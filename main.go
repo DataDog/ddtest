@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
+	"github.com/DataDog/datadog-test-runner/civisibility/integrations"
 	"github.com/spf13/cobra"
 )
 
@@ -18,13 +18,7 @@ var helloCmd = &cobra.Command{
 	Use:   "hello",
 	Short: "Say hello with Datadog tracing",
 	Run: func(cmd *cobra.Command, args []string) {
-		tracer.Start(tracer.WithService("datadog-test-runner"))
-		defer tracer.Stop()
-
-		span := tracer.StartSpan("greeting")
-		defer span.Finish()
-
-		span.SetTag("greeting", "Hello")
+		integrations.EnsureCiVisibilityInitialization()
 
 		fmt.Println("Hello, World!")
 	},
