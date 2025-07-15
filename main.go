@@ -7,6 +7,7 @@ import (
 	"github.com/DataDog/datadog-test-runner/civisibility/constants"
 	"github.com/DataDog/datadog-test-runner/civisibility/integrations"
 	"github.com/DataDog/datadog-test-runner/civisibility/utils"
+	"github.com/DataDog/datadog-test-runner/civisibility/utils/net"
 	"github.com/spf13/cobra"
 )
 
@@ -29,7 +30,34 @@ var skippablePercentageCmd = &cobra.Command{
 
 		utils.AddCITagsMap(tags)
 		integrations.EnsureCiVisibilityInitialization()
+
+		// settings
+		librarySettings := *integrations.GetSettings()
+		printSettings(librarySettings)
+
+		if librarySettings.ItrEnabled && librarySettings.TestsSkipping {
+			// fetch skippable tests
+		} else {
+			fmt.Println("Test skipping is not enabled")
+			fmt.Println("0.0")
+		}
 	},
+}
+
+func printSettings(settings net.SettingsResponseData) {
+	fmt.Printf("Library Settings:\n")
+	fmt.Printf("  ItrEnabled: %v\n", settings.ItrEnabled)
+	fmt.Printf("  TestsSkipping: %v\n", settings.TestsSkipping)
+	fmt.Printf("  CodeCoverage: %v\n", settings.CodeCoverage)
+	fmt.Printf("  RequireGit: %v\n", settings.RequireGit)
+	fmt.Printf("  FlakyTestRetriesEnabled: %v\n", settings.FlakyTestRetriesEnabled)
+	fmt.Printf("  KnownTestsEnabled: %v\n", settings.KnownTestsEnabled)
+	fmt.Printf("  ImpactedTestsEnabled: %v\n", settings.ImpactedTestsEnabled)
+	fmt.Printf("  EarlyFlakeDetection.Enabled: %v\n", settings.EarlyFlakeDetection.Enabled)
+	fmt.Printf("  EarlyFlakeDetection.FaultySessionThreshold: %d\n", settings.EarlyFlakeDetection.FaultySessionThreshold)
+	fmt.Printf("  TestManagement.Enabled: %v\n", settings.TestManagement.Enabled)
+	fmt.Printf("  TestManagement.AttemptToFixRetries: %d\n", settings.TestManagement.AttemptToFixRetries)
+	fmt.Println()
 }
 
 func init() {
