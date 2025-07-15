@@ -9,14 +9,13 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/DataDog/datadog-test-runner/civisibility/constants"
-
-	logger "github.com/gofiber/fiber/v2/log"
 )
 
 // This is a port of https://github.com/DataDog/dd-trace-dotnet/blob/v2.53.0/tracer/src/Datadog.Trace/Ci/CodeOwners.cs
@@ -98,10 +97,10 @@ func parseCodeOwners(filePath string) (*CodeOwners, error) {
 	}
 	cow, err := NewCodeOwners(filePath)
 	if err == nil {
-		logger.Debug("civisibility: codeowner file '%s' was loaded successfully.", filePath)
+		slog.Debug("civisibility: codeowner file was loaded successfully", "filepath", filePath)
 		return cow, nil
 	}
-	logger.Debug("Error parsing codeowners: %s", err.Error())
+	slog.Debug("Error parsing codeowners", "error", err.Error())
 	return nil, err
 }
 
@@ -119,7 +118,7 @@ func NewCodeOwners(filePath string) (*CodeOwners, error) {
 	defer func() {
 		err = file.Close()
 		if err != nil && !errors.Is(err, os.ErrClosed) {
-			logger.Warn("Error closing codeowners file: %s", err.Error())
+			slog.Warn("Error closing codeowners file", "error", err.Error())
 		}
 	}()
 

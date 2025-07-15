@@ -7,6 +7,7 @@ package impactedtests
 
 import (
 	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 	"strconv"
@@ -15,7 +16,6 @@ import (
 	"github.com/DataDog/datadog-test-runner/civisibility/constants"
 	"github.com/DataDog/datadog-test-runner/civisibility/utils"
 	"github.com/DataDog/datadog-test-runner/civisibility/utils/filebitmap"
-	logger "github.com/gofiber/fiber/v2/log"
 )
 
 type (
@@ -72,7 +72,7 @@ func NewImpactedTestAnalyzer() (*ImpactedTestAnalyzer, error) {
 		var err error
 		baseCommitSha, err = utils.GetBaseBranchSha("") // empty string triggers auto-detection
 		if err != nil {
-			logger.Debug("civisibility.ImpactedTests: Failed to get base commit SHA from git CLI: %s", err.Error())
+			slog.Debug("civisibility.ImpactedTests: Failed to get base commit SHA from git CLI", "err", err.Error())
 			// Don't fail here - we might be on a base branch or in a scenario where
 			// base branch detection isn't possible. Return an analyzer with no modified files.
 		}
@@ -83,17 +83,17 @@ func NewImpactedTestAnalyzer() (*ImpactedTestAnalyzer, error) {
 
 	// Check if the base commit SHA is available
 	if len(baseCommitSha) > 0 {
-		logger.Debug("civisibility.ImpactedTests: PR detected. Retrieving diff lines from Git CLI from BaseCommit %s", baseCommitSha)
+		slog.Debug("civisibility.ImpactedTests: PR detected. Retrieving diff lines from Git CLI from BaseCommit", "sha", baseCommitSha)
 		modifiedFiles = getGitDiffFrom(baseCommitSha, currentCommitSha)
 	}
 
 	// If we still don't have modified files, initialize with empty slice instead of failing
 	if modifiedFiles == nil {
-		logger.Debug("civisibility.ImpactedTests: No modified files found - initializing with empty list")
+		slog.Debug("civisibility.ImpactedTests: No modified files found - initializing with empty list")
 		modifiedFiles = []fileWithBitmap{}
 	}
 
-	logger.Debug("civisibility.ImpactedTests: loaded [from: %s to %s]: %v", baseCommitSha, currentCommitSha, modifiedFiles) //nolint:gocritic // File list debug logging
+	slog.Debug("civisibility.ImpactedTests: loaded", "baseCommitSha", baseCommitSha, "currentCommitSha", currentCommitSha, "modifiedFiles", modifiedFiles) //nolint:gocritic // File list debug logging
 	return &ImpactedTestAnalyzer{
 		modifiedFiles:    modifiedFiles,
 		currentCommitSha: currentCommitSha,
@@ -129,9 +129,9 @@ func (a *ImpactedTestAnalyzer) IsImpacted(testName string, sourceFile string, st
 		})
 		if modifiedFileIndex >= 0 {
 			modifiedFile := a.modifiedFiles[modifiedFileIndex]
-			logger.Debug("civisibility.ImpactedTests: DiffFile found: %s...", modifiedFile.file)
+			slog.Debug("civisibility.ImpactedTests: DiffFile found:", "diff", modifiedFile.file)
 			if testFile.bitmap == nil || modifiedFile.bitmap == nil {
-				logger.Debug("civisibility.ImpactedTests: No line info found")
+				slog.Debug("civisibility.ImpactedTests: No line info found")
 				modified = true
 				break
 			}
@@ -140,7 +140,7 @@ func (a *ImpactedTestAnalyzer) IsImpacted(testName string, sourceFile string, st
 			modifiedFileBitmap := filebitmap.NewFileBitmapFromBytes(modifiedFile.bitmap)
 
 			if testFileBitmap.IntersectsWith(modifiedFileBitmap) {
-				logger.Debug("civisibility.ImpactedTests: Intersecting lines. Marking test %s as modified.", testName)
+				slog.Debug("civisibility.ImpactedTests: Intersecting lines. Marking test as modified.", "name", testName)
 				modified = true
 				break
 			}
@@ -157,11 +157,11 @@ func getGitDiffFrom(baseCommitSha string, currentCommitSha string) []fileWithBit
 	// Milestone 1.5 : Retrieve diff files and lines from Git Diff CLI
 	output, err := utils.GetGitDiff(baseCommitSha, currentCommitSha)
 	if err != nil {
-		logger.Debug("civisibility.ImpactedTests: Failed to get diff files from Git CLI: %s", err.Error())
+		slog.Debug("civisibility.ImpactedTests: Failed to get diff files from Git CLI", "err", err.Error())
 	} else if output != "" {
 		modifiedFiles = parseGitDiffOutput(output)
 	} else {
-		logger.Debug("civisibility.ImpactedTests: No diff files found from Git CLI")
+		slog.Debug("civisibility.ImpactedTests: No diff files found from Git CLI")
 	}
 	return modifiedFiles
 }

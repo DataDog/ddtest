@@ -6,6 +6,7 @@
 package integrations
 
 import (
+	"log/slog"
 	"os"
 	"os/signal"
 	"regexp"
@@ -19,7 +20,6 @@ import (
 	"github.com/DataDog/datadog-test-runner/stableconfig"
 	"github.com/DataDog/dd-trace-go/v2/ddtrace/mocktracer"
 	"github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
-	"github.com/gofiber/fiber/v2/log"
 )
 
 // ciVisibilityCloseAction defines an action to be executed when CI visibility is closing.
@@ -63,13 +63,14 @@ func internalCiVisibilityInitialization(tracerInitializer func([]tracer.StartOpt
 		civisibility.SetState(civisibility.StateInitializing)
 		defer civisibility.SetState(civisibility.StateInitialized)
 
+		slog.SetLogLoggerLevel(slog.LevelWarn)
 		// check the debug flag to enable debug logs. The tracer initialization happens
 		// after the CI Visibility initialization so we need to handle this flag ourselves
 		if enabled, _ := stableconfig.Bool("DD_TRACE_DEBUG", false); enabled {
-			log.SetLevel(log.LevelDebug)
+			slog.SetLogLoggerLevel(slog.LevelDebug)
 		}
 
-		log.Debug("civisibility: initializing")
+		slog.Debug("civisibility: initializing")
 
 		// Since calling this method indicates we are in CI Visibility mode, set the environment variable.
 		_ = os.Setenv(constants.CIVisibilityEnabledEnvironmentVariable, "1")
@@ -104,7 +105,7 @@ func internalCiVisibilityInitialization(tracerInitializer func([]tracer.StartOpt
 		go func() { ensureAdditionalFeaturesInitialization(serviceName) }()
 
 		// Initialize the tracer
-		log.Debug("civisibility: initializing tracer")
+		slog.Debug("civisibility: initializing tracer")
 		tracerInitializer(opts)
 
 		// Handle SIGINT and SIGTERM signals to ensure we close all open spans and flush the tracer before exiting
@@ -128,22 +129,22 @@ func PushCiVisibilityCloseAction(action ciVisibilityCloseAction) {
 // ExitCiVisibility executes all registered close actions and stops the tracer.
 func ExitCiVisibility() {
 	if civisibility.GetState() != civisibility.StateInitialized {
-		log.Debug("civisibility: already closed or not initialized")
+		slog.Debug("civisibility: already closed or not initialized")
 		return
 	}
 
 	civisibility.SetState(civisibility.StateExiting)
 	defer civisibility.SetState(civisibility.StateExited)
-	log.Debug("civisibility: exiting")
+	slog.Debug("civisibility: exiting")
 	closeActionsMutex.Lock()
 	defer closeActionsMutex.Unlock()
 	defer func() {
 		closeActions = []ciVisibilityCloseAction{}
-		log.Debug("civisibility: flushing and stopping the logger")
-		log.Debug("civisibility: flushing and stopping tracer")
+		slog.Debug("civisibility: flushing and stopping the logger")
+		slog.Debug("civisibility: flushing and stopping tracer")
 		tracer.Flush()
 		tracer.Stop()
-		log.Debug("civisibility: done.")
+		slog.Debug("civisibility: done.")
 	}()
 	for _, v := range closeActions {
 		v()

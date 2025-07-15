@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/DataDog/datadog-test-runner/civisibility/constants"
 	"github.com/DataDog/datadog-test-runner/civisibility/integrations"
+	"github.com/DataDog/datadog-test-runner/civisibility/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -14,26 +16,23 @@ var rootCmd = &cobra.Command{
 	Long:  "A command line tool for running tests with Datadog Test Optimization.",
 }
 
-var helloCmd = &cobra.Command{
-	Use:   "hello",
-	Short: "Say hello with Datadog tracing",
-	Run: func(cmd *cobra.Command, args []string) {
-		integrations.EnsureCiVisibilityInitialization()
-
-		fmt.Println("Hello, World!")
-	},
-}
-
 var skippablePercentageCmd = &cobra.Command{
 	Use:   "skippable-percentage",
 	Short: "Calculate skippable percentage with Datadog tracing",
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Calculating skippable percentage...")
+
+		tags := make(map[string]string)
+		tags[constants.RuntimeName] = "ruby"
+		tags[constants.RuntimeVersion] = "3.3.3"
+		tags["language"] = "ruby"
+
+		utils.AddCITagsMap(tags)
+		integrations.EnsureCiVisibilityInitialization()
 	},
 }
 
 func init() {
-	rootCmd.AddCommand(helloCmd)
 	rootCmd.AddCommand(skippablePercentageCmd)
 }
 

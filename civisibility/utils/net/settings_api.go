@@ -7,8 +7,7 @@ package net
 
 import (
 	"fmt"
-
-	"github.com/gofiber/fiber/v2/log"
+	"log/slog"
 )
 
 const (
@@ -96,7 +95,7 @@ func (c *client) GetSettings() (*SettingsResponseData, error) {
 		return nil, fmt.Errorf("sending get settings request: %s", err.Error())
 	}
 
-	log.Debug("civisibility.settings: %s", string(response.Body))
+	slog.Debug("civisibility.settings", "response", string(response.Body))
 
 	var responseObject settingsResponse
 	err = response.Unmarshal(&responseObject)

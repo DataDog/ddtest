@@ -7,6 +7,7 @@ package integrations
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"slices"
 	"sync"
@@ -16,7 +17,6 @@ import (
 	"github.com/DataDog/datadog-test-runner/civisibility/utils"
 	"github.com/DataDog/datadog-test-runner/civisibility/utils/impactedtests"
 	"github.com/DataDog/datadog-test-runner/civisibility/utils/net"
-	"github.com/gofiber/fiber/v2/log"
 )
 
 const (
@@ -70,13 +70,13 @@ var (
 
 func ensureSettingsInitialization(serviceName string) {
 	settingsInitializationOnce.Do(func() {
-		log.Debug("civisibility: initializing settings")
-		defer log.Debug("civisibility: settings initialization complete")
+		slog.Debug("civisibility: initializing settings")
+		defer slog.Debug("civisibility: settings initialization complete")
 
 		// Create the CI Visibility client
 		ciVisibilityClient = net.NewClientWithServiceName(serviceName)
 		if ciVisibilityClient == nil {
-			log.Error("civisibility: error getting the ci visibility http client")
+			slog.Error("civisibility: error getting the ci visibility http client")
 			return
 		}
 
@@ -85,9 +85,9 @@ func ensureSettingsInitialization(serviceName string) {
 		go func() {
 			bytes, err := uploadRepositoryChanges()
 			if err != nil {
-				log.Error("civisibility: error uploading repository changes: %s", err.Error())
+				slog.Error("civisibility: error uploading repository changes:", "error", err.Error())
 			} else {
-				log.Debug("civisibility: uploaded %d bytes in pack files", bytes)
+				slog.Debug("civisibility: uploaded bytes in pack files", "count", bytes)
 			}
 			uploadChannel <- struct{}{}
 		}()
@@ -95,8 +95,8 @@ func ensureSettingsInitialization(serviceName string) {
 		// Get the CI Visibility settings payload for this test session
 		ciSettings, err := ciVisibilityClient.GetSettings()
 		if err != nil || ciSettings == nil {
-			log.Error("civisibility: error getting CI visibility settings: %s", err.Error())
-			log.Debug("civisibility: no need to wait for the git upload to finish")
+			slog.Error("civisibility: error getting CI visibility settings", "error", err.Error())
+			slog.Debug("civisibility: no need to wait for the git upload to finish")
 			// Enqueue a close action to wait for the upload to finish before finishing the process
 			PushCiVisibilityCloseAction(func() {
 				<-uploadChannel
@@ -106,18 +106,18 @@ func ensureSettingsInitialization(serviceName string) {
 
 		// check if we need to wait for the upload to finish and repeat the settings request or we can just continue
 		if ciSettings.RequireGit {
-			log.Debug("civisibility: waiting for the git upload to finish and repeating the settings request")
+			slog.Debug("civisibility: waiting for the git upload to finish and repeating the settings request")
 			<-uploadChannel
 			ciSettings, err = ciVisibilityClient.GetSettings()
 			if err != nil {
-				log.Error("civisibility: error getting CI visibility settings: %s", err.Error())
+				slog.Error("civisibility: error getting CI visibility settings", "error", err.Error())
 				return
 			}
 		} else if ciSettings.ImpactedTestsEnabled {
-			log.Debug("civisibility: impacted tests is enabled we need to wait for the upload to finish (for the unshallow process)")
+			slog.Debug("civisibility: impacted tests is enabled we need to wait for the upload to finish (for the unshallow process)")
 			<-uploadChannel
 		} else {
-			log.Debug("civisibility: no need to wait for the git upload to finish")
+			slog.Debug("civisibility: no need to wait for the git upload to finish")
 			// Enqueue a close action to wait for the upload to finish before finishing the process
 			PushCiVisibilityCloseAction(func() {
 				<-uploadChannel
@@ -134,13 +134,13 @@ func ensureSettingsInitialization(serviceName string) {
 
 		// check if flaky test retries is disabled by env-vars
 		if ciSettings.FlakyTestRetriesEnabled && !civisibility.BoolEnv(constants.CIVisibilityFlakyRetryEnabledEnvironmentVariable, true) {
-			log.Warn("civisibility: flaky test retries was disabled by the environment variable")
+			slog.Warn("civisibility: flaky test retries was disabled by the environment variable")
 			ciSettings.FlakyTestRetriesEnabled = false
 		}
 
 		// check if test management is disabled by env-vars
 		if ciSettings.TestManagement.Enabled && !civisibility.BoolEnv(constants.CIVisibilityTestManagementEnabledEnvironmentVariable, true) {
-			log.Warn("civisibility: test management was disabled by the environment variable")
+			slog.Warn("civisibility: test management was disabled by the environment variable")
 			ciSettings.TestManagement.Enabled = false
 		}
 
@@ -158,8 +158,8 @@ func ensureSettingsInitialization(serviceName string) {
 // ensureAdditionalFeaturesInitialization initialize all the additional features
 func ensureAdditionalFeaturesInitialization(_ string) {
 	additionalFeaturesInitializationOnce.Do(func() {
-		log.Debug("civisibility: initializing additional features")
-		defer log.Debug("civisibility: additional features initialization complete")
+		slog.Debug("civisibility: initializing additional features")
+		defer slog.Debug("civisibility: additional features initialization complete")
 
 		// get a copy of the settings instance
 		currentSettings := *GetSettings()
@@ -173,7 +173,7 @@ func ensureAdditionalFeaturesInitialization(_ string) {
 		additionalTags := make(map[string]string)
 		defer func() {
 			if len(additionalTags) > 0 {
-				log.Debug("civisibility: adding additional tags: %v", additionalTags) //nolint:gocritic // Map structure logging for debugging
+				slog.Debug("civisibility: adding additional tags", "tags", additionalTags) //nolint:gocritic // Map structure logging for debugging
 				utils.AddCITagsMap(additionalTags)
 			}
 		}()
@@ -204,7 +204,7 @@ func ensureAdditionalFeaturesInitialization(_ string) {
 				TotalRetryCount:          totalRetriesCount,
 				RemainingTotalRetryCount: totalRetriesCount,
 			}
-			log.Debug("civisibility: automatic test retries enabled [retryCount: %d, totalRetryCount: %d]", retryCount, totalRetriesCount)
+			slog.Debug("civisibility: automatic test retries enabled", "retryCount", retryCount, "totalRetriesCount", totalRetriesCount)
 		}
 
 		// wait group to wait for all the additional features to be loaded
@@ -217,10 +217,10 @@ func ensureAdditionalFeaturesInitialization(_ string) {
 				defer wg.Done()
 				ciEfdData, err := ciVisibilityClient.GetKnownTests()
 				if err != nil {
-					log.Error("civisibility: error getting CI visibility known tests data: %s", err.Error())
+					slog.Error("civisibility: error getting CI visibility known tests data", "err", err.Error())
 				} else if ciEfdData != nil {
 					ciVisibilityKnownTests = *ciEfdData
-					log.Debug("civisibility: known tests data loaded.")
+					slog.Debug("civisibility: known tests data loaded.")
 				}
 			}()
 		}
@@ -233,9 +233,9 @@ func ensureAdditionalFeaturesInitialization(_ string) {
 				// get the skippable tests
 				correlationID, skippableTests, err := ciVisibilityClient.GetSkippableTests()
 				if err != nil {
-					log.Error("civisibility: error getting CI visibility skippable tests: %s", err.Error())
+					slog.Error("civisibility: error getting CI visibility skippable tests", "err", err.Error())
 				} else if skippableTests != nil {
-					log.Debug("civisibility: skippable tests loaded: %d suites", len(skippableTests))
+					slog.Debug("civisibility: skippable tests loaded", "count", len(skippableTests))
 					setAdditionalTags(constants.ItrCorrelationIDTag, correlationID)
 					ciVisibilitySkippables = skippableTests
 				}
@@ -249,10 +249,10 @@ func ensureAdditionalFeaturesInitialization(_ string) {
 				defer wg.Done()
 				testManagementTests, err := ciVisibilityClient.GetTestManagementTests()
 				if err != nil {
-					log.Error("civisibility: error getting CI visibility test management tests: %s", err.Error())
+					slog.Error("civisibility: error getting CI visibility test management tests", "err", err.Error())
 				} else if testManagementTests != nil {
 					ciVisibilityTestManagementTests = *testManagementTests
-					log.Debug("civisibility: test management loaded [attemptToFixRetries: %d]", currentSettings.TestManagement.AttemptToFixRetries)
+					slog.Debug("civisibility: test management loaded", "attemptToFixRetries", currentSettings.TestManagement.AttemptToFixRetries)
 				}
 			}()
 		}
@@ -265,10 +265,10 @@ func ensureAdditionalFeaturesInitialization(_ string) {
 				defer wg.Done()
 				iTests, err := impactedtests.NewImpactedTestAnalyzer()
 				if err != nil {
-					log.Error("civisibility: error getting CI visibility impacted tests analyzer: %s", err.Error())
+					slog.Error("civisibility: error getting CI visibility impacted tests analyzer", "err", err.Error())
 				} else {
 					ciVisibilityImpactedTestsAnalyzer = iTests
-					log.Debug("civisibility: impacted tests analyzer loaded")
+					slog.Debug("civisibility: impacted tests analyzer loaded")
 				}
 			}()
 		}
@@ -334,7 +334,7 @@ func uploadRepositoryChanges() (bytes int64, err error) {
 
 	// if there are no commits then we don't need to do anything
 	if !initialCommitData.hasCommits() {
-		log.Debug("civisibility: no commits found")
+		slog.Debug("civisibility: no commits found")
 		return 0, nil
 	}
 
@@ -343,7 +343,7 @@ func uploadRepositoryChanges() (bytes int64, err error) {
 	//   - there are not missing commits (backend has the total number of local commits already)
 	// then we are good to go with it, we don't need to check if we need to unshallow or anything and just go with that.
 	if initialCommitData.hasCommits() && len(initialCommitData.missingCommits()) == 0 {
-		log.Debug("civisibility: initial commit data has everything already, we don't need to upload anything")
+		slog.Debug("civisibility: initial commit data has everything already, we don't need to upload anything")
 		return 0, nil
 	}
 
@@ -351,7 +351,7 @@ func uploadRepositoryChanges() (bytes int64, err error) {
 	hasBeenUnshallowed, err := utils.UnshallowGitRepository()
 	if err != nil || !hasBeenUnshallowed {
 		if err != nil {
-			log.Warn("%s", err.Error())
+			slog.Warn(err.Error())
 		}
 		// if unshallowing the repository failed or if there's nothing to unshallow then we try to upload the packfiles from
 		// the initial commit data
@@ -379,11 +379,11 @@ func uploadRepositoryChanges() (bytes int64, err error) {
 func getSearchCommits() (*searchCommitsResponse, error) {
 	localCommits := utils.GetLastLocalGitCommitShas()
 	if len(localCommits) == 0 {
-		log.Debug("civisibility: no local commits found")
+		slog.Debug("civisibility: no local commits found")
 		return newSearchCommitsResponse(nil, nil, false), nil
 	}
 
-	log.Debug("civisibility: local commits found: %d", len(localCommits))
+	slog.Debug("civisibility: local commits found", "count", len(localCommits))
 	remoteCommits, err := ciVisibilityClient.GetCommits(localCommits)
 	return newSearchCommitsResponse(localCommits, remoteCommits, true), err
 }
@@ -418,12 +418,12 @@ func sendObjectsPackFile(commitSha string, commitsToInclude []string, commitsToE
 	// get the pack files to send
 	packFiles := utils.CreatePackFiles(commitsToInclude, commitsToExclude)
 	if len(packFiles) == 0 {
-		log.Debug("civisibility: no pack files to send")
+		slog.Debug("civisibility: no pack files to send")
 		return 0, nil
 	}
 
 	// send the pack files
-	log.Debug("civisibility: sending pack file with missing commits. files: %v", packFiles) //nolint:gocritic // File list logging for debugging
+	slog.Debug("civisibility: sending pack file with missing commits", "count", packFiles) //nolint:gocritic // File list logging for debugging
 
 	// try to remove the pack files after sending them
 	defer func(files []string) {

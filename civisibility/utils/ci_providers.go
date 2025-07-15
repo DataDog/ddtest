@@ -8,13 +8,13 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/DataDog/datadog-test-runner/civisibility/constants"
-	"github.com/gofiber/fiber/v2/log"
 )
 
 // providerType defines a function type that returns a map of string key-value pairs.
@@ -79,9 +79,9 @@ func getProviderTags() map[string]string {
 	}
 
 	if providerName, ok := tags[constants.CIProviderName]; ok {
-		log.Debug("civisibility: detected ci provider: %s", providerName)
+		slog.Debug("civisibility: detected ci provider", "provider", providerName)
 	} else {
-		log.Debug("civisibility: no ci provider was detected.")
+		slog.Debug("civisibility: no ci provider was detected.")
 	}
 
 	return tags

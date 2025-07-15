@@ -6,14 +6,13 @@
 package civisibility
 
 import (
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
-
-	"github.com/gofiber/fiber/v2/log"
 )
 
 type State int
@@ -70,13 +69,13 @@ func AgentURLFromEnv() *url.URL {
 	if agentURL := os.Getenv("DD_TRACE_AGENT_URL"); agentURL != "" {
 		u, err := url.Parse(agentURL)
 		if err != nil {
-			log.Warn("Failed to parse DD_TRACE_AGENT_URL: %s", err.Error())
+			slog.Warn("Failed to parse DD_TRACE_AGENT_URL", "error", err.Error())
 		} else {
 			switch u.Scheme {
 			case "unix", "http", "https":
 				return u
 			default:
-				log.Warn("Unsupported protocol %q in Agent URL %q. Must be one of: http, https, unix.", u.Scheme, agentURL)
+				slog.Warn("Unsupported protocol in Agent URL. Must be one of: http, https, unix.", "scheme", u.Scheme, "url", agentURL)
 			}
 		}
 	}
@@ -119,7 +118,7 @@ func BoolEnv(key string, def bool) bool {
 	}
 	v, err := strconv.ParseBool(vv)
 	if err != nil {
-		log.Warn("Non-boolean value for env var %s, defaulting to %t. Parse failed with error: %v", key, def, err.Error())
+		slog.Warn("Non-boolean value for env var, defaulting to default value", "key", key, "default", def, "error", err.Error())
 		return def
 	}
 	return v
@@ -134,7 +133,7 @@ func IntEnv(key string, def int) int {
 	}
 	v, err := strconv.Atoi(vv)
 	if err != nil {
-		log.Warn("Non-integer value for env var %s, defaulting to %d. Parse failed with error: %v", key, def, err.Error())
+		slog.Warn("Non-integer value for env var, defaulting to default value", "key", key, "default", def, "error", err.Error())
 		return def
 	}
 	return v

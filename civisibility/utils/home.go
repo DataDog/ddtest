@@ -7,14 +7,13 @@ package utils
 
 import (
 	"bytes"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
-
-	"github.com/gofiber/fiber/v2/log"
 )
 
 // This code is based on: https://github.com/mitchellh/go-homedir/blob/v1.1.0/homedir.go (MIT License)
@@ -59,7 +58,7 @@ func ExpandPath(path string) string {
 //	The home directory of the current user.
 func getHomeDir() (homeDir string) {
 	defer func() {
-		log.Debug("civisibility: home directory: %s", homeDir)
+		slog.Debug("civisibility: home directory", "homeDir", homeDir)
 	}()
 
 	if runtime.GOOS == "windows" {

@@ -7,6 +7,7 @@ package utils
 
 import (
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -17,7 +18,6 @@ import (
 
 	"github.com/DataDog/datadog-test-runner/civisibility/constants"
 	"github.com/DataDog/datadog-test-runner/osinfo"
-	"github.com/gofiber/fiber/v2/log"
 )
 
 var (
@@ -227,9 +227,9 @@ func createCITagsMap() map[string]string {
 	localTags[constants.OSArchitecture] = runtime.GOARCH
 	localTags[constants.RuntimeName] = runtime.Compiler
 	localTags[constants.RuntimeVersion] = runtime.Version()
-	log.Debug("civisibility: os platform: ", runtime.GOOS)
-	log.Debug("civisibility: os architecture: ", runtime.GOARCH)
-	log.Debug("civisibility: runtime version: ", runtime.Version())
+	slog.Debug("civisibility: os platform", "platform", runtime.GOOS)
+	slog.Debug("civisibility: os architecture", "architecture", runtime.GOARCH)
+	slog.Debug("civisibility: runtime version", "version", runtime.Version())
 
 	// Get command line test command
 	var cmd string
@@ -245,7 +245,7 @@ func createCITagsMap() map[string]string {
 	cmd = regexp.MustCompile(`(?si)-test.testlogfile=(.*)\s`).ReplaceAllString(cmd, "")
 	cmd = strings.TrimSpace(cmd)
 	localTags[constants.TestCommand] = cmd
-	log.Debug("civisibility: test command: %s", cmd)
+	slog.Debug("civisibility: test command", "command", cmd)
 
 	// Populate the test session name
 	if testSessionName, ok := os.LookupEnv(constants.CIVisibilityTestSessionNameEnvironmentVariable); ok {
@@ -255,7 +255,7 @@ func createCITagsMap() map[string]string {
 	} else {
 		localTags[constants.TestSessionName] = cmd
 	}
-	log.Debug("civisibility: test session name: %s", localTags[constants.TestSessionName])
+	slog.Debug("civisibility: test session name", "sessionName", localTags[constants.TestSessionName])
 
 	// Check if the user provided the test service
 	if ddService := os.Getenv("DD_SERVICE"); ddService != "" {
@@ -309,8 +309,8 @@ func createCITagsMap() map[string]string {
 	// Apply environmental data if is available
 	applyEnvironmentalDataIfRequired(localTags)
 
-	log.Debug("civisibility: workspace directory: %s", localTags[constants.CIWorkspacePath])
-	log.Debug("civisibility: common tags created with %d items", len(localTags))
+	slog.Debug("civisibility: workspace directory", "workspacePath", localTags[constants.CIWorkspacePath])
+	slog.Debug("civisibility: common tags created", "count", len(localTags))
 	return localTags
 }
 
@@ -323,6 +323,6 @@ func createCIMetricsMap() map[string]float64 {
 	localMetrics := make(map[string]float64)
 	localMetrics[constants.LogicalCPUCores] = float64(runtime.NumCPU())
 
-	log.Debug("civisibility: common metrics created with %d items", len(localMetrics))
+	slog.Debug("civisibility: common metrics created", "count", len(localMetrics))
 	return localMetrics
 }

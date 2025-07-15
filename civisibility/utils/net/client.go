@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"math/rand/v2"
 	"net"
@@ -22,7 +23,6 @@ import (
 	"github.com/DataDog/datadog-test-runner/civisibility"
 	"github.com/DataDog/datadog-test-runner/civisibility/constants"
 	"github.com/DataDog/datadog-test-runner/civisibility/utils"
-	"github.com/gofiber/fiber/v2/log"
 )
 
 const (
@@ -130,7 +130,7 @@ func NewClientWithServiceNameAndSubdomain(serviceName, subdomain string) Client 
 		// Agentless mode is enabled.
 		apiKeyValue = os.Getenv(constants.APIKeyEnvironmentVariable)
 		if apiKeyValue == "" {
-			log.Error("An API key is required for agentless mode. Use the DD_API_KEY env variable to set it")
+			slog.Error("An API key is required for agentless mode. Use the DD_API_KEY env variable to set it")
 			return nil
 		}
 
@@ -160,7 +160,7 @@ func NewClientWithServiceNameAndSubdomain(serviceName, subdomain string) Client 
 		agentURL = civisibility.AgentURLFromEnv()
 		if agentURL.Scheme == "unix" {
 			// If we're connecting over UDS we can just rely on the agent to provide the hostname
-			log.Debug("connecting to agent over unix, do not set hostname on any traces")
+			slog.Debug("connecting to agent over unix, do not set hostname on any traces")
 			dialer := &net.Dialer{
 				Timeout:   30 * time.Second,
 				KeepAlive: 30 * time.Second,
@@ -199,7 +199,7 @@ func NewClientWithServiceNameAndSubdomain(serviceName, subdomain string) Client 
 	defaultHeaders["trace_id"] = id
 	defaultHeaders["parent_id"] = id
 
-	log.Debug("ciVisibilityHttpClient: new client created [id: %s, agentless: %t, url: %s, env: %s, serviceName: %s, subdomain: %s]",
+	slog.Debug("ciVisibilityHttpClient: new client created [id: %s, agentless: %t, url: %s, env: %s, serviceName: %s, subdomain: %s]",
 		id, agentlessEnabled, baseURL, environment, serviceName, subdomain)
 
 	// we try to get the branch name

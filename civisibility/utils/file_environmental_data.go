@@ -7,13 +7,13 @@ package utils
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	_ "unsafe" // for go:linkname
 
 	"github.com/DataDog/datadog-test-runner/civisibility/constants"
-	logger "github.com/gofiber/fiber/v2/log"
 )
 
 type (
@@ -79,21 +79,21 @@ type (
 func getEnvironmentalData() *fileEnvironmentalData {
 	envDataFileName := getEnvDataFileName()
 	if _, err := os.Stat(envDataFileName); os.IsNotExist(err) {
-		logger.Debug("civisibility: reading environmental data from %s not found.", envDataFileName)
+		slog.Debug("civisibility: reading environmental data file not found", "filename", envDataFileName)
 		return nil
 	}
 	file, err := os.Open(envDataFileName)
 	if err != nil {
-		logger.Error("civisibility: error reading environmental data from %s: %v", envDataFileName, err.Error())
+		slog.Error("civisibility: error reading environmental data from %s: %v", envDataFileName, err.Error())
 		return nil
 	}
 	defer file.Close()
 	var envData fileEnvironmentalData
 	if err := json.NewDecoder(file).Decode(&envData); err != nil {
-		logger.Error("civisibility: error decoding environmental data from %s: %v", envDataFileName, err.Error())
+		slog.Error("civisibility: error decoding environmental data from %s: %v", envDataFileName, err.Error())
 		return nil
 	}
-	logger.Debug("civisibility: loaded environmental data from %s", envDataFileName)
+	slog.Debug("civisibility: loaded environmental data", "filename", envDataFileName)
 	return &envData
 }
 
@@ -120,11 +120,11 @@ func applyEnvironmentalDataIfRequired(tags map[string]string) {
 	}
 	envData := getEnvironmentalData()
 	if envData == nil {
-		logger.Debug("civisibility: no environmental data found")
+		slog.Debug("civisibility: no environmental data found")
 		return
 	}
 
-	logger.Debug("civisibility: applying environmental data")
+	slog.Debug("civisibility: applying environmental data")
 
 	if envData.WorkspacePath != "" && tags[constants.CIWorkspacePath] == "" {
 		tags[constants.CIWorkspacePath] = envData.WorkspacePath
