@@ -39,9 +39,6 @@ var skippablePercentageCmd = &cobra.Command{
 		if librarySettings.ItrEnabled && librarySettings.TestsSkipping {
 			skippableTests := integrations.GetSkippableTests()
 
-			// we don't need any more data from Test Optimization, make it stop
-			integrations.ExitCiVisibility()
-
 			// fill the storage of all tests to be skipped
 			for _, suites := range skippableTests {
 				for _, tests := range suites {
@@ -52,6 +49,8 @@ var skippablePercentageCmd = &cobra.Command{
 				}
 			}
 		}
+
+		integrations.ExitCiVisibility()
 
 		for testFQN := range ddSkippedTests {
 			fmt.Println(testFQN)
