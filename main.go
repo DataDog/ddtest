@@ -20,10 +20,6 @@ type Test struct {
 	SourceFile string `json:"source_file"`
 }
 
-type TestDiscoveryResult struct {
-	Tests []Test `json:"tests"`
-}
-
 var rootCmd = &cobra.Command{
 	Use:   "datadog-test-runner",
 	Short: "A test runner with Datadog",
@@ -74,11 +70,6 @@ var skippablePercentageCmd = &cobra.Command{
 		durationTestOpt := time.Since(startTimeTestOpt)
 		fmt.Printf("Finished fetching skippable tests! (took %v)\n", durationTestOpt)
 
-		if err := os.MkdirAll("./.dd/tests-discovery", 0755); err != nil {
-			fmt.Printf("Error creating .dd/tests-discovery directory: %v\n", err)
-			os.Exit(1)
-		}
-
 		filePath := "./.dd/tests-discovery/rspec.json"
 		cmdName := "bundle"
 		cmdArgs := []string{"exec", "rspec", "--format", "progress"}
@@ -102,20 +93,26 @@ var skippablePercentageCmd = &cobra.Command{
 		duration := time.Since(startTime)
 		fmt.Printf("Finished RSpec dry run! (took %v)\n", duration)
 
-		// Read and parse the JSON file
-		jsonData, err := os.ReadFile(filePath)
+		// Read and parse the JSON stream file
+		file, err := os.Open(filePath)
 		if err != nil {
-			fmt.Printf("Error reading JSON file: %v\n", err)
+			fmt.Printf("Error opening JSON file: %v\n", err)
 			os.Exit(1)
 		}
+		defer file.Close()
 
-		var testDiscoveryResult TestDiscoveryResult
-		if err := json.Unmarshal(jsonData, &testDiscoveryResult); err != nil {
-			fmt.Printf("Error parsing JSON: %v\n", err)
-			os.Exit(1)
+		var tests []Test
+		decoder := json.NewDecoder(file)
+		for decoder.More() {
+			var test Test
+			if err := decoder.Decode(&test); err != nil {
+				fmt.Printf("Error parsing JSON: %v\n", err)
+				os.Exit(1)
+			}
+			tests = append(tests, test)
 		}
 
-		fmt.Printf("Parsed RSpec report with %d examples\n", len(testDiscoveryResult.Tests))
+		fmt.Printf("Parsed RSpec report with %d examples\n", len(tests))
 	},
 }
 
