@@ -1,14 +1,28 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"time"
 
 	"github.com/DataDog/datadog-test-runner/civisibility/constants"
 	"github.com/DataDog/datadog-test-runner/civisibility/integrations"
 	"github.com/DataDog/datadog-test-runner/civisibility/utils"
 	"github.com/spf13/cobra"
 )
+
+type Test struct {
+	FQN        string `json:"fqn"`
+	Name       string `json:"name"`
+	Suite      string `json:"suite"`
+	SourceFile string `json:"source_file"`
+}
+
+type TestDiscoveryResult struct {
+	Tests []Test `json:"tests"`
+}
 
 var rootCmd = &cobra.Command{
 	Use:   "datadog-test-runner",
@@ -28,15 +42,16 @@ var skippablePercentageCmd = &cobra.Command{
 		tags["language"] = "ruby"
 
 		utils.AddCITagsMap(tags)
+
+		startTimeTestOpt := time.Now()
 		integrations.EnsureCiVisibilityInitialization()
 
-		// copy settings
 		librarySettings := *integrations.GetSettings()
-
 		// Set of FQNs for tests that can be skipped
-		ddSkippedTests := make(map[string]any)
+		ddSkippedTests := make(map[string]bool)
 
 		if librarySettings.ItrEnabled && librarySettings.TestsSkipping {
+			fmt.Println("Fetching skippable tests...")
 			skippableTests := integrations.GetSkippableTests()
 
 			// fill the storage of all tests to be skipped
@@ -44,17 +59,63 @@ var skippablePercentageCmd = &cobra.Command{
 				for _, tests := range suites {
 					for _, test := range tests {
 						testFQN := testFQN(test.Suite, test.Name, test.Parameters)
-						ddSkippedTests[testFQN] = struct{}{}
+						ddSkippedTests[testFQN] = true
 					}
 				}
 			}
 		}
-
 		integrations.ExitCiVisibility()
 
-		for testFQN := range ddSkippedTests {
-			fmt.Println(testFQN)
+		fmt.Printf("Skipped tests: %d\n", len(ddSkippedTests))
+		// for testFQN := range ddSkippedTests {
+		// 	fmt.Println(testFQN)
+		// }
+
+		durationTestOpt := time.Since(startTimeTestOpt)
+		fmt.Printf("Finished fetching skippable tests! (took %v)\n", durationTestOpt)
+
+		if err := os.MkdirAll("./.dd/tests-discovery", 0755); err != nil {
+			fmt.Printf("Error creating .dd/tests-discovery directory: %v\n", err)
+			os.Exit(1)
 		}
+
+		filePath := "./.dd/tests-discovery/rspec.json"
+		cmdName := "bundle"
+		cmdArgs := []string{"exec", "rspec", "--format", "progress"}
+
+		fmt.Println("Starting RSpec dry run...")
+		startTime := time.Now()
+
+		rspecCmd := exec.Command(cmdName, cmdArgs...)
+		rspecCmd.Env = append(
+			os.Environ(),
+			"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1",
+			"DD_TEST_OPTIMIZATION_DISCOVERY_FILE="+filePath,
+		)
+		output, err := rspecCmd.CombinedOutput()
+
+		if err != nil {
+			fmt.Printf("Failed to run RSpec dry run with output: %s\n", output)
+			os.Exit(1)
+		}
+
+		duration := time.Since(startTime)
+		fmt.Printf("Finished RSpec dry run! (took %v)\n", duration)
+
+		// Read and parse the JSON file
+		jsonData, err := os.ReadFile(filePath)
+		if err != nil {
+			fmt.Printf("Error reading JSON file: %v\n", err)
+			os.Exit(1)
+		}
+
+		var testDiscoveryResult TestDiscoveryResult
+		if err := json.Unmarshal(jsonData, &testDiscoveryResult); err != nil {
+			fmt.Printf("Error parsing JSON: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Parsed RSpec report with %d examples\n", len(testDiscoveryResult.Tests))
 	},
 }
 
