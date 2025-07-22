@@ -17,18 +17,18 @@ type Test struct {
 	FQN        string `json:"fqn"`
 	Name       string `json:"name"`
 	Suite      string `json:"suite"`
-	SourceFile string `json:"source_file"`
+	SourceFile string `json:"sourceFile"`
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "datadog-test-runner",
-	Short: "A test runner with Datadog",
-	Long:  "A command line tool for running tests with Datadog Test Optimization.",
+	Use:   "ddruntest",
+	Short: "A test runner from Datadog",
+	Long:  "Command line tool for running tests with Datadog Test Optimization.",
 }
 
-var skippablePercentageCmd = &cobra.Command{
-	Use:   "skippable-percentage",
-	Short: "Calculate skippable percentage with Datadog tracing",
+var testFilesCmd = &cobra.Command{
+	Use:   "test-files",
+	Short: "prints test files that are discovered in the project and not skipped completely by Datadog's Test Impact Analysis",
 	Run: func(cmd *cobra.Command, args []string) {
 		tags := make(map[string]string)
 		tags[constants.RuntimeName] = "ruby"
@@ -72,7 +72,7 @@ var skippablePercentageCmd = &cobra.Command{
 
 		filePath := "./.dd/tests-discovery/rspec.json"
 		cmdName := "bundle"
-		cmdArgs := []string{"exec", "rspec", "--format", "progress"}
+		cmdArgs := []string{"exec", "rspec", "--format", "progress", "--dry-run"}
 
 		fmt.Println("Starting RSpec dry run...")
 		startTime := time.Now()
@@ -113,6 +113,18 @@ var skippablePercentageCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Parsed RSpec report with %d examples\n", len(tests))
+
+		testFiles := make(map[string]bool)
+		for _, test := range tests {
+			if !ddSkippedTests[test.FQN] {
+				testFiles[test.SourceFile] = true
+			}
+		}
+
+		for testFile := range testFiles {
+			fmt.Print(testFile + " ")
+		}
+		fmt.Println()
 	},
 }
 
@@ -160,7 +172,7 @@ func testFQN(suite, test, parameters string) string {
 // }
 
 func init() {
-	rootCmd.AddCommand(skippablePercentageCmd)
+	rootCmd.AddCommand(testFilesCmd)
 }
 
 func main() {
