@@ -9,17 +9,9 @@ import (
 	"time"
 
 	"github.com/DataDog/datadog-test-runner/civisibility/constants"
-	"github.com/DataDog/datadog-test-runner/civisibility/integrations"
-	"github.com/DataDog/datadog-test-runner/civisibility/utils"
+	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
 	"github.com/spf13/cobra"
 )
-
-type Test struct {
-	FQN        string `json:"fqn"`
-	Name       string `json:"name"`
-	Suite      string `json:"suite"`
-	SourceFile string `json:"sourceFile"`
-}
 
 var rootCmd = &cobra.Command{
 	Use:   "ddruntest",
@@ -38,35 +30,14 @@ var testFilesCmd = &cobra.Command{
 		tags[constants.OSVersion] = "24.5.0"
 		tags["language"] = "ruby"
 
-		utils.AddCITagsMap(tags)
-
-		startTimeTestOpt := time.Now()
-		integrations.EnsureCiVisibilityInitialization()
-
-		librarySettings := *integrations.GetSettings()
-		// Set of FQNs for tests that can be skipped
-		ddSkippedTests := make(map[string]bool)
-
-		if librarySettings.ItrEnabled && librarySettings.TestsSkipping {
-			slog.Debug("Fetching skippable tests...")
-			skippableTests := integrations.GetSkippableTests()
-
-			// fill the storage of all tests to be skipped
-			for _, suites := range skippableTests {
-				for _, tests := range suites {
-					for _, test := range tests {
-						testFQN := testFQN(test.Suite, test.Name, test.Parameters)
-						ddSkippedTests[testFQN] = true
-					}
-				}
-			}
+		client := testoptimization.NewDatadogClient()
+		if err := client.Initialize(tags); err != nil {
+			slog.Error("Failed to initialize optimization client", "error", err)
+			os.Exit(1)
 		}
-		integrations.ExitCiVisibility()
 
-		slog.Debug("Skipped tests", "count", len(ddSkippedTests))
-
-		durationTestOpt := time.Since(startTimeTestOpt)
-		slog.Debug("Finished fetching skippable tests!", "duration", durationTestOpt)
+		ddSkippedTests := client.GetSkippableTests()
+		client.Shutdown()
 
 		filePath := "./.dd/tests-discovery/rspec.json"
 
@@ -105,10 +76,10 @@ var testFilesCmd = &cobra.Command{
 		}
 		defer file.Close()
 
-		var tests []Test
+		var tests []testoptimization.Test
 		decoder := json.NewDecoder(file)
 		for decoder.More() {
-			var test Test
+			var test testoptimization.Test
 			if err := decoder.Decode(&test); err != nil {
 				slog.Error("Error parsing JSON", "error", err)
 				os.Exit(1)
@@ -131,10 +102,6 @@ var testFilesCmd = &cobra.Command{
 		}
 		fmt.Println()
 	},
-}
-
-func testFQN(suite, test, parameters string) string {
-	return fmt.Sprintf("%s.%s.%s", suite, test, parameters)
 }
 
 func init() {
