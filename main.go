@@ -1,12 +1,9 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
-	"time"
 
 	"github.com/DataDog/datadog-test-runner/internal/platform"
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
@@ -40,55 +37,17 @@ var testFilesCmd = &cobra.Command{
 		ddSkippedTests := client.GetSkippableTests()
 		client.Shutdown()
 
-		filePath := "./.dd/tests-discovery/rspec.json"
-
-		// Delete the discovery file if it exists before running
-		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-			slog.Warn("Warning: Failed to delete existing discovery file", "filePath", filePath, "error", err)
-		}
-
-		cmdName := "bundle"
-		cmdArgs := []string{"exec", "rspec", "--format", "progress", "--dry-run"}
-
-		slog.Debug("Starting RSpec dry run...")
-		startTime := time.Now()
-
-		rspecCmd := exec.Command(cmdName, cmdArgs...)
-		rspecCmd.Env = append(
-			os.Environ(),
-			"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1",
-			"DD_TEST_OPTIMIZATION_DISCOVERY_FILE="+filePath,
-		)
-		output, err := rspecCmd.CombinedOutput()
-
+		framework, err := platform.DetectFramework()
 		if err != nil {
-			slog.Error("Failed to run RSpec dry run", "output", string(output))
+			slog.Error("Failed to detect framework", "error", err)
 			os.Exit(1)
 		}
 
-		duration := time.Since(startTime)
-		slog.Debug("Finished RSpec dry run!", "duration", duration)
-
-		// Read and parse the JSON stream file
-		file, err := os.Open(filePath)
+		tests, err := framework.DiscoverTests()
 		if err != nil {
-			slog.Error("Error opening JSON file", "error", err)
+			slog.Error("Failed to discover tests", "error", err)
 			os.Exit(1)
 		}
-		defer file.Close()
-
-		var tests []testoptimization.Test
-		decoder := json.NewDecoder(file)
-		for decoder.More() {
-			var test testoptimization.Test
-			if err := decoder.Decode(&test); err != nil {
-				slog.Error("Error parsing JSON", "error", err)
-				os.Exit(1)
-			}
-			tests = append(tests, test)
-		}
-
-		slog.Debug("Parsed RSpec report", "examples", len(tests))
 
 		testFiles := make(map[string]bool)
 		for _, test := range tests {

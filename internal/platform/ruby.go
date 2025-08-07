@@ -1,8 +1,6 @@
 package platform
 
 import (
-	"fmt"
-
 	"github.com/DataDog/datadog-test-runner/civisibility/constants"
 	"github.com/DataDog/datadog-test-runner/internal/framework"
 )
@@ -28,5 +26,5 @@ func (r *Ruby) SupportedFrameworks() []string {
 }
 
 func (r *Ruby) DetectFramework() (framework.Framework, error) {
-	return nil, fmt.Errorf("framework detection not implemented yet")
+	return &framework.RSpec{}, nil
 }
