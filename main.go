@@ -1,12 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"log/slog"
 	"os"
 
-	"github.com/DataDog/datadog-test-runner/internal/platform"
-	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
+	"github.com/DataDog/datadog-test-runner/internal/runner"
 	"github.com/spf13/cobra"
 )
 
@@ -20,47 +18,11 @@ var testFilesCmd = &cobra.Command{
 	Use:   "test-files",
 	Short: "prints test files that are discovered in the project and not skipped completely by Datadog's Test Impact Analysis",
 	Run: func(cmd *cobra.Command, args []string) {
-		platform, err := platform.DetectPlatform()
-		if err != nil {
-			slog.Error("Failed to detect platform", "error", err)
+		testRunner := runner.New()
+		if err := testRunner.PrintTestFiles(); err != nil {
+			slog.Error("Runner failed", "error", err)
 			os.Exit(1)
 		}
-
-		tags := platform.CreateTagsMap()
-
-		client := testoptimization.NewDatadogClient()
-		if err := client.Initialize(tags); err != nil {
-			slog.Error("Failed to initialize optimization client", "error", err)
-			os.Exit(1)
-		}
-
-		ddSkippedTests := client.GetSkippableTests()
-		client.Shutdown()
-
-		framework, err := platform.DetectFramework()
-		if err != nil {
-			slog.Error("Failed to detect framework", "error", err)
-			os.Exit(1)
-		}
-
-		tests, err := framework.DiscoverTests()
-		if err != nil {
-			slog.Error("Failed to discover tests", "error", err)
-			os.Exit(1)
-		}
-
-		testFiles := make(map[string]bool)
-		for _, test := range tests {
-			if !ddSkippedTests[test.FQN] {
-				slog.Debug("Test is not skipped", "test", test.FQN, "sourceFile", test.SourceFile)
-				testFiles[test.SourceFile] = true
-			}
-		}
-
-		for testFile := range testFiles {
-			fmt.Print(testFile + " ")
-		}
-		fmt.Println()
 	},
 }
 
