@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/DataDog/datadog-test-runner/civisibility/constants"
+	"github.com/DataDog/datadog-test-runner/internal/platform"
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
 	"github.com/spf13/cobra"
 )
@@ -23,12 +23,13 @@ var testFilesCmd = &cobra.Command{
 	Use:   "test-files",
 	Short: "prints test files that are discovered in the project and not skipped completely by Datadog's Test Impact Analysis",
 	Run: func(cmd *cobra.Command, args []string) {
-		tags := make(map[string]string)
-		tags[constants.RuntimeName] = "ruby"
-		tags[constants.RuntimeVersion] = "3.3.0"
-		tags[constants.OSPlatform] = "darwin23"
-		tags[constants.OSVersion] = "24.5.0"
-		tags["language"] = "ruby"
+		platform, err := platform.DetectPlatform()
+		if err != nil {
+			slog.Error("Failed to detect platform", "error", err)
+			os.Exit(1)
+		}
+
+		tags := platform.CreateTagsMap()
 
 		client := testoptimization.NewDatadogClient()
 		if err := client.Initialize(tags); err != nil {

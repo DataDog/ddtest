@@ -9,12 +9,6 @@ import (
 	"github.com/DataDog/datadog-test-runner/civisibility/utils"
 )
 
-type Client interface {
-	Initialize(tags map[string]string) error
-	GetSkippableTests() map[string]bool
-	Shutdown()
-}
-
 type DatadogClient struct{}
 
 func NewDatadogClient() *DatadogClient {
