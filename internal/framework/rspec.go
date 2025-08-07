@@ -21,16 +21,14 @@ func (r *RSpec) CreateDiscoveryCommand() *exec.Cmd {
 	cmd.Env = append(
 		os.Environ(),
 		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1",
-		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE=./.dd/tests-discovery/rspec.json",
+		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE="+TestsDiscoveryFilePath,
 	)
 	return cmd
 }
 
 func (r *RSpec) DiscoverTests() ([]testoptimization.Test, error) {
-	filePath := "./.dd/tests-discovery/rspec.json"
-
-	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-		slog.Warn("Warning: Failed to delete existing discovery file", "filePath", filePath, "error", err)
+	if err := os.Remove(TestsDiscoveryFilePath); err != nil && !os.IsNotExist(err) {
+		slog.Warn("Warning: Failed to delete existing discovery file", "filePath", TestsDiscoveryFilePath, "error", err)
 	}
 
 	slog.Debug("Starting RSpec dry run...")
@@ -46,7 +44,7 @@ func (r *RSpec) DiscoverTests() ([]testoptimization.Test, error) {
 	duration := time.Since(startTime)
 	slog.Debug("Finished RSpec dry run!", "duration", duration)
 
-	file, err := os.Open(filePath)
+	file, err := os.Open(TestsDiscoveryFilePath)
 	if err != nil {
 		slog.Error("Error opening JSON file", "error", err)
 		return nil, err
