@@ -32,7 +32,9 @@ var testFilesCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().String("platform", "ruby", "Platform that runs tests")
+	rootCmd.PersistentFlags().String("framework", "rspec", "Test framework to use")
 	viper.BindPFlag("platform", rootCmd.PersistentFlags().Lookup("platform"))
+	viper.BindPFlag("framework", rootCmd.PersistentFlags().Lookup("framework"))
 
 	rootCmd.AddCommand(testFilesCmd)
 

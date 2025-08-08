@@ -10,17 +10,19 @@ import (
 type Platform interface {
 	Name() string
 	CreateTagsMap() map[string]string
-	SupportedFrameworks() []string
 	DetectFramework() (framework.Framework, error)
 }
 
 func DetectPlatform() (Platform, error) {
 	platformName := settings.GetPlatform()
 
+	var platform Platform
 	switch platformName {
 	case "ruby":
-		return &Ruby{}, nil
+		platform = &Ruby{}
 	default:
 		return nil, fmt.Errorf("unsupported platform: %s", platformName)
 	}
+
+	return platform, nil
 }

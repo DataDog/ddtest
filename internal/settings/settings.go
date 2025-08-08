@@ -7,7 +7,8 @@ import (
 )
 
 type Config struct {
-	Platform string `mapstructure:"platform"`
+	Platform  string `mapstructure:"platform"`
+	Framework string `mapstructure:"framework"`
 }
 
 var (
@@ -33,6 +34,7 @@ func Init() {
 
 func setDefaults() {
 	viper.SetDefault("platform", "ruby")
+	viper.SetDefault("framework", "rspec")
 }
 
 func Get() *Config {
@@ -44,4 +46,8 @@ func Get() *Config {
 
 func GetPlatform() string {
 	return Get().Platform
+}
+
+func GetFramework() string {
+	return Get().Framework
 }

@@ -1,8 +1,11 @@
 package platform
 
 import (
+	"fmt"
+
 	"github.com/DataDog/datadog-test-runner/civisibility/constants"
 	"github.com/DataDog/datadog-test-runner/internal/framework"
+	"github.com/DataDog/datadog-test-runner/internal/settings"
 )
 
 type Ruby struct{}
@@ -21,10 +24,13 @@ func (r *Ruby) CreateTagsMap() map[string]string {
 	return tags
 }
 
-func (r *Ruby) SupportedFrameworks() []string {
-	return []string{"rspec"}
-}
-
 func (r *Ruby) DetectFramework() (framework.Framework, error) {
-	return &framework.RSpec{}, nil
+	frameworkName := settings.GetFramework()
+
+	switch frameworkName {
+	case "rspec":
+		return &framework.RSpec{}, nil
+	default:
+		return nil, fmt.Errorf("framework '%s' is not supported by platform 'ruby'", frameworkName)
+	}
 }
