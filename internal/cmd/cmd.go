@@ -6,7 +6,9 @@ import (
 	"os"
 
 	"github.com/DataDog/datadog-test-runner/internal/runner"
+	"github.com/DataDog/datadog-test-runner/internal/settings"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 var rootCmd = &cobra.Command{
@@ -29,7 +31,12 @@ var testFilesCmd = &cobra.Command{
 }
 
 func init() {
+	rootCmd.PersistentFlags().String("platform", "ruby", "Platform that runs tests")
+	viper.BindPFlag("platform", rootCmd.PersistentFlags().Lookup("platform"))
+
 	rootCmd.AddCommand(testFilesCmd)
+
+	cobra.OnInitialize(settings.Init)
 }
 
 func Execute() error {

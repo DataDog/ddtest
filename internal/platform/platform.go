@@ -1,7 +1,10 @@
 package platform
 
 import (
+	"fmt"
+
 	"github.com/DataDog/datadog-test-runner/internal/framework"
+	"github.com/DataDog/datadog-test-runner/internal/settings"
 )
 
 type Platform interface {
@@ -12,5 +15,12 @@ type Platform interface {
 }
 
 func DetectPlatform() (Platform, error) {
-	return &Ruby{}, nil
+	platformName := settings.GetPlatform()
+
+	switch platformName {
+	case "ruby":
+		return &Ruby{}, nil
+	default:
+		return nil, fmt.Errorf("unsupported platform: %s", platformName)
+	}
 }
