@@ -27,7 +27,10 @@ func (tr *TestRunner) GetTestFiles(ctx context.Context) (map[string]bool, error)
 		return nil, fmt.Errorf("failed to detect platform: %w", err)
 	}
 
-	tags := detectedPlatform.CreateTagsMap()
+	tags, err := detectedPlatform.CreateTagsMap()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create platform tags: %w", err)
+	}
 
 	var skippableTests map[string]bool
 	var discoveredTests []testoptimization.Test

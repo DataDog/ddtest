@@ -9,7 +9,7 @@ import (
 
 type Platform interface {
 	Name() string
-	CreateTagsMap() map[string]string
+	CreateTagsMap() (map[string]string, error)
 	DetectFramework() (framework.Framework, error)
 }
 
