@@ -1,16 +1,18 @@
 package runner
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
 	"github.com/DataDog/datadog-test-runner/internal/platform"
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
+	"golang.org/x/sync/errgroup"
 )
 
 type Runner interface {
-	PrintTestFiles() error
-	GetTestFiles() (map[string]bool, error)
+	PrintTestFiles(ctx context.Context) error
+	GetTestFiles(ctx context.Context) (map[string]bool, error)
 }
 
 type TestRunner struct{}
@@ -19,7 +21,7 @@ func New() *TestRunner {
 	return &TestRunner{}
 }
 
-func (tr *TestRunner) GetTestFiles() (map[string]bool, error) {
+func (tr *TestRunner) GetTestFiles(ctx context.Context) (map[string]bool, error) {
 	detectedPlatform, err := platform.DetectPlatform()
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect platform: %w", err)
@@ -27,27 +29,40 @@ func (tr *TestRunner) GetTestFiles() (map[string]bool, error) {
 
 	tags := detectedPlatform.CreateTagsMap()
 
-	client := testoptimization.NewDatadogClient()
-	if err := client.Initialize(tags); err != nil {
-		return nil, fmt.Errorf("failed to initialize optimization client: %w", err)
-	}
+	var skippableTests map[string]bool
+	var discoveredTests []testoptimization.Test
 
-	ddSkippedTests := client.GetSkippableTests()
-	client.Shutdown()
+	g, ctx := errgroup.WithContext(ctx)
 
-	framework, err := detectedPlatform.DetectFramework()
-	if err != nil {
-		return nil, fmt.Errorf("failed to detect framework: %w", err)
-	}
+	g.Go(func() error {
+		client := testoptimization.NewDatadogClient()
+		defer client.Shutdown()
 
-	tests, err := framework.DiscoverTests()
-	if err != nil {
-		return nil, fmt.Errorf("failed to discover tests: %w", err)
+		if err := client.Initialize(tags); err != nil {
+			return fmt.Errorf("failed to initialize optimization client: %w", err)
+		}
+
+		skippableTests = client.GetSkippableTests()
+		return nil
+	})
+
+	g.Go(func() error {
+		framework, err := detectedPlatform.DetectFramework()
+		if err != nil {
+			return fmt.Errorf("failed to detect framework: %w", err)
+		}
+
+		discoveredTests, err = framework.DiscoverTests()
+		return err
+	})
+
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	testFiles := make(map[string]bool)
-	for _, test := range tests {
-		if !ddSkippedTests[test.FQN] {
+	for _, test := range discoveredTests {
+		if !skippableTests[test.FQN] {
 			slog.Debug("Test is not skipped", "test", test.FQN, "sourceFile", test.SourceFile)
 			testFiles[test.SourceFile] = true
 		}
@@ -56,8 +71,8 @@ func (tr *TestRunner) GetTestFiles() (map[string]bool, error) {
 	return testFiles, nil
 }
 
-func (tr *TestRunner) PrintTestFiles() error {
-	testFiles, err := tr.GetTestFiles()
+func (tr *TestRunner) PrintTestFiles(ctx context.Context) error {
+	testFiles, err := tr.GetTestFiles(ctx)
 	if err != nil {
 		return err
 	}

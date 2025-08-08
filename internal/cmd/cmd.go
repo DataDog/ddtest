@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"log/slog"
 	"os"
 
@@ -18,8 +19,9 @@ var testFilesCmd = &cobra.Command{
 	Use:   "test-files",
 	Short: "prints test files that are discovered in the project and not skipped completely by Datadog's Test Impact Analysis",
 	Run: func(cmd *cobra.Command, args []string) {
+		ctx := context.Background()
 		testRunner := runner.New()
-		if err := testRunner.PrintTestFiles(); err != nil {
+		if err := testRunner.PrintTestFiles(ctx); err != nil {
 			slog.Error("Runner failed", "error", err)
 			os.Exit(1)
 		}
