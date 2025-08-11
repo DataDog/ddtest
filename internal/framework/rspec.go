@@ -7,10 +7,19 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/DataDog/datadog-test-runner/internal/ext"
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
 )
 
-type RSpec struct{}
+type RSpec struct {
+	executor ext.CommandExecutor
+}
+
+func NewRSpec() *RSpec {
+	return &RSpec{
+		executor: &ext.DefaultCommandExecutor{},
+	}
+}
 
 func (r *RSpec) Name() string {
 	return "rspec"
@@ -35,7 +44,7 @@ func (r *RSpec) DiscoverTests() ([]testoptimization.Test, error) {
 	startTime := time.Now()
 
 	cmd := r.CreateDiscoveryCommand()
-	output, err := cmd.CombinedOutput()
+	output, err := r.executor.CombinedOutput(cmd)
 	if err != nil {
 		slog.Error("Failed to run RSpec dry run", "output", string(output))
 		return nil, err

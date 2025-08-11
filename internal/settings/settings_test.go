@@ -1,0 +1,118 @@
+package settings
+
+import (
+	"os"
+	"testing"
+
+	"github.com/spf13/viper"
+)
+
+func TestInit(t *testing.T) {
+	// Clear any existing config
+	config = nil
+	viper.Reset()
+
+	Init()
+
+	if config == nil {
+		t.Error("Init() should initialize config")
+	}
+
+	// Test defaults are set correctly
+	if config.Platform != "ruby" {
+		t.Errorf("expected default platform to be 'ruby', got %q", config.Platform)
+	}
+	if config.Framework != "rspec" {
+		t.Errorf("expected default framework to be 'rspec', got %q", config.Framework)
+	}
+}
+
+func TestSetDefaults(t *testing.T) {
+	viper.Reset()
+
+	setDefaults()
+
+	if viper.GetString("platform") != "ruby" {
+		t.Errorf("expected default platform to be 'ruby', got %q", viper.GetString("platform"))
+	}
+	if viper.GetString("framework") != "rspec" {
+		t.Errorf("expected default framework to be 'rspec', got %q", viper.GetString("framework"))
+	}
+}
+
+func TestGet(t *testing.T) {
+	// Clear any existing config
+	config = nil
+	viper.Reset()
+
+	result := Get()
+
+	if result == nil {
+		t.Error("Get() should return non-nil config")
+	}
+	if config == nil {
+		t.Error("Get() should initialize global config")
+	}
+	if result != config {
+		t.Error("Get() should return the same instance as global config")
+	}
+}
+
+func TestGetPlatform(t *testing.T) {
+	// Test with defaults
+	config = nil
+	viper.Reset()
+
+	platform := GetPlatform()
+	if platform != "ruby" {
+		t.Errorf("expected platform to be 'ruby', got %q", platform)
+	}
+
+	// Test with custom value
+	config = &Config{Platform: "python", Framework: "pytest"}
+	platform = GetPlatform()
+	if platform != "python" {
+		t.Errorf("expected platform to be 'python', got %q", platform)
+	}
+}
+
+func TestGetFramework(t *testing.T) {
+	// Test with defaults
+	config = nil
+	viper.Reset()
+
+	framework := GetFramework()
+	if framework != "rspec" {
+		t.Errorf("expected framework to be 'rspec', got %q", framework)
+	}
+
+	// Test with custom value
+	config = &Config{Platform: "python", Framework: "pytest"}
+	framework = GetFramework()
+	if framework != "pytest" {
+		t.Errorf("expected framework to be 'pytest', got %q", framework)
+	}
+}
+
+func TestEnvironmentVariables(t *testing.T) {
+	// Clear any existing config
+	config = nil
+	viper.Reset()
+
+	// Set environment variables
+	os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM", "python")
+	os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK", "pytest")
+	defer func() {
+		os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM")
+		os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK")
+	}()
+
+	Init()
+
+	if config.Platform != "python" {
+		t.Errorf("expected platform from env var to be 'python', got %q", config.Platform)
+	}
+	if config.Framework != "pytest" {
+		t.Errorf("expected framework from env var to be 'pytest', got %q", config.Framework)
+	}
+}

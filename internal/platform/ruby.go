@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/DataDog/datadog-test-runner/internal/ext"
 	"github.com/DataDog/datadog-test-runner/internal/framework"
 	"github.com/DataDog/datadog-test-runner/internal/settings"
 )
@@ -15,7 +16,15 @@ import (
 //go:embed scripts/ruby_env.rb
 var rubyEnvScript string
 
-type Ruby struct{}
+type Ruby struct {
+	executor ext.CommandExecutor
+}
+
+func NewRuby() *Ruby {
+	return &Ruby{
+		executor: &ext.DefaultCommandExecutor{},
+	}
+}
 
 func (r *Ruby) Name() string {
 	return "ruby"
@@ -27,7 +36,7 @@ func (r *Ruby) CreateTagsMap() (map[string]string, error) {
 
 	// Execute the embedded Ruby script to write tags to file
 	cmd := exec.Command("bundle", "exec", "ruby", "-e", rubyEnvScript)
-	if err := cmd.Run(); err != nil {
+	if _, err := r.executor.CombinedOutput(cmd); err != nil {
 		return nil, fmt.Errorf("failed to execute Ruby script: %w", err)
 	}
 
@@ -54,7 +63,7 @@ func (r *Ruby) DetectFramework() (framework.Framework, error) {
 
 	switch frameworkName {
 	case "rspec":
-		return &framework.RSpec{}, nil
+		return framework.NewRSpec(), nil
 	default:
 		return nil, fmt.Errorf("framework '%s' is not supported by platform 'ruby'", frameworkName)
 	}

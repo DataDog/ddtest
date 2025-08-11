@@ -18,7 +18,7 @@ var rootCmd = &cobra.Command{
 	Long:  "Command line tool for running tests with Datadog Test Optimization.",
 }
 
-var testFilesCmd = &cobra.Command{
+var setupCmd = &cobra.Command{
 	Use:   "setup",
 	Short: "Prepare test optimization data",
 	Long: fmt.Sprintf(
@@ -42,7 +42,7 @@ func init() {
 	viper.BindPFlag("platform", rootCmd.PersistentFlags().Lookup("platform"))
 	viper.BindPFlag("framework", rootCmd.PersistentFlags().Lookup("framework"))
 
-	rootCmd.AddCommand(testFilesCmd)
+	rootCmd.AddCommand(setupCmd)
 
 	cobra.OnInitialize(settings.Init)
 }

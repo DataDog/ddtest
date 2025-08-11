@@ -19,7 +19,7 @@ func DetectPlatform() (Platform, error) {
 	var platform Platform
 	switch platformName {
 	case "ruby":
-		platform = &Ruby{}
+		platform = NewRuby()
 	default:
 		return nil, fmt.Errorf("unsupported platform: %s", platformName)
 	}

@@ -17,7 +17,8 @@
       "Bash(DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK=rspec ./ddruntest test-files)",
       "Bash(./ddruntest --platform python --framework pytest test-files)",
       "Bash(find:*)",
-      "Bash(cp:*)"
+      "Bash(cp:*)",
+      "Bash(mkdir:*)"
     ],
     "deny": []
   }
