@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -18,12 +19,17 @@ var rootCmd = &cobra.Command{
 }
 
 var testFilesCmd = &cobra.Command{
-	Use:   "test-files",
-	Short: "prints test files that are discovered in the project and not skipped completely by Datadog's Test Impact Analysis",
+	Use:   "setup",
+	Short: "Prepare test optimization data",
+	Long: fmt.Sprintf(
+		"Discovers test files and calculates the percentage of tests that can be skipped using Datadog's Test Impact Analysis. Outputs results to %s and %s.",
+		runner.TestFilesOutputPath,
+		runner.SkippablePercentageOutputPath,
+	),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
 		testRunner := runner.New()
-		if err := testRunner.PrintTestFiles(ctx); err != nil {
+		if err := testRunner.Setup(ctx); err != nil {
 			slog.Error("Runner failed", "error", err)
 			os.Exit(1)
 		}

@@ -4,32 +4,44 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/DataDog/datadog-test-runner/internal/platform"
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
 	"golang.org/x/sync/errgroup"
 )
 
+const TestFilesOutputPath = ".dd/test-files.txt"
+const SkippablePercentageOutputPath = ".dd/skippable-percentage.txt"
+
 type Runner interface {
-	PrintTestFiles(ctx context.Context) error
-	GetTestFiles(ctx context.Context) (map[string]bool, error)
+	Setup(ctx context.Context) error
+	PrepareTestOptimization(ctx context.Context) error
 }
 
-type TestRunner struct{}
+type TestRunner struct {
+	testFiles           []string
+	skippablePercentage float64
+}
 
 func New() *TestRunner {
-	return &TestRunner{}
+	return &TestRunner{
+		testFiles:           nil,
+		skippablePercentage: 0.0,
+	}
 }
 
-func (tr *TestRunner) GetTestFiles(ctx context.Context) (map[string]bool, error) {
+func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	detectedPlatform, err := platform.DetectPlatform()
 	if err != nil {
-		return nil, fmt.Errorf("failed to detect platform: %w", err)
+		return fmt.Errorf("failed to detect platform: %w", err)
 	}
 
 	tags, err := detectedPlatform.CreateTagsMap()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create platform tags: %w", err)
+		return fmt.Errorf("failed to create platform tags: %w", err)
 	}
 
 	var skippableTests map[string]bool
@@ -60,30 +72,53 @@ func (tr *TestRunner) GetTestFiles(ctx context.Context) (map[string]bool, error)
 	})
 
 	if err := g.Wait(); err != nil {
-		return nil, err
-	}
-
-	testFiles := make(map[string]bool)
-	for _, test := range discoveredTests {
-		if !skippableTests[test.FQN] {
-			slog.Debug("Test is not skipped", "test", test.FQN, "sourceFile", test.SourceFile)
-			testFiles[test.SourceFile] = true
-		}
-	}
-
-	return testFiles, nil
-}
-
-func (tr *TestRunner) PrintTestFiles(ctx context.Context) error {
-	testFiles, err := tr.GetTestFiles(ctx)
-	if err != nil {
 		return err
 	}
 
-	for testFile := range testFiles {
-		fmt.Print(testFile + " ")
+	discoveredTestsCount := len(discoveredTests)
+	skippableTestsCount := 0
+
+	testFilesMap := make(map[string]bool)
+	for _, test := range discoveredTests {
+		if !skippableTests[test.FQN] {
+			slog.Debug("Test is not skipped", "test", test.FQN, "sourceFile", test.SourceFile)
+			testFilesMap[test.SourceFile] = true
+		} else {
+			skippableTestsCount++
+		}
 	}
-	fmt.Println()
+
+	tr.testFiles = make([]string, 0, len(testFilesMap))
+	for testFile := range testFilesMap {
+		tr.testFiles = append(tr.testFiles, testFile)
+	}
+	tr.skippablePercentage = float64(skippableTestsCount) / float64(discoveredTestsCount) * 100.0
+
+	return nil
+}
+
+func (tr *TestRunner) Setup(ctx context.Context) error {
+	if err := tr.PrepareTestOptimization(ctx); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(TestFilesOutputPath), 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	content := strings.Join(tr.testFiles, "\n")
+	if len(tr.testFiles) > 0 {
+		content += "\n"
+	}
+
+	if err := os.WriteFile(TestFilesOutputPath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("failed to write test files to %s: %w", TestFilesOutputPath, err)
+	}
+
+	percentageContent := fmt.Sprintf("%.2f", tr.skippablePercentage)
+	if err := os.WriteFile(SkippablePercentageOutputPath, []byte(percentageContent), 0644); err != nil {
+		return fmt.Errorf("failed to write skippable percentage to %s: %w", SkippablePercentageOutputPath, err)
+	}
 
 	return nil
 }
