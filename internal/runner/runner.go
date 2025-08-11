@@ -24,17 +24,30 @@ type Runner interface {
 type TestRunner struct {
 	testFiles           []string
 	skippablePercentage float64
+	platformDetector    platform.PlatformDetector
+	optimizationClient  testoptimization.TestOptimizationClient
 }
 
 func New() *TestRunner {
 	return &TestRunner{
 		testFiles:           nil,
 		skippablePercentage: 0.0,
+		platformDetector:    platform.NewPlatformDetector(),
+		optimizationClient:  testoptimization.NewDatadogClient(),
+	}
+}
+
+func NewWithDependencies(platformDetector platform.PlatformDetector, optimizationClient testoptimization.TestOptimizationClient) *TestRunner {
+	return &TestRunner{
+		testFiles:           nil,
+		skippablePercentage: 0.0,
+		platformDetector:    platformDetector,
+		optimizationClient:  optimizationClient,
 	}
 }
 
 func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
-	detectedPlatform, err := platform.DetectPlatform()
+	detectedPlatform, err := tr.platformDetector.DetectPlatform()
 	if err != nil {
 		return fmt.Errorf("failed to detect platform: %w", err)
 	}
@@ -50,14 +63,13 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		client := testoptimization.NewDatadogClient()
-		defer client.Shutdown()
+		defer tr.optimizationClient.Shutdown()
 
-		if err := client.Initialize(tags); err != nil {
+		if err := tr.optimizationClient.Initialize(tags); err != nil {
 			return fmt.Errorf("failed to initialize optimization client: %w", err)
 		}
 
-		skippableTests = client.GetSkippableTests()
+		skippableTests = tr.optimizationClient.GetSkippableTests()
 		return nil
 	})
 

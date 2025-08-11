@@ -13,6 +13,17 @@ type Platform interface {
 	DetectFramework() (framework.Framework, error)
 }
 
+// PlatformDetector defines interface for detecting platforms - needed to allow mocking in tests
+type PlatformDetector interface {
+	DetectPlatform() (Platform, error)
+}
+
+type DatadogPlatformDetector struct{}
+
+func (d *DatadogPlatformDetector) DetectPlatform() (Platform, error) {
+	return DetectPlatform()
+}
+
 func DetectPlatform() (Platform, error) {
 	platformName := settings.GetPlatform()
 
@@ -25,4 +36,8 @@ func DetectPlatform() (Platform, error) {
 	}
 
 	return platform, nil
+}
+
+func NewPlatformDetector() PlatformDetector {
+	return &DatadogPlatformDetector{}
 }

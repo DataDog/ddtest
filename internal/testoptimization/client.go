@@ -10,6 +10,13 @@ import (
 	"github.com/DataDog/datadog-test-runner/civisibility/utils/net"
 )
 
+// TestOptimizationClient defines interface for test optimization operations
+type TestOptimizationClient interface {
+	Initialize(tags map[string]string) error
+	GetSkippableTests() map[string]bool
+	Shutdown()
+}
+
 // these interfaces define our expectactions for dd-trace-go's public API
 type CIVisibilityIntegrations interface {
 	EnsureCiVisibilityInitialization()
@@ -60,7 +67,6 @@ func NewDatadogClient() *DatadogClient {
 	}
 }
 
-// NewDatadogClientWithDependencies creates a new DatadogClient with custom dependencies for testing
 func NewDatadogClientWithDependencies(integrations CIVisibilityIntegrations, utils UtilsInterface) *DatadogClient {
 	return &DatadogClient{
 		integrations: integrations,
