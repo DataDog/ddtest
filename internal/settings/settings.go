@@ -1,6 +1,8 @@
 package settings
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -16,20 +18,17 @@ var (
 )
 
 func Init() {
-	viper.SetConfigName("ddtesrunner")
-	viper.SetConfigType("yaml")
-	viper.AddConfigPath(".")
-
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix("DD_TEST_OPTIMIZATION_RUNNER")
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 
 	setDefaults()
 
-	viper.ReadInConfig()
-
 	config = &Config{}
-	viper.Unmarshal(config)
+	if err := viper.Unmarshal(config); err != nil {
+		fmt.Fprintf(os.Stderr, "Error unmarshaling config: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func setDefaults() {

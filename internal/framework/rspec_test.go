@@ -29,9 +29,11 @@ func TestNewRSpec(t *testing.T) {
 	rspec := NewRSpec()
 	if rspec == nil {
 		t.Error("NewRSpec() returned nil")
+		return
 	}
 	if rspec.executor == nil {
 		t.Error("NewRSpec() created RSpec with nil executor")
+		return
 	}
 
 	// Verify it's using the default executor

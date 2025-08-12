@@ -60,7 +60,7 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	var skippableTests map[string]bool
 	var discoveredTests []testoptimization.Test
 
-	g, ctx := errgroup.WithContext(ctx)
+	g, _ := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
 		defer tr.optimizationClient.Shutdown()

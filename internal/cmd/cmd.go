@@ -39,8 +39,14 @@ var setupCmd = &cobra.Command{
 func init() {
 	rootCmd.PersistentFlags().String("platform", "ruby", "Platform that runs tests")
 	rootCmd.PersistentFlags().String("framework", "rspec", "Test framework to use")
-	viper.BindPFlag("platform", rootCmd.PersistentFlags().Lookup("platform"))
-	viper.BindPFlag("framework", rootCmd.PersistentFlags().Lookup("framework"))
+	if err := viper.BindPFlag("platform", rootCmd.PersistentFlags().Lookup("platform")); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding platform flag: %v\n", err)
+		os.Exit(1)
+	}
+	if err := viper.BindPFlag("framework", rootCmd.PersistentFlags().Lookup("framework")); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding framework flag: %v\n", err)
+		os.Exit(1)
+	}
 
 	rootCmd.AddCommand(setupCmd)
 

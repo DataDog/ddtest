@@ -18,11 +18,13 @@ func TestRootCommandFlags(t *testing.T) {
 	platformFlag := rootCmd.PersistentFlags().Lookup("platform")
 	if platformFlag == nil {
 		t.Error("platform flag should be defined")
+		return
 	}
 
 	frameworkFlag := rootCmd.PersistentFlags().Lookup("framework")
 	if frameworkFlag == nil {
 		t.Error("framework flag should be defined")
+		return
 	}
 
 	// Check default values
@@ -81,12 +83,20 @@ func TestFlagBinding(t *testing.T) {
 
 	// Flags are already defined in init(), so we can use them directly
 	// Rebind flags to ensure they work with viper
-	viper.BindPFlag("platform", rootCmd.PersistentFlags().Lookup("platform"))
-	viper.BindPFlag("framework", rootCmd.PersistentFlags().Lookup("framework"))
+	if err := viper.BindPFlag("platform", rootCmd.PersistentFlags().Lookup("platform")); err != nil {
+		t.Fatalf("Error binding platform flag: %v", err)
+	}
+	if err := viper.BindPFlag("framework", rootCmd.PersistentFlags().Lookup("framework")); err != nil {
+		t.Fatalf("Error binding framework flag: %v", err)
+	}
 
 	// Set flag values
-	rootCmd.PersistentFlags().Set("platform", "python")
-	rootCmd.PersistentFlags().Set("framework", "pytest")
+	if err := rootCmd.PersistentFlags().Set("platform", "python"); err != nil {
+		t.Fatalf("Error setting platform flag: %v", err)
+	}
+	if err := rootCmd.PersistentFlags().Set("framework", "pytest"); err != nil {
+		t.Fatalf("Error setting framework flag: %v", err)
+	}
 
 	// Check that viper picks up the flag values
 	if viper.GetString("platform") != "python" {

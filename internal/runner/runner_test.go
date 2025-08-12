@@ -96,6 +96,7 @@ func TestNew(t *testing.T) {
 
 	if runner == nil {
 		t.Error("New() should return non-nil TestRunner")
+		return
 	}
 
 	if runner.testFiles != nil {
@@ -123,6 +124,7 @@ func TestNewWithDependencies(t *testing.T) {
 
 	if runner == nil {
 		t.Error("NewWithDependencies() should return non-nil TestRunner")
+		return
 	}
 
 	if runner.platformDetector != mockPlatformDetector {

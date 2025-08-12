@@ -43,7 +43,7 @@ var (
 func EnsureCiVisibilityInitialization() {
 	internalCiVisibilityInitialization(func(opts []tracer.StartOption) {
 		// Initialize the tracer.
-		tracer.Start(opts...)
+		_ = tracer.Start(opts...)
 	})
 }
 

@@ -18,7 +18,8 @@
       "Bash(./ddruntest --platform python --framework pytest test-files)",
       "Bash(find:*)",
       "Bash(cp:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(make lint:*)"
     ],
     "deny": []
   }
