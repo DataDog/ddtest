@@ -8,9 +8,9 @@ vet: fmt
 	go vet ./...
 lint: vet
 	golangci-lint run --timeout=5m
-test: lint
+test:
 	go test ./...
-build: test
+build: test lint
 	go build -o ddruntest main.go
 run:
 	go run main.go
