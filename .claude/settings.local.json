@@ -19,7 +19,8 @@
       "Bash(find:*)",
       "Bash(cp:*)",
       "Bash(mkdir:*)",
-      "Bash(make lint:*)"
+      "Bash(make lint:*)",
+      "Bash(make:*)"
     ],
     "deny": []
   }

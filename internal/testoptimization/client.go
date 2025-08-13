@@ -56,26 +56,34 @@ func (d *DatadogUtils) AddCITagsMap(tags map[string]string) {
 }
 
 type DatadogClient struct {
-	integrations CIVisibilityIntegrations
-	utils        UtilsInterface
+	integrations   CIVisibilityIntegrations
+	utils          UtilsInterface
+	contextManager *ContextManager
 }
 
 func NewDatadogClient() *DatadogClient {
 	return &DatadogClient{
-		integrations: &DatadogCIVisibilityIntegrations{},
-		utils:        &DatadogUtils{},
+		integrations:   &DatadogCIVisibilityIntegrations{},
+		utils:          &DatadogUtils{},
+		contextManager: NewContextManager(),
 	}
 }
 
 func NewDatadogClientWithDependencies(integrations CIVisibilityIntegrations, utils UtilsInterface) *DatadogClient {
 	return &DatadogClient{
-		integrations: integrations,
-		utils:        utils,
+		integrations:   integrations,
+		utils:          utils,
+		contextManager: NewContextManager(),
 	}
 }
 
 func (c *DatadogClient) Initialize(tags map[string]string) error {
 	c.utils.AddCITagsMap(tags)
+
+	// Create .dd/context directory for storing context data
+	if err := c.contextManager.CreateContextDirectory(); err != nil {
+		return fmt.Errorf("failed to create context directory: %w", err)
+	}
 
 	startTime := time.Now()
 	c.integrations.EnsureCiVisibilityInitialization()
@@ -95,9 +103,19 @@ func (c *DatadogClient) GetSkippableTests() map[string]bool {
 	if repositorySettings != nil {
 		slog.Debug("Received repository settings", "itr_enabled", repositorySettings.ItrEnabled, "tests_skipping", repositorySettings.TestsSkipping)
 
+		// Store repository settings using context manager
+		if err := c.contextManager.StoreRepositorySettings(repositorySettings); err != nil {
+			slog.Warn("Failed to store repository settings", "error", err)
+		}
+
 		if repositorySettings.ItrEnabled && repositorySettings.TestsSkipping {
 			slog.Debug("Fetching skippable tests...")
 			skippableTests := c.integrations.GetSkippableTests()
+
+			// Store skippable tests using context manager
+			if err := c.contextManager.StoreSkippableTestsContext(skippableTests); err != nil {
+				slog.Warn("Failed to store skippable tests context", "error", err)
+			}
 
 			for _, suites := range skippableTests {
 				for _, tests := range suites {
