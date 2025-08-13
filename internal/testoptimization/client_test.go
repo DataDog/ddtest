@@ -77,7 +77,12 @@ func TestNewDatadogClientWithDependencies(t *testing.T) {
 }
 
 func TestDatadogClient_Initialize(t *testing.T) {
-	mockIntegrations := &MockCIVisibilityIntegrations{}
+	mockIntegrations := &MockCIVisibilityIntegrations{
+		Settings: &net.SettingsResponseData{
+			ItrEnabled:    true,
+			TestsSkipping: false,
+		},
+	}
 	mockUtils := &MockUtils{}
 	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
 
@@ -115,7 +120,7 @@ func TestDatadogClient_Initialize(t *testing.T) {
 	}
 }
 
-func TestDatadogClient_GetSkippableTests_Disabled(t *testing.T) {
+func TestDatadogClient_GetSkippableTests_NilResponse(t *testing.T) {
 	mockIntegrations := &MockCIVisibilityIntegrations{
 		Settings: &net.SettingsResponseData{
 			ItrEnabled:    false,
@@ -124,6 +129,12 @@ func TestDatadogClient_GetSkippableTests_Disabled(t *testing.T) {
 	}
 	mockUtils := &MockUtils{}
 	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+
+	// Initialize the client to set up settings
+	err := client.Initialize(map[string]string{})
+	if err != nil {
+		t.Fatalf("Initialize() failed: %v", err)
+	}
 
 	result := client.GetSkippableTests()
 
@@ -136,7 +147,7 @@ func TestDatadogClient_GetSkippableTests_Disabled(t *testing.T) {
 	}
 }
 
-func TestDatadogClient_GetSkippableTests_Enabled(t *testing.T) {
+func TestDatadogClient_GetSkippableTests(t *testing.T) {
 	mockIntegrations := &MockCIVisibilityIntegrations{
 		Settings: &net.SettingsResponseData{
 			ItrEnabled:    true,
@@ -171,6 +182,12 @@ func TestDatadogClient_GetSkippableTests_Enabled(t *testing.T) {
 	mockUtils := &MockUtils{}
 	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
 
+	// Initialize the client to set up settings
+	err := client.Initialize(map[string]string{})
+	if err != nil {
+		t.Fatalf("Initialize() failed: %v", err)
+	}
+
 	result := client.GetSkippableTests()
 
 	if result == nil {
@@ -195,7 +212,19 @@ func TestDatadogClient_GetSkippableTests_Enabled(t *testing.T) {
 	}
 }
 
-func TestDatadogClient_GetSkippableTests_ItrEnabledButSkippingDisabled(t *testing.T) {
+func TestDatadogClient_StoreContextAndExit(t *testing.T) {
+	mockIntegrations := &MockCIVisibilityIntegrations{}
+	mockUtils := &MockUtils{}
+	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+
+	client.StoreContextAndExit()
+
+	if !mockIntegrations.ShutdownCalled {
+		t.Error("Shutdown() should call ExitCiVisibility")
+	}
+}
+
+func TestDatadogClient_StoreContextAndExit_WritesSettingsFile(t *testing.T) {
 	mockIntegrations := &MockCIVisibilityIntegrations{
 		Settings: &net.SettingsResponseData{
 			ItrEnabled:    true,
@@ -205,26 +234,35 @@ func TestDatadogClient_GetSkippableTests_ItrEnabledButSkippingDisabled(t *testin
 	mockUtils := &MockUtils{}
 	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
 
-	result := client.GetSkippableTests()
+	// 	client.StoreContextAndExit() should create directory and write settings file
+	client.StoreContextAndExit()
 
-	if result == nil {
-		t.Error("GetSkippableTests() should return non-nil map")
+	// Check if settings.json file was created and contains correct data
+	settingsPath := filepath.Join(".dd", "context", "settings.json")
+	if _, err := os.Stat(settingsPath); os.IsNotExist(err) {
+		t.Errorf("Expected settings file to exist at %s", settingsPath)
+		return
 	}
 
-	if len(result) != 0 {
-		t.Errorf("GetSkippableTests() should return empty map when tests skipping is disabled, got %d items", len(result))
+	// Read and parse the settings file
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Errorf("Failed to read settings file: %v", err)
+		return
 	}
-}
 
-func TestDatadogClient_Shutdown(t *testing.T) {
-	mockIntegrations := &MockCIVisibilityIntegrations{}
-	mockUtils := &MockUtils{}
-	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+	var settings net.SettingsResponseData
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Errorf("Failed to parse settings JSON: %v", err)
+		return
+	}
 
-	client.Shutdown()
-
-	if !mockIntegrations.ShutdownCalled {
-		t.Error("Shutdown() should call ExitCiVisibility")
+	// Verify the settings content
+	if settings.ItrEnabled != mockIntegrations.Settings.ItrEnabled {
+		t.Errorf("Expected ItrEnabled to be %v, got %v", mockIntegrations.Settings.ItrEnabled, settings.ItrEnabled)
+	}
+	if settings.TestsSkipping != mockIntegrations.Settings.TestsSkipping {
+		t.Errorf("Expected TestsSkipping to be %v, got %v", mockIntegrations.Settings.TestsSkipping, settings.TestsSkipping)
 	}
 }
 
@@ -263,6 +301,12 @@ func TestDatadogClient_GetSkippableTests_EmptyData(t *testing.T) {
 	mockUtils := &MockUtils{}
 	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
 
+	// Initialize the client to set up settings
+	err := client.Initialize(map[string]string{})
+	if err != nil {
+		t.Fatalf("Initialize() failed: %v", err)
+	}
+
 	result := client.GetSkippableTests()
 
 	if result == nil {
@@ -274,26 +318,13 @@ func TestDatadogClient_GetSkippableTests_EmptyData(t *testing.T) {
 	}
 }
 
-func TestDatadogClient_GetSkippableTests_NilSettings(t *testing.T) {
-	mockIntegrations := &MockCIVisibilityIntegrations{
-		Settings: nil, // nil settings
-	}
-	mockUtils := &MockUtils{}
-	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
-
-	result := client.GetSkippableTests()
-
-	if result == nil {
-		t.Error("GetSkippableTests() should return non-nil map even with nil settings")
-	}
-
-	if len(result) != 0 {
-		t.Errorf("GetSkippableTests() should return empty map with nil settings, got %d items", len(result))
-	}
-}
-
 func TestDatadogClient_Initialize_CreatesContextDirectory(t *testing.T) {
-	mockIntegrations := &MockCIVisibilityIntegrations{}
+	mockIntegrations := &MockCIVisibilityIntegrations{
+		Settings: &net.SettingsResponseData{
+			ItrEnabled:    true,
+			TestsSkipping: false,
+		},
+	}
 	mockUtils := &MockUtils{}
 	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
 
@@ -308,53 +339,6 @@ func TestDatadogClient_Initialize_CreatesContextDirectory(t *testing.T) {
 	contextDir := filepath.Join(".dd", "context")
 	if _, err := os.Stat(contextDir); os.IsNotExist(err) {
 		t.Errorf("Expected .dd/context directory to be created")
-	}
-}
-
-func TestDatadogClient_GetSkippableTests_WritesSettingsFile(t *testing.T) {
-	mockIntegrations := &MockCIVisibilityIntegrations{
-		Settings: &net.SettingsResponseData{
-			ItrEnabled:    true,
-			TestsSkipping: false,
-		},
-	}
-	mockUtils := &MockUtils{}
-	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
-
-	// Initialize to create directory
-	err := client.Initialize(map[string]string{})
-	if err != nil {
-		t.Fatalf("Initialize() failed: %v", err)
-	}
-
-	client.GetSkippableTests()
-
-	// Check if settings.json file was created and contains correct data
-	settingsPath := filepath.Join(".dd", "context", "settings.json")
-	if _, err := os.Stat(settingsPath); os.IsNotExist(err) {
-		t.Errorf("Expected settings file to exist at %s", settingsPath)
-		return
-	}
-
-	// Read and parse the settings file
-	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		t.Errorf("Failed to read settings file: %v", err)
-		return
-	}
-
-	var settings net.SettingsResponseData
-	if err := json.Unmarshal(data, &settings); err != nil {
-		t.Errorf("Failed to parse settings JSON: %v", err)
-		return
-	}
-
-	// Verify the settings content
-	if settings.ItrEnabled != mockIntegrations.Settings.ItrEnabled {
-		t.Errorf("Expected ItrEnabled to be %v, got %v", mockIntegrations.Settings.ItrEnabled, settings.ItrEnabled)
-	}
-	if settings.TestsSkipping != mockIntegrations.Settings.TestsSkipping {
-		t.Errorf("Expected TestsSkipping to be %v, got %v", mockIntegrations.Settings.TestsSkipping, settings.TestsSkipping)
 	}
 }
 

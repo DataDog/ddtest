@@ -14,7 +14,7 @@ import (
 type TestOptimizationClient interface {
 	Initialize(tags map[string]string) error
 	GetSkippableTests() map[string]bool
-	Shutdown()
+	StoreContextAndExit()
 }
 
 // these interfaces define our expectactions for dd-trace-go's public API
@@ -96,34 +96,21 @@ func (c *DatadogClient) Initialize(tags map[string]string) error {
 
 func (c *DatadogClient) GetSkippableTests() map[string]bool {
 	startTime := time.Now()
-
-	repositorySettings := c.integrations.GetSettings()
 	skippedTests := make(map[string]bool)
 
-	if repositorySettings != nil {
-		slog.Debug("Received repository settings", "itr_enabled", repositorySettings.ItrEnabled, "tests_skipping", repositorySettings.TestsSkipping)
+	slog.Debug("Fetching skippable tests...")
+	skippableTests := c.integrations.GetSkippableTests()
 
-		// Store repository settings using context manager
-		if err := c.contextManager.StoreRepositorySettings(repositorySettings); err != nil {
-			slog.Warn("Failed to store repository settings", "error", err)
-		}
+	// Store skippable tests using context manager
+	if err := c.contextManager.StoreSkippableTestsContext(skippableTests); err != nil {
+		slog.Warn("Failed to store skippable tests context", "error", err)
+	}
 
-		if repositorySettings.ItrEnabled && repositorySettings.TestsSkipping {
-			slog.Debug("Fetching skippable tests...")
-			skippableTests := c.integrations.GetSkippableTests()
-
-			// Store skippable tests using context manager
-			if err := c.contextManager.StoreSkippableTestsContext(skippableTests); err != nil {
-				slog.Warn("Failed to store skippable tests context", "error", err)
-			}
-
-			for _, suites := range skippableTests {
-				for _, tests := range suites {
-					for _, test := range tests {
-						testFQN := c.buildTestFQN(test.Suite, test.Name, test.Parameters)
-						skippedTests[testFQN] = true
-					}
-				}
+	for _, suites := range skippableTests {
+		for _, tests := range suites {
+			for _, test := range tests {
+				testFQN := c.buildTestFQN(test.Suite, test.Name, test.Parameters)
+				skippedTests[testFQN] = true
 			}
 		}
 	}
@@ -134,7 +121,18 @@ func (c *DatadogClient) GetSkippableTests() map[string]bool {
 	return skippedTests
 }
 
-func (c *DatadogClient) Shutdown() {
+func (c *DatadogClient) StoreContextAndExit() {
+	// store repository settings
+	repositorySettings := c.integrations.GetSettings()
+	if repositorySettings != nil {
+		slog.Debug("Repository settings", "itr_enabled", repositorySettings.ItrEnabled, "tests_skipping", repositorySettings.TestsSkipping)
+
+		// Store repository settings using context manager
+		if err := c.contextManager.StoreRepositorySettings(repositorySettings); err != nil {
+			slog.Warn("Failed to store repository settings", "error", err)
+		}
+	}
+
 	c.integrations.ExitCiVisibility()
 }
 
