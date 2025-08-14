@@ -24,6 +24,7 @@ type CIVisibilityIntegrations interface {
 	GetSettings() *net.SettingsResponseData
 	GetSkippableTests() map[string]map[string][]net.SkippableResponseDataAttributes
 	GetKnownTests() *net.KnownTestsResponseData
+	GetTestManagementTestsData() *net.TestManagementTestsResponseDataModules
 }
 
 type UtilsInterface interface {
@@ -51,6 +52,10 @@ func (d *DatadogCIVisibilityIntegrations) GetSkippableTests() map[string]map[str
 
 func (d *DatadogCIVisibilityIntegrations) GetKnownTests() *net.KnownTestsResponseData {
 	return integrations.GetKnownTests()
+}
+
+func (d *DatadogCIVisibilityIntegrations) GetTestManagementTestsData() *net.TestManagementTestsResponseDataModules {
+	return integrations.GetTestManagementTestsData()
 }
 
 // DatadogUtils implements UtilsInterface using the real utils package from dd-trace-go
@@ -146,6 +151,17 @@ func (c *DatadogClient) StoreContextAndExit() {
 		// Store known tests using context manager
 		if err := c.contextManager.StoreKnownTestsContext(knownTests); err != nil {
 			slog.Warn("Failed to store known tests context", "error", err)
+		}
+	}
+
+	// store test management tests
+	testManagementTests := c.integrations.GetTestManagementTestsData()
+	if testManagementTests != nil {
+		slog.Debug("Storing test management tests context")
+
+		// Store test management tests using context manager
+		if err := c.contextManager.StoreTestManagementTestsContext(testManagementTests); err != nil {
+			slog.Warn("Failed to store test management tests context", "error", err)
 		}
 	}
 

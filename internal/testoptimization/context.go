@@ -103,3 +103,19 @@ func (cm *ContextManager) StoreKnownTestsContext(knownTests *net.KnownTestsRespo
 	slog.Debug("Known tests written to file", "path", knownTestsPath)
 	return nil
 }
+
+// StoreTestManagementTestsContext stores test management tests in .dd/context/test_management_tests.json
+func (cm *ContextManager) StoreTestManagementTestsContext(testManagementTests *net.TestManagementTestsResponseDataModules) error {
+	if err := cm.CreateContextDirectory(); err != nil {
+		return fmt.Errorf("failed to create context directory: %w", err)
+	}
+
+	testManagementTestsPath := filepath.Join(".dd", "context", "test_management_tests.json")
+	if err := cm.writeJSONToFile(testManagementTests, testManagementTestsPath); err != nil {
+		slog.Error("Failed to write test management tests to file", "error", err, "path", testManagementTestsPath)
+		return err
+	}
+
+	slog.Debug("Test management tests written to file", "path", testManagementTestsPath)
+	return nil
+}

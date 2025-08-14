@@ -24,11 +24,12 @@ func TestMain(m *testing.M) {
 
 // Mock implementations for testing
 type MockCIVisibilityIntegrations struct {
-	InitializationCalled bool
-	ShutdownCalled       bool
-	Settings             *net.SettingsResponseData
-	SkippableTests       map[string]map[string][]net.SkippableResponseDataAttributes
-	KnownTests           *net.KnownTestsResponseData
+	InitializationCalled    bool
+	ShutdownCalled          bool
+	Settings                *net.SettingsResponseData
+	SkippableTests          map[string]map[string][]net.SkippableResponseDataAttributes
+	KnownTests              *net.KnownTestsResponseData
+	TestManagementTestsData *net.TestManagementTestsResponseDataModules
 }
 
 func (m *MockCIVisibilityIntegrations) EnsureCiVisibilityInitialization() {
@@ -49,6 +50,10 @@ func (m *MockCIVisibilityIntegrations) GetSkippableTests() map[string]map[string
 
 func (m *MockCIVisibilityIntegrations) GetKnownTests() *net.KnownTestsResponseData {
 	return m.KnownTests
+}
+
+func (m *MockCIVisibilityIntegrations) GetTestManagementTestsData() *net.TestManagementTestsResponseDataModules {
+	return m.TestManagementTestsData
 }
 
 type MockUtils struct {
@@ -510,5 +515,150 @@ func TestDatadogClient_GetSkippableTests_WritesSkippableTestsFile(t *testing.T) 
 	}
 	if actualTest.Parameters != expectedTest.Parameters {
 		t.Errorf("Expected parameters to be %s, got %s", expectedTest.Parameters, actualTest.Parameters)
+	}
+}
+
+func TestDatadogClient_StoreContextAndExit_WritesTestManagementTestsFile(t *testing.T) {
+	mockIntegrations := &MockCIVisibilityIntegrations{
+		Settings: &net.SettingsResponseData{
+			ItrEnabled:    true,
+			TestsSkipping: false,
+		},
+		TestManagementTestsData: &net.TestManagementTestsResponseDataModules{
+			Modules: map[string]net.TestManagementTestsResponseDataSuites{
+				"module1": {
+					Suites: map[string]net.TestManagementTestsResponseDataTests{
+						"suite1": {
+							Tests: map[string]net.TestManagementTestsResponseDataTestProperties{
+								"test1": {
+									Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{
+										Quarantined:  true,
+										Disabled:     false,
+										AttemptToFix: true,
+									},
+								},
+								"test2": {
+									Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{
+										Quarantined:  false,
+										Disabled:     true,
+										AttemptToFix: false,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	mockUtils := &MockUtils{}
+	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+
+	// StoreContextAndExit should create directory and write test management tests file
+	client.StoreContextAndExit()
+
+	// Check if test_management_tests.json file was created and contains correct data
+	testManagementTestsPath := filepath.Join(".dd", "context", "test_management_tests.json")
+	if _, err := os.Stat(testManagementTestsPath); os.IsNotExist(err) {
+		t.Errorf("Expected test management tests file to exist at %s", testManagementTestsPath)
+		return
+	}
+
+	// Read and parse the test management tests file
+	data, err := os.ReadFile(testManagementTestsPath)
+	if err != nil {
+		t.Errorf("Failed to read test management tests file: %v", err)
+		return
+	}
+
+	var testManagementTests net.TestManagementTestsResponseDataModules
+	if err := json.Unmarshal(data, &testManagementTests); err != nil {
+		t.Errorf("Failed to parse test management tests JSON: %v", err)
+		return
+	}
+
+	// Verify the test management tests structure
+	if len(testManagementTests.Modules) != 1 {
+		t.Errorf("Expected 1 module in test management tests, got %d", len(testManagementTests.Modules))
+	}
+
+	module1, exists := testManagementTests.Modules["module1"]
+	if !exists {
+		t.Error("Expected module1 to exist in test management tests")
+		return
+	}
+
+	if len(module1.Suites) != 1 {
+		t.Errorf("Expected 1 suite in module1, got %d", len(module1.Suites))
+	}
+
+	suite1, exists := module1.Suites["suite1"]
+	if !exists {
+		t.Error("Expected suite1 to exist in module1")
+		return
+	}
+
+	if len(suite1.Tests) != 2 {
+		t.Errorf("Expected 2 tests in suite1, got %d", len(suite1.Tests))
+	}
+
+	// Verify test1 properties
+	test1, exists := suite1.Tests["test1"]
+	if !exists {
+		t.Error("Expected test1 to exist in suite1")
+		return
+	}
+	if !test1.Properties.Quarantined {
+		t.Error("Expected test1 to be quarantined")
+	}
+	if test1.Properties.Disabled {
+		t.Error("Expected test1 to not be disabled")
+	}
+	if !test1.Properties.AttemptToFix {
+		t.Error("Expected test1 to have attempt to fix enabled")
+	}
+
+	// Verify test2 properties
+	test2, exists := suite1.Tests["test2"]
+	if !exists {
+		t.Error("Expected test2 to exist in suite1")
+		return
+	}
+	if test2.Properties.Quarantined {
+		t.Error("Expected test2 to not be quarantined")
+	}
+	if !test2.Properties.Disabled {
+		t.Error("Expected test2 to be disabled")
+	}
+	if test2.Properties.AttemptToFix {
+		t.Error("Expected test2 to not have attempt to fix enabled")
+	}
+}
+
+func TestDatadogClient_StoreContextAndExit_NilTestManagementTests(t *testing.T) {
+	// Clean up any existing files before test
+	os.RemoveAll(".dd")
+
+	mockIntegrations := &MockCIVisibilityIntegrations{
+		Settings: &net.SettingsResponseData{
+			ItrEnabled:    true,
+			TestsSkipping: false,
+		},
+		TestManagementTestsData: nil,
+	}
+	mockUtils := &MockUtils{}
+	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+
+	// StoreContextAndExit should handle nil test management tests gracefully
+	client.StoreContextAndExit()
+
+	// Check that test_management_tests.json file was NOT created
+	testManagementTestsPath := filepath.Join(".dd", "context", "test_management_tests.json")
+	if _, err := os.Stat(testManagementTestsPath); !os.IsNotExist(err) {
+		t.Errorf("Expected test management tests file to NOT exist at %s when data is nil, error: %v", testManagementTestsPath, err)
+	}
+
+	if !mockIntegrations.ShutdownCalled {
+		t.Error("StoreContextAndExit should still call ExitCiVisibility even with nil test management tests")
 	}
 }
