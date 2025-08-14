@@ -14,7 +14,7 @@ import (
 type TestOptimizationClient interface {
 	Initialize(tags map[string]string) error
 	GetSkippableTests() map[string]bool
-	Shutdown()
+	StoreContextAndExit()
 }
 
 // these interfaces define our expectactions for dd-trace-go's public API
@@ -23,6 +23,8 @@ type CIVisibilityIntegrations interface {
 	ExitCiVisibility()
 	GetSettings() *net.SettingsResponseData
 	GetSkippableTests() map[string]map[string][]net.SkippableResponseDataAttributes
+	GetKnownTests() *net.KnownTestsResponseData
+	GetTestManagementTestsData() *net.TestManagementTestsResponseDataModules
 }
 
 type UtilsInterface interface {
@@ -48,6 +50,14 @@ func (d *DatadogCIVisibilityIntegrations) GetSkippableTests() map[string]map[str
 	return integrations.GetSkippableTests()
 }
 
+func (d *DatadogCIVisibilityIntegrations) GetKnownTests() *net.KnownTestsResponseData {
+	return integrations.GetKnownTests()
+}
+
+func (d *DatadogCIVisibilityIntegrations) GetTestManagementTestsData() *net.TestManagementTestsResponseDataModules {
+	return integrations.GetTestManagementTestsData()
+}
+
 // DatadogUtils implements UtilsInterface using the real utils package from dd-trace-go
 type DatadogUtils struct{}
 
@@ -56,26 +66,34 @@ func (d *DatadogUtils) AddCITagsMap(tags map[string]string) {
 }
 
 type DatadogClient struct {
-	integrations CIVisibilityIntegrations
-	utils        UtilsInterface
+	integrations   CIVisibilityIntegrations
+	utils          UtilsInterface
+	contextManager *ContextManager
 }
 
 func NewDatadogClient() *DatadogClient {
 	return &DatadogClient{
-		integrations: &DatadogCIVisibilityIntegrations{},
-		utils:        &DatadogUtils{},
+		integrations:   &DatadogCIVisibilityIntegrations{},
+		utils:          &DatadogUtils{},
+		contextManager: NewContextManager(),
 	}
 }
 
 func NewDatadogClientWithDependencies(integrations CIVisibilityIntegrations, utils UtilsInterface) *DatadogClient {
 	return &DatadogClient{
-		integrations: integrations,
-		utils:        utils,
+		integrations:   integrations,
+		utils:          utils,
+		contextManager: NewContextManager(),
 	}
 }
 
 func (c *DatadogClient) Initialize(tags map[string]string) error {
 	c.utils.AddCITagsMap(tags)
+
+	// Create .dd/context directory for storing context data
+	if err := c.contextManager.CreateContextDirectory(); err != nil {
+		return fmt.Errorf("failed to create context directory: %w", err)
+	}
 
 	startTime := time.Now()
 	c.integrations.EnsureCiVisibilityInitialization()
@@ -88,24 +106,21 @@ func (c *DatadogClient) Initialize(tags map[string]string) error {
 
 func (c *DatadogClient) GetSkippableTests() map[string]bool {
 	startTime := time.Now()
-
-	repositorySettings := c.integrations.GetSettings()
 	skippedTests := make(map[string]bool)
 
-	if repositorySettings != nil {
-		slog.Debug("Received repository settings", "itr_enabled", repositorySettings.ItrEnabled, "tests_skipping", repositorySettings.TestsSkipping)
+	slog.Debug("Fetching skippable tests...")
+	skippableTests := c.integrations.GetSkippableTests()
 
-		if repositorySettings.ItrEnabled && repositorySettings.TestsSkipping {
-			slog.Debug("Fetching skippable tests...")
-			skippableTests := c.integrations.GetSkippableTests()
+	// Store skippable tests using context manager
+	if err := c.contextManager.StoreSkippableTestsContext(skippableTests); err != nil {
+		slog.Warn("Failed to store skippable tests context", "error", err)
+	}
 
-			for _, suites := range skippableTests {
-				for _, tests := range suites {
-					for _, test := range tests {
-						testFQN := c.buildTestFQN(test.Suite, test.Name, test.Parameters)
-						skippedTests[testFQN] = true
-					}
-				}
+	for _, suites := range skippableTests {
+		for _, tests := range suites {
+			for _, test := range tests {
+				testFQN := c.buildTestFQN(test.Suite, test.Name, test.Parameters)
+				skippedTests[testFQN] = true
 			}
 		}
 	}
@@ -116,7 +131,40 @@ func (c *DatadogClient) GetSkippableTests() map[string]bool {
 	return skippedTests
 }
 
-func (c *DatadogClient) Shutdown() {
+func (c *DatadogClient) StoreContextAndExit() {
+	// store repository settings
+	repositorySettings := c.integrations.GetSettings()
+	if repositorySettings != nil {
+		slog.Debug("Repository settings", "itr_enabled", repositorySettings.ItrEnabled, "tests_skipping", repositorySettings.TestsSkipping)
+
+		// Store repository settings using context manager
+		if err := c.contextManager.StoreRepositorySettings(repositorySettings); err != nil {
+			slog.Warn("Failed to store repository settings", "error", err)
+		}
+	}
+
+	// store known tests
+	knownTests := c.integrations.GetKnownTests()
+	if knownTests != nil {
+		slog.Debug("Storing known tests context")
+
+		// Store known tests using context manager
+		if err := c.contextManager.StoreKnownTestsContext(knownTests); err != nil {
+			slog.Warn("Failed to store known tests context", "error", err)
+		}
+	}
+
+	// store test management tests
+	testManagementTests := c.integrations.GetTestManagementTestsData()
+	if testManagementTests != nil {
+		slog.Debug("Storing test management tests context")
+
+		// Store test management tests using context manager
+		if err := c.contextManager.StoreTestManagementTestsContext(testManagementTests); err != nil {
+			slog.Warn("Failed to store test management tests context", "error", err)
+		}
+	}
+
 	c.integrations.ExitCiVisibility()
 }
 

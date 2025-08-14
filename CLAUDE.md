@@ -82,3 +82,5 @@ go test -v ./...           # Verbose testing
 
 - Use go 1.24
 - Use `strings` and `slices` packages, don't write your own string manipulation functions
+
+- Always run unit tests after any change. Any new functionality must be covered by test.
