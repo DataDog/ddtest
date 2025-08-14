@@ -28,6 +28,7 @@ type MockCIVisibilityIntegrations struct {
 	ShutdownCalled       bool
 	Settings             *net.SettingsResponseData
 	SkippableTests       map[string]map[string][]net.SkippableResponseDataAttributes
+	KnownTests           *net.KnownTestsResponseData
 }
 
 func (m *MockCIVisibilityIntegrations) EnsureCiVisibilityInitialization() {
@@ -44,6 +45,10 @@ func (m *MockCIVisibilityIntegrations) GetSettings() *net.SettingsResponseData {
 
 func (m *MockCIVisibilityIntegrations) GetSkippableTests() map[string]map[string][]net.SkippableResponseDataAttributes {
 	return m.SkippableTests
+}
+
+func (m *MockCIVisibilityIntegrations) GetKnownTests() *net.KnownTestsResponseData {
+	return m.KnownTests
 }
 
 type MockUtils struct {
@@ -339,6 +344,83 @@ func TestDatadogClient_Initialize_CreatesContextDirectory(t *testing.T) {
 	contextDir := filepath.Join(".dd", "context")
 	if _, err := os.Stat(contextDir); os.IsNotExist(err) {
 		t.Errorf("Expected .dd/context directory to be created")
+	}
+}
+
+func TestDatadogClient_StoreContextAndExit_WritesKnownTestsFile(t *testing.T) {
+	mockIntegrations := &MockCIVisibilityIntegrations{
+		Settings: &net.SettingsResponseData{
+			ItrEnabled:    true,
+			TestsSkipping: false,
+		},
+		KnownTests: &net.KnownTestsResponseData{
+			Tests: net.KnownTestsResponseDataModules{
+				"module1": net.KnownTestsResponseDataSuites{
+					"suite1": []string{"test1", "test2"},
+					"suite2": []string{"test3"},
+				},
+				"module2": net.KnownTestsResponseDataSuites{
+					"suite3": []string{"test4", "test5", "test6"},
+				},
+			},
+		},
+	}
+	mockUtils := &MockUtils{}
+	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+
+	// StoreContextAndExit should create directory and write known tests file
+	client.StoreContextAndExit()
+
+	// Check if known_tests.json file was created and contains correct data
+	knownTestsPath := filepath.Join(".dd", "context", "known_tests.json")
+	if _, err := os.Stat(knownTestsPath); os.IsNotExist(err) {
+		t.Errorf("Expected known tests file to exist at %s", knownTestsPath)
+		return
+	}
+
+	// Read and parse the known tests file
+	data, err := os.ReadFile(knownTestsPath)
+	if err != nil {
+		t.Errorf("Failed to read known tests file: %v", err)
+		return
+	}
+
+	var knownTests net.KnownTestsResponseData
+	if err := json.Unmarshal(data, &knownTests); err != nil {
+		t.Errorf("Failed to parse known tests JSON: %v", err)
+		return
+	}
+
+	// Verify the known tests structure
+	if len(knownTests.Tests) != 2 {
+		t.Errorf("Expected 2 modules in known tests, got %d", len(knownTests.Tests))
+	}
+
+	module1, exists := knownTests.Tests["module1"]
+	if !exists {
+		t.Error("Expected module1 to exist in known tests")
+		return
+	}
+
+	if len(module1) != 2 {
+		t.Errorf("Expected 2 suites in module1, got %d", len(module1))
+	}
+
+	suite1, exists := module1["suite1"]
+	if !exists {
+		t.Error("Expected suite1 to exist in module1")
+		return
+	}
+
+	if len(suite1) != 2 {
+		t.Errorf("Expected 2 tests in suite1, got %d", len(suite1))
+	}
+
+	expectedTests := []string{"test1", "test2"}
+	for i, expectedTest := range expectedTests {
+		if i >= len(suite1) || suite1[i] != expectedTest {
+			t.Errorf("Expected test %s at position %d in suite1, got %v", expectedTest, i, suite1)
+		}
 	}
 }
 

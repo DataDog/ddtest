@@ -87,3 +87,19 @@ func (cm *ContextManager) StoreSkippableTestsContext(skippableTests map[string]m
 	slog.Debug("Skippable tests written to file", "path", skippableTestsPath, "correlationId", correlationID)
 	return nil
 }
+
+// StoreKnownTestsContext stores known tests in .dd/context/known_tests.json
+func (cm *ContextManager) StoreKnownTestsContext(knownTests *net.KnownTestsResponseData) error {
+	if err := cm.CreateContextDirectory(); err != nil {
+		return fmt.Errorf("failed to create context directory: %w", err)
+	}
+
+	knownTestsPath := filepath.Join(".dd", "context", "known_tests.json")
+	if err := cm.writeJSONToFile(knownTests, knownTestsPath); err != nil {
+		slog.Error("Failed to write known tests to file", "error", err, "path", knownTestsPath)
+		return err
+	}
+
+	slog.Debug("Known tests written to file", "path", knownTestsPath)
+	return nil
+}

@@ -23,6 +23,7 @@ type CIVisibilityIntegrations interface {
 	ExitCiVisibility()
 	GetSettings() *net.SettingsResponseData
 	GetSkippableTests() map[string]map[string][]net.SkippableResponseDataAttributes
+	GetKnownTests() *net.KnownTestsResponseData
 }
 
 type UtilsInterface interface {
@@ -46,6 +47,10 @@ func (d *DatadogCIVisibilityIntegrations) GetSettings() *net.SettingsResponseDat
 
 func (d *DatadogCIVisibilityIntegrations) GetSkippableTests() map[string]map[string][]net.SkippableResponseDataAttributes {
 	return integrations.GetSkippableTests()
+}
+
+func (d *DatadogCIVisibilityIntegrations) GetKnownTests() *net.KnownTestsResponseData {
+	return integrations.GetKnownTests()
 }
 
 // DatadogUtils implements UtilsInterface using the real utils package from dd-trace-go
@@ -130,6 +135,17 @@ func (c *DatadogClient) StoreContextAndExit() {
 		// Store repository settings using context manager
 		if err := c.contextManager.StoreRepositorySettings(repositorySettings); err != nil {
 			slog.Warn("Failed to store repository settings", "error", err)
+		}
+	}
+
+	// store known tests
+	knownTests := c.integrations.GetKnownTests()
+	if knownTests != nil {
+		slog.Debug("Storing known tests context")
+
+		// Store known tests using context manager
+		if err := c.contextManager.StoreKnownTestsContext(knownTests); err != nil {
+			slog.Warn("Failed to store known tests context", "error", err)
 		}
 	}
 
