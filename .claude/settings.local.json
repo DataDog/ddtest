@@ -20,8 +20,10 @@
       "Bash(cp:*)",
       "Bash(mkdir:*)",
       "Bash(make lint:*)",
-      "Bash(make:*)"
+      "Bash(make:*)",
+      "Bash(./ddruntest:*)"
     ],
-    "deny": []
+    "deny": [],
+    "defaultMode": "acceptEdits"
   }
 }

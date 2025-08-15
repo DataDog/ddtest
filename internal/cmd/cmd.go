@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/DataDog/datadog-test-runner/internal/runner"
+	"github.com/DataDog/datadog-test-runner/internal/server"
 	"github.com/DataDog/datadog-test-runner/internal/settings"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -36,6 +37,20 @@ var setupCmd = &cobra.Command{
 	},
 }
 
+var serverCmd = &cobra.Command{
+	Use:   "server",
+	Short: "Start HTTP server to serve context data",
+	Long:  "Starts an HTTP server on configurable port that serves merged context data from .dd/context folder at /context endpoint.",
+	Run: func(cmd *cobra.Command, args []string) {
+		port := viper.GetInt("port")
+		contextServer := server.New(port)
+		if err := contextServer.Start(); err != nil {
+			slog.Error("Server failed", "error", err)
+			os.Exit(1)
+		}
+	},
+}
+
 func init() {
 	rootCmd.PersistentFlags().String("platform", "ruby", "Platform that runs tests")
 	rootCmd.PersistentFlags().String("framework", "rspec", "Test framework to use")
@@ -48,7 +63,14 @@ func init() {
 		os.Exit(1)
 	}
 
+	serverCmd.Flags().IntP("port", "p", 7890, "Port for the HTTP server")
+	if err := viper.BindPFlag("port", serverCmd.Flags().Lookup("port")); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding port flag: %v\n", err)
+		os.Exit(1)
+	}
+
 	rootCmd.AddCommand(setupCmd)
+	rootCmd.AddCommand(serverCmd)
 
 	cobra.OnInitialize(settings.Init)
 }
