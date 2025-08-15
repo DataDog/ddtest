@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -71,8 +72,14 @@ func TestLoadContextData(t *testing.T) {
 		// Change to temporary directory to avoid conflicts
 		originalDir, _ := os.Getwd()
 		tmpDir := t.TempDir()
-		os.Chdir(tmpDir)
-		defer os.Chdir(originalDir)
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("failed to change to temp directory: %v", err)
+		}
+		defer func() {
+			if err := os.Chdir(originalDir); err != nil {
+				t.Errorf("failed to restore original directory: %v", err)
+			}
+		}()
 
 		contextData, err := server.loadContextData()
 		if err != nil {
@@ -88,8 +95,14 @@ func TestLoadContextData(t *testing.T) {
 	t.Run("with context files", func(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		tmpDir := t.TempDir()
-		os.Chdir(tmpDir)
-		defer os.Chdir(originalDir)
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("failed to change to temp directory: %v", err)
+		}
+		defer func() {
+			if err := os.Chdir(originalDir); err != nil {
+				t.Errorf("failed to restore original directory: %v", err)
+			}
+		}()
 
 		// Create .dd/context directory
 		contextDir := filepath.Join(".dd", "context")
@@ -159,8 +172,14 @@ func TestLoadContextData(t *testing.T) {
 	t.Run("partial files - only some exist", func(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		tmpDir := t.TempDir()
-		os.Chdir(tmpDir)
-		defer os.Chdir(originalDir)
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("failed to change to temp directory: %v", err)
+		}
+		defer func() {
+			if err := os.Chdir(originalDir); err != nil {
+				t.Errorf("failed to restore original directory: %v", err)
+			}
+		}()
 
 		// Create .dd/context directory
 		contextDir := filepath.Join(".dd", "context")
@@ -204,8 +223,14 @@ func TestHandleContext(t *testing.T) {
 	t.Run("GET request success", func(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		tmpDir := t.TempDir()
-		os.Chdir(tmpDir)
-		defer os.Chdir(originalDir)
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("failed to change to temp directory: %v", err)
+		}
+		defer func() {
+			if err := os.Chdir(originalDir); err != nil {
+				t.Errorf("failed to restore original directory: %v", err)
+			}
+		}()
 
 		// Create .dd/context directory with test data
 		contextDir := filepath.Join(".dd", "context")
@@ -283,8 +308,14 @@ func TestHandleContext(t *testing.T) {
 	t.Run("empty context directory returns empty object", func(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		tmpDir := t.TempDir()
-		os.Chdir(tmpDir)
-		defer os.Chdir(originalDir)
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("failed to change to temp directory: %v", err)
+		}
+		defer func() {
+			if err := os.Chdir(originalDir); err != nil {
+				t.Errorf("failed to restore original directory: %v", err)
+			}
+		}()
 
 		req := httptest.NewRequest("GET", "/context", nil)
 		w := httptest.NewRecorder()
@@ -364,34 +395,16 @@ func TestContextDataOmitEmpty(t *testing.T) {
 
 	jsonStr := string(jsonBytes)
 
-	if !contains(jsonStr, "settings") {
+	if !strings.Contains(jsonStr, "settings") {
 		t.Error("expected settings to be in JSON")
 	}
-	if contains(jsonStr, "skippableTests") {
+	if strings.Contains(jsonStr, "skippableTests") {
 		t.Error("expected skippableTests to be omitted from JSON")
 	}
-	if contains(jsonStr, "knownTests") {
+	if strings.Contains(jsonStr, "knownTests") {
 		t.Error("expected knownTests to be omitted from JSON")
 	}
-	if contains(jsonStr, "testManagementTests") {
+	if strings.Contains(jsonStr, "testManagementTests") {
 		t.Error("expected testManagementTests to be omitted from JSON")
 	}
-}
-
-// Helper function to check if string contains substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) &&
-		(containsAt(s, substr, 0) || contains(s[1:], substr)))
-}
-
-func containsAt(s, substr string, index int) bool {
-	if len(s)-index < len(substr) {
-		return false
-	}
-	for i := 0; i < len(substr); i++ {
-		if s[index+i] != substr[i] {
-			return false
-		}
-	}
-	return true
 }

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/DataDog/datadog-test-runner/internal/runner"
 	"github.com/DataDog/datadog-test-runner/internal/server"
@@ -42,9 +44,13 @@ var serverCmd = &cobra.Command{
 	Short: "Start HTTP server to serve context data",
 	Long:  "Starts an HTTP server on configurable port that serves merged context data from .dd/context folder at /context endpoint.",
 	Run: func(cmd *cobra.Command, args []string) {
+		// Create context that cancels on SIGINT/SIGTERM
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+
 		port := viper.GetInt("port")
 		contextServer := server.New(port)
-		if err := contextServer.Start(); err != nil {
+		if err := contextServer.Start(ctx); err != nil {
 			slog.Error("Server failed", "error", err)
 			os.Exit(1)
 		}

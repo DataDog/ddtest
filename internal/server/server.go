@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -107,15 +109,44 @@ func (s *Server) handleContext(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) Start() error {
+func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/context", s.handleContext)
 
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", s.port),
-		Handler: mux,
+		Addr:         fmt.Sprintf(":%d", s.port),
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
 	}
 
-	slog.Info("Starting HTTP server", "port", s.port, "endpoint", "/context")
-	return server.ListenAndServe()
+	// Channel to receive server errors
+	serverErr := make(chan error, 1)
+
+	// Start server in a goroutine
+	go func() {
+		slog.Info("Starting HTTP server", "port", s.port, "endpoint", "/context")
+		serverErr <- server.ListenAndServe()
+	}()
+
+	// Wait for either context cancellation or server error
+	select {
+	case <-ctx.Done():
+		slog.Info("Shutting down server...")
+		// Create shutdown context with timeout
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			slog.Error("Server shutdown failed", "error", err)
+			return err
+		}
+		slog.Info("Server shutdown complete")
+		return nil
+	case err := <-serverErr:
+		if err != nil && err != http.ErrServerClosed {
+			return err
+		}
+		return nil
+	}
 }
