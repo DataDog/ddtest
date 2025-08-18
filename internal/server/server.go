@@ -74,13 +74,13 @@ func (s *Server) loadContextData() (*ContextData, error) {
 	return contextData, nil
 }
 
-func (s *Server) loadJSONFile(path string) (interface{}, error) {
+func (s *Server) loadJSONFile(path string) (any, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
-	var jsonData interface{}
+	var jsonData any
 	if err := json.Unmarshal(data, &jsonData); err != nil {
 		return nil, err
 	}
