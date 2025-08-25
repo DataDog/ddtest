@@ -89,16 +89,18 @@ func TestRSpec_DiscoverTests_Success(t *testing.T) {
 
 	testData := []testoptimization.Test{
 		{
-			FQN:        "spec/models/user_spec.rb[1:1]",
-			Name:       "User should be valid",
-			Suite:      "User",
-			SourceFile: "spec/models/user_spec.rb",
+			FQN:             "spec/models/user_spec.rb[1:1]",
+			Name:            "User should be valid",
+			Suite:           "User",
+			SourceFile:      "spec/models/user_spec.rb",
+			SuiteSourceFile: "spec/models/user_spec.rb",
 		},
 		{
-			FQN:        "spec/controllers/users_controller_spec.rb[1:1]",
-			Name:       "UsersController GET index should return success",
-			Suite:      "UsersController",
-			SourceFile: "spec/controllers/users_controller_spec.rb",
+			FQN:             "spec/controllers/users_controller_spec.rb[1:1]",
+			Name:            "UsersController GET index should return success",
+			Suite:           "UsersController",
+			SourceFile:      "spec/controllers/users_controller_spec.rb",
+			SuiteSourceFile: "spec/controllers/users_controller_spec.rb",
 		},
 	}
 

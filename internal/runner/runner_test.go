@@ -143,10 +143,10 @@ func TestTestRunner_PrepareTestOptimization_Success(t *testing.T) {
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
 		Tests: []testoptimization.Test{
-			{FQN: "TestSuite1.test1", SourceFile: "test/file1_test.rb"},
-			{FQN: "TestSuite1.test2", SourceFile: "test/file1_test.rb"},
-			{FQN: "TestSuite2.test3", SourceFile: "test/file2_test.rb"},
-			{FQN: "TestSuite3.test4", SourceFile: "test/file3_test.rb"},
+			{FQN: "TestSuite1.test1", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
+			{FQN: "TestSuite1.test2", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
+			{FQN: "TestSuite2.test3", SourceFile: "test/file2_test.rb", SuiteSourceFile: "test/file2_test.rb"},
+			{FQN: "TestSuite3.test4", SourceFile: "test/file3_test.rb", SuiteSourceFile: "test/file3_test.rb"},
 		},
 	}
 
@@ -272,7 +272,7 @@ func TestTestRunner_PrepareTestOptimization_OptimizationClientInitError(t *testi
 
 	mockFramework := &MockFramework{
 		Tests: []testoptimization.Test{
-			{FQN: "test1", SourceFile: "file1.rb"},
+			{FQN: "test1", SourceFile: "file1.rb", SuiteSourceFile: "file1.rb"},
 		},
 	}
 
@@ -401,8 +401,8 @@ func TestTestRunner_PrepareTestOptimization_AllTestsSkipped(t *testing.T) {
 
 	mockFramework := &MockFramework{
 		Tests: []testoptimization.Test{
-			{FQN: "test1", SourceFile: "file1.rb"},
-			{FQN: "test2", SourceFile: "file2.rb"},
+			{FQN: "test1", SourceFile: "file1.rb", SuiteSourceFile: "file1.rb"},
+			{FQN: "test2", SourceFile: "file2.rb", SuiteSourceFile: "file2.rb"},
 		},
 	}
 
