@@ -21,7 +21,7 @@ jobs:
           go-version: "1.24.x"
 
       - name: Cache Go modules
-        uses: actions/cache@v638ed79f9dc94c1de1baef91bcab5edaa19451f4
+        uses: actions/cache@638ed79f9dc94c1de1baef91bcab5edaa19451f4
         with:
           path: |
             ~/.cache/go-build
