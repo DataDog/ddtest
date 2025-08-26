@@ -424,7 +424,9 @@ func extractGithubActions() map[string]string {
 	eventFilePath := os.Getenv("GITHUB_EVENT_PATH")
 	if stats, ok := os.Stat(eventFilePath); ok == nil && !stats.IsDir() {
 		if eventFile, err := os.Open(eventFilePath); err == nil {
-			defer eventFile.Close()
+			defer func() {
+				_ = eventFile.Close()
+			}()
 
 			var eventJSON struct {
 				PullRequest struct {

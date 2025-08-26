@@ -87,7 +87,9 @@ func getEnvironmentalData() *fileEnvironmentalData {
 		slog.Error("civisibility: error reading environmental data from %s: %v", envDataFileName, err.Error())
 		return nil
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 	var envData fileEnvironmentalData
 	if err := json.NewDecoder(file).Decode(&envData); err != nil {
 		slog.Error("civisibility: error decoding environmental data from %s: %v", envDataFileName, err.Error())

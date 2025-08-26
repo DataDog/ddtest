@@ -52,7 +52,9 @@ func init() {
 		return
 	}
 
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		parts := strings.SplitN(scanner.Text(), "=", 2)

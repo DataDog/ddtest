@@ -84,7 +84,7 @@ func TestRSpec_DiscoverTests_Success(t *testing.T) {
 		t.Fatalf("failed to create discovery directory: %v", err)
 	}
 	defer func() {
-		os.RemoveAll(filepath.Dir(TestsDiscoveryFilePath))
+		_ = os.RemoveAll(filepath.Dir(TestsDiscoveryFilePath))
 	}()
 
 	testData := []testoptimization.Test{
@@ -124,7 +124,9 @@ func TestRSpec_DiscoverTests_Success(t *testing.T) {
 			if err != nil {
 				t.Fatalf("mock failed to create test file: %v", err)
 			}
-			defer file.Close()
+			defer func() {
+				_ = file.Close()
+			}()
 
 			encoder := json.NewEncoder(file)
 			for _, test := range testData {
@@ -172,7 +174,7 @@ func TestRSpec_DiscoverTests_CommandFailure(t *testing.T) {
 		t.Fatalf("failed to create discovery directory: %v", err)
 	}
 	defer func() {
-		os.RemoveAll(filepath.Dir(TestsDiscoveryFilePath))
+		_ = os.RemoveAll(filepath.Dir(TestsDiscoveryFilePath))
 	}()
 
 	mockExecutor := &mockCommandExecutor{
@@ -197,7 +199,7 @@ func TestRSpec_DiscoverTests_InvalidJSON(t *testing.T) {
 		t.Fatalf("failed to create discovery directory: %v", err)
 	}
 	defer func() {
-		os.RemoveAll(filepath.Dir(TestsDiscoveryFilePath))
+		_ = os.RemoveAll(filepath.Dir(TestsDiscoveryFilePath))
 	}()
 
 	mockExecutor := &mockCommandExecutor{
