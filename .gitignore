@@ -33,3 +33,4 @@ ddruntest
 
 # release artifacts
 dist
+.DS_Store
