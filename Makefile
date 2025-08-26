@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := build
-.PHONY: clean fmt vet lint build run
+.PHONY: clean fmt vet lint build run release
 clean:
 	go clean -i -x
 fmt:
@@ -14,3 +14,11 @@ build: test lint
 	go build -o ddruntest main.go
 run:
 	go run main.go
+release:
+	mkdir -p dist
+	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/ddruntest-linux-amd64 main.go
+	GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/ddruntest-linux-arm64 main.go
+	GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/ddruntest-darwin-amd64 main.go
+	GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/ddruntest-darwin-arm64 main.go
+	GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/ddruntest-windows-amd64.exe main.go
+	GOOS=windows GOARCH=arm64 go build -ldflags="-s -w" -o dist/ddruntest-windows-arm64.exe main.go
