@@ -11,6 +11,7 @@ import (
 type Config struct {
 	Platform  string `mapstructure:"platform"`
 	Framework string `mapstructure:"framework"`
+	Port      int    `mapstructure:"port"`
 }
 
 var (
@@ -34,6 +35,7 @@ func Init() {
 func setDefaults() {
 	viper.SetDefault("platform", "ruby")
 	viper.SetDefault("framework", "rspec")
+	viper.SetDefault("port", 7890)
 }
 
 func Get() *Config {
@@ -49,4 +51,8 @@ func GetPlatform() string {
 
 func GetFramework() string {
 	return Get().Framework
+}
+
+func GetPort() int {
+	return Get().Port
 }

@@ -25,6 +25,9 @@ func TestInit(t *testing.T) {
 	if config.Framework != "rspec" {
 		t.Errorf("expected default framework to be 'rspec', got %q", config.Framework)
 	}
+	if config.Port != 7890 {
+		t.Errorf("expected default port to be 7890, got %d", config.Port)
+	}
 }
 
 func TestSetDefaults(t *testing.T) {
@@ -37,6 +40,9 @@ func TestSetDefaults(t *testing.T) {
 	}
 	if viper.GetString("framework") != "rspec" {
 		t.Errorf("expected default framework to be 'rspec', got %q", viper.GetString("framework"))
+	}
+	if viper.GetInt("port") != 7890 {
+		t.Errorf("expected default port to be 7890, got %d", viper.GetInt("port"))
 	}
 }
 
@@ -69,7 +75,7 @@ func TestGetPlatform(t *testing.T) {
 	}
 
 	// Test with custom value
-	config = &Config{Platform: "python", Framework: "pytest"}
+	config = &Config{Platform: "python", Framework: "pytest", Port: 8080}
 	platform = GetPlatform()
 	if platform != "python" {
 		t.Errorf("expected platform to be 'python', got %q", platform)
@@ -87,7 +93,7 @@ func TestGetFramework(t *testing.T) {
 	}
 
 	// Test with custom value
-	config = &Config{Platform: "python", Framework: "pytest"}
+	config = &Config{Platform: "python", Framework: "pytest", Port: 8080}
 	framework = GetFramework()
 	if framework != "pytest" {
 		t.Errorf("expected framework to be 'pytest', got %q", framework)
@@ -102,9 +108,11 @@ func TestEnvironmentVariables(t *testing.T) {
 	// Set environment variables
 	os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM", "python")
 	os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK", "pytest")
+	os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PORT", "9090")
 	defer func() {
 		os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM")
 		os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK")
+		os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_PORT")
 	}()
 
 	Init()
@@ -114,5 +122,26 @@ func TestEnvironmentVariables(t *testing.T) {
 	}
 	if config.Framework != "pytest" {
 		t.Errorf("expected framework from env var to be 'pytest', got %q", config.Framework)
+	}
+	if config.Port != 9090 {
+		t.Errorf("expected port from env var to be 9090, got %d", config.Port)
+	}
+}
+
+func TestGetPort(t *testing.T) {
+	// Test with defaults
+	config = nil
+	viper.Reset()
+
+	port := GetPort()
+	if port != 7890 {
+		t.Errorf("expected port to be 7890, got %d", port)
+	}
+
+	// Test with custom value
+	config = &Config{Platform: "python", Framework: "pytest", Port: 8080}
+	port = GetPort()
+	if port != 8080 {
+		t.Errorf("expected port to be 8080, got %d", port)
 	}
 }
