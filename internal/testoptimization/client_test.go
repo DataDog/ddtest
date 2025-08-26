@@ -16,7 +16,7 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 
 	// remove any .dd directories that might be left behind
-	os.RemoveAll(".dd")
+	_ = os.RemoveAll(".dd")
 
 	// Exit with the same code as the tests
 	os.Exit(code)
@@ -637,7 +637,7 @@ func TestDatadogClient_StoreContextAndExit_WritesTestManagementTestsFile(t *test
 
 func TestDatadogClient_StoreContextAndExit_NilTestManagementTests(t *testing.T) {
 	// Clean up any existing files before test
-	os.RemoveAll(".dd")
+	_ = os.RemoveAll(".dd")
 
 	mockIntegrations := &MockCIVisibilityIntegrations{
 		Settings: &net.SettingsResponseData{

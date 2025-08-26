@@ -89,7 +89,9 @@ func TestRuby_DetectFramework_Unsupported(t *testing.T) {
 
 func TestRuby_CreateTagsMap_Success(t *testing.T) {
 	testDir := ".dd"
-	defer os.RemoveAll(testDir)
+	defer func() {
+		_ = os.RemoveAll(testDir)
+	}()
 
 	expectedRubyTags := map[string]string{
 		"os.platform":     "darwin",
@@ -165,7 +167,9 @@ func TestRuby_CreateTagsMap_Success(t *testing.T) {
 }
 
 func TestRuby_CreateTagsMap_CommandFailure(t *testing.T) {
-	defer os.RemoveAll(".dd")
+	defer func() {
+		_ = os.RemoveAll(".dd")
+	}()
 
 	mockExecutor := &mockCommandExecutor{
 		output: []byte("bundle: command not found"),
@@ -195,7 +199,9 @@ func TestRuby_CreateTagsMap_CommandFailure(t *testing.T) {
 }
 
 func TestRuby_CreateTagsMap_FileReadError(t *testing.T) {
-	defer os.RemoveAll(".dd")
+	defer func() {
+		_ = os.RemoveAll(".dd")
+	}()
 
 	mockExecutor := &mockCommandExecutor{
 		output: []byte("Tags written successfully"),
@@ -226,7 +232,9 @@ func TestRuby_CreateTagsMap_FileReadError(t *testing.T) {
 
 func TestRuby_CreateTagsMap_InvalidJSON(t *testing.T) {
 	testDir := ".dd"
-	defer os.RemoveAll(testDir)
+	defer func() {
+		_ = os.RemoveAll(testDir)
+	}()
 
 	mockExecutor := &mockCommandExecutor{
 		output: []byte("Tags written successfully"),

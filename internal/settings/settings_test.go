@@ -106,13 +106,13 @@ func TestEnvironmentVariables(t *testing.T) {
 	viper.Reset()
 
 	// Set environment variables
-	os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM", "python")
-	os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK", "pytest")
-	os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PORT", "9090")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM", "python")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK", "pytest")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PORT", "9090")
 	defer func() {
-		os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM")
-		os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK")
-		os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_PORT")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_PORT")
 	}()
 
 	Init()

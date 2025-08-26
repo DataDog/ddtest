@@ -58,7 +58,9 @@ func (r *RSpec) DiscoverTests() ([]testoptimization.Test, error) {
 		slog.Error("Error opening JSON file", "error", err)
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	var tests []testoptimization.Test
 	decoder := json.NewDecoder(file)

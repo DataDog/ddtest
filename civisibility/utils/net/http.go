@@ -246,7 +246,9 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 		return false, nil, nil
 	}
 	// Close response body
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	// Capture the status code
 	statusCode := resp.StatusCode
@@ -357,7 +359,9 @@ func compressData(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	writer.Close()
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
 	return buf.Bytes(), nil
 }
 
@@ -367,7 +371,9 @@ func decompressData(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gzip reader: %s", err.Error())
 	}
-	defer reader.Close()
+	defer func() {
+		_ = reader.Close()
+	}()
 	decompressedData, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decompress data: %s", err.Error())
@@ -387,11 +393,12 @@ func exponentialBackoff(retryCount int, initialDelay time.Duration) {
 
 // prepareContent prepares the content for a FormFile by serializing it if needed.
 func prepareContent(content interface{}, contentType string) ([]byte, error) {
-	if contentType == ContentTypeJSON {
+	switch contentType {
+	case ContentTypeJSON:
 		return serializeData(content, FormatJSON)
-	} else if contentType == ContentTypeMessagePack {
+	case ContentTypeMessagePack:
 		return serializeData(content, FormatMessagePack)
-	} else if contentType == ContentTypeOctetStream {
+	case ContentTypeOctetStream:
 		// For binary data, ensure it's already in byte format
 		if data, ok := content.([]byte); ok {
 			return data, nil
