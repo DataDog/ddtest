@@ -66,9 +66,9 @@ func TestNewCIProviderDetector(t *testing.T) {
 
 func TestCIProviderConfigure(t *testing.T) {
 	provider := NewGitHub()
-	err := provider.Configure()
+	err := provider.Configure(4) // Test with 4 parallel runners
 	if err != nil {
-		t.Errorf("Expected Configure() to return nil, got %v", err)
+		t.Errorf("Expected Configure(4) to return nil, got %v", err)
 	}
 }
 

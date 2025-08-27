@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DataDog/datadog-test-runner/internal/ciprovider"
 	"github.com/DataDog/datadog-test-runner/internal/framework"
 	"github.com/DataDog/datadog-test-runner/internal/platform"
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
@@ -92,6 +93,41 @@ func (m *MockTestOptimizationClient) StoreContextAndExit() {
 	m.ShutdownCalled = true
 }
 
+// MockCIProvider mocks a CI provider
+type MockCIProvider struct {
+	ProviderName    string
+	ConfigureCalled bool
+	ConfigureErr    error
+	ParallelRunners int
+}
+
+func (m *MockCIProvider) Name() string {
+	return m.ProviderName
+}
+
+func (m *MockCIProvider) Configure(parallelRunners int) error {
+	m.ConfigureCalled = true
+	m.ParallelRunners = parallelRunners
+	return m.ConfigureErr
+}
+
+// MockCIProviderDetector mocks CI provider detection
+type MockCIProviderDetector struct {
+	CIProvider ciprovider.CIProvider
+	Err        error
+}
+
+func (m *MockCIProviderDetector) DetectCIProvider() (ciprovider.CIProvider, error) {
+	return m.CIProvider, m.Err
+}
+
+// Helper function to create a default mock CI provider detector that returns no provider
+func newDefaultMockCIProviderDetector() *MockCIProviderDetector {
+	return &MockCIProviderDetector{
+		Err: errors.New("no CI provider detected"),
+	}
+}
+
 func TestNew(t *testing.T) {
 	runner := New()
 
@@ -120,8 +156,9 @@ func TestNew(t *testing.T) {
 func TestNewWithDependencies(t *testing.T) {
 	mockPlatformDetector := &MockPlatformDetector{}
 	mockOptimizationClient := &MockTestOptimizationClient{}
+	mockCIProviderDetector := newDefaultMockCIProviderDetector()
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient)
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockCIProviderDetector)
 
 	if runner == nil {
 		t.Error("NewWithDependencies() should return non-nil TestRunner")
@@ -171,7 +208,7 @@ func TestTestRunner_PrepareTestOptimization_Success(t *testing.T) {
 		},
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient)
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -227,7 +264,7 @@ func TestTestRunner_PrepareTestOptimization_PlatformDetectionError(t *testing.T)
 
 	mockOptimizationClient := &MockTestOptimizationClient{}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient)
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -254,7 +291,7 @@ func TestTestRunner_PrepareTestOptimization_TagsCreationError(t *testing.T) {
 
 	mockOptimizationClient := &MockTestOptimizationClient{}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient)
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -290,7 +327,7 @@ func TestTestRunner_PrepareTestOptimization_OptimizationClientInitError(t *testi
 		InitializeErr: errors.New("client initialization failed"),
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient)
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -318,7 +355,7 @@ func TestTestRunner_PrepareTestOptimization_FrameworkDetectionError(t *testing.T
 
 	mockOptimizationClient := &MockTestOptimizationClient{}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient)
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -350,7 +387,7 @@ func TestTestRunner_PrepareTestOptimization_TestDiscoveryError(t *testing.T) {
 
 	mockOptimizationClient := &MockTestOptimizationClient{}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient)
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -379,7 +416,7 @@ func TestTestRunner_PrepareTestOptimization_EmptyTests(t *testing.T) {
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{SkippableTests: map[string]bool{}}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient)
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -420,7 +457,7 @@ func TestTestRunner_PrepareTestOptimization_AllTestsSkipped(t *testing.T) {
 		},
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient)
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -631,7 +668,7 @@ func TestTestRunner_Setup_WithParallelRunners(t *testing.T) {
 		},
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient)
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	// Run Setup
 	err := runner.Setup(context.Background())
@@ -648,5 +685,160 @@ func TestTestRunner_Setup_WithParallelRunners(t *testing.T) {
 	expected := "1"
 	if string(content) != expected {
 		t.Errorf("Expected parallel runners file content '%s', got '%s'", expected, string(content))
+	}
+}
+
+func TestTestRunner_Setup_WithCIProvider(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Save current working directory and change to temp dir
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	// Create .dd directory
+	_ = os.MkdirAll(".dd", 0755)
+
+	// Setup mocks for test with CI provider
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{FQN: "TestSuite1.test1", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
+			{FQN: "TestSuite2.test2", SourceFile: "test/file2_test.rb", SuiteSourceFile: "test/file2_test.rb"},
+		},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		SkippableTests: map[string]bool{
+			"TestSuite1.test1": true, // Skip test1 = 50% skippable
+		},
+	}
+
+	// Mock CI provider that should be called
+	mockCIProvider := &MockCIProvider{
+		ProviderName: "github",
+	}
+	mockCIProviderDetector := &MockCIProviderDetector{
+		CIProvider: mockCIProvider,
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockCIProviderDetector)
+
+	// Run Setup
+	err := runner.Setup(context.Background())
+	if err != nil {
+		t.Fatalf("Setup() should not return error, got: %v", err)
+	}
+
+	// Verify CI provider Configure was called
+	if !mockCIProvider.ConfigureCalled {
+		t.Error("Expected CI provider Configure to be called")
+	}
+
+	// Verify Configure was called with the correct parallel runners count (1, since max=1)
+	expectedRunners := 1
+	if mockCIProvider.ParallelRunners != expectedRunners {
+		t.Errorf("Expected CI provider Configure called with %d parallel runners, got %d",
+			expectedRunners, mockCIProvider.ParallelRunners)
+	}
+}
+
+func TestTestRunner_Setup_CIProviderDetectionFailure(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Save current working directory and change to temp dir
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	// Create .dd directory
+	_ = os.MkdirAll(".dd", 0755)
+
+	// Setup mocks for test without CI provider
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{FQN: "TestSuite1.test1", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
+		},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{SkippableTests: map[string]bool{}}
+
+	// Mock CI provider detector that fails
+	mockCIProviderDetector := &MockCIProviderDetector{
+		Err: errors.New("no CI provider detected"),
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockCIProviderDetector)
+
+	// Run Setup - should succeed even if CI provider detection fails
+	err := runner.Setup(context.Background())
+	if err != nil {
+		t.Fatalf("Setup() should not fail when CI provider detection fails, got: %v", err)
+	}
+}
+
+func TestTestRunner_Setup_CIProviderConfigureFailure(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Save current working directory and change to temp dir
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	// Create .dd directory
+	_ = os.MkdirAll(".dd", 0755)
+
+	// Setup mocks for test with failing CI provider
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{FQN: "TestSuite1.test1", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
+		},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{SkippableTests: map[string]bool{}}
+
+	// Mock CI provider that fails during configuration
+	mockCIProvider := &MockCIProvider{
+		ProviderName: "github",
+		ConfigureErr: errors.New("configuration failed"),
+	}
+	mockCIProviderDetector := &MockCIProviderDetector{
+		CIProvider: mockCIProvider,
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockCIProviderDetector)
+
+	// Run Setup - should succeed even if CI provider configuration fails
+	err := runner.Setup(context.Background())
+	if err != nil {
+		t.Fatalf("Setup() should not fail when CI provider configuration fails, got: %v", err)
+	}
+
+	// Verify CI provider Configure was attempted
+	if !mockCIProvider.ConfigureCalled {
+		t.Error("Expected CI provider Configure to be called even if it fails")
 	}
 }

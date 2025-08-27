@@ -10,6 +10,9 @@ func (g *GitHub) Name() string {
 	return "github"
 }
 
-func (g *GitHub) Configure() error {
+func (g *GitHub) Configure(parallelRunners int) error {
+	// TODO: Implement GitHub-specific configuration logic with parallelRunners
+	// This could involve setting up GitHub Actions matrix strategy,
+	// updating workflow files, or configuring parallel job execution
 	return nil
 }

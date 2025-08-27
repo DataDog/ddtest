@@ -9,7 +9,7 @@ import (
 
 type CIProvider interface {
 	Name() string
-	Configure() error
+	Configure(parallelRunners int) error
 }
 
 type CIProviderDetector interface {

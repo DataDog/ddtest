@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/DataDog/datadog-test-runner/internal/ciprovider"
 	"github.com/DataDog/datadog-test-runner/internal/platform"
 	"github.com/DataDog/datadog-test-runner/internal/settings"
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
@@ -29,6 +30,7 @@ type TestRunner struct {
 	skippablePercentage float64
 	platformDetector    platform.PlatformDetector
 	optimizationClient  testoptimization.TestOptimizationClient
+	ciProviderDetector  ciprovider.CIProviderDetector
 }
 
 func New() *TestRunner {
@@ -37,15 +39,17 @@ func New() *TestRunner {
 		skippablePercentage: 0.0,
 		platformDetector:    platform.NewPlatformDetector(),
 		optimizationClient:  testoptimization.NewDatadogClient(),
+		ciProviderDetector:  ciprovider.NewCIProviderDetector(),
 	}
 }
 
-func NewWithDependencies(platformDetector platform.PlatformDetector, optimizationClient testoptimization.TestOptimizationClient) *TestRunner {
+func NewWithDependencies(platformDetector platform.PlatformDetector, optimizationClient testoptimization.TestOptimizationClient, ciProviderDetector ciprovider.CIProviderDetector) *TestRunner {
 	return &TestRunner{
 		testFiles:           nil,
 		skippablePercentage: 0.0,
 		platformDetector:    platformDetector,
 		optimizationClient:  optimizationClient,
+		ciProviderDetector:  ciProviderDetector,
 	}
 }
 
@@ -142,6 +146,18 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 	runnersContent := fmt.Sprintf("%d", parallelRunners)
 	if err := os.WriteFile(ParallelRunnersOutputPath, []byte(runnersContent), 0644); err != nil {
 		return fmt.Errorf("failed to write parallel runners to %s: %w", ParallelRunnersOutputPath, err)
+	}
+
+	// Detect and configure CI provider if available
+	if ciProvider, err := tr.ciProviderDetector.DetectCIProvider(); err == nil {
+		slog.Debug("CI provider detected, configuring with parallel runners",
+			"provider", ciProvider.Name(), "parallelRunners", parallelRunners)
+
+		if err := ciProvider.Configure(parallelRunners); err != nil {
+			slog.Warn("Failed to configure CI provider", "provider", ciProvider.Name(), "error", err)
+		}
+	} else {
+		slog.Debug("No CI provider detected or CI provider detection failed", "error", err)
 	}
 
 	return nil
