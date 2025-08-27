@@ -60,12 +60,22 @@ var serverCmd = &cobra.Command{
 func init() {
 	rootCmd.PersistentFlags().String("platform", "ruby", "Platform that runs tests")
 	rootCmd.PersistentFlags().String("framework", "rspec", "Test framework to use")
+	rootCmd.PersistentFlags().Int("min-parallelism", 1, "Minimum number of parallel test processes")
+	rootCmd.PersistentFlags().Int("max-parallelism", 1, "Maximum number of parallel test processes")
 	if err := viper.BindPFlag("platform", rootCmd.PersistentFlags().Lookup("platform")); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding platform flag: %v\n", err)
 		os.Exit(1)
 	}
 	if err := viper.BindPFlag("framework", rootCmd.PersistentFlags().Lookup("framework")); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding framework flag: %v\n", err)
+		os.Exit(1)
+	}
+	if err := viper.BindPFlag("min_parallelism", rootCmd.PersistentFlags().Lookup("min-parallelism")); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding min-parallelism flag: %v\n", err)
+		os.Exit(1)
+	}
+	if err := viper.BindPFlag("max_parallelism", rootCmd.PersistentFlags().Lookup("max-parallelism")); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding max-parallelism flag: %v\n", err)
 		os.Exit(1)
 	}
 
