@@ -51,7 +51,7 @@ func TestGitHub_Configure(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Clean up before each test
-			os.RemoveAll(".dd")
+			_ = os.RemoveAll(".dd")
 
 			err := g.Configure(tt.parallelRunners)
 			if (err != nil) != tt.wantErr {
@@ -94,17 +94,17 @@ func TestGitHub_Configure(t *testing.T) {
 			}
 
 			// Clean up after each test
-			os.RemoveAll(".dd")
+			_ = os.RemoveAll(".dd")
 		})
 	}
 }
 
 func TestGitHub_ConfigureJSONFormat(t *testing.T) {
 	g := NewGitHub()
-	
+
 	// Clean up before test
-	os.RemoveAll(".dd")
-	defer os.RemoveAll(".dd")
+	_ = os.RemoveAll(".dd")
+	defer func() { _ = os.RemoveAll(".dd") }()
 
 	err := g.Configure(2)
 	if err != nil {
