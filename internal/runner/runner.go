@@ -4,17 +4,20 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/DataDog/datadog-test-runner/internal/platform"
+	"github.com/DataDog/datadog-test-runner/internal/settings"
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
 	"golang.org/x/sync/errgroup"
 )
 
 const TestFilesOutputPath = ".dd/test-files.txt"
 const SkippablePercentageOutputPath = ".dd/skippable-percentage.txt"
+const ParallelRunnersOutputPath = ".dd/parallel-runners.txt"
 
 type Runner interface {
 	Setup(ctx context.Context) error
@@ -134,5 +137,41 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 		return fmt.Errorf("failed to write skippable percentage to %s: %w", SkippablePercentageOutputPath, err)
 	}
 
+	// Calculate and write parallel runners count
+	parallelRunners := calculateParallelRunners(tr.skippablePercentage)
+	runnersContent := fmt.Sprintf("%d", parallelRunners)
+	if err := os.WriteFile(ParallelRunnersOutputPath, []byte(runnersContent), 0644); err != nil {
+		return fmt.Errorf("failed to write parallel runners to %s: %w", ParallelRunnersOutputPath, err)
+	}
+
 	return nil
+}
+
+// calculateParallelRunners determines the number of parallel runners based on skippable percentage
+// and parallelism configuration
+func calculateParallelRunners(skippablePercentage float64) int {
+	return calculateParallelRunnersWithParams(skippablePercentage, settings.GetMinParallelism(), settings.GetMaxParallelism())
+}
+
+// calculateParallelRunnersWithParams is the testable version that accepts parameters directly
+func calculateParallelRunnersWithParams(skippablePercentage float64, minParallelism, maxParallelism int) int {
+	if maxParallelism == 1 {
+		return 1
+	}
+
+	if minParallelism < 1 {
+		slog.Warn("min_parallelism is less than 1, setting to 1", "min_parallelism", minParallelism)
+		return 1
+	}
+
+	if maxParallelism < minParallelism {
+		slog.Warn("max_parallelism is less than min_parallelism, using min_parallelism",
+			"max_parallelism", maxParallelism, "min_parallelism", minParallelism)
+		return minParallelism
+	}
+
+	percentage := math.Max(0.0, math.Min(100.0, skippablePercentage)) // Clamp to [0, 100]
+	runners := float64(maxParallelism) - (percentage/100.0)*float64(maxParallelism-minParallelism)
+
+	return int(math.Round(runners))
 }
