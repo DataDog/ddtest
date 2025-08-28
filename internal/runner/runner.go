@@ -20,6 +20,7 @@ import (
 const TestFilesOutputPath = ".dd/test-files.txt"
 const SkippablePercentageOutputPath = ".dd/skippable-percentage.txt"
 const ParallelRunnersOutputPath = ".dd/parallel-runners.txt"
+const TestsSplitDir = ".dd/tests-split"
 
 type Runner interface {
 	Setup(ctx context.Context) error
@@ -159,6 +160,30 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 		}
 	} else {
 		slog.Debug("No CI provider detected or CI provider detection failed", "error", err)
+	}
+
+	// Split test files for runners when there's more than one runner
+	if parallelRunners > 1 {
+		// Distribute test files across parallel runners using bin packing
+		distribution := DistributeTestFiles(tr.testFiles, parallelRunners)
+
+		// Create tests-split directory
+		if err := os.MkdirAll(TestsSplitDir, 0755); err != nil {
+			return fmt.Errorf("failed to create tests-split directory: %w", err)
+		}
+
+		// Save each runner's test files to separate files
+		for i, runnerFiles := range distribution {
+			runnerContent := strings.Join(runnerFiles, "\n")
+			if len(runnerFiles) > 0 {
+				runnerContent += "\n"
+			}
+
+			runnerFilePath := fmt.Sprintf("%s/runner-%d", TestsSplitDir, i)
+			if err := os.WriteFile(runnerFilePath, []byte(runnerContent), 0644); err != nil {
+				return fmt.Errorf("failed to write runner-%d files to %s: %w", i, runnerFilePath, err)
+			}
+		}
 	}
 
 	return nil

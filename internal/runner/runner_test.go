@@ -3,16 +3,19 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/DataDog/datadog-test-runner/internal/ciprovider"
 	"github.com/DataDog/datadog-test-runner/internal/framework"
 	"github.com/DataDog/datadog-test-runner/internal/platform"
+	"github.com/DataDog/datadog-test-runner/internal/settings"
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
 )
 
@@ -1073,6 +1076,153 @@ func TestDistributeTestFiles(t *testing.T) {
 					t.Errorf("Runner %d missing file %s in second result", i, file)
 				}
 			}
+		}
+	})
+}
+
+func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
+	t.Run("single runner - no split files created", func(t *testing.T) {
+		// Create a temporary directory for test output
+		tempDir := t.TempDir()
+
+		// Save current working directory and change to temp dir
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		_ = os.Chdir(tempDir)
+
+		// Create .dd directory
+		_ = os.MkdirAll(".dd", 0755)
+
+		// Setup mocks for single runner scenario
+		mockFramework := &MockFramework{
+			FrameworkName: "rspec",
+			Tests: []testoptimization.Test{
+				{FQN: "TestSuite1.test1", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
+			},
+		}
+
+		mockPlatform := &MockPlatform{
+			PlatformName: "ruby",
+			Tags:         map[string]string{"platform": "ruby"},
+			Framework:    mockFramework,
+		}
+
+		mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+		mockOptimizationClient := &MockTestOptimizationClient{
+			SkippableTests: map[string]bool{}, // No tests skipped
+		}
+
+		runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+		// Run Setup
+		err := runner.Setup(context.Background())
+		if err != nil {
+			t.Fatalf("Setup() should not return error, got: %v", err)
+		}
+
+		// Verify that tests-split directory was NOT created (since parallelRunners = 1)
+		if _, err := os.Stat(".dd/tests-split"); !os.IsNotExist(err) {
+			t.Error("Expected .dd/tests-split directory NOT to be created when parallelRunners = 1")
+		}
+	})
+
+	t.Run("multiple runners - split files created", func(t *testing.T) {
+		// Create a temporary directory for test output
+		tempDir := t.TempDir()
+
+		// Save current working directory and change to temp dir
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		_ = os.Chdir(tempDir)
+
+		// Create .dd directory
+		_ = os.MkdirAll(".dd", 0755)
+
+		// Setup mocks with test files that will create a predictable distribution
+		mockFramework := &MockFramework{
+			FrameworkName: "rspec",
+			Tests: []testoptimization.Test{
+				{FQN: "TestSuite1.test1", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
+				{FQN: "TestSuite1.test2", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"}, // 2 tests in file1
+				{FQN: "TestSuite2.test3", SourceFile: "test/file2_test.rb", SuiteSourceFile: "test/file2_test.rb"}, // 1 test in file2
+				{FQN: "TestSuite3.test4", SourceFile: "test/file3_test.rb", SuiteSourceFile: "test/file3_test.rb"}, // 1 test in file3
+			},
+		}
+
+		mockPlatform := &MockPlatform{
+			PlatformName: "ruby",
+			Tags:         map[string]string{"platform": "ruby"},
+			Framework:    mockFramework,
+		}
+
+		mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+		mockOptimizationClient := &MockTestOptimizationClient{
+			SkippableTests: map[string]bool{}, // No tests skipped
+		}
+
+		expectedParallelRunnersCount := 4
+		// Set environment variables to force multiple parallel runners
+		_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "2")
+		_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", strconv.Itoa(expectedParallelRunnersCount))
+		defer func() {
+			_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
+			_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+		}()
+
+		// Reinitialize settings to pick up environment variables
+		settings.Init()
+
+		runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+		// Run Setup
+		err := runner.Setup(context.Background())
+		if err != nil {
+			t.Fatalf("Setup() should not return error, got: %v", err)
+		}
+
+		// Verify that tests-split directory was created
+		if _, err := os.Stat(".dd/tests-split"); os.IsNotExist(err) {
+			t.Error("Expected .dd/tests-split directory to be created")
+		}
+
+		// With min=2 and 0% skippable tests, we should get 4 parallel runners
+		// Verify runner files exist
+		for i := range expectedParallelRunnersCount {
+			runnerPath := fmt.Sprintf(".dd/tests-split/runner-%d", i)
+			if _, err := os.Stat(runnerPath); os.IsNotExist(err) {
+				t.Errorf("Expected runner-%d file to exist", i)
+			}
+		}
+
+		// Verify content of runner files
+		// With the test distribution (file1: 2 tests, file2: 1 test, file3: 1 test)
+		// and 4 runners, expected: Runner 0 gets file1 (2 tests), others get 1 test each
+		runner0Content, err := os.ReadFile(".dd/tests-split/runner-0")
+		if err != nil {
+			t.Fatalf("Failed to read runner-0 file: %v", err)
+		}
+
+		// Verify runner-0 has the largest file (file1 with 2 tests)
+		runner0Files := strings.Fields(strings.TrimSpace(string(runner0Content)))
+		if !slices.Contains(runner0Files, "test/file1_test.rb") {
+			t.Error("Expected runner-0 to contain test/file1_test.rb (largest file)")
+		}
+
+		// Count total files across all runners
+		totalFiles := 0
+		for i := range expectedParallelRunnersCount {
+			runnerPath := fmt.Sprintf(".dd/tests-split/runner-%d", i)
+			content, err := os.ReadFile(runnerPath)
+			if err != nil {
+				continue
+			}
+			files := strings.Fields(strings.TrimSpace(string(content)))
+			totalFiles += len(files)
+		}
+
+		// Should have all 3 test files distributed
+		if totalFiles != 3 {
+			t.Errorf("Expected 3 total files distributed across runners, got %d", totalFiles)
 		}
 	})
 }
