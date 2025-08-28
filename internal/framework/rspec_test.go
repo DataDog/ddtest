@@ -12,6 +12,10 @@ import (
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
 )
 
+func cleanupDiscoveryDir() {
+	_ = os.RemoveAll(filepath.Dir(filepath.Dir(TestsDiscoveryFilePath)))
+}
+
 type mockCommandExecutor struct {
 	output      []byte
 	err         error
@@ -83,9 +87,7 @@ func TestRSpec_DiscoverTests_Success(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(TestsDiscoveryFilePath), 0755); err != nil {
 		t.Fatalf("failed to create discovery directory: %v", err)
 	}
-	defer func() {
-		_ = os.RemoveAll(filepath.Dir(TestsDiscoveryFilePath))
-	}()
+	defer cleanupDiscoveryDir()
 
 	testData := []testoptimization.Test{
 		{
@@ -173,9 +175,7 @@ func TestRSpec_DiscoverTests_CommandFailure(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(TestsDiscoveryFilePath), 0755); err != nil {
 		t.Fatalf("failed to create discovery directory: %v", err)
 	}
-	defer func() {
-		_ = os.RemoveAll(filepath.Dir(TestsDiscoveryFilePath))
-	}()
+	defer cleanupDiscoveryDir()
 
 	mockExecutor := &mockCommandExecutor{
 		output:      []byte("Could not locate Gemfile or .bundle/ directory"),
@@ -198,9 +198,7 @@ func TestRSpec_DiscoverTests_InvalidJSON(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(TestsDiscoveryFilePath), 0755); err != nil {
 		t.Fatalf("failed to create discovery directory: %v", err)
 	}
-	defer func() {
-		_ = os.RemoveAll(filepath.Dir(TestsDiscoveryFilePath))
-	}()
+	defer cleanupDiscoveryDir()
 
 	mockExecutor := &mockCommandExecutor{
 		output: []byte("Finished in 0.12345 seconds (files took 0.67890 seconds to load)"),
