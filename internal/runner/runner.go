@@ -26,7 +26,7 @@ type Runner interface {
 }
 
 type TestRunner struct {
-	testFiles           []string
+	testFiles           map[string]int
 	skippablePercentage float64
 	platformDetector    platform.PlatformDetector
 	optimizationClient  testoptimization.TestOptimizationClient
@@ -35,7 +35,7 @@ type TestRunner struct {
 
 func New() *TestRunner {
 	return &TestRunner{
-		testFiles:           nil,
+		testFiles:           make(map[string]int),
 		skippablePercentage: 0.0,
 		platformDetector:    platform.NewPlatformDetector(),
 		optimizationClient:  testoptimization.NewDatadogClient(),
@@ -45,7 +45,7 @@ func New() *TestRunner {
 
 func NewWithDependencies(platformDetector platform.PlatformDetector, optimizationClient testoptimization.TestOptimizationClient, ciProviderDetector ciprovider.CIProviderDetector) *TestRunner {
 	return &TestRunner{
-		testFiles:           nil,
+		testFiles:           make(map[string]int),
 		skippablePercentage: 0.0,
 		platformDetector:    platformDetector,
 		optimizationClient:  optimizationClient,
@@ -97,21 +97,16 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	discoveredTestsCount := len(discoveredTests)
 	skippableTestsCount := 0
 
-	testFilesMap := make(map[string]bool)
+	tr.testFiles = make(map[string]int)
 	for _, test := range discoveredTests {
 		if !skippableTests[test.FQN] {
 			slog.Debug("Test is not skipped", "test", test.FQN, "sourceFile", test.SuiteSourceFile)
 			if test.SuiteSourceFile != "" {
-				testFilesMap[test.SuiteSourceFile] = true
+				tr.testFiles[test.SuiteSourceFile]++
 			}
 		} else {
 			skippableTestsCount++
 		}
-	}
-
-	tr.testFiles = make([]string, 0, len(testFilesMap))
-	for testFile := range testFilesMap {
-		tr.testFiles = append(tr.testFiles, testFile)
 	}
 	tr.skippablePercentage = float64(skippableTestsCount) / float64(discoveredTestsCount) * 100.0
 
@@ -127,8 +122,13 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	content := strings.Join(tr.testFiles, "\n")
-	if len(tr.testFiles) > 0 {
+	testFileNames := make([]string, 0, len(tr.testFiles))
+	for testFile := range tr.testFiles {
+		testFileNames = append(testFileNames, testFile)
+	}
+	
+	content := strings.Join(testFileNames, "\n")
+	if len(testFileNames) > 0 {
 		content += "\n"
 	}
 

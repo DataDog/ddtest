@@ -136,8 +136,8 @@ func TestNew(t *testing.T) {
 		return
 	}
 
-	if runner.testFiles != nil {
-		t.Error("New() should initialize testFiles to nil")
+	if len(runner.testFiles) != 0 {
+		t.Error("New() should initialize testFiles to empty map")
 	}
 
 	if runner.skippablePercentage != 0.0 {
@@ -241,7 +241,7 @@ func TestTestRunner_PrepareTestOptimization_Success(t *testing.T) {
 		t.Errorf("PrepareTestOptimization() should result in 2 test files, got %d", len(runner.testFiles))
 	}
 
-	for _, file := range runner.testFiles {
+	for file := range runner.testFiles {
 		if !expectedFiles[file] {
 			t.Errorf("Unexpected test file: %s", file)
 		}
