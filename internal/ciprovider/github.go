@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-const GitHubMatrixPath = ".dd/github/matrix"
+const GitHubMatrixPath = ".dd/github/config"
 
 type GitHub struct{}
 
@@ -58,7 +58,8 @@ func (g *GitHub) Configure(parallelRunners int) error {
 	}
 
 	// Write matrix configuration to file
-	if err := os.WriteFile(GitHubMatrixPath, jsonData, 0644); err != nil {
+	configContent := fmt.Sprintf("matrix=%s", jsonData)
+	if err := os.WriteFile(GitHubMatrixPath, []byte(configContent), 0644); err != nil {
 		return fmt.Errorf("failed to write matrix configuration to %s: %w", GitHubMatrixPath, err)
 	}
 

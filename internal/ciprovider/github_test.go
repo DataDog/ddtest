@@ -3,6 +3,7 @@ package ciprovider
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -73,8 +74,16 @@ func TestGitHub_Configure(t *testing.T) {
 					return
 				}
 
+				// Extract JSON from matrix={json} format
+				content := string(data)
+				if !strings.HasPrefix(content, "matrix=") {
+					t.Errorf("Expected content to start with 'matrix=', got: %s", content)
+					return
+				}
+				jsonData := content[7:] // Remove "matrix=" prefix
+
 				var matrix matrixConfig
-				if err := json.Unmarshal(data, &matrix); err != nil {
+				if err := json.Unmarshal([]byte(jsonData), &matrix); err != nil {
 					t.Errorf("Failed to unmarshal matrix JSON: %v", err)
 					return
 				}
@@ -117,10 +126,10 @@ func TestGitHub_ConfigureJSONFormat(t *testing.T) {
 		t.Fatalf("Failed to read matrix file: %v", err)
 	}
 
-	expectedJSON := `{"include":[{"ci_node_index":0,"ci_node_total":2},{"ci_node_index":1,"ci_node_total":2}]}`
-	actualJSON := string(data)
+	expectedContent := `matrix={"include":[{"ci_node_index":0,"ci_node_total":2},{"ci_node_index":1,"ci_node_total":2}]}`
+	actualContent := string(data)
 
-	if actualJSON != expectedJSON {
-		t.Errorf("Expected JSON:\n%s\nGot JSON:\n%s", expectedJSON, actualJSON)
+	if actualContent != expectedContent {
+		t.Errorf("Expected content:\n%s\nGot content:\n%s", expectedContent, actualContent)
 	}
 }
