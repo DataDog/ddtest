@@ -195,7 +195,6 @@ func calculateParallelRunners(skippablePercentage float64) int {
 	return calculateParallelRunnersWithParams(skippablePercentage, settings.GetMinParallelism(), settings.GetMaxParallelism())
 }
 
-// calculateParallelRunnersWithParams is the testable version that accepts parameters directly
 func calculateParallelRunnersWithParams(skippablePercentage float64, minParallelism, maxParallelism int) int {
 	if maxParallelism == 1 {
 		return 1

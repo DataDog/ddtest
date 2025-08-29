@@ -11,6 +11,10 @@ import (
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
 )
 
+var CommandEntrypoint = "bundle"
+var DiscoveryCommand = []string{"exec", "rspec", "--format", "progress", "--dry-run"}
+var TestRunCommand = []string{"exec", "rspec", "--format", "progress"}
+
 type RSpec struct {
 	executor ext.CommandExecutor
 }
@@ -25,8 +29,8 @@ func (r *RSpec) Name() string {
 	return "rspec"
 }
 
-func (r *RSpec) CreateDiscoveryCommand() *exec.Cmd {
-	cmd := exec.Command("bundle", "exec", "rspec", "--format", "progress", "--dry-run")
+func (r *RSpec) createDiscoveryCommand() *exec.Cmd {
+	cmd := exec.Command(CommandEntrypoint, DiscoveryCommand...)
 	cmd.Env = append(
 		os.Environ(),
 		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1",
@@ -43,7 +47,7 @@ func (r *RSpec) DiscoverTests() ([]testoptimization.Test, error) {
 	slog.Debug("Starting RSpec dry run...")
 	startTime := time.Now()
 
-	cmd := r.CreateDiscoveryCommand()
+	cmd := r.createDiscoveryCommand()
 	output, err := r.executor.CombinedOutput(cmd)
 	if err != nil {
 		slog.Error("Failed to run RSpec dry run", "output", string(output))
@@ -75,4 +79,12 @@ func (r *RSpec) DiscoverTests() ([]testoptimization.Test, error) {
 
 	slog.Debug("Parsed RSpec report", "examples", len(tests))
 	return tests, nil
+}
+
+func (r *RSpec) RunTests(testFiles []string) error {
+	args := append(TestRunCommand, testFiles...)
+	cmd := exec.Command(CommandEntrypoint, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }

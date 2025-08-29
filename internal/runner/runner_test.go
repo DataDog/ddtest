@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -67,8 +66,8 @@ func (m *MockFramework) DiscoverTests() ([]testoptimization.Test, error) {
 	return m.Tests, m.Err
 }
 
-func (m *MockFramework) CreateDiscoveryCommand() *exec.Cmd {
-	return nil // Not used in our tests
+func (m *MockFramework) RunTests(testFiles []string) error {
+	return m.Err // Return the same error as other methods for consistency
 }
 
 // MockTestOptimizationClient mocks the test optimization client

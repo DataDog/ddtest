@@ -56,9 +56,9 @@ func TestRSpec_Name(t *testing.T) {
 	}
 }
 
-func TestRSpec_CreateDiscoveryCommand(t *testing.T) {
+func TestRSpec_createDiscoveryCommand(t *testing.T) {
 	rspec := NewRSpec()
-	cmd := rspec.CreateDiscoveryCommand()
+	cmd := rspec.createDiscoveryCommand()
 
 	expectedArgs := []string{"bundle", "exec", "rspec", "--format", "progress", "--dry-run"}
 	if len(cmd.Args) != len(expectedArgs) {
@@ -219,5 +219,22 @@ func TestRSpec_DiscoverTests_InvalidJSON(t *testing.T) {
 	}
 	if tests != nil {
 		t.Error("expected nil tests when JSON is invalid")
+	}
+}
+
+func TestRSpec_RunTests(t *testing.T) {
+	testFiles := []string{"spec/models/user_spec.rb", "spec/controllers/users_controller_spec.rb"}
+
+	cmd := exec.Command(CommandEntrypoint, append(TestRunCommand, testFiles...)...)
+	expectedArgs := []string{"bundle", "exec", "rspec", "--format", "progress", "spec/models/user_spec.rb", "spec/controllers/users_controller_spec.rb"}
+
+	if len(cmd.Args) != len(expectedArgs) {
+		t.Errorf("expected %d args, got %d", len(expectedArgs), len(cmd.Args))
+	}
+
+	for i, expected := range expectedArgs {
+		if i >= len(cmd.Args) || cmd.Args[i] != expected {
+			t.Errorf("expected arg[%d] to be %q, got %q", i, expected, cmd.Args[i])
+		}
 	}
 }
