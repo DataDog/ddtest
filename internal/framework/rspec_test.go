@@ -29,6 +29,13 @@ func (m *mockCommandExecutor) CombinedOutput(cmd *exec.Cmd) ([]byte, error) {
 	return m.output, m.err
 }
 
+func (m *mockCommandExecutor) Run(cmd *exec.Cmd) error {
+	if m.onExecution != nil {
+		m.onExecution(cmd)
+	}
+	return m.err
+}
+
 func TestNewRSpec(t *testing.T) {
 	rspec := NewRSpec()
 	if rspec == nil {
@@ -225,16 +232,42 @@ func TestRSpec_DiscoverTests_InvalidJSON(t *testing.T) {
 func TestRSpec_RunTests(t *testing.T) {
 	testFiles := []string{"spec/models/user_spec.rb", "spec/controllers/users_controller_spec.rb"}
 
-	cmd := exec.Command(CommandEntrypoint, append(TestRunCommand, testFiles...)...)
-	expectedArgs := []string{"bundle", "exec", "rspec", "--format", "progress", "spec/models/user_spec.rb", "spec/controllers/users_controller_spec.rb"}
+	var capturedCmd *exec.Cmd
+	mockExecutor := &mockCommandExecutor{
+		err: nil, // Simulate successful execution
+		onExecution: func(cmd *exec.Cmd) {
+			capturedCmd = cmd
+		},
+	}
 
-	if len(cmd.Args) != len(expectedArgs) {
-		t.Errorf("expected %d args, got %d", len(expectedArgs), len(cmd.Args))
+	rspec := &RSpec{executor: mockExecutor}
+	err := rspec.RunTests(testFiles)
+
+	if err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	if capturedCmd == nil {
+		t.Fatal("Expected command to be executed but none was captured")
+	}
+
+	// Verify the command arguments
+	expectedArgs := []string{"bundle", "exec", "rspec", "--format", "progress", "spec/models/user_spec.rb", "spec/controllers/users_controller_spec.rb"}
+	if len(capturedCmd.Args) != len(expectedArgs) {
+		t.Errorf("expected %d args, got %d", len(expectedArgs), len(capturedCmd.Args))
 	}
 
 	for i, expected := range expectedArgs {
-		if i >= len(cmd.Args) || cmd.Args[i] != expected {
-			t.Errorf("expected arg[%d] to be %q, got %q", i, expected, cmd.Args[i])
+		if i >= len(capturedCmd.Args) || capturedCmd.Args[i] != expected {
+			t.Errorf("expected arg[%d] to be %q, got %q", i, expected, capturedCmd.Args[i])
 		}
+	}
+
+	// Verify that stdout and stderr are set correctly
+	if capturedCmd.Stdout != os.Stdout {
+		t.Error("expected cmd.Stdout to be set to os.Stdout")
+	}
+	if capturedCmd.Stderr != os.Stderr {
+		t.Error("expected cmd.Stderr to be set to os.Stderr")
 	}
 }

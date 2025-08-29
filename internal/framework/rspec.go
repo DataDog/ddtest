@@ -86,5 +86,5 @@ func (r *RSpec) RunTests(testFiles []string) error {
 	cmd := exec.Command(CommandEntrypoint, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return r.executor.Run(cmd)
 }
