@@ -39,6 +39,20 @@ var setupCmd = &cobra.Command{
 	},
 }
 
+var runCmd = &cobra.Command{
+	Use:   "run",
+	Short: "Run tests using test optimization",
+	Long:  "Runs tests using Datadog Test Optimization to execute only necessary test files based on code changes.",
+	Run: func(cmd *cobra.Command, args []string) {
+		ctx := context.Background()
+		testRunner := runner.New()
+		if err := testRunner.Run(ctx); err != nil {
+			slog.Error("Runner failed", "error", err)
+			os.Exit(1)
+		}
+	},
+}
+
 var serverCmd = &cobra.Command{
 	Use:   "server",
 	Short: "Start HTTP server to serve context data",
@@ -86,6 +100,7 @@ func init() {
 	}
 
 	rootCmd.AddCommand(setupCmd)
+	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(serverCmd)
 
 	cobra.OnInitialize(settings.Init)

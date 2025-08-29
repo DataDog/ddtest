@@ -25,6 +25,7 @@ const TestsSplitDir = ".dd/tests-split"
 type Runner interface {
 	Setup(ctx context.Context) error
 	PrepareTestOptimization(ctx context.Context) error
+	Run(ctx context.Context) error
 }
 
 type TestRunner struct {
@@ -275,4 +276,109 @@ func DistributeTestFiles(testFiles map[string]int, parallelRunners int) [][]stri
 	}
 
 	return result
+}
+
+func (tr *TestRunner) Run(ctx context.Context) error {
+	// Check if parallel runners output file exists
+	if _, err := os.Stat(ParallelRunnersOutputPath); os.IsNotExist(err) {
+		// Run Setup if the file doesn't exist
+		if err := tr.Setup(ctx); err != nil {
+			return fmt.Errorf("failed to run setup: %w", err)
+		}
+	}
+
+	// Detect platform and framework
+	detectedPlatform, err := tr.platformDetector.DetectPlatform()
+	if err != nil {
+		return fmt.Errorf("failed to detect platform: %w", err)
+	}
+
+	framework, err := detectedPlatform.DetectFramework()
+	if err != nil {
+		return fmt.Errorf("failed to detect framework: %w", err)
+	}
+
+	// Read the number of parallel runners
+	runnersData, err := os.ReadFile(ParallelRunnersOutputPath)
+	if err != nil {
+		return fmt.Errorf("failed to read parallel runners from %s: %w", ParallelRunnersOutputPath, err)
+	}
+
+	parallelRunners := 0
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(runnersData)), "%d", &parallelRunners); err != nil {
+		return fmt.Errorf("failed to parse parallel runners count: %w", err)
+	}
+
+	if parallelRunners > 1 {
+		// Read test files from split directory and run in parallel
+		entries, err := os.ReadDir(TestsSplitDir)
+		if err != nil {
+			return fmt.Errorf("failed to read tests split directory %s: %w", TestsSplitDir, err)
+		}
+
+		g, _ := errgroup.WithContext(ctx)
+
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+
+			splitFilePath := filepath.Join(TestsSplitDir, entry.Name())
+			entryName := entry.Name()
+			g.Go(func() error {
+				return tr.runTestsFromFile(framework, splitFilePath, "split file: "+entryName)
+			})
+		}
+
+		if err := g.Wait(); err != nil {
+			return fmt.Errorf("failed to run parallel tests: %w", err)
+		}
+	} else {
+		// Read test files from main output file and run sequentially
+		if err := tr.runTestsFromFile(framework, TestFilesOutputPath, "sequential"); err != nil {
+			return fmt.Errorf("failed to run tests: %w", err)
+		}
+	}
+
+	slog.Debug("Run method completed", "parallelRunners", parallelRunners)
+	return nil
+}
+
+// readTestFilesFromFile reads a file containing test file paths (one per line)
+// and returns them as a slice of strings
+func readTestFilesFromFile(filePath string) ([]string, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	content := strings.TrimSpace(string(data))
+	if content == "" {
+		return []string{}, nil
+	}
+
+	lines := strings.Split(content, "\n")
+	testFiles := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			testFiles = append(testFiles, line)
+		}
+	}
+
+	return testFiles, nil
+}
+
+// runTestsFromFile reads test files from the given file path and runs them using the framework
+func (tr *TestRunner) runTestsFromFile(framework interface{ RunTests([]string) error }, filePath, logLabel string) error {
+	testFiles, err := readTestFilesFromFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to read test files from %s: %w", filePath, err)
+	}
+
+	if len(testFiles) > 0 {
+		slog.Debug("Running tests", "label", logLabel, "testCount", len(testFiles))
+		return framework.RunTests(testFiles)
+	}
+	return nil
 }

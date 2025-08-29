@@ -84,7 +84,7 @@ func (r *RSpec) DiscoverTests() ([]testoptimization.Test, error) {
 func (r *RSpec) RunTests(testFiles []string) error {
 	args := append(TestRunCommand, testFiles...)
 	cmd := exec.Command(CommandEntrypoint, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// cmd.Stdout = os.Stdout
+	// cmd.Stderr = os.Stderr
 	return r.executor.Run(cmd)
 }
