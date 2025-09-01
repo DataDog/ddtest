@@ -66,7 +66,7 @@ func (m *MockFramework) DiscoverTests() ([]testoptimization.Test, error) {
 	return m.Tests, m.Err
 }
 
-func (m *MockFramework) RunTests(testFiles []string) error {
+func (m *MockFramework) RunTests(testFiles []string, envMap map[string]string) error {
 	return m.Err // Return the same error as other methods for consistency
 }
 

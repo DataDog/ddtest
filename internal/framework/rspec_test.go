@@ -241,7 +241,7 @@ func TestRSpec_RunTests(t *testing.T) {
 	}
 
 	rspec := &RSpec{executor: mockExecutor}
-	err := rspec.RunTests(testFiles)
+	err := rspec.RunTests(testFiles, nil)
 
 	if err != nil {
 		t.Fatalf("RunTests failed: %v", err)
@@ -270,4 +270,50 @@ func TestRSpec_RunTests(t *testing.T) {
 	// if capturedCmd.Stderr != os.Stderr {
 	// 	t.Error("expected cmd.Stderr to be set to os.Stderr")
 	// }
+}
+
+func TestRSpec_RunTestsWithEnvMap(t *testing.T) {
+	testFiles := []string{"spec/models/user_spec.rb"}
+	envMap := map[string]string{
+		"RAILS_DB": "my_project_test_1",
+		"TEST_ENV": "rspec",
+	}
+
+	var capturedCmd *exec.Cmd
+	mockExecutor := &mockCommandExecutor{
+		err: nil,
+		onExecution: func(cmd *exec.Cmd) {
+			capturedCmd = cmd
+		},
+	}
+
+	rspec := &RSpec{executor: mockExecutor}
+	err := rspec.RunTests(testFiles, envMap)
+
+	if err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	if capturedCmd == nil {
+		t.Fatal("Expected command to be executed but none was captured")
+	}
+
+	// Verify environment variables are set
+	foundRailsDb := false
+	foundTestEnv := false
+	for _, env := range capturedCmd.Env {
+		if env == "RAILS_DB=my_project_test_1" {
+			foundRailsDb = true
+		}
+		if env == "TEST_ENV=rspec" {
+			foundTestEnv = true
+		}
+	}
+
+	if !foundRailsDb {
+		t.Error("Expected RAILS_DB environment variable to be set")
+	}
+	if !foundTestEnv {
+		t.Error("Expected TEST_ENV environment variable to be set")
+	}
 }

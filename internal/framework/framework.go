@@ -9,5 +9,5 @@ const TestsDiscoveryFilePath = "./.dd/tests-discovery/tests.json"
 type Framework interface {
 	Name() string
 	DiscoverTests() ([]testoptimization.Test, error)
-	RunTests(testFiles []string) error
+	RunTests(testFiles []string, envMap map[string]string) error
 }

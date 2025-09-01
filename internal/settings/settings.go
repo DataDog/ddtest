@@ -14,6 +14,7 @@ type Config struct {
 	Port           int    `mapstructure:"port"`
 	MinParallelism int    `mapstructure:"min_parallelism"`
 	MaxParallelism int    `mapstructure:"max_parallelism"`
+	WorkerEnv      string `mapstructure:"worker_env"`
 }
 
 var (
@@ -40,6 +41,7 @@ func setDefaults() {
 	viper.SetDefault("port", 7890)
 	viper.SetDefault("min_parallelism", 1)
 	viper.SetDefault("max_parallelism", 1)
+	viper.SetDefault("worker_env", "")
 }
 
 func Get() *Config {
@@ -67,4 +69,8 @@ func GetMinParallelism() int {
 
 func GetMaxParallelism() int {
 	return Get().MaxParallelism
+}
+
+func GetWorkerEnv() string {
+	return Get().WorkerEnv
 }

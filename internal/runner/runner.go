@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/datadog-test-runner/internal/ciprovider"
+	"github.com/DataDog/datadog-test-runner/internal/framework"
 	"github.com/DataDog/datadog-test-runner/internal/platform"
 	"github.com/DataDog/datadog-test-runner/internal/settings"
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
@@ -21,6 +22,7 @@ const TestFilesOutputPath = ".dd/test-files.txt"
 const SkippablePercentageOutputPath = ".dd/skippable-percentage.txt"
 const ParallelRunnersOutputPath = ".dd/parallel-runners.txt"
 const TestsSplitDir = ".dd/tests-split"
+const NodeIndexPlaceholder = "{{nodeIndex}}"
 
 type Runner interface {
 	Setup(ctx context.Context) error
@@ -287,6 +289,20 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 		}
 	}
 
+	// Parse worker environment variables if provided in settings
+	workerEnvMap := make(map[string]string)
+	if workerEnv := settings.GetWorkerEnv(); workerEnv != "" {
+		for pair := range strings.SplitSeq(workerEnv, ";") {
+			if parts := strings.SplitN(pair, "=", 2); len(parts) == 2 {
+				key := strings.TrimSpace(parts[0])
+				value := strings.TrimSpace(parts[1])
+				if key != "" {
+					workerEnvMap[key] = value
+				}
+			}
+		}
+	}
+
 	// Detect platform and framework
 	detectedPlatform, err := tr.platformDetector.DetectPlatform()
 	if err != nil {
@@ -318,15 +334,14 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 
 		g, _ := errgroup.WithContext(ctx)
 
-		for _, entry := range entries {
+		for workerIndex, entry := range entries {
 			if entry.IsDir() {
 				continue
 			}
 
 			splitFilePath := filepath.Join(TestsSplitDir, entry.Name())
-			entryName := entry.Name()
 			g.Go(func() error {
-				return tr.runTestsFromFile(framework, splitFilePath, "split file: "+entryName)
+				return tr.runTestsFromFile(framework, splitFilePath, workerEnvMap, workerIndex)
 			})
 		}
 
@@ -335,7 +350,7 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 		}
 	} else {
 		// Read test files from main output file and run sequentially
-		if err := tr.runTestsFromFile(framework, TestFilesOutputPath, "sequential"); err != nil {
+		if err := tr.runTestsFromFile(framework, TestFilesOutputPath, workerEnvMap, 0); err != nil {
 			return fmt.Errorf("failed to run tests: %w", err)
 		}
 	}
@@ -370,15 +385,21 @@ func readTestFilesFromFile(filePath string) ([]string, error) {
 }
 
 // runTestsFromFile reads test files from the given file path and runs them using the framework
-func (tr *TestRunner) runTestsFromFile(framework interface{ RunTests([]string) error }, filePath, logLabel string) error {
+func (tr *TestRunner) runTestsFromFile(framework framework.Framework, filePath string, workerEnvMap map[string]string, workerIndex int) error {
 	testFiles, err := readTestFilesFromFile(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to read test files from %s: %w", filePath, err)
 	}
 
 	if len(testFiles) > 0 {
-		slog.Debug("Running tests", "label", logLabel, "testCount", len(testFiles))
-		return framework.RunTests(testFiles)
+		// Create a copy of the worker env map and replace nodeIndex placeholder
+		processedEnvMap := make(map[string]string)
+		for key, value := range workerEnvMap {
+			processedEnvMap[key] = strings.ReplaceAll(value, NodeIndexPlaceholder, fmt.Sprintf("%d", workerIndex))
+		}
+
+		slog.Debug("Running tests", "testFilesCount", len(testFiles), "workerIndex", workerIndex)
+		return framework.RunTests(testFiles, processedEnvMap)
 	}
 	return nil
 }

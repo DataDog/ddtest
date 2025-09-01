@@ -81,10 +81,17 @@ func (r *RSpec) DiscoverTests() ([]testoptimization.Test, error) {
 	return tests, nil
 }
 
-func (r *RSpec) RunTests(testFiles []string) error {
+func (r *RSpec) RunTests(testFiles []string, envMap map[string]string) error {
 	args := append(TestRunCommand, testFiles...)
 	cmd := exec.Command(CommandEntrypoint, args...)
-	// cmd.Stdout = os.Stdout
-	// cmd.Stderr = os.Stderr
+
+	// Set environment variables from envMap
+	if len(envMap) > 0 {
+		cmd.Env = os.Environ()
+		for key, value := range envMap {
+			cmd.Env = append(cmd.Env, key+"="+value)
+		}
+	}
+
 	return r.executor.Run(cmd)
 }
