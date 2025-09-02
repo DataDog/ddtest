@@ -56,6 +56,12 @@ type MockFramework struct {
 	FrameworkName string
 	Tests         []testoptimization.Test
 	Err           error
+	RunTestsCalls []RunTestsCall
+}
+
+type RunTestsCall struct {
+	TestFiles []string
+	EnvMap    map[string]string
 }
 
 func (m *MockFramework) Name() string {
@@ -67,7 +73,12 @@ func (m *MockFramework) DiscoverTests() ([]testoptimization.Test, error) {
 }
 
 func (m *MockFramework) RunTests(testFiles []string, envMap map[string]string) error {
-	return m.Err // Return the same error as other methods for consistency
+	// Record the call
+	m.RunTestsCalls = append(m.RunTestsCalls, RunTestsCall{
+		TestFiles: slices.Clone(testFiles),
+		EnvMap:    maps.Clone(envMap),
+	})
+	return m.Err
 }
 
 // MockTestOptimizationClient mocks the test optimization client
@@ -1224,4 +1235,473 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 			t.Errorf("Expected 3 total files distributed across runners, got %d", totalFiles)
 		}
 	})
+}
+
+func TestTestRunner_Run_SingleRunner(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	// Setup directory structure and files
+	_ = os.MkdirAll(".dd", 0755)
+
+	// Create test files output with specific test files
+	testFiles := "test/file1_test.rb\ntest/file2_test.rb\n"
+	_ = os.WriteFile(".dd/test-files.txt", []byte(testFiles), 0644)
+	_ = os.WriteFile(".dd/parallel-runners.txt", []byte("1"), 0644)
+
+	// Setup mock framework to track RunTests calls
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{FQN: "test1", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
+			{FQN: "test2", SourceFile: "test/file2_test.rb", SuiteSourceFile: "test/file2_test.rb"},
+		},
+		RunTestsCalls: []RunTestsCall{},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{SkippableTests: map[string]bool{}}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+	// Run the tests
+	err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() should not return error, got: %v", err)
+	}
+
+	// Verify RunTests was called exactly once
+	if len(mockFramework.RunTestsCalls) != 1 {
+		t.Fatalf("Expected RunTests to be called once, got %d calls", len(mockFramework.RunTestsCalls))
+	}
+
+	call := mockFramework.RunTestsCalls[0]
+
+	// Verify correct test files were passed
+	expectedFiles := []string{"test/file1_test.rb", "test/file2_test.rb"}
+	if !slices.Equal(call.TestFiles, expectedFiles) {
+		t.Errorf("Expected test files %v, got %v", expectedFiles, call.TestFiles)
+	}
+
+	// Verify empty env map (no worker env configured)
+	if len(call.EnvMap) != 0 {
+		t.Errorf("Expected empty env map, got %v", call.EnvMap)
+	}
+}
+
+func TestTestRunner_Run_MultipleRunners(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	// Setup directory structure
+	_ = os.MkdirAll(".dd/tests-split", 0755)
+
+	// Create parallel runners file
+	_ = os.WriteFile(".dd/parallel-runners.txt", []byte("3"), 0644)
+
+	// Create split files for each runner
+	_ = os.WriteFile(".dd/tests-split/runner-0", []byte("test/file1_test.rb\n"), 0644)
+	_ = os.WriteFile(".dd/tests-split/runner-1", []byte("test/file2_test.rb\n"), 0644)
+	_ = os.WriteFile(".dd/tests-split/runner-2", []byte("test/file3_test.rb\n"), 0644)
+
+	// Setup mock framework to track all RunTests calls
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		RunTestsCalls: []RunTestsCall{},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+	// Run the tests
+	err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() should not return error, got: %v", err)
+	}
+
+	// Verify RunTests was called exactly 3 times (once per runner)
+	if len(mockFramework.RunTestsCalls) != 3 {
+		t.Fatalf("Expected RunTests to be called 3 times, got %d calls", len(mockFramework.RunTestsCalls))
+	}
+
+	// Collect all test files that were run
+	allRunFiles := make(map[string]bool)
+	for _, call := range mockFramework.RunTestsCalls {
+		// Each call should have exactly one test file
+		if len(call.TestFiles) != 1 {
+			t.Errorf("Expected each RunTests call to have 1 test file, got %d", len(call.TestFiles))
+		}
+		for _, file := range call.TestFiles {
+			allRunFiles[file] = true
+		}
+	}
+
+	// Verify all expected test files were run
+	expectedFiles := map[string]bool{
+		"test/file1_test.rb": true,
+		"test/file2_test.rb": true,
+		"test/file3_test.rb": true,
+	}
+
+	if !maps.Equal(allRunFiles, expectedFiles) {
+		t.Errorf("Expected test files %v, got %v", expectedFiles, allRunFiles)
+	}
+}
+
+func TestTestRunner_Run_WithWorkerEnv(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	// Setup directory structure
+	_ = os.MkdirAll(".dd/tests-split", 0755)
+	_ = os.WriteFile(".dd/parallel-runners.txt", []byte("2"), 0644)
+	_ = os.WriteFile(".dd/tests-split/runner-0", []byte("test/file1_test.rb\n"), 0644)
+	_ = os.WriteFile(".dd/tests-split/runner-1", []byte("test/file2_test.rb\n"), 0644)
+
+	// Set worker environment with nodeIndex placeholder
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV", "NODE_INDEX={{nodeIndex}};BUILD_ID=123")
+	defer func() { _ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV") }()
+
+	// Reinitialize settings to pick up environment variable
+	settings.Init()
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		RunTestsCalls: []RunTestsCall{},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+	err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() should not return error, got: %v", err)
+	}
+
+	// Verify 2 RunTests calls
+	if len(mockFramework.RunTestsCalls) != 2 {
+		t.Fatalf("Expected 2 RunTests calls, got %d", len(mockFramework.RunTestsCalls))
+	}
+
+	// Verify that each worker got the correct nodeIndex
+	nodeIndices := make(map[string]bool)
+	for _, call := range mockFramework.RunTestsCalls {
+		nodeIndex := call.EnvMap["NODE_INDEX"]
+		if nodeIndex == "" {
+			t.Error("Expected NODE_INDEX to be set in env map")
+		}
+		nodeIndices[nodeIndex] = true
+
+		// Verify BUILD_ID is preserved
+		if call.EnvMap["BUILD_ID"] != "123" {
+			t.Errorf("Expected BUILD_ID=123, got %s", call.EnvMap["BUILD_ID"])
+		}
+	}
+
+	// Verify we got node indices 0 and 1
+	expectedIndices := map[string]bool{"0": true, "1": true}
+	if !maps.Equal(nodeIndices, expectedIndices) {
+		t.Errorf("Expected node indices %v, got %v", expectedIndices, nodeIndices)
+	}
+}
+
+func TestTestRunner_Run_SetupCalledWhenNeeded(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	// Don't create parallel-runners.txt - this should trigger Setup
+	_ = os.MkdirAll(".dd", 0755)
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{FQN: "test1", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
+		},
+		RunTestsCalls: []RunTestsCall{},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{SkippableTests: map[string]bool{}}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+	err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() should not return error, got: %v", err)
+	}
+
+	// Verify Setup was called by checking that files were created
+	if _, err := os.Stat(".dd/parallel-runners.txt"); os.IsNotExist(err) {
+		t.Error("Expected parallel-runners.txt to be created by Setup")
+	}
+
+	if _, err := os.Stat(".dd/test-files.txt"); os.IsNotExist(err) {
+		t.Error("Expected test-files.txt to be created by Setup")
+	}
+
+	// Verify RunTests was called
+	if len(mockFramework.RunTestsCalls) != 1 {
+		t.Fatalf("Expected RunTests to be called once, got %d calls", len(mockFramework.RunTestsCalls))
+	}
+}
+
+func TestTestRunner_Run_PlatformDetectionError(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.MkdirAll(".dd", 0755)
+	_ = os.WriteFile(".dd/parallel-runners.txt", []byte("1"), 0644)
+
+	mockPlatformDetector := &MockPlatformDetector{
+		Err: errors.New("platform detection failed"),
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+
+	err := runner.Run(context.Background())
+	if err == nil {
+		t.Error("Run() should return error when platform detection fails")
+	}
+
+	expectedMsg := "failed to detect platform"
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Run() error should contain '%s', got: %v", expectedMsg, err)
+	}
+}
+
+func TestTestRunner_Run_FrameworkDetectionError(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.MkdirAll(".dd", 0755)
+	_ = os.WriteFile(".dd/parallel-runners.txt", []byte("1"), 0644)
+
+	mockPlatform := &MockPlatform{
+		FrameworkErr: errors.New("framework detection failed"),
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+
+	runner := NewWithDependencies(mockPlatformDetector, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+
+	err := runner.Run(context.Background())
+	if err == nil {
+		t.Error("Run() should return error when framework detection fails")
+	}
+
+	expectedMsg := "failed to detect framework"
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Run() error should contain '%s', got: %v", expectedMsg, err)
+	}
+}
+
+func TestTestRunner_Run_ParallelRunnersFileError(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.MkdirAll(".dd", 0755)
+	// Create malformed parallel-runners.txt
+	_ = os.WriteFile(".dd/parallel-runners.txt", []byte("not-a-number"), 0644)
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		RunTestsCalls: []RunTestsCall{},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+
+	runner := NewWithDependencies(mockPlatformDetector, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+
+	err := runner.Run(context.Background())
+	if err == nil {
+		t.Error("Run() should return error when parallel-runners.txt contains invalid data")
+	}
+
+	expectedMsg := "failed to parse parallel runners count"
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Run() error should contain '%s', got: %v", expectedMsg, err)
+	}
+}
+
+func TestTestRunner_Run_TestExecutionError(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.MkdirAll(".dd", 0755)
+	_ = os.WriteFile(".dd/parallel-runners.txt", []byte("1"), 0644)
+	_ = os.WriteFile(".dd/test-files.txt", []byte("test/file1_test.rb\n"), 0644)
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Err:           errors.New("test execution failed"),
+		RunTestsCalls: []RunTestsCall{},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+
+	runner := NewWithDependencies(mockPlatformDetector, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+
+	err := runner.Run(context.Background())
+	if err == nil {
+		t.Error("Run() should return error when test execution fails")
+	}
+
+	expectedMsg := "failed to run tests"
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Run() error should contain '%s', got: %v", expectedMsg, err)
+	}
+}
+
+func TestTestRunner_Run_ParallelTestExecutionError(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.MkdirAll(".dd/tests-split", 0755)
+	_ = os.WriteFile(".dd/parallel-runners.txt", []byte("2"), 0644)
+	_ = os.WriteFile(".dd/tests-split/runner-0", []byte("test/file1_test.rb\n"), 0644)
+	_ = os.WriteFile(".dd/tests-split/runner-1", []byte("test/file2_test.rb\n"), 0644)
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Err:           errors.New("test execution failed"),
+		RunTestsCalls: []RunTestsCall{},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+
+	runner := NewWithDependencies(mockPlatformDetector, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+
+	err := runner.Run(context.Background())
+	if err == nil {
+		t.Error("Run() should return error when parallel test execution fails")
+	}
+
+	expectedMsg := "failed to run parallel tests"
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Run() error should contain '%s', got: %v", expectedMsg, err)
+	}
+}
+
+func TestTestRunner_Run_EmptyTestFiles(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.MkdirAll(".dd", 0755)
+	_ = os.WriteFile(".dd/parallel-runners.txt", []byte("1"), 0644)
+	_ = os.WriteFile(".dd/test-files.txt", []byte(""), 0644) // Empty test files
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		RunTestsCalls: []RunTestsCall{},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+
+	runner := NewWithDependencies(mockPlatformDetector, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+
+	err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() should not return error for empty test files, got: %v", err)
+	}
+
+	// Verify RunTests was NOT called since there are no test files
+	if len(mockFramework.RunTestsCalls) != 0 {
+		t.Errorf("Expected RunTests not to be called for empty test files, got %d calls", len(mockFramework.RunTestsCalls))
+	}
+}
+
+func TestTestRunner_Run_MissingSplitDirectory(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.MkdirAll(".dd", 0755)
+	_ = os.WriteFile(".dd/parallel-runners.txt", []byte("2"), 0644)
+	// Don't create tests-split directory
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Framework:    &MockFramework{FrameworkName: "rspec", RunTestsCalls: []RunTestsCall{}},
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+
+	runner := NewWithDependencies(mockPlatformDetector, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+
+	err := runner.Run(context.Background())
+	if err == nil {
+		t.Error("Run() should return error when tests-split directory is missing")
+	}
+
+	expectedMsg := "failed to read tests split directory"
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Run() error should contain '%s', got: %v", expectedMsg, err)
+	}
 }
