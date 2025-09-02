@@ -325,7 +325,19 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to parse parallel runners count: %w", err)
 	}
 
-	if parallelRunners > 1 {
+	ciNode := settings.GetCiNode()
+	if ciNode >= 0 {
+		// Run only the specific ci-node runner file if ci-node is specified
+		runnerFilePath := fmt.Sprintf("%s/runner-%d", TestsSplitDir, ciNode)
+		if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
+			return fmt.Errorf("runner file for ci-node %d does not exist: %s", ciNode, runnerFilePath)
+		}
+
+		slog.Debug("Running tests for specific CI node", "ciNode", ciNode, "filePath", runnerFilePath)
+		if err := tr.runTestsFromFile(framework, runnerFilePath, workerEnvMap, ciNode); err != nil {
+			return fmt.Errorf("failed to run tests for ci-node %d: %w", ciNode, err)
+		}
+	} else if parallelRunners > 1 {
 		// Read test files from split directory and run in parallel
 		entries, err := os.ReadDir(TestsSplitDir)
 		if err != nil {

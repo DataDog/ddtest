@@ -15,6 +15,7 @@ type Config struct {
 	MinParallelism int    `mapstructure:"min_parallelism"`
 	MaxParallelism int    `mapstructure:"max_parallelism"`
 	WorkerEnv      string `mapstructure:"worker_env"`
+	CiNode         int    `mapstructure:"ci_node"`
 }
 
 var (
@@ -42,6 +43,7 @@ func setDefaults() {
 	viper.SetDefault("min_parallelism", 1)
 	viper.SetDefault("max_parallelism", 1)
 	viper.SetDefault("worker_env", "")
+	viper.SetDefault("ci_node", -1)
 }
 
 func Get() *Config {
@@ -73,4 +75,8 @@ func GetMaxParallelism() int {
 
 func GetWorkerEnv() string {
 	return Get().WorkerEnv
+}
+
+func GetCiNode() int {
+	return Get().CiNode
 }

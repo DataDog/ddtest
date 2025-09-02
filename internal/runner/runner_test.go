@@ -1705,3 +1705,207 @@ func TestTestRunner_Run_MissingSplitDirectory(t *testing.T) {
 		t.Errorf("Run() error should contain '%s', got: %v", expectedMsg, err)
 	}
 }
+
+func TestTestRunner_Run_WithCiNode_Success(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	// Setup directory structure
+	_ = os.MkdirAll(".dd/tests-split", 0755)
+	_ = os.WriteFile(".dd/parallel-runners.txt", []byte("3"), 0644)
+
+	// Create split files for multiple runners
+	_ = os.WriteFile(".dd/tests-split/runner-0", []byte("test/file1_test.rb\n"), 0644)
+	_ = os.WriteFile(".dd/tests-split/runner-1", []byte("test/file2_test.rb\ntest/file3_test.rb\n"), 0644)
+	_ = os.WriteFile(".dd/tests-split/runner-2", []byte("test/file4_test.rb\n"), 0644)
+
+	// Set ci-node environment variable (0-based indexing)
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE", "1")
+	defer func() { _ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE") }()
+
+	// Reinitialize settings to pick up environment variable
+	settings.Init()
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		RunTestsCalls: []RunTestsCall{},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+	err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() should not return error, got: %v", err)
+	}
+
+	// Verify RunTests was called exactly once (for the specific ci-node)
+	if len(mockFramework.RunTestsCalls) != 1 {
+		t.Fatalf("Expected RunTests to be called once for ci-node, got %d calls", len(mockFramework.RunTestsCalls))
+	}
+
+	call := mockFramework.RunTestsCalls[0]
+
+	// Verify correct test files were passed (from runner-1, since ci-node=1)
+	expectedFiles := []string{"test/file2_test.rb", "test/file3_test.rb"}
+	if !slices.Equal(call.TestFiles, expectedFiles) {
+		t.Errorf("Expected test files %v for ci-node=1, got %v", expectedFiles, call.TestFiles)
+	}
+}
+
+func TestTestRunner_Run_WithCiNode_FileNotFound(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	// Setup directory structure with fewer runners than requested ci-node
+	_ = os.MkdirAll(".dd/tests-split", 0755)
+	_ = os.WriteFile(".dd/parallel-runners.txt", []byte("2"), 0644)
+	_ = os.WriteFile(".dd/tests-split/runner-0", []byte("test/file1_test.rb\n"), 0644)
+	_ = os.WriteFile(".dd/tests-split/runner-1", []byte("test/file2_test.rb\n"), 0644)
+	// Note: runner-2 doesn't exist, but ci-node=2 will try to access it
+
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE", "2")
+	defer func() { _ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE") }()
+
+	// Reinitialize settings to pick up environment variable
+	settings.Init()
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Framework:    &MockFramework{FrameworkName: "rspec", RunTestsCalls: []RunTestsCall{}},
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+
+	runner := NewWithDependencies(mockPlatformDetector, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+
+	err := runner.Run(context.Background())
+	if err == nil {
+		t.Error("Run() should return error when ci-node runner file doesn't exist")
+	}
+
+	expectedMsg := "runner file for ci-node 2 does not exist"
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Run() error should contain '%s', got: %v", expectedMsg, err)
+	}
+}
+
+func TestTestRunner_Run_WithCiNode_ZeroValue(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	// Setup directory structure for multiple runners
+	_ = os.MkdirAll(".dd/tests-split", 0755)
+	_ = os.WriteFile(".dd/parallel-runners.txt", []byte("2"), 0644)
+	_ = os.WriteFile(".dd/tests-split/runner-0", []byte("test/file1_test.rb\n"), 0644)
+	_ = os.WriteFile(".dd/tests-split/runner-1", []byte("test/file2_test.rb\n"), 0644)
+
+	// Set ci-node to -1 (should use normal parallel behavior)
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE", "-1")
+	defer func() { _ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE") }()
+
+	// Reinitialize settings to pick up environment variable
+	settings.Init()
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		RunTestsCalls: []RunTestsCall{},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+
+	runner := NewWithDependencies(mockPlatformDetector, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+
+	err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() should not return error, got: %v", err)
+	}
+
+	// Verify RunTests was called twice (normal parallel behavior, not ci-node)
+	if len(mockFramework.RunTestsCalls) != 2 {
+		t.Fatalf("Expected RunTests to be called twice for normal parallel behavior, got %d calls", len(mockFramework.RunTestsCalls))
+	}
+}
+
+func TestTestRunner_Run_WithCiNode_WithWorkerEnv(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	// Setup directory structure
+	_ = os.MkdirAll(".dd/tests-split", 0755)
+	_ = os.WriteFile(".dd/parallel-runners.txt", []byte("2"), 0644)
+	_ = os.WriteFile(".dd/tests-split/runner-0", []byte("test/file1_test.rb\n"), 0644)
+	_ = os.WriteFile(".dd/tests-split/runner-1", []byte("test/file2_test.rb\n"), 0644)
+
+	// Set both ci-node and worker environment
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE", "0")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV", "NODE_INDEX={{nodeIndex}};CI_NODE=true")
+	defer func() {
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV")
+	}()
+
+	// Reinitialize settings to pick up environment variables
+	settings.Init()
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		RunTestsCalls: []RunTestsCall{},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+
+	runner := NewWithDependencies(mockPlatformDetector, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+
+	err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() should not return error, got: %v", err)
+	}
+
+	// Verify RunTests was called exactly once for the ci-node
+	if len(mockFramework.RunTestsCalls) != 1 {
+		t.Fatalf("Expected RunTests to be called once for ci-node, got %d calls", len(mockFramework.RunTestsCalls))
+	}
+
+	call := mockFramework.RunTestsCalls[0]
+
+	// Verify test files from runner-0 (ci-node=0)
+	expectedFiles := []string{"test/file1_test.rb"}
+	if !slices.Equal(call.TestFiles, expectedFiles) {
+		t.Errorf("Expected test files %v for ci-node=0, got %v", expectedFiles, call.TestFiles)
+	}
+
+	// Verify worker environment was processed correctly with ci-node index
+	if call.EnvMap["NODE_INDEX"] != "0" {
+		t.Errorf("Expected NODE_INDEX=0 for ci-node=0, got %s", call.EnvMap["NODE_INDEX"])
+	}
+
+	if call.EnvMap["CI_NODE"] != "true" {
+		t.Errorf("Expected CI_NODE=true, got %s", call.EnvMap["CI_NODE"])
+	}
+}
