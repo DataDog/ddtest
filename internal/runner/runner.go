@@ -165,7 +165,7 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 		slog.Debug("No CI provider detected or CI provider detection failed", "error", err)
 	}
 
-	// Split test files for runners when there's more than one runner
+	// Split test files for runners
 	if parallelRunners > 1 {
 		// Distribute test files across parallel runners using bin packing
 		distribution := DistributeTestFiles(tr.testFiles, parallelRunners)
@@ -186,6 +186,21 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 			if err := os.WriteFile(runnerFilePath, []byte(runnerContent), 0644); err != nil {
 				return fmt.Errorf("failed to write runner-%d files to %s: %w", i, runnerFilePath, err)
 			}
+		}
+	} else {
+		// For single runner, copy test-files.txt to runner-0
+		if err := os.MkdirAll(TestsSplitDir, 0755); err != nil {
+			return fmt.Errorf("failed to create tests-split directory: %w", err)
+		}
+
+		runnerFilePath := fmt.Sprintf("%s/runner-0", TestsSplitDir)
+		testFilesData, err := os.ReadFile(TestFilesOutputPath)
+		if err != nil {
+			return fmt.Errorf("failed to read test files from %s: %w", TestFilesOutputPath, err)
+		}
+
+		if err := os.WriteFile(runnerFilePath, testFilesData, 0644); err != nil {
+			return fmt.Errorf("failed to copy test files to %s: %w", runnerFilePath, err)
 		}
 	}
 

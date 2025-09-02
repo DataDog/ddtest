@@ -1091,7 +1091,7 @@ func TestDistributeTestFiles(t *testing.T) {
 }
 
 func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
-	t.Run("single runner - no split files created", func(t *testing.T) {
+	t.Run("single runner - copy test-files.txt to runner-0", func(t *testing.T) {
 		// Create a temporary directory for test output
 		tempDir := t.TempDir()
 
@@ -1108,6 +1108,7 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 			FrameworkName: "rspec",
 			Tests: []testoptimization.Test{
 				{FQN: "TestSuite1.test1", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
+				{FQN: "TestSuite2.test2", SourceFile: "test/file2_test.rb", SuiteSourceFile: "test/file2_test.rb"},
 			},
 		}
 
@@ -1130,9 +1131,37 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 			t.Fatalf("Setup() should not return error, got: %v", err)
 		}
 
-		// Verify that tests-split directory was NOT created (since parallelRunners = 1)
-		if _, err := os.Stat(".dd/tests-split"); !os.IsNotExist(err) {
-			t.Error("Expected .dd/tests-split directory NOT to be created when parallelRunners = 1")
+		// Verify that tests-split directory was created
+		if _, err := os.Stat(".dd/tests-split"); os.IsNotExist(err) {
+			t.Error("Expected .dd/tests-split directory to be created when parallelRunners = 1")
+		}
+
+		// Verify that runner-0 file was created
+		runnerFilePath := ".dd/tests-split/runner-0"
+		if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
+			t.Error("Expected runner-0 file to be created when parallelRunners = 1")
+		}
+
+		// Verify that runner-0 contains the same content as test-files.txt
+		testFilesContent, err := os.ReadFile(".dd/test-files.txt")
+		if err != nil {
+			t.Fatalf("Failed to read test-files.txt: %v", err)
+		}
+
+		runnerContent, err := os.ReadFile(runnerFilePath)
+		if err != nil {
+			t.Fatalf("Failed to read runner-0 file: %v", err)
+		}
+
+		if string(testFilesContent) != string(runnerContent) {
+			t.Errorf("Expected runner-0 content to match test-files.txt content.\ntest-files.txt: %q\nrunner-0: %q",
+				string(testFilesContent), string(runnerContent))
+		}
+
+		// Verify the content contains the expected test files
+		expectedContent := "test/file1_test.rb\ntest/file2_test.rb\n"
+		if string(runnerContent) != expectedContent {
+			t.Errorf("Expected runner-0 content %q, got %q", expectedContent, string(runnerContent))
 		}
 	})
 
