@@ -9,18 +9,15 @@ import (
 	"strings"
 
 	"github.com/DataDog/datadog-test-runner/internal/ciprovider"
-	"github.com/DataDog/datadog-test-runner/internal/framework"
 	"github.com/DataDog/datadog-test-runner/internal/platform"
 	"github.com/DataDog/datadog-test-runner/internal/settings"
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
-	"golang.org/x/sync/errgroup"
 )
 
 const TestFilesOutputPath = ".dd/test-files.txt"
 const SkippablePercentageOutputPath = ".dd/skippable-percentage.txt"
 const ParallelRunnersOutputPath = ".dd/parallel-runners.txt"
 const TestsSplitDir = ".dd/tests-split"
-const NodeIndexPlaceholder = "{{nodeIndex}}"
 
 type Runner interface {
 	Setup(ctx context.Context) error
@@ -191,91 +188,10 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 
 	ciNode := settings.GetCiNode()
 	if ciNode >= 0 {
-		// Run only the specific ci-node runner file if ci-node is specified
-		runnerFilePath := fmt.Sprintf("%s/runner-%d", TestsSplitDir, ciNode)
-		if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
-			return fmt.Errorf("runner file for ci-node %d does not exist: %s", ciNode, runnerFilePath)
-		}
-
-		slog.Debug("Running tests for specific CI node", "ciNode", ciNode, "filePath", runnerFilePath)
-		if err := tr.runTestsFromFile(framework, runnerFilePath, workerEnvMap, ciNode); err != nil {
-			return fmt.Errorf("failed to run tests for ci-node %d: %w", ciNode, err)
-		}
+		return runCINodeTests(framework, workerEnvMap, ciNode)
 	} else if parallelRunners > 1 {
-		// Read test files from split directory and run in parallel
-		entries, err := os.ReadDir(TestsSplitDir)
-		if err != nil {
-			return fmt.Errorf("failed to read tests split directory %s: %w", TestsSplitDir, err)
-		}
-
-		g, _ := errgroup.WithContext(ctx)
-
-		for workerIndex, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-
-			splitFilePath := filepath.Join(TestsSplitDir, entry.Name())
-			g.Go(func() error {
-				return tr.runTestsFromFile(framework, splitFilePath, workerEnvMap, workerIndex)
-			})
-		}
-
-		if err := g.Wait(); err != nil {
-			return fmt.Errorf("failed to run parallel tests: %w", err)
-		}
+		return runParallelTests(ctx, framework, workerEnvMap)
 	} else {
-		// Read test files from main output file and run sequentially
-		if err := tr.runTestsFromFile(framework, TestFilesOutputPath, workerEnvMap, 0); err != nil {
-			return fmt.Errorf("failed to run tests: %w", err)
-		}
+		return runSequentialTests(framework, workerEnvMap)
 	}
-
-	slog.Debug("Run method completed", "parallelRunners", parallelRunners)
-	return nil
-}
-
-// readTestFilesFromFile reads a file containing test file paths (one per line)
-// and returns them as a slice of strings
-func readTestFilesFromFile(filePath string) ([]string, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, err
-	}
-
-	content := strings.TrimSpace(string(data))
-	if content == "" {
-		return []string{}, nil
-	}
-
-	lines := strings.Split(content, "\n")
-	testFiles := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			testFiles = append(testFiles, line)
-		}
-	}
-
-	return testFiles, nil
-}
-
-// runTestsFromFile reads test files from the given file path and runs them using the framework
-func (tr *TestRunner) runTestsFromFile(framework framework.Framework, filePath string, workerEnvMap map[string]string, workerIndex int) error {
-	testFiles, err := readTestFilesFromFile(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to read test files from %s: %w", filePath, err)
-	}
-
-	if len(testFiles) > 0 {
-		// Create a copy of the worker env map and replace nodeIndex placeholder
-		processedEnvMap := make(map[string]string)
-		for key, value := range workerEnvMap {
-			processedEnvMap[key] = strings.ReplaceAll(value, NodeIndexPlaceholder, fmt.Sprintf("%d", workerIndex))
-		}
-
-		slog.Debug("Running tests", "testFilesCount", len(testFiles), "workerIndex", workerIndex)
-		return framework.RunTests(testFiles, processedEnvMap)
-	}
-	return nil
 }
