@@ -264,7 +264,7 @@ func TestTestRunner_PrepareTestOptimization_EmptyTests(t *testing.T) {
 	}
 
 	// Division by zero should be handled gracefully
-	if runner.skippablePercentage != 0.0 && runner.skippablePercentage == runner.skippablePercentage { // NaN != NaN
+	if runner.skippablePercentage != 0.0 {
 		t.Logf("Skippable percentage for empty tests: %f", runner.skippablePercentage)
 	}
 }

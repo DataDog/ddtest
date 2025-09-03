@@ -262,14 +262,6 @@ func TestRSpec_RunTests(t *testing.T) {
 			t.Errorf("expected arg[%d] to be %q, got %q", i, expected, capturedCmd.Args[i])
 		}
 	}
-
-	// Verify that stdout and stderr are set correctly
-	// if capturedCmd.Stdout != os.Stdout {
-	// 	t.Error("expected cmd.Stdout to be set to os.Stdout")
-	// }
-	// if capturedCmd.Stderr != os.Stderr {
-	// 	t.Error("expected cmd.Stderr to be set to os.Stderr")
-	// }
 }
 
 func TestRSpec_RunTestsWithEnvMap(t *testing.T) {
