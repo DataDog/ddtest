@@ -11,7 +11,8 @@ import (
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
 )
 
-var CommandEntrypoint = "bundle"
+const CommandEntrypoint = "bundle"
+
 var DiscoveryCommand = []string{"exec", "rspec", "--format", "progress", "--dry-run"}
 var TestRunCommand = []string{"exec", "rspec", "--format", "progress"}
 
@@ -30,6 +31,8 @@ func (r *RSpec) Name() string {
 }
 
 func (r *RSpec) createDiscoveryCommand() *exec.Cmd {
+	// this is a constant, no
+	// no-dd-sa:go-security/command-injection
 	cmd := exec.Command(CommandEntrypoint, DiscoveryCommand...)
 	cmd.Env = append(
 		os.Environ(),
