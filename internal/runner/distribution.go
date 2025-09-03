@@ -1,6 +1,11 @@
 package runner
 
-import "sort"
+import (
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+)
 
 // DistributeTestFiles distributes test files across parallel runners using bin packing algorithm
 func DistributeTestFiles(testFiles map[string]int, parallelRunners int) [][]string {
@@ -60,4 +65,45 @@ func DistributeTestFiles(testFiles map[string]int, parallelRunners int) [][]stri
 	}
 
 	return result
+}
+
+// CreateTestSplits creates test split files for parallel runners
+// For multiple runners: distributes files using bin packing and writes to separate runner files
+// For single runner: copies test-files.txt content to runner-0
+func CreateTestSplits(testFiles map[string]int, parallelRunners int, testFilesOutputPath string) error {
+	// Create tests-split directory
+	if err := os.MkdirAll(TestsSplitDir, 0755); err != nil {
+		return fmt.Errorf("failed to create tests-split directory: %w", err)
+	}
+
+	if parallelRunners > 1 {
+		// Distribute test files across parallel runners using bin packing
+		distribution := DistributeTestFiles(testFiles, parallelRunners)
+
+		// Save each runner's test files to separate files
+		for i, runnerFiles := range distribution {
+			runnerContent := strings.Join(runnerFiles, "\n")
+			if len(runnerFiles) > 0 {
+				runnerContent += "\n"
+			}
+
+			runnerFilePath := fmt.Sprintf("%s/runner-%d", TestsSplitDir, i)
+			if err := os.WriteFile(runnerFilePath, []byte(runnerContent), 0644); err != nil {
+				return fmt.Errorf("failed to write runner-%d files to %s: %w", i, runnerFilePath, err)
+			}
+		}
+	} else {
+		// For single runner, copy test-files.txt to runner-0
+		runnerFilePath := fmt.Sprintf("%s/runner-0", TestsSplitDir)
+		testFilesData, err := os.ReadFile(testFilesOutputPath)
+		if err != nil {
+			return fmt.Errorf("failed to read test files from %s: %w", testFilesOutputPath, err)
+		}
+
+		if err := os.WriteFile(runnerFilePath, testFilesData, 0644); err != nil {
+			return fmt.Errorf("failed to copy test files to %s: %w", runnerFilePath, err)
+		}
+	}
+
+	return nil
 }

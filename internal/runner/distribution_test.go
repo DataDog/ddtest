@@ -1,7 +1,10 @@
 package runner
 
 import (
+	"fmt"
+	"os"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -234,6 +237,148 @@ func TestDistributeTestFiles(t *testing.T) {
 					t.Errorf("Runner %d missing file %s in second result", i, file)
 				}
 			}
+		}
+	})
+}
+
+func TestCreateTestSplits(t *testing.T) {
+	t.Run("single runner - copies test-files.txt to runner-0", func(t *testing.T) {
+		tempDir := t.TempDir()
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		_ = os.Chdir(tempDir)
+
+		// Create test-files.txt with content
+		_ = os.MkdirAll(".dd", 0755)
+		testContent := "test/file1_test.rb\ntest/file2_test.rb\n"
+		_ = os.WriteFile(".dd/test-files.txt", []byte(testContent), 0644)
+
+		testFiles := map[string]int{
+			"test/file1_test.rb": 2,
+			"test/file2_test.rb": 1,
+		}
+
+		err := CreateTestSplits(testFiles, 1, ".dd/test-files.txt")
+		if err != nil {
+			t.Fatalf("CreateTestSplits() should not return error, got: %v", err)
+		}
+
+		// Verify tests-split directory was created
+		if _, err := os.Stat(".dd/tests-split"); os.IsNotExist(err) {
+			t.Error("Expected .dd/tests-split directory to be created")
+		}
+
+		// Verify runner-0 file was created
+		runnerFilePath := ".dd/tests-split/runner-0"
+		if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
+			t.Error("Expected runner-0 file to be created")
+		}
+
+		// Verify content matches test-files.txt
+		runnerContent, err := os.ReadFile(runnerFilePath)
+		if err != nil {
+			t.Fatalf("Failed to read runner-0 file: %v", err)
+		}
+
+		if string(runnerContent) != testContent {
+			t.Errorf("Expected runner-0 content %q, got %q", testContent, string(runnerContent))
+		}
+	})
+
+	t.Run("multiple runners - creates distributed split files", func(t *testing.T) {
+		tempDir := t.TempDir()
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		_ = os.Chdir(tempDir)
+
+		testFiles := map[string]int{
+			"test/file1_test.rb": 10, // Largest file
+			"test/file2_test.rb": 5,
+			"test/file3_test.rb": 3,
+		}
+
+		err := CreateTestSplits(testFiles, 2, ".dd/test-files.txt")
+		if err != nil {
+			t.Fatalf("CreateTestSplits() should not return error, got: %v", err)
+		}
+
+		// Verify tests-split directory was created
+		if _, err := os.Stat(".dd/tests-split"); os.IsNotExist(err) {
+			t.Error("Expected .dd/tests-split directory to be created")
+		}
+
+		// Verify both runner files were created
+		for i := 0; i < 2; i++ {
+			runnerFilePath := fmt.Sprintf(".dd/tests-split/runner-%d", i)
+			if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
+				t.Errorf("Expected runner-%d file to be created", i)
+			}
+		}
+
+		// Verify content distribution
+		// With bin packing: runner-0 gets file1 (10), runner-1 gets file2+file3 (8)
+		runner0Content, _ := os.ReadFile(".dd/tests-split/runner-0")
+		runner1Content, _ := os.ReadFile(".dd/tests-split/runner-1")
+
+		runner0Files := strings.Fields(strings.TrimSpace(string(runner0Content)))
+		runner1Files := strings.Fields(strings.TrimSpace(string(runner1Content)))
+
+		// Verify all files are distributed
+		allFiles := append(runner0Files, runner1Files...)
+		expectedFiles := []string{"test/file1_test.rb", "test/file2_test.rb", "test/file3_test.rb"}
+
+		if len(allFiles) != 3 {
+			t.Errorf("Expected 3 total files distributed, got %d", len(allFiles))
+		}
+
+		for _, expected := range expectedFiles {
+			if !slices.Contains(allFiles, expected) {
+				t.Errorf("Expected file %s to be in distribution, but not found", expected)
+			}
+		}
+	})
+
+	t.Run("empty test files", func(t *testing.T) {
+		tempDir := t.TempDir()
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		_ = os.Chdir(tempDir)
+
+		// Create empty test-files.txt
+		_ = os.MkdirAll(".dd", 0755)
+		_ = os.WriteFile(".dd/test-files.txt", []byte(""), 0644)
+
+		err := CreateTestSplits(map[string]int{}, 2, ".dd/test-files.txt")
+		if err != nil {
+			t.Fatalf("CreateTestSplits() should not return error for empty files, got: %v", err)
+		}
+
+		// Verify runner files are created (even if empty)
+		for i := 0; i < 2; i++ {
+			runnerFilePath := fmt.Sprintf(".dd/tests-split/runner-%d", i)
+			if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
+				t.Errorf("Expected runner-%d file to be created", i)
+			}
+		}
+	})
+
+	t.Run("test-files.txt read error for single runner", func(t *testing.T) {
+		tempDir := t.TempDir()
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		_ = os.Chdir(tempDir)
+
+		// Don't create test-files.txt
+		testFiles := map[string]int{"test/file1_test.rb": 1}
+
+		err := CreateTestSplits(testFiles, 1, ".dd/test-files.txt")
+		if err == nil {
+			t.Error("CreateTestSplits() should return error when test-files.txt doesn't exist")
+		}
+
+		expectedMsg := "failed to read test files from .dd/test-files.txt"
+		if !strings.Contains(err.Error(), expectedMsg) {
+			t.Errorf("Error should contain '%s', got: %v", expectedMsg, err)
 		}
 	})
 }

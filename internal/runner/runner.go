@@ -100,42 +100,8 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 	}
 
 	// Split test files for runners
-	if parallelRunners > 1 {
-		// Distribute test files across parallel runners using bin packing
-		distribution := DistributeTestFiles(tr.testFiles, parallelRunners)
-
-		// Create tests-split directory
-		if err := os.MkdirAll(TestsSplitDir, 0755); err != nil {
-			return fmt.Errorf("failed to create tests-split directory: %w", err)
-		}
-
-		// Save each runner's test files to separate files
-		for i, runnerFiles := range distribution {
-			runnerContent := strings.Join(runnerFiles, "\n")
-			if len(runnerFiles) > 0 {
-				runnerContent += "\n"
-			}
-
-			runnerFilePath := fmt.Sprintf("%s/runner-%d", TestsSplitDir, i)
-			if err := os.WriteFile(runnerFilePath, []byte(runnerContent), 0644); err != nil {
-				return fmt.Errorf("failed to write runner-%d files to %s: %w", i, runnerFilePath, err)
-			}
-		}
-	} else {
-		// For single runner, copy test-files.txt to runner-0
-		if err := os.MkdirAll(TestsSplitDir, 0755); err != nil {
-			return fmt.Errorf("failed to create tests-split directory: %w", err)
-		}
-
-		runnerFilePath := fmt.Sprintf("%s/runner-0", TestsSplitDir)
-		testFilesData, err := os.ReadFile(TestFilesOutputPath)
-		if err != nil {
-			return fmt.Errorf("failed to read test files from %s: %w", TestFilesOutputPath, err)
-		}
-
-		if err := os.WriteFile(runnerFilePath, testFilesData, 0644); err != nil {
-			return fmt.Errorf("failed to copy test files to %s: %w", runnerFilePath, err)
-		}
+	if err := CreateTestSplits(tr.testFiles, parallelRunners, TestFilesOutputPath); err != nil {
+		return fmt.Errorf("failed to create test splits: %w", err)
 	}
 
 	return nil
