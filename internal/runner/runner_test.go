@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/DataDog/datadog-test-runner/internal/ciprovider"
@@ -57,6 +58,7 @@ type MockFramework struct {
 	Tests         []testoptimization.Test
 	Err           error
 	RunTestsCalls []RunTestsCall
+	mu            sync.Mutex
 }
 
 type RunTestsCall struct {
@@ -74,11 +76,25 @@ func (m *MockFramework) DiscoverTests() ([]testoptimization.Test, error) {
 
 func (m *MockFramework) RunTests(testFiles []string, envMap map[string]string) error {
 	// Record the call
+	m.mu.Lock()
 	m.RunTestsCalls = append(m.RunTestsCalls, RunTestsCall{
 		TestFiles: slices.Clone(testFiles),
 		EnvMap:    maps.Clone(envMap),
 	})
+	m.mu.Unlock()
 	return m.Err
+}
+
+func (m *MockFramework) GetRunTestsCallsCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.RunTestsCalls)
+}
+
+func (m *MockFramework) GetRunTestsCalls() []RunTestsCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return slices.Clone(m.RunTestsCalls)
 }
 
 // MockTestOptimizationClient mocks the test optimization client

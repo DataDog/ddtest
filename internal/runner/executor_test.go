@@ -29,11 +29,12 @@ func TestRunCINodeTests_Success(t *testing.T) {
 	}
 
 	// Verify RunTests was called exactly once
-	if len(mockFramework.RunTestsCalls) != 1 {
-		t.Fatalf("Expected RunTests to be called once, got %d calls", len(mockFramework.RunTestsCalls))
+	if mockFramework.GetRunTestsCallsCount() != 1 {
+		t.Fatalf("Expected RunTests to be called once, got %d calls", mockFramework.GetRunTestsCallsCount())
 	}
 
-	call := mockFramework.RunTestsCalls[0]
+	calls := mockFramework.GetRunTestsCalls()
+	call := calls[0]
 	expectedFiles := []string{"test/file2_test.rb", "test/file3_test.rb"}
 	if !slices.Equal(call.TestFiles, expectedFiles) {
 		t.Errorf("Expected test files %v for ci-node=1, got %v", expectedFiles, call.TestFiles)
@@ -84,8 +85,8 @@ func TestRunParallelTests_Success(t *testing.T) {
 	}
 
 	// Verify RunTests was called twice
-	if len(mockFramework.RunTestsCalls) != 2 {
-		t.Fatalf("Expected RunTests to be called twice, got %d calls", len(mockFramework.RunTestsCalls))
+	if mockFramework.GetRunTestsCallsCount() != 2 {
+		t.Fatalf("Expected RunTests to be called twice, got %d calls", mockFramework.GetRunTestsCallsCount())
 	}
 }
 
@@ -131,11 +132,12 @@ func TestRunSequentialTests_Success(t *testing.T) {
 	}
 
 	// Verify RunTests was called exactly once
-	if len(mockFramework.RunTestsCalls) != 1 {
-		t.Fatalf("Expected RunTests to be called once, got %d calls", len(mockFramework.RunTestsCalls))
+	if mockFramework.GetRunTestsCallsCount() != 1 {
+		t.Fatalf("Expected RunTests to be called once, got %d calls", mockFramework.GetRunTestsCallsCount())
 	}
 
-	call := mockFramework.RunTestsCalls[0]
+	calls := mockFramework.GetRunTestsCalls()
+	call := calls[0]
 	expectedFiles := []string{"test/file1_test.rb", "test/file2_test.rb"}
 	if !slices.Equal(call.TestFiles, expectedFiles) {
 		t.Errorf("Expected test files %v, got %v", expectedFiles, call.TestFiles)
@@ -168,11 +170,12 @@ func TestRunTestsFromFile_WithWorkerEnv(t *testing.T) {
 	}
 
 	// Verify RunTests was called
-	if len(mockFramework.RunTestsCalls) != 1 {
-		t.Fatalf("Expected RunTests to be called once, got %d calls", len(mockFramework.RunTestsCalls))
+	if mockFramework.GetRunTestsCallsCount() != 1 {
+		t.Fatalf("Expected RunTests to be called once, got %d calls", mockFramework.GetRunTestsCallsCount())
 	}
 
-	call := mockFramework.RunTestsCalls[0]
+	calls := mockFramework.GetRunTestsCalls()
+	call := calls[0]
 
 	// Verify nodeIndex placeholder was replaced
 	if call.EnvMap["NODE_INDEX"] != "5" {
