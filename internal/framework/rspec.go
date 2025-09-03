@@ -86,6 +86,8 @@ func (r *RSpec) DiscoverTests() ([]testoptimization.Test, error) {
 
 func (r *RSpec) RunTests(testFiles []string, envMap map[string]string) error {
 	args := append(TestRunCommand, testFiles...)
+
+	// no-dd-sa:go-security/command-injection
 	cmd := exec.Command(CommandEntrypoint, args...)
 
 	// Set environment variables from envMap
