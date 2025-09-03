@@ -261,3 +261,92 @@ func TestGetCiNode(t *testing.T) {
 		t.Errorf("expected ci_node to be 7, got %d", ciNode)
 	}
 }
+
+func TestGetWorkerEnvMap(t *testing.T) {
+	t.Run("empty worker env", func(t *testing.T) {
+		config = &Config{WorkerEnv: ""}
+		result := GetWorkerEnvMap()
+
+		if len(result) != 0 {
+			t.Errorf("expected empty map for empty worker_env, got %v", result)
+		}
+	})
+
+	t.Run("single key-value pair", func(t *testing.T) {
+		config = &Config{WorkerEnv: "NODE_INDEX={{nodeIndex}}"}
+		result := GetWorkerEnvMap()
+
+		expected := map[string]string{"NODE_INDEX": "{{nodeIndex}}"}
+		if len(result) != 1 || result["NODE_INDEX"] != "{{nodeIndex}}" {
+			t.Errorf("expected %v, got %v", expected, result)
+		}
+	})
+
+	t.Run("multiple key-value pairs", func(t *testing.T) {
+		config = &Config{WorkerEnv: "NODE_INDEX={{nodeIndex}};BUILD_ID=123;ENV=test"}
+		result := GetWorkerEnvMap()
+
+		expected := map[string]string{
+			"NODE_INDEX": "{{nodeIndex}}",
+			"BUILD_ID":   "123",
+			"ENV":        "test",
+		}
+
+		if len(result) != 3 {
+			t.Errorf("expected 3 entries, got %d", len(result))
+		}
+		for k, v := range expected {
+			if result[k] != v {
+				t.Errorf("expected %s=%s, got %s=%s", k, v, k, result[k])
+			}
+		}
+	})
+
+	t.Run("handles whitespace", func(t *testing.T) {
+		config = &Config{WorkerEnv: " KEY1 = value1 ; KEY2=value2;  KEY3  =  value3  "}
+		result := GetWorkerEnvMap()
+
+		expected := map[string]string{
+			"KEY1": "value1",
+			"KEY2": "value2",
+			"KEY3": "value3",
+		}
+
+		if len(result) != 3 {
+			t.Errorf("expected 3 entries, got %d", len(result))
+		}
+		for k, v := range expected {
+			if result[k] != v {
+				t.Errorf("expected %s=%s, got %s=%s", k, v, k, result[k])
+			}
+		}
+	})
+
+	t.Run("ignores malformed pairs", func(t *testing.T) {
+		config = &Config{WorkerEnv: "GOOD=value;BAD_NO_EQUALS;=NO_KEY;ANOTHER=good"}
+		result := GetWorkerEnvMap()
+
+		expected := map[string]string{
+			"GOOD":    "value",
+			"ANOTHER": "good",
+		}
+
+		if len(result) != 2 {
+			t.Errorf("expected 2 entries, got %d", len(result))
+		}
+		for k, v := range expected {
+			if result[k] != v {
+				t.Errorf("expected %s=%s, got %s=%s", k, v, k, result[k])
+			}
+		}
+	})
+
+	t.Run("empty keys ignored", func(t *testing.T) {
+		config = &Config{WorkerEnv: "=value;KEY=good;  =another"}
+		result := GetWorkerEnvMap()
+
+		if len(result) != 1 || result["KEY"] != "good" {
+			t.Errorf("expected only KEY=good, got %v", result)
+		}
+	})
+}

@@ -80,3 +80,24 @@ func GetWorkerEnv() string {
 func GetCiNode() int {
 	return Get().CiNode
 }
+
+// GetWorkerEnvMap parses the worker_env setting and returns it as a map
+// The format is "KEY=value;KEY2=value2"
+func GetWorkerEnvMap() map[string]string {
+	workerEnv := GetWorkerEnv()
+	if workerEnv == "" {
+		return make(map[string]string)
+	}
+
+	workerEnvMap := make(map[string]string)
+	for pair := range strings.SplitSeq(workerEnv, ";") {
+		if parts := strings.SplitN(pair, "=", 2); len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			if key != "" {
+				workerEnvMap[key] = value
+			}
+		}
+	}
+	return workerEnvMap
+}

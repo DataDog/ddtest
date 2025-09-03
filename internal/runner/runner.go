@@ -149,20 +149,18 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 			return fmt.Errorf("failed to run setup: %w", err)
 		}
 	}
+	runnersData, err := os.ReadFile(ParallelRunnersOutputPath)
+	if err != nil {
+		return fmt.Errorf("failed to read parallel runners from %s: %w", ParallelRunnersOutputPath, err)
+	}
+
+	parallelRunners := 0
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(runnersData)), "%d", &parallelRunners); err != nil {
+		return fmt.Errorf("failed to parse parallel runners count: %w", err)
+	}
 
 	// Parse worker environment variables if provided in settings
-	workerEnvMap := make(map[string]string)
-	if workerEnv := settings.GetWorkerEnv(); workerEnv != "" {
-		for pair := range strings.SplitSeq(workerEnv, ";") {
-			if parts := strings.SplitN(pair, "=", 2); len(parts) == 2 {
-				key := strings.TrimSpace(parts[0])
-				value := strings.TrimSpace(parts[1])
-				if key != "" {
-					workerEnvMap[key] = value
-				}
-			}
-		}
-	}
+	workerEnvMap := settings.GetWorkerEnvMap()
 
 	// Detect platform and framework
 	detectedPlatform, err := tr.platformDetector.DetectPlatform()
@@ -173,17 +171,6 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 	framework, err := detectedPlatform.DetectFramework()
 	if err != nil {
 		return fmt.Errorf("failed to detect framework: %w", err)
-	}
-
-	// Read the number of parallel runners
-	runnersData, err := os.ReadFile(ParallelRunnersOutputPath)
-	if err != nil {
-		return fmt.Errorf("failed to read parallel runners from %s: %w", ParallelRunnersOutputPath, err)
-	}
-
-	parallelRunners := 0
-	if _, err := fmt.Sscanf(strings.TrimSpace(string(runnersData)), "%d", &parallelRunners); err != nil {
-		return fmt.Errorf("failed to parse parallel runners count: %w", err)
 	}
 
 	ciNode := settings.GetCiNode()
