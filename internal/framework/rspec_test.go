@@ -12,6 +12,10 @@ import (
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
 )
 
+func cleanupDiscoveryDir() {
+	_ = os.RemoveAll(filepath.Dir(filepath.Dir(TestsDiscoveryFilePath)))
+}
+
 type mockCommandExecutor struct {
 	output      []byte
 	err         error
@@ -23,6 +27,13 @@ func (m *mockCommandExecutor) CombinedOutput(cmd *exec.Cmd) ([]byte, error) {
 		m.onExecution(cmd)
 	}
 	return m.output, m.err
+}
+
+func (m *mockCommandExecutor) Run(cmd *exec.Cmd) error {
+	if m.onExecution != nil {
+		m.onExecution(cmd)
+	}
+	return m.err
 }
 
 func TestNewRSpec(t *testing.T) {
@@ -52,9 +63,9 @@ func TestRSpec_Name(t *testing.T) {
 	}
 }
 
-func TestRSpec_CreateDiscoveryCommand(t *testing.T) {
+func TestRSpec_createDiscoveryCommand(t *testing.T) {
 	rspec := NewRSpec()
-	cmd := rspec.CreateDiscoveryCommand()
+	cmd := rspec.createDiscoveryCommand()
 
 	expectedArgs := []string{"bundle", "exec", "rspec", "--format", "progress", "--dry-run"}
 	if len(cmd.Args) != len(expectedArgs) {
@@ -83,9 +94,7 @@ func TestRSpec_DiscoverTests_Success(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(TestsDiscoveryFilePath), 0755); err != nil {
 		t.Fatalf("failed to create discovery directory: %v", err)
 	}
-	defer func() {
-		_ = os.RemoveAll(filepath.Dir(TestsDiscoveryFilePath))
-	}()
+	defer cleanupDiscoveryDir()
 
 	testData := []testoptimization.Test{
 		{
@@ -173,9 +182,7 @@ func TestRSpec_DiscoverTests_CommandFailure(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(TestsDiscoveryFilePath), 0755); err != nil {
 		t.Fatalf("failed to create discovery directory: %v", err)
 	}
-	defer func() {
-		_ = os.RemoveAll(filepath.Dir(TestsDiscoveryFilePath))
-	}()
+	defer cleanupDiscoveryDir()
 
 	mockExecutor := &mockCommandExecutor{
 		output:      []byte("Could not locate Gemfile or .bundle/ directory"),
@@ -198,9 +205,7 @@ func TestRSpec_DiscoverTests_InvalidJSON(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(TestsDiscoveryFilePath), 0755); err != nil {
 		t.Fatalf("failed to create discovery directory: %v", err)
 	}
-	defer func() {
-		_ = os.RemoveAll(filepath.Dir(TestsDiscoveryFilePath))
-	}()
+	defer cleanupDiscoveryDir()
 
 	mockExecutor := &mockCommandExecutor{
 		output: []byte("Finished in 0.12345 seconds (files took 0.67890 seconds to load)"),
@@ -221,5 +226,86 @@ func TestRSpec_DiscoverTests_InvalidJSON(t *testing.T) {
 	}
 	if tests != nil {
 		t.Error("expected nil tests when JSON is invalid")
+	}
+}
+
+func TestRSpec_RunTests(t *testing.T) {
+	testFiles := []string{"spec/models/user_spec.rb", "spec/controllers/users_controller_spec.rb"}
+
+	var capturedCmd *exec.Cmd
+	mockExecutor := &mockCommandExecutor{
+		err: nil, // Simulate successful execution
+		onExecution: func(cmd *exec.Cmd) {
+			capturedCmd = cmd
+		},
+	}
+
+	rspec := &RSpec{executor: mockExecutor}
+	err := rspec.RunTests(testFiles, nil)
+
+	if err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	if capturedCmd == nil {
+		t.Fatal("Expected command to be executed but none was captured")
+	}
+
+	// Verify the command arguments
+	expectedArgs := []string{"bundle", "exec", "rspec", "--format", "progress", "spec/models/user_spec.rb", "spec/controllers/users_controller_spec.rb"}
+	if len(capturedCmd.Args) != len(expectedArgs) {
+		t.Errorf("expected %d args, got %d", len(expectedArgs), len(capturedCmd.Args))
+	}
+
+	for i, expected := range expectedArgs {
+		if i >= len(capturedCmd.Args) || capturedCmd.Args[i] != expected {
+			t.Errorf("expected arg[%d] to be %q, got %q", i, expected, capturedCmd.Args[i])
+		}
+	}
+}
+
+func TestRSpec_RunTestsWithEnvMap(t *testing.T) {
+	testFiles := []string{"spec/models/user_spec.rb"}
+	envMap := map[string]string{
+		"RAILS_DB": "my_project_test_1",
+		"TEST_ENV": "rspec",
+	}
+
+	var capturedCmd *exec.Cmd
+	mockExecutor := &mockCommandExecutor{
+		err: nil,
+		onExecution: func(cmd *exec.Cmd) {
+			capturedCmd = cmd
+		},
+	}
+
+	rspec := &RSpec{executor: mockExecutor}
+	err := rspec.RunTests(testFiles, envMap)
+
+	if err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	if capturedCmd == nil {
+		t.Fatal("Expected command to be executed but none was captured")
+	}
+
+	// Verify environment variables are set
+	foundRailsDb := false
+	foundTestEnv := false
+	for _, env := range capturedCmd.Env {
+		if env == "RAILS_DB=my_project_test_1" {
+			foundRailsDb = true
+		}
+		if env == "TEST_ENV=rspec" {
+			foundTestEnv = true
+		}
+	}
+
+	if !foundRailsDb {
+		t.Error("Expected RAILS_DB environment variable to be set")
+	}
+	if !foundTestEnv {
+		t.Error("Expected TEST_ENV environment variable to be set")
 	}
 }

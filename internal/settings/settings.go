@@ -14,6 +14,8 @@ type Config struct {
 	Port           int    `mapstructure:"port"`
 	MinParallelism int    `mapstructure:"min_parallelism"`
 	MaxParallelism int    `mapstructure:"max_parallelism"`
+	WorkerEnv      string `mapstructure:"worker_env"`
+	CiNode         int    `mapstructure:"ci_node"`
 }
 
 var (
@@ -40,6 +42,8 @@ func setDefaults() {
 	viper.SetDefault("port", 7890)
 	viper.SetDefault("min_parallelism", 1)
 	viper.SetDefault("max_parallelism", 1)
+	viper.SetDefault("worker_env", "")
+	viper.SetDefault("ci_node", -1)
 }
 
 func Get() *Config {
@@ -67,4 +71,33 @@ func GetMinParallelism() int {
 
 func GetMaxParallelism() int {
 	return Get().MaxParallelism
+}
+
+func GetWorkerEnv() string {
+	return Get().WorkerEnv
+}
+
+func GetCiNode() int {
+	return Get().CiNode
+}
+
+// GetWorkerEnvMap parses the worker_env setting and returns it as a map
+// The format is "KEY=value;KEY2=value2"
+func GetWorkerEnvMap() map[string]string {
+	workerEnv := GetWorkerEnv()
+	if workerEnv == "" {
+		return make(map[string]string)
+	}
+
+	workerEnvMap := make(map[string]string)
+	for pair := range strings.SplitSeq(workerEnv, ";") {
+		if parts := strings.SplitN(pair, "=", 2); len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			if key != "" {
+				workerEnvMap[key] = value
+			}
+		}
+	}
+	return workerEnvMap
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,20 +12,20 @@ import (
 	"github.com/DataDog/datadog-test-runner/internal/platform"
 	"github.com/DataDog/datadog-test-runner/internal/settings"
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
-	"golang.org/x/sync/errgroup"
 )
 
 const TestFilesOutputPath = ".dd/test-files.txt"
 const SkippablePercentageOutputPath = ".dd/skippable-percentage.txt"
 const ParallelRunnersOutputPath = ".dd/parallel-runners.txt"
+const TestsSplitDir = ".dd/tests-split"
 
 type Runner interface {
 	Setup(ctx context.Context) error
-	PrepareTestOptimization(ctx context.Context) error
+	Run(ctx context.Context) error
 }
 
 type TestRunner struct {
-	testFiles           []string
+	testFiles           map[string]int
 	skippablePercentage float64
 	platformDetector    platform.PlatformDetector
 	optimizationClient  testoptimization.TestOptimizationClient
@@ -35,7 +34,7 @@ type TestRunner struct {
 
 func New() *TestRunner {
 	return &TestRunner{
-		testFiles:           nil,
+		testFiles:           make(map[string]int),
 		skippablePercentage: 0.0,
 		platformDetector:    platform.NewPlatformDetector(),
 		optimizationClient:  testoptimization.NewDatadogClient(),
@@ -45,77 +44,12 @@ func New() *TestRunner {
 
 func NewWithDependencies(platformDetector platform.PlatformDetector, optimizationClient testoptimization.TestOptimizationClient, ciProviderDetector ciprovider.CIProviderDetector) *TestRunner {
 	return &TestRunner{
-		testFiles:           nil,
+		testFiles:           make(map[string]int),
 		skippablePercentage: 0.0,
 		platformDetector:    platformDetector,
 		optimizationClient:  optimizationClient,
 		ciProviderDetector:  ciProviderDetector,
 	}
-}
-
-func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
-	detectedPlatform, err := tr.platformDetector.DetectPlatform()
-	if err != nil {
-		return fmt.Errorf("failed to detect platform: %w", err)
-	}
-
-	tags, err := detectedPlatform.CreateTagsMap()
-	if err != nil {
-		return fmt.Errorf("failed to create platform tags: %w", err)
-	}
-
-	var skippableTests map[string]bool
-	var discoveredTests []testoptimization.Test
-
-	g, _ := errgroup.WithContext(ctx)
-
-	g.Go(func() error {
-		defer tr.optimizationClient.StoreContextAndExit()
-
-		if err := tr.optimizationClient.Initialize(tags); err != nil {
-			return fmt.Errorf("failed to initialize optimization client: %w", err)
-		}
-
-		skippableTests = tr.optimizationClient.GetSkippableTests()
-		return nil
-	})
-
-	g.Go(func() error {
-		framework, err := detectedPlatform.DetectFramework()
-		if err != nil {
-			return fmt.Errorf("failed to detect framework: %w", err)
-		}
-
-		discoveredTests, err = framework.DiscoverTests()
-		return err
-	})
-
-	if err := g.Wait(); err != nil {
-		return err
-	}
-
-	discoveredTestsCount := len(discoveredTests)
-	skippableTestsCount := 0
-
-	testFilesMap := make(map[string]bool)
-	for _, test := range discoveredTests {
-		if !skippableTests[test.FQN] {
-			slog.Debug("Test is not skipped", "test", test.FQN, "sourceFile", test.SuiteSourceFile)
-			if test.SuiteSourceFile != "" {
-				testFilesMap[test.SuiteSourceFile] = true
-			}
-		} else {
-			skippableTestsCount++
-		}
-	}
-
-	tr.testFiles = make([]string, 0, len(testFilesMap))
-	for testFile := range testFilesMap {
-		tr.testFiles = append(tr.testFiles, testFile)
-	}
-	tr.skippablePercentage = float64(skippableTestsCount) / float64(discoveredTestsCount) * 100.0
-
-	return nil
 }
 
 func (tr *TestRunner) Setup(ctx context.Context) error {
@@ -127,8 +61,13 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	content := strings.Join(tr.testFiles, "\n")
-	if len(tr.testFiles) > 0 {
+	testFileNames := make([]string, 0, len(tr.testFiles))
+	for testFile := range tr.testFiles {
+		testFileNames = append(testFileNames, testFile)
+	}
+
+	content := strings.Join(testFileNames, "\n")
+	if len(testFileNames) > 0 {
 		content += "\n"
 	}
 
@@ -160,34 +99,52 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 		slog.Debug("No CI provider detected or CI provider detection failed", "error", err)
 	}
 
+	// Split test files for runners
+	if err := CreateTestSplits(tr.testFiles, parallelRunners, TestFilesOutputPath); err != nil {
+		return fmt.Errorf("failed to create test splits: %w", err)
+	}
+
 	return nil
 }
 
-// calculateParallelRunners determines the number of parallel runners based on skippable percentage
-// and parallelism configuration
-func calculateParallelRunners(skippablePercentage float64) int {
-	return calculateParallelRunnersWithParams(skippablePercentage, settings.GetMinParallelism(), settings.GetMaxParallelism())
-}
-
-// calculateParallelRunnersWithParams is the testable version that accepts parameters directly
-func calculateParallelRunnersWithParams(skippablePercentage float64, minParallelism, maxParallelism int) int {
-	if maxParallelism == 1 {
-		return 1
+func (tr *TestRunner) Run(ctx context.Context) error {
+	// Check if parallel runners output file exists
+	if _, err := os.Stat(ParallelRunnersOutputPath); os.IsNotExist(err) {
+		// Run Setup if the file doesn't exist
+		if err := tr.Setup(ctx); err != nil {
+			return fmt.Errorf("failed to run setup: %w", err)
+		}
+	}
+	runnersData, err := os.ReadFile(ParallelRunnersOutputPath)
+	if err != nil {
+		return fmt.Errorf("failed to read parallel runners from %s: %w", ParallelRunnersOutputPath, err)
 	}
 
-	if minParallelism < 1 {
-		slog.Warn("min_parallelism is less than 1, setting to 1", "min_parallelism", minParallelism)
-		return 1
+	parallelRunners := 0
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(runnersData)), "%d", &parallelRunners); err != nil {
+		return fmt.Errorf("failed to parse parallel runners count: %w", err)
 	}
 
-	if maxParallelism < minParallelism {
-		slog.Warn("max_parallelism is less than min_parallelism, using min_parallelism",
-			"max_parallelism", maxParallelism, "min_parallelism", minParallelism)
-		return minParallelism
+	// Parse worker environment variables if provided in settings
+	workerEnvMap := settings.GetWorkerEnvMap()
+
+	// Detect platform and framework
+	detectedPlatform, err := tr.platformDetector.DetectPlatform()
+	if err != nil {
+		return fmt.Errorf("failed to detect platform: %w", err)
 	}
 
-	percentage := math.Max(0.0, math.Min(100.0, skippablePercentage)) // Clamp to [0, 100]
-	runners := float64(maxParallelism) - (percentage/100.0)*float64(maxParallelism-minParallelism)
+	framework, err := detectedPlatform.DetectFramework()
+	if err != nil {
+		return fmt.Errorf("failed to detect framework: %w", err)
+	}
 
-	return int(math.Round(runners))
+	ciNode := settings.GetCiNode()
+	if ciNode >= 0 {
+		return runCINodeTests(framework, workerEnvMap, ciNode)
+	} else if parallelRunners > 1 {
+		return runParallelTests(ctx, framework, workerEnvMap)
+	} else {
+		return runSequentialTests(framework, workerEnvMap)
+	}
 }
