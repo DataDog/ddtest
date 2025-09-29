@@ -3,7 +3,7 @@ package constants
 import "path/filepath"
 
 // PlanDirectory is the directory where ddtest stores its output files and context data
-const PlanDirectory = ".dd"
+const PlanDirectory = ".testoptimization"
 
 // Output file paths (using filepath.Join for cross-platform compatibility)
 var TestFilesOutputPath = filepath.Join(PlanDirectory, "test-files.txt")

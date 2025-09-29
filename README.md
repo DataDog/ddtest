@@ -54,8 +54,8 @@ DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK=pytest ./ddtest setup
 
 When you run `ddtest setup`, the tool generates:
 
-- `.dd/test-files.txt` - List of discovered test files
-- `.dd/skippable-percentage.txt` - Percentage of tests that can be skipped
+- `.testoptimization/test-files.txt` - List of discovered test files
+- `.testoptimization/skippable-percentage.txt` - Percentage of tests that can be skipped
 
 ## Supported Platforms and Frameworks
 
@@ -65,7 +65,7 @@ When you run `ddtest setup`, the tool generates:
 
 ## Integration with Knapsack Pro
 
-First, run `ddtest setup --platform ruby --framework rspec`. Then set environment variable `KNAPSACK_PRO_TEST_FILE_LIST_SOURCE_FILE=.dd/test-files.txt` and knapsack_pro runner will only run the test files listed in `.dd/test-files.txt` - the ones that are not completely skipped by Datadog Test Impact Analysis.
+First, run `ddtest setup --platform ruby --framework rspec`. Then set environment variable `KNAPSACK_PRO_TEST_FILE_LIST_SOURCE_FILE=.testoptimization/test-files.txt` and knapsack_pro runner will only run the test files listed in `.testoptimization/test-files.txt` - the ones that are not completely skipped by Datadog Test Impact Analysis.
 
 ## Development
 

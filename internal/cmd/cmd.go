@@ -57,7 +57,7 @@ var runCmd = &cobra.Command{
 var serverCmd = &cobra.Command{
 	Use:   "server",
 	Short: "Start HTTP server to serve context data",
-	Long:  "Starts an HTTP server on configurable port that serves merged context data from .dd/context folder at /context endpoint.",
+	Long:  "Starts an HTTP server on configurable port that serves merged context data from .testoptimization/context folder at /context endpoint.",
 	Run: func(cmd *cobra.Command, args []string) {
 		// Create context that cancels on SIGINT/SIGTERM
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

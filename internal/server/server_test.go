@@ -106,7 +106,6 @@ func TestLoadContextData(t *testing.T) {
 			}
 		}()
 
-		// Create .dd/context directory
 		contextDir := filepath.Join(constants.PlanDirectory, "context")
 		err := os.MkdirAll(contextDir, 0755)
 		if err != nil {
@@ -183,7 +182,6 @@ func TestLoadContextData(t *testing.T) {
 			}
 		}()
 
-		// Create .dd/context directory
 		contextDir := filepath.Join(constants.PlanDirectory, "context")
 		err := os.MkdirAll(contextDir, 0755)
 		if err != nil {
@@ -234,7 +232,6 @@ func TestHandleContext(t *testing.T) {
 			}
 		}()
 
-		// Create .dd/context directory with test data
 		contextDir := filepath.Join(constants.PlanDirectory, "context")
 		err := os.MkdirAll(contextDir, 0755)
 		if err != nil {

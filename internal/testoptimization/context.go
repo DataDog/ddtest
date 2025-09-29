@@ -27,7 +27,7 @@ func NewContextManager() *ContextManager {
 	return &ContextManager{}
 }
 
-// CreateContextDirectory creates the .dd/context directory for storing context data
+// CreateContextDirectory creates the .testoptimization/context directory for storing context data
 func (cm *ContextManager) CreateContextDirectory() error {
 	contextDir := filepath.Join(appConstants.PlanDirectory, "context")
 	return os.MkdirAll(contextDir, 0755)
@@ -47,7 +47,7 @@ func (cm *ContextManager) writeJSONToFile(data any, filePath string) error {
 	return nil
 }
 
-// StoreRepositorySettings stores repository settings in .dd/context/settings.json
+// StoreRepositorySettings stores repository settings in .testoptimization/context/settings.json
 func (cm *ContextManager) StoreRepositorySettings(repositorySettings *net.SettingsResponseData) error {
 	if err := cm.CreateContextDirectory(); err != nil {
 		return fmt.Errorf("failed to create context directory: %w", err)
@@ -63,7 +63,7 @@ func (cm *ContextManager) StoreRepositorySettings(repositorySettings *net.Settin
 	return nil
 }
 
-// StoreSkippableTestsContext stores skippable tests with correlation ID in .dd/context/skippable_tests.json
+// StoreSkippableTestsContext stores skippable tests with correlation ID in .testoptimization/context/skippable_tests.json
 func (cm *ContextManager) StoreSkippableTestsContext(skippableTests map[string]map[string][]net.SkippableResponseDataAttributes) error {
 	if err := cm.CreateContextDirectory(); err != nil {
 		return fmt.Errorf("failed to create context directory: %w", err)
@@ -89,7 +89,7 @@ func (cm *ContextManager) StoreSkippableTestsContext(skippableTests map[string]m
 	return nil
 }
 
-// StoreKnownTestsContext stores known tests in .dd/context/known_tests.json
+// StoreKnownTestsContext stores known tests in .testoptimization/context/known_tests.json
 func (cm *ContextManager) StoreKnownTestsContext(knownTests *net.KnownTestsResponseData) error {
 	if err := cm.CreateContextDirectory(); err != nil {
 		return fmt.Errorf("failed to create context directory: %w", err)
@@ -105,7 +105,7 @@ func (cm *ContextManager) StoreKnownTestsContext(knownTests *net.KnownTestsRespo
 	return nil
 }
 
-// StoreTestManagementTestsContext stores test management tests in .dd/context/test_management_tests.json
+// StoreTestManagementTestsContext stores test management tests in .testoptimization/context/test_management_tests.json
 func (cm *ContextManager) StoreTestManagementTestsContext(testManagementTests *net.TestManagementTestsResponseDataModules) error {
 	if err := cm.CreateContextDirectory(); err != nil {
 		return fmt.Errorf("failed to create context directory: %w", err)

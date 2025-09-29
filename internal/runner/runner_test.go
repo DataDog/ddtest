@@ -215,7 +215,7 @@ func TestTestRunner_Setup_WithParallelRunners(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(tempDir)
 
-	// Create .dd directory
+	// Create .testoptimization directory
 	_ = os.MkdirAll(constants.PlanDirectory, 0755)
 
 	// Setup mocks for a test with 40% skippable percentage
@@ -272,7 +272,7 @@ func TestTestRunner_Setup_WithCIProvider(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(tempDir)
 
-	// Create .dd directory
+	// Create .testoptimization directory
 	_ = os.MkdirAll(constants.PlanDirectory, 0755)
 
 	// Setup mocks for test with CI provider
@@ -334,7 +334,7 @@ func TestTestRunner_Setup_CIProviderDetectionFailure(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(tempDir)
 
-	// Create .dd directory
+	// Create .testoptimization directory
 	_ = os.MkdirAll(constants.PlanDirectory, 0755)
 
 	// Setup mocks for test without CI provider
@@ -376,7 +376,6 @@ func TestTestRunner_Setup_CIProviderConfigureFailure(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(tempDir)
 
-	// Create .dd directory
 	_ = os.MkdirAll(constants.PlanDirectory, 0755)
 
 	// Setup mocks for test with failing CI provider
@@ -429,7 +428,7 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		defer func() { _ = os.Chdir(oldWd) }()
 		_ = os.Chdir(tempDir)
 
-		// Create .dd directory
+		// Create .testoptimization directory
 		_ = os.MkdirAll(constants.PlanDirectory, 0755)
 
 		// Setup mocks for single runner scenario
@@ -503,7 +502,7 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		defer func() { _ = os.Chdir(oldWd) }()
 		_ = os.Chdir(tempDir)
 
-		// Create .dd directory
+		// Create .testoptimization directory
 		_ = os.MkdirAll(constants.PlanDirectory, 0755)
 
 		// Setup mocks with test files that will create a predictable distribution

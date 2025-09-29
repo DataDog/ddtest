@@ -16,7 +16,7 @@ import (
 func TestMain(m *testing.M) {
 	code := m.Run()
 
-	// remove any .dd directories that might be left behind
+	// remove any .testoptimization directories that might be left behind
 	_ = os.RemoveAll(constants.PlanDirectory)
 
 	// Exit with the same code as the tests
@@ -346,7 +346,7 @@ func TestDatadogClient_Initialize_CreatesContextDirectory(t *testing.T) {
 		t.Errorf("Initialize() should not return error, got: %v", err)
 	}
 
-	// Check if .dd/context directory was created
+	// Check if .testoptimization/context directory was created
 	contextDir := filepath.Join(constants.PlanDirectory, "context")
 	if _, err := os.Stat(contextDir); os.IsNotExist(err) {
 		t.Errorf("Expected context directory to be created")
