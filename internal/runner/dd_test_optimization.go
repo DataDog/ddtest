@@ -26,7 +26,7 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	g, _ := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		defer tr.optimizationClient.StoreContextAndExit()
+		defer tr.optimizationClient.StoreCacheAndExit()
 
 		if err := tr.optimizationClient.Initialize(tags); err != nil {
 			return fmt.Errorf("failed to initialize optimization client: %w", err)

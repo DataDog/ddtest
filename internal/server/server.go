@@ -19,7 +19,7 @@ type Server struct {
 	port int
 }
 
-type ContextData struct {
+type CacheData struct {
 	Settings            any `json:"settings,omitempty"`
 	SkippableTests      any `json:"skippableTests,omitempty"`
 	KnownTests          any `json:"knownTests,omitempty"`
@@ -43,36 +43,36 @@ func New(port int) *Server {
 	return &Server{port: port}
 }
 
-func (s *Server) loadContextData() (*ContextData, error) {
-	contextDir := filepath.Join(constants.PlanDirectory, "context")
+func (s *Server) loadCacheData() (*CacheData, error) {
+	cacheDir := filepath.Join(constants.PlanDirectory, "cache")
 
-	if _, err := os.Stat(contextDir); os.IsNotExist(err) {
-		return &ContextData{}, nil
+	if _, err := os.Stat(cacheDir); os.IsNotExist(err) {
+		return &CacheData{}, nil
 	}
 
-	contextData := &ContextData{}
+	cacheData := &CacheData{}
 
-	settingsPath := filepath.Join(contextDir, "settings.json")
+	settingsPath := filepath.Join(cacheDir, "settings.json")
 	if settings, err := s.loadJSONFile(settingsPath); err == nil {
-		contextData.Settings = settings
+		cacheData.Settings = settings
 	}
 
-	skippableTestsPath := filepath.Join(contextDir, "skippable_tests.json")
+	skippableTestsPath := filepath.Join(cacheDir, "skippable_tests.json")
 	if skippableTests, err := s.loadJSONFile(skippableTestsPath); err == nil {
-		contextData.SkippableTests = skippableTests
+		cacheData.SkippableTests = skippableTests
 	}
 
-	knownTestsPath := filepath.Join(contextDir, "known_tests.json")
+	knownTestsPath := filepath.Join(cacheDir, "known_tests.json")
 	if knownTests, err := s.loadJSONFile(knownTestsPath); err == nil {
-		contextData.KnownTests = knownTests
+		cacheData.KnownTests = knownTests
 	}
 
-	testManagementTestsPath := filepath.Join(contextDir, "test_management_tests.json")
+	testManagementTestsPath := filepath.Join(cacheDir, "test_management_tests.json")
 	if testManagementTests, err := s.loadJSONFile(testManagementTestsPath); err == nil {
-		contextData.TestManagementTests = testManagementTests
+		cacheData.TestManagementTests = testManagementTests
 	}
 
-	return contextData, nil
+	return cacheData, nil
 }
 
 func (s *Server) loadJSONFile(path string) (any, error) {
@@ -89,22 +89,22 @@ func (s *Server) loadJSONFile(path string) (any, error) {
 	return jsonData, nil
 }
 
-func (s *Server) handleContext(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleCache(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	contextData, err := s.loadContextData()
+	cacheData, err := s.loadCacheData()
 	if err != nil {
-		slog.Error("Failed to load context data", "error", err)
+		slog.Error("Failed to load cache data", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(contextData); err != nil {
-		slog.Error("Failed to encode context data", "error", err)
+	if err := json.NewEncoder(w).Encode(cacheData); err != nil {
+		slog.Error("Failed to encode cache data", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -112,7 +112,7 @@ func (s *Server) handleContext(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/context", s.handleContext)
+	mux.HandleFunc("/cache", s.handleCache)
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", s.port),
@@ -126,7 +126,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Start server in a goroutine
 	go func() {
-		slog.Info("Starting HTTP server", "port", s.port, "endpoint", "/context")
+		slog.Info("Starting HTTP server", "port", s.port, "endpoint", "/cache")
 		serverErr <- server.ListenAndServe()
 	}()
 

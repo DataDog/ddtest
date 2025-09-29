@@ -67,7 +67,7 @@ func TestLoadJSONFile(t *testing.T) {
 	})
 }
 
-func TestLoadContextData(t *testing.T) {
+func TestLoadCacheData(t *testing.T) {
 	server := &Server{port: 8080}
 
 	t.Run("no context directory", func(t *testing.T) {
@@ -83,18 +83,18 @@ func TestLoadContextData(t *testing.T) {
 			}
 		}()
 
-		contextData, err := server.loadContextData()
+		cacheData, err := server.loadCacheData()
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
 
-		if contextData.Settings != nil || contextData.SkippableTests != nil ||
-			contextData.KnownTests != nil || contextData.TestManagementTests != nil {
-			t.Error("expected empty context data when no directory exists")
+		if cacheData.Settings != nil || cacheData.SkippableTests != nil ||
+			cacheData.KnownTests != nil || cacheData.TestManagementTests != nil {
+			t.Error("expected empty cache data when no directory exists")
 		}
 	})
 
-	t.Run("with context files", func(t *testing.T) {
+	t.Run("with cache files", func(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		tmpDir := t.TempDir()
 		if err := os.Chdir(tmpDir); err != nil {
@@ -106,10 +106,10 @@ func TestLoadContextData(t *testing.T) {
 			}
 		}()
 
-		contextDir := filepath.Join(constants.PlanDirectory, "context")
-		err := os.MkdirAll(contextDir, 0755)
+		cacheDir := filepath.Join(constants.PlanDirectory, "cache")
+		err := os.MkdirAll(cacheDir, 0755)
 		if err != nil {
-			t.Fatalf("failed to create context directory: %v", err)
+			t.Fatalf("failed to create cache directory: %v", err)
 		}
 
 		// Create test files
@@ -133,7 +133,7 @@ func TestLoadContextData(t *testing.T) {
 		}
 
 		for filename, data := range testFiles {
-			filePath := filepath.Join(contextDir, filename)
+			filePath := filepath.Join(cacheDir, filename)
 			jsonBytes, _ := json.Marshal(data)
 			err := os.WriteFile(filePath, jsonBytes, 0644)
 			if err != nil {
@@ -141,26 +141,26 @@ func TestLoadContextData(t *testing.T) {
 			}
 		}
 
-		contextData, err := server.loadContextData()
+		cacheData, err := server.loadCacheData()
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
 
-		if contextData.Settings == nil {
+		if cacheData.Settings == nil {
 			t.Error("expected settings to be loaded")
 		}
-		if contextData.SkippableTests == nil {
+		if cacheData.SkippableTests == nil {
 			t.Error("expected skippable tests to be loaded")
 		}
-		if contextData.KnownTests == nil {
+		if cacheData.KnownTests == nil {
 			t.Error("expected known tests to be loaded")
 		}
-		if contextData.TestManagementTests == nil {
+		if cacheData.TestManagementTests == nil {
 			t.Error("expected test management tests to be loaded")
 		}
 
 		// Verify settings content
-		settingsMap, ok := contextData.Settings.(map[string]any)
+		settingsMap, ok := cacheData.Settings.(map[string]any)
 		if !ok {
 			t.Error("expected settings to be a map")
 		} else {
@@ -182,42 +182,42 @@ func TestLoadContextData(t *testing.T) {
 			}
 		}()
 
-		contextDir := filepath.Join(constants.PlanDirectory, "context")
-		err := os.MkdirAll(contextDir, 0755)
+		cacheDir := filepath.Join(constants.PlanDirectory, "cache")
+		err := os.MkdirAll(cacheDir, 0755)
 		if err != nil {
-			t.Fatalf("failed to create context directory: %v", err)
+			t.Fatalf("failed to create cache directory: %v", err)
 		}
 
 		// Create only settings.json
 		settingsData := map[string]any{"testOptimization": true}
 		jsonBytes, _ := json.Marshal(settingsData)
-		settingsPath := filepath.Join(contextDir, "settings.json")
+		settingsPath := filepath.Join(cacheDir, "settings.json")
 		err = os.WriteFile(settingsPath, jsonBytes, 0644)
 		if err != nil {
 			t.Fatalf("failed to create settings.json: %v", err)
 		}
 
-		contextData, err := server.loadContextData()
+		cacheData, err := server.loadCacheData()
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
 
-		if contextData.Settings == nil {
+		if cacheData.Settings == nil {
 			t.Error("expected settings to be loaded")
 		}
-		if contextData.SkippableTests != nil {
+		if cacheData.SkippableTests != nil {
 			t.Error("expected skippable tests to be nil")
 		}
-		if contextData.KnownTests != nil {
+		if cacheData.KnownTests != nil {
 			t.Error("expected known tests to be nil")
 		}
-		if contextData.TestManagementTests != nil {
+		if cacheData.TestManagementTests != nil {
 			t.Error("expected test management tests to be nil")
 		}
 	})
 }
 
-func TestHandleContext(t *testing.T) {
+func TestHandleCache(t *testing.T) {
 	server := &Server{port: 8080}
 
 	t.Run("GET request success", func(t *testing.T) {
@@ -232,24 +232,24 @@ func TestHandleContext(t *testing.T) {
 			}
 		}()
 
-		contextDir := filepath.Join(constants.PlanDirectory, "context")
-		err := os.MkdirAll(contextDir, 0755)
+		cacheDir := filepath.Join(constants.PlanDirectory, "cache")
+		err := os.MkdirAll(cacheDir, 0755)
 		if err != nil {
-			t.Fatalf("failed to create context directory: %v", err)
+			t.Fatalf("failed to create cache directory: %v", err)
 		}
 
 		settingsData := map[string]any{"testOptimization": true}
 		jsonBytes, _ := json.Marshal(settingsData)
-		settingsPath := filepath.Join(contextDir, "settings.json")
+		settingsPath := filepath.Join(cacheDir, "settings.json")
 		err = os.WriteFile(settingsPath, jsonBytes, 0644)
 		if err != nil {
 			t.Fatalf("failed to create settings.json: %v", err)
 		}
 
-		req := httptest.NewRequest("GET", "/context", nil)
+		req := httptest.NewRequest("GET", "/cache", nil)
 		w := httptest.NewRecorder()
 
-		server.handleContext(w, req)
+		server.handleCache(w, req)
 
 		if w.Code != http.StatusOK {
 			t.Errorf("expected status 200, got %d", w.Code)
@@ -260,7 +260,7 @@ func TestHandleContext(t *testing.T) {
 			t.Errorf("expected Content-Type application/json, got %s", contentType)
 		}
 
-		var response ContextData
+		var response CacheData
 		err = json.Unmarshal(w.Body.Bytes(), &response)
 		if err != nil {
 			t.Errorf("failed to unmarshal response: %v", err)
@@ -272,10 +272,10 @@ func TestHandleContext(t *testing.T) {
 	})
 
 	t.Run("POST request not allowed", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/context", nil)
+		req := httptest.NewRequest("POST", "/cache", nil)
 		w := httptest.NewRecorder()
 
-		server.handleContext(w, req)
+		server.handleCache(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
 			t.Errorf("expected status 405, got %d", w.Code)
@@ -283,10 +283,10 @@ func TestHandleContext(t *testing.T) {
 	})
 
 	t.Run("PUT request not allowed", func(t *testing.T) {
-		req := httptest.NewRequest("PUT", "/context", nil)
+		req := httptest.NewRequest("PUT", "/cache", nil)
 		w := httptest.NewRecorder()
 
-		server.handleContext(w, req)
+		server.handleCache(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
 			t.Errorf("expected status 405, got %d", w.Code)
@@ -294,17 +294,17 @@ func TestHandleContext(t *testing.T) {
 	})
 
 	t.Run("DELETE request not allowed", func(t *testing.T) {
-		req := httptest.NewRequest("DELETE", "/context", nil)
+		req := httptest.NewRequest("DELETE", "/cache", nil)
 		w := httptest.NewRecorder()
 
-		server.handleContext(w, req)
+		server.handleCache(w, req)
 
 		if w.Code != http.StatusMethodNotAllowed {
 			t.Errorf("expected status 405, got %d", w.Code)
 		}
 	})
 
-	t.Run("empty context directory returns empty object", func(t *testing.T) {
+	t.Run("empty cache directory returns empty object", func(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		tmpDir := t.TempDir()
 		if err := os.Chdir(tmpDir); err != nil {
@@ -316,16 +316,16 @@ func TestHandleContext(t *testing.T) {
 			}
 		}()
 
-		req := httptest.NewRequest("GET", "/context", nil)
+		req := httptest.NewRequest("GET", "/cache", nil)
 		w := httptest.NewRecorder()
 
-		server.handleContext(w, req)
+		server.handleCache(w, req)
 
 		if w.Code != http.StatusOK {
 			t.Errorf("expected status 200, got %d", w.Code)
 		}
 
-		var response ContextData
+		var response CacheData
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		if err != nil {
 			t.Errorf("failed to unmarshal response: %v", err)
@@ -338,8 +338,8 @@ func TestHandleContext(t *testing.T) {
 	})
 }
 
-func TestContextDataJSONSerialization(t *testing.T) {
-	contextData := ContextData{
+func TestCacheDataJSONSerialization(t *testing.T) {
+	cacheData := CacheData{
 		Settings: map[string]any{
 			"testOptimization": true,
 			"parallelization":  false,
@@ -353,15 +353,15 @@ func TestContextDataJSONSerialization(t *testing.T) {
 		},
 	}
 
-	jsonBytes, err := json.Marshal(contextData)
+	jsonBytes, err := json.Marshal(cacheData)
 	if err != nil {
-		t.Errorf("failed to marshal ContextData: %v", err)
+		t.Errorf("failed to marshal CacheData: %v", err)
 	}
 
-	var unmarshaled ContextData
+	var unmarshaled CacheData
 	err = json.Unmarshal(jsonBytes, &unmarshaled)
 	if err != nil {
-		t.Errorf("failed to unmarshal ContextData: %v", err)
+		t.Errorf("failed to unmarshal CacheData: %v", err)
 	}
 
 	if unmarshaled.Settings == nil {
@@ -378,18 +378,18 @@ func TestContextDataJSONSerialization(t *testing.T) {
 	}
 }
 
-func TestContextDataOmitEmpty(t *testing.T) {
+func TestCacheDataOmitEmpty(t *testing.T) {
 	// Test that empty fields are omitted in JSON serialization
-	contextData := ContextData{
+	cacheData := CacheData{
 		Settings: map[string]any{
 			"testOptimization": true,
 		},
 		// Other fields are nil, should be omitted
 	}
 
-	jsonBytes, err := json.Marshal(contextData)
+	jsonBytes, err := json.Marshal(cacheData)
 	if err != nil {
-		t.Errorf("failed to marshal ContextData: %v", err)
+		t.Errorf("failed to marshal CacheData: %v", err)
 	}
 
 	jsonStr := string(jsonBytes)

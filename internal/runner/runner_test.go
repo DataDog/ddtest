@@ -121,7 +121,7 @@ func (m *MockTestOptimizationClient) GetSkippableTests() map[string]bool {
 	return m.SkippableTests
 }
 
-func (m *MockTestOptimizationClient) StoreContextAndExit() {
+func (m *MockTestOptimizationClient) StoreCacheAndExit() {
 	m.ShutdownCalled = true
 }
 

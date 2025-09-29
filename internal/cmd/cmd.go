@@ -56,16 +56,16 @@ var runCmd = &cobra.Command{
 
 var serverCmd = &cobra.Command{
 	Use:   "server",
-	Short: "Start HTTP server to serve context data",
-	Long:  "Starts an HTTP server on configurable port that serves merged context data from .testoptimization/context folder at /context endpoint.",
+	Short: "Start HTTP server to serve cache data",
+	Long:  "Starts an HTTP server on configurable port that serves merged cache data from .testoptimization/cache folder at /cache endpoint.",
 	Run: func(cmd *cobra.Command, args []string) {
 		// Create context that cancels on SIGINT/SIGTERM
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
 		port := viper.GetInt("port")
-		contextServer := server.New(port)
-		if err := contextServer.Start(ctx); err != nil {
+		cacheServer := server.New(port)
+		if err := cacheServer.Start(ctx); err != nil {
 			slog.Error("Server failed", "error", err)
 			os.Exit(1)
 		}
