@@ -11,14 +11,14 @@ lint: vet
 test:
 	go test ./...
 build: test lint
-	go build -o ddruntest main.go
+	go build -o ddtest main.go
 run:
 	go run main.go
 release:
 	mkdir -p dist
-	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/ddruntest-linux-amd64 main.go
-	GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/ddruntest-linux-arm64 main.go
-	GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/ddruntest-darwin-amd64 main.go
-	GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/ddruntest-darwin-arm64 main.go
-	GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/ddruntest-windows-amd64.exe main.go
-	GOOS=windows GOARCH=arm64 go build -ldflags="-s -w" -o dist/ddruntest-windows-arm64.exe main.go
+	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/ddtest-linux-amd64 main.go
+	GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/ddtest-linux-arm64 main.go
+	GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/ddtest-darwin-amd64 main.go
+	GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/ddtest-darwin-arm64 main.go
+	GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/ddtest-windows-amd64.exe main.go
+	GOOS=windows GOARCH=arm64 go build -ldflags="-s -w" -o dist/ddtest-windows-arm64.exe main.go

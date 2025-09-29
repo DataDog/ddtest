@@ -12,14 +12,14 @@ cd datadog-test-runner
 make build
 ```
 
-This will create the `ddruntest` binary in the current directory.
+This will create the `ddtest` binary in the current directory.
 
 ## Usage
 
 ### Basic Command
 
 ```bash
-./ddruntest [command] [flags]
+./ddtest [command] [flags]
 ```
 
 ### Available Commands
@@ -40,19 +40,19 @@ This will create the `ddruntest` binary in the current directory.
 
 ```bash
 # Use default settings (Ruby with RSpec)
-./ddruntest setup
+./ddtest setup
 
 # Specify platform and framework explicitly
-./ddruntest setup --platform ruby --framework rspec
+./ddtest setup --platform ruby --framework rspec
 
 # Using environment variables
-DD_TEST_OPTIMIZATION_RUNNER_PLATFORM=python ./ddruntest setup
-DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK=pytest ./ddruntest setup
+DD_TEST_OPTIMIZATION_RUNNER_PLATFORM=python ./ddtest setup
+DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK=pytest ./ddtest setup
 ```
 
 ## Output Files
 
-When you run `ddruntest setup`, the tool generates:
+When you run `ddtest setup`, the tool generates:
 
 - `.dd/test-files.txt` - List of discovered test files
 - `.dd/skippable-percentage.txt` - Percentage of tests that can be skipped
@@ -60,34 +60,40 @@ When you run `ddruntest setup`, the tool generates:
 ## Supported Platforms and Frameworks
 
 ### Currently Supported
+
 - **Ruby**: RSpec framework
 
 ## Integration with Knapsack Pro
 
-First, run `ddruntest setup --platform ruby --framework rspec`. Then set environment variable `KNAPSACK_PRO_TEST_FILE_LIST_SOURCE_FILE=.dd/test-files.txt` and knapsack_pro runner will only run the test files listed in `.dd/test-files.txt` - the ones that are not completely skipped by Datadog Test Impact Analysis.
+First, run `ddtest setup --platform ruby --framework rspec`. Then set environment variable `KNAPSACK_PRO_TEST_FILE_LIST_SOURCE_FILE=.dd/test-files.txt` and knapsack_pro runner will only run the test files listed in `.dd/test-files.txt` - the ones that are not completely skipped by Datadog Test Impact Analysis.
 
 ## Development
 
 ### Prerequisites
+
 - Go 1.24.5 or later
 
 ### Building
+
 ```bash
 make build
 ```
 
 ### Testing
+
 ```bash
 make test
 ```
 
 ### Formatting and Vetting
+
 ```bash
 make fmt
 make vet
 ```
 
 ### Running from Source
+
 ```bash
 make run
 ```

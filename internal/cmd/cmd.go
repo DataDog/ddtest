@@ -16,7 +16,7 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "ddruntest",
+	Use:   "ddtest",
 	Short: "A test runner from Datadog",
 	Long:  "Command line tool for running tests with Datadog Test Optimization.",
 }

@@ -70,7 +70,7 @@ func TestExecute(t *testing.T) {
 	defer func() { os.Args = originalArgs }()
 
 	// Test with help flag to avoid actual execution
-	os.Args = []string{"ddruntest", "--help"}
+	os.Args = []string{"ddtest", "--help"}
 
 	// Capture output
 	var buf bytes.Buffer
@@ -83,8 +83,8 @@ func TestExecute(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "ddruntest") {
-		t.Error("help output should contain command name 'ddruntest'")
+	if !strings.Contains(output, "ddtest") {
+		t.Error("help output should contain command name 'ddtest'")
 	}
 }
 
