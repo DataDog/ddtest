@@ -11,7 +11,6 @@ import (
 type Config struct {
 	Platform       string `mapstructure:"platform"`
 	Framework      string `mapstructure:"framework"`
-	Port           int    `mapstructure:"port"`
 	MinParallelism int    `mapstructure:"min_parallelism"`
 	MaxParallelism int    `mapstructure:"max_parallelism"`
 	WorkerEnv      string `mapstructure:"worker_env"`
@@ -39,7 +38,6 @@ func Init() {
 func setDefaults() {
 	viper.SetDefault("platform", "ruby")
 	viper.SetDefault("framework", "rspec")
-	viper.SetDefault("port", 7890)
 	viper.SetDefault("min_parallelism", 1)
 	viper.SetDefault("max_parallelism", 1)
 	viper.SetDefault("worker_env", "")
@@ -59,10 +57,6 @@ func GetPlatform() string {
 
 func GetFramework() string {
 	return Get().Framework
-}
-
-func GetPort() int {
-	return Get().Port
 }
 
 func GetMinParallelism() int {

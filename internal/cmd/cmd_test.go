@@ -38,18 +38,15 @@ func TestRootCommandFlags(t *testing.T) {
 }
 
 func TestCommandHierarchy(t *testing.T) {
-	// Verify that planCmd, runCmd and serverCmd are added to rootCmd
+	// Verify that planCmd and runCmd are added to rootCmd
 	commands := rootCmd.Commands()
-	var foundPlan, foundRun, foundServer bool
+	var foundPlan, foundRun bool
 	for _, cmd := range commands {
 		if cmd.Use == "plan" {
 			foundPlan = true
 		}
 		if cmd.Use == "run" {
 			foundRun = true
-		}
-		if cmd.Use == "server" {
-			foundServer = true
 		}
 	}
 
@@ -58,9 +55,6 @@ func TestCommandHierarchy(t *testing.T) {
 	}
 	if !foundRun {
 		t.Error("run command should be added to root command")
-	}
-	if !foundServer {
-		t.Error("server command should be added to root command")
 	}
 }
 
@@ -154,8 +148,8 @@ func TestCommandUsage(t *testing.T) {
 	}
 
 	// Expected commands (cobra adds completion and help automatically)
-	expectedCommands := []string{"plan", "run", "server"}
-	requiredCommands := []string{"completion", "help [command]", "plan", "run", "server"}
+	expectedCommands := []string{"plan", "run"}
+	requiredCommands := []string{"completion", "help [command]", "plan", "run"}
 
 	// Verify minimum expected commands exist
 	for _, expected := range expectedCommands {
