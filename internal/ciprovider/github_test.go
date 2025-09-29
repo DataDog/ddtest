@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/DataDog/datadog-test-runner/internal/constants"
 )
 
 func TestGitHub_Name(t *testing.T) {
@@ -52,7 +54,7 @@ func TestGitHub_Configure(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Clean up before each test
-			_ = os.RemoveAll(".dd")
+			_ = os.RemoveAll(constants.PlanDirectory)
 
 			err := g.Configure(tt.parallelRunners)
 			if (err != nil) != tt.wantErr {
@@ -103,7 +105,7 @@ func TestGitHub_Configure(t *testing.T) {
 			}
 
 			// Clean up after each test
-			_ = os.RemoveAll(".dd")
+			_ = os.RemoveAll(constants.PlanDirectory)
 		})
 	}
 }
@@ -112,8 +114,8 @@ func TestGitHub_ConfigureJSONFormat(t *testing.T) {
 	g := NewGitHub()
 
 	// Clean up before test
-	_ = os.RemoveAll(".dd")
-	defer func() { _ = os.RemoveAll(".dd") }()
+	_ = os.RemoveAll(constants.PlanDirectory)
+	defer func() { _ = os.RemoveAll(constants.PlanDirectory) }()
 
 	err := g.Configure(2)
 	if err != nil {

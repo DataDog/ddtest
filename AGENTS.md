@@ -19,10 +19,8 @@ This creates the `ddtest` binary in the current directory.
 ### Testing
 
 ```bash
-make test
+make test # Runs only tests, without linting
 ```
-
-Runs the full test pipeline: lint → vet → test
 
 ### Linting and Formatting
 
@@ -52,6 +50,7 @@ go test -v ./...           # Verbose testing
 - Use go 1.24
 - Use `strings` and `slices` packages, don't write your own string manipulation functions
 - Always run `make test` after any change. Any new functionality must be covered by test.
+- Always run `make lint` after any change. Address any linting issues found.
 
 ## Architecture
 

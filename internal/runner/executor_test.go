@@ -3,9 +3,12 @@ package runner
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/DataDog/datadog-test-runner/internal/constants"
 )
 
 func TestRunCINodeTests_Success(t *testing.T) {
@@ -15,8 +18,8 @@ func TestRunCINodeTests_Success(t *testing.T) {
 	_ = os.Chdir(tempDir)
 
 	// Setup test split directory and files
-	_ = os.MkdirAll(".dd/tests-split", 0755)
-	_ = os.WriteFile(".dd/tests-split/runner-1", []byte("test/file2_test.rb\ntest/file3_test.rb\n"), 0644)
+	_ = os.MkdirAll(filepath.Join(constants.PlanDirectory, "tests-split"), 0755)
+	_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "tests-split", "runner-1"), []byte("test/file2_test.rb\ntest/file3_test.rb\n"), 0644)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -47,7 +50,7 @@ func TestRunCINodeTests_FileNotFound(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(tempDir)
 
-	_ = os.MkdirAll(".dd/tests-split", 0755)
+	_ = os.MkdirAll(filepath.Join(constants.PlanDirectory, "tests-split"), 0755)
 	// Don't create runner-2 file
 
 	mockFramework := &MockFramework{FrameworkName: "rspec"}
@@ -70,9 +73,9 @@ func TestRunParallelTests_Success(t *testing.T) {
 	_ = os.Chdir(tempDir)
 
 	// Setup test split directory and files
-	_ = os.MkdirAll(".dd/tests-split", 0755)
-	_ = os.WriteFile(".dd/tests-split/runner-0", []byte("test/file1_test.rb\n"), 0644)
-	_ = os.WriteFile(".dd/tests-split/runner-1", []byte("test/file2_test.rb\n"), 0644)
+	_ = os.MkdirAll(filepath.Join(constants.PlanDirectory, "tests-split"), 0755)
+	_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "tests-split", "runner-0"), []byte("test/file1_test.rb\n"), 0644)
+	_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "tests-split", "runner-1"), []byte("test/file2_test.rb\n"), 0644)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -117,9 +120,9 @@ func TestRunSequentialTests_Success(t *testing.T) {
 	_ = os.Chdir(tempDir)
 
 	// Setup test files
-	_ = os.MkdirAll(".dd", 0755)
+	_ = os.MkdirAll(constants.PlanDirectory, 0755)
 	testFiles := "test/file1_test.rb\ntest/file2_test.rb\n"
-	_ = os.WriteFile(".dd/test-files.txt", []byte(testFiles), 0644)
+	_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "test-files.txt"), []byte(testFiles), 0644)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",

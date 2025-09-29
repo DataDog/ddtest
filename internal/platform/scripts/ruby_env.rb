@@ -1,5 +1,4 @@
 require "json"
-require "fileutils"
 require "datadog/core/environment/platform"
 
 tags_map = {
@@ -10,5 +9,4 @@ tags_map = {
   Datadog::CI::Ext::Test::TAG_RUNTIME_VERSION => Datadog::Core::Environment::Ext::ENGINE_VERSION
 }
 
-FileUtils.mkdir_p(".dd")
-File.write(".dd/runtime_tags.json", tags_map.to_json)
+puts tags_map.to_json

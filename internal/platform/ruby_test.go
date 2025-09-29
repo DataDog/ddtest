@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/DataDog/datadog-test-runner/internal/constants"
 	"github.com/DataDog/datadog-test-runner/internal/settings"
 	"github.com/spf13/viper"
 )
@@ -95,7 +95,7 @@ func TestRuby_DetectFramework_Unsupported(t *testing.T) {
 }
 
 func TestRuby_CreateTagsMap_Success(t *testing.T) {
-	testDir := ".dd"
+	testDir := constants.PlanDirectory
 	defer func() {
 		_ = os.RemoveAll(testDir)
 	}()
@@ -107,8 +107,14 @@ func TestRuby_CreateTagsMap_Success(t *testing.T) {
 		"runtime.version": "3.3.0",
 	}
 
+	// Prepare expected JSON output
+	expectedOutput, err := json.Marshal(expectedRubyTags)
+	if err != nil {
+		t.Fatalf("failed to marshal expected tags: %v", err)
+	}
+
 	mockExecutor := &mockCommandExecutor{
-		output: []byte("Tags written successfully"),
+		output: expectedOutput,
 		err:    nil,
 		onExecution: func(cmd *exec.Cmd) {
 			// Verify the command is correct
@@ -130,20 +136,6 @@ func TestRuby_CreateTagsMap_Success(t *testing.T) {
 				} else if cmd.Args[i] != expected {
 					t.Errorf("expected arg[%d] to be %q, got %q", i, expected, cmd.Args[i])
 				}
-			}
-
-			// Create the output file that the Ruby script would create
-			if err := os.MkdirAll(testDir, 0755); err != nil {
-				t.Fatalf("failed to create test directory: %v", err)
-			}
-
-			data, err := json.Marshal(expectedRubyTags)
-			if err != nil {
-				t.Fatalf("failed to marshal test data: %v", err)
-			}
-
-			if err := os.WriteFile(filepath.Join(testDir, "runtime_tags.json"), data, 0644); err != nil {
-				t.Fatalf("failed to write test file: %v", err)
 			}
 		},
 	}
@@ -175,7 +167,7 @@ func TestRuby_CreateTagsMap_Success(t *testing.T) {
 
 func TestRuby_CreateTagsMap_CommandFailure(t *testing.T) {
 	defer func() {
-		_ = os.RemoveAll(".dd")
+		_ = os.RemoveAll(constants.PlanDirectory)
 	}()
 
 	mockExecutor := &mockCommandExecutor{
@@ -205,57 +197,18 @@ func TestRuby_CreateTagsMap_CommandFailure(t *testing.T) {
 	}
 }
 
-func TestRuby_CreateTagsMap_FileReadError(t *testing.T) {
-	defer func() {
-		_ = os.RemoveAll(".dd")
-	}()
-
-	mockExecutor := &mockCommandExecutor{
-		output: []byte("Tags written successfully"),
-		err:    nil,
-		onExecution: func(cmd *exec.Cmd) {
-			// Command succeeds but doesn't create the file
-		},
-	}
-
-	ruby := &Ruby{
-		executor: mockExecutor,
-	}
-
-	tags, err := ruby.CreateTagsMap()
-	if err == nil {
-		t.Error("expected error when runtime tags file doesn't exist")
-	}
-
-	if tags != nil {
-		t.Error("expected nil tags when file read fails")
-	}
-
-	expectedErrorMsg := "failed to read runtime tags file"
-	if err == nil || len(err.Error()) < len(expectedErrorMsg) || err.Error()[:len(expectedErrorMsg)] != expectedErrorMsg {
-		t.Errorf("expected error to start with %q, got %q", expectedErrorMsg, err.Error())
-	}
-}
-
 func TestRuby_CreateTagsMap_InvalidJSON(t *testing.T) {
-	testDir := ".dd"
+	testDir := constants.PlanDirectory
 	defer func() {
 		_ = os.RemoveAll(testDir)
 	}()
 
+	invalidJSON := `{invalid json}`
 	mockExecutor := &mockCommandExecutor{
-		output: []byte("Tags written successfully"),
+		output: []byte(invalidJSON),
 		err:    nil,
 		onExecution: func(cmd *exec.Cmd) {
-			// Create directory and invalid JSON file
-			if err := os.MkdirAll(testDir, 0755); err != nil {
-				t.Fatalf("failed to create test directory: %v", err)
-			}
-
-			invalidJSON := `{invalid json}`
-			if err := os.WriteFile(filepath.Join(testDir, "runtime_tags.json"), []byte(invalidJSON), 0644); err != nil {
-				t.Fatalf("failed to write invalid JSON file: %v", err)
-			}
+			// Ruby script outputs invalid JSON
 		},
 	}
 
@@ -272,9 +225,9 @@ func TestRuby_CreateTagsMap_InvalidJSON(t *testing.T) {
 		t.Error("expected nil tags when JSON parsing fails")
 	}
 
-	expectedErrorMsg := "failed to parse runtime tags file"
-	if err == nil || len(err.Error()) < len(expectedErrorMsg) || err.Error()[:len(expectedErrorMsg)] != expectedErrorMsg {
-		t.Errorf("expected error to start with %q, got %q", expectedErrorMsg, err.Error())
+	expectedErrorMsg := "failed to parse runtime tags JSON"
+	if err == nil || !strings.Contains(err.Error(), expectedErrorMsg) {
+		t.Errorf("expected error to contain %q, got %q", expectedErrorMsg, err.Error())
 	}
 }
 
@@ -287,10 +240,8 @@ func TestRuby_EmbeddedScript(t *testing.T) {
 	// Check for key components that should be in the script
 	expectedContent := []string{
 		"require \"json\"",
-		"require \"fileutils\"",
 		"tags_map",
-		".dd/runtime_tags.json",
-		"to_json",
+		"puts tags_map.to_json",
 	}
 
 	for _, expected := range expectedContent {

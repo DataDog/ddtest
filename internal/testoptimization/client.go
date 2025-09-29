@@ -90,7 +90,7 @@ func NewDatadogClientWithDependencies(integrations CIVisibilityIntegrations, uti
 func (c *DatadogClient) Initialize(tags map[string]string) error {
 	c.utils.AddCITagsMap(tags)
 
-	// Create .dd/context directory for storing context data
+	// Create context directory for storing context data
 	if err := c.contextManager.CreateContextDirectory(); err != nil {
 		return fmt.Errorf("failed to create context directory: %w", err)
 	}

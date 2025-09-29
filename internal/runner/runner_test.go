@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/datadog-test-runner/internal/ciprovider"
+	"github.com/DataDog/datadog-test-runner/internal/constants"
 	"github.com/DataDog/datadog-test-runner/internal/framework"
 	"github.com/DataDog/datadog-test-runner/internal/platform"
 	"github.com/DataDog/datadog-test-runner/internal/settings"
@@ -214,7 +216,7 @@ func TestTestRunner_Setup_WithParallelRunners(t *testing.T) {
 	_ = os.Chdir(tempDir)
 
 	// Create .dd directory
-	_ = os.MkdirAll(".dd", 0755)
+	_ = os.MkdirAll(constants.PlanDirectory, 0755)
 
 	// Setup mocks for a test with 40% skippable percentage
 	mockFramework := &MockFramework{
@@ -251,7 +253,7 @@ func TestTestRunner_Setup_WithParallelRunners(t *testing.T) {
 	}
 
 	// Expected: 1 (since max=1)
-	content, err := os.ReadFile(ParallelRunnersOutputPath)
+	content, err := os.ReadFile(constants.ParallelRunnersOutputPath)
 	if err != nil {
 		t.Fatalf("Failed to read parallel runners file: %v", err)
 	}
@@ -271,7 +273,7 @@ func TestTestRunner_Setup_WithCIProvider(t *testing.T) {
 	_ = os.Chdir(tempDir)
 
 	// Create .dd directory
-	_ = os.MkdirAll(".dd", 0755)
+	_ = os.MkdirAll(constants.PlanDirectory, 0755)
 
 	// Setup mocks for test with CI provider
 	mockFramework := &MockFramework{
@@ -333,7 +335,7 @@ func TestTestRunner_Setup_CIProviderDetectionFailure(t *testing.T) {
 	_ = os.Chdir(tempDir)
 
 	// Create .dd directory
-	_ = os.MkdirAll(".dd", 0755)
+	_ = os.MkdirAll(constants.PlanDirectory, 0755)
 
 	// Setup mocks for test without CI provider
 	mockFramework := &MockFramework{
@@ -375,7 +377,7 @@ func TestTestRunner_Setup_CIProviderConfigureFailure(t *testing.T) {
 	_ = os.Chdir(tempDir)
 
 	// Create .dd directory
-	_ = os.MkdirAll(".dd", 0755)
+	_ = os.MkdirAll(constants.PlanDirectory, 0755)
 
 	// Setup mocks for test with failing CI provider
 	mockFramework := &MockFramework{
@@ -428,7 +430,7 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		_ = os.Chdir(tempDir)
 
 		// Create .dd directory
-		_ = os.MkdirAll(".dd", 0755)
+		_ = os.MkdirAll(constants.PlanDirectory, 0755)
 
 		// Setup mocks for single runner scenario
 		mockFramework := &MockFramework{
@@ -459,18 +461,18 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		}
 
 		// Verify that tests-split directory was created
-		if _, err := os.Stat(".dd/tests-split"); os.IsNotExist(err) {
-			t.Error("Expected .dd/tests-split directory to be created when parallelRunners = 1")
+		if _, err := os.Stat(filepath.Join(constants.PlanDirectory, "tests-split")); os.IsNotExist(err) {
+			t.Error("Expected tests-split directory to be created when parallelRunners = 1")
 		}
 
 		// Verify that runner-0 file was created
-		runnerFilePath := ".dd/tests-split/runner-0"
+		runnerFilePath := filepath.Join(constants.PlanDirectory, "tests-split", "runner-0")
 		if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
 			t.Error("Expected runner-0 file to be created when parallelRunners = 1")
 		}
 
 		// Verify that runner-0 contains the same content as test-files.txt
-		testFilesContent, err := os.ReadFile(".dd/test-files.txt")
+		testFilesContent, err := os.ReadFile(filepath.Join(constants.PlanDirectory, "test-files.txt"))
 		if err != nil {
 			t.Fatalf("Failed to read test-files.txt: %v", err)
 		}
@@ -502,7 +504,7 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		_ = os.Chdir(tempDir)
 
 		// Create .dd directory
-		_ = os.MkdirAll(".dd", 0755)
+		_ = os.MkdirAll(constants.PlanDirectory, 0755)
 
 		// Setup mocks with test files that will create a predictable distribution
 		mockFramework := &MockFramework{
@@ -547,14 +549,14 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		}
 
 		// Verify that tests-split directory was created
-		if _, err := os.Stat(".dd/tests-split"); os.IsNotExist(err) {
-			t.Error("Expected .dd/tests-split directory to be created")
+		if _, err := os.Stat(filepath.Join(constants.PlanDirectory, "tests-split")); os.IsNotExist(err) {
+			t.Error("Expected tests-split directory to be created")
 		}
 
 		// With min=2 and 0% skippable tests, we should get 4 parallel runners
 		// Verify runner files exist
 		for i := range expectedParallelRunnersCount {
-			runnerPath := fmt.Sprintf(".dd/tests-split/runner-%d", i)
+			runnerPath := filepath.Join(constants.PlanDirectory, "tests-split", fmt.Sprintf("runner-%d", i))
 			if _, err := os.Stat(runnerPath); os.IsNotExist(err) {
 				t.Errorf("Expected runner-%d file to exist", i)
 			}
@@ -563,7 +565,7 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		// Verify content of runner files
 		// With the test distribution (file1: 2 tests, file2: 1 test, file3: 1 test)
 		// and 4 runners, expected: Runner 0 gets file1 (2 tests), others get 1 test each
-		runner0Content, err := os.ReadFile(".dd/tests-split/runner-0")
+		runner0Content, err := os.ReadFile(filepath.Join(constants.PlanDirectory, "tests-split", "runner-0"))
 		if err != nil {
 			t.Fatalf("Failed to read runner-0 file: %v", err)
 		}
@@ -577,7 +579,7 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		// Count total files across all runners
 		totalFiles := 0
 		for i := range expectedParallelRunnersCount {
-			runnerPath := fmt.Sprintf(".dd/tests-split/runner-%d", i)
+			runnerPath := filepath.Join(constants.PlanDirectory, "tests-split", fmt.Sprintf("runner-%d", i))
 			content, err := os.ReadFile(runnerPath)
 			if err != nil {
 				continue

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/DataDog/datadog-test-runner/internal/constants"
 )
 
 func TestLoadJSONFile(t *testing.T) {
@@ -105,7 +107,7 @@ func TestLoadContextData(t *testing.T) {
 		}()
 
 		// Create .dd/context directory
-		contextDir := filepath.Join(".dd", "context")
+		contextDir := filepath.Join(constants.PlanDirectory, "context")
 		err := os.MkdirAll(contextDir, 0755)
 		if err != nil {
 			t.Fatalf("failed to create context directory: %v", err)
@@ -182,7 +184,7 @@ func TestLoadContextData(t *testing.T) {
 		}()
 
 		// Create .dd/context directory
-		contextDir := filepath.Join(".dd", "context")
+		contextDir := filepath.Join(constants.PlanDirectory, "context")
 		err := os.MkdirAll(contextDir, 0755)
 		if err != nil {
 			t.Fatalf("failed to create context directory: %v", err)
@@ -233,7 +235,7 @@ func TestHandleContext(t *testing.T) {
 		}()
 
 		// Create .dd/context directory with test data
-		contextDir := filepath.Join(".dd", "context")
+		contextDir := filepath.Join(constants.PlanDirectory, "context")
 		err := os.MkdirAll(contextDir, 0755)
 		if err != nil {
 			t.Fatalf("failed to create context directory: %v", err)

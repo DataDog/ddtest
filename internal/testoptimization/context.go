@@ -10,6 +10,7 @@ import (
 	"github.com/DataDog/datadog-test-runner/civisibility/constants"
 	"github.com/DataDog/datadog-test-runner/civisibility/utils"
 	"github.com/DataDog/datadog-test-runner/civisibility/utils/net"
+	appConstants "github.com/DataDog/datadog-test-runner/internal/constants"
 )
 
 // SkippableTestsContext represents the structure for storing skippable tests with correlation ID
@@ -28,7 +29,7 @@ func NewContextManager() *ContextManager {
 
 // CreateContextDirectory creates the .dd/context directory for storing context data
 func (cm *ContextManager) CreateContextDirectory() error {
-	contextDir := filepath.Join(".dd", "context")
+	contextDir := filepath.Join(appConstants.PlanDirectory, "context")
 	return os.MkdirAll(contextDir, 0755)
 }
 
@@ -52,7 +53,7 @@ func (cm *ContextManager) StoreRepositorySettings(repositorySettings *net.Settin
 		return fmt.Errorf("failed to create context directory: %w", err)
 	}
 
-	settingsPath := filepath.Join(".dd", "context", "settings.json")
+	settingsPath := filepath.Join(appConstants.PlanDirectory, "context", "settings.json")
 	if err := cm.writeJSONToFile(repositorySettings, settingsPath); err != nil {
 		slog.Error("Failed to write repository settings to file", "error", err, "path", settingsPath)
 		return err
@@ -78,7 +79,7 @@ func (cm *ContextManager) StoreSkippableTestsContext(skippableTests map[string]m
 		SkippableTests: skippableTests,
 	}
 
-	skippableTestsPath := filepath.Join(".dd", "context", "skippable_tests.json")
+	skippableTestsPath := filepath.Join(appConstants.PlanDirectory, "context", "skippable_tests.json")
 	if err := cm.writeJSONToFile(skippableTestsContext, skippableTestsPath); err != nil {
 		slog.Error("Failed to write skippable tests to file", "error", err, "path", skippableTestsPath)
 		return err
@@ -94,7 +95,7 @@ func (cm *ContextManager) StoreKnownTestsContext(knownTests *net.KnownTestsRespo
 		return fmt.Errorf("failed to create context directory: %w", err)
 	}
 
-	knownTestsPath := filepath.Join(".dd", "context", "known_tests.json")
+	knownTestsPath := filepath.Join(appConstants.PlanDirectory, "context", "known_tests.json")
 	if err := cm.writeJSONToFile(knownTests, knownTestsPath); err != nil {
 		slog.Error("Failed to write known tests to file", "error", err, "path", knownTestsPath)
 		return err
@@ -110,7 +111,7 @@ func (cm *ContextManager) StoreTestManagementTestsContext(testManagementTests *n
 		return fmt.Errorf("failed to create context directory: %w", err)
 	}
 
-	testManagementTestsPath := filepath.Join(".dd", "context", "test_management_tests.json")
+	testManagementTestsPath := filepath.Join(appConstants.PlanDirectory, "context", "test_management_tests.json")
 	if err := cm.writeJSONToFile(testManagementTests, testManagementTestsPath); err != nil {
 		slog.Error("Failed to write test management tests to file", "error", err, "path", testManagementTestsPath)
 		return err

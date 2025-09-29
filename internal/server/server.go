@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/DataDog/datadog-test-runner/internal/constants"
 	"github.com/spf13/viper"
 )
 
@@ -43,7 +44,7 @@ func New(port int) *Server {
 }
 
 func (s *Server) loadContextData() (*ContextData, error) {
-	contextDir := filepath.Join(".dd", "context")
+	contextDir := filepath.Join(constants.PlanDirectory, "context")
 
 	if _, err := os.Stat(contextDir); os.IsNotExist(err) {
 		return &ContextData{}, nil

@@ -3,9 +3,12 @@ package runner
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/DataDog/datadog-test-runner/internal/constants"
 )
 
 func TestDistributeTestFiles(t *testing.T) {
@@ -249,27 +252,27 @@ func TestCreateTestSplits(t *testing.T) {
 		_ = os.Chdir(tempDir)
 
 		// Create test-files.txt with content
-		_ = os.MkdirAll(".dd", 0755)
+		_ = os.MkdirAll(constants.PlanDirectory, 0755)
 		testContent := "test/file1_test.rb\ntest/file2_test.rb\n"
-		_ = os.WriteFile(".dd/test-files.txt", []byte(testContent), 0644)
+		_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "test-files.txt"), []byte(testContent), 0644)
 
 		testFiles := map[string]int{
 			"test/file1_test.rb": 2,
 			"test/file2_test.rb": 1,
 		}
 
-		err := CreateTestSplits(testFiles, 1, ".dd/test-files.txt")
+		err := CreateTestSplits(testFiles, 1, filepath.Join(constants.PlanDirectory, "test-files.txt"))
 		if err != nil {
 			t.Fatalf("CreateTestSplits() should not return error, got: %v", err)
 		}
 
 		// Verify tests-split directory was created
-		if _, err := os.Stat(".dd/tests-split"); os.IsNotExist(err) {
-			t.Error("Expected .dd/tests-split directory to be created")
+		if _, err := os.Stat(filepath.Join(constants.PlanDirectory, "tests-split")); os.IsNotExist(err) {
+			t.Error("Expected tests-split directory to be created")
 		}
 
 		// Verify runner-0 file was created
-		runnerFilePath := ".dd/tests-split/runner-0"
+		runnerFilePath := filepath.Join(constants.PlanDirectory, "tests-split", "runner-0")
 		if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
 			t.Error("Expected runner-0 file to be created")
 		}
@@ -297,19 +300,19 @@ func TestCreateTestSplits(t *testing.T) {
 			"test/file3_test.rb": 3,
 		}
 
-		err := CreateTestSplits(testFiles, 2, ".dd/test-files.txt")
+		err := CreateTestSplits(testFiles, 2, filepath.Join(constants.PlanDirectory, "test-files.txt"))
 		if err != nil {
 			t.Fatalf("CreateTestSplits() should not return error, got: %v", err)
 		}
 
 		// Verify tests-split directory was created
-		if _, err := os.Stat(".dd/tests-split"); os.IsNotExist(err) {
-			t.Error("Expected .dd/tests-split directory to be created")
+		if _, err := os.Stat(filepath.Join(constants.PlanDirectory, "tests-split")); os.IsNotExist(err) {
+			t.Error("Expected tests-split directory to be created")
 		}
 
 		// Verify both runner files were created
 		for i := 0; i < 2; i++ {
-			runnerFilePath := fmt.Sprintf(".dd/tests-split/runner-%d", i)
+			runnerFilePath := filepath.Join(constants.PlanDirectory, "tests-split", fmt.Sprintf("runner-%d", i))
 			if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
 				t.Errorf("Expected runner-%d file to be created", i)
 			}
@@ -317,8 +320,8 @@ func TestCreateTestSplits(t *testing.T) {
 
 		// Verify content distribution
 		// With bin packing: runner-0 gets file1 (10), runner-1 gets file2+file3 (8)
-		runner0Content, _ := os.ReadFile(".dd/tests-split/runner-0")
-		runner1Content, _ := os.ReadFile(".dd/tests-split/runner-1")
+		runner0Content, _ := os.ReadFile(filepath.Join(constants.PlanDirectory, "tests-split", "runner-0"))
+		runner1Content, _ := os.ReadFile(filepath.Join(constants.PlanDirectory, "tests-split", "runner-1"))
 
 		runner0Files := strings.Fields(strings.TrimSpace(string(runner0Content)))
 		runner1Files := strings.Fields(strings.TrimSpace(string(runner1Content)))
@@ -345,17 +348,17 @@ func TestCreateTestSplits(t *testing.T) {
 		_ = os.Chdir(tempDir)
 
 		// Create empty test-files.txt
-		_ = os.MkdirAll(".dd", 0755)
-		_ = os.WriteFile(".dd/test-files.txt", []byte(""), 0644)
+		_ = os.MkdirAll(constants.PlanDirectory, 0755)
+		_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "test-files.txt"), []byte(""), 0644)
 
-		err := CreateTestSplits(map[string]int{}, 2, ".dd/test-files.txt")
+		err := CreateTestSplits(map[string]int{}, 2, filepath.Join(constants.PlanDirectory, "test-files.txt"))
 		if err != nil {
 			t.Fatalf("CreateTestSplits() should not return error for empty files, got: %v", err)
 		}
 
 		// Verify runner files are created (even if empty)
 		for i := 0; i < 2; i++ {
-			runnerFilePath := fmt.Sprintf(".dd/tests-split/runner-%d", i)
+			runnerFilePath := filepath.Join(constants.PlanDirectory, "tests-split", fmt.Sprintf("runner-%d", i))
 			if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
 				t.Errorf("Expected runner-%d file to be created", i)
 			}
@@ -371,12 +374,12 @@ func TestCreateTestSplits(t *testing.T) {
 		// Don't create test-files.txt
 		testFiles := map[string]int{"test/file1_test.rb": 1}
 
-		err := CreateTestSplits(testFiles, 1, ".dd/test-files.txt")
+		err := CreateTestSplits(testFiles, 1, filepath.Join(constants.PlanDirectory, "test-files.txt"))
 		if err == nil {
 			t.Error("CreateTestSplits() should return error when test-files.txt doesn't exist")
 		}
 
-		expectedMsg := "failed to read test files from .dd/test-files.txt"
+		expectedMsg := "failed to read test files from " + filepath.Join(constants.PlanDirectory, "test-files.txt")
 		if !strings.Contains(err.Error(), expectedMsg) {
 			t.Errorf("Error should contain '%s', got: %v", expectedMsg, err)
 		}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/DataDog/datadog-test-runner/civisibility/utils/net"
+	"github.com/DataDog/datadog-test-runner/internal/constants"
 )
 
 // TestMain runs once for the entire package and handles global setup/teardown
@@ -16,7 +17,7 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 
 	// remove any .dd directories that might be left behind
-	_ = os.RemoveAll(".dd")
+	_ = os.RemoveAll(constants.PlanDirectory)
 
 	// Exit with the same code as the tests
 	os.Exit(code)
@@ -248,7 +249,7 @@ func TestDatadogClient_StoreContextAndExit_WritesSettingsFile(t *testing.T) {
 	client.StoreContextAndExit()
 
 	// Check if settings.json file was created and contains correct data
-	settingsPath := filepath.Join(".dd", "context", "settings.json")
+	settingsPath := filepath.Join(constants.PlanDirectory, "context", "settings.json")
 	if _, err := os.Stat(settingsPath); os.IsNotExist(err) {
 		t.Errorf("Expected settings file to exist at %s", settingsPath)
 		return
@@ -346,9 +347,9 @@ func TestDatadogClient_Initialize_CreatesContextDirectory(t *testing.T) {
 	}
 
 	// Check if .dd/context directory was created
-	contextDir := filepath.Join(".dd", "context")
+	contextDir := filepath.Join(constants.PlanDirectory, "context")
 	if _, err := os.Stat(contextDir); os.IsNotExist(err) {
-		t.Errorf("Expected .dd/context directory to be created")
+		t.Errorf("Expected context directory to be created")
 	}
 }
 
@@ -377,7 +378,7 @@ func TestDatadogClient_StoreContextAndExit_WritesKnownTestsFile(t *testing.T) {
 	client.StoreContextAndExit()
 
 	// Check if known_tests.json file was created and contains correct data
-	knownTestsPath := filepath.Join(".dd", "context", "known_tests.json")
+	knownTestsPath := filepath.Join(constants.PlanDirectory, "context", "known_tests.json")
 	if _, err := os.Stat(knownTestsPath); os.IsNotExist(err) {
 		t.Errorf("Expected known tests file to exist at %s", knownTestsPath)
 		return
@@ -460,7 +461,7 @@ func TestDatadogClient_GetSkippableTests_WritesSkippableTestsFile(t *testing.T) 
 	client.GetSkippableTests()
 
 	// Check if skippable_tests.json file was created and contains correct data
-	skippableTestsPath := filepath.Join(".dd", "context", "skippable_tests.json")
+	skippableTestsPath := filepath.Join(constants.PlanDirectory, "context", "skippable_tests.json")
 	if _, err := os.Stat(skippableTestsPath); os.IsNotExist(err) {
 		t.Errorf("Expected skippable tests file to exist at %s", skippableTestsPath)
 		return
@@ -558,7 +559,7 @@ func TestDatadogClient_StoreContextAndExit_WritesTestManagementTestsFile(t *test
 	client.StoreContextAndExit()
 
 	// Check if test_management_tests.json file was created and contains correct data
-	testManagementTestsPath := filepath.Join(".dd", "context", "test_management_tests.json")
+	testManagementTestsPath := filepath.Join(constants.PlanDirectory, "context", "test_management_tests.json")
 	if _, err := os.Stat(testManagementTestsPath); os.IsNotExist(err) {
 		t.Errorf("Expected test management tests file to exist at %s", testManagementTestsPath)
 		return
@@ -637,7 +638,7 @@ func TestDatadogClient_StoreContextAndExit_WritesTestManagementTestsFile(t *test
 
 func TestDatadogClient_StoreContextAndExit_NilTestManagementTests(t *testing.T) {
 	// Clean up any existing files before test
-	_ = os.RemoveAll(".dd")
+	_ = os.RemoveAll(constants.PlanDirectory)
 
 	mockIntegrations := &MockCIVisibilityIntegrations{
 		Settings: &net.SettingsResponseData{
@@ -653,7 +654,7 @@ func TestDatadogClient_StoreContextAndExit_NilTestManagementTests(t *testing.T) 
 	client.StoreContextAndExit()
 
 	// Check that test_management_tests.json file was NOT created
-	testManagementTestsPath := filepath.Join(".dd", "context", "test_management_tests.json")
+	testManagementTestsPath := filepath.Join(constants.PlanDirectory, "context", "test_management_tests.json")
 	if _, err := os.Stat(testManagementTestsPath); !os.IsNotExist(err) {
 		t.Errorf("Expected test management tests file to NOT exist at %s when data is nil, error: %v", testManagementTestsPath, err)
 	}

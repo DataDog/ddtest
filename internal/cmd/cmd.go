@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/DataDog/datadog-test-runner/internal/constants"
 	"github.com/DataDog/datadog-test-runner/internal/runner"
 	"github.com/DataDog/datadog-test-runner/internal/server"
 	"github.com/DataDog/datadog-test-runner/internal/settings"
@@ -26,8 +27,8 @@ var setupCmd = &cobra.Command{
 	Short: "Prepare test optimization data",
 	Long: fmt.Sprintf(
 		"Discovers test files and calculates the percentage of tests that can be skipped using Datadog's Test Impact Analysis. Outputs results to %s and %s.",
-		runner.TestFilesOutputPath,
-		runner.SkippablePercentageOutputPath,
+		constants.TestFilesOutputPath,
+		constants.SkippablePercentageOutputPath,
 	),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()

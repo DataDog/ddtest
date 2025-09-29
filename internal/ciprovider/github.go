@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/DataDog/datadog-test-runner/internal/constants"
 )
 
-const GitHubMatrixPath = ".dd/github/config"
+var GitHubMatrixPath = filepath.Join(constants.PlanDirectory, "github/config")
 
 type GitHub struct{}
 

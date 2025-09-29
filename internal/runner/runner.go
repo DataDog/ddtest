@@ -9,15 +9,11 @@ import (
 	"strings"
 
 	"github.com/DataDog/datadog-test-runner/internal/ciprovider"
+	"github.com/DataDog/datadog-test-runner/internal/constants"
 	"github.com/DataDog/datadog-test-runner/internal/platform"
 	"github.com/DataDog/datadog-test-runner/internal/settings"
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
 )
-
-const TestFilesOutputPath = ".dd/test-files.txt"
-const SkippablePercentageOutputPath = ".dd/skippable-percentage.txt"
-const ParallelRunnersOutputPath = ".dd/parallel-runners.txt"
-const TestsSplitDir = ".dd/tests-split"
 
 type Runner interface {
 	Setup(ctx context.Context) error
@@ -57,7 +53,7 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(TestFilesOutputPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(constants.TestFilesOutputPath), 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
@@ -71,20 +67,20 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 		content += "\n"
 	}
 
-	if err := os.WriteFile(TestFilesOutputPath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("failed to write test files to %s: %w", TestFilesOutputPath, err)
+	if err := os.WriteFile(constants.TestFilesOutputPath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("failed to write test files to %s: %w", constants.TestFilesOutputPath, err)
 	}
 
 	percentageContent := fmt.Sprintf("%.2f", tr.skippablePercentage)
-	if err := os.WriteFile(SkippablePercentageOutputPath, []byte(percentageContent), 0644); err != nil {
-		return fmt.Errorf("failed to write skippable percentage to %s: %w", SkippablePercentageOutputPath, err)
+	if err := os.WriteFile(constants.SkippablePercentageOutputPath, []byte(percentageContent), 0644); err != nil {
+		return fmt.Errorf("failed to write skippable percentage to %s: %w", constants.SkippablePercentageOutputPath, err)
 	}
 
 	// Calculate and write parallel runners count
 	parallelRunners := calculateParallelRunners(tr.skippablePercentage)
 	runnersContent := fmt.Sprintf("%d", parallelRunners)
-	if err := os.WriteFile(ParallelRunnersOutputPath, []byte(runnersContent), 0644); err != nil {
-		return fmt.Errorf("failed to write parallel runners to %s: %w", ParallelRunnersOutputPath, err)
+	if err := os.WriteFile(constants.ParallelRunnersOutputPath, []byte(runnersContent), 0644); err != nil {
+		return fmt.Errorf("failed to write parallel runners to %s: %w", constants.ParallelRunnersOutputPath, err)
 	}
 
 	// Detect and configure CI provider if available
@@ -100,7 +96,7 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 	}
 
 	// Split test files for runners
-	if err := CreateTestSplits(tr.testFiles, parallelRunners, TestFilesOutputPath); err != nil {
+	if err := CreateTestSplits(tr.testFiles, parallelRunners, constants.TestFilesOutputPath); err != nil {
 		return fmt.Errorf("failed to create test splits: %w", err)
 	}
 
@@ -109,15 +105,15 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 
 func (tr *TestRunner) Run(ctx context.Context) error {
 	// Check if parallel runners output file exists
-	if _, err := os.Stat(ParallelRunnersOutputPath); os.IsNotExist(err) {
+	if _, err := os.Stat(constants.ParallelRunnersOutputPath); os.IsNotExist(err) {
 		// Run Setup if the file doesn't exist
 		if err := tr.Setup(ctx); err != nil {
 			return fmt.Errorf("failed to run setup: %w", err)
 		}
 	}
-	runnersData, err := os.ReadFile(ParallelRunnersOutputPath)
+	runnersData, err := os.ReadFile(constants.ParallelRunnersOutputPath)
 	if err != nil {
-		return fmt.Errorf("failed to read parallel runners from %s: %w", ParallelRunnersOutputPath, err)
+		return fmt.Errorf("failed to read parallel runners from %s: %w", constants.ParallelRunnersOutputPath, err)
 	}
 
 	parallelRunners := 0

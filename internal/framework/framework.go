@@ -1,10 +1,13 @@
 package framework
 
 import (
+	"path/filepath"
+
+	"github.com/DataDog/datadog-test-runner/internal/constants"
 	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
 )
 
-const TestsDiscoveryFilePath = "./.dd/tests-discovery/tests.json"
+var TestsDiscoveryFilePath = filepath.Join(".", constants.PlanDirectory, "tests-discovery/tests.json")
 
 type Framework interface {
 	Name() string
