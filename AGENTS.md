@@ -34,7 +34,7 @@ make fmt     # Formats code with go fmt
 
 ```bash
 make run              # Runs with go run main.go
-go run main.go setup  # Run setup command directly
+go run main.go plan   # Run plan command directly
 ```
 
 ### Single Test Execution

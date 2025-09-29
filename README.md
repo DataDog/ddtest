@@ -24,7 +24,7 @@ This will create the `ddtest` binary in the current directory.
 
 ### Available Commands
 
-- `setup` - Prepare test optimization data by discovering test files and calculating skippable percentage
+- `plan` - Prepare test optimization data by discovering test files and calculating skippable percentage
 - `completion` - Generate autocompletion scripts for your shell
 - `help` - Get help about any command
 
@@ -36,23 +36,22 @@ This will create the `ddtest` binary in the current directory.
 
 ### Examples
 
-#### Setup Test Optimization
+#### Planning mode
 
 ```bash
 # Use default settings (Ruby with RSpec)
-./ddtest setup
+./ddtest plan
 
 # Specify platform and framework explicitly
-./ddtest setup --platform ruby --framework rspec
+./ddtest plan --platform ruby --framework rspec
 
 # Using environment variables
-DD_TEST_OPTIMIZATION_RUNNER_PLATFORM=python ./ddtest setup
-DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK=pytest ./ddtest setup
+DD_TEST_OPTIMIZATION_RUNNER_PLATFORM=python DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK=pytest ./ddtest plan
 ```
 
 ## Output Files
 
-When you run `ddtest setup`, the tool generates:
+When you run `ddtest plan`, the tool generates:
 
 - `.testoptimization/test-files.txt` - List of discovered test files
 - `.testoptimization/skippable-percentage.txt` - Percentage of tests that can be skipped
@@ -65,7 +64,7 @@ When you run `ddtest setup`, the tool generates:
 
 ## Integration with Knapsack Pro
 
-First, run `ddtest setup --platform ruby --framework rspec`. Then set environment variable `KNAPSACK_PRO_TEST_FILE_LIST_SOURCE_FILE=.testoptimization/test-files.txt` and knapsack_pro runner will only run the test files listed in `.testoptimization/test-files.txt` - the ones that are not completely skipped by Datadog Test Impact Analysis.
+First, run `ddtest plan --platform ruby --framework rspec`. Then set environment variable `KNAPSACK_PRO_TEST_FILE_LIST_SOURCE_FILE=.testoptimization/test-files.txt` and knapsack_pro runner will only run the test files listed in `.testoptimization/test-files.txt` - the ones that are not completely skipped by Datadog Test Impact Analysis.
 
 ## Development
 

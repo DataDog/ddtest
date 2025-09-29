@@ -22,8 +22,8 @@ var rootCmd = &cobra.Command{
 	Long:  "Command line tool for running tests with Datadog Test Optimization.",
 }
 
-var setupCmd = &cobra.Command{
-	Use:   "setup",
+var planCmd = &cobra.Command{
+	Use:   "plan",
 	Short: "Prepare test optimization data",
 	Long: fmt.Sprintf(
 		"Discovers test files and calculates the percentage of tests that can be skipped using Datadog's Test Impact Analysis. Outputs results to %s and %s.",
@@ -105,7 +105,7 @@ func init() {
 		os.Exit(1)
 	}
 
-	rootCmd.AddCommand(setupCmd)
+	rootCmd.AddCommand(planCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(serverCmd)
 
