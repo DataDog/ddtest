@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"os"
 	"os/exec"
 
 	"github.com/DataDog/datadog-test-runner/internal/ext"
@@ -34,25 +33,20 @@ func (r *Ruby) CreateTagsMap() (map[string]string, error) {
 	tags := make(map[string]string)
 	tags["language"] = r.Name()
 
-	// Execute the embedded Ruby script to write tags to file
+	// Execute the embedded Ruby script to get runtime tags
 	cmd := exec.Command("bundle", "exec", "ruby", "-e", rubyEnvScript)
-	if _, err := r.executor.CombinedOutput(cmd); err != nil {
+	output, err := r.executor.CombinedOutput(cmd)
+	if err != nil {
 		return nil, fmt.Errorf("failed to execute Ruby script: %w", err)
 	}
 
-	// Read the tags from the generated file
-	data, err := os.ReadFile(".dd/runtime_tags.json")
-	if err != nil {
-		return nil, fmt.Errorf("failed to read runtime tags file: %w", err)
-	}
-
-	// Parse the JSON from the file
+	// Parse the JSON output directly
 	var rubyTags map[string]string
-	if err := json.Unmarshal(data, &rubyTags); err != nil {
-		return nil, fmt.Errorf("failed to parse runtime tags file: %w", err)
+	if err := json.Unmarshal(output, &rubyTags); err != nil {
+		return nil, fmt.Errorf("failed to parse runtime tags JSON: %w", err)
 	}
 
-	// Merge the tags from the file
+	// Merge the tags from the Ruby output
 	maps.Copy(tags, rubyTags)
 
 	return tags, nil

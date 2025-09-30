@@ -8,15 +8,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/DataDog/datadog-test-runner/internal/constants"
 	"github.com/DataDog/datadog-test-runner/internal/framework"
 	"golang.org/x/sync/errgroup"
 )
 
-const NodeIndexPlaceholder = "{{nodeIndex}}"
-
 // runCINodeTests executes tests for a specific CI node (one split, not the whole tests set)
 func runCINodeTests(framework framework.Framework, workerEnvMap map[string]string, ciNode int) error {
-	runnerFilePath := fmt.Sprintf("%s/runner-%d", TestsSplitDir, ciNode)
+	runnerFilePath := fmt.Sprintf("%s/runner-%d", constants.TestsSplitDir, ciNode)
 	if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
 		return fmt.Errorf("runner file for ci-node %d does not exist: %s", ciNode, runnerFilePath)
 	}
@@ -30,9 +29,9 @@ func runCINodeTests(framework framework.Framework, workerEnvMap map[string]strin
 
 // runParallelTests executes tests across multiple parallel runners on a single node
 func runParallelTests(ctx context.Context, framework framework.Framework, workerEnvMap map[string]string) error {
-	entries, err := os.ReadDir(TestsSplitDir)
+	entries, err := os.ReadDir(constants.TestsSplitDir)
 	if err != nil {
-		return fmt.Errorf("failed to read tests split directory %s: %w", TestsSplitDir, err)
+		return fmt.Errorf("failed to read tests split directory %s: %w", constants.TestsSplitDir, err)
 	}
 
 	g, _ := errgroup.WithContext(ctx)
@@ -42,7 +41,7 @@ func runParallelTests(ctx context.Context, framework framework.Framework, worker
 			continue
 		}
 
-		splitFilePath := filepath.Join(TestsSplitDir, entry.Name())
+		splitFilePath := filepath.Join(constants.TestsSplitDir, entry.Name())
 		g.Go(func() error {
 			return runTestsFromFile(framework, splitFilePath, workerEnvMap, workerIndex)
 		})
@@ -56,7 +55,7 @@ func runParallelTests(ctx context.Context, framework framework.Framework, worker
 
 // runSequentialTests executes tests in a single sequential runner
 func runSequentialTests(framework framework.Framework, workerEnvMap map[string]string) error {
-	if err := runTestsFromFile(framework, TestFilesOutputPath, workerEnvMap, 0); err != nil {
+	if err := runTestsFromFile(framework, constants.TestFilesOutputPath, workerEnvMap, 0); err != nil {
 		return fmt.Errorf("failed to run tests: %w", err)
 	}
 	return nil
@@ -98,7 +97,7 @@ func runTestsFromFile(framework framework.Framework, filePath string, workerEnvM
 		// Create a copy of the worker env map and replace nodeIndex placeholder
 		processedEnvMap := make(map[string]string)
 		for key, value := range workerEnvMap {
-			processedEnvMap[key] = strings.ReplaceAll(value, NodeIndexPlaceholder, fmt.Sprintf("%d", workerIndex))
+			processedEnvMap[key] = strings.ReplaceAll(value, constants.NodeIndexPlaceholder, fmt.Sprintf("%d", workerIndex))
 		}
 
 		slog.Debug("Running tests", "testFilesCount", len(testFiles), "workerIndex", workerIndex)

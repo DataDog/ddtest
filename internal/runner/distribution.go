@@ -5,6 +5,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/DataDog/datadog-test-runner/internal/constants"
 )
 
 // DistributeTestFiles distributes test files across parallel runners using bin packing algorithm
@@ -72,7 +74,7 @@ func DistributeTestFiles(testFiles map[string]int, parallelRunners int) [][]stri
 // For single runner: copies test-files.txt content to runner-0
 func CreateTestSplits(testFiles map[string]int, parallelRunners int, testFilesOutputPath string) error {
 	// Create tests-split directory
-	if err := os.MkdirAll(TestsSplitDir, 0755); err != nil {
+	if err := os.MkdirAll(constants.TestsSplitDir, 0755); err != nil {
 		return fmt.Errorf("failed to create tests-split directory: %w", err)
 	}
 
@@ -87,14 +89,14 @@ func CreateTestSplits(testFiles map[string]int, parallelRunners int, testFilesOu
 				runnerContent += "\n"
 			}
 
-			runnerFilePath := fmt.Sprintf("%s/runner-%d", TestsSplitDir, i)
+			runnerFilePath := fmt.Sprintf("%s/runner-%d", constants.TestsSplitDir, i)
 			if err := os.WriteFile(runnerFilePath, []byte(runnerContent), 0644); err != nil {
 				return fmt.Errorf("failed to write runner-%d files to %s: %w", i, runnerFilePath, err)
 			}
 		}
 	} else {
 		// For single runner, copy test-files.txt to runner-0
-		runnerFilePath := fmt.Sprintf("%s/runner-0", TestsSplitDir)
+		runnerFilePath := fmt.Sprintf("%s/runner-0", constants.TestsSplitDir)
 		testFilesData, err := os.ReadFile(testFilesOutputPath)
 		if err != nil {
 			return fmt.Errorf("failed to read test files from %s: %w", testFilesOutputPath, err)

@@ -25,9 +25,6 @@ func TestInit(t *testing.T) {
 	if config.Framework != "rspec" {
 		t.Errorf("expected default framework to be 'rspec', got %q", config.Framework)
 	}
-	if config.Port != 7890 {
-		t.Errorf("expected default port to be 7890, got %d", config.Port)
-	}
 	if config.MinParallelism != 1 {
 		t.Errorf("expected default min_parallelism to be 1, got %d", config.MinParallelism)
 	}
@@ -52,9 +49,6 @@ func TestSetDefaults(t *testing.T) {
 	}
 	if viper.GetString("framework") != "rspec" {
 		t.Errorf("expected default framework to be 'rspec', got %q", viper.GetString("framework"))
-	}
-	if viper.GetInt("port") != 7890 {
-		t.Errorf("expected default port to be 7890, got %d", viper.GetInt("port"))
 	}
 	if viper.GetInt("min_parallelism") != 1 {
 		t.Errorf("expected default min_parallelism to be 1, got %d", viper.GetInt("min_parallelism"))
@@ -99,7 +93,7 @@ func TestGetPlatform(t *testing.T) {
 	}
 
 	// Test with custom value
-	config = &Config{Platform: "python", Framework: "pytest", Port: 8080, MinParallelism: 2, MaxParallelism: 4, WorkerEnv: "RAILS_DB=my_project_dev_{{nodeIndex}}", CiNode: 3}
+	config = &Config{Platform: "python", Framework: "pytest", MinParallelism: 2, MaxParallelism: 4, WorkerEnv: "RAILS_DB=my_project_dev_{{nodeIndex}}", CiNode: 3}
 	platform = GetPlatform()
 	if platform != "python" {
 		t.Errorf("expected platform to be 'python', got %q", platform)
@@ -117,7 +111,7 @@ func TestGetFramework(t *testing.T) {
 	}
 
 	// Test with custom value
-	config = &Config{Platform: "python", Framework: "pytest", Port: 8080, MinParallelism: 2, MaxParallelism: 4, WorkerEnv: "RAILS_DB=my_project_dev_{{nodeIndex}}", CiNode: 3}
+	config = &Config{Platform: "python", Framework: "pytest", MinParallelism: 2, MaxParallelism: 4, WorkerEnv: "RAILS_DB=my_project_dev_{{nodeIndex}}", CiNode: 3}
 	framework = GetFramework()
 	if framework != "pytest" {
 		t.Errorf("expected framework to be 'pytest', got %q", framework)
@@ -132,7 +126,6 @@ func TestEnvironmentVariables(t *testing.T) {
 	// Set environment variables
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM", "python")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK", "pytest")
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PORT", "9090")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "2")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "8")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV", "RAILS_DB=my_project_dev_{{nodeIndex}}")
@@ -140,7 +133,6 @@ func TestEnvironmentVariables(t *testing.T) {
 	defer func() {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK")
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_PORT")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV")
@@ -154,9 +146,6 @@ func TestEnvironmentVariables(t *testing.T) {
 	}
 	if config.Framework != "pytest" {
 		t.Errorf("expected framework from env var to be 'pytest', got %q", config.Framework)
-	}
-	if config.Port != 9090 {
-		t.Errorf("expected port from env var to be 9090, got %d", config.Port)
 	}
 	if config.MinParallelism != 2 {
 		t.Errorf("expected min_parallelism from env var to be 2, got %d", config.MinParallelism)
@@ -172,24 +161,6 @@ func TestEnvironmentVariables(t *testing.T) {
 	}
 }
 
-func TestGetPort(t *testing.T) {
-	// Test with defaults
-	config = nil
-	viper.Reset()
-
-	port := GetPort()
-	if port != 7890 {
-		t.Errorf("expected port to be 7890, got %d", port)
-	}
-
-	// Test with custom value
-	config = &Config{Platform: "python", Framework: "pytest", Port: 8080, MinParallelism: 2, MaxParallelism: 4, WorkerEnv: "RAILS_DB=my_project_dev_{{nodeIndex}}", CiNode: 3}
-	port = GetPort()
-	if port != 8080 {
-		t.Errorf("expected port to be 8080, got %d", port)
-	}
-}
-
 func TestGetMinParallelism(t *testing.T) {
 	// Test with defaults
 	config = nil
@@ -201,7 +172,7 @@ func TestGetMinParallelism(t *testing.T) {
 	}
 
 	// Test with custom value
-	config = &Config{Platform: "python", Framework: "pytest", Port: 8080, MinParallelism: 3, MaxParallelism: 8, WorkerEnv: "RAILS_DB=my_project_dev_{{nodeIndex}}", CiNode: 3}
+	config = &Config{Platform: "python", Framework: "pytest", MinParallelism: 3, MaxParallelism: 8, WorkerEnv: "RAILS_DB=my_project_dev_{{nodeIndex}}", CiNode: 3}
 	minParallelism = GetMinParallelism()
 	if minParallelism != 3 {
 		t.Errorf("expected min_parallelism to be 3, got %d", minParallelism)
@@ -219,7 +190,7 @@ func TestGetMaxParallelism(t *testing.T) {
 	}
 
 	// Test with custom value
-	config = &Config{Platform: "python", Framework: "pytest", Port: 8080, MinParallelism: 2, MaxParallelism: 6, WorkerEnv: "RAILS_DB=my_project_dev_{{nodeIndex}}", CiNode: 3}
+	config = &Config{Platform: "python", Framework: "pytest", MinParallelism: 2, MaxParallelism: 6, WorkerEnv: "RAILS_DB=my_project_dev_{{nodeIndex}}", CiNode: 3}
 	maxParallelism = GetMaxParallelism()
 	if maxParallelism != 6 {
 		t.Errorf("expected max_parallelism to be 6, got %d", maxParallelism)
@@ -237,7 +208,7 @@ func TestGetWorkerEnv(t *testing.T) {
 	}
 
 	// Test with custom value
-	config = &Config{Platform: "python", Framework: "pytest", Port: 8080, MinParallelism: 2, MaxParallelism: 4, WorkerEnv: "RAILS_DB=my_project_dev_{{nodeIndex}}", CiNode: 3}
+	config = &Config{Platform: "python", Framework: "pytest", MinParallelism: 2, MaxParallelism: 4, WorkerEnv: "RAILS_DB=my_project_dev_{{nodeIndex}}", CiNode: 3}
 	workerEnv = GetWorkerEnv()
 	if workerEnv != "RAILS_DB=my_project_dev_{{nodeIndex}}" {
 		t.Errorf("expected worker_env to be 'RAILS_DB=my_project_dev_{{nodeIndex}}', got %q", workerEnv)
@@ -255,7 +226,7 @@ func TestGetCiNode(t *testing.T) {
 	}
 
 	// Test with custom value
-	config = &Config{Platform: "python", Framework: "pytest", Port: 8080, MinParallelism: 2, MaxParallelism: 4, WorkerEnv: "RAILS_DB=my_project_dev_{{nodeIndex}}", CiNode: 7}
+	config = &Config{Platform: "python", Framework: "pytest", MinParallelism: 2, MaxParallelism: 4, WorkerEnv: "RAILS_DB=my_project_dev_{{nodeIndex}}", CiNode: 7}
 	ciNode = GetCiNode()
 	if ciNode != 7 {
 		t.Errorf("expected ci_node to be 7, got %d", ciNode)

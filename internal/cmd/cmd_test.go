@@ -38,29 +38,23 @@ func TestRootCommandFlags(t *testing.T) {
 }
 
 func TestCommandHierarchy(t *testing.T) {
-	// Verify that setupCmd, runCmd and serverCmd are added to rootCmd
+	// Verify that planCmd and runCmd are added to rootCmd
 	commands := rootCmd.Commands()
-	var foundSetup, foundRun, foundServer bool
+	var foundPlan, foundRun bool
 	for _, cmd := range commands {
-		if cmd.Use == "setup" {
-			foundSetup = true
+		if cmd.Use == "plan" {
+			foundPlan = true
 		}
 		if cmd.Use == "run" {
 			foundRun = true
 		}
-		if cmd.Use == "server" {
-			foundServer = true
-		}
 	}
 
-	if !foundSetup {
-		t.Error("setup command should be added to root command")
+	if !foundPlan {
+		t.Error("plan command should be added to root command")
 	}
 	if !foundRun {
 		t.Error("run command should be added to root command")
-	}
-	if !foundServer {
-		t.Error("server command should be added to root command")
 	}
 }
 
@@ -70,7 +64,7 @@ func TestExecute(t *testing.T) {
 	defer func() { os.Args = originalArgs }()
 
 	// Test with help flag to avoid actual execution
-	os.Args = []string{"ddruntest", "--help"}
+	os.Args = []string{"ddtest", "--help"}
 
 	// Capture output
 	var buf bytes.Buffer
@@ -83,8 +77,8 @@ func TestExecute(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "ddruntest") {
-		t.Error("help output should contain command name 'ddruntest'")
+	if !strings.Contains(output, "ddtest") {
+		t.Error("help output should contain command name 'ddtest'")
 	}
 }
 
@@ -154,8 +148,8 @@ func TestCommandUsage(t *testing.T) {
 	}
 
 	// Expected commands (cobra adds completion and help automatically)
-	expectedCommands := []string{"setup", "run", "server"}
-	requiredCommands := []string{"completion", "help [command]", "setup", "run", "server"}
+	expectedCommands := []string{"plan", "run"}
+	requiredCommands := []string{"completion", "help [command]", "plan", "run"}
 
 	// Verify minimum expected commands exist
 	for _, expected := range expectedCommands {

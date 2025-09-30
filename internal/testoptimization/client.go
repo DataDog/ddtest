@@ -14,7 +14,7 @@ import (
 type TestOptimizationClient interface {
 	Initialize(tags map[string]string) error
 	GetSkippableTests() map[string]bool
-	StoreContextAndExit()
+	StoreCacheAndExit()
 }
 
 // these interfaces define our expectactions for dd-trace-go's public API
@@ -66,33 +66,33 @@ func (d *DatadogUtils) AddCITagsMap(tags map[string]string) {
 }
 
 type DatadogClient struct {
-	integrations   CIVisibilityIntegrations
-	utils          UtilsInterface
-	contextManager *ContextManager
+	integrations CIVisibilityIntegrations
+	utils        UtilsInterface
+	cacheManager *CacheManager
 }
 
 func NewDatadogClient() *DatadogClient {
 	return &DatadogClient{
-		integrations:   &DatadogCIVisibilityIntegrations{},
-		utils:          &DatadogUtils{},
-		contextManager: NewContextManager(),
+		integrations: &DatadogCIVisibilityIntegrations{},
+		utils:        &DatadogUtils{},
+		cacheManager: NewCacheManager(),
 	}
 }
 
 func NewDatadogClientWithDependencies(integrations CIVisibilityIntegrations, utils UtilsInterface) *DatadogClient {
 	return &DatadogClient{
-		integrations:   integrations,
-		utils:          utils,
-		contextManager: NewContextManager(),
+		integrations: integrations,
+		utils:        utils,
+		cacheManager: NewCacheManager(),
 	}
 }
 
 func (c *DatadogClient) Initialize(tags map[string]string) error {
 	c.utils.AddCITagsMap(tags)
 
-	// Create .dd/context directory for storing context data
-	if err := c.contextManager.CreateContextDirectory(); err != nil {
-		return fmt.Errorf("failed to create context directory: %w", err)
+	// Create cache directory for storing cache data
+	if err := c.cacheManager.CreateCacheDirectory(); err != nil {
+		return fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
 	startTime := time.Now()
@@ -111,9 +111,9 @@ func (c *DatadogClient) GetSkippableTests() map[string]bool {
 	slog.Debug("Fetching skippable tests...")
 	skippableTests := c.integrations.GetSkippableTests()
 
-	// Store skippable tests using context manager
-	if err := c.contextManager.StoreSkippableTestsContext(skippableTests); err != nil {
-		slog.Warn("Failed to store skippable tests context", "error", err)
+	// Store skippable tests using cache manager
+	if err := c.cacheManager.StoreSkippableTestsCache(skippableTests); err != nil {
+		slog.Warn("Failed to store skippable tests cache", "error", err)
 	}
 
 	for _, suites := range skippableTests {
@@ -131,14 +131,14 @@ func (c *DatadogClient) GetSkippableTests() map[string]bool {
 	return skippedTests
 }
 
-func (c *DatadogClient) StoreContextAndExit() {
+func (c *DatadogClient) StoreCacheAndExit() {
 	// store repository settings
 	repositorySettings := c.integrations.GetSettings()
 	if repositorySettings != nil {
 		slog.Debug("Repository settings", "itr_enabled", repositorySettings.ItrEnabled, "tests_skipping", repositorySettings.TestsSkipping)
 
-		// Store repository settings using context manager
-		if err := c.contextManager.StoreRepositorySettings(repositorySettings); err != nil {
+		// Store repository settings using cache manager
+		if err := c.cacheManager.StoreRepositorySettings(repositorySettings); err != nil {
 			slog.Warn("Failed to store repository settings", "error", err)
 		}
 	}
@@ -146,22 +146,22 @@ func (c *DatadogClient) StoreContextAndExit() {
 	// store known tests
 	knownTests := c.integrations.GetKnownTests()
 	if knownTests != nil {
-		slog.Debug("Storing known tests context")
+		slog.Debug("Storing known tests cache")
 
-		// Store known tests using context manager
-		if err := c.contextManager.StoreKnownTestsContext(knownTests); err != nil {
-			slog.Warn("Failed to store known tests context", "error", err)
+		// Store known tests using cache manager
+		if err := c.cacheManager.StoreKnownTestsCache(knownTests); err != nil {
+			slog.Warn("Failed to store known tests cache", "error", err)
 		}
 	}
 
 	// store test management tests
 	testManagementTests := c.integrations.GetTestManagementTestsData()
 	if testManagementTests != nil {
-		slog.Debug("Storing test management tests context")
+		slog.Debug("Storing test management tests cache")
 
-		// Store test management tests using context manager
-		if err := c.contextManager.StoreTestManagementTestsContext(testManagementTests); err != nil {
-			slog.Warn("Failed to store test management tests context", "error", err)
+		// Store test management tests using cache manager
+		if err := c.cacheManager.StoreTestManagementTestsCache(testManagementTests); err != nil {
+			slog.Warn("Failed to store test management tests cache", "error", err)
 		}
 	}
 
