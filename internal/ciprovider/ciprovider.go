@@ -3,8 +3,8 @@ package ciprovider
 import (
 	"fmt"
 
-	"github.com/DataDog/datadog-test-runner/civisibility/constants"
-	"github.com/DataDog/datadog-test-runner/civisibility/utils"
+	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/civisibility/utils"
 )
 
 type CIProvider interface {

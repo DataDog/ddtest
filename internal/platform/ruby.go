@@ -7,9 +7,9 @@ import (
 	"maps"
 	"os/exec"
 
-	"github.com/DataDog/datadog-test-runner/internal/ext"
-	"github.com/DataDog/datadog-test-runner/internal/framework"
-	"github.com/DataDog/datadog-test-runner/internal/settings"
+	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/settings"
 )
 
 //go:embed scripts/ruby_env.rb

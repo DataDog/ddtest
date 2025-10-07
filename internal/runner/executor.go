@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/DataDog/datadog-test-runner/internal/constants"
-	"github.com/DataDog/datadog-test-runner/internal/framework"
+	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/framework"
 	"golang.org/x/sync/errgroup"
 )
 

@@ -15,7 +15,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/DataDog/datadog-test-runner/civisibility/constants"
+	"github.com/DataDog/ddtest/civisibility/constants"
 )
 
 // This is a port of https://github.com/DataDog/dd-trace-dotnet/blob/v2.53.0/tracer/src/Datadog.Trace/Ci/CodeOwners.cs

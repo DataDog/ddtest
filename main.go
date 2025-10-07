@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/DataDog/datadog-test-runner/internal/cmd"
+	"github.com/DataDog/ddtest/internal/cmd"
 )
 
 func main() {

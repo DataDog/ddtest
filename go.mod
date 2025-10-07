@@ -1,4 +1,4 @@
-module github.com/DataDog/datadog-test-runner
+module github.com/DataDog/ddtest
 
 go 1.24.5
 

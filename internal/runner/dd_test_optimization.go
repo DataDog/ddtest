@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/testoptimization"
 	"golang.org/x/sync/errgroup"
 )
 

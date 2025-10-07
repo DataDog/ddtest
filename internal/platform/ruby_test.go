@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/datadog-test-runner/internal/constants"
-	"github.com/DataDog/datadog-test-runner/internal/settings"
+	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/viper"
 )
 

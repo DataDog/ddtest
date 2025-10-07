@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/DataDog/datadog-test-runner/internal/constants"
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 // DistributeTestFiles distributes test files across parallel runners using bin packing algorithm

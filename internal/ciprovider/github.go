@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/DataDog/datadog-test-runner/internal/constants"
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 var GitHubMatrixPath = filepath.Join(constants.PlanDirectory, "github/config")

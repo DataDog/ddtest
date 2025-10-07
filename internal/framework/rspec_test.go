@@ -8,8 +8,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/DataDog/datadog-test-runner/internal/ext"
-	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
 func cleanupDiscoveryDir() {

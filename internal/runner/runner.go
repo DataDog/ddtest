@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/DataDog/datadog-test-runner/internal/ciprovider"
-	"github.com/DataDog/datadog-test-runner/internal/constants"
-	"github.com/DataDog/datadog-test-runner/internal/platform"
-	"github.com/DataDog/datadog-test-runner/internal/settings"
-	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/ciprovider"
+	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
 type Runner interface {

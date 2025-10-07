@@ -13,9 +13,8 @@ Currently supported languages and frameworks:
 ### From Source
 
 ```bash
-git clone https://github.com/DataDog/datadog-test-runner.git
-cd datadog-test-runner
-make build
+git clone https://github.com/DataDog/ddtest.git
+cd ddtest && make build
 ```
 
 This will create the `ddtest` binary in the current directory. It requires Go 1.24+.

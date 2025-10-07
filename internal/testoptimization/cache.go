@@ -7,10 +7,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/DataDog/datadog-test-runner/civisibility/constants"
-	"github.com/DataDog/datadog-test-runner/civisibility/utils"
-	"github.com/DataDog/datadog-test-runner/civisibility/utils/net"
-	appConstants "github.com/DataDog/datadog-test-runner/internal/constants"
+	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/civisibility/utils"
+	"github.com/DataDog/ddtest/civisibility/utils/net"
+	appConstants "github.com/DataDog/ddtest/internal/constants"
 )
 
 // SkippableTestsCache represents the structure for storing skippable tests with correlation ID

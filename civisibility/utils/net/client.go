@@ -20,9 +20,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DataDog/datadog-test-runner/civisibility"
-	"github.com/DataDog/datadog-test-runner/civisibility/constants"
-	"github.com/DataDog/datadog-test-runner/civisibility/utils"
+	"github.com/DataDog/ddtest/civisibility"
+	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/civisibility/utils"
 )
 
 const (
