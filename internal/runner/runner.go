@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/ciprovider"
@@ -61,6 +62,7 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 	for testFile := range tr.testFiles {
 		testFileNames = append(testFileNames, testFile)
 	}
+	slices.Sort(testFileNames)
 
 	content := strings.Join(testFileNames, "\n")
 	if len(testFileNames) > 0 {
