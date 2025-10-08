@@ -18,6 +18,12 @@ func (e *DefaultCommandExecutor) CombinedOutput(cmd *exec.Cmd) ([]byte, error) {
 }
 
 func (e *DefaultCommandExecutor) Run(cmd *exec.Cmd) error {
+	// Connect command's stdin/stdout/stderr to parent's stdin/stdout/stderr for proper streaming
+	// stdin is needed even for non-interactive commands because some gems (like reline) check terminal properties
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
 	// Start the command
 	if err := cmd.Start(); err != nil {
 		return err
