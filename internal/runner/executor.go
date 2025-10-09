@@ -108,8 +108,8 @@ func runTestsFromFile(framework framework.Framework, filePath string, workerEnvM
 
 		slog.Info("Running tests in worker", "workerIndex", workerIndex, "testFilesCount", len(testFiles), "workerEnv", workerEnv)
 		return framework.RunTests(testFiles, workerEnv)
-	} else {
-		slog.Info("No tests to run", "workerIndex", workerIndex)
 	}
+
+	slog.Info("No tests to run", "workerIndex", workerIndex)
 	return nil
 }
