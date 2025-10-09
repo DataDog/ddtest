@@ -63,7 +63,7 @@ func internalCiVisibilityInitialization(tracerInitializer func([]tracer.StartOpt
 		civisibility.SetState(civisibility.StateInitializing)
 		defer civisibility.SetState(civisibility.StateInitialized)
 
-		slog.SetLogLoggerLevel(slog.LevelWarn)
+		slog.SetLogLoggerLevel(slog.LevelInfo)
 		// check the debug flag to enable debug logs. The tracer initialization happens
 		// after the CI Visibility initialization so we need to handle this flag ourselves
 		if enabled, _ := stableconfig.Bool("DD_TRACE_DEBUG", false); enabled {

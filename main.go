@@ -8,12 +8,6 @@ import (
 )
 
 func main() {
-	// Configure slog with Info level
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
-
 	if err := cmd.Execute(); err != nil {
 		slog.Error("FAILURE", "error", err)
 		os.Exit(1)
