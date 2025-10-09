@@ -247,7 +247,7 @@ func TestTestRunner_Setup_WithParallelRunners(t *testing.T) {
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	// Run Setup
-	err := runner.Setup(context.Background())
+	err := runner.Plan(context.Background())
 	if err != nil {
 		t.Fatalf("Setup() should not return error, got: %v", err)
 	}
@@ -308,7 +308,7 @@ func TestTestRunner_Setup_WithCIProvider(t *testing.T) {
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockCIProviderDetector)
 
 	// Run Setup
-	err := runner.Setup(context.Background())
+	err := runner.Plan(context.Background())
 	if err != nil {
 		t.Fatalf("Setup() should not return error, got: %v", err)
 	}
@@ -362,7 +362,7 @@ func TestTestRunner_Setup_CIProviderDetectionFailure(t *testing.T) {
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockCIProviderDetector)
 
 	// Run Setup - should succeed even if CI provider detection fails
-	err := runner.Setup(context.Background())
+	err := runner.Plan(context.Background())
 	if err != nil {
 		t.Fatalf("Setup() should not fail when CI provider detection fails, got: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestTestRunner_Setup_CIProviderConfigureFailure(t *testing.T) {
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockCIProviderDetector)
 
 	// Run Setup - should succeed even if CI provider configuration fails
-	err := runner.Setup(context.Background())
+	err := runner.Plan(context.Background())
 	if err != nil {
 		t.Fatalf("Setup() should not fail when CI provider configuration fails, got: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 		// Run Setup
-		err := runner.Setup(context.Background())
+		err := runner.Plan(context.Background())
 		if err != nil {
 			t.Fatalf("Setup() should not return error, got: %v", err)
 		}
@@ -542,7 +542,7 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 		// Run Setup
-		err := runner.Setup(context.Background())
+		err := runner.Plan(context.Background())
 		if err != nil {
 			t.Fatalf("Setup() should not return error, got: %v", err)
 		}

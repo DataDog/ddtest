@@ -29,6 +29,13 @@ func (m *mockCommandExecutor) CombinedOutput(cmd *exec.Cmd) ([]byte, error) {
 	return m.output, m.err
 }
 
+func (m *mockCommandExecutor) StderrOutput(cmd *exec.Cmd) ([]byte, error) {
+	if m.onExecution != nil {
+		m.onExecution(cmd)
+	}
+	return m.output, m.err
+}
+
 func (m *mockCommandExecutor) Run(cmd *exec.Cmd) error {
 	if m.onExecution != nil {
 		m.onExecution(cmd)

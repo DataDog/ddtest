@@ -30,7 +30,7 @@ var planCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
 		testRunner := runner.New()
-		if err := testRunner.Setup(ctx); err != nil {
+		if err := testRunner.Plan(ctx); err != nil {
 			slog.Error("Runner failed", "error", err)
 			os.Exit(1)
 		}

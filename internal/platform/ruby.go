@@ -35,15 +35,15 @@ func (r *Ruby) CreateTagsMap() (map[string]string, error) {
 
 	// Execute the embedded Ruby script to get runtime tags
 	cmd := exec.Command("bundle", "exec", "ruby", "-e", rubyEnvScript)
-	output, err := r.executor.CombinedOutput(cmd)
+	stderr, err := r.executor.StderrOutput(cmd)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute Ruby script: %w", err)
+		return nil, fmt.Errorf("failed to execute Ruby script: %w with output: %s", err, string(stderr))
 	}
 
-	// Parse the JSON output directly
+	// Parse the JSON output from stderr
 	var rubyTags map[string]string
-	if err := json.Unmarshal(output, &rubyTags); err != nil {
-		return nil, fmt.Errorf("failed to parse runtime tags JSON: %w", err)
+	if err := json.Unmarshal(stderr, &rubyTags); err != nil {
+		return nil, fmt.Errorf("failed to parse runtime tags JSON: %w, tried to parse: %s", err, string(stderr))
 	}
 
 	// Merge the tags from the Ruby output

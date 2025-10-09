@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/testoptimization"
 	"golang.org/x/sync/errgroup"
@@ -20,6 +21,8 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 		return fmt.Errorf("failed to create platform tags: %w", err)
 	}
 
+	slog.Info("Preparing test optimization data", "runtimeTags", tags, "platform", detectedPlatform.Name())
+
 	var skippableTests map[string]bool
 	var discoveredTests []testoptimization.Test
 
@@ -32,7 +35,11 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 			return fmt.Errorf("failed to initialize optimization client: %w", err)
 		}
 
+		startTime := time.Now()
+		slog.Info("Fetching skippable tests from Datadog...")
 		skippableTests = tr.optimizationClient.GetSkippableTests()
+		slog.Info("Fetched skippable tests", "duration", time.Since(startTime))
+
 		return nil
 	})
 
@@ -42,7 +49,11 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 			return fmt.Errorf("failed to detect framework: %w", err)
 		}
 
+		startTime := time.Now()
+		slog.Info("Discovering local tests...", "framework", framework.Name())
 		discoveredTests, err = framework.DiscoverTests()
+		slog.Info("Discovered local tests", "duration", time.Since(startTime))
+
 		return err
 	})
 
@@ -65,6 +76,8 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 		}
 	}
 	tr.skippablePercentage = float64(skippableTestsCount) / float64(discoveredTestsCount) * 100.0
+
+	slog.Info("Test optimization data prepared", "skippablePercentage", tr.skippablePercentage, "skippableTestsCount", skippableTestsCount, "discoveredTestsCount", discoveredTestsCount)
 
 	return nil
 }
