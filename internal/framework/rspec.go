@@ -11,10 +11,7 @@ import (
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
-const CommandEntrypoint = "bundle"
-
-var DiscoveryCommand = []string{"exec", "rspec", "--format", "progress", "--dry-run"}
-var TestRunCommand = []string{"exec", "rspec", "--format", "progress"}
+const binRSpecPath = "bin/rspec"
 
 type RSpec struct {
 	executor ext.CommandExecutor
@@ -30,10 +27,28 @@ func (r *RSpec) Name() string {
 	return "rspec"
 }
 
+// getRSpecCommand determines whether to use bin/rspec or bundle exec rspec
+func (r *RSpec) getRSpecCommand() (string, []string) {
+	// Check if bin/rspec exists and is executable
+	if info, err := os.Stat(binRSpecPath); err == nil && !info.IsDir() {
+		// Check if file is executable
+		if info.Mode()&0111 != 0 {
+			slog.Debug("Using bin/rspec for RSpec commands")
+			return binRSpecPath, []string{}
+		}
+	}
+
+	slog.Debug("Using bundle exec rspec for RSpec commands")
+	return "bundle", []string{"exec", "rspec"}
+}
+
 func (r *RSpec) createDiscoveryCommand() *exec.Cmd {
+	command, baseArgs := r.getRSpecCommand()
+	args := append(baseArgs, "--format", "progress", "--dry-run")
+
 	// this is a constant, no
 	// no-dd-sa:go-security/command-injection
-	cmd := exec.Command(CommandEntrypoint, DiscoveryCommand...)
+	cmd := exec.Command(command, args...)
 	cmd.Env = append(
 		os.Environ(),
 		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1",
@@ -85,10 +100,12 @@ func (r *RSpec) DiscoverTests() ([]testoptimization.Test, error) {
 }
 
 func (r *RSpec) RunTests(testFiles []string, envMap map[string]string) error {
-	args := append(TestRunCommand, testFiles...)
+	command, baseArgs := r.getRSpecCommand()
+	args := append(baseArgs, "--format", "progress")
+	args = append(args, testFiles...)
 
 	// no-dd-sa:go-security/command-injection
-	cmd := exec.Command(CommandEntrypoint, args...)
+	cmd := exec.Command(command, args...)
 
 	// Set environment variables from envMap
 	if len(envMap) > 0 {
