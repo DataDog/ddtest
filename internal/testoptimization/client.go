@@ -5,9 +5,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/DataDog/datadog-test-runner/civisibility/integrations"
-	"github.com/DataDog/datadog-test-runner/civisibility/utils"
-	"github.com/DataDog/datadog-test-runner/civisibility/utils/net"
+	"github.com/DataDog/ddtest/civisibility/integrations"
+	"github.com/DataDog/ddtest/civisibility/utils"
+	"github.com/DataDog/ddtest/civisibility/utils/net"
 )
 
 // TestOptimizationClient defines interface for test optimization operations

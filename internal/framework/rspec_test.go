@@ -8,8 +8,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/DataDog/datadog-test-runner/internal/ext"
-	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
 func cleanupDiscoveryDir() {
@@ -23,6 +23,13 @@ type mockCommandExecutor struct {
 }
 
 func (m *mockCommandExecutor) CombinedOutput(cmd *exec.Cmd) ([]byte, error) {
+	if m.onExecution != nil {
+		m.onExecution(cmd)
+	}
+	return m.output, m.err
+}
+
+func (m *mockCommandExecutor) StderrOutput(cmd *exec.Cmd) ([]byte, error) {
 	if m.onExecution != nil {
 		m.onExecution(cmd)
 	}
@@ -63,19 +70,106 @@ func TestRSpec_Name(t *testing.T) {
 	}
 }
 
+func TestRSpec_getRSpecCommand_WithBinRSpec(t *testing.T) {
+	// Create a temporary bin/rspec file
+	if err := os.MkdirAll("bin", 0755); err != nil {
+		t.Fatalf("failed to create bin directory: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll("bin")
+	}()
+
+	// Create an executable bin/rspec file
+	if err := os.WriteFile("bin/rspec", []byte("#!/usr/bin/env ruby\n# test file"), 0755); err != nil {
+		t.Fatalf("failed to create bin/rspec: %v", err)
+	}
+
+	rspec := NewRSpec()
+	command, baseArgs := rspec.getRSpecCommand()
+
+	if command != "bin/rspec" {
+		t.Errorf("expected command to be 'bin/rspec', got %q", command)
+	}
+	if len(baseArgs) != 0 {
+		t.Errorf("expected baseArgs to be empty, got %v", baseArgs)
+	}
+}
+
+func TestRSpec_getRSpecCommand_WithNonExecutableBinRSpec(t *testing.T) {
+	// Create a temporary bin/rspec file that is NOT executable
+	if err := os.MkdirAll("bin", 0755); err != nil {
+		t.Fatalf("failed to create bin directory: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll("bin")
+	}()
+
+	// Create a non-executable bin/rspec file (0644 instead of 0755)
+	if err := os.WriteFile("bin/rspec", []byte("#!/usr/bin/env ruby\n# test file"), 0644); err != nil {
+		t.Fatalf("failed to create bin/rspec: %v", err)
+	}
+
+	rspec := NewRSpec()
+	command, baseArgs := rspec.getRSpecCommand()
+
+	if command != "bundle" {
+		t.Errorf("expected command to be 'bundle', got %q", command)
+	}
+	expectedBaseArgs := []string{"exec", "rspec"}
+	if len(baseArgs) != len(expectedBaseArgs) {
+		t.Errorf("expected %d baseArgs, got %d", len(expectedBaseArgs), len(baseArgs))
+	}
+	for i, expected := range expectedBaseArgs {
+		if i >= len(baseArgs) || baseArgs[i] != expected {
+			t.Errorf("expected baseArgs[%d] to be %q, got %q", i, expected, baseArgs[i])
+		}
+	}
+}
+
+func TestRSpec_getRSpecCommand_WithoutBinRSpec(t *testing.T) {
+	// Ensure bin/rspec doesn't exist
+	_ = os.RemoveAll("bin")
+
+	rspec := NewRSpec()
+	command, baseArgs := rspec.getRSpecCommand()
+
+	if command != "bundle" {
+		t.Errorf("expected command to be 'bundle', got %q", command)
+	}
+	expectedBaseArgs := []string{"exec", "rspec"}
+	if len(baseArgs) != len(expectedBaseArgs) {
+		t.Errorf("expected %d baseArgs, got %d", len(expectedBaseArgs), len(baseArgs))
+	}
+	for i, expected := range expectedBaseArgs {
+		if i >= len(baseArgs) || baseArgs[i] != expected {
+			t.Errorf("expected baseArgs[%d] to be %q, got %q", i, expected, baseArgs[i])
+		}
+	}
+}
+
 func TestRSpec_createDiscoveryCommand(t *testing.T) {
+	_ = os.RemoveAll("bin")
+
 	rspec := NewRSpec()
 	cmd := rspec.createDiscoveryCommand()
 
-	expectedArgs := []string{"bundle", "exec", "rspec", "--format", "progress", "--dry-run"}
-	if len(cmd.Args) != len(expectedArgs) {
-		t.Errorf("expected %d args, got %d", len(expectedArgs), len(cmd.Args))
+	// Verify command contains necessary arguments
+	argsStr := filepath.Join(cmd.Args...)
+	if !slices.Contains(cmd.Args, "--format") {
+		t.Error("expected --format argument")
+	}
+	if !slices.Contains(cmd.Args, "progress") {
+		t.Error("expected progress argument")
+	}
+	if !slices.Contains(cmd.Args, "--dry-run") {
+		t.Error("expected --dry-run argument")
 	}
 
-	for i, expected := range expectedArgs {
-		if i >= len(cmd.Args) || cmd.Args[i] != expected {
-			t.Errorf("expected arg[%d] to be %q, got %q", i, expected, cmd.Args[i])
-		}
+	// Verify it contains rspec in some form
+	if !slices.ContainsFunc(cmd.Args, func(arg string) bool {
+		return arg == "rspec" || arg == "bin/rspec"
+	}) {
+		t.Errorf("expected 'rspec' or 'bin/rspec' in arguments, got: %v", argsStr)
 	}
 
 	expectedEnv := []string{
@@ -91,6 +185,8 @@ func TestRSpec_createDiscoveryCommand(t *testing.T) {
 }
 
 func TestRSpec_DiscoverTests_Success(t *testing.T) {
+	_ = os.RemoveAll("bin")
+
 	if err := os.MkdirAll(filepath.Dir(TestsDiscoveryFilePath), 0755); err != nil {
 		t.Fatalf("failed to create discovery directory: %v", err)
 	}
@@ -117,15 +213,15 @@ func TestRSpec_DiscoverTests_Success(t *testing.T) {
 		output: []byte("Finished in 0.12345 seconds (files took 0.67890 seconds to load)"),
 		err:    nil,
 		onExecution: func(cmd *exec.Cmd) {
-			// Verify the command is correct
-			expectedArgs := []string{"bundle", "exec", "rspec", "--format", "progress", "--dry-run"}
-			if len(cmd.Args) != len(expectedArgs) {
-				t.Errorf("expected %d args, got %d", len(expectedArgs), len(cmd.Args))
+			// Verify the command has necessary arguments
+			if !slices.Contains(cmd.Args, "--format") {
+				t.Error("expected --format argument")
 			}
-			for i, expected := range expectedArgs {
-				if i >= len(cmd.Args) || cmd.Args[i] != expected {
-					t.Errorf("expected arg[%d] to be %q, got %q", i, expected, cmd.Args[i])
-				}
+			if !slices.Contains(cmd.Args, "progress") {
+				t.Error("expected progress argument")
+			}
+			if !slices.Contains(cmd.Args, "--dry-run") {
+				t.Error("expected --dry-run argument")
 			}
 
 			// Create the test file as the real command would
@@ -230,6 +326,9 @@ func TestRSpec_DiscoverTests_InvalidJSON(t *testing.T) {
 }
 
 func TestRSpec_RunTests(t *testing.T) {
+	// Ensure bin/rspec doesn't exist to have predictable behavior
+	_ = os.RemoveAll("bin")
+
 	testFiles := []string{"spec/models/user_spec.rb", "spec/controllers/users_controller_spec.rb"}
 
 	var capturedCmd *exec.Cmd
@@ -251,20 +350,25 @@ func TestRSpec_RunTests(t *testing.T) {
 		t.Fatal("Expected command to be executed but none was captured")
 	}
 
-	// Verify the command arguments
-	expectedArgs := []string{"bundle", "exec", "rspec", "--format", "progress", "spec/models/user_spec.rb", "spec/controllers/users_controller_spec.rb"}
-	if len(capturedCmd.Args) != len(expectedArgs) {
-		t.Errorf("expected %d args, got %d", len(expectedArgs), len(capturedCmd.Args))
+	// Verify the command has necessary arguments
+	if !slices.Contains(capturedCmd.Args, "--format") {
+		t.Error("expected --format argument")
 	}
-
-	for i, expected := range expectedArgs {
-		if i >= len(capturedCmd.Args) || capturedCmd.Args[i] != expected {
-			t.Errorf("expected arg[%d] to be %q, got %q", i, expected, capturedCmd.Args[i])
+	if !slices.Contains(capturedCmd.Args, "progress") {
+		t.Error("expected progress argument")
+	}
+	// Verify test files are included
+	for _, testFile := range testFiles {
+		if !slices.Contains(capturedCmd.Args, testFile) {
+			t.Errorf("expected test file %q in arguments", testFile)
 		}
 	}
 }
 
 func TestRSpec_RunTestsWithEnvMap(t *testing.T) {
+	// Ensure bin/rspec doesn't exist to have predictable behavior
+	_ = os.RemoveAll("bin")
+
 	testFiles := []string{"spec/models/user_spec.rb"}
 	envMap := map[string]string{
 		"RAILS_DB": "my_project_test_1",
@@ -307,5 +411,87 @@ func TestRSpec_RunTestsWithEnvMap(t *testing.T) {
 	}
 	if !foundTestEnv {
 		t.Error("Expected TEST_ENV environment variable to be set")
+	}
+}
+
+func TestRSpec_createDiscoveryCommand_WithBinRSpec(t *testing.T) {
+	// Create a temporary bin/rspec file
+	if err := os.MkdirAll("bin", 0755); err != nil {
+		t.Fatalf("failed to create bin directory: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll("bin")
+	}()
+
+	// Create an executable bin/rspec file
+	if err := os.WriteFile("bin/rspec", []byte("#!/usr/bin/env ruby\n# test file"), 0755); err != nil {
+		t.Fatalf("failed to create bin/rspec: %v", err)
+	}
+
+	rspec := NewRSpec()
+	cmd := rspec.createDiscoveryCommand()
+
+	// Verify command uses bin/rspec
+	if len(cmd.Args) < 1 || cmd.Args[0] != "bin/rspec" {
+		t.Errorf("expected command to use bin/rspec, got %v", cmd.Args)
+	}
+
+	// Verify necessary arguments are present
+	if !slices.Contains(cmd.Args, "--format") {
+		t.Error("expected --format argument")
+	}
+	if !slices.Contains(cmd.Args, "progress") {
+		t.Error("expected progress argument")
+	}
+	if !slices.Contains(cmd.Args, "--dry-run") {
+		t.Error("expected --dry-run argument")
+	}
+}
+
+func TestRSpec_RunTests_WithBinRSpec(t *testing.T) {
+	// Create a temporary bin/rspec file
+	if err := os.MkdirAll("bin", 0755); err != nil {
+		t.Fatalf("failed to create bin directory: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll("bin")
+	}()
+
+	// Create an executable bin/rspec file
+	if err := os.WriteFile("bin/rspec", []byte("#!/usr/bin/env ruby\n# test file"), 0755); err != nil {
+		t.Fatalf("failed to create bin/rspec: %v", err)
+	}
+
+	testFiles := []string{"spec/models/user_spec.rb"}
+
+	var capturedCmd *exec.Cmd
+	mockExecutor := &mockCommandExecutor{
+		err: nil,
+		onExecution: func(cmd *exec.Cmd) {
+			capturedCmd = cmd
+		},
+	}
+
+	rspec := &RSpec{executor: mockExecutor}
+	err := rspec.RunTests(testFiles, nil)
+
+	if err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	if capturedCmd == nil {
+		t.Fatal("Expected command to be executed but none was captured")
+	}
+
+	// Verify command uses bin/rspec
+	if len(capturedCmd.Args) < 1 || capturedCmd.Args[0] != "bin/rspec" {
+		t.Errorf("expected command to use bin/rspec, got %v", capturedCmd.Args)
+	}
+
+	// Verify test files are included
+	for _, testFile := range testFiles {
+		if !slices.Contains(capturedCmd.Args, testFile) {
+			t.Errorf("expected test file %q in arguments", testFile)
+		}
 	}
 }

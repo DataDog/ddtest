@@ -4,7 +4,7 @@ This file provides guidance to AI agents when working with code in this reposito
 
 ## Project Overview
 
-This is the Datadog Test Runner (`ddtest`), a command-line tool that implements Datadog Test Optimization to automatically identify and skip tests that are unlikely to fail based on code changes. The tool integrates with Datadog's CI Visibility to provide Test Impact Analysis.
+This is the DDTest (`ddtest`), a command-line tool that implements Datadog Test Optimization to automatically identify and skip tests that are unlikely to fail based on code changes. The tool integrates with Datadog's CI Visibility to provide Test Impact Analysis.
 
 ## Dev Commands
 

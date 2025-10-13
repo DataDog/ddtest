@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/datadog-test-runner/internal/constants"
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 func TestRunCINodeTests_Success(t *testing.T) {

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DataDog/datadog-test-runner/civisibility/constants"
 	"github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
+	"github.com/DataDog/ddtest/civisibility/constants"
 )
 
 // Test Module

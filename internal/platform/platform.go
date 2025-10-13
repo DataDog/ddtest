@@ -3,8 +3,8 @@ package platform
 import (
 	"fmt"
 
-	"github.com/DataDog/datadog-test-runner/internal/framework"
-	"github.com/DataDog/datadog-test-runner/internal/settings"
+	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/settings"
 )
 
 type Platform interface {

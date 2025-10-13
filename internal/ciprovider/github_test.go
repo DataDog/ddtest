@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/datadog-test-runner/internal/constants"
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 func TestGitHub_Name(t *testing.T) {

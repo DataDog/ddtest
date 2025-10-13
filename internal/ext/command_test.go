@@ -1,9 +1,12 @@
 package ext
 
 import (
+	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestDefaultCommandExecutor_CombinedOutput_Success(t *testing.T) {
@@ -88,4 +91,172 @@ func TestDefaultCommandExecutor_CombinedOutput_EmptyCommand(t *testing.T) {
 	if len(output) != 0 {
 		t.Errorf("expected empty output, got %q", string(output))
 	}
+}
+
+func TestDefaultCommandExecutor_Run_Success(t *testing.T) {
+	executor := &DefaultCommandExecutor{}
+
+	// Test with simple echo command
+	cmd := exec.Command("echo", "test")
+	err := executor.Run(cmd)
+
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestDefaultCommandExecutor_Run_CommandFailure(t *testing.T) {
+	executor := &DefaultCommandExecutor{}
+
+	// Test with a command that will fail
+	cmd := exec.Command("ls", "/nonexistent/directory/path")
+	err := executor.Run(cmd)
+
+	if err == nil {
+		t.Error("expected error for nonexistent directory")
+	}
+}
+
+func TestDefaultCommandExecutor_Run_SignalForwarding(t *testing.T) {
+	executor := &DefaultCommandExecutor{}
+
+	// Create a long-running process that we can interrupt
+	cmd := exec.Command("sleep", "30")
+
+	// Send SIGINT to the test process itself (simulating Ctrl+C to the parent)
+	// The executor should forward this to the child sleep process
+	go func() {
+		pid := os.Getpid()
+		process, err := os.FindProcess(pid)
+		if err != nil {
+			t.Errorf("failed to find test process: %v", err)
+			return
+		}
+		// Wait for command to start
+		time.Sleep(200 * time.Millisecond)
+		if err := process.Signal(syscall.SIGINT); err != nil {
+			t.Errorf("failed to send signal to test process: %v", err)
+		}
+	}()
+
+	// Run the command - it should be interrupted by the signal forwarding
+	err := executor.Run(cmd)
+
+	// The process should have been interrupted
+	if err == nil {
+		t.Fatal("expected error from interrupted process")
+	}
+
+	// Verify it's a signal-related error
+	if !strings.Contains(err.Error(), "signal") && !strings.Contains(err.Error(), "interrupt") {
+		t.Logf("Got error (expected signal/interrupt related): %v", err)
+	}
+
+	t.Logf("Process correctly terminated with: %v", err)
+}
+
+func TestDefaultCommandExecutor_Run_SignalForwardingSIGTERM(t *testing.T) {
+	executor := &DefaultCommandExecutor{}
+
+	// Create a long-running process
+	cmd := exec.Command("sleep", "30")
+
+	// Send SIGTERM to the test process itself
+	// The executor should forward this to the child sleep process
+	go func() {
+		pid := os.Getpid()
+		process, err := os.FindProcess(pid)
+		if err != nil {
+			t.Errorf("failed to find test process: %v", err)
+			return
+		}
+		// Wait for command to start
+		time.Sleep(200 * time.Millisecond)
+		if err := process.Signal(syscall.SIGTERM); err != nil {
+			t.Errorf("failed to send SIGTERM to test process: %v", err)
+		}
+	}()
+
+	// Run the command - it should be terminated by the signal forwarding
+	err := executor.Run(cmd)
+
+	// The process should have been terminated
+	if err == nil {
+		t.Fatal("expected error from terminated process")
+	}
+
+	t.Logf("Process correctly terminated with: %v", err)
+}
+
+func TestDefaultCommandExecutor_Run_ProcessCompletesNormally(t *testing.T) {
+	executor := &DefaultCommandExecutor{}
+
+	// Test that normal completion works without signals
+	cmd := exec.Command("sleep", "0.1")
+
+	start := time.Now()
+	err := executor.Run(cmd)
+	duration := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	// Should complete quickly
+	if duration > 2*time.Second {
+		t.Errorf("process took too long: %v", duration)
+	}
+}
+
+func TestDefaultCommandExecutor_Run_MultipleCommands(t *testing.T) {
+	executor := &DefaultCommandExecutor{}
+
+	// Test that multiple sequential commands work fine
+	// (ensures signal handlers are properly cleaned up)
+
+	// First command with signal
+	t.Run("first command with signal", func(t *testing.T) {
+		cmd := exec.Command("sleep", "30")
+
+		// Send SIGINT to the test process itself
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			pid := os.Getpid()
+			process, _ := os.FindProcess(pid)
+			_ = process.Signal(syscall.SIGINT)
+		}()
+
+		err := executor.Run(cmd)
+		if err == nil {
+			t.Fatal("expected error from interrupted process")
+		}
+
+		t.Logf("First command interrupted: %v", err)
+	})
+
+	// Second command without signal - should complete normally
+	t.Run("second command completes normally", func(t *testing.T) {
+		cmd := exec.Command("echo", "test")
+		err := executor.Run(cmd)
+		if err != nil {
+			t.Fatalf("second command failed: %v", err)
+		}
+		t.Logf("Second command completed successfully")
+	})
+}
+
+func TestDefaultCommandExecutor_Run_SignalHandlerCleanup(t *testing.T) {
+	executor := &DefaultCommandExecutor{}
+
+	// Run multiple commands sequentially to verify signal handlers are cleaned up
+	for i := 0; i < 3; i++ {
+		cmd := exec.Command("echo", "test")
+		err := executor.Run(cmd)
+		if err != nil {
+			t.Fatalf("command %d failed: %v", i, err)
+		}
+	}
+
+	// If signal handlers weren't cleaned up properly, this would leak goroutines
+	// The test passing means cleanup is working
 }

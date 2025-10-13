@@ -13,7 +13,7 @@ import (
 	"strings"
 	_ "unsafe" // for go:linkname
 
-	"github.com/DataDog/datadog-test-runner/civisibility/constants"
+	"github.com/DataDog/ddtest/civisibility/constants"
 )
 
 type (

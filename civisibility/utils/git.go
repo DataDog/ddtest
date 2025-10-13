@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DataDog/datadog-test-runner/civisibility/constants"
+	"github.com/DataDog/ddtest/civisibility/constants"
 )
 
 // MaxPackFileSizeInMb is the maximum size of a pack file in megabytes.

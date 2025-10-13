@@ -16,8 +16,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/DataDog/datadog-test-runner/civisibility/constants"
-	"github.com/DataDog/datadog-test-runner/osinfo"
+	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/osinfo"
 )
 
 var (

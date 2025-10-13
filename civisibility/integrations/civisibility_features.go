@@ -12,11 +12,11 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/DataDog/datadog-test-runner/civisibility"
-	"github.com/DataDog/datadog-test-runner/civisibility/constants"
-	"github.com/DataDog/datadog-test-runner/civisibility/utils"
-	"github.com/DataDog/datadog-test-runner/civisibility/utils/impactedtests"
-	"github.com/DataDog/datadog-test-runner/civisibility/utils/net"
+	"github.com/DataDog/ddtest/civisibility"
+	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/civisibility/utils"
+	"github.com/DataDog/ddtest/civisibility/utils/impactedtests"
+	"github.com/DataDog/ddtest/civisibility/utils/net"
 )
 
 const (

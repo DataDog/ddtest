@@ -13,9 +13,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/DataDog/datadog-test-runner/civisibility/constants"
-	"github.com/DataDog/datadog-test-runner/civisibility/utils"
-	"github.com/DataDog/datadog-test-runner/civisibility/utils/filebitmap"
+	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/civisibility/utils"
+	"github.com/DataDog/ddtest/civisibility/utils/filebitmap"
 )
 
 type (

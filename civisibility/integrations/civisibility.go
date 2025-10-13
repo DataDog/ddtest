@@ -14,12 +14,12 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/DataDog/datadog-test-runner/civisibility"
-	"github.com/DataDog/datadog-test-runner/civisibility/constants"
-	"github.com/DataDog/datadog-test-runner/civisibility/utils"
-	"github.com/DataDog/datadog-test-runner/stableconfig"
 	"github.com/DataDog/dd-trace-go/v2/ddtrace/mocktracer"
 	"github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
+	"github.com/DataDog/ddtest/civisibility"
+	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/civisibility/utils"
+	"github.com/DataDog/ddtest/stableconfig"
 )
 
 // ciVisibilityCloseAction defines an action to be executed when CI visibility is closing.
@@ -63,7 +63,7 @@ func internalCiVisibilityInitialization(tracerInitializer func([]tracer.StartOpt
 		civisibility.SetState(civisibility.StateInitializing)
 		defer civisibility.SetState(civisibility.StateInitialized)
 
-		slog.SetLogLoggerLevel(slog.LevelWarn)
+		slog.SetLogLoggerLevel(slog.LevelInfo)
 		// check the debug flag to enable debug logs. The tracer initialization happens
 		// after the CI Visibility initialization so we need to handle this flag ourselves
 		if enabled, _ := stableconfig.Bool("DD_TRACE_DEBUG", false); enabled {

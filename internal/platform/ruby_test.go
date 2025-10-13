@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/datadog-test-runner/internal/constants"
-	"github.com/DataDog/datadog-test-runner/internal/settings"
+	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/viper"
 )
 
@@ -19,6 +19,13 @@ type mockCommandExecutor struct {
 }
 
 func (m *mockCommandExecutor) CombinedOutput(cmd *exec.Cmd) ([]byte, error) {
+	if m.onExecution != nil {
+		m.onExecution(cmd)
+	}
+	return m.output, m.err
+}
+
+func (m *mockCommandExecutor) StderrOutput(cmd *exec.Cmd) ([]byte, error) {
 	if m.onExecution != nil {
 		m.onExecution(cmd)
 	}
@@ -241,7 +248,7 @@ func TestRuby_EmbeddedScript(t *testing.T) {
 	expectedContent := []string{
 		"require \"json\"",
 		"tags_map",
-		"puts tags_map.to_json",
+		"$stderr.puts tags_map.to_json",
 	}
 
 	for _, expected := range expectedContent {

@@ -14,7 +14,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/DataDog/datadog-test-runner/civisibility/constants"
+	"github.com/DataDog/ddtest/civisibility/constants"
 )
 
 // providerType defines a function type that returns a map of string key-value pairs.

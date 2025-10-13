@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/DataDog/datadog-test-runner/internal/constants"
-	"github.com/DataDog/datadog-test-runner/internal/runner"
-	"github.com/DataDog/datadog-test-runner/internal/settings"
+	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/runner"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -30,7 +30,7 @@ var planCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
 		testRunner := runner.New()
-		if err := testRunner.Setup(ctx); err != nil {
+		if err := testRunner.Plan(ctx); err != nil {
 			slog.Error("Runner failed", "error", err)
 			os.Exit(1)
 		}

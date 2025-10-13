@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/DataDog/datadog-test-runner/internal/constants"
-	"github.com/DataDog/datadog-test-runner/internal/framework"
+	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/framework"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -20,7 +20,7 @@ func runCINodeTests(framework framework.Framework, workerEnvMap map[string]strin
 		return fmt.Errorf("runner file for ci-node %d does not exist: %s", ciNode, runnerFilePath)
 	}
 
-	slog.Debug("Running tests for specific CI node", "ciNode", ciNode, "filePath", runnerFilePath)
+	slog.Info("Running tests for specific CI node", "ciNode", ciNode, "filePath", runnerFilePath)
 	if err := runTestsFromFile(framework, runnerFilePath, workerEnvMap, ciNode); err != nil {
 		return fmt.Errorf("failed to run tests for ci-node %d: %w", ciNode, err)
 	}
@@ -29,6 +29,8 @@ func runCINodeTests(framework framework.Framework, workerEnvMap map[string]strin
 
 // runParallelTests executes tests across multiple parallel runners on a single node
 func runParallelTests(ctx context.Context, framework framework.Framework, workerEnvMap map[string]string) error {
+	slog.Info("Running tests in parallel mode")
+
 	entries, err := os.ReadDir(constants.TestsSplitDir)
 	if err != nil {
 		return fmt.Errorf("failed to read tests split directory %s: %w", constants.TestsSplitDir, err)
@@ -55,6 +57,8 @@ func runParallelTests(ctx context.Context, framework framework.Framework, worker
 
 // runSequentialTests executes tests in a single sequential runner
 func runSequentialTests(framework framework.Framework, workerEnvMap map[string]string) error {
+	slog.Info("Running all tests in a single process")
+
 	if err := runTestsFromFile(framework, constants.TestFilesOutputPath, workerEnvMap, 0); err != nil {
 		return fmt.Errorf("failed to run tests: %w", err)
 	}
@@ -88,6 +92,8 @@ func readTestFilesFromFile(filePath string) ([]string, error) {
 
 // runTestsFromFile reads test files from the given file path and runs them using the framework
 func runTestsFromFile(framework framework.Framework, filePath string, workerEnvMap map[string]string, workerIndex int) error {
+	slog.Info("Reading prepared files list", "filePath", filePath, "workerIndex", workerIndex)
+
 	testFiles, err := readTestFilesFromFile(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to read test files from %s: %w", filePath, err)
@@ -95,13 +101,15 @@ func runTestsFromFile(framework framework.Framework, filePath string, workerEnvM
 
 	if len(testFiles) > 0 {
 		// Create a copy of the worker env map and replace nodeIndex placeholder
-		processedEnvMap := make(map[string]string)
+		workerEnv := make(map[string]string)
 		for key, value := range workerEnvMap {
-			processedEnvMap[key] = strings.ReplaceAll(value, constants.NodeIndexPlaceholder, fmt.Sprintf("%d", workerIndex))
+			workerEnv[key] = strings.ReplaceAll(value, constants.NodeIndexPlaceholder, fmt.Sprintf("%d", workerIndex))
 		}
 
-		slog.Debug("Running tests", "testFilesCount", len(testFiles), "workerIndex", workerIndex)
-		return framework.RunTests(testFiles, processedEnvMap)
+		slog.Info("Running tests in worker", "workerIndex", workerIndex, "testFilesCount", len(testFiles), "workerEnv", workerEnv)
+		return framework.RunTests(testFiles, workerEnv)
 	}
+
+	slog.Info("No tests to run", "workerIndex", workerIndex)
 	return nil
 }

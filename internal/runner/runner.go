@@ -6,17 +6,18 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
-	"github.com/DataDog/datadog-test-runner/internal/ciprovider"
-	"github.com/DataDog/datadog-test-runner/internal/constants"
-	"github.com/DataDog/datadog-test-runner/internal/platform"
-	"github.com/DataDog/datadog-test-runner/internal/settings"
-	"github.com/DataDog/datadog-test-runner/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/ciprovider"
+	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
 type Runner interface {
-	Setup(ctx context.Context) error
+	Plan(ctx context.Context) error
 	Run(ctx context.Context) error
 }
 
@@ -48,7 +49,9 @@ func NewWithDependencies(platformDetector platform.PlatformDetector, optimizatio
 	}
 }
 
-func (tr *TestRunner) Setup(ctx context.Context) error {
+func (tr *TestRunner) Plan(ctx context.Context) error {
+	slog.Info("Planning test execution...")
+
 	if err := tr.PrepareTestOptimization(ctx); err != nil {
 		return err
 	}
@@ -61,6 +64,7 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 	for testFile := range tr.testFiles {
 		testFileNames = append(testFileNames, testFile)
 	}
+	slices.Sort(testFileNames)
 
 	content := strings.Join(testFileNames, "\n")
 	if len(testFileNames) > 0 {
@@ -85,14 +89,14 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 
 	// Detect and configure CI provider if available
 	if ciProvider, err := tr.ciProviderDetector.DetectCIProvider(); err == nil {
-		slog.Debug("CI provider detected, configuring with parallel runners",
+		slog.Info("CI provider detected, configuring with parallel runners",
 			"provider", ciProvider.Name(), "parallelRunners", parallelRunners)
 
 		if err := ciProvider.Configure(parallelRunners); err != nil {
 			slog.Warn("Failed to configure CI provider", "provider", ciProvider.Name(), "error", err)
 		}
 	} else {
-		slog.Debug("No CI provider detected or CI provider detection failed", "error", err)
+		slog.Info("No CI provider detected or CI provider is not supported, running tests without CI integration", "error", err)
 	}
 
 	// Split test files for runners
@@ -100,40 +104,50 @@ func (tr *TestRunner) Setup(ctx context.Context) error {
 		return fmt.Errorf("failed to create test splits: %w", err)
 	}
 
+	slog.Info("Test execution planning completed", "parallelRunners", parallelRunners, "testFilesCount", len(tr.testFiles))
+
 	return nil
 }
 
 func (tr *TestRunner) Run(ctx context.Context) error {
 	// Check if parallel runners output file exists
 	if _, err := os.Stat(constants.ParallelRunnersOutputPath); os.IsNotExist(err) {
+		slog.Info("Test optimization planning data not found, running planning phase...")
+
 		// Run Setup if the file doesn't exist
-		if err := tr.Setup(ctx); err != nil {
-			return fmt.Errorf("failed to run setup: %w", err)
+		if err := tr.Plan(ctx); err != nil {
+			return fmt.Errorf("failed to run planning phase: %w", err)
 		}
 	}
 	runnersData, err := os.ReadFile(constants.ParallelRunnersOutputPath)
 	if err != nil {
-		return fmt.Errorf("failed to read parallel runners from %s: %w", constants.ParallelRunnersOutputPath, err)
+		return fmt.Errorf("failed to read parallel runners count from %s: %w", constants.ParallelRunnersOutputPath, err)
 	}
+	runnersString := strings.TrimSpace(string(runnersData))
 
 	parallelRunners := 0
-	if _, err := fmt.Sscanf(strings.TrimSpace(string(runnersData)), "%d", &parallelRunners); err != nil {
-		return fmt.Errorf("failed to parse parallel runners count: %w", err)
+	if _, err := fmt.Sscanf(runnersString, "%d", &parallelRunners); err != nil {
+		return fmt.Errorf("failed to parse parallel runners count from %s: %w", runnersString, err)
 	}
+
+	slog.Info("Got parallel runners count", "parallelRunners", parallelRunners)
 
 	// Parse worker environment variables if provided in settings
 	workerEnvMap := settings.GetWorkerEnvMap()
+	slog.Info("Worker environment variables", "workerEnvMap", workerEnvMap)
 
 	// Detect platform and framework
 	detectedPlatform, err := tr.platformDetector.DetectPlatform()
 	if err != nil {
 		return fmt.Errorf("failed to detect platform: %w", err)
 	}
+	slog.Info("Platform detected", "platform", detectedPlatform.Name())
 
 	framework, err := detectedPlatform.DetectFramework()
 	if err != nil {
 		return fmt.Errorf("failed to detect framework: %w", err)
 	}
+	slog.Info("Framework detected", "framework", framework.Name())
 
 	ciNode := settings.GetCiNode()
 	if ciNode >= 0 {

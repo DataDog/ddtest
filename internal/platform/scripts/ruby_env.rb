@@ -9,4 +9,4 @@ tags_map = {
   Datadog::CI::Ext::Test::TAG_RUNTIME_VERSION => Datadog::Core::Environment::Ext::ENGINE_VERSION
 }
 
-puts tags_map.to_json
+$stderr.puts tags_map.to_json

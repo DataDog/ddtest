@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"math"
 
-	"github.com/DataDog/datadog-test-runner/internal/settings"
+	"github.com/DataDog/ddtest/internal/settings"
 )
 
 // calculateParallelRunners determines the number of parallel runners based on skippable percentage
