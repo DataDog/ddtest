@@ -1,6 +1,6 @@
 # DDTest
 
-DDTest is a single‑binary CLI that plans and runs your tests in parallel alongside your existing test commands — or as a drop‑in runner. It discovers the tests in your repo, fetches Datadog Test Optimization data, configures your CI to use the right number of workers, and distributes test execution across workers.
+DDTest is a CLI tool that plans and runs your tests in parallel alongside your existing test commands - or as a drop‑in runner. It discovers the tests in your repo, fetches Datadog Test Optimization data, configures your CI to use the right number of workers, and distributes test execution across workers.
 
 You need it when Test Impact Analysis shrinks the test workload but CI still launches too many nodes, and skipped tests leave splits wildly uneven. Start by generating a plan (`ddtest plan`) you can feed to any runner, or let DDTest execute the tests for you with `ddtest run` in CI.
 
@@ -19,9 +19,15 @@ cd ddtest && make build
 
 This will create the `ddtest` binary in the current directory. It requires Go 1.24+.
 
+## Prerequisites
+
+Before using DDTest, you must have **Datadog Test Optimization** already set up and enabled with a Datadog Test Optimization library for your language and framework. DDTest relies on this integration to discover your tests and plan test execution accordingly.
+
+For instructions on setting up Test Optimization, see the [Datadog Test Optimization documentation](https://docs.datadoghq.com/tests/setup/).
+
 ## Usage
 
-DDTest ships as a single CLI with two primary sub‑commands: `plan` and `run`.
+DDTest ships as a CLI tool `ddtest` with two primary sub‑commands: `plan` and `run`.
 
 Use `plan` to discover tests, fetch Datadog Test Optimization data once, and compute a parallelization plan you can reuse on any CI node; use `run` to execute that plan locally or in CI. If a plan is missing, `run` will generate it on the fly.
 
