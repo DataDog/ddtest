@@ -222,11 +222,11 @@ func TestTestRunner_Setup_WithParallelRunners(t *testing.T) {
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
 		Tests: []testoptimization.Test{
-			{FQN: "TestSuite1.test1", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
-			{FQN: "TestSuite1.test2", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
-			{FQN: "TestSuite2.test3", SourceFile: "test/file2_test.rb", SuiteSourceFile: "test/file2_test.rb"},
-			{FQN: "TestSuite3.test4", SourceFile: "test/file3_test.rb", SuiteSourceFile: "test/file3_test.rb"},
-			{FQN: "TestSuite4.test5", SourceFile: "test/file4_test.rb", SuiteSourceFile: "test/file4_test.rb"},
+			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+			{Suite: "TestSuite1", Name: "test2", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+			{Suite: "TestSuite2", Name: "test3", Parameters: "", SuiteSourceFile: "test/file2_test.rb"},
+			{Suite: "TestSuite3", Name: "test4", Parameters: "", SuiteSourceFile: "test/file3_test.rb"},
+			{Suite: "TestSuite4", Name: "test5", Parameters: "", SuiteSourceFile: "test/file4_test.rb"},
 		},
 	}
 
@@ -239,8 +239,8 @@ func TestTestRunner_Setup_WithParallelRunners(t *testing.T) {
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		SkippableTests: map[string]bool{
-			"TestSuite1.test2": true, // Skip test2
-			"TestSuite4.test5": true, // Skip test5
+			"TestSuite1.test2.": true, // Skip test2
+			"TestSuite4.test5.": true, // Skip test5
 		},
 	}
 
@@ -279,8 +279,8 @@ func TestTestRunner_Setup_WithCIProvider(t *testing.T) {
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
 		Tests: []testoptimization.Test{
-			{FQN: "TestSuite1.test1", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
-			{FQN: "TestSuite2.test2", SourceFile: "test/file2_test.rb", SuiteSourceFile: "test/file2_test.rb"},
+			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+			{Suite: "TestSuite2", Name: "test2", Parameters: "", SuiteSourceFile: "test/file2_test.rb"},
 		},
 	}
 
@@ -341,7 +341,7 @@ func TestTestRunner_Setup_CIProviderDetectionFailure(t *testing.T) {
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
 		Tests: []testoptimization.Test{
-			{FQN: "TestSuite1.test1", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
+			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
 		},
 	}
 
@@ -382,7 +382,7 @@ func TestTestRunner_Setup_CIProviderConfigureFailure(t *testing.T) {
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
 		Tests: []testoptimization.Test{
-			{FQN: "TestSuite1.test1", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
+			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
 		},
 	}
 
@@ -435,8 +435,8 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		mockFramework := &MockFramework{
 			FrameworkName: "rspec",
 			Tests: []testoptimization.Test{
-				{FQN: "TestSuite1.test1", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
-				{FQN: "TestSuite2.test2", SourceFile: "test/file2_test.rb", SuiteSourceFile: "test/file2_test.rb"},
+				{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+				{Suite: "TestSuite2", Name: "test2", Parameters: "", SuiteSourceFile: "test/file2_test.rb"},
 			},
 		}
 
@@ -509,10 +509,10 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		mockFramework := &MockFramework{
 			FrameworkName: "rspec",
 			Tests: []testoptimization.Test{
-				{FQN: "TestSuite1.test1", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"},
-				{FQN: "TestSuite1.test2", SourceFile: "test/file1_test.rb", SuiteSourceFile: "test/file1_test.rb"}, // 2 tests in file1
-				{FQN: "TestSuite2.test3", SourceFile: "test/file2_test.rb", SuiteSourceFile: "test/file2_test.rb"}, // 1 test in file2
-				{FQN: "TestSuite3.test4", SourceFile: "test/file3_test.rb", SuiteSourceFile: "test/file3_test.rb"}, // 1 test in file3
+				{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+				{Suite: "TestSuite1", Name: "test2", Parameters: "", SuiteSourceFile: "test/file1_test.rb"}, // 2 tests in file1
+				{Suite: "TestSuite2", Name: "test3", Parameters: "", SuiteSourceFile: "test/file2_test.rb"}, // 1 test in file2
+				{Suite: "TestSuite3", Name: "test4", Parameters: "", SuiteSourceFile: "test/file3_test.rb"}, // 1 test in file3
 			},
 		}
 

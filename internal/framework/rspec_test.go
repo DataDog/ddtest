@@ -194,17 +194,17 @@ func TestRSpec_DiscoverTests_Success(t *testing.T) {
 
 	testData := []testoptimization.Test{
 		{
-			FQN:             "spec/models/user_spec.rb[1:1]",
 			Name:            "User should be valid",
 			Suite:           "User",
-			SourceFile:      "spec/models/user_spec.rb",
+			Module:          "rspec",
+			Parameters:      "{a: 1}",
 			SuiteSourceFile: "spec/models/user_spec.rb",
 		},
 		{
-			FQN:             "spec/controllers/users_controller_spec.rb[1:1]",
 			Name:            "UsersController GET index should return success",
 			Suite:           "UsersController",
-			SourceFile:      "spec/controllers/users_controller_spec.rb",
+			Module:          "rspec",
+			Parameters:      "{a: 2}",
 			SuiteSourceFile: "spec/controllers/users_controller_spec.rb",
 		},
 	}
@@ -259,8 +259,8 @@ func TestRSpec_DiscoverTests_Success(t *testing.T) {
 			continue
 		}
 		actual := tests[i]
-		if actual.FQN != expected.FQN {
-			t.Errorf("test[%d].FQN: expected %q, got %q", i, expected.FQN, actual.FQN)
+		if actual.Parameters != expected.Parameters {
+			t.Errorf("test[%d].Parameters: expected %q, got %q", i, expected.Parameters, actual.Parameters)
 		}
 		if actual.Name != expected.Name {
 			t.Errorf("test[%d].Name: expected %q, got %q", i, expected.Name, actual.Name)
@@ -268,8 +268,11 @@ func TestRSpec_DiscoverTests_Success(t *testing.T) {
 		if actual.Suite != expected.Suite {
 			t.Errorf("test[%d].Suite: expected %q, got %q", i, expected.Suite, actual.Suite)
 		}
-		if actual.SourceFile != expected.SourceFile {
-			t.Errorf("test[%d].SourceFile: expected %q, got %q", i, expected.SourceFile, actual.SourceFile)
+		if actual.Module != expected.Module {
+			t.Errorf("test[%d].Module: expected %q, got %q", i, expected.Module, actual.Module)
+		}
+		if actual.SuiteSourceFile != expected.SuiteSourceFile {
+			t.Errorf("test[%d].SuiteSourceFile: expected %q, got %q", i, expected.SuiteSourceFile, actual.SuiteSourceFile)
 		}
 	}
 }

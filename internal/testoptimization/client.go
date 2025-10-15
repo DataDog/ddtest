@@ -119,8 +119,12 @@ func (c *DatadogClient) GetSkippableTests() map[string]bool {
 	for _, suites := range skippableTests {
 		for _, tests := range suites {
 			for _, test := range tests {
-				testFQN := c.buildTestFQN(test.Suite, test.Name, test.Parameters)
-				skippedTests[testFQN] = true
+				t := Test{
+					Name:       test.Name,
+					Suite:      test.Suite,
+					Parameters: test.Parameters,
+				}
+				skippedTests[t.FQN()] = true
 			}
 		}
 	}
@@ -166,8 +170,4 @@ func (c *DatadogClient) StoreCacheAndExit() {
 	}
 
 	c.integrations.ExitCiVisibility()
-}
-
-func (c *DatadogClient) buildTestFQN(suite, test, parameters string) string {
-	return fmt.Sprintf("%s.%s.%s", suite, test, parameters)
 }

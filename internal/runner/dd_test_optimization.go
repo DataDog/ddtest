@@ -66,8 +66,8 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 
 	tr.testFiles = make(map[string]int)
 	for _, test := range discoveredTests {
-		if !skippableTests[test.FQN] {
-			slog.Debug("Test is not skipped", "test", test.FQN, "sourceFile", test.SuiteSourceFile)
+		if !skippableTests[test.FQN()] {
+			slog.Debug("Test is not skipped", "test", test.FQN(), "sourceFile", test.SuiteSourceFile)
 			if test.SuiteSourceFile != "" {
 				tr.testFiles[test.SuiteSourceFile]++
 			}
