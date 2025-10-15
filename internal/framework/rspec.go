@@ -46,7 +46,6 @@ func (r *RSpec) createDiscoveryCommand() *exec.Cmd {
 	command, baseArgs := r.getRSpecCommand()
 	args := append(baseArgs, "--format", "progress", "--dry-run")
 
-	// this is a constant, no
 	// no-dd-sa:go-security/command-injection
 	cmd := exec.Command(command, args...)
 	cmd.Env = append(

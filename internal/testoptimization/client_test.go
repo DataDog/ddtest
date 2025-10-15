@@ -277,9 +277,7 @@ func TestDatadogClient_StoreCacheAndExit_WritesSettingsFile(t *testing.T) {
 	}
 }
 
-func TestDatadogClient_buildTestFQN(t *testing.T) {
-	client := NewDatadogClient()
-
+func TestTest_FQN(t *testing.T) {
 	testCases := []struct {
 		suite      string
 		test       string
@@ -293,9 +291,14 @@ func TestDatadogClient_buildTestFQN(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		result := client.buildTestFQN(tc.suite, tc.test, tc.parameters)
+		test := Test{
+			Suite:      tc.suite,
+			Name:       tc.test,
+			Parameters: tc.parameters,
+		}
+		result := test.FQN()
 		if result != tc.expected {
-			t.Errorf("buildTestFQN(%q, %q, %q) = %q, expected %q",
+			t.Errorf("Test{Suite: %q, Name: %q, Parameters: %q}.FQN() = %q, expected %q",
 				tc.suite, tc.test, tc.parameters, result, tc.expected)
 		}
 	}
