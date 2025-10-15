@@ -2,7 +2,8 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    tags:
+      - 'v*'
 
 jobs:
   release:
@@ -17,7 +18,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@c0137caad775660c0844396c52da96e560aba63d # v5
         with:
-          go-version: "1.25"
+          go-version: '1.25'
 
       - name: Build binaries
         run: make release
@@ -26,8 +27,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          gh release create "pre-release-$SHORT_SHA" \
-            --title "Pre-release $SHORT_SHA" \
-            --prerelease \
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          gh release create "$TAG_NAME" \
+            --title "$TAG_NAME" \
+            --draft \
+            --generate-notes \
             dist/*
+
+      - name: Print Release Summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          RELEASE_URL=$(gh release view "$TAG_NAME" --json url --jq .url)
+          echo "## Release Created! 🎉" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Please review and publish the release! Here is the link: $RELEASE_URL" >> $GITHUB_STEP_SUMMARY
