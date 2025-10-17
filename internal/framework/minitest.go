@@ -1,11 +1,9 @@
 package framework
 
 import (
-	"encoding/json"
 	"log/slog"
 	"os"
 	"os/exec"
-	"time"
 
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -37,41 +35,17 @@ func (m *Minitest) createDiscoveryCommand() *exec.Cmd {
 }
 
 func (m *Minitest) DiscoverTests() ([]testoptimization.Test, error) {
-	if err := os.Remove(TestsDiscoveryFilePath); err != nil && !os.IsNotExist(err) {
-		slog.Warn("Warning: Failed to delete existing discovery file", "filePath", TestsDiscoveryFilePath, "error", err)
-	}
-
-	slog.Debug("Starting Minitest test discovery...")
-	startTime := time.Now()
+	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
 	cmd := m.createDiscoveryCommand()
-	output, err := m.executor.CombinedOutput(cmd)
+	_, err := executeDiscoveryCommand(m.executor, cmd, m.Name())
 	if err != nil {
-		slog.Error("Failed to run Minitest test discovery", "output", string(output))
 		return nil, err
 	}
 
-	duration := time.Since(startTime)
-	slog.Debug("Finished Minitest test discovery", "duration", duration)
-
-	file, err := os.Open(TestsDiscoveryFilePath)
+	tests, err := parseDiscoveryFile(TestsDiscoveryFilePath)
 	if err != nil {
-		slog.Error("Error opening JSON file", "error", err)
 		return nil, err
-	}
-	defer func() {
-		_ = file.Close()
-	}()
-
-	var tests []testoptimization.Test
-	decoder := json.NewDecoder(file)
-	for decoder.More() {
-		var test testoptimization.Test
-		if err := decoder.Decode(&test); err != nil {
-			slog.Error("Error parsing JSON", "error", err)
-			return nil, err
-		}
-		tests = append(tests, test)
 	}
 
 	slog.Debug("Parsed Minitest report", "examples", len(tests))
@@ -89,13 +63,7 @@ func (m *Minitest) RunTests(testFiles []string, envMap map[string]string) error 
 	// no-dd-sa:go-security/command-injection
 	cmd := exec.Command("bundle", args...)
 
-	// Set environment variables from envMap
-	if len(envMap) > 0 {
-		cmd.Env = os.Environ()
-		for key, value := range envMap {
-			cmd.Env = append(cmd.Env, key+"="+value)
-		}
-	}
+	applyEnvMap(cmd, envMap)
 
 	return m.executor.Run(cmd)
 }
