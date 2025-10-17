@@ -74,9 +74,34 @@ func TestRuby_DetectFramework_RSpec(t *testing.T) {
 	}
 }
 
-func TestRuby_DetectFramework_Unsupported(t *testing.T) {
+func TestRuby_DetectFramework_Minitest(t *testing.T) {
 	viper.Reset()
 	viper.Set("framework", "minitest")
+	settings.Init()
+	defer func() {
+		viper.Reset()
+		settings.Init()
+	}()
+
+	ruby := NewRuby()
+	fw, err := ruby.DetectFramework()
+
+	if err != nil {
+		t.Fatalf("DetectFramework failed: %v", err)
+	}
+
+	if fw == nil {
+		t.Error("expected framework to be non-nil")
+	}
+
+	if fw.Name() != "minitest" {
+		t.Errorf("expected framework name to be 'minitest', got %q", fw.Name())
+	}
+}
+
+func TestRuby_DetectFramework_Unsupported(t *testing.T) {
+	viper.Reset()
+	viper.Set("framework", "cucumber")
 	settings.Init()
 	defer func() {
 		viper.Reset()
@@ -95,7 +120,7 @@ func TestRuby_DetectFramework_Unsupported(t *testing.T) {
 		t.Error("expected nil framework for unsupported framework")
 	}
 
-	expectedError := "framework 'minitest' is not supported by platform 'ruby'"
+	expectedError := "framework 'cucumber' is not supported by platform 'ruby'"
 	if err.Error() != expectedError {
 		t.Errorf("expected error %q, got %q", expectedError, err.Error())
 	}

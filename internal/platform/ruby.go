@@ -58,6 +58,8 @@ func (r *Ruby) DetectFramework() (framework.Framework, error) {
 	switch frameworkName {
 	case "rspec":
 		return framework.NewRSpec(), nil
+	case "minitest":
+		return framework.NewMinitest(), nil
 	default:
 		return nil, fmt.Errorf("framework '%s' is not supported by platform 'ruby'", frameworkName)
 	}
