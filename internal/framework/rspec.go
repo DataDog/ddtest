@@ -25,6 +25,37 @@ func (r *RSpec) Name() string {
 	return "rspec"
 }
 
+func (r *RSpec) DiscoverTests() ([]testoptimization.Test, error) {
+	cleanupDiscoveryFile(TestsDiscoveryFilePath)
+
+	cmd := r.createDiscoveryCommand()
+	_, err := executeDiscoveryCommand(r.executor, cmd, r.Name())
+	if err != nil {
+		return nil, err
+	}
+
+	tests, err := parseDiscoveryFile(TestsDiscoveryFilePath)
+	if err != nil {
+		return nil, err
+	}
+
+	slog.Debug("Parsed RSpec report", "tests", len(tests))
+	return tests, nil
+}
+
+func (r *RSpec) RunTests(testFiles []string, envMap map[string]string) error {
+	command, baseArgs := r.getRSpecCommand()
+	args := append(baseArgs, "--format", "progress")
+	args = append(args, testFiles...)
+
+	// no-dd-sa:go-security/command-injection
+	cmd := exec.Command(command, args...)
+
+	applyEnvMap(cmd, envMap)
+
+	return r.executor.Run(cmd)
+}
+
 // getRSpecCommand determines whether to use bin/rspec or bundle exec rspec
 func (r *RSpec) getRSpecCommand() (string, []string) {
 	// Check if bin/rspec exists and is executable
@@ -52,35 +83,4 @@ func (r *RSpec) createDiscoveryCommand() *exec.Cmd {
 		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE="+TestsDiscoveryFilePath,
 	)
 	return cmd
-}
-
-func (r *RSpec) DiscoverTests() ([]testoptimization.Test, error) {
-	cleanupDiscoveryFile(TestsDiscoveryFilePath)
-
-	cmd := r.createDiscoveryCommand()
-	_, err := executeDiscoveryCommand(r.executor, cmd, r.Name())
-	if err != nil {
-		return nil, err
-	}
-
-	tests, err := parseDiscoveryFile(TestsDiscoveryFilePath)
-	if err != nil {
-		return nil, err
-	}
-
-	slog.Debug("Parsed RSpec report", "examples", len(tests))
-	return tests, nil
-}
-
-func (r *RSpec) RunTests(testFiles []string, envMap map[string]string) error {
-	command, baseArgs := r.getRSpecCommand()
-	args := append(baseArgs, "--format", "progress")
-	args = append(args, testFiles...)
-
-	// no-dd-sa:go-security/command-injection
-	cmd := exec.Command(command, args...)
-
-	applyEnvMap(cmd, envMap)
-
-	return r.executor.Run(cmd)
 }

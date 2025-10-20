@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -23,17 +24,6 @@ func (m *Minitest) Name() string {
 	return "minitest"
 }
 
-func (m *Minitest) createDiscoveryCommand() *exec.Cmd {
-	// no-dd-sa:go-security/command-injection
-	cmd := exec.Command("bundle", "exec", "rake", "test")
-	cmd.Env = append(
-		os.Environ(),
-		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1",
-		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE="+TestsDiscoveryFilePath,
-	)
-	return cmd
-}
-
 func (m *Minitest) DiscoverTests() ([]testoptimization.Test, error) {
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
@@ -48,22 +38,81 @@ func (m *Minitest) DiscoverTests() ([]testoptimization.Test, error) {
 		return nil, err
 	}
 
-	slog.Debug("Parsed Minitest report", "examples", len(tests))
+	slog.Debug("Parsed Minitest report", "tests", len(tests))
 	return tests, nil
 }
 
 func (m *Minitest) RunTests(testFiles []string, envMap map[string]string) error {
-	args := []string{"exec", "rake", "test"}
+	command, args, isRails := m.getMinitestCommand()
 
-	// Add test files as command-line arguments if provided
+	// Add test files if provided
 	if len(testFiles) > 0 {
-		args = append(args, testFiles...)
+		if isRails {
+			// Rails test accepts files as command-line arguments
+			args = append(args, testFiles...)
+		} else {
+			// Rake test requires TEST_FILES environment variable
+			if envMap == nil {
+				envMap = make(map[string]string)
+			}
+			envMap["TEST_FILES"] = strings.Join(testFiles, " ")
+		}
 	}
 
 	// no-dd-sa:go-security/command-injection
-	cmd := exec.Command("bundle", args...)
+	cmd := exec.Command(command, args...)
 
 	applyEnvMap(cmd, envMap)
 
 	return m.executor.Run(cmd)
+}
+
+// isRailsApplication determines if the current project is a Rails application
+func (m *Minitest) isRailsApplication() bool {
+	// Check if rails gem is installed
+	// no-dd-sa:go-security/command-injection
+	cmd := exec.Command("bundle", "show", "rails")
+	output, err := m.executor.CombinedOutput(cmd)
+	if err != nil {
+		slog.Debug("Not a Rails application: bundle show rails failed", "output", string(output), "error", err)
+		return false
+	}
+
+	// Check if rails command works
+	// no-dd-sa:go-security/command-injection
+	cmd = exec.Command("bundle", "exec", "rails", "version")
+	output, err = m.executor.CombinedOutput(cmd)
+	if err != nil {
+		slog.Debug("Not a Rails application: bundle exec rails version failed", "output", string(output), "error", err)
+		return false
+	}
+
+	slog.Debug("Detected Rails application", "version_output", string(output))
+	return true
+}
+
+// getMinitestCommand determines whether to use rails test or rake test
+// Returns: command, args, isRails
+func (m *Minitest) getMinitestCommand() (string, []string, bool) {
+	isRails := m.isRailsApplication()
+	if isRails {
+		slog.Info("Found Ruby on Rails. Using bundle exec rails test for Minitest commands")
+		return "bundle", []string{"exec", "rails", "test"}, true
+	}
+
+	slog.Info("No Ruby on Rails found. Using bundle exec rake test for Minitest commands")
+	return "bundle", []string{"exec", "rake", "test"}, false
+}
+
+func (m *Minitest) createDiscoveryCommand() *exec.Cmd {
+	command, args, _ := m.getMinitestCommand()
+
+	// no-dd-sa:go-security/command-injection
+	cmd := exec.Command(command, args...)
+	cmd.Env = append(
+		os.Environ(),
+		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1",
+		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE="+TestsDiscoveryFilePath,
+	)
+	return cmd
 }
