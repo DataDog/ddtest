@@ -16,6 +16,7 @@ import (
 type mockRailsCommandExecutor struct {
 	isRails         bool
 	onTestExecution func(cmd *exec.Cmd)
+	railsGemPath    string // Optional: custom path for rails gem, defaults to temp dir
 }
 
 func (m *mockRailsCommandExecutor) CombinedOutput(cmd *exec.Cmd) ([]byte, error) {
@@ -23,7 +24,15 @@ func (m *mockRailsCommandExecutor) CombinedOutput(cmd *exec.Cmd) ([]byte, error)
 	if len(cmd.Args) >= 3 && slices.Contains(cmd.Args, "show") && slices.Contains(cmd.Args, "rails") {
 		// bundle show rails
 		if m.isRails {
-			return []byte("Rails 7.0.0"), nil
+			// Return a valid file path that exists
+			railsPath := m.railsGemPath
+			if railsPath == "" {
+				// Create a temporary directory to simulate rails gem path
+				tmpDir := filepath.Join(os.TempDir(), "rails-gem-mock")
+				_ = os.MkdirAll(tmpDir, 0755)
+				railsPath = tmpDir
+			}
+			return []byte(railsPath), nil
 		}
 		return []byte("Could not locate Gemfile"), &exec.ExitError{}
 	}
@@ -298,7 +307,7 @@ func TestMinitest_RunTests(t *testing.T) {
 
 	// For rake test, test files should be in TEST_FILES environment variable
 	foundTestFiles := false
-	expectedTestFiles := "test/models/user_test.rb test/controllers/users_controller_test.rb"
+	expectedTestFiles := "test/models/user_test.rb,test/controllers/users_controller_test.rb"
 	for _, env := range capturedCmd.Env {
 		if env == "TEST_FILES="+expectedTestFiles {
 			foundTestFiles = true

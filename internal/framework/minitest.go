@@ -55,7 +55,7 @@ func (m *Minitest) RunTests(testFiles []string, envMap map[string]string) error 
 			if envMap == nil {
 				envMap = make(map[string]string)
 			}
-			envMap["TEST_FILES"] = strings.Join(testFiles, " ")
+			envMap["TEST_FILES"] = strings.Join(testFiles, ",")
 		}
 	}
 
@@ -78,6 +78,17 @@ func (m *Minitest) isRailsApplication() bool {
 		return false
 	}
 
+	// Verify the output is a valid filepath that exists
+	railsPath := strings.TrimSpace(string(output))
+	if railsPath == "" {
+		slog.Debug("Not a Rails application: bundle show rails returned empty output")
+		return false
+	}
+	if _, err := os.Stat(railsPath); err != nil {
+		slog.Debug("Not a Rails application: rails gem path does not exist", "path", railsPath, "error", err)
+		return false
+	}
+
 	// Check if rails command works
 	// no-dd-sa:go-security/command-injection
 	cmd = exec.Command("bundle", "exec", "rails", "version")
@@ -87,7 +98,14 @@ func (m *Minitest) isRailsApplication() bool {
 		return false
 	}
 
-	slog.Debug("Detected Rails application", "version_output", string(output))
+	// Verify the output starts with "Rails <version>"
+	versionOutput := strings.TrimSpace(string(output))
+	if !strings.HasPrefix(versionOutput, "Rails ") {
+		slog.Debug("Not a Rails application: rails version output does not start with 'Rails '", "output", versionOutput)
+		return false
+	}
+
+	slog.Debug("Detected Rails application", "version_output", versionOutput)
 	return true
 }
 
