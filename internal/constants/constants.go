@@ -11,5 +11,8 @@ var SkippablePercentageOutputPath = filepath.Join(PlanDirectory, "skippable-perc
 var ParallelRunnersOutputPath = filepath.Join(PlanDirectory, "parallel-runners.txt")
 var TestsSplitDir = filepath.Join(PlanDirectory, "tests-split")
 
+// Platform specific output file paths
+var RubyEnvOutputPath = filepath.Join(PlanDirectory, "ruby_env.json")
+
 // Executor constants
 const NodeIndexPlaceholder = "{{nodeIndex}}"

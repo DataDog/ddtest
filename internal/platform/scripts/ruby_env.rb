@@ -1,4 +1,6 @@
 require "json"
+
+require "datadog/ci/ext/test"
 require "datadog/core/environment/platform"
 
 tags_map = {
@@ -9,4 +11,5 @@ tags_map = {
   Datadog::CI::Ext::Test::TAG_RUNTIME_VERSION => Datadog::Core::Environment::Ext::ENGINE_VERSION
 }
 
-$stderr.puts tags_map.to_json
+output_file = ARGV[0]
+File.write(output_file, tags_map.to_json)

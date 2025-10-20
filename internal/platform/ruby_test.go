@@ -146,28 +146,36 @@ func TestRuby_CreateTagsMap_Success(t *testing.T) {
 	}
 
 	mockExecutor := &mockCommandExecutor{
-		output: expectedOutput,
-		err:    nil,
+		err: nil,
 		onExecution: func(cmd *exec.Cmd) {
 			// Verify the command is correct
-			expectedArgs := []string{"bundle", "exec", "ruby", "-e", rubyEnvScript}
-			if len(cmd.Args) != len(expectedArgs) {
-				t.Errorf("expected %d args, got %d", len(expectedArgs), len(cmd.Args))
+			if len(cmd.Args) < 6 {
+				t.Errorf("expected at least 6 args, got %d", len(cmd.Args))
+				return
 			}
 
+			// Check the base command
+			expectedArgs := []string{"bundle", "exec", "ruby", "-e"}
 			for i, expected := range expectedArgs {
-				if i >= len(cmd.Args) {
-					t.Errorf("missing arg at index %d", i)
-					continue
-				}
-				// For the script argument, just verify it's not empty
-				if i == len(expectedArgs)-1 {
-					if cmd.Args[i] == "" {
-						t.Error("ruby script should not be empty")
-					}
-				} else if cmd.Args[i] != expected {
+				if cmd.Args[i] != expected {
 					t.Errorf("expected arg[%d] to be %q, got %q", i, expected, cmd.Args[i])
 				}
+			}
+
+			// Verify the script is not empty
+			if cmd.Args[4] == "" {
+				t.Error("ruby script should not be empty")
+			}
+
+			// The last argument should be the temp file path
+			tempFile := cmd.Args[5]
+			if tempFile == "" {
+				t.Error("temp file path should not be empty")
+			}
+
+			// Write the expected output to the temp file
+			if err := os.WriteFile(tempFile, expectedOutput, 0644); err != nil {
+				t.Errorf("failed to write temp file: %v", err)
 			}
 		},
 	}
@@ -237,10 +245,19 @@ func TestRuby_CreateTagsMap_InvalidJSON(t *testing.T) {
 
 	invalidJSON := `{invalid json}`
 	mockExecutor := &mockCommandExecutor{
-		output: []byte(invalidJSON),
-		err:    nil,
+		err: nil,
 		onExecution: func(cmd *exec.Cmd) {
-			// Ruby script outputs invalid JSON
+			// Get the temp file path from the last argument
+			if len(cmd.Args) < 6 {
+				t.Errorf("expected at least 6 args, got %d", len(cmd.Args))
+				return
+			}
+			tempFile := cmd.Args[5]
+
+			// Write invalid JSON to the temp file
+			if err := os.WriteFile(tempFile, []byte(invalidJSON), 0644); err != nil {
+				t.Errorf("failed to write temp file: %v", err)
+			}
 		},
 	}
 
@@ -273,7 +290,8 @@ func TestRuby_EmbeddedScript(t *testing.T) {
 	expectedContent := []string{
 		"require \"json\"",
 		"tags_map",
-		"$stderr.puts tags_map.to_json",
+		"output_file = ARGV[0]",
+		"File.write(output_file, tags_map.to_json)",
 	}
 
 	for _, expected := range expectedContent {
