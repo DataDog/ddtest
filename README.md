@@ -6,7 +6,7 @@ You need it when Test Impact Analysis shrinks the test workload but CI still lau
 
 Currently supported languages and frameworks:
 
-- Ruby (RSpec)
+- Ruby (RSpec, Minitest)
 
 ## Installation
 
@@ -115,7 +115,7 @@ In CI‑node mode, DDTest also fans out across local CPUs on that node and furth
 | CLI flag            | Environment variable                          |    Default | What it does                                                                                                          |
 | ------------------- | --------------------------------------------- | ---------: | --------------------------------------------------------------------------------------------------------------------- |
 | `--platform`        | `DD_TEST_OPTIMIZATION_RUNNER_PLATFORM`        |     `ruby` | Language/platform (currently supported values: `ruby`).                                                               |
-| `--framework`       | `DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK`       |    `rspec` | Test framework (currently supported values: `rspec`).                                                                 |
+| `--framework`       | `DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK`       |    `rspec` | Test framework (currently supported values: `rspec`, `minitest`).                                                     |
 | `--min-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM` | vCPU count | Minimum workers to use for the split.                                                                                 |
 | `--max-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM` | vCPU count | Maximum workers to use for the split.                                                                                 |
 | `--ci-node`         | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE`         | `-1` (off) | Restrict this run to the slice assigned to node **N** (0‑indexed). Also parallelizes within the node across its CPUs. |
@@ -201,6 +201,21 @@ matrix={"include":[{"ci_node_index":0},{"ci_node_index":1},{"ci_node_index":2}]}
 ```
 
 You can cat it to `$GITHUB_OUTPUT` to make it available for the test job.
+
+### Minitest support in non-rails projects
+
+We use `bundle exec rake test` command when we don't detect `rails` command to run tests.
+This command doesn't have a built in way to pass the list of files to execute, so we pass
+them as a space-separated list of files in `TEST_FILES` environment variable.
+
+You need to use this environment variable in your project to integrate your tests with
+`ddtest run`. Example when using `Rake::TestTask`:
+
+```ruby
+Rake::TestTask.new(:test) do |test|
+  test.test_files = ENV["TEST_FILES"] ? ENV["TEST_FILES"].split : ["test/**/*.rb"]
+end
+```
 
 ## Development
 
