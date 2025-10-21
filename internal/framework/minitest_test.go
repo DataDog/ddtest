@@ -307,7 +307,7 @@ func TestMinitest_RunTests(t *testing.T) {
 
 	// For rake test, test files should be in TEST_FILES environment variable
 	foundTestFiles := false
-	expectedTestFiles := "test/models/user_test.rb,test/controllers/users_controller_test.rb"
+	expectedTestFiles := "test/models/user_test.rb test/controllers/users_controller_test.rb"
 	for _, env := range capturedCmd.Env {
 		if env == "TEST_FILES="+expectedTestFiles {
 			foundTestFiles = true

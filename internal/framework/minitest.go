@@ -55,7 +55,7 @@ func (m *Minitest) RunTests(testFiles []string, envMap map[string]string) error 
 			if envMap == nil {
 				envMap = make(map[string]string)
 			}
-			envMap["TEST_FILES"] = strings.Join(testFiles, ",")
+			envMap["TEST_FILES"] = strings.Join(testFiles, " ")
 		}
 	}
 
