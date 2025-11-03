@@ -23,6 +23,13 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 
 	slog.Info("Preparing test optimization data", "runtimeTags", tags, "platform", detectedPlatform.Name())
 
+	// Detect framework once to avoid duplicate work
+	framework, err := detectedPlatform.DetectFramework()
+	if err != nil {
+		return fmt.Errorf("failed to detect framework: %w", err)
+	}
+	slog.Info("Framework detected", "framework", framework.Name())
+
 	// Create a cancellable context for test discovery
 	discoveryCtx, cancelDiscovery := context.WithCancel(ctx)
 	defer cancelDiscovery()
@@ -63,11 +70,6 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 
 	// Goroutine 2: Full test discovery (respects context cancellation)
 	g.Go(func() error {
-		framework, err := detectedPlatform.DetectFramework()
-		if err != nil {
-			return fmt.Errorf("failed to detect framework: %w", err)
-		}
-
 		startTime := time.Now()
 		slog.Info("Discovering local tests...", "framework", framework.Name())
 		discoveredTests, err = framework.DiscoverTests(discoveryCtx)
@@ -83,11 +85,6 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 
 	// Goroutine 3: Fast test discovery (always completes)
 	g.Go(func() error {
-		framework, err := detectedPlatform.DetectFramework()
-		if err != nil {
-			return fmt.Errorf("failed to detect framework: %w", err)
-		}
-
 		startTime := time.Now()
 		slog.Info("Discovering test files (fast)...", "framework", framework.Name())
 		discoveredTestFiles, err = framework.DiscoverTestFiles()
