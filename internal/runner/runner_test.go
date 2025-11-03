@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/DataDog/ddtest/civisibility/utils/net"
 	"github.com/DataDog/ddtest/internal/ciprovider"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/framework"
@@ -58,6 +59,7 @@ func (m *MockPlatform) DetectFramework() (framework.Framework, error) {
 type MockFramework struct {
 	FrameworkName string
 	Tests         []testoptimization.Test
+	TestFiles     []string
 	Err           error
 	RunTestsCalls []RunTestsCall
 	mu            sync.Mutex
@@ -72,8 +74,12 @@ func (m *MockFramework) Name() string {
 	return m.FrameworkName
 }
 
-func (m *MockFramework) DiscoverTests() ([]testoptimization.Test, error) {
+func (m *MockFramework) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
 	return m.Tests, m.Err
+}
+
+func (m *MockFramework) DiscoverTestFiles() ([]string, error) {
+	return m.TestFiles, m.Err
 }
 
 func (m *MockFramework) RunTests(testFiles []string, envMap map[string]string) error {
@@ -103,6 +109,7 @@ func (m *MockFramework) GetRunTestsCalls() []RunTestsCall {
 type MockTestOptimizationClient struct {
 	InitializeCalled bool
 	InitializeErr    error
+	Settings         *net.SettingsResponseData
 	SkippableTests   map[string]bool
 	ShutdownCalled   bool
 	Tags             map[string]string
@@ -115,6 +122,10 @@ func (m *MockTestOptimizationClient) Initialize(tags map[string]string) error {
 	}
 	maps.Copy(m.Tags, tags)
 	return m.InitializeErr
+}
+
+func (m *MockTestOptimizationClient) GetSettings() *net.SettingsResponseData {
+	return m.Settings
 }
 
 func (m *MockTestOptimizationClient) GetSkippableTests() map[string]bool {

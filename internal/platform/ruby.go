@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -46,7 +47,7 @@ func (r *Ruby) CreateTagsMap() (map[string]string, error) {
 
 	// Execute the embedded Ruby script to get runtime tags
 	cmd := exec.Command("bundle", "exec", "ruby", "-e", rubyEnvScript, tempFile)
-	if err := r.executor.Run(cmd); err != nil {
+	if err := r.executor.Run(context.Background(), cmd); err != nil {
 		return nil, fmt.Errorf("failed to execute Ruby script: %w", err)
 	}
 

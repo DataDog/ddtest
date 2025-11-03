@@ -1,6 +1,7 @@
 package framework
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -22,21 +23,14 @@ type mockCommandExecutor struct {
 	onExecution func(cmd *exec.Cmd) // Called when command is executed
 }
 
-func (m *mockCommandExecutor) CombinedOutput(cmd *exec.Cmd) ([]byte, error) {
+func (m *mockCommandExecutor) CombinedOutput(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
 	if m.onExecution != nil {
 		m.onExecution(cmd)
 	}
 	return m.output, m.err
 }
 
-func (m *mockCommandExecutor) StderrOutput(cmd *exec.Cmd) ([]byte, error) {
-	if m.onExecution != nil {
-		m.onExecution(cmd)
-	}
-	return m.output, m.err
-}
-
-func (m *mockCommandExecutor) Run(cmd *exec.Cmd) error {
+func (m *mockCommandExecutor) Run(ctx context.Context, cmd *exec.Cmd) error {
 	if m.onExecution != nil {
 		m.onExecution(cmd)
 	}
@@ -244,7 +238,7 @@ func TestRSpec_DiscoverTests_Success(t *testing.T) {
 
 	rspec := &RSpec{executor: mockExecutor}
 
-	tests, err := rspec.DiscoverTests()
+	tests, err := rspec.DiscoverTests(context.Background())
 	if err != nil {
 		t.Fatalf("DiscoverTests failed: %v", err)
 	}
@@ -291,7 +285,7 @@ func TestRSpec_DiscoverTests_CommandFailure(t *testing.T) {
 
 	rspec := &RSpec{executor: mockExecutor}
 
-	tests, err := rspec.DiscoverTests()
+	tests, err := rspec.DiscoverTests(context.Background())
 	if err == nil {
 		t.Error("expected error when command fails")
 	}
@@ -319,7 +313,7 @@ func TestRSpec_DiscoverTests_InvalidJSON(t *testing.T) {
 
 	rspec := &RSpec{executor: mockExecutor}
 
-	tests, err := rspec.DiscoverTests()
+	tests, err := rspec.DiscoverTests(context.Background())
 	if err == nil {
 		t.Error("expected error when JSON is invalid")
 	}
@@ -496,5 +490,113 @@ func TestRSpec_RunTests_WithBinRSpec(t *testing.T) {
 		if !slices.Contains(capturedCmd.Args, testFile) {
 			t.Errorf("expected test file %q in arguments", testFile)
 		}
+	}
+}
+
+func TestRSpec_DiscoverTestFiles(t *testing.T) {
+	// Create a temporary fake RSpec project
+	tmpDir, err := os.MkdirTemp("", "rspec-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
+
+	// Save current directory and change to temp directory
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to change to temp directory: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(originalDir)
+	}()
+
+	// Create fake RSpec project structure
+	testFiles := []string{
+		"spec/models/user_spec.rb",
+		"spec/controllers/users_controller_spec.rb",
+		"spec/helpers/application_helper_spec.rb",
+		"spec/lib/utils_spec.rb",
+	}
+	// Non-matching files that should be ignored
+	nonTestFiles := []string{
+		"spec/support/helper.rb",
+		"spec/factories/users.rb",
+		"spec/spec_helper.rb",
+	}
+
+	for _, file := range append(testFiles, nonTestFiles...) {
+		dir := filepath.Dir(file)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("failed to create directory %s: %v", dir, err)
+		}
+		if err := os.WriteFile(file, []byte("# test content"), 0644); err != nil {
+			t.Fatalf("failed to create file %s: %v", file, err)
+		}
+	}
+
+	rspec := NewRSpec()
+	discoveredFiles, err := rspec.DiscoverTestFiles()
+
+	if err != nil {
+		t.Fatalf("DiscoverTestFiles failed: %v", err)
+	}
+
+	// Verify all test files were found
+	if len(discoveredFiles) != len(testFiles) {
+		t.Errorf("expected %d test files, got %d", len(testFiles), len(discoveredFiles))
+	}
+
+	// Verify each expected test file was found
+	for _, expectedFile := range testFiles {
+		if !slices.Contains(discoveredFiles, expectedFile) {
+			t.Errorf("expected test file %q not found in discovered files", expectedFile)
+		}
+	}
+
+	// Verify non-test files were not included
+	for _, nonTestFile := range nonTestFiles {
+		if slices.Contains(discoveredFiles, nonTestFile) {
+			t.Errorf("non-test file %q should not be in discovered files", nonTestFile)
+		}
+	}
+}
+
+func TestRSpec_DiscoverTestFiles_NoSpecDirectory(t *testing.T) {
+	// Create a temporary directory without a spec folder
+	tmpDir, err := os.MkdirTemp("", "rspec-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
+
+	// Save current directory and change to temp directory
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to change to temp directory: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(originalDir)
+	}()
+
+	rspec := NewRSpec()
+	discoveredFiles, err := rspec.DiscoverTestFiles()
+
+	if err != nil {
+		t.Fatalf("DiscoverTestFiles failed: %v", err)
+	}
+
+	// Should return empty slice when spec directory doesn't exist
+	if len(discoveredFiles) != 0 {
+		t.Errorf("expected 0 test files, got %d", len(discoveredFiles))
 	}
 }

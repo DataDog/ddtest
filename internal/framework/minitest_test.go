@@ -1,6 +1,7 @@
 package framework
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -19,7 +20,7 @@ type mockRailsCommandExecutor struct {
 	railsGemPath    string // Optional: custom path for rails gem, defaults to temp dir
 }
 
-func (m *mockRailsCommandExecutor) CombinedOutput(cmd *exec.Cmd) ([]byte, error) {
+func (m *mockRailsCommandExecutor) CombinedOutput(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
 	// Check if this is a Rails detection command
 	if len(cmd.Args) >= 3 && slices.Contains(cmd.Args, "show") && slices.Contains(cmd.Args, "rails") {
 		// bundle show rails
@@ -51,11 +52,7 @@ func (m *mockRailsCommandExecutor) CombinedOutput(cmd *exec.Cmd) ([]byte, error)
 	return []byte("Finished in 0.12345 seconds"), nil
 }
 
-func (m *mockRailsCommandExecutor) StderrOutput(cmd *exec.Cmd) ([]byte, error) {
-	return m.CombinedOutput(cmd)
-}
-
-func (m *mockRailsCommandExecutor) Run(cmd *exec.Cmd) error {
+func (m *mockRailsCommandExecutor) Run(ctx context.Context, cmd *exec.Cmd) error {
 	if m.onTestExecution != nil {
 		m.onTestExecution(cmd)
 	}
@@ -178,7 +175,7 @@ func TestMinitest_DiscoverTests_Success(t *testing.T) {
 
 	minitest := &Minitest{executor: mockExecutor}
 
-	tests, err := minitest.DiscoverTests()
+	tests, err := minitest.DiscoverTests(context.Background())
 	if err != nil {
 		t.Fatalf("DiscoverTests failed: %v", err)
 	}
@@ -225,7 +222,7 @@ func TestMinitest_DiscoverTests_CommandFailure(t *testing.T) {
 
 	minitest := &Minitest{executor: mockExecutor}
 
-	tests, err := minitest.DiscoverTests()
+	tests, err := minitest.DiscoverTests(context.Background())
 	if err == nil {
 		t.Error("expected error when command fails")
 	}
@@ -253,7 +250,7 @@ func TestMinitest_DiscoverTests_InvalidJSON(t *testing.T) {
 
 	minitest := &Minitest{executor: mockExecutor}
 
-	tests, err := minitest.DiscoverTests()
+	tests, err := minitest.DiscoverTests(context.Background())
 	if err == nil {
 		t.Error("expected error when JSON is invalid")
 	}
@@ -511,5 +508,113 @@ func TestMinitest_createDiscoveryCommand_RailsApplication(t *testing.T) {
 		if !slices.Contains(cmd.Env, expected) {
 			t.Errorf("expected %q in environment", expected)
 		}
+	}
+}
+
+func TestMinitest_DiscoverTestFiles(t *testing.T) {
+	// Create a temporary fake Minitest project
+	tmpDir, err := os.MkdirTemp("", "minitest-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
+
+	// Save current directory and change to temp directory
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to change to temp directory: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(originalDir)
+	}()
+
+	// Create fake Minitest project structure
+	testFiles := []string{
+		"test/models/user_test.rb",
+		"test/controllers/users_controller_test.rb",
+		"test/integration/login_test.rb",
+		"test/lib/utils_test.rb",
+	}
+	// Non-matching files that should be ignored
+	nonTestFiles := []string{
+		"test/test_helper.rb",
+		"test/support/helper.rb",
+		"test/fixtures/users.yml",
+	}
+
+	for _, file := range append(testFiles, nonTestFiles...) {
+		dir := filepath.Dir(file)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("failed to create directory %s: %v", dir, err)
+		}
+		if err := os.WriteFile(file, []byte("# test content"), 0644); err != nil {
+			t.Fatalf("failed to create file %s: %v", file, err)
+		}
+	}
+
+	minitest := NewMinitest()
+	discoveredFiles, err := minitest.DiscoverTestFiles()
+
+	if err != nil {
+		t.Fatalf("DiscoverTestFiles failed: %v", err)
+	}
+
+	// Verify all test files were found
+	if len(discoveredFiles) != len(testFiles) {
+		t.Errorf("expected %d test files, got %d", len(testFiles), len(discoveredFiles))
+	}
+
+	// Verify each expected test file was found
+	for _, expectedFile := range testFiles {
+		if !slices.Contains(discoveredFiles, expectedFile) {
+			t.Errorf("expected test file %q not found in discovered files", expectedFile)
+		}
+	}
+
+	// Verify non-test files were not included
+	for _, nonTestFile := range nonTestFiles {
+		if slices.Contains(discoveredFiles, nonTestFile) {
+			t.Errorf("non-test file %q should not be in discovered files", nonTestFile)
+		}
+	}
+}
+
+func TestMinitest_DiscoverTestFiles_NoTestDirectory(t *testing.T) {
+	// Create a temporary directory without a test folder
+	tmpDir, err := os.MkdirTemp("", "minitest-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
+
+	// Save current directory and change to temp directory
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to change to temp directory: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(originalDir)
+	}()
+
+	minitest := NewMinitest()
+	discoveredFiles, err := minitest.DiscoverTestFiles()
+
+	if err != nil {
+		t.Fatalf("DiscoverTestFiles failed: %v", err)
+	}
+
+	// Should return empty slice when test directory doesn't exist
+	if len(discoveredFiles) != 0 {
+		t.Errorf("expected 0 test files, got %d", len(discoveredFiles))
 	}
 }

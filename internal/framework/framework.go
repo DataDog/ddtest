@@ -1,6 +1,7 @@
 package framework
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"os"
@@ -17,7 +18,8 @@ var TestsDiscoveryFilePath = filepath.Join(".", constants.PlanDirectory, "tests-
 
 type Framework interface {
 	Name() string
-	DiscoverTests() ([]testoptimization.Test, error)
+	DiscoverTests(ctx context.Context) ([]testoptimization.Test, error)
+	DiscoverTestFiles() ([]string, error)
 	RunTests(testFiles []string, envMap map[string]string) error
 }
 
@@ -39,11 +41,11 @@ func applyEnvMap(cmd *exec.Cmd, envMap map[string]string) {
 }
 
 // executeDiscoveryCommand runs the discovery command and logs timing
-func executeDiscoveryCommand(executor ext.CommandExecutor, cmd *exec.Cmd, frameworkName string) ([]byte, error) {
+func executeDiscoveryCommand(ctx context.Context, executor ext.CommandExecutor, cmd *exec.Cmd, frameworkName string) ([]byte, error) {
 	slog.Debug("Starting test discovery...", "framework", frameworkName)
 	startTime := time.Now()
 
-	output, err := executor.CombinedOutput(cmd)
+	output, err := executor.CombinedOutput(ctx, cmd)
 	if err != nil {
 		slog.Error("Failed to run test discovery", "framework", frameworkName, "output", string(output))
 		return nil, err
@@ -78,4 +80,38 @@ func parseDiscoveryFile(filePath string) ([]testoptimization.Test, error) {
 	}
 
 	return tests, nil
+}
+
+// discoverTestFilesByPattern searches for test files matching a pattern in a given directory
+func discoverTestFilesByPattern(rootDir string, pattern string) ([]string, error) {
+	var testFiles []string
+
+	err := filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip directories
+		if d.IsDir() {
+			return nil
+		}
+
+		// Check if the file matches the pattern
+		matched, err := filepath.Match(pattern, filepath.Base(path))
+		if err != nil {
+			return err
+		}
+
+		if matched {
+			testFiles = append(testFiles, path)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return testFiles, nil
 }

@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -18,21 +19,14 @@ type mockCommandExecutor struct {
 	onExecution func(cmd *exec.Cmd)
 }
 
-func (m *mockCommandExecutor) CombinedOutput(cmd *exec.Cmd) ([]byte, error) {
+func (m *mockCommandExecutor) CombinedOutput(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
 	if m.onExecution != nil {
 		m.onExecution(cmd)
 	}
 	return m.output, m.err
 }
 
-func (m *mockCommandExecutor) StderrOutput(cmd *exec.Cmd) ([]byte, error) {
-	if m.onExecution != nil {
-		m.onExecution(cmd)
-	}
-	return m.output, m.err
-}
-
-func (m *mockCommandExecutor) Run(cmd *exec.Cmd) error {
+func (m *mockCommandExecutor) Run(ctx context.Context, cmd *exec.Cmd) error {
 	if m.onExecution != nil {
 		m.onExecution(cmd)
 	}
