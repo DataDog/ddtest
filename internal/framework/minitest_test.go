@@ -1,12 +1,12 @@
 package framework
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -15,13 +15,14 @@ import (
 // mockRailsCommandExecutor is a mock that can handle Rails detection commands
 type mockRailsCommandExecutor struct {
 	isRails         bool
-	onTestExecution func(cmd *exec.Cmd)
-	railsGemPath    string // Optional: custom path for rails gem, defaults to temp dir
+	onTestExecution func(name string, args []string)
+	railsGemPath    string            // Optional: custom path for rails gem, defaults to temp dir
+	capturedEnvMap  map[string]string // Captured environment map from Run calls
 }
 
-func (m *mockRailsCommandExecutor) CombinedOutput(cmd *exec.Cmd) ([]byte, error) {
+func (m *mockRailsCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
 	// Check if this is a Rails detection command
-	if len(cmd.Args) >= 3 && slices.Contains(cmd.Args, "show") && slices.Contains(cmd.Args, "rails") {
+	if name == "bundle" && len(args) >= 2 && slices.Contains(args, "show") && slices.Contains(args, "rails") {
 		// bundle show rails
 		if m.isRails {
 			// Return a valid file path that exists
@@ -36,7 +37,7 @@ func (m *mockRailsCommandExecutor) CombinedOutput(cmd *exec.Cmd) ([]byte, error)
 		}
 		return []byte("Could not locate Gemfile"), &exec.ExitError{}
 	}
-	if len(cmd.Args) >= 4 && slices.Contains(cmd.Args, "rails") && slices.Contains(cmd.Args, "version") {
+	if name == "bundle" && len(args) >= 3 && slices.Contains(args, "rails") && slices.Contains(args, "version") {
 		// bundle exec rails version
 		if m.isRails {
 			return []byte("Rails 7.0.0"), nil
@@ -46,18 +47,16 @@ func (m *mockRailsCommandExecutor) CombinedOutput(cmd *exec.Cmd) ([]byte, error)
 
 	// This is the actual test command
 	if m.onTestExecution != nil {
-		m.onTestExecution(cmd)
+		m.onTestExecution(name, args)
 	}
 	return []byte("Finished in 0.12345 seconds"), nil
 }
 
-func (m *mockRailsCommandExecutor) StderrOutput(cmd *exec.Cmd) ([]byte, error) {
-	return m.CombinedOutput(cmd)
-}
-
-func (m *mockRailsCommandExecutor) Run(cmd *exec.Cmd) error {
+func (m *mockRailsCommandExecutor) Run(ctx context.Context, name string, args []string, envMap map[string]string) error {
+	// Capture the envMap for test assertions
+	m.capturedEnvMap = envMap
 	if m.onTestExecution != nil {
-		m.onTestExecution(cmd)
+		m.onTestExecution(name, args)
 	}
 	return nil
 }
@@ -90,28 +89,29 @@ func TestMinitest_createDiscoveryCommand(t *testing.T) {
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	cmd := minitest.createDiscoveryCommand()
+	command, args, envMap := minitest.createDiscoveryCommand()
 
 	// Verify command structure: bundle exec rake test (non-Rails)
-	expectedArgs := []string{"bundle", "exec", "rake", "test"}
-	if len(cmd.Args) != len(expectedArgs) {
-		t.Errorf("expected %d args, got %d: %v", len(expectedArgs), len(cmd.Args), cmd.Args)
+	if command != "bundle" {
+		t.Errorf("expected command to be %q, got %q", "bundle", command)
+	}
+
+	expectedArgs := []string{"exec", "rake", "test"}
+	if len(args) != len(expectedArgs) {
+		t.Errorf("expected %d args, got %d: %v", len(expectedArgs), len(args), args)
 	}
 	for i, expected := range expectedArgs {
-		if i >= len(cmd.Args) || cmd.Args[i] != expected {
-			t.Errorf("expected args[%d] to be %q, got %q", i, expected, cmd.Args[i])
+		if i >= len(args) || args[i] != expected {
+			t.Errorf("expected args[%d] to be %q, got %q", i, expected, args[i])
 		}
 	}
 
-	expectedEnv := []string{
-		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1",
-		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE=" + TestsDiscoveryFilePath,
+	// Verify environment variables
+	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
+		t.Error("expected DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1 in envMap")
 	}
-
-	for _, expected := range expectedEnv {
-		if !slices.Contains(cmd.Env, expected) {
-			t.Errorf("expected %q in environment", expected)
-		}
+	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"] != TestsDiscoveryFilePath {
+		t.Errorf("expected DD_TEST_OPTIMIZATION_DISCOVERY_FILE=%q in envMap, got %q", TestsDiscoveryFilePath, envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"])
 	}
 }
 
@@ -140,21 +140,18 @@ func TestMinitest_DiscoverTests_Success(t *testing.T) {
 
 	mockExecutor := &mockRailsCommandExecutor{
 		isRails: false,
-		onTestExecution: func(cmd *exec.Cmd) {
+		onTestExecution: func(name string, args []string) {
 			// Verify the command structure
-			if len(cmd.Args) < 4 {
-				t.Errorf("expected at least 4 args, got %d", len(cmd.Args))
+			if name != "bundle" {
+				t.Errorf("expected 'bundle' as command, got %q", name)
 			}
-			if !slices.Contains(cmd.Args, "bundle") {
-				t.Error("expected 'bundle' in arguments")
-			}
-			if !slices.Contains(cmd.Args, "exec") {
+			if !slices.Contains(args, "exec") {
 				t.Error("expected 'exec' in arguments")
 			}
-			if !slices.Contains(cmd.Args, "rake") {
+			if !slices.Contains(args, "rake") {
 				t.Error("expected 'rake' in arguments")
 			}
-			if !slices.Contains(cmd.Args, "test") {
+			if !slices.Contains(args, "test") {
 				t.Error("expected 'test' in arguments")
 			}
 
@@ -178,7 +175,7 @@ func TestMinitest_DiscoverTests_Success(t *testing.T) {
 
 	minitest := &Minitest{executor: mockExecutor}
 
-	tests, err := minitest.DiscoverTests()
+	tests, err := minitest.DiscoverTests(context.Background())
 	if err != nil {
 		t.Fatalf("DiscoverTests failed: %v", err)
 	}
@@ -220,12 +217,12 @@ func TestMinitest_DiscoverTests_CommandFailure(t *testing.T) {
 	mockExecutor := &mockCommandExecutor{
 		output:      []byte("Could not locate Gemfile or .bundle/ directory"),
 		err:         &exec.ExitError{},
-		onExecution: func(cmd *exec.Cmd) {},
+		onExecution: func(name string, args []string) {},
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
 
-	tests, err := minitest.DiscoverTests()
+	tests, err := minitest.DiscoverTests(context.Background())
 	if err == nil {
 		t.Error("expected error when command fails")
 	}
@@ -243,7 +240,7 @@ func TestMinitest_DiscoverTests_InvalidJSON(t *testing.T) {
 	mockExecutor := &mockCommandExecutor{
 		output: []byte("Finished in 0.12345 seconds"),
 		err:    nil,
-		onExecution: func(cmd *exec.Cmd) {
+		onExecution: func(name string, args []string) {
 			// Create invalid JSON file as the real command would (simulating corrupted output)
 			if err := os.WriteFile(TestsDiscoveryFilePath, []byte(`{invalid json}`), 0644); err != nil {
 				t.Fatalf("mock failed to write invalid JSON: %v", err)
@@ -253,7 +250,7 @@ func TestMinitest_DiscoverTests_InvalidJSON(t *testing.T) {
 
 	minitest := &Minitest{executor: mockExecutor}
 
-	tests, err := minitest.DiscoverTests()
+	tests, err := minitest.DiscoverTests(context.Background())
 	if err == nil {
 		t.Error("expected error when JSON is invalid")
 	}
@@ -265,57 +262,52 @@ func TestMinitest_DiscoverTests_InvalidJSON(t *testing.T) {
 func TestMinitest_RunTests(t *testing.T) {
 	testFiles := []string{"test/models/user_test.rb", "test/controllers/users_controller_test.rb"}
 
-	var capturedCmd *exec.Cmd
+	var capturedName string
+	var capturedArgs []string
 	mockExecutor := &mockRailsCommandExecutor{
 		isRails: false,
-		onTestExecution: func(cmd *exec.Cmd) {
-			capturedCmd = cmd
+		onTestExecution: func(name string, args []string) {
+			capturedName = name
+			capturedArgs = args
 		},
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	err := minitest.RunTests(testFiles, nil)
+	err := minitest.RunTests(context.Background(), testFiles, nil)
 
 	if err != nil {
 		t.Fatalf("RunTests failed: %v", err)
 	}
 
-	if capturedCmd == nil {
+	if capturedName == "" {
 		t.Fatal("Expected command to be executed but none was captured")
 	}
 
 	// Verify the command structure
-	if !slices.Contains(capturedCmd.Args, "bundle") {
-		t.Error("expected 'bundle' in arguments")
+	if capturedName != "bundle" {
+		t.Errorf("expected 'bundle' as command, got %q", capturedName)
 	}
-	if !slices.Contains(capturedCmd.Args, "exec") {
+	if !slices.Contains(capturedArgs, "exec") {
 		t.Error("expected 'exec' in arguments")
 	}
-	if !slices.Contains(capturedCmd.Args, "rake") {
+	if !slices.Contains(capturedArgs, "rake") {
 		t.Error("expected 'rake' in arguments")
 	}
-	if !slices.Contains(capturedCmd.Args, "test") {
+	if !slices.Contains(capturedArgs, "test") {
 		t.Error("expected 'test' in arguments")
 	}
 
 	// For rake test, test files should NOT be in command-line arguments
 	for _, testFile := range testFiles {
-		if slices.Contains(capturedCmd.Args, testFile) {
+		if slices.Contains(capturedArgs, testFile) {
 			t.Errorf("test file %q should not be in arguments for rake test", testFile)
 		}
 	}
 
 	// For rake test, test files should be in TEST_FILES environment variable
-	foundTestFiles := false
 	expectedTestFiles := "test/models/user_test.rb test/controllers/users_controller_test.rb"
-	for _, env := range capturedCmd.Env {
-		if env == "TEST_FILES="+expectedTestFiles {
-			foundTestFiles = true
-			break
-		}
-	}
-	if !foundTestFiles {
-		t.Errorf("Expected TEST_FILES=%q in environment", expectedTestFiles)
+	if mockExecutor.capturedEnvMap["TEST_FILES"] != expectedTestFiles {
+		t.Errorf("Expected TEST_FILES=%q in environment, got %q", expectedTestFiles, mockExecutor.capturedEnvMap["TEST_FILES"])
 	}
 }
 
@@ -326,83 +318,63 @@ func TestMinitest_RunTestsWithEnvMap(t *testing.T) {
 		"TEST_ENV": "minitest",
 	}
 
-	var capturedCmd *exec.Cmd
 	mockExecutor := &mockRailsCommandExecutor{
 		isRails: false,
-		onTestExecution: func(cmd *exec.Cmd) {
-			capturedCmd = cmd
-		},
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	err := minitest.RunTests(testFiles, envMap)
+	err := minitest.RunTests(context.Background(), testFiles, envMap)
 
 	if err != nil {
 		t.Fatalf("RunTests failed: %v", err)
 	}
 
-	if capturedCmd == nil {
-		t.Fatal("Expected command to be executed but none was captured")
-	}
-
 	// Verify environment variables are set
-	foundRailsDb := false
-	foundTestEnv := false
-	foundTestFiles := false
-	for _, env := range capturedCmd.Env {
-		if env == "RAILS_DB=my_project_test_1" {
-			foundRailsDb = true
-		}
-		if env == "TEST_ENV=minitest" {
-			foundTestEnv = true
-		}
-		if env == "TEST_FILES=test/models/user_test.rb" {
-			foundTestFiles = true
-		}
-	}
-
-	if !foundRailsDb {
+	if mockExecutor.capturedEnvMap["RAILS_DB"] != "my_project_test_1" {
 		t.Error("Expected RAILS_DB environment variable to be set")
 	}
-	if !foundTestEnv {
+	if mockExecutor.capturedEnvMap["TEST_ENV"] != "minitest" {
 		t.Error("Expected TEST_ENV environment variable to be set")
 	}
-	if !foundTestFiles {
+	if mockExecutor.capturedEnvMap["TEST_FILES"] != "test/models/user_test.rb" {
 		t.Error("Expected TEST_FILES environment variable to be set")
 	}
 }
 
 func TestMinitest_RunTests_NoTestFiles(t *testing.T) {
-	var capturedCmd *exec.Cmd
+	var capturedName string
+	var capturedArgs []string
 	mockExecutor := &mockRailsCommandExecutor{
 		isRails: false,
-		onTestExecution: func(cmd *exec.Cmd) {
-			capturedCmd = cmd
+		onTestExecution: func(name string, args []string) {
+			capturedName = name
+			capturedArgs = args
 		},
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	err := minitest.RunTests([]string{}, nil)
+	err := minitest.RunTests(context.Background(), []string{}, nil)
 
 	if err != nil {
 		t.Fatalf("RunTests failed: %v", err)
 	}
 
-	if capturedCmd == nil {
+	if capturedName == "" {
 		t.Fatal("Expected command to be executed but none was captured")
 	}
 
 	// Should still have the basic command structure
-	expectedArgs := []string{"bundle", "exec", "rake", "test"}
-	if len(capturedCmd.Args) != len(expectedArgs) {
-		t.Errorf("expected %d args, got %d: %v", len(expectedArgs), len(capturedCmd.Args), capturedCmd.Args)
+	if capturedName != "bundle" {
+		t.Errorf("expected 'bundle' as command, got %q", capturedName)
+	}
+	expectedArgs := []string{"exec", "rake", "test"}
+	if len(capturedArgs) != len(expectedArgs) {
+		t.Errorf("expected %d args, got %d: %v", len(expectedArgs), len(capturedArgs), capturedArgs)
 	}
 
 	// Should not have TEST_FILES environment variable when no test files
-	for _, env := range capturedCmd.Env {
-		if strings.HasPrefix(env, "TEST_FILES=") {
-			t.Error("TEST_FILES should not be set when no test files provided")
-		}
+	if _, exists := mockExecutor.capturedEnvMap["TEST_FILES"]; exists {
+		t.Error("TEST_FILES should not be set when no test files provided")
 	}
 }
 
@@ -435,51 +407,51 @@ func TestMinitest_isRailsApplication_NoRails(t *testing.T) {
 func TestMinitest_RunTests_RailsApplication(t *testing.T) {
 	testFiles := []string{"test/models/user_test.rb"}
 
-	var capturedCmd *exec.Cmd
+	var capturedName string
+	var capturedArgs []string
 	mockExecutor := &mockRailsCommandExecutor{
 		isRails: true,
-		onTestExecution: func(cmd *exec.Cmd) {
-			capturedCmd = cmd
+		onTestExecution: func(name string, args []string) {
+			capturedName = name
+			capturedArgs = args
 		},
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	err := minitest.RunTests(testFiles, nil)
+	err := minitest.RunTests(context.Background(), testFiles, nil)
 
 	if err != nil {
 		t.Fatalf("RunTests failed: %v", err)
 	}
 
-	if capturedCmd == nil {
+	if capturedName == "" {
 		t.Fatal("Expected command to be executed but none was captured")
 	}
 
 	// Verify the command structure uses "rails test" instead of "rake test"
-	if !slices.Contains(capturedCmd.Args, "bundle") {
-		t.Error("expected 'bundle' in arguments")
+	if capturedName != "bundle" {
+		t.Errorf("expected 'bundle' as command, got %q", capturedName)
 	}
-	if !slices.Contains(capturedCmd.Args, "exec") {
+	if !slices.Contains(capturedArgs, "exec") {
 		t.Error("expected 'exec' in arguments")
 	}
-	if !slices.Contains(capturedCmd.Args, "rails") {
+	if !slices.Contains(capturedArgs, "rails") {
 		t.Error("expected 'rails' in arguments")
 	}
-	if !slices.Contains(capturedCmd.Args, "test") {
+	if !slices.Contains(capturedArgs, "test") {
 		t.Error("expected 'test' in arguments")
 	}
 
 	// Verify test files are included as command-line arguments
 	for _, testFile := range testFiles {
-		if !slices.Contains(capturedCmd.Args, testFile) {
+		if !slices.Contains(capturedArgs, testFile) {
 			t.Errorf("expected test file %q in arguments", testFile)
 		}
 	}
 
 	// For Rails test, TEST_FILES should NOT be set
-	for _, env := range capturedCmd.Env {
-		if strings.HasPrefix(env, "TEST_FILES=") {
-			t.Error("TEST_FILES should not be set for rails test (files should be in command-line args)")
-		}
+	if _, exists := mockExecutor.capturedEnvMap["TEST_FILES"]; exists {
+		t.Error("TEST_FILES should not be set for rails test (files should be in command-line args)")
 	}
 }
 
@@ -489,27 +461,136 @@ func TestMinitest_createDiscoveryCommand_RailsApplication(t *testing.T) {
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	cmd := minitest.createDiscoveryCommand()
+	command, args, envMap := minitest.createDiscoveryCommand()
 
 	// Verify command structure: bundle exec rails test (Rails)
-	expectedArgs := []string{"bundle", "exec", "rails", "test"}
-	if len(cmd.Args) != len(expectedArgs) {
-		t.Errorf("expected %d args, got %d: %v", len(expectedArgs), len(cmd.Args), cmd.Args)
+	if command != "bundle" {
+		t.Errorf("expected command to be %q, got %q", "bundle", command)
+	}
+
+	expectedArgs := []string{"exec", "rails", "test"}
+	if len(args) != len(expectedArgs) {
+		t.Errorf("expected %d args, got %d: %v", len(expectedArgs), len(args), args)
 	}
 	for i, expected := range expectedArgs {
-		if i >= len(cmd.Args) || cmd.Args[i] != expected {
-			t.Errorf("expected args[%d] to be %q, got %q", i, expected, cmd.Args[i])
+		if i >= len(args) || args[i] != expected {
+			t.Errorf("expected args[%d] to be %q, got %q", i, expected, args[i])
 		}
 	}
 
-	expectedEnv := []string{
-		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1",
-		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE=" + TestsDiscoveryFilePath,
+	// Verify environment variables
+	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
+		t.Error("expected DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1 in envMap")
+	}
+	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"] != TestsDiscoveryFilePath {
+		t.Errorf("expected DD_TEST_OPTIMIZATION_DISCOVERY_FILE=%q in envMap, got %q", TestsDiscoveryFilePath, envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"])
+	}
+}
+
+func TestMinitest_DiscoverTestFiles(t *testing.T) {
+	// Create a temporary fake Minitest project
+	tmpDir, err := os.MkdirTemp("", "minitest-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
+
+	// Save current directory and change to temp directory
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to change to temp directory: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(originalDir)
+	}()
+
+	// Create fake Minitest project structure
+	testFiles := []string{
+		"test/models/user_test.rb",
+		"test/controllers/users_controller_test.rb",
+		"test/integration/login_test.rb",
+		"test/lib/utils_test.rb",
+	}
+	// Non-matching files that should be ignored
+	nonTestFiles := []string{
+		"test/test_helper.rb",
+		"test/support/helper.rb",
+		"test/fixtures/users.yml",
 	}
 
-	for _, expected := range expectedEnv {
-		if !slices.Contains(cmd.Env, expected) {
-			t.Errorf("expected %q in environment", expected)
+	for _, file := range append(testFiles, nonTestFiles...) {
+		dir := filepath.Dir(file)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("failed to create directory %s: %v", dir, err)
 		}
+		if err := os.WriteFile(file, []byte("# test content"), 0644); err != nil {
+			t.Fatalf("failed to create file %s: %v", file, err)
+		}
+	}
+
+	minitest := NewMinitest()
+	discoveredFiles, err := minitest.DiscoverTestFiles()
+
+	if err != nil {
+		t.Fatalf("DiscoverTestFiles failed: %v", err)
+	}
+
+	// Verify all test files were found
+	if len(discoveredFiles) != len(testFiles) {
+		t.Errorf("expected %d test files, got %d", len(testFiles), len(discoveredFiles))
+	}
+
+	// Verify each expected test file was found
+	for _, expectedFile := range testFiles {
+		if !slices.Contains(discoveredFiles, expectedFile) {
+			t.Errorf("expected test file %q not found in discovered files", expectedFile)
+		}
+	}
+
+	// Verify non-test files were not included
+	for _, nonTestFile := range nonTestFiles {
+		if slices.Contains(discoveredFiles, nonTestFile) {
+			t.Errorf("non-test file %q should not be in discovered files", nonTestFile)
+		}
+	}
+}
+
+func TestMinitest_DiscoverTestFiles_NoTestDirectory(t *testing.T) {
+	// Create a temporary directory without a test folder
+	tmpDir, err := os.MkdirTemp("", "minitest-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
+
+	// Save current directory and change to temp directory
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to change to temp directory: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(originalDir)
+	}()
+
+	minitest := NewMinitest()
+	discoveredFiles, err := minitest.DiscoverTestFiles()
+
+	if err != nil {
+		t.Fatalf("DiscoverTestFiles failed: %v", err)
+	}
+
+	// Should return empty slice when test directory doesn't exist
+	if len(discoveredFiles) != 0 {
+		t.Errorf("expected 0 test files, got %d", len(discoveredFiles))
 	}
 }

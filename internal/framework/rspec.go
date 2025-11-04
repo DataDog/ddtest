@@ -1,15 +1,19 @@
 package framework
 
 import (
+	"context"
 	"log/slog"
 	"os"
-	"os/exec"
 
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
-const binRSpecPath = "bin/rspec"
+const (
+	binRSpecPath         = "bin/rspec"
+	rspecTestFilePattern = "*_spec.rb"
+	rspecRootDir         = "spec"
+)
 
 type RSpec struct {
 	executor ext.CommandExecutor
@@ -25,11 +29,11 @@ func (r *RSpec) Name() string {
 	return "rspec"
 }
 
-func (r *RSpec) DiscoverTests() ([]testoptimization.Test, error) {
+func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
-	cmd := r.createDiscoveryCommand()
-	_, err := executeDiscoveryCommand(r.executor, cmd, r.Name())
+	name, args, envMap := r.createDiscoveryCommand()
+	_, err := executeDiscoveryCommand(ctx, r.executor, name, args, envMap, r.Name())
 	if err != nil {
 		return nil, err
 	}
@@ -43,17 +47,28 @@ func (r *RSpec) DiscoverTests() ([]testoptimization.Test, error) {
 	return tests, nil
 }
 
-func (r *RSpec) RunTests(testFiles []string, envMap map[string]string) error {
+func (r *RSpec) DiscoverTestFiles() ([]string, error) {
+	// Check if the spec directory exists
+	if _, err := os.Stat(rspecRootDir); os.IsNotExist(err) {
+		slog.Debug("RSpec directory does not exist", "directory", rspecRootDir)
+		return []string{}, nil
+	}
+
+	testFiles, err := discoverTestFilesByPattern(rspecRootDir, rspecTestFilePattern)
+	if err != nil {
+		return nil, err
+	}
+
+	slog.Debug("Discovered RSpec test files", "count", len(testFiles))
+	return testFiles, nil
+}
+
+func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, baseArgs := r.getRSpecCommand()
 	args := append(baseArgs, "--format", "progress")
 	args = append(args, testFiles...)
 
-	// no-dd-sa:go-security/command-injection
-	cmd := exec.Command(command, args...)
-
-	applyEnvMap(cmd, envMap)
-
-	return r.executor.Run(cmd)
+	return r.executor.Run(ctx, command, args, envMap)
 }
 
 // getRSpecCommand determines whether to use bin/rspec or bundle exec rspec
@@ -71,16 +86,13 @@ func (r *RSpec) getRSpecCommand() (string, []string) {
 	return "bundle", []string{"exec", "rspec"}
 }
 
-func (r *RSpec) createDiscoveryCommand() *exec.Cmd {
+func (r *RSpec) createDiscoveryCommand() (string, []string, map[string]string) {
 	command, baseArgs := r.getRSpecCommand()
 	args := append(baseArgs, "--format", "progress", "--dry-run")
 
-	// no-dd-sa:go-security/command-injection
-	cmd := exec.Command(command, args...)
-	cmd.Env = append(
-		os.Environ(),
-		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1",
-		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE="+TestsDiscoveryFilePath,
-	)
-	return cmd
+	envMap := map[string]string{
+		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED": "1",
+		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE":    TestsDiscoveryFilePath,
+	}
+	return command, args, envMap
 }

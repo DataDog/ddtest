@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -15,26 +16,19 @@ import (
 type mockCommandExecutor struct {
 	output      []byte
 	err         error
-	onExecution func(cmd *exec.Cmd)
+	onExecution func(name string, args []string)
 }
 
-func (m *mockCommandExecutor) CombinedOutput(cmd *exec.Cmd) ([]byte, error) {
+func (m *mockCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
 	if m.onExecution != nil {
-		m.onExecution(cmd)
+		m.onExecution(name, args)
 	}
 	return m.output, m.err
 }
 
-func (m *mockCommandExecutor) StderrOutput(cmd *exec.Cmd) ([]byte, error) {
+func (m *mockCommandExecutor) Run(ctx context.Context, name string, args []string, envMap map[string]string) error {
 	if m.onExecution != nil {
-		m.onExecution(cmd)
-	}
-	return m.output, m.err
-}
-
-func (m *mockCommandExecutor) Run(cmd *exec.Cmd) error {
-	if m.onExecution != nil {
-		m.onExecution(cmd)
+		m.onExecution(name, args)
 	}
 	return m.err
 }
@@ -147,28 +141,32 @@ func TestRuby_CreateTagsMap_Success(t *testing.T) {
 
 	mockExecutor := &mockCommandExecutor{
 		err: nil,
-		onExecution: func(cmd *exec.Cmd) {
+		onExecution: func(name string, args []string) {
 			// Verify the command is correct
-			if len(cmd.Args) < 6 {
-				t.Errorf("expected at least 6 args, got %d", len(cmd.Args))
+			if name != "bundle" {
+				t.Errorf("expected command to be 'bundle', got %q", name)
+			}
+
+			if len(args) < 5 {
+				t.Errorf("expected at least 5 args, got %d", len(args))
 				return
 			}
 
-			// Check the base command
-			expectedArgs := []string{"bundle", "exec", "ruby", "-e"}
+			// Check the base command args
+			expectedArgs := []string{"exec", "ruby", "-e"}
 			for i, expected := range expectedArgs {
-				if cmd.Args[i] != expected {
-					t.Errorf("expected arg[%d] to be %q, got %q", i, expected, cmd.Args[i])
+				if args[i] != expected {
+					t.Errorf("expected arg[%d] to be %q, got %q", i, expected, args[i])
 				}
 			}
 
 			// Verify the script is not empty
-			if cmd.Args[4] == "" {
+			if args[3] == "" {
 				t.Error("ruby script should not be empty")
 			}
 
 			// The last argument should be the temp file path
-			tempFile := cmd.Args[5]
+			tempFile := args[4]
 			if tempFile == "" {
 				t.Error("temp file path should not be empty")
 			}
@@ -213,7 +211,7 @@ func TestRuby_CreateTagsMap_CommandFailure(t *testing.T) {
 	mockExecutor := &mockCommandExecutor{
 		output: []byte("bundle: command not found"),
 		err:    &exec.ExitError{},
-		onExecution: func(cmd *exec.Cmd) {
+		onExecution: func(name string, args []string) {
 			// Command fails, don't create any file
 		},
 	}
@@ -246,13 +244,13 @@ func TestRuby_CreateTagsMap_InvalidJSON(t *testing.T) {
 	invalidJSON := `{invalid json}`
 	mockExecutor := &mockCommandExecutor{
 		err: nil,
-		onExecution: func(cmd *exec.Cmd) {
+		onExecution: func(name string, args []string) {
 			// Get the temp file path from the last argument
-			if len(cmd.Args) < 6 {
-				t.Errorf("expected at least 6 args, got %d", len(cmd.Args))
+			if len(args) < 5 {
+				t.Errorf("expected at least 5 args, got %d", len(args))
 				return
 			}
-			tempFile := cmd.Args[5]
+			tempFile := args[4]
 
 			// Write invalid JSON to the temp file
 			if err := os.WriteFile(tempFile, []byte(invalidJSON), 0644); err != nil {

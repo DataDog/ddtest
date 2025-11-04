@@ -13,6 +13,7 @@ import (
 // TestOptimizationClient defines interface for test optimization operations
 type TestOptimizationClient interface {
 	Initialize(tags map[string]string) error
+	GetSettings() *net.SettingsResponseData
 	GetSkippableTests() map[string]bool
 	StoreCacheAndExit()
 }
@@ -69,6 +70,7 @@ type DatadogClient struct {
 	integrations CIVisibilityIntegrations
 	utils        UtilsInterface
 	cacheManager *CacheManager
+	settings     *net.SettingsResponseData
 }
 
 func NewDatadogClient() *DatadogClient {
@@ -98,10 +100,17 @@ func (c *DatadogClient) Initialize(tags map[string]string) error {
 	startTime := time.Now()
 	c.integrations.EnsureCiVisibilityInitialization()
 
+	// Fetch and store settings
+	c.settings = c.integrations.GetSettings()
+
 	duration := time.Since(startTime)
 	slog.Debug("Finished Datadog Test Optimization initialization", "duration", duration)
 
 	return nil
+}
+
+func (c *DatadogClient) GetSettings() *net.SettingsResponseData {
+	return c.settings
 }
 
 func (c *DatadogClient) GetSkippableTests() map[string]bool {

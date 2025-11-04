@@ -1,12 +1,12 @@
 package platform
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/ext"
@@ -45,8 +45,8 @@ func (r *Ruby) CreateTagsMap() (map[string]string, error) {
 	defer func() { _ = os.Remove(tempFile) }()
 
 	// Execute the embedded Ruby script to get runtime tags
-	cmd := exec.Command("bundle", "exec", "ruby", "-e", rubyEnvScript, tempFile)
-	if err := r.executor.Run(cmd); err != nil {
+	args := []string{"exec", "ruby", "-e", rubyEnvScript, tempFile}
+	if err := r.executor.Run(context.Background(), "bundle", args, nil); err != nil {
 		return nil, fmt.Errorf("failed to execute Ruby script: %w", err)
 	}
 

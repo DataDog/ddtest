@@ -22,6 +22,7 @@ type Runner interface {
 }
 
 type TestRunner struct {
+	// the keys are file paths, the values are "durations" - currently just the number of tests in a file
 	testFiles           map[string]int
 	skippablePercentage float64
 	platformDetector    platform.PlatformDetector
@@ -151,10 +152,10 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 
 	ciNode := settings.GetCiNode()
 	if ciNode >= 0 {
-		return runCINodeTests(framework, workerEnvMap, ciNode)
+		return runCINodeTests(ctx, framework, workerEnvMap, ciNode)
 	} else if parallelRunners > 1 {
 		return runParallelTests(ctx, framework, workerEnvMap)
 	} else {
-		return runSequentialTests(framework, workerEnvMap)
+		return runSequentialTests(ctx, framework, workerEnvMap)
 	}
 }
