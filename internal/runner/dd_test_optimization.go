@@ -72,11 +72,12 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	g.Go(func() error {
 		startTime := time.Now()
 		slog.Info("Discovering local tests...", "framework", framework.Name())
-		discoveredTests, err = framework.DiscoverTests(discoveryCtx)
-		if err != nil {
-			slog.Warn("Full test discovery failed or was cancelled", "error", err)
+		res, discErr := framework.DiscoverTests(discoveryCtx)
+		if discErr != nil {
+			slog.Warn("Full test discovery failed or was cancelled", "error", discErr)
 			return nil // Don't fail the entire process, we have fast discovery as fallback
 		}
+		discoveredTests = res
 		fullDiscoverySucceeded = true
 		slog.Info("Discovered local tests", "duration", time.Since(startTime), "count", len(discoveredTests))
 
@@ -87,10 +88,11 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	g.Go(func() error {
 		startTime := time.Now()
 		slog.Info("Discovering test files (fast)...", "framework", framework.Name())
-		discoveredTestFiles, err = framework.DiscoverTestFiles()
-		if err != nil {
-			return fmt.Errorf("failed to discover test files: %w", err)
+		res, discErr := framework.DiscoverTestFiles()
+		if discErr != nil {
+			return fmt.Errorf("failed to discover test files: %w", discErr)
 		}
+		discoveredTestFiles = res
 		slog.Info("Discovered test files (fast)", "duration", time.Since(startTime), "count", len(discoveredTestFiles))
 
 		return nil

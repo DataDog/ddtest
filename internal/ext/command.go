@@ -1,6 +1,7 @@
 package ext
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -17,17 +18,19 @@ type CommandExecutor interface {
 type DefaultCommandExecutor struct{}
 
 func (e *DefaultCommandExecutor) CombinedOutput(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
-	// Create a channel to receive the result
-	type result struct {
-		output []byte
-		err    error
-	}
-	resultChan := make(chan result, 1)
+	// Set up buffers to capture stdout and stderr
+	var outputBuf bytes.Buffer
+	cmd.Stdout = &outputBuf
+	cmd.Stderr = &outputBuf
 
-	// Run the command in a goroutine
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	errChan := make(chan error, 1)
 	go func() {
-		output, err := cmd.CombinedOutput()
-		resultChan <- result{output: output, err: err}
+		err := cmd.Wait()
+		errChan <- err
 	}()
 
 	// Wait for either context cancellation or command completion
@@ -37,11 +40,10 @@ func (e *DefaultCommandExecutor) CombinedOutput(ctx context.Context, cmd *exec.C
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
-		// Wait for the goroutine to finish
-		<-resultChan
+		<-errChan
 		return nil, errors.New("command cancelled by context")
-	case res := <-resultChan:
-		return res.output, res.err
+	case err := <-errChan:
+		return outputBuf.Bytes(), err
 	}
 }
 
