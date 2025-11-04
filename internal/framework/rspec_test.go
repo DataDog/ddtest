@@ -339,7 +339,7 @@ func TestRSpec_RunTests(t *testing.T) {
 	}
 
 	rspec := &RSpec{executor: mockExecutor}
-	err := rspec.RunTests(testFiles, nil)
+	err := rspec.RunTests(context.Background(), testFiles, nil)
 
 	if err != nil {
 		t.Fatalf("RunTests failed: %v", err)
@@ -379,7 +379,7 @@ func TestRSpec_RunTestsWithEnvMap(t *testing.T) {
 	}
 
 	rspec := &RSpec{executor: mockExecutor}
-	err := rspec.RunTests(testFiles, envMap)
+	err := rspec.RunTests(context.Background(), testFiles, envMap)
 
 	if err != nil {
 		t.Fatalf("RunTests failed: %v", err)
@@ -455,7 +455,7 @@ func TestRSpec_RunTests_WithBinRSpec(t *testing.T) {
 	}
 
 	rspec := &RSpec{executor: mockExecutor}
-	err := rspec.RunTests(testFiles, nil)
+	err := rspec.RunTests(context.Background(), testFiles, nil)
 
 	if err != nil {
 		t.Fatalf("RunTests failed: %v", err)

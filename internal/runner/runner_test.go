@@ -82,7 +82,7 @@ func (m *MockFramework) DiscoverTestFiles() ([]string, error) {
 	return m.TestFiles, m.Err
 }
 
-func (m *MockFramework) RunTests(testFiles []string, envMap map[string]string) error {
+func (m *MockFramework) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	// Record the call
 	m.mu.Lock()
 	m.RunTestsCalls = append(m.RunTestsCalls, RunTestsCall{

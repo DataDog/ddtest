@@ -14,14 +14,14 @@ import (
 )
 
 // runCINodeTests executes tests for a specific CI node (one split, not the whole tests set)
-func runCINodeTests(framework framework.Framework, workerEnvMap map[string]string, ciNode int) error {
+func runCINodeTests(ctx context.Context, framework framework.Framework, workerEnvMap map[string]string, ciNode int) error {
 	runnerFilePath := fmt.Sprintf("%s/runner-%d", constants.TestsSplitDir, ciNode)
 	if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
 		return fmt.Errorf("runner file for ci-node %d does not exist: %s", ciNode, runnerFilePath)
 	}
 
 	slog.Info("Running tests for specific CI node", "ciNode", ciNode, "filePath", runnerFilePath)
-	if err := runTestsFromFile(framework, runnerFilePath, workerEnvMap, ciNode); err != nil {
+	if err := runTestsFromFile(ctx, framework, runnerFilePath, workerEnvMap, ciNode); err != nil {
 		return fmt.Errorf("failed to run tests for ci-node %d: %w", ciNode, err)
 	}
 	return nil
@@ -36,7 +36,7 @@ func runParallelTests(ctx context.Context, framework framework.Framework, worker
 		return fmt.Errorf("failed to read tests split directory %s: %w", constants.TestsSplitDir, err)
 	}
 
-	g, _ := errgroup.WithContext(ctx)
+	g, gCtx := errgroup.WithContext(ctx)
 
 	for workerIndex, entry := range entries {
 		if entry.IsDir() {
@@ -45,7 +45,7 @@ func runParallelTests(ctx context.Context, framework framework.Framework, worker
 
 		splitFilePath := filepath.Join(constants.TestsSplitDir, entry.Name())
 		g.Go(func() error {
-			return runTestsFromFile(framework, splitFilePath, workerEnvMap, workerIndex)
+			return runTestsFromFile(gCtx, framework, splitFilePath, workerEnvMap, workerIndex)
 		})
 	}
 
@@ -56,10 +56,10 @@ func runParallelTests(ctx context.Context, framework framework.Framework, worker
 }
 
 // runSequentialTests executes tests in a single sequential runner
-func runSequentialTests(framework framework.Framework, workerEnvMap map[string]string) error {
+func runSequentialTests(ctx context.Context, framework framework.Framework, workerEnvMap map[string]string) error {
 	slog.Info("Running all tests in a single process")
 
-	if err := runTestsFromFile(framework, constants.TestFilesOutputPath, workerEnvMap, 0); err != nil {
+	if err := runTestsFromFile(ctx, framework, constants.TestFilesOutputPath, workerEnvMap, 0); err != nil {
 		return fmt.Errorf("failed to run tests: %w", err)
 	}
 	return nil
@@ -91,7 +91,7 @@ func readTestFilesFromFile(filePath string) ([]string, error) {
 }
 
 // runTestsFromFile reads test files from the given file path and runs them using the framework
-func runTestsFromFile(framework framework.Framework, filePath string, workerEnvMap map[string]string, workerIndex int) error {
+func runTestsFromFile(ctx context.Context, framework framework.Framework, filePath string, workerEnvMap map[string]string, workerIndex int) error {
 	slog.Info("Reading prepared files list", "filePath", filePath, "workerIndex", workerIndex)
 
 	testFiles, err := readTestFilesFromFile(filePath)
@@ -107,7 +107,7 @@ func runTestsFromFile(framework framework.Framework, filePath string, workerEnvM
 		}
 
 		slog.Info("Running tests in worker", "workerIndex", workerIndex, "testFilesCount", len(testFiles), "workerEnv", workerEnv)
-		return framework.RunTests(testFiles, workerEnv)
+		return framework.RunTests(ctx, testFiles, workerEnv)
 	}
 
 	slog.Info("No tests to run", "workerIndex", workerIndex)

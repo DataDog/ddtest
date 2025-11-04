@@ -19,7 +19,7 @@ type Framework interface {
 	Name() string
 	DiscoverTests(ctx context.Context) ([]testoptimization.Test, error)
 	DiscoverTestFiles() ([]string, error)
-	RunTests(testFiles []string, envMap map[string]string) error
+	RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error
 }
 
 // cleanupDiscoveryFile removes the discovery file, ignoring "not exists" errors

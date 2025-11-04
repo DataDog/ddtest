@@ -26,7 +26,7 @@ func TestRunCINodeTests_Success(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	err := runCINodeTests(mockFramework, map[string]string{}, 1)
+	err := runCINodeTests(context.Background(), mockFramework, map[string]string{}, 1)
 	if err != nil {
 		t.Fatalf("runCINodeTests() should not return error, got: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestRunCINodeTests_FileNotFound(t *testing.T) {
 
 	mockFramework := &MockFramework{FrameworkName: "rspec"}
 
-	err := runCINodeTests(mockFramework, map[string]string{}, 2)
+	err := runCINodeTests(context.Background(), mockFramework, map[string]string{}, 2)
 	if err == nil {
 		t.Error("runCINodeTests() should return error when runner file doesn't exist")
 	}
@@ -129,7 +129,7 @@ func TestRunSequentialTests_Success(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	err := runSequentialTests(mockFramework, map[string]string{})
+	err := runSequentialTests(context.Background(), mockFramework, map[string]string{})
 	if err != nil {
 		t.Fatalf("runSequentialTests() should not return error, got: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestRunTestsFromFile_WithWorkerEnv(t *testing.T) {
 		"BUILD_ID":   "123",
 	}
 
-	err := runTestsFromFile(mockFramework, "test-list.txt", workerEnvMap, 5)
+	err := runTestsFromFile(context.Background(), mockFramework, "test-list.txt", workerEnvMap, 5)
 	if err != nil {
 		t.Fatalf("runTestsFromFile() should not return error, got: %v", err)
 	}

@@ -273,7 +273,7 @@ func TestMinitest_RunTests(t *testing.T) {
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	err := minitest.RunTests(testFiles, nil)
+	err := minitest.RunTests(context.Background(), testFiles, nil)
 
 	if err != nil {
 		t.Fatalf("RunTests failed: %v", err)
@@ -323,7 +323,7 @@ func TestMinitest_RunTestsWithEnvMap(t *testing.T) {
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	err := minitest.RunTests(testFiles, envMap)
+	err := minitest.RunTests(context.Background(), testFiles, envMap)
 
 	if err != nil {
 		t.Fatalf("RunTests failed: %v", err)
@@ -353,7 +353,7 @@ func TestMinitest_RunTests_NoTestFiles(t *testing.T) {
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	err := minitest.RunTests([]string{}, nil)
+	err := minitest.RunTests(context.Background(), []string{}, nil)
 
 	if err != nil {
 		t.Fatalf("RunTests failed: %v", err)
@@ -418,7 +418,7 @@ func TestMinitest_RunTests_RailsApplication(t *testing.T) {
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	err := minitest.RunTests(testFiles, nil)
+	err := minitest.RunTests(context.Background(), testFiles, nil)
 
 	if err != nil {
 		t.Fatalf("RunTests failed: %v", err)

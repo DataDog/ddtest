@@ -63,7 +63,7 @@ func (m *Minitest) DiscoverTestFiles() ([]string, error) {
 	return testFiles, nil
 }
 
-func (m *Minitest) RunTests(testFiles []string, envMap map[string]string) error {
+func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, args, isRails := m.getMinitestCommand()
 
 	// Add test files if provided
@@ -80,7 +80,7 @@ func (m *Minitest) RunTests(testFiles []string, envMap map[string]string) error 
 		}
 	}
 
-	return m.executor.Run(context.Background(), command, args, envMap)
+	return m.executor.Run(ctx, command, args, envMap)
 }
 
 // isRailsApplication determines if the current project is a Rails application

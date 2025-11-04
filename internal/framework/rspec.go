@@ -63,12 +63,12 @@ func (r *RSpec) DiscoverTestFiles() ([]string, error) {
 	return testFiles, nil
 }
 
-func (r *RSpec) RunTests(testFiles []string, envMap map[string]string) error {
+func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, baseArgs := r.getRSpecCommand()
 	args := append(baseArgs, "--format", "progress")
 	args = append(args, testFiles...)
 
-	return r.executor.Run(context.Background(), command, args, envMap)
+	return r.executor.Run(ctx, command, args, envMap)
 }
 
 // getRSpecCommand determines whether to use bin/rspec or bundle exec rspec
