@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"os/exec"
 
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -33,8 +32,8 @@ func (r *RSpec) Name() string {
 func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
-	cmd := r.createDiscoveryCommand()
-	_, err := executeDiscoveryCommand(ctx, r.executor, cmd, r.Name())
+	name, args, envMap := r.createDiscoveryCommand()
+	_, err := executeDiscoveryCommand(ctx, r.executor, name, args, envMap, r.Name())
 	if err != nil {
 		return nil, err
 	}
@@ -69,12 +68,7 @@ func (r *RSpec) RunTests(testFiles []string, envMap map[string]string) error {
 	args := append(baseArgs, "--format", "progress")
 	args = append(args, testFiles...)
 
-	// no-dd-sa:go-security/command-injection
-	cmd := exec.Command(command, args...)
-
-	applyEnvMap(cmd, envMap)
-
-	return r.executor.Run(context.Background(), cmd)
+	return r.executor.Run(context.Background(), command, args, envMap)
 }
 
 // getRSpecCommand determines whether to use bin/rspec or bundle exec rspec
@@ -92,16 +86,13 @@ func (r *RSpec) getRSpecCommand() (string, []string) {
 	return "bundle", []string{"exec", "rspec"}
 }
 
-func (r *RSpec) createDiscoveryCommand() *exec.Cmd {
+func (r *RSpec) createDiscoveryCommand() (string, []string, map[string]string) {
 	command, baseArgs := r.getRSpecCommand()
 	args := append(baseArgs, "--format", "progress", "--dry-run")
 
-	// no-dd-sa:go-security/command-injection
-	cmd := exec.Command(command, args...)
-	cmd.Env = append(
-		os.Environ(),
-		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1",
-		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE="+TestsDiscoveryFilePath,
-	)
-	return cmd
+	envMap := map[string]string{
+		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED": "1",
+		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE":    TestsDiscoveryFilePath,
+	}
+	return command, args, envMap
 }

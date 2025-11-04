@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -30,22 +29,12 @@ func cleanupDiscoveryFile(filePath string) {
 	}
 }
 
-// applyEnvMap sets environment variables from envMap onto the command
-func applyEnvMap(cmd *exec.Cmd, envMap map[string]string) {
-	if len(envMap) > 0 {
-		cmd.Env = os.Environ()
-		for key, value := range envMap {
-			cmd.Env = append(cmd.Env, key+"="+value)
-		}
-	}
-}
-
 // executeDiscoveryCommand runs the discovery command and logs timing
-func executeDiscoveryCommand(ctx context.Context, executor ext.CommandExecutor, cmd *exec.Cmd, frameworkName string) ([]byte, error) {
+func executeDiscoveryCommand(ctx context.Context, executor ext.CommandExecutor, name string, args []string, envMap map[string]string, frameworkName string) ([]byte, error) {
 	slog.Debug("Starting test discovery...", "framework", frameworkName)
 	startTime := time.Now()
 
-	output, err := executor.CombinedOutput(ctx, cmd)
+	output, err := executor.CombinedOutput(ctx, name, args, envMap)
 	if err != nil {
 		slog.Error("Failed to run test discovery", "framework", frameworkName, "output", string(output))
 		return nil, err

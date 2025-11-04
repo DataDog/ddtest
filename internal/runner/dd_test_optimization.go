@@ -38,6 +38,8 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	var discoveredTests []testoptimization.Test
 	var discoveredTestFiles []string
 	var fullDiscoverySucceeded bool
+	var fullDiscoveryErr error
+	var fastDiscoveryErr error
 
 	g, _ := errgroup.WithContext(ctx)
 
@@ -74,6 +76,7 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 		slog.Info("Discovering local tests...", "framework", framework.Name())
 		res, discErr := framework.DiscoverTests(discoveryCtx)
 		if discErr != nil {
+			fullDiscoveryErr = discErr
 			slog.Warn("Full test discovery failed or was cancelled", "error", discErr)
 			return nil // Don't fail the entire process, we have fast discovery as fallback
 		}
@@ -90,7 +93,9 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 		slog.Info("Discovering test files (fast)...", "framework", framework.Name())
 		res, discErr := framework.DiscoverTestFiles()
 		if discErr != nil {
-			return fmt.Errorf("failed to discover test files: %w", discErr)
+			fastDiscoveryErr = discErr
+			slog.Warn("Fast test discovery failed", "error", discErr)
+			return nil // Don't fail the entire process if full discovery succeeded
 		}
 		discoveredTestFiles = res
 		slog.Info("Discovered test files (fast)", "duration", time.Since(startTime), "count", len(discoveredTestFiles))
@@ -100,6 +105,11 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 
 	if err := g.Wait(); err != nil {
 		return err
+	}
+
+	// If both discovery methods failed, return an error
+	if fullDiscoveryErr != nil && fastDiscoveryErr != nil {
+		return fmt.Errorf("both test discovery methods failed - full: %w, fast: %v", fullDiscoveryErr, fastDiscoveryErr)
 	}
 
 	// Process results based on which discovery method succeeded
@@ -113,6 +123,8 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 			if !skippableTests[test.FQN()] {
 				slog.Debug("Test is not skipped", "test", test.FQN(), "sourceFile", test.SuiteSourceFile)
 				if test.SuiteSourceFile != "" {
+					// increment the number of tests in the file
+					// it should track the test suite's duration here in the future
 					tr.testFiles[test.SuiteSourceFile]++
 				}
 			} else {
@@ -126,6 +138,10 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 		slog.Info("Using fast test discovery results (ITR disabled or full discovery failed)")
 		tr.testFiles = make(map[string]int)
 		for _, testFile := range discoveredTestFiles {
+			// As we don't know what tests are there we just set the number of tests to 1
+			//
+			// When we'll have data for "known test suites" with their durations we will
+			// be able to use test suites durations here
 			tr.testFiles[testFile] = 1
 		}
 		tr.skippablePercentage = 0.0

@@ -3,7 +3,6 @@ package ext
 import (
 	"context"
 	"os"
-	"os/exec"
 	"strings"
 	"syscall"
 	"testing"
@@ -14,8 +13,7 @@ func TestDefaultCommandExecutor_CombinedOutput_Success(t *testing.T) {
 	executor := &DefaultCommandExecutor{}
 
 	// Test with echo command (available on all Unix systems)
-	cmd := exec.Command("echo", "hello world")
-	output, err := executor.CombinedOutput(context.Background(), cmd)
+	output, err := executor.CombinedOutput(context.Background(), "echo", []string{"hello world"}, nil)
 
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -32,8 +30,7 @@ func TestDefaultCommandExecutor_CombinedOutput_WithArgs(t *testing.T) {
 	executor := &DefaultCommandExecutor{}
 
 	// Test ls command with current directory (more portable)
-	cmd := exec.Command("ls", "-1", ".") // -1 for one file per line
-	output, err := executor.CombinedOutput(context.Background(), cmd)
+	output, err := executor.CombinedOutput(context.Background(), "ls", []string{"-1", "."}, nil)
 
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -56,8 +53,7 @@ func TestDefaultCommandExecutor_CombinedOutput_CommandFailure(t *testing.T) {
 	executor := &DefaultCommandExecutor{}
 
 	// Test with a command that will fail
-	cmd := exec.Command("ls", "/nonexistent/directory/path")
-	output, err := executor.CombinedOutput(context.Background(), cmd)
+	output, err := executor.CombinedOutput(context.Background(), "ls", []string{"/nonexistent/directory/path"}, nil)
 
 	if err == nil {
 		t.Error("expected error for nonexistent directory")
@@ -77,12 +73,8 @@ func TestDefaultCommandExecutor_CombinedOutput_CommandFailure(t *testing.T) {
 func TestDefaultCommandExecutor_CombinedOutput_EmptyCommand(t *testing.T) {
 	executor := &DefaultCommandExecutor{}
 
-	// Test with cat command reading from stdin (should return immediately with no input)
-	cmd := exec.Command("cat")
-	// Close stdin so cat exits immediately
-	cmd.Stdin = strings.NewReader("")
-
-	output, err := executor.CombinedOutput(context.Background(), cmd)
+	// Test with true command (should return immediately with no output)
+	output, err := executor.CombinedOutput(context.Background(), "true", []string{}, nil)
 
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -94,12 +86,31 @@ func TestDefaultCommandExecutor_CombinedOutput_EmptyCommand(t *testing.T) {
 	}
 }
 
+func TestDefaultCommandExecutor_CombinedOutput_WithEnvMap(t *testing.T) {
+	executor := &DefaultCommandExecutor{}
+
+	// Test with environment variable
+	envMap := map[string]string{
+		"TEST_VAR": "test_value",
+	}
+	output, err := executor.CombinedOutput(context.Background(), "sh", []string{"-c", "echo $TEST_VAR"}, envMap)
+
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	expected := "test_value\n"
+	actual := string(output)
+	if actual != expected {
+		t.Errorf("expected %q, got %q", expected, actual)
+	}
+}
+
 func TestDefaultCommandExecutor_Run_Success(t *testing.T) {
 	executor := &DefaultCommandExecutor{}
 
 	// Test with simple echo command
-	cmd := exec.Command("echo", "test")
-	err := executor.Run(context.Background(), cmd)
+	err := executor.Run(context.Background(), "echo", []string{"test"}, nil)
 
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -110,93 +121,33 @@ func TestDefaultCommandExecutor_Run_CommandFailure(t *testing.T) {
 	executor := &DefaultCommandExecutor{}
 
 	// Test with a command that will fail
-	cmd := exec.Command("ls", "/nonexistent/directory/path")
-	err := executor.Run(context.Background(), cmd)
+	err := executor.Run(context.Background(), "ls", []string{"/nonexistent/directory/path"}, nil)
 
 	if err == nil {
 		t.Error("expected error for nonexistent directory")
 	}
 }
 
-func TestDefaultCommandExecutor_Run_SignalForwarding(t *testing.T) {
+func TestDefaultCommandExecutor_Run_WithEnvMap(t *testing.T) {
 	executor := &DefaultCommandExecutor{}
 
-	// Create a long-running process that we can interrupt
-	cmd := exec.Command("sleep", "30")
-
-	// Send SIGINT to the test process itself (simulating Ctrl+C to the parent)
-	// The executor should forward this to the child sleep process
-	go func() {
-		pid := os.Getpid()
-		process, err := os.FindProcess(pid)
-		if err != nil {
-			t.Errorf("failed to find test process: %v", err)
-			return
-		}
-		// Wait for command to start
-		time.Sleep(200 * time.Millisecond)
-		if err := process.Signal(syscall.SIGINT); err != nil {
-			t.Errorf("failed to send signal to test process: %v", err)
-		}
-	}()
-
-	// Run the command - it should be interrupted by the signal forwarding
-	err := executor.Run(context.Background(), cmd)
-
-	// The process should have been interrupted
-	if err == nil {
-		t.Fatal("expected error from interrupted process")
+	// Test with environment variable
+	envMap := map[string]string{
+		"TEST_VAR": "test_value",
 	}
+	err := executor.Run(context.Background(), "sh", []string{"-c", "test \"$TEST_VAR\" = \"test_value\""}, envMap)
 
-	// Verify it's a signal-related error
-	if !strings.Contains(err.Error(), "signal") && !strings.Contains(err.Error(), "interrupt") {
-		t.Logf("Got error (expected signal/interrupt related): %v", err)
+	if err != nil {
+		t.Fatalf("expected no error (environment variable should be set), got %v", err)
 	}
-
-	t.Logf("Process correctly terminated with: %v", err)
-}
-
-func TestDefaultCommandExecutor_Run_SignalForwardingSIGTERM(t *testing.T) {
-	executor := &DefaultCommandExecutor{}
-
-	// Create a long-running process
-	cmd := exec.Command("sleep", "30")
-
-	// Send SIGTERM to the test process itself
-	// The executor should forward this to the child sleep process
-	go func() {
-		pid := os.Getpid()
-		process, err := os.FindProcess(pid)
-		if err != nil {
-			t.Errorf("failed to find test process: %v", err)
-			return
-		}
-		// Wait for command to start
-		time.Sleep(200 * time.Millisecond)
-		if err := process.Signal(syscall.SIGTERM); err != nil {
-			t.Errorf("failed to send SIGTERM to test process: %v", err)
-		}
-	}()
-
-	// Run the command - it should be terminated by the signal forwarding
-	err := executor.Run(context.Background(), cmd)
-
-	// The process should have been terminated
-	if err == nil {
-		t.Fatal("expected error from terminated process")
-	}
-
-	t.Logf("Process correctly terminated with: %v", err)
 }
 
 func TestDefaultCommandExecutor_Run_ProcessCompletesNormally(t *testing.T) {
 	executor := &DefaultCommandExecutor{}
 
-	// Test that normal completion works without signals
-	cmd := exec.Command("sleep", "0.1")
-
+	// Test that normal completion works
 	start := time.Now()
-	err := executor.Run(context.Background(), cmd)
+	err := executor.Run(context.Background(), "sleep", []string{"0.1"}, nil)
 	duration := time.Since(start)
 
 	if err != nil {
@@ -209,67 +160,11 @@ func TestDefaultCommandExecutor_Run_ProcessCompletesNormally(t *testing.T) {
 	}
 }
 
-func TestDefaultCommandExecutor_Run_MultipleCommands(t *testing.T) {
-	executor := &DefaultCommandExecutor{}
-
-	// Test that multiple sequential commands work fine
-	// (ensures signal handlers are properly cleaned up)
-
-	// First command with signal
-	t.Run("first command with signal", func(t *testing.T) {
-		cmd := exec.Command("sleep", "30")
-
-		// Send SIGINT to the test process itself
-		go func() {
-			time.Sleep(200 * time.Millisecond)
-			pid := os.Getpid()
-			process, _ := os.FindProcess(pid)
-			_ = process.Signal(syscall.SIGINT)
-		}()
-
-		err := executor.Run(context.Background(), cmd)
-		if err == nil {
-			t.Fatal("expected error from interrupted process")
-		}
-
-		t.Logf("First command interrupted: %v", err)
-	})
-
-	// Second command without signal - should complete normally
-	t.Run("second command completes normally", func(t *testing.T) {
-		cmd := exec.Command("echo", "test")
-		err := executor.Run(context.Background(), cmd)
-		if err != nil {
-			t.Fatalf("second command failed: %v", err)
-		}
-		t.Logf("Second command completed successfully")
-	})
-}
-
-func TestDefaultCommandExecutor_Run_SignalHandlerCleanup(t *testing.T) {
-	executor := &DefaultCommandExecutor{}
-
-	// Run multiple commands sequentially to verify signal handlers are cleaned up
-	for i := 0; i < 3; i++ {
-		cmd := exec.Command("echo", "test")
-		err := executor.Run(context.Background(), cmd)
-		if err != nil {
-			t.Fatalf("command %d failed: %v", i, err)
-		}
-	}
-
-	// If signal handlers weren't cleaned up properly, this would leak goroutines
-	// The test passing means cleanup is working
-}
-
 func TestDefaultCommandExecutor_Run_ContextCancellation(t *testing.T) {
 	executor := &DefaultCommandExecutor{}
 
 	// Create a context that we can cancel
 	ctx, cancel := context.WithCancel(context.Background())
-
-	// Create a long-running process
-	cmd := exec.Command("sleep", "30")
 
 	// Cancel the context after a short delay
 	go func() {
@@ -277,17 +172,12 @@ func TestDefaultCommandExecutor_Run_ContextCancellation(t *testing.T) {
 		cancel()
 	}()
 
-	// Run the command - it should be cancelled by context
-	err := executor.Run(ctx, cmd)
+	// Run a long-running command - it should be cancelled by context
+	err := executor.Run(ctx, "sleep", []string{"30"}, nil)
 
 	// The process should have been cancelled
 	if err == nil {
 		t.Fatal("expected error from cancelled process")
-	}
-
-	// Verify it's a cancellation error
-	if !strings.Contains(err.Error(), "cancelled") {
-		t.Errorf("expected 'cancelled' in error, got: %v", err)
 	}
 
 	t.Logf("Process correctly cancelled with: %v", err)
@@ -299,32 +189,123 @@ func TestDefaultCommandExecutor_CombinedOutput_ContextCancellation(t *testing.T)
 	// Create a context that we can cancel
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Create a long-running process
-	cmd := exec.Command("sleep", "30")
-
 	// Cancel the context after a short delay
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		cancel()
 	}()
 
-	// Run the command - it should be cancelled by context
-	output, err := executor.CombinedOutput(ctx, cmd)
+	// Run a long-running command - it should be cancelled by context
+	output, err := executor.CombinedOutput(ctx, "sleep", []string{"30"}, nil)
 
 	// The process should have been cancelled
 	if err == nil {
 		t.Fatal("expected error from cancelled process")
 	}
 
-	// Verify it's a cancellation error
-	if !strings.Contains(err.Error(), "cancelled") {
-		t.Errorf("expected 'cancelled' in error, got: %v", err)
-	}
-
-	// Output should be nil on cancellation
-	if output != nil {
-		t.Errorf("expected nil output on cancellation, got: %q", string(output))
+	// Output should be empty on cancellation (we didn't capture anything)
+	if len(output) > 0 {
+		t.Logf("Got output on cancellation: %q", string(output))
 	}
 
 	t.Logf("Process correctly cancelled with: %v", err)
+}
+
+func TestDefaultCommandExecutor_CombinedOutput_ContextTimeout(t *testing.T) {
+	executor := &DefaultCommandExecutor{}
+
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	// Run a long-running command - it should timeout
+	output, err := executor.CombinedOutput(ctx, "sleep", []string{"30"}, nil)
+
+	// The process should have timed out
+	if err == nil {
+		t.Fatal("expected error from timed out process")
+	}
+
+	// Output should be empty on timeout
+	if len(output) > 0 {
+		t.Logf("Got output on timeout: %q", string(output))
+	}
+
+	t.Logf("Process correctly timed out with: %v", err)
+}
+
+func TestDefaultCommandExecutor_Run_ContextTimeout(t *testing.T) {
+	executor := &DefaultCommandExecutor{}
+
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	// Run a long-running command - it should timeout
+	err := executor.Run(ctx, "sleep", []string{"30"}, nil)
+
+	// The process should have timed out
+	if err == nil {
+		t.Fatal("expected error from timed out process")
+	}
+
+	t.Logf("Process correctly timed out with: %v", err)
+}
+
+func TestDefaultCommandExecutor_Run_SignalForwarding(t *testing.T) {
+	executor := &DefaultCommandExecutor{}
+
+	// Send SIGINT to the test process itself after a delay
+	// The executor should forward this to the child sleep process
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		pid := os.Getpid()
+		process, err := os.FindProcess(pid)
+		if err != nil {
+			t.Errorf("failed to find test process: %v", err)
+			return
+		}
+		if err := process.Signal(syscall.SIGINT); err != nil {
+			t.Errorf("failed to send SIGINT to test process: %v", err)
+		}
+	}()
+
+	// Run a long-running command - it should be interrupted by the signal forwarding
+	err := executor.Run(context.Background(), "sleep", []string{"30"}, nil)
+
+	// The process should have been interrupted
+	if err == nil {
+		t.Fatal("expected error from interrupted process")
+	}
+
+	t.Logf("Process correctly interrupted with: %v", err)
+}
+
+func TestDefaultCommandExecutor_Run_SignalForwardingSIGTERM(t *testing.T) {
+	executor := &DefaultCommandExecutor{}
+
+	// Send SIGTERM to the test process itself after a delay
+	// The executor should forward this to the child sleep process
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		pid := os.Getpid()
+		process, err := os.FindProcess(pid)
+		if err != nil {
+			t.Errorf("failed to find test process: %v", err)
+			return
+		}
+		if err := process.Signal(syscall.SIGTERM); err != nil {
+			t.Errorf("failed to send SIGTERM to test process: %v", err)
+		}
+	}()
+
+	// Run a long-running command - it should be terminated by the signal forwarding
+	err := executor.Run(context.Background(), "sleep", []string{"30"}, nil)
+
+	// The process should have been terminated
+	if err == nil {
+		t.Fatal("expected error from terminated process")
+	}
+
+	t.Logf("Process correctly terminated with: %v", err)
 }

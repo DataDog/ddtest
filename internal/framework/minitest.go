@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/ext"
@@ -33,8 +32,8 @@ func (m *Minitest) Name() string {
 func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
-	cmd := m.createDiscoveryCommand()
-	_, err := executeDiscoveryCommand(ctx, m.executor, cmd, m.Name())
+	name, args, envMap := m.createDiscoveryCommand()
+	_, err := executeDiscoveryCommand(ctx, m.executor, name, args, envMap, m.Name())
 	if err != nil {
 		return nil, err
 	}
@@ -81,20 +80,13 @@ func (m *Minitest) RunTests(testFiles []string, envMap map[string]string) error 
 		}
 	}
 
-	// no-dd-sa:go-security/command-injection
-	cmd := exec.Command(command, args...)
-
-	applyEnvMap(cmd, envMap)
-
-	return m.executor.Run(context.Background(), cmd)
+	return m.executor.Run(context.Background(), command, args, envMap)
 }
 
 // isRailsApplication determines if the current project is a Rails application
 func (m *Minitest) isRailsApplication() bool {
 	// Check if rails gem is installed
-	// no-dd-sa:go-security/command-injection
-	cmd := exec.Command("bundle", "show", "rails")
-	output, err := m.executor.CombinedOutput(context.Background(), cmd)
+	output, err := m.executor.CombinedOutput(context.Background(), "bundle", []string{"show", "rails"}, nil)
 	if err != nil {
 		slog.Debug("Not a Rails application: bundle show rails failed", "output", string(output), "error", err)
 		return false
@@ -112,9 +104,7 @@ func (m *Minitest) isRailsApplication() bool {
 	}
 
 	// Check if rails command works
-	// no-dd-sa:go-security/command-injection
-	cmd = exec.Command("bundle", "exec", "rails", "version")
-	output, err = m.executor.CombinedOutput(context.Background(), cmd)
+	output, err = m.executor.CombinedOutput(context.Background(), "bundle", []string{"exec", "rails", "version"}, nil)
 	if err != nil {
 		slog.Debug("Not a Rails application: bundle exec rails version failed", "output", string(output), "error", err)
 		return false
@@ -144,15 +134,12 @@ func (m *Minitest) getMinitestCommand() (string, []string, bool) {
 	return "bundle", []string{"exec", "rake", "test"}, false
 }
 
-func (m *Minitest) createDiscoveryCommand() *exec.Cmd {
+func (m *Minitest) createDiscoveryCommand() (string, []string, map[string]string) {
 	command, args, _ := m.getMinitestCommand()
 
-	// no-dd-sa:go-security/command-injection
-	cmd := exec.Command(command, args...)
-	cmd.Env = append(
-		os.Environ(),
-		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1",
-		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE="+TestsDiscoveryFilePath,
-	)
-	return cmd
+	envMap := map[string]string{
+		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED": "1",
+		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE":    TestsDiscoveryFilePath,
+	}
+	return command, args, envMap
 }

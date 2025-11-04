@@ -22,6 +22,7 @@ type Runner interface {
 }
 
 type TestRunner struct {
+	// the keys are file paths, the values are "durations" - currently just the number of tests in a file
 	testFiles           map[string]int
 	skippablePercentage float64
 	platformDetector    platform.PlatformDetector

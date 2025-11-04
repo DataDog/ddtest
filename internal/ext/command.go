@@ -1,9 +1,7 @@
 package ext
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -11,43 +9,35 @@ import (
 )
 
 type CommandExecutor interface {
-	CombinedOutput(ctx context.Context, cmd *exec.Cmd) ([]byte, error)
-	Run(ctx context.Context, cmd *exec.Cmd) error
+	CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error)
+	Run(ctx context.Context, name string, args []string, envMap map[string]string) error
 }
 
 type DefaultCommandExecutor struct{}
 
-func (e *DefaultCommandExecutor) CombinedOutput(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
-	// Set up buffers to capture stdout and stderr
-	var outputBuf bytes.Buffer
-	cmd.Stdout = &outputBuf
-	cmd.Stderr = &outputBuf
-
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-
-	errChan := make(chan error, 1)
-	go func() {
-		err := cmd.Wait()
-		errChan <- err
-	}()
-
-	// Wait for either context cancellation or command completion
-	select {
-	case <-ctx.Done():
-		// Context was cancelled, kill the process
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
+// applyEnvMap applies environment variables from envMap to the command
+func applyEnvMap(cmd *exec.Cmd, envMap map[string]string) {
+	if len(envMap) > 0 {
+		cmd.Env = os.Environ()
+		for key, value := range envMap {
+			cmd.Env = append(cmd.Env, key+"="+value)
 		}
-		<-errChan
-		return nil, errors.New("command cancelled by context")
-	case err := <-errChan:
-		return outputBuf.Bytes(), err
 	}
 }
 
-func (e *DefaultCommandExecutor) Run(ctx context.Context, cmd *exec.Cmd) error {
+func (e *DefaultCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
+	// no-dd-sa:go-security/command-injection
+	cmd := exec.CommandContext(ctx, name, args...)
+	applyEnvMap(cmd, envMap)
+
+	return cmd.CombinedOutput()
+}
+
+func (e *DefaultCommandExecutor) Run(ctx context.Context, name string, args []string, envMap map[string]string) error {
+	// no-dd-sa:go-security/command-injection
+	cmd := exec.CommandContext(ctx, name, args...)
+	applyEnvMap(cmd, envMap)
+
 	// Connect command's stdin/stdout/stderr to parent's stdin/stdout/stderr for proper streaming
 	// stdin is needed even for non-interactive commands because some gems (like reline) check terminal properties
 	cmd.Stdin = os.Stdin
@@ -59,29 +49,22 @@ func (e *DefaultCommandExecutor) Run(ctx context.Context, cmd *exec.Cmd) error {
 		return err
 	}
 
-	// Set up signal handling for SIGINT and SIGTERM only
+	// Set up signal forwarding for SIGINT and SIGTERM
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigChan)
 
-	// Wait for the command to finish in a goroutine
+	// Wait for command completion in a goroutine
 	errChan := make(chan error, 1)
 	go func() {
 		errChan <- cmd.Wait()
 	}()
 
-	// Single select loop to handle context cancellation, signals, and command completion
+	// Wait for either signals or command completion
 	for {
 		select {
-		case <-ctx.Done():
-			// Context was cancelled, kill the process
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
-			}
-			<-errChan // Wait for the command to finish
-			return errors.New("command cancelled by context")
 		case sig := <-sigChan:
-			// Forward the signal to the process
+			// Forward the signal to the child process
 			if cmd.Process != nil {
 				_ = cmd.Process.Signal(sig)
 			}
