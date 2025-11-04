@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"syscall"
 )
 
 type CommandExecutor interface {
@@ -56,9 +57,9 @@ func (e *DefaultCommandExecutor) Run(ctx context.Context, cmd *exec.Cmd) error {
 		return err
 	}
 
-	// Set up signal handling
+	// Set up signal handling for SIGINT and SIGTERM only
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigChan)
 
 	// Wait for the command to finish in a goroutine
