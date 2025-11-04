@@ -36,7 +36,7 @@ func executeDiscoveryCommand(ctx context.Context, executor ext.CommandExecutor, 
 
 	output, err := executor.CombinedOutput(ctx, name, args, envMap)
 	if err != nil {
-		slog.Error("Failed to run test discovery", "framework", frameworkName, "output", string(output))
+		slog.Warn("Failed to run test discovery", "framework", frameworkName, "output", string(output), "error", err)
 		return nil, err
 	}
 
