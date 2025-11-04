@@ -49,9 +49,13 @@ func (e *DefaultCommandExecutor) Run(ctx context.Context, name string, args []st
 		return err
 	}
 
-	// Set up signal forwarding for SIGINT and SIGTERM
+	// Set up signal forwarding for common termination signals used by CI systems
+	// SIGTERM - standard graceful termination (most common in CI)
+	// SIGINT - interrupt/user cancellation
+	// SIGHUP - hangup/connection loss
+	// SIGQUIT - quit signal
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGQUIT)
 	defer signal.Stop(sigChan)
 
 	// Wait for command completion in a goroutine
