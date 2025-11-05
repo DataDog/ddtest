@@ -122,6 +122,32 @@ In CI‑node mode, DDTest also fans out across local CPUs on that node and furth
 | `--worker-env`      | `DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV`      |       `""` | Template env vars per local worker (e.g., isolate DBs): `--worker-env "DATABASE_NAME_TEST=app_test{{nodeIndex}}"`.                                           |
 | `--command`         | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND`         |       `""` | Override the default test command used by the framework. When provided, takes precedence over auto-detection (e.g., `--command "bundle exec custom-rspec"`). |
 
+#### Note about the `--command` flag
+
+When using `--command`, do not include the `--` separator or test files in your command. DDTest automatically appends test files and framework-specific flags to the command you provide.
+
+**Incorrect usage:**
+
+```bash
+# This will fail - test files should not be included
+ddtest run --command "bundle exec rspec -- spec/models/"
+
+# This will also fail - the -- separator causes issues
+ddtest run --command "bundle exec my-wrapper --"
+```
+
+**Correct usage:**
+
+```bash
+# Just provide the command - DDTest handles test files
+ddtest run --command "bundle exec rspec"
+
+# You can include flags for your wrapper
+ddtest run --command "bundle exec my-wrapper --profile"
+```
+
+If your command contains `--`, DDTest will emit a warning and automatically remove the `--` separator and anything after it.
+
 ### GitHub Actions integration example
 
 The plan job computes the split and emits a matrix; the run job downloads the artifacts and executes only its slice.
