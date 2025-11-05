@@ -37,6 +37,9 @@ func TestInit(t *testing.T) {
 	if config.CiNode != -1 {
 		t.Errorf("expected default ci_node to be -1, got %d", config.CiNode)
 	}
+	if config.Command != "" {
+		t.Errorf("expected default command to be empty, got %q", config.Command)
+	}
 }
 
 func TestSetDefaults(t *testing.T) {
@@ -61,6 +64,9 @@ func TestSetDefaults(t *testing.T) {
 	}
 	if viper.GetInt("ci_node") != -1 {
 		t.Errorf("expected default ci_node to be -1, got %d", viper.GetInt("ci_node"))
+	}
+	if viper.GetString("command") != "" {
+		t.Errorf("expected default command to be empty, got %q", viper.GetString("command"))
 	}
 }
 
@@ -130,6 +136,7 @@ func TestEnvironmentVariables(t *testing.T) {
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "8")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV", "RAILS_DB=my_project_dev_{{nodeIndex}}")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE", "5")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND", "bundle exec rspec")
 	defer func() {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK")
@@ -137,6 +144,7 @@ func TestEnvironmentVariables(t *testing.T) {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND")
 	}()
 
 	Init()
@@ -158,6 +166,9 @@ func TestEnvironmentVariables(t *testing.T) {
 	}
 	if config.CiNode != 5 {
 		t.Errorf("expected ci_node from env var to be 5, got %d", config.CiNode)
+	}
+	if config.Command != "bundle exec rspec" {
+		t.Errorf("expected command from env var to be 'bundle exec rspec', got %q", config.Command)
 	}
 }
 
@@ -212,6 +223,22 @@ func TestGetWorkerEnv(t *testing.T) {
 	workerEnv = GetWorkerEnv()
 	if workerEnv != "RAILS_DB=my_project_dev_{{nodeIndex}}" {
 		t.Errorf("expected worker_env to be 'RAILS_DB=my_project_dev_{{nodeIndex}}', got %q", workerEnv)
+	}
+}
+
+func TestGetCommand(t *testing.T) {
+	config = nil
+	viper.Reset()
+
+	command := GetCommand()
+	if command != "" {
+		t.Errorf("expected command to be empty by default, got %q", command)
+	}
+
+	config = &Config{Command: "bundle exec rspec"}
+	command = GetCommand()
+	if command != "bundle exec rspec" {
+		t.Errorf("expected command to be 'bundle exec rspec', got %q", command)
 	}
 }
 

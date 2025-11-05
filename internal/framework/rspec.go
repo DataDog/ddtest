@@ -16,12 +16,14 @@ const (
 )
 
 type RSpec struct {
-	executor ext.CommandExecutor
+	executor        ext.CommandExecutor
+	commandOverride []string
 }
 
 func NewRSpec() *RSpec {
 	return &RSpec{
-		executor: &ext.DefaultCommandExecutor{},
+		executor:        &ext.DefaultCommandExecutor{},
+		commandOverride: loadCommandOverride(),
 	}
 }
 
@@ -73,6 +75,10 @@ func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[str
 
 // getRSpecCommand determines whether to use bin/rspec or bundle exec rspec
 func (r *RSpec) getRSpecCommand() (string, []string) {
+	if len(r.commandOverride) > 0 {
+		return r.commandOverride[0], r.commandOverride[1:]
+	}
+
 	// Check if bin/rspec exists and is executable
 	if info, err := os.Stat(binRSpecPath); err == nil && !info.IsDir() {
 		// Check if file is executable

@@ -144,6 +144,25 @@ func TestRSpec_getRSpecCommand_WithoutBinRSpec(t *testing.T) {
 	}
 }
 
+func TestRSpec_getRSpecCommand_WithOverride(t *testing.T) {
+	rspec := &RSpec{commandOverride: []string{"./custom-rspec", "--profile"}}
+
+	command, baseArgs := rspec.getRSpecCommand()
+
+	if command != "./custom-rspec" {
+		t.Errorf("expected command to be './custom-rspec', got %q", command)
+	}
+	expectedBaseArgs := []string{"--profile"}
+	if len(baseArgs) != len(expectedBaseArgs) {
+		t.Errorf("expected %d baseArgs, got %d", len(expectedBaseArgs), len(baseArgs))
+	}
+	for i, expected := range expectedBaseArgs {
+		if baseArgs[i] != expected {
+			t.Errorf("expected baseArgs[%d] to be %q, got %q", i, expected, baseArgs[i])
+		}
+	}
+}
+
 func TestRSpec_createDiscoveryCommand(t *testing.T) {
 	_ = os.RemoveAll("bin")
 
@@ -175,6 +194,25 @@ func TestRSpec_createDiscoveryCommand(t *testing.T) {
 	}
 	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"] != TestsDiscoveryFilePath {
 		t.Errorf("expected DD_TEST_OPTIMIZATION_DISCOVERY_FILE=%q in envMap, got %q", TestsDiscoveryFilePath, envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"])
+	}
+}
+
+func TestRSpec_createDiscoveryCommand_WithOverride(t *testing.T) {
+	rspec := &RSpec{commandOverride: []string{"./custom-rspec", "--profile"}}
+
+	command, args, envMap := rspec.createDiscoveryCommand()
+
+	if command != "./custom-rspec" {
+		t.Errorf("expected command to be './custom-rspec', got %q", command)
+	}
+	if !slices.Contains(args, "--profile") {
+		t.Errorf("expected args to contain '--profile', got %v", args)
+	}
+	if !slices.Contains(args, "--dry-run") {
+		t.Error("expected args to contain '--dry-run'")
+	}
+	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
+		t.Error("expected discovery env map to be set")
 	}
 }
 
@@ -361,6 +399,38 @@ func TestRSpec_RunTests(t *testing.T) {
 		if !slices.Contains(capturedArgs, testFile) {
 			t.Errorf("expected test file %q in arguments", testFile)
 		}
+	}
+}
+
+func TestRSpec_RunTests_WithOverride(t *testing.T) {
+	testFiles := []string{"spec/models/user_spec.rb"}
+
+	var capturedName string
+	var capturedArgs []string
+	mockExecutor := &mockCommandExecutor{
+		err: nil,
+		onExecution: func(name string, args []string) {
+			capturedName = name
+			capturedArgs = args
+		},
+	}
+
+	rspec := &RSpec{executor: mockExecutor, commandOverride: []string{"./custom-rspec", "--profile"}}
+	if err := rspec.RunTests(context.Background(), testFiles, nil); err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	if capturedName != "./custom-rspec" {
+		t.Fatalf("expected command './custom-rspec', got %q", capturedName)
+	}
+	if !slices.Contains(capturedArgs, "--profile") {
+		t.Errorf("expected args to include '--profile', got %v", capturedArgs)
+	}
+	if !slices.Contains(capturedArgs, "--format") || !slices.Contains(capturedArgs, "progress") {
+		t.Errorf("expected args to include formatting flags, got %v", capturedArgs)
+	}
+	if !slices.Contains(capturedArgs, testFiles[0]) {
+		t.Errorf("expected args to include test file, got %v", capturedArgs)
 	}
 }
 

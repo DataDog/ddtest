@@ -16,12 +16,14 @@ const (
 )
 
 type Minitest struct {
-	executor ext.CommandExecutor
+	executor        ext.CommandExecutor
+	commandOverride []string
 }
 
 func NewMinitest() *Minitest {
 	return &Minitest{
-		executor: &ext.DefaultCommandExecutor{},
+		executor:        &ext.DefaultCommandExecutor{},
+		commandOverride: loadCommandOverride(),
 	}
 }
 
@@ -125,6 +127,9 @@ func (m *Minitest) isRailsApplication() bool {
 // Returns: command, args, isRails
 func (m *Minitest) getMinitestCommand() (string, []string, bool) {
 	isRails := m.isRailsApplication()
+	if len(m.commandOverride) > 0 {
+		return m.commandOverride[0], m.commandOverride[1:], isRails
+	}
 	if isRails {
 		slog.Info("Found Ruby on Rails. Using bundle exec rails test for Minitest commands")
 		return "bundle", []string{"exec", "rails", "test"}, true

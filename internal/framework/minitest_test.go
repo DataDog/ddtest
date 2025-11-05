@@ -115,6 +115,22 @@ func TestMinitest_createDiscoveryCommand(t *testing.T) {
 	}
 }
 
+func TestMinitest_createDiscoveryCommand_WithOverride(t *testing.T) {
+	mockExecutor := &mockRailsCommandExecutor{isRails: false}
+	minitest := &Minitest{executor: mockExecutor, commandOverride: []string{"./custom-minitest", "--flag"}}
+	command, args, envMap := minitest.createDiscoveryCommand()
+
+	if command != "./custom-minitest" {
+		t.Errorf("expected command to be './custom-minitest', got %q", command)
+	}
+	if len(args) == 0 || args[0] != "--flag" {
+		t.Errorf("expected args to start with '--flag', got %v", args)
+	}
+	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
+		t.Error("expected discovery env map to include DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED")
+	}
+}
+
 func TestMinitest_DiscoverTests_Success(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(TestsDiscoveryFilePath), 0755); err != nil {
 		t.Fatalf("failed to create discovery directory: %v", err)
@@ -308,6 +324,35 @@ func TestMinitest_RunTests(t *testing.T) {
 	expectedTestFiles := "test/models/user_test.rb test/controllers/users_controller_test.rb"
 	if mockExecutor.capturedEnvMap["TEST_FILES"] != expectedTestFiles {
 		t.Errorf("Expected TEST_FILES=%q in environment, got %q", expectedTestFiles, mockExecutor.capturedEnvMap["TEST_FILES"])
+	}
+}
+
+func TestMinitest_RunTests_WithOverride(t *testing.T) {
+	testFiles := []string{"test/models/user_test.rb"}
+
+	var capturedName string
+	var capturedArgs []string
+	mockExecutor := &mockRailsCommandExecutor{
+		isRails: false,
+		onTestExecution: func(name string, args []string) {
+			capturedName = name
+			capturedArgs = args
+		},
+	}
+
+	minitest := &Minitest{executor: mockExecutor, commandOverride: []string{"./custom-minitest", "--flag"}}
+	if err := minitest.RunTests(context.Background(), testFiles, nil); err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	if capturedName != "./custom-minitest" {
+		t.Fatalf("expected command './custom-minitest', got %q", capturedName)
+	}
+	if len(capturedArgs) == 0 || capturedArgs[0] != "--flag" {
+		t.Errorf("expected args to start with '--flag', got %v", capturedArgs)
+	}
+	if mockExecutor.capturedEnvMap["TEST_FILES"] != testFiles[0] {
+		t.Errorf("expected TEST_FILES env var to be %q, got %q", testFiles[0], mockExecutor.capturedEnvMap["TEST_FILES"])
 	}
 }
 
