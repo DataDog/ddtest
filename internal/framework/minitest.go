@@ -35,6 +35,7 @@ func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, 
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
 	name, args, envMap := m.createDiscoveryCommand()
+	slog.Info("Discovering tests with command", "command", name, "args", args)
 	_, err := executeDiscoveryCommand(ctx, m.executor, name, args, envMap, m.Name())
 	if err != nil {
 		return nil, err
@@ -67,6 +68,7 @@ func (m *Minitest) DiscoverTestFiles() ([]string, error) {
 
 func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, args, isRails := m.getMinitestCommand()
+	slog.Info("Running tests with command", "command", command, "args", args)
 
 	// Add test files if provided
 	if len(testFiles) > 0 {

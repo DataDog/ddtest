@@ -35,6 +35,7 @@ func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, err
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
 	name, args, envMap := r.createDiscoveryCommand()
+	slog.Info("Discovering tests with command", "command", name, "args", args)
 	_, err := executeDiscoveryCommand(ctx, r.executor, name, args, envMap, r.Name())
 	if err != nil {
 		return nil, err
@@ -68,6 +69,7 @@ func (r *RSpec) DiscoverTestFiles() ([]string, error) {
 func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, baseArgs := r.getRSpecCommand()
 	args := append(baseArgs, "--format", "progress")
+	slog.Info("Running tests with command", "command", command, "args", args)
 	args = append(args, testFiles...)
 
 	return r.executor.Run(ctx, command, args, envMap)
