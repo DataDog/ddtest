@@ -639,3 +639,210 @@ func TestMinitest_DiscoverTestFiles_NoTestDirectory(t *testing.T) {
 		t.Errorf("expected 0 test files, got %d", len(discoveredFiles))
 	}
 }
+
+func TestMinitest_getMinitestCommand_WithBinRails(t *testing.T) {
+	// Create a temporary bin/rails file
+	if err := os.MkdirAll("bin", 0755); err != nil {
+		t.Fatalf("failed to create bin directory: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll("bin")
+	}()
+
+	// Create an executable bin/rails file
+	if err := os.WriteFile("bin/rails", []byte("#!/usr/bin/env ruby\n# test file"), 0755); err != nil {
+		t.Fatalf("failed to create bin/rails: %v", err)
+	}
+
+	mockExecutor := &mockRailsCommandExecutor{
+		isRails: true,
+	}
+
+	minitest := &Minitest{executor: mockExecutor}
+	command, args, isRails := minitest.getMinitestCommand()
+
+	if !isRails {
+		t.Error("expected Rails to be detected")
+	}
+	if command != "bin/rails" {
+		t.Errorf("expected command to be 'bin/rails', got %q", command)
+	}
+	expectedArgs := []string{"test"}
+	if len(args) != len(expectedArgs) {
+		t.Errorf("expected %d args, got %d: %v", len(expectedArgs), len(args), args)
+	}
+	for i, expected := range expectedArgs {
+		if i >= len(args) || args[i] != expected {
+			t.Errorf("expected args[%d] to be %q, got %q", i, expected, args[i])
+		}
+	}
+}
+
+func TestMinitest_getMinitestCommand_WithNonExecutableBinRails(t *testing.T) {
+	// Create a temporary bin/rails file that is NOT executable
+	if err := os.MkdirAll("bin", 0755); err != nil {
+		t.Fatalf("failed to create bin directory: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll("bin")
+	}()
+
+	// Create a non-executable bin/rails file (0644 instead of 0755)
+	if err := os.WriteFile("bin/rails", []byte("#!/usr/bin/env ruby\n# test file"), 0644); err != nil {
+		t.Fatalf("failed to create bin/rails: %v", err)
+	}
+
+	mockExecutor := &mockRailsCommandExecutor{
+		isRails: true,
+	}
+
+	minitest := &Minitest{executor: mockExecutor}
+	command, args, isRails := minitest.getMinitestCommand()
+
+	if !isRails {
+		t.Error("expected Rails to be detected")
+	}
+	if command != "bundle" {
+		t.Errorf("expected command to be 'bundle', got %q", command)
+	}
+	expectedArgs := []string{"exec", "rails", "test"}
+	if len(args) != len(expectedArgs) {
+		t.Errorf("expected %d args, got %d: %v", len(expectedArgs), len(args), args)
+	}
+	for i, expected := range expectedArgs {
+		if i >= len(args) || args[i] != expected {
+			t.Errorf("expected args[%d] to be %q, got %q", i, expected, args[i])
+		}
+	}
+}
+
+func TestMinitest_getMinitestCommand_WithoutBinRails(t *testing.T) {
+	// Ensure bin/rails doesn't exist
+	_ = os.RemoveAll("bin")
+
+	mockExecutor := &mockRailsCommandExecutor{
+		isRails: true,
+	}
+
+	minitest := &Minitest{executor: mockExecutor}
+	command, args, isRails := minitest.getMinitestCommand()
+
+	if !isRails {
+		t.Error("expected Rails to be detected")
+	}
+	if command != "bundle" {
+		t.Errorf("expected command to be 'bundle', got %q", command)
+	}
+	expectedArgs := []string{"exec", "rails", "test"}
+	if len(args) != len(expectedArgs) {
+		t.Errorf("expected %d args, got %d: %v", len(expectedArgs), len(args), args)
+	}
+	for i, expected := range expectedArgs {
+		if i >= len(args) || args[i] != expected {
+			t.Errorf("expected args[%d] to be %q, got %q", i, expected, args[i])
+		}
+	}
+}
+
+func TestMinitest_RunTests_RailsApplication_WithBinRails(t *testing.T) {
+	// Create a temporary bin/rails file
+	if err := os.MkdirAll("bin", 0755); err != nil {
+		t.Fatalf("failed to create bin directory: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll("bin")
+	}()
+
+	// Create an executable bin/rails file
+	if err := os.WriteFile("bin/rails", []byte("#!/usr/bin/env ruby\n# test file"), 0755); err != nil {
+		t.Fatalf("failed to create bin/rails: %v", err)
+	}
+
+	testFiles := []string{"test/models/user_test.rb"}
+
+	var capturedName string
+	var capturedArgs []string
+	mockExecutor := &mockRailsCommandExecutor{
+		isRails: true,
+		onTestExecution: func(name string, args []string) {
+			capturedName = name
+			capturedArgs = args
+		},
+	}
+
+	minitest := &Minitest{executor: mockExecutor}
+	err := minitest.RunTests(context.Background(), testFiles, nil)
+
+	if err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	if capturedName == "" {
+		t.Fatal("Expected command to be executed but none was captured")
+	}
+
+	// Verify the command structure uses "bin/rails test" instead of "bundle exec rails test"
+	if capturedName != "bin/rails" {
+		t.Errorf("expected 'bin/rails' as command, got %q", capturedName)
+	}
+	if !slices.Contains(capturedArgs, "test") {
+		t.Error("expected 'test' in arguments")
+	}
+
+	// Verify test files are included as command-line arguments
+	for _, testFile := range testFiles {
+		if !slices.Contains(capturedArgs, testFile) {
+			t.Errorf("expected test file %q in arguments", testFile)
+		}
+	}
+
+	// For Rails test, TEST_FILES should NOT be set
+	if _, exists := mockExecutor.capturedEnvMap["TEST_FILES"]; exists {
+		t.Error("TEST_FILES should not be set for rails test (files should be in command-line args)")
+	}
+}
+
+func TestMinitest_createDiscoveryCommand_RailsApplication_WithBinRails(t *testing.T) {
+	// Create a temporary bin/rails file
+	if err := os.MkdirAll("bin", 0755); err != nil {
+		t.Fatalf("failed to create bin directory: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll("bin")
+	}()
+
+	// Create an executable bin/rails file
+	if err := os.WriteFile("bin/rails", []byte("#!/usr/bin/env ruby\n# test file"), 0755); err != nil {
+		t.Fatalf("failed to create bin/rails: %v", err)
+	}
+
+	mockExecutor := &mockRailsCommandExecutor{
+		isRails: true,
+	}
+
+	minitest := &Minitest{executor: mockExecutor}
+	command, args, envMap := minitest.createDiscoveryCommand()
+
+	// Verify command structure: bin/rails test (Rails with bin/rails)
+	if command != "bin/rails" {
+		t.Errorf("expected command to be %q, got %q", "bin/rails", command)
+	}
+
+	expectedArgs := []string{"test"}
+	if len(args) != len(expectedArgs) {
+		t.Errorf("expected %d args, got %d: %v", len(expectedArgs), len(args), args)
+	}
+	for i, expected := range expectedArgs {
+		if i >= len(args) || args[i] != expected {
+			t.Errorf("expected args[%d] to be %q, got %q", i, expected, args[i])
+		}
+	}
+
+	// Verify environment variables
+	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
+		t.Error("expected DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1 in envMap")
+	}
+	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"] != TestsDiscoveryFilePath {
+		t.Errorf("expected DD_TEST_OPTIMIZATION_DISCOVERY_FILE=%q in envMap, got %q", TestsDiscoveryFilePath, envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"])
+	}
+}

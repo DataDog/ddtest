@@ -11,6 +11,7 @@ import (
 )
 
 const (
+	binRailsPath            = "bin/rails"
 	minitestTestFilePattern = "*_test.rb"
 	minitestRootDir         = "test"
 )
@@ -133,6 +134,14 @@ func (m *Minitest) getMinitestCommand() (string, []string, bool) {
 		return m.commandOverride[0], m.commandOverride[1:], isRails
 	}
 	if isRails {
+		// Check if bin/rails exists and is executable
+		if info, err := os.Stat(binRailsPath); err == nil && !info.IsDir() {
+			// Check if file is executable
+			if info.Mode()&0111 != 0 {
+				slog.Info("Found Ruby on Rails. Using bin/rails test for Minitest commands")
+				return binRailsPath, []string{"test"}, true
+			}
+		}
 		slog.Info("Found Ruby on Rails. Using bundle exec rails test for Minitest commands")
 		return "bundle", []string{"exec", "rails", "test"}, true
 	}
