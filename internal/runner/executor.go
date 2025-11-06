@@ -36,7 +36,7 @@ func runParallelTests(ctx context.Context, framework framework.Framework, worker
 		return fmt.Errorf("failed to read tests split directory %s: %w", constants.TestsSplitDir, err)
 	}
 
-	g, gCtx := errgroup.WithContext(ctx)
+	var g errgroup.Group
 
 	for workerIndex, entry := range entries {
 		if entry.IsDir() {
@@ -45,7 +45,7 @@ func runParallelTests(ctx context.Context, framework framework.Framework, worker
 
 		splitFilePath := filepath.Join(constants.TestsSplitDir, entry.Name())
 		g.Go(func() error {
-			return runTestsFromFile(gCtx, framework, splitFilePath, workerEnvMap, workerIndex)
+			return runTestsFromFile(ctx, framework, splitFilePath, workerEnvMap, workerIndex)
 		})
 	}
 
