@@ -11,17 +11,20 @@ import (
 )
 
 const (
+	binRailsPath            = "bin/rails"
 	minitestTestFilePattern = "*_test.rb"
 	minitestRootDir         = "test"
 )
 
 type Minitest struct {
-	executor ext.CommandExecutor
+	executor        ext.CommandExecutor
+	commandOverride []string
 }
 
 func NewMinitest() *Minitest {
 	return &Minitest{
-		executor: &ext.DefaultCommandExecutor{},
+		executor:        &ext.DefaultCommandExecutor{},
+		commandOverride: loadCommandOverride(),
 	}
 }
 
@@ -33,6 +36,7 @@ func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, 
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
 	name, args, envMap := m.createDiscoveryCommand()
+	slog.Info("Discovering tests with command", "command", name, "args", args)
 	_, err := executeDiscoveryCommand(ctx, m.executor, name, args, envMap, m.Name())
 	if err != nil {
 		return nil, err
@@ -65,6 +69,7 @@ func (m *Minitest) DiscoverTestFiles() ([]string, error) {
 
 func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, args, isRails := m.getMinitestCommand()
+	slog.Info("Running tests with command", "command", command, "args", args)
 
 	// Add test files if provided
 	if len(testFiles) > 0 {
@@ -125,7 +130,18 @@ func (m *Minitest) isRailsApplication() bool {
 // Returns: command, args, isRails
 func (m *Minitest) getMinitestCommand() (string, []string, bool) {
 	isRails := m.isRailsApplication()
+	if len(m.commandOverride) > 0 {
+		return m.commandOverride[0], m.commandOverride[1:], isRails
+	}
 	if isRails {
+		// Check if bin/rails exists and is executable
+		if info, err := os.Stat(binRailsPath); err == nil && !info.IsDir() {
+			// Check if file is executable
+			if info.Mode()&0111 != 0 {
+				slog.Info("Found Ruby on Rails. Using bin/rails test for Minitest commands")
+				return binRailsPath, []string{"test"}, true
+			}
+		}
 		slog.Info("Found Ruby on Rails. Using bundle exec rails test for Minitest commands")
 		return "bundle", []string{"exec", "rails", "test"}, true
 	}

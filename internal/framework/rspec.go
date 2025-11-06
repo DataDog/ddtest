@@ -16,12 +16,14 @@ const (
 )
 
 type RSpec struct {
-	executor ext.CommandExecutor
+	executor        ext.CommandExecutor
+	commandOverride []string
 }
 
 func NewRSpec() *RSpec {
 	return &RSpec{
-		executor: &ext.DefaultCommandExecutor{},
+		executor:        &ext.DefaultCommandExecutor{},
+		commandOverride: loadCommandOverride(),
 	}
 }
 
@@ -33,6 +35,7 @@ func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, err
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
 	name, args, envMap := r.createDiscoveryCommand()
+	slog.Info("Discovering tests with command", "command", name, "args", args)
 	_, err := executeDiscoveryCommand(ctx, r.executor, name, args, envMap, r.Name())
 	if err != nil {
 		return nil, err
@@ -66,6 +69,7 @@ func (r *RSpec) DiscoverTestFiles() ([]string, error) {
 func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, baseArgs := r.getRSpecCommand()
 	args := append(baseArgs, "--format", "progress")
+	slog.Info("Running tests with command", "command", command, "args", args)
 	args = append(args, testFiles...)
 
 	return r.executor.Run(ctx, command, args, envMap)
@@ -73,6 +77,10 @@ func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[str
 
 // getRSpecCommand determines whether to use bin/rspec or bundle exec rspec
 func (r *RSpec) getRSpecCommand() (string, []string) {
+	if len(r.commandOverride) > 0 {
+		return r.commandOverride[0], r.commandOverride[1:]
+	}
+
 	// Check if bin/rspec exists and is executable
 	if info, err := os.Stat(binRSpecPath); err == nil && !info.IsDir() {
 		// Check if file is executable

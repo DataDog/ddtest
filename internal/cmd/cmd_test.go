@@ -27,6 +27,12 @@ func TestRootCommandFlags(t *testing.T) {
 		return
 	}
 
+	commandFlag := rootCmd.PersistentFlags().Lookup("command")
+	if commandFlag == nil {
+		t.Error("command flag should be defined")
+		return
+	}
+
 	// Check default values
 	if platformFlag.DefValue != "ruby" {
 		t.Errorf("expected platform default to be 'ruby', got %q", platformFlag.DefValue)
@@ -34,6 +40,10 @@ func TestRootCommandFlags(t *testing.T) {
 
 	if frameworkFlag.DefValue != "rspec" {
 		t.Errorf("expected framework default to be 'rspec', got %q", frameworkFlag.DefValue)
+	}
+
+	if commandFlag.DefValue != "" {
+		t.Errorf("expected command default to be empty, got %q", commandFlag.DefValue)
 	}
 }
 
@@ -94,6 +104,9 @@ func TestFlagBinding(t *testing.T) {
 	if err := viper.BindPFlag("framework", rootCmd.PersistentFlags().Lookup("framework")); err != nil {
 		t.Fatalf("Error binding framework flag: %v", err)
 	}
+	if err := viper.BindPFlag("command", rootCmd.PersistentFlags().Lookup("command")); err != nil {
+		t.Fatalf("Error binding command flag: %v", err)
+	}
 
 	// Set flag values
 	if err := rootCmd.PersistentFlags().Set("platform", "python"); err != nil {
@@ -102,6 +115,9 @@ func TestFlagBinding(t *testing.T) {
 	if err := rootCmd.PersistentFlags().Set("framework", "pytest"); err != nil {
 		t.Fatalf("Error setting framework flag: %v", err)
 	}
+	if err := rootCmd.PersistentFlags().Set("command", "bundle exec pytest"); err != nil {
+		t.Fatalf("Error setting command flag: %v", err)
+	}
 
 	// Check that viper picks up the flag values
 	if viper.GetString("platform") != "python" {
@@ -109,6 +125,9 @@ func TestFlagBinding(t *testing.T) {
 	}
 	if viper.GetString("framework") != "pytest" {
 		t.Errorf("expected viper framework to be 'pytest', got %q", viper.GetString("framework"))
+	}
+	if viper.GetString("command") != "bundle exec pytest" {
+		t.Errorf("expected viper command to be 'bundle exec pytest', got %q", viper.GetString("command"))
 	}
 }
 
