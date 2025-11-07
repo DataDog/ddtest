@@ -37,20 +37,19 @@ func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, 
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
 	pattern := m.testPattern()
-	matchedFiles, err := globTestFiles(pattern)
-	if err != nil {
-		return nil, err
-	}
-	if len(matchedFiles) == 0 {
-		slog.Info("Test pattern matched no files", "pattern", pattern)
-		return []testoptimization.Test{}, nil
+	name, args, envMap, isRails := m.createDiscoveryCommand()
+	slog.Debug("Using test discovery pattern", "pattern", pattern)
+	if isRails {
+		args = append(args, pattern)
+	} else {
+		if envMap == nil {
+			envMap = make(map[string]string)
+		}
+		envMap["TEST"] = pattern
 	}
 
-	name, args, envMap, isRails := m.createDiscoveryCommand()
-	slog.Debug("Using test discovery pattern", "pattern", pattern, "files", len(matchedFiles))
-	args, envMap = addTestFiles(args, envMap, isRails, matchedFiles)
 	slog.Info("Discovering tests with command", "command", name, "args", args)
-	_, err = executeDiscoveryCommand(ctx, m.executor, name, args, envMap, m.Name())
+	_, err := executeDiscoveryCommand(ctx, m.executor, name, args, envMap, m.Name())
 	if err != nil {
 		return nil, err
 	}
@@ -87,26 +86,19 @@ func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[
 
 	// Add test files if provided
 	if len(testFiles) > 0 {
-		args, envMap = addTestFiles(args, envMap, isRails, testFiles)
+		if isRails {
+			// Rails test accepts files as command-line arguments
+			args = append(args, testFiles...)
+		} else {
+			// Rake test requires TEST_FILES environment variable
+			if envMap == nil {
+				envMap = make(map[string]string)
+			}
+			envMap["TEST_FILES"] = strings.Join(testFiles, " ")
+		}
 	}
 
 	return m.executor.Run(ctx, command, args, envMap)
-}
-
-// addTestFiles adds test files to either args (for Rails) or envMap (for Rake)
-// Returns modified args and envMap
-func addTestFiles(args []string, envMap map[string]string, isRails bool, testFiles []string) ([]string, map[string]string) {
-	if isRails {
-		// Rails test accepts files as command-line arguments
-		args = append(args, testFiles...)
-	} else {
-		// Rake test requires TEST_FILES environment variable
-		if envMap == nil {
-			envMap = make(map[string]string)
-		}
-		envMap["TEST_FILES"] = strings.Join(testFiles, " ")
-	}
-	return args, envMap
 }
 
 // isRailsApplication determines if the current project is a Rails application

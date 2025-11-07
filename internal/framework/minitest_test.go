@@ -7,8 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"sort"
-	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -854,11 +852,9 @@ func TestMinitest_DiscoverTests_WithTestsLocation(t *testing.T) {
 		t.Error("expected discovery env to include DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED")
 	}
 
-	sortedFiles := append([]string(nil), matchingFiles...)
-	sort.Strings(sortedFiles)
-	expectedEnv := strings.Join(sortedFiles, " ")
-	if mockExecutor.capturedEnvMap["TEST_FILES"] != expectedEnv {
-		t.Errorf("expected TEST_FILES to be %q, got %q", expectedEnv, mockExecutor.capturedEnvMap["TEST_FILES"])
+	expectedPattern := filepath.Join("custom", "test", "**", "*_test.rb")
+	if mockExecutor.capturedEnvMap["TEST"] != expectedPattern {
+		t.Errorf("expected TEST to be %q, got %q", expectedPattern, mockExecutor.capturedEnvMap["TEST"])
 	}
 }
 
@@ -941,12 +937,17 @@ func TestMinitest_DiscoverTests_WithTestsLocation_Rails(t *testing.T) {
 		t.Fatal("expected discovery command to capture arguments")
 	}
 
-	if !slices.Contains(capturedArgs, matchingFile) {
-		t.Errorf("expected discovery args to include %q", matchingFile)
+	expectedPattern := filepath.Join("custom", "test", "**", "*_test.rb")
+	if !slices.Contains(capturedArgs, expectedPattern) {
+		t.Errorf("expected discovery args to include pattern %q, got %v", expectedPattern, capturedArgs)
 	}
 
 	if _, exists := mockExecutor.capturedEnvMap["TEST_FILES"]; exists {
 		t.Error("expected TEST_FILES not to be set for Rails discovery")
+	}
+
+	if _, exists := mockExecutor.capturedEnvMap["TEST"]; exists {
+		t.Error("expected TEST not to be set for Rails discovery")
 	}
 }
 
@@ -973,10 +974,20 @@ func TestMinitest_DiscoverTests_WithTestsLocation_NoMatches(t *testing.T) {
 
 	setTestsLocation(t, filepath.Join("custom", "test", "**", "*_test.rb"))
 
+	if err := os.MkdirAll(filepath.Dir(TestsDiscoveryFilePath), 0755); err != nil {
+		t.Fatalf("failed to create discovery directory: %v", err)
+	}
+
 	var executed bool
 	mockExecutor := &mockRailsCommandExecutor{
 		onTestExecution: func(name string, args []string) {
 			executed = true
+			// Create empty discovery file when no tests match
+			file, err := os.Create(TestsDiscoveryFilePath)
+			if err != nil {
+				t.Fatalf("mock failed to create test file: %v", err)
+			}
+			_ = file.Close()
 		},
 	}
 
@@ -987,11 +998,11 @@ func TestMinitest_DiscoverTests_WithTestsLocation_NoMatches(t *testing.T) {
 	}
 
 	if len(tests) != 0 {
-		t.Errorf("expected no tests when override matches nothing, got %d", len(tests))
+		t.Errorf("expected no tests when pattern matches nothing, got %d", len(tests))
 	}
 
-	if executed {
-		t.Error("expected discovery command not to run when override matches nothing")
+	if !executed {
+		t.Error("expected discovery command to run even when pattern matches nothing")
 	}
 }
 
