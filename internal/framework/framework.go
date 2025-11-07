@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/bmatcuk/doublestar/v4"
+
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -71,36 +73,15 @@ func parseDiscoveryFile(filePath string) ([]testoptimization.Test, error) {
 	return tests, nil
 }
 
-// discoverTestFilesByPattern searches for test files matching a pattern in a given directory
-func discoverTestFilesByPattern(rootDir string, pattern string) ([]string, error) {
-	var testFiles []string
+func defaultTestPattern(rootDir, filePattern string) string {
+	return filepath.Join(rootDir, "**", filePattern)
+}
 
-	err := filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Skip directories
-		if d.IsDir() {
-			return nil
-		}
-
-		// Check if the file matches the pattern
-		matched, err := filepath.Match(pattern, filepath.Base(path))
-		if err != nil {
-			return err
-		}
-
-		if matched {
-			testFiles = append(testFiles, path)
-		}
-
-		return nil
-	})
-
+func globTestFiles(pattern string) ([]string, error) {
+	matches, err := doublestar.FilepathGlob(pattern, doublestar.WithFilesOnly())
 	if err != nil {
 		return nil, err
 	}
 
-	return testFiles, nil
+	return matches, nil
 }

@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -21,6 +23,9 @@ type mockRailsCommandExecutor struct {
 }
 
 func (m *mockRailsCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
+	// Capture env for assertions
+	m.capturedEnvMap = envMap
+
 	// Check if this is a Rails detection command
 	if name == "bundle" && len(args) >= 2 && slices.Contains(args, "show") && slices.Contains(args, "rails") {
 		// bundle show rails
@@ -89,7 +94,7 @@ func TestMinitest_createDiscoveryCommand(t *testing.T) {
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	command, args, envMap := minitest.createDiscoveryCommand()
+	command, args, envMap, isRails := minitest.createDiscoveryCommand()
 
 	// Verify command structure: bundle exec rake test (non-Rails)
 	if command != "bundle" {
@@ -113,12 +118,15 @@ func TestMinitest_createDiscoveryCommand(t *testing.T) {
 	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"] != TestsDiscoveryFilePath {
 		t.Errorf("expected DD_TEST_OPTIMIZATION_DISCOVERY_FILE=%q in envMap, got %q", TestsDiscoveryFilePath, envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"])
 	}
+	if isRails {
+		t.Error("expected Rails detection to be false for default Minitest discovery")
+	}
 }
 
 func TestMinitest_createDiscoveryCommand_WithOverride(t *testing.T) {
 	mockExecutor := &mockRailsCommandExecutor{isRails: false}
 	minitest := &Minitest{executor: mockExecutor, commandOverride: []string{"./custom-minitest", "--flag"}}
-	command, args, envMap := minitest.createDiscoveryCommand()
+	command, args, envMap, isRails := minitest.createDiscoveryCommand()
 
 	if command != "./custom-minitest" {
 		t.Errorf("expected command to be './custom-minitest', got %q", command)
@@ -129,6 +137,9 @@ func TestMinitest_createDiscoveryCommand_WithOverride(t *testing.T) {
 	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
 		t.Error("expected discovery env map to include DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED")
 	}
+	if isRails {
+		t.Error("expected Rails detection to be false when override is provided")
+	}
 }
 
 func TestMinitest_DiscoverTests_Success(t *testing.T) {
@@ -136,6 +147,21 @@ func TestMinitest_DiscoverTests_Success(t *testing.T) {
 		t.Fatalf("failed to create discovery directory: %v", err)
 	}
 	defer cleanupDiscoveryDir()
+	if err := os.MkdirAll("test/models", 0755); err != nil {
+		t.Fatalf("failed to create test/models directory: %v", err)
+	}
+	if err := os.MkdirAll("test/controllers", 0755); err != nil {
+		t.Fatalf("failed to create test/controllers directory: %v", err)
+	}
+	if err := os.WriteFile("test/models/user_test.rb", []byte("# test"), 0644); err != nil {
+		t.Fatalf("failed to create user test file: %v", err)
+	}
+	if err := os.WriteFile("test/controllers/users_controller_test.rb", []byte("# test"), 0644); err != nil {
+		t.Fatalf("failed to create controller test file: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll("test")
+	}()
 
 	testData := []testoptimization.Test{
 		{
@@ -229,6 +255,15 @@ func TestMinitest_DiscoverTests_CommandFailure(t *testing.T) {
 		t.Fatalf("failed to create discovery directory: %v", err)
 	}
 	defer cleanupDiscoveryDir()
+	if err := os.MkdirAll("test/sample", 0755); err != nil {
+		t.Fatalf("failed to create test/sample directory: %v", err)
+	}
+	if err := os.WriteFile("test/sample/sample_test.rb", []byte("# test"), 0644); err != nil {
+		t.Fatalf("failed to create sample test file: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll("test")
+	}()
 
 	mockExecutor := &mockCommandExecutor{
 		output:      []byte("Could not locate Gemfile or .bundle/ directory"),
@@ -252,6 +287,15 @@ func TestMinitest_DiscoverTests_InvalidJSON(t *testing.T) {
 		t.Fatalf("failed to create discovery directory: %v", err)
 	}
 	defer cleanupDiscoveryDir()
+	if err := os.MkdirAll("test/sample", 0755); err != nil {
+		t.Fatalf("failed to create test/sample directory: %v", err)
+	}
+	if err := os.WriteFile("test/sample/sample_test.rb", []byte("# test"), 0644); err != nil {
+		t.Fatalf("failed to create sample test file: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll("test")
+	}()
 
 	mockExecutor := &mockCommandExecutor{
 		output: []byte("Finished in 0.12345 seconds"),
@@ -506,7 +550,7 @@ func TestMinitest_createDiscoveryCommand_RailsApplication(t *testing.T) {
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	command, args, envMap := minitest.createDiscoveryCommand()
+	command, args, envMap, isRails := minitest.createDiscoveryCommand()
 
 	// Verify command structure: bundle exec rails test (Rails)
 	if command != "bundle" {
@@ -529,6 +573,9 @@ func TestMinitest_createDiscoveryCommand_RailsApplication(t *testing.T) {
 	}
 	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"] != TestsDiscoveryFilePath {
 		t.Errorf("expected DD_TEST_OPTIMIZATION_DISCOVERY_FILE=%q in envMap, got %q", TestsDiscoveryFilePath, envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"])
+	}
+	if !isRails {
+		t.Error("expected Rails detection to be true for rails discovery command")
 	}
 }
 
@@ -605,6 +652,73 @@ func TestMinitest_DiscoverTestFiles(t *testing.T) {
 	}
 }
 
+func TestMinitest_DiscoverTestFiles_WithTestsLocation(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "minitest-tests-location-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to change to temp directory: %v", err)
+	}
+	defer cleanupDiscoveryDir()
+	defer func() {
+		_ = os.Chdir(originalDir)
+	}()
+
+	matchingFiles := []string{
+		filepath.Join("custom", "test", "models", "user_test.rb"),
+		filepath.Join("custom", "test", "controllers", "users_controller_test.rb"),
+	}
+
+	for _, file := range matchingFiles {
+		dir := filepath.Dir(file)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("failed to create directory %s: %v", dir, err)
+		}
+		if err := os.WriteFile(file, []byte("# test"), 0644); err != nil {
+			t.Fatalf("failed to create file %s: %v", file, err)
+		}
+	}
+
+	ignoredFile := filepath.Join("test", "models", "ignored_test.rb")
+	if err := os.MkdirAll(filepath.Dir(ignoredFile), 0755); err != nil {
+		t.Fatalf("failed to create directory %s: %v", filepath.Dir(ignoredFile), err)
+	}
+	if err := os.WriteFile(ignoredFile, []byte("# ignored"), 0644); err != nil {
+		t.Fatalf("failed to create file %s: %v", ignoredFile, err)
+	}
+
+	setTestsLocation(t, filepath.Join("custom", "test", "**", "*_test.rb"))
+
+	minitest := NewMinitest()
+	files, err := minitest.DiscoverTestFiles()
+	if err != nil {
+		t.Fatalf("DiscoverTestFiles failed: %v", err)
+	}
+
+	if len(files) != len(matchingFiles) {
+		t.Errorf("expected %d matched files, got %d", len(matchingFiles), len(files))
+	}
+
+	for _, expected := range matchingFiles {
+		if !slices.Contains(files, expected) {
+			t.Errorf("expected file %q to be present", expected)
+		}
+	}
+
+	if slices.Contains(files, ignoredFile) {
+		t.Errorf("expected ignored file %q to be excluded", ignoredFile)
+	}
+}
+
 func TestMinitest_DiscoverTestFiles_NoTestDirectory(t *testing.T) {
 	// Create a temporary directory without a test folder
 	tmpDir, err := os.MkdirTemp("", "minitest-test-*")
@@ -637,6 +751,247 @@ func TestMinitest_DiscoverTestFiles_NoTestDirectory(t *testing.T) {
 	// Should return empty slice when test directory doesn't exist
 	if len(discoveredFiles) != 0 {
 		t.Errorf("expected 0 test files, got %d", len(discoveredFiles))
+	}
+}
+
+func TestMinitest_DiscoverTests_WithTestsLocation(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "minitest-tests-location-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to change to temp directory: %v", err)
+	}
+	defer cleanupDiscoveryDir()
+	defer func() {
+		_ = os.Chdir(originalDir)
+	}()
+
+	matchingFiles := []string{
+		filepath.Join("custom", "test", "controllers", "users_controller_test.rb"),
+		filepath.Join("custom", "test", "models", "user_test.rb"),
+	}
+
+	for _, file := range matchingFiles {
+		dir := filepath.Dir(file)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("failed to create directory %s: %v", dir, err)
+		}
+		if err := os.WriteFile(file, []byte("# test"), 0644); err != nil {
+			t.Fatalf("failed to create file %s: %v", file, err)
+		}
+	}
+
+	setTestsLocation(t, filepath.Join("custom", "test", "**", "*_test.rb"))
+
+	if err := os.MkdirAll(filepath.Dir(TestsDiscoveryFilePath), 0755); err != nil {
+		t.Fatalf("failed to create discovery directory: %v", err)
+	}
+
+	testData := []testoptimization.Test{
+		{
+			Name:            "test_user_validation",
+			Suite:           "UserTest",
+			Module:          "minitest",
+			Parameters:      "{}",
+			SuiteSourceFile: matchingFiles[0],
+		},
+	}
+
+	var capturedArgs []string
+	mockExecutor := &mockRailsCommandExecutor{
+		isRails: false,
+		onTestExecution: func(name string, args []string) {
+			capturedArgs = append([]string(nil), args...)
+			file, err := os.Create(TestsDiscoveryFilePath)
+			if err != nil {
+				t.Fatalf("mock failed to create test file: %v", err)
+			}
+			defer func() { _ = file.Close() }()
+
+			encoder := json.NewEncoder(file)
+			for _, test := range testData {
+				if err := encoder.Encode(test); err != nil {
+					t.Fatalf("mock failed to encode test data: %v", err)
+				}
+			}
+		},
+	}
+
+	minitest := &Minitest{executor: mockExecutor}
+	tests, err := minitest.DiscoverTests(context.Background())
+	if err != nil {
+		t.Fatalf("DiscoverTests failed: %v", err)
+	}
+
+	if len(tests) != len(testData) {
+		t.Errorf("expected %d tests, got %d", len(testData), len(tests))
+	}
+
+	if len(capturedArgs) == 0 {
+		t.Fatal("expected discovery command to capture arguments")
+	}
+
+	for _, file := range matchingFiles {
+		if slices.Contains(capturedArgs, file) {
+			t.Errorf("expected discovery args not to contain %q for non-Rails command", file)
+		}
+	}
+
+	if mockExecutor.capturedEnvMap == nil {
+		t.Fatal("expected env map to be captured")
+	}
+
+	if mockExecutor.capturedEnvMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
+		t.Error("expected discovery env to include DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED")
+	}
+
+	sortedFiles := append([]string(nil), matchingFiles...)
+	sort.Strings(sortedFiles)
+	expectedEnv := strings.Join(sortedFiles, " ")
+	if mockExecutor.capturedEnvMap["TEST_FILES"] != expectedEnv {
+		t.Errorf("expected TEST_FILES to be %q, got %q", expectedEnv, mockExecutor.capturedEnvMap["TEST_FILES"])
+	}
+}
+
+func TestMinitest_DiscoverTests_WithTestsLocation_Rails(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "minitest-tests-location-rails-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to change to temp directory: %v", err)
+	}
+	defer cleanupDiscoveryDir()
+	defer func() {
+		_ = os.Chdir(originalDir)
+	}()
+
+	matchingFile := filepath.Join("custom", "test", "models", "user_test.rb")
+	if err := os.MkdirAll(filepath.Dir(matchingFile), 0755); err != nil {
+		t.Fatalf("failed to create directory %s: %v", filepath.Dir(matchingFile), err)
+	}
+	if err := os.WriteFile(matchingFile, []byte("# test"), 0644); err != nil {
+		t.Fatalf("failed to create file %s: %v", matchingFile, err)
+	}
+
+	setTestsLocation(t, filepath.Join("custom", "test", "**", "*_test.rb"))
+
+	if err := os.MkdirAll(filepath.Dir(TestsDiscoveryFilePath), 0755); err != nil {
+		t.Fatalf("failed to create discovery directory: %v", err)
+	}
+
+	testData := []testoptimization.Test{
+		{
+			Name:            "test_user_validation",
+			Suite:           "UserTest",
+			Module:          "minitest",
+			Parameters:      "{}",
+			SuiteSourceFile: matchingFile,
+		},
+	}
+
+	var capturedArgs []string
+	mockExecutor := &mockRailsCommandExecutor{
+		isRails: true,
+		onTestExecution: func(name string, args []string) {
+			capturedArgs = append([]string(nil), args...)
+			file, err := os.Create(TestsDiscoveryFilePath)
+			if err != nil {
+				t.Fatalf("mock failed to create test file: %v", err)
+			}
+			defer func() { _ = file.Close() }()
+
+			encoder := json.NewEncoder(file)
+			for _, test := range testData {
+				if err := encoder.Encode(test); err != nil {
+					t.Fatalf("mock failed to encode test data: %v", err)
+				}
+			}
+		},
+	}
+
+	minitest := &Minitest{executor: mockExecutor}
+	tests, err := minitest.DiscoverTests(context.Background())
+	if err != nil {
+		t.Fatalf("DiscoverTests failed: %v", err)
+	}
+
+	if len(tests) != len(testData) {
+		t.Errorf("expected %d tests, got %d", len(testData), len(tests))
+	}
+
+	if len(capturedArgs) == 0 {
+		t.Fatal("expected discovery command to capture arguments")
+	}
+
+	if !slices.Contains(capturedArgs, matchingFile) {
+		t.Errorf("expected discovery args to include %q", matchingFile)
+	}
+
+	if _, exists := mockExecutor.capturedEnvMap["TEST_FILES"]; exists {
+		t.Error("expected TEST_FILES not to be set for Rails discovery")
+	}
+}
+
+func TestMinitest_DiscoverTests_WithTestsLocation_NoMatches(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "minitest-tests-location-none-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to change to temp directory: %v", err)
+	}
+	defer cleanupDiscoveryDir()
+	defer func() {
+		_ = os.Chdir(originalDir)
+	}()
+
+	setTestsLocation(t, filepath.Join("custom", "test", "**", "*_test.rb"))
+
+	var executed bool
+	mockExecutor := &mockRailsCommandExecutor{
+		onTestExecution: func(name string, args []string) {
+			executed = true
+		},
+	}
+
+	minitest := &Minitest{executor: mockExecutor}
+	tests, err := minitest.DiscoverTests(context.Background())
+	if err != nil {
+		t.Fatalf("DiscoverTests should not fail when no matches: %v", err)
+	}
+
+	if len(tests) != 0 {
+		t.Errorf("expected no tests when override matches nothing, got %d", len(tests))
+	}
+
+	if executed {
+		t.Error("expected discovery command not to run when override matches nothing")
 	}
 }
 
@@ -821,7 +1176,7 @@ func TestMinitest_createDiscoveryCommand_RailsApplication_WithBinRails(t *testin
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	command, args, envMap := minitest.createDiscoveryCommand()
+	command, args, envMap, isRails := minitest.createDiscoveryCommand()
 
 	// Verify command structure: bin/rails test (Rails with bin/rails)
 	if command != "bin/rails" {
@@ -844,5 +1199,8 @@ func TestMinitest_createDiscoveryCommand_RailsApplication_WithBinRails(t *testin
 	}
 	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"] != TestsDiscoveryFilePath {
 		t.Errorf("expected DD_TEST_OPTIMIZATION_DISCOVERY_FILE=%q in envMap, got %q", TestsDiscoveryFilePath, envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"])
+	}
+	if !isRails {
+		t.Error("expected Rails detection to be true when bin/rails is used for discovery")
 	}
 }

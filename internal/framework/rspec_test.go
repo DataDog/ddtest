@@ -10,11 +10,34 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
 func cleanupDiscoveryDir() {
 	_ = os.RemoveAll(filepath.Dir(filepath.Dir(TestsDiscoveryFilePath)))
+}
+
+func setTestsLocation(t *testing.T, pattern string) {
+	t.Helper()
+	previous := os.Getenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION")
+	if err := os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", pattern); err != nil {
+		t.Fatalf("failed to set tests_location env: %v", err)
+	}
+	settings.Init()
+
+	t.Cleanup(func() {
+		if previous == "" {
+			if err := os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION"); err != nil {
+				t.Errorf("failed to unset tests_location env: %v", err)
+			}
+		} else {
+			if err := os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", previous); err != nil {
+				t.Errorf("failed to restore tests_location env: %v", err)
+			}
+		}
+		settings.Init()
+	})
 }
 
 type mockCommandExecutor struct {
@@ -254,6 +277,21 @@ func TestRSpec_DiscoverTests_Success(t *testing.T) {
 			}
 			if !slices.Contains(args, "--dry-run") {
 				t.Error("expected --dry-run argument")
+			}
+			patternIndex := slices.Index(args, "--pattern")
+			if patternIndex == -1 {
+				t.Fatal("expected --pattern argument")
+			}
+			defaultPattern := filepath.Join("spec", "**", "*_spec.rb")
+			if patternIndex+1 >= len(args) || args[patternIndex+1] != defaultPattern {
+				t.Fatalf("expected default pattern %q, got %v", defaultPattern, args)
+			}
+			defaultPathIndex := slices.Index(args, "--default-path")
+			if defaultPathIndex == -1 {
+				t.Fatal("expected --default-path argument")
+			}
+			if defaultPathIndex+1 >= len(args) || args[defaultPathIndex+1] != "." {
+				t.Fatalf("expected default path '.', got %v", args)
 			}
 
 			// Create the test file as the real command would
@@ -618,6 +656,242 @@ func TestRSpec_DiscoverTestFiles(t *testing.T) {
 		if slices.Contains(discoveredFiles, nonTestFile) {
 			t.Errorf("non-test file %q should not be in discovered files", nonTestFile)
 		}
+	}
+}
+
+func TestRSpec_DiscoverTestFiles_WithTestsLocation(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "rspec-tests-location-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to change to temp directory: %v", err)
+	}
+	defer cleanupDiscoveryDir()
+	defer func() {
+		_ = os.Chdir(originalDir)
+	}()
+
+	matchingFiles := []string{
+		filepath.Join("custom", "spec", "models", "user_spec.rb"),
+		filepath.Join("custom", "spec", "controllers", "admin_spec.rb"),
+	}
+
+	for _, file := range matchingFiles {
+		dir := filepath.Dir(file)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("failed to create directory %s: %v", dir, err)
+		}
+		if err := os.WriteFile(file, []byte("# spec"), 0644); err != nil {
+			t.Fatalf("failed to create file %s: %v", file, err)
+		}
+	}
+
+	// Create a default spec file that should be ignored
+	ignoredFile := filepath.Join("spec", "models", "ignored_spec.rb")
+	if err := os.MkdirAll(filepath.Dir(ignoredFile), 0755); err != nil {
+		t.Fatalf("failed to create directory %s: %v", filepath.Dir(ignoredFile), err)
+	}
+	if err := os.WriteFile(ignoredFile, []byte("# ignored"), 0644); err != nil {
+		t.Fatalf("failed to create file %s: %v", ignoredFile, err)
+	}
+
+	setTestsLocation(t, filepath.Join("custom", "spec", "**", "*_spec.rb"))
+
+	rspec := NewRSpec()
+	files, err := rspec.DiscoverTestFiles()
+	if err != nil {
+		t.Fatalf("DiscoverTestFiles failed: %v", err)
+	}
+
+	if len(files) != len(matchingFiles) {
+		t.Errorf("expected %d matched files, got %d", len(matchingFiles), len(files))
+	}
+
+	for _, expected := range matchingFiles {
+		if !slices.Contains(files, expected) {
+			t.Errorf("expected file %q to be present", expected)
+		}
+	}
+
+	if slices.Contains(files, ignoredFile) {
+		t.Errorf("expected ignored file %q to be excluded", ignoredFile)
+	}
+}
+
+func TestRSpec_DiscoverTests_WithTestsLocation(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "rspec-tests-location-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to change to temp directory: %v", err)
+	}
+	defer cleanupDiscoveryDir()
+	defer func() {
+		_ = os.Chdir(originalDir)
+	}()
+
+	matchingFile := filepath.Join("custom", "spec", "models", "user_spec.rb")
+	if err := os.MkdirAll(filepath.Dir(matchingFile), 0755); err != nil {
+		t.Fatalf("failed to create directory %s: %v", filepath.Dir(matchingFile), err)
+	}
+	if err := os.WriteFile(matchingFile, []byte("# spec"), 0644); err != nil {
+		t.Fatalf("failed to create file %s: %v", matchingFile, err)
+	}
+
+	setTestsLocation(t, filepath.Join("custom", "spec", "**", "*_spec.rb"))
+
+	if err := os.MkdirAll(filepath.Dir(TestsDiscoveryFilePath), 0755); err != nil {
+		t.Fatalf("failed to create discovery directory: %v", err)
+	}
+
+	testData := []testoptimization.Test{
+		{
+			Name:            "User should be valid",
+			Suite:           "User",
+			Module:          "rspec",
+			Parameters:      "{}",
+			SuiteSourceFile: matchingFile,
+		},
+	}
+
+	var capturedArgs []string
+	mockExecutor := &mockCommandExecutor{
+		onExecution: func(name string, args []string) {
+			capturedArgs = append([]string(nil), args...)
+			file, err := os.Create(TestsDiscoveryFilePath)
+			if err != nil {
+				t.Fatalf("mock failed to create test file: %v", err)
+			}
+			defer func() { _ = file.Close() }()
+
+			encoder := json.NewEncoder(file)
+			for _, test := range testData {
+				if err := encoder.Encode(test); err != nil {
+					t.Fatalf("mock failed to encode test data: %v", err)
+				}
+			}
+		},
+		output: []byte("Finished in 0.1 seconds"),
+	}
+
+	rspec := &RSpec{executor: mockExecutor}
+	tests, err := rspec.DiscoverTests(context.Background())
+	if err != nil {
+		t.Fatalf("DiscoverTests failed: %v", err)
+	}
+
+	if len(tests) != len(testData) {
+		t.Errorf("expected %d tests, got %d", len(testData), len(tests))
+	}
+
+	if len(capturedArgs) == 0 {
+		t.Fatal("expected discovery command to capture arguments")
+	}
+
+	expectedPattern := filepath.Join("custom", "spec", "**", "*_spec.rb")
+	patternIndex := slices.Index(capturedArgs, "--pattern")
+	if patternIndex == -1 {
+		t.Fatalf("expected discovery args to include --pattern, got %v", capturedArgs)
+	}
+	if patternIndex+1 >= len(capturedArgs) || capturedArgs[patternIndex+1] != expectedPattern {
+		t.Fatalf("expected pattern argument %q, got %v", expectedPattern, capturedArgs)
+	}
+
+	defaultPathIndex := slices.Index(capturedArgs, "--default-path")
+	if defaultPathIndex == -1 {
+		t.Fatalf("expected discovery args to include --default-path, got %v", capturedArgs)
+	}
+	if defaultPathIndex+1 >= len(capturedArgs) || capturedArgs[defaultPathIndex+1] != "." {
+		t.Fatalf("expected default path '.', got %v", capturedArgs)
+	}
+}
+
+func TestRSpec_DiscoverTests_WithTestsLocation_NoMatches(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "rspec-tests-location-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(tmpDir)
+	}()
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to change to temp directory: %v", err)
+	}
+	defer cleanupDiscoveryDir()
+	defer func() {
+		_ = os.Chdir(originalDir)
+	}()
+
+	setTestsLocation(t, filepath.Join("custom", "spec", "**", "*_spec.rb"))
+
+	if err := os.MkdirAll(filepath.Dir(TestsDiscoveryFilePath), 0755); err != nil {
+		t.Fatalf("failed to create discovery directory: %v", err)
+	}
+
+	var capturedArgs []string
+	mockExecutor := &mockCommandExecutor{
+		onExecution: func(name string, args []string) {
+			capturedArgs = append([]string(nil), args...)
+			file, createErr := os.Create(TestsDiscoveryFilePath)
+			if createErr != nil {
+				t.Fatalf("mock failed to create discovery file: %v", createErr)
+			}
+			_ = file.Close()
+		},
+	}
+
+	rspec := &RSpec{executor: mockExecutor}
+	tests, err := rspec.DiscoverTests(context.Background())
+	if err != nil {
+		t.Fatalf("DiscoverTests should not fail when no matches: %v", err)
+	}
+
+	if len(tests) != 0 {
+		t.Errorf("expected no tests when override matches nothing, got %d", len(tests))
+	}
+
+	if len(capturedArgs) == 0 {
+		t.Fatal("expected discovery command to capture arguments")
+	}
+
+	expectedPattern := filepath.Join("custom", "spec", "**", "*_spec.rb")
+	patternIndex := slices.Index(capturedArgs, "--pattern")
+	if patternIndex == -1 {
+		t.Fatalf("expected discovery args to include --pattern, got %v", capturedArgs)
+	}
+	if patternIndex+1 >= len(capturedArgs) || capturedArgs[patternIndex+1] != expectedPattern {
+		t.Fatalf("expected pattern argument %q, got %v", expectedPattern, capturedArgs)
+	}
+
+	defaultPathIndex := slices.Index(capturedArgs, "--default-path")
+	if defaultPathIndex == -1 {
+		t.Fatalf("expected discovery args to include --default-path, got %v", capturedArgs)
+	}
+	if defaultPathIndex+1 >= len(capturedArgs) || capturedArgs[defaultPathIndex+1] != "." {
+		t.Fatalf("expected default path '.', got %v", capturedArgs)
 	}
 }
 

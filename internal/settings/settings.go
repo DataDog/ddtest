@@ -16,6 +16,7 @@ type Config struct {
 	WorkerEnv      string `mapstructure:"worker_env"`
 	CiNode         int    `mapstructure:"ci_node"`
 	Command        string `mapstructure:"command"`
+	TestsLocation  string `mapstructure:"tests_location"`
 }
 
 var (
@@ -44,6 +45,7 @@ func setDefaults() {
 	viper.SetDefault("worker_env", "")
 	viper.SetDefault("ci_node", -1)
 	viper.SetDefault("command", "")
+	viper.SetDefault("tests_location", "")
 }
 
 func Get() *Config {
@@ -79,6 +81,10 @@ func GetCiNode() int {
 
 func GetCommand() string {
 	return Get().Command
+}
+
+func GetTestsLocation() string {
+	return Get().TestsLocation
 }
 
 // GetWorkerEnvMap parses the worker_env setting and returns it as a map

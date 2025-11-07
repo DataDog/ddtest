@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
@@ -35,9 +36,21 @@ func (m *Minitest) Name() string {
 func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
-	name, args, envMap := m.createDiscoveryCommand()
+	pattern := m.testPattern()
+	matchedFiles, err := globTestFiles(pattern)
+	if err != nil {
+		return nil, err
+	}
+	if len(matchedFiles) == 0 {
+		slog.Info("Test pattern matched no files", "pattern", pattern)
+		return []testoptimization.Test{}, nil
+	}
+
+	name, args, envMap, isRails := m.createDiscoveryCommand()
+	slog.Debug("Using test discovery pattern", "pattern", pattern, "files", len(matchedFiles))
+	args, envMap = addTestFiles(args, envMap, isRails, matchedFiles)
 	slog.Info("Discovering tests with command", "command", name, "args", args)
-	_, err := executeDiscoveryCommand(ctx, m.executor, name, args, envMap, m.Name())
+	_, err = executeDiscoveryCommand(ctx, m.executor, name, args, envMap, m.Name())
 	if err != nil {
 		return nil, err
 	}
@@ -52,13 +65,7 @@ func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, 
 }
 
 func (m *Minitest) DiscoverTestFiles() ([]string, error) {
-	// Check if the test directory exists
-	if _, err := os.Stat(minitestRootDir); os.IsNotExist(err) {
-		slog.Debug("Minitest directory does not exist", "directory", minitestRootDir)
-		return []string{}, nil
-	}
-
-	testFiles, err := discoverTestFilesByPattern(minitestRootDir, minitestTestFilePattern)
+	testFiles, err := globTestFiles(m.testPattern())
 	if err != nil {
 		return nil, err
 	}
@@ -67,25 +74,39 @@ func (m *Minitest) DiscoverTestFiles() ([]string, error) {
 	return testFiles, nil
 }
 
+func (m *Minitest) testPattern() string {
+	if custom := settings.GetTestsLocation(); custom != "" {
+		return custom
+	}
+	return defaultTestPattern(minitestRootDir, minitestTestFilePattern)
+}
+
 func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, args, isRails := m.getMinitestCommand()
 	slog.Info("Running tests with command", "command", command, "args", args)
 
 	// Add test files if provided
 	if len(testFiles) > 0 {
-		if isRails {
-			// Rails test accepts files as command-line arguments
-			args = append(args, testFiles...)
-		} else {
-			// Rake test requires TEST_FILES environment variable
-			if envMap == nil {
-				envMap = make(map[string]string)
-			}
-			envMap["TEST_FILES"] = strings.Join(testFiles, " ")
-		}
+		args, envMap = addTestFiles(args, envMap, isRails, testFiles)
 	}
 
 	return m.executor.Run(ctx, command, args, envMap)
+}
+
+// addTestFiles adds test files to either args (for Rails) or envMap (for Rake)
+// Returns modified args and envMap
+func addTestFiles(args []string, envMap map[string]string, isRails bool, testFiles []string) ([]string, map[string]string) {
+	if isRails {
+		// Rails test accepts files as command-line arguments
+		args = append(args, testFiles...)
+	} else {
+		// Rake test requires TEST_FILES environment variable
+		if envMap == nil {
+			envMap = make(map[string]string)
+		}
+		envMap["TEST_FILES"] = strings.Join(testFiles, " ")
+	}
+	return args, envMap
 }
 
 // isRailsApplication determines if the current project is a Rails application
@@ -150,12 +171,12 @@ func (m *Minitest) getMinitestCommand() (string, []string, bool) {
 	return "bundle", []string{"exec", "rake", "test"}, false
 }
 
-func (m *Minitest) createDiscoveryCommand() (string, []string, map[string]string) {
-	command, args, _ := m.getMinitestCommand()
+func (m *Minitest) createDiscoveryCommand() (string, []string, map[string]string, bool) {
+	command, args, isRails := m.getMinitestCommand()
 
 	envMap := map[string]string{
 		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED": "1",
 		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE":    TestsDiscoveryFilePath,
 	}
-	return command, args, envMap
+	return command, args, envMap, isRails
 }

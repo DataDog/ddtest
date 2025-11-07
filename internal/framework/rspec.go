@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
@@ -34,7 +35,12 @@ func (r *RSpec) Name() string {
 func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
+	pattern := r.testPattern()
+
 	name, args, envMap := r.createDiscoveryCommand()
+	args = append(args, "--pattern", pattern, "--default-path", ".")
+	slog.Debug("Using test discovery pattern", "pattern", pattern)
+
 	slog.Info("Discovering tests with command", "command", name, "args", args)
 	_, err := executeDiscoveryCommand(ctx, r.executor, name, args, envMap, r.Name())
 	if err != nil {
@@ -51,19 +57,20 @@ func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, err
 }
 
 func (r *RSpec) DiscoverTestFiles() ([]string, error) {
-	// Check if the spec directory exists
-	if _, err := os.Stat(rspecRootDir); os.IsNotExist(err) {
-		slog.Debug("RSpec directory does not exist", "directory", rspecRootDir)
-		return []string{}, nil
-	}
-
-	testFiles, err := discoverTestFilesByPattern(rspecRootDir, rspecTestFilePattern)
+	testFiles, err := globTestFiles(r.testPattern())
 	if err != nil {
 		return nil, err
 	}
 
 	slog.Debug("Discovered RSpec test files", "count", len(testFiles))
 	return testFiles, nil
+}
+
+func (r *RSpec) testPattern() string {
+	if custom := settings.GetTestsLocation(); custom != "" {
+		return custom
+	}
+	return defaultTestPattern(rspecRootDir, rspecTestFilePattern)
 }
 
 func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
