@@ -38,9 +38,9 @@ func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, err
 	pattern := r.testPattern()
 
 	name, args, envMap := r.createDiscoveryCommand()
-	args = append(args, "--pattern", pattern, "--default-path", ".")
-	slog.Debug("Using test discovery pattern", "pattern", pattern)
+	args = append(args, "--pattern", pattern)
 
+	slog.Info("Using test discovery pattern", "pattern", pattern)
 	slog.Info("Discovering tests with command", "command", name, "args", args)
 	_, err := executeDiscoveryCommand(ctx, r.executor, name, args, envMap, r.Name())
 	if err != nil {
