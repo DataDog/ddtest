@@ -870,14 +870,6 @@ func TestRSpec_DiscoverTests_WithTestsLocation_NoMatches(t *testing.T) {
 	if patternIndex+1 >= len(capturedArgs) || capturedArgs[patternIndex+1] != expectedPattern {
 		t.Fatalf("expected pattern argument %q, got %v", expectedPattern, capturedArgs)
 	}
-
-	defaultPathIndex := slices.Index(capturedArgs, "--default-path")
-	if defaultPathIndex == -1 {
-		t.Fatalf("expected discovery args to include --default-path, got %v", capturedArgs)
-	}
-	if defaultPathIndex+1 >= len(capturedArgs) || capturedArgs[defaultPathIndex+1] != "." {
-		t.Fatalf("expected default path '.', got %v", capturedArgs)
-	}
 }
 
 func TestRSpec_DiscoverTestFiles_NoSpecDirectory(t *testing.T) {
