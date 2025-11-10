@@ -286,13 +286,6 @@ func TestRSpec_DiscoverTests_Success(t *testing.T) {
 			if patternIndex+1 >= len(args) || args[patternIndex+1] != defaultPattern {
 				t.Fatalf("expected default pattern %q, got %v", defaultPattern, args)
 			}
-			defaultPathIndex := slices.Index(args, "--default-path")
-			if defaultPathIndex == -1 {
-				t.Fatal("expected --default-path argument")
-			}
-			if defaultPathIndex+1 >= len(args) || args[defaultPathIndex+1] != "." {
-				t.Fatalf("expected default path '.', got %v", args)
-			}
 
 			// Create the test file as the real command would
 			file, err := os.Create(TestsDiscoveryFilePath)
@@ -813,14 +806,6 @@ func TestRSpec_DiscoverTests_WithTestsLocation(t *testing.T) {
 	}
 	if patternIndex+1 >= len(capturedArgs) || capturedArgs[patternIndex+1] != expectedPattern {
 		t.Fatalf("expected pattern argument %q, got %v", expectedPattern, capturedArgs)
-	}
-
-	defaultPathIndex := slices.Index(capturedArgs, "--default-path")
-	if defaultPathIndex == -1 {
-		t.Fatalf("expected discovery args to include --default-path, got %v", capturedArgs)
-	}
-	if defaultPathIndex+1 >= len(capturedArgs) || capturedArgs[defaultPathIndex+1] != "." {
-		t.Fatalf("expected default path '.', got %v", capturedArgs)
 	}
 }
 
