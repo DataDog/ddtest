@@ -4,6 +4,7 @@ go 1.24.5
 
 require (
 	github.com/DataDog/dd-trace-go/v2 v2.1.0
+	github.com/bmatcuk/doublestar/v4 v4.9.1
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1
 	github.com/tinylib/msgp v1.2.5

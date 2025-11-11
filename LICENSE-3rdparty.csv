@@ -78,3 +78,4 @@ google.golang.org/grpc,https://github.com/grpc/grpc-go,Apache-2.0,"Google LLC"
 google.golang.org/protobuf,https://github.com/protocolbuffers/protobuf-go,BSD-3-Clause,"The Go Authors"
 gopkg.in/ini.v1,https://github.com/go-ini/ini,Apache-2.0,"Unknown"
 gopkg.in/yaml.v3,https://github.com/go-yaml/yaml,MIT,"Kirill Simonov"
+github.com/bmatcuk/doublestar/v4,https://github.com/bmatcuk/doublestar,MIT,Bob Matcuk

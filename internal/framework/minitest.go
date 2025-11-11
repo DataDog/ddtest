@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
@@ -35,7 +36,18 @@ func (m *Minitest) Name() string {
 func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
-	name, args, envMap := m.createDiscoveryCommand()
+	pattern := m.testPattern()
+	name, args, envMap, isRails := m.createDiscoveryCommand()
+	slog.Debug("Using test discovery pattern", "pattern", pattern)
+	if isRails {
+		args = append(args, pattern)
+	} else {
+		if envMap == nil {
+			envMap = make(map[string]string)
+		}
+		envMap["TEST"] = pattern
+	}
+
 	slog.Info("Discovering tests with command", "command", name, "args", args)
 	_, err := executeDiscoveryCommand(ctx, m.executor, name, args, envMap, m.Name())
 	if err != nil {
@@ -52,19 +64,20 @@ func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, 
 }
 
 func (m *Minitest) DiscoverTestFiles() ([]string, error) {
-	// Check if the test directory exists
-	if _, err := os.Stat(minitestRootDir); os.IsNotExist(err) {
-		slog.Debug("Minitest directory does not exist", "directory", minitestRootDir)
-		return []string{}, nil
-	}
-
-	testFiles, err := discoverTestFilesByPattern(minitestRootDir, minitestTestFilePattern)
+	testFiles, err := globTestFiles(m.testPattern())
 	if err != nil {
 		return nil, err
 	}
 
 	slog.Debug("Discovered Minitest test files", "count", len(testFiles))
 	return testFiles, nil
+}
+
+func (m *Minitest) testPattern() string {
+	if custom := settings.GetTestsLocation(); custom != "" {
+		return custom
+	}
+	return defaultTestPattern(minitestRootDir, minitestTestFilePattern)
 }
 
 func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
@@ -150,12 +163,12 @@ func (m *Minitest) getMinitestCommand() (string, []string, bool) {
 	return "bundle", []string{"exec", "rake", "test"}, false
 }
 
-func (m *Minitest) createDiscoveryCommand() (string, []string, map[string]string) {
-	command, args, _ := m.getMinitestCommand()
+func (m *Minitest) createDiscoveryCommand() (string, []string, map[string]string, bool) {
+	command, args, isRails := m.getMinitestCommand()
 
 	envMap := map[string]string{
 		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED": "1",
 		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE":    TestsDiscoveryFilePath,
 	}
-	return command, args, envMap
+	return command, args, envMap, isRails
 }

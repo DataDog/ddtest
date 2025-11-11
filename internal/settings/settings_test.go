@@ -40,6 +40,9 @@ func TestInit(t *testing.T) {
 	if config.Command != "" {
 		t.Errorf("expected default command to be empty, got %q", config.Command)
 	}
+	if config.TestsLocation != "" {
+		t.Errorf("expected default tests_location to be empty, got %q", config.TestsLocation)
+	}
 }
 
 func TestSetDefaults(t *testing.T) {
@@ -67,6 +70,9 @@ func TestSetDefaults(t *testing.T) {
 	}
 	if viper.GetString("command") != "" {
 		t.Errorf("expected default command to be empty, got %q", viper.GetString("command"))
+	}
+	if viper.GetString("tests_location") != "" {
+		t.Errorf("expected default tests_location to be empty, got %q", viper.GetString("tests_location"))
 	}
 }
 
@@ -137,6 +143,7 @@ func TestEnvironmentVariables(t *testing.T) {
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV", "RAILS_DB=my_project_dev_{{nodeIndex}}")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE", "5")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND", "bundle exec rspec")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", "spec/**/*_spec.rb")
 	defer func() {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK")
@@ -145,6 +152,7 @@ func TestEnvironmentVariables(t *testing.T) {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION")
 	}()
 
 	Init()
@@ -169,6 +177,9 @@ func TestEnvironmentVariables(t *testing.T) {
 	}
 	if config.Command != "bundle exec rspec" {
 		t.Errorf("expected command from env var to be 'bundle exec rspec', got %q", config.Command)
+	}
+	if config.TestsLocation != "spec/**/*_spec.rb" {
+		t.Errorf("expected tests_location from env var to be 'spec/**/*_spec.rb', got %q", config.TestsLocation)
 	}
 }
 
@@ -239,6 +250,22 @@ func TestGetCommand(t *testing.T) {
 	command = GetCommand()
 	if command != "bundle exec rspec" {
 		t.Errorf("expected command to be 'bundle exec rspec', got %q", command)
+	}
+}
+
+func TestGetTestsLocation(t *testing.T) {
+	config = nil
+	viper.Reset()
+
+	testsLocation := GetTestsLocation()
+	if testsLocation != "" {
+		t.Errorf("expected tests_location to be empty by default, got %q", testsLocation)
+	}
+
+	config = &Config{TestsLocation: "spec/**/*_spec.rb"}
+	testsLocation = GetTestsLocation()
+	if testsLocation != "spec/**/*_spec.rb" {
+		t.Errorf("expected tests_location to be 'spec/**/*_spec.rb', got %q", testsLocation)
 	}
 }
 

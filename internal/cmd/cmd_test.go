@@ -33,6 +33,12 @@ func TestRootCommandFlags(t *testing.T) {
 		return
 	}
 
+	testsLocationFlag := rootCmd.PersistentFlags().Lookup("tests-location")
+	if testsLocationFlag == nil {
+		t.Error("tests-location flag should be defined")
+		return
+	}
+
 	// Check default values
 	if platformFlag.DefValue != "ruby" {
 		t.Errorf("expected platform default to be 'ruby', got %q", platformFlag.DefValue)
@@ -44,6 +50,10 @@ func TestRootCommandFlags(t *testing.T) {
 
 	if commandFlag.DefValue != "" {
 		t.Errorf("expected command default to be empty, got %q", commandFlag.DefValue)
+	}
+
+	if testsLocationFlag.DefValue != "" {
+		t.Errorf("expected tests-location default to be empty, got %q", testsLocationFlag.DefValue)
 	}
 }
 
@@ -107,6 +117,9 @@ func TestFlagBinding(t *testing.T) {
 	if err := viper.BindPFlag("command", rootCmd.PersistentFlags().Lookup("command")); err != nil {
 		t.Fatalf("Error binding command flag: %v", err)
 	}
+	if err := viper.BindPFlag("tests_location", rootCmd.PersistentFlags().Lookup("tests-location")); err != nil {
+		t.Fatalf("Error binding tests-location flag: %v", err)
+	}
 
 	// Set flag values
 	if err := rootCmd.PersistentFlags().Set("platform", "python"); err != nil {
@@ -118,6 +131,9 @@ func TestFlagBinding(t *testing.T) {
 	if err := rootCmd.PersistentFlags().Set("command", "bundle exec pytest"); err != nil {
 		t.Fatalf("Error setting command flag: %v", err)
 	}
+	if err := rootCmd.PersistentFlags().Set("tests-location", "spec/**/*_spec.rb"); err != nil {
+		t.Fatalf("Error setting tests-location flag: %v", err)
+	}
 
 	// Check that viper picks up the flag values
 	if viper.GetString("platform") != "python" {
@@ -128,6 +144,9 @@ func TestFlagBinding(t *testing.T) {
 	}
 	if viper.GetString("command") != "bundle exec pytest" {
 		t.Errorf("expected viper command to be 'bundle exec pytest', got %q", viper.GetString("command"))
+	}
+	if viper.GetString("tests_location") != "spec/**/*_spec.rb" {
+		t.Errorf("expected viper tests_location to be 'spec/**/*_spec.rb', got %q", viper.GetString("tests_location"))
 	}
 }
 

@@ -58,6 +58,7 @@ func init() {
 	rootCmd.PersistentFlags().Int("max-parallelism", 1, "Maximum number of parallel test processes")
 	rootCmd.PersistentFlags().String("worker-env", "", "Worker environment configuration")
 	rootCmd.PersistentFlags().String("command", "", "Test command that ddtest should wrap")
+	rootCmd.PersistentFlags().String("tests-location", "", "Glob pattern used to discover test files")
 	if err := viper.BindPFlag("platform", rootCmd.PersistentFlags().Lookup("platform")); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding platform flag: %v\n", err)
 		os.Exit(1)
@@ -80,6 +81,10 @@ func init() {
 	}
 	if err := viper.BindPFlag("command", rootCmd.PersistentFlags().Lookup("command")); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding command flag: %v\n", err)
+		os.Exit(1)
+	}
+	if err := viper.BindPFlag("tests_location", rootCmd.PersistentFlags().Lookup("tests-location")); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding tests-location flag: %v\n", err)
 		os.Exit(1)
 	}
 
