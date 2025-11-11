@@ -5,32 +5,53 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/viper"
 )
 
 type mockCommandExecutor struct {
-	output      []byte
-	err         error
-	onExecution func(name string, args []string)
+	runErr            error
+	combinedOutput    []byte
+	combinedOutputErr error
+	onRun             func(name string, args []string, envMap map[string]string)
+	onCombinedOutput  func(name string, args []string, envMap map[string]string)
 }
 
 func (m *mockCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
-	if m.onExecution != nil {
-		m.onExecution(name, args)
+	if m.onCombinedOutput != nil {
+		m.onCombinedOutput(name, args, envMap)
 	}
-	return m.output, m.err
+	return m.combinedOutput, m.combinedOutputErr
 }
 
 func (m *mockCommandExecutor) Run(ctx context.Context, name string, args []string, envMap map[string]string) error {
-	if m.onExecution != nil {
-		m.onExecution(name, args)
+	if m.onRun != nil {
+		m.onRun(name, args, envMap)
 	}
-	return m.err
+	return m.runErr
+}
+
+func writeTestFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write %s: %v", path, err)
+	}
+}
+
+func newRubyForDir(dir string, executor ext.CommandExecutor) *Ruby {
+	ruby := NewRuby()
+	ruby.rootDir = dir
+	if executor != nil {
+		ruby.executor = executor
+	}
+	return ruby
 }
 
 func TestRuby_Name(t *testing.T) {
@@ -40,6 +61,103 @@ func TestRuby_Name(t *testing.T) {
 
 	if actual != expected {
 		t.Errorf("expected %q, got %q", expected, actual)
+	}
+}
+
+func TestRuby_SanityCheck_Passes(t *testing.T) {
+	tempDir := t.TempDir()
+	writeTestFile(t, tempDir, "Gemfile", "source \"https://rubygems.org\"\n\ngem \"datadog-ci\"\n")
+
+	mockExecutor := &mockCommandExecutor{
+		combinedOutput: []byte("  * datadog-ci (1.23.1 9d54a15)\n"),
+		onCombinedOutput: func(name string, args []string, envMap map[string]string) {
+			if name != "bundle" {
+				t.Fatalf("expected command 'bundle', got %q", name)
+			}
+			if len(args) != 2 || args[0] != "info" || args[1] != "datadog-ci" {
+				t.Fatalf("unexpected args: %v", args)
+			}
+			if envMap["BUNDLE_GEMFILE"] != filepath.Join(tempDir, "Gemfile") {
+				t.Fatalf("expected BUNDLE_GEMFILE to be %s, got %s", filepath.Join(tempDir, "Gemfile"), envMap["BUNDLE_GEMFILE"])
+			}
+		},
+	}
+
+	ruby := newRubyForDir(tempDir, mockExecutor)
+	if err := ruby.SanityCheck(); err != nil {
+		t.Fatalf("SanityCheck() unexpected error: %v", err)
+	}
+}
+
+func TestRuby_SanityCheck_FailsWhenGemfileMissing(t *testing.T) {
+	tempDir := t.TempDir()
+
+	ruby := newRubyForDir(tempDir, nil)
+	err := ruby.SanityCheck()
+	if err == nil {
+		t.Fatal("SanityCheck() expected error when Gemfile is missing")
+	}
+
+	if !strings.Contains(err.Error(), "gemfile") {
+		t.Fatalf("expected error to mention gemfile, got: %v", err)
+	}
+}
+
+func TestRuby_SanityCheck_FailsWhenBundleInfoFails(t *testing.T) {
+	tempDir := t.TempDir()
+	writeTestFile(t, tempDir, "Gemfile", "source \"https://rubygems.org\"\n\ngem \"datadog-ci\"\n")
+
+	mockExecutor := &mockCommandExecutor{
+		combinedOutput:    []byte("Could not find gem 'datadog-ci'."),
+		combinedOutputErr: &exec.ExitError{},
+	}
+
+	ruby := newRubyForDir(tempDir, mockExecutor)
+	err := ruby.SanityCheck()
+	if err == nil {
+		t.Fatal("SanityCheck() expected error when bundle info fails")
+	}
+
+	if !strings.Contains(err.Error(), "Could not find gem") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRuby_SanityCheck_FailsWhenVersionTooLow(t *testing.T) {
+	tempDir := t.TempDir()
+	writeTestFile(t, tempDir, "Gemfile", "source \"https://rubygems.org\"\n\ngem \"datadog-ci\"\n")
+
+	mockExecutor := &mockCommandExecutor{
+		combinedOutput: []byte("  * datadog-ci (1.22.5)\n"),
+	}
+
+	ruby := newRubyForDir(tempDir, mockExecutor)
+	err := ruby.SanityCheck()
+	if err == nil {
+		t.Fatal("SanityCheck() expected error for outdated datadog-ci version")
+	}
+
+	if !strings.Contains(err.Error(), "1.22.5") {
+		t.Fatalf("expected error to mention detected version, got: %v", err)
+	}
+}
+
+func TestRuby_SanityCheck_FailsWhenVersionNotFound(t *testing.T) {
+	tempDir := t.TempDir()
+	writeTestFile(t, tempDir, "Gemfile", "source \"https://rubygems.org\"\n\ngem \"datadog-ci\"\n")
+
+	mockExecutor := &mockCommandExecutor{
+		combinedOutput: []byte("  * datadog-ci\n    Summary: Datadog Test Optimization for your ruby application\n"),
+	}
+
+	ruby := newRubyForDir(tempDir, mockExecutor)
+	err := ruby.SanityCheck()
+	if err == nil {
+		t.Fatal("SanityCheck() expected error when version is not found")
+	}
+
+	if !strings.Contains(err.Error(), "unable to find datadog-ci gem version") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -140,8 +258,7 @@ func TestRuby_CreateTagsMap_Success(t *testing.T) {
 	}
 
 	mockExecutor := &mockCommandExecutor{
-		err: nil,
-		onExecution: func(name string, args []string) {
+		onRun: func(name string, args []string, envMap map[string]string) {
 			// Verify the command is correct
 			if name != "bundle" {
 				t.Errorf("expected command to be 'bundle', got %q", name)
@@ -209,9 +326,8 @@ func TestRuby_CreateTagsMap_CommandFailure(t *testing.T) {
 	}()
 
 	mockExecutor := &mockCommandExecutor{
-		output: []byte("bundle: command not found"),
-		err:    &exec.ExitError{},
-		onExecution: func(name string, args []string) {
+		runErr: &exec.ExitError{},
+		onRun: func(name string, args []string, envMap map[string]string) {
 			// Command fails, don't create any file
 		},
 	}
@@ -243,8 +359,7 @@ func TestRuby_CreateTagsMap_InvalidJSON(t *testing.T) {
 
 	invalidJSON := `{invalid json}`
 	mockExecutor := &mockCommandExecutor{
-		err: nil,
-		onExecution: func(name string, args []string) {
+		onRun: func(name string, args []string, envMap map[string]string) {
 			// Get the temp file path from the last argument
 			if len(args) < 5 {
 				t.Errorf("expected at least 5 args, got %d", len(args))

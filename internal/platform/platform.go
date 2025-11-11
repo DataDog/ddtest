@@ -11,6 +11,7 @@ type Platform interface {
 	Name() string
 	CreateTagsMap() (map[string]string, error)
 	DetectFramework() (framework.Framework, error)
+	SanityCheck() error
 }
 
 // PlatformDetector defines interface for detecting platforms - needed to allow mocking in tests
@@ -33,6 +34,10 @@ func DetectPlatform() (Platform, error) {
 		platform = NewRuby()
 	default:
 		return nil, fmt.Errorf("unsupported platform: %s", platformName)
+	}
+
+	if err := platform.SanityCheck(); err != nil {
+		return nil, fmt.Errorf("sanity check failed for platform %s: %w", platform.Name(), err)
 	}
 
 	return platform, nil

@@ -41,6 +41,7 @@ type MockPlatform struct {
 	TagsErr      error
 	Framework    framework.Framework
 	FrameworkErr error
+	SanityErr    error
 }
 
 func (m *MockPlatform) Name() string {
@@ -53,6 +54,10 @@ func (m *MockPlatform) CreateTagsMap() (map[string]string, error) {
 
 func (m *MockPlatform) DetectFramework() (framework.Framework, error) {
 	return m.Framework, m.FrameworkErr
+}
+
+func (m *MockPlatform) SanityCheck() error {
+	return m.SanityErr
 }
 
 // MockFramework mocks a testing framework
