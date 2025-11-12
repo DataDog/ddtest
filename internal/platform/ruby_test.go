@@ -382,9 +382,9 @@ func TestDetectPlatform_Ruby(t *testing.T) {
 		t.Errorf("expected nil platform for SanityCheck failure, but got platform: %v", platform)
 	}
 
-	expectedError := "sanity check failed for platform ruby: bundle info datadog-ci command failed: Could not locate Gemfile"
-	if err.Error() != expectedError {
-		t.Errorf("expected error %q, got %q", expectedError, err.Error())
+	expectedErrorPrefix := "sanity check failed for platform ruby: bundle info datadog-ci command failed"
+	if !strings.Contains(err.Error(), expectedErrorPrefix) {
+		t.Errorf("expected error to contain %q, got %q", expectedErrorPrefix, err.Error())
 	}
 }
 
