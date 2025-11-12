@@ -19,6 +19,11 @@ import (
 //go:embed scripts/ruby_env.rb
 var rubyEnvScript string
 
+const (
+	requiredGemName       = "datadog-ci"
+	requiredGemMinVersion = "1.23.0"
+)
+
 type Ruby struct {
 	executor ext.CommandExecutor
 }
@@ -84,9 +89,6 @@ func (r *Ruby) DetectFramework() (framework.Framework, error) {
 }
 
 func (r *Ruby) SanityCheck() error {
-	requiredGemName := "datadog-ci"
-	minimumGemVersion := "1.23.0"
-
 	args := []string{"info", requiredGemName}
 	output, err := r.executor.CombinedOutput(context.Background(), "bundle", args, nil)
 	if err != nil {
@@ -97,7 +99,7 @@ func (r *Ruby) SanityCheck() error {
 		return fmt.Errorf("bundle info datadog-ci command failed: %s", message)
 	}
 
-	requiredVersion, err := version.Parse(minimumGemVersion)
+	requiredVersion, err := version.Parse(requiredGemMinVersion)
 	if err != nil {
 		return err
 	}
