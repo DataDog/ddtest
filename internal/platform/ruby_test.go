@@ -14,23 +14,25 @@ import (
 )
 
 type mockCommandExecutor struct {
-	output      []byte
-	err         error
-	onExecution func(name string, args []string)
+	runErr            error
+	combinedOutput    []byte
+	combinedOutputErr error
+	onRun             func(name string, args []string, envMap map[string]string)
+	onCombinedOutput  func(name string, args []string, envMap map[string]string)
 }
 
 func (m *mockCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
-	if m.onExecution != nil {
-		m.onExecution(name, args)
+	if m.onCombinedOutput != nil {
+		m.onCombinedOutput(name, args, envMap)
 	}
-	return m.output, m.err
+	return m.combinedOutput, m.combinedOutputErr
 }
 
 func (m *mockCommandExecutor) Run(ctx context.Context, name string, args []string, envMap map[string]string) error {
-	if m.onExecution != nil {
-		m.onExecution(name, args)
+	if m.onRun != nil {
+		m.onRun(name, args, envMap)
 	}
-	return m.err
+	return m.runErr
 }
 
 func TestRuby_Name(t *testing.T) {
@@ -40,6 +42,78 @@ func TestRuby_Name(t *testing.T) {
 
 	if actual != expected {
 		t.Errorf("expected %q, got %q", expected, actual)
+	}
+}
+
+func TestRuby_SanityCheck_Passes(t *testing.T) {
+	mockExecutor := &mockCommandExecutor{
+		combinedOutput: []byte("  * datadog-ci (1.23.1 9d54a15)\n"),
+		onCombinedOutput: func(name string, args []string, envMap map[string]string) {
+			if name != "bundle" {
+				t.Fatalf("expected command 'bundle', got %q", name)
+			}
+			if len(args) != 2 || args[0] != "info" || args[1] != "datadog-ci" {
+				t.Fatalf("unexpected args: %v", args)
+			}
+		},
+	}
+
+	ruby := NewRuby()
+	ruby.executor = mockExecutor
+	if err := ruby.SanityCheck(); err != nil {
+		t.Fatalf("SanityCheck() unexpected error: %v", err)
+	}
+}
+
+func TestRuby_SanityCheck_FailsWhenBundleInfoFails(t *testing.T) {
+	mockExecutor := &mockCommandExecutor{
+		combinedOutput:    []byte("Could not find gem 'datadog-ci'."),
+		combinedOutputErr: &exec.ExitError{},
+	}
+
+	ruby := NewRuby()
+	ruby.executor = mockExecutor
+	err := ruby.SanityCheck()
+	if err == nil {
+		t.Fatal("SanityCheck() expected error when bundle info fails")
+	}
+
+	if !strings.Contains(err.Error(), "Could not find gem") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRuby_SanityCheck_FailsWhenVersionTooLow(t *testing.T) {
+	mockExecutor := &mockCommandExecutor{
+		combinedOutput: []byte("  * datadog-ci (1.22.5)\n"),
+	}
+
+	ruby := NewRuby()
+	ruby.executor = mockExecutor
+	err := ruby.SanityCheck()
+	if err == nil {
+		t.Fatal("SanityCheck() expected error for outdated datadog-ci version")
+	}
+
+	if !strings.Contains(err.Error(), "1.22.5") {
+		t.Fatalf("expected error to mention detected version, got: %v", err)
+	}
+}
+
+func TestRuby_SanityCheck_FailsWhenVersionNotFound(t *testing.T) {
+	mockExecutor := &mockCommandExecutor{
+		combinedOutput: []byte("  * datadog-ci\n    Summary: Datadog Test Optimization for your ruby application\n"),
+	}
+
+	ruby := NewRuby()
+	ruby.executor = mockExecutor
+	err := ruby.SanityCheck()
+	if err == nil {
+		t.Fatal("SanityCheck() expected error when version is not found")
+	}
+
+	if !strings.Contains(err.Error(), "unable to find datadog-ci gem version") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -140,8 +214,7 @@ func TestRuby_CreateTagsMap_Success(t *testing.T) {
 	}
 
 	mockExecutor := &mockCommandExecutor{
-		err: nil,
-		onExecution: func(name string, args []string) {
+		onRun: func(name string, args []string, envMap map[string]string) {
 			// Verify the command is correct
 			if name != "bundle" {
 				t.Errorf("expected command to be 'bundle', got %q", name)
@@ -209,9 +282,8 @@ func TestRuby_CreateTagsMap_CommandFailure(t *testing.T) {
 	}()
 
 	mockExecutor := &mockCommandExecutor{
-		output: []byte("bundle: command not found"),
-		err:    &exec.ExitError{},
-		onExecution: func(name string, args []string) {
+		runErr: &exec.ExitError{},
+		onRun: func(name string, args []string, envMap map[string]string) {
 			// Command fails, don't create any file
 		},
 	}
@@ -243,8 +315,7 @@ func TestRuby_CreateTagsMap_InvalidJSON(t *testing.T) {
 
 	invalidJSON := `{invalid json}`
 	mockExecutor := &mockCommandExecutor{
-		err: nil,
-		onExecution: func(name string, args []string) {
+		onRun: func(name string, args []string, envMap map[string]string) {
 			// Get the temp file path from the last argument
 			if len(args) < 5 {
 				t.Errorf("expected at least 5 args, got %d", len(args))
@@ -305,24 +376,15 @@ func TestDetectPlatform_Ruby(t *testing.T) {
 	viper.Set("platform", "ruby")
 
 	platform, err := DetectPlatform()
-	if err != nil {
-		t.Fatalf("DetectPlatform failed: %v", err)
+	if err == nil {
+		t.Errorf("expected error for SanityCheck failure, but got platform: %v", platform)
+	} else if platform != nil {
+		t.Errorf("expected nil platform for SanityCheck failure, but got platform: %v", platform)
 	}
 
-	if platform == nil {
-		t.Error("expected platform to be non-nil")
-	}
-
-	if platform.Name() != "ruby" {
-		t.Errorf("expected platform name to be 'ruby', got %q", platform.Name())
-	}
-
-	// Verify it's the correct type and has executor
-	rubyPlatform, ok := platform.(*Ruby)
-	if !ok {
-		t.Error("expected platform to be *Ruby")
-	} else if rubyPlatform.executor == nil {
-		t.Error("expected Ruby platform to have executor")
+	expectedErrorPrefix := "sanity check failed for platform ruby: bundle info datadog-ci command failed"
+	if !strings.Contains(err.Error(), expectedErrorPrefix) {
+		t.Errorf("expected error to contain %q, got %q", expectedErrorPrefix, err.Error())
 	}
 }
 
