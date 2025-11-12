@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -22,17 +21,11 @@ var rubyEnvScript string
 
 type Ruby struct {
 	executor ext.CommandExecutor
-	rootDir  string
 }
 
 func NewRuby() *Ruby {
-	wd, err := os.Getwd()
-	if err != nil {
-		wd = "."
-	}
 	return &Ruby{
 		executor: &ext.DefaultCommandExecutor{},
-		rootDir:  wd,
 	}
 }
 
@@ -91,26 +84,11 @@ func (r *Ruby) DetectFramework() (framework.Framework, error) {
 }
 
 func (r *Ruby) SanityCheck() error {
-	const (
-		requiredGemName   = "datadog-ci"
-		minimumGemVersion = "1.23.0"
-		gemfileName       = "Gemfile"
-	)
-
-	gemfilePath := r.resolvePath(gemfileName)
-	if _, err := os.Stat(gemfilePath); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("gemfile not found at %s", gemfilePath)
-		}
-		return fmt.Errorf("failed to stat gemfile at %s: %w", gemfilePath, err)
-	}
+	requiredGemName := "datadog-ci"
+	minimumGemVersion := "1.23.0"
 
 	args := []string{"info", requiredGemName}
-	env := map[string]string{
-		"BUNDLE_GEMFILE": gemfilePath,
-	}
-
-	output, err := r.executor.CombinedOutput(context.Background(), "bundle", args, env)
+	output, err := r.executor.CombinedOutput(context.Background(), "bundle", args, nil)
 	if err != nil {
 		message := strings.TrimSpace(string(output))
 		if message == "" {
@@ -136,17 +114,8 @@ func (r *Ruby) SanityCheck() error {
 	return nil
 }
 
-func (r *Ruby) resolvePath(name string) string {
-	root := r.rootDir
-	if root == "" || root == "." {
-		return name
-	}
-	return filepath.Join(root, name)
-}
-
 func parseBundlerInfoVersion(output, gemName string) (version.Version, error) {
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
+	for line := range strings.SplitSeq(output, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue

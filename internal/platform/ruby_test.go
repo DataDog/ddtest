@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
-	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/viper"
 )
@@ -37,23 +35,6 @@ func (m *mockCommandExecutor) Run(ctx context.Context, name string, args []strin
 	return m.runErr
 }
 
-func writeTestFile(t *testing.T, dir, name, content string) {
-	t.Helper()
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("failed to write %s: %v", path, err)
-	}
-}
-
-func newRubyForDir(dir string, executor ext.CommandExecutor) *Ruby {
-	ruby := NewRuby()
-	ruby.rootDir = dir
-	if executor != nil {
-		ruby.executor = executor
-	}
-	return ruby
-}
-
 func TestRuby_Name(t *testing.T) {
 	ruby := NewRuby()
 	expected := "ruby"
@@ -65,9 +46,6 @@ func TestRuby_Name(t *testing.T) {
 }
 
 func TestRuby_SanityCheck_Passes(t *testing.T) {
-	tempDir := t.TempDir()
-	writeTestFile(t, tempDir, "Gemfile", "source \"https://rubygems.org\"\n\ngem \"datadog-ci\"\n")
-
 	mockExecutor := &mockCommandExecutor{
 		combinedOutput: []byte("  * datadog-ci (1.23.1 9d54a15)\n"),
 		onCombinedOutput: func(name string, args []string, envMap map[string]string) {
@@ -77,42 +55,24 @@ func TestRuby_SanityCheck_Passes(t *testing.T) {
 			if len(args) != 2 || args[0] != "info" || args[1] != "datadog-ci" {
 				t.Fatalf("unexpected args: %v", args)
 			}
-			if envMap["BUNDLE_GEMFILE"] != filepath.Join(tempDir, "Gemfile") {
-				t.Fatalf("expected BUNDLE_GEMFILE to be %s, got %s", filepath.Join(tempDir, "Gemfile"), envMap["BUNDLE_GEMFILE"])
-			}
 		},
 	}
 
-	ruby := newRubyForDir(tempDir, mockExecutor)
+	ruby := NewRuby()
+	ruby.executor = mockExecutor
 	if err := ruby.SanityCheck(); err != nil {
 		t.Fatalf("SanityCheck() unexpected error: %v", err)
 	}
 }
 
-func TestRuby_SanityCheck_FailsWhenGemfileMissing(t *testing.T) {
-	tempDir := t.TempDir()
-
-	ruby := newRubyForDir(tempDir, nil)
-	err := ruby.SanityCheck()
-	if err == nil {
-		t.Fatal("SanityCheck() expected error when Gemfile is missing")
-	}
-
-	if !strings.Contains(err.Error(), "gemfile") {
-		t.Fatalf("expected error to mention gemfile, got: %v", err)
-	}
-}
-
 func TestRuby_SanityCheck_FailsWhenBundleInfoFails(t *testing.T) {
-	tempDir := t.TempDir()
-	writeTestFile(t, tempDir, "Gemfile", "source \"https://rubygems.org\"\n\ngem \"datadog-ci\"\n")
-
 	mockExecutor := &mockCommandExecutor{
 		combinedOutput:    []byte("Could not find gem 'datadog-ci'."),
 		combinedOutputErr: &exec.ExitError{},
 	}
 
-	ruby := newRubyForDir(tempDir, mockExecutor)
+	ruby := NewRuby()
+	ruby.executor = mockExecutor
 	err := ruby.SanityCheck()
 	if err == nil {
 		t.Fatal("SanityCheck() expected error when bundle info fails")
@@ -124,14 +84,12 @@ func TestRuby_SanityCheck_FailsWhenBundleInfoFails(t *testing.T) {
 }
 
 func TestRuby_SanityCheck_FailsWhenVersionTooLow(t *testing.T) {
-	tempDir := t.TempDir()
-	writeTestFile(t, tempDir, "Gemfile", "source \"https://rubygems.org\"\n\ngem \"datadog-ci\"\n")
-
 	mockExecutor := &mockCommandExecutor{
 		combinedOutput: []byte("  * datadog-ci (1.22.5)\n"),
 	}
 
-	ruby := newRubyForDir(tempDir, mockExecutor)
+	ruby := NewRuby()
+	ruby.executor = mockExecutor
 	err := ruby.SanityCheck()
 	if err == nil {
 		t.Fatal("SanityCheck() expected error for outdated datadog-ci version")
@@ -143,14 +101,12 @@ func TestRuby_SanityCheck_FailsWhenVersionTooLow(t *testing.T) {
 }
 
 func TestRuby_SanityCheck_FailsWhenVersionNotFound(t *testing.T) {
-	tempDir := t.TempDir()
-	writeTestFile(t, tempDir, "Gemfile", "source \"https://rubygems.org\"\n\ngem \"datadog-ci\"\n")
-
 	mockExecutor := &mockCommandExecutor{
 		combinedOutput: []byte("  * datadog-ci\n    Summary: Datadog Test Optimization for your ruby application\n"),
 	}
 
-	ruby := newRubyForDir(tempDir, mockExecutor)
+	ruby := NewRuby()
+	ruby.executor = mockExecutor
 	err := ruby.SanityCheck()
 	if err == nil {
 		t.Fatal("SanityCheck() expected error when version is not found")
@@ -420,24 +376,15 @@ func TestDetectPlatform_Ruby(t *testing.T) {
 	viper.Set("platform", "ruby")
 
 	platform, err := DetectPlatform()
-	if err != nil {
-		t.Fatalf("DetectPlatform failed: %v", err)
+	if err == nil {
+		t.Errorf("expected error for SanityCheck failure, but got platform: %v", platform)
+	} else if platform != nil {
+		t.Errorf("expected nil platform for SanityCheck failure, but got platform: %v", platform)
 	}
 
-	if platform == nil {
-		t.Error("expected platform to be non-nil")
-	}
-
-	if platform.Name() != "ruby" {
-		t.Errorf("expected platform name to be 'ruby', got %q", platform.Name())
-	}
-
-	// Verify it's the correct type and has executor
-	rubyPlatform, ok := platform.(*Ruby)
-	if !ok {
-		t.Error("expected platform to be *Ruby")
-	} else if rubyPlatform.executor == nil {
-		t.Error("expected Ruby platform to have executor")
+	expectedError := "sanity check failed for platform ruby: bundle info datadog-ci command failed: Could not locate Gemfile"
+	if err.Error() != expectedError {
+		t.Errorf("expected error %q, got %q", expectedError, err.Error())
 	}
 }
 
