@@ -395,7 +395,8 @@ Use your CI’s dependency cache. For GitHub Actions + Bundler:
 
 #### Disable seeds/fixtures during discovery
 
-Discovery (planning) does not execute tests; you don't have to setup DB, migrations, or seeds. Set a flag only for the planning job (determined by `DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1`) and guard DB‑related code.
+Discovery (planning) does not execute tests; you don't have to setup DB, migrations, or seeds.
+You could guard DB‑related code when running in discovery mode determined by `DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1`.
 
 RSpec / Rails example:
 
