@@ -419,7 +419,7 @@ end
 ```
 
 After these changes the tests discovery will be faster and will not fail when database is not present.
-You can skip database setup for planning step completely and save a lot of time.l
+You can skip database setup for planning step completely and save a lot of time.
 
 ### Minitest support in non-rails projects
 
