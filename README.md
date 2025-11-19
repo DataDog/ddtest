@@ -14,7 +14,33 @@ DDTest requires that your project is correctly set up for Datadog Test Optimizat
 
 ## Installation
 
-### From Source
+### Download precompiled binary
+
+This project uses GitHub Releases for distribution.
+
+Use `gh` command line tool to download the latest release in GitHub actions:
+
+```yaml
+- name: Download ddtest binary
+  run: |
+    gh release download --repo DataDog/ddtest --pattern "ddtest-linux-amd64" --dir bin
+    mv bin/ddtest-linux-amd64 bin/ddtest
+    chmod +x bin/ddtest
+  env:
+    GH_TOKEN: ${{ github.token }}
+```
+
+...or use `curl`:
+
+```bash
+mkdir -p bin
+curl -fsSL https://github.com/DataDog/ddtest/releases/latest/download/ddtest-linux-amd64 -o bin/ddtest
+chmod +x bin/ddtest
+```
+
+The list of available precompiled artifacts is on [release page](https://github.com/DataDog/ddtest/releases/latest).
+
+### Compile from source
 
 ```bash
 git clone https://github.com/DataDog/ddtest.git
@@ -153,7 +179,7 @@ ddtest run --command "bundle exec my-wrapper --profile"
 
 If your command contains `--`, DDTest will emit a warning and automatically remove the `--` separator and anything after it.
 
-### GitHub Actions integration example
+## GitHub Actions example usage
 
 The plan job computes the split and emits a matrix; the run job downloads the artifacts and executes only its slice.
 
@@ -233,6 +259,194 @@ matrix={"include":[{"ci_node_index":0},{"ci_node_index":1},{"ci_node_index":2}]}
 ```
 
 You can cat it to `$GITHUB_OUTPUT` to make it available for the test job.
+
+## Circle CI example usage
+
+In `.circleci/config.yml`:
+
+```yaml
+version: '2.1'
+setup: true
+
+orbs:
+  node: circleci/node@7
+  ruby: circleci/ruby@2
+  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@1
+  continuation: circleci/continuation@0.2.0
+
+jobs:
+  plan:
+    docker:
+      - image: cimg/ruby:3.4.1-node
+    environment:
+      RAILS_ENV: test
+      DD_ENV: ci
+      BUNDLE_PATH: vendor/bundle
+      BUNDLE_JOBS: 4
+    steps:
+      - checkout
+      - ruby/install-deps
+      - node/install-packages:
+          pkg-manager: yarn
+      - test-optimization-circleci-orb/autoinstrument:
+          languages: ruby
+          site: datadoghq.eu
+      - run:
+          name: Download ddtest latest release
+          command: |
+            set -euo pipefail
+            mkdir -p bin
+            curl -fsSL https://github.com/DataDog/ddtest/releases/latest/download/ddtest-linux-amd64 -o bin/ddtest
+            chmod +x bin/ddtest
+      - run:
+          name: Plan tests with ddtest
+          command: ./bin/ddtest plan --platform ruby --framework minitest
+          environment:
+            DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM: 1
+            DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM: 4
+      - save_cache:
+          key: ddtest-plan-{{ .Revision }}
+          paths:
+            - .testoptimization
+            - bin/ddtest
+      - run:
+          name: Determine parallelism
+          command: |
+            set -euo pipefail
+            cat .testoptimization/parallel-runners.txt
+            desired=$(cat .testoptimization/parallel-runners.txt 2>/dev/null || echo 1)
+            if ! echo "${desired}" | grep -Eq '^[0-9]+$'; then
+              echo "Invalid parallelism value '${desired}', defaulting to 1"
+              desired=1
+            fi
+            if [ "${desired}" -lt 1 ]; then
+              echo "Parallelism must be at least 1, defaulting to 1"
+              desired=1
+            fi
+            printf '{"parallelism": %s}\n' "${desired}" > pipeline-parameters.json
+            cat pipeline-parameters.json
+      - continuation/continue:
+          configuration_path: .circleci/test.yml
+          parameters: pipeline-parameters.json
+
+workflows:
+  plan:
+    jobs:
+      - plan
+```
+
+In `.circleci/test.yml`:
+
+```yaml
+version: '2.1'
+
+parameters:
+  parallelism:
+    type: integer
+    default: 1
+
+orbs:
+  node: circleci/node@7
+  ruby: circleci/ruby@2
+  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@1
+
+jobs:
+  test:
+    parallelism: << pipeline.parameters.parallelism >>
+    docker:
+      - image: cimg/ruby:3.4.1-browsers
+    environment:
+      RAILS_ENV: test
+      DD_ENV: ci
+      BUNDLE_PATH: vendor/bundle
+      BUNDLE_JOBS: 4
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - ddtest-plan-{{ .Revision }}
+      - ruby/install-deps
+      - node/install-packages:
+          pkg-manager: yarn
+      - test-optimization-circleci-orb/autoinstrument:
+          languages: ruby
+          site: datadoghq.eu
+      - run:
+          name: Precompile assets
+          command: |
+            bundle exec rails assets:precompile
+      - run:
+          name: Run tests with ddtest
+          command: |
+            NODE_INDEX=${CIRCLE_NODE_INDEX:-0}
+            export DD_TEST_SESSION_NAME="quotes-rails-ci-${NODE_INDEX}"
+            export DD_TEST_OPTIMIZATION_RUNNER_CI_NODE="${NODE_INDEX}"
+            ./bin/ddtest run --platform ruby --framework minitest
+
+workflows:
+  test:
+    jobs:
+      - test
+```
+
+## Best practices
+
+### Optimize planning step
+
+When using ddtest, you need to add a planning step that performs test discovery (e.g., RSpec dry‑run) before execution. This stage adds overhead: you can optimize it with the practices below.
+
+#### Preinstall system dependencies via Docker
+
+Bake OS packages (e.g., ImageMagick) into a base image so they’re cached in layers and not installed on every run.
+
+```dockerfile
+# ci/Dockerfile.test
+FROM ruby:3.3
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive \
+    apt-get install -y --no-install-recommends imagemagick libpq-dev \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+```
+
+#### Cache project dependencies
+
+Use your CI’s dependency cache. For GitHub Actions + Bundler:
+
+```yaml
+- uses: ruby/setup-ruby@v1
+  with:
+    ruby-version: 3.3
+    bundler-cache: true
+```
+
+#### Disable seeds/fixtures during discovery
+
+Discovery (planning) does not execute tests; you don't have to setup DB, migrations, or seeds.
+You could guard DB‑related code when running in discovery mode determined by `DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1`.
+
+RSpec / Rails example:
+
+```ruby
+
+# in seeds.rb
+return if ENV["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"].present?
+# your seeds here
+
+# in rails_helper.rb
+ActiveRecord::Migration.maintain_test_schema! unless ENV["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"].present?
+
+RSpec.configure do |config|
+  unless ENV["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"]
+    config.use_transactional_fixtures = true
+  else
+    config.use_transactional_fixtures = false
+    config.use_active_record = false
+  end
+end
+```
+
+After these changes the tests discovery will be faster and will not fail when database is not present.
+You can skip database setup for planning step completely and save a lot of time.
 
 ### Minitest support in non-rails projects
 
