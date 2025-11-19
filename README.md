@@ -14,7 +14,33 @@ DDTest requires that your project is correctly set up for Datadog Test Optimizat
 
 ## Installation
 
-### From Source
+### Download precompiled binary
+
+This project uses GitHub Releases for distribution.
+
+Use `gh` command line tool to download the latest release in GitHub actions:
+
+```yaml
+- name: Download ddtest binary
+  run: |
+    gh release download --repo DataDog/ddtest --pattern "ddtest-linux-amd64" --dir bin
+    mv bin/ddtest-linux-amd64 bin/ddtest
+    chmod +x bin/ddtest
+  env:
+    GH_TOKEN: ${{ github.token }}
+```
+
+...or use `curl`:
+
+```bash
+mkdir -p bin
+curl -fsSL https://github.com/DataDog/ddtest/releases/latest/download/ddtest-linux-amd64 -o bin/ddtest
+chmod +x bin/ddtest
+```
+
+The list of available precompiled artifacts is on [release page](https://github.com/DataDog/ddtest/releases/latest).
+
+### Compile from source
 
 ```bash
 git clone https://github.com/DataDog/ddtest.git
