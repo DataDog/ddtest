@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"time"
@@ -22,6 +23,8 @@ type Framework interface {
 	DiscoverTests(ctx context.Context) ([]testoptimization.Test, error)
 	DiscoverTestFiles() ([]string, error)
 	RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error
+	SetPlatformEnv(platformEnv map[string]string)
+	GetPlatformEnv() map[string]string
 }
 
 // cleanupDiscoveryFile removes the discovery file, ignoring "not exists" errors
@@ -84,4 +87,13 @@ func globTestFiles(pattern string) ([]string, error) {
 	}
 
 	return matches, nil
+}
+
+// mergeEnvMaps merges platform env with additional env vars.
+// Values in additional take precedence over platform values.
+func mergeEnvMaps(platformEnv, additional map[string]string) map[string]string {
+	result := make(map[string]string)
+	maps.Copy(result, platformEnv)
+	maps.Copy(result, additional)
+	return result
 }

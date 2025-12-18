@@ -412,3 +412,73 @@ func TestDetectPlatform_Unsupported(t *testing.T) {
 		t.Errorf("expected error %q, got %q", expectedError, err.Error())
 	}
 }
+
+func TestRuby_GetPlatformEnv_SetsRUBYOPT_WhenNotSet(t *testing.T) {
+	// Ensure RUBYOPT is not set
+	originalValue, existed := os.LookupEnv("RUBYOPT")
+	if existed {
+		_ = os.Unsetenv("RUBYOPT")
+		defer func() { _ = os.Setenv("RUBYOPT", originalValue) }()
+	}
+
+	ruby := NewRuby()
+	envMap := ruby.GetPlatformEnv()
+
+	expectedValue := "-rbundler/setup -rdatadog/ci/auto_instrument"
+	if envMap["RUBYOPT"] != expectedValue {
+		t.Errorf("expected RUBYOPT to be %q, got %q", expectedValue, envMap["RUBYOPT"])
+	}
+}
+
+func TestRuby_GetPlatformEnv_DoesNotOverride_WhenAlreadySet(t *testing.T) {
+	// Set RUBYOPT to a custom value
+	originalValue, existed := os.LookupEnv("RUBYOPT")
+	customValue := "-rbundler/setup -rsome_other_require"
+	_ = os.Setenv("RUBYOPT", customValue)
+	defer func() {
+		if existed {
+			_ = os.Setenv("RUBYOPT", originalValue)
+		} else {
+			_ = os.Unsetenv("RUBYOPT")
+		}
+	}()
+
+	ruby := NewRuby()
+	envMap := ruby.GetPlatformEnv()
+
+	// When RUBYOPT is already set, GetPlatformEnv should not include it
+	if _, exists := envMap["RUBYOPT"]; exists {
+		t.Error("expected RUBYOPT to not be in envMap when it's already set in environment")
+	}
+}
+
+func TestRuby_DetectFramework_SetsPlatformEnv(t *testing.T) {
+	// Ensure RUBYOPT is not set so we can verify it gets set
+	originalValue, existed := os.LookupEnv("RUBYOPT")
+	if existed {
+		_ = os.Unsetenv("RUBYOPT")
+		defer func() { _ = os.Setenv("RUBYOPT", originalValue) }()
+	}
+
+	viper.Reset()
+	viper.Set("framework", "rspec")
+	defer viper.Reset()
+
+	ruby := NewRuby()
+	fw, err := ruby.DetectFramework()
+
+	if err != nil {
+		t.Fatalf("DetectFramework failed: %v", err)
+	}
+
+	if fw == nil {
+		t.Fatal("expected framework to be non-nil")
+	}
+
+	// Verify the framework received the correct platform env
+	frameworkPlatformEnv := fw.GetPlatformEnv()
+	expectedRubyOpt := "-rbundler/setup -rdatadog/ci/auto_instrument"
+	if frameworkPlatformEnv["RUBYOPT"] != expectedRubyOpt {
+		t.Errorf("expected framework platformEnv RUBYOPT=%q, got %q", expectedRubyOpt, frameworkPlatformEnv["RUBYOPT"])
+	}
+}

@@ -20,13 +20,23 @@ const (
 type Minitest struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
+	platformEnv     map[string]string
 }
 
 func NewMinitest() *Minitest {
 	return &Minitest{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
+		platformEnv:     make(map[string]string),
 	}
+}
+
+func (m *Minitest) SetPlatformEnv(platformEnv map[string]string) {
+	m.platformEnv = platformEnv
+}
+
+func (m *Minitest) GetPlatformEnv() map[string]string {
+	return m.platformEnv
 }
 
 func (m *Minitest) Name() string {
@@ -37,16 +47,15 @@ func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, 
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
 	pattern := m.testPattern()
-	name, args, envMap, isRails := m.createDiscoveryCommand()
+	name, args, discoveryEnv, isRails := m.createDiscoveryCommand()
 	slog.Debug("Using test discovery pattern", "pattern", pattern)
 	if isRails {
 		args = append(args, pattern)
 	} else {
-		if envMap == nil {
-			envMap = make(map[string]string)
-		}
-		envMap["TEST"] = pattern
+		discoveryEnv["TEST"] = pattern
 	}
+
+	envMap := mergeEnvMaps(m.platformEnv, discoveryEnv)
 
 	slog.Info("Discovering tests with command", "command", name, "args", args)
 	_, err := executeDiscoveryCommand(ctx, m.executor, name, args, envMap, m.Name())
@@ -98,7 +107,8 @@ func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[
 		}
 	}
 
-	return m.executor.Run(ctx, command, args, envMap)
+	mergedEnv := mergeEnvMaps(m.platformEnv, envMap)
+	return m.executor.Run(ctx, command, args, mergedEnv)
 }
 
 // isRailsApplication determines if the current project is a Rails application

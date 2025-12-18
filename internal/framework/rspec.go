@@ -19,13 +19,23 @@ const (
 type RSpec struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
+	platformEnv     map[string]string
 }
 
 func NewRSpec() *RSpec {
 	return &RSpec{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
+		platformEnv:     make(map[string]string),
 	}
+}
+
+func (r *RSpec) SetPlatformEnv(platformEnv map[string]string) {
+	r.platformEnv = platformEnv
+}
+
+func (r *RSpec) GetPlatformEnv() map[string]string {
+	return r.platformEnv
 }
 
 func (r *RSpec) Name() string {
@@ -37,8 +47,10 @@ func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, err
 
 	pattern := r.testPattern()
 
-	name, args, envMap := r.createDiscoveryCommand()
+	name, args, discoveryEnv := r.createDiscoveryCommand()
 	args = append(args, "--pattern", pattern)
+
+	envMap := mergeEnvMaps(r.platformEnv, discoveryEnv)
 
 	slog.Info("Using test discovery pattern", "pattern", pattern)
 	slog.Info("Discovering tests with command", "command", name, "args", args)
@@ -79,7 +91,8 @@ func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[str
 	slog.Info("Running tests with command", "command", command, "args", args)
 	args = append(args, testFiles...)
 
-	return r.executor.Run(ctx, command, args, envMap)
+	mergedEnv := mergeEnvMaps(r.platformEnv, envMap)
+	return r.executor.Run(ctx, command, args, mergedEnv)
 }
 
 // getRSpecCommand determines whether to use bin/rspec or bundle exec rspec
@@ -105,9 +118,9 @@ func (r *RSpec) createDiscoveryCommand() (string, []string, map[string]string) {
 	command, baseArgs := r.getRSpecCommand()
 	args := append(baseArgs, "--format", "progress", "--dry-run")
 
-	envMap := map[string]string{
+	discoveryEnv := map[string]string{
 		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED": "1",
 		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE":    TestsDiscoveryFilePath,
 	}
-	return command, args, envMap
+	return command, args, discoveryEnv
 }
