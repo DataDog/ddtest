@@ -213,15 +213,19 @@ func TestRSpec_createDiscoveryCommand(t *testing.T) {
 }
 
 func TestRSpec_createDiscoveryCommand_WithOverride(t *testing.T) {
+	// Even with command override, discovery should always use bundle exec rspec
 	rspec := &RSpec{commandOverride: []string{"./custom-rspec", "--profile"}}
 
 	command, args := rspec.createDiscoveryCommand()
 
-	if command != "./custom-rspec" {
-		t.Errorf("expected command to be './custom-rspec', got %q", command)
+	if command != "bundle" {
+		t.Errorf("expected command to be 'bundle', got %q", command)
 	}
-	if !slices.Contains(args, "--profile") {
-		t.Errorf("expected args to contain '--profile', got %v", args)
+	if !slices.Contains(args, "exec") {
+		t.Errorf("expected args to contain 'exec', got %v", args)
+	}
+	if !slices.Contains(args, "rspec") {
+		t.Errorf("expected args to contain 'rspec', got %v", args)
 	}
 	if !slices.Contains(args, "--dry-run") {
 		t.Error("expected args to contain '--dry-run'")
@@ -485,7 +489,8 @@ func TestRSpec_RunTestsWithEnvMap(t *testing.T) {
 }
 
 func TestRSpec_createDiscoveryCommand_WithBinRSpec(t *testing.T) {
-	// Create a temporary bin/rspec file
+	// Even with bin/rspec present, discovery should always use bundle exec rspec
+	// because bin/rspec is often heavily customized and cannot be used for discovery
 	if err := os.MkdirAll("bin", 0755); err != nil {
 		t.Fatalf("failed to create bin directory: %v", err)
 	}
@@ -501,12 +506,16 @@ func TestRSpec_createDiscoveryCommand_WithBinRSpec(t *testing.T) {
 	rspec := NewRSpec()
 	command, args := rspec.createDiscoveryCommand()
 
-	// Verify command uses bin/rspec
-	if command != "bin/rspec" {
-		t.Errorf("expected command to use bin/rspec, got %q", command)
+	// Verify discovery always uses bundle exec rspec
+	if command != "bundle" {
+		t.Errorf("expected command to use bundle, got %q", command)
 	}
-
-	// Verify necessary arguments are present
+	if !slices.Contains(args, "exec") {
+		t.Error("expected 'exec' argument")
+	}
+	if !slices.Contains(args, "rspec") {
+		t.Error("expected 'rspec' argument")
+	}
 	if !slices.Contains(args, "--format") {
 		t.Error("expected --format argument")
 	}

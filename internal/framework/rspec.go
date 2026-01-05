@@ -116,7 +116,6 @@ func (r *RSpec) getRSpecCommand() (string, []string) {
 }
 
 func (r *RSpec) createDiscoveryCommand() (string, []string) {
-	command, baseArgs := r.getRSpecCommand()
-	args := append(baseArgs, "--format", "progress", "--dry-run")
-	return command, args
+	// Always use bundle exec rspec for discovery, as bin/rspec is often customized
+	return "bundle", []string{"exec", "rspec", "--format", "progress", "--dry-run"}
 }
