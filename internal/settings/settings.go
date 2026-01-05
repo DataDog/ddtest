@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -17,6 +18,7 @@ type Config struct {
 	CiNode         int    `mapstructure:"ci_node"`
 	Command        string `mapstructure:"command"`
 	TestsLocation  string `mapstructure:"tests_location"`
+	RuntimeTags    string `mapstructure:"runtime_tags"`
 }
 
 var (
@@ -46,6 +48,7 @@ func setDefaults() {
 	viper.SetDefault("ci_node", -1)
 	viper.SetDefault("command", "")
 	viper.SetDefault("tests_location", "")
+	viper.SetDefault("runtime_tags", "")
 }
 
 func Get() *Config {
@@ -85,6 +88,26 @@ func GetCommand() string {
 
 func GetTestsLocation() string {
 	return Get().TestsLocation
+}
+
+func GetRuntimeTags() string {
+	return Get().RuntimeTags
+}
+
+// GetRuntimeTagsMap parses the runtime_tags setting as JSON and returns it as a map.
+// Returns nil if runtime_tags is empty or not set.
+// Returns an error if the JSON is invalid.
+func GetRuntimeTagsMap() (map[string]string, error) {
+	runtimeTags := GetRuntimeTags()
+	if runtimeTags == "" {
+		return nil, nil
+	}
+
+	var tagsMap map[string]string
+	if err := json.Unmarshal([]byte(runtimeTags), &tagsMap); err != nil {
+		return nil, fmt.Errorf("failed to parse runtime-tags as JSON: %w. The runtime tags value was: %s", err, runtimeTags)
+	}
+	return tagsMap, nil
 }
 
 // GetWorkerEnvMap parses the worker_env setting and returns it as a map

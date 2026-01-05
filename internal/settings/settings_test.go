@@ -43,6 +43,9 @@ func TestInit(t *testing.T) {
 	if config.TestsLocation != "" {
 		t.Errorf("expected default tests_location to be empty, got %q", config.TestsLocation)
 	}
+	if config.RuntimeTags != "" {
+		t.Errorf("expected default runtime_tags to be empty, got %q", config.RuntimeTags)
+	}
 }
 
 func TestSetDefaults(t *testing.T) {
@@ -73,6 +76,9 @@ func TestSetDefaults(t *testing.T) {
 	}
 	if viper.GetString("tests_location") != "" {
 		t.Errorf("expected default tests_location to be empty, got %q", viper.GetString("tests_location"))
+	}
+	if viper.GetString("runtime_tags") != "" {
+		t.Errorf("expected default runtime_tags to be empty, got %q", viper.GetString("runtime_tags"))
 	}
 }
 
@@ -144,6 +150,7 @@ func TestEnvironmentVariables(t *testing.T) {
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE", "5")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND", "bundle exec rspec")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", "spec/**/*_spec.rb")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS", `{"os.platform":"linux","runtime.version":"3.2.0"}`)
 	defer func() {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK")
@@ -153,6 +160,7 @@ func TestEnvironmentVariables(t *testing.T) {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS")
 	}()
 
 	Init()
@@ -180,6 +188,9 @@ func TestEnvironmentVariables(t *testing.T) {
 	}
 	if config.TestsLocation != "spec/**/*_spec.rb" {
 		t.Errorf("expected tests_location from env var to be 'spec/**/*_spec.rb', got %q", config.TestsLocation)
+	}
+	if config.RuntimeTags != `{"os.platform":"linux","runtime.version":"3.2.0"}` {
+		t.Errorf("expected runtime_tags from env var to be JSON string, got %q", config.RuntimeTags)
 	}
 }
 
@@ -267,6 +278,84 @@ func TestGetTestsLocation(t *testing.T) {
 	if testsLocation != "spec/**/*_spec.rb" {
 		t.Errorf("expected tests_location to be 'spec/**/*_spec.rb', got %q", testsLocation)
 	}
+}
+
+func TestGetRuntimeTags(t *testing.T) {
+	config = nil
+	viper.Reset()
+
+	runtimeTags := GetRuntimeTags()
+	if runtimeTags != "" {
+		t.Errorf("expected runtime_tags to be empty by default, got %q", runtimeTags)
+	}
+
+	config = &Config{RuntimeTags: `{"os.platform":"linux","runtime.version":"3.2.0"}`}
+	runtimeTags = GetRuntimeTags()
+	if runtimeTags != `{"os.platform":"linux","runtime.version":"3.2.0"}` {
+		t.Errorf("expected runtime_tags to be JSON string, got %q", runtimeTags)
+	}
+}
+
+func TestGetRuntimeTagsMap(t *testing.T) {
+	t.Run("empty runtime tags", func(t *testing.T) {
+		config = &Config{RuntimeTags: ""}
+		result, err := GetRuntimeTagsMap()
+
+		if err != nil {
+			t.Errorf("expected no error for empty runtime_tags, got %v", err)
+		}
+		if result != nil {
+			t.Errorf("expected nil for empty runtime_tags, got %v", result)
+		}
+	})
+
+	t.Run("valid JSON", func(t *testing.T) {
+		config = &Config{RuntimeTags: `{"os.platform":"linux","runtime.version":"3.2.0","language":"ruby"}`}
+		result, err := GetRuntimeTagsMap()
+
+		if err != nil {
+			t.Errorf("expected no error for valid JSON, got %v", err)
+		}
+
+		expected := map[string]string{
+			"os.platform":     "linux",
+			"runtime.version": "3.2.0",
+			"language":        "ruby",
+		}
+
+		if len(result) != 3 {
+			t.Errorf("expected 3 entries, got %d", len(result))
+		}
+		for k, v := range expected {
+			if result[k] != v {
+				t.Errorf("expected %s=%s, got %s=%s", k, v, k, result[k])
+			}
+		}
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		config = &Config{RuntimeTags: `{invalid json}`}
+		result, err := GetRuntimeTagsMap()
+
+		if err == nil {
+			t.Error("expected error for invalid JSON")
+		}
+		if result != nil {
+			t.Errorf("expected nil result for invalid JSON, got %v", result)
+		}
+	})
+
+	t.Run("single key-value pair", func(t *testing.T) {
+		config = &Config{RuntimeTags: `{"os.platform":"darwin"}`}
+		result, err := GetRuntimeTagsMap()
+
+		if err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+		if len(result) != 1 || result["os.platform"] != "darwin" {
+			t.Errorf("expected {os.platform: darwin}, got %v", result)
+		}
+	})
 }
 
 func TestGetCiNode(t *testing.T) {

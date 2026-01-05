@@ -59,6 +59,7 @@ func init() {
 	rootCmd.PersistentFlags().String("worker-env", "", "Worker environment configuration")
 	rootCmd.PersistentFlags().String("command", "", "Test command that ddtest should wrap")
 	rootCmd.PersistentFlags().String("tests-location", "", "Glob pattern used to discover test files")
+	rootCmd.PersistentFlags().String("runtime-tags", "", "JSON string to override runtime tags (e.g. '{\"os.platform\":\"linux\",\"runtime.version\":\"3.2.0\"}')")
 	if err := viper.BindPFlag("platform", rootCmd.PersistentFlags().Lookup("platform")); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding platform flag: %v\n", err)
 		os.Exit(1)
@@ -85,6 +86,10 @@ func init() {
 	}
 	if err := viper.BindPFlag("tests_location", rootCmd.PersistentFlags().Lookup("tests-location")); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding tests-location flag: %v\n", err)
+		os.Exit(1)
+	}
+	if err := viper.BindPFlag("runtime_tags", rootCmd.PersistentFlags().Lookup("runtime-tags")); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding runtime-tags flag: %v\n", err)
 		os.Exit(1)
 	}
 

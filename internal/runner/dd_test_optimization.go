@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 	"golang.org/x/sync/errgroup"
 )
@@ -16,12 +17,22 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 		return fmt.Errorf("failed to detect platform: %w", err)
 	}
 
-	tags, err := detectedPlatform.CreateTagsMap()
+	// Check if runtime tags override is provided
+	tags, err := settings.GetRuntimeTagsMap()
 	if err != nil {
-		return fmt.Errorf("failed to create platform tags: %w", err)
+		return fmt.Errorf("failed to parse runtime tags override: %w", err)
 	}
 
-	slog.Info("Preparing test optimization data", "runtimeTags", tags, "platform", detectedPlatform.Name())
+	if tags != nil {
+		slog.Info("Using runtime tags override from --runtime-tags", "runtimeTags", tags)
+	} else {
+		// Use platform-detected tags
+		tags, err = detectedPlatform.CreateTagsMap()
+		if err != nil {
+			return fmt.Errorf("failed to create platform tags: %w", err)
+		}
+		slog.Info("Preparing test optimization data", "runtimeTags", tags, "platform", detectedPlatform.Name())
+	}
 
 	// Detect framework once to avoid duplicate work
 	framework, err := detectedPlatform.DetectFramework()

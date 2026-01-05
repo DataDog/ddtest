@@ -142,16 +142,17 @@ In CI‑node mode, DDTest also fans out across local CPUs on that node and furth
 
 ### Settings (flags and environment variables)
 
-| CLI flag            | Environment variable                          |    Default | What it does                                                                                                                                                                   |
-| ------------------- | --------------------------------------------- | ---------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--platform`        | `DD_TEST_OPTIMIZATION_RUNNER_PLATFORM`        |     `ruby` | Language/platform (currently supported values: `ruby`).                                                                                                                        |
-| `--framework`       | `DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK`       |    `rspec` | Test framework (currently supported values: `rspec`, `minitest`).                                                                                                              |
-| `--min-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM` | vCPU count | Minimum workers to use for the split.                                                                                                                                          |
-| `--max-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM` | vCPU count | Maximum workers to use for the split.                                                                                                                                          |
-|                     | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE`         | `-1` (off) | Restrict this run to the slice assigned to node **N** (0‑indexed). Also parallelizes within the node across its CPUs.                                                          |
-| `--worker-env`      | `DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV`      |       `""` | Template env vars per local worker (e.g., isolate DBs): `--worker-env "DATABASE_NAME_TEST=app_test{{nodeIndex}}"`.                                                             |
-| `--command`         | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND`         |       `""` | Override the default test command used by the framework. When provided, takes precedence over auto-detection (e.g., `--command "bundle exec custom-rspec"`).                   |
-| `--tests-location`  | `DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION`  |       `""` | Custom glob pattern to discover test files (e.g., `--tests-location "custom/spec/**/*_spec.rb"`). Defaults to `spec/**/*_spec.rb` for RSpec, `test/**/*_test.rb` for Minitest. |
+| CLI flag            | Environment variable                          |    Default | What it does                                                                                                                                                                                             |
+| ------------------- | --------------------------------------------- | ---------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--platform`        | `DD_TEST_OPTIMIZATION_RUNNER_PLATFORM`        |     `ruby` | Language/platform (currently supported values: `ruby`).                                                                                                                                                  |
+| `--framework`       | `DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK`       |    `rspec` | Test framework (currently supported values: `rspec`, `minitest`).                                                                                                                                        |
+| `--min-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM` | vCPU count | Minimum workers to use for the split.                                                                                                                                                                    |
+| `--max-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM` | vCPU count | Maximum workers to use for the split.                                                                                                                                                                    |
+|                     | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE`         | `-1` (off) | Restrict this run to the slice assigned to node **N** (0‑indexed). Also parallelizes within the node across its CPUs.                                                                                    |
+| `--worker-env`      | `DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV`      |       `""` | Template env vars per local worker (e.g., isolate DBs): `--worker-env "DATABASE_NAME_TEST=app_test{{nodeIndex}}"`.                                                                                       |
+| `--command`         | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND`         |       `""` | Override the default test command used by the framework. When provided, takes precedence over auto-detection (e.g., `--command "bundle exec custom-rspec"`).                                             |
+| `--tests-location`  | `DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION`  |       `""` | Custom glob pattern to discover test files (e.g., `--tests-location "custom/spec/**/*_spec.rb"`). Defaults to `spec/**/*_spec.rb` for RSpec, `test/**/*_test.rb` for Minitest.                           |
+| `--runtime-tags`    | `DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS`    |       `""` | JSON string to override runtime tags used to fetch skippable tests. Useful for local development on a different OS than CI (e.g., `--runtime-tags '{"os.platform":"linux","runtime.version":"3.2.0"}'`). |
 
 #### Note about the `--command` flag
 
@@ -462,6 +463,59 @@ Rake::TestTask.new(:test) do |test|
   test.test_files = ENV["TEST_FILES"] ? ENV["TEST_FILES"].split : ["test/**/*.rb"]
 end
 ```
+
+## Running tests locally with CI's skippable tests
+
+When using Test Impact Analysis, skippable tests are scoped by runtime environment (OS, architecture, language version). This means tests skipped in your Linux CI won't automatically be skipped on your macOS development machine because the runtime tags differ.
+
+The `--runtime-tags` option lets you override your local runtime tags to match your CI environment, enabling you to benefit from Test Impact Analysis locally without re-running your entire test suite.
+
+### How to use
+
+1. **Find your CI's runtime tags in Datadog**
+
+   Open any test run from your CI in [Datadog Test Optimization](https://app.datadoghq.com/ci/test-runs). In the test details panel, look for the `os` and `runtime` sections:
+
+   ![Runtime tags in Datadog](docs/images/runtime-tags-datadog.png)
+
+   Note the following tags:
+
+   - `os.architecture` (e.g., `x86_64`)
+   - `os.platform` (e.g., `linux`)
+   - `os.version` (e.g., `6.8.0-aws`)
+   - `runtime.name` (e.g., `ruby`)
+   - `runtime.version` (e.g., `3.3.0`)
+
+2. **Create the runtime tags JSON**
+
+   Build a JSON object with these tags:
+
+   ```json
+   {
+     "os.architecture": "x86_64",
+     "os.platform": "linux",
+     "os.version": "6.8.0-aws",
+     "runtime.name": "ruby",
+     "runtime.version": "3.3.0"
+   }
+   ```
+
+3. **Run ddtest with the override**
+
+   Pass the JSON as a single-line string:
+
+   ```bash
+   ddtest run --runtime-tags '{"os.architecture":"x86_64","os.platform":"linux","os.version":"6.8.0-aws","runtime.name":"ruby","runtime.version":"3.3.0"}'
+   ```
+
+   Or use an environment variable (useful for shell aliases):
+
+   ```bash
+   export DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS='{"os.architecture":"x86_64","os.platform":"linux","os.version":"6.8.0-aws","runtime.name":"ruby","runtime.version":"3.3.0"}'
+   ddtest run
+   ```
+
+> **Note:** Test Impact Analysis works on committed changes. Make sure to commit your changes before running ddtest to see accurate skippable tests.
 
 ## Development
 
