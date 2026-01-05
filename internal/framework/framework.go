@@ -97,3 +97,16 @@ func mergeEnvMaps(platformEnv, additional map[string]string) map[string]string {
 	maps.Copy(result, additional)
 	return result
 }
+
+// BaseDiscoveryEnv returns environment variables required for all test discovery processes.
+// These env vars ensure the test framework runs in discovery mode without requiring
+// actual Datadog credentials or agent connectivity.
+func BaseDiscoveryEnv() map[string]string {
+	return map[string]string{
+		"DD_CIVISIBILITY_ENABLED":                "1",
+		"DD_CIVISIBILITY_AGENTLESS_ENABLED":      "true",
+		"DD_API_KEY":                             "dummy_key",
+		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED": "1",
+		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE":    TestsDiscoveryFilePath,
+	}
+}

@@ -47,15 +47,17 @@ func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, 
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
 	pattern := m.testPattern()
-	name, args, discoveryEnv, isRails := m.createDiscoveryCommand()
+	name, args, isRails := m.createDiscoveryCommand()
 	slog.Debug("Using test discovery pattern", "pattern", pattern)
+
+	// Merge env maps: platform env -> base discovery env
+	envMap := mergeEnvMaps(m.platformEnv, BaseDiscoveryEnv())
+
 	if isRails {
 		args = append(args, pattern)
 	} else {
-		discoveryEnv["TEST"] = pattern
+		envMap["TEST"] = pattern
 	}
-
-	envMap := mergeEnvMaps(m.platformEnv, discoveryEnv)
 
 	slog.Info("Discovering tests with command", "command", name, "args", args)
 	_, err := executeDiscoveryCommand(ctx, m.executor, name, args, envMap, m.Name())
@@ -173,12 +175,7 @@ func (m *Minitest) getMinitestCommand() (string, []string, bool) {
 	return "bundle", []string{"exec", "rake", "test"}, false
 }
 
-func (m *Minitest) createDiscoveryCommand() (string, []string, map[string]string, bool) {
+func (m *Minitest) createDiscoveryCommand() (string, []string, bool) {
 	command, args, isRails := m.getMinitestCommand()
-
-	envMap := map[string]string{
-		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED": "1",
-		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE":    TestsDiscoveryFilePath,
-	}
-	return command, args, envMap, isRails
+	return command, args, isRails
 }

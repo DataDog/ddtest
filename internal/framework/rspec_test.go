@@ -190,7 +190,7 @@ func TestRSpec_createDiscoveryCommand(t *testing.T) {
 	_ = os.RemoveAll("bin")
 
 	rspec := NewRSpec()
-	command, args, envMap := rspec.createDiscoveryCommand()
+	command, args := rspec.createDiscoveryCommand()
 
 	// Verify command contains necessary arguments
 	if !slices.Contains(args, "--format") {
@@ -210,20 +210,12 @@ func TestRSpec_createDiscoveryCommand(t *testing.T) {
 	if !slices.Contains(args, "rspec") {
 		t.Errorf("expected 'rspec' in arguments, got: %v", args)
 	}
-
-	// Verify environment variables
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
-		t.Error("expected DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1 in envMap")
-	}
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"] != TestsDiscoveryFilePath {
-		t.Errorf("expected DD_TEST_OPTIMIZATION_DISCOVERY_FILE=%q in envMap, got %q", TestsDiscoveryFilePath, envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"])
-	}
 }
 
 func TestRSpec_createDiscoveryCommand_WithOverride(t *testing.T) {
 	rspec := &RSpec{commandOverride: []string{"./custom-rspec", "--profile"}}
 
-	command, args, envMap := rspec.createDiscoveryCommand()
+	command, args := rspec.createDiscoveryCommand()
 
 	if command != "./custom-rspec" {
 		t.Errorf("expected command to be './custom-rspec', got %q", command)
@@ -233,9 +225,6 @@ func TestRSpec_createDiscoveryCommand_WithOverride(t *testing.T) {
 	}
 	if !slices.Contains(args, "--dry-run") {
 		t.Error("expected args to contain '--dry-run'")
-	}
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
-		t.Error("expected discovery env map to be set")
 	}
 }
 
@@ -510,7 +499,7 @@ func TestRSpec_createDiscoveryCommand_WithBinRSpec(t *testing.T) {
 	}
 
 	rspec := NewRSpec()
-	command, args, _ := rspec.createDiscoveryCommand()
+	command, args := rspec.createDiscoveryCommand()
 
 	// Verify command uses bin/rspec
 	if command != "bin/rspec" {
@@ -1117,8 +1106,19 @@ func TestRSpec_DiscoverTests_UsesPlatformEnv(t *testing.T) {
 		t.Errorf("expected RUBYOPT to be %q, got %q", platformEnv["RUBYOPT"], mockExecutor.combinedOutputEnvMap["RUBYOPT"])
 	}
 
-	// Verify discovery-specific env vars are also present
+	// Verify framework-specific discovery env vars are present
 	if mockExecutor.combinedOutputEnvMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
 		t.Error("expected DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED to be set")
+	}
+
+	// Verify base discovery env vars are present
+	if mockExecutor.combinedOutputEnvMap["DD_CIVISIBILITY_ENABLED"] != "1" {
+		t.Error("expected DD_CIVISIBILITY_ENABLED to be set")
+	}
+	if mockExecutor.combinedOutputEnvMap["DD_CIVISIBILITY_AGENTLESS_ENABLED"] != "true" {
+		t.Error("expected DD_CIVISIBILITY_AGENTLESS_ENABLED to be set")
+	}
+	if mockExecutor.combinedOutputEnvMap["DD_API_KEY"] != "dummy_key" {
+		t.Error("expected DD_API_KEY to be set")
 	}
 }

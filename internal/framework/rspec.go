@@ -47,10 +47,11 @@ func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, err
 
 	pattern := r.testPattern()
 
-	name, args, discoveryEnv := r.createDiscoveryCommand()
+	name, args := r.createDiscoveryCommand()
 	args = append(args, "--pattern", pattern)
 
-	envMap := mergeEnvMaps(r.platformEnv, discoveryEnv)
+	// Merge env maps: platform env -> base discovery env
+	envMap := mergeEnvMaps(r.platformEnv, BaseDiscoveryEnv())
 
 	slog.Info("Using test discovery pattern", "pattern", pattern)
 	slog.Info("Discovering tests with command", "command", name, "args", args)
@@ -114,13 +115,8 @@ func (r *RSpec) getRSpecCommand() (string, []string) {
 	return "bundle", []string{"exec", "rspec"}
 }
 
-func (r *RSpec) createDiscoveryCommand() (string, []string, map[string]string) {
+func (r *RSpec) createDiscoveryCommand() (string, []string) {
 	command, baseArgs := r.getRSpecCommand()
 	args := append(baseArgs, "--format", "progress", "--dry-run")
-
-	discoveryEnv := map[string]string{
-		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED": "1",
-		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE":    TestsDiscoveryFilePath,
-	}
-	return command, args, discoveryEnv
+	return command, args
 }

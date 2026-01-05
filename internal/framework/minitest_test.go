@@ -92,7 +92,7 @@ func TestMinitest_createDiscoveryCommand(t *testing.T) {
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	command, args, envMap, isRails := minitest.createDiscoveryCommand()
+	command, args, isRails := minitest.createDiscoveryCommand()
 
 	// Verify command structure: bundle exec rake test (non-Rails)
 	if command != "bundle" {
@@ -109,13 +109,6 @@ func TestMinitest_createDiscoveryCommand(t *testing.T) {
 		}
 	}
 
-	// Verify environment variables
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
-		t.Error("expected DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1 in envMap")
-	}
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"] != TestsDiscoveryFilePath {
-		t.Errorf("expected DD_TEST_OPTIMIZATION_DISCOVERY_FILE=%q in envMap, got %q", TestsDiscoveryFilePath, envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"])
-	}
 	if isRails {
 		t.Error("expected Rails detection to be false for default Minitest discovery")
 	}
@@ -124,16 +117,13 @@ func TestMinitest_createDiscoveryCommand(t *testing.T) {
 func TestMinitest_createDiscoveryCommand_WithOverride(t *testing.T) {
 	mockExecutor := &mockRailsCommandExecutor{isRails: false}
 	minitest := &Minitest{executor: mockExecutor, commandOverride: []string{"./custom-minitest", "--flag"}}
-	command, args, envMap, isRails := minitest.createDiscoveryCommand()
+	command, args, isRails := minitest.createDiscoveryCommand()
 
 	if command != "./custom-minitest" {
 		t.Errorf("expected command to be './custom-minitest', got %q", command)
 	}
 	if len(args) == 0 || args[0] != "--flag" {
 		t.Errorf("expected args to start with '--flag', got %v", args)
-	}
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
-		t.Error("expected discovery env map to include DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED")
 	}
 	if isRails {
 		t.Error("expected Rails detection to be false when override is provided")
@@ -548,7 +538,7 @@ func TestMinitest_createDiscoveryCommand_RailsApplication(t *testing.T) {
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	command, args, envMap, isRails := minitest.createDiscoveryCommand()
+	command, args, isRails := minitest.createDiscoveryCommand()
 
 	// Verify command structure: bundle exec rails test (Rails)
 	if command != "bundle" {
@@ -565,13 +555,6 @@ func TestMinitest_createDiscoveryCommand_RailsApplication(t *testing.T) {
 		}
 	}
 
-	// Verify environment variables
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
-		t.Error("expected DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1 in envMap")
-	}
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"] != TestsDiscoveryFilePath {
-		t.Errorf("expected DD_TEST_OPTIMIZATION_DISCOVERY_FILE=%q in envMap, got %q", TestsDiscoveryFilePath, envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"])
-	}
 	if !isRails {
 		t.Error("expected Rails detection to be true for rails discovery command")
 	}
@@ -1187,7 +1170,7 @@ func TestMinitest_createDiscoveryCommand_RailsApplication_WithBinRails(t *testin
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	command, args, envMap, isRails := minitest.createDiscoveryCommand()
+	command, args, isRails := minitest.createDiscoveryCommand()
 
 	// Verify command structure: bin/rails test (Rails with bin/rails)
 	if command != "bin/rails" {
@@ -1204,13 +1187,6 @@ func TestMinitest_createDiscoveryCommand_RailsApplication_WithBinRails(t *testin
 		}
 	}
 
-	// Verify environment variables
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
-		t.Error("expected DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1 in envMap")
-	}
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"] != TestsDiscoveryFilePath {
-		t.Errorf("expected DD_TEST_OPTIMIZATION_DISCOVERY_FILE=%q in envMap, got %q", TestsDiscoveryFilePath, envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"])
-	}
 	if !isRails {
 		t.Error("expected Rails detection to be true when bin/rails is used for discovery")
 	}
@@ -1401,9 +1377,20 @@ func TestMinitest_DiscoverTests_UsesPlatformEnv(t *testing.T) {
 		t.Errorf("expected RUBYOPT to be %q, got %q", platformEnv["RUBYOPT"], mockExecutor.capturedEnvMap["RUBYOPT"])
 	}
 
-	// Verify discovery-specific env vars are also present
+	// Verify framework-specific discovery env vars are present
 	if mockExecutor.capturedEnvMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
 		t.Error("expected DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED to be set")
+	}
+
+	// Verify base discovery env vars are present
+	if mockExecutor.capturedEnvMap["DD_CIVISIBILITY_ENABLED"] != "1" {
+		t.Error("expected DD_CIVISIBILITY_ENABLED to be set")
+	}
+	if mockExecutor.capturedEnvMap["DD_CIVISIBILITY_AGENTLESS_ENABLED"] != "true" {
+		t.Error("expected DD_CIVISIBILITY_AGENTLESS_ENABLED to be set")
+	}
+	if mockExecutor.capturedEnvMap["DD_API_KEY"] != "dummy_key" {
+		t.Error("expected DD_API_KEY to be set")
 	}
 }
 
