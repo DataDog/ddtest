@@ -89,12 +89,12 @@ func globTestFiles(pattern string) ([]string, error) {
 	return matches, nil
 }
 
-// mergeEnvMaps merges platform env with additional env vars.
-// Values in additional take precedence over platform values.
-func mergeEnvMaps(platformEnv, additional map[string]string) map[string]string {
+// mergeEnvMaps merges base env vars with overrides.
+// Values in overrides take precedence over base values.
+func mergeEnvMaps(base, overrides map[string]string) map[string]string {
 	result := make(map[string]string)
-	maps.Copy(result, platformEnv)
-	maps.Copy(result, additional)
+	maps.Copy(result, base)
+	maps.Copy(result, overrides)
 	return result
 }
 
