@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"time"
@@ -22,6 +23,8 @@ type Framework interface {
 	DiscoverTests(ctx context.Context) ([]testoptimization.Test, error)
 	DiscoverTestFiles() ([]string, error)
 	RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error
+	SetPlatformEnv(platformEnv map[string]string)
+	GetPlatformEnv() map[string]string
 }
 
 // cleanupDiscoveryFile removes the discovery file, ignoring "not exists" errors
@@ -84,4 +87,26 @@ func globTestFiles(pattern string) ([]string, error) {
 	}
 
 	return matches, nil
+}
+
+// mergeEnvMaps merges base env vars with overrides.
+// Values in overrides take precedence over base values.
+func mergeEnvMaps(base, overrides map[string]string) map[string]string {
+	result := make(map[string]string)
+	maps.Copy(result, base)
+	maps.Copy(result, overrides)
+	return result
+}
+
+// BaseDiscoveryEnv returns environment variables required for all test discovery processes.
+// These env vars ensure the test framework runs in discovery mode without requiring
+// actual Datadog credentials or agent connectivity.
+func BaseDiscoveryEnv() map[string]string {
+	return map[string]string{
+		"DD_CIVISIBILITY_ENABLED":                "1",
+		"DD_CIVISIBILITY_AGENTLESS_ENABLED":      "true",
+		"DD_API_KEY":                             "dummy_key",
+		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED": "1",
+		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE":    TestsDiscoveryFilePath,
+	}
 }

@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"strings"
@@ -22,6 +23,8 @@ var rubyEnvScript string
 const (
 	requiredGemName       = "datadog-ci"
 	requiredGemMinVersion = "1.23.0"
+	rubyOptEnvVar         = "RUBYOPT"
+	rubyOptDefaultValue   = "-rbundler/setup -rdatadog/ci/auto_instrument"
 )
 
 type Ruby struct {
@@ -36,6 +39,21 @@ func NewRuby() *Ruby {
 
 func (r *Ruby) Name() string {
 	return "ruby"
+}
+
+// GetPlatformEnv returns environment variables required for Ruby commands.
+// It sets RUBYOPT to auto-instrument with datadog-ci if not already set.
+func (r *Ruby) GetPlatformEnv() map[string]string {
+	envMap := make(map[string]string)
+
+	// Check if RUBYOPT is already set in the environment
+	if _, exists := os.LookupEnv(rubyOptEnvVar); !exists {
+		slog.Debug("Setting RUBYOPT to auto-instrument with datadog-ci", "rubyOpt", rubyOptDefaultValue)
+
+		envMap[rubyOptEnvVar] = rubyOptDefaultValue
+	}
+
+	return envMap
 }
 
 func (r *Ruby) CreateTagsMap() (map[string]string, error) {
@@ -77,15 +95,20 @@ func (r *Ruby) CreateTagsMap() (map[string]string, error) {
 
 func (r *Ruby) DetectFramework() (framework.Framework, error) {
 	frameworkName := settings.GetFramework()
+	platformEnv := r.GetPlatformEnv()
 
+	var fw framework.Framework
 	switch frameworkName {
 	case "rspec":
-		return framework.NewRSpec(), nil
+		fw = framework.NewRSpec()
 	case "minitest":
-		return framework.NewMinitest(), nil
+		fw = framework.NewMinitest()
 	default:
 		return nil, fmt.Errorf("framework '%s' is not supported by platform 'ruby'", frameworkName)
 	}
+
+	fw.SetPlatformEnv(platformEnv)
+	return fw, nil
 }
 
 func (r *Ruby) SanityCheck() error {

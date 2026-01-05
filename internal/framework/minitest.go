@@ -20,13 +20,23 @@ const (
 type Minitest struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
+	platformEnv     map[string]string
 }
 
 func NewMinitest() *Minitest {
 	return &Minitest{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
+		platformEnv:     make(map[string]string),
 	}
+}
+
+func (m *Minitest) SetPlatformEnv(platformEnv map[string]string) {
+	m.platformEnv = platformEnv
+}
+
+func (m *Minitest) GetPlatformEnv() map[string]string {
+	return m.platformEnv
 }
 
 func (m *Minitest) Name() string {
@@ -37,14 +47,15 @@ func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, 
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
 	pattern := m.testPattern()
-	name, args, envMap, isRails := m.createDiscoveryCommand()
+	name, args, isRails := m.createDiscoveryCommand()
 	slog.Debug("Using test discovery pattern", "pattern", pattern)
+
+	// Merge env maps: platform env -> base discovery env
+	envMap := mergeEnvMaps(m.platformEnv, BaseDiscoveryEnv())
+
 	if isRails {
 		args = append(args, pattern)
 	} else {
-		if envMap == nil {
-			envMap = make(map[string]string)
-		}
 		envMap["TEST"] = pattern
 	}
 
@@ -98,7 +109,8 @@ func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[
 		}
 	}
 
-	return m.executor.Run(ctx, command, args, envMap)
+	mergedEnv := mergeEnvMaps(m.platformEnv, envMap)
+	return m.executor.Run(ctx, command, args, mergedEnv)
 }
 
 // isRailsApplication determines if the current project is a Rails application
@@ -163,12 +175,7 @@ func (m *Minitest) getMinitestCommand() (string, []string, bool) {
 	return "bundle", []string{"exec", "rake", "test"}, false
 }
 
-func (m *Minitest) createDiscoveryCommand() (string, []string, map[string]string, bool) {
+func (m *Minitest) createDiscoveryCommand() (string, []string, bool) {
 	command, args, isRails := m.getMinitestCommand()
-
-	envMap := map[string]string{
-		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED": "1",
-		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE":    TestsDiscoveryFilePath,
-	}
-	return command, args, envMap, isRails
+	return command, args, isRails
 }

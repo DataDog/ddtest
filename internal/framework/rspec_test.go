@@ -190,7 +190,7 @@ func TestRSpec_createDiscoveryCommand(t *testing.T) {
 	_ = os.RemoveAll("bin")
 
 	rspec := NewRSpec()
-	command, args, envMap := rspec.createDiscoveryCommand()
+	command, args := rspec.createDiscoveryCommand()
 
 	// Verify command contains necessary arguments
 	if !slices.Contains(args, "--format") {
@@ -210,32 +210,25 @@ func TestRSpec_createDiscoveryCommand(t *testing.T) {
 	if !slices.Contains(args, "rspec") {
 		t.Errorf("expected 'rspec' in arguments, got: %v", args)
 	}
-
-	// Verify environment variables
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
-		t.Error("expected DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1 in envMap")
-	}
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"] != TestsDiscoveryFilePath {
-		t.Errorf("expected DD_TEST_OPTIMIZATION_DISCOVERY_FILE=%q in envMap, got %q", TestsDiscoveryFilePath, envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"])
-	}
 }
 
 func TestRSpec_createDiscoveryCommand_WithOverride(t *testing.T) {
+	// Even with command override, discovery should always use bundle exec rspec
 	rspec := &RSpec{commandOverride: []string{"./custom-rspec", "--profile"}}
 
-	command, args, envMap := rspec.createDiscoveryCommand()
+	command, args := rspec.createDiscoveryCommand()
 
-	if command != "./custom-rspec" {
-		t.Errorf("expected command to be './custom-rspec', got %q", command)
+	if command != "bundle" {
+		t.Errorf("expected command to be 'bundle', got %q", command)
 	}
-	if !slices.Contains(args, "--profile") {
-		t.Errorf("expected args to contain '--profile', got %v", args)
+	if !slices.Contains(args, "exec") {
+		t.Errorf("expected args to contain 'exec', got %v", args)
+	}
+	if !slices.Contains(args, "rspec") {
+		t.Errorf("expected args to contain 'rspec', got %v", args)
 	}
 	if !slices.Contains(args, "--dry-run") {
 		t.Error("expected args to contain '--dry-run'")
-	}
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
-		t.Error("expected discovery env map to be set")
 	}
 }
 
@@ -496,7 +489,8 @@ func TestRSpec_RunTestsWithEnvMap(t *testing.T) {
 }
 
 func TestRSpec_createDiscoveryCommand_WithBinRSpec(t *testing.T) {
-	// Create a temporary bin/rspec file
+	// Even with bin/rspec present, discovery should always use bundle exec rspec
+	// because bin/rspec is often heavily customized and cannot be used for discovery
 	if err := os.MkdirAll("bin", 0755); err != nil {
 		t.Fatalf("failed to create bin directory: %v", err)
 	}
@@ -510,14 +504,18 @@ func TestRSpec_createDiscoveryCommand_WithBinRSpec(t *testing.T) {
 	}
 
 	rspec := NewRSpec()
-	command, args, _ := rspec.createDiscoveryCommand()
+	command, args := rspec.createDiscoveryCommand()
 
-	// Verify command uses bin/rspec
-	if command != "bin/rspec" {
-		t.Errorf("expected command to use bin/rspec, got %q", command)
+	// Verify discovery always uses bundle exec rspec
+	if command != "bundle" {
+		t.Errorf("expected command to use bundle, got %q", command)
 	}
-
-	// Verify necessary arguments are present
+	if !slices.Contains(args, "exec") {
+		t.Error("expected 'exec' argument")
+	}
+	if !slices.Contains(args, "rspec") {
+		t.Error("expected 'rspec' argument")
+	}
 	if !slices.Contains(args, "--format") {
 		t.Error("expected --format argument")
 	}
@@ -904,5 +902,232 @@ func TestRSpec_DiscoverTestFiles_NoSpecDirectory(t *testing.T) {
 	// Should return empty slice when spec directory doesn't exist
 	if len(discoveredFiles) != 0 {
 		t.Errorf("expected 0 test files, got %d", len(discoveredFiles))
+	}
+}
+
+func TestRSpec_SetPlatformEnv(t *testing.T) {
+	rspec := NewRSpec()
+
+	platformEnv := map[string]string{
+		"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument",
+	}
+	rspec.SetPlatformEnv(platformEnv)
+
+	if rspec.platformEnv["RUBYOPT"] != platformEnv["RUBYOPT"] {
+		t.Errorf("expected platformEnv to be set, got %v", rspec.platformEnv)
+	}
+}
+
+func TestRSpec_RunTests_UsesPlatformEnv(t *testing.T) {
+	_ = os.RemoveAll("bin")
+
+	testFiles := []string{"spec/models/user_spec.rb"}
+
+	mockExecutor := &mockCommandExecutor{
+		err: nil,
+	}
+
+	rspec := &RSpec{executor: mockExecutor}
+
+	// Set platform env
+	platformEnv := map[string]string{
+		"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument",
+	}
+	rspec.SetPlatformEnv(platformEnv)
+
+	err := rspec.RunTests(context.Background(), testFiles, nil)
+	if err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	// Verify platform env is passed to executor
+	if mockExecutor.capturedEnvMap["RUBYOPT"] != platformEnv["RUBYOPT"] {
+		t.Errorf("expected RUBYOPT to be %q, got %q", platformEnv["RUBYOPT"], mockExecutor.capturedEnvMap["RUBYOPT"])
+	}
+}
+
+func TestRSpec_RunTests_MergesPlatformEnvWithPassedEnv(t *testing.T) {
+	_ = os.RemoveAll("bin")
+
+	testFiles := []string{"spec/models/user_spec.rb"}
+
+	mockExecutor := &mockCommandExecutor{
+		err: nil,
+	}
+
+	rspec := &RSpec{executor: mockExecutor}
+
+	// Set platform env
+	platformEnv := map[string]string{
+		"RUBYOPT":      "-rbundler/setup -rdatadog/ci/auto_instrument",
+		"PLATFORM_VAR": "platform_value",
+	}
+	rspec.SetPlatformEnv(platformEnv)
+
+	// Pass additional env vars
+	additionalEnv := map[string]string{
+		"RAILS_DB": "my_project_test_1",
+		"TEST_ENV": "rspec",
+	}
+
+	err := rspec.RunTests(context.Background(), testFiles, additionalEnv)
+	if err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	// Verify platform env is present
+	if mockExecutor.capturedEnvMap["RUBYOPT"] != platformEnv["RUBYOPT"] {
+		t.Errorf("expected RUBYOPT to be %q, got %q", platformEnv["RUBYOPT"], mockExecutor.capturedEnvMap["RUBYOPT"])
+	}
+	if mockExecutor.capturedEnvMap["PLATFORM_VAR"] != platformEnv["PLATFORM_VAR"] {
+		t.Errorf("expected PLATFORM_VAR to be %q, got %q", platformEnv["PLATFORM_VAR"], mockExecutor.capturedEnvMap["PLATFORM_VAR"])
+	}
+
+	// Verify additional env is present
+	if mockExecutor.capturedEnvMap["RAILS_DB"] != additionalEnv["RAILS_DB"] {
+		t.Errorf("expected RAILS_DB to be %q, got %q", additionalEnv["RAILS_DB"], mockExecutor.capturedEnvMap["RAILS_DB"])
+	}
+	if mockExecutor.capturedEnvMap["TEST_ENV"] != additionalEnv["TEST_ENV"] {
+		t.Errorf("expected TEST_ENV to be %q, got %q", additionalEnv["TEST_ENV"], mockExecutor.capturedEnvMap["TEST_ENV"])
+	}
+}
+
+func TestRSpec_RunTests_AdditionalEnvOverridesPlatformEnv(t *testing.T) {
+	_ = os.RemoveAll("bin")
+
+	testFiles := []string{"spec/models/user_spec.rb"}
+
+	mockExecutor := &mockCommandExecutor{
+		err: nil,
+	}
+
+	rspec := &RSpec{executor: mockExecutor}
+
+	// Set platform env with a value that will be overridden
+	platformEnv := map[string]string{
+		"RUBYOPT":     "-rbundler/setup -rdatadog/ci/auto_instrument",
+		"SHARED_VAR":  "platform_value",
+		"ANOTHER_VAR": "platform_another",
+	}
+	rspec.SetPlatformEnv(platformEnv)
+
+	// Pass additional env that overrides SHARED_VAR
+	additionalEnv := map[string]string{
+		"SHARED_VAR": "additional_value",
+	}
+
+	err := rspec.RunTests(context.Background(), testFiles, additionalEnv)
+	if err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	// Verify SHARED_VAR is overridden by additional env
+	if mockExecutor.capturedEnvMap["SHARED_VAR"] != additionalEnv["SHARED_VAR"] {
+		t.Errorf("expected SHARED_VAR to be overridden to %q, got %q", additionalEnv["SHARED_VAR"], mockExecutor.capturedEnvMap["SHARED_VAR"])
+	}
+
+	// Verify non-overridden platform env values are preserved
+	if mockExecutor.capturedEnvMap["RUBYOPT"] != platformEnv["RUBYOPT"] {
+		t.Errorf("expected RUBYOPT to be preserved as %q, got %q", platformEnv["RUBYOPT"], mockExecutor.capturedEnvMap["RUBYOPT"])
+	}
+	if mockExecutor.capturedEnvMap["ANOTHER_VAR"] != platformEnv["ANOTHER_VAR"] {
+		t.Errorf("expected ANOTHER_VAR to be preserved as %q, got %q", platformEnv["ANOTHER_VAR"], mockExecutor.capturedEnvMap["ANOTHER_VAR"])
+	}
+}
+
+// mockCommandExecutorWithEnvCapture extends mockCommandExecutor to capture envMap from CombinedOutput
+type mockCommandExecutorWithEnvCapture struct {
+	output               []byte
+	err                  error
+	onExecution          func(name string, args []string)
+	capturedEnvMap       map[string]string
+	combinedOutputEnvMap map[string]string
+}
+
+func (m *mockCommandExecutorWithEnvCapture) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
+	m.combinedOutputEnvMap = envMap
+	if m.onExecution != nil {
+		m.onExecution(name, args)
+	}
+	return m.output, m.err
+}
+
+func (m *mockCommandExecutorWithEnvCapture) Run(ctx context.Context, name string, args []string, envMap map[string]string) error {
+	m.capturedEnvMap = envMap
+	if m.onExecution != nil {
+		m.onExecution(name, args)
+	}
+	return m.err
+}
+
+func TestRSpec_DiscoverTests_UsesPlatformEnv(t *testing.T) {
+	_ = os.RemoveAll("bin")
+
+	if err := os.MkdirAll(filepath.Dir(TestsDiscoveryFilePath), 0755); err != nil {
+		t.Fatalf("failed to create discovery directory: %v", err)
+	}
+	defer cleanupDiscoveryDir()
+
+	testData := []testoptimization.Test{
+		{
+			Name:            "User should be valid",
+			Suite:           "User",
+			Module:          "rspec",
+			Parameters:      "{}",
+			SuiteSourceFile: "spec/models/user_spec.rb",
+		},
+	}
+
+	mockExecutor := &mockCommandExecutorWithEnvCapture{
+		output: []byte("Finished in 0.12345 seconds"),
+		err:    nil,
+		onExecution: func(name string, args []string) {
+			file, err := os.Create(TestsDiscoveryFilePath)
+			if err != nil {
+				t.Fatalf("mock failed to create test file: %v", err)
+			}
+			defer func() { _ = file.Close() }()
+
+			encoder := json.NewEncoder(file)
+			for _, test := range testData {
+				if err := encoder.Encode(test); err != nil {
+					t.Fatalf("mock failed to encode test data: %v", err)
+				}
+			}
+		},
+	}
+
+	rspec := &RSpec{executor: mockExecutor}
+
+	// Set platform env
+	platformEnv := map[string]string{
+		"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument",
+	}
+	rspec.SetPlatformEnv(platformEnv)
+
+	_, err := rspec.DiscoverTests(context.Background())
+	if err != nil {
+		t.Fatalf("DiscoverTests failed: %v", err)
+	}
+
+	// Verify platform env is passed to executor during discovery
+	if mockExecutor.combinedOutputEnvMap["RUBYOPT"] != platformEnv["RUBYOPT"] {
+		t.Errorf("expected RUBYOPT to be %q, got %q", platformEnv["RUBYOPT"], mockExecutor.combinedOutputEnvMap["RUBYOPT"])
+	}
+
+	// Verify framework-specific discovery env vars are present
+	if mockExecutor.combinedOutputEnvMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
+		t.Error("expected DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED to be set")
+	}
+
+	// Verify base discovery env vars are present
+	if mockExecutor.combinedOutputEnvMap["DD_CIVISIBILITY_ENABLED"] != "1" {
+		t.Error("expected DD_CIVISIBILITY_ENABLED to be set")
+	}
+	if mockExecutor.combinedOutputEnvMap["DD_CIVISIBILITY_AGENTLESS_ENABLED"] != "true" {
+		t.Error("expected DD_CIVISIBILITY_AGENTLESS_ENABLED to be set")
+	}
+	if mockExecutor.combinedOutputEnvMap["DD_API_KEY"] != "dummy_key" {
+		t.Error("expected DD_API_KEY to be set")
 	}
 }

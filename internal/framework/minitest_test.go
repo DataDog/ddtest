@@ -92,7 +92,7 @@ func TestMinitest_createDiscoveryCommand(t *testing.T) {
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	command, args, envMap, isRails := minitest.createDiscoveryCommand()
+	command, args, isRails := minitest.createDiscoveryCommand()
 
 	// Verify command structure: bundle exec rake test (non-Rails)
 	if command != "bundle" {
@@ -109,13 +109,6 @@ func TestMinitest_createDiscoveryCommand(t *testing.T) {
 		}
 	}
 
-	// Verify environment variables
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
-		t.Error("expected DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1 in envMap")
-	}
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"] != TestsDiscoveryFilePath {
-		t.Errorf("expected DD_TEST_OPTIMIZATION_DISCOVERY_FILE=%q in envMap, got %q", TestsDiscoveryFilePath, envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"])
-	}
 	if isRails {
 		t.Error("expected Rails detection to be false for default Minitest discovery")
 	}
@@ -124,16 +117,13 @@ func TestMinitest_createDiscoveryCommand(t *testing.T) {
 func TestMinitest_createDiscoveryCommand_WithOverride(t *testing.T) {
 	mockExecutor := &mockRailsCommandExecutor{isRails: false}
 	minitest := &Minitest{executor: mockExecutor, commandOverride: []string{"./custom-minitest", "--flag"}}
-	command, args, envMap, isRails := minitest.createDiscoveryCommand()
+	command, args, isRails := minitest.createDiscoveryCommand()
 
 	if command != "./custom-minitest" {
 		t.Errorf("expected command to be './custom-minitest', got %q", command)
 	}
 	if len(args) == 0 || args[0] != "--flag" {
 		t.Errorf("expected args to start with '--flag', got %v", args)
-	}
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
-		t.Error("expected discovery env map to include DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED")
 	}
 	if isRails {
 		t.Error("expected Rails detection to be false when override is provided")
@@ -548,7 +538,7 @@ func TestMinitest_createDiscoveryCommand_RailsApplication(t *testing.T) {
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	command, args, envMap, isRails := minitest.createDiscoveryCommand()
+	command, args, isRails := minitest.createDiscoveryCommand()
 
 	// Verify command structure: bundle exec rails test (Rails)
 	if command != "bundle" {
@@ -565,13 +555,6 @@ func TestMinitest_createDiscoveryCommand_RailsApplication(t *testing.T) {
 		}
 	}
 
-	// Verify environment variables
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
-		t.Error("expected DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1 in envMap")
-	}
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"] != TestsDiscoveryFilePath {
-		t.Errorf("expected DD_TEST_OPTIMIZATION_DISCOVERY_FILE=%q in envMap, got %q", TestsDiscoveryFilePath, envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"])
-	}
 	if !isRails {
 		t.Error("expected Rails detection to be true for rails discovery command")
 	}
@@ -1187,7 +1170,7 @@ func TestMinitest_createDiscoveryCommand_RailsApplication_WithBinRails(t *testin
 	}
 
 	minitest := &Minitest{executor: mockExecutor}
-	command, args, envMap, isRails := minitest.createDiscoveryCommand()
+	command, args, isRails := minitest.createDiscoveryCommand()
 
 	// Verify command structure: bin/rails test (Rails with bin/rails)
 	if command != "bin/rails" {
@@ -1204,14 +1187,235 @@ func TestMinitest_createDiscoveryCommand_RailsApplication_WithBinRails(t *testin
 		}
 	}
 
-	// Verify environment variables
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
-		t.Error("expected DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED=1 in envMap")
-	}
-	if envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"] != TestsDiscoveryFilePath {
-		t.Errorf("expected DD_TEST_OPTIMIZATION_DISCOVERY_FILE=%q in envMap, got %q", TestsDiscoveryFilePath, envMap["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"])
-	}
 	if !isRails {
 		t.Error("expected Rails detection to be true when bin/rails is used for discovery")
+	}
+}
+
+func TestMinitest_SetPlatformEnv(t *testing.T) {
+	minitest := NewMinitest()
+
+	platformEnv := map[string]string{
+		"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument",
+	}
+	minitest.SetPlatformEnv(platformEnv)
+
+	if minitest.platformEnv["RUBYOPT"] != platformEnv["RUBYOPT"] {
+		t.Errorf("expected platformEnv to be set, got %v", minitest.platformEnv)
+	}
+}
+
+func TestMinitest_RunTests_UsesPlatformEnv(t *testing.T) {
+	testFiles := []string{"test/models/user_test.rb"}
+
+	mockExecutor := &mockRailsCommandExecutor{
+		isRails: false,
+	}
+
+	minitest := &Minitest{executor: mockExecutor}
+
+	// Set platform env
+	platformEnv := map[string]string{
+		"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument",
+	}
+	minitest.SetPlatformEnv(platformEnv)
+
+	err := minitest.RunTests(context.Background(), testFiles, nil)
+	if err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	// Verify platform env is passed to executor
+	if mockExecutor.capturedEnvMap["RUBYOPT"] != platformEnv["RUBYOPT"] {
+		t.Errorf("expected RUBYOPT to be %q, got %q", platformEnv["RUBYOPT"], mockExecutor.capturedEnvMap["RUBYOPT"])
+	}
+}
+
+func TestMinitest_RunTests_MergesPlatformEnvWithPassedEnv(t *testing.T) {
+	testFiles := []string{"test/models/user_test.rb"}
+
+	mockExecutor := &mockRailsCommandExecutor{
+		isRails: false,
+	}
+
+	minitest := &Minitest{executor: mockExecutor}
+
+	// Set platform env
+	platformEnv := map[string]string{
+		"RUBYOPT":      "-rbundler/setup -rdatadog/ci/auto_instrument",
+		"PLATFORM_VAR": "platform_value",
+	}
+	minitest.SetPlatformEnv(platformEnv)
+
+	// Pass additional env vars
+	additionalEnv := map[string]string{
+		"RAILS_DB": "my_project_test_1",
+		"TEST_ENV": "minitest",
+	}
+
+	err := minitest.RunTests(context.Background(), testFiles, additionalEnv)
+	if err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	// Verify platform env is present
+	if mockExecutor.capturedEnvMap["RUBYOPT"] != platformEnv["RUBYOPT"] {
+		t.Errorf("expected RUBYOPT to be %q, got %q", platformEnv["RUBYOPT"], mockExecutor.capturedEnvMap["RUBYOPT"])
+	}
+	if mockExecutor.capturedEnvMap["PLATFORM_VAR"] != platformEnv["PLATFORM_VAR"] {
+		t.Errorf("expected PLATFORM_VAR to be %q, got %q", platformEnv["PLATFORM_VAR"], mockExecutor.capturedEnvMap["PLATFORM_VAR"])
+	}
+
+	// Verify additional env is present
+	if mockExecutor.capturedEnvMap["RAILS_DB"] != additionalEnv["RAILS_DB"] {
+		t.Errorf("expected RAILS_DB to be %q, got %q", additionalEnv["RAILS_DB"], mockExecutor.capturedEnvMap["RAILS_DB"])
+	}
+	if mockExecutor.capturedEnvMap["TEST_ENV"] != additionalEnv["TEST_ENV"] {
+		t.Errorf("expected TEST_ENV to be %q, got %q", additionalEnv["TEST_ENV"], mockExecutor.capturedEnvMap["TEST_ENV"])
+	}
+}
+
+func TestMinitest_RunTests_AdditionalEnvOverridesPlatformEnv(t *testing.T) {
+	testFiles := []string{"test/models/user_test.rb"}
+
+	mockExecutor := &mockRailsCommandExecutor{
+		isRails: false,
+	}
+
+	minitest := &Minitest{executor: mockExecutor}
+
+	// Set platform env with a value that will be overridden
+	platformEnv := map[string]string{
+		"RUBYOPT":     "-rbundler/setup -rdatadog/ci/auto_instrument",
+		"SHARED_VAR":  "platform_value",
+		"ANOTHER_VAR": "platform_another",
+	}
+	minitest.SetPlatformEnv(platformEnv)
+
+	// Pass additional env that overrides SHARED_VAR
+	additionalEnv := map[string]string{
+		"SHARED_VAR": "additional_value",
+	}
+
+	err := minitest.RunTests(context.Background(), testFiles, additionalEnv)
+	if err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	// Verify SHARED_VAR is overridden by additional env
+	if mockExecutor.capturedEnvMap["SHARED_VAR"] != additionalEnv["SHARED_VAR"] {
+		t.Errorf("expected SHARED_VAR to be overridden to %q, got %q", additionalEnv["SHARED_VAR"], mockExecutor.capturedEnvMap["SHARED_VAR"])
+	}
+
+	// Verify non-overridden platform env values are preserved
+	if mockExecutor.capturedEnvMap["RUBYOPT"] != platformEnv["RUBYOPT"] {
+		t.Errorf("expected RUBYOPT to be preserved as %q, got %q", platformEnv["RUBYOPT"], mockExecutor.capturedEnvMap["RUBYOPT"])
+	}
+	if mockExecutor.capturedEnvMap["ANOTHER_VAR"] != platformEnv["ANOTHER_VAR"] {
+		t.Errorf("expected ANOTHER_VAR to be preserved as %q, got %q", platformEnv["ANOTHER_VAR"], mockExecutor.capturedEnvMap["ANOTHER_VAR"])
+	}
+}
+
+func TestMinitest_DiscoverTests_UsesPlatformEnv(t *testing.T) {
+	if err := os.MkdirAll(filepath.Dir(TestsDiscoveryFilePath), 0755); err != nil {
+		t.Fatalf("failed to create discovery directory: %v", err)
+	}
+	defer cleanupDiscoveryDir()
+	if err := os.MkdirAll("test/models", 0755); err != nil {
+		t.Fatalf("failed to create test/models directory: %v", err)
+	}
+	if err := os.WriteFile("test/models/user_test.rb", []byte("# test"), 0644); err != nil {
+		t.Fatalf("failed to create user test file: %v", err)
+	}
+	defer func() {
+		_ = os.RemoveAll("test")
+	}()
+
+	testData := []testoptimization.Test{
+		{
+			Name:            "test_user_validation",
+			Suite:           "UserTest",
+			Module:          "minitest",
+			Parameters:      "{}",
+			SuiteSourceFile: "test/models/user_test.rb",
+		},
+	}
+
+	mockExecutor := &mockRailsCommandExecutor{
+		isRails: false,
+		onTestExecution: func(name string, args []string) {
+			file, err := os.Create(TestsDiscoveryFilePath)
+			if err != nil {
+				t.Fatalf("mock failed to create test file: %v", err)
+			}
+			defer func() { _ = file.Close() }()
+
+			encoder := json.NewEncoder(file)
+			for _, test := range testData {
+				if err := encoder.Encode(test); err != nil {
+					t.Fatalf("mock failed to encode test data: %v", err)
+				}
+			}
+		},
+	}
+
+	minitest := &Minitest{executor: mockExecutor}
+
+	// Set platform env
+	platformEnv := map[string]string{
+		"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument",
+	}
+	minitest.SetPlatformEnv(platformEnv)
+
+	_, err := minitest.DiscoverTests(context.Background())
+	if err != nil {
+		t.Fatalf("DiscoverTests failed: %v", err)
+	}
+
+	// Verify platform env is passed to executor during discovery
+	if mockExecutor.capturedEnvMap["RUBYOPT"] != platformEnv["RUBYOPT"] {
+		t.Errorf("expected RUBYOPT to be %q, got %q", platformEnv["RUBYOPT"], mockExecutor.capturedEnvMap["RUBYOPT"])
+	}
+
+	// Verify framework-specific discovery env vars are present
+	if mockExecutor.capturedEnvMap["DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED"] != "1" {
+		t.Error("expected DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED to be set")
+	}
+
+	// Verify base discovery env vars are present
+	if mockExecutor.capturedEnvMap["DD_CIVISIBILITY_ENABLED"] != "1" {
+		t.Error("expected DD_CIVISIBILITY_ENABLED to be set")
+	}
+	if mockExecutor.capturedEnvMap["DD_CIVISIBILITY_AGENTLESS_ENABLED"] != "true" {
+		t.Error("expected DD_CIVISIBILITY_AGENTLESS_ENABLED to be set")
+	}
+	if mockExecutor.capturedEnvMap["DD_API_KEY"] != "dummy_key" {
+		t.Error("expected DD_API_KEY to be set")
+	}
+}
+
+func TestMinitest_RunTests_RailsApplication_UsesPlatformEnv(t *testing.T) {
+	testFiles := []string{"test/models/user_test.rb"}
+
+	mockExecutor := &mockRailsCommandExecutor{
+		isRails: true,
+	}
+
+	minitest := &Minitest{executor: mockExecutor}
+
+	// Set platform env
+	platformEnv := map[string]string{
+		"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument",
+	}
+	minitest.SetPlatformEnv(platformEnv)
+
+	err := minitest.RunTests(context.Background(), testFiles, nil)
+	if err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	// Verify platform env is passed to executor for Rails
+	if mockExecutor.capturedEnvMap["RUBYOPT"] != platformEnv["RUBYOPT"] {
+		t.Errorf("expected RUBYOPT to be %q, got %q", platformEnv["RUBYOPT"], mockExecutor.capturedEnvMap["RUBYOPT"])
 	}
 }

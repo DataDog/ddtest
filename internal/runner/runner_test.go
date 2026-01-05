@@ -98,6 +98,14 @@ func (m *MockFramework) RunTests(ctx context.Context, testFiles []string, envMap
 	return m.Err
 }
 
+func (m *MockFramework) SetPlatformEnv(platformEnv map[string]string) {
+	// No-op for mock
+}
+
+func (m *MockFramework) GetPlatformEnv() map[string]string {
+	return nil
+}
+
 func (m *MockFramework) GetRunTestsCallsCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
