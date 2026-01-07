@@ -71,13 +71,13 @@ func (c *client) GetKnownTests() (*KnownTestsResponseData, error) {
 	response, err := c.handler.SendRequest(*request)
 
 	if err != nil {
-		return nil, fmt.Errorf("sending known tests request: %s", err.Error())
+		return nil, fmt.Errorf("sending known tests request: %s", err)
 	}
 
 	var responseObject knownTestsResponse
 	err = response.Unmarshal(&responseObject)
 	if err != nil {
-		return nil, fmt.Errorf("unmarshalling known tests response: %s", err.Error())
+		return nil, fmt.Errorf("unmarshalling known tests response: %s", err)
 	}
 
 	return &responseObject.Data.Attributes, nil

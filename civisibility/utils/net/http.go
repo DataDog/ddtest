@@ -100,26 +100,31 @@ type RequestHandler struct {
 // This also permits orchestrion to disable tracing on this client.
 // See https://golang.org/pkg/net/http/#DefaultTransport .
 // Except we use a higher timeout for this
-var defaultHTTPClient = http.Client{
-	Timeout: 45 * time.Second,
-	Transport: &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	},
+var defaultHTTPClient = createNewHTTPClient()
+
+// createNewHTTPClient creates a new HTTP client with custom transport settings.
+func createNewHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 45 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
 }
 
 // NewRequestHandler creates a new RequestHandler with a default HTTP client.
 func NewRequestHandler() *RequestHandler {
 	return &RequestHandler{
-		Client: &defaultHTTPClient,
+		Client: defaultHTTPClient,
 	}
 }
 
@@ -170,8 +175,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 		for _, f := range config.Files {
 			fileNames = append(fileNames, f.FieldName)
 		}
-		slog.Debug("ciVisibilityHttpClient: new request with files", "method", config.Method, "url", config.URL, "attempt", attempt, "maxRetries", config.MaxRetries, "files", fileNames)
-
+		slog.Debug("ciVisibilityHttpClient: new request with files", "method", config.Method, "url", config.URL, "attempt", attempt, "maxRetries", config.MaxRetries, "fileNames", fileNames)
 		req, err = http.NewRequest(config.Method, config.URL, bytes.NewBuffer(body))
 		if err != nil {
 			return true, nil, err
@@ -204,7 +208,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 				strBody = strBody[:4096] + "..." // Truncate for logging
 			}
 		}
-		slog.Debug("ciVisibilityHttpClient: new request with body", "method", config.Method, "url", config.URL, "attempt", attempt, "maxRetries", config.MaxRetries, "compressed", config.Compressed, "format", config.Format, "bodySize", len(serializedBody), "body", strBody)
+		slog.Debug("ciVisibilityHttpClient: new request with body", "method", config.Method, "url", config.URL, "attempt", attempt, "maxRetries", config.MaxRetries, "compressed", config.Compressed, "format", config.Format, "bytes", len(serializedBody), "body", strBody)
 
 		req, err = http.NewRequest(config.Method, config.URL, bytes.NewBuffer(serializedBody))
 		if err != nil {
@@ -246,9 +250,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 		return false, nil, nil
 	}
 	// Close response body
-	defer func() {
-		_ = resp.Body.Close()
-	}()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Capture the status code
 	statusCode := resp.StatusCode
@@ -312,7 +314,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 		}
 	}
 
-	slog.Debug("ciVisibilityHttpClient: response received", "method", config.Method, "url", config.URL, "statusCode", resp.StatusCode, "format", responseFormat, "bodySize", len(responseBody))
+	slog.Debug("ciVisibilityHttpClient: response received", "method", config.Method, "url", config.URL, "statusCode", resp.StatusCode, "format", responseFormat, "bytes", len(responseBody))
 
 	// Determine if we can unmarshal based on status code (2xx)
 	canUnmarshal := statusCode >= 200 && statusCode < 300
@@ -369,26 +371,29 @@ func compressData(data []byte) ([]byte, error) {
 func decompressData(data []byte) ([]byte, error) {
 	reader, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create gzip reader: %s", err.Error())
+		return nil, fmt.Errorf("failed to create gzip reader: %s", err)
 	}
-	defer func() {
-		_ = reader.Close()
-	}()
+	defer func() { _ = reader.Close() }()
 	decompressedData, err := io.ReadAll(reader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decompress data: %s", err.Error())
+		return nil, fmt.Errorf("failed to decompress data: %s", err)
 	}
 	return decompressedData, nil
 }
 
 // exponentialBackoff performs an exponential backoff with retries.
 func exponentialBackoff(retryCount int, initialDelay time.Duration) {
+	time.Sleep(getExponentialBackoffDuration(retryCount, initialDelay))
+}
+
+// getExponentialBackoffDuration calculates the backoff duration based on the retry count and initial delay.
+func getExponentialBackoffDuration(retryCount int, initialDelay time.Duration) time.Duration {
 	maxDelay := 10 * time.Second
 	delay := initialDelay * (1 << uint(retryCount)) // Exponential backoff
 	if delay > maxDelay {
 		delay = maxDelay
 	}
-	time.Sleep(delay)
+	return delay
 }
 
 // prepareContent prepares the content for a FormFile by serializing it if needed.
@@ -407,8 +412,9 @@ func prepareContent(content interface{}, contentType string) ([]byte, error) {
 			return io.ReadAll(reader)
 		}
 		return nil, errors.New("content must be []byte or an io.Reader for octet-stream content type")
+	default:
+		return nil, errors.New("unsupported content type for serialization")
 	}
-	return nil, errors.New("unsupported content type for serialization")
 }
 
 // createMultipartFormData creates a multipart form data request body with the given files.
