@@ -3,9 +3,11 @@ package runner
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
@@ -306,5 +308,188 @@ func TestTestRunner_PrepareTestOptimization_AllTestsSkipped(t *testing.T) {
 
 	if runner.skippablePercentage != 100.0 {
 		t.Errorf("PrepareTestOptimization() should calculate 100%% skippable when all tests are skipped, got %.2f", runner.skippablePercentage)
+	}
+}
+
+func TestTestRunner_PrepareTestOptimization_RuntimeTagsOverride(t *testing.T) {
+	ctx := context.Background()
+
+	// Set runtime tags override via environment variable - only override some tags
+	overrideTags := `{"os.platform":"linux","runtime.version":"3.2.0"}`
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS", overrideTags)
+	defer func() {
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS")
+	}()
+
+	// Reinitialize settings to pick up the environment variable
+	settings.Init()
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+		},
+	}
+
+	// Platform tags should have more tags than the override
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			"os.platform":     "darwin",
+			"os.architecture": "arm64",
+			"runtime.name":    "ruby",
+			"runtime.version": "3.3.0",
+			"language":        "ruby",
+		},
+		Framework: mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{
+		Platform: mockPlatform,
+	}
+
+	mockOptimizationClient := &MockTestOptimizationClient{
+		SkippableTests: map[string]bool{},
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+
+	if err != nil {
+		t.Errorf("PrepareTestOptimization() should not return error, got: %v", err)
+	}
+
+	// Verify optimization client was initialized
+	if !mockOptimizationClient.InitializeCalled {
+		t.Error("PrepareTestOptimization() should initialize optimization client")
+	}
+
+	// Check that override tags replaced the detected values
+	if mockOptimizationClient.Tags["os.platform"] != "linux" {
+		t.Errorf("Expected os.platform to be 'linux' from override, got %q", mockOptimizationClient.Tags["os.platform"])
+	}
+
+	if mockOptimizationClient.Tags["runtime.version"] != "3.2.0" {
+		t.Errorf("Expected runtime.version to be '3.2.0' from override, got %q", mockOptimizationClient.Tags["runtime.version"])
+	}
+
+	// Check that detected tags NOT in override were preserved
+	if mockOptimizationClient.Tags["os.architecture"] != "arm64" {
+		t.Errorf("Expected os.architecture to be 'arm64' from detected tags (not overridden), got %q", mockOptimizationClient.Tags["os.architecture"])
+	}
+
+	if mockOptimizationClient.Tags["runtime.name"] != "ruby" {
+		t.Errorf("Expected runtime.name to be 'ruby' from detected tags (not overridden), got %q", mockOptimizationClient.Tags["runtime.name"])
+	}
+
+	if mockOptimizationClient.Tags["language"] != "ruby" {
+		t.Errorf("Expected language to be 'ruby' from detected tags (not overridden), got %q", mockOptimizationClient.Tags["language"])
+	}
+}
+
+func TestTestRunner_PrepareTestOptimization_RuntimeTagsOverrideInvalidJSON(t *testing.T) {
+	ctx := context.Background()
+
+	// Set invalid JSON as runtime tags override
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS", `{invalid json}`)
+	defer func() {
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS")
+	}()
+
+	// Reinitialize settings to pick up the environment variable
+	settings.Init()
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests:         []testoptimization.Test{},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{
+		Platform: mockPlatform,
+	}
+
+	mockOptimizationClient := &MockTestOptimizationClient{}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+
+	if err == nil {
+		t.Error("PrepareTestOptimization() should return error when runtime tags JSON is invalid")
+	}
+
+	expectedMsg := "failed to parse runtime tags override"
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("PrepareTestOptimization() error should contain '%s', got: %v", expectedMsg, err)
+	}
+
+	// Optimization client should not be initialized when there's a parse error
+	if mockOptimizationClient.InitializeCalled {
+		t.Error("PrepareTestOptimization() should not initialize optimization client when runtime tags JSON is invalid")
+	}
+}
+
+func TestTestRunner_PrepareTestOptimization_NoRuntimeTagsOverride(t *testing.T) {
+	ctx := context.Background()
+
+	// Ensure no runtime tags override is set
+	_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS")
+
+	// Reinitialize settings to ensure clean state
+	settings.Init()
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+		},
+	}
+
+	// Platform tags that should be used when no override is provided
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			"os.platform":     "darwin",
+			"runtime.version": "3.3.0",
+			"language":        "ruby",
+		},
+		Framework: mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{
+		Platform: mockPlatform,
+	}
+
+	mockOptimizationClient := &MockTestOptimizationClient{
+		SkippableTests: map[string]bool{},
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+
+	if err != nil {
+		t.Errorf("PrepareTestOptimization() should not return error, got: %v", err)
+	}
+
+	// Verify optimization client was initialized with platform tags
+	if !mockOptimizationClient.InitializeCalled {
+		t.Error("PrepareTestOptimization() should initialize optimization client")
+	}
+
+	// Check that platform tags were used (not override)
+	if mockOptimizationClient.Tags["os.platform"] != "darwin" {
+		t.Errorf("Expected os.platform to be 'darwin' from platform, got %q", mockOptimizationClient.Tags["os.platform"])
+	}
+
+	if mockOptimizationClient.Tags["runtime.version"] != "3.3.0" {
+		t.Errorf("Expected runtime.version to be '3.3.0' from platform, got %q", mockOptimizationClient.Tags["runtime.version"])
 	}
 }

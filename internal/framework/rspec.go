@@ -3,6 +3,7 @@ package framework
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"os"
 
 	"github.com/DataDog/ddtest/internal/ext"
@@ -51,7 +52,9 @@ func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, err
 	args = append(args, "--pattern", pattern)
 
 	// Merge env maps: platform env -> base discovery env
-	envMap := mergeEnvMaps(r.platformEnv, BaseDiscoveryEnv())
+	envMap := make(map[string]string)
+	maps.Copy(envMap, r.platformEnv)
+	maps.Copy(envMap, BaseDiscoveryEnv())
 
 	slog.Info("Using test discovery pattern", "pattern", pattern)
 	slog.Info("Discovering tests with command", "command", name, "args", args)
@@ -92,7 +95,9 @@ func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[str
 	slog.Info("Running tests with command", "command", command, "args", args)
 	args = append(args, testFiles...)
 
-	mergedEnv := mergeEnvMaps(r.platformEnv, envMap)
+	mergedEnv := make(map[string]string)
+	maps.Copy(mergedEnv, r.platformEnv)
+	maps.Copy(mergedEnv, envMap)
 	return r.executor.Run(ctx, command, args, mergedEnv)
 }
 
