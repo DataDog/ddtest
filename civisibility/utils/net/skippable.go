@@ -80,13 +80,13 @@ func (c *client) GetSkippableTests() (correlationID string, skippables map[strin
 	response, err := c.handler.SendRequest(*request)
 
 	if err != nil {
-		return "", nil, fmt.Errorf("sending skippable tests request: %s", err.Error())
+		return "", nil, fmt.Errorf("sending skippable tests request: %s", err)
 	}
 
 	var responseObject skippableResponse
 	err = response.Unmarshal(&responseObject)
 	if err != nil {
-		return "", nil, fmt.Errorf("unmarshalling skippable tests response: %s", err.Error())
+		return "", nil, fmt.Errorf("unmarshalling skippable tests response: %s", err)
 	}
 
 	skippableTestsMap := map[string]map[string][]SkippableResponseDataAttributes{}

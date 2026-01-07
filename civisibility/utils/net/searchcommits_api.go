@@ -48,7 +48,6 @@ func (c *client) GetCommits(localCommits []string) ([]string, error) {
 	}
 
 	request := c.getPostRequestConfig(searchCommitsURLPath, body)
-
 	response, err := c.handler.SendRequest(*request)
 	if err != nil {
 		return nil, fmt.Errorf("sending search commits request: %s", err.Error())

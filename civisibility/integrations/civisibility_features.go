@@ -11,6 +11,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/DataDog/ddtest/civisibility"
 	"github.com/DataDog/ddtest/civisibility/constants"
@@ -83,14 +84,33 @@ func ensureSettingsInitialization(serviceName string) {
 		// upload the repository changes
 		var uploadChannel = make(chan struct{})
 		go func() {
+			defer func() {
+				close(uploadChannel)
+			}()
 			bytes, err := uploadRepositoryChanges()
 			if err != nil {
 				slog.Error("civisibility: error uploading repository changes:", "error", err.Error())
 			} else {
 				slog.Debug("civisibility: uploaded bytes in pack files", "count", bytes)
 			}
-			uploadChannel <- struct{}{}
 		}()
+
+		//Wait for the upload with timeout func
+		waitUpload := func(timeout time.Duration) bool {
+			select {
+			case <-uploadChannel:
+				// All ok, upload succeeded
+				return true
+			case <-time.After(timeout):
+				slog.Warn("civisibility: timeout waiting for upload repository changes")
+				return false
+			}
+		}
+		// returns a closure suitable for PushCiVisibilityCloseAction that will wait
+		// for the upload to complete (or time out) using the given timeout.
+		waitUploadFactory := func(timeout time.Duration) func() {
+			return func() { waitUpload(timeout) }
+		}
 
 		// Get the CI Visibility settings payload for this test session
 		ciSettings, err := ciVisibilityClient.GetSettings()
@@ -98,30 +118,22 @@ func ensureSettingsInitialization(serviceName string) {
 			slog.Error("civisibility: error getting CI visibility settings", "error", err.Error())
 			slog.Debug("civisibility: no need to wait for the git upload to finish")
 			// Enqueue a close action to wait for the upload to finish before finishing the process
-			PushCiVisibilityCloseAction(func() {
-				<-uploadChannel
-			})
+			PushCiVisibilityCloseAction(waitUploadFactory(time.Minute))
 			return
 		}
 
 		// check if we need to wait for the upload to finish and repeat the settings request or we can just continue
 		if ciSettings.RequireGit {
 			slog.Debug("civisibility: waiting for the git upload to finish and repeating the settings request")
-			<-uploadChannel
+			if !waitUpload(1 * time.Minute) {
+				slog.Error("civisibility: error getting CI visibility settings due to timeout")
+				return
+			}
 			ciSettings, err = ciVisibilityClient.GetSettings()
 			if err != nil {
 				slog.Error("civisibility: error getting CI visibility settings", "error", err.Error())
 				return
 			}
-		} else if ciSettings.ImpactedTestsEnabled {
-			slog.Debug("civisibility: impacted tests is enabled we need to wait for the upload to finish (for the unshallow process)")
-			<-uploadChannel
-		} else {
-			slog.Debug("civisibility: no need to wait for the git upload to finish")
-			// Enqueue a close action to wait for the upload to finish before finishing the process
-			PushCiVisibilityCloseAction(func() {
-				<-uploadChannel
-			})
 		}
 
 		// check if we need to disable EFD because known tests is not enabled
@@ -138,6 +150,12 @@ func ensureSettingsInitialization(serviceName string) {
 			ciSettings.FlakyTestRetriesEnabled = false
 		}
 
+		// check if impacted tests is disabled by env-vars
+		if ciSettings.ImpactedTestsEnabled && !civisibility.BoolEnv(constants.CIVisibilityImpactedTestsDetectionEnabled, true) {
+			slog.Warn("civisibility: impacted tests was disabled by the environment variable")
+			ciSettings.ImpactedTestsEnabled = false
+		}
+
 		// check if test management is disabled by env-vars
 		if ciSettings.TestManagement.Enabled && !civisibility.BoolEnv(constants.CIVisibilityTestManagementEnabledEnvironmentVariable, true) {
 			slog.Warn("civisibility: test management was disabled by the environment variable")
@@ -148,6 +166,23 @@ func ensureSettingsInitialization(serviceName string) {
 		testManagementAttemptToFixRetriesEnv := civisibility.IntEnv(constants.CIVisibilityTestManagementAttemptToFixRetriesEnvironmentVariable, -1)
 		if testManagementAttemptToFixRetriesEnv != -1 {
 			ciSettings.TestManagement.AttemptToFixRetries = testManagementAttemptToFixRetriesEnv
+		}
+
+		// determine if subtest-specific features are enabled via environment variables
+		subtestFeaturesEnabled := civisibility.BoolEnv(constants.CIVisibilitySubtestFeaturesEnabled, true)
+		if !subtestFeaturesEnabled {
+			slog.Debug("civisibility: subtest test management features disabled by environment variable")
+		}
+		ciSettings.SubtestFeaturesEnabled = subtestFeaturesEnabled
+
+		// check if we need to wait for the upload to finish before continuing
+		if ciSettings.ImpactedTestsEnabled {
+			slog.Debug("civisibility: impacted tests is enabled we need to wait for the upload to finish (for the unshallow process)")
+			waitUpload(30 * time.Second)
+		} else {
+			slog.Debug("civisibility: no need to wait for the git upload to finish")
+			// Enqueue a close action to wait for the upload to finish before finishing the process
+			PushCiVisibilityCloseAction(waitUploadFactory(time.Minute))
 		}
 
 		// set the ciVisibilitySettings with the settings from the backend
@@ -184,7 +219,7 @@ func ensureAdditionalFeaturesInitialization(_ string) {
 		additionalTags[constants.LibraryCapabilitiesTestImpactAnalysis] = "1"
 		additionalTags[constants.LibraryCapabilitiesTestManagementQuarantine] = "1"
 		additionalTags[constants.LibraryCapabilitiesTestManagementDisable] = "1"
-		additionalTags[constants.LibraryCapabilitiesTestManagementAttemptToFix] = "2"
+		additionalTags[constants.LibraryCapabilitiesTestManagementAttemptToFix] = "5"
 
 		// mutex to protect the additional tags map
 		var aTagsMutex sync.Mutex
@@ -258,8 +293,7 @@ func ensureAdditionalFeaturesInitialization(_ string) {
 		}
 
 		// if wheter the settings response or the env var is true we load the impacted tests analyzer
-		if currentSettings.ImpactedTestsEnabled ||
-			civisibility.BoolEnv(constants.CIVisibilityImpactedTestsDetectionEnabled, false) {
+		if currentSettings.ImpactedTestsEnabled {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -324,7 +358,7 @@ func uploadRepositoryChanges() (bytes int64, err error) {
 	// get the search commits response
 	initialCommitData, err := getSearchCommits()
 	if err != nil {
-		return 0, fmt.Errorf("civisibility: error getting the search commits response: %s", err.Error())
+		return 0, fmt.Errorf("civisibility: error getting the search commits response: %s", err)
 	}
 
 	// let's check if we could retrieve commit data
@@ -363,11 +397,11 @@ func uploadRepositoryChanges() (bytes int64, err error) {
 	// after unshallowing the repository we need to get the search commits to calculate the missing commits again
 	commitsData, err := getSearchCommits()
 	if err != nil {
-		return 0, fmt.Errorf("civisibility: error getting the search commits response: %s", err.Error())
+		return 0, fmt.Errorf("civisibility: error getting the search commits response: %s", err)
 	}
 
 	// let's check if we could retrieve commit data
-	if !initialCommitData.IsOk {
+	if !commitsData.IsOk {
 		return 0, nil
 	}
 

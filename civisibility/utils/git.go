@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/DataDog/ddtest/civisibility/constants"
@@ -24,12 +25,8 @@ import (
 // MaxPackFileSizeInMb is the maximum size of a pack file in megabytes.
 const MaxPackFileSizeInMb = 3
 
-// localGitData holds various pieces of information about the local Git repository,
-// including the source root, repository URL, branch, commit SHA, author and committer details, and commit message.
-type localGitData struct {
-	SourceRoot     string
-	RepositoryURL  string
-	Branch         string
+// localCommitData holds information about a single commit in the local Git repository.
+type localCommitData struct {
 	CommitSha      string
 	AuthorDate     time.Time
 	AuthorName     string
@@ -40,21 +37,55 @@ type localGitData struct {
 	CommitMessage  string
 }
 
+// localGitData holds various pieces of information about the local Git repository,
+// including the source root, repository URL, branch, commit SHA, author and committer details, and commit message.
+type localGitData struct {
+	localCommitData
+	SourceRoot    string
+	RepositoryURL string
+	Branch        string
+}
+
+// gitVersionData holds the major, minor, and patch version numbers of the Git executable.
+type gitVersionData struct {
+	major int
+	minor int
+	patch int
+	err   error
+}
+
 var (
+	// gitCommandMutex is a mutex used to synchronize access to Git commands to prevent lock errors in git
+	gitCommandMutex sync.Mutex
+
 	// regexpSensitiveInfo is a regular expression used to match and filter out sensitive information from URLs.
 	regexpSensitiveInfo = regexp.MustCompile("(https?://|ssh?://)[^/]*@")
-
-	// isGitFoundValue is a boolean flag indicating whether the Git executable is available on the system.
-	isGitFoundValue bool
-
-	// gitFinder is a sync.Once instance used to ensure that the Git executable is only checked once.
-	gitFinder sync.Once
 
 	// Constants for base branch detection algorithm
 	possibleBaseBranches = []string{"main", "master", "preprod", "prod", "dev", "development", "trunk"}
 
 	// BASE_LIKE_BRANCH_FILTER - regex to check if the branch name is similar to a possible base branch
 	baseLikeBranchFilter = regexp.MustCompile(`^(main|master|preprod|prod|dev|development|trunk|release\/.*|hotfix\/.*)$`)
+
+	// Cached data
+
+	// isGitFoundValue is a boolean flag indicating whether the Git executable is available on the system.
+	isGitFoundValue bool
+
+	// gitFinder is a sync.Once instance used to ensure that the Git executable is only checked once.
+	gitFinderOnce sync.Once
+
+	// gitVersion is a sync.Once instance used to ensure that the Git version is only retrieved once.
+	gitVersionOnce sync.Once
+
+	// gitVersionValue holds the version of the Git executable installed on the system.
+	gitVersionValue gitVersionData
+
+	// isAShallowCloneRepositoryOnce is a sync.Once instance used to ensure that the check for a shallow clone repository is only performed once.
+	isAShallowCloneRepositoryOnce atomic.Pointer[sync.Once]
+
+	// isAShallowCloneRepositoryValue is a boolean flag indicating whether the repository is a shallow clone.
+	isAShallowCloneRepositoryValue bool
 )
 
 // branchMetrics holds metrics for evaluating base branch candidates
@@ -66,7 +97,7 @@ type branchMetrics struct {
 
 // isGitFound checks if the Git executable is available on the system.
 func isGitFound() bool {
-	gitFinder.Do(func() {
+	gitFinderOnce.Do(func() {
 		_, err := exec.LookPath("git")
 		isGitFoundValue = err == nil
 		if err != nil {
@@ -81,6 +112,8 @@ func execGit(args ...string) (val []byte, err error) {
 	if !isGitFound() {
 		return nil, errors.New("git executable not found")
 	}
+	gitCommandMutex.Lock()
+	defer gitCommandMutex.Unlock()
 	return exec.Command("git", args...).CombinedOutput()
 }
 
@@ -102,19 +135,30 @@ func execGitStringWithInput(input string, args ...string) (val string, err error
 
 // getGitVersion retrieves the version of the Git executable installed on the system.
 func getGitVersion() (major int, minor int, patch int, err error) {
-	out, lerr := execGitString("--version")
-	if lerr != nil {
-		return 0, 0, 0, lerr
-	}
-	out = strings.TrimSpace(strings.ReplaceAll(out, "git version ", ""))
-	versionParts := strings.Split(out, ".")
-	if len(versionParts) < 3 {
-		return 0, 0, 0, errors.New("invalid git version")
-	}
-	major, _ = strconv.Atoi(versionParts[0])
-	minor, _ = strconv.Atoi(versionParts[1])
-	patch, _ = strconv.Atoi(versionParts[2])
-	return major, minor, patch, nil
+	gitVersionOnce.Do(func() {
+		out, lerr := execGitString("--version")
+		if lerr != nil {
+			gitVersionValue = gitVersionData{err: lerr}
+			return
+		}
+		out = strings.TrimSpace(strings.ReplaceAll(out, "git version ", ""))
+		versionParts := strings.Split(out, ".")
+		if len(versionParts) < 3 {
+			gitVersionValue = gitVersionData{err: errors.New("invalid git version")}
+			return
+		}
+		major, _ = strconv.Atoi(versionParts[0])
+		minor, _ = strconv.Atoi(versionParts[1])
+		patch, _ = strconv.Atoi(versionParts[2])
+		gitVersionValue = gitVersionData{
+			major: major,
+			minor: minor,
+			patch: patch,
+			err:   nil,
+		}
+	})
+
+	return gitVersionValue.major, gitVersionValue.minor, gitVersionValue.patch, gitVersionValue.err
 }
 
 // getLocalGitData retrieves information about the local Git repository from the current HEAD.
@@ -137,6 +181,14 @@ func getLocalGitData() (localGitData, error) {
 			slog.Debug("civisibility.git: setting permissions to git folder", "gitDir", gitDir)
 			if out, err := execGitString("config", "--global", "--add", "safe.directory", gitDir); err != nil {
 				slog.Debug("civisibility.git: error while setting permissions to git folder", "gitDir", gitDir, "out", out, "error", err.Error())
+			}
+			// if the git folder contains with a `/.git` then we also add permission to the parent.
+			if strings.HasSuffix(gitDir, "/.git") {
+				parentGitDir := strings.TrimSuffix(gitDir, "/.git")
+				slog.Debug("civisibility.git: setting permissions to git folder", "parentGitDir", parentGitDir)
+				if out, err := execGitString("config", "--global", "--add", "safe.directory", parentGitDir); err != nil {
+					slog.Debug("civisibility.git: error while setting permissions to git folder", "parentGitDir", parentGitDir, "out", out, "error", err.Error())
+				}
 			}
 		} else {
 			slog.Debug("civisibility.git: error getting the parent git folder.")
@@ -195,6 +247,82 @@ func getLocalGitData() (localGitData, error) {
 	return gitData, nil
 }
 
+// fetchCommitData retrieves commit data for a specific commit SHA in a shallow clone Git repository.
+func fetchCommitData(commitSha string) (localCommitData, error) {
+	commitData := localCommitData{}
+
+	// let's do a first check to see if the repository is a shallow clone
+	slog.Debug("civisibility.fetchCommitData: checking if the repository is a shallow clone")
+	isAShallowClone, err := isAShallowCloneRepository()
+	if err != nil {
+		return commitData, fmt.Errorf("civisibility.fetchCommitData: error checking if the repository is a shallow clone: %s", err)
+	}
+
+	// if the git repo is a shallow clone, we try to fecth the commit sha data
+	if isAShallowClone {
+		// let's check the git version >= 2.27.0 (git --version) to see if we can unshallow the repository
+		slog.Debug("civisibility.fetchCommitData: checking the git version")
+		major, minor, patch, err := getGitVersion()
+		if err != nil {
+			return commitData, fmt.Errorf("civisibility.fetchCommitData: error getting the git version: %s", err)
+		}
+		slog.Debug("civisibility.fetchCommitData: git version", "major", major, "minor", minor, "patch", patch)
+		if major < 2 || (major == 2 && minor < 27) {
+			slog.Debug("civisibility.fetchCommitData: the git version is less than 2.27.0 we cannot unshallow the repository")
+			return commitData, nil
+		}
+
+		// let's get the remote name
+		remoteName, err := getRemoteName()
+		if err != nil {
+			return commitData, fmt.Errorf("civisibility.fetchCommitData: error getting the remote name: %s\n%s", err, remoteName)
+		}
+		if remoteName == "" {
+			// if the origin name is empty, we fallback to "origin"
+			remoteName = "origin"
+		}
+		slog.Debug("civisibility.fetchCommitData: remote name", "remoteName", remoteName)
+
+		// let's fetch the missing commits and trees from a commit sha
+		// git fetch --update-shallow --filter="blob:none" --recurse-submodules=no --no-write-fetch-head <remoteName> <commitSha>
+		slog.Debug("civisibility.fetchCommitData: fetching the missing commits and trees from the last month")
+		if fetchOutput, fetchErr := execGitString(
+			"fetch", "--update-shallow", "--filter=blob:none", "--recurse-submodules=no", "--no-write-fetch-head", remoteName, commitSha); fetchErr != nil {
+			return commitData, fmt.Errorf("civisibility.fetchCommitData: error: %s\n%s", fetchErr, fetchOutput)
+		}
+	}
+
+	// Get commit details from the latest commit using git log (git show <commitSha> -s --format='%H","%aI","%an","%ae","%cI","%cn","%ce","%B')
+	slog.Debug("civisibility.git: getting the latest commit details")
+	out, err := execGitString("show", commitSha, "-s", "--format=%H\",\"%at\",\"%an\",\"%ae\",\"%ct\",\"%cn\",\"%ce\",\"%B")
+	if err != nil {
+		return commitData, err
+	}
+
+	// Split the output into individual components
+	outArray := strings.Split(out, "\",\"")
+	if len(outArray) < 8 {
+		return commitData, errors.New("git log failed")
+	}
+
+	// Parse author and committer dates from Unix timestamp
+	authorUnixDate, _ := strconv.ParseInt(outArray[1], 10, 64)
+	committerUnixDate, _ := strconv.ParseInt(outArray[4], 10, 64)
+
+	// Populate the localGitData struct with the parsed information
+	commitData.CommitSha = outArray[0]
+	commitData.AuthorDate = time.Unix(authorUnixDate, 0)
+	commitData.AuthorName = outArray[2]
+	commitData.AuthorEmail = outArray[3]
+	commitData.CommitterDate = time.Unix(committerUnixDate, 0)
+	commitData.CommitterName = outArray[5]
+	commitData.CommitterEmail = outArray[6]
+	commitData.CommitMessage = strings.Trim(outArray[7], "\n")
+
+	slog.Debug("civisibility.fetchCommitData: was completed successfully")
+	return commitData, nil
+}
+
 // GetLastLocalGitCommitShas retrieves the commit SHAs of the last 1000 commits in the local Git repository.
 func GetLastLocalGitCommitShas() []string {
 	// git log --format=%H -n 1000 --since=\"1 month ago\"
@@ -213,7 +341,7 @@ func UnshallowGitRepository() (bool, error) {
 	slog.Debug("civisibility.unshallow: checking if the repository is a shallow clone")
 	isAShallowClone, err := isAShallowCloneRepository()
 	if err != nil {
-		return false, fmt.Errorf("civisibility.unshallow: error checking if the repository is a shallow clone: %s", err.Error())
+		return false, fmt.Errorf("civisibility.unshallow: error checking if the repository is a shallow clone: %s", err)
 	}
 
 	// if the git repo is not a shallow clone, we can return early
@@ -226,7 +354,7 @@ func UnshallowGitRepository() (bool, error) {
 	slog.Debug("civisibility.unshallow: the repository is a shallow clone, checking if there are more than one commit in the logs")
 	hasMoreThanOneCommits, err := hasTheGitLogHaveMoreThanOneCommits()
 	if err != nil {
-		return false, fmt.Errorf("civisibility.unshallow: error checking if the git log has more than one commit: %s", err.Error())
+		return false, fmt.Errorf("civisibility.unshallow: error checking if the git log has more than one commit: %s", err)
 	}
 
 	// if there are more than 1 commits, we can return early
@@ -239,7 +367,7 @@ func UnshallowGitRepository() (bool, error) {
 	slog.Debug("civisibility.unshallow: checking the git version")
 	major, minor, patch, err := getGitVersion()
 	if err != nil {
-		return false, fmt.Errorf("civisibility.unshallow: error getting the git version: %s", err.Error())
+		return false, fmt.Errorf("civisibility.unshallow: error getting the git version: %s", err)
 	}
 	slog.Debug("civisibility.unshallow: git version", "major", major, "minor", minor, "patch", patch)
 	if major < 2 || (major == 2 && minor < 27) {
@@ -250,27 +378,27 @@ func UnshallowGitRepository() (bool, error) {
 	// after asking for 2 logs lines, if the git log command returns just one commit sha, we reconfigure the repo
 	// to ask for git commits and trees of the last month (no blobs)
 
-	// let's get the origin name (git config --default origin --get clone.defaultRemoteName)
-	originName, err := execGitString("config", "--default", "origin", "--get", "clone.defaultRemoteName")
+	// let's get the remote name
+	remoteName, err := getRemoteName()
 	if err != nil {
-		return false, fmt.Errorf("civisibility.unshallow: error getting the origin name: %s\n%s", err.Error(), originName)
+		return false, fmt.Errorf("civisibility.unshallow: error getting the remote name: %s\n%s", err, remoteName)
 	}
-	if originName == "" {
+	if remoteName == "" {
 		// if the origin name is empty, we fallback to "origin"
-		originName = "origin"
+		remoteName = "origin"
 	}
-	slog.Debug("civisibility.unshallow: origin name", "originName", originName)
+	slog.Debug("civisibility.unshallow: remote name", "remoteName", remoteName)
 
 	// let's get the sha of the HEAD (git rev-parse HEAD)
 	headSha, err := execGitString("rev-parse", "HEAD")
 	if err != nil {
-		return false, fmt.Errorf("civisibility.unshallow: error getting the HEAD sha: %s\n%s", err.Error(), headSha)
+		return false, fmt.Errorf("civisibility.unshallow: error getting the HEAD sha: %s\n%s", err, headSha)
 	}
 	if headSha == "" {
 		// if the HEAD is empty, we fallback to the current branch (git branch --show-current)
 		headSha, err = execGitString("branch", "--show-current")
 		if err != nil {
-			return false, fmt.Errorf("civisibility.unshallow: error getting the current branch: %s\n%s", err.Error(), headSha)
+			return false, fmt.Errorf("civisibility.unshallow: error getting the current branch: %s\n%s", err, headSha)
 		}
 	}
 	slog.Debug("civisibility.unshallow: HEAD sha", "headSha", headSha)
@@ -278,7 +406,7 @@ func UnshallowGitRepository() (bool, error) {
 	// let's fetch the missing commits and trees from the last month
 	// git fetch --shallow-since="1 month ago" --update-shallow --filter="blob:none" --recurse-submodules=no $(git config --default origin --get clone.defaultRemoteName) $(git rev-parse HEAD)
 	slog.Debug("civisibility.unshallow: fetching the missing commits and trees from the last month")
-	fetchOutput, err := execGitString("fetch", "--shallow-since=\"1 month ago\"", "--update-shallow", "--filter=blob:none", "--recurse-submodules=no", originName, headSha)
+	fetchOutput, err := execGitString("fetch", "--shallow-since=\"1 month ago\"", "--update-shallow", "--filter=blob:none", "--recurse-submodules=no", remoteName, headSha)
 
 	// let's check if the last command was unsuccessful
 	if err != nil || fetchOutput == "" {
@@ -296,7 +424,7 @@ func UnshallowGitRepository() (bool, error) {
 		if err == nil {
 			// let's try the alternative: git fetch --shallow-since="1 month ago" --update-shallow --filter="blob:none" --recurse-submodules=no $(git config --default origin --get clone.defaultRemoteName) $(git rev-parse --abbrev-ref --symbolic-full-name @{upstream})
 			slog.Debug("civisibility.unshallow: fetching the missing commits and trees from the last month using the remote branch name")
-			fetchOutput, err = execGitString("fetch", "--shallow-since=\"1 month ago\"", "--update-shallow", "--filter=blob:none", "--recurse-submodules=no", originName, remoteBranchName)
+			fetchOutput, err = execGitString("fetch", "--shallow-since=\"1 month ago\"", "--update-shallow", "--filter=blob:none", "--recurse-submodules=no", remoteName, remoteBranchName)
 		}
 	}
 
@@ -311,14 +439,16 @@ func UnshallowGitRepository() (bool, error) {
 
 		// let's try the last fallback: git fetch --shallow-since="1 month ago" --update-shallow --filter="blob:none" --recurse-submodules=no $(git config --default origin --get clone.defaultRemoteName)
 		slog.Debug("civisibility.unshallow: fetching the missing commits and trees from the last month using the origin name")
-		fetchOutput, err = execGitString("fetch", "--shallow-since=\"1 month ago\"", "--update-shallow", "--filter=blob:none", "--recurse-submodules=no", originName)
+		fetchOutput, err = execGitString("fetch", "--shallow-since=\"1 month ago\"", "--update-shallow", "--filter=blob:none", "--recurse-submodules=no", remoteName)
 	}
 
 	if err != nil {
-		return false, fmt.Errorf("civisibility.unshallow: error: %s\n%s", err.Error(), fetchOutput)
+		return false, fmt.Errorf("civisibility.unshallow: error: %s\n%s", err, fetchOutput)
 	}
 
 	slog.Debug("civisibility.unshallow: was completed successfully")
+	tmpso := sync.Once{}
+	isAShallowCloneRepositoryOnce.Store(&tmpso)
 	return true, nil
 }
 
@@ -341,7 +471,7 @@ func GetGitDiff(baseCommit, headCommit string) (string, error) {
 			// let's ensure we have all the branch names from the remote
 			fetchOut, err := execGitString("fetch", remoteOut, baseCommit, "--depth=1")
 			if err != nil {
-				slog.Debug("civisibility.git: error fetching", "remote", remoteOut, "baseCommit", baseCommit, "fetchOut", fetchOut, "error", err.Error())
+				slog.Debug("civisibility.git: error fetching", "remoteOut", remoteOut, "baseCommit", baseCommit, "fetchOut", fetchOut, "error", err.Error())
 			}
 
 			// then let's get the remote branch name
@@ -349,10 +479,10 @@ func GetGitDiff(baseCommit, headCommit string) (string, error) {
 		}
 	}
 
-	slog.Debug("civisibility.git: getting the diff between commits", "baseCommit", baseCommit, "headCommit", headCommit)
+	slog.Debug("civisibility.git: getting the diff between", "baseCommit", baseCommit, "headCommit", headCommit)
 	out, err := execGitString("diff", "-U0", "--word-diff=porcelain", baseCommit, headCommit)
 	if err != nil {
-		return "", fmt.Errorf("civisibility.git: error getting the diff from %s to %s: %s | %s", baseCommit, headCommit, err.Error(), out)
+		return "", fmt.Errorf("civisibility.git: error getting the diff from %s to %s: %s | %s", baseCommit, headCommit, err, out)
 	}
 	if out == "" {
 		return "", fmt.Errorf("civisibility.git: error getting the diff from %s to %s: empty output", baseCommit, headCommit)
@@ -376,13 +506,26 @@ func filterSensitiveInfo(url string) string {
 
 // isAShallowCloneRepository checks if the local Git repository is a shallow clone.
 func isAShallowCloneRepository() (bool, error) {
-	// git rev-parse --is-shallow-repository
-	out, err := execGitString("rev-parse", "--is-shallow-repository")
-	if err != nil {
-		return false, err
+	var fErr error
+	var sOnce *sync.Once
+	sOnce = isAShallowCloneRepositoryOnce.Load()
+	if sOnce == nil {
+		sOnce = &sync.Once{}
+		isAShallowCloneRepositoryOnce.Store(sOnce)
 	}
+	sOnce.Do(func() {
+		// git rev-parse --is-shallow-repository
+		out, err := execGitString("rev-parse", "--is-shallow-repository")
+		if err != nil {
+			isAShallowCloneRepositoryValue = false
+			fErr = err
+			return
+		}
 
-	return strings.TrimSpace(out) == "true", nil
+		isAShallowCloneRepositoryValue = strings.TrimSpace(out) == "true"
+	})
+
+	return isAShallowCloneRepositoryValue, fErr
 }
 
 // hasTheGitLogHaveMoreThanOneCommits checks if the local Git repository has more than one commit.
@@ -412,6 +555,7 @@ func getObjectsSha(commitsToInclude []string, commitsToExclude []string) []strin
 	return strings.Split(out, "\n")
 }
 
+// CreatePackFiles creates pack files from the given commits to include and exclude.
 func CreatePackFiles(commitsToInclude []string, commitsToExclude []string) []string {
 	// get the objects shas to send
 	objectsShas := getObjectsSha(commitsToInclude, commitsToExclude)
@@ -426,18 +570,38 @@ func CreatePackFiles(commitsToInclude []string, commitsToExclude []string) []str
 		objectsShasString += objectSha + "\n"
 	}
 
-	// get a temporary path to store the pack files
-	temporaryPath, err := os.MkdirTemp("", "pack-objects")
-	if err != nil {
-		slog.Warn("civisibility: error creating temporary directory", "error", err.Error())
-		return nil
+	workingDirectory := func() string {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "."
+		}
+		return wd
 	}
 
-	// git pack-objects --compression=9 --max-pack-size={MaxPackFileSizeInMb}m "{temporaryPath}"
-	out, err := execGitStringWithInput(objectsShasString,
-		"pack-objects", "--compression=9", "--max-pack-size="+strconv.Itoa(MaxPackFileSizeInMb)+"m", temporaryPath+"/")
+	var temporaryPath string
+	var out string
+	var err error
+
+	// Git can throw a cross device error if the temporal folder is in a different drive than the .git folder (eg. symbolic link)
+	// to handle this edge case, we first try with a temp folder and if we fail then we try in the working directory folder.
+	for _, folder := range []string{"", workingDirectory()} {
+		// get a temporary path to store the pack files
+		temporaryPath, err = os.MkdirTemp(folder, ".dd-pack-objects")
+		if err != nil {
+			slog.Warn("civisibility: error creating temporary directory", "folder", folder, "error", err.Error())
+			continue
+		}
+
+		// git pack-objects --compression=9 --max-pack-size={MaxPackFileSizeInMb}m "{temporaryPath}"
+		out, err = execGitStringWithInput(objectsShasString,
+			"pack-objects", "--compression=9", "--max-pack-size="+strconv.Itoa(MaxPackFileSizeInMb)+"m", temporaryPath+"/")
+		if err == nil {
+			break
+		}
+	}
+
 	if err != nil {
-		slog.Warn("civisibility: error creating pack files", "error", err.Error())
+		slog.Warn("civisibility: error creating pack files in", "temporaryPath", temporaryPath, "error", err.Error(), "output", out)
 		return nil
 	}
 
@@ -448,7 +612,7 @@ func CreatePackFiles(commitsToInclude []string, commitsToExclude []string) []str
 
 		// check if the pack file exists
 		if _, err := os.Stat(file); os.IsNotExist(err) {
-			slog.Warn("civisibility: pack file not found", "packFile", packFiles[i])
+			slog.Warn("civisibility: pack file not found", "file", packFiles[i])
 			continue
 		}
 
@@ -531,7 +695,7 @@ func findFallbackDefaultBranch(remoteName string) string {
 	return ""
 }
 
-// GetBaseBranchSha detects the base branch SHA using the algorithm from algorithm.md
+// GetBaseBranchSha detects the base branch SHA using the algorithm
 func GetBaseBranchSha(defaultBranch string) (string, error) {
 	if !isGitFound() {
 		return "", errors.New("git executable not found")

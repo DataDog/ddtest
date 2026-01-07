@@ -65,6 +65,7 @@ type (
 			Enabled             bool `json:"enabled"`
 			AttemptToFixRetries int  `json:"attempt_to_fix_retries"`
 		} `json:"test_management"`
+		SubtestFeaturesEnabled bool `json:"-"`
 	}
 )
 
@@ -92,15 +93,15 @@ func (c *client) GetSettings() (*SettingsResponseData, error) {
 
 	response, err := c.handler.SendRequest(*request)
 	if err != nil {
-		return nil, fmt.Errorf("sending get settings request: %s", err.Error())
+		return nil, fmt.Errorf("sending get settings request: %s", err)
 	}
 
-	slog.Debug("civisibility.settings", "response", string(response.Body))
+	slog.Debug("civisibility.settings", "responseBody", string(response.Body))
 
 	var responseObject settingsResponse
 	err = response.Unmarshal(&responseObject)
 	if err != nil {
-		return nil, fmt.Errorf("unmarshalling settings response: %s", err.Error())
+		return nil, fmt.Errorf("unmarshalling settings response: %s", err)
 	}
 
 	return &responseObject.Data.Attributes, nil
