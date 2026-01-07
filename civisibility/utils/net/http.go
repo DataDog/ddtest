@@ -250,7 +250,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 		return false, nil, nil
 	}
 	// Close response body
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Capture the status code
 	statusCode := resp.StatusCode
@@ -361,7 +361,9 @@ func compressData(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	writer.Close()
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
 	return buf.Bytes(), nil
 }
 
@@ -371,7 +373,7 @@ func decompressData(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gzip reader: %s", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	decompressedData, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decompress data: %s", err)
@@ -396,11 +398,12 @@ func getExponentialBackoffDuration(retryCount int, initialDelay time.Duration) t
 
 // prepareContent prepares the content for a FormFile by serializing it if needed.
 func prepareContent(content interface{}, contentType string) ([]byte, error) {
-	if contentType == ContentTypeJSON {
+	switch contentType {
+	case ContentTypeJSON:
 		return serializeData(content, FormatJSON)
-	} else if contentType == ContentTypeMessagePack {
+	case ContentTypeMessagePack:
 		return serializeData(content, FormatMessagePack)
-	} else if contentType == ContentTypeOctetStream {
+	case ContentTypeOctetStream:
 		// For binary data, ensure it's already in byte format
 		if data, ok := content.([]byte); ok {
 			return data, nil
@@ -409,8 +412,9 @@ func prepareContent(content interface{}, contentType string) ([]byte, error) {
 			return io.ReadAll(reader)
 		}
 		return nil, errors.New("content must be []byte or an io.Reader for octet-stream content type")
+	default:
+		return nil, errors.New("unsupported content type for serialization")
 	}
-	return nil, errors.New("unsupported content type for serialization")
 }
 
 // createMultipartFormData creates a multipart form data request body with the given files.
