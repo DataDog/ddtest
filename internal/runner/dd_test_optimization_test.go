@@ -314,8 +314,8 @@ func TestTestRunner_PrepareTestOptimization_AllTestsSkipped(t *testing.T) {
 func TestTestRunner_PrepareTestOptimization_RuntimeTagsOverride(t *testing.T) {
 	ctx := context.Background()
 
-	// Set runtime tags override via environment variable
-	overrideTags := `{"os.platform":"linux","runtime.version":"3.2.0","language":"ruby"}`
+	// Set runtime tags override via environment variable - only override some tags
+	overrideTags := `{"os.platform":"linux","runtime.version":"3.2.0"}`
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS", overrideTags)
 	defer func() {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS")
@@ -331,11 +331,13 @@ func TestTestRunner_PrepareTestOptimization_RuntimeTagsOverride(t *testing.T) {
 		},
 	}
 
-	// Platform tags should be different from override tags
+	// Platform tags should have more tags than the override
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
 			"os.platform":     "darwin",
+			"os.architecture": "arm64",
+			"runtime.name":    "ruby",
 			"runtime.version": "3.3.0",
 			"language":        "ruby",
 		},
@@ -358,12 +360,12 @@ func TestTestRunner_PrepareTestOptimization_RuntimeTagsOverride(t *testing.T) {
 		t.Errorf("PrepareTestOptimization() should not return error, got: %v", err)
 	}
 
-	// Verify optimization client was initialized with override tags, not platform tags
+	// Verify optimization client was initialized
 	if !mockOptimizationClient.InitializeCalled {
 		t.Error("PrepareTestOptimization() should initialize optimization client")
 	}
 
-	// Check that override tags were used
+	// Check that override tags replaced the detected values
 	if mockOptimizationClient.Tags["os.platform"] != "linux" {
 		t.Errorf("Expected os.platform to be 'linux' from override, got %q", mockOptimizationClient.Tags["os.platform"])
 	}
@@ -372,8 +374,17 @@ func TestTestRunner_PrepareTestOptimization_RuntimeTagsOverride(t *testing.T) {
 		t.Errorf("Expected runtime.version to be '3.2.0' from override, got %q", mockOptimizationClient.Tags["runtime.version"])
 	}
 
+	// Check that detected tags NOT in override were preserved
+	if mockOptimizationClient.Tags["os.architecture"] != "arm64" {
+		t.Errorf("Expected os.architecture to be 'arm64' from detected tags (not overridden), got %q", mockOptimizationClient.Tags["os.architecture"])
+	}
+
+	if mockOptimizationClient.Tags["runtime.name"] != "ruby" {
+		t.Errorf("Expected runtime.name to be 'ruby' from detected tags (not overridden), got %q", mockOptimizationClient.Tags["runtime.name"])
+	}
+
 	if mockOptimizationClient.Tags["language"] != "ruby" {
-		t.Errorf("Expected language to be 'ruby' from override, got %q", mockOptimizationClient.Tags["language"])
+		t.Errorf("Expected language to be 'ruby' from detected tags (not overridden), got %q", mockOptimizationClient.Tags["language"])
 	}
 }
 

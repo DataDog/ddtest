@@ -3,6 +3,7 @@ package framework
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"os"
 	"strings"
 
@@ -51,7 +52,9 @@ func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, 
 	slog.Debug("Using test discovery pattern", "pattern", pattern)
 
 	// Merge env maps: platform env -> base discovery env
-	envMap := mergeEnvMaps(m.platformEnv, BaseDiscoveryEnv())
+	envMap := make(map[string]string)
+	maps.Copy(envMap, m.platformEnv)
+	maps.Copy(envMap, BaseDiscoveryEnv())
 
 	if isRails {
 		args = append(args, pattern)
@@ -109,7 +112,9 @@ func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[
 		}
 	}
 
-	mergedEnv := mergeEnvMaps(m.platformEnv, envMap)
+	mergedEnv := make(map[string]string)
+	maps.Copy(mergedEnv, m.platformEnv)
+	maps.Copy(mergedEnv, envMap)
 	return m.executor.Run(ctx, command, args, mergedEnv)
 }
 

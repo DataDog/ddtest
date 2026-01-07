@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 	"time"
@@ -87,15 +86,6 @@ func globTestFiles(pattern string) ([]string, error) {
 	}
 
 	return matches, nil
-}
-
-// mergeEnvMaps merges base env vars with overrides.
-// Values in overrides take precedence over base values.
-func mergeEnvMaps(base, overrides map[string]string) map[string]string {
-	result := make(map[string]string)
-	maps.Copy(result, base)
-	maps.Copy(result, overrides)
-	return result
 }
 
 // BaseDiscoveryEnv returns environment variables required for all test discovery processes.
