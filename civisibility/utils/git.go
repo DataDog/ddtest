@@ -224,7 +224,6 @@ func getLocalGitData() (localGitData, error) {
 		return gitData, errors.New("git executable not found")
 	}
 
-
 	// Extract the absolute path to the Git directory
 	slog.Debug("civisibility.git: getting the absolute path to the Git directory")
 	out, err := execGitString("rev-parse", "--show-toplevel")
