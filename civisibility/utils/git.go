@@ -86,6 +86,12 @@ var (
 
 	// isAShallowCloneRepositoryValue is a boolean flag indicating whether the repository is a shallow clone.
 	isAShallowCloneRepositoryValue bool
+
+	// safeDirectoryOnce is a sync.Once instance used to ensure that the safe directory is only resolved once.
+	safeDirectoryOnce sync.Once
+
+	// safeDirectoryValue holds the cached repository root path for safe.directory config.
+	safeDirectoryValue string
 )
 
 // branchMetrics holds metrics for evaluating base branch candidates
@@ -107,13 +113,50 @@ func isGitFound() bool {
 	return isGitFoundValue
 }
 
+// getSafeDirectoryConfig returns the repository root path to be used with git's safe.directory config.
+// This is cached to avoid repeated filesystem lookups.
+// Using -c safe.directory=<path> instead of modifying global config avoids config pollution
+// and provides better security (only affects the single command execution).
+func getSafeDirectoryConfig() string {
+	safeDirectoryOnce.Do(func() {
+		currentDir, err := os.Getwd()
+		if err != nil {
+			slog.Debug("civisibility.git: error getting current working directory for safe.directory")
+			return
+		}
+
+		gitDir, err := getParentGitFolder(currentDir)
+		if err != nil || gitDir == "" {
+			slog.Debug("civisibility.git: could not find git folder for safe.directory")
+			return
+		}
+
+		// Use the repo root (parent of .git) for safe.directory
+		if strings.HasSuffix(gitDir, string(filepath.Separator)+".git") {
+			safeDirectoryValue = strings.TrimSuffix(gitDir, string(filepath.Separator)+".git")
+		} else {
+			safeDirectoryValue = gitDir
+		}
+		slog.Debug("civisibility.git: using safe.directory config", "path", safeDirectoryValue)
+	})
+	return safeDirectoryValue
+}
+
 // execGit executes a Git command with the given arguments.
+// It automatically includes -c safe.directory=<repo_root> to handle repositories
+// with different ownership (common in CI environments) without modifying global config.
 func execGit(args ...string) (val []byte, err error) {
 	if !isGitFound() {
 		return nil, errors.New("git executable not found")
 	}
 	gitCommandMutex.Lock()
 	defer gitCommandMutex.Unlock()
+
+	// Prepend safe.directory config if we have a known repo root
+	if safeDir := getSafeDirectoryConfig(); safeDir != "" {
+		args = append([]string{"-c", "safe.directory=" + safeDir}, args...)
+	}
+
 	return exec.Command("git", args...).CombinedOutput()
 }
 
@@ -125,7 +168,13 @@ func execGitString(args ...string) (string, error) {
 }
 
 // execGitStringWithInput executes a Git command with the given input and arguments and returns the output as a string.
+// It automatically includes -c safe.directory=<repo_root> to handle repositories with different ownership.
 func execGitStringWithInput(input string, args ...string) (val string, err error) {
+	// Prepend safe.directory config if we have a known repo root
+	if safeDir := getSafeDirectoryConfig(); safeDir != "" {
+		args = append([]string{"-c", "safe.directory=" + safeDir}, args...)
+	}
+
 	cmd := exec.Command("git", args...)
 	cmd.Stdin = strings.NewReader(input)
 	out, err := cmd.CombinedOutput()
@@ -175,27 +224,6 @@ func getLocalGitData() (localGitData, error) {
 		return gitData, errors.New("git executable not found")
 	}
 
-	// Ensure we have permissions to read the git directory
-	if currentDir, err := os.Getwd(); err == nil {
-		if gitDir, err := getParentGitFolder(currentDir); err == nil && gitDir != "" {
-			slog.Debug("civisibility.git: setting permissions to git folder", "gitDir", gitDir)
-			if out, err := execGitString("config", "--global", "--add", "safe.directory", gitDir); err != nil {
-				slog.Debug("civisibility.git: error while setting permissions to git folder", "gitDir", gitDir, "out", out, "error", err.Error())
-			}
-			// if the git folder contains with a `/.git` then we also add permission to the parent.
-			if strings.HasSuffix(gitDir, "/.git") {
-				parentGitDir := strings.TrimSuffix(gitDir, "/.git")
-				slog.Debug("civisibility.git: setting permissions to git folder", "parentGitDir", parentGitDir)
-				if out, err := execGitString("config", "--global", "--add", "safe.directory", parentGitDir); err != nil {
-					slog.Debug("civisibility.git: error while setting permissions to git folder", "parentGitDir", parentGitDir, "out", out, "error", err.Error())
-				}
-			}
-		} else {
-			slog.Debug("civisibility.git: error getting the parent git folder.")
-		}
-	} else {
-		slog.Debug("civisibility.git: error getting the current working directory.")
-	}
 
 	// Extract the absolute path to the Git directory
 	slog.Debug("civisibility.git: getting the absolute path to the Git directory")
