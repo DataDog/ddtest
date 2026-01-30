@@ -24,9 +24,9 @@ func calculateParallelRunnersWithParams(skippablePercentage float64, minParallel
 	}
 
 	if maxParallelism < minParallelism {
-		slog.Warn("max_parallelism is less than min_parallelism, using min_parallelism",
+		slog.Warn("max_parallelism is less than min_parallelism, clamping min to max",
 			"max_parallelism", maxParallelism, "min_parallelism", minParallelism)
-		return minParallelism
+		minParallelism = maxParallelism
 	}
 
 	percentage := math.Max(0.0, math.Min(100.0, skippablePercentage)) // Clamp to [0, 100]

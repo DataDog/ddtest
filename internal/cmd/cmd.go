@@ -13,6 +13,9 @@ import (
 	"github.com/spf13/viper"
 )
 
+// defaultParallelism stores the computed default at init time for CLI flags
+var defaultParallelism = settings.DefaultParallelism()
+
 var rootCmd = &cobra.Command{
 	Use:   "ddtest",
 	Short: "A test runner from Datadog",
@@ -54,8 +57,8 @@ var runCmd = &cobra.Command{
 func init() {
 	rootCmd.PersistentFlags().String("platform", "ruby", "Platform that runs tests")
 	rootCmd.PersistentFlags().String("framework", "rspec", "Test framework to use")
-	rootCmd.PersistentFlags().Int("min-parallelism", 1, "Minimum number of parallel test processes")
-	rootCmd.PersistentFlags().Int("max-parallelism", 1, "Maximum number of parallel test processes")
+	rootCmd.PersistentFlags().Int("min-parallelism", defaultParallelism, "Minimum number of parallel test processes (default: number of CPUs)")
+	rootCmd.PersistentFlags().Int("max-parallelism", defaultParallelism, "Maximum number of parallel test processes (default: number of CPUs)")
 	rootCmd.PersistentFlags().String("worker-env", "", "Worker environment configuration")
 	rootCmd.PersistentFlags().String("command", "", "Test command that ddtest should wrap")
 	rootCmd.PersistentFlags().String("tests-location", "", "Glob pattern used to discover test files")
