@@ -60,6 +60,7 @@ func init() {
 	rootCmd.PersistentFlags().Int("min-parallelism", defaultParallelism, "Minimum number of parallel test processes (default: number of CPUs)")
 	rootCmd.PersistentFlags().Int("max-parallelism", defaultParallelism, "Maximum number of parallel test processes (default: number of CPUs)")
 	rootCmd.PersistentFlags().String("worker-env", "", "Worker environment configuration")
+	rootCmd.PersistentFlags().Int("ci-node-workers", defaultParallelism, "Number of parallel workers per CI node (default: number of CPUs)")
 	rootCmd.PersistentFlags().String("command", "", "Test command that ddtest should wrap")
 	rootCmd.PersistentFlags().String("tests-location", "", "Glob pattern used to discover test files")
 	rootCmd.PersistentFlags().String("runtime-tags", "", "JSON string to override runtime tags (e.g. '{\"os.platform\":\"linux\",\"runtime.version\":\"3.2.0\"}')")
@@ -81,6 +82,10 @@ func init() {
 	}
 	if err := viper.BindPFlag("worker_env", rootCmd.PersistentFlags().Lookup("worker-env")); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding worker-env flag: %v\n", err)
+		os.Exit(1)
+	}
+	if err := viper.BindPFlag("ci_node_workers", rootCmd.PersistentFlags().Lookup("ci-node-workers")); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding ci-node-workers flag: %v\n", err)
 		os.Exit(1)
 	}
 	if err := viper.BindPFlag("command", rootCmd.PersistentFlags().Lookup("command")); err != nil {

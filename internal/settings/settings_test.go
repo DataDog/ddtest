@@ -51,6 +51,9 @@ func TestInit(t *testing.T) {
 	if config.CiNode != -1 {
 		t.Errorf("expected default ci_node to be -1, got %d", config.CiNode)
 	}
+	if config.CiNodeWorkers != expectedParallelism {
+		t.Errorf("expected default ci_node_workers to be %d (CPU count), got %d", expectedParallelism, config.CiNodeWorkers)
+	}
 	if config.Command != "" {
 		t.Errorf("expected default command to be empty, got %q", config.Command)
 	}
@@ -85,6 +88,9 @@ func TestSetDefaults(t *testing.T) {
 	}
 	if viper.GetInt("ci_node") != -1 {
 		t.Errorf("expected default ci_node to be -1, got %d", viper.GetInt("ci_node"))
+	}
+	if viper.GetInt("ci_node_workers") != expectedParallelism {
+		t.Errorf("expected default ci_node_workers to be %d (CPU count), got %d", expectedParallelism, viper.GetInt("ci_node_workers"))
 	}
 	if viper.GetString("command") != "" {
 		t.Errorf("expected default command to be empty, got %q", viper.GetString("command"))
@@ -163,6 +169,7 @@ func TestEnvironmentVariables(t *testing.T) {
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "8")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV", "RAILS_DB=my_project_dev_{{nodeIndex}}")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE", "5")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS", "4")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND", "bundle exec rspec")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", "spec/**/*_spec.rb")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS", `{"os.platform":"linux","runtime.version":"3.2.0"}`)
@@ -173,6 +180,7 @@ func TestEnvironmentVariables(t *testing.T) {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS")
@@ -197,6 +205,9 @@ func TestEnvironmentVariables(t *testing.T) {
 	}
 	if config.CiNode != 5 {
 		t.Errorf("expected ci_node from env var to be 5, got %d", config.CiNode)
+	}
+	if config.CiNodeWorkers != 4 {
+		t.Errorf("expected ci_node_workers from env var to be 4, got %d", config.CiNodeWorkers)
 	}
 	if config.Command != "bundle exec rspec" {
 		t.Errorf("expected command from env var to be 'bundle exec rspec', got %q", config.Command)
@@ -390,6 +401,25 @@ func TestGetCiNode(t *testing.T) {
 	ciNode = GetCiNode()
 	if ciNode != 7 {
 		t.Errorf("expected ci_node to be 7, got %d", ciNode)
+	}
+}
+
+func TestGetCiNodeWorkers(t *testing.T) {
+	// Test with defaults
+	config = nil
+	viper.Reset()
+
+	expectedParallelism := runtime.NumCPU()
+	ciNodeWorkers := GetCiNodeWorkers()
+	if ciNodeWorkers != expectedParallelism {
+		t.Errorf("expected ci_node_workers to be %d (CPU count), got %d", expectedParallelism, ciNodeWorkers)
+	}
+
+	// Test with custom value
+	config = &Config{CiNodeWorkers: 4}
+	ciNodeWorkers = GetCiNodeWorkers()
+	if ciNodeWorkers != 4 {
+		t.Errorf("expected ci_node_workers to be 4, got %d", ciNodeWorkers)
 	}
 }
 
