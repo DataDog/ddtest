@@ -50,8 +50,10 @@ func TestCalculateParallelRunners_MinParallelismLessThanOne(t *testing.T) {
 }
 
 func TestCalculateParallelRunners_MaxLessThanMin(t *testing.T) {
+	// When max < min, min is clamped to max. This ensures that a user who only
+	// sets --max-parallelism to a lower value gets the expected behavior.
 	result := testCalculateParallelRunners(50.0, 5, 3) // max < min
-	expected := 5                                      // Should return min_parallelism
+	expected := 3                                      // Should clamp min to max and return max
 	if result != expected {
 		t.Errorf("calculateParallelRunners(50.0) = %d, expected %d when max < min", result, expected)
 	}
