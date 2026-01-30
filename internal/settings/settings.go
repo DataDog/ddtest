@@ -4,10 +4,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/viper"
 )
+
+// DefaultParallelism returns the default parallelism value, which is the number
+// of available CPUs. This respects container CPU limits in cloud CI environments.
+func DefaultParallelism() int {
+	return runtime.NumCPU()
+}
 
 type Config struct {
 	Platform       string `mapstructure:"platform"`
@@ -42,8 +49,8 @@ func Init() {
 func setDefaults() {
 	viper.SetDefault("platform", "ruby")
 	viper.SetDefault("framework", "rspec")
-	viper.SetDefault("min_parallelism", 1)
-	viper.SetDefault("max_parallelism", 1)
+	viper.SetDefault("min_parallelism", DefaultParallelism())
+	viper.SetDefault("max_parallelism", DefaultParallelism())
 	viper.SetDefault("worker_env", "")
 	viper.SetDefault("ci_node", -1)
 	viper.SetDefault("command", "")

@@ -2,10 +2,23 @@ package settings
 
 import (
 	"os"
+	"runtime"
 	"testing"
 
 	"github.com/spf13/viper"
 )
+
+func TestDefaultParallelism(t *testing.T) {
+	result := DefaultParallelism()
+	expected := runtime.NumCPU()
+
+	if result != expected {
+		t.Errorf("expected DefaultParallelism() to return %d (runtime.NumCPU()), got %d", expected, result)
+	}
+	if result < 1 {
+		t.Errorf("expected DefaultParallelism() to be at least 1, got %d", result)
+	}
+}
 
 func TestInit(t *testing.T) {
 	// Clear any existing config
@@ -25,11 +38,12 @@ func TestInit(t *testing.T) {
 	if config.Framework != "rspec" {
 		t.Errorf("expected default framework to be 'rspec', got %q", config.Framework)
 	}
-	if config.MinParallelism != 1 {
-		t.Errorf("expected default min_parallelism to be 1, got %d", config.MinParallelism)
+	expectedParallelism := runtime.NumCPU()
+	if config.MinParallelism != expectedParallelism {
+		t.Errorf("expected default min_parallelism to be %d (CPU count), got %d", expectedParallelism, config.MinParallelism)
 	}
-	if config.MaxParallelism != 1 {
-		t.Errorf("expected default max_parallelism to be 1, got %d", config.MaxParallelism)
+	if config.MaxParallelism != expectedParallelism {
+		t.Errorf("expected default max_parallelism to be %d (CPU count), got %d", expectedParallelism, config.MaxParallelism)
 	}
 	if config.WorkerEnv != "" {
 		t.Errorf("expected default worker_env to be empty, got %q", config.WorkerEnv)
@@ -59,11 +73,12 @@ func TestSetDefaults(t *testing.T) {
 	if viper.GetString("framework") != "rspec" {
 		t.Errorf("expected default framework to be 'rspec', got %q", viper.GetString("framework"))
 	}
-	if viper.GetInt("min_parallelism") != 1 {
-		t.Errorf("expected default min_parallelism to be 1, got %d", viper.GetInt("min_parallelism"))
+	expectedParallelism := runtime.NumCPU()
+	if viper.GetInt("min_parallelism") != expectedParallelism {
+		t.Errorf("expected default min_parallelism to be %d (CPU count), got %d", expectedParallelism, viper.GetInt("min_parallelism"))
 	}
-	if viper.GetInt("max_parallelism") != 1 {
-		t.Errorf("expected default max_parallelism to be 1, got %d", viper.GetInt("max_parallelism"))
+	if viper.GetInt("max_parallelism") != expectedParallelism {
+		t.Errorf("expected default max_parallelism to be %d (CPU count), got %d", expectedParallelism, viper.GetInt("max_parallelism"))
 	}
 	if viper.GetString("worker_env") != "" {
 		t.Errorf("expected default worker_env to be empty, got %q", viper.GetString("worker_env"))
@@ -199,9 +214,10 @@ func TestGetMinParallelism(t *testing.T) {
 	config = nil
 	viper.Reset()
 
+	expectedParallelism := runtime.NumCPU()
 	minParallelism := GetMinParallelism()
-	if minParallelism != 1 {
-		t.Errorf("expected min_parallelism to be 1, got %d", minParallelism)
+	if minParallelism != expectedParallelism {
+		t.Errorf("expected min_parallelism to be %d (CPU count), got %d", expectedParallelism, minParallelism)
 	}
 
 	// Test with custom value
@@ -217,9 +233,10 @@ func TestGetMaxParallelism(t *testing.T) {
 	config = nil
 	viper.Reset()
 
+	expectedParallelism := runtime.NumCPU()
 	maxParallelism := GetMaxParallelism()
-	if maxParallelism != 1 {
-		t.Errorf("expected max_parallelism to be 1, got %d", maxParallelism)
+	if maxParallelism != expectedParallelism {
+		t.Errorf("expected max_parallelism to be %d (CPU count), got %d", expectedParallelism, maxParallelism)
 	}
 
 	// Test with custom value

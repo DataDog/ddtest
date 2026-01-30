@@ -242,6 +242,15 @@ func TestTestRunner_Setup_WithParallelRunners(t *testing.T) {
 	// Create .testoptimization directory
 	_ = os.MkdirAll(constants.PlanDirectory, 0755)
 
+	// Set parallelism to 1 to test single runner behavior
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "1")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "1")
+	defer func() {
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+	}()
+	settings.Init()
+
 	// Setup mocks for a test with 40% skippable percentage
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -298,6 +307,15 @@ func TestTestRunner_Setup_WithCIProvider(t *testing.T) {
 
 	// Create .testoptimization directory
 	_ = os.MkdirAll(constants.PlanDirectory, 0755)
+
+	// Set parallelism to 1 to test single runner behavior
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "1")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "1")
+	defer func() {
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+	}()
+	settings.Init()
 
 	// Setup mocks for test with CI provider
 	mockFramework := &MockFramework{
@@ -454,6 +472,15 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 
 		// Create .testoptimization directory
 		_ = os.MkdirAll(constants.PlanDirectory, 0755)
+
+		// Set parallelism to 1 to test single runner behavior
+		_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "1")
+		_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "1")
+		defer func() {
+			_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
+			_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+		}()
+		settings.Init()
 
 		// Setup mocks for single runner scenario
 		mockFramework := &MockFramework{
