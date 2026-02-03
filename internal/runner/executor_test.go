@@ -107,7 +107,7 @@ func TestRunCINodeTests_GlobalIndexCalculation(t *testing.T) {
 	}
 
 	// Test with 2 workers on ci-node 1
-	// Global indices should be: 1*2+0=2 and 1*2+1=3
+	// Global indices should be: 1*10000+0=10000 and 1*10000+1=10001
 	err := runCINodeTestsWithWorkers(context.Background(), mockFramework, workerEnvMap, 1, 2)
 	if err != nil {
 		t.Fatalf("runCINodeTestsWithWorkers() should not return error, got: %v", err)
@@ -126,8 +126,8 @@ func TestRunCINodeTests_GlobalIndexCalculation(t *testing.T) {
 	}
 	slices.Sort(nodeIndices)
 
-	// Global indices for ci-node=1 with ciNodeWorkers=2 should be 2 and 3
-	expectedIndices := []string{"2", "3"}
+	// Global indices for ci-node=1 should be 10000 and 10001 (ciNode * 10000 + localIndex)
+	expectedIndices := []string{"10000", "10001"}
 	if !slices.Equal(nodeIndices, expectedIndices) {
 		t.Errorf("Expected global indices %v, got %v", expectedIndices, nodeIndices)
 	}
@@ -153,7 +153,7 @@ func TestRunCINodeTests_SingleWorkerGlobalIndex(t *testing.T) {
 		"NODE_INDEX": "{{nodeIndex}}",
 	}
 
-	// Single worker mode on ci-node 2 - global index should be 2 (just the ciNode)
+	// Single worker mode on ci-node 2 - global index should be 20000 (ciNode * 10000)
 	err := runCINodeTestsWithWorkers(context.Background(), mockFramework, workerEnvMap, 2, 1)
 	if err != nil {
 		t.Fatalf("runCINodeTestsWithWorkers() should not return error, got: %v", err)
@@ -164,8 +164,8 @@ func TestRunCINodeTests_SingleWorkerGlobalIndex(t *testing.T) {
 		t.Fatalf("Expected 1 call, got %d", len(calls))
 	}
 
-	if calls[0].EnvMap["NODE_INDEX"] != "2" {
-		t.Errorf("Expected NODE_INDEX=2 for single worker on ci-node 2, got %s", calls[0].EnvMap["NODE_INDEX"])
+	if calls[0].EnvMap["NODE_INDEX"] != "20000" {
+		t.Errorf("Expected NODE_INDEX=20000 for single worker on ci-node 2, got %s", calls[0].EnvMap["NODE_INDEX"])
 	}
 }
 

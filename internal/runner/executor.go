@@ -14,6 +14,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// ciNodeIndexMultiplier is used to calculate global worker indices in CI-node mode.
+// Each CI node gets a range of 10000 indices (node 0: 0-9999, node 1: 10000-19999, etc.)
+// This ensures uniqueness even in heterogeneous CI pools with different CPU counts per node.
+const ciNodeIndexMultiplier = 10000
+
 // splitTestFilesIntoGroups splits a slice of test files into n groups
 // using simple round-robin distribution
 func splitTestFilesIntoGroups(testFiles []string, n int) [][]string {
@@ -58,9 +63,9 @@ func runCINodeTestsWithWorkers(ctx context.Context, framework framework.Framewor
 		return nil
 	}
 
-	// Single worker mode: run all tests with global index = ciNode * ciNodeWorkers
+	// Single worker mode: run all tests with global index based on ciNode
 	if ciNodeWorkers <= 1 {
-		globalIndex := ciNode
+		globalIndex := ciNode * ciNodeIndexMultiplier
 		slog.Info("Running tests for CI node in single-worker mode", "ciNode", ciNode, "globalIndex", globalIndex)
 		return runTestsWithGlobalIndex(ctx, framework, testFiles, workerEnvMap, globalIndex)
 	}
@@ -77,8 +82,8 @@ func runCINodeTestsWithWorkers(ctx context.Context, framework framework.Framewor
 			continue
 		}
 
-		// Global index = ciNode * ciNodeWorkers + localIndex
-		globalIndex := ciNode*ciNodeWorkers + localIndex
+		// Global index = ciNode * 10000 + localIndex (ensures uniqueness across heterogeneous CI pools)
+		globalIndex := ciNode*ciNodeIndexMultiplier + localIndex
 		g.Go(func() error {
 			return runTestsWithGlobalIndex(ctx, framework, groupFiles, workerEnvMap, globalIndex)
 		})
