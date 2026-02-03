@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -139,34 +140,23 @@ func (r *Ruby) SanityCheck() error {
 	return nil
 }
 
+// bundlerInfoRegex matches bundler info output format: "  * gem-name (version [hash])"
+// Captures: 1=gem-name, 2=version
+var bundlerInfoRegex = regexp.MustCompile(`^\s*\*\s+(\S+)\s+\((\d+\.\d+\.\d+)`)
+
 func parseBundlerInfoVersion(output, gemName string) (version.Version, error) {
 	for line := range strings.SplitSeq(output, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
+		matches := bundlerInfoRegex.FindStringSubmatch(line)
+		if matches == nil {
 			continue
 		}
 
-		if !strings.Contains(trimmed, gemName) {
+		matchedGem := matches[1]
+		if matchedGem != gemName {
 			continue
 		}
 
-		start := strings.Index(trimmed, "(")
-		end := strings.Index(trimmed, ")")
-		if start == -1 || end == -1 || end <= start+1 {
-			continue
-		}
-
-		versionToken := strings.TrimSpace(trimmed[start+1 : end])
-		if versionToken == "" {
-			continue
-		}
-
-		fields := strings.Fields(versionToken)
-		versionString := fields[0]
-		if !version.IsValid(versionString) {
-			return version.Version{}, fmt.Errorf("unexpected version format in bundle info output: %q", versionToken)
-		}
-
+		versionString := matches[2]
 		parsed, err := version.Parse(versionString)
 		if err != nil {
 			return version.Version{}, fmt.Errorf("failed to parse version from bundle info output: %w", err)
