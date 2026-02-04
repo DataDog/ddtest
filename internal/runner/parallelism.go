@@ -14,7 +14,8 @@ func calculateParallelRunners(skippablePercentage float64) int {
 }
 
 func calculateParallelRunnersWithParams(skippablePercentage float64, minParallelism, maxParallelism int) int {
-	if maxParallelism == 1 {
+	// maxParallelism could be 0 or negative!
+	if maxParallelism <= 1 {
 		return 1
 	}
 

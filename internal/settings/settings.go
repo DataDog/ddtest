@@ -23,6 +23,7 @@ type Config struct {
 	MaxParallelism int    `mapstructure:"max_parallelism"`
 	WorkerEnv      string `mapstructure:"worker_env"`
 	CiNode         int    `mapstructure:"ci_node"`
+	CiNodeWorkers  int    `mapstructure:"ci_node_workers"`
 	Command        string `mapstructure:"command"`
 	TestsLocation  string `mapstructure:"tests_location"`
 	RuntimeTags    string `mapstructure:"runtime_tags"`
@@ -53,6 +54,7 @@ func setDefaults() {
 	viper.SetDefault("max_parallelism", DefaultParallelism())
 	viper.SetDefault("worker_env", "")
 	viper.SetDefault("ci_node", -1)
+	viper.SetDefault("ci_node_workers", DefaultParallelism())
 	viper.SetDefault("command", "")
 	viper.SetDefault("tests_location", "")
 	viper.SetDefault("runtime_tags", "")
@@ -87,6 +89,10 @@ func GetWorkerEnv() string {
 
 func GetCiNode() int {
 	return Get().CiNode
+}
+
+func GetCiNodeWorkers() int {
+	return Get().CiNodeWorkers
 }
 
 func GetCommand() string {

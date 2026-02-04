@@ -10,21 +10,101 @@ import (
 
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/settings"
 	"golang.org/x/sync/errgroup"
 )
 
+// ciNodeIndexMultiplier is used to calculate global worker indices in CI-node mode.
+// Each CI node gets a range of 10000 indices (node 0: 0-9999, node 1: 10000-19999, etc.)
+// This ensures uniqueness even in heterogeneous CI pools with different CPU counts per node.
+const ciNodeIndexMultiplier = 10000
+
+// splitTestFilesIntoGroups splits a slice of test files into n groups
+// using simple round-robin distribution
+func splitTestFilesIntoGroups(testFiles []string, n int) [][]string {
+	if n <= 0 {
+		n = 1
+	}
+
+	result := make([][]string, n)
+	for i := range result {
+		result[i] = []string{}
+	}
+
+	for i, file := range testFiles {
+		groupIndex := i % n
+		result[groupIndex] = append(result[groupIndex], file)
+	}
+
+	return result
+}
+
 // runCINodeTests executes tests for a specific CI node (one split, not the whole tests set)
+// It further splits the node's tests among local workers based on ci_node_workers setting.
 func runCINodeTests(ctx context.Context, framework framework.Framework, workerEnvMap map[string]string, ciNode int) error {
+	return runCINodeTestsWithWorkers(ctx, framework, workerEnvMap, ciNode, settings.GetCiNodeWorkers())
+}
+
+// runCINodeTestsWithWorkers is the internal implementation that accepts ciNodeWorkers as a parameter
+// for easier testing.
+func runCINodeTestsWithWorkers(ctx context.Context, framework framework.Framework, workerEnvMap map[string]string, ciNode int, ciNodeWorkers int) error {
 	runnerFilePath := fmt.Sprintf("%s/runner-%d", constants.TestsSplitDir, ciNode)
 	if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
 		return fmt.Errorf("runner file for ci-node %d does not exist: %s", ciNode, runnerFilePath)
 	}
 
-	slog.Info("Running tests for specific CI node", "ciNode", ciNode, "filePath", runnerFilePath)
-	if err := runTestsFromFile(ctx, framework, runnerFilePath, workerEnvMap, ciNode); err != nil {
+	testFiles, err := readTestFilesFromFile(runnerFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to read test files for ci-node %d from %s: %w", ciNode, runnerFilePath, err)
+	}
+
+	if len(testFiles) == 0 {
+		slog.Info("No tests to run for CI node", "ciNode", ciNode)
+		return nil
+	}
+
+	// Single worker mode: run all tests with global index based on ciNode
+	if ciNodeWorkers <= 1 {
+		globalIndex := ciNode * ciNodeIndexMultiplier
+		slog.Info("Running tests for CI node in single-worker mode", "ciNode", ciNode, "globalIndex", globalIndex)
+		return runTestsWithGlobalIndex(ctx, framework, testFiles, workerEnvMap, globalIndex)
+	}
+
+	// Multi-worker mode: split tests among local workers
+	slog.Info("Running tests for CI node in parallel mode",
+		"ciNode", ciNode, "ciNodeWorkers", ciNodeWorkers, "testFilesCount", len(testFiles))
+
+	groups := splitTestFilesIntoGroups(testFiles, ciNodeWorkers)
+
+	var g errgroup.Group
+	for localIndex, groupFiles := range groups {
+		if len(groupFiles) == 0 {
+			continue
+		}
+
+		// Global index = ciNode * 10000 + localIndex (ensures uniqueness across heterogeneous CI pools)
+		globalIndex := ciNode*ciNodeIndexMultiplier + localIndex
+		g.Go(func() error {
+			return runTestsWithGlobalIndex(ctx, framework, groupFiles, workerEnvMap, globalIndex)
+		})
+	}
+
+	if err := g.Wait(); err != nil {
 		return fmt.Errorf("failed to run tests for ci-node %d: %w", ciNode, err)
 	}
 	return nil
+}
+
+// runTestsWithGlobalIndex runs a set of test files with the given global worker index for env templating
+func runTestsWithGlobalIndex(ctx context.Context, framework framework.Framework, testFiles []string, workerEnvMap map[string]string, globalIndex int) error {
+	// Create a copy of the worker env map and replace nodeIndex placeholder with global index
+	workerEnv := make(map[string]string)
+	for key, value := range workerEnvMap {
+		workerEnv[key] = strings.ReplaceAll(value, constants.NodeIndexPlaceholder, fmt.Sprintf("%d", globalIndex))
+	}
+
+	slog.Info("Running tests in worker", "globalIndex", globalIndex, "testFilesCount", len(testFiles), "workerEnv", workerEnv)
+	return framework.RunTests(ctx, testFiles, workerEnv)
 }
 
 // runParallelTests executes tests across multiple parallel runners on a single node

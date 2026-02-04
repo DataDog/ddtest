@@ -28,6 +28,37 @@ func TestCalculateParallelRunners_MaxParallelismIsOne(t *testing.T) {
 	}
 }
 
+func TestCalculateParallelRunners_MaxParallelismZeroOrNegative(t *testing.T) {
+	tests := []struct {
+		name           string
+		maxParallelism int
+	}{
+		{"maxParallelism is 0", 0},
+		{"maxParallelism is -1", -1},
+		{"maxParallelism is -100", -100},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Should always return 1 regardless of skippable percentage
+			result := testCalculateParallelRunners(0.0, 1, tt.maxParallelism)
+			if result != 1 {
+				t.Errorf("calculateParallelRunners(0.0) with maxParallelism=%d = %d, expected 1", tt.maxParallelism, result)
+			}
+
+			result = testCalculateParallelRunners(50.0, 1, tt.maxParallelism)
+			if result != 1 {
+				t.Errorf("calculateParallelRunners(50.0) with maxParallelism=%d = %d, expected 1", tt.maxParallelism, result)
+			}
+
+			result = testCalculateParallelRunners(100.0, 1, tt.maxParallelism)
+			if result != 1 {
+				t.Errorf("calculateParallelRunners(100.0) with maxParallelism=%d = %d, expected 1", tt.maxParallelism, result)
+			}
+		})
+	}
+}
+
 func TestCalculateParallelRunners_MinParallelismLessThanOne(t *testing.T) {
 	tests := []struct {
 		name                string

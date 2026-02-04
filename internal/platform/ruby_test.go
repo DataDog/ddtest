@@ -117,6 +117,26 @@ func TestRuby_SanityCheck_FailsWhenVersionNotFound(t *testing.T) {
 	}
 }
 
+func TestRuby_SanityCheck_SucceedsWithDebugLogs(t *testing.T) {
+	// Debug logs from datadog tracing contain paths with gem name and parentheses
+	// that could confuse the parser if not handled correctly
+	output := `D, [2026-02-02T16:50:26.016240 #9457] DEBUG -- datadog: [datadog] (/path/to/datadog-ci-rb/lib/datadog/ci/contrib/instrumentation.rb:27:in 'auto_instrument') Auto instrumenting all integrations...
+  * datadog-ci (1.27.0 e11ecfb)
+        Summary: Datadog Test Optimization for your ruby application
+        Homepage: https://github.com/DataDog/datadog-ci-rb
+        Path: /Users/user/.rbenv/versions/3.3.5/lib/ruby/gems/3.3.0/bundler/gems/datadog-ci-rb-e11ecfbf06ad
+`
+	mockExecutor := &mockCommandExecutor{
+		combinedOutput: []byte(output),
+	}
+
+	ruby := NewRuby()
+	ruby.executor = mockExecutor
+	if err := ruby.SanityCheck(); err != nil {
+		t.Fatalf("SanityCheck() unexpected error: %v", err)
+	}
+}
+
 func TestRuby_DetectFramework_RSpec(t *testing.T) {
 	viper.Reset()
 	viper.Set("framework", "rspec")
