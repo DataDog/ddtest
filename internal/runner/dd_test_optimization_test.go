@@ -748,3 +748,90 @@ func TestPrepareTestOptimization_ITRPathNormalization_PrefixMismatchUnchanged(t 
 		}
 	}
 }
+
+// TestPrepareTestOptimization_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd
+// verifies that when running from a monorepo subdirectory, skip matching works
+// correctly: both the API (skippable tests) and framework discovery use the same
+// CWD-relative Suite names (e.g. "Spree::Role at ./spec/models/role_spec.rb"),
+// while SuiteSourceFile is repo-root-relative (e.g. "core/spec/models/role_spec.rb")
+// and needs normalization for worker splitting.
+func TestPrepareTestOptimization_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a temp monorepo: repoRoot/core/spec/models/
+	repoRoot := t.TempDir()
+	initGitRepo(t, repoRoot)
+
+	coreDir := filepath.Join(repoRoot, "core")
+	_ = os.MkdirAll(filepath.Join(coreDir, "spec", "models"), 0755)
+	_ = os.WriteFile(filepath.Join(coreDir, "spec", "models", "role_spec.rb"), []byte("# spec"), 0644)
+	_ = os.WriteFile(filepath.Join(coreDir, "spec", "models", "order_spec.rb"), []byte("# spec"), 0644)
+
+	// chdir into the subdirectory (simulating: cd core && ddtest plan)
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(coreDir)
+
+	// Both framework discovery and API use CWD-relative Suite names.
+	// SuiteSourceFile is repo-root-relative (comes from tracer's test discovery mode).
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "Spree::Role at ./spec/models/role_spec.rb", Name: "should be valid", Parameters: "", SuiteSourceFile: "core/spec/models/role_spec.rb"},
+			{Suite: "Spree::Role at ./spec/models/role_spec.rb", Name: "should have permissions", Parameters: "", SuiteSourceFile: "core/spec/models/role_spec.rb"},
+			{Suite: "Order at ./spec/models/order_spec.rb", Name: "should be valid", Parameters: "", SuiteSourceFile: "core/spec/models/order_spec.rb"},
+		},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+
+	// API returns skippable tests with the same CWD-relative Suite names
+	roleTest1 := testoptimization.Test{
+		Suite: "Spree::Role at ./spec/models/role_spec.rb", Name: "should be valid", Parameters: "",
+	}
+	roleTest2 := testoptimization.Test{
+		Suite: "Spree::Role at ./spec/models/role_spec.rb", Name: "should have permissions", Parameters: "",
+	}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		SkippableTests: map[string]bool{
+			roleTest1.FQN(): true,
+			roleTest2.FQN(): true,
+		},
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not return error, got: %v", err)
+	}
+
+	// 2 of 3 tests should be skipped (the role_spec.rb tests)
+	expectedSkippablePercentage := float64(2) / float64(3) * 100.0
+	if runner.skippablePercentage != expectedSkippablePercentage {
+		t.Errorf("Expected skippablePercentage=%.2f%%, got %.2f%%",
+			expectedSkippablePercentage, runner.skippablePercentage)
+	}
+
+	// Only order_spec.rb should remain in testFiles (role_spec.rb tests were skipped).
+	// The SuiteSourceFile path should be normalized from "core/spec/..." to "spec/..." (CWD-relative).
+	expectedFiles := map[string]bool{
+		"spec/models/order_spec.rb": true,
+	}
+
+	if len(runner.testFiles) != 1 {
+		t.Fatalf("Expected 1 test file (only order_spec.rb), got %d: %v", len(runner.testFiles), runner.testFiles)
+	}
+
+	for file := range runner.testFiles {
+		if !expectedFiles[file] {
+			t.Errorf("Unexpected test file path %q", file)
+		}
+	}
+}
