@@ -20,7 +20,8 @@ func TestNormalizePath_SubdirPrefixMatch_StripsPrefix(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(coreDir)
 
-	result := normalizeTestFilePath("core/spec/models/order_spec.rb")
+	prefix := getCwdSubdirPrefix()
+	result := normalizeTestFilePathWithPrefix("core/spec/models/order_spec.rb", prefix)
 	expected := "spec/models/order_spec.rb"
 	if result != expected {
 		t.Errorf("Expected %q, got %q", expected, result)
@@ -40,7 +41,8 @@ func TestNormalizePath_NestedSubdirPrefixMatch_StripsFullPrefix(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(nestedDir)
 
-	result := normalizeTestFilePath("packages/core/spec/user_spec.rb")
+	prefix := getCwdSubdirPrefix()
+	result := normalizeTestFilePathWithPrefix("packages/core/spec/user_spec.rb", prefix)
 	expected := "spec/user_spec.rb"
 	if result != expected {
 		t.Errorf("Expected %q, got %q", expected, result)
@@ -60,7 +62,8 @@ func TestNormalizePath_AlreadyRelative_NoChange(t *testing.T) {
 	_ = os.Chdir(coreDir)
 
 	// This path is already CWD-relative (doesn't start with "core/")
-	result := normalizeTestFilePath("spec/models/order_spec.rb")
+	prefix := getCwdSubdirPrefix()
+	result := normalizeTestFilePathWithPrefix("spec/models/order_spec.rb", prefix)
 	expected := "spec/models/order_spec.rb"
 	if result != expected {
 		t.Errorf("Expected %q (unchanged), got %q", expected, result)
@@ -79,7 +82,8 @@ func TestNormalizePath_PrefixMismatch_NoChange(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(apiDir)
 
-	result := normalizeTestFilePath("core/spec/models/order_spec.rb")
+	prefix := getCwdSubdirPrefix()
+	result := normalizeTestFilePathWithPrefix("core/spec/models/order_spec.rb", prefix)
 	expected := "core/spec/models/order_spec.rb"
 	if result != expected {
 		t.Errorf("Expected %q (unchanged), got %q", expected, result)
@@ -95,7 +99,8 @@ func TestNormalizePath_AtRepoRoot_NoChange(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(repoRoot)
 
-	result := normalizeTestFilePath("spec/models/order_spec.rb")
+	prefix := getCwdSubdirPrefix()
+	result := normalizeTestFilePathWithPrefix("spec/models/order_spec.rb", prefix)
 	expected := "spec/models/order_spec.rb"
 	if result != expected {
 		t.Errorf("Expected %q (unchanged), got %q", expected, result)
@@ -110,7 +115,8 @@ func TestNormalizePath_GitRootUnavailable_NoChange(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(tempDir)
 
-	result := normalizeTestFilePath("core/spec/models/order_spec.rb")
+	prefix := getCwdSubdirPrefix()
+	result := normalizeTestFilePathWithPrefix("core/spec/models/order_spec.rb", prefix)
 	expected := "core/spec/models/order_spec.rb"
 	if result != expected {
 		t.Errorf("Expected %q (unchanged when git root unavailable), got %q", expected, result)
@@ -130,14 +136,15 @@ func TestNormalizePath_AbsolutePath_NoChange(t *testing.T) {
 	_ = os.Chdir(coreDir)
 
 	absPath := "/absolute/path/to/spec.rb"
-	result := normalizeTestFilePath(absPath)
+	prefix := getCwdSubdirPrefix()
+	result := normalizeTestFilePathWithPrefix(absPath, prefix)
 	if result != absPath {
 		t.Errorf("Expected %q (absolute path unchanged), got %q", absPath, result)
 	}
 }
 
 func TestNormalizePath_EmptyPath_NoChange(t *testing.T) {
-	result := normalizeTestFilePath("")
+	result := normalizeTestFilePathWithPrefix("", "core")
 	if result != "" {
 		t.Errorf("Expected empty string, got %q", result)
 	}
