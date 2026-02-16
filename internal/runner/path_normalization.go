@@ -3,21 +3,11 @@ package runner
 import (
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-)
 
-// getGitRootDir returns the absolute path to the git repository root.
-// Returns empty string if git is not available or CWD is not in a git repo.
-func getGitRootDir() string {
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
+	ciutils "github.com/DataDog/ddtest/civisibility/utils"
+)
 
 // getCwdSubdirPrefix calculates the relative path from the git root to the
 // current working directory. Returns empty string if CWD is the git root
@@ -27,7 +17,7 @@ func getGitRootDir() string {
 // Example: git root = /repo, CWD = /repo/packages/core -> returns "packages/core"
 // Example: git root = /repo, CWD = /repo -> returns ""
 func getCwdSubdirPrefix() string {
-	gitRoot := getGitRootDir()
+	gitRoot := ciutils.GetSourceRoot()
 	if gitRoot == "" {
 		return ""
 	}
