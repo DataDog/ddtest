@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -62,12 +63,14 @@ func (m *MockPlatform) SanityCheck() error {
 
 // MockFramework mocks a testing framework
 type MockFramework struct {
-	FrameworkName string
-	Tests         []testoptimization.Test
-	TestFiles     []string
-	Err           error
-	RunTestsCalls []RunTestsCall
-	mu            sync.Mutex
+	FrameworkName        string
+	Tests                []testoptimization.Test
+	TestFiles            []string
+	Err                  error // Used by both DiscoverTests and DiscoverTestFiles if specific errors are nil
+	DiscoverTestsErr     error // If set, overrides Err for DiscoverTests
+	DiscoverTestFilesErr error // If set, overrides Err for DiscoverTestFiles
+	RunTestsCalls        []RunTestsCall
+	mu                   sync.Mutex
 }
 
 type RunTestsCall struct {
@@ -80,10 +83,16 @@ func (m *MockFramework) Name() string {
 }
 
 func (m *MockFramework) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
+	if m.DiscoverTestsErr != nil {
+		return m.Tests, m.DiscoverTestsErr
+	}
 	return m.Tests, m.Err
 }
 
 func (m *MockFramework) DiscoverTestFiles() ([]string, error) {
+	if m.DiscoverTestFilesErr != nil {
+		return m.TestFiles, m.DiscoverTestFilesErr
+	}
 	return m.TestFiles, m.Err
 }
 
@@ -643,4 +652,101 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 			t.Errorf("Expected 3 total files distributed across runners, got %d", totalFiles)
 		}
 	})
+}
+
+// TestTestRunner_Plan_SubdirRootRelativeDiscovery_WritesNormalizedPaths
+// reproduces the end-to-end bug from issue #33: Plan writes repo-root-relative paths
+// that become invalid for workers running from a monorepo subdirectory.
+func TestTestRunner_Plan_SubdirRootRelativeDiscovery_WritesNormalizedPaths(t *testing.T) {
+	// Create a temp monorepo: repoRoot/core/spec/...
+	repoRoot := t.TempDir()
+
+	// Initialize git repo at the root
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repoRoot
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to init git repo: %v\n%s", err, string(out))
+	}
+	cmd = exec.Command("git", "commit", "--allow-empty", "-m", "init")
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to create initial commit: %v\n%s", err, string(out))
+	}
+
+	coreDir := filepath.Join(repoRoot, "core")
+	_ = os.MkdirAll(filepath.Join(coreDir, "spec", "models"), 0755)
+	_ = os.WriteFile(filepath.Join(coreDir, "spec", "models", "order_spec.rb"), []byte("# spec"), 0644)
+	_ = os.WriteFile(filepath.Join(coreDir, "spec", "models", "payment_spec.rb"), []byte("# spec"), 0644)
+
+	// chdir into subdirectory
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(coreDir)
+
+	// Set parallelism to 1
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "1")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "1")
+	defer func() {
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+	}()
+	settings.Init()
+
+	// Full discovery returns repo-root-relative paths (the bug)
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "Order", Name: "should be valid", Parameters: "", SuiteSourceFile: "core/spec/models/order_spec.rb"},
+			{Suite: "Payment", Name: "should process", Parameters: "", SuiteSourceFile: "core/spec/models/payment_spec.rb"},
+		},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		SkippableTests: map[string]bool{},
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+	err := runner.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan() should not return error, got: %v", err)
+	}
+
+	// Verify test-files.txt contains CWD-relative paths
+	testFilesContent, err := os.ReadFile(constants.TestFilesOutputPath)
+	if err != nil {
+		t.Fatalf("Failed to read test-files.txt: %v", err)
+	}
+
+	testFilesStr := string(testFilesContent)
+	if strings.Contains(testFilesStr, "core/") {
+		t.Errorf("test-files.txt should not contain repo-root prefix 'core/', got:\n%s", testFilesStr)
+	}
+
+	expectedContent := "spec/models/order_spec.rb\nspec/models/payment_spec.rb\n"
+	if testFilesStr != expectedContent {
+		t.Errorf("Expected test-files.txt content:\n%s\nGot:\n%s", expectedContent, testFilesStr)
+	}
+
+	// Verify runner-0 split file also contains CWD-relative paths
+	runnerContent, err := os.ReadFile(filepath.Join(constants.TestsSplitDir, "runner-0"))
+	if err != nil {
+		t.Fatalf("Failed to read runner-0: %v", err)
+	}
+
+	runnerStr := string(runnerContent)
+	if strings.Contains(runnerStr, "core/") {
+		t.Errorf("runner-0 should not contain repo-root prefix 'core/', got:\n%s", runnerStr)
+	}
 }

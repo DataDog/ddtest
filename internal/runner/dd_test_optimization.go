@@ -133,14 +133,26 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 		discoveredTestsCount := len(discoveredTests)
 		skippableTestsCount := 0
 
+		// Compute subdirectory prefix once for all paths.
+		// When running from a monorepo subdirectory (e.g., "cd core && ddtest plan"),
+		// full discovery may return repo-root-relative paths (e.g., "core/spec/...").
+		// We normalize them to CWD-relative paths so workers can find the files.
+		subdirPrefix := getCwdSubdirPrefix()
+		if subdirPrefix != "" {
+			slog.Info("Running from subdirectory, will normalize repo-root-relative paths", "subdirPrefix", subdirPrefix)
+		}
+
 		tr.testFiles = make(map[string]int)
 		for _, test := range discoveredTests {
 			if !skippableTests[test.FQN()] {
 				slog.Debug("Test is not skipped", "test", test.FQN(), "sourceFile", test.SuiteSourceFile)
 				if test.SuiteSourceFile != "" {
+					// Normalize repo-root-relative path to CWD-relative path.
+					// No-op when running from repo root or when path doesn't match subdir prefix.
+					normalizedPath := normalizeTestFilePathWithPrefix(test.SuiteSourceFile, subdirPrefix)
 					// increment the number of tests in the file
 					// it should track the test suite's duration here in the future
-					tr.testFiles[test.SuiteSourceFile]++
+					tr.testFiles[normalizedPath]++
 				}
 			} else {
 				skippableTestsCount++

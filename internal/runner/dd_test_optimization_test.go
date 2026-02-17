@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -491,5 +493,345 @@ func TestTestRunner_PrepareTestOptimization_NoRuntimeTagsOverride(t *testing.T) 
 
 	if mockOptimizationClient.Tags["runtime.version"] != "3.3.0" {
 		t.Errorf("Expected runtime.version to be '3.3.0' from platform, got %q", mockOptimizationClient.Tags["runtime.version"])
+	}
+}
+
+// initGitRepo initializes a bare git repo in the given directory so that
+// `git rev-parse --show-toplevel` resolves correctly during tests.
+func initGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	cmd := exec.Command("git", "init")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to init git repo in %s: %v\n%s", dir, err, string(out))
+	}
+	// Need at least one commit for some git operations to work
+	cmd = exec.Command("git", "commit", "--allow-empty", "-m", "init")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to create initial commit in %s: %v\n%s", dir, err, string(out))
+	}
+}
+
+// TestPrepareTestOptimization_ITRFullDiscovery_SubdirRootRelativePath_NormalizesToCwdRelative
+// reproduces issue #33: full discovery returns repo-root-relative SuiteSourceFile paths
+// (e.g. "core/spec/...") but workers run from subdirectory "core/", causing double-prefix.
+func TestPrepareTestOptimization_ITRFullDiscovery_SubdirRootRelativePath_NormalizesToCwdRelative(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a temp monorepo: repoRoot/core/spec/models/order_spec.rb
+	repoRoot := t.TempDir()
+	initGitRepo(t, repoRoot)
+
+	coreDir := filepath.Join(repoRoot, "core")
+	_ = os.MkdirAll(filepath.Join(coreDir, "spec", "models"), 0755)
+	_ = os.WriteFile(filepath.Join(coreDir, "spec", "models", "order_spec.rb"), []byte("# spec"), 0644)
+	_ = os.MkdirAll(filepath.Join(coreDir, "spec", "finders"), 0755)
+	_ = os.WriteFile(filepath.Join(coreDir, "spec", "finders", "find_spec.rb"), []byte("# spec"), 0644)
+
+	// chdir into the subdirectory (simulating: cd core && ddtest plan)
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(coreDir)
+
+	// Full discovery returns repo-root-relative paths (the bug scenario)
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "Order", Name: "should be valid", Parameters: "", SuiteSourceFile: "core/spec/models/order_spec.rb"},
+			{Suite: "AddressFinder", Name: "finds addresses", Parameters: "", SuiteSourceFile: "core/spec/finders/find_spec.rb"},
+		},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		SkippableTests: map[string]bool{}, // No tests skipped (ITR enabled but all tests need to run)
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not return error, got: %v", err)
+	}
+
+	// The key assertion: testFiles should contain CWD-relative paths, not repo-root-relative paths
+	// i.e. "spec/models/order_spec.rb" not "core/spec/models/order_spec.rb"
+	expectedFiles := map[string]bool{
+		"spec/models/order_spec.rb": true,
+		"spec/finders/find_spec.rb": true,
+	}
+
+	if len(runner.testFiles) != 2 {
+		t.Fatalf("Expected 2 test files, got %d: %v", len(runner.testFiles), runner.testFiles)
+	}
+
+	for file := range runner.testFiles {
+		if !expectedFiles[file] {
+			t.Errorf("Unexpected test file path %q - should be CWD-relative, not repo-root-relative", file)
+		}
+		// Explicitly check for the double-prefix bug
+		if strings.HasPrefix(file, "core/") {
+			t.Errorf("Test file path %q still has repo-root prefix 'core/' - this is the bug from issue #33", file)
+		}
+	}
+}
+
+// TestPrepareTestOptimization_RepoRootRun_LeavesRepoRelativePathsUnchanged
+// ensures that when running from the repo root (not a subdirectory), paths are not modified.
+func TestPrepareTestOptimization_RepoRootRun_LeavesRepoRelativePathsUnchanged(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a temp repo root with spec files
+	repoRoot := t.TempDir()
+	initGitRepo(t, repoRoot)
+
+	_ = os.MkdirAll(filepath.Join(repoRoot, "spec", "models"), 0755)
+	_ = os.WriteFile(filepath.Join(repoRoot, "spec", "models", "user_spec.rb"), []byte("# spec"), 0644)
+
+	// chdir to repo root (normal case)
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(repoRoot)
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "User", Name: "should be valid", Parameters: "", SuiteSourceFile: "spec/models/user_spec.rb"},
+		},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		SkippableTests: map[string]bool{},
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not return error, got: %v", err)
+	}
+
+	// Paths should remain unchanged when running from repo root
+	if _, ok := runner.testFiles["spec/models/user_spec.rb"]; !ok {
+		t.Errorf("Expected test file 'spec/models/user_spec.rb' to remain unchanged, got: %v", runner.testFiles)
+	}
+}
+
+// TestPrepareTestOptimization_FastDiscovery_PathsRemainUnchanged
+// ensures the fast discovery path (ITR disabled) does not modify paths.
+func TestPrepareTestOptimization_FastDiscovery_PathsRemainUnchanged(t *testing.T) {
+	ctx := context.Background()
+
+	// Fast discovery returns CWD-relative paths directly from glob
+	mockFramework := &MockFramework{
+		FrameworkName:    "rspec",
+		Tests:            nil,                                                                    // No full discovery results
+		TestFiles:        []string{"spec/models/user_spec.rb", "spec/controllers/admin_spec.rb"}, // Fast discovery
+		DiscoverTestsErr: errors.New("context canceled"),                                         // Simulate full discovery being cancelled
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		SkippableTests: map[string]bool{},
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not return error, got: %v", err)
+	}
+
+	// Fast discovery paths should be used as-is
+	expectedFiles := map[string]bool{
+		"spec/models/user_spec.rb":       true,
+		"spec/controllers/admin_spec.rb": true,
+	}
+
+	if len(runner.testFiles) != 2 {
+		t.Fatalf("Expected 2 test files, got %d: %v", len(runner.testFiles), runner.testFiles)
+	}
+
+	for file := range runner.testFiles {
+		if !expectedFiles[file] {
+			t.Errorf("Unexpected test file path %q in fast discovery", file)
+		}
+	}
+}
+
+// TestPrepareTestOptimization_ITRPathNormalization_PrefixMismatchUnchanged
+// ensures that when SuiteSourceFile does not match the current subdir prefix,
+// the path is not modified (conservative behavior).
+func TestPrepareTestOptimization_ITRPathNormalization_PrefixMismatchUnchanged(t *testing.T) {
+	ctx := context.Background()
+
+	// Create monorepo with "api" and "core" subdirs
+	repoRoot := t.TempDir()
+	initGitRepo(t, repoRoot)
+
+	apiDir := filepath.Join(repoRoot, "api")
+	_ = os.MkdirAll(filepath.Join(apiDir, "spec", "models"), 0755)
+	_ = os.WriteFile(filepath.Join(apiDir, "spec", "models", "endpoint_spec.rb"), []byte("# spec"), 0644)
+
+	// We're in "api/" subdir but discovery returns "core/" paths (shouldn't happen in practice,
+	// but tests the safety of the normalization)
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(apiDir)
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			// Path with different prefix than CWD subdir - should be left unchanged
+			{Suite: "Endpoint", Name: "should respond", Parameters: "", SuiteSourceFile: "core/spec/models/order_spec.rb"},
+			// Path that does match CWD subdir prefix
+			{Suite: "ApiEndpoint", Name: "should work", Parameters: "", SuiteSourceFile: "api/spec/models/endpoint_spec.rb"},
+		},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		SkippableTests: map[string]bool{},
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not return error, got: %v", err)
+	}
+
+	// "core/spec/..." doesn't match "api" subdir prefix, should be unchanged
+	// "api/spec/..." matches "api" subdir prefix, should be normalized to "spec/..."
+	expectedFiles := map[string]bool{
+		"core/spec/models/order_spec.rb": true, // Mismatched prefix - unchanged
+		"spec/models/endpoint_spec.rb":   true, // Matched "api/" prefix - stripped
+	}
+
+	if len(runner.testFiles) != 2 {
+		t.Fatalf("Expected 2 test files, got %d: %v", len(runner.testFiles), runner.testFiles)
+	}
+
+	for file := range runner.testFiles {
+		if !expectedFiles[file] {
+			t.Errorf("Unexpected test file path %q", file)
+		}
+	}
+}
+
+// TestPrepareTestOptimization_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd
+// verifies that when running from a monorepo subdirectory, skip matching works
+// correctly: both the API (skippable tests) and framework discovery use the same
+// CWD-relative Suite names (e.g. "Spree::Role at ./spec/models/role_spec.rb"),
+// while SuiteSourceFile is repo-root-relative (e.g. "core/spec/models/role_spec.rb")
+// and needs normalization for worker splitting.
+func TestPrepareTestOptimization_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a temp monorepo: repoRoot/core/spec/models/
+	repoRoot := t.TempDir()
+	initGitRepo(t, repoRoot)
+
+	coreDir := filepath.Join(repoRoot, "core")
+	_ = os.MkdirAll(filepath.Join(coreDir, "spec", "models"), 0755)
+	_ = os.WriteFile(filepath.Join(coreDir, "spec", "models", "role_spec.rb"), []byte("# spec"), 0644)
+	_ = os.WriteFile(filepath.Join(coreDir, "spec", "models", "order_spec.rb"), []byte("# spec"), 0644)
+
+	// chdir into the subdirectory (simulating: cd core && ddtest plan)
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(coreDir)
+
+	// Both framework discovery and API use CWD-relative Suite names.
+	// SuiteSourceFile is repo-root-relative (comes from tracer's test discovery mode).
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "Spree::Role at ./spec/models/role_spec.rb", Name: "should be valid", Parameters: "", SuiteSourceFile: "core/spec/models/role_spec.rb"},
+			{Suite: "Spree::Role at ./spec/models/role_spec.rb", Name: "should have permissions", Parameters: "", SuiteSourceFile: "core/spec/models/role_spec.rb"},
+			{Suite: "Order at ./spec/models/order_spec.rb", Name: "should be valid", Parameters: "", SuiteSourceFile: "core/spec/models/order_spec.rb"},
+		},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+
+	// API returns skippable tests with the same CWD-relative Suite names
+	roleTest1 := testoptimization.Test{
+		Suite: "Spree::Role at ./spec/models/role_spec.rb", Name: "should be valid", Parameters: "",
+	}
+	roleTest2 := testoptimization.Test{
+		Suite: "Spree::Role at ./spec/models/role_spec.rb", Name: "should have permissions", Parameters: "",
+	}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		SkippableTests: map[string]bool{
+			roleTest1.FQN(): true,
+			roleTest2.FQN(): true,
+		},
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not return error, got: %v", err)
+	}
+
+	// 2 of 3 tests should be skipped (the role_spec.rb tests)
+	expectedSkippablePercentage := float64(2) / float64(3) * 100.0
+	if runner.skippablePercentage != expectedSkippablePercentage {
+		t.Errorf("Expected skippablePercentage=%.2f%%, got %.2f%%",
+			expectedSkippablePercentage, runner.skippablePercentage)
+	}
+
+	// Only order_spec.rb should remain in testFiles (role_spec.rb tests were skipped).
+	// The SuiteSourceFile path should be normalized from "core/spec/..." to "spec/..." (CWD-relative).
+	expectedFiles := map[string]bool{
+		"spec/models/order_spec.rb": true,
+	}
+
+	if len(runner.testFiles) != 1 {
+		t.Fatalf("Expected 1 test file (only order_spec.rb), got %d: %v", len(runner.testFiles), runner.testFiles)
+	}
+
+	for file := range runner.testFiles {
+		if !expectedFiles[file] {
+			t.Errorf("Unexpected test file path %q", file)
+		}
 	}
 }

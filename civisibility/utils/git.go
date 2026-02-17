@@ -210,6 +210,20 @@ func getGitVersion() (major int, minor int, patch int, err error) {
 	return gitVersionValue.major, gitVersionValue.minor, gitVersionValue.patch, gitVersionValue.err
 }
 
+// GetSourceRoot returns the absolute path to the git repository root
+// (the result of `git rev-parse --show-toplevel`).
+// Returns empty string if git is not available or the current directory is not in a git repo.
+func GetSourceRoot() string {
+	if !isGitFound() {
+		return ""
+	}
+	out, err := execGitString("rev-parse", "--show-toplevel")
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
 // getLocalGitData retrieves information about the local Git repository from the current HEAD.
 // It gathers details such as the repository URL, current branch, latest commit SHA, author and committer details, and commit message.
 //
