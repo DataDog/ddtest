@@ -47,7 +47,7 @@ git clone https://github.com/DataDog/ddtest.git
 cd ddtest && make build
 ```
 
-This will create the `ddtest` binary in the current directory. It requires Go 1.24+.
+This will create the `ddtest` binary in the current directory. It requires Go 1.26+.
 
 ## Prerequisites
 
@@ -142,18 +142,18 @@ In CI‑node mode, DDTest also fans out across local CPUs on that node and furth
 
 ### Settings (flags and environment variables)
 
-| CLI flag            | Environment variable                          |    Default | What it does                                                                                                                                                                                             |
-| ------------------- | --------------------------------------------- | ---------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--platform`        | `DD_TEST_OPTIMIZATION_RUNNER_PLATFORM`        |     `ruby` | Language/platform (currently supported values: `ruby`).                                                                                                                                                  |
-| `--framework`       | `DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK`       |    `rspec` | Test framework (currently supported values: `rspec`, `minitest`).                                                                                                                                        |
-| `--min-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM` | vCPU count | Minimum workers to use for the split.                                                                                                                                                                    |
-| `--max-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM` | vCPU count | Maximum workers to use for the split.                                                                                                                                                                    |
-|                     | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE`         | `-1` (off) | Restrict this run to the slice assigned to node **N** (0‑indexed). Also parallelizes within the node across its CPUs.                                                                                    |
-| `--ci-node-workers` | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS` | vCPU count | Number of parallel workers per CI node. Tests assigned to a CI node are further split among this many local workers.                                                                                     |
+| CLI flag            | Environment variable                          |    Default | What it does                                                                                                                                                                                                         |
+| ------------------- | --------------------------------------------- | ---------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--platform`        | `DD_TEST_OPTIMIZATION_RUNNER_PLATFORM`        |     `ruby` | Language/platform (currently supported values: `ruby`).                                                                                                                                                              |
+| `--framework`       | `DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK`       |    `rspec` | Test framework (currently supported values: `rspec`, `minitest`).                                                                                                                                                    |
+| `--min-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM` | vCPU count | Minimum workers to use for the split.                                                                                                                                                                                |
+| `--max-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM` | vCPU count | Maximum workers to use for the split.                                                                                                                                                                                |
+|                     | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE`         | `-1` (off) | Restrict this run to the slice assigned to node **N** (0‑indexed). Also parallelizes within the node across its CPUs.                                                                                                |
+| `--ci-node-workers` | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS` | vCPU count | Number of parallel workers per CI node. Tests assigned to a CI node are further split among this many local workers.                                                                                                 |
 | `--worker-env`      | `DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV`      |       `""` | Template env vars per worker: `--worker-env "DATABASE_NAME_TEST=app_test{{nodeIndex}}"`. In CI-node mode, `{{nodeIndex}}` is `ciNode * 10000 + localWorkerIndex`, ensuring uniqueness across heterogeneous CI pools. |
-| `--command`         | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND`         |       `""` | Override the default test command used by the framework. When provided, takes precedence over auto-detection (e.g., `--command "bundle exec custom-rspec"`).                                             |
-| `--tests-location`  | `DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION`  |       `""` | Custom glob pattern to discover test files (e.g., `--tests-location "custom/spec/**/*_spec.rb"`). Defaults to `spec/**/*_spec.rb` for RSpec, `test/**/*_test.rb` for Minitest.                           |
-| `--runtime-tags`    | `DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS`    |       `""` | JSON string to override runtime tags used to fetch skippable tests. Useful for local development on a different OS than CI (e.g., `--runtime-tags '{"os.platform":"linux","runtime.version":"3.2.0"}'`). |
+| `--command`         | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND`         |       `""` | Override the default test command used by the framework. When provided, takes precedence over auto-detection (e.g., `--command "bundle exec custom-rspec"`).                                                         |
+| `--tests-location`  | `DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION`  |       `""` | Custom glob pattern to discover test files (e.g., `--tests-location "custom/spec/**/*_spec.rb"`). Defaults to `spec/**/*_spec.rb` for RSpec, `test/**/*_test.rb` for Minitest.                                       |
+| `--runtime-tags`    | `DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS`    |       `""` | JSON string to override runtime tags used to fetch skippable tests. Useful for local development on a different OS than CI (e.g., `--runtime-tags '{"os.platform":"linux","runtime.version":"3.2.0"}'`).             |
 
 #### Note about the `--command` flag
 
@@ -521,7 +521,7 @@ The `--runtime-tags` option lets you override your local runtime tags to match y
 
 ### Prerequisites
 
-- Go 1.24.5 or later
+- Go 1.26.0 or later
 
 ### Building
 
