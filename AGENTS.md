@@ -47,7 +47,7 @@ go test -v ./...           # Verbose testing
 ## Development
 
 - Uses `dd-trace-go/v2` for Datadog tracing and CI Visibility
-- Use go 1.24
+- Use go 1.26
 - Use `strings` and `slices` packages, don't write your own string manipulation functions
 - Always run `make test` after any change. Any new functionality must be covered by test.
 - Always run `make lint` after any change. Address any linting issues found.
