@@ -9,11 +9,19 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Get GitHub token
+        uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
+        id: octo-sts
+        with:
+          scope: DataDog/ddtest
+          policy: self.github.release.tags
 
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v5
@@ -25,7 +33,7 @@ jobs:
 
       - name: Create Release and Upload Assets
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
         run: |
           TAG_NAME=${GITHUB_REF#refs/tags/}
           gh release create "$TAG_NAME" \
@@ -36,7 +44,7 @@ jobs:
 
       - name: Print Release Summary
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
         run: |
           TAG_NAME=${GITHUB_REF#refs/tags/}
           RELEASE_URL=$(gh release view "$TAG_NAME" --json url --jq .url)
