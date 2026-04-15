@@ -1,20 +1,38 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
+	ciUtils "github.com/DataDog/ddtest/civisibility/utils"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	originalLogger := slog.Default()
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	slog.SetDefault(logger)
+	t.Cleanup(func() {
+		slog.SetDefault(originalLogger)
+	})
+	return &buf
+}
+
 func TestTestRunner_PrepareTestOptimization_Success(t *testing.T) {
 	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
 
 	// Setup mocks
 	mockFramework := &MockFramework{
@@ -46,8 +64,18 @@ func TestTestRunner_PrepareTestOptimization_Success(t *testing.T) {
 			"TestSuite3.test4.": true, // Skip test4
 		},
 	}
+	mockDurationsClient := &MockTestSuiteDurationsClient{
+		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+			"module1": {
+				"suite1": {
+					SourceFile: "test/file1_test.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "1", P90: "2"},
+				},
+			},
+		},
+	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockDurationsClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -92,6 +120,151 @@ func TestTestRunner_PrepareTestOptimization_Success(t *testing.T) {
 		t.Errorf("PrepareTestOptimization() should calculate skippable percentage as %.2f, got %.2f",
 			expectedPercentage, runner.skippablePercentage)
 	}
+
+	if !mockDurationsClient.Called {
+		t.Error("PrepareTestOptimization() should fetch test suite durations")
+	}
+}
+
+func TestTestRunner_PrepareTestOptimization_DurationsErrorContinues(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+	logs := captureLogs(t)
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "Suite", Name: "test1", Parameters: "", SuiteSourceFile: "spec/file1_test.rb"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+		},
+		Framework: mockFramework,
+	}
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{}
+	mockDurationsClient := &MockTestSuiteDurationsClient{Err: errors.New("durations backend failed")}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockDurationsClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not fail when durations API errors, got: %v", err)
+	}
+
+	if len(runner.testSuiteDurations) != 0 {
+		t.Errorf("Expected empty in-memory test suite durations on error, got %v", runner.testSuiteDurations)
+	}
+
+	if !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "Test durations API errored") {
+		t.Errorf("Expected ERROR log for durations API failure, got logs: %s", logs.String())
+	}
+}
+
+func TestTestRunner_PrepareTestOptimization_EmptyDurationsWarns(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+	logs := captureLogs(t)
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "Suite", Name: "test1", Parameters: "", SuiteSourceFile: "spec/file1_test.rb"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+		},
+		Framework: mockFramework,
+	}
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{}
+	mockDurationsClient := &MockTestSuiteDurationsClient{
+		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{},
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockDurationsClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not fail with empty durations, got: %v", err)
+	}
+
+	if len(runner.testSuiteDurations) != 0 {
+		t.Errorf("Expected empty in-memory test suite durations on empty response, got %v", runner.testSuiteDurations)
+	}
+
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "Test durations API returned no test suites") {
+		t.Errorf("Expected WARN log for empty durations response, got logs: %s", logs.String())
+	}
+}
+
+func TestTestRunner_PrepareTestOptimization_NonEmptyDurationsStoredWithoutChangingWeights(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+	logs := captureLogs(t)
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "Suite1", Name: "test1", Parameters: "", SuiteSourceFile: "spec/file1_test.rb"},
+			{Suite: "Suite1", Name: "test2", Parameters: "", SuiteSourceFile: "spec/file1_test.rb"},
+			{Suite: "Suite2", Name: "test3", Parameters: "", SuiteSourceFile: "spec/file2_test.rb"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+		},
+		Framework: mockFramework,
+	}
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{}
+	mockDurationsClient := &MockTestSuiteDurationsClient{
+		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+			"module1": {
+				"suite1": {
+					SourceFile: "spec/file1_test.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "10", P90: "20"},
+				},
+				"suite2": {
+					SourceFile: "spec/file2_test.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "30", P90: "40"},
+				},
+			},
+		},
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockDurationsClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not fail with durations data, got: %v", err)
+	}
+
+	if len(runner.testSuiteDurations) != 1 {
+		t.Fatalf("Expected stored durations data, got %v", runner.testSuiteDurations)
+	}
+
+	if runner.testFiles["spec/file1_test.rb"] != 2 {
+		t.Errorf("Expected file1 weight to remain test-count based (2), got %d", runner.testFiles["spec/file1_test.rb"])
+	}
+	if runner.testFiles["spec/file2_test.rb"] != 1 {
+		t.Errorf("Expected file2 weight to remain test-count based (1), got %d", runner.testFiles["spec/file2_test.rb"])
+	}
+
+	if !strings.Contains(logs.String(), "level=DEBUG") || !strings.Contains(logs.String(), "Found test suite durations") || !strings.Contains(logs.String(), "testSuitesCount=2") {
+		t.Errorf("Expected DEBUG log for non-empty durations response, got logs: %s", logs.String())
+	}
 }
 
 func TestTestRunner_PrepareTestOptimization_PlatformDetectionError(t *testing.T) {
@@ -103,7 +276,7 @@ func TestTestRunner_PrepareTestOptimization_PlatformDetectionError(t *testing.T)
 
 	mockOptimizationClient := &MockTestOptimizationClient{}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -130,7 +303,7 @@ func TestTestRunner_PrepareTestOptimization_TagsCreationError(t *testing.T) {
 
 	mockOptimizationClient := &MockTestOptimizationClient{}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -166,7 +339,7 @@ func TestTestRunner_PrepareTestOptimization_OptimizationClientInitError(t *testi
 		InitializeErr: errors.New("client initialization failed"),
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -194,7 +367,7 @@ func TestTestRunner_PrepareTestOptimization_FrameworkDetectionError(t *testing.T
 
 	mockOptimizationClient := &MockTestOptimizationClient{}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -226,7 +399,7 @@ func TestTestRunner_PrepareTestOptimization_TestDiscoveryError(t *testing.T) {
 
 	mockOptimizationClient := &MockTestOptimizationClient{}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -255,7 +428,7 @@ func TestTestRunner_PrepareTestOptimization_EmptyTests(t *testing.T) {
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{SkippableTests: map[string]bool{}}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -296,7 +469,7 @@ func TestTestRunner_PrepareTestOptimization_AllTestsSkipped(t *testing.T) {
 		},
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -354,7 +527,7 @@ func TestTestRunner_PrepareTestOptimization_RuntimeTagsOverride(t *testing.T) {
 		SkippableTests: map[string]bool{},
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -419,7 +592,7 @@ func TestTestRunner_PrepareTestOptimization_RuntimeTagsOverrideInvalidJSON(t *te
 
 	mockOptimizationClient := &MockTestOptimizationClient{}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -473,7 +646,7 @@ func TestTestRunner_PrepareTestOptimization_NoRuntimeTagsOverride(t *testing.T) 
 		SkippableTests: map[string]bool{},
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 
@@ -558,7 +731,7 @@ func TestPrepareTestOptimization_ITRFullDiscovery_SubdirRootRelativePath_Normali
 		SkippableTests: map[string]bool{}, // No tests skipped (ITR enabled but all tests need to run)
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 	if err != nil {
@@ -622,7 +795,7 @@ func TestPrepareTestOptimization_RepoRootRun_LeavesRepoRelativePathsUnchanged(t 
 		SkippableTests: map[string]bool{},
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 	if err != nil {
@@ -659,7 +832,7 @@ func TestPrepareTestOptimization_FastDiscovery_PathsRemainUnchanged(t *testing.T
 		SkippableTests: map[string]bool{},
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 	if err != nil {
@@ -724,7 +897,7 @@ func TestPrepareTestOptimization_ITRPathNormalization_PrefixMismatchUnchanged(t 
 		SkippableTests: map[string]bool{},
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 	if err != nil {
@@ -805,7 +978,7 @@ func TestPrepareTestOptimization_ITRSubdir_SkipMatching_WithSuitePathsMatchingCw
 		},
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.PrepareTestOptimization(ctx)
 	if err != nil {

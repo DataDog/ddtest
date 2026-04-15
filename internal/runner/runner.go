@@ -24,28 +24,39 @@ type Runner interface {
 type TestRunner struct {
 	// the keys are file paths, the values are "durations" - currently just the number of tests in a file
 	testFiles           map[string]int
+	testSuiteDurations  map[string]map[string]testoptimization.TestSuiteDurationInfo
 	skippablePercentage float64
 	platformDetector    platform.PlatformDetector
 	optimizationClient  testoptimization.TestOptimizationClient
+	durationsClient     testoptimization.TestSuiteDurationsClient
 	ciProviderDetector  ciprovider.CIProviderDetector
 }
 
 func New() *TestRunner {
 	return &TestRunner{
 		testFiles:           make(map[string]int),
+		testSuiteDurations:  make(map[string]map[string]testoptimization.TestSuiteDurationInfo),
 		skippablePercentage: 0.0,
 		platformDetector:    platform.NewPlatformDetector(),
 		optimizationClient:  testoptimization.NewDatadogClient(),
+		durationsClient:     testoptimization.NewDurationsClient(),
 		ciProviderDetector:  ciprovider.NewCIProviderDetector(),
 	}
 }
 
-func NewWithDependencies(platformDetector platform.PlatformDetector, optimizationClient testoptimization.TestOptimizationClient, ciProviderDetector ciprovider.CIProviderDetector) *TestRunner {
+func NewWithDependencies(
+	platformDetector platform.PlatformDetector,
+	optimizationClient testoptimization.TestOptimizationClient,
+	durationsClient testoptimization.TestSuiteDurationsClient,
+	ciProviderDetector ciprovider.CIProviderDetector,
+) *TestRunner {
 	return &TestRunner{
 		testFiles:           make(map[string]int),
+		testSuiteDurations:  make(map[string]map[string]testoptimization.TestSuiteDurationInfo),
 		skippablePercentage: 0.0,
 		platformDetector:    platformDetector,
 		optimizationClient:  optimizationClient,
+		durationsClient:     durationsClient,
 		ciProviderDetector:  ciProviderDetector,
 	}
 }

@@ -21,7 +21,8 @@
       "Bash(mkdir:*)",
       "Bash(make lint:*)",
       "Bash(make:*)",
-      "Bash(./ddtest:*)"
+      "Bash(./ddtest:*)",
+      "Bash(git diff:*)"
     ],
     "deny": [],
     "defaultMode": "acceptEdits"

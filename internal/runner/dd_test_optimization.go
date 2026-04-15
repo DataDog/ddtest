@@ -5,8 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"os"
+	"regexp"
+	"strings"
 	"time"
 
+	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/civisibility/utils"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 	"golang.org/x/sync/errgroup"
@@ -55,6 +60,7 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	var fullDiscoverySucceeded bool
 	var fullDiscoveryErr error
 	var fastDiscoveryErr error
+	tr.testSuiteDurations = make(map[string]map[string]testoptimization.TestSuiteDurationInfo)
 
 	g, _ := errgroup.WithContext(ctx)
 
@@ -76,6 +82,8 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 				cancelDiscovery()
 			}
 		}
+
+		tr.fetchAndStoreTestSuiteDurations()
 
 		startTime := time.Now()
 		slog.Info("Fetching skippable tests from Datadog...")
@@ -177,4 +185,69 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func initializeDurationsFetchInputs() (string, string, error) {
+	ciTags := utils.GetCITags()
+	repositoryURL := ciTags[constants.GitRepositoryURL]
+	if repositoryURL == "" {
+		return "", "", fmt.Errorf("repository URL is required")
+	}
+
+	service := os.Getenv("DD_SERVICE")
+	if service == "" {
+		repoRegex := regexp.MustCompile(`(?m)/([a-zA-Z0-9\-_.]*)$`)
+		matches := repoRegex.FindStringSubmatch(repositoryURL)
+		if len(matches) > 1 {
+			repositoryURL = strings.TrimSuffix(matches[1], ".git")
+		}
+		service = repositoryURL
+	}
+
+	return ciTags[constants.GitRepositoryURL], service, nil
+}
+
+func (tr *TestRunner) fetchAndStoreTestSuiteDurations() {
+	repositoryURL, service, err := initializeDurationsFetchInputs()
+	if err != nil {
+		logDurationsAPIError(err)
+		tr.testSuiteDurations = make(map[string]map[string]testoptimization.TestSuiteDurationInfo)
+		return
+	}
+
+	durations, err := tr.durationsClient.GetTestSuiteDurations(repositoryURL, service)
+	if err != nil {
+		logDurationsAPIError(err)
+		tr.testSuiteDurations = make(map[string]map[string]testoptimization.TestSuiteDurationInfo)
+		return
+	}
+
+	tr.storeTestSuiteDurations(repositoryURL, service, durations)
+}
+
+func (tr *TestRunner) storeTestSuiteDurations(
+	repositoryURL, service string,
+	durations map[string]map[string]testoptimization.TestSuiteDurationInfo,
+) {
+	totalSuites := countTestSuites(durations)
+	if totalSuites == 0 {
+		slog.Warn("Test durations API returned no test suites", "service", service, "repositoryURL", repositoryURL)
+		tr.testSuiteDurations = make(map[string]map[string]testoptimization.TestSuiteDurationInfo)
+		return
+	}
+
+	slog.Debug("Found test suite durations", "service", service, "repositoryURL", repositoryURL, "testSuitesCount", totalSuites)
+	tr.testSuiteDurations = durations
+}
+
+func countTestSuites(durations map[string]map[string]testoptimization.TestSuiteDurationInfo) int {
+	totalSuites := 0
+	for _, suites := range durations {
+		totalSuites += len(suites)
+	}
+	return totalSuites
+}
+
+func logDurationsAPIError(err error) {
+	slog.Error("Test durations API errored", "error", err)
 }
