@@ -276,6 +276,8 @@ func (c *DatadogDurationsAPI) doPost(requestURL string, body interface{}) (*dura
 		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, truncateBody(respBody))
 	}
 
+	slog.Debug("test_suite_durations", "responseBody", string(respBody))
+
 	var responseObject durationsResponse
 	if err := json.Unmarshal(respBody, &responseObject); err != nil {
 		return nil, fmt.Errorf("unmarshalling response: %w", err)
