@@ -47,7 +47,7 @@ git clone https://github.com/DataDog/ddtest.git
 cd ddtest && make build
 ```
 
-This will create the `ddtest` binary in the current directory. It requires Go 1.26+.
+This will create the `ddtest` binary in the current directory. It requires Go 1.26.2+.
 
 ## Prerequisites
 
@@ -521,7 +521,7 @@ The `--runtime-tags` option lets you override your local runtime tags to match y
 
 ### Prerequisites
 
-- Go 1.26.0 or later
+- Go 1.26.2 or later
 
 ### Building
 
