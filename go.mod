@@ -3,11 +3,11 @@ module github.com/DataDog/ddtest
 go 1.26.2
 
 require (
-	github.com/DataDog/dd-trace-go/v2 v2.7.1
+	github.com/DataDog/dd-trace-go/v2 v2.7.3
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
-	github.com/tinylib/msgp v1.6.3
+	github.com/tinylib/msgp v1.6.4
 	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.42.0
 )
