@@ -226,6 +226,14 @@ func TestNew(t *testing.T) {
 		t.Error("New() should initialize testFiles to empty map")
 	}
 
+	if len(runner.suiteAggregates) != 0 {
+		t.Error("New() should initialize suiteAggregates to empty map")
+	}
+
+	if len(runner.suitesBySourceFile) != 0 {
+		t.Error("New() should initialize suitesBySourceFile to empty map")
+	}
+
 	if runner.skippablePercentage != 0.0 {
 		t.Errorf("New() should initialize skippablePercentage to 0.0, got %f", runner.skippablePercentage)
 	}
@@ -266,6 +274,18 @@ func TestNewWithDependencies(t *testing.T) {
 
 	if runner.durationsClient != mockDurationsClient {
 		t.Error("NewWithDependencies() should use injected durationsClient")
+	}
+
+	if len(runner.testFiles) != 0 {
+		t.Error("NewWithDependencies() should initialize testFiles to empty map")
+	}
+
+	if len(runner.suiteAggregates) != 0 {
+		t.Error("NewWithDependencies() should initialize suiteAggregates to empty map")
+	}
+
+	if len(runner.suitesBySourceFile) != 0 {
+		t.Error("NewWithDependencies() should initialize suitesBySourceFile to empty map")
 	}
 }
 

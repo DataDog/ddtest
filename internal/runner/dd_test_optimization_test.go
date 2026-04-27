@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	ciUtils "github.com/DataDog/ddtest/civisibility/utils"
@@ -37,11 +38,16 @@ func TestTestRunner_PrepareTestOptimization_Success(t *testing.T) {
 	// Setup mocks
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
+		TestFiles: []string{
+			"test/file1_test.rb",
+			"test/file2_test.rb",
+			"test/fast_only_test.rb",
+		},
 		Tests: []testoptimization.Test{
-			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
-			{Suite: "TestSuite1", Name: "test2", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
-			{Suite: "TestSuite2", Name: "test3", Parameters: "", SuiteSourceFile: "test/file2_test.rb"},
-			{Suite: "TestSuite3", Name: "test4", Parameters: "", SuiteSourceFile: "test/file3_test.rb"},
+			{Module: "rspec", Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+			{Module: "rspec", Suite: "TestSuite1", Name: "test2", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+			{Module: "rspec", Suite: "TestSuite2", Name: "test3", Parameters: "", SuiteSourceFile: "test/file2_test.rb"},
+			{Module: "rspec", Suite: "TestSuite3", Name: "test4", Parameters: "", SuiteSourceFile: "test/file3_test.rb"},
 		},
 	}
 
@@ -66,10 +72,10 @@ func TestTestRunner_PrepareTestOptimization_Success(t *testing.T) {
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
 		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
-			"module1": {
-				"suite1": {
+			"rspec": {
+				"TestSuite1": {
 					SourceFile: "test/file1_test.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "1", P90: "2"},
+					Duration:   testoptimization.DurationPercentiles{P50: "7000000", P90: "2000000"},
 				},
 			},
 		},
@@ -98,20 +104,46 @@ func TestTestRunner_PrepareTestOptimization_Success(t *testing.T) {
 		t.Error("PrepareTestOptimization() should shutdown optimization client")
 	}
 
-	// Verify test files were calculated correctly (should include file1 and file2, but not file3)
 	expectedFiles := map[string]bool{
-		"test/file1_test.rb": true, // test1 is not skipped
-		"test/file2_test.rb": true, // test3 is not skipped
+		"test/file1_test.rb":     true, // test1 is not skipped
+		"test/file2_test.rb":     true, // test3 is not skipped
+		"test/file3_test.rb":     true, // test4 is skipped but the source file is discovered
+		"test/fast_only_test.rb": true, // from fast discovery only
 	}
 
-	if len(runner.testFiles) != 2 {
-		t.Errorf("PrepareTestOptimization() should result in 2 test files, got %d", len(runner.testFiles))
+	if len(runner.testFiles) != len(expectedFiles) {
+		t.Errorf("PrepareTestOptimization() should result in %d test files, got %d", len(expectedFiles), len(runner.testFiles))
+	}
+
+	if weightedFiles := runner.weightedTestFiles(); len(weightedFiles) != 3 {
+		t.Errorf("Expected weighted files to omit fully skipped file and keep 3 files, got %v", weightedFiles)
 	}
 
 	for file := range runner.testFiles {
 		if !expectedFiles[file] {
 			t.Errorf("Unexpected test file: %s", file)
 		}
+	}
+
+	suite1 := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "TestSuite1"}]
+	if suite1.NumTests != 2 {
+		t.Errorf("Expected Suite1 total test count 2, got %d", suite1.NumTests)
+	}
+	if suite1.NumTestsSkipped != 1 {
+		t.Errorf("Expected Suite1 skipped test count 1, got %d", suite1.NumTestsSkipped)
+	}
+
+	if weight, ok := runner.testFileWeight("test/file1_test.rb"); !ok || weight != 7 {
+		t.Errorf("Expected file1 weight to use backend p50 converted to 7ms, got weight=%d ok=%t", weight, ok)
+	}
+
+	expectedFile2Weight := int(time.Second / time.Millisecond)
+	if weight, ok := runner.testFileWeight("test/file2_test.rb"); !ok || weight != expectedFile2Weight {
+		t.Errorf("Expected file2 weight to use count fallback %d, got weight=%d ok=%t", expectedFile2Weight, weight, ok)
+	}
+
+	if weight, ok := runner.testFileWeight("test/fast_only_test.rb"); !ok || weight != expectedFile2Weight {
+		t.Errorf("Expected fast-only file weight to use default %d, got weight=%d ok=%t", expectedFile2Weight, weight, ok)
 	}
 
 	// Verify skippable percentage was calculated correctly (2 out of 4 tests skipped = 50%)
@@ -206,7 +238,7 @@ func TestTestRunner_PrepareTestOptimization_EmptyDurationsWarns(t *testing.T) {
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_NonEmptyDurationsStoredWithoutChangingWeights(t *testing.T) {
+func TestTestRunner_PrepareTestOptimization_NonEmptyDurationsUsesP50ForMatchingSuites(t *testing.T) {
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -214,10 +246,11 @@ func TestTestRunner_PrepareTestOptimization_NonEmptyDurationsStoredWithoutChangi
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
+		TestFiles:     []string{"spec/file1_test.rb", "spec/file2_test.rb"},
 		Tests: []testoptimization.Test{
-			{Suite: "Suite1", Name: "test1", Parameters: "", SuiteSourceFile: "spec/file1_test.rb"},
-			{Suite: "Suite1", Name: "test2", Parameters: "", SuiteSourceFile: "spec/file1_test.rb"},
-			{Suite: "Suite2", Name: "test3", Parameters: "", SuiteSourceFile: "spec/file2_test.rb"},
+			{Module: "rspec", Suite: "Suite1", Name: "test1", Parameters: "", SuiteSourceFile: "spec/file1_test.rb"},
+			{Module: "rspec", Suite: "Suite1", Name: "test2", Parameters: "", SuiteSourceFile: "spec/file1_test.rb"},
+			{Module: "rspec", Suite: "Suite2", Name: "test3", Parameters: "", SuiteSourceFile: "spec/file2_test.rb"},
 		},
 	}
 	mockPlatform := &MockPlatform{
@@ -231,14 +264,14 @@ func TestTestRunner_PrepareTestOptimization_NonEmptyDurationsStoredWithoutChangi
 	mockOptimizationClient := &MockTestOptimizationClient{}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
 		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
-			"module1": {
-				"suite1": {
+			"rspec": {
+				"Suite1": {
 					SourceFile: "spec/file1_test.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "10", P90: "20"},
+					Duration:   testoptimization.DurationPercentiles{P50: "10000000", P90: "20000000"},
 				},
-				"suite2": {
+				"Suite2": {
 					SourceFile: "spec/file2_test.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "30", P90: "40"},
+					Duration:   testoptimization.DurationPercentiles{P50: "30000000", P90: "40000000"},
 				},
 			},
 		},
@@ -255,15 +288,337 @@ func TestTestRunner_PrepareTestOptimization_NonEmptyDurationsStoredWithoutChangi
 		t.Fatalf("Expected stored durations data, got %v", runner.testSuiteDurations)
 	}
 
-	if runner.testFiles["spec/file1_test.rb"] != 2 {
-		t.Errorf("Expected file1 weight to remain test-count based (2), got %d", runner.testFiles["spec/file1_test.rb"])
+	if _, ok := runner.testFiles["spec/file1_test.rb"]; !ok {
+		t.Error("Expected file1 in test files")
 	}
-	if runner.testFiles["spec/file2_test.rb"] != 1 {
-		t.Errorf("Expected file2 weight to remain test-count based (1), got %d", runner.testFiles["spec/file2_test.rb"])
+	if _, ok := runner.testFiles["spec/file2_test.rb"]; !ok {
+		t.Error("Expected file2 in test files")
+	}
+
+	if weight, ok := runner.testFileWeight("spec/file1_test.rb"); !ok || weight != 10 {
+		t.Errorf("Expected file1 weight to use backend p50 converted to 10ms, got weight=%d ok=%t", weight, ok)
+	}
+	if weight, ok := runner.testFileWeight("spec/file2_test.rb"); !ok || weight != 30 {
+		t.Errorf("Expected file2 weight to use backend p50 converted to 30ms, got weight=%d ok=%t", weight, ok)
 	}
 
 	if !strings.Contains(logs.String(), "level=DEBUG") || !strings.Contains(logs.String(), "Found test suite durations") || !strings.Contains(logs.String(), "testSuitesCount=2") {
 		t.Errorf("Expected DEBUG log for non-empty durations response, got logs: %s", logs.String())
+	}
+}
+
+func TestTestRunner_TestFileWeight_CountFallbackForMissingSuiteDuration(t *testing.T) {
+	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
+	runner.testFiles = map[string]struct{}{
+		"spec/file1_test.rb":   {},
+		"spec/file2_test.rb":   {},
+		"spec/unknown_test.rb": {},
+	}
+	runner.suiteAggregates = map[testSuiteKey]testSuiteAggregate{
+		{Module: "rspec", Suite: "Suite1"}: {
+			Module:     "rspec",
+			Suite:      "Suite1",
+			SourceFile: "spec/file1_test.rb",
+			NumTests:   2,
+		},
+		{Module: "rspec", Suite: "Suite2"}: {
+			Module:     "rspec",
+			Suite:      "Suite2",
+			SourceFile: "spec/file2_test.rb",
+			NumTests:   3,
+		},
+	}
+
+	testSuiteDurations := map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		"rspec": {
+			"Suite1": {
+				SourceFile: "spec/file1_test.rb",
+				Duration:   testoptimization.DurationPercentiles{P50: "11000000", P90: "22000000"},
+			},
+		},
+	}
+
+	resolveSuiteDurations(runner.suiteAggregates, testSuiteDurations)
+	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
+
+	if weight, ok := runner.testFileWeight("spec/file1_test.rb"); !ok || weight != 11 {
+		t.Errorf("Expected Suite1 file weight to use p50 converted to 11ms, got weight=%d ok=%t", weight, ok)
+	}
+
+	expectedSuite2Weight := 3 * int(time.Second/time.Millisecond)
+	if weight, ok := runner.testFileWeight("spec/file2_test.rb"); !ok || weight != expectedSuite2Weight {
+		t.Errorf("Expected Suite2 file weight to use count fallback %d, got weight=%d ok=%t", expectedSuite2Weight, weight, ok)
+	}
+
+	if weight, ok := runner.testFileWeight("spec/unknown_test.rb"); !ok || weight != int(time.Second/time.Millisecond) {
+		t.Errorf("Expected unknown file weight to use default 1 second, got weight=%d ok=%t", weight, ok)
+	}
+}
+
+func TestTestRunner_TestFileWeight_SkipsFullySkippedSuites(t *testing.T) {
+	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
+	runner.testFiles = map[string]struct{}{
+		"spec/skipped_test.rb": {},
+	}
+	runner.suiteAggregates = map[testSuiteKey]testSuiteAggregate{
+		{Module: "rspec", Suite: "SkippedSuite"}: {
+			Module:          "rspec",
+			Suite:           "SkippedSuite",
+			SourceFile:      "spec/skipped_test.rb",
+			Duration:        int(time.Second),
+			NumTests:        2,
+			NumTestsSkipped: 2,
+		},
+	}
+	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
+
+	if _, ok := runner.suitesBySourceFile["spec/skipped_test.rb"]; !ok {
+		t.Fatal("Expected fully skipped suite to be indexed by source file")
+	}
+
+	if weight, ok := runner.testFileWeight("spec/skipped_test.rb"); ok || weight != 0 {
+		t.Errorf("Expected fully skipped suite file to have no weight, got weight=%d ok=%t", weight, ok)
+	}
+
+	if weightedFiles := runner.weightedTestFiles(); len(weightedFiles) != 0 {
+		t.Errorf("Expected fully skipped suite file to be omitted from weighted files, got %v", weightedFiles)
+	}
+}
+
+func TestTestRunner_PrepareTestOptimization_FastDiscoveryUsesBackendDurations(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	mockFramework := &MockFramework{
+		FrameworkName:    "rspec",
+		TestFiles:        []string{"spec/backend_only_spec.rb"},
+		DiscoverTestsErr: errors.New("full discovery failed"),
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+		},
+		Framework: mockFramework,
+	}
+	mockDurationsClient := &MockTestSuiteDurationsClient{
+		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+			"rspec": {
+				"BackendOnlySuite": {
+					SourceFile: "spec/backend_only_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "42000000", P90: "84000000"},
+				},
+			},
+		},
+	}
+
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, &MockTestOptimizationClient{}, mockDurationsClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not fail when full discovery fails but fast discovery succeeds, got: %v", err)
+	}
+
+	if weight, ok := runner.testFileWeight("spec/backend_only_spec.rb"); !ok || weight != 42 {
+		t.Errorf("Expected fast-discovery file to use backend p50 converted to 42ms, got weight=%d ok=%t", weight, ok)
+	}
+}
+
+func TestTestRunner_PrepareTestOptimization_BackendDurationSubdirMatchesFastDiscovery(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	repoRoot := t.TempDir()
+	initGitRepo(t, repoRoot)
+	coreDir := filepath.Join(repoRoot, "core")
+	_ = os.MkdirAll(filepath.Join(coreDir, "spec", "models"), 0755)
+
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(coreDir)
+
+	mockFramework := &MockFramework{
+		FrameworkName:    "rspec",
+		TestFiles:        []string{"spec/models/order_spec.rb"},
+		DiscoverTestsErr: errors.New("full discovery failed"),
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: repoRoot,
+		},
+		Framework: mockFramework,
+	}
+	mockDurationsClient := &MockTestSuiteDurationsClient{
+		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+			"rspec": {
+				"OrderSuite": {
+					SourceFile: "core/spec/models/order_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "55000000", P90: "110000000"},
+				},
+			},
+		},
+	}
+	ciUtils.AddCITagsMap(map[string]string{ciConstants.GitRepositoryURL: repoRoot})
+
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, &MockTestOptimizationClient{}, mockDurationsClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not fail, got: %v", err)
+	}
+	if !mockDurationsClient.Called {
+		t.Fatal("Expected durations client to be called")
+	}
+
+	if weight, ok := runner.testFileWeight("spec/models/order_spec.rb"); !ok || weight != 55 {
+		t.Errorf("Expected subdir fast-discovery file to use backend p50 converted to 55ms, got weight=%d ok=%t", weight, ok)
+	}
+
+	if got := runner.testSuiteDurations["rspec"]["OrderSuite"].SourceFile; got != "core/spec/models/order_spec.rb" {
+		t.Errorf("Expected raw backend source file to remain git-root-relative, got %q", got)
+	}
+}
+
+func TestTestRunner_PrepareTestOptimization_IgnoresBackendDurationsForUndiscoveredFiles(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	mockFramework := &MockFramework{
+		FrameworkName:    "rspec",
+		TestFiles:        []string{"spec/discovered_spec.rb"},
+		DiscoverTestsErr: errors.New("full discovery failed"),
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+		},
+		Framework: mockFramework,
+	}
+	mockDurationsClient := &MockTestSuiteDurationsClient{
+		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+			"rspec": {
+				"StaleSuite": {
+					SourceFile: "spec/stale_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "99000000", P90: "198000000"},
+				},
+			},
+		},
+	}
+
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, &MockTestOptimizationClient{}, mockDurationsClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not fail, got: %v", err)
+	}
+
+	if len(runner.suiteAggregates) != 0 {
+		t.Errorf("Expected stale backend suite to be ignored, got aggregates: %v", runner.suiteAggregates)
+	}
+
+	if weight, ok := runner.testFileWeight("spec/discovered_spec.rb"); !ok || weight != int(time.Second/time.Millisecond) {
+		t.Errorf("Expected discovered file without backend aggregate to use default 1 second, got weight=%d ok=%t", weight, ok)
+	}
+}
+
+func TestTestRunner_PrepareTestOptimization_BackendDoesNotReintroduceFullySkippedSuite(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	skippedTest := testoptimization.Test{
+		Module:          "rspec",
+		Suite:           "SkippedSuite",
+		Name:            "test1",
+		SuiteSourceFile: "spec/skipped_spec.rb",
+	}
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		TestFiles:     []string{"spec/skipped_spec.rb"},
+		Tests:         []testoptimization.Test{skippedTest},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+		},
+		Framework: mockFramework,
+	}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		SkippableTests: map[string]bool{skippedTest.FQN(): true},
+	}
+	mockDurationsClient := &MockTestSuiteDurationsClient{
+		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+			"rspec": {
+				"SkippedSuite": {
+					SourceFile: "spec/skipped_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "99000000", P90: "198000000"},
+				},
+			},
+		},
+	}
+
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, mockDurationsClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not fail, got: %v", err)
+	}
+
+	aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "SkippedSuite"}]
+	if aggregate.NumTests != 1 || aggregate.NumTestsSkipped != 1 {
+		t.Errorf("Expected full-discovery skip metadata to remain intact, got %+v", aggregate)
+	}
+
+	if weight, ok := runner.testFileWeight("spec/skipped_spec.rb"); ok || weight != 0 {
+		t.Errorf("Expected fully skipped suite to be omitted despite backend duration, got weight=%d ok=%t", weight, ok)
+	}
+}
+
+func TestRecordRunnableAndSkippedTest_CountsTestsPerSuite(t *testing.T) {
+	suiteAggregates := make(map[testSuiteKey]testSuiteAggregate)
+
+	recordRunnableTest(suiteAggregates, testoptimization.Test{
+		Module:          "rspec",
+		Suite:           "Suite1",
+		Name:            "test1",
+		SuiteSourceFile: "spec/file1_test.rb",
+	}, "spec/file1_test.rb")
+	recordSkippedTest(suiteAggregates, testoptimization.Test{
+		Module:          "rspec",
+		Suite:           "Suite1",
+		Name:            "test2",
+		SuiteSourceFile: "spec/file1_test.rb",
+	}, "spec/file1_test.rb")
+	recordRunnableTest(suiteAggregates, testoptimization.Test{
+		Module:          "rspec",
+		Suite:           "Suite2",
+		Name:            "test3",
+		SuiteSourceFile: "spec/file2_test.rb",
+	}, "spec/file2_test.rb")
+
+	suite1 := suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite1"}]
+	if suite1.NumTests != 2 {
+		t.Errorf("Expected Suite1 test count 2, got %d", suite1.NumTests)
+	}
+	if suite1.NumTestsSkipped != 1 {
+		t.Errorf("Expected Suite1 skipped test count 1, got %d", suite1.NumTestsSkipped)
+	}
+	if suite1.SourceFile != "spec/file1_test.rb" {
+		t.Errorf("Expected Suite1 source file spec/file1_test.rb, got %s", suite1.SourceFile)
+	}
+
+	suite2 := suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite2"}]
+	if suite2.NumTests != 1 {
+		t.Errorf("Expected Suite2 test count 1, got %d", suite2.NumTests)
+	}
+	if suite2.NumTestsSkipped != 0 {
+		t.Errorf("Expected Suite2 skipped test count 0, got %d", suite2.NumTestsSkipped)
 	}
 }
 
@@ -451,8 +806,8 @@ func TestTestRunner_PrepareTestOptimization_AllTestsSkipped(t *testing.T) {
 
 	mockFramework := &MockFramework{
 		Tests: []testoptimization.Test{
-			{Suite: "", Name: "test1", Parameters: "", SuiteSourceFile: "file1.rb"},
-			{Suite: "", Name: "test2", Parameters: "", SuiteSourceFile: "file2.rb"},
+			{Suite: "Suite1", Name: "test1", Parameters: "", SuiteSourceFile: "file1.rb"},
+			{Suite: "Suite2", Name: "test2", Parameters: "", SuiteSourceFile: "file2.rb"},
 		},
 	}
 
@@ -464,8 +819,8 @@ func TestTestRunner_PrepareTestOptimization_AllTestsSkipped(t *testing.T) {
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		SkippableTests: map[string]bool{
-			".test1.": true,
-			".test2.": true,
+			"Suite1.test1.": true,
+			"Suite2.test2.": true,
 		},
 	}
 
@@ -477,8 +832,12 @@ func TestTestRunner_PrepareTestOptimization_AllTestsSkipped(t *testing.T) {
 		t.Errorf("PrepareTestOptimization() should handle all tests skipped, got: %v", err)
 	}
 
-	if len(runner.testFiles) != 0 {
-		t.Errorf("PrepareTestOptimization() should result in 0 test files when all tests are skipped, got %d", len(runner.testFiles))
+	if len(runner.testFiles) != 2 {
+		t.Errorf("PrepareTestOptimization() should keep all discovered files even when all tests are skipped, got %d", len(runner.testFiles))
+	}
+
+	if weightedFiles := runner.weightedTestFiles(); len(weightedFiles) != 0 {
+		t.Errorf("PrepareTestOptimization() should result in 0 weighted files when all tests are skipped, got %v", weightedFiles)
 	}
 
 	if runner.skippablePercentage != 100.0 {
@@ -992,19 +1351,28 @@ func TestPrepareTestOptimization_ITRSubdir_SkipMatching_WithSuitePathsMatchingCw
 			expectedSkippablePercentage, runner.skippablePercentage)
 	}
 
-	// Only order_spec.rb should remain in testFiles (role_spec.rb tests were skipped).
-	// The SuiteSourceFile path should be normalized from "core/spec/..." to "spec/..." (CWD-relative).
+	// All discovered source files should remain in testFiles, while weightedTestFiles omits the fully skipped role_spec.rb.
+	// The SuiteSourceFile paths should be normalized from "core/spec/..." to "spec/..." (CWD-relative).
 	expectedFiles := map[string]bool{
+		"spec/models/role_spec.rb":  true,
 		"spec/models/order_spec.rb": true,
 	}
 
-	if len(runner.testFiles) != 1 {
-		t.Fatalf("Expected 1 test file (only order_spec.rb), got %d: %v", len(runner.testFiles), runner.testFiles)
+	if len(runner.testFiles) != 2 {
+		t.Fatalf("Expected 2 discovered test files, got %d: %v", len(runner.testFiles), runner.testFiles)
 	}
 
 	for file := range runner.testFiles {
 		if !expectedFiles[file] {
 			t.Errorf("Unexpected test file path %q", file)
 		}
+	}
+
+	weightedFiles := runner.weightedTestFiles()
+	if len(weightedFiles) != 1 {
+		t.Fatalf("Expected 1 weighted test file (only order_spec.rb), got %d: %v", len(weightedFiles), weightedFiles)
+	}
+	if _, ok := weightedFiles["spec/models/order_spec.rb"]; !ok {
+		t.Errorf("Expected weighted test files to contain only order_spec.rb, got %v", weightedFiles)
 	}
 }

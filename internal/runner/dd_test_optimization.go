@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,6 +61,9 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	var fullDiscoverySucceeded bool
 	var fullDiscoveryErr error
 	var fastDiscoveryErr error
+	tr.testFiles = make(map[string]struct{})
+	tr.suiteAggregates = make(map[testSuiteKey]testSuiteAggregate)
+	tr.suitesBySourceFile = make(map[string][]testSuiteKey)
 	tr.testSuiteDurations = make(map[string]map[string]testoptimization.TestSuiteDurationInfo)
 
 	g, _ := errgroup.WithContext(ctx)
@@ -135,54 +139,32 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 		return fmt.Errorf("both test discovery methods failed - full: %w, fast: %v", fullDiscoveryErr, fastDiscoveryErr)
 	}
 
+	// Compute subdirectory prefix once for all paths.
+	// When running from a monorepo subdirectory (e.g., "cd core && ddtest plan"),
+	// full discovery may return repo-root-relative paths (e.g., "core/spec/...").
+	// We normalize them to CWD-relative paths so workers can find the files.
+	subdirPrefix := getCwdSubdirPrefix()
+	if subdirPrefix != "" {
+		slog.Info("Running from subdirectory, will normalize repo-root-relative paths", "subdirPrefix", subdirPrefix)
+	}
+
 	// Process results based on which discovery method succeeded
 	if fullDiscoverySucceeded && len(discoveredTests) > 0 {
 		slog.Info("Using full test discovery results")
-		discoveredTestsCount := len(discoveredTests)
-		skippableTestsCount := 0
-
-		// Compute subdirectory prefix once for all paths.
-		// When running from a monorepo subdirectory (e.g., "cd core && ddtest plan"),
-		// full discovery may return repo-root-relative paths (e.g., "core/spec/...").
-		// We normalize them to CWD-relative paths so workers can find the files.
-		subdirPrefix := getCwdSubdirPrefix()
-		if subdirPrefix != "" {
-			slog.Info("Running from subdirectory, will normalize repo-root-relative paths", "subdirPrefix", subdirPrefix)
-		}
-
-		tr.testFiles = make(map[string]int)
-		for _, test := range discoveredTests {
-			if !skippableTests[test.FQN()] {
-				slog.Debug("Test is not skipped", "test", test.FQN(), "sourceFile", test.SuiteSourceFile)
-				if test.SuiteSourceFile != "" {
-					// Normalize repo-root-relative path to CWD-relative path.
-					// No-op when running from repo root or when path doesn't match subdir prefix.
-					normalizedPath := normalizeTestFilePathWithPrefix(test.SuiteSourceFile, subdirPrefix)
-					// increment the number of tests in the file
-					// it should track the test suite's duration here in the future
-					tr.testFiles[normalizedPath]++
-				}
-			} else {
-				skippableTestsCount++
-			}
-		}
+		discoveredTestsCount, skippableTestsCount := recordDiscoveredTests(tr.suiteAggregates, tr.testFiles, discoveredTests, skippableTests, subdirPrefix)
 		tr.skippablePercentage = float64(skippableTestsCount) / float64(discoveredTestsCount) * 100.0
 
 		slog.Info("Test optimization data prepared", "skippablePercentage", tr.skippablePercentage, "skippableTestsCount", skippableTestsCount, "discoveredTestsCount", discoveredTestsCount)
 	} else {
 		slog.Info("Using fast test discovery results (ITR disabled or full discovery failed)")
-		tr.testFiles = make(map[string]int)
-		for _, testFile := range discoveredTestFiles {
-			// As we don't know what tests are there we just set the number of tests to 1
-			//
-			// When we'll have data for "known test suites" with their durations we will
-			// be able to use test suites durations here
-			tr.testFiles[testFile] = 1
-		}
 		tr.skippablePercentage = 0.0
-
-		slog.Info("Test files prepared from fast discovery", "testFilesCount", len(tr.testFiles))
 	}
+
+	recordDiscoveredTestFiles(tr.testFiles, discoveredTestFiles)
+	resolveSuiteDurations(tr.suiteAggregates, tr.testSuiteDurations)
+	addBackendSuiteAggregates(tr.suiteAggregates, tr.testSuiteDurations, tr.testFiles, subdirPrefix)
+	tr.suitesBySourceFile = indexSuitesBySourceFile(tr.suiteAggregates)
+	slog.Info("Test files prepared", "testFilesCount", len(tr.testFiles))
 
 	return nil
 }
@@ -250,4 +232,200 @@ func countTestSuites(durations map[string]map[string]testoptimization.TestSuiteD
 
 func logDurationsAPIError(err error) {
 	slog.Error("Test durations API errored", "error", err)
+}
+
+type testSuiteKey struct {
+	Module string
+	Suite  string
+}
+
+type testSuiteAggregate struct {
+	Module          string
+	Suite           string
+	SourceFile      string
+	Duration        int
+	NumTests        int
+	NumTestsSkipped int
+}
+
+func recordDiscoveredTests(
+	suiteAggregates map[testSuiteKey]testSuiteAggregate,
+	testFiles map[string]struct{},
+	discoveredTests []testoptimization.Test,
+	skippableTests map[string]bool,
+	subdirPrefix string,
+) (int, int) {
+	skippableTestsCount := 0
+
+	for _, test := range discoveredTests {
+		normalizedSourceFile := stripCwdSubdirPrefix(test.SuiteSourceFile, subdirPrefix)
+		if normalizedSourceFile != "" {
+			testFiles[normalizedSourceFile] = struct{}{}
+		}
+
+		if !skippableTests[test.FQN()] {
+			slog.Debug("Test is not skipped", "test", test.FQN(), "sourceFile", test.SuiteSourceFile)
+			recordRunnableTest(suiteAggregates, test, normalizedSourceFile)
+		} else {
+			recordSkippedTest(suiteAggregates, test, normalizedSourceFile)
+			skippableTestsCount++
+		}
+	}
+
+	return len(discoveredTests), skippableTestsCount
+}
+
+func recordDiscoveredTestFiles(testFiles map[string]struct{}, discoveredTestFiles []string) {
+	for _, testFile := range discoveredTestFiles {
+		if testFile != "" {
+			testFiles[testFile] = struct{}{}
+		}
+	}
+}
+
+func recordRunnableTest(suiteAggregates map[testSuiteKey]testSuiteAggregate, test testoptimization.Test, sourceFile string) {
+	aggregate := suiteAggregateForTest(suiteAggregates, test, sourceFile)
+	aggregate.NumTests++
+	suiteAggregates[testSuiteKey{Module: test.Module, Suite: test.Suite}] = aggregate
+}
+
+func recordSkippedTest(suiteAggregates map[testSuiteKey]testSuiteAggregate, test testoptimization.Test, sourceFile string) {
+	aggregate := suiteAggregateForTest(suiteAggregates, test, sourceFile)
+	aggregate.NumTests++
+	aggregate.NumTestsSkipped++
+	suiteAggregates[testSuiteKey{Module: test.Module, Suite: test.Suite}] = aggregate
+}
+
+func suiteAggregateForTest(suiteAggregates map[testSuiteKey]testSuiteAggregate, test testoptimization.Test, sourceFile string) testSuiteAggregate {
+	key := testSuiteKey{
+		Module: test.Module,
+		Suite:  test.Suite,
+	}
+	aggregate := suiteAggregates[key]
+	if aggregate.SourceFile == "" {
+		aggregate.Module = test.Module
+		aggregate.Suite = test.Suite
+		aggregate.SourceFile = sourceFile
+	}
+	return aggregate
+}
+
+func resolveSuiteDurations(
+	suiteAggregates map[testSuiteKey]testSuiteAggregate,
+	testSuiteDurations map[string]map[string]testoptimization.TestSuiteDurationInfo,
+) {
+	for key, aggregate := range suiteAggregates {
+		aggregate.Duration = (aggregate.NumTests - aggregate.NumTestsSkipped) * int(time.Second)
+		if suiteInfo, ok := getTestSuiteDuration(testSuiteDurations, key); ok {
+			if p50, ok := parseDurationP50(suiteInfo); ok {
+				aggregate.Duration = p50
+			}
+		}
+		suiteAggregates[key] = aggregate
+	}
+}
+
+func addBackendSuiteAggregates(
+	suiteAggregates map[testSuiteKey]testSuiteAggregate,
+	testSuiteDurations map[string]map[string]testoptimization.TestSuiteDurationInfo,
+	testFiles map[string]struct{},
+	subdirPrefix string,
+) {
+	for module, suites := range testSuiteDurations {
+		for suite, suiteInfo := range suites {
+			key := testSuiteKey{Module: module, Suite: suite}
+			if _, ok := suiteAggregates[key]; ok {
+				continue
+			}
+
+			sourceFile := stripCwdSubdirPrefix(suiteInfo.SourceFile, subdirPrefix)
+			if _, ok := testFiles[sourceFile]; !ok {
+				continue
+			}
+
+			if duration, ok := parseDurationP50(suiteInfo); ok {
+				suiteAggregates[key] = testSuiteAggregate{
+					Module:          module,
+					Suite:           suite,
+					SourceFile:      sourceFile,
+					Duration:        duration,
+					NumTests:        1,
+					NumTestsSkipped: 0,
+				}
+			}
+		}
+	}
+}
+
+func getTestSuiteDuration(
+	testSuiteDurations map[string]map[string]testoptimization.TestSuiteDurationInfo,
+	key testSuiteKey,
+) (testoptimization.TestSuiteDurationInfo, bool) {
+	if suiteDurations, ok := testSuiteDurations[key.Module]; ok {
+		suiteInfo, ok := suiteDurations[key.Suite]
+		return suiteInfo, ok
+	}
+	return testoptimization.TestSuiteDurationInfo{}, false
+}
+
+func parseDurationP50(suiteInfo testoptimization.TestSuiteDurationInfo) (int, bool) {
+	p50, err := strconv.ParseInt(suiteInfo.Duration.P50, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return int(p50), true
+}
+
+func indexSuitesBySourceFile(suiteAggregates map[testSuiteKey]testSuiteAggregate) map[string][]testSuiteKey {
+	sourceFileLookup := make(map[string][]testSuiteKey)
+	for key, aggregate := range suiteAggregates {
+		if aggregate.SourceFile == "" {
+			continue
+		}
+
+		sourceFileLookup[aggregate.SourceFile] = append(sourceFileLookup[aggregate.SourceFile], key)
+	}
+	return sourceFileLookup
+}
+
+func (tr *TestRunner) weightedTestFiles() map[string]int {
+	testFileWeights := make(map[string]int, len(tr.testFiles))
+	for testFile := range tr.testFiles {
+		weight, ok := tr.testFileWeight(testFile)
+		if ok {
+			testFileWeights[testFile] = weight
+		}
+	}
+	return testFileWeights
+}
+
+func (tr *TestRunner) testFileWeight(testFile string) (int, bool) {
+	const defaultTestFileWeight = int(time.Second / time.Millisecond)
+	suiteKeys := tr.suitesBySourceFile[testFile]
+	if len(suiteKeys) == 0 {
+		return defaultTestFileWeight, true
+	}
+
+	var duration int
+	var hasRunnableSuite bool
+	for _, key := range suiteKeys {
+		aggregate := tr.suiteAggregates[key]
+		if aggregate.NumTests == aggregate.NumTestsSkipped {
+			continue
+		}
+		hasRunnableSuite = true
+		duration += aggregate.Duration
+	}
+	if !hasRunnableSuite {
+		return 0, false
+	}
+	if duration <= 0 {
+		return defaultTestFileWeight, true
+	}
+
+	weight := duration / int(time.Millisecond)
+	if weight < 1 {
+		return 1, true
+	}
+	return weight, true
 }
