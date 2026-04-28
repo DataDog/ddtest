@@ -133,8 +133,8 @@ func TestTestRunner_PrepareTestOptimization_Success(t *testing.T) {
 		t.Errorf("Expected Suite1 skipped test count 1, got %d", suite1.NumTestsSkipped)
 	}
 
-	if weight, ok := runner.testFileWeight("test/file1_test.rb"); !ok || weight != 7 {
-		t.Errorf("Expected file1 weight to use backend p50 converted to 7ms, got weight=%d ok=%t", weight, ok)
+	if weight, ok := runner.testFileWeight("test/file1_test.rb"); !ok || weight != 3 {
+		t.Errorf("Expected file1 weight to use backend p50 adjusted for skipped tests and converted to 3ms, got weight=%d ok=%t", weight, ok)
 	}
 
 	expectedFile2Weight := int(time.Second / time.Millisecond)
@@ -307,6 +307,60 @@ func TestTestRunner_PrepareTestOptimization_NonEmptyDurationsUsesP50ForMatchingS
 	}
 }
 
+func TestTestRunner_PrepareTestOptimization_SkippablePercentageUsesDurations(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		TestFiles:     []string{"spec/slow_spec.rb", "spec/fast_spec.rb"},
+		Tests: []testoptimization.Test{
+			{Module: "rspec", Suite: "SlowSuite", Name: "test1", SuiteSourceFile: "spec/slow_spec.rb"},
+			{Module: "rspec", Suite: "SlowSuite", Name: "test2", SuiteSourceFile: "spec/slow_spec.rb"},
+			{Module: "rspec", Suite: "FastSuite", Name: "test1", SuiteSourceFile: "spec/fast_spec.rb"},
+			{Module: "rspec", Suite: "FastSuite", Name: "test2", SuiteSourceFile: "spec/fast_spec.rb"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+		},
+		Framework: mockFramework,
+	}
+	skippedTest := mockFramework.Tests[0]
+	mockOptimizationClient := &MockTestOptimizationClient{
+		SkippableTests: map[string]bool{skippedTest.FQN(): true},
+	}
+	mockDurationsClient := &MockTestSuiteDurationsClient{
+		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+			"rspec": {
+				"SlowSuite": {
+					SourceFile: "spec/slow_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "8000000000"},
+				},
+				"FastSuite": {
+					SourceFile: "spec/fast_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "2000000000"},
+				},
+			},
+		},
+	}
+
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, mockDurationsClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not fail, got: %v", err)
+	}
+
+	expectedPercentage := 40.0
+	if runner.skippablePercentage != expectedPercentage {
+		t.Errorf("Expected skippable percentage to use saved time %.2f, got %.2f", expectedPercentage, runner.skippablePercentage)
+	}
+}
+
 func TestTestRunner_TestFileWeight_CountFallbackForMissingSuiteDuration(t *testing.T) {
 	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 	runner.testFiles = map[string]struct{}{
@@ -362,12 +416,12 @@ func TestTestRunner_TestFileWeight_SkipsFullySkippedSuites(t *testing.T) {
 	}
 	runner.suiteAggregates = map[testSuiteKey]testSuiteAggregate{
 		{Module: "rspec", Suite: "SkippedSuite"}: {
-			Module:          "rspec",
-			Suite:           "SkippedSuite",
-			SourceFile:      "spec/skipped_test.rb",
-			Duration:        int(time.Second),
-			NumTests:        2,
-			NumTestsSkipped: 2,
+			Module:            "rspec",
+			Suite:             "SkippedSuite",
+			SourceFile:        "spec/skipped_test.rb",
+			EstimatedDuration: float64(time.Second),
+			NumTests:          2,
+			NumTestsSkipped:   2,
 		},
 	}
 	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)

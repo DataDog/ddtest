@@ -152,9 +152,8 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	if fullDiscoverySucceeded && len(discoveredTests) > 0 {
 		slog.Info("Using full test discovery results")
 		discoveredTestsCount, skippableTestsCount := recordDiscoveredTests(tr.suiteAggregates, tr.testFiles, discoveredTests, skippableTests, subdirPrefix)
-		tr.skippablePercentage = float64(skippableTestsCount) / float64(discoveredTestsCount) * 100.0
 
-		slog.Info("Test optimization data prepared", "skippablePercentage", tr.skippablePercentage, "skippableTestsCount", skippableTestsCount, "discoveredTestsCount", discoveredTestsCount)
+		slog.Info("Test optimization data prepared", "skippableTestsCount", skippableTestsCount, "discoveredTestsCount", discoveredTestsCount)
 	} else {
 		slog.Info("Using fast test discovery results (ITR disabled or full discovery failed)")
 		tr.skippablePercentage = 0.0
@@ -164,6 +163,7 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	resolveSuiteDurations(tr.suiteAggregates, tr.testSuiteDurations)
 	addBackendSuiteAggregates(tr.suiteAggregates, tr.testSuiteDurations, tr.testFiles, subdirPrefix)
 	tr.suitesBySourceFile = indexSuitesBySourceFile(tr.suiteAggregates)
+	tr.skippablePercentage = calculateSavedTimePercentage(tr.suiteAggregates)
 	slog.Info("Test files prepared", "testFilesCount", len(tr.testFiles))
 
 	return nil
@@ -240,12 +240,13 @@ type testSuiteKey struct {
 }
 
 type testSuiteAggregate struct {
-	Module          string
-	Suite           string
-	SourceFile      string
-	Duration        int
-	NumTests        int
-	NumTestsSkipped int
+	Module            string
+	Suite             string
+	SourceFile        string
+	TotalDuration     float64
+	EstimatedDuration float64
+	NumTests          int
+	NumTestsSkipped   int
 }
 
 func recordDiscoveredTests(
@@ -315,10 +316,18 @@ func resolveSuiteDurations(
 	testSuiteDurations map[string]map[string]testoptimization.TestSuiteDurationInfo,
 ) {
 	for key, aggregate := range suiteAggregates {
-		aggregate.Duration = (aggregate.NumTests - aggregate.NumTestsSkipped) * int(time.Second)
+		// Without backend timing data, use test counts as the estimate:
+		// TotalDuration is the full suite before ITR skips, while EstimatedDuration
+		// is the runnable remainder after skipped tests are removed.
+		aggregate.TotalDuration = float64(aggregate.NumTests) * float64(time.Second)
+		aggregate.EstimatedDuration = float64(aggregate.NumTests-aggregate.NumTestsSkipped) * float64(time.Second)
 		if suiteInfo, ok := getTestSuiteDuration(testSuiteDurations, key); ok {
 			if p50, ok := parseDurationP50(suiteInfo); ok {
-				aggregate.Duration = p50
+				aggregate.TotalDuration = p50
+				aggregate.EstimatedDuration = p50
+				if aggregate.NumTests > 0 {
+					aggregate.EstimatedDuration = p50 * float64(aggregate.NumTests-aggregate.NumTestsSkipped) / float64(aggregate.NumTests)
+				}
 			}
 		}
 		suiteAggregates[key] = aggregate
@@ -345,12 +354,13 @@ func addBackendSuiteAggregates(
 
 			if duration, ok := parseDurationP50(suiteInfo); ok {
 				suiteAggregates[key] = testSuiteAggregate{
-					Module:          module,
-					Suite:           suite,
-					SourceFile:      sourceFile,
-					Duration:        duration,
-					NumTests:        1,
-					NumTestsSkipped: 0,
+					Module:            module,
+					Suite:             suite,
+					SourceFile:        sourceFile,
+					TotalDuration:     duration,
+					EstimatedDuration: duration,
+					NumTests:          1,
+					NumTestsSkipped:   0,
 				}
 			}
 		}
@@ -368,12 +378,37 @@ func getTestSuiteDuration(
 	return testoptimization.TestSuiteDurationInfo{}, false
 }
 
-func parseDurationP50(suiteInfo testoptimization.TestSuiteDurationInfo) (int, bool) {
+func parseDurationP50(suiteInfo testoptimization.TestSuiteDurationInfo) (float64, bool) {
 	p50, err := strconv.ParseInt(suiteInfo.Duration.P50, 10, 64)
 	if err != nil {
 		return 0, false
 	}
-	return int(p50), true
+	return float64(p50), true
+}
+
+func calculateSavedTimePercentage(suiteAggregates map[testSuiteKey]testSuiteAggregate) float64 {
+	var totalDuration float64
+	var estimatedDuration float64
+
+	for _, aggregate := range suiteAggregates {
+		if aggregate.NumTests == 0 {
+			continue
+		}
+
+		totalDurationForSuite := aggregate.TotalDuration
+		if totalDurationForSuite <= 0 {
+			continue
+		}
+
+		totalDuration += totalDurationForSuite
+		estimatedDuration += aggregate.EstimatedDuration
+	}
+
+	if totalDuration == 0 {
+		return 0.0
+	}
+
+	return (totalDuration - estimatedDuration) / totalDuration * 100.0
 }
 
 func indexSuitesBySourceFile(suiteAggregates map[testSuiteKey]testSuiteAggregate) map[string][]testSuiteKey {
@@ -406,7 +441,7 @@ func (tr *TestRunner) testFileWeight(testFile string) (int, bool) {
 		return defaultTestFileWeight, true
 	}
 
-	var duration int
+	var duration float64
 	var hasRunnableSuite bool
 	for _, key := range suiteKeys {
 		aggregate := tr.suiteAggregates[key]
@@ -414,7 +449,7 @@ func (tr *TestRunner) testFileWeight(testFile string) (int, bool) {
 			continue
 		}
 		hasRunnableSuite = true
-		duration += aggregate.Duration
+		duration += aggregate.EstimatedDuration
 	}
 	if !hasRunnableSuite {
 		return 0, false
@@ -423,7 +458,7 @@ func (tr *TestRunner) testFileWeight(testFile string) (int, bool) {
 		return defaultTestFileWeight, true
 	}
 
-	weight := duration / int(time.Millisecond)
+	weight := int(duration / float64(time.Millisecond))
 	if weight < 1 {
 		return 1, true
 	}
