@@ -14,6 +14,7 @@ import (
 
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	ciUtils "github.com/DataDog/ddtest/civisibility/utils"
+	ciNet "github.com/DataDog/ddtest/civisibility/utils/net"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
@@ -383,7 +384,7 @@ func TestTestRunner_TestFileWeight_CountFallbackForMissingSuiteDuration(t *testi
 		},
 	}
 
-	testSuiteDurations := map[string]map[string]testoptimization.TestSuiteDurationInfo{
+	runner.testSuiteDurations = map[string]map[string]testoptimization.TestSuiteDurationInfo{
 		"rspec": {
 			"Suite1": {
 				SourceFile: "spec/file1_test.rb",
@@ -392,7 +393,7 @@ func TestTestRunner_TestFileWeight_CountFallbackForMissingSuiteDuration(t *testi
 		},
 	}
 
-	resolveSuiteDurations(runner.suiteAggregates, testSuiteDurations)
+	runner.resolveSuiteDurations()
 	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
 
 	if weight, ok := runner.testFileWeight("spec/file1_test.rb"); !ok || weight != 11 {
@@ -424,7 +425,7 @@ func TestTestRunner_TestFileWeight_InvalidP50FallsBackForFullDiscoveryAggregate(
 		},
 	}
 
-	testSuiteDurations := map[string]map[string]testoptimization.TestSuiteDurationInfo{
+	runner.testSuiteDurations = map[string]map[string]testoptimization.TestSuiteDurationInfo{
 		"rspec": {
 			"Suite1": {
 				SourceFile: "spec/file1_test.rb",
@@ -433,7 +434,7 @@ func TestTestRunner_TestFileWeight_InvalidP50FallsBackForFullDiscoveryAggregate(
 		},
 	}
 
-	resolveSuiteDurations(runner.suiteAggregates, testSuiteDurations)
+	runner.resolveSuiteDurations()
 	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
 
 	aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite1"}]
@@ -462,7 +463,7 @@ func TestTestRunner_TestFileWeight_SubMillisecondP50MinimumWeight(t *testing.T) 
 		},
 	}
 
-	testSuiteDurations := map[string]map[string]testoptimization.TestSuiteDurationInfo{
+	runner.testSuiteDurations = map[string]map[string]testoptimization.TestSuiteDurationInfo{
 		"rspec": {
 			"FastSuite": {
 				SourceFile: "spec/fast_test.rb",
@@ -471,7 +472,7 @@ func TestTestRunner_TestFileWeight_SubMillisecondP50MinimumWeight(t *testing.T) 
 		},
 	}
 
-	resolveSuiteDurations(runner.suiteAggregates, testSuiteDurations)
+	runner.resolveSuiteDurations()
 	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
 
 	if weight, ok := runner.testFileWeight("spec/fast_test.rb"); !ok || weight != 1 {
@@ -694,6 +695,66 @@ func TestTestRunner_PrepareTestOptimization_IgnoresBackendDurationsForUndiscover
 
 	if weight, ok := runner.testFileWeight("spec/discovered_spec.rb"); !ok || weight != int(time.Second/time.Millisecond) {
 		t.Errorf("Expected discovered file without backend aggregate to use default 1 second, got weight=%d ok=%t", weight, ok)
+	}
+}
+
+func TestTestRunner_PrepareTestOptimization_FastDiscoveryDoesNotRunStaleBackendFilesWhenSkippingDisabled(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	mockFramework := &MockFramework{
+		FrameworkName:    "rspec",
+		TestFiles:        []string{"spec/local_spec.rb"},
+		DiscoverTestsErr: errors.New("full discovery cancelled because test skipping is disabled"),
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+		},
+		Framework: mockFramework,
+	}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings: &ciNet.SettingsResponseData{
+			ItrEnabled:    true,
+			TestsSkipping: false,
+		},
+	}
+	mockDurationsClient := &MockTestSuiteDurationsClient{
+		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+			"rspec": {
+				"LocalSuite": {
+					SourceFile: "spec/local_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "11000000"},
+				},
+				"DeletedSuite": {
+					SourceFile: "spec/deleted_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "99000000"},
+				},
+			},
+		},
+	}
+
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, mockDurationsClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not fail, got: %v", err)
+	}
+
+	weightedFiles := runner.weightedTestFiles()
+	if len(weightedFiles) != 1 {
+		t.Fatalf("Expected only local fast-discovery file to be runnable, got %v", weightedFiles)
+	}
+	if _, ok := weightedFiles["spec/local_spec.rb"]; !ok {
+		t.Errorf("Expected local fast-discovery file to be runnable, got %v", weightedFiles)
+	}
+	if _, ok := weightedFiles["spec/deleted_spec.rb"]; ok {
+		t.Errorf("Expected stale backend file not to be runnable, got %v", weightedFiles)
+	}
+	if _, ok := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "DeletedSuite"}]; ok {
+		t.Errorf("Expected stale backend suite not to be added, got aggregates %v", runner.suiteAggregates)
 	}
 }
 
