@@ -409,6 +409,76 @@ func TestTestRunner_TestFileWeight_CountFallbackForMissingSuiteDuration(t *testi
 	}
 }
 
+func TestTestRunner_TestFileWeight_InvalidP50FallsBackForFullDiscoveryAggregate(t *testing.T) {
+	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
+	runner.testFiles = map[string]struct{}{
+		"spec/file1_test.rb": {},
+	}
+	runner.suiteAggregates = map[testSuiteKey]testSuiteAggregate{
+		{Module: "rspec", Suite: "Suite1"}: {
+			Module:          "rspec",
+			Suite:           "Suite1",
+			SourceFile:      "spec/file1_test.rb",
+			NumTests:        3,
+			NumTestsSkipped: 1,
+		},
+	}
+
+	testSuiteDurations := map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		"rspec": {
+			"Suite1": {
+				SourceFile: "spec/file1_test.rb",
+				Duration:   testoptimization.DurationPercentiles{P50: "not-a-number"},
+			},
+		},
+	}
+
+	resolveSuiteDurations(runner.suiteAggregates, testSuiteDurations)
+	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
+
+	aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite1"}]
+	expectedTotalDuration := 3 * float64(time.Second)
+	if aggregate.TotalDuration != expectedTotalDuration {
+		t.Errorf("Expected invalid p50 to keep count-based total duration %.0f, got %.0f", expectedTotalDuration, aggregate.TotalDuration)
+	}
+
+	expectedEstimatedDuration := 2 * int(time.Second/time.Millisecond)
+	if weight, ok := runner.testFileWeight("spec/file1_test.rb"); !ok || weight != expectedEstimatedDuration {
+		t.Errorf("Expected invalid p50 to use runnable count fallback %d, got weight=%d ok=%t", expectedEstimatedDuration, weight, ok)
+	}
+}
+
+func TestTestRunner_TestFileWeight_SubMillisecondP50MinimumWeight(t *testing.T) {
+	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
+	runner.testFiles = map[string]struct{}{
+		"spec/fast_test.rb": {},
+	}
+	runner.suiteAggregates = map[testSuiteKey]testSuiteAggregate{
+		{Module: "rspec", Suite: "FastSuite"}: {
+			Module:     "rspec",
+			Suite:      "FastSuite",
+			SourceFile: "spec/fast_test.rb",
+			NumTests:   1,
+		},
+	}
+
+	testSuiteDurations := map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		"rspec": {
+			"FastSuite": {
+				SourceFile: "spec/fast_test.rb",
+				Duration:   testoptimization.DurationPercentiles{P50: "500000"},
+			},
+		},
+	}
+
+	resolveSuiteDurations(runner.suiteAggregates, testSuiteDurations)
+	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
+
+	if weight, ok := runner.testFileWeight("spec/fast_test.rb"); !ok || weight != 1 {
+		t.Errorf("Expected sub-millisecond p50 to use minimum weight 1, got weight=%d ok=%t", weight, ok)
+	}
+}
+
 func TestTestRunner_TestFileWeight_SkipsFullySkippedSuites(t *testing.T) {
 	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 	runner.testFiles = map[string]struct{}{
@@ -436,6 +506,53 @@ func TestTestRunner_TestFileWeight_SkipsFullySkippedSuites(t *testing.T) {
 
 	if weightedFiles := runner.weightedTestFiles(); len(weightedFiles) != 0 {
 		t.Errorf("Expected fully skipped suite file to be omitted from weighted files, got %v", weightedFiles)
+	}
+}
+
+func TestCalculateSavedTimePercentage_IgnoresInvalidDurationAggregates(t *testing.T) {
+	suiteAggregates := map[testSuiteKey]testSuiteAggregate{
+		{Module: "rspec", Suite: "ZeroTests"}: {
+			TotalDuration:     10,
+			EstimatedDuration: 5,
+			NumTests:          0,
+		},
+		{Module: "rspec", Suite: "ZeroDuration"}: {
+			TotalDuration:     0,
+			EstimatedDuration: 0,
+			NumTests:          1,
+		},
+		{Module: "rspec", Suite: "NegativeDuration"}: {
+			TotalDuration:     -10,
+			EstimatedDuration: 0,
+			NumTests:          1,
+		},
+	}
+
+	if percentage := calculateSavedTimePercentage(suiteAggregates); percentage != 0.0 {
+		t.Errorf("Expected invalid duration aggregates to produce 0 saved time percentage, got %.2f", percentage)
+	}
+}
+
+func TestIndexSuitesBySourceFile_IgnoresEmptySourceFile(t *testing.T) {
+	suiteAggregates := map[testSuiteKey]testSuiteAggregate{
+		{Module: "rspec", Suite: "MissingSource"}: {
+			Module: "rspec",
+			Suite:  "MissingSource",
+		},
+		{Module: "rspec", Suite: "WithSource"}: {
+			Module:     "rspec",
+			Suite:      "WithSource",
+			SourceFile: "spec/with_source_spec.rb",
+		},
+	}
+
+	suitesBySourceFile := indexSuitesBySourceFile(suiteAggregates)
+
+	if _, ok := suitesBySourceFile[""]; ok {
+		t.Error("Expected empty source file to be ignored")
+	}
+	if got := suitesBySourceFile["spec/with_source_spec.rb"]; len(got) != 1 || got[0] != (testSuiteKey{Module: "rspec", Suite: "WithSource"}) {
+		t.Errorf("Expected only suite with source file to be indexed, got %v", suitesBySourceFile)
 	}
 }
 
