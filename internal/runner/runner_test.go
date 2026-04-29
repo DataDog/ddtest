@@ -158,6 +158,27 @@ func (m *MockTestOptimizationClient) StoreCacheAndExit() {
 	m.ShutdownCalled = true
 }
 
+type MockTestSuiteDurationsClient struct {
+	Durations     map[string]map[string]testoptimization.TestSuiteDurationInfo
+	Err           error
+	Called        bool
+	RepositoryURL string
+	Service       string
+}
+
+func (m *MockTestSuiteDurationsClient) GetTestSuiteDurations(repositoryURL, service string) (map[string]map[string]testoptimization.TestSuiteDurationInfo, error) {
+	m.Called = true
+	m.RepositoryURL = repositoryURL
+	m.Service = service
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	if m.Durations == nil {
+		return map[string]map[string]testoptimization.TestSuiteDurationInfo{}, nil
+	}
+	return m.Durations, nil
+}
+
 // MockCIProvider mocks a CI provider
 type MockCIProvider struct {
 	ProviderName    string
@@ -205,6 +226,14 @@ func TestNew(t *testing.T) {
 		t.Error("New() should initialize testFiles to empty map")
 	}
 
+	if len(runner.suiteAggregates) != 0 {
+		t.Error("New() should initialize suiteAggregates to empty map")
+	}
+
+	if len(runner.suitesBySourceFile) != 0 {
+		t.Error("New() should initialize suitesBySourceFile to empty map")
+	}
+
 	if runner.skippablePercentage != 0.0 {
 		t.Errorf("New() should initialize skippablePercentage to 0.0, got %f", runner.skippablePercentage)
 	}
@@ -216,14 +245,19 @@ func TestNew(t *testing.T) {
 	if runner.optimizationClient == nil {
 		t.Error("New() should initialize optimizationClient")
 	}
+
+	if runner.durationsClient == nil {
+		t.Error("New() should initialize durationsClient")
+	}
 }
 
 func TestNewWithDependencies(t *testing.T) {
 	mockPlatformDetector := &MockPlatformDetector{}
 	mockOptimizationClient := &MockTestOptimizationClient{}
+	mockDurationsClient := &MockTestSuiteDurationsClient{}
 	mockCIProviderDetector := newDefaultMockCIProviderDetector()
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockCIProviderDetector)
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockDurationsClient, mockCIProviderDetector)
 
 	if runner == nil {
 		t.Error("NewWithDependencies() should return non-nil TestRunner")
@@ -236,6 +270,22 @@ func TestNewWithDependencies(t *testing.T) {
 
 	if runner.optimizationClient != mockOptimizationClient {
 		t.Error("NewWithDependencies() should use injected optimizationClient")
+	}
+
+	if runner.durationsClient != mockDurationsClient {
+		t.Error("NewWithDependencies() should use injected durationsClient")
+	}
+
+	if len(runner.testFiles) != 0 {
+		t.Error("NewWithDependencies() should initialize testFiles to empty map")
+	}
+
+	if len(runner.suiteAggregates) != 0 {
+		t.Error("NewWithDependencies() should initialize suiteAggregates to empty map")
+	}
+
+	if len(runner.suitesBySourceFile) != 0 {
+		t.Error("NewWithDependencies() should initialize suitesBySourceFile to empty map")
 	}
 }
 
@@ -286,7 +336,7 @@ func TestTestRunner_Setup_WithParallelRunners(t *testing.T) {
 		},
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	// Run Setup
 	err := runner.Plan(context.Background())
@@ -356,7 +406,7 @@ func TestTestRunner_Setup_WithCIProvider(t *testing.T) {
 		CIProvider: mockCIProvider,
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockCIProviderDetector)
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, mockCIProviderDetector)
 
 	// Run Setup
 	err := runner.Plan(context.Background())
@@ -410,7 +460,7 @@ func TestTestRunner_Setup_CIProviderDetectionFailure(t *testing.T) {
 		Err: errors.New("no CI provider detected"),
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockCIProviderDetector)
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, mockCIProviderDetector)
 
 	// Run Setup - should succeed even if CI provider detection fails
 	err := runner.Plan(context.Background())
@@ -455,7 +505,7 @@ func TestTestRunner_Setup_CIProviderConfigureFailure(t *testing.T) {
 		CIProvider: mockCIProvider,
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockCIProviderDetector)
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, mockCIProviderDetector)
 
 	// Run Setup - should succeed even if CI provider configuration fails
 	err := runner.Plan(context.Background())
@@ -511,7 +561,7 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 			SkippableTests: map[string]bool{}, // No tests skipped
 		}
 
-		runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+		runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 		// Run Setup
 		err := runner.Plan(context.Background())
@@ -599,7 +649,7 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		// Reinitialize settings to pick up environment variables
 		settings.Init()
 
-		runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+		runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 		// Run Setup
 		err := runner.Plan(context.Background())
@@ -716,7 +766,7 @@ func TestTestRunner_Plan_SubdirRootRelativeDiscovery_WritesNormalizedPaths(t *te
 		SkippableTests: map[string]bool{},
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.Plan(context.Background())
 	if err != nil {

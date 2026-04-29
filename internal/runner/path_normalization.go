@@ -51,11 +51,11 @@ func getCwdSubdirPrefix() string {
 	return filepath.ToSlash(rel)
 }
 
-// normalizeTestFilePathWithPrefix converts a test file path that may be repo-root-relative
-// to a CWD-relative path. This is needed when running ddtest from a monorepo
-// subdirectory (e.g., "cd core && ddtest plan") where full test discovery returns
-// paths relative to the git root (e.g., "core/spec/...") but workers need
-// paths relative to CWD (e.g., "spec/...").
+// stripCwdSubdirPrefix converts a test file path that may be repo-root-relative
+// to a CWD-relative path by stripping the current subdirectory prefix. This is
+// needed when running ddtest from a monorepo subdirectory (e.g., "cd core && ddtest plan")
+// where full test discovery returns paths relative to the git root (e.g., "core/spec/...")
+// but workers need paths relative to CWD (e.g., "spec/...").
 //
 // The subdirPrefix should be computed once via getCwdSubdirPrefix() and reused
 // across all paths to avoid repeated git calls.
@@ -65,7 +65,7 @@ func getCwdSubdirPrefix() string {
 //   - If CWD is the git root (subdirPrefix is ""), the path is returned unchanged
 //   - Absolute paths are returned unchanged
 //   - Empty paths are returned unchanged
-func normalizeTestFilePathWithPrefix(path string, subdirPrefix string) string {
+func stripCwdSubdirPrefix(path string, subdirPrefix string) string {
 	if path == "" || subdirPrefix == "" {
 		return path
 	}

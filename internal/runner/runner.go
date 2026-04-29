@@ -22,30 +22,46 @@ type Runner interface {
 }
 
 type TestRunner struct {
-	// the keys are file paths, the values are "durations" - currently just the number of tests in a file
-	testFiles           map[string]int
+	testFiles           map[string]struct{}
+	suiteAggregates     map[testSuiteKey]testSuiteAggregate
+	suitesBySourceFile  map[string][]testSuiteKey
+	testSuiteDurations  map[string]map[string]testoptimization.TestSuiteDurationInfo
 	skippablePercentage float64
 	platformDetector    platform.PlatformDetector
 	optimizationClient  testoptimization.TestOptimizationClient
+	durationsClient     testoptimization.TestSuiteDurationsClient
 	ciProviderDetector  ciprovider.CIProviderDetector
 }
 
 func New() *TestRunner {
 	return &TestRunner{
-		testFiles:           make(map[string]int),
+		testFiles:           make(map[string]struct{}),
+		suiteAggregates:     make(map[testSuiteKey]testSuiteAggregate),
+		suitesBySourceFile:  make(map[string][]testSuiteKey),
+		testSuiteDurations:  make(map[string]map[string]testoptimization.TestSuiteDurationInfo),
 		skippablePercentage: 0.0,
 		platformDetector:    platform.NewPlatformDetector(),
 		optimizationClient:  testoptimization.NewDatadogClient(),
+		durationsClient:     testoptimization.NewDurationsClient(),
 		ciProviderDetector:  ciprovider.NewCIProviderDetector(),
 	}
 }
 
-func NewWithDependencies(platformDetector platform.PlatformDetector, optimizationClient testoptimization.TestOptimizationClient, ciProviderDetector ciprovider.CIProviderDetector) *TestRunner {
+func NewWithDependencies(
+	platformDetector platform.PlatformDetector,
+	optimizationClient testoptimization.TestOptimizationClient,
+	durationsClient testoptimization.TestSuiteDurationsClient,
+	ciProviderDetector ciprovider.CIProviderDetector,
+) *TestRunner {
 	return &TestRunner{
-		testFiles:           make(map[string]int),
+		testFiles:           make(map[string]struct{}),
+		suiteAggregates:     make(map[testSuiteKey]testSuiteAggregate),
+		suitesBySourceFile:  make(map[string][]testSuiteKey),
+		testSuiteDurations:  make(map[string]map[string]testoptimization.TestSuiteDurationInfo),
 		skippablePercentage: 0.0,
 		platformDetector:    platformDetector,
 		optimizationClient:  optimizationClient,
+		durationsClient:     durationsClient,
 		ciProviderDetector:  ciProviderDetector,
 	}
 }
@@ -61,8 +77,9 @@ func (tr *TestRunner) Plan(ctx context.Context) error {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	testFileNames := make([]string, 0, len(tr.testFiles))
-	for testFile := range tr.testFiles {
+	weightedTestFiles := tr.weightedTestFiles()
+	testFileNames := make([]string, 0, len(weightedTestFiles))
+	for testFile := range weightedTestFiles {
 		testFileNames = append(testFileNames, testFile)
 	}
 	slices.Sort(testFileNames)
@@ -101,11 +118,11 @@ func (tr *TestRunner) Plan(ctx context.Context) error {
 	}
 
 	// Split test files for runners
-	if err := CreateTestSplits(tr.testFiles, parallelRunners, constants.TestFilesOutputPath); err != nil {
+	if err := CreateTestSplits(weightedTestFiles, parallelRunners, constants.TestFilesOutputPath); err != nil {
 		return fmt.Errorf("failed to create test splits: %w", err)
 	}
 
-	slog.Info("Test execution planning completed", "parallelRunners", parallelRunners, "testFilesCount", len(tr.testFiles))
+	slog.Info("Test execution planning completed", "parallelRunners", parallelRunners, "testFilesCount", len(weightedTestFiles))
 
 	return nil
 }
