@@ -2,7 +2,12 @@ package testoptimization
 
 import (
 	"fmt"
+	"net/http"
+	"os"
+	"strings"
 	"testing"
+
+	"github.com/DataDog/ddtest/civisibility/constants"
 )
 
 // MockDurationsAPI implements DurationsAPI for testing (equivalent of MockCIVisibilityIntegrations)
@@ -440,5 +445,48 @@ func TestDatadogDurationsAPI_FetchTestSuiteDurations_EmptyRepositoryURL(t *testi
 
 	if err == nil {
 		t.Error("FetchTestSuiteDurations() should return error when repository URL is empty")
+	}
+}
+
+func TestNewDatadogDurationsAPI_AgentlessMissingAPIKeyReturnsErroringClient(t *testing.T) {
+	t.Setenv(constants.CIVisibilityAgentlessEnabledEnvironmentVariable, "true")
+	t.Setenv(constants.APIKeyEnvironmentVariable, "")
+
+	api := NewDatadogDurationsAPI()
+	if api == nil {
+		t.Fatal("NewDatadogDurationsAPI() should return an erroring client, not nil")
+	}
+
+	_, err := api.FetchTestSuiteDurations("github.com/DataDog/foo", "my-service", "", 100)
+	if err == nil {
+		t.Fatal("FetchTestSuiteDurations() should return an error when API key is missing")
+	}
+	if !strings.Contains(err.Error(), constants.APIKeyEnvironmentVariable) {
+		t.Errorf("Expected error to mention missing API key, got %v", err)
+	}
+}
+
+func TestNewDatadogDurationsAPI_AgentUnixSocketConfiguresHTTPTransport(t *testing.T) {
+	socketPath := "/tmp/ddtest-agent.sock"
+	t.Setenv(constants.CIVisibilityAgentlessEnabledEnvironmentVariable, "false")
+	t.Setenv("DD_TRACE_AGENT_URL", "unix://"+socketPath)
+	t.Setenv("DD_AGENT_HOST", "")
+	t.Setenv("DD_TRACE_AGENT_PORT", "")
+	t.Cleanup(func() {
+		_ = os.Unsetenv("DD_TRACE_AGENT_URL")
+	})
+
+	api := NewDatadogDurationsAPI()
+	if api == nil {
+		t.Fatal("NewDatadogDurationsAPI() should return a client")
+	}
+	if api.baseURL != "http://UDS__tmp_ddtest-agent.sock" {
+		t.Errorf("Expected UDS base URL host, got %q", api.baseURL)
+	}
+	if api.httpClient == nil {
+		t.Fatal("Expected HTTP client to be configured")
+	}
+	if _, ok := api.httpClient.Transport.(*http.Transport); !ok {
+		t.Fatalf("Expected Unix socket HTTP transport, got %T", api.httpClient.Transport)
 	}
 }

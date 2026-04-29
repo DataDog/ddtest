@@ -14,6 +14,7 @@ import (
 
 	"github.com/DataDog/ddtest/civisibility"
 	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/httptransport"
 )
 
 const (
@@ -151,18 +152,26 @@ type DatadogDurationsAPI struct {
 	baseURL    string
 	headers    map[string]string
 	httpClient *http.Client
+	err        error
 }
 
 func NewDatadogDurationsAPI() *DatadogDurationsAPI {
 	headers := map[string]string{}
 	var baseURL string
+	httpClient := &http.Client{
+		Timeout: 45 * time.Second,
+	}
 
 	agentlessEnabled := civisibility.BoolEnv(constants.CIVisibilityAgentlessEnabledEnvironmentVariable, false)
 	if agentlessEnabled {
 		apiKey := os.Getenv(constants.APIKeyEnvironmentVariable)
 		if apiKey == "" {
 			slog.Error("An API key is required for agentless mode. Use the DD_API_KEY env variable to set it")
-			return nil
+			return &DatadogDurationsAPI{
+				headers:    headers,
+				httpClient: httpClient,
+				err:        fmt.Errorf("DD_API_KEY is required when DD_CIVISIBILITY_AGENTLESS_ENABLED is true"),
+			}
 		}
 		headers["dd-api-key"] = apiKey
 
@@ -179,6 +188,10 @@ func NewDatadogDurationsAPI() *DatadogDurationsAPI {
 	} else {
 		headers["X-Datadog-EVP-Subdomain"] = "api"
 		agentURL := civisibility.AgentURLFromEnv()
+		if agentURL.Scheme == "unix" {
+			httpClient = httptransport.UnixSocketClient(agentURL.Path, 45*time.Second)
+			agentURL = httptransport.UnixSocketURL(agentURL.Path)
+		}
 		baseURL = agentURL.String()
 	}
 
@@ -190,15 +203,16 @@ func NewDatadogDurationsAPI() *DatadogDurationsAPI {
 		"agentless", agentlessEnabled, "url", baseURL)
 
 	return &DatadogDurationsAPI{
-		baseURL: baseURL,
-		headers: headers,
-		httpClient: &http.Client{
-			Timeout: 45 * time.Second,
-		},
+		baseURL:    baseURL,
+		headers:    headers,
+		httpClient: httpClient,
 	}
 }
 
 func (c *DatadogDurationsAPI) FetchTestSuiteDurations(repositoryURL, service, cursor string, pageSize int) (*durationsResponseAttributes, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
 	if repositoryURL == "" {
 		return nil, fmt.Errorf("repository URL is required")
 	}
