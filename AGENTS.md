@@ -52,6 +52,14 @@ go test -v ./...           # Verbose testing
 - Always run `make test` after any change. Any new functionality must be covered by test.
 - Always run `make lint` after any change. Address any linting issues found.
 
+## Pull Requests
+
+When opening a pull request for this repository, use exactly these sections:
+
+1. `What`: Briefly describe the user-visible behavior change.
+2. `Why`: Explain the customer problem and motivation. Link to relevant external docs when they are part of the rationale.
+3. `E2E testing`: Provide a concrete manual end-to-end test scenario for the change.
+
 ## Architecture
 
 ### Core Components
