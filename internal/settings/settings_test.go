@@ -2,7 +2,6 @@ package settings
 
 import (
 	"os"
-	"runtime"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -10,13 +9,80 @@ import (
 
 func TestDefaultParallelism(t *testing.T) {
 	result := DefaultParallelism()
-	expected := runtime.NumCPU()
+	expected := PhysicalCPUCount()
 
 	if result != expected {
-		t.Errorf("expected DefaultParallelism() to return %d (runtime.NumCPU()), got %d", expected, result)
+		t.Errorf("expected DefaultParallelism() to return %d (PhysicalCPUCount()), got %d", expected, result)
 	}
 	if result < 1 {
 		t.Errorf("expected DefaultParallelism() to be at least 1, got %d", result)
+	}
+}
+
+func TestPhysicalCPUCount(t *testing.T) {
+	result := PhysicalCPUCount()
+	if result < 1 {
+		t.Errorf("expected PhysicalCPUCount() to be at least 1, got %d", result)
+	}
+}
+
+func TestPhysicalCPUCountFromTopology(t *testing.T) {
+	tests := []struct {
+		name                  string
+		availableLogicalCPUs  int
+		threadsPerCore        int
+		detectedPhysicalCores int
+		detectedLogicalCores  int
+		expected              int
+	}{
+		{
+			name:                 "divides logical CPUs by threads per core",
+			availableLogicalCPUs: 8,
+			threadsPerCore:       2,
+			expected:             4,
+		},
+		{
+			name:                 "rounds up odd logical CPU quotas",
+			availableLogicalCPUs: 3,
+			threadsPerCore:       2,
+			expected:             2,
+		},
+		{
+			name:                  "uses detected topology when threads per core is missing",
+			availableLogicalCPUs:  8,
+			threadsPerCore:        1,
+			detectedPhysicalCores: 4,
+			detectedLogicalCores:  8,
+			expected:              4,
+		},
+		{
+			name:                  "does not exceed available logical CPUs",
+			availableLogicalCPUs:  2,
+			threadsPerCore:        1,
+			detectedPhysicalCores: 4,
+			detectedLogicalCores:  4,
+			expected:              2,
+		},
+		{
+			name:                 "clamps invalid available logical CPU count",
+			availableLogicalCPUs: 0,
+			threadsPerCore:       2,
+			expected:             1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := physicalCPUCount(
+				tt.availableLogicalCPUs,
+				tt.threadsPerCore,
+				tt.detectedPhysicalCores,
+				tt.detectedLogicalCores,
+			)
+			if result != tt.expected {
+				t.Errorf("expected %d, got %d", tt.expected, result)
+			}
+		})
 	}
 }
 
@@ -38,12 +104,12 @@ func TestInit(t *testing.T) {
 	if config.Framework != "rspec" {
 		t.Errorf("expected default framework to be 'rspec', got %q", config.Framework)
 	}
-	expectedParallelism := runtime.NumCPU()
+	expectedParallelism := PhysicalCPUCount()
 	if config.MinParallelism != expectedParallelism {
-		t.Errorf("expected default min_parallelism to be %d (CPU count), got %d", expectedParallelism, config.MinParallelism)
+		t.Errorf("expected default min_parallelism to be %d (physical CPU count), got %d", expectedParallelism, config.MinParallelism)
 	}
 	if config.MaxParallelism != expectedParallelism {
-		t.Errorf("expected default max_parallelism to be %d (CPU count), got %d", expectedParallelism, config.MaxParallelism)
+		t.Errorf("expected default max_parallelism to be %d (physical CPU count), got %d", expectedParallelism, config.MaxParallelism)
 	}
 	if config.WorkerEnv != "" {
 		t.Errorf("expected default worker_env to be empty, got %q", config.WorkerEnv)
@@ -51,8 +117,8 @@ func TestInit(t *testing.T) {
 	if config.CiNode != -1 {
 		t.Errorf("expected default ci_node to be -1, got %d", config.CiNode)
 	}
-	if config.CiNodeWorkers != expectedParallelism {
-		t.Errorf("expected default ci_node_workers to be %d (CPU count), got %d", expectedParallelism, config.CiNodeWorkers)
+	if config.CiNodeWorkers != 1 {
+		t.Errorf("expected default ci_node_workers to be 1, got %d", config.CiNodeWorkers)
 	}
 	if config.Command != "" {
 		t.Errorf("expected default command to be empty, got %q", config.Command)
@@ -76,12 +142,12 @@ func TestSetDefaults(t *testing.T) {
 	if viper.GetString("framework") != "rspec" {
 		t.Errorf("expected default framework to be 'rspec', got %q", viper.GetString("framework"))
 	}
-	expectedParallelism := runtime.NumCPU()
+	expectedParallelism := PhysicalCPUCount()
 	if viper.GetInt("min_parallelism") != expectedParallelism {
-		t.Errorf("expected default min_parallelism to be %d (CPU count), got %d", expectedParallelism, viper.GetInt("min_parallelism"))
+		t.Errorf("expected default min_parallelism to be %d (physical CPU count), got %d", expectedParallelism, viper.GetInt("min_parallelism"))
 	}
 	if viper.GetInt("max_parallelism") != expectedParallelism {
-		t.Errorf("expected default max_parallelism to be %d (CPU count), got %d", expectedParallelism, viper.GetInt("max_parallelism"))
+		t.Errorf("expected default max_parallelism to be %d (physical CPU count), got %d", expectedParallelism, viper.GetInt("max_parallelism"))
 	}
 	if viper.GetString("worker_env") != "" {
 		t.Errorf("expected default worker_env to be empty, got %q", viper.GetString("worker_env"))
@@ -89,8 +155,8 @@ func TestSetDefaults(t *testing.T) {
 	if viper.GetInt("ci_node") != -1 {
 		t.Errorf("expected default ci_node to be -1, got %d", viper.GetInt("ci_node"))
 	}
-	if viper.GetInt("ci_node_workers") != expectedParallelism {
-		t.Errorf("expected default ci_node_workers to be %d (CPU count), got %d", expectedParallelism, viper.GetInt("ci_node_workers"))
+	if viper.GetInt("ci_node_workers") != 1 {
+		t.Errorf("expected default ci_node_workers to be 1, got %d", viper.GetInt("ci_node_workers"))
 	}
 	if viper.GetString("command") != "" {
 		t.Errorf("expected default command to be empty, got %q", viper.GetString("command"))
@@ -225,10 +291,10 @@ func TestGetMinParallelism(t *testing.T) {
 	config = nil
 	viper.Reset()
 
-	expectedParallelism := runtime.NumCPU()
+	expectedParallelism := PhysicalCPUCount()
 	minParallelism := GetMinParallelism()
 	if minParallelism != expectedParallelism {
-		t.Errorf("expected min_parallelism to be %d (CPU count), got %d", expectedParallelism, minParallelism)
+		t.Errorf("expected min_parallelism to be %d (physical CPU count), got %d", expectedParallelism, minParallelism)
 	}
 
 	// Test with custom value
@@ -244,10 +310,10 @@ func TestGetMaxParallelism(t *testing.T) {
 	config = nil
 	viper.Reset()
 
-	expectedParallelism := runtime.NumCPU()
+	expectedParallelism := PhysicalCPUCount()
 	maxParallelism := GetMaxParallelism()
 	if maxParallelism != expectedParallelism {
-		t.Errorf("expected max_parallelism to be %d (CPU count), got %d", expectedParallelism, maxParallelism)
+		t.Errorf("expected max_parallelism to be %d (physical CPU count), got %d", expectedParallelism, maxParallelism)
 	}
 
 	// Test with custom value
@@ -409,10 +475,9 @@ func TestGetCiNodeWorkers(t *testing.T) {
 	config = nil
 	viper.Reset()
 
-	expectedParallelism := runtime.NumCPU()
 	ciNodeWorkers := GetCiNodeWorkers()
-	if ciNodeWorkers != expectedParallelism {
-		t.Errorf("expected ci_node_workers to be %d (CPU count), got %d", expectedParallelism, ciNodeWorkers)
+	if ciNodeWorkers != 1 {
+		t.Errorf("expected ci_node_workers to be 1, got %d", ciNodeWorkers)
 	}
 
 	// Test with custom value
@@ -420,6 +485,93 @@ func TestGetCiNodeWorkers(t *testing.T) {
 	ciNodeWorkers = GetCiNodeWorkers()
 	if ciNodeWorkers != 4 {
 		t.Errorf("expected ci_node_workers to be 4, got %d", ciNodeWorkers)
+	}
+}
+
+func TestParseCiNodeWorkers(t *testing.T) {
+	physicalCPUCount := PhysicalCPUCount()
+	tests := []struct {
+		name      string
+		value     string
+		expected  int
+		expectErr bool
+	}{
+		{
+			name:     "empty value uses default",
+			value:    "",
+			expected: 1,
+		},
+		{
+			name:     "positive integer",
+			value:    "4",
+			expected: 4,
+		},
+		{
+			name:     "trims whitespace",
+			value:    " 3 ",
+			expected: 3,
+		},
+		{
+			name:     "ncpu magic value",
+			value:    "ncpu",
+			expected: physicalCPUCount,
+		},
+		{
+			name:     "ncpu is case insensitive",
+			value:    "NCPU",
+			expected: physicalCPUCount,
+		},
+		{
+			name:      "rejects zero",
+			value:     "0",
+			expectErr: true,
+		},
+		{
+			name:      "rejects negative values",
+			value:     "-1",
+			expectErr: true,
+		},
+		{
+			name:      "rejects unknown strings",
+			value:     "many",
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ParseCiNodeWorkers(tt.value)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			if result != tt.expected {
+				t.Errorf("expected %d, got %d", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestEnvironmentVariableCiNodeWorkersNCPU(t *testing.T) {
+	config = nil
+	viper.Reset()
+
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS", "ncpu")
+	defer func() {
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS")
+	}()
+
+	Init()
+
+	expected := PhysicalCPUCount()
+	if config.CiNodeWorkers != expected {
+		t.Errorf("expected ci_node_workers from ncpu env var to be %d, got %d", expected, config.CiNodeWorkers)
 	}
 }
 

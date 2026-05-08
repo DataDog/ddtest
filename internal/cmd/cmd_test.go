@@ -39,6 +39,12 @@ func TestRootCommandFlags(t *testing.T) {
 		return
 	}
 
+	ciNodeWorkersFlag := rootCmd.PersistentFlags().Lookup("ci-node-workers")
+	if ciNodeWorkersFlag == nil {
+		t.Error("ci-node-workers flag should be defined")
+		return
+	}
+
 	// Check default values
 	if platformFlag.DefValue != "ruby" {
 		t.Errorf("expected platform default to be 'ruby', got %q", platformFlag.DefValue)
@@ -54,6 +60,10 @@ func TestRootCommandFlags(t *testing.T) {
 
 	if testsLocationFlag.DefValue != "" {
 		t.Errorf("expected tests-location default to be empty, got %q", testsLocationFlag.DefValue)
+	}
+
+	if ciNodeWorkersFlag.DefValue != "1" {
+		t.Errorf("expected ci-node-workers default to be '1', got %q", ciNodeWorkersFlag.DefValue)
 	}
 }
 
@@ -120,6 +130,9 @@ func TestFlagBinding(t *testing.T) {
 	if err := viper.BindPFlag("tests_location", rootCmd.PersistentFlags().Lookup("tests-location")); err != nil {
 		t.Fatalf("Error binding tests-location flag: %v", err)
 	}
+	if err := viper.BindPFlag("ci_node_workers", rootCmd.PersistentFlags().Lookup("ci-node-workers")); err != nil {
+		t.Fatalf("Error binding ci-node-workers flag: %v", err)
+	}
 
 	// Set flag values
 	if err := rootCmd.PersistentFlags().Set("platform", "python"); err != nil {
@@ -134,6 +147,9 @@ func TestFlagBinding(t *testing.T) {
 	if err := rootCmd.PersistentFlags().Set("tests-location", "spec/**/*_spec.rb"); err != nil {
 		t.Fatalf("Error setting tests-location flag: %v", err)
 	}
+	if err := rootCmd.PersistentFlags().Set("ci-node-workers", "ncpu"); err != nil {
+		t.Fatalf("Error setting ci-node-workers flag: %v", err)
+	}
 
 	// Check that viper picks up the flag values
 	if viper.GetString("platform") != "python" {
@@ -147,6 +163,9 @@ func TestFlagBinding(t *testing.T) {
 	}
 	if viper.GetString("tests_location") != "spec/**/*_spec.rb" {
 		t.Errorf("expected viper tests_location to be 'spec/**/*_spec.rb', got %q", viper.GetString("tests_location"))
+	}
+	if viper.GetString("ci_node_workers") != "ncpu" {
+		t.Errorf("expected viper ci_node_workers to be 'ncpu', got %q", viper.GetString("ci_node_workers"))
 	}
 }
 

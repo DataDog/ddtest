@@ -5,6 +5,7 @@ go 1.26.2
 require (
 	github.com/DataDog/dd-trace-go/v2 v2.7.3
 	github.com/bmatcuk/doublestar/v4 v4.10.0
+	github.com/klauspost/cpuid/v2 v2.3.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/tinylib/msgp v1.6.4
@@ -48,7 +49,6 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.18.4 // indirect
-	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/linkdata/deadlock v0.5.5 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260216142805-b3301c5f2a88 // indirect
 	github.com/minio/simdjson-go v0.4.5 // indirect
