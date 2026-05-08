@@ -5,15 +5,69 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 
+	"github.com/klauspost/cpuid/v2"
 	"github.com/spf13/viper"
 )
 
-// DefaultParallelism returns the default parallelism value, which is the number
-// of available CPUs. This respects container CPU limits in cloud CI environments.
+const (
+	defaultCiNodeWorkers = 1
+	ncpuCiNodeWorkers    = "ncpu"
+)
+
+// DefaultParallelism returns the default parallelism value.
 func DefaultParallelism() int {
-	return runtime.NumCPU()
+	return PhysicalCPUCount()
+}
+
+// PhysicalCPUCount returns the number of physical CPU cores available to this process.
+//
+// It starts from runtime.GOMAXPROCS(0), which is the number of logical CPUs the
+// Go scheduler may run on at once. That preserves explicit GOMAXPROCS settings
+// and modern Go's container-aware CPU budget instead of using the host's
+// full logical CPU count.
+//
+// It then converts that logical CPU budget to physical cores using CPU topology:
+// if cpuid reports threads-per-core, it divides by that value with a ceiling.
+// The ceiling is intentional: a one-logical-CPU quota still maps to one usable
+// physical core, and odd CPU budgets such as 3 logical CPUs on a 2-thread/core
+// machine should yield 2 physical cores instead of undercounting to 1. If
+// threads-per-core is unavailable, it derives the same ratio from reported
+// logical and physical core counts. If only the physical core count is known, it
+// caps the result to that count. If topology is unavailable entirely, it falls
+// back to the logical CPU budget, which is the safest non-zero answer.
+//
+// This is correct for ddtest's "ncpu" worker setting because the setting should
+// opt into one worker per available physical execution core, not one worker per
+// hyperthread. It also never returns less than 1, and never exceeds the process'
+// available logical CPU budget.
+func PhysicalCPUCount() int {
+	return physicalCPUCount(runtime.GOMAXPROCS(0), cpuid.CPU.ThreadsPerCore, cpuid.CPU.PhysicalCores, cpuid.CPU.LogicalCores)
+}
+
+func physicalCPUCount(availableLogicalCPUs, threadsPerCore, detectedPhysicalCores, detectedLogicalCores int) int {
+	if availableLogicalCPUs < 1 {
+		availableLogicalCPUs = 1
+	}
+	if threadsPerCore > 1 {
+		return ceilDiv(availableLogicalCPUs, threadsPerCore)
+	}
+	if detectedPhysicalCores > 0 && detectedLogicalCores > detectedPhysicalCores {
+		detectedThreadsPerCore := ceilDiv(detectedLogicalCores, detectedPhysicalCores)
+		if detectedThreadsPerCore > 1 {
+			return ceilDiv(availableLogicalCPUs, detectedThreadsPerCore)
+		}
+	}
+	if detectedPhysicalCores > 0 && detectedPhysicalCores < availableLogicalCPUs {
+		return detectedPhysicalCores
+	}
+	return availableLogicalCPUs
+}
+
+func ceilDiv(numerator, denominator int) int {
+	return (numerator + denominator - 1) / denominator
 }
 
 type Config struct {
@@ -40,6 +94,13 @@ func Init() {
 
 	setDefaults()
 
+	ciNodeWorkers, err := ParseCiNodeWorkers(viper.GetString("ci_node_workers"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+	viper.Set("ci_node_workers", ciNodeWorkers)
+
 	config = &Config{}
 	if err := viper.Unmarshal(config); err != nil {
 		fmt.Fprintf(os.Stderr, "Error unmarshaling config: %v\n", err)
@@ -54,10 +115,31 @@ func setDefaults() {
 	viper.SetDefault("max_parallelism", DefaultParallelism())
 	viper.SetDefault("worker_env", "")
 	viper.SetDefault("ci_node", -1)
-	viper.SetDefault("ci_node_workers", DefaultParallelism())
+	viper.SetDefault("ci_node_workers", strconv.Itoa(defaultCiNodeWorkers))
 	viper.SetDefault("command", "")
 	viper.SetDefault("tests_location", "")
 	viper.SetDefault("runtime_tags", "")
+}
+
+// ParseCiNodeWorkers resolves the ci_node_workers setting from either a positive integer
+// or the "ncpu" magic value.
+func ParseCiNodeWorkers(value string) (int, error) {
+	normalized := strings.TrimSpace(value)
+	if normalized == "" {
+		return defaultCiNodeWorkers, nil
+	}
+	if strings.EqualFold(normalized, ncpuCiNodeWorkers) {
+		return PhysicalCPUCount(), nil
+	}
+
+	workers, err := strconv.Atoi(normalized)
+	if err != nil {
+		return 0, fmt.Errorf("ci_node_workers must be a positive integer or %q, got %q", ncpuCiNodeWorkers, value)
+	}
+	if workers < 1 {
+		return 0, fmt.Errorf("ci_node_workers must be greater than 0, got %d", workers)
+	}
+	return workers, nil
 }
 
 func Get() *Config {

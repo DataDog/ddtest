@@ -128,7 +128,7 @@ Runs tests using the framework you specify. If .testoptimization/ exists, DDTest
 ddtest run --platform ruby --framework rspec
 ```
 
-The default --min-parallelism and --max-parallelism equal the machine’s vCPU count, so you get full CPU utilization without extra flags.
+The default --min-parallelism and --max-parallelism equal the machine's available physical CPU core count, so you get CPU utilization without defaulting to one worker per hyperthread.
 
 **Multiple CI nodes (static split per node)**
 
@@ -138,7 +138,7 @@ First run `ddtest plan` once, share `.testoptimization/` folder to all nodes (pu
 ddtest run --platform ruby --framework rspec --ci-node <CI_NODE_INDEX>
 ```
 
-In CI‑node mode, DDTest also fans out across local CPUs on that node and further splits the assigned files between them.
+In CI-node mode, DDTest uses one local worker by default so database and other per-worker resources stay easy to isolate. To fan out within each CI node, set `--ci-node-workers` to a positive integer, or use `--ci-node-workers ncpu` to use the node's available physical CPU cores.
 
 ### Settings (flags and environment variables)
 
@@ -146,10 +146,10 @@ In CI‑node mode, DDTest also fans out across local CPUs on that node and furth
 | ------------------- | --------------------------------------------- | ---------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--platform`        | `DD_TEST_OPTIMIZATION_RUNNER_PLATFORM`        |     `ruby` | Language/platform (currently supported values: `ruby`).                                                                                                                                                              |
 | `--framework`       | `DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK`       |    `rspec` | Test framework (currently supported values: `rspec`, `minitest`).                                                                                                                                                    |
-| `--min-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM` | vCPU count | Minimum workers to use for the split.                                                                                                                                                                                |
-| `--max-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM` | vCPU count | Maximum workers to use for the split.                                                                                                                                                                                |
-|                     | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE`         | `-1` (off) | Restrict this run to the slice assigned to node **N** (0‑indexed). Also parallelizes within the node across its CPUs.                                                                                                |
-| `--ci-node-workers` | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS` | vCPU count | Number of parallel workers per CI node. Tests assigned to a CI node are further split among this many local workers.                                                                                                 |
+| `--min-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM` | physical CPU count | Minimum workers to use for the split.                                                                                                                                                                                |
+| `--max-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM` | physical CPU count | Maximum workers to use for the split.                                                                                                                                                                                |
+|                     | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE`         | `-1` (off) | Restrict this run to the slice assigned to node **N** (0-indexed).                                                                                                                                                   |
+| `--ci-node-workers` | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS` |        `1` | Number of parallel workers per CI node. Use a positive integer, or `ncpu` to use the node's available physical CPU cores. Tests assigned to a CI node are further split among this many local workers.                |
 | `--worker-env`      | `DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV`      |       `""` | Template env vars per worker: `--worker-env "DATABASE_NAME_TEST=app_test{{nodeIndex}}"`. In CI-node mode, `{{nodeIndex}}` is `ciNode * 10000 + localWorkerIndex`, ensuring uniqueness across heterogeneous CI pools. |
 | `--command`         | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND`         |       `""` | Override the default test command used by the framework. When provided, takes precedence over auto-detection (e.g., `--command "bundle exec custom-rspec"`).                                                         |
 | `--tests-location`  | `DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION`  |       `""` | Custom glob pattern to discover test files (e.g., `--tests-location "custom/spec/**/*_spec.rb"`). Defaults to `spec/**/*_spec.rb` for RSpec, `test/**/*_test.rb` for Minitest.                                       |
