@@ -5,10 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"os"
-	"regexp"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/DataDog/ddtest/civisibility/constants"
@@ -181,15 +178,7 @@ func initializeDurationsFetchInputs() (string, string, error) {
 		return "", "", fmt.Errorf("repository URL is required")
 	}
 
-	service := os.Getenv("DD_SERVICE")
-	if service == "" {
-		repoRegex := regexp.MustCompile(`(?m)/([a-zA-Z0-9\-_.]*)$`)
-		matches := repoRegex.FindStringSubmatch(repositoryURL)
-		if len(matches) > 1 {
-			repositoryURL = strings.TrimSuffix(matches[1], ".git")
-		}
-		service = repositoryURL
-	}
+	service := resolveServiceName(repositoryURL)
 
 	return ciTags[constants.GitRepositoryURL], service, nil
 }
