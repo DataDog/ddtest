@@ -142,6 +142,8 @@ In CI-node mode, DDTest uses one local worker by default so database and other p
 
 `--worker-env` supports `{{nodeIndex}}` and `{{workerIndex}}` placeholders. `{{nodeIndex}}` is the machine number: in CI-node mode, it is the exact CI node index from `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE`; in single-machine runs without `--ci-node`, it is `0`. `{{workerIndex}}` is the process number within the current machine, starting at `0`. If a CI node is split across multiple local workers, each worker receives the same `{{nodeIndex}}` value and a different `{{workerIndex}}` value.
 
+DDTest automatically sets `DD_TEST_SESSION_NAME` for each worker to `<DD_SERVICE>-node-<nodeIndex>-worker-<workerIndex>` when the variable is not already set. If you set `DD_TEST_SESSION_NAME` yourself, DDTest preserves it and expands the same `{{nodeIndex}}` and `{{workerIndex}}` placeholders before starting each worker.
+
 ### Settings (flags and environment variables)
 
 | CLI flag            | Environment variable                          |    Default | What it does                                                                                                                                                                                                         |

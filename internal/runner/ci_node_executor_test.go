@@ -225,181 +225,10 @@ func TestRunCINodeTests_EmptyFile(t *testing.T) {
 	}
 }
 
-func TestRunParallelTests_Success(t *testing.T) {
-	tempDir := t.TempDir()
-	oldWd, _ := os.Getwd()
-	defer func() { _ = os.Chdir(oldWd) }()
-	_ = os.Chdir(tempDir)
-
-	// Setup test split directory and files
-	_ = os.MkdirAll(filepath.Join(constants.PlanDirectory, "tests-split"), 0755)
-	_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "tests-split", "runner-0"), []byte("test/file1_test.rb\n"), 0644)
-	_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "tests-split", "runner-1"), []byte("test/file2_test.rb\n"), 0644)
-
-	mockFramework := &MockFramework{
-		FrameworkName: "rspec",
-		RunTestsCalls: []RunTestsCall{},
-	}
-
-	err := runParallelTests(context.Background(), mockFramework, map[string]string{})
-	if err != nil {
-		t.Fatalf("runParallelTests() should not return error, got: %v", err)
-	}
-
-	// Verify RunTests was called twice
-	if mockFramework.GetRunTestsCallsCount() != 2 {
-		t.Fatalf("Expected RunTests to be called twice, got %d calls", mockFramework.GetRunTestsCallsCount())
-	}
-}
-
-func TestRunParallelTests_MissingSplitDirectory(t *testing.T) {
-	tempDir := t.TempDir()
-	oldWd, _ := os.Getwd()
-	defer func() { _ = os.Chdir(oldWd) }()
-	_ = os.Chdir(tempDir)
-
-	// Don't create tests-split directory
-	mockFramework := &MockFramework{FrameworkName: "rspec"}
-
-	err := runParallelTests(context.Background(), mockFramework, map[string]string{})
-	if err == nil {
-		t.Error("runParallelTests() should return error when tests-split directory is missing")
-	}
-
-	expectedMsg := "failed to read tests split directory"
-	if !strings.Contains(err.Error(), expectedMsg) {
-		t.Errorf("Error should contain '%s', got: %v", expectedMsg, err)
-	}
-}
-
-func TestRunSequentialTests_Success(t *testing.T) {
-	tempDir := t.TempDir()
-	oldWd, _ := os.Getwd()
-	defer func() { _ = os.Chdir(oldWd) }()
-	_ = os.Chdir(tempDir)
-
-	// Setup test files
-	_ = os.MkdirAll(constants.PlanDirectory, 0755)
-	testFiles := "test/file1_test.rb\ntest/file2_test.rb\n"
-	_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "test-files.txt"), []byte(testFiles), 0644)
-
-	mockFramework := &MockFramework{
-		FrameworkName: "rspec",
-		RunTestsCalls: []RunTestsCall{},
-	}
-
-	err := runSequentialTests(context.Background(), mockFramework, map[string]string{})
-	if err != nil {
-		t.Fatalf("runSequentialTests() should not return error, got: %v", err)
-	}
-
-	// Verify RunTests was called exactly once
-	if mockFramework.GetRunTestsCallsCount() != 1 {
-		t.Fatalf("Expected RunTests to be called once, got %d calls", mockFramework.GetRunTestsCallsCount())
-	}
-
-	calls := mockFramework.GetRunTestsCalls()
-	call := calls[0]
-	expectedFiles := []string{"test/file1_test.rb", "test/file2_test.rb"}
-	if !slices.Equal(call.TestFiles, expectedFiles) {
-		t.Errorf("Expected test files %v, got %v", expectedFiles, call.TestFiles)
-	}
-}
-
-func TestRunTestsFromFile_WithWorkerEnv(t *testing.T) {
-	tempDir := t.TempDir()
-	oldWd, _ := os.Getwd()
-	defer func() { _ = os.Chdir(oldWd) }()
-	_ = os.Chdir(tempDir)
-
-	// Create test file
-	testFile := "test/file1_test.rb\n"
-	_ = os.WriteFile("test-list.txt", []byte(testFile), 0644)
-
-	mockFramework := &MockFramework{
-		FrameworkName: "rspec",
-		RunTestsCalls: []RunTestsCall{},
-	}
-
-	workerEnvMap := map[string]string{
-		"NODE_INDEX":       "{{nodeIndex}}",
-		"WORKER_INDEX":     "{{workerIndex}}",
-		"WORKER_RESOURCES": "node_{{nodeIndex}}_worker_{{workerIndex}}",
-		"BUILD_ID":         "123",
-	}
-
-	err := runTestsFromFile(context.Background(), mockFramework, "test-list.txt", workerEnvMap, 5)
-	if err != nil {
-		t.Fatalf("runTestsFromFile() should not return error, got: %v", err)
-	}
-
-	// Verify RunTests was called
-	if mockFramework.GetRunTestsCallsCount() != 1 {
-		t.Fatalf("Expected RunTests to be called once, got %d calls", mockFramework.GetRunTestsCallsCount())
-	}
-
-	calls := mockFramework.GetRunTestsCalls()
-	call := calls[0]
-
-	// Verify nodeIndex identifies the machine, and workerIndex identifies the process on that machine.
-	if call.EnvMap["NODE_INDEX"] != "0" {
-		t.Errorf("Expected NODE_INDEX=0, got %s", call.EnvMap["NODE_INDEX"])
-	}
-	if call.EnvMap["WORKER_INDEX"] != "5" {
-		t.Errorf("Expected WORKER_INDEX=5, got %s", call.EnvMap["WORKER_INDEX"])
-	}
-	if call.EnvMap["WORKER_RESOURCES"] != "node_0_worker_5" {
-		t.Errorf("Expected WORKER_RESOURCES=node_0_worker_5, got %s", call.EnvMap["WORKER_RESOURCES"])
-	}
-
-	// Verify other env vars preserved
-	if call.EnvMap["BUILD_ID"] != "123" {
-		t.Errorf("Expected BUILD_ID=123, got %s", call.EnvMap["BUILD_ID"])
-	}
-}
-
-func TestReadTestFilesFromFile_EmptyFile(t *testing.T) {
-	tempDir := t.TempDir()
-	oldWd, _ := os.Getwd()
-	defer func() { _ = os.Chdir(oldWd) }()
-	_ = os.Chdir(tempDir)
-
-	_ = os.WriteFile("empty.txt", []byte(""), 0644)
-
-	files, err := readTestFilesFromFile("empty.txt")
-	if err != nil {
-		t.Fatalf("readTestFilesFromFile() should not return error for empty file, got: %v", err)
-	}
-
-	if len(files) != 0 {
-		t.Errorf("Expected 0 files for empty file, got %d", len(files))
-	}
-}
-
-func TestReadTestFilesFromFile_WithContent(t *testing.T) {
-	tempDir := t.TempDir()
-	oldWd, _ := os.Getwd()
-	defer func() { _ = os.Chdir(oldWd) }()
-	_ = os.Chdir(tempDir)
-
-	content := "test/file1_test.rb\n  test/file2_test.rb  \n\ntest/file3_test.rb\n"
-	_ = os.WriteFile("tests.txt", []byte(content), 0644)
-
-	files, err := readTestFilesFromFile("tests.txt")
-	if err != nil {
-		t.Fatalf("readTestFilesFromFile() should not return error, got: %v", err)
-	}
-
-	expected := []string{"test/file1_test.rb", "test/file2_test.rb", "test/file3_test.rb"}
-	if !slices.Equal(files, expected) {
-		t.Errorf("Expected files %v, got %v", expected, files)
-	}
-}
-
-func TestSplitTestFilesIntoGroups(t *testing.T) {
+func TestSubsplitTestsBetweenWorkers(t *testing.T) {
 	t.Run("even split", func(t *testing.T) {
 		files := []string{"a", "b", "c", "d"}
-		result := splitTestFilesIntoGroups(files, 2)
+		result := subsplitTestsBetweenWorkers(files, 2)
 
 		if len(result) != 2 {
 			t.Fatalf("Expected 2 groups, got %d", len(result))
@@ -419,7 +248,7 @@ func TestSplitTestFilesIntoGroups(t *testing.T) {
 
 	t.Run("uneven split", func(t *testing.T) {
 		files := []string{"a", "b", "c", "d", "e"}
-		result := splitTestFilesIntoGroups(files, 2)
+		result := subsplitTestsBetweenWorkers(files, 2)
 
 		if len(result) != 2 {
 			t.Fatalf("Expected 2 groups, got %d", len(result))
@@ -439,7 +268,7 @@ func TestSplitTestFilesIntoGroups(t *testing.T) {
 
 	t.Run("more groups than files", func(t *testing.T) {
 		files := []string{"a", "b"}
-		result := splitTestFilesIntoGroups(files, 4)
+		result := subsplitTestsBetweenWorkers(files, 4)
 
 		if len(result) != 4 {
 			t.Fatalf("Expected 4 groups, got %d", len(result))
@@ -462,7 +291,7 @@ func TestSplitTestFilesIntoGroups(t *testing.T) {
 
 	t.Run("single group", func(t *testing.T) {
 		files := []string{"a", "b", "c"}
-		result := splitTestFilesIntoGroups(files, 1)
+		result := subsplitTestsBetweenWorkers(files, 1)
 
 		if len(result) != 1 {
 			t.Fatalf("Expected 1 group, got %d", len(result))
@@ -474,7 +303,7 @@ func TestSplitTestFilesIntoGroups(t *testing.T) {
 	})
 
 	t.Run("empty input", func(t *testing.T) {
-		result := splitTestFilesIntoGroups([]string{}, 3)
+		result := subsplitTestsBetweenWorkers([]string{}, 3)
 
 		if len(result) != 3 {
 			t.Fatalf("Expected 3 groups, got %d", len(result))
@@ -489,7 +318,7 @@ func TestSplitTestFilesIntoGroups(t *testing.T) {
 
 	t.Run("zero groups defaults to 1", func(t *testing.T) {
 		files := []string{"a", "b"}
-		result := splitTestFilesIntoGroups(files, 0)
+		result := subsplitTestsBetweenWorkers(files, 0)
 
 		if len(result) != 1 {
 			t.Fatalf("Expected 1 group for n=0, got %d", len(result))
@@ -499,50 +328,4 @@ func TestSplitTestFilesIntoGroups(t *testing.T) {
 			t.Errorf("Expected all files in single group, got %v", result[0])
 		}
 	})
-}
-
-func TestRunTestsWithIndexes(t *testing.T) {
-	mockFramework := &MockFramework{
-		FrameworkName: "rspec",
-		RunTestsCalls: []RunTestsCall{},
-	}
-
-	testFiles := []string{"test/file1_test.rb", "test/file2_test.rb"}
-	workerEnvMap := map[string]string{
-		"NODE_INDEX":       "{{nodeIndex}}",
-		"WORKER_INDEX":     "{{workerIndex}}",
-		"WORKER_RESOURCES": "node_{{nodeIndex}}_worker_{{workerIndex}}",
-		"STATIC":           "value",
-	}
-
-	err := runTestsWithIndexes(context.Background(), mockFramework, testFiles, workerEnvMap, 5, 3)
-	if err != nil {
-		t.Fatalf("runTestsWithIndexes() should not return error, got: %v", err)
-	}
-
-	if mockFramework.GetRunTestsCallsCount() != 1 {
-		t.Fatalf("Expected 1 call, got %d", mockFramework.GetRunTestsCallsCount())
-	}
-
-	call := mockFramework.GetRunTestsCalls()[0]
-
-	if !slices.Equal(call.TestFiles, testFiles) {
-		t.Errorf("Expected test files %v, got %v", testFiles, call.TestFiles)
-	}
-
-	if call.EnvMap["NODE_INDEX"] != "5" {
-		t.Errorf("Expected NODE_INDEX=5, got %s", call.EnvMap["NODE_INDEX"])
-	}
-
-	if call.EnvMap["WORKER_INDEX"] != "3" {
-		t.Errorf("Expected WORKER_INDEX=3, got %s", call.EnvMap["WORKER_INDEX"])
-	}
-
-	if call.EnvMap["WORKER_RESOURCES"] != "node_5_worker_3" {
-		t.Errorf("Expected WORKER_RESOURCES=node_5_worker_3, got %s", call.EnvMap["WORKER_RESOURCES"])
-	}
-
-	if call.EnvMap["STATIC"] != "value" {
-		t.Errorf("Expected STATIC=value, got %s", call.EnvMap["STATIC"])
-	}
 }
