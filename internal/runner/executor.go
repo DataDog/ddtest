@@ -14,11 +14,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// ciNodeIndexMultiplier is used to calculate global worker indices in CI-node mode.
-// Each CI node gets a range of 10000 indices (node 0: 0-9999, node 1: 10000-19999, etc.)
-// This ensures uniqueness even in heterogeneous CI pools with different CPU counts per node.
-const ciNodeIndexMultiplier = 10000
-
 // splitTestFilesIntoGroups splits a slice of test files into n groups
 // using simple round-robin distribution
 func splitTestFilesIntoGroups(testFiles []string, n int) [][]string {
@@ -63,11 +58,10 @@ func runCINodeTestsWithWorkers(ctx context.Context, framework framework.Framewor
 		return nil
 	}
 
-	// Single worker mode: run all tests with global index based on ciNode
+	// Single worker mode: run all tests with nodeIndex matching ciNode
 	if ciNodeWorkers <= 1 {
-		globalIndex := ciNode * ciNodeIndexMultiplier
-		slog.Info("Running tests for CI node in single-worker mode", "ciNode", ciNode, "globalIndex", globalIndex)
-		return runTestsWithGlobalIndex(ctx, framework, testFiles, workerEnvMap, globalIndex)
+		slog.Info("Running tests for CI node in single-worker mode", "ciNode", ciNode, "nodeIndex", ciNode, "workerIndex", 0)
+		return runTestsWithIndexes(ctx, framework, testFiles, workerEnvMap, ciNode, 0)
 	}
 
 	// Multi-worker mode: split tests among local workers
@@ -77,15 +71,13 @@ func runCINodeTestsWithWorkers(ctx context.Context, framework framework.Framewor
 	groups := splitTestFilesIntoGroups(testFiles, ciNodeWorkers)
 
 	var g errgroup.Group
-	for localIndex, groupFiles := range groups {
+	for workerIndex, groupFiles := range groups {
 		if len(groupFiles) == 0 {
 			continue
 		}
 
-		// Global index = ciNode * 10000 + localIndex (ensures uniqueness across heterogeneous CI pools)
-		globalIndex := ciNode*ciNodeIndexMultiplier + localIndex
 		g.Go(func() error {
-			return runTestsWithGlobalIndex(ctx, framework, groupFiles, workerEnvMap, globalIndex)
+			return runTestsWithIndexes(ctx, framework, groupFiles, workerEnvMap, ciNode, workerIndex)
 		})
 	}
 
@@ -95,16 +87,24 @@ func runCINodeTestsWithWorkers(ctx context.Context, framework framework.Framewor
 	return nil
 }
 
-// runTestsWithGlobalIndex runs a set of test files with the given global worker index for env templating
-func runTestsWithGlobalIndex(ctx context.Context, framework framework.Framework, testFiles []string, workerEnvMap map[string]string, globalIndex int) error {
-	// Create a copy of the worker env map and replace nodeIndex placeholder with global index
-	workerEnv := make(map[string]string)
-	for key, value := range workerEnvMap {
-		workerEnv[key] = strings.ReplaceAll(value, constants.NodeIndexPlaceholder, fmt.Sprintf("%d", globalIndex))
-	}
+// runTestsWithIndexes runs a set of test files with node and worker indexes for env templating.
+func runTestsWithIndexes(ctx context.Context, framework framework.Framework, testFiles []string, workerEnvMap map[string]string, nodeIndex int, workerIndex int) error {
+	workerEnv := replaceIndexPlaceholders(workerEnvMap, nodeIndex, workerIndex)
 
-	slog.Info("Running tests in worker", "globalIndex", globalIndex, "testFilesCount", len(testFiles), "workerEnv", workerEnv)
+	slog.Info("Running tests in worker", "nodeIndex", nodeIndex, "workerIndex", workerIndex, "testFilesCount", len(testFiles), "workerEnv", workerEnv)
 	return framework.RunTests(ctx, testFiles, workerEnv)
+}
+
+func replaceIndexPlaceholders(workerEnvMap map[string]string, nodeIndex int, workerIndex int) map[string]string {
+	workerEnv := make(map[string]string)
+	nodeIndexValue := fmt.Sprintf("%d", nodeIndex)
+	workerIndexValue := fmt.Sprintf("%d", workerIndex)
+	for key, value := range workerEnvMap {
+		value = strings.ReplaceAll(value, constants.NodeIndexPlaceholder, nodeIndexValue)
+		value = strings.ReplaceAll(value, constants.WorkerIndexPlaceholder, workerIndexValue)
+		workerEnv[key] = value
+	}
+	return workerEnv
 }
 
 // runParallelTests executes tests across multiple parallel runners on a single node
@@ -180,11 +180,7 @@ func runTestsFromFile(ctx context.Context, framework framework.Framework, filePa
 	}
 
 	if len(testFiles) > 0 {
-		// Create a copy of the worker env map and replace nodeIndex placeholder
-		workerEnv := make(map[string]string)
-		for key, value := range workerEnvMap {
-			workerEnv[key] = strings.ReplaceAll(value, constants.NodeIndexPlaceholder, fmt.Sprintf("%d", workerIndex))
-		}
+		workerEnv := replaceIndexPlaceholders(workerEnvMap, 0, workerIndex)
 
 		slog.Info("Running tests in worker", "workerIndex", workerIndex, "testFilesCount", len(testFiles), "workerEnv", workerEnv)
 		return framework.RunTests(ctx, testFiles, workerEnv)
