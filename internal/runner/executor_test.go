@@ -86,7 +86,7 @@ func TestRunCINodeTests_MultipleWorkers(t *testing.T) {
 	}
 }
 
-func TestRunCINodeTests_GlobalIndexCalculation(t *testing.T) {
+func TestRunCINodeTests_NodeIndexMatchesCINode(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -103,11 +103,11 @@ func TestRunCINodeTests_GlobalIndexCalculation(t *testing.T) {
 	}
 
 	workerEnvMap := map[string]string{
-		"NODE_INDEX": "{{nodeIndex}}",
+		"NODE_INDEX":   "{{nodeIndex}}",
+		"WORKER_INDEX": "{{workerIndex}}",
 	}
 
 	// Test with 2 workers on ci-node 1
-	// Global indices should be: 1*10000+0=10000 and 1*10000+1=10001
 	err := runCINodeTestsWithWorkers(context.Background(), mockFramework, workerEnvMap, 1, 2)
 	if err != nil {
 		t.Fatalf("runCINodeTestsWithWorkers() should not return error, got: %v", err)
@@ -121,19 +121,26 @@ func TestRunCINodeTests_GlobalIndexCalculation(t *testing.T) {
 	// Collect all NODE_INDEX values
 	calls := mockFramework.GetRunTestsCalls()
 	nodeIndices := make([]string, 0)
+	workerIndices := make([]string, 0)
 	for _, call := range calls {
 		nodeIndices = append(nodeIndices, call.EnvMap["NODE_INDEX"])
+		workerIndices = append(workerIndices, call.EnvMap["WORKER_INDEX"])
 	}
 	slices.Sort(nodeIndices)
+	slices.Sort(workerIndices)
 
-	// Global indices for ci-node=1 should be 10000 and 10001 (ciNode * 10000 + localIndex)
-	expectedIndices := []string{"10000", "10001"}
+	expectedIndices := []string{"1", "1"}
 	if !slices.Equal(nodeIndices, expectedIndices) {
-		t.Errorf("Expected global indices %v, got %v", expectedIndices, nodeIndices)
+		t.Errorf("Expected node indices %v, got %v", expectedIndices, nodeIndices)
+	}
+
+	expectedWorkerIndices := []string{"0", "1"}
+	if !slices.Equal(workerIndices, expectedWorkerIndices) {
+		t.Errorf("Expected worker indices %v, got %v", expectedWorkerIndices, workerIndices)
 	}
 }
 
-func TestRunCINodeTests_SingleWorkerGlobalIndex(t *testing.T) {
+func TestRunCINodeTests_SingleWorkerNodeIndex(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -150,10 +157,10 @@ func TestRunCINodeTests_SingleWorkerGlobalIndex(t *testing.T) {
 	}
 
 	workerEnvMap := map[string]string{
-		"NODE_INDEX": "{{nodeIndex}}",
+		"NODE_INDEX":   "{{nodeIndex}}",
+		"WORKER_INDEX": "{{workerIndex}}",
 	}
 
-	// Single worker mode on ci-node 2 - global index should be 20000 (ciNode * 10000)
 	err := runCINodeTestsWithWorkers(context.Background(), mockFramework, workerEnvMap, 2, 1)
 	if err != nil {
 		t.Fatalf("runCINodeTestsWithWorkers() should not return error, got: %v", err)
@@ -164,8 +171,11 @@ func TestRunCINodeTests_SingleWorkerGlobalIndex(t *testing.T) {
 		t.Fatalf("Expected 1 call, got %d", len(calls))
 	}
 
-	if calls[0].EnvMap["NODE_INDEX"] != "20000" {
-		t.Errorf("Expected NODE_INDEX=20000 for single worker on ci-node 2, got %s", calls[0].EnvMap["NODE_INDEX"])
+	if calls[0].EnvMap["NODE_INDEX"] != "2" {
+		t.Errorf("Expected NODE_INDEX=2 for single worker on ci-node 2, got %s", calls[0].EnvMap["NODE_INDEX"])
+	}
+	if calls[0].EnvMap["WORKER_INDEX"] != "0" {
+		t.Errorf("Expected WORKER_INDEX=0 for single worker on ci-node 2, got %s", calls[0].EnvMap["WORKER_INDEX"])
 	}
 }
 
@@ -312,8 +322,10 @@ func TestRunTestsFromFile_WithWorkerEnv(t *testing.T) {
 	}
 
 	workerEnvMap := map[string]string{
-		"NODE_INDEX": "{{nodeIndex}}",
-		"BUILD_ID":   "123",
+		"NODE_INDEX":       "{{nodeIndex}}",
+		"WORKER_INDEX":     "{{workerIndex}}",
+		"WORKER_RESOURCES": "node_{{nodeIndex}}_worker_{{workerIndex}}",
+		"BUILD_ID":         "123",
 	}
 
 	err := runTestsFromFile(context.Background(), mockFramework, "test-list.txt", workerEnvMap, 5)
@@ -329,9 +341,15 @@ func TestRunTestsFromFile_WithWorkerEnv(t *testing.T) {
 	calls := mockFramework.GetRunTestsCalls()
 	call := calls[0]
 
-	// Verify nodeIndex placeholder was replaced
-	if call.EnvMap["NODE_INDEX"] != "5" {
-		t.Errorf("Expected NODE_INDEX=5, got %s", call.EnvMap["NODE_INDEX"])
+	// Verify nodeIndex identifies the machine, and workerIndex identifies the process on that machine.
+	if call.EnvMap["NODE_INDEX"] != "0" {
+		t.Errorf("Expected NODE_INDEX=0, got %s", call.EnvMap["NODE_INDEX"])
+	}
+	if call.EnvMap["WORKER_INDEX"] != "5" {
+		t.Errorf("Expected WORKER_INDEX=5, got %s", call.EnvMap["WORKER_INDEX"])
+	}
+	if call.EnvMap["WORKER_RESOURCES"] != "node_0_worker_5" {
+		t.Errorf("Expected WORKER_RESOURCES=node_0_worker_5, got %s", call.EnvMap["WORKER_RESOURCES"])
 	}
 
 	// Verify other env vars preserved
@@ -483,7 +501,7 @@ func TestSplitTestFilesIntoGroups(t *testing.T) {
 	})
 }
 
-func TestRunTestsWithGlobalIndex(t *testing.T) {
+func TestRunTestsWithIndexes(t *testing.T) {
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
 		RunTestsCalls: []RunTestsCall{},
@@ -491,14 +509,15 @@ func TestRunTestsWithGlobalIndex(t *testing.T) {
 
 	testFiles := []string{"test/file1_test.rb", "test/file2_test.rb"}
 	workerEnvMap := map[string]string{
-		"NODE_INDEX": "{{nodeIndex}}",
-		"DB_NAME":    "test_db_{{nodeIndex}}",
-		"STATIC":     "value",
+		"NODE_INDEX":       "{{nodeIndex}}",
+		"WORKER_INDEX":     "{{workerIndex}}",
+		"WORKER_RESOURCES": "node_{{nodeIndex}}_worker_{{workerIndex}}",
+		"STATIC":           "value",
 	}
 
-	err := runTestsWithGlobalIndex(context.Background(), mockFramework, testFiles, workerEnvMap, 5)
+	err := runTestsWithIndexes(context.Background(), mockFramework, testFiles, workerEnvMap, 5, 3)
 	if err != nil {
-		t.Fatalf("runTestsWithGlobalIndex() should not return error, got: %v", err)
+		t.Fatalf("runTestsWithIndexes() should not return error, got: %v", err)
 	}
 
 	if mockFramework.GetRunTestsCallsCount() != 1 {
@@ -515,8 +534,12 @@ func TestRunTestsWithGlobalIndex(t *testing.T) {
 		t.Errorf("Expected NODE_INDEX=5, got %s", call.EnvMap["NODE_INDEX"])
 	}
 
-	if call.EnvMap["DB_NAME"] != "test_db_5" {
-		t.Errorf("Expected DB_NAME=test_db_5, got %s", call.EnvMap["DB_NAME"])
+	if call.EnvMap["WORKER_INDEX"] != "3" {
+		t.Errorf("Expected WORKER_INDEX=3, got %s", call.EnvMap["WORKER_INDEX"])
+	}
+
+	if call.EnvMap["WORKER_RESOURCES"] != "node_5_worker_3" {
+		t.Errorf("Expected WORKER_RESOURCES=node_5_worker_3, got %s", call.EnvMap["WORKER_RESOURCES"])
 	}
 
 	if call.EnvMap["STATIC"] != "value" {

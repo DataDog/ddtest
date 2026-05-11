@@ -15,4 +15,7 @@ var TestsSplitDir = filepath.Join(PlanDirectory, "tests-split")
 var RubyEnvOutputPath = filepath.Join(PlanDirectory, "ruby_env.json")
 
 // Executor constants
-const NodeIndexPlaceholder = "{{nodeIndex}}"
+const (
+	NodeIndexPlaceholder   = "{{nodeIndex}}"
+	WorkerIndexPlaceholder = "{{workerIndex}}"
+)
