@@ -36,6 +36,9 @@ func DistributeTestFiles(testFiles map[string]int, parallelRunners int) [][]stri
 	}
 
 	sort.Slice(files, func(i, j int) bool {
+		if files[i].count == files[j].count {
+			return files[i].path < files[j].path
+		}
 		return files[i].count > files[j].count
 	})
 

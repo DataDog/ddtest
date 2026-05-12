@@ -2,9 +2,11 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"maps"
+	"slices"
 	"strconv"
 	"time"
 
@@ -14,6 +16,8 @@ import (
 	"github.com/DataDog/ddtest/internal/testoptimization"
 	"golang.org/x/sync/errgroup"
 )
+
+const defaultTestFileWeight = int(time.Second / time.Millisecond)
 
 func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	detectedPlatform, err := tr.platformDetector.DetectPlatform()
@@ -214,18 +218,33 @@ func (tr *TestRunner) fetchAndStoreTestSuiteDurations() {
 }
 
 type testSuiteKey struct {
-	Module string
-	Suite  string
+	Module string `json:"module"`
+	Suite  string `json:"suite"`
+}
+
+func (key testSuiteKey) MarshalText() ([]byte, error) {
+	return json.Marshal([2]string{key.Module, key.Suite})
+}
+
+func (key *testSuiteKey) UnmarshalText(text []byte) error {
+	var values [2]string
+	if err := json.Unmarshal(text, &values); err != nil {
+		return err
+	}
+
+	key.Module = values[0]
+	key.Suite = values[1]
+	return nil
 }
 
 type testSuiteAggregate struct {
-	Module            string
-	Suite             string
-	SourceFile        string
-	TotalDuration     float64
-	EstimatedDuration float64
-	NumTests          int
-	NumTestsSkipped   int
+	Module            string  `json:"module"`
+	Suite             string  `json:"suite"`
+	SourceFile        string  `json:"sourceFile"`
+	TotalDuration     float64 `json:"totalDuration"`
+	EstimatedDuration float64 `json:"estimatedDuration"`
+	NumTests          int     `json:"numTests"`
+	NumTestsSkipped   int     `json:"numTestsSkipped"`
 }
 
 func (tr *TestRunner) processDiscoveredTests(
@@ -395,6 +414,24 @@ func indexSuitesBySourceFile(suiteAggregates map[testSuiteKey]testSuiteAggregate
 
 		sourceFileLookup[aggregate.SourceFile] = append(sourceFileLookup[aggregate.SourceFile], key)
 	}
+
+	for sourceFile := range sourceFileLookup {
+		slices.SortFunc(sourceFileLookup[sourceFile], func(a, b testSuiteKey) int {
+			if a.Module < b.Module {
+				return -1
+			}
+			if a.Module > b.Module {
+				return 1
+			}
+			if a.Suite < b.Suite {
+				return -1
+			}
+			if a.Suite > b.Suite {
+				return 1
+			}
+			return 0
+		})
+	}
 	return sourceFileLookup
 }
 
@@ -410,7 +447,6 @@ func (tr *TestRunner) weightedTestFiles() map[string]int {
 }
 
 func (tr *TestRunner) testFileWeight(testFile string) (int, bool) {
-	const defaultTestFileWeight = int(time.Second / time.Millisecond)
 	suiteKeys := tr.suitesBySourceFile[testFile]
 	if len(suiteKeys) == 0 {
 		return defaultTestFileWeight, true
@@ -438,4 +474,15 @@ func (tr *TestRunner) testFileWeight(testFile string) (int, bool) {
 		return 1, true
 	}
 	return weight, true
+}
+
+func (tr *TestRunner) knownTestFileWeights() map[string]int {
+	testFileWeights := make(map[string]int, len(tr.suitesBySourceFile))
+	for testFile := range tr.suitesBySourceFile {
+		weight, ok := tr.testFileWeight(testFile)
+		if ok {
+			testFileWeights[testFile] = weight
+		}
+	}
+	return testFileWeights
 }

@@ -27,7 +27,7 @@ func TestRunCINodeTests_SingleWorker(t *testing.T) {
 	}
 
 	// Test with single worker (ciNodeWorkers=1)
-	err := runCINodeTestsWithWorkers(context.Background(), mockFramework, map[string]string{}, 1, 1)
+	err := runCINodeTestsWithWorkers(context.Background(), mockFramework, map[string]string{}, 1, 1, nil)
 	if err != nil {
 		t.Fatalf("runCINodeTestsWithWorkers() should not return error, got: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestRunCINodeTests_MultipleWorkers(t *testing.T) {
 	}
 
 	// Test with 2 workers on ci-node 1
-	err := runCINodeTestsWithWorkers(context.Background(), mockFramework, map[string]string{}, 1, 2)
+	err := runCINodeTestsWithWorkers(context.Background(), mockFramework, map[string]string{}, 1, 2, nil)
 	if err != nil {
 		t.Fatalf("runCINodeTestsWithWorkers() should not return error, got: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestRunCINodeTests_NodeIndexMatchesCINode(t *testing.T) {
 	}
 
 	// Test with 2 workers on ci-node 1
-	err := runCINodeTestsWithWorkers(context.Background(), mockFramework, workerEnvMap, 1, 2)
+	err := runCINodeTestsWithWorkers(context.Background(), mockFramework, workerEnvMap, 1, 2, nil)
 	if err != nil {
 		t.Fatalf("runCINodeTestsWithWorkers() should not return error, got: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestRunCINodeTests_SingleWorkerNodeIndex(t *testing.T) {
 		"WORKER_INDEX": "{{workerIndex}}",
 	}
 
-	err := runCINodeTestsWithWorkers(context.Background(), mockFramework, workerEnvMap, 2, 1)
+	err := runCINodeTestsWithWorkers(context.Background(), mockFramework, workerEnvMap, 2, 1, nil)
 	if err != nil {
 		t.Fatalf("runCINodeTestsWithWorkers() should not return error, got: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestRunCINodeTests_FileNotFound(t *testing.T) {
 
 	mockFramework := &MockFramework{FrameworkName: "rspec"}
 
-	err := runCINodeTestsWithWorkers(context.Background(), mockFramework, map[string]string{}, 2, 1)
+	err := runCINodeTestsWithWorkers(context.Background(), mockFramework, map[string]string{}, 2, 1, nil)
 	if err == nil {
 		t.Error("runCINodeTestsWithWorkers() should return error when runner file doesn't exist")
 	}
@@ -214,7 +214,7 @@ func TestRunCINodeTests_EmptyFile(t *testing.T) {
 	mockFramework := &MockFramework{FrameworkName: "rspec"}
 
 	// Should not error for empty file, just not run any tests
-	err := runCINodeTestsWithWorkers(context.Background(), mockFramework, map[string]string{}, 0, 2)
+	err := runCINodeTestsWithWorkers(context.Background(), mockFramework, map[string]string{}, 0, 2, nil)
 	if err != nil {
 		t.Fatalf("runCINodeTestsWithWorkers() should not return error for empty file, got: %v", err)
 	}
@@ -228,13 +228,13 @@ func TestRunCINodeTests_EmptyFile(t *testing.T) {
 func TestSubsplitTestsBetweenWorkers(t *testing.T) {
 	t.Run("even split", func(t *testing.T) {
 		files := []string{"a", "b", "c", "d"}
-		result := subsplitTestsBetweenWorkers(files, 2)
+		result := subsplitTestsBetweenWorkers(files, 2, nil)
 
 		if len(result) != 2 {
 			t.Fatalf("Expected 2 groups, got %d", len(result))
 		}
 
-		// Round-robin: a->0, b->1, c->0, d->1
+		// Equal default weights keep this balanced as a->0, b->1, c->0, d->1.
 		expected0 := []string{"a", "c"}
 		expected1 := []string{"b", "d"}
 
@@ -248,13 +248,13 @@ func TestSubsplitTestsBetweenWorkers(t *testing.T) {
 
 	t.Run("uneven split", func(t *testing.T) {
 		files := []string{"a", "b", "c", "d", "e"}
-		result := subsplitTestsBetweenWorkers(files, 2)
+		result := subsplitTestsBetweenWorkers(files, 2, nil)
 
 		if len(result) != 2 {
 			t.Fatalf("Expected 2 groups, got %d", len(result))
 		}
 
-		// Round-robin: a->0, b->1, c->0, d->1, e->0
+		// Equal default weights keep this balanced as a->0, b->1, c->0, d->1, e->0.
 		expected0 := []string{"a", "c", "e"}
 		expected1 := []string{"b", "d"}
 
@@ -268,7 +268,7 @@ func TestSubsplitTestsBetweenWorkers(t *testing.T) {
 
 	t.Run("more groups than files", func(t *testing.T) {
 		files := []string{"a", "b"}
-		result := subsplitTestsBetweenWorkers(files, 4)
+		result := subsplitTestsBetweenWorkers(files, 4, nil)
 
 		if len(result) != 4 {
 			t.Fatalf("Expected 4 groups, got %d", len(result))
@@ -291,7 +291,7 @@ func TestSubsplitTestsBetweenWorkers(t *testing.T) {
 
 	t.Run("single group", func(t *testing.T) {
 		files := []string{"a", "b", "c"}
-		result := subsplitTestsBetweenWorkers(files, 1)
+		result := subsplitTestsBetweenWorkers(files, 1, nil)
 
 		if len(result) != 1 {
 			t.Fatalf("Expected 1 group, got %d", len(result))
@@ -303,7 +303,7 @@ func TestSubsplitTestsBetweenWorkers(t *testing.T) {
 	})
 
 	t.Run("empty input", func(t *testing.T) {
-		result := subsplitTestsBetweenWorkers([]string{}, 3)
+		result := subsplitTestsBetweenWorkers([]string{}, 3, nil)
 
 		if len(result) != 3 {
 			t.Fatalf("Expected 3 groups, got %d", len(result))
@@ -318,7 +318,7 @@ func TestSubsplitTestsBetweenWorkers(t *testing.T) {
 
 	t.Run("zero groups defaults to 1", func(t *testing.T) {
 		files := []string{"a", "b"}
-		result := subsplitTestsBetweenWorkers(files, 0)
+		result := subsplitTestsBetweenWorkers(files, 0, nil)
 
 		if len(result) != 1 {
 			t.Fatalf("Expected 1 group for n=0, got %d", len(result))
@@ -326,6 +326,29 @@ func TestSubsplitTestsBetweenWorkers(t *testing.T) {
 
 		if !slices.Equal(result[0], files) {
 			t.Errorf("Expected all files in single group, got %v", result[0])
+		}
+	})
+
+	t.Run("weighted split keeps heavy file isolated", func(t *testing.T) {
+		files := []string{"a", "b", "c", "d"}
+		weights := map[string]int{
+			"a": 100,
+			"b": 1,
+			"c": 1,
+			"d": 1,
+		}
+
+		result := subsplitTestsBetweenWorkers(files, 2, weights)
+
+		if len(result) != 2 {
+			t.Fatalf("Expected 2 groups, got %d", len(result))
+		}
+
+		if !slices.Equal(result[0], []string{"a"}) {
+			t.Errorf("Expected heavy file to be alone in group 0, got %v", result[0])
+		}
+		if !slices.Equal(result[1], []string{"b", "c", "d"}) {
+			t.Errorf("Expected light files in group 1, got %v", result[1])
 		}
 	})
 }
