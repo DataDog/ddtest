@@ -91,31 +91,38 @@ The folder contents are:
 
 ```
 .testoptimization/
-  cache/                     # Datadog responses cached locally
-    settings.json
-    known_tests.json
-    skippable_tests.json
-    test_management_tests.json
+  manifest.txt               # Plan layout version
+  cache/
+    http/                    # Backend-shaped Datadog responses
+      settings.json
+      known_tests.json
+      skippable_tests.json
+      test_management.json
+  runner/                    # DDTest runner-private plan files
+    test-files.txt           # All non-skipped test files to execute
+    parallel-runners.txt     # Chosen worker count (single integer)
+    skippable-percentage.txt # % tests skipped by TIA
+    tests-split/
+      runner-0               # File list for worker 0
+      ...
+      runner-(N-1)           # File list for worker N-1
+    cache/
+      test_suite_durations.json
   tests-discovery/
     tests.json               # JSON stream of discovered tests
-  test-files.txt             # All non-skipped test files to execute
-  parallel-runners.txt       # Chosen worker count (single integer)
-  skippable-percentage.txt   # % tests skipped by TIA
-  tests-split/
-    runner-0                 # File list for worker 0
-    ...
-    runner-(N-1)             # File list for worker N-1
   github/
     config                   # (GHA only) matrix JSON with ci_node_index entries
 ```
 
-You can use `test-files.txt` or `tests-split/runner-X` files to feed them directly to
-your existing test runner.
+DDTest may also write compatibility cache files for older Ruby library integrations.
+The runner files live under `.testoptimization/runner/*`. You can use
+`runner/test-files.txt` or `runner/tests-split/runner-X` files to feed them directly
+to your existing test runner.
 
 Example for Knapsack Pro:
 
 ```bash
-KNAPSACK_PRO_TEST_FILE_LIST_SOURCE_FILE=.testoptimization/test-files.txt bundle exec rake knapsack_pro:queue:rspec
+KNAPSACK_PRO_TEST_FILE_LIST_SOURCE_FILE=.testoptimization/runner/test-files.txt bundle exec rake knapsack_pro:queue:rspec
 ```
 
 #### ddtest run
@@ -319,8 +326,8 @@ jobs:
           name: Determine parallelism
           command: |
             set -euo pipefail
-            cat .testoptimization/parallel-runners.txt
-            desired=$(cat .testoptimization/parallel-runners.txt 2>/dev/null || echo 1)
+            cat .testoptimization/runner/parallel-runners.txt
+            desired=$(cat .testoptimization/runner/parallel-runners.txt 2>/dev/null || echo 1)
             if ! echo "${desired}" | grep -Eq '^[0-9]+$'; then
               echo "Invalid parallelism value '${desired}', defaulting to 1"
               desired=1

@@ -9,6 +9,8 @@ const ManifestVersion = "1"
 
 var ManifestPath = filepath.Join(PlanDirectory, "manifest.txt")
 
+const TestOptimizationManifestFileEnvVar = "DD_TEST_OPTIMIZATION_MANIFEST_FILE"
+
 // Runner layout paths.
 var RunnerDirectory = filepath.Join(PlanDirectory, "runner")
 var TestFilesOutputPath = filepath.Join(RunnerDirectory, "test-files.txt")
