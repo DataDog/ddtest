@@ -217,6 +217,28 @@ func TestRunCINodeTests_FileNotFound(t *testing.T) {
 	}
 }
 
+func TestRunCINodeTests_DoesNotReadLegacySplitFile(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.MkdirAll(constants.LegacyTestsSplitDir, 0755)
+	_ = os.WriteFile(filepath.Join(constants.LegacyTestsSplitDir, "runner-2"), []byte("test/file1_test.rb\n"), 0644)
+
+	mockFramework := &MockFramework{FrameworkName: "rspec"}
+
+	err := runCINodeTests(context.Background(), mockFramework, map[string]string{}, 2, 1, nil)
+	if err == nil {
+		t.Error("runCINodeTests() should return error when only the legacy runner file exists")
+	}
+
+	expectedMsg := "runner file for ci-node 2 does not exist"
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Error should contain '%s', got: %v", expectedMsg, err)
+	}
+}
+
 func TestRunCINodeTests_EmptyFile(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()

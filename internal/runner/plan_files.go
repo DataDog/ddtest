@@ -21,3 +21,12 @@ func writePlanFile(path string, data []byte) error {
 	}
 	return nil
 }
+
+func writePlanFileCopies(data []byte, paths ...string) error {
+	for _, path := range paths {
+		if err := writePlanFile(path, data); err != nil {
+			return err
+		}
+	}
+	return nil
+}

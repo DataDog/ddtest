@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -41,5 +42,29 @@ func TestRunSequentialTests_Success(t *testing.T) {
 	expectedFiles := []string{"test/file1_test.rb", "test/file2_test.rb"}
 	if !slices.Equal(call.TestFiles, expectedFiles) {
 		t.Errorf("Expected test files %v, got %v", expectedFiles, call.TestFiles)
+	}
+}
+
+func TestRunSequentialTests_DoesNotReadLegacyTestFiles(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.MkdirAll(filepath.Dir(constants.LegacyTestFilesOutputPath), 0755)
+	_ = os.WriteFile(constants.LegacyTestFilesOutputPath, []byte("test/file1_test.rb\n"), 0644)
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		RunTestsCalls: []RunTestsCall{},
+	}
+
+	err := runSequentialTests(context.Background(), mockFramework, map[string]string{})
+	if err == nil {
+		t.Fatal("runSequentialTests() should return error when only the legacy test files list exists")
+	}
+
+	if !strings.Contains(err.Error(), constants.TestFilesOutputPath) {
+		t.Errorf("Error should reference new test files path %s, got: %v", constants.TestFilesOutputPath, err)
 	}
 }

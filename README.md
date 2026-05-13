@@ -114,10 +114,11 @@ The folder contents are:
     config                   # (GHA only) matrix JSON with ci_node_index entries
 ```
 
-DDTest may also write compatibility cache files for older Ruby library integrations.
-The runner files live under `.testoptimization/runner/*`. You can use
-`runner/test-files.txt` or `runner/tests-split/runner-X` files to feed them directly
-to your existing test runner.
+DDTest may also write compatibility files at legacy root paths for existing
+integrations. New integrations should read runner files from `.testoptimization/runner/*`.
+You can use `runner/test-files.txt` or `runner/tests-split/runner-X` files to feed
+them directly to your existing test runner. See [the 1.0 upgrade guide](docs/upgrade-1.0.md)
+for the planned removal of compatibility writes.
 
 Example for Knapsack Pro:
 

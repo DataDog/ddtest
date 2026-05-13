@@ -410,16 +410,15 @@ func TestTestRunner_Plan_WritesManifestAndRunnerLayout(t *testing.T) {
 
 	expectedTestFiles := "test/file1_test.rb\ntest/file2_test.rb\n"
 	assertFileContent(t, constants.TestFilesOutputPath, expectedTestFiles)
+	assertFileContent(t, constants.LegacyTestFilesOutputPath, expectedTestFiles)
 
 	assertFileContent(t, constants.ParallelRunnersOutputPath, "1")
+	assertFileContent(t, constants.LegacyParallelRunnersOutputPath, "1")
 	assertFileContent(t, constants.SkippablePercentageOutputPath, "0.00")
+	assertFileContent(t, constants.LegacySkippablePercentageOutputPath, "0.00")
 
 	assertFileContent(t, filepath.Join(constants.TestsSplitDir, "runner-0"), expectedTestFiles)
-
-	legacyTestFilesPath := filepath.Join(constants.PlanDirectory, "test-files.txt")
-	if _, err := os.Stat(legacyTestFilesPath); !os.IsNotExist(err) {
-		t.Fatalf("expected no legacy runner file at %s, got err %v", legacyTestFilesPath, err)
-	}
+	assertFileContent(t, filepath.Join(constants.LegacyTestsSplitDir, "runner-0"), expectedTestFiles)
 }
 
 func TestTestRunner_Setup_WithCIProvider(t *testing.T) {
