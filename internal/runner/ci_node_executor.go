@@ -8,19 +8,12 @@ import (
 
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/framework"
-	"github.com/DataDog/ddtest/internal/settings"
 	"golang.org/x/sync/errgroup"
 )
 
 // runCINodeTests executes tests for a specific CI node (one split, not the whole tests set).
 // It further splits the node's tests among local workers based on ci_node_workers setting.
-func runCINodeTests(ctx context.Context, framework framework.Framework, workerEnvMap map[string]string, ciNode int, testFileWeights map[string]int) error {
-	return runCINodeTestsWithWorkers(ctx, framework, workerEnvMap, ciNode, settings.GetCiNodeWorkers(), testFileWeights)
-}
-
-// runCINodeTestsWithWorkers is the internal implementation that accepts ciNodeWorkers as a parameter
-// for easier testing.
-func runCINodeTestsWithWorkers(ctx context.Context, framework framework.Framework, workerEnvMap map[string]string, ciNode int, ciNodeWorkers int, testFileWeights map[string]int) error {
+func runCINodeTests(ctx context.Context, framework framework.Framework, workerEnvMap map[string]string, ciNode int, ciNodeWorkers int, testFileWeights map[string]int) error {
 	runnerFilePath := fmt.Sprintf("%s/runner-%d", constants.TestsSplitDir, ciNode)
 	if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
 		return fmt.Errorf("runner file for ci-node %d does not exist: %s", ciNode, runnerFilePath)
@@ -46,6 +39,9 @@ func runCINodeTestsWithWorkers(ctx context.Context, framework framework.Framewor
 	slog.Info("Running tests for CI node in parallel mode",
 		"ciNode", ciNode, "ciNodeWorkers", ciNodeWorkers, "testFilesCount", len(testFiles))
 
+	if testFileWeights == nil {
+		testFileWeights = map[string]int{}
+	}
 	groups := subsplitTestsBetweenWorkers(testFiles, ciNodeWorkers, testFileWeights)
 
 	var g errgroup.Group
@@ -53,6 +49,11 @@ func runCINodeTestsWithWorkers(ctx context.Context, framework framework.Framewor
 		if len(groupFiles) == 0 {
 			continue
 		}
+
+		slog.Debug("Assigned test files to CI node worker",
+			"ciNode", ciNode,
+			"workerIndex", workerIndex,
+			"testFiles", groupFiles)
 
 		g.Go(func() error {
 			return runTestBatch(ctx, framework, groupFiles, workerEnvMap, ciNode, workerIndex)
@@ -72,16 +73,14 @@ func subsplitTestsBetweenWorkers(testFiles []string, n int, testFileWeights map[
 		n = 1
 	}
 
-	weightedTestFiles := make(map[string]int, len(testFiles))
+	nodeTestFiles := make(map[string]int, len(testFiles))
 	for _, testFile := range testFiles {
-		weight := defaultTestFileWeight
-		if testFileWeights != nil {
-			if cachedWeight, ok := testFileWeights[testFile]; ok && cachedWeight > 0 {
-				weight = cachedWeight
-			}
+		if cachedWeight, ok := testFileWeights[testFile]; ok && cachedWeight > 0 {
+			nodeTestFiles[testFile] = cachedWeight
+		} else {
+			nodeTestFiles[testFile] = defaultTestFileWeight
 		}
-		weightedTestFiles[testFile] = weight
 	}
 
-	return DistributeTestFiles(weightedTestFiles, n)
+	return DistributeTestFiles(nodeTestFiles, n)
 }

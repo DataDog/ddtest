@@ -169,6 +169,7 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 
 	tr.suitesBySourceFile = indexSuitesBySourceFile(tr.suiteAggregates)
 	tr.skippablePercentage = calculateSavedTimePercentage(tr.suiteAggregates)
+	tr.testFileWeights = tr.weightedTestFiles()
 
 	slog.Info("Test files prepared", "testFilesCount", len(tr.testFiles))
 
@@ -188,32 +189,44 @@ func initializeDurationsFetchInputs() (string, string, error) {
 }
 
 func (tr *TestRunner) fetchAndStoreTestSuiteDurations() {
+	startTime := time.Now()
 	repositoryURL, service, err := initializeDurationsFetchInputs()
 	if err != nil {
-		slog.Error("Test durations API errored", "error", err)
+		slog.Error("Test durations API errored", "duration", time.Since(startTime), "error", err)
 		tr.testSuiteDurations = make(map[string]map[string]testoptimization.TestSuiteDurationInfo)
 		return
 	}
 
 	durations, err := tr.durationsClient.GetTestSuiteDurations(repositoryURL, service)
 	if err != nil {
-		slog.Error("Test durations API errored", "error", err)
+		slog.Error("Test durations API errored",
+			"service", service,
+			"repositoryURL", repositoryURL,
+			"duration", time.Since(startTime),
+			"error", err)
 		tr.testSuiteDurations = make(map[string]map[string]testoptimization.TestSuiteDurationInfo)
 		return
 	}
 
-	totalSuites := 0
-	for _, suites := range durations {
-		totalSuites += len(suites)
-	}
+	totalSuites := countTestSuites(durations)
 
 	if totalSuites == 0 {
-		slog.Warn("Test durations API returned no test suites", "service", service, "repositoryURL", repositoryURL)
+		slog.Warn("Test durations API returned no test suites",
+			"service", service,
+			"repositoryURL", repositoryURL,
+			"modulesCount", len(durations),
+			"testSuitesCount", totalSuites,
+			"duration", time.Since(startTime))
 		tr.testSuiteDurations = make(map[string]map[string]testoptimization.TestSuiteDurationInfo)
 		return
 	}
 
-	slog.Debug("Found test suite durations", "service", service, "repositoryURL", repositoryURL, "testSuitesCount", totalSuites)
+	slog.Info("Fetched test suite durations",
+		"service", service,
+		"repositoryURL", repositoryURL,
+		"modulesCount", len(durations),
+		"testSuitesCount", totalSuites,
+		"duration", time.Since(startTime))
 	tr.testSuiteDurations = durations
 }
 
@@ -474,15 +487,4 @@ func (tr *TestRunner) testFileWeight(testFile string) (int, bool) {
 		return 1, true
 	}
 	return weight, true
-}
-
-func (tr *TestRunner) knownTestFileWeights() map[string]int {
-	testFileWeights := make(map[string]int, len(tr.suitesBySourceFile))
-	for testFile := range tr.suitesBySourceFile {
-		weight, ok := tr.testFileWeight(testFile)
-		if ok {
-			testFileWeights[testFile] = weight
-		}
-	}
-	return testFileWeights
 }

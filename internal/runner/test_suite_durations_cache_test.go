@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -71,6 +72,9 @@ func TestTestRunner_Plan_StoresTestSuiteDurationsCache(t *testing.T) {
 	if !reflect.DeepEqual(restored.suitesBySourceFile, runner.suitesBySourceFile) {
 		t.Errorf("Expected restored suitesBySourceFile to match stored index.\nexpected: %v\nactual: %v", runner.suitesBySourceFile, restored.suitesBySourceFile)
 	}
+	if !reflect.DeepEqual(restored.testFileWeights, runner.testFileWeights) {
+		t.Errorf("Expected restored test file weights to match stored weights.\nexpected: %v\nactual: %v", runner.testFileWeights, restored.testFileWeights)
+	}
 }
 
 func TestTestRunner_StoreAndRestoreTestSuiteDurationsCache_RoundTripDurations(t *testing.T) {
@@ -107,11 +111,15 @@ func TestTestRunner_StoreAndRestoreTestSuiteDurationsCache_RoundTripDurations(t 
 	runner.suitesBySourceFile = map[string][]testSuiteKey{
 		"spec/suite1_spec.rb": {{Module: "rspec", Suite: "Suite1"}},
 	}
+	runner.testFileWeights = map[string]int{
+		"spec/suite1_spec.rb": 2500,
+	}
 
 	if err := runner.storeTestSuiteDurationsCache(); err != nil {
 		t.Fatalf("storeTestSuiteDurationsCache() should not return error, got: %v", err)
 	}
 
+	logs := captureLogs(t)
 	restored := NewWithDependencies(
 		&MockPlatformDetector{},
 		&MockTestOptimizationClient{},
@@ -130,6 +138,80 @@ func TestTestRunner_StoreAndRestoreTestSuiteDurationsCache_RoundTripDurations(t 
 	}
 	if !reflect.DeepEqual(restored.suitesBySourceFile, runner.suitesBySourceFile) {
 		t.Errorf("Expected restored suitesBySourceFile to match stored index.\nexpected: %v\nactual: %v", runner.suitesBySourceFile, restored.suitesBySourceFile)
+	}
+	if !reflect.DeepEqual(restored.testFileWeights, runner.testFileWeights) {
+		t.Errorf("Expected restored test file weights to match stored weights.\nexpected: %v\nactual: %v", runner.testFileWeights, restored.testFileWeights)
+	}
+
+	logOutput := logs.String()
+	if !strings.Contains(logOutput, "level=INFO") ||
+		!strings.Contains(logOutput, "Restored test suite durations cache") ||
+		!strings.Contains(logOutput, "objectsCount=4") ||
+		!strings.Contains(logOutput, "modulesCount=1") ||
+		!strings.Contains(logOutput, "testSuitesCount=1") ||
+		!strings.Contains(logOutput, "suiteAggregatesCount=1") ||
+		!strings.Contains(logOutput, "suitesBySourceFileCount=1") ||
+		!strings.Contains(logOutput, "testFileWeightsCount=1") {
+		t.Errorf("Expected INFO log for restored cache counts, got logs: %s", logOutput)
+	}
+}
+
+func TestTestRunner_RestoreTestSuiteDurationsCache_ComputesWeightsForLegacyCache(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	type legacyTestSuiteDurationsCache struct {
+		TestSuiteDurations map[string]map[string]testoptimization.TestSuiteDurationInfo `json:"testSuiteDurations"`
+		SuiteAggregates    map[testSuiteKey]testSuiteAggregate                          `json:"suiteAggregates"`
+		SuitesBySourceFile map[string][]testSuiteKey                                    `json:"suitesBySourceFile"`
+	}
+
+	cache := legacyTestSuiteDurationsCache{
+		TestSuiteDurations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+			"rspec": {
+				"Suite1": {
+					SourceFile: "spec/suite1_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "5000000000", P90: "7000000000"},
+				},
+			},
+		},
+		SuiteAggregates: map[testSuiteKey]testSuiteAggregate{
+			{Module: "rspec", Suite: "Suite1"}: {
+				Module:            "rspec",
+				Suite:             "Suite1",
+				SourceFile:        "spec/suite1_spec.rb",
+				TotalDuration:     5000000000,
+				EstimatedDuration: 2500000000,
+				NumTests:          2,
+				NumTestsSkipped:   1,
+			},
+		},
+		SuitesBySourceFile: map[string][]testSuiteKey{
+			"spec/suite1_spec.rb": {{Module: "rspec", Suite: "Suite1"}},
+		},
+	}
+
+	if err := testoptimization.NewCacheManager().StoreTestSuiteDurationsCache(cache); err != nil {
+		t.Fatalf("StoreTestSuiteDurationsCache() should not return error, got: %v", err)
+	}
+
+	restored := NewWithDependencies(
+		&MockPlatformDetector{},
+		&MockTestOptimizationClient{},
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+	if err := restored.restoreTestSuiteDurationsCache(); err != nil {
+		t.Fatalf("restoreTestSuiteDurationsCache() should not return error, got: %v", err)
+	}
+
+	expectedWeights := map[string]int{
+		"spec/suite1_spec.rb": 2500,
+	}
+	if !reflect.DeepEqual(restored.testFileWeights, expectedWeights) {
+		t.Errorf("Expected restored legacy cache to compute test file weights.\nexpected: %v\nactual: %v", expectedWeights, restored.testFileWeights)
 	}
 }
 

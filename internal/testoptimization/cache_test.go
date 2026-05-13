@@ -13,6 +13,7 @@ type testSuiteDurationsCacheFixture struct {
 	TestSuiteDurations map[string]map[string]TestSuiteDurationInfo `json:"testSuiteDurations"`
 	SuiteAggregates    []testSuiteAggregateCacheFixture            `json:"suiteAggregates"`
 	SuitesBySourceFile map[string][]testSuiteCacheKeyFixture       `json:"suitesBySourceFile"`
+	TestFileWeights    map[string]int                              `json:"testFileWeights"`
 }
 
 type testSuiteCacheKeyFixture struct {
@@ -58,6 +59,9 @@ func TestCacheManager_StoreAndReadTestSuiteDurationsCache(t *testing.T) {
 		},
 		SuitesBySourceFile: map[string][]testSuiteCacheKeyFixture{
 			"spec/suite1_spec.rb": {{Module: "rspec", Suite: "Suite1"}},
+		},
+		TestFileWeights: map[string]int{
+			"spec/suite1_spec.rb": 2500,
 		},
 	}
 
