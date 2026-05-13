@@ -25,12 +25,16 @@ func TestMain(m *testing.M) {
 
 // Mock implementations for testing
 type MockCIVisibilityIntegrations struct {
-	InitializationCalled    bool
-	ShutdownCalled          bool
-	Settings                *net.SettingsResponseData
-	SkippableTests          map[string]map[string][]net.SkippableResponseDataAttributes
-	KnownTests              *net.KnownTestsResponseData
-	TestManagementTestsData *net.TestManagementTestsResponseDataModules
+	InitializationCalled           bool
+	ShutdownCalled                 bool
+	Settings                       *net.SettingsResponseData
+	SettingsRawResponse            json.RawMessage
+	SkippableTests                 map[string]map[string][]net.SkippableResponseDataAttributes
+	SkippableTestsRawResponse      json.RawMessage
+	KnownTests                     *net.KnownTestsResponseData
+	KnownTestsRawResponse          json.RawMessage
+	TestManagementTestsData        *net.TestManagementTestsResponseDataModules
+	TestManagementTestsRawResponse json.RawMessage
 }
 
 func (m *MockCIVisibilityIntegrations) EnsureCiVisibilityInitialization() {
@@ -45,16 +49,32 @@ func (m *MockCIVisibilityIntegrations) GetSettings() *net.SettingsResponseData {
 	return m.Settings
 }
 
+func (m *MockCIVisibilityIntegrations) GetSettingsRawResponse() json.RawMessage {
+	return m.SettingsRawResponse
+}
+
 func (m *MockCIVisibilityIntegrations) GetSkippableTests() map[string]map[string][]net.SkippableResponseDataAttributes {
 	return m.SkippableTests
+}
+
+func (m *MockCIVisibilityIntegrations) GetSkippableTestsRawResponse() json.RawMessage {
+	return m.SkippableTestsRawResponse
 }
 
 func (m *MockCIVisibilityIntegrations) GetKnownTests() *net.KnownTestsResponseData {
 	return m.KnownTests
 }
 
+func (m *MockCIVisibilityIntegrations) GetKnownTestsRawResponse() json.RawMessage {
+	return m.KnownTestsRawResponse
+}
+
 func (m *MockCIVisibilityIntegrations) GetTestManagementTestsData() *net.TestManagementTestsResponseDataModules {
 	return m.TestManagementTestsData
+}
+
+func (m *MockCIVisibilityIntegrations) GetTestManagementTestsRawResponse() json.RawMessage {
+	return m.TestManagementTestsRawResponse
 }
 
 type MockUtils struct {

@@ -68,6 +68,7 @@ func (c *client) GetTestManagementTests() (*TestManagementTestsResponseDataModul
 	if c.repositoryURL == "" {
 		return nil, fmt.Errorf("civisibility.GetTestManagementTests: repository URL is required")
 	}
+	c.testManagementTestsRawResponse = nil
 
 	// we use the head commit SHA if it is set, otherwise we use the commit SHA
 	commitSha := c.commitSha
@@ -100,6 +101,7 @@ func (c *client) GetTestManagementTests() (*TestManagementTestsResponseDataModul
 	if err != nil {
 		return nil, fmt.Errorf("sending known tests request: %s", err)
 	}
+	c.testManagementTestsRawResponse = cloneRawMessage(response.Body)
 
 	var responseObject testManagementTestsResponse
 	err = response.Unmarshal(&responseObject)

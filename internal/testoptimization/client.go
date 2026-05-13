@@ -1,6 +1,7 @@
 package testoptimization
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -23,9 +24,13 @@ type CIVisibilityIntegrations interface {
 	EnsureCiVisibilityInitialization()
 	ExitCiVisibility()
 	GetSettings() *net.SettingsResponseData
+	GetSettingsRawResponse() json.RawMessage
 	GetSkippableTests() map[string]map[string][]net.SkippableResponseDataAttributes
+	GetSkippableTestsRawResponse() json.RawMessage
 	GetKnownTests() *net.KnownTestsResponseData
+	GetKnownTestsRawResponse() json.RawMessage
 	GetTestManagementTestsData() *net.TestManagementTestsResponseDataModules
+	GetTestManagementTestsRawResponse() json.RawMessage
 }
 
 type UtilsInterface interface {
@@ -47,16 +52,32 @@ func (d *DatadogCIVisibilityIntegrations) GetSettings() *net.SettingsResponseDat
 	return integrations.GetSettings()
 }
 
+func (d *DatadogCIVisibilityIntegrations) GetSettingsRawResponse() json.RawMessage {
+	return integrations.GetSettingsRawResponse()
+}
+
 func (d *DatadogCIVisibilityIntegrations) GetSkippableTests() map[string]map[string][]net.SkippableResponseDataAttributes {
 	return integrations.GetSkippableTests()
+}
+
+func (d *DatadogCIVisibilityIntegrations) GetSkippableTestsRawResponse() json.RawMessage {
+	return integrations.GetSkippableTestsRawResponse()
 }
 
 func (d *DatadogCIVisibilityIntegrations) GetKnownTests() *net.KnownTestsResponseData {
 	return integrations.GetKnownTests()
 }
 
+func (d *DatadogCIVisibilityIntegrations) GetKnownTestsRawResponse() json.RawMessage {
+	return integrations.GetKnownTestsRawResponse()
+}
+
 func (d *DatadogCIVisibilityIntegrations) GetTestManagementTestsData() *net.TestManagementTestsResponseDataModules {
 	return integrations.GetTestManagementTestsData()
+}
+
+func (d *DatadogCIVisibilityIntegrations) GetTestManagementTestsRawResponse() json.RawMessage {
+	return integrations.GetTestManagementTestsRawResponse()
 }
 
 // DatadogUtils implements UtilsInterface using the real utils package from dd-trace-go
