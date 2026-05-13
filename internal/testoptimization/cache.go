@@ -46,6 +46,10 @@ func (cm *CacheManager) createHTTPCacheDirectory() error {
 	return os.MkdirAll(appConstants.HTTPCacheDir, 0755)
 }
 
+func (cm *CacheManager) createRunnerCacheDirectory() error {
+	return os.MkdirAll(appConstants.RunnerCacheDir, 0755)
+}
+
 // writeJSONToFile writes data as JSON to the specified file path
 func (cm *CacheManager) writeJSONToFile(data any, filePath string) error {
 	jsonData, err := json.MarshalIndent(data, "", "  ")
@@ -194,30 +198,29 @@ func (cm *CacheManager) StoreTestManagementTestsCache(testManagementTests *net.T
 	return nil
 }
 
-// StoreTestSuiteDurationsCache stores test suite duration data in .testoptimization/cache/test_suite_durations.json
+// StoreTestSuiteDurationsCache stores ddtest-private duration data in the runner cache.
 func (cm *CacheManager) StoreTestSuiteDurationsCache(cache any) error {
-	if err := cm.CreateCacheDirectory(); err != nil {
-		return fmt.Errorf("failed to create cache directory: %w", err)
+	if err := cm.createRunnerCacheDirectory(); err != nil {
+		return fmt.Errorf("failed to create runner cache directory: %w", err)
 	}
 
-	testSuiteDurationsPath := filepath.Join(appConstants.CacheDir, TestSuiteDurationsCacheFile)
-	if err := cm.writeJSONToFile(cache, testSuiteDurationsPath); err != nil {
-		slog.Error("Failed to write test suite durations to file", "error", err, "path", testSuiteDurationsPath)
+	runnerPath := filepath.Join(appConstants.RunnerCacheDir, TestSuiteDurationsCacheFile)
+	if err := cm.writeJSONToFile(cache, runnerPath); err != nil {
+		slog.Error("Failed to write test suite durations to file", "error", err, "path", runnerPath)
 		return err
 	}
 
-	slog.Debug("Test suite durations written to file", "path", testSuiteDurationsPath)
+	slog.Debug("Test suite durations written to file", "path", runnerPath)
 	return nil
 }
 
-// ReadTestSuiteDurationsCache reads test suite duration data from .testoptimization/cache/test_suite_durations.json
+// ReadTestSuiteDurationsCache reads ddtest-private duration data from the runner cache.
 func (cm *CacheManager) ReadTestSuiteDurationsCache(cache any) error {
-	testSuiteDurationsPath := filepath.Join(appConstants.CacheDir, TestSuiteDurationsCacheFile)
-
-	if err := cm.readJSONFromFile(testSuiteDurationsPath, cache); err != nil {
+	runnerPath := filepath.Join(appConstants.RunnerCacheDir, TestSuiteDurationsCacheFile)
+	if err := cm.readJSONFromFile(runnerPath, cache); err != nil {
 		return err
 	}
 
-	slog.Debug("Test suite durations read from file", "path", testSuiteDurationsPath)
+	slog.Debug("Test suite durations read from file", "path", runnerPath)
 	return nil
 }
