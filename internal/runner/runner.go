@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -77,8 +76,8 @@ func (tr *TestRunner) Plan(ctx context.Context) error {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(constants.TestFilesOutputPath), 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
+	if err := writePlanFile(constants.ManifestPath, []byte(constants.ManifestVersion+"\n")); err != nil {
+		return fmt.Errorf("failed to write test optimization manifest: %w", err)
 	}
 
 	if err := tr.storeTestSuiteDurationsCache(); err != nil {
@@ -96,20 +95,20 @@ func (tr *TestRunner) Plan(ctx context.Context) error {
 		content += "\n"
 	}
 
-	if err := os.WriteFile(constants.TestFilesOutputPath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("failed to write test files to %s: %w", constants.TestFilesOutputPath, err)
+	if err := writePlanFile(constants.TestFilesOutputPath, []byte(content)); err != nil {
+		return fmt.Errorf("failed to write test files: %w", err)
 	}
 
 	percentageContent := fmt.Sprintf("%.2f", tr.skippablePercentage)
-	if err := os.WriteFile(constants.SkippablePercentageOutputPath, []byte(percentageContent), 0644); err != nil {
-		return fmt.Errorf("failed to write skippable percentage to %s: %w", constants.SkippablePercentageOutputPath, err)
+	if err := writePlanFile(constants.SkippablePercentageOutputPath, []byte(percentageContent)); err != nil {
+		return fmt.Errorf("failed to write skippable percentage: %w", err)
 	}
 
 	// Calculate and write parallel runners count
 	parallelRunners := calculateParallelRunners(tr.skippablePercentage)
 	runnersContent := fmt.Sprintf("%d", parallelRunners)
-	if err := os.WriteFile(constants.ParallelRunnersOutputPath, []byte(runnersContent), 0644); err != nil {
-		return fmt.Errorf("failed to write parallel runners to %s: %w", constants.ParallelRunnersOutputPath, err)
+	if err := writePlanFile(constants.ParallelRunnersOutputPath, []byte(runnersContent)); err != nil {
+		return fmt.Errorf("failed to write parallel runners: %w", err)
 	}
 
 	// Detect and configure CI provider if available
@@ -143,6 +142,8 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 		if err := tr.Plan(ctx); err != nil {
 			return fmt.Errorf("failed to run planning phase: %w", err)
 		}
+	} else if err != nil {
+		return fmt.Errorf("failed to check parallel runners count at %s: %w", constants.ParallelRunnersOutputPath, err)
 	}
 
 	if err := tr.restoreTestSuiteDurationsCache(); err != nil {

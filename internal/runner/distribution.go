@@ -3,6 +3,7 @@ package runner
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -76,7 +77,6 @@ func DistributeTestFiles(testFiles map[string]int, parallelRunners int) [][]stri
 // For multiple runners: distributes files using bin packing and writes to separate runner files
 // For single runner: copies test-files.txt content to runner-0
 func CreateTestSplits(testFiles map[string]int, parallelRunners int, testFilesOutputPath string) error {
-	// Create tests-split directory
 	if err := os.MkdirAll(constants.TestsSplitDir, 0755); err != nil {
 		return fmt.Errorf("failed to create tests-split directory: %w", err)
 	}
@@ -92,14 +92,14 @@ func CreateTestSplits(testFiles map[string]int, parallelRunners int, testFilesOu
 				runnerContent += "\n"
 			}
 
-			runnerFilePath := fmt.Sprintf("%s/runner-%d", constants.TestsSplitDir, i)
+			runnerFilePath := filepath.Join(constants.TestsSplitDir, fmt.Sprintf("runner-%d", i))
 			if err := os.WriteFile(runnerFilePath, []byte(runnerContent), 0644); err != nil {
 				return fmt.Errorf("failed to write runner-%d files to %s: %w", i, runnerFilePath, err)
 			}
 		}
 	} else {
 		// For single runner, copy test-files.txt to runner-0
-		runnerFilePath := fmt.Sprintf("%s/runner-0", constants.TestsSplitDir)
+		runnerFilePath := filepath.Join(constants.TestsSplitDir, "runner-0")
 		testFilesData, err := os.ReadFile(testFilesOutputPath)
 		if err != nil {
 			return fmt.Errorf("failed to read test files from %s: %w", testFilesOutputPath, err)

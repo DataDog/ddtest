@@ -17,9 +17,9 @@ func TestRunSequentialTests_Success(t *testing.T) {
 	_ = os.Chdir(tempDir)
 
 	// Setup test files
-	_ = os.MkdirAll(constants.PlanDirectory, 0755)
+	_ = os.MkdirAll(filepath.Dir(constants.TestFilesOutputPath), 0755)
 	testFiles := "test/file1_test.rb\ntest/file2_test.rb\n"
-	_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "test-files.txt"), []byte(testFiles), 0644)
+	_ = os.WriteFile(constants.TestFilesOutputPath, []byte(testFiles), 0644)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",

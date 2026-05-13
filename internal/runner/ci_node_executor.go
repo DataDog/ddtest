@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/framework"
 	"golang.org/x/sync/errgroup"
 )
@@ -14,9 +13,11 @@ import (
 // runCINodeTests executes tests for a specific CI node (one split, not the whole tests set).
 // It further splits the node's tests among local workers based on ci_node_workers setting.
 func runCINodeTests(ctx context.Context, framework framework.Framework, workerEnvMap map[string]string, ciNode int, ciNodeWorkers int, testFileWeights map[string]int) error {
-	runnerFilePath := fmt.Sprintf("%s/runner-%d", constants.TestsSplitDir, ciNode)
+	runnerFilePath := runnerSplitPath(ciNode)
 	if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
 		return fmt.Errorf("runner file for ci-node %d does not exist: %s", ciNode, runnerFilePath)
+	} else if err != nil {
+		return fmt.Errorf("failed to check runner file for ci-node %d at %s: %w", ciNode, runnerFilePath, err)
 	}
 
 	// Single worker mode: run all tests with nodeIndex matching ciNode.

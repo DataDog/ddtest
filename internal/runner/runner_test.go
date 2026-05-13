@@ -214,6 +214,18 @@ func newDefaultMockCIProviderDetector() *MockCIProviderDetector {
 	}
 }
 
+func assertFileContent(t *testing.T, path string, expected string) {
+	t.Helper()
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	if string(content) != expected {
+		t.Fatalf("expected %s content %q, got %q", path, expected, string(content))
+	}
+}
+
 func TestNew(t *testing.T) {
 	runner := New()
 
@@ -353,6 +365,60 @@ func TestTestRunner_Setup_WithParallelRunners(t *testing.T) {
 	expected := "1"
 	if string(content) != expected {
 		t.Errorf("Expected parallel runners file content '%s', got '%s'", expected, string(content))
+	}
+}
+
+func TestTestRunner_Plan_WritesManifestAndRunnerLayout(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "1")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "1")
+	defer func() {
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+	}()
+	settings.Init()
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+			{Suite: "TestSuite2", Name: "test2", Parameters: "", SuiteSourceFile: "test/file2_test.rb"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		&MockTestOptimizationClient{SkippableTests: map[string]bool{}},
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.Plan(context.Background()); err != nil {
+		t.Fatalf("Plan() should not return error, got: %v", err)
+	}
+
+	assertFileContent(t, constants.ManifestPath, constants.ManifestVersion+"\n")
+
+	expectedTestFiles := "test/file1_test.rb\ntest/file2_test.rb\n"
+	assertFileContent(t, constants.TestFilesOutputPath, expectedTestFiles)
+
+	assertFileContent(t, constants.ParallelRunnersOutputPath, "1")
+	assertFileContent(t, constants.SkippablePercentageOutputPath, "0.00")
+
+	assertFileContent(t, filepath.Join(constants.TestsSplitDir, "runner-0"), expectedTestFiles)
+
+	legacyTestFilesPath := filepath.Join(constants.PlanDirectory, "test-files.txt")
+	if _, err := os.Stat(legacyTestFilesPath); !os.IsNotExist(err) {
+		t.Fatalf("expected no legacy runner file at %s, got err %v", legacyTestFilesPath, err)
 	}
 }
 
@@ -570,18 +636,18 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		}
 
 		// Verify that tests-split directory was created
-		if _, err := os.Stat(filepath.Join(constants.PlanDirectory, "tests-split")); os.IsNotExist(err) {
+		if _, err := os.Stat(constants.TestsSplitDir); os.IsNotExist(err) {
 			t.Error("Expected tests-split directory to be created when parallelRunners = 1")
 		}
 
 		// Verify that runner-0 file was created
-		runnerFilePath := filepath.Join(constants.PlanDirectory, "tests-split", "runner-0")
+		runnerFilePath := filepath.Join(constants.TestsSplitDir, "runner-0")
 		if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
 			t.Error("Expected runner-0 file to be created when parallelRunners = 1")
 		}
 
 		// Verify that runner-0 contains the same content as test-files.txt
-		testFilesContent, err := os.ReadFile(filepath.Join(constants.PlanDirectory, "test-files.txt"))
+		testFilesContent, err := os.ReadFile(constants.TestFilesOutputPath)
 		if err != nil {
 			t.Fatalf("Failed to read test-files.txt: %v", err)
 		}
@@ -658,14 +724,14 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		}
 
 		// Verify that tests-split directory was created
-		if _, err := os.Stat(filepath.Join(constants.PlanDirectory, "tests-split")); os.IsNotExist(err) {
+		if _, err := os.Stat(constants.TestsSplitDir); os.IsNotExist(err) {
 			t.Error("Expected tests-split directory to be created")
 		}
 
 		// With min=2 and 0% skippable tests, we should get 4 parallel runners
 		// Verify runner files exist
 		for i := range expectedParallelRunnersCount {
-			runnerPath := filepath.Join(constants.PlanDirectory, "tests-split", fmt.Sprintf("runner-%d", i))
+			runnerPath := filepath.Join(constants.TestsSplitDir, fmt.Sprintf("runner-%d", i))
 			if _, err := os.Stat(runnerPath); os.IsNotExist(err) {
 				t.Errorf("Expected runner-%d file to exist", i)
 			}
@@ -674,7 +740,7 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		// Verify content of runner files
 		// With the test distribution (file1: 2 tests, file2: 1 test, file3: 1 test)
 		// and 4 runners, expected: Runner 0 gets file1 (2 tests), others get 1 test each
-		runner0Content, err := os.ReadFile(filepath.Join(constants.PlanDirectory, "tests-split", "runner-0"))
+		runner0Content, err := os.ReadFile(filepath.Join(constants.TestsSplitDir, "runner-0"))
 		if err != nil {
 			t.Fatalf("Failed to read runner-0 file: %v", err)
 		}
@@ -688,7 +754,7 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		// Count total files across all runners
 		totalFiles := 0
 		for i := range expectedParallelRunnersCount {
-			runnerPath := filepath.Join(constants.PlanDirectory, "tests-split", fmt.Sprintf("runner-%d", i))
+			runnerPath := filepath.Join(constants.TestsSplitDir, fmt.Sprintf("runner-%d", i))
 			content, err := os.ReadFile(runnerPath)
 			if err != nil {
 				continue
