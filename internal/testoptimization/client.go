@@ -145,6 +145,9 @@ func (c *DatadogClient) GetSkippableTests() map[string]bool {
 	if err := c.cacheManager.StoreSkippableTestsCache(skippableTests); err != nil {
 		slog.Warn("Failed to store skippable tests cache", "error", err)
 	}
+	if err := c.cacheManager.StoreRawSkippableTestsCache(c.integrations.GetSkippableTestsRawResponse()); err != nil {
+		slog.Warn("Failed to store raw skippable tests cache", "error", err)
+	}
 
 	for _, suites := range skippableTests {
 		for _, tests := range suites {
@@ -176,6 +179,9 @@ func (c *DatadogClient) StoreCacheAndExit() {
 			slog.Warn("Failed to store repository settings", "error", err)
 		}
 	}
+	if err := c.cacheManager.StoreRawRepositorySettings(c.integrations.GetSettingsRawResponse()); err != nil {
+		slog.Warn("Failed to store raw repository settings cache", "error", err)
+	}
 
 	// store known tests
 	knownTests := c.integrations.GetKnownTests()
@@ -187,6 +193,9 @@ func (c *DatadogClient) StoreCacheAndExit() {
 			slog.Warn("Failed to store known tests cache", "error", err)
 		}
 	}
+	if err := c.cacheManager.StoreRawKnownTestsCache(c.integrations.GetKnownTestsRawResponse()); err != nil {
+		slog.Warn("Failed to store raw known tests cache", "error", err)
+	}
 
 	// store test management tests
 	testManagementTests := c.integrations.GetTestManagementTestsData()
@@ -197,6 +206,9 @@ func (c *DatadogClient) StoreCacheAndExit() {
 		if err := c.cacheManager.StoreTestManagementTestsCache(testManagementTests); err != nil {
 			slog.Warn("Failed to store test management tests cache", "error", err)
 		}
+	}
+	if err := c.cacheManager.StoreRawTestManagementTestsCache(c.integrations.GetTestManagementTestsRawResponse()); err != nil {
+		slog.Warn("Failed to store raw test management tests cache", "error", err)
 	}
 
 	c.integrations.ExitCiVisibility()

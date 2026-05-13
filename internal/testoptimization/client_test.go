@@ -88,6 +88,43 @@ func (m *MockUtils) AddCITagsMap(tags map[string]string) {
 	maps.Copy(m.AddedTags, tags)
 }
 
+func cleanPlanDirectory(t *testing.T) {
+	t.Helper()
+	if err := os.RemoveAll(constants.PlanDirectory); err != nil {
+		t.Fatalf("Failed to remove plan directory: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(constants.PlanDirectory)
+	})
+}
+
+func assertFileExists(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("Expected file to exist at %s: %v", path, err)
+	}
+}
+
+func assertFileDoesNotExist(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("Expected file to not exist at %s, got error: %v", path, err)
+	}
+}
+
+func assertRawJSONFile(t *testing.T, path string, expected json.RawMessage) {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("Failed to read raw JSON file at %s: %v", path, err)
+	}
+
+	if string(data) != string(expected) {
+		t.Fatalf("Raw JSON file mismatch at %s\nexpected: %s\nactual:   %s", path, expected, data)
+	}
+}
+
 func TestNewDatadogClient(t *testing.T) {
 	client := NewDatadogClient()
 
@@ -297,6 +334,61 @@ func TestDatadogClient_StoreCacheAndExit_WritesSettingsFile(t *testing.T) {
 	}
 }
 
+func TestDatadogClient_StoreCacheAndExit_WritesRawHTTPCaches(t *testing.T) {
+	cleanPlanDirectory(t)
+
+	settingsRaw := json.RawMessage(`{"data":{"id":"settings","type":"ci_app_test_service_settings","attributes":{"itr_enabled":true}}}`)
+	knownTestsRaw := json.RawMessage(`{"data":{"id":"known-tests","type":"ci_app_libraries_tests","attributes":{"tests":{}}}}`)
+	testManagementRaw := json.RawMessage(`{"data":{"id":"test-management","type":"test_management_tests","attributes":{"modules":{}}}}`)
+
+	mockIntegrations := &MockCIVisibilityIntegrations{
+		Settings: &net.SettingsResponseData{
+			ItrEnabled:    true,
+			TestsSkipping: false,
+		},
+		SettingsRawResponse: settingsRaw,
+		KnownTests: &net.KnownTestsResponseData{
+			Tests: net.KnownTestsResponseDataModules{},
+		},
+		KnownTestsRawResponse: knownTestsRaw,
+		TestManagementTestsData: &net.TestManagementTestsResponseDataModules{
+			Modules: map[string]net.TestManagementTestsResponseDataSuites{},
+		},
+		TestManagementTestsRawResponse: testManagementRaw,
+	}
+	mockUtils := &MockUtils{}
+	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+
+	client.StoreCacheAndExit()
+
+	assertFileExists(t, filepath.Join(constants.CacheDir, "settings.json"))
+	assertFileExists(t, filepath.Join(constants.CacheDir, "known_tests.json"))
+	assertFileExists(t, filepath.Join(constants.CacheDir, "test_management_tests.json"))
+
+	assertRawJSONFile(t, filepath.Join(constants.HTTPCacheDir, "settings.json"), settingsRaw)
+	assertRawJSONFile(t, filepath.Join(constants.HTTPCacheDir, "known_tests.json"), knownTestsRaw)
+	assertRawJSONFile(t, filepath.Join(constants.HTTPCacheDir, "test_management.json"), testManagementRaw)
+}
+
+func TestDatadogClient_StoreCacheAndExit_SkipsRawHTTPCacheWithoutRawResponse(t *testing.T) {
+	cleanPlanDirectory(t)
+
+	mockIntegrations := &MockCIVisibilityIntegrations{
+		Settings: &net.SettingsResponseData{
+			ItrEnabled:    true,
+			TestsSkipping: false,
+		},
+	}
+	mockUtils := &MockUtils{}
+	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+
+	client.StoreCacheAndExit()
+
+	assertFileExists(t, filepath.Join(constants.CacheDir, "settings.json"))
+	assertFileDoesNotExist(t, filepath.Join(constants.HTTPCacheDir, "settings.json"))
+	assertFileDoesNotExist(t, constants.HTTPCacheDir)
+}
+
 func TestTest_FQN(t *testing.T) {
 	testCases := []struct {
 		suite      string
@@ -454,7 +546,6 @@ func TestDatadogClient_StoreCacheAndExit_WritesKnownTestsFile(t *testing.T) {
 }
 
 func TestDatadogClient_GetSkippableTests_WritesSkippableTestsFile(t *testing.T) {
-
 	mockIntegrations := &MockCIVisibilityIntegrations{
 		Settings: &net.SettingsResponseData{
 			ItrEnabled:    true,
@@ -540,6 +631,46 @@ func TestDatadogClient_GetSkippableTests_WritesSkippableTestsFile(t *testing.T) 
 	if actualTest.Parameters != expectedTest.Parameters {
 		t.Errorf("Expected parameters to be %s, got %s", expectedTest.Parameters, actualTest.Parameters)
 	}
+}
+
+func TestDatadogClient_GetSkippableTests_WritesRawHTTPCache(t *testing.T) {
+	cleanPlanDirectory(t)
+
+	skippableTestsRaw := json.RawMessage(`{"data":[{"id":"test-id","type":"test","attributes":{"suite":"TestSuite1","name":"test_method_1"}}]}`)
+
+	mockIntegrations := &MockCIVisibilityIntegrations{
+		Settings: &net.SettingsResponseData{
+			ItrEnabled:    true,
+			TestsSkipping: true,
+		},
+		SkippableTests: map[string]map[string][]net.SkippableResponseDataAttributes{
+			"module1": {
+				"suite1": []net.SkippableResponseDataAttributes{
+					{
+						Suite:      "TestSuite1",
+						Name:       "test_method_1",
+						Parameters: "param1",
+					},
+				},
+			},
+		},
+		SkippableTestsRawResponse: skippableTestsRaw,
+	}
+	mockUtils := &MockUtils{}
+	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+
+	err := client.Initialize(map[string]string{})
+	if err != nil {
+		t.Fatalf("Initialize() failed: %v", err)
+	}
+
+	result := client.GetSkippableTests()
+
+	if len(result) != 1 {
+		t.Fatalf("Expected 1 skippable test, got %d", len(result))
+	}
+	assertFileExists(t, filepath.Join(constants.CacheDir, "skippable_tests.json"))
+	assertRawJSONFile(t, filepath.Join(constants.HTTPCacheDir, "skippable_tests.json"), skippableTestsRaw)
 }
 
 func TestDatadogClient_StoreCacheAndExit_WritesTestManagementTestsFile(t *testing.T) {
