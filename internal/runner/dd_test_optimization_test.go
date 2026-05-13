@@ -119,6 +119,19 @@ func TestTestRunner_PrepareTestOptimization_Success(t *testing.T) {
 	if weightedFiles := runner.weightedTestFiles(); len(weightedFiles) != 3 {
 		t.Errorf("Expected weighted files to omit fully skipped file and keep 3 files, got %v", weightedFiles)
 	}
+	expectedTestFileWeights := map[string]int{
+		"test/file1_test.rb":     3,
+		"test/file2_test.rb":     defaultTestFileWeight,
+		"test/fast_only_test.rb": defaultTestFileWeight,
+	}
+	if len(runner.testFileWeights) != len(expectedTestFileWeights) {
+		t.Errorf("Expected precomputed test file weights to have %d entries, got %v", len(expectedTestFileWeights), runner.testFileWeights)
+	}
+	for testFile, expectedWeight := range expectedTestFileWeights {
+		if runner.testFileWeights[testFile] != expectedWeight {
+			t.Errorf("Expected precomputed weight for %s to be %d, got %d", testFile, expectedWeight, runner.testFileWeights[testFile])
+		}
+	}
 
 	for file := range runner.testFiles {
 		if !expectedFiles[file] {
@@ -193,7 +206,7 @@ func TestTestRunner_PrepareTestOptimization_DurationsErrorContinues(t *testing.T
 		t.Errorf("Expected empty in-memory test suite durations on error, got %v", runner.testSuiteDurations)
 	}
 
-	if !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "Test durations API errored") {
+	if !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "Test durations API errored") || !strings.Contains(logs.String(), "duration=") {
 		t.Errorf("Expected ERROR log for durations API failure, got logs: %s", logs.String())
 	}
 }
@@ -234,7 +247,10 @@ func TestTestRunner_PrepareTestOptimization_EmptyDurationsWarns(t *testing.T) {
 		t.Errorf("Expected empty in-memory test suite durations on empty response, got %v", runner.testSuiteDurations)
 	}
 
-	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "Test durations API returned no test suites") {
+	if !strings.Contains(logs.String(), "level=WARN") ||
+		!strings.Contains(logs.String(), "Test durations API returned no test suites") ||
+		!strings.Contains(logs.String(), "testSuitesCount=0") ||
+		!strings.Contains(logs.String(), "duration=") {
 		t.Errorf("Expected WARN log for empty durations response, got logs: %s", logs.String())
 	}
 }
@@ -303,8 +319,12 @@ func TestTestRunner_PrepareTestOptimization_NonEmptyDurationsUsesP50ForMatchingS
 		t.Errorf("Expected file2 weight to use backend p50 converted to 30ms, got weight=%d ok=%t", weight, ok)
 	}
 
-	if !strings.Contains(logs.String(), "level=DEBUG") || !strings.Contains(logs.String(), "Found test suite durations") || !strings.Contains(logs.String(), "testSuitesCount=2") {
-		t.Errorf("Expected DEBUG log for non-empty durations response, got logs: %s", logs.String())
+	if !strings.Contains(logs.String(), "level=INFO") ||
+		!strings.Contains(logs.String(), "Fetched test suite durations") ||
+		!strings.Contains(logs.String(), "modulesCount=1") ||
+		!strings.Contains(logs.String(), "testSuitesCount=2") ||
+		!strings.Contains(logs.String(), "duration=") {
+		t.Errorf("Expected INFO log for non-empty durations response, got logs: %s", logs.String())
 	}
 }
 

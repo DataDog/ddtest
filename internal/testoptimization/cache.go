@@ -19,6 +19,9 @@ type SkippableTestsCache struct {
 	SkippableTests map[string]map[string][]net.SkippableResponseDataAttributes `json:"skippableTests"`
 }
 
+// TestSuiteDurationsCacheFile is the cache file name for suite duration metadata.
+const TestSuiteDurationsCacheFile = "test_suite_durations.json"
+
 // CacheManager handles creation and storage of cache data for test runners
 type CacheManager struct{}
 
@@ -42,6 +45,20 @@ func (cm *CacheManager) writeJSONToFile(data any, filePath string) error {
 
 	if err := os.WriteFile(filePath, jsonData, 0644); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
+	}
+
+	return nil
+}
+
+// readJSONFromFile reads JSON data from the specified file path into data.
+func (cm *CacheManager) readJSONFromFile(filePath string, data any) error {
+	jsonData, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to read file: %w", err)
+	}
+
+	if err := json.Unmarshal(jsonData, data); err != nil {
+		return fmt.Errorf("failed to unmarshal JSON: %w", err)
 	}
 
 	return nil
@@ -118,5 +135,33 @@ func (cm *CacheManager) StoreTestManagementTestsCache(testManagementTests *net.T
 	}
 
 	slog.Debug("Test management tests written to file", "path", testManagementTestsPath)
+	return nil
+}
+
+// StoreTestSuiteDurationsCache stores test suite duration data in .testoptimization/cache/test_suite_durations.json
+func (cm *CacheManager) StoreTestSuiteDurationsCache(cache any) error {
+	if err := cm.CreateCacheDirectory(); err != nil {
+		return fmt.Errorf("failed to create cache directory: %w", err)
+	}
+
+	testSuiteDurationsPath := filepath.Join(appConstants.PlanDirectory, "cache", TestSuiteDurationsCacheFile)
+	if err := cm.writeJSONToFile(cache, testSuiteDurationsPath); err != nil {
+		slog.Error("Failed to write test suite durations to file", "error", err, "path", testSuiteDurationsPath)
+		return err
+	}
+
+	slog.Debug("Test suite durations written to file", "path", testSuiteDurationsPath)
+	return nil
+}
+
+// ReadTestSuiteDurationsCache reads test suite duration data from .testoptimization/cache/test_suite_durations.json
+func (cm *CacheManager) ReadTestSuiteDurationsCache(cache any) error {
+	testSuiteDurationsPath := filepath.Join(appConstants.PlanDirectory, "cache", TestSuiteDurationsCacheFile)
+
+	if err := cm.readJSONFromFile(testSuiteDurationsPath, cache); err != nil {
+		return err
+	}
+
+	slog.Debug("Test suite durations read from file", "path", testSuiteDurationsPath)
 	return nil
 }

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -26,6 +27,7 @@ type TestRunner struct {
 	suiteAggregates     map[testSuiteKey]testSuiteAggregate
 	suitesBySourceFile  map[string][]testSuiteKey
 	testSuiteDurations  map[string]map[string]testoptimization.TestSuiteDurationInfo
+	testFileWeights     map[string]int
 	skippablePercentage float64
 	platformDetector    platform.PlatformDetector
 	optimizationClient  testoptimization.TestOptimizationClient
@@ -39,6 +41,7 @@ func New() *TestRunner {
 		suiteAggregates:     make(map[testSuiteKey]testSuiteAggregate),
 		suitesBySourceFile:  make(map[string][]testSuiteKey),
 		testSuiteDurations:  make(map[string]map[string]testoptimization.TestSuiteDurationInfo),
+		testFileWeights:     make(map[string]int),
 		skippablePercentage: 0.0,
 		platformDetector:    platform.NewPlatformDetector(),
 		optimizationClient:  testoptimization.NewDatadogClient(),
@@ -58,6 +61,7 @@ func NewWithDependencies(
 		suiteAggregates:     make(map[testSuiteKey]testSuiteAggregate),
 		suitesBySourceFile:  make(map[string][]testSuiteKey),
 		testSuiteDurations:  make(map[string]map[string]testoptimization.TestSuiteDurationInfo),
+		testFileWeights:     make(map[string]int),
 		skippablePercentage: 0.0,
 		platformDetector:    platformDetector,
 		optimizationClient:  optimizationClient,
@@ -77,9 +81,12 @@ func (tr *TestRunner) Plan(ctx context.Context) error {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	weightedTestFiles := tr.weightedTestFiles()
-	testFileNames := make([]string, 0, len(weightedTestFiles))
-	for testFile := range weightedTestFiles {
+	if err := tr.storeTestSuiteDurationsCache(); err != nil {
+		return fmt.Errorf("failed to store test suite durations cache: %w", err)
+	}
+
+	testFileNames := make([]string, 0, len(tr.testFileWeights))
+	for testFile := range tr.testFileWeights {
 		testFileNames = append(testFileNames, testFile)
 	}
 	slices.Sort(testFileNames)
@@ -118,11 +125,11 @@ func (tr *TestRunner) Plan(ctx context.Context) error {
 	}
 
 	// Split test files for runners
-	if err := CreateTestSplits(weightedTestFiles, parallelRunners, constants.TestFilesOutputPath); err != nil {
+	if err := CreateTestSplits(tr.testFileWeights, parallelRunners, constants.TestFilesOutputPath); err != nil {
 		return fmt.Errorf("failed to create test splits: %w", err)
 	}
 
-	slog.Info("Test execution planning completed", "parallelRunners", parallelRunners, "testFilesCount", len(weightedTestFiles))
+	slog.Info("Test execution planning completed", "parallelRunners", parallelRunners, "testFilesCount", len(tr.testFileWeights))
 
 	return nil
 }
@@ -137,6 +144,17 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 			return fmt.Errorf("failed to run planning phase: %w", err)
 		}
 	}
+
+	if err := tr.restoreTestSuiteDurationsCache(); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			slog.Debug("Test suite durations cache not found; CI-node subsplits will use default weights",
+				"file", testoptimization.TestSuiteDurationsCacheFile)
+		} else {
+			slog.Warn("Failed to restore test suite durations cache; CI-node subsplits will use default weights",
+				"file", testoptimization.TestSuiteDurationsCacheFile, "error", err)
+		}
+	}
+
 	runnersData, err := os.ReadFile(constants.ParallelRunnersOutputPath)
 	if err != nil {
 		return fmt.Errorf("failed to read parallel runners count from %s: %w", constants.ParallelRunnersOutputPath, err)
@@ -169,7 +187,7 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 
 	ciNode := settings.GetCiNode()
 	if ciNode >= 0 {
-		return runCINodeTests(ctx, framework, workerEnvMap, ciNode)
+		return runCINodeTests(ctx, framework, workerEnvMap, ciNode, settings.GetCiNodeWorkers(), tr.testFileWeights)
 	} else if parallelRunners > 1 {
 		return runParallelTests(ctx, framework, workerEnvMap)
 	} else {

@@ -2,9 +2,11 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"maps"
+	"slices"
 	"strconv"
 	"time"
 
@@ -14,6 +16,8 @@ import (
 	"github.com/DataDog/ddtest/internal/testoptimization"
 	"golang.org/x/sync/errgroup"
 )
+
+const defaultTestFileWeight = int(time.Second / time.Millisecond)
 
 func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	detectedPlatform, err := tr.platformDetector.DetectPlatform()
@@ -165,6 +169,7 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 
 	tr.suitesBySourceFile = indexSuitesBySourceFile(tr.suiteAggregates)
 	tr.skippablePercentage = calculateSavedTimePercentage(tr.suiteAggregates)
+	tr.testFileWeights = tr.weightedTestFiles()
 
 	slog.Info("Test files prepared", "testFilesCount", len(tr.testFiles))
 
@@ -184,48 +189,75 @@ func initializeDurationsFetchInputs() (string, string, error) {
 }
 
 func (tr *TestRunner) fetchAndStoreTestSuiteDurations() {
+	startTime := time.Now()
 	repositoryURL, service, err := initializeDurationsFetchInputs()
 	if err != nil {
-		slog.Error("Test durations API errored", "error", err)
+		slog.Error("Test durations API errored", "duration", time.Since(startTime), "error", err)
 		tr.testSuiteDurations = make(map[string]map[string]testoptimization.TestSuiteDurationInfo)
 		return
 	}
 
 	durations, err := tr.durationsClient.GetTestSuiteDurations(repositoryURL, service)
 	if err != nil {
-		slog.Error("Test durations API errored", "error", err)
+		slog.Error("Test durations API errored",
+			"service", service,
+			"repositoryURL", repositoryURL,
+			"duration", time.Since(startTime),
+			"error", err)
 		tr.testSuiteDurations = make(map[string]map[string]testoptimization.TestSuiteDurationInfo)
 		return
 	}
 
-	totalSuites := 0
-	for _, suites := range durations {
-		totalSuites += len(suites)
-	}
+	totalSuites := countTestSuites(durations)
 
 	if totalSuites == 0 {
-		slog.Warn("Test durations API returned no test suites", "service", service, "repositoryURL", repositoryURL)
+		slog.Warn("Test durations API returned no test suites",
+			"service", service,
+			"repositoryURL", repositoryURL,
+			"modulesCount", len(durations),
+			"testSuitesCount", totalSuites,
+			"duration", time.Since(startTime))
 		tr.testSuiteDurations = make(map[string]map[string]testoptimization.TestSuiteDurationInfo)
 		return
 	}
 
-	slog.Debug("Found test suite durations", "service", service, "repositoryURL", repositoryURL, "testSuitesCount", totalSuites)
+	slog.Info("Fetched test suite durations",
+		"service", service,
+		"repositoryURL", repositoryURL,
+		"modulesCount", len(durations),
+		"testSuitesCount", totalSuites,
+		"duration", time.Since(startTime))
 	tr.testSuiteDurations = durations
 }
 
 type testSuiteKey struct {
-	Module string
-	Suite  string
+	Module string `json:"module"`
+	Suite  string `json:"suite"`
+}
+
+func (key testSuiteKey) MarshalText() ([]byte, error) {
+	return json.Marshal([2]string{key.Module, key.Suite})
+}
+
+func (key *testSuiteKey) UnmarshalText(text []byte) error {
+	var values [2]string
+	if err := json.Unmarshal(text, &values); err != nil {
+		return err
+	}
+
+	key.Module = values[0]
+	key.Suite = values[1]
+	return nil
 }
 
 type testSuiteAggregate struct {
-	Module            string
-	Suite             string
-	SourceFile        string
-	TotalDuration     float64
-	EstimatedDuration float64
-	NumTests          int
-	NumTestsSkipped   int
+	Module            string  `json:"module"`
+	Suite             string  `json:"suite"`
+	SourceFile        string  `json:"sourceFile"`
+	TotalDuration     float64 `json:"totalDuration"`
+	EstimatedDuration float64 `json:"estimatedDuration"`
+	NumTests          int     `json:"numTests"`
+	NumTestsSkipped   int     `json:"numTestsSkipped"`
 }
 
 func (tr *TestRunner) processDiscoveredTests(
@@ -395,6 +427,24 @@ func indexSuitesBySourceFile(suiteAggregates map[testSuiteKey]testSuiteAggregate
 
 		sourceFileLookup[aggregate.SourceFile] = append(sourceFileLookup[aggregate.SourceFile], key)
 	}
+
+	for sourceFile := range sourceFileLookup {
+		slices.SortFunc(sourceFileLookup[sourceFile], func(a, b testSuiteKey) int {
+			if a.Module < b.Module {
+				return -1
+			}
+			if a.Module > b.Module {
+				return 1
+			}
+			if a.Suite < b.Suite {
+				return -1
+			}
+			if a.Suite > b.Suite {
+				return 1
+			}
+			return 0
+		})
+	}
 	return sourceFileLookup
 }
 
@@ -410,7 +460,6 @@ func (tr *TestRunner) weightedTestFiles() map[string]int {
 }
 
 func (tr *TestRunner) testFileWeight(testFile string) (int, bool) {
-	const defaultTestFileWeight = int(time.Second / time.Millisecond)
 	suiteKeys := tr.suitesBySourceFile[testFile]
 	if len(suiteKeys) == 0 {
 		return defaultTestFileWeight, true
