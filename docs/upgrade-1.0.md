@@ -18,7 +18,7 @@ Update any scripts, CI jobs, or custom test runners that read DDTest runner file
 | `.testoptimization/tests-split/runner-*` | `.testoptimization/runner/tests-split/runner-*` |
 
 Use `.testoptimization/manifest.txt` as the plan layout marker. DDTest sets
-`DD_TEST_OPTIMIZATION_MANIFEST_FILE` for worker processes to the absolute manifest
+`TEST_OPTIMIZATION_MANIFEST_FILE` for worker processes to the absolute manifest
 path unless that environment variable is already provided.
 
 ## Current Compatibility Window
