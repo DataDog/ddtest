@@ -81,9 +81,9 @@ func TestDistributeTestFiles(t *testing.T) {
 			t.Errorf("Expected 3 runners, got %d", len(result))
 		}
 
-		// With First Fit Decreasing algorithm, files are sorted by count (descending):
+		// With weighted list scheduling, files are sorted by weight descending:
 		// test2.rb: 10, test4.rb: 8, test3.rb: 6, test5.rb: 4, test1.rb: 2
-		// Expected distribution (always picking bin with minimum load):
+		// Expected distribution (always picking the runner with minimum load):
 		// Runner 0: test2.rb (10)
 		// Runner 1: test4.rb (8) + test1.rb (2) = 10
 		// Runner 2: test3.rb (6) + test5.rb (4) = 10
@@ -195,6 +195,30 @@ func TestDistributeTestFiles(t *testing.T) {
 
 		if largeFileLoad < 100 {
 			t.Errorf("Runner with large.rb should have at least 100 load, got %d", largeFileLoad)
+		}
+	})
+
+	t.Run("ties sort by path and lower runner index", func(t *testing.T) {
+		testFiles := map[string]int{
+			"b.rb": 1,
+			"a.rb": 1,
+			"c.rb": 1,
+		}
+
+		result := DistributeTestFiles(testFiles, 2)
+		expected := [][]string{
+			{"a.rb", "c.rb"},
+			{"b.rb"},
+		}
+
+		if len(result) != len(expected) {
+			t.Fatalf("Expected %d runners, got %d", len(expected), len(result))
+		}
+
+		for i := range expected {
+			if !slices.Equal(result[i], expected[i]) {
+				t.Errorf("Runner %d = %v, expected %v", i, result[i], expected[i])
+			}
 		}
 	})
 
@@ -341,7 +365,7 @@ func TestCreateTestSplits(t *testing.T) {
 		}
 
 		// Verify content distribution
-		// With bin packing: runner-0 gets file1 (10), runner-1 gets file2+file3 (8)
+		// With weighted list scheduling: runner-0 gets file1 (10), runner-1 gets file2+file3 (8)
 		runner0Content, _ := os.ReadFile(filepath.Join(constants.TestsSplitDir, "runner-0"))
 		runner1Content, _ := os.ReadFile(filepath.Join(constants.TestsSplitDir, "runner-1"))
 		legacyRunner0Content, _ := os.ReadFile(filepath.Join(constants.LegacyTestsSplitDir, "runner-0"))
