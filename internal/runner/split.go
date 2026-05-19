@@ -42,40 +42,40 @@ type splitScore struct {
 }
 
 func scoreSortedWeightedRunnerSplit(files []weightedTestFile, parallelRunners int) splitScore {
-	split := newWeightedRunnerSplit(parallelRunners)
+	builder := newTestSplitBuilder(parallelRunners)
 	for _, file := range files {
-		split.addFile(file.weight)
+		builder.addFile(file.weight)
 	}
-	return split.score()
+	return builder.score()
 }
 
-type weightedRunnerSplit struct {
+type testSplitBuilder struct {
 	parallelRunners int
 	loads           minLoadHeap
 }
 
-func newWeightedRunnerSplit(parallelRunners int) weightedRunnerSplit {
+func newTestSplitBuilder(parallelRunners int) testSplitBuilder {
 	if parallelRunners <= 0 {
 		parallelRunners = 1
 	}
 
-	return weightedRunnerSplit{
+	return testSplitBuilder{
 		parallelRunners: parallelRunners,
 		loads:           makeMinLoadHeap(parallelRunners),
 	}
 }
 
-func (s *weightedRunnerSplit) addFile(weight int) int {
-	lightestRunner := heap.Pop(&s.loads).(runnerLoad)
+func (b *testSplitBuilder) addFile(weight int) int {
+	lightestRunner := heap.Pop(&b.loads).(runnerLoad)
 	lightestRunner.load += weight
-	heap.Push(&s.loads, lightestRunner)
+	heap.Push(&b.loads, lightestRunner)
 	return lightestRunner.index
 }
 
-func (s weightedRunnerSplit) score() splitScore {
-	minLoad, maxLoad := minMaxLoad(s.loads)
+func (b testSplitBuilder) score() splitScore {
+	minLoad, maxLoad := minMaxLoad(b.loads)
 	return splitScore{
-		parallelRunners: s.parallelRunners,
+		parallelRunners: b.parallelRunners,
 		wallTime:        maxLoad,
 		imbalance:       maxLoad - minLoad,
 	}
