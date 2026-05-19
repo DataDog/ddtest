@@ -326,14 +326,15 @@ func TestScoreSortedWeightedRunnerSplit_UnavoidableEmptyRunners(t *testing.T) {
 	}
 }
 
-func TestDistributeWeightedTestFiles(t *testing.T) {
+func TestTestSplitBuilderDistributeFiles(t *testing.T) {
 	testFiles := map[string]int{
 		"fast.rb":   1,
 		"medium.rb": 2,
 		"slow.rb":   3,
 	}
 
-	result := distributeWeightedTestFiles(testFiles, 2)
+	builder := newTestSplitBuilder(2)
+	result := builder.distributeFiles(testFiles)
 	expected := [][]string{
 		{"slow.rb"},
 		{"medium.rb", "fast.rb"},
@@ -342,14 +343,15 @@ func TestDistributeWeightedTestFiles(t *testing.T) {
 	assertDistribution(t, result, expected)
 }
 
-func TestDistributeSortedWeightedTestFiles(t *testing.T) {
+func TestTestSplitBuilderDistributeSortedFiles(t *testing.T) {
 	files := []weightedTestFile{
 		{path: "slow.rb", weight: 3},
 		{path: "medium.rb", weight: 2},
 		{path: "fast.rb", weight: 1},
 	}
 
-	result := distributeSortedWeightedTestFiles(files, 2)
+	builder := newTestSplitBuilder(2)
+	result := builder.distributeSortedFiles(files)
 	expected := [][]string{
 		{"slow.rb"},
 		{"medium.rb", "fast.rb"},

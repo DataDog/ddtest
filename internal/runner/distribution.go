@@ -13,7 +13,8 @@ import (
 
 // DistributeTestFiles distributes test files across parallel runners using weighted list scheduling.
 func DistributeTestFiles(testFiles map[string]int, parallelRunners int) [][]string {
-	return distributeWeightedTestFiles(testFiles, parallelRunners)
+	builder := newTestSplitBuilder(parallelRunners)
+	return builder.distributeFiles(testFiles)
 }
 
 // CreateTestSplits creates test split files for parallel runners
@@ -75,16 +76,6 @@ func sortedWeightedTestFiles(testFiles map[string]int) []weightedTestFile {
 	})
 
 	return files
-}
-
-func distributeWeightedTestFiles(testFiles map[string]int, parallelRunners int) [][]string {
-	builder := newTestSplitBuilder(parallelRunners)
-	return builder.distributeFiles(testFiles)
-}
-
-func distributeSortedWeightedTestFiles(files []weightedTestFile, parallelRunners int) [][]string {
-	builder := newTestSplitBuilder(parallelRunners)
-	return builder.distributeSortedFiles(files)
 }
 
 type splitScore struct {
