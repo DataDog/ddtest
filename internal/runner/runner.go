@@ -105,7 +105,7 @@ func (tr *TestRunner) Plan(ctx context.Context) error {
 	}
 
 	// Calculate and write parallel runners count
-	parallelRunners := calculateParallelRunners(tr.skippablePercentage)
+	parallelRunners := calculateParallelRunners(tr.testFileWeights)
 	runnersContent := fmt.Sprintf("%d", parallelRunners)
 	if err := writePlanFileCopies([]byte(runnersContent), constants.ParallelRunnersOutputPath, constants.LegacyParallelRunnersOutputPath); err != nil {
 		return fmt.Errorf("failed to write parallel runners: %w", err)

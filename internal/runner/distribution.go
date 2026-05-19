@@ -4,19 +4,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/constants"
 )
 
-// DistributeTestFiles distributes test files across parallel runners using bin packing algorithm
+// DistributeTestFiles distributes test files across parallel runners using weighted list scheduling.
 func DistributeTestFiles(testFiles map[string]int, parallelRunners int) [][]string {
+	return distributeSortedTestFiles(sortedWeightedTestFiles(testFiles), parallelRunners)
+}
+
+func distributeSortedTestFiles(files []weightedTestFile, parallelRunners int) [][]string {
 	if parallelRunners <= 0 {
 		parallelRunners = 1
 	}
 
-	if len(testFiles) == 0 {
+	if len(files) == 0 {
 		result := make([][]string, parallelRunners)
 		for i := range result {
 			result[i] = []string{}
@@ -24,63 +27,24 @@ func DistributeTestFiles(testFiles map[string]int, parallelRunners int) [][]stri
 		return result
 	}
 
-	// Convert map to sorted slice (largest first)
-	files := make([]struct {
-		path  string
-		count int
-	}, 0, len(testFiles))
-	for path, count := range testFiles {
-		files = append(files, struct {
-			path  string
-			count int
-		}{path: path, count: count})
-	}
-
-	sort.Slice(files, func(i, j int) bool {
-		if files[i].count == files[j].count {
-			return files[i].path < files[j].path
-		}
-		return files[i].count > files[j].count
-	})
-
-	// loads tracks current test duration assigned to each bin
-	loads := make([]int, parallelRunners)
 	// result tracks files assigned to each bin (can be returned directly)
 	result := make([][]string, parallelRunners)
 	for i := range result {
 		result[i] = []string{}
 	}
 
-	// First Fit Decreasing algorithm for bin packing
-	// On each step take the file in decreasing order of load
-	// and put it into the bin with minimum load
-	//
-	// Time complexity is N * M where
-	// N - number of bins (estimated about 10^2)
-	// M - number of test files (estimated about 10^4)
-	for _, file := range files {
-		minBin := 0
-		for i := 1; i < len(loads); i++ {
-			if loads[i] < loads[minBin] {
-				minBin = i
-			}
-		}
-
-		loads[minBin] += file.count
-		result[minBin] = append(result[minBin], file.path)
-	}
-
+	scheduleSortedFiles(files, parallelRunners, result)
 	return result
 }
 
 // CreateTestSplits creates test split files for parallel runners
-// For multiple runners: distributes files using bin packing and writes to separate runner files
+// For multiple runners: distributes files using weighted list scheduling and writes to separate runner files
 // For single runner: copies test-files.txt content to runner-0
 func CreateTestSplits(testFiles map[string]int, parallelRunners int, testFilesOutputPath string) error {
 	testsSplitDirs := []string{constants.TestsSplitDir, constants.LegacyTestsSplitDir}
 
 	if parallelRunners > 1 {
-		// Distribute test files across parallel runners using bin packing
+		// Distribute test files across parallel runners using weighted list scheduling.
 		distribution := DistributeTestFiles(testFiles, parallelRunners)
 		for _, testsSplitDir := range testsSplitDirs {
 			if err := writeDistributedTestSplits(distribution, testsSplitDir); err != nil {

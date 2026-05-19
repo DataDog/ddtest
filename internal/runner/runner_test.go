@@ -421,6 +421,64 @@ func TestTestRunner_Plan_WritesManifestAndRunnerLayout(t *testing.T) {
 	assertFileContent(t, filepath.Join(constants.LegacyTestsSplitDir, "runner-0"), expectedTestFiles)
 }
 
+func TestTestRunner_Plan_ChoosesParallelismFromSplitNotSkippablePercentage(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "2")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "4")
+	defer func() {
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+	}()
+	settings.Init()
+
+	var tests []testoptimization.Test
+	skippableTests := map[string]bool{}
+	for suiteIndex := range 4 {
+		suite := fmt.Sprintf("TestSuite%d", suiteIndex)
+		sourceFile := fmt.Sprintf("test/file%d_test.rb", suiteIndex)
+		for testIndex := range 10 {
+			name := fmt.Sprintf("test%d", testIndex)
+			tests = append(tests, testoptimization.Test{
+				Suite:           suite,
+				Name:            name,
+				Parameters:      "",
+				SuiteSourceFile: sourceFile,
+			})
+			if testIndex > 0 {
+				skippableTests[fmt.Sprintf("%s.%s.", suite, name)] = true
+			}
+		}
+	}
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests:         tests,
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		&MockTestOptimizationClient{SkippableTests: skippableTests},
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.Plan(context.Background()); err != nil {
+		t.Fatalf("Plan() should not return error, got: %v", err)
+	}
+
+	assertFileContent(t, constants.SkippablePercentageOutputPath, "90.00")
+	assertFileContent(t, constants.ParallelRunnersOutputPath, "4")
+}
+
 func TestTestRunner_Setup_WithCIProvider(t *testing.T) {
 	tempDir := t.TempDir()
 
@@ -702,10 +760,11 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 			SkippableTests: map[string]bool{}, // No tests skipped
 		}
 
-		expectedParallelRunnersCount := 4
+		expectedParallelRunnersCount := 2
+		maxParallelism := 4
 		// Set environment variables to force multiple parallel runners
 		_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "2")
-		_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", strconv.Itoa(expectedParallelRunnersCount))
+		_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", strconv.Itoa(maxParallelism))
 		defer func() {
 			_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
 			_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
@@ -727,7 +786,7 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 			t.Error("Expected tests-split directory to be created")
 		}
 
-		// With min=2 and 0% skippable tests, we should get 4 parallel runners
+		// With this split, 2 runners are as fast as 3 and more balanced.
 		// Verify runner files exist
 		for i := range expectedParallelRunnersCount {
 			runnerPath := filepath.Join(constants.TestsSplitDir, fmt.Sprintf("runner-%d", i))
@@ -737,8 +796,8 @@ func TestTestRunner_Setup_WithTestSplit(t *testing.T) {
 		}
 
 		// Verify content of runner files
-		// With the test distribution (file1: 2 tests, file2: 1 test, file3: 1 test)
-		// and 4 runners, expected: Runner 0 gets file1 (2 tests), others get 1 test each
+		// With the test distribution (file1: 2 tests, file2: 1 test, file3: 1 test),
+		// expected: runner 0 gets file1 (2 tests), runner 1 gets file2+file3 (2 tests).
 		runner0Content, err := os.ReadFile(filepath.Join(constants.TestsSplitDir, "runner-0"))
 		if err != nil {
 			t.Fatalf("Failed to read runner-0 file: %v", err)
