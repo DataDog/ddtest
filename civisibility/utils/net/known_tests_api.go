@@ -52,6 +52,7 @@ func (c *client) GetKnownTests() (*KnownTestsResponseData, error) {
 	if c.repositoryURL == "" || c.commitSha == "" {
 		return nil, fmt.Errorf("civisibility.GetKnownTests: repository URL and commit SHA are required")
 	}
+	c.knownTestsRawResponse = nil
 
 	body := knownTestsRequest{
 		Data: knownTestsRequestHeader{
@@ -73,6 +74,7 @@ func (c *client) GetKnownTests() (*KnownTestsResponseData, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sending known tests request: %s", err)
 	}
+	c.knownTestsRawResponse = cloneRawMessage(response.Body)
 
 	var responseObject knownTestsResponse
 	err = response.Unmarshal(&responseObject)

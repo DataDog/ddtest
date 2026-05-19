@@ -6,6 +6,7 @@
 package integrations
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -23,6 +24,13 @@ import (
 const (
 	DefaultFlakyRetryCount      = 5
 	DefaultFlakyTotalRetryCount = 1_000
+
+	// autoDetectServiceName preserves the existing public getter behavior:
+	// an empty service name makes net.NewClientWithServiceName derive the
+	// service from DD_SERVICE or repository tags. The ensure helpers are
+	// sync.Once-guarded, so raw-response getters do not repeat initialization
+	// or backend requests beyond the matching processed getter path.
+	autoDetectServiceName = ""
 )
 
 type (
@@ -314,43 +322,75 @@ func ensureAdditionalFeaturesInitialization(_ string) {
 
 // GetSettings gets the settings from the backend settings endpoint
 func GetSettings() *net.SettingsResponseData {
-	// call to ensure the settings features initialization is completed (service name can be null here)
-	ensureSettingsInitialization("")
+	// call to ensure the settings features initialization is completed
+	ensureSettingsInitialization(autoDetectServiceName)
 	return &ciVisibilitySettings
+}
+
+func GetSettingsRawResponse() json.RawMessage {
+	ensureSettingsInitialization(autoDetectServiceName)
+	if ciVisibilityClient == nil {
+		return nil
+	}
+	return ciVisibilityClient.GetSettingsRawResponse()
 }
 
 // GetKnownTests gets the known tests data
 func GetKnownTests() *net.KnownTestsResponseData {
-	// call to ensure the additional features initialization is completed (service name can be null here)
-	ensureAdditionalFeaturesInitialization("")
+	// call to ensure the additional features initialization is completed
+	ensureAdditionalFeaturesInitialization(autoDetectServiceName)
 	return &ciVisibilityKnownTests
+}
+
+func GetKnownTestsRawResponse() json.RawMessage {
+	ensureAdditionalFeaturesInitialization(autoDetectServiceName)
+	if ciVisibilityClient == nil {
+		return nil
+	}
+	return ciVisibilityClient.GetKnownTestsRawResponse()
 }
 
 // GetTestManagementTestsData gets the test management tests data
 func GetTestManagementTestsData() *net.TestManagementTestsResponseDataModules {
-	// call to ensure the additional features initialization is completed (service name can be null here)
-	ensureAdditionalFeaturesInitialization("")
+	// call to ensure the additional features initialization is completed
+	ensureAdditionalFeaturesInitialization(autoDetectServiceName)
 	return &ciVisibilityTestManagementTests
+}
+
+func GetTestManagementTestsRawResponse() json.RawMessage {
+	ensureAdditionalFeaturesInitialization(autoDetectServiceName)
+	if ciVisibilityClient == nil {
+		return nil
+	}
+	return ciVisibilityClient.GetTestManagementTestsRawResponse()
 }
 
 // GetFlakyRetriesSettings gets the flaky retries settings
 func GetFlakyRetriesSettings() *FlakyRetriesSetting {
-	// call to ensure the additional features initialization is completed (service name can be null here)
-	ensureAdditionalFeaturesInitialization("")
+	// call to ensure the additional features initialization is completed
+	ensureAdditionalFeaturesInitialization(autoDetectServiceName)
 	return &ciVisibilityFlakyRetriesSettings
 }
 
 // GetSkippableTests gets the skippable tests from the backend
 func GetSkippableTests() map[string]map[string][]net.SkippableResponseDataAttributes {
-	// call to ensure the additional features initialization is completed (service name can be null here)
-	ensureAdditionalFeaturesInitialization("")
+	// call to ensure the additional features initialization is completed
+	ensureAdditionalFeaturesInitialization(autoDetectServiceName)
 	return ciVisibilitySkippables
+}
+
+func GetSkippableTestsRawResponse() json.RawMessage {
+	ensureAdditionalFeaturesInitialization(autoDetectServiceName)
+	if ciVisibilityClient == nil {
+		return nil
+	}
+	return ciVisibilityClient.GetSkippableTestsRawResponse()
 }
 
 // GetImpactedTestsAnalyzer gets the impacted tests analyzer
 func GetImpactedTestsAnalyzer() *impactedtests.ImpactedTestAnalyzer {
-	// call to ensure the additional features initialization is completed (service name can be null here)
-	ensureAdditionalFeaturesInitialization("")
+	// call to ensure the additional features initialization is completed
+	ensureAdditionalFeaturesInitialization(autoDetectServiceName)
 	return ciVisibilityImpactedTestsAnalyzer
 }
 

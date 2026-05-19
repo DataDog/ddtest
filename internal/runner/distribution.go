@@ -3,6 +3,7 @@ package runner
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -76,38 +77,56 @@ func DistributeTestFiles(testFiles map[string]int, parallelRunners int) [][]stri
 // For multiple runners: distributes files using bin packing and writes to separate runner files
 // For single runner: copies test-files.txt content to runner-0
 func CreateTestSplits(testFiles map[string]int, parallelRunners int, testFilesOutputPath string) error {
-	// Create tests-split directory
-	if err := os.MkdirAll(constants.TestsSplitDir, 0755); err != nil {
-		return fmt.Errorf("failed to create tests-split directory: %w", err)
-	}
+	testsSplitDirs := []string{constants.TestsSplitDir, constants.LegacyTestsSplitDir}
 
 	if parallelRunners > 1 {
 		// Distribute test files across parallel runners using bin packing
 		distribution := DistributeTestFiles(testFiles, parallelRunners)
-
-		// Save each runner's test files to separate files
-		for i, runnerFiles := range distribution {
-			runnerContent := strings.Join(runnerFiles, "\n")
-			if len(runnerFiles) > 0 {
-				runnerContent += "\n"
-			}
-
-			runnerFilePath := fmt.Sprintf("%s/runner-%d", constants.TestsSplitDir, i)
-			if err := os.WriteFile(runnerFilePath, []byte(runnerContent), 0644); err != nil {
-				return fmt.Errorf("failed to write runner-%d files to %s: %w", i, runnerFilePath, err)
+		for _, testsSplitDir := range testsSplitDirs {
+			if err := writeDistributedTestSplits(distribution, testsSplitDir); err != nil {
+				return err
 			}
 		}
 	} else {
 		// For single runner, copy test-files.txt to runner-0
-		runnerFilePath := fmt.Sprintf("%s/runner-0", constants.TestsSplitDir)
 		testFilesData, err := os.ReadFile(testFilesOutputPath)
 		if err != nil {
 			return fmt.Errorf("failed to read test files from %s: %w", testFilesOutputPath, err)
 		}
 
-		if err := os.WriteFile(runnerFilePath, testFilesData, 0644); err != nil {
-			return fmt.Errorf("failed to copy test files to %s: %w", runnerFilePath, err)
+		for _, testsSplitDir := range testsSplitDirs {
+			if err := writeRunnerSplit(testsSplitDir, 0, testFilesData); err != nil {
+				return err
+			}
 		}
+	}
+
+	return nil
+}
+
+func writeDistributedTestSplits(distribution [][]string, testsSplitDir string) error {
+	for i, runnerFiles := range distribution {
+		runnerContent := strings.Join(runnerFiles, "\n")
+		if len(runnerFiles) > 0 {
+			runnerContent += "\n"
+		}
+
+		if err := writeRunnerSplit(testsSplitDir, i, []byte(runnerContent)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func writeRunnerSplit(testsSplitDir string, runnerIndex int, content []byte) error {
+	if err := os.MkdirAll(testsSplitDir, 0755); err != nil {
+		return fmt.Errorf("failed to create tests-split directory %s: %w", testsSplitDir, err)
+	}
+
+	runnerFilePath := filepath.Join(testsSplitDir, fmt.Sprintf("runner-%d", runnerIndex))
+	if err := os.WriteFile(runnerFilePath, content, 0644); err != nil {
+		return fmt.Errorf("failed to write runner-%d files to %s: %w", runnerIndex, runnerFilePath, err)
 	}
 
 	return nil

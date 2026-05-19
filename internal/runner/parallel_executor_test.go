@@ -17,9 +17,9 @@ func TestRunParallelTests_Success(t *testing.T) {
 	_ = os.Chdir(tempDir)
 
 	// Setup test split directory and files
-	_ = os.MkdirAll(filepath.Join(constants.PlanDirectory, "tests-split"), 0755)
-	_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "tests-split", "runner-0"), []byte("test/file1_test.rb\n"), 0644)
-	_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "tests-split", "runner-1"), []byte("test/file2_test.rb\n"), 0644)
+	_ = os.MkdirAll(constants.TestsSplitDir, 0755)
+	_ = os.WriteFile(filepath.Join(constants.TestsSplitDir, "runner-0"), []byte("test/file1_test.rb\n"), 0644)
+	_ = os.WriteFile(filepath.Join(constants.TestsSplitDir, "runner-1"), []byte("test/file2_test.rb\n"), 0644)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",

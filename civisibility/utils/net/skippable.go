@@ -61,6 +61,7 @@ func (c *client) GetSkippableTests() (correlationID string, skippables map[strin
 		err = fmt.Errorf("civisibility.GetSkippableTests: repository URL and commit SHA are required")
 		return
 	}
+	c.skippableTestsRawResponse = nil
 
 	body := skippableRequest{
 		Data: skippableRequestHeader{
@@ -82,6 +83,7 @@ func (c *client) GetSkippableTests() (correlationID string, skippables map[strin
 	if err != nil {
 		return "", nil, fmt.Errorf("sending skippable tests request: %s", err)
 	}
+	c.skippableTestsRawResponse = cloneRawMessage(response.Body)
 
 	var responseObject skippableResponse
 	err = response.Unmarshal(&responseObject)

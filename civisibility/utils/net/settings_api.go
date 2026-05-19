@@ -73,6 +73,7 @@ func (c *client) GetSettings() (*SettingsResponseData, error) {
 	if c.repositoryURL == "" || c.commitSha == "" {
 		return nil, fmt.Errorf("civisibility.GetSettings: repository URL and commit SHA are required")
 	}
+	c.settingsRawResponse = nil
 
 	body := settingsRequest{
 		Data: settingsRequestHeader{
@@ -97,6 +98,7 @@ func (c *client) GetSettings() (*SettingsResponseData, error) {
 	}
 
 	slog.Debug("civisibility.settings", "responseBody", string(response.Body))
+	c.settingsRawResponse = cloneRawMessage(response.Body)
 
 	var responseObject settingsResponse
 	err = response.Unmarshal(&responseObject)

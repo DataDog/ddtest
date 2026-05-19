@@ -3,6 +3,7 @@ package runner
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
@@ -13,6 +14,7 @@ import (
 func createWorkerEnv(workerEnvMap map[string]string, nodeIndex int, workerIndex int) map[string]string {
 	workerEnv := replaceIndexPlaceholders(workerEnvMap, nodeIndex, workerIndex)
 	ensureTestSessionName(workerEnv, nodeIndex, workerIndex)
+	ensureManifestFile(workerEnv)
 	return workerEnv
 }
 
@@ -43,4 +45,21 @@ func ensureTestSessionName(workerEnv map[string]string, nodeIndex int, workerInd
 
 	service := resolveServiceName(ciUtils.GetCITags()[ciConstants.GitRepositoryURL])
 	workerEnv[ciConstants.CIVisibilityTestSessionNameEnvironmentVariable] = fmt.Sprintf("%s-node-%d-worker-%d", service, nodeIndex, workerIndex)
+}
+
+func ensureManifestFile(workerEnv map[string]string) {
+	if _, ok := workerEnv[constants.TestOptimizationManifestFileEnvVar]; ok {
+		return
+	}
+
+	if manifestFile, ok := os.LookupEnv(constants.TestOptimizationManifestFileEnvVar); ok {
+		workerEnv[constants.TestOptimizationManifestFileEnvVar] = manifestFile
+		return
+	}
+
+	manifestPath, err := filepath.Abs(constants.ManifestPath)
+	if err != nil {
+		manifestPath = constants.ManifestPath
+	}
+	workerEnv[constants.TestOptimizationManifestFileEnvVar] = manifestPath
 }

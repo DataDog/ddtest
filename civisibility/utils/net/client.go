@@ -7,6 +7,7 @@ package net
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -36,11 +37,15 @@ type (
 	// Client is an interface for sending requests to the Datadog backend.
 	Client interface {
 		GetSettings() (*SettingsResponseData, error)
+		GetSettingsRawResponse() json.RawMessage
 		GetKnownTests() (*KnownTestsResponseData, error)
+		GetKnownTestsRawResponse() json.RawMessage
 		GetCommits(localCommits []string) ([]string, error)
 		SendPackFiles(commitSha string, packFiles []string) (bytes int64, err error)
 		GetSkippableTests() (correlationID string, skippables map[string]map[string][]SkippableResponseDataAttributes, err error)
+		GetSkippableTestsRawResponse() json.RawMessage
 		GetTestManagementTests() (*TestManagementTestsResponseDataModules, error)
+		GetTestManagementTestsRawResponse() json.RawMessage
 		SendLogs(logsPayload io.Reader) error
 	}
 
@@ -61,6 +66,11 @@ type (
 		testConfigurations testConfigurations
 		headers            map[string]string
 		handler            *RequestHandler
+
+		settingsRawResponse            json.RawMessage
+		knownTestsRawResponse          json.RawMessage
+		skippableTestsRawResponse      json.RawMessage
+		testManagementTestsRawResponse json.RawMessage
 	}
 
 	// testConfigurations represents the test configurations.
@@ -249,6 +259,29 @@ func NewClientWithServiceName(serviceName string) Client {
 // NewClient creates a new client with the default service name.
 func NewClient() Client {
 	return NewClientWithServiceName("")
+}
+
+func cloneRawMessage(data []byte) json.RawMessage {
+	if len(data) == 0 {
+		return nil
+	}
+	return append(json.RawMessage(nil), data...)
+}
+
+func (c *client) GetSettingsRawResponse() json.RawMessage {
+	return cloneRawMessage(c.settingsRawResponse)
+}
+
+func (c *client) GetKnownTestsRawResponse() json.RawMessage {
+	return cloneRawMessage(c.knownTestsRawResponse)
+}
+
+func (c *client) GetSkippableTestsRawResponse() json.RawMessage {
+	return cloneRawMessage(c.skippableTestsRawResponse)
+}
+
+func (c *client) GetTestManagementTestsRawResponse() json.RawMessage {
+	return cloneRawMessage(c.testManagementTestsRawResponse)
 }
 
 // getURLPath returns the full URL path for the given URL path.

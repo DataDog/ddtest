@@ -51,7 +51,7 @@ func TestTestRunner_Plan_StoresTestSuiteDurationsCache(t *testing.T) {
 		t.Fatalf("Plan() should not return error, got: %v", err)
 	}
 
-	cachePath := filepath.Join(constants.PlanDirectory, "cache", testoptimization.TestSuiteDurationsCacheFile)
+	cachePath := filepath.Join(constants.RunnerCacheDir, testoptimization.TestSuiteDurationsCacheFile)
 	if _, err := os.Stat(cachePath); err != nil {
 		t.Fatalf("Expected test suite durations cache file to be written: %v", err)
 	}

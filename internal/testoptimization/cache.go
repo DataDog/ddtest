@@ -22,6 +22,13 @@ type SkippableTestsCache struct {
 // TestSuiteDurationsCacheFile is the cache file name for suite duration metadata.
 const TestSuiteDurationsCacheFile = "test_suite_durations.json"
 
+const (
+	httpSettingsCacheFile       = "settings.json"
+	httpKnownTestsCacheFile     = "known_tests.json"
+	httpSkippableTestsCacheFile = "skippable_tests.json"
+	httpTestManagementCacheFile = "test_management.json"
+)
+
 // CacheManager handles creation and storage of cache data for test runners
 type CacheManager struct{}
 
@@ -32,8 +39,15 @@ func NewCacheManager() *CacheManager {
 
 // CreateCacheDirectory creates the .testoptimization/cache directory for storing cache data
 func (cm *CacheManager) CreateCacheDirectory() error {
-	cacheDir := filepath.Join(appConstants.PlanDirectory, "cache")
-	return os.MkdirAll(cacheDir, 0755)
+	return os.MkdirAll(appConstants.CacheDir, 0755)
+}
+
+func (cm *CacheManager) createHTTPCacheDirectory() error {
+	return os.MkdirAll(appConstants.HTTPCacheDir, 0755)
+}
+
+func (cm *CacheManager) createRunnerCacheDirectory() error {
+	return os.MkdirAll(appConstants.RunnerCacheDir, 0755)
 }
 
 // writeJSONToFile writes data as JSON to the specified file path
@@ -44,6 +58,18 @@ func (cm *CacheManager) writeJSONToFile(data any, filePath string) error {
 	}
 
 	if err := os.WriteFile(filePath, jsonData, 0644); err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+
+	return nil
+}
+
+func (cm *CacheManager) writeRawJSONToFile(data json.RawMessage, filePath string) error {
+	if len(data) == 0 {
+		return nil
+	}
+
+	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 
@@ -64,13 +90,47 @@ func (cm *CacheManager) readJSONFromFile(filePath string, data any) error {
 	return nil
 }
 
+func (cm *CacheManager) storeRawHTTPResponse(data json.RawMessage, fileName string) error {
+	if len(data) == 0 {
+		return nil
+	}
+	if err := cm.createHTTPCacheDirectory(); err != nil {
+		return fmt.Errorf("failed to create HTTP cache directory: %w", err)
+	}
+
+	path := filepath.Join(appConstants.HTTPCacheDir, fileName)
+	if err := cm.writeRawJSONToFile(data, path); err != nil {
+		slog.Error("Failed to write raw backend response to file", "error", err, "path", path)
+		return err
+	}
+
+	slog.Debug("Raw backend response written to file", "path", path)
+	return nil
+}
+
+func (cm *CacheManager) StoreRawRepositorySettings(data json.RawMessage) error {
+	return cm.storeRawHTTPResponse(data, httpSettingsCacheFile)
+}
+
+func (cm *CacheManager) StoreRawKnownTestsCache(data json.RawMessage) error {
+	return cm.storeRawHTTPResponse(data, httpKnownTestsCacheFile)
+}
+
+func (cm *CacheManager) StoreRawSkippableTestsCache(data json.RawMessage) error {
+	return cm.storeRawHTTPResponse(data, httpSkippableTestsCacheFile)
+}
+
+func (cm *CacheManager) StoreRawTestManagementTestsCache(data json.RawMessage) error {
+	return cm.storeRawHTTPResponse(data, httpTestManagementCacheFile)
+}
+
 // StoreRepositorySettings stores repository settings in .testoptimization/cache/settings.json
 func (cm *CacheManager) StoreRepositorySettings(repositorySettings *net.SettingsResponseData) error {
 	if err := cm.CreateCacheDirectory(); err != nil {
 		return fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
-	settingsPath := filepath.Join(appConstants.PlanDirectory, "cache", "settings.json")
+	settingsPath := filepath.Join(appConstants.CacheDir, "settings.json")
 	if err := cm.writeJSONToFile(repositorySettings, settingsPath); err != nil {
 		slog.Error("Failed to write repository settings to file", "error", err, "path", settingsPath)
 		return err
@@ -96,7 +156,7 @@ func (cm *CacheManager) StoreSkippableTestsCache(skippableTests map[string]map[s
 		SkippableTests: skippableTests,
 	}
 
-	skippableTestsPath := filepath.Join(appConstants.PlanDirectory, "cache", "skippable_tests.json")
+	skippableTestsPath := filepath.Join(appConstants.CacheDir, "skippable_tests.json")
 	if err := cm.writeJSONToFile(skippableTestsCache, skippableTestsPath); err != nil {
 		slog.Error("Failed to write skippable tests to file", "error", err, "path", skippableTestsPath)
 		return err
@@ -112,7 +172,7 @@ func (cm *CacheManager) StoreKnownTestsCache(knownTests *net.KnownTestsResponseD
 		return fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
-	knownTestsPath := filepath.Join(appConstants.PlanDirectory, "cache", "known_tests.json")
+	knownTestsPath := filepath.Join(appConstants.CacheDir, "known_tests.json")
 	if err := cm.writeJSONToFile(knownTests, knownTestsPath); err != nil {
 		slog.Error("Failed to write known tests to file", "error", err, "path", knownTestsPath)
 		return err
@@ -128,7 +188,7 @@ func (cm *CacheManager) StoreTestManagementTestsCache(testManagementTests *net.T
 		return fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
-	testManagementTestsPath := filepath.Join(appConstants.PlanDirectory, "cache", "test_management_tests.json")
+	testManagementTestsPath := filepath.Join(appConstants.CacheDir, "test_management_tests.json")
 	if err := cm.writeJSONToFile(testManagementTests, testManagementTestsPath); err != nil {
 		slog.Error("Failed to write test management tests to file", "error", err, "path", testManagementTestsPath)
 		return err
@@ -138,30 +198,29 @@ func (cm *CacheManager) StoreTestManagementTestsCache(testManagementTests *net.T
 	return nil
 }
 
-// StoreTestSuiteDurationsCache stores test suite duration data in .testoptimization/cache/test_suite_durations.json
+// StoreTestSuiteDurationsCache stores ddtest-private duration data in the runner cache.
 func (cm *CacheManager) StoreTestSuiteDurationsCache(cache any) error {
-	if err := cm.CreateCacheDirectory(); err != nil {
-		return fmt.Errorf("failed to create cache directory: %w", err)
+	if err := cm.createRunnerCacheDirectory(); err != nil {
+		return fmt.Errorf("failed to create runner cache directory: %w", err)
 	}
 
-	testSuiteDurationsPath := filepath.Join(appConstants.PlanDirectory, "cache", TestSuiteDurationsCacheFile)
-	if err := cm.writeJSONToFile(cache, testSuiteDurationsPath); err != nil {
-		slog.Error("Failed to write test suite durations to file", "error", err, "path", testSuiteDurationsPath)
+	runnerPath := filepath.Join(appConstants.RunnerCacheDir, TestSuiteDurationsCacheFile)
+	if err := cm.writeJSONToFile(cache, runnerPath); err != nil {
+		slog.Error("Failed to write test suite durations to file", "error", err, "path", runnerPath)
 		return err
 	}
 
-	slog.Debug("Test suite durations written to file", "path", testSuiteDurationsPath)
+	slog.Debug("Test suite durations written to file", "path", runnerPath)
 	return nil
 }
 
-// ReadTestSuiteDurationsCache reads test suite duration data from .testoptimization/cache/test_suite_durations.json
+// ReadTestSuiteDurationsCache reads ddtest-private duration data from the runner cache.
 func (cm *CacheManager) ReadTestSuiteDurationsCache(cache any) error {
-	testSuiteDurationsPath := filepath.Join(appConstants.PlanDirectory, "cache", TestSuiteDurationsCacheFile)
-
-	if err := cm.readJSONFromFile(testSuiteDurationsPath, cache); err != nil {
+	runnerPath := filepath.Join(appConstants.RunnerCacheDir, TestSuiteDurationsCacheFile)
+	if err := cm.readJSONFromFile(runnerPath, cache); err != nil {
 		return err
 	}
 
-	slog.Debug("Test suite durations read from file", "path", testSuiteDurationsPath)
+	slog.Debug("Test suite durations read from file", "path", runnerPath)
 	return nil
 }

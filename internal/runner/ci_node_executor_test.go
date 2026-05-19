@@ -18,8 +18,8 @@ func TestRunCINodeTests_SingleWorker(t *testing.T) {
 	_ = os.Chdir(tempDir)
 
 	// Setup test split directory and files
-	_ = os.MkdirAll(filepath.Join(constants.PlanDirectory, "tests-split"), 0755)
-	_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "tests-split", "runner-1"), []byte("test/file2_test.rb\ntest/file3_test.rb\n"), 0644)
+	_ = os.MkdirAll(constants.TestsSplitDir, 0755)
+	_ = os.WriteFile(filepath.Join(constants.TestsSplitDir, "runner-1"), []byte("test/file2_test.rb\ntest/file3_test.rb\n"), 0644)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -53,8 +53,8 @@ func TestRunCINodeTests_MultipleWorkers(t *testing.T) {
 	logs := captureLogs(t)
 
 	// Setup test split directory and files - 4 test files for ci-node 1
-	_ = os.MkdirAll(filepath.Join(constants.PlanDirectory, "tests-split"), 0755)
-	_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "tests-split", "runner-1"),
+	_ = os.MkdirAll(constants.TestsSplitDir, 0755)
+	_ = os.WriteFile(filepath.Join(constants.TestsSplitDir, "runner-1"),
 		[]byte("test/file1_test.rb\ntest/file2_test.rb\ntest/file3_test.rb\ntest/file4_test.rb\n"), 0644)
 
 	mockFramework := &MockFramework{
@@ -109,8 +109,8 @@ func TestRunCINodeTests_NodeIndexMatchesCINode(t *testing.T) {
 	_ = os.Chdir(tempDir)
 
 	// Setup test split directory and files - 2 test files for ci-node 1
-	_ = os.MkdirAll(filepath.Join(constants.PlanDirectory, "tests-split"), 0755)
-	_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "tests-split", "runner-1"),
+	_ = os.MkdirAll(constants.TestsSplitDir, 0755)
+	_ = os.WriteFile(filepath.Join(constants.TestsSplitDir, "runner-1"),
 		[]byte("test/file1_test.rb\ntest/file2_test.rb\n"), 0644)
 
 	mockFramework := &MockFramework{
@@ -163,8 +163,8 @@ func TestRunCINodeTests_SingleWorkerNodeIndex(t *testing.T) {
 	_ = os.Chdir(tempDir)
 
 	// Setup test split directory and files
-	_ = os.MkdirAll(filepath.Join(constants.PlanDirectory, "tests-split"), 0755)
-	_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "tests-split", "runner-2"),
+	_ = os.MkdirAll(constants.TestsSplitDir, 0755)
+	_ = os.WriteFile(filepath.Join(constants.TestsSplitDir, "runner-2"),
 		[]byte("test/file1_test.rb\n"), 0644)
 
 	mockFramework := &MockFramework{
@@ -201,7 +201,7 @@ func TestRunCINodeTests_FileNotFound(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(tempDir)
 
-	_ = os.MkdirAll(filepath.Join(constants.PlanDirectory, "tests-split"), 0755)
+	_ = os.MkdirAll(constants.TestsSplitDir, 0755)
 	// Don't create runner-2 file
 
 	mockFramework := &MockFramework{FrameworkName: "rspec"}
@@ -217,6 +217,28 @@ func TestRunCINodeTests_FileNotFound(t *testing.T) {
 	}
 }
 
+func TestRunCINodeTests_DoesNotReadLegacySplitFile(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.MkdirAll(constants.LegacyTestsSplitDir, 0755)
+	_ = os.WriteFile(filepath.Join(constants.LegacyTestsSplitDir, "runner-2"), []byte("test/file1_test.rb\n"), 0644)
+
+	mockFramework := &MockFramework{FrameworkName: "rspec"}
+
+	err := runCINodeTests(context.Background(), mockFramework, map[string]string{}, 2, 1, nil)
+	if err == nil {
+		t.Error("runCINodeTests() should return error when only the legacy runner file exists")
+	}
+
+	expectedMsg := "runner file for ci-node 2 does not exist"
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Error should contain '%s', got: %v", expectedMsg, err)
+	}
+}
+
 func TestRunCINodeTests_EmptyFile(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
@@ -224,8 +246,8 @@ func TestRunCINodeTests_EmptyFile(t *testing.T) {
 	_ = os.Chdir(tempDir)
 
 	// Setup test split directory with empty runner file
-	_ = os.MkdirAll(filepath.Join(constants.PlanDirectory, "tests-split"), 0755)
-	_ = os.WriteFile(filepath.Join(constants.PlanDirectory, "tests-split", "runner-0"), []byte(""), 0644)
+	_ = os.MkdirAll(constants.TestsSplitDir, 0755)
+	_ = os.WriteFile(filepath.Join(constants.TestsSplitDir, "runner-0"), []byte(""), 0644)
 
 	mockFramework := &MockFramework{FrameworkName: "rspec"}
 

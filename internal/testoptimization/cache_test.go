@@ -31,17 +31,12 @@ type testSuiteAggregateCacheFixture struct {
 	NumTestsSkipped   int     `json:"numTestsSkipped"`
 }
 
-func TestCacheManager_StoreAndReadTestSuiteDurationsCache(t *testing.T) {
-	tempDir := t.TempDir()
-	oldWd, _ := os.Getwd()
-	defer func() { _ = os.Chdir(oldWd) }()
-	_ = os.Chdir(tempDir)
-
-	cache := testSuiteDurationsCacheFixture{
+func newTestSuiteDurationsCacheFixture(sourceFile string, weight int) testSuiteDurationsCacheFixture {
+	return testSuiteDurationsCacheFixture{
 		TestSuiteDurations: map[string]map[string]TestSuiteDurationInfo{
 			"rspec": {
 				"Suite1": {
-					SourceFile: "spec/suite1_spec.rb",
+					SourceFile: sourceFile,
 					Duration:   DurationPercentiles{P50: "5000000000", P90: "7000000000"},
 				},
 			},
@@ -50,7 +45,7 @@ func TestCacheManager_StoreAndReadTestSuiteDurationsCache(t *testing.T) {
 			{
 				Module:            "rspec",
 				Suite:             "Suite1",
-				SourceFile:        "spec/suite1_spec.rb",
+				SourceFile:        sourceFile,
 				TotalDuration:     5000000000,
 				EstimatedDuration: 2500000000,
 				NumTests:          2,
@@ -58,21 +53,40 @@ func TestCacheManager_StoreAndReadTestSuiteDurationsCache(t *testing.T) {
 			},
 		},
 		SuitesBySourceFile: map[string][]testSuiteCacheKeyFixture{
-			"spec/suite1_spec.rb": {{Module: "rspec", Suite: "Suite1"}},
+			sourceFile: {{Module: "rspec", Suite: "Suite1"}},
 		},
 		TestFileWeights: map[string]int{
-			"spec/suite1_spec.rb": 2500,
+			sourceFile: weight,
 		},
 	}
+}
+
+func TestCacheManager_StoreAndReadTestSuiteDurationsCache(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	cache := newTestSuiteDurationsCacheFixture("spec/suite1_spec.rb", 2500)
 
 	cacheManager := NewCacheManager()
 	if err := cacheManager.StoreTestSuiteDurationsCache(cache); err != nil {
 		t.Fatalf("StoreTestSuiteDurationsCache() should not return error, got: %v", err)
 	}
 
-	cachePath := filepath.Join(appConstants.PlanDirectory, "cache", TestSuiteDurationsCacheFile)
-	if _, err := os.Stat(cachePath); err != nil {
-		t.Fatalf("Expected test suite durations cache file to be written: %v", err)
+	runnerCachePath := filepath.Join(appConstants.RunnerCacheDir, TestSuiteDurationsCacheFile)
+	if _, err := os.Stat(runnerCachePath); err != nil {
+		t.Fatalf("Expected runner test suite durations cache file to be written: %v", err)
+	}
+
+	legacyCachePath := filepath.Join(appConstants.CacheDir, TestSuiteDurationsCacheFile)
+	if _, err := os.Stat(legacyCachePath); !os.IsNotExist(err) {
+		t.Fatalf("Expected test suite durations cache to stay out of legacy cache dir, got error: %v", err)
+	}
+
+	httpCachePath := filepath.Join(appConstants.HTTPCacheDir, TestSuiteDurationsCacheFile)
+	if _, err := os.Stat(httpCachePath); !os.IsNotExist(err) {
+		t.Fatalf("Expected test suite durations cache to stay out of cache/http, got error: %v", err)
 	}
 
 	var restored testSuiteDurationsCacheFixture
@@ -82,5 +96,28 @@ func TestCacheManager_StoreAndReadTestSuiteDurationsCache(t *testing.T) {
 
 	if !reflect.DeepEqual(restored, cache) {
 		t.Errorf("Expected restored cache to match stored cache.\nexpected: %v\nactual: %v", cache, restored)
+	}
+}
+
+func TestCacheManager_ReadTestSuiteDurationsCache_DoesNotReadLegacyCache(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	cacheManager := NewCacheManager()
+	if err := cacheManager.CreateCacheDirectory(); err != nil {
+		t.Fatalf("CreateCacheDirectory() should not return error, got: %v", err)
+	}
+
+	legacyCache := newTestSuiteDurationsCacheFixture("spec/legacy_spec.rb", 1000)
+	legacyCachePath := filepath.Join(appConstants.CacheDir, TestSuiteDurationsCacheFile)
+	if err := cacheManager.writeJSONToFile(legacyCache, legacyCachePath); err != nil {
+		t.Fatalf("writeJSONToFile() should not return error for legacy cache, got: %v", err)
+	}
+
+	var restored testSuiteDurationsCacheFixture
+	if err := cacheManager.ReadTestSuiteDurationsCache(&restored); err == nil {
+		t.Fatal("ReadTestSuiteDurationsCache() should not read the legacy cache path")
 	}
 }
