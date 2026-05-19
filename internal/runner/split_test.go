@@ -62,3 +62,49 @@ func TestScoreSortedWeightedRunnerSplit_UnavoidableEmptyRunners(t *testing.T) {
 		t.Fatalf("scoreSortedWeightedRunnerSplit() = %+v, expected %+v", result, expected)
 	}
 }
+
+func TestDistributeWeightedTestFiles(t *testing.T) {
+	testFiles := map[string]int{
+		"fast.rb":   1,
+		"medium.rb": 2,
+		"slow.rb":   3,
+	}
+
+	result := distributeWeightedTestFiles(testFiles, 2)
+	expected := [][]string{
+		{"slow.rb"},
+		{"medium.rb", "fast.rb"},
+	}
+
+	assertDistribution(t, result, expected)
+}
+
+func TestDistributeSortedWeightedTestFiles(t *testing.T) {
+	files := []weightedTestFile{
+		{path: "slow.rb", weight: 3},
+		{path: "medium.rb", weight: 2},
+		{path: "fast.rb", weight: 1},
+	}
+
+	result := distributeSortedWeightedTestFiles(files, 2)
+	expected := [][]string{
+		{"slow.rb"},
+		{"medium.rb", "fast.rb"},
+	}
+
+	assertDistribution(t, result, expected)
+}
+
+func assertDistribution(t *testing.T, result, expected [][]string) {
+	t.Helper()
+
+	if len(result) != len(expected) {
+		t.Fatalf("distribution has %d runners, expected %d", len(result), len(expected))
+	}
+
+	for i := range expected {
+		if !slices.Equal(result[i], expected[i]) {
+			t.Errorf("runner %d = %v, expected %v", i, result[i], expected[i])
+		}
+	}
+}

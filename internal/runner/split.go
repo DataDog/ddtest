@@ -35,6 +35,16 @@ func sortedWeightedTestFiles(testFiles map[string]int) []weightedTestFile {
 	return files
 }
 
+func distributeWeightedTestFiles(testFiles map[string]int, parallelRunners int) [][]string {
+	builder := newTestSplitBuilder(parallelRunners)
+	return builder.distributeFiles(testFiles)
+}
+
+func distributeSortedWeightedTestFiles(files []weightedTestFile, parallelRunners int) [][]string {
+	builder := newTestSplitBuilder(parallelRunners)
+	return builder.distributeSortedFiles(files)
+}
+
 type splitScore struct {
 	parallelRunners int
 	wallTime        int
@@ -70,6 +80,24 @@ func (b *testSplitBuilder) addFile(weight int) int {
 	lightestRunner.load += weight
 	heap.Push(&b.loads, lightestRunner)
 	return lightestRunner.index
+}
+
+func (b *testSplitBuilder) distributeFiles(testFiles map[string]int) [][]string {
+	return b.distributeSortedFiles(sortedWeightedTestFiles(testFiles))
+}
+
+func (b *testSplitBuilder) distributeSortedFiles(files []weightedTestFile) [][]string {
+	result := make([][]string, b.parallelRunners)
+	for i := range result {
+		result[i] = []string{}
+	}
+
+	for _, file := range files {
+		runnerIndex := b.addFile(file.weight)
+		result[runnerIndex] = append(result[runnerIndex], file.path)
+	}
+
+	return result
 }
 
 func (b testSplitBuilder) score() splitScore {

@@ -11,19 +11,7 @@ import (
 
 // DistributeTestFiles distributes test files across parallel runners using weighted list scheduling.
 func DistributeTestFiles(testFiles map[string]int, parallelRunners int) [][]string {
-	builder := newTestSplitBuilder(parallelRunners)
-
-	result := make([][]string, builder.parallelRunners)
-	for i := range result {
-		result[i] = []string{}
-	}
-
-	for _, file := range sortedWeightedTestFiles(testFiles) {
-		runnerIndex := builder.addFile(file.weight)
-		result[runnerIndex] = append(result[runnerIndex], file.path)
-	}
-
-	return result
+	return distributeWeightedTestFiles(testFiles, parallelRunners)
 }
 
 // CreateTestSplits creates test split files for parallel runners
