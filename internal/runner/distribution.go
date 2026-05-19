@@ -11,29 +11,20 @@ import (
 
 // DistributeTestFiles distributes test files across parallel runners using weighted list scheduling.
 func DistributeTestFiles(testFiles map[string]int, parallelRunners int) [][]string {
-	return distributeSortedTestFiles(sortedWeightedTestFiles(testFiles), parallelRunners)
-}
-
-func distributeSortedTestFiles(files []weightedTestFile, parallelRunners int) [][]string {
 	if parallelRunners <= 0 {
 		parallelRunners = 1
 	}
 
-	if len(files) == 0 {
-		result := make([][]string, parallelRunners)
-		for i := range result {
-			result[i] = []string{}
-		}
-		return result
-	}
-
-	// result tracks files assigned to each bin (can be returned directly)
 	result := make([][]string, parallelRunners)
 	for i := range result {
 		result[i] = []string{}
 	}
 
-	scheduleSortedFiles(files, parallelRunners, result)
+	files := sortedWeightedTestFiles(testFiles)
+	if len(files) > 0 {
+		scheduleSortedFiles(files, parallelRunners, result)
+	}
+
 	return result
 }
 

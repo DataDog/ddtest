@@ -6,7 +6,7 @@ import (
 )
 
 func testCalculateParallelRunners(testFileWeights map[string]int, minParallelism, maxParallelism int) int {
-	return calculateParallelRunnersWithParams(testFileWeights, minParallelism, maxParallelism)
+	return calculateParallelRunners(testFileWeights, minParallelism, maxParallelism)
 }
 
 func TestCalculateParallelRunners_MaxParallelismIsOne(t *testing.T) {
@@ -121,6 +121,6 @@ func BenchmarkCalculateParallelRunners20000TestFiles(b *testing.B) {
 
 	b.ResetTimer()
 	for range b.N {
-		_ = calculateParallelRunnersWithParams(testFileWeights, 1, 256)
+		_ = calculateParallelRunners(testFileWeights, 1, 256)
 	}
 }

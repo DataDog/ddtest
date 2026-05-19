@@ -1,18 +1,10 @@
 package runner
 
-import (
-	"log/slog"
-
-	"github.com/DataDog/ddtest/internal/settings"
-)
+import "log/slog"
 
 // calculateParallelRunners determines the number of parallel runners by
 // estimating splits between the configured min and max parallelism.
-func calculateParallelRunners(testFileWeights map[string]int) int {
-	return calculateParallelRunnersWithParams(testFileWeights, settings.GetMinParallelism(), settings.GetMaxParallelism())
-}
-
-func calculateParallelRunnersWithParams(testFileWeights map[string]int, minParallelism, maxParallelism int) int {
+func calculateParallelRunners(testFileWeights map[string]int, minParallelism, maxParallelism int) int {
 	// maxParallelism could be 0 or negative!
 	if maxParallelism <= 1 {
 		return 1
