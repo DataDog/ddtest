@@ -15,6 +15,11 @@ type runnerLoad struct {
 	load  int
 }
 
+type weightedRunnerSplit struct {
+	parallelRunners int
+	loads           minLoadHeap
+}
+
 type minLoadHeap []runnerLoad
 
 func (h minLoadHeap) Len() int {
@@ -75,30 +80,36 @@ func sortedWeightedTestFiles(testFiles map[string]int) []weightedTestFile {
 	return files
 }
 
-func scoreSortedSplit(files []weightedTestFile, parallelRunners int) splitScore {
-	return scheduleSortedFiles(files, parallelRunners, nil)
+func scoreSortedWeightedRunnerSplit(files []weightedTestFile, parallelRunners int) splitScore {
+	split := newWeightedRunnerSplit(parallelRunners)
+	for _, file := range files {
+		split.addFile(file.weight)
+	}
+	return split.score()
 }
 
-// scheduleSortedFiles uses longest-processing-time list scheduling: assign the
-// heaviest remaining file to the currently lightest runner.
-func scheduleSortedFiles(files []weightedTestFile, parallelRunners int, result [][]string) splitScore {
+func newWeightedRunnerSplit(parallelRunners int) weightedRunnerSplit {
 	if parallelRunners <= 0 {
 		parallelRunners = 1
 	}
 
-	loads := makeMinLoadHeap(parallelRunners)
-	for _, file := range files {
-		lightestRunner := heap.Pop(&loads).(runnerLoad)
-		lightestRunner.load += file.weight
-		if result != nil {
-			result[lightestRunner.index] = append(result[lightestRunner.index], file.path)
-		}
-		heap.Push(&loads, lightestRunner)
-	}
-
-	minLoad, maxLoad := minMaxLoad(loads)
-	return splitScore{
+	return weightedRunnerSplit{
 		parallelRunners: parallelRunners,
+		loads:           makeMinLoadHeap(parallelRunners),
+	}
+}
+
+func (s *weightedRunnerSplit) addFile(weight int) int {
+	lightestRunner := heap.Pop(&s.loads).(runnerLoad)
+	lightestRunner.load += weight
+	heap.Push(&s.loads, lightestRunner)
+	return lightestRunner.index
+}
+
+func (s weightedRunnerSplit) score() splitScore {
+	minLoad, maxLoad := minMaxLoad(s.loads)
+	return splitScore{
+		parallelRunners: s.parallelRunners,
 		wallTime:        maxLoad,
 		imbalance:       maxLoad - minLoad,
 	}

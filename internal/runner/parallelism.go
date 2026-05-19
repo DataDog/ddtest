@@ -28,9 +28,9 @@ func calculateParallelRunners(testFileWeights map[string]int, minParallelism, ma
 
 	candidateMax := maxUsefulParallelism(minParallelism, maxParallelism, len(files))
 
-	best := scoreSortedSplit(files, minParallelism)
+	best := scoreSortedWeightedRunnerSplit(files, minParallelism)
 	for parallelRunners := minParallelism + 1; parallelRunners <= candidateMax; parallelRunners++ {
-		score := scoreSortedSplit(files, parallelRunners)
+		score := scoreSortedWeightedRunnerSplit(files, parallelRunners)
 		if betterSplit(score, best) {
 			best = score
 		}
