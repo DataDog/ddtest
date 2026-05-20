@@ -1,42 +1,73 @@
 package runner
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"os"
 
-	"github.com/DataDog/ddtest/internal/framework"
 	"golang.org/x/sync/errgroup"
 )
 
-// runCINodeTests executes tests for a specific CI node (one split, not the whole tests set).
+// runCINode executes tests for a specific CI node (one split, not the whole tests set).
 // It further splits the node's tests among local workers based on ci_node_workers setting.
-func runCINodeTests(ctx context.Context, framework framework.Framework, workerEnvMap map[string]string, ciNode int, ciNodeWorkers int, testFileWeights map[string]int) error {
-	runnerFilePath := runnerSplitPath(ciNode)
-	if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
-		return fmt.Errorf("runner file for ci-node %d does not exist: %s", ciNode, runnerFilePath)
-	} else if err != nil {
-		return fmt.Errorf("failed to check runner file for ci-node %d at %s: %w", ciNode, runnerFilePath, err)
-	}
-
-	// Single worker mode: run all tests with nodeIndex matching ciNode.
-	if ciNodeWorkers <= 1 {
-		slog.Info("Running tests for CI node in single-worker mode", "ciNode", ciNode, "nodeIndex", ciNode, "workerIndex", 0)
-		return runTestBatchFromFile(ctx, framework, runnerFilePath, workerEnvMap, ciNode, 0)
-	}
-
-	testFiles, err := loadTestBatch(runnerFilePath)
+func (e testExecutor) runCINode(ciNode int, ciNodeWorkers int, testFileWeights map[string]int) runExecutionResult {
+	report := newCINodeExecutionReport(ciNode, ciNodeWorkers)
+	testFiles, err := loadCINodeTestFiles(ciNode)
 	if err != nil {
-		return fmt.Errorf("failed to read test files for ci-node %d from %s: %w", ciNode, runnerFilePath, err)
+		return report.failure(err)
+	}
+	report.TestFilesRun = len(testFiles)
+
+	if report.LocalWorkers <= 1 {
+		err = e.runCINodeSingleWorker(ciNode, testFiles)
+	} else {
+		err = e.runCINodeWorkers(ciNode, report.LocalWorkers, testFiles, testFileWeights)
+	}
+	if err != nil {
+		return report.failure(err)
+	}
+	return report.success()
+}
+
+func newCINodeExecutionReport(ciNode int, ciNodeWorkers int) runExecutionReport {
+	if ciNodeWorkers <= 0 {
+		ciNodeWorkers = 1
 	}
 
+	return runExecutionReport{
+		Mode:         runModeCINode,
+		CINode:       ciNode,
+		LocalWorkers: ciNodeWorkers,
+	}
+}
+
+func loadCINodeTestFiles(ciNode int) ([]string, error) {
+	runnerFilePath := runnerSplitPath(ciNode)
+	testFiles, err := loadTestBatch(runnerFilePath)
+	if os.IsNotExist(err) {
+		return nil, fmt.Errorf("runner file for ci-node %d does not exist: %s", ciNode, runnerFilePath)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read test files for ci-node %d from %s: %w", ciNode, runnerFilePath, err)
+	}
+	return testFiles, nil
+}
+
+func (e testExecutor) runCINodeSingleWorker(ciNode int, testFiles []string) error {
+	slog.Info("Running tests for CI node in single-worker mode", "ciNode", ciNode, "nodeIndex", ciNode, "workerIndex", 0)
+	if len(testFiles) == 0 {
+		slog.Info("No tests to run", "nodeIndex", ciNode, "workerIndex", 0)
+		return nil
+	}
+	return e.runBatch(testFiles, ciNode, 0)
+}
+
+func (e testExecutor) runCINodeWorkers(ciNode int, ciNodeWorkers int, testFiles []string, testFileWeights map[string]int) error {
 	if len(testFiles) == 0 {
 		slog.Info("No tests to run for CI node", "ciNode", ciNode)
 		return nil
 	}
 
-	// Multi-worker mode: split tests among local workers.
 	slog.Info("Running tests for CI node in parallel mode",
 		"ciNode", ciNode, "ciNodeWorkers", ciNodeWorkers, "testFilesCount", len(testFiles))
 
@@ -44,7 +75,10 @@ func runCINodeTests(ctx context.Context, framework framework.Framework, workerEn
 		testFileWeights = map[string]int{}
 	}
 	groups := subsplitTestsBetweenWorkers(testFiles, ciNodeWorkers, testFileWeights)
+	return e.runCINodeWorkerGroups(ciNode, groups)
+}
 
+func (e testExecutor) runCINodeWorkerGroups(ciNode int, groups [][]string) error {
 	var g errgroup.Group
 	for workerIndex, groupFiles := range groups {
 		if len(groupFiles) == 0 {
@@ -57,7 +91,7 @@ func runCINodeTests(ctx context.Context, framework framework.Framework, workerEn
 			"testFiles", groupFiles)
 
 		g.Go(func() error {
-			return runTestBatch(ctx, framework, groupFiles, workerEnvMap, ciNode, workerIndex)
+			return e.runBatch(groupFiles, ciNode, workerIndex)
 		})
 	}
 

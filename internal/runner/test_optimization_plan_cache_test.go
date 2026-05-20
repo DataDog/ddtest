@@ -13,7 +13,7 @@ import (
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
-func TestTestRunner_Plan_StoresTestSuiteDurationsCache(t *testing.T) {
+func TestTestRunner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -51,9 +51,9 @@ func TestTestRunner_Plan_StoresTestSuiteDurationsCache(t *testing.T) {
 		t.Fatalf("Plan() should not return error, got: %v", err)
 	}
 
-	cachePath := filepath.Join(constants.RunnerCacheDir, testoptimization.TestSuiteDurationsCacheFile)
+	cachePath := filepath.Join(constants.RunnerCacheDir, testoptimization.TestOptimizationPlanCacheFile)
 	if _, err := os.Stat(cachePath); err != nil {
-		t.Fatalf("Expected test suite durations cache file to be written: %v", err)
+		t.Fatalf("Expected test optimization plan cache file to be written: %v", err)
 	}
 
 	restored := NewWithDependencies(
@@ -62,8 +62,8 @@ func TestTestRunner_Plan_StoresTestSuiteDurationsCache(t *testing.T) {
 		&MockTestSuiteDurationsClient{},
 		newDefaultMockCIProviderDetector(),
 	)
-	if err := restored.restoreTestSuiteDurationsCache(); err != nil {
-		t.Fatalf("restoreTestSuiteDurationsCache() should not return error, got: %v", err)
+	if err := restored.restoreTestOptimizationPlanCache(); err != nil {
+		t.Fatalf("restoreTestOptimizationPlanCache() should not return error, got: %v", err)
 	}
 
 	if !reflect.DeepEqual(restored.suiteAggregates, runner.suiteAggregates) {
@@ -77,7 +77,7 @@ func TestTestRunner_Plan_StoresTestSuiteDurationsCache(t *testing.T) {
 	}
 }
 
-func TestTestRunner_StoreAndRestoreTestSuiteDurationsCache_RoundTripDurations(t *testing.T) {
+func TestTestRunner_StoreAndRestoreTestOptimizationPlanCache_RoundTripDurations(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -115,8 +115,8 @@ func TestTestRunner_StoreAndRestoreTestSuiteDurationsCache_RoundTripDurations(t 
 		"spec/suite1_spec.rb": 2500,
 	}
 
-	if err := runner.storeTestSuiteDurationsCache(); err != nil {
-		t.Fatalf("storeTestSuiteDurationsCache() should not return error, got: %v", err)
+	if err := runner.storeTestOptimizationPlanCache(); err != nil {
+		t.Fatalf("storeTestOptimizationPlanCache() should not return error, got: %v", err)
 	}
 
 	logs := captureLogs(t)
@@ -126,8 +126,8 @@ func TestTestRunner_StoreAndRestoreTestSuiteDurationsCache_RoundTripDurations(t 
 		&MockTestSuiteDurationsClient{},
 		newDefaultMockCIProviderDetector(),
 	)
-	if err := restored.restoreTestSuiteDurationsCache(); err != nil {
-		t.Fatalf("restoreTestSuiteDurationsCache() should not return error, got: %v", err)
+	if err := restored.restoreTestOptimizationPlanCache(); err != nil {
+		t.Fatalf("restoreTestOptimizationPlanCache() should not return error, got: %v", err)
 	}
 
 	if !reflect.DeepEqual(restored.testSuiteDurations, runner.testSuiteDurations) {
@@ -145,7 +145,7 @@ func TestTestRunner_StoreAndRestoreTestSuiteDurationsCache_RoundTripDurations(t 
 
 	logOutput := logs.String()
 	if !strings.Contains(logOutput, "level=INFO") ||
-		!strings.Contains(logOutput, "Restored test suite durations cache") ||
+		!strings.Contains(logOutput, "Restored test optimization plan cache") ||
 		!strings.Contains(logOutput, "objectsCount=4") ||
 		!strings.Contains(logOutput, "modulesCount=1") ||
 		!strings.Contains(logOutput, "testSuitesCount=1") ||
@@ -156,19 +156,19 @@ func TestTestRunner_StoreAndRestoreTestSuiteDurationsCache_RoundTripDurations(t 
 	}
 }
 
-func TestTestRunner_RestoreTestSuiteDurationsCache_ComputesWeightsForLegacyCache(t *testing.T) {
+func TestTestRunner_RestoreTestOptimizationPlanCache_ComputesWeightsForLegacyCache(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(tempDir)
 
-	type legacyTestSuiteDurationsCache struct {
+	type legacyTestOptimizationPlanCache struct {
 		TestSuiteDurations map[string]map[string]testoptimization.TestSuiteDurationInfo `json:"testSuiteDurations"`
 		SuiteAggregates    map[testSuiteKey]testSuiteAggregate                          `json:"suiteAggregates"`
 		SuitesBySourceFile map[string][]testSuiteKey                                    `json:"suitesBySourceFile"`
 	}
 
-	cache := legacyTestSuiteDurationsCache{
+	cache := legacyTestOptimizationPlanCache{
 		TestSuiteDurations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
 			"rspec": {
 				"Suite1": {
@@ -193,8 +193,8 @@ func TestTestRunner_RestoreTestSuiteDurationsCache_ComputesWeightsForLegacyCache
 		},
 	}
 
-	if err := testoptimization.NewCacheManager().StoreTestSuiteDurationsCache(cache); err != nil {
-		t.Fatalf("StoreTestSuiteDurationsCache() should not return error, got: %v", err)
+	if err := testoptimization.NewCacheManager().StoreTestOptimizationPlanCache(cache); err != nil {
+		t.Fatalf("StoreTestOptimizationPlanCache() should not return error, got: %v", err)
 	}
 
 	restored := NewWithDependencies(
@@ -203,8 +203,8 @@ func TestTestRunner_RestoreTestSuiteDurationsCache_ComputesWeightsForLegacyCache
 		&MockTestSuiteDurationsClient{},
 		newDefaultMockCIProviderDetector(),
 	)
-	if err := restored.restoreTestSuiteDurationsCache(); err != nil {
-		t.Fatalf("restoreTestSuiteDurationsCache() should not return error, got: %v", err)
+	if err := restored.restoreTestOptimizationPlanCache(); err != nil {
+		t.Fatalf("restoreTestOptimizationPlanCache() should not return error, got: %v", err)
 	}
 
 	expectedWeights := map[string]int{
@@ -240,8 +240,8 @@ func TestTestSuiteKey_JSONMapKeyRoundTrip(t *testing.T) {
 		},
 	}
 
-	if err := runner.storeTestSuiteDurationsCache(); err != nil {
-		t.Fatalf("storeTestSuiteDurationsCache() should not return error, got: %v", err)
+	if err := runner.storeTestOptimizationPlanCache(); err != nil {
+		t.Fatalf("storeTestOptimizationPlanCache() should not return error, got: %v", err)
 	}
 
 	restored := NewWithDependencies(
@@ -250,8 +250,8 @@ func TestTestSuiteKey_JSONMapKeyRoundTrip(t *testing.T) {
 		&MockTestSuiteDurationsClient{},
 		newDefaultMockCIProviderDetector(),
 	)
-	if err := restored.restoreTestSuiteDurationsCache(); err != nil {
-		t.Fatalf("restoreTestSuiteDurationsCache() should not return error, got: %v", err)
+	if err := restored.restoreTestOptimizationPlanCache(); err != nil {
+		t.Fatalf("restoreTestOptimizationPlanCache() should not return error, got: %v", err)
 	}
 
 	if !reflect.DeepEqual(restored.suiteAggregates, runner.suiteAggregates) {

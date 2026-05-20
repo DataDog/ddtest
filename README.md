@@ -114,6 +114,13 @@ The folder contents are:
     config                   # (GHA only) matrix JSON with ci_node_index entries
 ```
 
+DDTest chooses parallelism by estimating the runnable duration of each test file,
+then trying worker counts between `--min-parallelism` and `--max-parallelism`.
+Duration estimates come from Datadog test suite p50 timings when available and
+fall back to local discovery weights otherwise. DDTest chooses the split with
+the lowest slowest-worker time, then the most even load, so it avoids launching
+workers that would sit idle or would not shorten the run.
+
 DDTest may also write compatibility files at legacy root paths for existing
 integrations. New integrations should read runner files from `.testoptimization/runner/*`.
 You can use `runner/test-files.txt` or `runner/tests-split/runner-X` files to feed
@@ -152,20 +159,37 @@ In CI-node mode, DDTest uses one local worker by default so database and other p
 
 DDTest automatically sets `DD_TEST_SESSION_NAME` for each worker to `<DD_SERVICE>-node-<nodeIndex>-worker-<workerIndex>` when the variable is not already set. If you set `DD_TEST_SESSION_NAME` yourself, DDTest preserves it and expands the same `{{nodeIndex}}` and `{{workerIndex}}` placeholders before starting each worker.
 
+### Reports
+
+DDTest prints a human-readable report to stderr after `ddtest plan` and `ddtest run`.
+The plan report summarizes the run identity, Datadog feature settings, backend
+data, planning quality, and selected split. `Test impact collection` is shown
+from Datadog's `code_coverage` setting. The run report summarizes the worker,
+file count, duration, and process result.
+
+Reports are aggregate-only: DDTest does not print per-test or per-file lists,
+and counts may show `disabled` or `not available` when a Datadog feature is off
+or its backend payload is not present. To turn reports off:
+
+```bash
+DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED=false ddtest plan
+```
+
 ### Settings (flags and environment variables)
 
 | CLI flag            | Environment variable                          |    Default | What it does                                                                                                                                                                                                         |
 | ------------------- | --------------------------------------------- | ---------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--platform`        | `DD_TEST_OPTIMIZATION_RUNNER_PLATFORM`        |     `ruby` | Language/platform (currently supported values: `ruby`).                                                                                                                                                              |
 | `--framework`       | `DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK`       |    `rspec` | Test framework (currently supported values: `rspec`, `minitest`).                                                                                                                                                    |
-| `--min-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM` | physical CPU count | Minimum workers to use for the split.                                                                                                                                                                                |
-| `--max-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM` | physical CPU count | Maximum workers to use for the split.                                                                                                                                                                                |
+| `--min-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM` | physical CPU count | Minimum worker count DDTest considers when choosing the split.                                                                                                                                                       |
+| `--max-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM` | physical CPU count | Maximum worker count DDTest considers when choosing the split.                                                                                                                                                       |
 |                     | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE`         | `-1` (off) | Restrict this run to the slice assigned to node **N** (0-indexed).                                                                                                                                                   |
 | `--ci-node-workers` | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS` |        `1` | Number of parallel workers per CI node. Use a positive integer, or `ncpu` to use the node's available physical CPU cores. Tests assigned to a CI node are further split among this many local workers.                |
 | `--worker-env`      | `DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV`      |       `""` | Template env vars per worker: `--worker-env "DATABASE_NAME_TEST=app_test{{nodeIndex}}_{{workerIndex}}"`. `{{nodeIndex}}` is the machine number (`0` for single-machine runs); `{{workerIndex}}` is the process number within that machine. |
 | `--command`         | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND`         |       `""` | Override the default test command used by the framework. When provided, takes precedence over auto-detection (e.g., `--command "bundle exec custom-rspec"`).                                                         |
 | `--tests-location`  | `DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION`  |       `""` | Custom glob pattern to discover test files (e.g., `--tests-location "custom/spec/**/*_spec.rb"`). Defaults to `spec/**/*_spec.rb` for RSpec, `test/**/*_test.rb` for Minitest.                                       |
 | `--runtime-tags`    | `DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS`    |       `""` | JSON string to override runtime tags used to fetch skippable tests. Useful for local development on a different OS than CI (e.g., `--runtime-tags '{"os.platform":"linux","runtime.version":"3.2.0"}'`).             |
+|                     | `DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED`  |     `true` | Print human-readable plan and run reports. Set to `false` to disable them.                                                                                                                                           |
 
 #### Note about the `--command` flag
 

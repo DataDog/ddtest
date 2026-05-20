@@ -10,7 +10,7 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 )
 
-func TestRunParallelTests_Success(t *testing.T) {
+func TestRunParallel_Success(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -26,9 +26,16 @@ func TestRunParallelTests_Success(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	err := runParallelTests(context.Background(), mockFramework, map[string]string{})
+	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runParallel()
+	report, err := result.report, result.err
 	if err != nil {
-		t.Fatalf("runParallelTests() should not return error, got: %v", err)
+		t.Fatalf("runParallel() should not return error, got: %v", err)
+	}
+	if report.LocalWorkers != 2 {
+		t.Errorf("Expected report to count 2 local workers, got %d", report.LocalWorkers)
+	}
+	if report.TestFilesRun != 2 {
+		t.Errorf("Expected report to count 2 test files, got %d", report.TestFilesRun)
 	}
 
 	// Verify RunTests was called twice
@@ -37,7 +44,7 @@ func TestRunParallelTests_Success(t *testing.T) {
 	}
 }
 
-func TestRunParallelTests_MissingSplitDirectory(t *testing.T) {
+func TestRunParallel_MissingSplitDirectory(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -46,9 +53,10 @@ func TestRunParallelTests_MissingSplitDirectory(t *testing.T) {
 	// Don't create tests-split directory
 	mockFramework := &MockFramework{FrameworkName: "rspec"}
 
-	err := runParallelTests(context.Background(), mockFramework, map[string]string{})
+	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runParallel()
+	err := result.err
 	if err == nil {
-		t.Error("runParallelTests() should return error when tests-split directory is missing")
+		t.Error("runParallel() should return error when tests-split directory is missing")
 	}
 
 	expectedMsg := "failed to read tests split directory"

@@ -1,24 +1,25 @@
 package runner
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 
 	"github.com/DataDog/ddtest/internal/constants"
-	"github.com/DataDog/ddtest/internal/framework"
 	"golang.org/x/sync/errgroup"
 )
 
-// runParallelTests executes tests across multiple parallel runners on a single node.
-func runParallelTests(ctx context.Context, framework framework.Framework, workerEnvMap map[string]string) error {
+// runParallel executes tests across multiple parallel runners on a single node.
+func (e testExecutor) runParallel() runExecutionResult {
+	report := runExecutionReport{
+		Mode: runModeParallel,
+	}
 	slog.Info("Running tests in parallel mode")
 
 	entries, err := os.ReadDir(constants.TestsSplitDir)
 	if err != nil {
-		return fmt.Errorf("failed to read tests split directory %s: %w", constants.TestsSplitDir, err)
+		return report.failure(fmt.Errorf("failed to read tests split directory %s: %w", constants.TestsSplitDir, err))
 	}
 
 	var g errgroup.Group
@@ -28,14 +29,24 @@ func runParallelTests(ctx context.Context, framework framework.Framework, worker
 			continue
 		}
 
+		report.LocalWorkers++
 		splitFilePath := filepath.Join(constants.TestsSplitDir, entry.Name())
+		testFiles, err := loadTestBatch(splitFilePath)
+		if err != nil {
+			return report.failure(fmt.Errorf("failed to read test files from %s: %w", splitFilePath, err))
+		}
+		report.TestFilesRun += len(testFiles)
+		if len(testFiles) == 0 {
+			continue
+		}
+
 		g.Go(func() error {
-			return runTestBatchFromFile(ctx, framework, splitFilePath, workerEnvMap, 0, workerIndex)
+			return e.runBatch(testFiles, 0, workerIndex)
 		})
 	}
 
 	if err := g.Wait(); err != nil {
-		return fmt.Errorf("failed to run parallel tests: %w", err)
+		return report.failure(fmt.Errorf("failed to run parallel tests: %w", err))
 	}
-	return nil
+	return report.success()
 }

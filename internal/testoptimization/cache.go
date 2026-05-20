@@ -19,8 +19,8 @@ type SkippableTestsCache struct {
 	SkippableTests map[string]map[string][]net.SkippableResponseDataAttributes `json:"skippableTests"`
 }
 
-// TestSuiteDurationsCacheFile is the cache file name for suite duration metadata.
-const TestSuiteDurationsCacheFile = "test_suite_durations.json"
+// TestOptimizationPlanCacheFile keeps the historical filename used for plan/run handoff data.
+const TestOptimizationPlanCacheFile = "test_suite_durations.json"
 
 const (
 	httpSettingsCacheFile       = "settings.json"
@@ -198,29 +198,29 @@ func (cm *CacheManager) StoreTestManagementTestsCache(testManagementTests *net.T
 	return nil
 }
 
-// StoreTestSuiteDurationsCache stores ddtest-private duration data in the runner cache.
-func (cm *CacheManager) StoreTestSuiteDurationsCache(cache any) error {
+// StoreTestOptimizationPlanCache stores ddtest-private plan data in the runner cache.
+func (cm *CacheManager) StoreTestOptimizationPlanCache(cache any) error {
 	if err := cm.createRunnerCacheDirectory(); err != nil {
 		return fmt.Errorf("failed to create runner cache directory: %w", err)
 	}
 
-	runnerPath := filepath.Join(appConstants.RunnerCacheDir, TestSuiteDurationsCacheFile)
+	runnerPath := filepath.Join(appConstants.RunnerCacheDir, TestOptimizationPlanCacheFile)
 	if err := cm.writeJSONToFile(cache, runnerPath); err != nil {
-		slog.Error("Failed to write test suite durations to file", "error", err, "path", runnerPath)
+		slog.Error("Failed to write test optimization plan to file", "error", err, "path", runnerPath)
 		return err
 	}
 
-	slog.Debug("Test suite durations written to file", "path", runnerPath)
+	slog.Debug("Test optimization plan written to file", "path", runnerPath)
 	return nil
 }
 
-// ReadTestSuiteDurationsCache reads ddtest-private duration data from the runner cache.
-func (cm *CacheManager) ReadTestSuiteDurationsCache(cache any) error {
-	runnerPath := filepath.Join(appConstants.RunnerCacheDir, TestSuiteDurationsCacheFile)
+// ReadTestOptimizationPlanCache reads ddtest-private plan data from the runner cache.
+func (cm *CacheManager) ReadTestOptimizationPlanCache(cache any) error {
+	runnerPath := filepath.Join(appConstants.RunnerCacheDir, TestOptimizationPlanCacheFile)
 	if err := cm.readJSONFromFile(runnerPath, cache); err != nil {
 		return err
 	}
 
-	slog.Debug("Test suite durations read from file", "path", runnerPath)
+	slog.Debug("Test optimization plan read from file", "path", runnerPath)
 	return nil
 }

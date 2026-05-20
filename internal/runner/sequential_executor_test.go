@@ -11,7 +11,7 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 )
 
-func TestRunSequentialTests_Success(t *testing.T) {
+func TestRunSequential_Success(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -27,9 +27,13 @@ func TestRunSequentialTests_Success(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	err := runSequentialTests(context.Background(), mockFramework, map[string]string{})
+	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runSequential()
+	report, err := result.report, result.err
 	if err != nil {
-		t.Fatalf("runSequentialTests() should not return error, got: %v", err)
+		t.Fatalf("runSequential() should not return error, got: %v", err)
+	}
+	if report.TestFilesRun != 2 {
+		t.Errorf("Expected report to count 2 test files, got %d", report.TestFilesRun)
 	}
 
 	// Verify RunTests was called exactly once
@@ -45,7 +49,7 @@ func TestRunSequentialTests_Success(t *testing.T) {
 	}
 }
 
-func TestRunSequentialTests_DoesNotReadLegacyTestFiles(t *testing.T) {
+func TestRunSequential_DoesNotReadLegacyTestFiles(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -59,9 +63,10 @@ func TestRunSequentialTests_DoesNotReadLegacyTestFiles(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	err := runSequentialTests(context.Background(), mockFramework, map[string]string{})
+	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runSequential()
+	err := result.err
 	if err == nil {
-		t.Fatal("runSequentialTests() should return error when only the legacy test files list exists")
+		t.Fatal("runSequential() should return error when only the legacy test files list exists")
 	}
 
 	if !strings.Contains(err.Error(), constants.TestFilesOutputPath) {

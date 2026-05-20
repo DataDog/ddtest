@@ -1,27 +1,22 @@
 package runner
 
-import (
-	"log/slog"
-	"math"
+import "log/slog"
 
-	"github.com/DataDog/ddtest/internal/settings"
-)
+// calculateParallelRunnerSplit determines the selected runner split by
+// estimating candidates between the configured min and max parallelism.
+func calculateParallelRunnerSplit(testFileWeights map[string]int, minParallelism, maxParallelism int) splitScore {
+	files := sortedWeightedTestFiles(testFileWeights)
 
-// calculateParallelRunners determines the number of parallel runners based on skippable percentage
-// and parallelism configuration
-func calculateParallelRunners(skippablePercentage float64) int {
-	return calculateParallelRunnersWithParams(skippablePercentage, settings.GetMinParallelism(), settings.GetMaxParallelism())
-}
-
-func calculateParallelRunnersWithParams(skippablePercentage float64, minParallelism, maxParallelism int) int {
 	// maxParallelism could be 0 or negative!
 	if maxParallelism <= 1 {
-		return 1
+		score := scoreSortedWeightedRunnerSplit(files, 1)
+		logCandidateSplit(score)
+		return score
 	}
 
 	if minParallelism < 1 {
 		slog.Warn("min_parallelism is less than 1, setting to 1", "min_parallelism", minParallelism)
-		return 1
+		minParallelism = 1
 	}
 
 	if maxParallelism < minParallelism {
@@ -30,8 +25,46 @@ func calculateParallelRunnersWithParams(skippablePercentage float64, minParallel
 		minParallelism = maxParallelism
 	}
 
-	percentage := math.Max(0.0, math.Min(100.0, skippablePercentage)) // Clamp to [0, 100]
-	runners := float64(maxParallelism) - (percentage/100.0)*float64(maxParallelism-minParallelism)
+	if len(files) == 0 {
+		score := scoreSortedWeightedRunnerSplit(files, minParallelism)
+		logCandidateSplit(score)
+		return score
+	}
 
-	return int(math.Round(runners))
+	candidateMax := maxUsefulParallelism(minParallelism, maxParallelism, len(files))
+
+	best := scoreSortedWeightedRunnerSplit(files, minParallelism)
+	logCandidateSplit(best)
+	for parallelRunners := minParallelism + 1; parallelRunners <= candidateMax; parallelRunners++ {
+		score := scoreSortedWeightedRunnerSplit(files, parallelRunners)
+		logCandidateSplit(score)
+		if betterSplit(score, best) {
+			best = score
+		}
+	}
+
+	return best
+}
+
+func maxUsefulParallelism(minParallelism, maxParallelism, filesCount int) int {
+	if filesCount < minParallelism {
+		return minParallelism
+	}
+	if filesCount < maxParallelism {
+		return filesCount
+	}
+	return maxParallelism
+}
+
+func betterSplit(candidate, currentBest splitScore) bool {
+	return candidate.wallTime < currentBest.wallTime ||
+		(candidate.wallTime == currentBest.wallTime && candidate.imbalance < currentBest.imbalance)
+}
+
+func logCandidateSplit(score splitScore) {
+	slog.Debug("Considered parallel runner split",
+		"parallelRunners", score.parallelRunners,
+		"expectedWallTime", score.wallTimeDuration(),
+		"imbalance", score.imbalanceDuration(),
+		"expectedTotalRuntime", score.totalRuntimeDuration())
 }

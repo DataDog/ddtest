@@ -81,9 +81,9 @@ func TestDistributeTestFiles(t *testing.T) {
 			t.Errorf("Expected 3 runners, got %d", len(result))
 		}
 
-		// With First Fit Decreasing algorithm, files are sorted by count (descending):
+		// With weighted list scheduling, files are sorted by weight descending:
 		// test2.rb: 10, test4.rb: 8, test3.rb: 6, test5.rb: 4, test1.rb: 2
-		// Expected distribution (always picking bin with minimum load):
+		// Expected distribution (always picking the runner with minimum load):
 		// Runner 0: test2.rb (10)
 		// Runner 1: test4.rb (8) + test1.rb (2) = 10
 		// Runner 2: test3.rb (6) + test5.rb (4) = 10
@@ -198,6 +198,30 @@ func TestDistributeTestFiles(t *testing.T) {
 		}
 	})
 
+	t.Run("ties sort by path and lower runner index", func(t *testing.T) {
+		testFiles := map[string]int{
+			"b.rb": 1,
+			"a.rb": 1,
+			"c.rb": 1,
+		}
+
+		result := DistributeTestFiles(testFiles, 2)
+		expected := [][]string{
+			{"a.rb", "c.rb"},
+			{"b.rb"},
+		}
+
+		if len(result) != len(expected) {
+			t.Fatalf("Expected %d runners, got %d", len(expected), len(result))
+		}
+
+		for i := range expected {
+			if !slices.Equal(result[i], expected[i]) {
+				t.Errorf("Runner %d = %v, expected %v", i, result[i], expected[i])
+			}
+		}
+	})
+
 	t.Run("deterministic output", func(t *testing.T) {
 		testFiles := map[string]int{
 			"test1.rb": 5,
@@ -242,6 +266,100 @@ func TestDistributeTestFiles(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestSortedWeightedTestFiles(t *testing.T) {
+	testFiles := map[string]int{
+		"small.rb":  1,
+		"same-b.rb": 5,
+		"large.rb":  10,
+		"same-a.rb": 5,
+	}
+
+	result := sortedWeightedTestFiles(testFiles)
+	expected := []weightedTestFile{
+		{path: "large.rb", weight: 10},
+		{path: "same-a.rb", weight: 5},
+		{path: "same-b.rb", weight: 5},
+		{path: "small.rb", weight: 1},
+	}
+
+	if !slices.Equal(result, expected) {
+		t.Fatalf("sortedWeightedTestFiles() = %v, expected %v", result, expected)
+	}
+}
+
+func TestScoreSortedWeightedRunnerSplit(t *testing.T) {
+	files := []weightedTestFile{
+		{path: "slow.rb", weight: 10},
+		{path: "medium.rb", weight: 6},
+		{path: "fast.rb", weight: 4},
+		{path: "tiny.rb", weight: 2},
+	}
+
+	result := scoreSortedWeightedRunnerSplit(files, 2)
+	expected := splitScore{
+		parallelRunners: 2,
+		wallTime:        12,
+		imbalance:       2,
+		totalRuntime:    22,
+	}
+
+	if result != expected {
+		t.Fatalf("scoreSortedWeightedRunnerSplit() = %+v, expected %+v", result, expected)
+	}
+}
+
+func TestScoreSortedWeightedRunnerSplit_UnavoidableEmptyRunners(t *testing.T) {
+	files := []weightedTestFile{
+		{path: "slow.rb", weight: 10},
+	}
+
+	result := scoreSortedWeightedRunnerSplit(files, 3)
+	expected := splitScore{
+		parallelRunners: 3,
+		wallTime:        10,
+		imbalance:       10,
+		totalRuntime:    10,
+	}
+
+	if result != expected {
+		t.Fatalf("scoreSortedWeightedRunnerSplit() = %+v, expected %+v", result, expected)
+	}
+}
+
+func TestTestSplitBuilderDistributeFiles(t *testing.T) {
+	testFiles := map[string]int{
+		"fast.rb":   1,
+		"medium.rb": 2,
+		"slow.rb":   3,
+	}
+
+	builder := newTestSplitBuilder(2)
+	result := builder.distributeFiles(testFiles)
+	expected := [][]string{
+		{"slow.rb"},
+		{"medium.rb", "fast.rb"},
+	}
+
+	assertDistribution(t, result, expected)
+}
+
+func TestTestSplitBuilderDistributeSortedFiles(t *testing.T) {
+	files := []weightedTestFile{
+		{path: "slow.rb", weight: 3},
+		{path: "medium.rb", weight: 2},
+		{path: "fast.rb", weight: 1},
+	}
+
+	builder := newTestSplitBuilder(2)
+	result := builder.distributeSortedFiles(files)
+	expected := [][]string{
+		{"slow.rb"},
+		{"medium.rb", "fast.rb"},
+	}
+
+	assertDistribution(t, result, expected)
 }
 
 func TestCreateTestSplits(t *testing.T) {
@@ -341,7 +459,7 @@ func TestCreateTestSplits(t *testing.T) {
 		}
 
 		// Verify content distribution
-		// With bin packing: runner-0 gets file1 (10), runner-1 gets file2+file3 (8)
+		// With weighted list scheduling: runner-0 gets file1 (10), runner-1 gets file2+file3 (8)
 		runner0Content, _ := os.ReadFile(filepath.Join(constants.TestsSplitDir, "runner-0"))
 		runner1Content, _ := os.ReadFile(filepath.Join(constants.TestsSplitDir, "runner-1"))
 		legacyRunner0Content, _ := os.ReadFile(filepath.Join(constants.LegacyTestsSplitDir, "runner-0"))
@@ -419,4 +537,18 @@ func TestCreateTestSplits(t *testing.T) {
 			t.Errorf("Error should contain '%s', got: %v", expectedMsg, err)
 		}
 	})
+}
+
+func assertDistribution(t *testing.T, result, expected [][]string) {
+	t.Helper()
+
+	if len(result) != len(expected) {
+		t.Fatalf("distribution has %d runners, expected %d", len(result), len(expected))
+	}
+
+	for i := range expected {
+		if !slices.Equal(result[i], expected[i]) {
+			t.Errorf("runner %d = %v, expected %v", i, result[i], expected[i])
+		}
+	}
 }

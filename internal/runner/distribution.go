@@ -1,86 +1,31 @@
 package runner
 
 import (
+	"container/heap"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
 )
 
-// DistributeTestFiles distributes test files across parallel runners using bin packing algorithm
+// DistributeTestFiles distributes test files across parallel runners using weighted list scheduling.
 func DistributeTestFiles(testFiles map[string]int, parallelRunners int) [][]string {
-	if parallelRunners <= 0 {
-		parallelRunners = 1
-	}
-
-	if len(testFiles) == 0 {
-		result := make([][]string, parallelRunners)
-		for i := range result {
-			result[i] = []string{}
-		}
-		return result
-	}
-
-	// Convert map to sorted slice (largest first)
-	files := make([]struct {
-		path  string
-		count int
-	}, 0, len(testFiles))
-	for path, count := range testFiles {
-		files = append(files, struct {
-			path  string
-			count int
-		}{path: path, count: count})
-	}
-
-	sort.Slice(files, func(i, j int) bool {
-		if files[i].count == files[j].count {
-			return files[i].path < files[j].path
-		}
-		return files[i].count > files[j].count
-	})
-
-	// loads tracks current test duration assigned to each bin
-	loads := make([]int, parallelRunners)
-	// result tracks files assigned to each bin (can be returned directly)
-	result := make([][]string, parallelRunners)
-	for i := range result {
-		result[i] = []string{}
-	}
-
-	// First Fit Decreasing algorithm for bin packing
-	// On each step take the file in decreasing order of load
-	// and put it into the bin with minimum load
-	//
-	// Time complexity is N * M where
-	// N - number of bins (estimated about 10^2)
-	// M - number of test files (estimated about 10^4)
-	for _, file := range files {
-		minBin := 0
-		for i := 1; i < len(loads); i++ {
-			if loads[i] < loads[minBin] {
-				minBin = i
-			}
-		}
-
-		loads[minBin] += file.count
-		result[minBin] = append(result[minBin], file.path)
-	}
-
-	return result
+	builder := newTestSplitBuilder(parallelRunners)
+	return builder.distributeFiles(testFiles)
 }
 
 // CreateTestSplits creates test split files for parallel runners
-// For multiple runners: distributes files using bin packing and writes to separate runner files
+// For multiple runners: distributes files using weighted list scheduling and writes to separate runner files
 // For single runner: copies test-files.txt content to runner-0
 func CreateTestSplits(testFiles map[string]int, parallelRunners int, testFilesOutputPath string) error {
 	testsSplitDirs := []string{constants.TestsSplitDir, constants.LegacyTestsSplitDir}
 
 	if parallelRunners > 1 {
-		// Distribute test files across parallel runners using bin packing
+		// Distribute test files across parallel runners using weighted list scheduling.
 		distribution := DistributeTestFiles(testFiles, parallelRunners)
 		for _, testsSplitDir := range testsSplitDirs {
 			if err := writeDistributedTestSplits(distribution, testsSplitDir); err != nil {
@@ -102,6 +47,173 @@ func CreateTestSplits(testFiles map[string]int, parallelRunners int, testFilesOu
 	}
 
 	return nil
+}
+
+type weightedTestFile struct {
+	path   string
+	weight int
+}
+
+func sortedWeightedTestFiles(testFiles map[string]int) []weightedTestFile {
+	files := make([]weightedTestFile, 0, len(testFiles))
+	for path, weight := range testFiles {
+		files = append(files, weightedTestFile{path: path, weight: weight})
+	}
+
+	slices.SortFunc(files, func(a, b weightedTestFile) int {
+		if a.weight > b.weight {
+			return -1
+		}
+		if a.weight < b.weight {
+			return 1
+		}
+		if a.path < b.path {
+			return -1
+		}
+		if a.path > b.path {
+			return 1
+		}
+		return 0
+	})
+
+	return files
+}
+
+type splitScore struct {
+	parallelRunners int
+	wallTime        int
+	imbalance       int
+	totalRuntime    int
+}
+
+func (s splitScore) wallTimeDuration() time.Duration {
+	return time.Duration(s.wallTime) * time.Millisecond
+}
+
+func (s splitScore) imbalanceDuration() time.Duration {
+	return time.Duration(s.imbalance) * time.Millisecond
+}
+
+func (s splitScore) totalRuntimeDuration() time.Duration {
+	return time.Duration(s.totalRuntime) * time.Millisecond
+}
+
+func scoreSortedWeightedRunnerSplit(files []weightedTestFile, parallelRunners int) splitScore {
+	builder := newTestSplitBuilder(parallelRunners)
+	for _, file := range files {
+		builder.addFile(file.weight)
+	}
+	return builder.score()
+}
+
+type testSplitBuilder struct {
+	parallelRunners int
+	loads           minLoadHeap
+}
+
+func newTestSplitBuilder(parallelRunners int) testSplitBuilder {
+	if parallelRunners <= 0 {
+		parallelRunners = 1
+	}
+
+	return testSplitBuilder{
+		parallelRunners: parallelRunners,
+		loads:           makeMinLoadHeap(parallelRunners),
+	}
+}
+
+func (b *testSplitBuilder) addFile(weight int) int {
+	lightestRunner := heap.Pop(&b.loads).(runnerLoad)
+	lightestRunner.load += weight
+	heap.Push(&b.loads, lightestRunner)
+	return lightestRunner.index
+}
+
+func (b *testSplitBuilder) distributeFiles(testFiles map[string]int) [][]string {
+	return b.distributeSortedFiles(sortedWeightedTestFiles(testFiles))
+}
+
+func (b *testSplitBuilder) distributeSortedFiles(files []weightedTestFile) [][]string {
+	result := make([][]string, b.parallelRunners)
+	for i := range result {
+		result[i] = []string{}
+	}
+
+	for _, file := range files {
+		runnerIndex := b.addFile(file.weight)
+		result[runnerIndex] = append(result[runnerIndex], file.path)
+	}
+
+	return result
+}
+
+func (b testSplitBuilder) score() splitScore {
+	minLoad, maxLoad, totalLoad := loadStats(b.loads)
+	return splitScore{
+		parallelRunners: b.parallelRunners,
+		wallTime:        maxLoad,
+		imbalance:       maxLoad - minLoad,
+		totalRuntime:    totalLoad,
+	}
+}
+
+type runnerLoad struct {
+	index int
+	load  int
+}
+
+type minLoadHeap []runnerLoad
+
+func (h minLoadHeap) Len() int {
+	return len(h)
+}
+
+func (h minLoadHeap) Less(i, j int) bool {
+	if h[i].load == h[j].load {
+		return h[i].index < h[j].index
+	}
+	return h[i].load < h[j].load
+}
+
+func (h minLoadHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+}
+
+func (h *minLoadHeap) Push(x any) {
+	*h = append(*h, x.(runnerLoad))
+}
+
+func (h *minLoadHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[:n-1]
+	return x
+}
+
+func makeMinLoadHeap(parallelRunners int) minLoadHeap {
+	loads := make(minLoadHeap, parallelRunners)
+	for i := range loads {
+		loads[i] = runnerLoad{index: i}
+	}
+	heap.Init(&loads)
+	return loads
+}
+
+func loadStats(loads []runnerLoad) (int, int, int) {
+	minLoad := loads[0].load
+	maxLoad := loads[0].load
+	totalLoad := loads[0].load
+	for _, load := range loads[1:] {
+		if load.load < minLoad {
+			minLoad = load.load
+		}
+		if load.load > maxLoad {
+			maxLoad = load.load
+		}
+		totalLoad += load.load
+	}
+	return minLoad, maxLoad, totalLoad
 }
 
 func writeDistributedTestSplits(distribution [][]string, testsSplitDir string) error {

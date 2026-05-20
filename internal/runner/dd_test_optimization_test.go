@@ -428,6 +428,17 @@ func TestTestRunner_TestFileWeight_CountFallbackForMissingSuiteDuration(t *testi
 	if weight, ok := runner.testFileWeight("spec/unknown_test.rb"); !ok || weight != int(time.Second/time.Millisecond) {
 		t.Errorf("Expected unknown file weight to use default 1 second, got weight=%d ok=%t", weight, ok)
 	}
+
+	runner.weightedTestFiles()
+	if source := runner.testFileDurationSources["spec/file1_test.rb"]; source != testFileDurationSourceKnown {
+		t.Errorf("Expected Suite1 file duration source to be known, got %q", source)
+	}
+	if source := runner.testFileDurationSources["spec/file2_test.rb"]; source != testFileDurationSourceDefault {
+		t.Errorf("Expected Suite2 file duration source to be default, got %q", source)
+	}
+	if source := runner.testFileDurationSources["spec/unknown_test.rb"]; source != testFileDurationSourceDefault {
+		t.Errorf("Expected unknown file duration source to be default, got %q", source)
+	}
 }
 
 func TestTestRunner_TestFileWeight_InvalidP50FallsBackForFullDiscoveryAggregate(t *testing.T) {

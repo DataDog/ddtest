@@ -129,6 +129,9 @@ func TestInit(t *testing.T) {
 	if config.RuntimeTags != "" {
 		t.Errorf("expected default runtime_tags to be empty, got %q", config.RuntimeTags)
 	}
+	if !config.ReportEnabled {
+		t.Error("expected default report_enabled to be true")
+	}
 }
 
 func TestSetDefaults(t *testing.T) {
@@ -166,6 +169,9 @@ func TestSetDefaults(t *testing.T) {
 	}
 	if viper.GetString("runtime_tags") != "" {
 		t.Errorf("expected default runtime_tags to be empty, got %q", viper.GetString("runtime_tags"))
+	}
+	if !viper.GetBool("report_enabled") {
+		t.Error("expected default report_enabled to be true")
 	}
 }
 
@@ -239,6 +245,7 @@ func TestEnvironmentVariables(t *testing.T) {
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND", "bundle exec rspec")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", "spec/**/*_spec.rb")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS", `{"os.platform":"linux","runtime.version":"3.2.0"}`)
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED", "false")
 	defer func() {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK")
@@ -250,6 +257,7 @@ func TestEnvironmentVariables(t *testing.T) {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED")
 	}()
 
 	Init()
@@ -283,6 +291,9 @@ func TestEnvironmentVariables(t *testing.T) {
 	}
 	if config.RuntimeTags != `{"os.platform":"linux","runtime.version":"3.2.0"}` {
 		t.Errorf("expected runtime_tags from env var to be JSON string, got %q", config.RuntimeTags)
+	}
+	if config.ReportEnabled {
+		t.Error("expected report_enabled from env var to be false")
 	}
 }
 
@@ -387,6 +398,20 @@ func TestGetRuntimeTags(t *testing.T) {
 	runtimeTags = GetRuntimeTags()
 	if runtimeTags != `{"os.platform":"linux","runtime.version":"3.2.0"}` {
 		t.Errorf("expected runtime_tags to be JSON string, got %q", runtimeTags)
+	}
+}
+
+func TestGetReportEnabled(t *testing.T) {
+	config = nil
+	viper.Reset()
+
+	if !GetReportEnabled() {
+		t.Error("expected report_enabled to be true by default")
+	}
+
+	config = &Config{ReportEnabled: false}
+	if GetReportEnabled() {
+		t.Error("expected report_enabled to be false")
 	}
 }
 

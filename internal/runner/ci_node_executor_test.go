@@ -11,7 +11,7 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 )
 
-func TestRunCINodeTests_SingleWorker(t *testing.T) {
+func TestRunCINode_SingleWorker(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -27,9 +27,13 @@ func TestRunCINodeTests_SingleWorker(t *testing.T) {
 	}
 
 	// Test with single worker (ciNodeWorkers=1)
-	err := runCINodeTests(context.Background(), mockFramework, map[string]string{}, 1, 1, nil)
+	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runCINode(1, 1, nil)
+	report, err := result.report, result.err
 	if err != nil {
-		t.Fatalf("runCINodeTests() should not return error, got: %v", err)
+		t.Fatalf("runCINode() should not return error, got: %v", err)
+	}
+	if report.TestFilesRun != 2 {
+		t.Errorf("Expected report to count 2 test files, got %d", report.TestFilesRun)
 	}
 
 	// Verify RunTests was called exactly once
@@ -45,7 +49,7 @@ func TestRunCINodeTests_SingleWorker(t *testing.T) {
 	}
 }
 
-func TestRunCINodeTests_MultipleWorkers(t *testing.T) {
+func TestRunCINode_MultipleWorkers(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -63,9 +67,16 @@ func TestRunCINodeTests_MultipleWorkers(t *testing.T) {
 	}
 
 	// Test with 2 workers on ci-node 1
-	err := runCINodeTests(context.Background(), mockFramework, map[string]string{}, 1, 2, nil)
+	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runCINode(1, 2, nil)
+	report, err := result.report, result.err
 	if err != nil {
-		t.Fatalf("runCINodeTests() should not return error, got: %v", err)
+		t.Fatalf("runCINode() should not return error, got: %v", err)
+	}
+	if report.LocalWorkers != 2 {
+		t.Errorf("Expected report to count 2 local workers, got %d", report.LocalWorkers)
+	}
+	if report.TestFilesRun != 4 {
+		t.Errorf("Expected report to count 4 test files, got %d", report.TestFilesRun)
 	}
 
 	// Verify RunTests was called twice (once per worker)
@@ -102,7 +113,7 @@ func TestRunCINodeTests_MultipleWorkers(t *testing.T) {
 	}
 }
 
-func TestRunCINodeTests_NodeIndexMatchesCINode(t *testing.T) {
+func TestRunCINode_NodeIndexMatchesCINode(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -124,9 +135,10 @@ func TestRunCINodeTests_NodeIndexMatchesCINode(t *testing.T) {
 	}
 
 	// Test with 2 workers on ci-node 1
-	err := runCINodeTests(context.Background(), mockFramework, workerEnvMap, 1, 2, nil)
+	result := newTestExecutor(context.Background(), mockFramework, workerEnvMap).runCINode(1, 2, nil)
+	err := result.err
 	if err != nil {
-		t.Fatalf("runCINodeTests() should not return error, got: %v", err)
+		t.Fatalf("runCINode() should not return error, got: %v", err)
 	}
 
 	// Verify RunTests was called twice
@@ -156,7 +168,7 @@ func TestRunCINodeTests_NodeIndexMatchesCINode(t *testing.T) {
 	}
 }
 
-func TestRunCINodeTests_SingleWorkerNodeIndex(t *testing.T) {
+func TestRunCINode_SingleWorkerNodeIndex(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -177,9 +189,10 @@ func TestRunCINodeTests_SingleWorkerNodeIndex(t *testing.T) {
 		"WORKER_INDEX": "{{workerIndex}}",
 	}
 
-	err := runCINodeTests(context.Background(), mockFramework, workerEnvMap, 2, 1, nil)
+	result := newTestExecutor(context.Background(), mockFramework, workerEnvMap).runCINode(2, 1, nil)
+	err := result.err
 	if err != nil {
-		t.Fatalf("runCINodeTests() should not return error, got: %v", err)
+		t.Fatalf("runCINode() should not return error, got: %v", err)
 	}
 
 	calls := mockFramework.GetRunTestsCalls()
@@ -195,7 +208,7 @@ func TestRunCINodeTests_SingleWorkerNodeIndex(t *testing.T) {
 	}
 }
 
-func TestRunCINodeTests_FileNotFound(t *testing.T) {
+func TestRunCINode_FileNotFound(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -206,9 +219,10 @@ func TestRunCINodeTests_FileNotFound(t *testing.T) {
 
 	mockFramework := &MockFramework{FrameworkName: "rspec"}
 
-	err := runCINodeTests(context.Background(), mockFramework, map[string]string{}, 2, 1, nil)
+	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runCINode(2, 1, nil)
+	err := result.err
 	if err == nil {
-		t.Error("runCINodeTests() should return error when runner file doesn't exist")
+		t.Error("runCINode() should return error when runner file doesn't exist")
 	}
 
 	expectedMsg := "runner file for ci-node 2 does not exist"
@@ -217,7 +231,7 @@ func TestRunCINodeTests_FileNotFound(t *testing.T) {
 	}
 }
 
-func TestRunCINodeTests_DoesNotReadLegacySplitFile(t *testing.T) {
+func TestRunCINode_DoesNotReadLegacySplitFile(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -228,9 +242,10 @@ func TestRunCINodeTests_DoesNotReadLegacySplitFile(t *testing.T) {
 
 	mockFramework := &MockFramework{FrameworkName: "rspec"}
 
-	err := runCINodeTests(context.Background(), mockFramework, map[string]string{}, 2, 1, nil)
+	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runCINode(2, 1, nil)
+	err := result.err
 	if err == nil {
-		t.Error("runCINodeTests() should return error when only the legacy runner file exists")
+		t.Error("runCINode() should return error when only the legacy runner file exists")
 	}
 
 	expectedMsg := "runner file for ci-node 2 does not exist"
@@ -239,7 +254,7 @@ func TestRunCINodeTests_DoesNotReadLegacySplitFile(t *testing.T) {
 	}
 }
 
-func TestRunCINodeTests_EmptyFile(t *testing.T) {
+func TestRunCINode_EmptyFile(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -252,9 +267,13 @@ func TestRunCINodeTests_EmptyFile(t *testing.T) {
 	mockFramework := &MockFramework{FrameworkName: "rspec"}
 
 	// Should not error for empty file, just not run any tests
-	err := runCINodeTests(context.Background(), mockFramework, map[string]string{}, 0, 2, nil)
+	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runCINode(0, 2, nil)
+	report, err := result.report, result.err
 	if err != nil {
-		t.Fatalf("runCINodeTests() should not return error for empty file, got: %v", err)
+		t.Fatalf("runCINode() should not return error for empty file, got: %v", err)
+	}
+	if report.TestFilesRun != 0 {
+		t.Errorf("Expected report to count 0 test files, got %d", report.TestFilesRun)
 	}
 
 	// Verify no tests were run
