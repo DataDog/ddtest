@@ -321,6 +321,7 @@ func TestTestRunner_Setup_WithParallelRunners(t *testing.T) {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
 	}()
 	settings.Init()
+	logs := captureLogs(t)
 
 	// Setup mocks for a test with 40% skippable percentage
 	mockFramework := &MockFramework{
@@ -365,6 +366,15 @@ func TestTestRunner_Setup_WithParallelRunners(t *testing.T) {
 	expected := "1"
 	if string(content) != expected {
 		t.Errorf("Expected parallel runners file content '%s', got '%s'", expected, string(content))
+	}
+
+	logOutput := logs.String()
+	if !strings.Contains(logOutput, "Test execution planning completed") ||
+		!strings.Contains(logOutput, "parallelRunners=1") ||
+		!strings.Contains(logOutput, "expectedWallTime=") ||
+		!strings.Contains(logOutput, "imbalance=") ||
+		!strings.Contains(logOutput, "expectedTotalRuntime=") {
+		t.Errorf("Expected planning log with selected split information, got logs: %s", logOutput)
 	}
 }
 

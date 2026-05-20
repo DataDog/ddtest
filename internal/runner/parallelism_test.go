@@ -2,11 +2,12 @@ package runner
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
 func testCalculateParallelRunners(testFileWeights map[string]int, minParallelism, maxParallelism int) int {
-	return calculateParallelRunners(testFileWeights, minParallelism, maxParallelism)
+	return calculateParallelRunnerSplit(testFileWeights, minParallelism, maxParallelism).parallelRunners
 }
 
 func TestCalculateParallelRunners_MaxParallelismIsOne(t *testing.T) {
@@ -113,6 +114,50 @@ func TestCalculateParallelRunners_OverParallelizedInputsPreserveMinimum(t *testi
 	}
 }
 
+func TestCalculateParallelRunnerSplit_ReturnsSelectedScore(t *testing.T) {
+	testFileWeights := map[string]int{
+		"test1.rb": 10,
+		"test2.rb": 6,
+		"test3.rb": 6,
+		"test4.rb": 6,
+		"test5.rb": 6,
+	}
+
+	result := calculateParallelRunnerSplit(testFileWeights, 3, 4)
+	expected := splitScore{
+		parallelRunners: 3,
+		wallTime:        12,
+		imbalance:       2,
+		totalRuntime:    34,
+	}
+
+	if result != expected {
+		t.Errorf("calculateParallelRunnerSplit() = %+v, expected %+v", result, expected)
+	}
+}
+
+func TestCalculateParallelRunnerSplit_LogsCandidateSplits(t *testing.T) {
+	logs := captureLogs(t)
+	testFileWeights := map[string]int{
+		"test1.rb": 10,
+		"test2.rb": 10,
+		"test3.rb": 10,
+	}
+
+	_ = calculateParallelRunnerSplit(testFileWeights, 1, 3)
+
+	logOutput := logs.String()
+	if strings.Count(logOutput, "Considered parallel runner split") != 3 ||
+		!strings.Contains(logOutput, "parallelRunners=1") ||
+		!strings.Contains(logOutput, "parallelRunners=2") ||
+		!strings.Contains(logOutput, "parallelRunners=3") ||
+		!strings.Contains(logOutput, "expectedWallTime=") ||
+		!strings.Contains(logOutput, "imbalance=") ||
+		!strings.Contains(logOutput, "expectedTotalRuntime=") {
+		t.Errorf("Expected DEBUG logs for each candidate split with score fields, got logs: %s", logOutput)
+	}
+}
+
 func BenchmarkCalculateParallelRunners20000TestFiles(b *testing.B) {
 	testFileWeights := make(map[string]int, 20000)
 	for i := range 20000 {
@@ -121,6 +166,6 @@ func BenchmarkCalculateParallelRunners20000TestFiles(b *testing.B) {
 
 	b.ResetTimer()
 	for range b.N {
-		_ = calculateParallelRunners(testFileWeights, 1, 256)
+		_ = calculateParallelRunnerSplit(testFileWeights, 1, 256)
 	}
 }

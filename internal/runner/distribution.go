@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
 )
@@ -82,6 +83,19 @@ type splitScore struct {
 	parallelRunners int
 	wallTime        int
 	imbalance       int
+	totalRuntime    int
+}
+
+func (s splitScore) wallTimeDuration() time.Duration {
+	return time.Duration(s.wallTime) * time.Millisecond
+}
+
+func (s splitScore) imbalanceDuration() time.Duration {
+	return time.Duration(s.imbalance) * time.Millisecond
+}
+
+func (s splitScore) totalRuntimeDuration() time.Duration {
+	return time.Duration(s.totalRuntime) * time.Millisecond
 }
 
 func scoreSortedWeightedRunnerSplit(files []weightedTestFile, parallelRunners int) splitScore {
@@ -134,11 +148,12 @@ func (b *testSplitBuilder) distributeSortedFiles(files []weightedTestFile) [][]s
 }
 
 func (b testSplitBuilder) score() splitScore {
-	minLoad, maxLoad := minMaxLoad(b.loads)
+	minLoad, maxLoad, totalLoad := loadStats(b.loads)
 	return splitScore{
 		parallelRunners: b.parallelRunners,
 		wallTime:        maxLoad,
 		imbalance:       maxLoad - minLoad,
+		totalRuntime:    totalLoad,
 	}
 }
 
@@ -185,9 +200,10 @@ func makeMinLoadHeap(parallelRunners int) minLoadHeap {
 	return loads
 }
 
-func minMaxLoad(loads []runnerLoad) (int, int) {
+func loadStats(loads []runnerLoad) (int, int, int) {
 	minLoad := loads[0].load
 	maxLoad := loads[0].load
+	totalLoad := loads[0].load
 	for _, load := range loads[1:] {
 		if load.load < minLoad {
 			minLoad = load.load
@@ -195,8 +211,9 @@ func minMaxLoad(loads []runnerLoad) (int, int) {
 		if load.load > maxLoad {
 			maxLoad = load.load
 		}
+		totalLoad += load.load
 	}
-	return minLoad, maxLoad
+	return minLoad, maxLoad, totalLoad
 }
 
 func writeDistributedTestSplits(distribution [][]string, testsSplitDir string) error {

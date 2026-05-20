@@ -2,12 +2,16 @@ package runner
 
 import "log/slog"
 
-// calculateParallelRunners determines the number of parallel runners by
-// estimating splits between the configured min and max parallelism.
-func calculateParallelRunners(testFileWeights map[string]int, minParallelism, maxParallelism int) int {
+// calculateParallelRunnerSplit determines the selected runner split by
+// estimating candidates between the configured min and max parallelism.
+func calculateParallelRunnerSplit(testFileWeights map[string]int, minParallelism, maxParallelism int) splitScore {
+	files := sortedWeightedTestFiles(testFileWeights)
+
 	// maxParallelism could be 0 or negative!
 	if maxParallelism <= 1 {
-		return 1
+		score := scoreSortedWeightedRunnerSplit(files, 1)
+		logCandidateSplit(score)
+		return score
 	}
 
 	if minParallelism < 1 {
@@ -21,22 +25,25 @@ func calculateParallelRunners(testFileWeights map[string]int, minParallelism, ma
 		minParallelism = maxParallelism
 	}
 
-	files := sortedWeightedTestFiles(testFileWeights)
 	if len(files) == 0 {
-		return minParallelism
+		score := scoreSortedWeightedRunnerSplit(files, minParallelism)
+		logCandidateSplit(score)
+		return score
 	}
 
 	candidateMax := maxUsefulParallelism(minParallelism, maxParallelism, len(files))
 
 	best := scoreSortedWeightedRunnerSplit(files, minParallelism)
+	logCandidateSplit(best)
 	for parallelRunners := minParallelism + 1; parallelRunners <= candidateMax; parallelRunners++ {
 		score := scoreSortedWeightedRunnerSplit(files, parallelRunners)
+		logCandidateSplit(score)
 		if betterSplit(score, best) {
 			best = score
 		}
 	}
 
-	return best.parallelRunners
+	return best
 }
 
 func maxUsefulParallelism(minParallelism, maxParallelism, filesCount int) int {
@@ -52,4 +59,12 @@ func maxUsefulParallelism(minParallelism, maxParallelism, filesCount int) int {
 func betterSplit(candidate, currentBest splitScore) bool {
 	return candidate.wallTime < currentBest.wallTime ||
 		(candidate.wallTime == currentBest.wallTime && candidate.imbalance < currentBest.imbalance)
+}
+
+func logCandidateSplit(score splitScore) {
+	slog.Debug("Considered parallel runner split",
+		"parallelRunners", score.parallelRunners,
+		"expectedWallTime", score.wallTimeDuration(),
+		"imbalance", score.imbalanceDuration(),
+		"expectedTotalRuntime", score.totalRuntimeDuration())
 }

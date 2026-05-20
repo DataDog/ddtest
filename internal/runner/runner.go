@@ -105,11 +105,12 @@ func (tr *TestRunner) Plan(ctx context.Context) error {
 	}
 
 	// Calculate and write parallel runners count
-	parallelRunners := calculateParallelRunners(
+	parallelRunnerSplit := calculateParallelRunnerSplit(
 		tr.testFileWeights,
 		settings.GetMinParallelism(),
 		settings.GetMaxParallelism(),
 	)
+	parallelRunners := parallelRunnerSplit.parallelRunners
 	runnersContent := fmt.Sprintf("%d", parallelRunners)
 	if err := writePlanFileCopies([]byte(runnersContent), constants.ParallelRunnersOutputPath, constants.LegacyParallelRunnersOutputPath); err != nil {
 		return fmt.Errorf("failed to write parallel runners: %w", err)
@@ -132,7 +133,12 @@ func (tr *TestRunner) Plan(ctx context.Context) error {
 		return fmt.Errorf("failed to create test splits: %w", err)
 	}
 
-	slog.Info("Test execution planning completed", "parallelRunners", parallelRunners, "testFilesCount", len(tr.testFileWeights))
+	slog.Info("Test execution planning completed",
+		"parallelRunners", parallelRunners,
+		"expectedWallTime", parallelRunnerSplit.wallTimeDuration(),
+		"imbalance", parallelRunnerSplit.imbalanceDuration(),
+		"expectedTotalRuntime", parallelRunnerSplit.totalRuntimeDuration(),
+		"testFilesCount", len(tr.testFileWeights))
 
 	return nil
 }

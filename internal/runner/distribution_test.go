@@ -302,6 +302,7 @@ func TestScoreSortedWeightedRunnerSplit(t *testing.T) {
 		parallelRunners: 2,
 		wallTime:        12,
 		imbalance:       2,
+		totalRuntime:    22,
 	}
 
 	if result != expected {
@@ -319,6 +320,7 @@ func TestScoreSortedWeightedRunnerSplit_UnavoidableEmptyRunners(t *testing.T) {
 		parallelRunners: 3,
 		wallTime:        10,
 		imbalance:       10,
+		totalRuntime:    10,
 	}
 
 	if result != expected {
