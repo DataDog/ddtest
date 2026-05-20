@@ -19,7 +19,7 @@ type TestOptimizationClient interface {
 	StoreCacheAndExit()
 }
 
-// these interfaces define our expectactions for dd-trace-go's public API
+// These interfaces define the subset of the copied CI Visibility API ddtest uses.
 type CIVisibilityIntegrations interface {
 	EnsureCiVisibilityInitialization()
 	ExitCiVisibility()
@@ -37,7 +37,7 @@ type UtilsInterface interface {
 	AddCITagsMap(tags map[string]string)
 }
 
-// DatadogCIVisibilityIntegrations implements CIVisibilityIntegrations using the real integrations package from dd-trace-go
+// DatadogCIVisibilityIntegrations implements CIVisibilityIntegrations using the copied integrations package.
 type DatadogCIVisibilityIntegrations struct{}
 
 func (d *DatadogCIVisibilityIntegrations) EnsureCiVisibilityInitialization() {
@@ -80,7 +80,7 @@ func (d *DatadogCIVisibilityIntegrations) GetTestManagementTestsRawResponse() js
 	return integrations.GetTestManagementTestsRawResponse()
 }
 
-// DatadogUtils implements UtilsInterface using the real utils package from dd-trace-go
+// DatadogUtils implements UtilsInterface using the copied utils package.
 type DatadogUtils struct{}
 
 func (d *DatadogUtils) AddCITagsMap(tags map[string]string) {
