@@ -81,6 +81,7 @@ type Config struct {
 	Command        string `mapstructure:"command"`
 	TestsLocation  string `mapstructure:"tests_location"`
 	RuntimeTags    string `mapstructure:"runtime_tags"`
+	ReportEnabled  bool   `mapstructure:"report_enabled"`
 }
 
 var (
@@ -119,6 +120,7 @@ func setDefaults() {
 	viper.SetDefault("command", "")
 	viper.SetDefault("tests_location", "")
 	viper.SetDefault("runtime_tags", "")
+	viper.SetDefault("report_enabled", true)
 }
 
 // ParseCiNodeWorkers resolves the ci_node_workers setting from either a positive integer
@@ -187,6 +189,10 @@ func GetTestsLocation() string {
 
 func GetRuntimeTags() string {
 	return Get().RuntimeTags
+}
+
+func GetReportEnabled() bool {
+	return Get().ReportEnabled
 }
 
 // GetRuntimeTagsMap parses the runtime_tags setting as JSON and returns it as a map.

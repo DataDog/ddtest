@@ -129,12 +129,14 @@ func (m *MockFramework) GetRunTestsCalls() []RunTestsCall {
 
 // MockTestOptimizationClient mocks the test optimization client
 type MockTestOptimizationClient struct {
-	InitializeCalled bool
-	InitializeErr    error
-	Settings         *net.SettingsResponseData
-	SkippableTests   map[string]bool
-	ShutdownCalled   bool
-	Tags             map[string]string
+	InitializeCalled    bool
+	InitializeErr       error
+	Settings            *net.SettingsResponseData
+	SkippableTests      map[string]bool
+	KnownTests          *net.KnownTestsResponseData
+	TestManagementTests *net.TestManagementTestsResponseDataModules
+	ShutdownCalled      bool
+	Tags                map[string]string
 }
 
 func (m *MockTestOptimizationClient) Initialize(tags map[string]string) error {
@@ -152,6 +154,14 @@ func (m *MockTestOptimizationClient) GetSettings() *net.SettingsResponseData {
 
 func (m *MockTestOptimizationClient) GetSkippableTests() map[string]bool {
 	return m.SkippableTests
+}
+
+func (m *MockTestOptimizationClient) GetKnownTests() *net.KnownTestsResponseData {
+	return m.KnownTests
+}
+
+func (m *MockTestOptimizationClient) GetTestManagementTestsData() *net.TestManagementTestsResponseDataModules {
+	return m.TestManagementTests
 }
 
 func (m *MockTestOptimizationClient) StoreCacheAndExit() {
@@ -429,6 +439,52 @@ func TestTestRunner_Plan_WritesManifestAndRunnerLayout(t *testing.T) {
 
 	assertFileContent(t, filepath.Join(constants.TestsSplitDir, "runner-0"), expectedTestFiles)
 	assertFileContent(t, filepath.Join(constants.LegacyTestsSplitDir, "runner-0"), expectedTestFiles)
+}
+
+func TestTestRunner_Plan_DoesNotPrintReportWhenDisabled(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "1")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "1")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED", "false")
+	defer func() {
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED")
+		settings.Init()
+	}()
+	settings.Init()
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		&MockTestOptimizationClient{SkippableTests: map[string]bool{}},
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+	var output strings.Builder
+	runner.reportWriter = &output
+
+	if err := runner.Plan(context.Background()); err != nil {
+		t.Fatalf("Plan() should not return error, got: %v", err)
+	}
+	if output.Len() != 0 {
+		t.Errorf("Expected no report output when report is disabled, got: %s", output.String())
+	}
 }
 
 func TestTestRunner_Plan_ChoosesParallelismFromSplitNotSkippablePercentage(t *testing.T) {

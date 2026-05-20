@@ -44,7 +44,7 @@ func chdirForTest(t *testing.T, dir string) {
 	})
 }
 
-func TestRunTestBatch_DefaultTestSessionName(t *testing.T) {
+func TestRunBatch_DefaultTestSessionName(t *testing.T) {
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
 	unsetEnvForTest(t, ciConstants.CIVisibilityTestSessionNameEnvironmentVariable)
@@ -56,9 +56,9 @@ func TestRunTestBatch_DefaultTestSessionName(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	err := runTestBatch(context.Background(), mockFramework, []string{"test/file1_test.rb"}, map[string]string{}, 2, 4)
+	err := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runBatch([]string{"test/file1_test.rb"}, 2, 4)
 	if err != nil {
-		t.Fatalf("runTestBatch() should not return error, got: %v", err)
+		t.Fatalf("runBatch() should not return error, got: %v", err)
 	}
 
 	call := mockFramework.GetRunTestsCalls()[0]
@@ -68,7 +68,7 @@ func TestRunTestBatch_DefaultTestSessionName(t *testing.T) {
 	}
 }
 
-func TestRunTestBatch_DefaultTestSessionNameUsesDDService(t *testing.T) {
+func TestRunBatch_DefaultTestSessionNameUsesDDService(t *testing.T) {
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
 	unsetEnvForTest(t, ciConstants.CIVisibilityTestSessionNameEnvironmentVariable)
@@ -80,9 +80,9 @@ func TestRunTestBatch_DefaultTestSessionNameUsesDDService(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	err := runTestBatch(context.Background(), mockFramework, []string{"test/file1_test.rb"}, map[string]string{}, 3, 7)
+	err := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runBatch([]string{"test/file1_test.rb"}, 3, 7)
 	if err != nil {
-		t.Fatalf("runTestBatch() should not return error, got: %v", err)
+		t.Fatalf("runBatch() should not return error, got: %v", err)
 	}
 
 	call := mockFramework.GetRunTestsCalls()[0]
@@ -92,7 +92,7 @@ func TestRunTestBatch_DefaultTestSessionNameUsesDDService(t *testing.T) {
 	}
 }
 
-func TestRunTestBatch_UserTestSessionNameSupportsPlaceholders(t *testing.T) {
+func TestRunBatch_UserTestSessionNameSupportsPlaceholders(t *testing.T) {
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
 	t.Setenv(ciConstants.CIVisibilityTestSessionNameEnvironmentVariable, "custom-node-{{nodeIndex}}-worker-{{workerIndex}}")
@@ -102,9 +102,9 @@ func TestRunTestBatch_UserTestSessionNameSupportsPlaceholders(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	err := runTestBatch(context.Background(), mockFramework, []string{"test/file1_test.rb"}, map[string]string{}, 5, 8)
+	err := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runBatch([]string{"test/file1_test.rb"}, 5, 8)
 	if err != nil {
-		t.Fatalf("runTestBatch() should not return error, got: %v", err)
+		t.Fatalf("runBatch() should not return error, got: %v", err)
 	}
 
 	call := mockFramework.GetRunTestsCalls()[0]
@@ -114,7 +114,7 @@ func TestRunTestBatch_UserTestSessionNameSupportsPlaceholders(t *testing.T) {
 	}
 }
 
-func TestRunTestBatch_WorkerEnvTestSessionNameTakesPrecedence(t *testing.T) {
+func TestRunBatch_WorkerEnvTestSessionNameTakesPrecedence(t *testing.T) {
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
 	t.Setenv(ciConstants.CIVisibilityTestSessionNameEnvironmentVariable, "outer-session")
@@ -127,9 +127,9 @@ func TestRunTestBatch_WorkerEnvTestSessionNameTakesPrecedence(t *testing.T) {
 		ciConstants.CIVisibilityTestSessionNameEnvironmentVariable: "worker-node-{{nodeIndex}}-worker-{{workerIndex}}",
 	}
 
-	err := runTestBatch(context.Background(), mockFramework, []string{"test/file1_test.rb"}, workerEnvMap, 9, 1)
+	err := newTestExecutor(context.Background(), mockFramework, workerEnvMap).runBatch([]string{"test/file1_test.rb"}, 9, 1)
 	if err != nil {
-		t.Fatalf("runTestBatch() should not return error, got: %v", err)
+		t.Fatalf("runBatch() should not return error, got: %v", err)
 	}
 
 	call := mockFramework.GetRunTestsCalls()[0]
@@ -139,7 +139,7 @@ func TestRunTestBatch_WorkerEnvTestSessionNameTakesPrecedence(t *testing.T) {
 	}
 }
 
-func TestRunTestBatch_DefaultManifestFile(t *testing.T) {
+func TestRunBatch_DefaultManifestFile(t *testing.T) {
 	chdirForTest(t, t.TempDir())
 	unsetEnvForTest(t, constants.TestOptimizationManifestFileEnvVar)
 	unsetEnvForTest(t, "DD_TEST_OPTIMIZATION_PAYLOADS_IN_FILES")
@@ -149,9 +149,9 @@ func TestRunTestBatch_DefaultManifestFile(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	err := runTestBatch(context.Background(), mockFramework, []string{"test/file1_test.rb"}, map[string]string{}, 2, 4)
+	err := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runBatch([]string{"test/file1_test.rb"}, 2, 4)
 	if err != nil {
-		t.Fatalf("runTestBatch() should not return error, got: %v", err)
+		t.Fatalf("runBatch() should not return error, got: %v", err)
 	}
 
 	call := mockFramework.GetRunTestsCalls()[0]
@@ -172,7 +172,7 @@ func TestRunTestBatch_DefaultManifestFile(t *testing.T) {
 	}
 }
 
-func TestRunTestBatch_ManifestFileUsesProcessEnv(t *testing.T) {
+func TestRunBatch_ManifestFileUsesProcessEnv(t *testing.T) {
 	t.Setenv(constants.TestOptimizationManifestFileEnvVar, "/tmp/custom-manifest.txt")
 
 	mockFramework := &MockFramework{
@@ -180,9 +180,9 @@ func TestRunTestBatch_ManifestFileUsesProcessEnv(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	err := runTestBatch(context.Background(), mockFramework, []string{"test/file1_test.rb"}, map[string]string{}, 2, 4)
+	err := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runBatch([]string{"test/file1_test.rb"}, 2, 4)
 	if err != nil {
-		t.Fatalf("runTestBatch() should not return error, got: %v", err)
+		t.Fatalf("runBatch() should not return error, got: %v", err)
 	}
 
 	call := mockFramework.GetRunTestsCalls()[0]
@@ -191,7 +191,7 @@ func TestRunTestBatch_ManifestFileUsesProcessEnv(t *testing.T) {
 	}
 }
 
-func TestRunTestBatch_WorkerEnvManifestFileTakesPrecedence(t *testing.T) {
+func TestRunBatch_WorkerEnvManifestFileTakesPrecedence(t *testing.T) {
 	t.Setenv(constants.TestOptimizationManifestFileEnvVar, "/tmp/process-manifest.txt")
 
 	mockFramework := &MockFramework{
@@ -202,9 +202,9 @@ func TestRunTestBatch_WorkerEnvManifestFileTakesPrecedence(t *testing.T) {
 		constants.TestOptimizationManifestFileEnvVar: "/tmp/worker-manifest.txt",
 	}
 
-	err := runTestBatch(context.Background(), mockFramework, []string{"test/file1_test.rb"}, workerEnvMap, 2, 4)
+	err := newTestExecutor(context.Background(), mockFramework, workerEnvMap).runBatch([]string{"test/file1_test.rb"}, 2, 4)
 	if err != nil {
-		t.Fatalf("runTestBatch() should not return error, got: %v", err)
+		t.Fatalf("runBatch() should not return error, got: %v", err)
 	}
 
 	call := mockFramework.GetRunTestsCalls()[0]

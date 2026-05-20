@@ -51,6 +51,7 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 		return fmt.Errorf("failed to detect framework: %w", err)
 	}
 	slog.Info("Framework detected", "framework", framework.Name())
+	tr.runInfoReport = newRunInfoReport(utils.GetCITags(), tags, detectedPlatform.Name(), framework.Name())
 
 	// Create a cancellable context for test discovery
 	discoveryCtx, cancelDiscovery := context.WithCancel(ctx)
@@ -80,6 +81,7 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 
 		// Get settings to check if ITR is enabled
 		settings := tr.optimizationClient.GetSettings()
+		tr.planReport.DatadogSettings = newDatadogSettingsReport(settings)
 		if settings != nil {
 			slog.Debug("Repository settings", "itr_enabled", settings.ItrEnabled, "tests_skipping", settings.TestsSkipping)
 
@@ -94,6 +96,9 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 		startTime := time.Now()
 		slog.Info("Fetching skippable tests from Datadog...")
 		skippableTests = tr.optimizationClient.GetSkippableTests()
+		tr.planReport.SkippableTestsCount = len(skippableTests)
+		tr.planReport.KnownTests = newKnownTestsReport(tr.optimizationClient.GetKnownTests())
+		tr.planReport.ManagedFlakyTests = newManagedFlakyTestsReport(tr.optimizationClient.GetTestManagementTestsData())
 		slog.Info("Fetched skippable tests", "duration", time.Since(startTime))
 
 		return nil
@@ -170,6 +175,8 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	tr.suitesBySourceFile = indexSuitesBySourceFile(tr.suiteAggregates)
 	tr.skippablePercentage = calculateSavedTimePercentage(tr.suiteAggregates)
 	tr.testFileWeights = tr.weightedTestFiles()
+	tr.planReport.RunInfo = tr.runInfoReport
+	tr.planReport.Planning = tr.newPlanningReport()
 
 	slog.Info("Test files prepared", "testFilesCount", len(tr.testFiles))
 
@@ -251,13 +258,14 @@ func (key *testSuiteKey) UnmarshalText(text []byte) error {
 }
 
 type testSuiteAggregate struct {
-	Module            string  `json:"module"`
-	Suite             string  `json:"suite"`
-	SourceFile        string  `json:"sourceFile"`
-	TotalDuration     float64 `json:"totalDuration"`
-	EstimatedDuration float64 `json:"estimatedDuration"`
-	NumTests          int     `json:"numTests"`
-	NumTestsSkipped   int     `json:"numTestsSkipped"`
+	Module            string                 `json:"module"`
+	Suite             string                 `json:"suite"`
+	SourceFile        string                 `json:"sourceFile"`
+	TotalDuration     float64                `json:"totalDuration"`
+	EstimatedDuration float64                `json:"estimatedDuration"`
+	DurationSource    testFileDurationSource `json:"durationSource,omitempty"`
+	NumTests          int                    `json:"numTests"`
+	NumTestsSkipped   int                    `json:"numTestsSkipped"`
 }
 
 func (tr *TestRunner) processDiscoveredTests(
@@ -333,12 +341,16 @@ func (tr *TestRunner) resolveSuiteDurations() {
 		// is the runnable remainder after skipped tests are removed.
 		aggregate.TotalDuration = float64(aggregate.NumTests) * float64(time.Second)
 		aggregate.EstimatedDuration = float64(aggregate.NumTests-aggregate.NumTestsSkipped) * float64(time.Second)
+		aggregate.DurationSource = testFileDurationSourceDefault
 		if suiteInfo, ok := getTestSuiteDuration(tr.testSuiteDurations, key); ok {
 			if p50, ok := parseDurationP50(suiteInfo); ok {
 				aggregate.TotalDuration = p50
 				aggregate.EstimatedDuration = p50
 				if aggregate.NumTests > 0 {
 					aggregate.EstimatedDuration = p50 * float64(aggregate.NumTests-aggregate.NumTestsSkipped) / float64(aggregate.NumTests)
+				}
+				if aggregate.EstimatedDuration > 0 {
+					aggregate.DurationSource = testFileDurationSourceKnown
 				}
 			}
 		}
@@ -366,6 +378,7 @@ func (tr *TestRunner) addBackendTestSuites(subdirPrefix string) {
 					SourceFile:        sourceFile,
 					TotalDuration:     duration,
 					EstimatedDuration: duration,
+					DurationSource:    testFileDurationSourceKnown,
 					NumTests:          1,
 					NumTestsSkipped:   0,
 				}
@@ -448,43 +461,83 @@ func indexSuitesBySourceFile(suiteAggregates map[testSuiteKey]testSuiteAggregate
 	return sourceFileLookup
 }
 
+type testFileDurationSource string
+
+const (
+	testFileDurationSourceKnown   testFileDurationSource = "known"
+	testFileDurationSourceDefault testFileDurationSource = "default"
+)
+
+type testFileWeightEstimate struct {
+	weight int
+	source testFileDurationSource
+}
+
 func (tr *TestRunner) weightedTestFiles() map[string]int {
-	testFileWeights := make(map[string]int, len(tr.testFiles))
-	for testFile := range tr.testFiles {
-		weight, ok := tr.testFileWeight(testFile)
+	return tr.estimateTestFileWeights(tr.testFiles)
+}
+
+func (tr *TestRunner) estimateTestFileWeights(testFiles map[string]struct{}) map[string]int {
+	testFileWeights := make(map[string]int, len(testFiles))
+	tr.testFileDurationSources = make(map[string]testFileDurationSource, len(testFiles))
+	for testFile := range testFiles {
+		estimate, ok := tr.estimateTestFileWeight(testFile)
 		if ok {
-			testFileWeights[testFile] = weight
+			testFileWeights[testFile] = estimate.weight
+			tr.testFileDurationSources[testFile] = estimate.source
 		}
 	}
 	return testFileWeights
 }
 
 func (tr *TestRunner) testFileWeight(testFile string) (int, bool) {
+	estimate, ok := tr.estimateTestFileWeight(testFile)
+	return estimate.weight, ok
+}
+
+func (tr *TestRunner) estimateTestFileWeight(testFile string) (testFileWeightEstimate, bool) {
 	suiteKeys := tr.suitesBySourceFile[testFile]
 	if len(suiteKeys) == 0 {
-		return defaultTestFileWeight, true
+		return testFileWeightEstimate{
+			weight: defaultTestFileWeight,
+			source: testFileDurationSourceDefault,
+		}, true
 	}
 
 	var duration float64
 	var hasRunnableSuite bool
+	var source testFileDurationSource
 	for _, key := range suiteKeys {
 		aggregate := tr.suiteAggregates[key]
 		if aggregate.NumTests == aggregate.NumTestsSkipped {
 			continue
 		}
 		hasRunnableSuite = true
+		source = aggregate.DurationSource
 		duration += aggregate.EstimatedDuration
 	}
 	if !hasRunnableSuite {
-		return 0, false
+		return testFileWeightEstimate{}, false
+	}
+	if source == "" {
+		source = testFileDurationSourceDefault
 	}
 	if duration <= 0 {
-		return defaultTestFileWeight, true
+		return testFileWeightEstimate{
+			weight: defaultTestFileWeight,
+			source: source,
+		}, true
 	}
 
 	weight := int(duration / float64(time.Millisecond))
 	if weight < 1 {
-		return 1, true
+		return testFileWeightEstimate{
+			weight: 1,
+			source: source,
+		}, true
 	}
-	return weight, true
+	return testFileWeightEstimate{
+		weight: weight,
+		source: source,
+	}, true
 }

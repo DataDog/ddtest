@@ -7,58 +7,6 @@ import (
 	"testing"
 )
 
-func TestRunTestBatchFromFile_WithWorkerEnv(t *testing.T) {
-	tempDir := t.TempDir()
-	oldWd, _ := os.Getwd()
-	defer func() { _ = os.Chdir(oldWd) }()
-	_ = os.Chdir(tempDir)
-
-	// Create test file
-	testFile := "test/file1_test.rb\n"
-	_ = os.WriteFile("test-list.txt", []byte(testFile), 0644)
-
-	mockFramework := &MockFramework{
-		FrameworkName: "rspec",
-		RunTestsCalls: []RunTestsCall{},
-	}
-
-	workerEnvMap := map[string]string{
-		"NODE_INDEX":       "{{nodeIndex}}",
-		"WORKER_INDEX":     "{{workerIndex}}",
-		"WORKER_RESOURCES": "node_{{nodeIndex}}_worker_{{workerIndex}}",
-		"BUILD_ID":         "123",
-	}
-
-	err := runTestBatchFromFile(context.Background(), mockFramework, "test-list.txt", workerEnvMap, 4, 5)
-	if err != nil {
-		t.Fatalf("runTestBatchFromFile() should not return error, got: %v", err)
-	}
-
-	// Verify RunTests was called
-	if mockFramework.GetRunTestsCallsCount() != 1 {
-		t.Fatalf("Expected RunTests to be called once, got %d calls", mockFramework.GetRunTestsCallsCount())
-	}
-
-	calls := mockFramework.GetRunTestsCalls()
-	call := calls[0]
-
-	// Verify nodeIndex identifies the machine, and workerIndex identifies the process on that machine.
-	if call.EnvMap["NODE_INDEX"] != "4" {
-		t.Errorf("Expected NODE_INDEX=4, got %s", call.EnvMap["NODE_INDEX"])
-	}
-	if call.EnvMap["WORKER_INDEX"] != "5" {
-		t.Errorf("Expected WORKER_INDEX=5, got %s", call.EnvMap["WORKER_INDEX"])
-	}
-	if call.EnvMap["WORKER_RESOURCES"] != "node_4_worker_5" {
-		t.Errorf("Expected WORKER_RESOURCES=node_4_worker_5, got %s", call.EnvMap["WORKER_RESOURCES"])
-	}
-
-	// Verify other env vars preserved
-	if call.EnvMap["BUILD_ID"] != "123" {
-		t.Errorf("Expected BUILD_ID=123, got %s", call.EnvMap["BUILD_ID"])
-	}
-}
-
 func TestLoadTestBatch_EmptyFile(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
@@ -97,7 +45,7 @@ func TestLoadTestBatch_WithContent(t *testing.T) {
 	}
 }
 
-func TestRunTestBatch(t *testing.T) {
+func TestRunBatch(t *testing.T) {
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
 		RunTestsCalls: []RunTestsCall{},
@@ -111,9 +59,9 @@ func TestRunTestBatch(t *testing.T) {
 		"STATIC":           "value",
 	}
 
-	err := runTestBatch(context.Background(), mockFramework, testFiles, workerEnvMap, 5, 3)
+	err := newTestExecutor(context.Background(), mockFramework, workerEnvMap).runBatch(testFiles, 5, 3)
 	if err != nil {
-		t.Fatalf("runTestBatch() should not return error, got: %v", err)
+		t.Fatalf("runBatch() should not return error, got: %v", err)
 	}
 
 	if mockFramework.GetRunTestsCallsCount() != 1 {

@@ -159,6 +159,22 @@ In CI-node mode, DDTest uses one local worker by default so database and other p
 
 DDTest automatically sets `DD_TEST_SESSION_NAME` for each worker to `<DD_SERVICE>-node-<nodeIndex>-worker-<workerIndex>` when the variable is not already set. If you set `DD_TEST_SESSION_NAME` yourself, DDTest preserves it and expands the same `{{nodeIndex}}` and `{{workerIndex}}` placeholders before starting each worker.
 
+### Reports
+
+DDTest prints a human-readable report to stderr after `ddtest plan` and `ddtest run`.
+The plan report summarizes the run identity, Datadog feature settings, backend
+data, planning quality, and selected split. `Test impact collection` is shown
+from Datadog's `code_coverage` setting. The run report summarizes the worker,
+file count, duration, and process result.
+
+Reports are aggregate-only: DDTest does not print per-test or per-file lists,
+and counts may show `disabled` or `not available` when a Datadog feature is off
+or its backend payload is not present. To turn reports off:
+
+```bash
+DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED=false ddtest plan
+```
+
 ### Settings (flags and environment variables)
 
 | CLI flag            | Environment variable                          |    Default | What it does                                                                                                                                                                                                         |
@@ -173,6 +189,7 @@ DDTest automatically sets `DD_TEST_SESSION_NAME` for each worker to `<DD_SERVICE
 | `--command`         | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND`         |       `""` | Override the default test command used by the framework. When provided, takes precedence over auto-detection (e.g., `--command "bundle exec custom-rspec"`).                                                         |
 | `--tests-location`  | `DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION`  |       `""` | Custom glob pattern to discover test files (e.g., `--tests-location "custom/spec/**/*_spec.rb"`). Defaults to `spec/**/*_spec.rb` for RSpec, `test/**/*_test.rb` for Minitest.                                       |
 | `--runtime-tags`    | `DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS`    |       `""` | JSON string to override runtime tags used to fetch skippable tests. Useful for local development on a different OS than CI (e.g., `--runtime-tags '{"os.platform":"linux","runtime.version":"3.2.0"}'`).             |
+|                     | `DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED`  |     `true` | Print human-readable plan and run reports. Set to `false` to disable them.                                                                                                                                           |
 
 #### Note about the `--command` flag
 

@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"slices"
 	"strings"
+	"time"
 
+	ciUtils "github.com/DataDog/ddtest/civisibility/utils"
 	"github.com/DataDog/ddtest/internal/ciprovider"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/platform"
@@ -22,31 +25,29 @@ type Runner interface {
 }
 
 type TestRunner struct {
-	testFiles           map[string]struct{}
-	suiteAggregates     map[testSuiteKey]testSuiteAggregate
-	suitesBySourceFile  map[string][]testSuiteKey
-	testSuiteDurations  map[string]map[string]testoptimization.TestSuiteDurationInfo
-	testFileWeights     map[string]int
-	skippablePercentage float64
-	platformDetector    platform.PlatformDetector
-	optimizationClient  testoptimization.TestOptimizationClient
-	durationsClient     testoptimization.TestSuiteDurationsClient
-	ciProviderDetector  ciprovider.CIProviderDetector
+	testFiles               map[string]struct{}
+	suiteAggregates         map[testSuiteKey]testSuiteAggregate
+	suitesBySourceFile      map[string][]testSuiteKey
+	testSuiteDurations      map[string]map[string]testoptimization.TestSuiteDurationInfo
+	testFileWeights         map[string]int
+	testFileDurationSources map[string]testFileDurationSource
+	skippablePercentage     float64
+	planReport              planReport
+	runInfoReport           runInfoReport
+	platformDetector        platform.PlatformDetector
+	optimizationClient      testoptimization.TestOptimizationClient
+	durationsClient         testoptimization.TestSuiteDurationsClient
+	ciProviderDetector      ciprovider.CIProviderDetector
+	reportWriter            io.Writer
 }
 
 func New() *TestRunner {
-	return &TestRunner{
-		testFiles:           make(map[string]struct{}),
-		suiteAggregates:     make(map[testSuiteKey]testSuiteAggregate),
-		suitesBySourceFile:  make(map[string][]testSuiteKey),
-		testSuiteDurations:  make(map[string]map[string]testoptimization.TestSuiteDurationInfo),
-		testFileWeights:     make(map[string]int),
-		skippablePercentage: 0.0,
-		platformDetector:    platform.NewPlatformDetector(),
-		optimizationClient:  testoptimization.NewDatadogClient(),
-		durationsClient:     testoptimization.NewDurationsClient(),
-		ciProviderDetector:  ciprovider.NewCIProviderDetector(),
-	}
+	runner := newTestRunnerWithDefaults()
+	runner.platformDetector = platform.NewPlatformDetector()
+	runner.optimizationClient = testoptimization.NewDatadogClient()
+	runner.durationsClient = testoptimization.NewDurationsClient()
+	runner.ciProviderDetector = ciprovider.NewCIProviderDetector()
+	return runner
 }
 
 func NewWithDependencies(
@@ -55,17 +56,24 @@ func NewWithDependencies(
 	durationsClient testoptimization.TestSuiteDurationsClient,
 	ciProviderDetector ciprovider.CIProviderDetector,
 ) *TestRunner {
+	runner := newTestRunnerWithDefaults()
+	runner.platformDetector = platformDetector
+	runner.optimizationClient = optimizationClient
+	runner.durationsClient = durationsClient
+	runner.ciProviderDetector = ciProviderDetector
+	return runner
+}
+
+func newTestRunnerWithDefaults() *TestRunner {
 	return &TestRunner{
-		testFiles:           make(map[string]struct{}),
-		suiteAggregates:     make(map[testSuiteKey]testSuiteAggregate),
-		suitesBySourceFile:  make(map[string][]testSuiteKey),
-		testSuiteDurations:  make(map[string]map[string]testoptimization.TestSuiteDurationInfo),
-		testFileWeights:     make(map[string]int),
-		skippablePercentage: 0.0,
-		platformDetector:    platformDetector,
-		optimizationClient:  optimizationClient,
-		durationsClient:     durationsClient,
-		ciProviderDetector:  ciProviderDetector,
+		testFiles:               make(map[string]struct{}),
+		suiteAggregates:         make(map[testSuiteKey]testSuiteAggregate),
+		suitesBySourceFile:      make(map[string][]testSuiteKey),
+		testSuiteDurations:      make(map[string]map[string]testoptimization.TestSuiteDurationInfo),
+		testFileWeights:         make(map[string]int),
+		testFileDurationSources: make(map[string]testFileDurationSource),
+		skippablePercentage:     0.0,
+		reportWriter:            os.Stderr,
 	}
 }
 
@@ -80,8 +88,8 @@ func (tr *TestRunner) Plan(ctx context.Context) error {
 		return fmt.Errorf("failed to write test optimization manifest: %w", err)
 	}
 
-	if err := tr.storeTestSuiteDurationsCache(); err != nil {
-		return fmt.Errorf("failed to store test suite durations cache: %w", err)
+	if err := tr.storeTestOptimizationPlanCache(); err != nil {
+		return fmt.Errorf("failed to store test optimization plan cache: %w", err)
 	}
 
 	testFileNames := make([]string, 0, len(tr.testFileWeights))
@@ -133,12 +141,17 @@ func (tr *TestRunner) Plan(ctx context.Context) error {
 		return fmt.Errorf("failed to create test splits: %w", err)
 	}
 
+	tr.planReport.Split = parallelRunnerSplit
 	slog.Info("Test execution planning completed",
 		"parallelRunners", parallelRunners,
 		"expectedWallTime", parallelRunnerSplit.wallTimeDuration(),
 		"imbalance", parallelRunnerSplit.imbalanceDuration(),
 		"expectedTotalRuntime", parallelRunnerSplit.totalRuntimeDuration(),
 		"testFilesCount", len(tr.testFileWeights))
+
+	if settings.GetReportEnabled() {
+		printPlanReport(tr.reportWriter, tr.planReport)
+	}
 
 	return nil
 }
@@ -156,13 +169,13 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to check parallel runners count at %s: %w", constants.ParallelRunnersOutputPath, err)
 	}
 
-	if err := tr.restoreTestSuiteDurationsCache(); err != nil {
+	if err := tr.restoreTestOptimizationPlanCache(); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			slog.Debug("Test suite durations cache not found; CI-node subsplits will use default weights",
-				"file", testoptimization.TestSuiteDurationsCacheFile)
+			slog.Debug("Test optimization plan cache not found; CI-node subsplits will use default weights",
+				"file", testoptimization.TestOptimizationPlanCacheFile)
 		} else {
-			slog.Warn("Failed to restore test suite durations cache; CI-node subsplits will use default weights",
-				"file", testoptimization.TestSuiteDurationsCacheFile, "error", err)
+			slog.Warn("Failed to restore test optimization plan cache; CI-node subsplits will use default weights",
+				"file", testoptimization.TestOptimizationPlanCacheFile, "error", err)
 		}
 	}
 
@@ -195,13 +208,29 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to detect framework: %w", err)
 	}
 	slog.Info("Framework detected", "framework", framework.Name())
+	if tr.runInfoReport.isZero() {
+		tr.runInfoReport = newRunInfoReport(ciUtils.GetCITags(), nil, detectedPlatform.Name(), framework.Name())
+	}
 
 	ciNode := settings.GetCiNode()
+	startTime := time.Now()
+	executor := newTestExecutor(ctx, framework, workerEnvMap)
+	var executionResult runExecutionResult
 	if ciNode >= 0 {
-		return runCINodeTests(ctx, framework, workerEnvMap, ciNode, settings.GetCiNodeWorkers(), tr.testFileWeights)
+		executionResult = executor.runCINode(ciNode, settings.GetCiNodeWorkers(), tr.testFileWeights)
 	} else if parallelRunners > 1 {
-		return runParallelTests(ctx, framework, workerEnvMap)
+		executionResult = executor.runParallel()
 	} else {
-		return runSequentialTests(ctx, framework, workerEnvMap)
+		executionResult = executor.runSequential()
 	}
+
+	if settings.GetReportEnabled() {
+		printRunReport(tr.reportWriter, runReport{
+			RunInfo:   tr.runInfoReport,
+			Execution: executionResult.report,
+			Duration:  time.Since(startTime),
+			Err:       executionResult.err,
+		})
+	}
+	return executionResult.err
 }

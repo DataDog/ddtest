@@ -16,6 +16,8 @@ type TestOptimizationClient interface {
 	Initialize(tags map[string]string) error
 	GetSettings() *net.SettingsResponseData
 	GetSkippableTests() map[string]bool
+	GetKnownTests() *net.KnownTestsResponseData
+	GetTestManagementTestsData() *net.TestManagementTestsResponseDataModules
 	StoreCacheAndExit()
 }
 
@@ -166,6 +168,20 @@ func (c *DatadogClient) GetSkippableTests() map[string]bool {
 	slog.Debug("Finished fetching skippable tests", "count", len(skippedTests), "duration", duration)
 
 	return skippedTests
+}
+
+func (c *DatadogClient) GetKnownTests() *net.KnownTestsResponseData {
+	if c.settings == nil || !c.settings.KnownTestsEnabled {
+		return nil
+	}
+	return c.integrations.GetKnownTests()
+}
+
+func (c *DatadogClient) GetTestManagementTestsData() *net.TestManagementTestsResponseDataModules {
+	if c.settings == nil || !c.settings.TestManagement.Enabled {
+		return nil
+	}
+	return c.integrations.GetTestManagementTestsData()
 }
 
 func (c *DatadogClient) StoreCacheAndExit() {
