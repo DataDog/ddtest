@@ -1,6 +1,11 @@
 package runner
 
-import "log/slog"
+import (
+	"log/slog"
+	"time"
+)
+
+const parallelRunnerFanoutCost = int(20 * time.Second / time.Millisecond)
 
 // calculateParallelRunnerSplit determines the selected runner split by
 // estimating candidates between the configured min and max parallelism.
@@ -57,8 +62,22 @@ func maxUsefulParallelism(minParallelism, maxParallelism, filesCount int) int {
 }
 
 func betterSplit(candidate, currentBest splitScore) bool {
-	return candidate.wallTime < currentBest.wallTime ||
-		(candidate.wallTime == currentBest.wallTime && candidate.imbalance < currentBest.imbalance)
+	candidateScore := splitSelectionScore(candidate)
+	currentBestScore := splitSelectionScore(currentBest)
+	if candidateScore != currentBestScore {
+		return candidateScore < currentBestScore
+	}
+	if candidate.parallelRunners != currentBest.parallelRunners {
+		return candidate.parallelRunners < currentBest.parallelRunners
+	}
+	if candidate.wallTime != currentBest.wallTime {
+		return candidate.wallTime < currentBest.wallTime
+	}
+	return candidate.imbalance < currentBest.imbalance
+}
+
+func splitSelectionScore(score splitScore) int {
+	return score.wallTime + score.parallelRunners*parallelRunnerFanoutCost
 }
 
 func logCandidateSplit(score splitScore) {
@@ -66,5 +85,6 @@ func logCandidateSplit(score splitScore) {
 		"parallelRunners", score.parallelRunners,
 		"expectedWallTime", score.wallTimeDuration(),
 		"imbalance", score.imbalanceDuration(),
-		"expectedTotalRuntime", score.totalRuntimeDuration())
+		"expectedTotalRuntime", score.totalRuntimeDuration(),
+		"selectionScore", time.Duration(splitSelectionScore(score))*time.Millisecond)
 }
