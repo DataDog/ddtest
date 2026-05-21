@@ -17,6 +17,7 @@ const (
 	defaultCiNodeWorkers          = 1
 	defaultParallelRunnerOverhead = 25 * time.Second
 	ncpuCiNodeWorkers             = "ncpu"
+	parallelRunnerOverheadEnv     = "DD_TEST_OPTIMIZATION_RUNNER_CI_JOB_OVERHEAD"
 )
 
 // DefaultParallelism returns the default parallelism value.
@@ -101,6 +102,10 @@ func Init() {
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix("DD_TEST_OPTIMIZATION_RUNNER")
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	if err := viper.BindEnv("parallel_runner_overhead", parallelRunnerOverheadEnv); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding parallel runner overhead env: %v\n", err)
+		os.Exit(1)
+	}
 
 	setDefaults()
 
