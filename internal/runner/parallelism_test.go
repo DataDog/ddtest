@@ -168,7 +168,7 @@ func TestCalculateParallelRunnerSplit_RealGitHubActionsArtifacts(t *testing.T) {
 		{
 			name:                    "spree measure 1 high TIA savings should reduce fanout",
 			fixturePath:             "spree-26223858840.json",
-			expectedParallelRunners: 4,
+			expectedParallelRunners: 3,
 		},
 		{
 			name:                    "spree measure 2 high TIA savings should reduce fanout",

@@ -5,7 +5,11 @@ import (
 	"time"
 )
 
-const parallelRunnerFanoutCost = int(20 * time.Second / time.Millisecond)
+// parallelRunnerFanoutCost is the modeled per-runner CI overhead used when
+// choosing a split. It makes an extra runner worth selecting only when it saves
+// enough modeled test wall time to justify another CI job, database setup, and
+// queue slot.
+const parallelRunnerFanoutCost = int(25 * time.Second / time.Millisecond)
 
 // calculateParallelRunnerSplit determines the selected runner split by
 // estimating candidates between the configured min and max parallelism.
