@@ -59,6 +59,7 @@ func init() {
 	rootCmd.PersistentFlags().String("framework", "rspec", "Test framework to use")
 	rootCmd.PersistentFlags().Int("min-parallelism", defaultParallelism, "Minimum number of parallel test processes (default: number of physical CPUs)")
 	rootCmd.PersistentFlags().Int("max-parallelism", defaultParallelism, "Maximum number of parallel test processes (default: number of physical CPUs)")
+	rootCmd.PersistentFlags().String("parallel-runner-overhead", settings.DefaultParallelRunnerOverhead().String(), "Modeled overhead for adding one more parallel runner (for example, 25s, 1m, 1500ms, or 0s to disable the bias). Increase it to use fewer CI jobs; decrease it to prefer faster wall time")
 	rootCmd.PersistentFlags().String("worker-env", "", "Worker environment configuration")
 	rootCmd.PersistentFlags().String("ci-node-workers", "1", `Number of parallel workers per CI node (positive integer or "ncpu"; default: 1)`)
 	rootCmd.PersistentFlags().String("command", "", "Test command that ddtest should wrap")
@@ -78,6 +79,10 @@ func init() {
 	}
 	if err := viper.BindPFlag("max_parallelism", rootCmd.PersistentFlags().Lookup("max-parallelism")); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding max-parallelism flag: %v\n", err)
+		os.Exit(1)
+	}
+	if err := viper.BindPFlag("parallel_runner_overhead", rootCmd.PersistentFlags().Lookup("parallel-runner-overhead")); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding parallel-runner-overhead flag: %v\n", err)
 		os.Exit(1)
 	}
 	if err := viper.BindPFlag("worker_env", rootCmd.PersistentFlags().Lookup("worker-env")); err != nil {

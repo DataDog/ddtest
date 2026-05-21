@@ -3,9 +3,12 @@ package settings
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 )
+
+const expectedDefaultParallelRunnerOverhead = 25 * time.Second
 
 func TestDefaultParallelism(t *testing.T) {
 	result := DefaultParallelism()
@@ -16,6 +19,12 @@ func TestDefaultParallelism(t *testing.T) {
 	}
 	if result < 1 {
 		t.Errorf("expected DefaultParallelism() to be at least 1, got %d", result)
+	}
+}
+
+func TestDefaultParallelRunnerOverhead(t *testing.T) {
+	if DefaultParallelRunnerOverhead() != expectedDefaultParallelRunnerOverhead {
+		t.Errorf("expected default parallel runner overhead to be %s, got %s", expectedDefaultParallelRunnerOverhead, DefaultParallelRunnerOverhead())
 	}
 }
 
@@ -111,6 +120,9 @@ func TestInit(t *testing.T) {
 	if config.MaxParallelism != expectedParallelism {
 		t.Errorf("expected default max_parallelism to be %d (physical CPU count), got %d", expectedParallelism, config.MaxParallelism)
 	}
+	if config.ParallelRunnerOverhead != expectedDefaultParallelRunnerOverhead {
+		t.Errorf("expected default parallel_runner_overhead to be %s, got %s", expectedDefaultParallelRunnerOverhead, config.ParallelRunnerOverhead)
+	}
 	if config.WorkerEnv != "" {
 		t.Errorf("expected default worker_env to be empty, got %q", config.WorkerEnv)
 	}
@@ -151,6 +163,9 @@ func TestSetDefaults(t *testing.T) {
 	}
 	if viper.GetInt("max_parallelism") != expectedParallelism {
 		t.Errorf("expected default max_parallelism to be %d (physical CPU count), got %d", expectedParallelism, viper.GetInt("max_parallelism"))
+	}
+	if viper.GetString("parallel_runner_overhead") != expectedDefaultParallelRunnerOverhead.String() {
+		t.Errorf("expected default parallel_runner_overhead to be %s, got %q", expectedDefaultParallelRunnerOverhead, viper.GetString("parallel_runner_overhead"))
 	}
 	if viper.GetString("worker_env") != "" {
 		t.Errorf("expected default worker_env to be empty, got %q", viper.GetString("worker_env"))
@@ -239,6 +254,7 @@ func TestEnvironmentVariables(t *testing.T) {
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK", "pytest")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "2")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "8")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PARALLEL_RUNNER_OVERHEAD", "40s")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV", "RAILS_DB=my_project_dev_{{nodeIndex}}")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE", "5")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS", "4")
@@ -251,6 +267,7 @@ func TestEnvironmentVariables(t *testing.T) {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_PARALLEL_RUNNER_OVERHEAD")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS")
@@ -273,6 +290,9 @@ func TestEnvironmentVariables(t *testing.T) {
 	}
 	if config.MaxParallelism != 8 {
 		t.Errorf("expected max_parallelism from env var to be 8, got %d", config.MaxParallelism)
+	}
+	if config.ParallelRunnerOverhead != 40*time.Second {
+		t.Errorf("expected parallel_runner_overhead from env var to be 40s, got %s", config.ParallelRunnerOverhead)
 	}
 	if config.WorkerEnv != "RAILS_DB=my_project_dev_{{nodeIndex}}" {
 		t.Errorf("expected worker_env from env var to be 'RAILS_DB=my_project_dev_{{nodeIndex}}', got %q", config.WorkerEnv)
@@ -332,6 +352,22 @@ func TestGetMaxParallelism(t *testing.T) {
 	maxParallelism = GetMaxParallelism()
 	if maxParallelism != 6 {
 		t.Errorf("expected max_parallelism to be 6, got %d", maxParallelism)
+	}
+}
+
+func TestGetParallelRunnerOverhead(t *testing.T) {
+	config = nil
+	viper.Reset()
+
+	parallelRunnerOverhead := GetParallelRunnerOverhead()
+	if parallelRunnerOverhead != expectedDefaultParallelRunnerOverhead {
+		t.Errorf("expected parallel_runner_overhead to be %s, got %s", expectedDefaultParallelRunnerOverhead, parallelRunnerOverhead)
+	}
+
+	config = &Config{ParallelRunnerOverhead: 45 * time.Second}
+	parallelRunnerOverhead = GetParallelRunnerOverhead()
+	if parallelRunnerOverhead != 45*time.Second {
+		t.Errorf("expected parallel_runner_overhead to be 45s, got %s", parallelRunnerOverhead)
 	}
 }
 
@@ -578,6 +614,75 @@ func TestParseCiNodeWorkers(t *testing.T) {
 			}
 			if result != tt.expected {
 				t.Errorf("expected %d, got %d", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestParseParallelRunnerOverhead(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		expected  time.Duration
+		expectErr bool
+	}{
+		{
+			name:     "empty value uses default",
+			value:    "",
+			expected: expectedDefaultParallelRunnerOverhead,
+		},
+		{
+			name:     "seconds",
+			value:    "25s",
+			expected: expectedDefaultParallelRunnerOverhead,
+		},
+		{
+			name:     "minutes",
+			value:    "1m",
+			expected: time.Minute,
+		},
+		{
+			name:     "milliseconds",
+			value:    "1500ms",
+			expected: 1500 * time.Millisecond,
+		},
+		{
+			name:     "zero disables bias",
+			value:    "0s",
+			expected: 0,
+		},
+		{
+			name:      "rejects negative values",
+			value:     "-1s",
+			expectErr: true,
+		},
+		{
+			name:      "rejects plain integers",
+			value:     "25",
+			expectErr: true,
+		},
+		{
+			name:      "rejects unknown strings",
+			value:     "many",
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ParseParallelRunnerOverhead(tt.value)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			if result != tt.expected {
+				t.Errorf("expected %s, got %s", tt.expected, result)
 			}
 		})
 	}

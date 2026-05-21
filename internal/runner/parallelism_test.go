@@ -8,10 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
+const testParallelRunnerOverhead = 25 * time.Second
+
 func testCalculateParallelRunners(testFileWeights map[string]int, minParallelism, maxParallelism int) int {
-	return calculateParallelRunnerSplit(testFileWeights, minParallelism, maxParallelism).parallelRunners
+	return calculateParallelRunnerSplit(testFileWeights, minParallelism, maxParallelism, testParallelRunnerOverhead).parallelRunners
 }
 
 func TestCalculateParallelRunners_MaxParallelismIsOne(t *testing.T) {
@@ -141,7 +144,7 @@ func TestCalculateParallelRunnerSplit_ReturnsSelectedScore(t *testing.T) {
 		"test5.rb": 6,
 	}
 
-	result := calculateParallelRunnerSplit(testFileWeights, 3, 4)
+	result := calculateParallelRunnerSplit(testFileWeights, 3, 4, testParallelRunnerOverhead)
 	expected := splitScore{
 		parallelRunners: 3,
 		wallTime:        12,
@@ -198,7 +201,7 @@ func TestCalculateParallelRunnerSplit_RealGitHubActionsArtifacts(t *testing.T) {
 				)
 			}
 
-			result := calculateParallelRunnerSplit(fixture.TestFileWeights, 1, 8)
+			result := calculateParallelRunnerSplit(fixture.TestFileWeights, 1, 8, testParallelRunnerOverhead)
 			if result.parallelRunners != tt.expectedParallelRunners {
 				t.Fatalf(
 					"calculateParallelRunnerSplit() = %d runners, expected %d; artifact selected %d before this fix",
@@ -206,6 +209,36 @@ func TestCalculateParallelRunnerSplit_RealGitHubActionsArtifacts(t *testing.T) {
 					tt.expectedParallelRunners,
 					fixture.CurrentParallelRunners,
 				)
+			}
+		})
+	}
+}
+
+func TestCalculateParallelRunnerSplit_ParallelRunnerOverheadTunesFanout(t *testing.T) {
+	fixture := loadSplitSelectionFixture(t, "spree-26223858840.json")
+
+	tests := []struct {
+		name                    string
+		parallelRunnerOverhead  time.Duration
+		expectedParallelRunners int
+	}{
+		{
+			name:                    "lower overhead prefers faster wall time",
+			parallelRunnerOverhead:  20 * time.Second,
+			expectedParallelRunners: 4,
+		},
+		{
+			name:                    "higher overhead prefers fewer CI jobs",
+			parallelRunnerOverhead:  testParallelRunnerOverhead,
+			expectedParallelRunners: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := calculateParallelRunnerSplit(fixture.TestFileWeights, 1, 8, tt.parallelRunnerOverhead)
+			if result.parallelRunners != tt.expectedParallelRunners {
+				t.Errorf("calculateParallelRunnerSplit() = %d runners, expected %d", result.parallelRunners, tt.expectedParallelRunners)
 			}
 		})
 	}
@@ -243,7 +276,7 @@ func TestCalculateParallelRunnerSplit_LogsCandidateSplits(t *testing.T) {
 		"test3.rb": 10,
 	}
 
-	_ = calculateParallelRunnerSplit(testFileWeights, 1, 3)
+	_ = calculateParallelRunnerSplit(testFileWeights, 1, 3, testParallelRunnerOverhead)
 
 	logOutput := logs.String()
 	if strings.Count(logOutput, "Considered parallel runner split") != 3 ||
@@ -265,6 +298,6 @@ func BenchmarkCalculateParallelRunners20000TestFiles(b *testing.B) {
 
 	b.ResetTimer()
 	for range b.N {
-		_ = calculateParallelRunnerSplit(testFileWeights, 1, 256)
+		_ = calculateParallelRunnerSplit(testFileWeights, 1, 256, testParallelRunnerOverhead)
 	}
 }

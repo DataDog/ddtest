@@ -117,9 +117,12 @@ The folder contents are:
 DDTest chooses parallelism by estimating the runnable duration of each test file,
 then trying worker counts between `--min-parallelism` and `--max-parallelism`.
 Duration estimates come from Datadog test suite p50 timings when available and
-fall back to local discovery weights otherwise. DDTest chooses the split with
-the lowest slowest-worker time, then the most even load, so it avoids launching
-workers that would sit idle or would not shorten the run.
+fall back to local discovery weights otherwise. DDTest chooses the split with the
+best modeled balance between slowest-worker time and CI fanout. The
+`--parallel-runner-overhead` setting models the cost of adding one more runner:
+increase it to use fewer CI jobs, or decrease it to prefer faster wall time.
+Use duration values such as `25s`, `1m`, or `1500ms`; set `0s` to disable this
+runner-overhead bias.
 
 DDTest may also write compatibility files at legacy root paths for existing
 integrations. New integrations should read runner files from `.testoptimization/runner/*`.
@@ -183,6 +186,7 @@ DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED=false ddtest plan
 | `--framework`       | `DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK`       |    `rspec` | Test framework (currently supported values: `rspec`, `minitest`).                                                                                                                                                    |
 | `--min-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM` | physical CPU count | Minimum worker count DDTest considers when choosing the split.                                                                                                                                                       |
 | `--max-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM` | physical CPU count | Maximum worker count DDTest considers when choosing the split.                                                                                                                                                       |
+| `--parallel-runner-overhead` | `DD_TEST_OPTIMIZATION_RUNNER_PARALLEL_RUNNER_OVERHEAD` | `25s` | Modeled overhead for adding one more parallel runner. Accepts durations such as `25s`, `1m`, `1500ms`, or `0s` to disable this bias. Increase it to use fewer CI jobs; decrease it to prefer faster wall time. |
 |                     | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE`         | `-1` (off) | Restrict this run to the slice assigned to node **N** (0-indexed).                                                                                                                                                   |
 | `--ci-node-workers` | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS` |        `1` | Number of parallel workers per CI node. Use a positive integer, or `ncpu` to use the node's available physical CPU cores. Tests assigned to a CI node are further split among this many local workers.                |
 | `--worker-env`      | `DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV`      |       `""` | Template env vars per worker: `--worker-env "DATABASE_NAME_TEST=app_test{{nodeIndex}}_{{workerIndex}}"`. `{{nodeIndex}}` is the machine number (`0` for single-machine runs); `{{workerIndex}}` is the process number within that machine. |

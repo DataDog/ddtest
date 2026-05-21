@@ -5,21 +5,16 @@ import (
 	"time"
 )
 
-// parallelRunnerFanoutCost is the modeled per-runner CI overhead used when
-// choosing a split. It makes an extra runner worth selecting only when it saves
-// enough modeled test wall time to justify another CI job, database setup, and
-// queue slot.
-const parallelRunnerFanoutCost = int(25 * time.Second / time.Millisecond)
-
 // calculateParallelRunnerSplit determines the selected runner split by
 // estimating candidates between the configured min and max parallelism.
-func calculateParallelRunnerSplit(testFileWeights map[string]int, minParallelism, maxParallelism int) splitScore {
+func calculateParallelRunnerSplit(testFileWeights map[string]int, minParallelism, maxParallelism int, parallelRunnerOverhead time.Duration) splitScore {
 	files := sortedWeightedTestFiles(testFileWeights)
+	selector := splitSelector{parallelRunnerOverhead: parallelRunnerOverhead}
 
 	// maxParallelism could be 0 or negative!
 	if maxParallelism <= 1 {
 		score := scoreSortedWeightedRunnerSplit(files, 1)
-		logCandidateSplit(score)
+		selector.logCandidate(score)
 		return score
 	}
 
@@ -36,18 +31,18 @@ func calculateParallelRunnerSplit(testFileWeights map[string]int, minParallelism
 
 	if len(files) == 0 {
 		score := scoreSortedWeightedRunnerSplit(files, minParallelism)
-		logCandidateSplit(score)
+		selector.logCandidate(score)
 		return score
 	}
 
 	candidateMax := maxUsefulParallelism(minParallelism, maxParallelism, len(files))
 
 	best := scoreSortedWeightedRunnerSplit(files, minParallelism)
-	logCandidateSplit(best)
+	selector.logCandidate(best)
 	for parallelRunners := minParallelism + 1; parallelRunners <= candidateMax; parallelRunners++ {
 		score := scoreSortedWeightedRunnerSplit(files, parallelRunners)
-		logCandidateSplit(score)
-		if betterSplit(score, best) {
+		selector.logCandidate(score)
+		if selector.better(score, best) {
 			best = score
 		}
 	}
@@ -65,9 +60,13 @@ func maxUsefulParallelism(minParallelism, maxParallelism, filesCount int) int {
 	return maxParallelism
 }
 
-func betterSplit(candidate, currentBest splitScore) bool {
-	candidateScore := splitSelectionScore(candidate)
-	currentBestScore := splitSelectionScore(currentBest)
+type splitSelector struct {
+	parallelRunnerOverhead time.Duration
+}
+
+func (s splitSelector) better(candidate, currentBest splitScore) bool {
+	candidateScore := s.selectionScore(candidate)
+	currentBestScore := s.selectionScore(currentBest)
 	if candidateScore != currentBestScore {
 		return candidateScore < currentBestScore
 	}
@@ -80,15 +79,26 @@ func betterSplit(candidate, currentBest splitScore) bool {
 	return candidate.imbalance < currentBest.imbalance
 }
 
-func splitSelectionScore(score splitScore) int {
-	return score.wallTime + score.parallelRunners*parallelRunnerFanoutCost
+// selectionScore models each candidate as wallTime + runners * overhead. When
+// scores tie, the selector intentionally prefers fewer runners before comparing
+// wall time and imbalance.
+func (s splitSelector) selectionScore(score splitScore) int {
+	return score.wallTime + score.parallelRunners*s.parallelRunnerOverheadMillis()
 }
 
-func logCandidateSplit(score splitScore) {
+func (s splitSelector) parallelRunnerOverheadMillis() int {
+	if s.parallelRunnerOverhead <= 0 {
+		return 0
+	}
+	return int(s.parallelRunnerOverhead / time.Millisecond)
+}
+
+func (s splitSelector) logCandidate(score splitScore) {
 	slog.Debug("Considered parallel runner split",
 		"parallelRunners", score.parallelRunners,
 		"expectedWallTime", score.wallTimeDuration(),
 		"imbalance", score.imbalanceDuration(),
 		"expectedTotalRuntime", score.totalRuntimeDuration(),
-		"selectionScore", time.Duration(splitSelectionScore(score))*time.Millisecond)
+		"parallelRunnerOverhead", s.parallelRunnerOverhead,
+		"selectionScore", time.Duration(s.selectionScore(score))*time.Millisecond)
 }
