@@ -155,10 +155,10 @@ func ParseParallelRunnerOverhead(value string) (time.Duration, error) {
 
 	overhead, err := time.ParseDuration(normalized)
 	if err != nil {
-		return 0, fmt.Errorf("parallel-runner-overhead must be a duration like %q, %q, %q, or %q, got %q", "25s", "1m", "1500ms", "0s", value)
+		return 0, fmt.Errorf("ci-job-overhead must be a duration like %q, %q, %q, or %q, got %q", "25s", "1m", "1500ms", "0s", value)
 	}
 	if overhead < 0 {
-		return 0, fmt.Errorf("parallel-runner-overhead must be non-negative, got %q", value)
+		return 0, fmt.Errorf("ci-job-overhead must be non-negative, got %q", value)
 	}
 	return overhead, nil
 }

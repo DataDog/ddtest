@@ -46,9 +46,9 @@ func TestRootCommandFlags(t *testing.T) {
 		return
 	}
 
-	parallelRunnerOverheadFlag := rootCmd.PersistentFlags().Lookup("parallel-runner-overhead")
+	parallelRunnerOverheadFlag := rootCmd.PersistentFlags().Lookup("ci-job-overhead")
 	if parallelRunnerOverheadFlag == nil {
-		t.Error("parallel-runner-overhead flag should be defined")
+		t.Error("ci-job-overhead flag should be defined")
 		return
 	}
 
@@ -75,7 +75,7 @@ func TestRootCommandFlags(t *testing.T) {
 
 	expectedParallelRunnerOverhead := settings.DefaultParallelRunnerOverhead().String()
 	if parallelRunnerOverheadFlag.DefValue != expectedParallelRunnerOverhead {
-		t.Errorf("expected parallel-runner-overhead default to be %q, got %q", expectedParallelRunnerOverhead, parallelRunnerOverheadFlag.DefValue)
+		t.Errorf("expected ci-job-overhead default to be %q, got %q", expectedParallelRunnerOverhead, parallelRunnerOverheadFlag.DefValue)
 	}
 }
 
@@ -145,8 +145,8 @@ func TestFlagBinding(t *testing.T) {
 	if err := viper.BindPFlag("ci_node_workers", rootCmd.PersistentFlags().Lookup("ci-node-workers")); err != nil {
 		t.Fatalf("Error binding ci-node-workers flag: %v", err)
 	}
-	if err := viper.BindPFlag("parallel_runner_overhead", rootCmd.PersistentFlags().Lookup("parallel-runner-overhead")); err != nil {
-		t.Fatalf("Error binding parallel-runner-overhead flag: %v", err)
+	if err := viper.BindPFlag("parallel_runner_overhead", rootCmd.PersistentFlags().Lookup("ci-job-overhead")); err != nil {
+		t.Fatalf("Error binding ci-job-overhead flag: %v", err)
 	}
 
 	// Set flag values
@@ -165,8 +165,8 @@ func TestFlagBinding(t *testing.T) {
 	if err := rootCmd.PersistentFlags().Set("ci-node-workers", "ncpu"); err != nil {
 		t.Fatalf("Error setting ci-node-workers flag: %v", err)
 	}
-	if err := rootCmd.PersistentFlags().Set("parallel-runner-overhead", "30s"); err != nil {
-		t.Fatalf("Error setting parallel-runner-overhead flag: %v", err)
+	if err := rootCmd.PersistentFlags().Set("ci-job-overhead", "30s"); err != nil {
+		t.Fatalf("Error setting ci-job-overhead flag: %v", err)
 	}
 
 	// Check that viper picks up the flag values
