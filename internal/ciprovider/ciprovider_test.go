@@ -65,6 +65,8 @@ func TestNewCIProviderDetector(t *testing.T) {
 }
 
 func TestCIProviderConfigure(t *testing.T) {
+	t.Setenv(githubOutputEnvVar, "")
+
 	provider := NewGitHub()
 	err := provider.Configure(4) // Test with 4 parallel runners
 	if err != nil {

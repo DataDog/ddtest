@@ -1,6 +1,6 @@
 # DDTest
 
-DDTest is a CLI tool that plans and runs your tests in parallel alongside your existing test commands - or as a drop‑in runner. It discovers the tests in your repo, fetches Datadog Test Optimization data, configures your CI to use the right number of workers, and distributes test execution across workers.
+DDTest is a CLI tool that plans and runs your tests in parallel alongside your existing test commands, or as a drop-in runner. It discovers tests in your repo, fetches Datadog Test Optimization data, and chooses an efficient worker split.
 
 You need it when Test Impact Analysis shrinks the test workload but CI still launches too many nodes, and skipped tests leave splits wildly uneven. Start by generating a plan (`ddtest plan`) you can feed to any runner, or let DDTest execute the tests for you with `ddtest run` in CI.
 
@@ -85,48 +85,13 @@ ddtest plan \
 ```
 
 This prepares the plan and writes it to `.testoptimization/` folder for later reuse.
-The folder can be copied to to any runner and will be used by Datadog's test optimization
-library automatically.
+Copy `.testoptimization/` to any CI job that runs `ddtest run` or reads DDTest's
+runner file lists. For the full file layout and formats, see
+[Plan file layout](docs/layout.md).
 
-The folder contents are:
-
-```
-.testoptimization/
-  manifest.txt               # Plan layout version
-  cache/
-    http/                    # Backend-shaped Datadog responses
-      settings.json
-      known_tests.json
-      skippable_tests.json
-      test_management.json
-  runner/                    # DDTest runner-private plan files
-    test-files.txt           # All non-skipped test files to execute
-    parallel-runners.txt     # Chosen worker count (single integer)
-    skippable-percentage.txt # % tests skipped by TIA
-    tests-split/
-      runner-0               # File list for worker 0
-      ...
-      runner-(N-1)           # File list for worker N-1
-    cache/
-      test_suite_durations.json
-  tests-discovery/
-    tests.json               # JSON stream of discovered tests
-  github/
-    config                   # (GHA only) matrix JSON with ci_node_index entries
-```
-
-DDTest chooses parallelism by estimating the runnable duration of each test file,
-then trying worker counts between `--min-parallelism` and `--max-parallelism`.
-Duration estimates come from Datadog test suite p50 timings when available and
-fall back to local discovery weights otherwise. DDTest chooses the split with the
-best modeled balance between slowest-worker time and CI fanout. The
-`--ci-job-overhead` setting models the cost of adding one more runner:
-increase it to use fewer CI jobs, or decrease it to prefer faster wall time.
-Use duration values such as `25s`, `1m`, or `1500ms`; set `0s` to disable this
-runner-overhead bias.
-
-You can use `runner/test-files.txt` or `runner/tests-split/runner-X` files to feed
-them directly to your existing test runner.
+You can use `.testoptimization/runner/test-files.txt` or
+`.testoptimization/runner/tests-split/runner-X` files to feed them directly to
+your existing test runner.
 
 Example for Knapsack Pro:
 
@@ -236,7 +201,7 @@ jobs:
   dd_plan:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
+      matrix: ${{ steps.dd_plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
       - name: Download ddtest binary
@@ -257,13 +222,12 @@ jobs:
           languages: ruby
           api_key: ${{ secrets.DD_API_KEY }}
           site: datadoghq.com
-      - name: Plan test execution with DDTest
+      - id: dd_plan
+        name: Plan test execution with DDTest
         run: bin/ddtest plan
         env:
           DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM: 1
           DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM: 8
-      - id: matrix
-        run: cat .testoptimization/github/config >> $GITHUB_OUTPUT
       - uses: actions/upload-artifact@v4
         with:
           name: dd-artifacts
@@ -309,10 +273,11 @@ jobs:
 DDTest automatically writes the matrix file at `.testoptimization/github/config` that looks like:
 
 ```
-matrix={"include":[{"ci_node_index":0},{"ci_node_index":1},{"ci_node_index":2}]}
+matrix={"include":[{"ci_node_index":0,"ci_node_total":3},{"ci_node_index":1,"ci_node_total":3},{"ci_node_index":2,"ci_node_total":3}]}
 ```
 
-You can cat it to `$GITHUB_OUTPUT` to make it available for the test job.
+In GitHub Actions, `ddtest plan` also writes this matrix to `$GITHUB_OUTPUT`, so
+the plan step can expose it directly as `steps.dd_plan.outputs.matrix`.
 
 ## Circle CI example usage
 
@@ -567,6 +532,20 @@ The `--runtime-tags` option lets you override your local runtime tags to match y
    ```
 
 > **Note:** Test Impact Analysis works on committed changes. Make sure to commit your changes before running ddtest to see accurate skippable tests.
+
+## Parallelism selection
+
+DDTest chooses parallelism by estimating the runnable duration of each test file,
+then trying worker counts between `--min-parallelism` and `--max-parallelism`.
+Duration estimates come from Datadog test suite p50 timings when available and
+fall back to local discovery weights otherwise.
+
+Each candidate split is scored as expected slowest-worker time plus the runner
+count multiplied by `--ci-job-overhead`. Increase `--ci-job-overhead` to use
+fewer CI jobs, or decrease it to prefer faster wall time. Use duration values
+such as `25s`, `1m`, or `1500ms`; set `0s` to disable this runner-overhead bias.
+When scores tie, DDTest prefers fewer runners, then lower wall time, then lower
+imbalance between workers.
 
 ## Development
 
