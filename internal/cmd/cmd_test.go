@@ -46,6 +46,12 @@ func TestRootCommandFlags(t *testing.T) {
 		return
 	}
 
+	ciNodeFlag := rootCmd.PersistentFlags().Lookup("ci-node")
+	if ciNodeFlag == nil {
+		t.Error("ci-node flag should be defined")
+		return
+	}
+
 	parallelRunnerOverheadFlag := rootCmd.PersistentFlags().Lookup("ci-job-overhead")
 	if parallelRunnerOverheadFlag == nil {
 		t.Error("ci-job-overhead flag should be defined")
@@ -71,6 +77,10 @@ func TestRootCommandFlags(t *testing.T) {
 
 	if ciNodeWorkersFlag.DefValue != "1" {
 		t.Errorf("expected ci-node-workers default to be '1', got %q", ciNodeWorkersFlag.DefValue)
+	}
+
+	if ciNodeFlag.DefValue != "-1" {
+		t.Errorf("expected ci-node default to be '-1', got %q", ciNodeFlag.DefValue)
 	}
 
 	expectedParallelRunnerOverhead := settings.DefaultParallelRunnerOverhead().String()
@@ -145,6 +155,9 @@ func TestFlagBinding(t *testing.T) {
 	if err := viper.BindPFlag("ci_node_workers", rootCmd.PersistentFlags().Lookup("ci-node-workers")); err != nil {
 		t.Fatalf("Error binding ci-node-workers flag: %v", err)
 	}
+	if err := viper.BindPFlag("ci_node", rootCmd.PersistentFlags().Lookup("ci-node")); err != nil {
+		t.Fatalf("Error binding ci-node flag: %v", err)
+	}
 	if err := viper.BindPFlag("parallel_runner_overhead", rootCmd.PersistentFlags().Lookup("ci-job-overhead")); err != nil {
 		t.Fatalf("Error binding ci-job-overhead flag: %v", err)
 	}
@@ -165,6 +178,9 @@ func TestFlagBinding(t *testing.T) {
 	if err := rootCmd.PersistentFlags().Set("ci-node-workers", "ncpu"); err != nil {
 		t.Fatalf("Error setting ci-node-workers flag: %v", err)
 	}
+	if err := rootCmd.PersistentFlags().Set("ci-node", "3"); err != nil {
+		t.Fatalf("Error setting ci-node flag: %v", err)
+	}
 	if err := rootCmd.PersistentFlags().Set("ci-job-overhead", "30s"); err != nil {
 		t.Fatalf("Error setting ci-job-overhead flag: %v", err)
 	}
@@ -184,6 +200,9 @@ func TestFlagBinding(t *testing.T) {
 	}
 	if viper.GetString("ci_node_workers") != "ncpu" {
 		t.Errorf("expected viper ci_node_workers to be 'ncpu', got %q", viper.GetString("ci_node_workers"))
+	}
+	if viper.GetInt("ci_node") != 3 {
+		t.Errorf("expected viper ci_node to be 3, got %d", viper.GetInt("ci_node"))
 	}
 	if viper.GetString("parallel_runner_overhead") != "30s" {
 		t.Errorf("expected viper parallel_runner_overhead to be '30s', got %q", viper.GetString("parallel_runner_overhead"))

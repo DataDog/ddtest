@@ -8,9 +8,15 @@ Currently supported languages and frameworks:
 
 - Ruby (RSpec, Minitest)
 
-DDTest requires that your project is correctly set up for Datadog Test Optimization with the native library for your language. Minimum supported library versions:
+## Prerequisites
+
+Before using DDTest, you must have **Datadog Test Optimization** already set up and enabled with a Datadog Test Optimization library for your language and framework. DDTest relies on this integration to discover your tests and plan test execution accordingly.
+
+Minimum supported library versions:
 
 - Ruby: `datadog-ci` gem **1.31.0** or higher
+
+For instructions on setting up Test Optimization, see the [Datadog Test Optimization documentation](https://docs.datadoghq.com/tests/setup/).
 
 ## Installation
 
@@ -23,6 +29,7 @@ Use `gh` command line tool to download the latest release in GitHub actions:
 ```yaml
 - name: Download ddtest binary
   run: |
+    mkdir -p bin
     gh release download --repo DataDog/ddtest --pattern "ddtest-linux-amd64" --dir bin
     mv bin/ddtest-linux-amd64 bin/ddtest
     chmod +x bin/ddtest
@@ -48,12 +55,6 @@ cd ddtest && make build
 ```
 
 This will create the `ddtest` binary in the current directory. It requires Go 1.26.2+.
-
-## Prerequisites
-
-Before using DDTest, you must have **Datadog Test Optimization** already set up and enabled with a Datadog Test Optimization library for your language and framework. DDTest relies on this integration to discover your tests and plan test execution accordingly.
-
-For instructions on setting up Test Optimization, see the [Datadog Test Optimization documentation](https://docs.datadoghq.com/tests/setup/).
 
 ## Usage
 
@@ -155,7 +156,7 @@ ddtest run --platform ruby --framework rspec --ci-node <CI_NODE_INDEX>
 
 In CI-node mode, DDTest uses one local worker by default so database and other per-worker resources stay easy to isolate. To fan out within each CI node, set `--ci-node-workers` to a positive integer, or use `--ci-node-workers ncpu` to use the node's available physical CPU cores.
 
-`--worker-env` supports `{{nodeIndex}}` and `{{workerIndex}}` placeholders. `{{nodeIndex}}` is the machine number: in CI-node mode, it is the exact CI node index from `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE`; in single-machine runs without `--ci-node`, it is `0`. `{{workerIndex}}` is the process number within the current machine, starting at `0`. If a CI node is split across multiple local workers, each worker receives the same `{{nodeIndex}}` value and a different `{{workerIndex}}` value.
+`--worker-env` supports `{{nodeIndex}}` and `{{workerIndex}}` placeholders. `{{nodeIndex}}` is the machine number: in CI-node mode, it is the exact CI node index from `--ci-node` or `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE`; in single-machine runs, it is `0`. `{{workerIndex}}` is the process number within the current machine, starting at `0`. If a CI node is split across multiple local workers, each worker receives the same `{{nodeIndex}}` value and a different `{{workerIndex}}` value.
 
 DDTest automatically sets `DD_TEST_SESSION_NAME` for each worker to `<DD_SERVICE>-node-<nodeIndex>-worker-<workerIndex>` when the variable is not already set. If you set `DD_TEST_SESSION_NAME` yourself, DDTest preserves it and expands the same `{{nodeIndex}}` and `{{workerIndex}}` placeholders before starting each worker.
 
@@ -184,7 +185,7 @@ DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED=false ddtest plan
 | `--min-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM` | physical CPU count | Minimum worker count DDTest considers when choosing the split.                                                                                                                                                       |
 | `--max-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM` | physical CPU count | Maximum worker count DDTest considers when choosing the split.                                                                                                                                                       |
 | `--ci-job-overhead` | `DD_TEST_OPTIMIZATION_RUNNER_CI_JOB_OVERHEAD` | `25s` | Modeled overhead for adding one more CI job / parallel runner. Accepts durations such as `25s`, `1m`, `1500ms`, or `0s` to disable this bias. Increase it to use fewer CI jobs; decrease it to prefer faster wall time. |
-|                     | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE`         | `-1` (off) | Restrict this run to the slice assigned to node **N** (0-indexed).                                                                                                                                                   |
+| `--ci-node`         | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE`         | `-1` (off) | Restrict this run to the slice assigned to node **N** (0-indexed).                                                                                                                                                   |
 | `--ci-node-workers` | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS` |        `1` | Number of parallel workers per CI node. Use a positive integer, or `ncpu` to use the node's available physical CPU cores. Tests assigned to a CI node are further split among this many local workers.                |
 | `--worker-env`      | `DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV`      |       `""` | Template env vars per worker: `--worker-env "DATABASE_NAME_TEST=app_test{{nodeIndex}}_{{workerIndex}}"`. `{{nodeIndex}}` is the machine number (`0` for single-machine runs); `{{workerIndex}}` is the process number within that machine. |
 | `--command`         | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND`         |       `""` | Override the default test command used by the framework. When provided, takes precedence over auto-detection (e.g., `--command "bundle exec custom-rspec"`).                                                         |
@@ -238,6 +239,14 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
+      - name: Download ddtest binary
+        run: |
+          mkdir -p bin
+          gh release download --repo DataDog/ddtest --pattern "ddtest-linux-amd64" --dir bin
+          mv bin/ddtest-linux-amd64 bin/ddtest
+          chmod +x bin/ddtest
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
@@ -249,7 +258,7 @@ jobs:
           api_key: ${{ secrets.DD_API_KEY }}
           site: datadoghq.com
       - name: Plan test execution with DDTest
-        run: ddtest plan
+        run: bin/ddtest plan
         env:
           DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM: 1
           DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM: 8
@@ -267,10 +276,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.dd_plan.outputs.matrix) }}
-    env:
-      DD_TEST_OPTIMIZATION_RUNNER_CI_NODE: ${{ matrix.ci_node_index }}
     steps:
       - uses: actions/checkout@v4
+      - name: Download ddtest binary
+        run: |
+          mkdir -p bin
+          gh release download --repo DataDog/ddtest --pattern "ddtest-linux-amd64" --dir bin
+          mv bin/ddtest-linux-amd64 bin/ddtest
+          chmod +x bin/ddtest
+        env:
+          GH_TOKEN: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
           name: dd-artifacts
@@ -286,7 +301,7 @@ jobs:
           api_key: ${{ secrets.DD_API_KEY }}
           site: datadoghq.com
       - name: Run tests
-        run: ddtest run
+        run: bin/ddtest run --ci-node ${{ matrix.ci_node_index }}
         env:
           DD_TEST_SESSION_NAME: ddtest-runner-${{ matrix.ci_node_index }}
 ```
@@ -419,8 +434,7 @@ jobs:
           command: |
             NODE_INDEX=${CIRCLE_NODE_INDEX:-0}
             export DD_TEST_SESSION_NAME="quotes-rails-ci-${NODE_INDEX}"
-            export DD_TEST_OPTIMIZATION_RUNNER_CI_NODE="${NODE_INDEX}"
-            ./bin/ddtest run --platform ruby --framework minitest
+            ./bin/ddtest run --platform ruby --framework minitest --ci-node "${NODE_INDEX}"
 
 workflows:
   test:
