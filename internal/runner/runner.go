@@ -117,6 +117,7 @@ func (tr *TestRunner) Plan(ctx context.Context) error {
 		tr.testFileWeights,
 		settings.GetMinParallelism(),
 		settings.GetMaxParallelism(),
+		settings.GetParallelRunnerOverhead(),
 	)
 	parallelRunners := parallelRunnerSplit.parallelRunners
 	runnersContent := fmt.Sprintf("%d", parallelRunners)

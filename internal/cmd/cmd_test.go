@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -45,6 +46,12 @@ func TestRootCommandFlags(t *testing.T) {
 		return
 	}
 
+	parallelRunnerOverheadFlag := rootCmd.PersistentFlags().Lookup("ci-job-overhead")
+	if parallelRunnerOverheadFlag == nil {
+		t.Error("ci-job-overhead flag should be defined")
+		return
+	}
+
 	// Check default values
 	if platformFlag.DefValue != "ruby" {
 		t.Errorf("expected platform default to be 'ruby', got %q", platformFlag.DefValue)
@@ -64,6 +71,11 @@ func TestRootCommandFlags(t *testing.T) {
 
 	if ciNodeWorkersFlag.DefValue != "1" {
 		t.Errorf("expected ci-node-workers default to be '1', got %q", ciNodeWorkersFlag.DefValue)
+	}
+
+	expectedParallelRunnerOverhead := settings.DefaultParallelRunnerOverhead().String()
+	if parallelRunnerOverheadFlag.DefValue != expectedParallelRunnerOverhead {
+		t.Errorf("expected ci-job-overhead default to be %q, got %q", expectedParallelRunnerOverhead, parallelRunnerOverheadFlag.DefValue)
 	}
 }
 
@@ -133,6 +145,9 @@ func TestFlagBinding(t *testing.T) {
 	if err := viper.BindPFlag("ci_node_workers", rootCmd.PersistentFlags().Lookup("ci-node-workers")); err != nil {
 		t.Fatalf("Error binding ci-node-workers flag: %v", err)
 	}
+	if err := viper.BindPFlag("parallel_runner_overhead", rootCmd.PersistentFlags().Lookup("ci-job-overhead")); err != nil {
+		t.Fatalf("Error binding ci-job-overhead flag: %v", err)
+	}
 
 	// Set flag values
 	if err := rootCmd.PersistentFlags().Set("platform", "python"); err != nil {
@@ -150,6 +165,9 @@ func TestFlagBinding(t *testing.T) {
 	if err := rootCmd.PersistentFlags().Set("ci-node-workers", "ncpu"); err != nil {
 		t.Fatalf("Error setting ci-node-workers flag: %v", err)
 	}
+	if err := rootCmd.PersistentFlags().Set("ci-job-overhead", "30s"); err != nil {
+		t.Fatalf("Error setting ci-job-overhead flag: %v", err)
+	}
 
 	// Check that viper picks up the flag values
 	if viper.GetString("platform") != "python" {
@@ -166,6 +184,9 @@ func TestFlagBinding(t *testing.T) {
 	}
 	if viper.GetString("ci_node_workers") != "ncpu" {
 		t.Errorf("expected viper ci_node_workers to be 'ncpu', got %q", viper.GetString("ci_node_workers"))
+	}
+	if viper.GetString("parallel_runner_overhead") != "30s" {
+		t.Errorf("expected viper parallel_runner_overhead to be '30s', got %q", viper.GetString("parallel_runner_overhead"))
 	}
 }
 

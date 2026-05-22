@@ -480,6 +480,45 @@ func TestTestRunner_TestFileWeight_InvalidP50FallsBackForFullDiscoveryAggregate(
 	}
 }
 
+func TestTestRunner_TestFileWeight_ZeroP50FallsBackForFullDiscoveryAggregate(t *testing.T) {
+	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
+	runner.testFiles = map[string]struct{}{
+		"spec/file1_test.rb": {},
+	}
+	runner.suiteAggregates = map[testSuiteKey]testSuiteAggregate{
+		{Module: "rspec", Suite: "Suite1"}: {
+			Module:          "rspec",
+			Suite:           "Suite1",
+			SourceFile:      "spec/file1_test.rb",
+			NumTests:        3,
+			NumTestsSkipped: 1,
+		},
+	}
+
+	runner.testSuiteDurations = map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		"rspec": {
+			"Suite1": {
+				SourceFile: "spec/file1_test.rb",
+				Duration:   testoptimization.DurationPercentiles{P50: "0"},
+			},
+		},
+	}
+
+	runner.resolveSuiteDurations()
+	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
+
+	aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite1"}]
+	expectedTotalDuration := 3 * float64(time.Second)
+	if aggregate.TotalDuration != expectedTotalDuration {
+		t.Errorf("Expected zero p50 to keep count-based total duration %.0f, got %.0f", expectedTotalDuration, aggregate.TotalDuration)
+	}
+
+	expectedEstimatedDuration := 2 * int(time.Second/time.Millisecond)
+	if weight, ok := runner.testFileWeight("spec/file1_test.rb"); !ok || weight != expectedEstimatedDuration {
+		t.Errorf("Expected zero p50 to use runnable count fallback %d, got weight=%d ok=%t", expectedEstimatedDuration, weight, ok)
+	}
+}
+
 func TestTestRunner_TestFileWeight_SubMillisecondP50MinimumWeight(t *testing.T) {
 	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 	runner.testFiles = map[string]struct{}{
@@ -625,6 +664,50 @@ func TestTestRunner_PrepareTestOptimization_FastDiscoveryUsesBackendDurations(t 
 
 	if weight, ok := runner.testFileWeight("spec/backend_only_spec.rb"); !ok || weight != 42 {
 		t.Errorf("Expected fast-discovery file to use backend p50 converted to 42ms, got weight=%d ok=%t", weight, ok)
+	}
+}
+
+func TestTestRunner_PrepareTestOptimization_IgnoresZeroBackendDurationForFastDiscovery(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	mockFramework := &MockFramework{
+		FrameworkName:    "rspec",
+		TestFiles:        []string{"spec/backend_only_spec.rb"},
+		DiscoverTestsErr: errors.New("full discovery failed"),
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+		},
+		Framework: mockFramework,
+	}
+	mockDurationsClient := &MockTestSuiteDurationsClient{
+		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+			"rspec": {
+				"BrokenZeroDurationSuite": {
+					SourceFile: "spec/backend_only_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "0", P90: "0"},
+				},
+			},
+		},
+	}
+
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, &MockTestOptimizationClient{}, mockDurationsClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not fail when full discovery fails but fast discovery succeeds, got: %v", err)
+	}
+
+	if len(runner.suiteAggregates) != 0 {
+		t.Errorf("Expected zero-duration backend suite to be ignored, got aggregates: %v", runner.suiteAggregates)
+	}
+
+	if weight, ok := runner.testFileWeight("spec/backend_only_spec.rb"); !ok || weight != defaultTestFileWeight {
+		t.Errorf("Expected fast-discovery file with broken backend duration to use default weight, got weight=%d ok=%t", weight, ok)
 	}
 }
 
@@ -840,6 +923,60 @@ func TestTestRunner_PrepareTestOptimization_BackendDoesNotReintroduceFullySkippe
 
 	if weight, ok := runner.testFileWeight("spec/skipped_spec.rb"); ok || weight != 0 {
 		t.Errorf("Expected fully skipped suite to be omitted despite backend duration, got weight=%d ok=%t", weight, ok)
+	}
+}
+
+func TestTestRunner_PrepareTestOptimization_BackendDoesNotDuplicateDiscoveredSourceFile(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	skippedTest := testoptimization.Test{
+		Module:          "rspec",
+		Suite:           "DiscoveredSuite",
+		Name:            "test1",
+		SuiteSourceFile: "spec/skipped_spec.rb",
+	}
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		TestFiles:     []string{"spec/skipped_spec.rb"},
+		Tests:         []testoptimization.Test{skippedTest},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+		},
+		Framework: mockFramework,
+	}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		SkippableTests: map[string]bool{skippedTest.FQN(): true},
+	}
+	mockDurationsClient := &MockTestSuiteDurationsClient{
+		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+			"rspec": {
+				"BackendDuplicateSuite": {
+					SourceFile: "spec/skipped_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "99000000"},
+				},
+			},
+		},
+	}
+
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, mockDurationsClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not fail, got: %v", err)
+	}
+
+	duplicateKey := testSuiteKey{Module: "rspec", Suite: "BackendDuplicateSuite"}
+	if _, ok := runner.suiteAggregates[duplicateKey]; ok {
+		t.Errorf("Expected backend suite for already-discovered source file not to be added, got aggregates %v", runner.suiteAggregates)
+	}
+
+	if weight, ok := runner.testFileWeight("spec/skipped_spec.rb"); ok || weight != 0 {
+		t.Errorf("Expected fully skipped file to remain omitted despite backend duplicate, got weight=%d ok=%t", weight, ok)
 	}
 }
 

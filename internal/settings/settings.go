@@ -7,19 +7,28 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/klauspost/cpuid/v2"
 	"github.com/spf13/viper"
 )
 
 const (
-	defaultCiNodeWorkers = 1
-	ncpuCiNodeWorkers    = "ncpu"
+	defaultCiNodeWorkers          = 1
+	defaultParallelRunnerOverhead = 25 * time.Second
+	ncpuCiNodeWorkers             = "ncpu"
+	parallelRunnerOverheadEnv     = "DD_TEST_OPTIMIZATION_RUNNER_CI_JOB_OVERHEAD"
 )
 
 // DefaultParallelism returns the default parallelism value.
 func DefaultParallelism() int {
 	return PhysicalCPUCount()
+}
+
+// DefaultParallelRunnerOverhead returns the default modeled overhead for adding
+// another parallel runner.
+func DefaultParallelRunnerOverhead() time.Duration {
+	return defaultParallelRunnerOverhead
 }
 
 // PhysicalCPUCount returns the number of physical CPU cores available to this process.
@@ -71,17 +80,18 @@ func ceilDiv(numerator, denominator int) int {
 }
 
 type Config struct {
-	Platform       string `mapstructure:"platform"`
-	Framework      string `mapstructure:"framework"`
-	MinParallelism int    `mapstructure:"min_parallelism"`
-	MaxParallelism int    `mapstructure:"max_parallelism"`
-	WorkerEnv      string `mapstructure:"worker_env"`
-	CiNode         int    `mapstructure:"ci_node"`
-	CiNodeWorkers  int    `mapstructure:"ci_node_workers"`
-	Command        string `mapstructure:"command"`
-	TestsLocation  string `mapstructure:"tests_location"`
-	RuntimeTags    string `mapstructure:"runtime_tags"`
-	ReportEnabled  bool   `mapstructure:"report_enabled"`
+	Platform               string        `mapstructure:"platform"`
+	Framework              string        `mapstructure:"framework"`
+	MinParallelism         int           `mapstructure:"min_parallelism"`
+	MaxParallelism         int           `mapstructure:"max_parallelism"`
+	ParallelRunnerOverhead time.Duration `mapstructure:"parallel_runner_overhead"`
+	WorkerEnv              string        `mapstructure:"worker_env"`
+	CiNode                 int           `mapstructure:"ci_node"`
+	CiNodeWorkers          int           `mapstructure:"ci_node_workers"`
+	Command                string        `mapstructure:"command"`
+	TestsLocation          string        `mapstructure:"tests_location"`
+	RuntimeTags            string        `mapstructure:"runtime_tags"`
+	ReportEnabled          bool          `mapstructure:"report_enabled"`
 }
 
 var (
@@ -92,6 +102,10 @@ func Init() {
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix("DD_TEST_OPTIMIZATION_RUNNER")
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	if err := viper.BindEnv("parallel_runner_overhead", parallelRunnerOverheadEnv); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding parallel runner overhead env: %v\n", err)
+		os.Exit(1)
+	}
 
 	setDefaults()
 
@@ -101,6 +115,12 @@ func Init() {
 		os.Exit(1)
 	}
 	viper.Set("ci_node_workers", ciNodeWorkers)
+	parallelRunnerOverhead, err := ParseParallelRunnerOverhead(viper.GetString("parallel_runner_overhead"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+	viper.Set("parallel_runner_overhead", parallelRunnerOverhead)
 
 	config = &Config{}
 	if err := viper.Unmarshal(config); err != nil {
@@ -114,6 +134,7 @@ func setDefaults() {
 	viper.SetDefault("framework", "rspec")
 	viper.SetDefault("min_parallelism", DefaultParallelism())
 	viper.SetDefault("max_parallelism", DefaultParallelism())
+	viper.SetDefault("parallel_runner_overhead", defaultParallelRunnerOverhead.String())
 	viper.SetDefault("worker_env", "")
 	viper.SetDefault("ci_node", -1)
 	viper.SetDefault("ci_node_workers", strconv.Itoa(defaultCiNodeWorkers))
@@ -121,6 +142,25 @@ func setDefaults() {
 	viper.SetDefault("tests_location", "")
 	viper.SetDefault("runtime_tags", "")
 	viper.SetDefault("report_enabled", true)
+}
+
+// ParseParallelRunnerOverhead resolves the modeled overhead for adding another
+// parallel runner. It accepts Go duration strings such as "25s", "1m",
+// "1500ms", or "0s" to disable the runner-overhead bias.
+func ParseParallelRunnerOverhead(value string) (time.Duration, error) {
+	normalized := strings.TrimSpace(value)
+	if normalized == "" {
+		return defaultParallelRunnerOverhead, nil
+	}
+
+	overhead, err := time.ParseDuration(normalized)
+	if err != nil {
+		return 0, fmt.Errorf("ci-job-overhead must be a duration like %q, %q, %q, or %q, got %q", "25s", "1m", "1500ms", "0s", value)
+	}
+	if overhead < 0 {
+		return 0, fmt.Errorf("ci-job-overhead must be non-negative, got %q", value)
+	}
+	return overhead, nil
 }
 
 // ParseCiNodeWorkers resolves the ci_node_workers setting from either a positive integer
@@ -165,6 +205,10 @@ func GetMinParallelism() int {
 
 func GetMaxParallelism() int {
 	return Get().MaxParallelism
+}
+
+func GetParallelRunnerOverhead() time.Duration {
+	return Get().ParallelRunnerOverhead
 }
 
 func GetWorkerEnv() string {

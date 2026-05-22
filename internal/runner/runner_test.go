@@ -487,7 +487,7 @@ func TestTestRunner_Plan_DoesNotPrintReportWhenDisabled(t *testing.T) {
 	}
 }
 
-func TestTestRunner_Plan_ChoosesParallelismFromSplitNotSkippablePercentage(t *testing.T) {
+func TestTestRunner_Plan_ChoosesParallelismFromFanoutAdjustedSplit(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -542,7 +542,7 @@ func TestTestRunner_Plan_ChoosesParallelismFromSplitNotSkippablePercentage(t *te
 	}
 
 	assertFileContent(t, constants.SkippablePercentageOutputPath, "90.00")
-	assertFileContent(t, constants.ParallelRunnersOutputPath, "4")
+	assertFileContent(t, constants.ParallelRunnersOutputPath, "2")
 }
 
 func TestTestRunner_Setup_WithCIProvider(t *testing.T) {
