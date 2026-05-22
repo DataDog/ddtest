@@ -2,11 +2,11 @@
 
 DDTest 1.0 removes compatibility writes for legacy `.testoptimization` plan files.
 Before upgrading to 1.0, update CI jobs and custom integrations to consume the
-1.0 plan layout and upgrade the Datadog Ruby library to 1.31 or later.
+1.0 plan layout. Ruby requires the `datadog-ci` gem 1.31.0 or higher.
 
 ## Required Changes
 
-Upgrade the Datadog Ruby library to `1.31+`.
+Ruby requires the `datadog-ci` gem 1.31.0 or higher.
 
 Update any scripts, CI jobs, or custom test runners that read DDTest plan files:
 
@@ -33,7 +33,7 @@ longer writes these legacy plan files:
 
 ## Cache Layout
 
-Backend-shaped Datadog responses are available under `.testoptimization/cache/http/*`.
+Datadog Test Optimization JSON cache data is available under `.testoptimization/cache/http/*`.
 DDTest 1.0 no longer writes processed cache files directly under `.testoptimization/cache/*`.
 
 DDTest-private cache files, such as `test_suite_durations.json`, live under
@@ -43,6 +43,6 @@ DDTest-private cache files, such as `test_suite_durations.json`, live under
 
 1. Run `ddtest plan` in CI and verify `.testoptimization/manifest.txt` exists.
 2. Verify CI jobs read plan files only from `.testoptimization/runner/*`.
-3. Verify the Ruby library version is `1.31+`.
+3. Verify the `datadog-ci` gem version is 1.31.0 or higher.
 4. Run one CI shard with `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE=0 ddtest run`.
 5. Remove any references to legacy root plan paths from CI templates and custom scripts.

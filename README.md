@@ -14,7 +14,7 @@ Before using DDTest, you must have **Datadog Test Optimization** already set up 
 
 Minimum supported library versions:
 
-- Ruby: `datadog-ci` gem **1.31.0** or higher
+- Ruby requires the `datadog-ci` gem **1.31.0** or higher.
 
 For instructions on setting up Test Optimization, see the [Datadog Test Optimization documentation](https://docs.datadoghq.com/tests/setup/).
 
@@ -132,6 +132,27 @@ In CI-node mode, DDTest uses one local worker by default so database and other p
 
 DDTest automatically sets `DD_TEST_SESSION_NAME` for each worker to `<DD_SERVICE>-node-<nodeIndex>-worker-<workerIndex>` when the variable is not already set. If you set `DD_TEST_SESSION_NAME` yourself, DDTest preserves it and expands the same `{{nodeIndex}}` and `{{workerIndex}}` placeholders before starting each worker.
 
+**Custom command example:**
+
+```bash
+ddtest run --platform ruby --framework rspec --command "bundle exec rspec --profile"
+```
+
+When using `--command`, do not include the `--` separator or test files in your
+command. DDTest automatically appends test files and framework-specific flags to
+the command you provide.
+
+```bash
+# Incorrect: DDTest appends test files itself
+ddtest run --command "bundle exec rspec -- spec/models/"
+
+# Incorrect: the -- separator is not supported in --command
+ddtest run --command "bundle exec my-wrapper --"
+```
+
+If your command contains `--`, DDTest will emit a warning and automatically
+remove the `--` separator and anything after it.
+
 ### Integrating with third party test runners
 
 You can use `.testoptimization/runner/test-files.txt` or
@@ -156,36 +177,10 @@ KNAPSACK_PRO_TEST_FILE_LIST_SOURCE_FILE=.testoptimization/runner/test-files.txt 
 | `--ci-node`         | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE`         | `-1` (off) | Restrict this run to files assigned to CI node **N** (0-indexed).                                                                                                                                                    |
 | `--ci-node-workers` | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS` |        `1` | Number of workers to start on this CI node. Use a positive integer, or `ncpu` to use the node's available physical CPU cores. Tests assigned to a CI node are distributed among this many workers.                  |
 | `--worker-env`      | `DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV`      |       `""` | Template env vars per worker: `--worker-env "DATABASE_NAME_TEST=app_test{{nodeIndex}}_{{workerIndex}}"`. `{{nodeIndex}}` is the CI node index (`0` for single-node runs); `{{workerIndex}}` is the worker process index within that CI node. |
-| `--command`         | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND`         |       `""` | Override the default test command used by the framework. When provided, takes precedence over auto-detection (e.g., `--command "bundle exec custom-rspec"`).                                                         |
+| `--command`         | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND`         |       `""` | Override the default test command used by the framework. DDTest appends test files and framework-specific flags to the command.                                                                                      |
 | `--tests-location`  | `DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION`  |       `""` | Custom glob pattern to discover test files (e.g., `--tests-location "custom/spec/**/*_spec.rb"`). Defaults to `spec/**/*_spec.rb` for RSpec, `test/**/*_test.rb` for Minitest.                                       |
 | `--runtime-tags`    | `DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS`    |       `""` | JSON string to override runtime tags used to fetch skippable tests. Useful for local development on a different OS than CI (e.g., `--runtime-tags '{"os.platform":"linux","runtime.version":"3.2.0"}'`).             |
 |                     | `DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED`  |     `true` | Print human-readable plan and run reports. Set to `false` to disable them.                                                                                                                                           |
-
-#### Note about the `--command` flag
-
-When using `--command`, do not include the `--` separator or test files in your command. DDTest automatically appends test files and framework-specific flags to the command you provide.
-
-**Incorrect usage:**
-
-```bash
-# This will fail - test files should not be included
-ddtest run --command "bundle exec rspec -- spec/models/"
-
-# This will also fail - the -- separator causes issues
-ddtest run --command "bundle exec my-wrapper --"
-```
-
-**Correct usage:**
-
-```bash
-# Just provide the command - DDTest handles test files
-ddtest run --command "bundle exec rspec"
-
-# You can include flags for your wrapper
-ddtest run --command "bundle exec my-wrapper --profile"
-```
-
-If your command contains `--`, DDTest will emit a warning and automatically remove the `--` separator and anything after it.
 
 ## CI configuration examples
 

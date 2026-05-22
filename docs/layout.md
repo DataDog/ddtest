@@ -5,9 +5,9 @@ directory. Copy this directory from the planning job to every CI job that runs
 `ddtest run` or consumes DDTest's plan file lists.
 
 Most integrations should treat `.testoptimization/` as a generated artifact. The
-stable files for external consumers are the manifest, the HTTP cache, the plan
-file lists under `.testoptimization/runner/`, and the GitHub Actions matrix
-file. Files under `runner/cache/` and `tests-discovery/` are documented for
+stable files for external consumers are the manifest, the plan file lists under
+`.testoptimization/runner/`, the GitHub Actions matrix file, and the HTTP cache.
+Files under `runner/cache/` and `tests-discovery/` are documented for
 troubleshooting, but they are DDTest implementation details.
 
 ## Directory Tree
@@ -15,12 +15,6 @@ troubleshooting, but they are DDTest implementation details.
 ```text
 .testoptimization/
   manifest.txt
-  cache/
-    http/
-      settings.json
-      known_tests.json
-      skippable_tests.json
-      test_management.json
   runner/
     test-files.txt
     parallel-runners.txt
@@ -31,15 +25,21 @@ troubleshooting, but they are DDTest implementation details.
       ...
     cache/
       test_suite_durations.json
-  tests-discovery/
-    tests.json
   github/
     config
+  cache/
+    http/
+      settings.json
+      known_tests.json
+      skippable_tests.json
+      test_management.json
+  tests-discovery/
+    tests.json
 ```
 
 Some files are conditional. For example, `github/config` is only written when
 DDTest detects GitHub Actions, and individual `cache/http/*.json` files are only
-written when the corresponding Datadog backend response is available.
+written when the corresponding Datadog Test Optimization data is available.
 
 ## Manifest
 
@@ -53,24 +53,6 @@ Plain text file containing the plan layout version.
 
 DDTest sets `TEST_OPTIMIZATION_MANIFEST_FILE` for worker processes to point at
 this file unless that environment variable is already set.
-
-## Datadog HTTP Cache
-
-### `.testoptimization/cache/http/*.json`
-
-These files contain raw JSON responses from Datadog backend endpoints. DDTest
-does not normalize or reformat them before writing; the file contents are the
-backend response payload bytes.
-
-| File | Contents |
-| --- | --- |
-| `settings.json` | Repository Test Optimization settings. |
-| `known_tests.json` | Known tests response. |
-| `skippable_tests.json` | Skippable tests response for the runtime tags used by the plan. |
-| `test_management.json` | Flaky test management response. |
-
-These files are library-facing cache files. Custom runners should usually read
-the plan files below instead of depending on Datadog backend response shapes.
 
 ## Plan Files
 
@@ -120,6 +102,49 @@ spec/services/checkout_spec.rb
 
 Use these files when your CI already fans out jobs and each CI node should run
 only its assigned files. `ddtest run --ci-node N` reads `runner-N`.
+
+## GitHub Actions Matrix
+
+### `.testoptimization/github/config`
+
+GitHub Actions output file. It contains a single `matrix=` assignment whose
+value is compact JSON.
+
+```text
+matrix={"include":[{"ci_node_index":0,"ci_node_total":2},{"ci_node_index":1,"ci_node_total":2}]}
+```
+
+When `ddtest plan` runs in GitHub Actions, DDTest also appends the same
+`matrix=...` assignment to `$GITHUB_OUTPUT`. Give the plan step an `id`, then
+use the matching `steps.<id>.outputs.matrix` value in the job output:
+
+```yaml
+- id: dd_plan
+  run: bin/ddtest plan
+```
+
+The resulting matrix entries expose:
+
+| Field | Description |
+| --- | --- |
+| `ci_node_index` | Zero-indexed CI node number to pass to `ddtest run --ci-node`. |
+| `ci_node_total` | Total number of CI nodes DDTest selected. |
+
+## Datadog HTTP Cache
+
+### `.testoptimization/cache/http/*.json`
+
+These files contain Datadog Test Optimization JSON cache data used by Datadog
+libraries during test execution.
+
+| File | Contents |
+| --- | --- |
+| `settings.json` | Repository Test Optimization settings. |
+| `known_tests.json` | Known tests data. |
+| `skippable_tests.json` | Skippable tests data for the runtime tags used by the plan. |
+| `test_management.json` | Flaky test management data. |
+
+These cache files are only for Datadog libraries.
 
 ## DDTest Private Cache
 
@@ -219,30 +244,3 @@ Fields:
 This file is an intermediate discovery output. Prefer
 `.testoptimization/runner/test-files.txt` or `tests-split/runner-N` for custom
 execution.
-
-## GitHub Actions Matrix
-
-### `.testoptimization/github/config`
-
-GitHub Actions output file. It contains a single `matrix=` assignment whose
-value is compact JSON.
-
-```text
-matrix={"include":[{"ci_node_index":0,"ci_node_total":2},{"ci_node_index":1,"ci_node_total":2}]}
-```
-
-When `ddtest plan` runs in GitHub Actions, DDTest also appends the same
-`matrix=...` assignment to `$GITHUB_OUTPUT`. Give the plan step an `id`, then
-use the matching `steps.<id>.outputs.matrix` value in the job output:
-
-```yaml
-- id: dd_plan
-  run: bin/ddtest plan
-```
-
-The resulting matrix entries expose:
-
-| Field | Description |
-| --- | --- |
-| `ci_node_index` | Zero-indexed CI node number to pass to `ddtest run --ci-node`. |
-| `ci_node_total` | Total number of CI nodes DDTest selected. |
