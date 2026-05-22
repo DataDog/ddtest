@@ -388,18 +388,11 @@ func TestCreateTestSplits(t *testing.T) {
 		if _, err := os.Stat(constants.TestsSplitDir); os.IsNotExist(err) {
 			t.Error("Expected tests-split directory to be created")
 		}
-		if _, err := os.Stat(constants.LegacyTestsSplitDir); os.IsNotExist(err) {
-			t.Error("Expected legacy tests-split directory to be created")
-		}
 
 		// Verify runner-0 file was created
 		runnerFilePath := filepath.Join(constants.TestsSplitDir, "runner-0")
 		if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
 			t.Error("Expected runner-0 file to be created")
-		}
-		legacyRunnerFilePath := filepath.Join(constants.LegacyTestsSplitDir, "runner-0")
-		if _, err := os.Stat(legacyRunnerFilePath); os.IsNotExist(err) {
-			t.Error("Expected legacy runner-0 file to be created")
 		}
 
 		// Verify content matches test-files.txt
@@ -410,14 +403,6 @@ func TestCreateTestSplits(t *testing.T) {
 
 		if string(runnerContent) != testContent {
 			t.Errorf("Expected runner-0 content %q, got %q", testContent, string(runnerContent))
-		}
-
-		legacyRunnerContent, err := os.ReadFile(legacyRunnerFilePath)
-		if err != nil {
-			t.Fatalf("Failed to read legacy runner-0 file: %v", err)
-		}
-		if string(legacyRunnerContent) != testContent {
-			t.Errorf("Expected legacy runner-0 content %q, got %q", testContent, string(legacyRunnerContent))
 		}
 	})
 
@@ -442,9 +427,6 @@ func TestCreateTestSplits(t *testing.T) {
 		if _, err := os.Stat(constants.TestsSplitDir); os.IsNotExist(err) {
 			t.Error("Expected tests-split directory to be created")
 		}
-		if _, err := os.Stat(constants.LegacyTestsSplitDir); os.IsNotExist(err) {
-			t.Error("Expected legacy tests-split directory to be created")
-		}
 
 		// Verify both runner files were created
 		for i := 0; i < 2; i++ {
@@ -452,25 +434,12 @@ func TestCreateTestSplits(t *testing.T) {
 			if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
 				t.Errorf("Expected runner-%d file to be created", i)
 			}
-			legacyRunnerFilePath := filepath.Join(constants.LegacyTestsSplitDir, fmt.Sprintf("runner-%d", i))
-			if _, err := os.Stat(legacyRunnerFilePath); os.IsNotExist(err) {
-				t.Errorf("Expected legacy runner-%d file to be created", i)
-			}
 		}
 
 		// Verify content distribution
 		// With weighted list scheduling: runner-0 gets file1 (10), runner-1 gets file2+file3 (8)
 		runner0Content, _ := os.ReadFile(filepath.Join(constants.TestsSplitDir, "runner-0"))
 		runner1Content, _ := os.ReadFile(filepath.Join(constants.TestsSplitDir, "runner-1"))
-		legacyRunner0Content, _ := os.ReadFile(filepath.Join(constants.LegacyTestsSplitDir, "runner-0"))
-		legacyRunner1Content, _ := os.ReadFile(filepath.Join(constants.LegacyTestsSplitDir, "runner-1"))
-
-		if string(legacyRunner0Content) != string(runner0Content) {
-			t.Errorf("Expected legacy runner-0 content to match runner-0 content")
-		}
-		if string(legacyRunner1Content) != string(runner1Content) {
-			t.Errorf("Expected legacy runner-1 content to match runner-1 content")
-		}
 
 		runner0Files := strings.Fields(strings.TrimSpace(string(runner0Content)))
 		runner1Files := strings.Fields(strings.TrimSpace(string(runner1Content)))
@@ -510,10 +479,6 @@ func TestCreateTestSplits(t *testing.T) {
 			runnerFilePath := filepath.Join(constants.TestsSplitDir, fmt.Sprintf("runner-%d", i))
 			if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
 				t.Errorf("Expected runner-%d file to be created", i)
-			}
-			legacyRunnerFilePath := filepath.Join(constants.LegacyTestsSplitDir, fmt.Sprintf("runner-%d", i))
-			if _, err := os.Stat(legacyRunnerFilePath); os.IsNotExist(err) {
-				t.Errorf("Expected legacy runner-%d file to be created", i)
 			}
 		}
 	})

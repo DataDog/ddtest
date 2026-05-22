@@ -79,11 +79,6 @@ func TestCacheManager_StoreAndReadTestOptimizationPlanCache(t *testing.T) {
 		t.Fatalf("Expected runner test optimization plan cache file to be written: %v", err)
 	}
 
-	legacyCachePath := filepath.Join(appConstants.CacheDir, TestOptimizationPlanCacheFile)
-	if _, err := os.Stat(legacyCachePath); !os.IsNotExist(err) {
-		t.Fatalf("Expected test optimization plan cache to stay out of legacy cache dir, got error: %v", err)
-	}
-
 	httpCachePath := filepath.Join(appConstants.HTTPCacheDir, TestOptimizationPlanCacheFile)
 	if _, err := os.Stat(httpCachePath); !os.IsNotExist(err) {
 		t.Fatalf("Expected test optimization plan cache to stay out of cache/http, got error: %v", err)
@@ -96,28 +91,5 @@ func TestCacheManager_StoreAndReadTestOptimizationPlanCache(t *testing.T) {
 
 	if !reflect.DeepEqual(restored, cache) {
 		t.Errorf("Expected restored cache to match stored cache.\nexpected: %v\nactual: %v", cache, restored)
-	}
-}
-
-func TestCacheManager_ReadTestOptimizationPlanCache_DoesNotReadLegacyCache(t *testing.T) {
-	tempDir := t.TempDir()
-	oldWd, _ := os.Getwd()
-	defer func() { _ = os.Chdir(oldWd) }()
-	_ = os.Chdir(tempDir)
-
-	cacheManager := NewCacheManager()
-	if err := cacheManager.CreateCacheDirectory(); err != nil {
-		t.Fatalf("CreateCacheDirectory() should not return error, got: %v", err)
-	}
-
-	legacyCache := newTestOptimizationPlanCacheFixture("spec/legacy_spec.rb", 1000)
-	legacyCachePath := filepath.Join(appConstants.CacheDir, TestOptimizationPlanCacheFile)
-	if err := cacheManager.writeJSONToFile(legacyCache, legacyCachePath); err != nil {
-		t.Fatalf("writeJSONToFile() should not return error for legacy cache, got: %v", err)
-	}
-
-	var restored testOptimizationPlanCacheFixture
-	if err := cacheManager.ReadTestOptimizationPlanCache(&restored); err == nil {
-		t.Fatal("ReadTestOptimizationPlanCache() should not read the legacy cache path")
 	}
 }

@@ -103,12 +103,12 @@ func (tr *TestRunner) Plan(ctx context.Context) error {
 		content += "\n"
 	}
 
-	if err := writePlanFileCopies([]byte(content), constants.TestFilesOutputPath, constants.LegacyTestFilesOutputPath); err != nil {
+	if err := writePlanFile(constants.TestFilesOutputPath, []byte(content)); err != nil {
 		return fmt.Errorf("failed to write test files: %w", err)
 	}
 
 	percentageContent := fmt.Sprintf("%.2f", tr.skippablePercentage)
-	if err := writePlanFileCopies([]byte(percentageContent), constants.SkippablePercentageOutputPath, constants.LegacySkippablePercentageOutputPath); err != nil {
+	if err := writePlanFile(constants.SkippablePercentageOutputPath, []byte(percentageContent)); err != nil {
 		return fmt.Errorf("failed to write skippable percentage: %w", err)
 	}
 
@@ -121,7 +121,7 @@ func (tr *TestRunner) Plan(ctx context.Context) error {
 	)
 	parallelRunners := parallelRunnerSplit.parallelRunners
 	runnersContent := fmt.Sprintf("%d", parallelRunners)
-	if err := writePlanFileCopies([]byte(runnersContent), constants.ParallelRunnersOutputPath, constants.LegacyParallelRunnersOutputPath); err != nil {
+	if err := writePlanFile(constants.ParallelRunnersOutputPath, []byte(runnersContent)); err != nil {
 		return fmt.Errorf("failed to write parallel runners: %w", err)
 	}
 

@@ -22,15 +22,11 @@ func DistributeTestFiles(testFiles map[string]int, parallelRunners int) [][]stri
 // For multiple runners: distributes files using weighted list scheduling and writes to separate runner files
 // For single runner: copies test-files.txt content to runner-0
 func CreateTestSplits(testFiles map[string]int, parallelRunners int, testFilesOutputPath string) error {
-	testsSplitDirs := []string{constants.TestsSplitDir, constants.LegacyTestsSplitDir}
-
 	if parallelRunners > 1 {
 		// Distribute test files across parallel runners using weighted list scheduling.
 		distribution := DistributeTestFiles(testFiles, parallelRunners)
-		for _, testsSplitDir := range testsSplitDirs {
-			if err := writeDistributedTestSplits(distribution, testsSplitDir); err != nil {
-				return err
-			}
+		if err := writeDistributedTestSplits(distribution, constants.TestsSplitDir); err != nil {
+			return err
 		}
 	} else {
 		// For single runner, copy test-files.txt to runner-0
@@ -39,10 +35,8 @@ func CreateTestSplits(testFiles map[string]int, parallelRunners int, testFilesOu
 			return fmt.Errorf("failed to read test files from %s: %w", testFilesOutputPath, err)
 		}
 
-		for _, testsSplitDir := range testsSplitDirs {
-			if err := writeRunnerSplit(testsSplitDir, 0, testFilesData); err != nil {
-				return err
-			}
+		if err := writeRunnerSplit(constants.TestsSplitDir, 0, testFilesData); err != nil {
+			return err
 		}
 	}
 

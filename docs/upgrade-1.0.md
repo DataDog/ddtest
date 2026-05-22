@@ -1,7 +1,7 @@
 # DDTest 1.0 Upgrade Guide
 
-DDTest 1.0 will remove compatibility writes for legacy `.testoptimization` runner files.
-Before upgrading to 1.0, update CI jobs and custom integrations to consume the new
+DDTest 1.0 removes compatibility writes for legacy `.testoptimization` runner files.
+Before upgrading to 1.0, update CI jobs and custom integrations to consume the
 runner layout and upgrade the Datadog Ruby library to 1.31 or later.
 
 ## Required Changes
@@ -21,13 +21,10 @@ Use `.testoptimization/manifest.txt` as the plan layout marker. DDTest sets
 `TEST_OPTIMIZATION_MANIFEST_FILE` for worker processes to the absolute manifest
 path unless that environment variable is already provided.
 
-## Current Compatibility Window
+## Removed Compatibility Paths
 
-Before 1.0, DDTest writes runner files to both the legacy paths and the new
-`.testoptimization/runner/*` paths. This is write-only compatibility: DDTest itself
-reads from the new runner paths.
-
-In 1.0, DDTest will stop writing these legacy runner files:
+DDTest 1.0 writes runner files only under `.testoptimization/runner/*` and no
+longer writes these legacy runner files:
 
 - `.testoptimization/test-files.txt`
 - `.testoptimization/parallel-runners.txt`
@@ -37,12 +34,10 @@ In 1.0, DDTest will stop writing these legacy runner files:
 ## Cache Layout
 
 Backend-shaped Datadog responses are available under `.testoptimization/cache/http/*`.
-The processed cache files under `.testoptimization/cache/*` are kept for Ruby library
-compatibility before 1.0.
+DDTest 1.0 no longer writes processed cache files directly under `.testoptimization/cache/*`.
 
 DDTest-private runner cache files, such as `test_suite_durations.json`, live under
-`.testoptimization/runner/cache/*` and do not cross the Ruby library compatibility
-boundary.
+`.testoptimization/runner/cache/*`.
 
 ## Validation Checklist
 

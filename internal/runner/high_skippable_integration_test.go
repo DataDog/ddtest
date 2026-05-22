@@ -91,7 +91,6 @@ func TestTestRunner_Plan_HighSkippableIntegrationSelectsExpectedRunnerCountAndRu
 		t.Fatalf("Plan() selected %d runners, expected %d", runner.planReport.Split.parallelRunners, expectedParallelRunners)
 	}
 	assertFileContent(t, constants.ParallelRunnersOutputPath, "1")
-	assertFileContent(t, constants.LegacyParallelRunnersOutputPath, "1")
 
 	testFiles := readTestPlanLines(t, constants.TestFilesOutputPath)
 	if !slices.Equal(testFiles, expectedRunnableFiles) {
@@ -101,10 +100,6 @@ func TestTestRunner_Plan_HighSkippableIntegrationSelectsExpectedRunnerCountAndRu
 	runner0 := readTestPlanLines(t, filepath.Join(constants.TestsSplitDir, "runner-0"))
 	if !slices.Equal(runner0, expectedRunnableFiles) {
 		t.Fatalf("runner-0 files = %v, expected %v", runner0, expectedRunnableFiles)
-	}
-	legacyRunner0 := readTestPlanLines(t, filepath.Join(constants.LegacyTestsSplitDir, "runner-0"))
-	if !slices.Equal(legacyRunner0, expectedRunnableFiles) {
-		t.Fatalf("legacy runner-0 files = %v, expected %v", legacyRunner0, expectedRunnableFiles)
 	}
 
 	if _, err := os.Stat(filepath.Join(constants.TestsSplitDir, "runner-1")); !os.IsNotExist(err) {

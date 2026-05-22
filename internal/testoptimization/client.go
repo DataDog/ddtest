@@ -2,7 +2,6 @@ package testoptimization
 
 import (
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -115,11 +114,6 @@ func NewDatadogClientWithDependencies(integrations CIVisibilityIntegrations, uti
 func (c *DatadogClient) Initialize(tags map[string]string) error {
 	c.utils.AddCITagsMap(tags)
 
-	// Create cache directory for storing cache data
-	if err := c.cacheManager.CreateCacheDirectory(); err != nil {
-		return fmt.Errorf("failed to create cache directory: %w", err)
-	}
-
 	startTime := time.Now()
 	c.integrations.EnsureCiVisibilityInitialization()
 
@@ -143,12 +137,8 @@ func (c *DatadogClient) GetSkippableTests() map[string]bool {
 	slog.Debug("Fetching skippable tests...")
 	skippableTests := c.integrations.GetSkippableTests()
 
-	// Store skippable tests using cache manager
-	if err := c.cacheManager.StoreSkippableTestsCache(skippableTests); err != nil {
+	if err := c.cacheManager.StoreSkippableTestsCache(c.integrations.GetSkippableTestsRawResponse()); err != nil {
 		slog.Warn("Failed to store skippable tests cache", "error", err)
-	}
-	if err := c.cacheManager.StoreRawSkippableTestsCache(c.integrations.GetSkippableTestsRawResponse()); err != nil {
-		slog.Warn("Failed to store raw skippable tests cache", "error", err)
 	}
 
 	for _, suites := range skippableTests {
@@ -185,46 +175,20 @@ func (c *DatadogClient) GetTestManagementTestsData() *net.TestManagementTestsRes
 }
 
 func (c *DatadogClient) StoreCacheAndExit() {
-	// store repository settings
 	repositorySettings := c.integrations.GetSettings()
 	if repositorySettings != nil {
 		slog.Debug("Repository settings", "itr_enabled", repositorySettings.ItrEnabled, "tests_skipping", repositorySettings.TestsSkipping)
-
-		// Store repository settings using cache manager
-		if err := c.cacheManager.StoreRepositorySettings(repositorySettings); err != nil {
-			slog.Warn("Failed to store repository settings", "error", err)
-		}
 	}
-	if err := c.cacheManager.StoreRawRepositorySettings(c.integrations.GetSettingsRawResponse()); err != nil {
-		slog.Warn("Failed to store raw repository settings cache", "error", err)
+	if err := c.cacheManager.StoreRepositorySettings(c.integrations.GetSettingsRawResponse()); err != nil {
+		slog.Warn("Failed to store repository settings cache", "error", err)
 	}
 
-	// store known tests
-	knownTests := c.integrations.GetKnownTests()
-	if knownTests != nil {
-		slog.Debug("Storing known tests cache")
-
-		// Store known tests using cache manager
-		if err := c.cacheManager.StoreKnownTestsCache(knownTests); err != nil {
-			slog.Warn("Failed to store known tests cache", "error", err)
-		}
-	}
-	if err := c.cacheManager.StoreRawKnownTestsCache(c.integrations.GetKnownTestsRawResponse()); err != nil {
-		slog.Warn("Failed to store raw known tests cache", "error", err)
+	if err := c.cacheManager.StoreKnownTestsCache(c.integrations.GetKnownTestsRawResponse()); err != nil {
+		slog.Warn("Failed to store known tests cache", "error", err)
 	}
 
-	// store test management tests
-	testManagementTests := c.integrations.GetTestManagementTestsData()
-	if testManagementTests != nil {
-		slog.Debug("Storing test management tests cache")
-
-		// Store test management tests using cache manager
-		if err := c.cacheManager.StoreTestManagementTestsCache(testManagementTests); err != nil {
-			slog.Warn("Failed to store test management tests cache", "error", err)
-		}
-	}
-	if err := c.cacheManager.StoreRawTestManagementTestsCache(c.integrations.GetTestManagementTestsRawResponse()); err != nil {
-		slog.Warn("Failed to store raw test management tests cache", "error", err)
+	if err := c.cacheManager.StoreTestManagementTestsCache(c.integrations.GetTestManagementTestsRawResponse()); err != nil {
+		slog.Warn("Failed to store test management tests cache", "error", err)
 	}
 
 	c.integrations.ExitCiVisibility()

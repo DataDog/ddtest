@@ -124,11 +124,8 @@ increase it to use fewer CI jobs, or decrease it to prefer faster wall time.
 Use duration values such as `25s`, `1m`, or `1500ms`; set `0s` to disable this
 runner-overhead bias.
 
-DDTest may also write compatibility files at legacy root paths for existing
-integrations. New integrations should read runner files from `.testoptimization/runner/*`.
 You can use `runner/test-files.txt` or `runner/tests-split/runner-X` files to feed
-them directly to your existing test runner. See [the 1.0 upgrade guide](docs/upgrade-1.0.md)
-for the planned removal of compatibility writes.
+them directly to your existing test runner.
 
 Example for Knapsack Pro:
 

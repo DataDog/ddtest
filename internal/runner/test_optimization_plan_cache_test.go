@@ -156,19 +156,19 @@ func TestTestRunner_StoreAndRestoreTestOptimizationPlanCache_RoundTripDurations(
 	}
 }
 
-func TestTestRunner_RestoreTestOptimizationPlanCache_ComputesWeightsForLegacyCache(t *testing.T) {
+func TestTestRunner_RestoreTestOptimizationPlanCache_ComputesMissingWeights(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(tempDir)
 
-	type legacyTestOptimizationPlanCache struct {
+	type partialTestOptimizationPlanCache struct {
 		TestSuiteDurations map[string]map[string]testoptimization.TestSuiteDurationInfo `json:"testSuiteDurations"`
 		SuiteAggregates    map[testSuiteKey]testSuiteAggregate                          `json:"suiteAggregates"`
 		SuitesBySourceFile map[string][]testSuiteKey                                    `json:"suitesBySourceFile"`
 	}
 
-	cache := legacyTestOptimizationPlanCache{
+	cache := partialTestOptimizationPlanCache{
 		TestSuiteDurations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
 			"rspec": {
 				"Suite1": {
@@ -211,7 +211,7 @@ func TestTestRunner_RestoreTestOptimizationPlanCache_ComputesWeightsForLegacyCac
 		"spec/suite1_spec.rb": 2500,
 	}
 	if !reflect.DeepEqual(restored.testFileWeights, expectedWeights) {
-		t.Errorf("Expected restored legacy cache to compute test file weights.\nexpected: %v\nactual: %v", expectedWeights, restored.testFileWeights)
+		t.Errorf("Expected restored cache to compute missing test file weights.\nexpected: %v\nactual: %v", expectedWeights, restored.testFileWeights)
 	}
 }
 
