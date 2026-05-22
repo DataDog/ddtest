@@ -169,10 +169,10 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 
 	// Enrich test suite aggregates with the duration data we got from the backend
 	tr.resolveSuiteDurations()
+	tr.suitesBySourceFile = indexSuitesBySourceFile(tr.suiteAggregates)
 	// For the test files with no suite info, try to match them to our backend test suites data
 	tr.addBackendTestSuites(subdirPrefix)
 
-	tr.suitesBySourceFile = indexSuitesBySourceFile(tr.suiteAggregates)
 	tr.skippablePercentage = calculateSavedTimePercentage(tr.suiteAggregates)
 	tr.testFileWeights = tr.weightedTestFiles()
 	tr.planReport.RunInfo = tr.runInfoReport
@@ -371,18 +371,29 @@ func (tr *TestRunner) addBackendTestSuites(subdirPrefix string) {
 				continue
 			}
 
-			if duration, ok := parseDurationP50(suiteInfo); ok {
-				tr.suiteAggregates[key] = testSuiteAggregate{
-					Module:            module,
-					Suite:             suite,
-					SourceFile:        sourceFile,
-					TotalDuration:     duration,
-					EstimatedDuration: duration,
-					DurationSource:    testFileDurationSourceKnown,
-					NumTests:          1,
-					NumTestsSkipped:   0,
-				}
+			duration, ok := parseDurationP50(suiteInfo)
+			if !ok {
+				continue
 			}
+
+			// Backend durations can contain duplicate suite names for a source file already
+			// handled by discovery. Treat backend-only suites as a fallback only; otherwise
+			// stale duplicate rows can make fully skipped files look runnable.
+			if _, ok := tr.suitesBySourceFile[sourceFile]; ok {
+				continue
+			}
+
+			tr.suiteAggregates[key] = testSuiteAggregate{
+				Module:            module,
+				Suite:             suite,
+				SourceFile:        sourceFile,
+				TotalDuration:     duration,
+				EstimatedDuration: duration,
+				DurationSource:    testFileDurationSourceKnown,
+				NumTests:          1,
+				NumTestsSkipped:   0,
+			}
+			tr.suitesBySourceFile[sourceFile] = append(tr.suitesBySourceFile[sourceFile], key)
 		}
 	}
 }
@@ -401,6 +412,9 @@ func getTestSuiteDuration(
 func parseDurationP50(suiteInfo testoptimization.TestSuiteDurationInfo) (float64, bool) {
 	p50, err := strconv.ParseInt(suiteInfo.Duration.P50, 10, 64)
 	if err != nil {
+		return 0, false
+	}
+	if p50 <= 0 {
 		return 0, false
 	}
 	return float64(p50), true
