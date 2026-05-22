@@ -62,6 +62,10 @@ DDTest ships as a CLI tool `ddtest` with two primary sub‑commands: `plan` and 
 
 Use `plan` to discover tests, fetch Datadog Test Optimization data once, and compute a parallelization plan you can reuse on any CI node; use `run` to execute that plan locally or in CI. If a plan is missing, `run` will generate it on the fly.
 
+DDTest is meant to run in CI. Local runs are possible when you want to reuse
+CI's skippable tests on your machine; see
+[Running locally with CI skippable tests](docs/local-ci-skippable-tests.md).
+
 ### Available commands
 
 #### ddtest plan
@@ -89,16 +93,6 @@ Copy `.testoptimization/` to any CI job that runs `ddtest run` or reads DDTest's
 runner file lists. For the full file layout and formats, see
 [Plan file layout](docs/layout.md).
 
-You can use `.testoptimization/runner/test-files.txt` or
-`.testoptimization/runner/tests-split/runner-X` files to feed them directly to
-your existing test runner.
-
-Example for Knapsack Pro:
-
-```bash
-KNAPSACK_PRO_TEST_FILE_LIST_SOURCE_FILE=.testoptimization/runner/test-files.txt bundle exec rake knapsack_pro:queue:rspec
-```
-
 #### ddtest run
 
 Runs tests using the framework you specify. If .testoptimization/ exists, DDTest will use its precomputed split; otherwise it first runs plan and then executes.
@@ -125,20 +119,16 @@ In CI-node mode, DDTest uses one local worker by default so database and other p
 
 DDTest automatically sets `DD_TEST_SESSION_NAME` for each worker to `<DD_SERVICE>-node-<nodeIndex>-worker-<workerIndex>` when the variable is not already set. If you set `DD_TEST_SESSION_NAME` yourself, DDTest preserves it and expands the same `{{nodeIndex}}` and `{{workerIndex}}` placeholders before starting each worker.
 
-### Reports
+### Integrating with third party test runners
 
-DDTest prints a human-readable report to stderr after `ddtest plan` and `ddtest run`.
-The plan report summarizes the run identity, Datadog feature settings, backend
-data, planning quality, and selected split. `Test impact collection` is shown
-from Datadog's `code_coverage` setting. The run report summarizes the worker,
-file count, duration, and process result.
+You can use `.testoptimization/runner/test-files.txt` or
+`.testoptimization/runner/tests-split/runner-X` files to feed DDTest's plan into
+another test runner.
 
-Reports are aggregate-only: DDTest does not print per-test or per-file lists,
-and counts may show `disabled` or `not available` when a Datadog feature is off
-or its backend payload is not present. To turn reports off:
+Example for Knapsack Pro:
 
 ```bash
-DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED=false ddtest plan
+KNAPSACK_PRO_TEST_FILE_LIST_SOURCE_FILE=.testoptimization/runner/test-files.txt bundle exec rake knapsack_pro:queue:rspec
 ```
 
 ### Settings (flags and environment variables)
@@ -184,228 +174,10 @@ ddtest run --command "bundle exec my-wrapper --profile"
 
 If your command contains `--`, DDTest will emit a warning and automatically remove the `--` separator and anything after it.
 
-## GitHub Actions example usage
+## CI configuration examples
 
-The plan job computes the split and emits a matrix; the run job downloads the artifacts and executes only its slice.
-
-```yaml
-name: CI with DDTest
-
-on: [push]
-
-env:
-  DD_TEST_OPTIMIZATION_RUNNER_PLATFORM: ruby
-  DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK: rspec
-
-jobs:
-  dd_plan:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.dd_plan.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Download ddtest binary
-        run: |
-          mkdir -p bin
-          gh release download --repo DataDog/ddtest --pattern "ddtest-linux-amd64" --dir bin
-          mv bin/ddtest-linux-amd64 bin/ddtest
-          chmod +x bin/ddtest
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - name: Setup Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          bundler-cache: true
-      - name: Configure Datadog Test Optimization
-        uses: datadog/test-visibility-github-action@v2
-        with:
-          languages: ruby
-          api_key: ${{ secrets.DD_API_KEY }}
-          site: datadoghq.com
-      - id: dd_plan
-        name: Plan test execution with DDTest
-        run: bin/ddtest plan
-        env:
-          DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM: 1
-          DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM: 8
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dd-artifacts
-          path: .testoptimization
-          include-hidden-files: true
-
-  dd_test:
-    runs-on: ubuntu-latest
-    needs: [dd_plan]
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.dd_plan.outputs.matrix) }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Download ddtest binary
-        run: |
-          mkdir -p bin
-          gh release download --repo DataDog/ddtest --pattern "ddtest-linux-amd64" --dir bin
-          mv bin/ddtest-linux-amd64 bin/ddtest
-          chmod +x bin/ddtest
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: dd-artifacts
-          path: .testoptimization
-      - name: Setup Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          bundler-cache: true
-      - name: Configure Datadog Test Optimization
-        uses: datadog/test-visibility-github-action@v2
-        with:
-          languages: ruby
-          api_key: ${{ secrets.DD_API_KEY }}
-          site: datadoghq.com
-      - name: Run tests
-        run: bin/ddtest run --ci-node ${{ matrix.ci_node_index }}
-        env:
-          DD_TEST_SESSION_NAME: ddtest-runner-${{ matrix.ci_node_index }}
-```
-
-DDTest automatically writes the matrix file at `.testoptimization/github/config` that looks like:
-
-```
-matrix={"include":[{"ci_node_index":0,"ci_node_total":3},{"ci_node_index":1,"ci_node_total":3},{"ci_node_index":2,"ci_node_total":3}]}
-```
-
-In GitHub Actions, `ddtest plan` also writes this matrix to `$GITHUB_OUTPUT`, so
-the plan step can expose it directly as `steps.dd_plan.outputs.matrix`.
-
-## Circle CI example usage
-
-In `.circleci/config.yml`:
-
-```yaml
-version: '2.1'
-setup: true
-
-orbs:
-  node: circleci/node@7
-  ruby: circleci/ruby@2
-  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@1
-  continuation: circleci/continuation@0.2.0
-
-jobs:
-  plan:
-    docker:
-      - image: cimg/ruby:3.4.1-node
-    environment:
-      RAILS_ENV: test
-      DD_ENV: ci
-      BUNDLE_PATH: vendor/bundle
-      BUNDLE_JOBS: 4
-    steps:
-      - checkout
-      - ruby/install-deps
-      - node/install-packages:
-          pkg-manager: yarn
-      - test-optimization-circleci-orb/autoinstrument:
-          languages: ruby
-          site: datadoghq.eu
-      - run:
-          name: Download ddtest latest release
-          command: |
-            set -euo pipefail
-            mkdir -p bin
-            curl -fsSL https://github.com/DataDog/ddtest/releases/latest/download/ddtest-linux-amd64 -o bin/ddtest
-            chmod +x bin/ddtest
-      - run:
-          name: Plan tests with ddtest
-          command: ./bin/ddtest plan --platform ruby --framework minitest
-          environment:
-            DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM: 1
-            DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM: 4
-      - save_cache:
-          key: ddtest-plan-{{ .Revision }}
-          paths:
-            - .testoptimization
-            - bin/ddtest
-      - run:
-          name: Determine parallelism
-          command: |
-            set -euo pipefail
-            cat .testoptimization/runner/parallel-runners.txt
-            desired=$(cat .testoptimization/runner/parallel-runners.txt 2>/dev/null || echo 1)
-            if ! echo "${desired}" | grep -Eq '^[0-9]+$'; then
-              echo "Invalid parallelism value '${desired}', defaulting to 1"
-              desired=1
-            fi
-            if [ "${desired}" -lt 1 ]; then
-              echo "Parallelism must be at least 1, defaulting to 1"
-              desired=1
-            fi
-            printf '{"parallelism": %s}\n' "${desired}" > pipeline-parameters.json
-            cat pipeline-parameters.json
-      - continuation/continue:
-          configuration_path: .circleci/test.yml
-          parameters: pipeline-parameters.json
-
-workflows:
-  plan:
-    jobs:
-      - plan
-```
-
-In `.circleci/test.yml`:
-
-```yaml
-version: '2.1'
-
-parameters:
-  parallelism:
-    type: integer
-    default: 1
-
-orbs:
-  node: circleci/node@7
-  ruby: circleci/ruby@2
-  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@1
-
-jobs:
-  test:
-    parallelism: << pipeline.parameters.parallelism >>
-    docker:
-      - image: cimg/ruby:3.4.1-browsers
-    environment:
-      RAILS_ENV: test
-      DD_ENV: ci
-      BUNDLE_PATH: vendor/bundle
-      BUNDLE_JOBS: 4
-    steps:
-      - checkout
-      - restore_cache:
-          keys:
-            - ddtest-plan-{{ .Revision }}
-      - ruby/install-deps
-      - node/install-packages:
-          pkg-manager: yarn
-      - test-optimization-circleci-orb/autoinstrument:
-          languages: ruby
-          site: datadoghq.eu
-      - run:
-          name: Precompile assets
-          command: |
-            bundle exec rails assets:precompile
-      - run:
-          name: Run tests with ddtest
-          command: |
-            NODE_INDEX=${CIRCLE_NODE_INDEX:-0}
-            export DD_TEST_SESSION_NAME="quotes-rails-ci-${NODE_INDEX}"
-            ./bin/ddtest run --platform ruby --framework minitest --ci-node "${NODE_INDEX}"
-
-workflows:
-  test:
-    jobs:
-      - test
-```
+- [GitHub Actions](docs/examples/github-actions.md)
+- [CircleCI](docs/examples/circleci.md)
 
 ## Best practices
 
@@ -481,58 +253,6 @@ Rake::TestTask.new(:test) do |test|
 end
 ```
 
-## Running tests locally with CI's skippable tests
-
-When using Test Impact Analysis, skippable tests are scoped by runtime environment (OS, architecture, language version). This means tests skipped in your Linux CI won't automatically be skipped on your macOS development machine because the runtime tags differ.
-
-The `--runtime-tags` option lets you override your local runtime tags to match your CI environment, enabling you to benefit from Test Impact Analysis locally without re-running your entire test suite.
-
-### How to use
-
-1. **Find your CI's runtime tags in Datadog**
-
-   Open any test run from your CI in [Datadog Test Optimization](https://app.datadoghq.com/ci/test-runs). In the test details panel, look for the `os` and `runtime` sections:
-
-   ![Runtime tags in Datadog](docs/images/runtime-tags-datadog.png)
-
-   Note the following tags:
-   - `os.architecture` (e.g., `x86_64`)
-   - `os.platform` (e.g., `linux`)
-   - `os.version` (e.g., `6.8.0-aws`)
-   - `runtime.name` (e.g., `ruby`)
-   - `runtime.version` (e.g., `3.3.0`)
-
-2. **Create the runtime tags JSON**
-
-   Build a JSON object with these tags:
-
-   ```json
-   {
-     "os.architecture": "x86_64",
-     "os.platform": "linux",
-     "os.version": "6.8.0-aws",
-     "runtime.name": "ruby",
-     "runtime.version": "3.3.0"
-   }
-   ```
-
-3. **Run ddtest with the override**
-
-   Pass the JSON as a single-line string:
-
-   ```bash
-   ddtest run --runtime-tags '{"os.architecture":"x86_64","os.platform":"linux","os.version":"6.8.0-aws","runtime.name":"ruby","runtime.version":"3.3.0"}'
-   ```
-
-   Or use an environment variable (useful for shell aliases):
-
-   ```bash
-   export DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS='{"os.architecture":"x86_64","os.platform":"linux","os.version":"6.8.0-aws","runtime.name":"ruby","runtime.version":"3.3.0"}'
-   ddtest run
-   ```
-
-> **Note:** Test Impact Analysis works on committed changes. Make sure to commit your changes before running ddtest to see accurate skippable tests.
-
 ## Parallelism selection
 
 DDTest chooses parallelism by estimating the runnable duration of each test file,
@@ -546,34 +266,3 @@ fewer CI jobs, or decrease it to prefer faster wall time. Use duration values
 such as `25s`, `1m`, or `1500ms`; set `0s` to disable this runner-overhead bias.
 When scores tie, DDTest prefers fewer runners, then lower wall time, then lower
 imbalance between workers.
-
-## Development
-
-### Prerequisites
-
-- Go 1.26.2 or later
-
-### Building
-
-```bash
-make build
-```
-
-### Testing
-
-```bash
-make test
-```
-
-### Formatting and Vetting
-
-```bash
-make fmt
-make vet
-```
-
-### Running from Source
-
-```bash
-make run
-```
