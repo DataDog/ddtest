@@ -47,7 +47,7 @@ func TestRuby_Name(t *testing.T) {
 
 func TestRuby_SanityCheck_Passes(t *testing.T) {
 	mockExecutor := &mockCommandExecutor{
-		combinedOutput: []byte("  * datadog-ci (1.23.1 9d54a15)\n"),
+		combinedOutput: []byte("  * datadog-ci (1.31.0 9d54a15)\n"),
 		onCombinedOutput: func(name string, args []string, envMap map[string]string) {
 			if name != "bundle" {
 				t.Fatalf("expected command 'bundle', got %q", name)
@@ -85,7 +85,7 @@ func TestRuby_SanityCheck_FailsWhenBundleInfoFails(t *testing.T) {
 
 func TestRuby_SanityCheck_FailsWhenVersionTooLow(t *testing.T) {
 	mockExecutor := &mockCommandExecutor{
-		combinedOutput: []byte("  * datadog-ci (1.22.5)\n"),
+		combinedOutput: []byte("  * datadog-ci (1.30.9)\n"),
 	}
 
 	ruby := NewRuby()
@@ -95,8 +95,11 @@ func TestRuby_SanityCheck_FailsWhenVersionTooLow(t *testing.T) {
 		t.Fatal("SanityCheck() expected error for outdated datadog-ci version")
 	}
 
-	if !strings.Contains(err.Error(), "1.22.5") {
+	if !strings.Contains(err.Error(), "1.30.9") {
 		t.Fatalf("expected error to mention detected version, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "1.31.0") {
+		t.Fatalf("expected error to mention required version, got: %v", err)
 	}
 }
 
@@ -121,7 +124,7 @@ func TestRuby_SanityCheck_SucceedsWithDebugLogs(t *testing.T) {
 	// Debug logs from datadog tracing contain paths with gem name and parentheses
 	// that could confuse the parser if not handled correctly
 	output := `D, [2026-02-02T16:50:26.016240 #9457] DEBUG -- datadog: [datadog] (/path/to/datadog-ci-rb/lib/datadog/ci/contrib/instrumentation.rb:27:in 'auto_instrument') Auto instrumenting all integrations...
-  * datadog-ci (1.27.0 e11ecfb)
+  * datadog-ci (1.31.2 e11ecfb)
         Summary: Datadog Test Optimization for your ruby application
         Homepage: https://github.com/DataDog/datadog-ci-rb
         Path: /Users/user/.rbenv/versions/3.3.5/lib/ruby/gems/3.3.0/bundler/gems/datadog-ci-rb-e11ecfbf06ad

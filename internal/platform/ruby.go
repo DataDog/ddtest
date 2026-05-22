@@ -23,7 +23,7 @@ var rubyEnvScript string
 
 const (
 	requiredGemName       = "datadog-ci"
-	requiredGemMinVersion = "1.23.0"
+	requiredGemMinVersion = "1.31.0"
 	rubyOptEnvVar         = "RUBYOPT"
 	rubyOptDefaultValue   = "-rbundler/setup -rdatadog/ci/auto_instrument"
 )

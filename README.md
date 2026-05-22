@@ -10,7 +10,7 @@ Currently supported languages and frameworks:
 
 DDTest requires that your project is correctly set up for Datadog Test Optimization with the native library for your language. Minimum supported library versions:
 
-- Ruby: `datadog-ci` gem **1.23.0** or higher
+- Ruby: `datadog-ci` gem **1.31.0** or higher
 
 ## Installation
 
