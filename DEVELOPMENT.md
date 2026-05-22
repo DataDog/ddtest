@@ -6,7 +6,17 @@
 
 ## Building
 
+From an existing checkout:
+
 ```bash
+make build
+```
+
+From a fresh clone:
+
+```bash
+git clone https://github.com/DataDog/ddtest.git
+cd ddtest
 make build
 ```
 

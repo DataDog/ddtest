@@ -1,12 +1,17 @@
 # DDTest
 
-DDTest is a CLI tool that plans and runs your tests in parallel alongside your existing test commands, or as a drop-in runner. It discovers tests in your repo, fetches Datadog Test Optimization data, and chooses how many CI nodes or local workers to use.
+DDTest helps you scale CI workloads down when Datadog Test Optimization skips
+tests.
 
-You need it when Test Impact Analysis shrinks the test workload but CI still launches too many CI nodes, and skipped tests leave work unevenly distributed. Start by generating a plan (`ddtest plan`) you can feed to another runner, or let DDTest execute the tests for you with `ddtest run` in CI.
+It plans how to run the remaining test files across CI nodes or local workers.
 
-Currently supported languages and frameworks:
+Use `ddtest plan` once to create a reusable `.testoptimization/` plan, then use
+`ddtest run` in each CI job to run only the files assigned to that job.
 
-- Ruby (RSpec, Minitest)
+DDTest can also write file lists for another runner, such as Knapsack Pro or
+`parallel_tests`.
+
+Currently supported: Ruby with RSpec or Minitest.
 
 ## Prerequisites
 
@@ -46,15 +51,6 @@ chmod +x bin/ddtest
 ```
 
 The list of available precompiled artifacts is on [release page](https://github.com/DataDog/ddtest/releases/latest).
-
-### Compile from source
-
-```bash
-git clone https://github.com/DataDog/ddtest.git
-cd ddtest && make build
-```
-
-This will create the `ddtest` binary in the current directory. It requires Go 1.26.2+.
 
 ## Usage
 
@@ -186,6 +182,14 @@ KNAPSACK_PRO_TEST_FILE_LIST_SOURCE_FILE=.testoptimization/runner/test-files.txt 
 
 - [GitHub Actions](docs/examples/github-actions.md)
 - [CircleCI](docs/examples/circleci.md)
+
+## More documentation
+
+- [Plan file layout](docs/layout.md)
+- [CircleCI example](docs/examples/circleci.md)
+- [Rails discovery optimization](docs/best_practices.md)
+- [Running locally with CI skippable tests and runtime tags](docs/local-ci-skippable-tests.md)
+- [DDTest 1.0 upgrade guide](docs/upgrade-1.0.md)
 
 ## Parallelism selection
 
