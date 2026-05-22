@@ -2,13 +2,13 @@
 
 `ddtest plan` writes a `.testoptimization/` directory in the current working
 directory. Copy this directory from the planning job to every CI job that runs
-`ddtest run` or consumes DDTest's runner file lists.
+`ddtest run` or consumes DDTest's plan file lists.
 
 Most integrations should treat `.testoptimization/` as a generated artifact. The
-stable files for external consumers are the manifest, the HTTP cache, the runner
-file lists, and the GitHub Actions matrix file. Files under `runner/cache/` and
-`tests-discovery/` are documented for troubleshooting, but they are DDTest
-implementation details.
+stable files for external consumers are the manifest, the HTTP cache, the plan
+file lists under `.testoptimization/runner/`, and the GitHub Actions matrix
+file. Files under `runner/cache/` and `tests-discovery/` are documented for
+troubleshooting, but they are DDTest implementation details.
 
 ## Directory Tree
 
@@ -70,9 +70,9 @@ backend response payload bytes.
 | `test_management.json` | Flaky test management response. |
 
 These files are library-facing cache files. Custom runners should usually read
-the runner files below instead of depending on Datadog backend response shapes.
+the plan files below instead of depending on Datadog backend response shapes.
 
-## Runner Files
+## Plan Files
 
 ### `.testoptimization/runner/test-files.txt`
 
@@ -85,13 +85,14 @@ spec/models/user_spec.rb
 spec/services/checkout_spec.rb
 ```
 
-This is the main file to feed into another splitter or a custom test runner when
-you do not want DDTest to execute tests itself.
+This is the main file to feed into another runner when you do not want DDTest to
+execute tests itself.
 
 ### `.testoptimization/runner/parallel-runners.txt`
 
-Plain text integer with the selected runner count. There is no percent sign or
-extra JSON wrapper.
+Plain text integer with the selected parallelism count. In CI-node mode, this is
+the CI node count. In a single-node run, this is the worker count. There is no
+percent sign or extra JSON wrapper.
 
 ```text
 8
@@ -108,19 +109,19 @@ formatted with two decimal places and no `%` suffix.
 
 ### `.testoptimization/runner/tests-split/runner-N`
 
-Newline-delimited list of runnable test files assigned to runner `N`, where `N`
-is zero-indexed. DDTest writes one file for each runner from `runner-0` through
-`runner-(parallel-runners - 1)`.
+Newline-delimited list of runnable test files assigned to index `N`, where `N`
+is zero-indexed. DDTest writes one file for each planned CI node or worker from
+`runner-0` through `runner-(parallelism - 1)`.
 
 ```text
 spec/models/user_spec.rb
 spec/services/checkout_spec.rb
 ```
 
-Use these files when your CI already fans out jobs and each job should run only
-its own slice. `ddtest run --ci-node N` reads `runner-N`.
+Use these files when your CI already fans out jobs and each CI node should run
+only its assigned files. `ddtest run --ci-node N` reads `runner-N`.
 
-## Runner Cache
+## DDTest Private Cache
 
 ### `.testoptimization/runner/cache/test_suite_durations.json`
 
@@ -187,7 +188,7 @@ Top-level shape:
 }
 ```
 
-`testFileWeights` values are integer millisecond weights used for split
+`testFileWeights` values are integer millisecond weights used for parallelism
 selection. `totalDuration` and `estimatedDuration` preserve DDTest's internal
 duration estimate for the suite aggregate.
 
@@ -243,5 +244,5 @@ The resulting matrix entries expose:
 
 | Field | Description |
 | --- | --- |
-| `ci_node_index` | Zero-indexed node number to pass to `ddtest run --ci-node`. |
-| `ci_node_total` | Total number of nodes DDTest selected. |
+| `ci_node_index` | Zero-indexed CI node number to pass to `ddtest run --ci-node`. |
+| `ci_node_total` | Total number of CI nodes DDTest selected. |

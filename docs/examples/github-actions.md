@@ -1,7 +1,9 @@
 # GitHub Actions Example
 
-The plan job computes the split and emits a matrix; the run job downloads the
-artifacts and executes only its slice.
+The plan job chooses the CI node count and emits a matrix; the run job downloads
+the artifacts and executes only the files assigned to its CI node. Each matrix
+job is one CI node, and `matrix.ci_node_index` is passed to
+`ddtest run --ci-node`.
 
 ```yaml
 name: CI with DDTest

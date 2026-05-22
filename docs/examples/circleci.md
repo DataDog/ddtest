@@ -2,7 +2,8 @@
 
 This example uses a setup workflow: the first config runs `ddtest plan`, stores
 the generated `.testoptimization/` directory, and continues into a second config
-with the selected parallelism.
+with the selected CI node count. Each CircleCI parallel container is one CI node,
+and `CIRCLE_NODE_INDEX` is passed to `ddtest run --ci-node`.
 
 In `.circleci/config.yml`:
 
@@ -52,7 +53,7 @@ jobs:
             - .testoptimization
             - bin/ddtest
       - run:
-          name: Determine parallelism
+          name: Determine CI node count
           command: |
             set -euo pipefail
             cat .testoptimization/runner/parallel-runners.txt
