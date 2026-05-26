@@ -195,7 +195,7 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 
 	// Parse worker environment variables if provided in settings
 	workerEnvMap := settings.GetWorkerEnvMap()
-	slog.Info("Worker environment variables", "workerEnvMap", workerEnvMap)
+	slog.Info("Worker environment variables", "workerEnvKeys", workerEnvKeys(workerEnvMap))
 
 	// Detect platform and framework
 	detectedPlatform, err := tr.platformDetector.DetectPlatform()

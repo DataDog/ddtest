@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
@@ -16,6 +17,15 @@ func createWorkerEnv(workerEnvMap map[string]string, nodeIndex int, workerIndex 
 	ensureTestSessionName(workerEnv, nodeIndex, workerIndex)
 	ensureManifestFile(workerEnv)
 	return workerEnv
+}
+
+func workerEnvKeys(workerEnv map[string]string) []string {
+	keys := make([]string, 0, len(workerEnv))
+	for key := range workerEnv {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
 }
 
 func replaceIndexPlaceholders(workerEnvMap map[string]string, nodeIndex int, workerIndex int) map[string]string {

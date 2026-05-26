@@ -40,7 +40,7 @@ func (r runExecutionReport) failure(err error) runExecutionResult {
 func (e testExecutor) runBatch(testFiles []string, nodeIndex int, workerIndex int) error {
 	workerEnv := createWorkerEnv(e.workerEnvMap, nodeIndex, workerIndex)
 
-	slog.Info("Running tests in worker", "nodeIndex", nodeIndex, "workerIndex", workerIndex, "testFilesCount", len(testFiles), "workerEnv", workerEnv)
+	slog.Info("Running tests in worker", "nodeIndex", nodeIndex, "workerIndex", workerIndex, "testFilesCount", len(testFiles), "workerEnvKeys", workerEnvKeys(workerEnv))
 	return e.framework.RunTests(e.ctx, testFiles, workerEnv)
 }
 
