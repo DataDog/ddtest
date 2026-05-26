@@ -1,9 +1,7 @@
 # DDTest
 
 DDTest helps you scale CI workloads down when Datadog Test Optimization skips
-tests.
-
-It plans how to run the remaining test files across CI nodes or local workers.
+tests: it plans how to run the remaining test files across CI nodes or local workers in the most efficient way.
 
 Use `ddtest plan` once to create a reusable `.testoptimization/` plan, then use
 `ddtest run` in each CI job to run only the files assigned to that job.
@@ -23,43 +21,12 @@ Minimum supported library versions:
 
 For instructions on setting up Test Optimization, see the [Datadog Test Optimization documentation](https://docs.datadoghq.com/tests/setup/).
 
-## Installation
-
-### Download precompiled binary
-
-This project uses GitHub Releases for distribution.
-
-Use `gh` command line tool to download the latest release in GitHub actions:
-
-```yaml
-- name: Download ddtest binary
-  run: |
-    mkdir -p bin
-    gh release download --repo DataDog/ddtest --pattern "ddtest-linux-amd64" --dir bin
-    mv bin/ddtest-linux-amd64 bin/ddtest
-    chmod +x bin/ddtest
-  env:
-    GH_TOKEN: ${{ github.token }}
-```
-
-...or use `curl`:
-
-```bash
-mkdir -p bin
-curl -fsSL https://github.com/DataDog/ddtest/releases/latest/download/ddtest-linux-amd64 -o bin/ddtest
-chmod +x bin/ddtest
-```
-
-The list of available precompiled artifacts is on [release page](https://github.com/DataDog/ddtest/releases/latest).
-
 ## Usage
 
-DDTest ships as a CLI tool `ddtest` with two primary sub-commands: `plan` and
-`run`.
+DDTest ships as a CLI tool `ddtest` with two primary sub-commands: `plan` and `run`.
 
 Use `plan` to create a reusable `.testoptimization/` plan without running tests.
-Use `run` to execute that plan locally or in CI. If a plan is missing, `run`
-will generate it on the fly.
+Use `run` to execute that plan locally or in CI. If a plan is missing, `run` will generate it on the fly.
 
 DDTest is meant to run in CI. Local runs are possible when you want to reuse
 CI's skippable tests on your machine; see
@@ -116,6 +83,33 @@ parallelism details, see [Running DDTest](docs/running.md).
 
 For all flags, environment variables, and defaults, see
 [Settings](docs/settings.md).
+
+## Installation
+
+This project uses GitHub Releases for distribution.
+
+Use `gh` command line tool to download the latest release in GitHub actions:
+
+```yaml
+- name: Download ddtest binary
+  run: |
+    mkdir -p bin
+    gh release download --repo DataDog/ddtest --pattern "ddtest-linux-amd64" --dir bin
+    mv bin/ddtest-linux-amd64 bin/ddtest
+    chmod +x bin/ddtest
+  env:
+    GH_TOKEN: ${{ github.token }}
+```
+
+...or use `curl`:
+
+```bash
+mkdir -p bin
+curl -fsSL https://github.com/DataDog/ddtest/releases/latest/download/ddtest-linux-amd64 -o bin/ddtest
+chmod +x bin/ddtest
+```
+
+The list of available precompiled artifacts is on [release page](https://github.com/DataDog/ddtest/releases/latest).
 
 ## CI configuration examples
 

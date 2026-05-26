@@ -13,6 +13,8 @@ on: [push]
 env:
   DD_TEST_OPTIMIZATION_RUNNER_PLATFORM: ruby
   DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK: rspec
+  DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM: 1
+  DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM: 8
 
 jobs:
   dd_plan:
@@ -42,9 +44,6 @@ jobs:
       - id: dd_plan
         name: Plan test execution with DDTest
         run: bin/ddtest plan
-        env:
-          DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM: 1
-          DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM: 8
       - uses: actions/upload-artifact@v4
         with:
           name: dd-artifacts
@@ -83,8 +82,6 @@ jobs:
           site: datadoghq.com
       - name: Run tests
         run: bin/ddtest run --ci-node ${{ matrix.ci_node_index }}
-        env:
-          DD_TEST_SESSION_NAME: ddtest-runner-${{ matrix.ci_node_index }}
 ```
 
 DDTest automatically writes the matrix file at `.testoptimization/github/config`
