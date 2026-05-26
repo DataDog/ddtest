@@ -61,6 +61,7 @@ func init() {
 	rootCmd.PersistentFlags().Int("max-parallelism", defaultParallelism, "Maximum number of parallel test processes (default: number of physical CPUs)")
 	rootCmd.PersistentFlags().String("ci-job-overhead", settings.DefaultParallelRunnerOverhead().String(), "Modeled overhead for adding one more CI job / parallel runner (for example, 25s, 1m, 1500ms, or 0s to disable the bias). Increase it to use fewer CI jobs; decrease it to prefer faster wall time")
 	rootCmd.PersistentFlags().String("worker-env", "", "Worker environment configuration")
+	rootCmd.PersistentFlags().Int("ci-node", -1, "CI node index to run (0-indexed; default: -1 disables CI-node mode)")
 	rootCmd.PersistentFlags().String("ci-node-workers", "1", `Number of parallel workers per CI node (positive integer or "ncpu"; default: 1)`)
 	rootCmd.PersistentFlags().String("command", "", "Test command that ddtest should wrap")
 	rootCmd.PersistentFlags().String("tests-location", "", "Glob pattern used to discover test files")
@@ -87,6 +88,10 @@ func init() {
 	}
 	if err := viper.BindPFlag("worker_env", rootCmd.PersistentFlags().Lookup("worker-env")); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding worker-env flag: %v\n", err)
+		os.Exit(1)
+	}
+	if err := viper.BindPFlag("ci_node", rootCmd.PersistentFlags().Lookup("ci-node")); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding ci-node flag: %v\n", err)
 		os.Exit(1)
 	}
 	if err := viper.BindPFlag("ci_node_workers", rootCmd.PersistentFlags().Lookup("ci-node-workers")); err != nil {

@@ -18,6 +18,7 @@ func TestGitHub_Name(t *testing.T) {
 
 func TestGitHub_Configure(t *testing.T) {
 	g := NewGitHub()
+	t.Setenv(githubOutputEnvVar, "")
 
 	tests := []struct {
 		name            string
@@ -112,6 +113,7 @@ func TestGitHub_Configure(t *testing.T) {
 
 func TestGitHub_ConfigureJSONFormat(t *testing.T) {
 	g := NewGitHub()
+	t.Setenv(githubOutputEnvVar, "")
 
 	// Clean up before test
 	_ = os.RemoveAll(constants.PlanDirectory)
@@ -133,5 +135,36 @@ func TestGitHub_ConfigureJSONFormat(t *testing.T) {
 
 	if actualContent != expectedContent {
 		t.Errorf("Expected content:\n%s\nGot content:\n%s", expectedContent, actualContent)
+	}
+}
+
+func TestGitHub_ConfigureWritesGitHubOutput(t *testing.T) {
+	g := NewGitHub()
+
+	_ = os.RemoveAll(constants.PlanDirectory)
+	defer func() { _ = os.RemoveAll(constants.PlanDirectory) }()
+
+	outputFile, err := os.CreateTemp(t.TempDir(), "github-output-*")
+	if err != nil {
+		t.Fatalf("failed to create GitHub output file: %v", err)
+	}
+	if err := outputFile.Close(); err != nil {
+		t.Fatalf("failed to close GitHub output file: %v", err)
+	}
+	t.Setenv(githubOutputEnvVar, outputFile.Name())
+
+	err = g.Configure(2)
+	if err != nil {
+		t.Fatalf("Configure() failed: %v", err)
+	}
+
+	data, err := os.ReadFile(outputFile.Name())
+	if err != nil {
+		t.Fatalf("failed to read GitHub output file: %v", err)
+	}
+
+	expectedContent := "matrix={\"include\":[{\"ci_node_index\":0,\"ci_node_total\":2},{\"ci_node_index\":1,\"ci_node_total\":2}]}\n"
+	if string(data) != expectedContent {
+		t.Errorf("Expected GitHub output:\n%s\nGot content:\n%s", expectedContent, string(data))
 	}
 }

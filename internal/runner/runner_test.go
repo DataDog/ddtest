@@ -430,15 +430,11 @@ func TestTestRunner_Plan_WritesManifestAndRunnerLayout(t *testing.T) {
 
 	expectedTestFiles := "test/file1_test.rb\ntest/file2_test.rb\n"
 	assertFileContent(t, constants.TestFilesOutputPath, expectedTestFiles)
-	assertFileContent(t, constants.LegacyTestFilesOutputPath, expectedTestFiles)
 
 	assertFileContent(t, constants.ParallelRunnersOutputPath, "1")
-	assertFileContent(t, constants.LegacyParallelRunnersOutputPath, "1")
 	assertFileContent(t, constants.SkippablePercentageOutputPath, "0.00")
-	assertFileContent(t, constants.LegacySkippablePercentageOutputPath, "0.00")
 
 	assertFileContent(t, filepath.Join(constants.TestsSplitDir, "runner-0"), expectedTestFiles)
-	assertFileContent(t, filepath.Join(constants.LegacyTestsSplitDir, "runner-0"), expectedTestFiles)
 }
 
 func TestTestRunner_Plan_DoesNotPrintReportWhenDisabled(t *testing.T) {

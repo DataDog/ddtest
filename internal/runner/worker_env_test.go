@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
@@ -210,5 +211,21 @@ func TestRunBatch_WorkerEnvManifestFileTakesPrecedence(t *testing.T) {
 	call := mockFramework.GetRunTestsCalls()[0]
 	if call.EnvMap[constants.TestOptimizationManifestFileEnvVar] != "/tmp/worker-manifest.txt" {
 		t.Errorf("Expected worker env manifest file to take precedence, got %s", call.EnvMap[constants.TestOptimizationManifestFileEnvVar])
+	}
+}
+
+func TestWorkerEnvKeysReturnsSortedKeysWithoutValues(t *testing.T) {
+	keys := workerEnvKeys(map[string]string{
+		"Z_VAR":        "secret-z",
+		"DATABASE_URL": "postgres://user:password@example.invalid/db",
+		"A_VAR":        "secret-a",
+	})
+
+	expected := []string{"A_VAR", "DATABASE_URL", "Z_VAR"}
+	if !slices.Equal(keys, expected) {
+		t.Fatalf("workerEnvKeys() = %v, expected %v", keys, expected)
+	}
+	if slices.Contains(keys, "secret-z") || slices.Contains(keys, "postgres://user:password@example.invalid/db") || slices.Contains(keys, "secret-a") {
+		t.Fatalf("workerEnvKeys() leaked values: %v", keys)
 	}
 }

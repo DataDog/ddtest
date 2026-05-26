@@ -11,6 +11,8 @@ import (
 
 var GitHubMatrixPath = filepath.Join(constants.PlanDirectory, "github/config")
 
+const githubOutputEnvVar = "GITHUB_OUTPUT"
+
 type GitHub struct{}
 
 type matrixEntry struct {
@@ -63,6 +65,31 @@ func (g *GitHub) Configure(parallelRunners int) error {
 	configContent := fmt.Sprintf("matrix=%s", jsonData)
 	if err := os.WriteFile(GitHubMatrixPath, []byte(configContent), 0644); err != nil {
 		return fmt.Errorf("failed to write matrix configuration to %s: %w", GitHubMatrixPath, err)
+	}
+
+	if err := writeGitHubStepOutput(configContent); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func writeGitHubStepOutput(configContent string) error {
+	outputPath := os.Getenv(githubOutputEnvVar)
+	if outputPath == "" {
+		return nil
+	}
+
+	outputFile, err := os.OpenFile(outputPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open GitHub output file %s: %w", outputPath, err)
+	}
+	defer func() {
+		_ = outputFile.Close()
+	}()
+
+	if _, err := fmt.Fprintln(outputFile, configContent); err != nil {
+		return fmt.Errorf("failed to write matrix configuration to GitHub output file %s: %w", outputPath, err)
 	}
 
 	return nil
