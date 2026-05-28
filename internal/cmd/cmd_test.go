@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -131,6 +133,42 @@ func TestExecute(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "ddtest") {
 		t.Error("help output should contain command name 'ddtest'")
+	}
+}
+
+func TestVersionFlag(t *testing.T) {
+	resetBoolFlag := func(name string) {
+		if rootCmd.Flags().Lookup(name) != nil {
+			_ = rootCmd.Flags().Set(name, "false")
+		}
+	}
+	resetBoolFlag("help")
+	resetBoolFlag("version")
+
+	originalLookPathFunc := git.LookPathFunc
+	git.LookPathFunc = func(file string) (string, error) {
+		return "", errors.New("git should not be checked for --version")
+	}
+	t.Cleanup(func() {
+		git.LookPathFunc = originalLookPathFunc
+		resetBoolFlag("help")
+		resetBoolFlag("version")
+		rootCmd.SetArgs(nil)
+		rootCmd.SetOut(os.Stdout)
+		rootCmd.SetErr(os.Stderr)
+	})
+
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
+	rootCmd.SetArgs([]string{"--version"})
+
+	if err := Execute(); err != nil {
+		t.Fatalf("Execute() with --version should not return error, got %v", err)
+	}
+
+	if got, want := buf.String(), rootCmd.Version+"\n"; got != want {
+		t.Fatalf("expected version output %q, got %q", want, got)
 	}
 }
 

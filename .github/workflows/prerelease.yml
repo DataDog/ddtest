@@ -28,7 +28,9 @@ jobs:
           go-version: '1.26.3'
 
       - name: Build binaries
-        run: make release
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          make release VERSION="pre-release-$SHORT_SHA"
 
       - name: Create Release and Upload Assets
         env:
