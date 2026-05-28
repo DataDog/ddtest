@@ -65,7 +65,8 @@ type (
 			Enabled             bool `json:"enabled"`
 			AttemptToFixRetries int  `json:"attempt_to_fix_retries"`
 		} `json:"test_management"`
-		SubtestFeaturesEnabled bool `json:"-"`
+		CoverageReportUploadEnabled bool `json:"coverage_report_upload_enabled"`
+		SubtestFeaturesEnabled      bool `json:"-"`
 	}
 )
 
