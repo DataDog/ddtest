@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/DataDog/ddtest/internal/buildinfo"
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/runner"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/cobra"
@@ -17,9 +19,13 @@ import (
 var defaultParallelism = settings.DefaultParallelism()
 
 var rootCmd = &cobra.Command{
-	Use:   "ddtest",
-	Short: "A test runner from Datadog",
-	Long:  "Command line tool for running tests with Datadog Test Optimization.",
+	Use:     "ddtest",
+	Short:   "A test runner from Datadog",
+	Long:    "Command line tool for running tests with Datadog Test Optimization.",
+	Version: buildinfo.CurrentVersion(),
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		return git.CheckAvailable()
+	},
 }
 
 var planCmd = &cobra.Command{
@@ -55,6 +61,8 @@ var runCmd = &cobra.Command{
 }
 
 func init() {
+	rootCmd.SetVersionTemplate("{{ .Version }}\n")
+
 	rootCmd.PersistentFlags().String("platform", "ruby", "Platform that runs tests")
 	rootCmd.PersistentFlags().String("framework", "rspec", "Test framework to use")
 	rootCmd.PersistentFlags().Int("min-parallelism", defaultParallelism, "Minimum number of parallel test processes (default: number of physical CPUs)")
