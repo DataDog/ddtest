@@ -26,7 +26,7 @@ func TestRunSequential_Success(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runSequential()
+	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}, roundRobinTestPlanner{}).runSequential()
 	report, err := result.report, result.err
 	if err != nil {
 		t.Fatalf("runSequential() should not return error, got: %v", err)

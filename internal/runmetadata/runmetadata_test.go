@@ -1,4 +1,4 @@
-package runner
+package runmetadata
 
 import "testing"
 
@@ -37,9 +37,9 @@ func TestServiceNameFromRepositoryURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := serviceNameFromRepositoryURL(tt.repositoryURL)
+			got := ServiceNameFromRepositoryURL(tt.repositoryURL)
 			if got != tt.want {
-				t.Errorf("serviceNameFromRepositoryURL(%q) = %q, want %q", tt.repositoryURL, got, tt.want)
+				t.Errorf("ServiceNameFromRepositoryURL(%q) = %q, want %q", tt.repositoryURL, got, tt.want)
 			}
 		})
 	}
@@ -48,8 +48,8 @@ func TestServiceNameFromRepositoryURL(t *testing.T) {
 func TestResolveServiceNamePrefersDDService(t *testing.T) {
 	t.Setenv("DD_SERVICE", "custom-service")
 
-	got := resolveServiceName("https://github.com/DataDog/ddtest.git")
+	got := ResolveServiceName("https://github.com/DataDog/ddtest.git")
 	if got != "custom-service" {
-		t.Errorf("resolveServiceName() = %q, want %q", got, "custom-service")
+		t.Errorf("ResolveServiceName() = %q, want %q", got, "custom-service")
 	}
 }

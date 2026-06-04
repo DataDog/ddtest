@@ -1,8 +1,10 @@
-package runner
+package planner
 
 import (
 	"container/heap"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,19 +14,47 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 )
 
-// DistributeTestFiles distributes test files across parallel runners using weighted list scheduling.
-func DistributeTestFiles(testFiles map[string]int, parallelRunners int) [][]string {
+// DistributeTestFiles distributes test files using weights loaded into this planner.
+func (tp *TestPlanner) DistributeTestFiles(testFiles []string, parallelRunners int) [][]string {
+	if !tp.planLoaded {
+		if err := tp.restoreTestOptimizationPlanCache(); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				slog.Debug("Test optimization run artifacts not found; distributing test files with default weights")
+			} else {
+				slog.Warn("Failed to load test optimization run artifacts; distributing test files with default weights", "error", err)
+			}
+		}
+	}
+
+	testFileWeights := testFileWeightsForFiles(tp.testFileWeights, testFiles)
+	return tp.DistributeWeightedTestFiles(testFileWeights, parallelRunners)
+}
+
+// DistributeWeightedTestFiles distributes test files across parallel runners using weighted list scheduling.
+func (tp *TestPlanner) DistributeWeightedTestFiles(testFiles map[string]int, parallelRunners int) [][]string {
 	builder := newTestSplitBuilder(parallelRunners)
 	return builder.distributeFiles(testFiles)
+}
+
+func testFileWeightsForFiles(cacheWeights map[string]int, testFiles []string) map[string]int {
+	testFileWeights := make(map[string]int, len(testFiles))
+	for _, testFile := range testFiles {
+		if cachedWeight, ok := cacheWeights[testFile]; ok && cachedWeight > 0 {
+			testFileWeights[testFile] = cachedWeight
+		} else {
+			testFileWeights[testFile] = DefaultTestFileWeight
+		}
+	}
+	return testFileWeights
 }
 
 // CreateTestSplits creates test split files for parallel runners
 // For multiple runners: distributes files using weighted list scheduling and writes to separate runner files
 // For single runner: copies test-files.txt content to runner-0
-func CreateTestSplits(testFiles map[string]int, parallelRunners int, testFilesOutputPath string) error {
+func (tp *TestPlanner) CreateTestSplits(testFiles map[string]int, parallelRunners int, testFilesOutputPath string) error {
 	if parallelRunners > 1 {
 		// Distribute test files across parallel runners using weighted list scheduling.
-		distribution := DistributeTestFiles(testFiles, parallelRunners)
+		distribution := tp.DistributeWeightedTestFiles(testFiles, parallelRunners)
 		if err := writeDistributedTestSplits(distribution, constants.TestsSplitDir); err != nil {
 			return err
 		}

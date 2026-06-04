@@ -10,6 +10,7 @@ import (
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	ciUtils "github.com/DataDog/ddtest/civisibility/utils"
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/runmetadata"
 )
 
 func createWorkerEnv(workerEnvMap map[string]string, nodeIndex int, workerIndex int) map[string]string {
@@ -53,7 +54,7 @@ func ensureTestSessionName(workerEnv map[string]string, nodeIndex int, workerInd
 		return
 	}
 
-	service := resolveServiceName(ciUtils.GetCITags()[ciConstants.GitRepositoryURL])
+	service := runmetadata.ResolveServiceName(ciUtils.GetCITags()[ciConstants.GitRepositoryURL])
 	workerEnv[ciConstants.CIVisibilityTestSessionNameEnvironmentVariable] = fmt.Sprintf("%s-node-%d-worker-%d", service, nodeIndex, workerIndex)
 }
 

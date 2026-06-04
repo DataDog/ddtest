@@ -1,4 +1,4 @@
-package runner
+package planner
 
 import (
 	"log/slog"

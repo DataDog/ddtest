@@ -1,24 +1,997 @@
-package runner
+package planner
 
 import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	ciUtils "github.com/DataDog/ddtest/civisibility/utils"
-	ciNet "github.com/DataDog/ddtest/civisibility/utils/net"
+	"github.com/DataDog/ddtest/civisibility/utils/net"
+	"github.com/DataDog/ddtest/internal/ciprovider"
+	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
+// Mock implementations for testing
+
+// MockPlatformDetector mocks platform detection
+type MockPlatformDetector struct {
+	Platform platform.Platform
+	Err      error
+}
+
+func (m *MockPlatformDetector) DetectPlatform() (platform.Platform, error) {
+	return m.Platform, m.Err
+}
+
+// MockPlatform mocks a platform
+type MockPlatform struct {
+	PlatformName string
+	Tags         map[string]string
+	TagsErr      error
+	Framework    framework.Framework
+	FrameworkErr error
+	SanityErr    error
+}
+
+func (m *MockPlatform) Name() string {
+	return m.PlatformName
+}
+
+func (m *MockPlatform) CreateTagsMap() (map[string]string, error) {
+	return m.Tags, m.TagsErr
+}
+
+func (m *MockPlatform) DetectFramework() (framework.Framework, error) {
+	return m.Framework, m.FrameworkErr
+}
+
+func (m *MockPlatform) SanityCheck() error {
+	return m.SanityErr
+}
+
+// MockFramework mocks a testing framework
+type MockFramework struct {
+	FrameworkName        string
+	Tests                []testoptimization.Test
+	TestFiles            []string
+	Err                  error // Used by both DiscoverTests and DiscoverTestFiles if specific errors are nil
+	DiscoverTestsErr     error // If set, overrides Err for DiscoverTests
+	DiscoverTestFilesErr error // If set, overrides Err for DiscoverTestFiles
+	RunTestsCalls        []RunTestsCall
+	mu                   sync.Mutex
+}
+
+type RunTestsCall struct {
+	TestFiles []string
+	EnvMap    map[string]string
+}
+
+func (m *MockFramework) Name() string {
+	return m.FrameworkName
+}
+
+func (m *MockFramework) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
+	if m.DiscoverTestsErr != nil {
+		return m.Tests, m.DiscoverTestsErr
+	}
+	return m.Tests, m.Err
+}
+
+func (m *MockFramework) DiscoverTestFiles() ([]string, error) {
+	if m.DiscoverTestFilesErr != nil {
+		return m.TestFiles, m.DiscoverTestFilesErr
+	}
+	return m.TestFiles, m.Err
+}
+
+func (m *MockFramework) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
+	// Record the call
+	m.mu.Lock()
+	m.RunTestsCalls = append(m.RunTestsCalls, RunTestsCall{
+		TestFiles: slices.Clone(testFiles),
+		EnvMap:    maps.Clone(envMap),
+	})
+	m.mu.Unlock()
+	return m.Err
+}
+
+func (m *MockFramework) SetPlatformEnv(platformEnv map[string]string) {
+	// No-op for mock
+}
+
+func (m *MockFramework) GetPlatformEnv() map[string]string {
+	return nil
+}
+
+func (m *MockFramework) GetRunTestsCallsCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.RunTestsCalls)
+}
+
+func (m *MockFramework) GetRunTestsCalls() []RunTestsCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return slices.Clone(m.RunTestsCalls)
+}
+
+// MockTestOptimizationClient mocks the test optimization client
+type MockTestOptimizationClient struct {
+	InitializeCalled    bool
+	InitializeErr       error
+	Settings            *net.SettingsResponseData
+	SkippableTests      map[string]bool
+	KnownTests          *net.KnownTestsResponseData
+	TestManagementTests *net.TestManagementTestsResponseDataModules
+	ShutdownCalled      bool
+	Tags                map[string]string
+}
+
+func (m *MockTestOptimizationClient) Initialize(tags map[string]string) error {
+	m.InitializeCalled = true
+	if m.Tags == nil {
+		m.Tags = make(map[string]string)
+	}
+	maps.Copy(m.Tags, tags)
+	return m.InitializeErr
+}
+
+func (m *MockTestOptimizationClient) GetSettings() *net.SettingsResponseData {
+	return m.Settings
+}
+
+func (m *MockTestOptimizationClient) GetSkippableTests() map[string]bool {
+	return m.SkippableTests
+}
+
+func (m *MockTestOptimizationClient) GetKnownTests() *net.KnownTestsResponseData {
+	return m.KnownTests
+}
+
+func (m *MockTestOptimizationClient) GetTestManagementTestsData() *net.TestManagementTestsResponseDataModules {
+	return m.TestManagementTests
+}
+
+func (m *MockTestOptimizationClient) StoreCacheAndExit() {
+	m.ShutdownCalled = true
+}
+
+type MockTestSuiteDurationsClient struct {
+	Durations map[string]map[string]testoptimization.TestSuiteDurationInfo
+	Called    bool
+}
+
+func (m *MockTestSuiteDurationsClient) GetTestSuiteDurations() map[string]map[string]testoptimization.TestSuiteDurationInfo {
+	m.Called = true
+	if m.Durations == nil {
+		return map[string]map[string]testoptimization.TestSuiteDurationInfo{}
+	}
+	return m.Durations
+}
+
+// MockCIProvider mocks a CI provider
+type MockCIProvider struct {
+	ProviderName    string
+	ConfigureCalled bool
+	ConfigureErr    error
+	ParallelRunners int
+}
+
+func (m *MockCIProvider) Name() string {
+	return m.ProviderName
+}
+
+func (m *MockCIProvider) Configure(parallelRunners int) error {
+	m.ConfigureCalled = true
+	m.ParallelRunners = parallelRunners
+	return m.ConfigureErr
+}
+
+// MockCIProviderDetector mocks CI provider detection
+type MockCIProviderDetector struct {
+	CIProvider ciprovider.CIProvider
+	Err        error
+}
+
+func (m *MockCIProviderDetector) DetectCIProvider() (ciprovider.CIProvider, error) {
+	return m.CIProvider, m.Err
+}
+
+// Helper function to create a default mock CI provider detector that returns no provider
+func newDefaultMockCIProviderDetector() *MockCIProviderDetector {
+	return &MockCIProviderDetector{
+		Err: errors.New("no CI provider detected"),
+	}
+}
+
+func assertFileContent(t *testing.T, path string, expected string) {
+	t.Helper()
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	if string(content) != expected {
+		t.Fatalf("expected %s content %q, got %q", path, expected, string(content))
+	}
+}
+
+func gitTestEnv() []string {
+	return append(os.Environ(),
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+		"GIT_CONFIG_NOSYSTEM=1",
+	)
+}
+
+func TestNew(t *testing.T) {
+	runner := New()
+
+	if runner == nil {
+		t.Error("New() should return non-nil TestPlanner")
+		return
+	}
+
+	if len(runner.testFiles) != 0 {
+		t.Error("New() should initialize testFiles to empty map")
+	}
+
+	if len(runner.suiteAggregates) != 0 {
+		t.Error("New() should initialize suiteAggregates to empty map")
+	}
+
+	if len(runner.suitesBySourceFile) != 0 {
+		t.Error("New() should initialize suitesBySourceFile to empty map")
+	}
+
+	if runner.skippablePercentage != 0.0 {
+		t.Errorf("New() should initialize skippablePercentage to 0.0, got %f", runner.skippablePercentage)
+	}
+
+	if runner.platformDetector == nil {
+		t.Error("New() should initialize platformDetector")
+	}
+
+	if runner.optimizationClient == nil {
+		t.Error("New() should initialize optimizationClient")
+	}
+
+	if runner.durationsClient == nil {
+		t.Error("New() should initialize durationsClient")
+	}
+}
+
+func TestNewWithDependencies(t *testing.T) {
+	mockPlatformDetector := &MockPlatformDetector{}
+	mockOptimizationClient := &MockTestOptimizationClient{}
+	mockDurationsClient := &MockTestSuiteDurationsClient{}
+	mockCIProviderDetector := newDefaultMockCIProviderDetector()
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockDurationsClient, mockCIProviderDetector)
+
+	if runner == nil {
+		t.Error("NewWithDependencies() should return non-nil TestPlanner")
+		return
+	}
+
+	if runner.platformDetector != mockPlatformDetector {
+		t.Error("NewWithDependencies() should use injected platformDetector")
+	}
+
+	if runner.optimizationClient != mockOptimizationClient {
+		t.Error("NewWithDependencies() should use injected optimizationClient")
+	}
+
+	if runner.durationsClient != mockDurationsClient {
+		t.Error("NewWithDependencies() should use injected durationsClient")
+	}
+
+	if len(runner.testFiles) != 0 {
+		t.Error("NewWithDependencies() should initialize testFiles to empty map")
+	}
+
+	if len(runner.suiteAggregates) != 0 {
+		t.Error("NewWithDependencies() should initialize suiteAggregates to empty map")
+	}
+
+	if len(runner.suitesBySourceFile) != 0 {
+		t.Error("NewWithDependencies() should initialize suitesBySourceFile to empty map")
+	}
+}
+
+func TestTestPlanner_Setup_WithParallelRunners(t *testing.T) {
+	// Create a temporary directory for test output
+	tempDir := t.TempDir()
+
+	// Save current working directory and change to temp dir
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	// Create .testoptimization directory
+	_ = os.MkdirAll(constants.PlanDirectory, 0755)
+
+	// Set parallelism to 1 to test single runner behavior
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "1")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "1")
+	defer func() {
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+	}()
+	settings.Init()
+	logs := captureLogs(t)
+
+	// Setup mocks for a test with 40% skippable percentage
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+			{Suite: "TestSuite1", Name: "test2", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+			{Suite: "TestSuite2", Name: "test3", Parameters: "", SuiteSourceFile: "test/file2_test.rb"},
+			{Suite: "TestSuite3", Name: "test4", Parameters: "", SuiteSourceFile: "test/file3_test.rb"},
+			{Suite: "TestSuite4", Name: "test5", Parameters: "", SuiteSourceFile: "test/file4_test.rb"},
+		},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		SkippableTests: map[string]bool{
+			"TestSuite1.test2.": true, // Skip test2
+			"TestSuite4.test5.": true, // Skip test5
+		},
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
+
+	// Run Setup
+	err := runner.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Setup() should not return error, got: %v", err)
+	}
+
+	// Expected: 1 (since max=1)
+	content, err := os.ReadFile(constants.ParallelRunnersOutputPath)
+	if err != nil {
+		t.Fatalf("Failed to read parallel runners file: %v", err)
+	}
+
+	expected := "1"
+	if string(content) != expected {
+		t.Errorf("Expected parallel runners file content '%s', got '%s'", expected, string(content))
+	}
+
+	logOutput := logs.String()
+	if !strings.Contains(logOutput, "Test execution planning completed") ||
+		!strings.Contains(logOutput, "parallelRunners=1") ||
+		!strings.Contains(logOutput, "expectedWallTime=") ||
+		!strings.Contains(logOutput, "imbalance=") ||
+		!strings.Contains(logOutput, "expectedTotalRuntime=") {
+		t.Errorf("Expected planning log with selected split information, got logs: %s", logOutput)
+	}
+}
+
+func TestTestPlanner_Plan_WritesManifestAndRunnerLayout(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "1")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "1")
+	defer func() {
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+	}()
+	settings.Init()
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+			{Suite: "TestSuite2", Name: "test2", Parameters: "", SuiteSourceFile: "test/file2_test.rb"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		&MockTestOptimizationClient{SkippableTests: map[string]bool{}},
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.Plan(context.Background()); err != nil {
+		t.Fatalf("Plan() should not return error, got: %v", err)
+	}
+
+	assertFileContent(t, constants.ManifestPath, constants.ManifestVersion+"\n")
+
+	expectedTestFiles := "test/file1_test.rb\ntest/file2_test.rb\n"
+	assertFileContent(t, constants.TestFilesOutputPath, expectedTestFiles)
+
+	assertFileContent(t, constants.ParallelRunnersOutputPath, "1")
+	assertFileContent(t, constants.SkippablePercentageOutputPath, "0.00")
+
+	assertFileContent(t, filepath.Join(constants.TestsSplitDir, "runner-0"), expectedTestFiles)
+}
+
+func TestTestPlanner_Plan_DoesNotPrintReportWhenDisabled(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "1")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "1")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED", "false")
+	defer func() {
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED")
+		settings.Init()
+	}()
+	settings.Init()
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		&MockTestOptimizationClient{SkippableTests: map[string]bool{}},
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+	var output strings.Builder
+	runner.reportWriter = &output
+
+	if err := runner.Plan(context.Background()); err != nil {
+		t.Fatalf("Plan() should not return error, got: %v", err)
+	}
+	if output.Len() != 0 {
+		t.Errorf("Expected no report output when report is disabled, got: %s", output.String())
+	}
+}
+
+func TestTestPlanner_Plan_ChoosesParallelismFromFanoutAdjustedSplit(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "2")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "4")
+	defer func() {
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+	}()
+	settings.Init()
+
+	var tests []testoptimization.Test
+	skippableTests := map[string]bool{}
+	for suiteIndex := range 4 {
+		suite := fmt.Sprintf("TestSuite%d", suiteIndex)
+		sourceFile := fmt.Sprintf("test/file%d_test.rb", suiteIndex)
+		for testIndex := range 10 {
+			name := fmt.Sprintf("test%d", testIndex)
+			tests = append(tests, testoptimization.Test{
+				Suite:           suite,
+				Name:            name,
+				Parameters:      "",
+				SuiteSourceFile: sourceFile,
+			})
+			if testIndex > 0 {
+				skippableTests[fmt.Sprintf("%s.%s.", suite, name)] = true
+			}
+		}
+	}
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests:         tests,
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		&MockTestOptimizationClient{SkippableTests: skippableTests},
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.Plan(context.Background()); err != nil {
+		t.Fatalf("Plan() should not return error, got: %v", err)
+	}
+
+	assertFileContent(t, constants.SkippablePercentageOutputPath, "90.00")
+	assertFileContent(t, constants.ParallelRunnersOutputPath, "2")
+}
+
+func TestTestPlanner_Setup_WithCIProvider(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Save current working directory and change to temp dir
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	// Create .testoptimization directory
+	_ = os.MkdirAll(constants.PlanDirectory, 0755)
+
+	// Set parallelism to 1 to test single runner behavior
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "1")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "1")
+	defer func() {
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+	}()
+	settings.Init()
+
+	// Setup mocks for test with CI provider
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+			{Suite: "TestSuite2", Name: "test2", Parameters: "", SuiteSourceFile: "test/file2_test.rb"},
+		},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		SkippableTests: map[string]bool{
+			"TestSuite1.test1": true, // Skip test1 = 50% skippable
+		},
+	}
+
+	// Mock CI provider that should be called
+	mockCIProvider := &MockCIProvider{
+		ProviderName: "github",
+	}
+	mockCIProviderDetector := &MockCIProviderDetector{
+		CIProvider: mockCIProvider,
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, mockCIProviderDetector)
+
+	// Run Setup
+	err := runner.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Setup() should not return error, got: %v", err)
+	}
+
+	// Verify CI provider Configure was called
+	if !mockCIProvider.ConfigureCalled {
+		t.Error("Expected CI provider Configure to be called")
+	}
+
+	// Verify Configure was called with the correct parallel runners count (1, since max=1)
+	expectedRunners := 1
+	if mockCIProvider.ParallelRunners != expectedRunners {
+		t.Errorf("Expected CI provider Configure called with %d parallel runners, got %d",
+			expectedRunners, mockCIProvider.ParallelRunners)
+	}
+}
+
+func TestTestPlanner_Setup_CIProviderDetectionFailure(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Save current working directory and change to temp dir
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	// Create .testoptimization directory
+	_ = os.MkdirAll(constants.PlanDirectory, 0755)
+
+	// Setup mocks for test without CI provider
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+		},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{SkippableTests: map[string]bool{}}
+
+	// Mock CI provider detector that fails
+	mockCIProviderDetector := &MockCIProviderDetector{
+		Err: errors.New("no CI provider detected"),
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, mockCIProviderDetector)
+
+	// Run Setup - should succeed even if CI provider detection fails
+	err := runner.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Setup() should not fail when CI provider detection fails, got: %v", err)
+	}
+}
+
+func TestTestPlanner_Setup_CIProviderConfigureFailure(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Save current working directory and change to temp dir
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.MkdirAll(constants.PlanDirectory, 0755)
+
+	// Setup mocks for test with failing CI provider
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+		},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{SkippableTests: map[string]bool{}}
+
+	// Mock CI provider that fails during configuration
+	mockCIProvider := &MockCIProvider{
+		ProviderName: "github",
+		ConfigureErr: errors.New("configuration failed"),
+	}
+	mockCIProviderDetector := &MockCIProviderDetector{
+		CIProvider: mockCIProvider,
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, mockCIProviderDetector)
+
+	// Run Setup - should succeed even if CI provider configuration fails
+	err := runner.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Setup() should not fail when CI provider configuration fails, got: %v", err)
+	}
+
+	// Verify CI provider Configure was attempted
+	if !mockCIProvider.ConfigureCalled {
+		t.Error("Expected CI provider Configure to be called even if it fails")
+	}
+}
+
+func TestTestPlanner_Setup_WithTestSplit(t *testing.T) {
+	t.Run("single runner - copy test-files.txt to runner-0", func(t *testing.T) {
+		// Create a temporary directory for test output
+		tempDir := t.TempDir()
+
+		// Save current working directory and change to temp dir
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		_ = os.Chdir(tempDir)
+
+		// Create .testoptimization directory
+		_ = os.MkdirAll(constants.PlanDirectory, 0755)
+
+		// Set parallelism to 1 to test single runner behavior
+		_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "1")
+		_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "1")
+		defer func() {
+			_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
+			_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+		}()
+		settings.Init()
+
+		// Setup mocks for single runner scenario
+		mockFramework := &MockFramework{
+			FrameworkName: "rspec",
+			Tests: []testoptimization.Test{
+				{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+				{Suite: "TestSuite2", Name: "test2", Parameters: "", SuiteSourceFile: "test/file2_test.rb"},
+			},
+		}
+
+		mockPlatform := &MockPlatform{
+			PlatformName: "ruby",
+			Tags:         map[string]string{"platform": "ruby"},
+			Framework:    mockFramework,
+		}
+
+		mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+		mockOptimizationClient := &MockTestOptimizationClient{
+			SkippableTests: map[string]bool{}, // No tests skipped
+		}
+
+		runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
+
+		// Run Setup
+		err := runner.Plan(context.Background())
+		if err != nil {
+			t.Fatalf("Setup() should not return error, got: %v", err)
+		}
+
+		// Verify that tests-split directory was created
+		if _, err := os.Stat(constants.TestsSplitDir); os.IsNotExist(err) {
+			t.Error("Expected tests-split directory to be created when parallelRunners = 1")
+		}
+
+		// Verify that runner-0 file was created
+		runnerFilePath := filepath.Join(constants.TestsSplitDir, "runner-0")
+		if _, err := os.Stat(runnerFilePath); os.IsNotExist(err) {
+			t.Error("Expected runner-0 file to be created when parallelRunners = 1")
+		}
+
+		// Verify that runner-0 contains the same content as test-files.txt
+		testFilesContent, err := os.ReadFile(constants.TestFilesOutputPath)
+		if err != nil {
+			t.Fatalf("Failed to read test-files.txt: %v", err)
+		}
+
+		runnerContent, err := os.ReadFile(runnerFilePath)
+		if err != nil {
+			t.Fatalf("Failed to read runner-0 file: %v", err)
+		}
+
+		if string(testFilesContent) != string(runnerContent) {
+			t.Errorf("Expected runner-0 content to match test-files.txt content.\ntest-files.txt: %q\nrunner-0: %q",
+				string(testFilesContent), string(runnerContent))
+		}
+
+		// Verify the content contains the expected test files
+		expectedContent := "test/file1_test.rb\ntest/file2_test.rb\n"
+		if string(runnerContent) != expectedContent {
+			t.Errorf("Expected runner-0 content %q, got %q", expectedContent, string(runnerContent))
+		}
+	})
+
+	t.Run("multiple runners - split files created", func(t *testing.T) {
+		// Create a temporary directory for test output
+		tempDir := t.TempDir()
+
+		// Save current working directory and change to temp dir
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		_ = os.Chdir(tempDir)
+
+		// Create .testoptimization directory
+		_ = os.MkdirAll(constants.PlanDirectory, 0755)
+
+		// Setup mocks with test files that will create a predictable distribution
+		mockFramework := &MockFramework{
+			FrameworkName: "rspec",
+			Tests: []testoptimization.Test{
+				{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+				{Suite: "TestSuite1", Name: "test2", Parameters: "", SuiteSourceFile: "test/file1_test.rb"}, // 2 tests in file1
+				{Suite: "TestSuite2", Name: "test3", Parameters: "", SuiteSourceFile: "test/file2_test.rb"}, // 1 test in file2
+				{Suite: "TestSuite3", Name: "test4", Parameters: "", SuiteSourceFile: "test/file3_test.rb"}, // 1 test in file3
+			},
+		}
+
+		mockPlatform := &MockPlatform{
+			PlatformName: "ruby",
+			Tags:         map[string]string{"platform": "ruby"},
+			Framework:    mockFramework,
+		}
+
+		mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+		mockOptimizationClient := &MockTestOptimizationClient{
+			SkippableTests: map[string]bool{}, // No tests skipped
+		}
+
+		expectedParallelRunnersCount := 2
+		maxParallelism := 4
+		// Set environment variables to force multiple parallel runners
+		_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "2")
+		_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", strconv.Itoa(maxParallelism))
+		defer func() {
+			_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
+			_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+		}()
+
+		// Reinitialize settings to pick up environment variables
+		settings.Init()
+
+		runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
+
+		// Run Setup
+		err := runner.Plan(context.Background())
+		if err != nil {
+			t.Fatalf("Setup() should not return error, got: %v", err)
+		}
+
+		// Verify that tests-split directory was created
+		if _, err := os.Stat(constants.TestsSplitDir); os.IsNotExist(err) {
+			t.Error("Expected tests-split directory to be created")
+		}
+
+		// With this split, 2 runners are as fast as 3 and more balanced.
+		// Verify runner files exist
+		for i := range expectedParallelRunnersCount {
+			runnerPath := filepath.Join(constants.TestsSplitDir, fmt.Sprintf("runner-%d", i))
+			if _, err := os.Stat(runnerPath); os.IsNotExist(err) {
+				t.Errorf("Expected runner-%d file to exist", i)
+			}
+		}
+
+		// Verify content of runner files
+		// With the test distribution (file1: 2 tests, file2: 1 test, file3: 1 test),
+		// expected: runner 0 gets file1 (2 tests), runner 1 gets file2+file3 (2 tests).
+		runner0Content, err := os.ReadFile(filepath.Join(constants.TestsSplitDir, "runner-0"))
+		if err != nil {
+			t.Fatalf("Failed to read runner-0 file: %v", err)
+		}
+
+		// Verify runner-0 has the largest file (file1 with 2 tests)
+		runner0Files := strings.Fields(strings.TrimSpace(string(runner0Content)))
+		if !slices.Contains(runner0Files, "test/file1_test.rb") {
+			t.Error("Expected runner-0 to contain test/file1_test.rb (largest file)")
+		}
+
+		// Count total files across all runners
+		totalFiles := 0
+		for i := range expectedParallelRunnersCount {
+			runnerPath := filepath.Join(constants.TestsSplitDir, fmt.Sprintf("runner-%d", i))
+			content, err := os.ReadFile(runnerPath)
+			if err != nil {
+				continue
+			}
+			files := strings.Fields(strings.TrimSpace(string(content)))
+			totalFiles += len(files)
+		}
+
+		// Should have all 3 test files distributed
+		if totalFiles != 3 {
+			t.Errorf("Expected 3 total files distributed across runners, got %d", totalFiles)
+		}
+	})
+}
+
+// TestTestPlanner_Plan_SubdirRootRelativeDiscovery_WritesNormalizedPaths
+// reproduces the end-to-end bug from issue #33: Plan writes repo-root-relative paths
+// that become invalid for workers running from a monorepo subdirectory.
+func TestTestPlanner_Plan_SubdirRootRelativeDiscovery_WritesNormalizedPaths(t *testing.T) {
+	// Create a temp monorepo: repoRoot/core/spec/...
+	repoRoot := t.TempDir()
+
+	// Initialize git repo at the root
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repoRoot
+	cmd.Env = gitTestEnv()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to init git repo: %v\n%s", err, string(out))
+	}
+	cmd = exec.Command("git", "commit", "--allow-empty", "-m", "init")
+	cmd.Dir = repoRoot
+	cmd.Env = append(gitTestEnv(),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to create initial commit: %v\n%s", err, string(out))
+	}
+
+	coreDir := filepath.Join(repoRoot, "core")
+	_ = os.MkdirAll(filepath.Join(coreDir, "spec", "models"), 0755)
+	_ = os.WriteFile(filepath.Join(coreDir, "spec", "models", "order_spec.rb"), []byte("# spec"), 0644)
+	_ = os.WriteFile(filepath.Join(coreDir, "spec", "models", "payment_spec.rb"), []byte("# spec"), 0644)
+
+	// chdir into subdirectory
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(coreDir)
+
+	// Set parallelism to 1
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "1")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "1")
+	defer func() {
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+	}()
+	settings.Init()
+
+	// Full discovery returns repo-root-relative paths (the bug)
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Suite: "Order", Name: "should be valid", Parameters: "", SuiteSourceFile: "core/spec/models/order_spec.rb"},
+			{Suite: "Payment", Name: "should process", Parameters: "", SuiteSourceFile: "core/spec/models/payment_spec.rb"},
+		},
+	}
+
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+
+	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		SkippableTests: map[string]bool{},
+	}
+
+	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
+
+	err := runner.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan() should not return error, got: %v", err)
+	}
+
+	// Verify test-files.txt contains CWD-relative paths
+	testFilesContent, err := os.ReadFile(constants.TestFilesOutputPath)
+	if err != nil {
+		t.Fatalf("Failed to read test-files.txt: %v", err)
+	}
+
+	testFilesStr := string(testFilesContent)
+	if strings.Contains(testFilesStr, "core/") {
+		t.Errorf("test-files.txt should not contain repo-root prefix 'core/', got:\n%s", testFilesStr)
+	}
+
+	expectedContent := "spec/models/order_spec.rb\nspec/models/payment_spec.rb\n"
+	if testFilesStr != expectedContent {
+		t.Errorf("Expected test-files.txt content:\n%s\nGot:\n%s", expectedContent, testFilesStr)
+	}
+
+	// Verify runner-0 split file also contains CWD-relative paths
+	runnerContent, err := os.ReadFile(filepath.Join(constants.TestsSplitDir, "runner-0"))
+	if err != nil {
+		t.Fatalf("Failed to read runner-0: %v", err)
+	}
+
+	runnerStr := string(runnerContent)
+	if strings.Contains(runnerStr, "core/") {
+		t.Errorf("runner-0 should not contain repo-root prefix 'core/', got:\n%s", runnerStr)
+	}
+}
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
@@ -31,7 +1004,7 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
-func TestTestRunner_PrepareTestOptimization_Success(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_Success(t *testing.T) {
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -84,45 +1057,43 @@ func TestTestRunner_PrepareTestOptimization_Success(t *testing.T) {
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockDurationsClient, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 
 	if err != nil {
-		t.Errorf("PrepareTestOptimization() should not return error, got: %v", err)
+		t.Errorf("PreparePlanningData() should not return error, got: %v", err)
 	}
 
 	// Verify optimization client was initialized
 	if !mockOptimizationClient.InitializeCalled {
-		t.Error("PrepareTestOptimization() should initialize optimization client")
+		t.Error("PreparePlanningData() should initialize optimization client")
 	}
 
 	// Verify tags were passed to optimization client
 	if mockOptimizationClient.Tags["platform"] != "ruby" {
-		t.Error("PrepareTestOptimization() should pass platform tags to optimization client")
+		t.Error("PreparePlanningData() should pass platform tags to optimization client")
 	}
 
 	// Verify optimization client was shut down
 	if !mockOptimizationClient.ShutdownCalled {
-		t.Error("PrepareTestOptimization() should shutdown optimization client")
+		t.Error("PreparePlanningData() should shutdown optimization client")
 	}
 
 	expectedFiles := map[string]bool{
-		"test/file1_test.rb":     true, // test1 is not skipped
-		"test/file2_test.rb":     true, // test3 is not skipped
-		"test/file3_test.rb":     true, // test4 is skipped but the source file is discovered
-		"test/fast_only_test.rb": true, // from fast discovery only
+		"test/file1_test.rb": true, // test1 is not skipped
+		"test/file2_test.rb": true, // test3 is not skipped
+		"test/file3_test.rb": true, // test4 is skipped but the source file is discovered
 	}
 
 	if len(runner.testFiles) != len(expectedFiles) {
-		t.Errorf("PrepareTestOptimization() should result in %d test files, got %d", len(expectedFiles), len(runner.testFiles))
+		t.Errorf("PreparePlanningData() should result in %d test files, got %d", len(expectedFiles), len(runner.testFiles))
 	}
 
-	if weightedFiles := runner.weightedTestFiles(); len(weightedFiles) != 3 {
-		t.Errorf("Expected weighted files to omit fully skipped file and keep 3 files, got %v", weightedFiles)
+	if weightedFiles := runner.calculateFileWeights(); len(weightedFiles) != 2 {
+		t.Errorf("Expected weighted files to omit fully skipped and fast-only files, got %v", weightedFiles)
 	}
 	expectedTestFileWeights := map[string]int{
-		"test/file1_test.rb":     3,
-		"test/file2_test.rb":     defaultTestFileWeight,
-		"test/fast_only_test.rb": defaultTestFileWeight,
+		"test/file1_test.rb": 3,
+		"test/file2_test.rb": DefaultTestFileWeight,
 	}
 	if len(runner.testFileWeights) != len(expectedTestFileWeights) {
 		t.Errorf("Expected precomputed test file weights to have %d entries, got %v", len(expectedTestFileWeights), runner.testFileWeights)
@@ -156,27 +1127,22 @@ func TestTestRunner_PrepareTestOptimization_Success(t *testing.T) {
 		t.Errorf("Expected file2 weight to use count fallback %d, got weight=%d ok=%t", expectedFile2Weight, weight, ok)
 	}
 
-	if weight, ok := runner.testFileWeight("test/fast_only_test.rb"); !ok || weight != expectedFile2Weight {
-		t.Errorf("Expected fast-only file weight to use default %d, got weight=%d ok=%t", expectedFile2Weight, weight, ok)
-	}
-
 	// Verify skippable percentage was calculated correctly (2 out of 4 tests skipped = 50%)
 	expectedPercentage := 50.0
 	if runner.skippablePercentage != expectedPercentage {
-		t.Errorf("PrepareTestOptimization() should calculate skippable percentage as %.2f, got %.2f",
+		t.Errorf("PreparePlanningData() should calculate skippable percentage as %.2f, got %.2f",
 			expectedPercentage, runner.skippablePercentage)
 	}
 
 	if !mockDurationsClient.Called {
-		t.Error("PrepareTestOptimization() should fetch test suite durations")
+		t.Error("PreparePlanningData() should fetch test suite durations")
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_DurationsErrorContinues(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_EmptyDurationsContinues(t *testing.T) {
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
-	logs := captureLogs(t)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -193,73 +1159,28 @@ func TestTestRunner_PrepareTestOptimization_DurationsErrorContinues(t *testing.T
 	}
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{}
-	mockDurationsClient := &MockTestSuiteDurationsClient{Err: errors.New("durations backend failed")}
+	mockDurationsClient := &MockTestSuiteDurationsClient{}
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockDurationsClient, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 	if err != nil {
-		t.Fatalf("PrepareTestOptimization() should not fail when durations API errors, got: %v", err)
+		t.Fatalf("PreparePlanningData() should not fail with empty durations, got: %v", err)
 	}
 
-	if len(runner.testSuiteDurations) != 0 {
-		t.Errorf("Expected empty in-memory test suite durations on error, got %v", runner.testSuiteDurations)
-	}
-
-	if !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "Test durations API errored") || !strings.Contains(logs.String(), "duration=") {
-		t.Errorf("Expected ERROR log for durations API failure, got logs: %s", logs.String())
-	}
-}
-
-func TestTestRunner_PrepareTestOptimization_EmptyDurationsWarns(t *testing.T) {
-	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
-	logs := captureLogs(t)
-
-	mockFramework := &MockFramework{
-		FrameworkName: "rspec",
-		Tests: []testoptimization.Test{
-			{Suite: "Suite", Name: "test1", Parameters: "", SuiteSourceFile: "spec/file1_test.rb"},
-		},
-	}
-	mockPlatform := &MockPlatform{
-		PlatformName: "ruby",
-		Tags: map[string]string{
-			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
-		},
-		Framework: mockFramework,
-	}
-	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
-	mockOptimizationClient := &MockTestOptimizationClient{}
-	mockDurationsClient := &MockTestSuiteDurationsClient{
-		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{},
-	}
-
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockDurationsClient, newDefaultMockCIProviderDetector())
-
-	err := runner.PrepareTestOptimization(ctx)
-	if err != nil {
-		t.Fatalf("PrepareTestOptimization() should not fail with empty durations, got: %v", err)
+	if !mockDurationsClient.Called {
+		t.Error("PreparePlanningData() should fetch test suite durations")
 	}
 
 	if len(runner.testSuiteDurations) != 0 {
 		t.Errorf("Expected empty in-memory test suite durations on empty response, got %v", runner.testSuiteDurations)
 	}
-
-	if !strings.Contains(logs.String(), "level=WARN") ||
-		!strings.Contains(logs.String(), "Test durations API returned no test suites") ||
-		!strings.Contains(logs.String(), "testSuitesCount=0") ||
-		!strings.Contains(logs.String(), "duration=") {
-		t.Errorf("Expected WARN log for empty durations response, got logs: %s", logs.String())
-	}
 }
 
-func TestTestRunner_PrepareTestOptimization_NonEmptyDurationsUsesP50ForMatchingSuites(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_NonEmptyDurationsUsesP50ForMatchingSuites(t *testing.T) {
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
-	logs := captureLogs(t)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -296,9 +1217,9 @@ func TestTestRunner_PrepareTestOptimization_NonEmptyDurationsUsesP50ForMatchingS
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockDurationsClient, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 	if err != nil {
-		t.Fatalf("PrepareTestOptimization() should not fail with durations data, got: %v", err)
+		t.Fatalf("PreparePlanningData() should not fail with durations data, got: %v", err)
 	}
 
 	if len(runner.testSuiteDurations) != 1 {
@@ -318,17 +1239,9 @@ func TestTestRunner_PrepareTestOptimization_NonEmptyDurationsUsesP50ForMatchingS
 	if weight, ok := runner.testFileWeight("spec/file2_test.rb"); !ok || weight != 30 {
 		t.Errorf("Expected file2 weight to use backend p50 converted to 30ms, got weight=%d ok=%t", weight, ok)
 	}
-
-	if !strings.Contains(logs.String(), "level=INFO") ||
-		!strings.Contains(logs.String(), "Fetched test suite durations") ||
-		!strings.Contains(logs.String(), "modulesCount=1") ||
-		!strings.Contains(logs.String(), "testSuitesCount=2") ||
-		!strings.Contains(logs.String(), "duration=") {
-		t.Errorf("Expected INFO log for non-empty durations response, got logs: %s", logs.String())
-	}
 }
 
-func TestTestRunner_PrepareTestOptimization_SkippablePercentageUsesDurations(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_SkippablePercentageUsesDurations(t *testing.T) {
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -371,9 +1284,9 @@ func TestTestRunner_PrepareTestOptimization_SkippablePercentageUsesDurations(t *
 
 	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, mockDurationsClient, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 	if err != nil {
-		t.Fatalf("PrepareTestOptimization() should not fail, got: %v", err)
+		t.Fatalf("PreparePlanningData() should not fail, got: %v", err)
 	}
 
 	expectedPercentage := 40.0
@@ -382,7 +1295,7 @@ func TestTestRunner_PrepareTestOptimization_SkippablePercentageUsesDurations(t *
 	}
 }
 
-func TestTestRunner_TestFileWeight_CountFallbackForMissingSuiteDuration(t *testing.T) {
+func TestTestPlanner_TestFileWeight_CountFallbackForMissingSuiteDuration(t *testing.T) {
 	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 	runner.testFiles = map[string]struct{}{
 		"spec/file1_test.rb":   {},
@@ -413,7 +1326,7 @@ func TestTestRunner_TestFileWeight_CountFallbackForMissingSuiteDuration(t *testi
 		},
 	}
 
-	runner.resolveSuiteDurations()
+	runner.estimateDiscoveredSuiteDurations()
 	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
 
 	if weight, ok := runner.testFileWeight("spec/file1_test.rb"); !ok || weight != 11 {
@@ -429,7 +1342,7 @@ func TestTestRunner_TestFileWeight_CountFallbackForMissingSuiteDuration(t *testi
 		t.Errorf("Expected unknown file weight to use default 1 second, got weight=%d ok=%t", weight, ok)
 	}
 
-	runner.weightedTestFiles()
+	runner.calculateFileWeights()
 	if source := runner.testFileDurationSources["spec/file1_test.rb"]; source != testFileDurationSourceKnown {
 		t.Errorf("Expected Suite1 file duration source to be known, got %q", source)
 	}
@@ -441,7 +1354,7 @@ func TestTestRunner_TestFileWeight_CountFallbackForMissingSuiteDuration(t *testi
 	}
 }
 
-func TestTestRunner_TestFileWeight_InvalidP50FallsBackForFullDiscoveryAggregate(t *testing.T) {
+func TestTestPlanner_TestFileWeight_InvalidP50FallsBackForFullDiscoveryAggregate(t *testing.T) {
 	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 	runner.testFiles = map[string]struct{}{
 		"spec/file1_test.rb": {},
@@ -465,7 +1378,7 @@ func TestTestRunner_TestFileWeight_InvalidP50FallsBackForFullDiscoveryAggregate(
 		},
 	}
 
-	runner.resolveSuiteDurations()
+	runner.estimateDiscoveredSuiteDurations()
 	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
 
 	aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite1"}]
@@ -480,7 +1393,7 @@ func TestTestRunner_TestFileWeight_InvalidP50FallsBackForFullDiscoveryAggregate(
 	}
 }
 
-func TestTestRunner_TestFileWeight_ZeroP50FallsBackForFullDiscoveryAggregate(t *testing.T) {
+func TestTestPlanner_TestFileWeight_ZeroP50FallsBackForFullDiscoveryAggregate(t *testing.T) {
 	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 	runner.testFiles = map[string]struct{}{
 		"spec/file1_test.rb": {},
@@ -504,7 +1417,7 @@ func TestTestRunner_TestFileWeight_ZeroP50FallsBackForFullDiscoveryAggregate(t *
 		},
 	}
 
-	runner.resolveSuiteDurations()
+	runner.estimateDiscoveredSuiteDurations()
 	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
 
 	aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite1"}]
@@ -519,7 +1432,7 @@ func TestTestRunner_TestFileWeight_ZeroP50FallsBackForFullDiscoveryAggregate(t *
 	}
 }
 
-func TestTestRunner_TestFileWeight_SubMillisecondP50MinimumWeight(t *testing.T) {
+func TestTestPlanner_TestFileWeight_SubMillisecondP50MinimumWeight(t *testing.T) {
 	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 	runner.testFiles = map[string]struct{}{
 		"spec/fast_test.rb": {},
@@ -542,7 +1455,7 @@ func TestTestRunner_TestFileWeight_SubMillisecondP50MinimumWeight(t *testing.T) 
 		},
 	}
 
-	runner.resolveSuiteDurations()
+	runner.estimateDiscoveredSuiteDurations()
 	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
 
 	if weight, ok := runner.testFileWeight("spec/fast_test.rb"); !ok || weight != 1 {
@@ -550,7 +1463,7 @@ func TestTestRunner_TestFileWeight_SubMillisecondP50MinimumWeight(t *testing.T) 
 	}
 }
 
-func TestTestRunner_TestFileWeight_SkipsFullySkippedSuites(t *testing.T) {
+func TestTestPlanner_TestFileWeight_SkipsFullySkippedSuites(t *testing.T) {
 	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 	runner.testFiles = map[string]struct{}{
 		"spec/skipped_test.rb": {},
@@ -575,7 +1488,7 @@ func TestTestRunner_TestFileWeight_SkipsFullySkippedSuites(t *testing.T) {
 		t.Errorf("Expected fully skipped suite file to have no weight, got weight=%d ok=%t", weight, ok)
 	}
 
-	if weightedFiles := runner.weightedTestFiles(); len(weightedFiles) != 0 {
+	if weightedFiles := runner.calculateFileWeights(); len(weightedFiles) != 0 {
 		t.Errorf("Expected fully skipped suite file to be omitted from weighted files, got %v", weightedFiles)
 	}
 }
@@ -627,7 +1540,7 @@ func TestIndexSuitesBySourceFile_IgnoresEmptySourceFile(t *testing.T) {
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_FastDiscoveryUsesBackendDurations(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesBackendDurations(t *testing.T) {
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -657,9 +1570,9 @@ func TestTestRunner_PrepareTestOptimization_FastDiscoveryUsesBackendDurations(t 
 
 	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, &MockTestOptimizationClient{}, mockDurationsClient, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 	if err != nil {
-		t.Fatalf("PrepareTestOptimization() should not fail when full discovery fails but fast discovery succeeds, got: %v", err)
+		t.Fatalf("PreparePlanningData() should not fail when full discovery fails but fast discovery succeeds, got: %v", err)
 	}
 
 	if weight, ok := runner.testFileWeight("spec/backend_only_spec.rb"); !ok || weight != 42 {
@@ -667,7 +1580,54 @@ func TestTestRunner_PrepareTestOptimization_FastDiscoveryUsesBackendDurations(t 
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_IgnoresZeroBackendDurationForFastDiscovery(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesOneBackendDurationPerSourceFile(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	mockFramework := &MockFramework{
+		FrameworkName:    "rspec",
+		TestFiles:        []string{"spec/backend_only_spec.rb"},
+		DiscoverTestsErr: errors.New("full discovery failed"),
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+		},
+		Framework: mockFramework,
+	}
+	mockDurationsClient := &MockTestSuiteDurationsClient{
+		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+			"rspec": {
+				"BackendOnlySuite": {
+					SourceFile: "spec/backend_only_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "42000000"},
+				},
+				"DuplicateBackendOnlySuite": {
+					SourceFile: "spec/backend_only_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "84000000"},
+				},
+			},
+		},
+	}
+
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, &MockTestOptimizationClient{}, mockDurationsClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PreparePlanningData(ctx)
+	if err != nil {
+		t.Fatalf("PreparePlanningData() should not fail when full discovery fails but fast discovery succeeds, got: %v", err)
+	}
+
+	if len(runner.suiteAggregates) != 1 {
+		t.Fatalf("Expected one backend fallback suite aggregate per source file, got %v", runner.suiteAggregates)
+	}
+	if suiteKeys := runner.suitesBySourceFile["spec/backend_only_spec.rb"]; len(suiteKeys) != 1 {
+		t.Fatalf("Expected rebuilt source-file index to contain one suite key, got %v", runner.suitesBySourceFile)
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_IgnoresZeroBackendDurationForFastDiscovery(t *testing.T) {
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -697,21 +1657,21 @@ func TestTestRunner_PrepareTestOptimization_IgnoresZeroBackendDurationForFastDis
 
 	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, &MockTestOptimizationClient{}, mockDurationsClient, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 	if err != nil {
-		t.Fatalf("PrepareTestOptimization() should not fail when full discovery fails but fast discovery succeeds, got: %v", err)
+		t.Fatalf("PreparePlanningData() should not fail when full discovery fails but fast discovery succeeds, got: %v", err)
 	}
 
 	if len(runner.suiteAggregates) != 0 {
 		t.Errorf("Expected zero-duration backend suite to be ignored, got aggregates: %v", runner.suiteAggregates)
 	}
 
-	if weight, ok := runner.testFileWeight("spec/backend_only_spec.rb"); !ok || weight != defaultTestFileWeight {
+	if weight, ok := runner.testFileWeight("spec/backend_only_spec.rb"); !ok || weight != DefaultTestFileWeight {
 		t.Errorf("Expected fast-discovery file with broken backend duration to use default weight, got weight=%d ok=%t", weight, ok)
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_BackendDurationSubdirMatchesFastDiscovery(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_BackendDurationSubdirMatchesFastDiscovery(t *testing.T) {
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -751,9 +1711,9 @@ func TestTestRunner_PrepareTestOptimization_BackendDurationSubdirMatchesFastDisc
 
 	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, &MockTestOptimizationClient{}, mockDurationsClient, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 	if err != nil {
-		t.Fatalf("PrepareTestOptimization() should not fail, got: %v", err)
+		t.Fatalf("PreparePlanningData() should not fail, got: %v", err)
 	}
 	if !mockDurationsClient.Called {
 		t.Fatal("Expected durations client to be called")
@@ -768,7 +1728,7 @@ func TestTestRunner_PrepareTestOptimization_BackendDurationSubdirMatchesFastDisc
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_IgnoresBackendDurationsForUndiscoveredFiles(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_IgnoresBackendDurationsForUndiscoveredFiles(t *testing.T) {
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -798,9 +1758,9 @@ func TestTestRunner_PrepareTestOptimization_IgnoresBackendDurationsForUndiscover
 
 	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, &MockTestOptimizationClient{}, mockDurationsClient, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 	if err != nil {
-		t.Fatalf("PrepareTestOptimization() should not fail, got: %v", err)
+		t.Fatalf("PreparePlanningData() should not fail, got: %v", err)
 	}
 
 	if len(runner.suiteAggregates) != 0 {
@@ -812,7 +1772,110 @@ func TestTestRunner_PrepareTestOptimization_IgnoresBackendDurationsForUndiscover
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_FastDiscoveryDoesNotRunStaleBackendFilesWhenSkippingDisabled(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_FullDiscoveryIgnoresFastOnlyFiles(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		TestFiles:     []string{"spec/discovered_spec.rb", "spec/fast_only_spec.rb"},
+		Tests: []testoptimization.Test{
+			{
+				Module:          "rspec",
+				Suite:           "DiscoveredSuite",
+				Name:            "test1",
+				SuiteSourceFile: "spec/discovered_spec.rb",
+			},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+		},
+		Framework: mockFramework,
+	}
+
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, &MockTestOptimizationClient{}, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
+
+	err := runner.PreparePlanningData(ctx)
+	if err != nil {
+		t.Fatalf("PreparePlanningData() should not fail, got: %v", err)
+	}
+
+	if _, ok := runner.testFiles["spec/discovered_spec.rb"]; !ok {
+		t.Fatalf("Expected full-discovered file to be planned, got %v", runner.testFiles)
+	}
+	if _, ok := runner.testFiles["spec/fast_only_spec.rb"]; ok {
+		t.Errorf("Expected fast-only file to be ignored after successful full discovery, got %v", runner.testFiles)
+	}
+	if _, ok := runner.testFileWeights["spec/fast_only_spec.rb"]; ok {
+		t.Errorf("Expected fast-only file not to have a weight, got %v", runner.testFileWeights)
+	}
+	if _, ok := runner.testFileDurationSources["spec/fast_only_spec.rb"]; ok {
+		t.Errorf("Expected fast-only file not to have a duration source, got %v", runner.testFileDurationSources)
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_FullDiscoveryDoesNotReintroduceFastOnlyBackendSuite(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+	ciUtils.AddCITagsMap(map[string]string{ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest"})
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		TestFiles:     []string{"spec/discovered_spec.rb", "spec/fast_only_spec.rb"},
+		Tests: []testoptimization.Test{
+			{
+				Module:          "rspec",
+				Suite:           "DiscoveredSuite",
+				Name:            "test1",
+				SuiteSourceFile: "spec/discovered_spec.rb",
+			},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+		},
+		Framework: mockFramework,
+	}
+	mockDurationsClient := &MockTestSuiteDurationsClient{
+		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+			"rspec": {
+				"FastOnlySuite": {
+					SourceFile: "spec/fast_only_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "42000000", P90: "84000000"},
+				},
+			},
+		},
+	}
+
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, &MockTestOptimizationClient{}, mockDurationsClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PreparePlanningData(ctx)
+	if err != nil {
+		t.Fatalf("PreparePlanningData() should not fail, got: %v", err)
+	}
+	if !mockDurationsClient.Called {
+		t.Fatal("Expected durations client to be called")
+	}
+
+	if _, ok := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "FastOnlySuite"}]; ok {
+		t.Errorf("Expected backend suite for fast-only file not to be added, got aggregates %v", runner.suiteAggregates)
+	}
+	if _, ok := runner.testFiles["spec/fast_only_spec.rb"]; ok {
+		t.Errorf("Expected fast-only file not to be planned despite backend duration, got %v", runner.testFiles)
+	}
+	if _, ok := runner.testFileWeights["spec/fast_only_spec.rb"]; ok {
+		t.Errorf("Expected fast-only file not to be runnable despite backend duration, got %v", runner.testFileWeights)
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_FastDiscoveryDoesNotRunStaleBackendFilesWhenSkippingDisabled(t *testing.T) {
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -830,7 +1893,7 @@ func TestTestRunner_PrepareTestOptimization_FastDiscoveryDoesNotRunStaleBackendF
 		Framework: mockFramework,
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
-		Settings: &ciNet.SettingsResponseData{
+		Settings: &net.SettingsResponseData{
 			ItrEnabled:    true,
 			TestsSkipping: false,
 		},
@@ -852,12 +1915,12 @@ func TestTestRunner_PrepareTestOptimization_FastDiscoveryDoesNotRunStaleBackendF
 
 	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, mockDurationsClient, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 	if err != nil {
-		t.Fatalf("PrepareTestOptimization() should not fail, got: %v", err)
+		t.Fatalf("PreparePlanningData() should not fail, got: %v", err)
 	}
 
-	weightedFiles := runner.weightedTestFiles()
+	weightedFiles := runner.calculateFileWeights()
 	if len(weightedFiles) != 1 {
 		t.Fatalf("Expected only local fast-discovery file to be runnable, got %v", weightedFiles)
 	}
@@ -872,7 +1935,7 @@ func TestTestRunner_PrepareTestOptimization_FastDiscoveryDoesNotRunStaleBackendF
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_BackendDoesNotReintroduceFullySkippedSuite(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_BackendDoesNotReintroduceFullySkippedSuite(t *testing.T) {
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -911,9 +1974,9 @@ func TestTestRunner_PrepareTestOptimization_BackendDoesNotReintroduceFullySkippe
 
 	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, mockDurationsClient, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 	if err != nil {
-		t.Fatalf("PrepareTestOptimization() should not fail, got: %v", err)
+		t.Fatalf("PreparePlanningData() should not fail, got: %v", err)
 	}
 
 	aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "SkippedSuite"}]
@@ -926,7 +1989,7 @@ func TestTestRunner_PrepareTestOptimization_BackendDoesNotReintroduceFullySkippe
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_BackendDoesNotDuplicateDiscoveredSourceFile(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_BackendDoesNotDuplicateDiscoveredSourceFile(t *testing.T) {
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -965,9 +2028,9 @@ func TestTestRunner_PrepareTestOptimization_BackendDoesNotDuplicateDiscoveredSou
 
 	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, mockDurationsClient, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 	if err != nil {
-		t.Fatalf("PrepareTestOptimization() should not fail, got: %v", err)
+		t.Fatalf("PreparePlanningData() should not fail, got: %v", err)
 	}
 
 	duplicateKey := testSuiteKey{Module: "rspec", Suite: "BackendDuplicateSuite"}
@@ -1022,7 +2085,7 @@ func TestRecordRunnableAndSkippedTest_CountsTestsPerSuite(t *testing.T) {
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_PlatformDetectionError(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_PlatformDetectionError(t *testing.T) {
 	ctx := context.Background()
 
 	mockPlatformDetector := &MockPlatformDetector{
@@ -1033,19 +2096,19 @@ func TestTestRunner_PrepareTestOptimization_PlatformDetectionError(t *testing.T)
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 
 	if err == nil {
-		t.Error("PrepareTestOptimization() should return error when platform detection fails")
+		t.Error("PreparePlanningData() should return error when platform detection fails")
 	}
 
 	expectedMsg := "failed to detect platform"
 	if !strings.Contains(err.Error(), expectedMsg) {
-		t.Errorf("PrepareTestOptimization() error should contain '%s', got: %v", expectedMsg, err)
+		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_TagsCreationError(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_TagsCreationError(t *testing.T) {
 	ctx := context.Background()
 
 	mockPlatform := &MockPlatform{
@@ -1060,19 +2123,19 @@ func TestTestRunner_PrepareTestOptimization_TagsCreationError(t *testing.T) {
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 
 	if err == nil {
-		t.Error("PrepareTestOptimization() should return error when tags creation fails")
+		t.Error("PreparePlanningData() should return error when tags creation fails")
 	}
 
 	expectedMsg := "failed to create platform tags"
 	if !strings.Contains(err.Error(), expectedMsg) {
-		t.Errorf("PrepareTestOptimization() error should contain '%s', got: %v", expectedMsg, err)
+		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_OptimizationClientInitError(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_OptimizationClientInitError(t *testing.T) {
 	ctx := context.Background()
 
 	mockFramework := &MockFramework{
@@ -1096,19 +2159,19 @@ func TestTestRunner_PrepareTestOptimization_OptimizationClientInitError(t *testi
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 
 	if err == nil {
-		t.Error("PrepareTestOptimization() should return error when optimization client initialization fails")
+		t.Error("PreparePlanningData() should return error when optimization client initialization fails")
 	}
 
 	expectedMsg := "failed to initialize optimization client"
 	if !strings.Contains(err.Error(), expectedMsg) {
-		t.Errorf("PrepareTestOptimization() error should contain '%s', got: %v", expectedMsg, err)
+		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_FrameworkDetectionError(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_FrameworkDetectionError(t *testing.T) {
 	ctx := context.Background()
 
 	mockPlatform := &MockPlatform{
@@ -1124,19 +2187,19 @@ func TestTestRunner_PrepareTestOptimization_FrameworkDetectionError(t *testing.T
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 
 	if err == nil {
-		t.Error("PrepareTestOptimization() should return error when framework detection fails")
+		t.Error("PreparePlanningData() should return error when framework detection fails")
 	}
 
 	expectedMsg := "failed to detect framework"
 	if !strings.Contains(err.Error(), expectedMsg) {
-		t.Errorf("PrepareTestOptimization() error should contain '%s', got: %v", expectedMsg, err)
+		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_TestDiscoveryError(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_TestDiscoveryError(t *testing.T) {
 	ctx := context.Background()
 
 	mockFramework := &MockFramework{
@@ -1156,23 +2219,25 @@ func TestTestRunner_PrepareTestOptimization_TestDiscoveryError(t *testing.T) {
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 
 	if err == nil {
-		t.Error("PrepareTestOptimization() should return error when test discovery fails")
+		t.Error("PreparePlanningData() should return error when test discovery fails")
 	}
 
 	expectedMsg := "test discovery failed"
 	if !strings.Contains(err.Error(), expectedMsg) {
-		t.Errorf("PrepareTestOptimization() error should contain '%s', got: %v", expectedMsg, err)
+		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_EmptyTests(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_EmptyTests(t *testing.T) {
 	ctx := context.Background()
+	logs := captureLogs(t)
 
 	mockFramework := &MockFramework{
-		Tests: []testoptimization.Test{}, // Empty test list
+		TestFiles: []string{"file1.rb"},      // Fast discovery should be used when full discovery returns no tests.
+		Tests:     []testoptimization.Test{}, // Empty test list
 	}
 
 	mockPlatform := &MockPlatform{
@@ -1185,14 +2250,24 @@ func TestTestRunner_PrepareTestOptimization_EmptyTests(t *testing.T) {
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 
 	if err != nil {
-		t.Errorf("PrepareTestOptimization() should handle empty tests, got: %v", err)
+		t.Errorf("PreparePlanningData() should handle empty tests, got: %v", err)
 	}
 
-	if len(runner.testFiles) != 0 {
-		t.Errorf("PrepareTestOptimization() should result in 0 test files for empty tests, got %d", len(runner.testFiles))
+	if len(runner.testFiles) != 1 {
+		t.Errorf("PreparePlanningData() should use fast discovery fallback for empty full discovery, got %d files", len(runner.testFiles))
+	}
+	if _, ok := runner.testFiles["file1.rb"]; !ok {
+		t.Errorf("PreparePlanningData() should include fast-discovered file after empty full discovery, got %v", runner.testFiles)
+	}
+	if _, ok := runner.testFileWeights["file1.rb"]; !ok {
+		t.Errorf("PreparePlanningData() should schedule fast-discovered file after empty full discovery, got %v", runner.testFileWeights)
+	}
+	if !strings.Contains(logs.String(), "level=WARN") ||
+		!strings.Contains(logs.String(), "Full test discovery returned no tests") {
+		t.Errorf("Expected WARN log for empty full discovery, got logs: %s", logs.String())
 	}
 
 	// Division by zero should be handled gracefully
@@ -1201,7 +2276,7 @@ func TestTestRunner_PrepareTestOptimization_EmptyTests(t *testing.T) {
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_AllTestsSkipped(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_AllTestsSkipped(t *testing.T) {
 	ctx := context.Background()
 
 	mockFramework := &MockFramework{
@@ -1226,26 +2301,26 @@ func TestTestRunner_PrepareTestOptimization_AllTestsSkipped(t *testing.T) {
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 
 	if err != nil {
-		t.Errorf("PrepareTestOptimization() should handle all tests skipped, got: %v", err)
+		t.Errorf("PreparePlanningData() should handle all tests skipped, got: %v", err)
 	}
 
 	if len(runner.testFiles) != 2 {
-		t.Errorf("PrepareTestOptimization() should keep all discovered files even when all tests are skipped, got %d", len(runner.testFiles))
+		t.Errorf("PreparePlanningData() should keep all discovered files even when all tests are skipped, got %d", len(runner.testFiles))
 	}
 
-	if weightedFiles := runner.weightedTestFiles(); len(weightedFiles) != 0 {
-		t.Errorf("PrepareTestOptimization() should result in 0 weighted files when all tests are skipped, got %v", weightedFiles)
+	if weightedFiles := runner.calculateFileWeights(); len(weightedFiles) != 0 {
+		t.Errorf("PreparePlanningData() should result in 0 weighted files when all tests are skipped, got %v", weightedFiles)
 	}
 
 	if runner.skippablePercentage != 100.0 {
-		t.Errorf("PrepareTestOptimization() should calculate 100%% skippable when all tests are skipped, got %.2f", runner.skippablePercentage)
+		t.Errorf("PreparePlanningData() should calculate 100%% skippable when all tests are skipped, got %.2f", runner.skippablePercentage)
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_RuntimeTagsOverride(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_RuntimeTagsOverride(t *testing.T) {
 	ctx := context.Background()
 
 	// Set runtime tags override via environment variable - only override some tags
@@ -1288,15 +2363,15 @@ func TestTestRunner_PrepareTestOptimization_RuntimeTagsOverride(t *testing.T) {
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 
 	if err != nil {
-		t.Errorf("PrepareTestOptimization() should not return error, got: %v", err)
+		t.Errorf("PreparePlanningData() should not return error, got: %v", err)
 	}
 
 	// Verify optimization client was initialized
 	if !mockOptimizationClient.InitializeCalled {
-		t.Error("PrepareTestOptimization() should initialize optimization client")
+		t.Error("PreparePlanningData() should initialize optimization client")
 	}
 
 	// Check that override tags replaced the detected values
@@ -1322,7 +2397,7 @@ func TestTestRunner_PrepareTestOptimization_RuntimeTagsOverride(t *testing.T) {
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_RuntimeTagsOverrideInvalidJSON(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_RuntimeTagsOverrideInvalidJSON(t *testing.T) {
 	ctx := context.Background()
 
 	// Set invalid JSON as runtime tags override
@@ -1353,24 +2428,24 @@ func TestTestRunner_PrepareTestOptimization_RuntimeTagsOverrideInvalidJSON(t *te
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 
 	if err == nil {
-		t.Error("PrepareTestOptimization() should return error when runtime tags JSON is invalid")
+		t.Error("PreparePlanningData() should return error when runtime tags JSON is invalid")
 	}
 
 	expectedMsg := "failed to parse runtime tags override"
 	if !strings.Contains(err.Error(), expectedMsg) {
-		t.Errorf("PrepareTestOptimization() error should contain '%s', got: %v", expectedMsg, err)
+		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
 
 	// Optimization client should not be initialized when there's a parse error
 	if mockOptimizationClient.InitializeCalled {
-		t.Error("PrepareTestOptimization() should not initialize optimization client when runtime tags JSON is invalid")
+		t.Error("PreparePlanningData() should not initialize optimization client when runtime tags JSON is invalid")
 	}
 }
 
-func TestTestRunner_PrepareTestOptimization_NoRuntimeTagsOverride(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_NoRuntimeTagsOverride(t *testing.T) {
 	ctx := context.Background()
 
 	// Ensure no runtime tags override is set
@@ -1407,15 +2482,15 @@ func TestTestRunner_PrepareTestOptimization_NoRuntimeTagsOverride(t *testing.T) 
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 
 	if err != nil {
-		t.Errorf("PrepareTestOptimization() should not return error, got: %v", err)
+		t.Errorf("PreparePlanningData() should not return error, got: %v", err)
 	}
 
 	// Verify optimization client was initialized with platform tags
 	if !mockOptimizationClient.InitializeCalled {
-		t.Error("PrepareTestOptimization() should initialize optimization client")
+		t.Error("PreparePlanningData() should initialize optimization client")
 	}
 
 	// Check that platform tags were used (not override)
@@ -1434,13 +2509,14 @@ func initGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	cmd := exec.Command("git", "init")
 	cmd.Dir = dir
+	cmd.Env = gitTestEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to init git repo in %s: %v\n%s", dir, err, string(out))
 	}
 	// Need at least one commit for some git operations to work
 	cmd = exec.Command("git", "commit", "--allow-empty", "-m", "init")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(gitTestEnv(),
 		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
 		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
 	)
@@ -1449,10 +2525,10 @@ func initGitRepo(t *testing.T, dir string) {
 	}
 }
 
-// TestPrepareTestOptimization_ITRFullDiscovery_SubdirRootRelativePath_NormalizesToCwdRelative
+// TestPreparePlanningData_ITRFullDiscovery_SubdirRootRelativePath_NormalizesToCwdRelative
 // reproduces issue #33: full discovery returns repo-root-relative SuiteSourceFile paths
 // (e.g. "core/spec/...") but workers run from subdirectory "core/", causing double-prefix.
-func TestPrepareTestOptimization_ITRFullDiscovery_SubdirRootRelativePath_NormalizesToCwdRelative(t *testing.T) {
+func TestPreparePlanningData_ITRFullDiscovery_SubdirRootRelativePath_NormalizesToCwdRelative(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a temp monorepo: repoRoot/core/spec/models/order_spec.rb
@@ -1492,9 +2568,9 @@ func TestPrepareTestOptimization_ITRFullDiscovery_SubdirRootRelativePath_Normali
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 	if err != nil {
-		t.Fatalf("PrepareTestOptimization() should not return error, got: %v", err)
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
 	}
 
 	// The key assertion: testFiles should contain CWD-relative paths, not repo-root-relative paths
@@ -1519,9 +2595,9 @@ func TestPrepareTestOptimization_ITRFullDiscovery_SubdirRootRelativePath_Normali
 	}
 }
 
-// TestPrepareTestOptimization_RepoRootRun_LeavesRepoRelativePathsUnchanged
+// TestPreparePlanningData_RepoRootRun_LeavesRepoRelativePathsUnchanged
 // ensures that when running from the repo root (not a subdirectory), paths are not modified.
-func TestPrepareTestOptimization_RepoRootRun_LeavesRepoRelativePathsUnchanged(t *testing.T) {
+func TestPreparePlanningData_RepoRootRun_LeavesRepoRelativePathsUnchanged(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a temp repo root with spec files
@@ -1556,9 +2632,9 @@ func TestPrepareTestOptimization_RepoRootRun_LeavesRepoRelativePathsUnchanged(t 
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 	if err != nil {
-		t.Fatalf("PrepareTestOptimization() should not return error, got: %v", err)
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
 	}
 
 	// Paths should remain unchanged when running from repo root
@@ -1567,9 +2643,9 @@ func TestPrepareTestOptimization_RepoRootRun_LeavesRepoRelativePathsUnchanged(t 
 	}
 }
 
-// TestPrepareTestOptimization_FastDiscovery_PathsRemainUnchanged
+// TestPreparePlanningData_FastDiscovery_PathsRemainUnchanged
 // ensures the fast discovery path (ITR disabled) does not modify paths.
-func TestPrepareTestOptimization_FastDiscovery_PathsRemainUnchanged(t *testing.T) {
+func TestPreparePlanningData_FastDiscovery_PathsRemainUnchanged(t *testing.T) {
 	ctx := context.Background()
 
 	// Fast discovery returns CWD-relative paths directly from glob
@@ -1593,9 +2669,9 @@ func TestPrepareTestOptimization_FastDiscovery_PathsRemainUnchanged(t *testing.T
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 	if err != nil {
-		t.Fatalf("PrepareTestOptimization() should not return error, got: %v", err)
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
 	}
 
 	// Fast discovery paths should be used as-is
@@ -1615,10 +2691,10 @@ func TestPrepareTestOptimization_FastDiscovery_PathsRemainUnchanged(t *testing.T
 	}
 }
 
-// TestPrepareTestOptimization_ITRPathNormalization_PrefixMismatchUnchanged
+// TestPreparePlanningData_ITRPathNormalization_PrefixMismatchUnchanged
 // ensures that when SuiteSourceFile does not match the current subdir prefix,
 // the path is not modified (conservative behavior).
-func TestPrepareTestOptimization_ITRPathNormalization_PrefixMismatchUnchanged(t *testing.T) {
+func TestPreparePlanningData_ITRPathNormalization_PrefixMismatchUnchanged(t *testing.T) {
 	ctx := context.Background()
 
 	// Create monorepo with "api" and "core" subdirs
@@ -1658,9 +2734,9 @@ func TestPrepareTestOptimization_ITRPathNormalization_PrefixMismatchUnchanged(t 
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 	if err != nil {
-		t.Fatalf("PrepareTestOptimization() should not return error, got: %v", err)
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
 	}
 
 	// "core/spec/..." doesn't match "api" subdir prefix, should be unchanged
@@ -1681,13 +2757,13 @@ func TestPrepareTestOptimization_ITRPathNormalization_PrefixMismatchUnchanged(t 
 	}
 }
 
-// TestPrepareTestOptimization_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd
+// TestPreparePlanningData_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd
 // verifies that when running from a monorepo subdirectory, skip matching works
 // correctly: both the API (skippable tests) and framework discovery use the same
 // CWD-relative Suite names (e.g. "Spree::Role at ./spec/models/role_spec.rb"),
 // while SuiteSourceFile is repo-root-relative (e.g. "core/spec/models/role_spec.rb")
 // and needs normalization for worker splitting.
-func TestPrepareTestOptimization_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd(t *testing.T) {
+func TestPreparePlanningData_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a temp monorepo: repoRoot/core/spec/models/
@@ -1739,9 +2815,9 @@ func TestPrepareTestOptimization_ITRSubdir_SkipMatching_WithSuitePathsMatchingCw
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
-	err := runner.PrepareTestOptimization(ctx)
+	err := runner.PreparePlanningData(ctx)
 	if err != nil {
-		t.Fatalf("PrepareTestOptimization() should not return error, got: %v", err)
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
 	}
 
 	// 2 of 3 tests should be skipped (the role_spec.rb tests)
@@ -1751,7 +2827,7 @@ func TestPrepareTestOptimization_ITRSubdir_SkipMatching_WithSuitePathsMatchingCw
 			expectedSkippablePercentage, runner.skippablePercentage)
 	}
 
-	// All discovered source files should remain in testFiles, while weightedTestFiles omits the fully skipped role_spec.rb.
+	// All discovered source files should remain in testFiles, while calculateFileWeights omits the fully skipped role_spec.rb.
 	// The SuiteSourceFile paths should be normalized from "core/spec/..." to "spec/..." (CWD-relative).
 	expectedFiles := map[string]bool{
 		"spec/models/role_spec.rb":  true,
@@ -1768,7 +2844,7 @@ func TestPrepareTestOptimization_ITRSubdir_SkipMatching_WithSuitePathsMatchingCw
 		}
 	}
 
-	weightedFiles := runner.weightedTestFiles()
+	weightedFiles := runner.calculateFileWeights()
 	if len(weightedFiles) != 1 {
 		t.Fatalf("Expected 1 weighted test file (only order_spec.rb), got %d: %v", len(weightedFiles), weightedFiles)
 	}

@@ -14,7 +14,9 @@ import (
 
 	"github.com/DataDog/ddtest/civisibility"
 	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/civisibility/utils"
 	"github.com/DataDog/ddtest/internal/httptransport"
+	"github.com/DataDog/ddtest/internal/runmetadata"
 )
 
 const (
@@ -84,7 +86,7 @@ type (
 
 // TestSuiteDurationsClient defines the interface for fetching test suite durations
 type TestSuiteDurationsClient interface {
-	GetTestSuiteDurations(repositoryURL, service string) (map[string]map[string]TestSuiteDurationInfo, error)
+	GetTestSuiteDurations() map[string]map[string]TestSuiteDurationInfo
 }
 
 // DurationsAPI abstracts the HTTP endpoint for testability (equivalent of CIVisibilityIntegrations)
@@ -109,7 +111,56 @@ func NewDurationsClientWithDependencies(api DurationsAPI) *DatadogDurationsClien
 	}
 }
 
-func (c *DatadogDurationsClient) GetTestSuiteDurations(repositoryURL, service string) (map[string]map[string]TestSuiteDurationInfo, error) {
+func (c *DatadogDurationsClient) GetTestSuiteDurations() map[string]map[string]TestSuiteDurationInfo {
+	startTime := time.Now()
+	repositoryURL, service, err := testSuiteDurationsFetchInputs()
+	if err != nil {
+		slog.Error("Test durations API errored", "duration", time.Since(startTime), "error", err)
+		return map[string]map[string]TestSuiteDurationInfo{}
+	}
+
+	durations, err := c.fetchTestSuiteDurations(repositoryURL, service)
+	if err != nil {
+		slog.Error("Test durations API errored",
+			"service", service,
+			"repositoryURL", repositoryURL,
+			"duration", time.Since(startTime),
+			"error", err)
+		return map[string]map[string]TestSuiteDurationInfo{}
+	}
+
+	totalSuites := countTestSuiteDurations(durations)
+	if totalSuites == 0 {
+		slog.Warn("Test durations API returned no test suites",
+			"service", service,
+			"repositoryURL", repositoryURL,
+			"modulesCount", len(durations),
+			"testSuitesCount", totalSuites,
+			"duration", time.Since(startTime))
+		return map[string]map[string]TestSuiteDurationInfo{}
+	}
+
+	slog.Info("Fetched test suite durations",
+		"service", service,
+		"repositoryURL", repositoryURL,
+		"modulesCount", len(durations),
+		"testSuitesCount", totalSuites,
+		"duration", time.Since(startTime))
+	return durations
+}
+
+func testSuiteDurationsFetchInputs() (string, string, error) {
+	ciTags := utils.GetCITags()
+	repositoryURL := ciTags[constants.GitRepositoryURL]
+	if repositoryURL == "" {
+		return "", "", fmt.Errorf("repository URL is required")
+	}
+
+	service := runmetadata.ResolveServiceName(repositoryURL)
+	return repositoryURL, service, nil
+}
+
+func (c *DatadogDurationsClient) fetchTestSuiteDurations(repositoryURL, service string) (map[string]map[string]TestSuiteDurationInfo, error) {
 	startTime := time.Now()
 	allSuites := make(map[string]map[string]TestSuiteDurationInfo)
 
@@ -145,6 +196,14 @@ func (c *DatadogDurationsClient) GetTestSuiteDurations(repositoryURL, service st
 	slog.Debug("Finished fetching test suite durations", "modules", len(allSuites), "suites", totalSuites, "duration", duration)
 
 	return allSuites, nil
+}
+
+func countTestSuiteDurations(testSuiteDurations map[string]map[string]TestSuiteDurationInfo) int {
+	totalSuites := 0
+	for _, suites := range testSuiteDurations {
+		totalSuites += len(suites)
+	}
+	return totalSuites
 }
 
 // DatadogDurationsAPI implements DurationsAPI using real HTTP calls (equivalent of DatadogCIVisibilityIntegrations)
