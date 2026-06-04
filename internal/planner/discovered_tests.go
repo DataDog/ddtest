@@ -6,7 +6,7 @@ import (
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
-func (tp *TestPlanner) processDiscoveredTests(
+func (tp *TestPlanner) recordFullDiscoveryResults(
 	discoveredTests []testoptimization.Test,
 	skippableTests map[string]bool,
 	subdirPrefix string,
@@ -37,7 +37,7 @@ func (tp *TestPlanner) processDiscoveredTests(
 	slog.Info("Processed the discovered tests", "skippableTestsCount", skippableTestsCount, "discoveredTestsCount", discoveredTestsCount)
 }
 
-func (tp *TestPlanner) processDiscoveredTestFiles(discoveredTestFiles []string) {
+func (tp *TestPlanner) recordFastDiscoveryFallbackFiles(discoveredTestFiles []string) {
 	for _, testFile := range discoveredTestFiles {
 		if testFile != "" {
 			tp.testFiles[testFile] = struct{}{}

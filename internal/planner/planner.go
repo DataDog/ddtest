@@ -233,216 +233,6 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 	return nil
 }
 
-func (tp *TestPlanner) resolveSuiteDurations() {
-	for key, aggregate := range tp.suiteAggregates {
-		// Without backend timing data, use test counts as the estimate:
-		// TotalDuration is the full suite before ITR skips, while EstimatedDuration
-		// is the runnable remainder after skipped tests are removed.
-		aggregate.TotalDuration = float64(aggregate.NumTests) * float64(time.Second)
-		aggregate.EstimatedDuration = float64(aggregate.NumTests-aggregate.NumTestsSkipped) * float64(time.Second)
-		aggregate.DurationSource = testFileDurationSourceDefault
-		if suiteInfo, ok := getTestSuiteDuration(tp.testSuiteDurations, key); ok {
-			if p50, ok := parseDurationP50(suiteInfo); ok {
-				aggregate.TotalDuration = p50
-				aggregate.EstimatedDuration = p50
-				if aggregate.NumTests > 0 {
-					aggregate.EstimatedDuration = p50 * float64(aggregate.NumTests-aggregate.NumTestsSkipped) / float64(aggregate.NumTests)
-				}
-				if aggregate.EstimatedDuration > 0 {
-					aggregate.DurationSource = testFileDurationSourceKnown
-				}
-			}
-		}
-		tp.suiteAggregates[key] = aggregate
-	}
-}
-
-func (tp *TestPlanner) addBackendTestSuites(subdirPrefix string) {
-	for module, suites := range tp.testSuiteDurations {
-		for suite, suiteInfo := range suites {
-			key := testSuiteKey{Module: module, Suite: suite}
-			if _, ok := tp.suiteAggregates[key]; ok {
-				continue
-			}
-
-			sourceFile := stripCwdSubdirPrefix(suiteInfo.SourceFile, subdirPrefix)
-			if _, ok := tp.testFiles[sourceFile]; !ok {
-				continue
-			}
-
-			duration, ok := parseDurationP50(suiteInfo)
-			if !ok {
-				continue
-			}
-
-			// Backend durations can contain duplicate suite names for a source file already
-			// handled by discovery. Treat backend-only suites as a fallback only; otherwise
-			// stale duplicate rows can make fully skipped files look runnable.
-			if _, ok := tp.suitesBySourceFile[sourceFile]; ok {
-				continue
-			}
-
-			tp.suiteAggregates[key] = testSuiteAggregate{
-				Module:            module,
-				Suite:             suite,
-				SourceFile:        sourceFile,
-				TotalDuration:     duration,
-				EstimatedDuration: duration,
-				DurationSource:    testFileDurationSourceKnown,
-				NumTests:          1,
-				NumTestsSkipped:   0,
-			}
-			tp.suitesBySourceFile[sourceFile] = append(tp.suitesBySourceFile[sourceFile], key)
-		}
-	}
-}
-
-func getTestSuiteDuration(
-	testSuiteDurations map[string]map[string]testoptimization.TestSuiteDurationInfo,
-	key testSuiteKey,
-) (testoptimization.TestSuiteDurationInfo, bool) {
-	if suiteDurations, ok := testSuiteDurations[key.Module]; ok {
-		suiteInfo, ok := suiteDurations[key.Suite]
-		return suiteInfo, ok
-	}
-	return testoptimization.TestSuiteDurationInfo{}, false
-}
-
-func parseDurationP50(suiteInfo testoptimization.TestSuiteDurationInfo) (float64, bool) {
-	p50, err := strconv.ParseInt(suiteInfo.Duration.P50, 10, 64)
-	if err != nil {
-		return 0, false
-	}
-	if p50 <= 0 {
-		return 0, false
-	}
-	return float64(p50), true
-}
-
-func calculateSavedTimePercentage(suiteAggregates map[testSuiteKey]testSuiteAggregate) float64 {
-	var totalDuration float64
-	var estimatedDuration float64
-
-	for _, aggregate := range suiteAggregates {
-		if aggregate.NumTests == 0 {
-			continue
-		}
-
-		totalDurationForSuite := aggregate.TotalDuration
-		if totalDurationForSuite <= 0 {
-			continue
-		}
-
-		totalDuration += totalDurationForSuite
-		estimatedDuration += aggregate.EstimatedDuration
-	}
-
-	if totalDuration == 0 {
-		return 0.0
-	}
-
-	return (totalDuration - estimatedDuration) / totalDuration * 100.0
-}
-
-func indexSuitesBySourceFile(suiteAggregates map[testSuiteKey]testSuiteAggregate) map[string][]testSuiteKey {
-	sourceFileLookup := make(map[string][]testSuiteKey)
-	for key, aggregate := range suiteAggregates {
-		if aggregate.SourceFile == "" {
-			continue
-		}
-
-		sourceFileLookup[aggregate.SourceFile] = append(sourceFileLookup[aggregate.SourceFile], key)
-	}
-
-	for sourceFile := range sourceFileLookup {
-		slices.SortFunc(sourceFileLookup[sourceFile], func(a, b testSuiteKey) int {
-			if a.Module < b.Module {
-				return -1
-			}
-			if a.Module > b.Module {
-				return 1
-			}
-			if a.Suite < b.Suite {
-				return -1
-			}
-			if a.Suite > b.Suite {
-				return 1
-			}
-			return 0
-		})
-	}
-	return sourceFileLookup
-}
-
-func (tp *TestPlanner) weightedTestFiles() map[string]int {
-	return tp.estimateTestFileWeights(tp.testFiles)
-}
-
-func (tp *TestPlanner) estimateTestFileWeights(testFiles map[string]struct{}) map[string]int {
-	testFileWeights := make(map[string]int, len(testFiles))
-	tp.testFileDurationSources = make(map[string]testFileDurationSource, len(testFiles))
-	for testFile := range testFiles {
-		estimate, ok := tp.estimateTestFileWeight(testFile)
-		if ok {
-			testFileWeights[testFile] = estimate.weight
-			tp.testFileDurationSources[testFile] = estimate.source
-		}
-	}
-	return testFileWeights
-}
-
-func (tp *TestPlanner) testFileWeight(testFile string) (int, bool) {
-	estimate, ok := tp.estimateTestFileWeight(testFile)
-	return estimate.weight, ok
-}
-
-func (tp *TestPlanner) estimateTestFileWeight(testFile string) (testFileWeightEstimate, bool) {
-	suiteKeys := tp.suitesBySourceFile[testFile]
-	if len(suiteKeys) == 0 {
-		return testFileWeightEstimate{
-			weight: DefaultTestFileWeight,
-			source: testFileDurationSourceDefault,
-		}, true
-	}
-
-	var duration float64
-	var hasRunnableSuite bool
-	var source testFileDurationSource
-	for _, key := range suiteKeys {
-		aggregate := tp.suiteAggregates[key]
-		if aggregate.NumTests == aggregate.NumTestsSkipped {
-			continue
-		}
-		hasRunnableSuite = true
-		source = aggregate.DurationSource
-		duration += aggregate.EstimatedDuration
-	}
-	if !hasRunnableSuite {
-		return testFileWeightEstimate{}, false
-	}
-	if source == "" {
-		source = testFileDurationSourceDefault
-	}
-	if duration <= 0 {
-		return testFileWeightEstimate{
-			weight: DefaultTestFileWeight,
-			source: source,
-		}, true
-	}
-
-	weight := int(duration / float64(time.Millisecond))
-	if weight < 1 {
-		return testFileWeightEstimate{
-			weight: 1,
-			source: source,
-		}, true
-	}
-	return testFileWeightEstimate{
-		weight: weight,
-		source: source,
-	}, true
-}
-
 func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	detectedPlatform, err := tp.platformDetector.DetectPlatform()
 	if err != nil {
@@ -590,21 +380,23 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	// into a collection of testSuiteAggregate structs.
 	// This collection is used to calculate the skippable percentage and the weighted test files.
 	if fullDiscoverySucceeded {
-		tp.processDiscoveredTests(discoveredTests, skippableTests, subdirPrefix)
+		tp.recordFullDiscoveryResults(discoveredTests, skippableTests, subdirPrefix)
+		tp.estimateDiscoveredSuiteDurations()
+
 		slog.Info("Full test discovery succeeded; using full discovery results and ignoring fast-discovered-only files",
 			"fastDiscoveredTestFilesCount", len(discoveredTestFiles))
 	} else {
+		tp.recordFastDiscoveryFallbackFiles(discoveredTestFiles)
+		tp.addDurationDataForFastDiscoveryFallback(subdirPrefix)
+
 		slog.Info("Full test discovery did not run or failed; using fast test file discovery fallback",
 			"fastDiscoveredTestFilesCount", len(discoveredTestFiles))
-		tp.processDiscoveredTestFiles(discoveredTestFiles)
 	}
 
-	tp.resolveSuiteDurations()
 	tp.suitesBySourceFile = indexSuitesBySourceFile(tp.suiteAggregates)
-	tp.addBackendTestSuites(subdirPrefix)
-
 	tp.skippablePercentage = calculateSavedTimePercentage(tp.suiteAggregates)
-	tp.testFileWeights = tp.weightedTestFiles()
+	tp.testFileWeights = tp.calculateFileWeights()
+
 	tp.planReport.RunInfo = tp.runInfo
 	tp.planReport.PlanInfo = tp.planInfo
 	tp.planReport.Planning = tp.newPlanningReport()
@@ -612,4 +404,214 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	slog.Info("Test files prepared", "testFilesCount", len(tp.testFiles))
 
 	return nil
+}
+
+func (tp *TestPlanner) estimateDiscoveredSuiteDurations() {
+	for key, aggregate := range tp.suiteAggregates {
+		// Without backend timing data, use test counts as the estimate:
+		// TotalDuration is the full suite before ITR skips, while EstimatedDuration
+		// is the runnable remainder after skipped tests are removed.
+		aggregate.TotalDuration = float64(aggregate.NumTests) * float64(time.Second)
+		aggregate.EstimatedDuration = float64(aggregate.NumTests-aggregate.NumTestsSkipped) * float64(time.Second)
+		aggregate.DurationSource = testFileDurationSourceDefault
+		if suiteInfo, ok := getTestSuiteDuration(tp.testSuiteDurations, key); ok {
+			if p50, ok := parseDurationP50(suiteInfo); ok {
+				aggregate.TotalDuration = p50
+				aggregate.EstimatedDuration = p50
+				if aggregate.NumTests > 0 {
+					aggregate.EstimatedDuration = p50 * float64(aggregate.NumTests-aggregate.NumTestsSkipped) / float64(aggregate.NumTests)
+				}
+				if aggregate.EstimatedDuration > 0 {
+					aggregate.DurationSource = testFileDurationSourceKnown
+				}
+			}
+		}
+		tp.suiteAggregates[key] = aggregate
+	}
+}
+
+func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback(subdirPrefix string) {
+	seenSourceFiles := make(map[string]struct{})
+	for module, suites := range tp.testSuiteDurations {
+		for suite, suiteInfo := range suites {
+			key := testSuiteKey{Module: module, Suite: suite}
+			if _, ok := tp.suiteAggregates[key]; ok {
+				continue
+			}
+
+			sourceFile := stripCwdSubdirPrefix(suiteInfo.SourceFile, subdirPrefix)
+			if _, ok := tp.testFiles[sourceFile]; !ok {
+				continue
+			}
+
+			duration, ok := parseDurationP50(suiteInfo)
+			if !ok {
+				continue
+			}
+
+			// Backend durations can contain duplicate suite names for the same source file.
+			// Fast discovery only tells us the file exists, so keep one backend fallback row per file.
+			if _, ok := seenSourceFiles[sourceFile]; ok {
+				continue
+			}
+
+			tp.suiteAggregates[key] = testSuiteAggregate{
+				Module:            module,
+				Suite:             suite,
+				SourceFile:        sourceFile,
+				TotalDuration:     duration,
+				EstimatedDuration: duration,
+				DurationSource:    testFileDurationSourceKnown,
+				NumTests:          1,
+				NumTestsSkipped:   0,
+			}
+			seenSourceFiles[sourceFile] = struct{}{}
+		}
+	}
+}
+
+func getTestSuiteDuration(
+	testSuiteDurations map[string]map[string]testoptimization.TestSuiteDurationInfo,
+	key testSuiteKey,
+) (testoptimization.TestSuiteDurationInfo, bool) {
+	if suiteDurations, ok := testSuiteDurations[key.Module]; ok {
+		suiteInfo, ok := suiteDurations[key.Suite]
+		return suiteInfo, ok
+	}
+	return testoptimization.TestSuiteDurationInfo{}, false
+}
+
+func parseDurationP50(suiteInfo testoptimization.TestSuiteDurationInfo) (float64, bool) {
+	p50, err := strconv.ParseInt(suiteInfo.Duration.P50, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	if p50 <= 0 {
+		return 0, false
+	}
+	return float64(p50), true
+}
+
+func calculateSavedTimePercentage(suiteAggregates map[testSuiteKey]testSuiteAggregate) float64 {
+	var totalDuration float64
+	var estimatedDuration float64
+
+	for _, aggregate := range suiteAggregates {
+		if aggregate.NumTests == 0 {
+			continue
+		}
+
+		totalDurationForSuite := aggregate.TotalDuration
+		if totalDurationForSuite <= 0 {
+			continue
+		}
+
+		totalDuration += totalDurationForSuite
+		estimatedDuration += aggregate.EstimatedDuration
+	}
+
+	if totalDuration == 0 {
+		return 0.0
+	}
+
+	return (totalDuration - estimatedDuration) / totalDuration * 100.0
+}
+
+func indexSuitesBySourceFile(suiteAggregates map[testSuiteKey]testSuiteAggregate) map[string][]testSuiteKey {
+	sourceFileLookup := make(map[string][]testSuiteKey)
+	for key, aggregate := range suiteAggregates {
+		if aggregate.SourceFile == "" {
+			continue
+		}
+
+		sourceFileLookup[aggregate.SourceFile] = append(sourceFileLookup[aggregate.SourceFile], key)
+	}
+
+	for sourceFile := range sourceFileLookup {
+		slices.SortFunc(sourceFileLookup[sourceFile], func(a, b testSuiteKey) int {
+			if a.Module < b.Module {
+				return -1
+			}
+			if a.Module > b.Module {
+				return 1
+			}
+			if a.Suite < b.Suite {
+				return -1
+			}
+			if a.Suite > b.Suite {
+				return 1
+			}
+			return 0
+		})
+	}
+	return sourceFileLookup
+}
+
+func (tp *TestPlanner) calculateFileWeights() map[string]int {
+	return tp.estimateTestFileWeights(tp.testFiles)
+}
+
+func (tp *TestPlanner) estimateTestFileWeights(testFiles map[string]struct{}) map[string]int {
+	testFileWeights := make(map[string]int, len(testFiles))
+	tp.testFileDurationSources = make(map[string]testFileDurationSource, len(testFiles))
+	for testFile := range testFiles {
+		estimate, ok := tp.estimateTestFileWeight(testFile)
+		if ok {
+			testFileWeights[testFile] = estimate.weight
+			tp.testFileDurationSources[testFile] = estimate.source
+		}
+	}
+	return testFileWeights
+}
+
+func (tp *TestPlanner) testFileWeight(testFile string) (int, bool) {
+	estimate, ok := tp.estimateTestFileWeight(testFile)
+	return estimate.weight, ok
+}
+
+func (tp *TestPlanner) estimateTestFileWeight(testFile string) (testFileWeightEstimate, bool) {
+	suiteKeys := tp.suitesBySourceFile[testFile]
+	if len(suiteKeys) == 0 {
+		return testFileWeightEstimate{
+			weight: DefaultTestFileWeight,
+			source: testFileDurationSourceDefault,
+		}, true
+	}
+
+	var duration float64
+	var hasRunnableSuite bool
+	var source testFileDurationSource
+	for _, key := range suiteKeys {
+		aggregate := tp.suiteAggregates[key]
+		if aggregate.NumTests == aggregate.NumTestsSkipped {
+			continue
+		}
+		hasRunnableSuite = true
+		source = aggregate.DurationSource
+		duration += aggregate.EstimatedDuration
+	}
+	if !hasRunnableSuite {
+		return testFileWeightEstimate{}, false
+	}
+	if source == "" {
+		source = testFileDurationSourceDefault
+	}
+	if duration <= 0 {
+		return testFileWeightEstimate{
+			weight: DefaultTestFileWeight,
+			source: source,
+		}, true
+	}
+
+	weight := int(duration / float64(time.Millisecond))
+	if weight < 1 {
+		return testFileWeightEstimate{
+			weight: 1,
+			source: source,
+		}, true
+	}
+	return testFileWeightEstimate{
+		weight: weight,
+		source: source,
+	}, true
 }

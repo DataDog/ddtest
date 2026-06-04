@@ -1088,7 +1088,7 @@ func TestTestPlanner_PreparePlanningData_Success(t *testing.T) {
 		t.Errorf("PreparePlanningData() should result in %d test files, got %d", len(expectedFiles), len(runner.testFiles))
 	}
 
-	if weightedFiles := runner.weightedTestFiles(); len(weightedFiles) != 2 {
+	if weightedFiles := runner.calculateFileWeights(); len(weightedFiles) != 2 {
 		t.Errorf("Expected weighted files to omit fully skipped and fast-only files, got %v", weightedFiles)
 	}
 	expectedTestFileWeights := map[string]int{
@@ -1326,7 +1326,7 @@ func TestTestPlanner_TestFileWeight_CountFallbackForMissingSuiteDuration(t *test
 		},
 	}
 
-	runner.resolveSuiteDurations()
+	runner.estimateDiscoveredSuiteDurations()
 	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
 
 	if weight, ok := runner.testFileWeight("spec/file1_test.rb"); !ok || weight != 11 {
@@ -1342,7 +1342,7 @@ func TestTestPlanner_TestFileWeight_CountFallbackForMissingSuiteDuration(t *test
 		t.Errorf("Expected unknown file weight to use default 1 second, got weight=%d ok=%t", weight, ok)
 	}
 
-	runner.weightedTestFiles()
+	runner.calculateFileWeights()
 	if source := runner.testFileDurationSources["spec/file1_test.rb"]; source != testFileDurationSourceKnown {
 		t.Errorf("Expected Suite1 file duration source to be known, got %q", source)
 	}
@@ -1378,7 +1378,7 @@ func TestTestPlanner_TestFileWeight_InvalidP50FallsBackForFullDiscoveryAggregate
 		},
 	}
 
-	runner.resolveSuiteDurations()
+	runner.estimateDiscoveredSuiteDurations()
 	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
 
 	aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite1"}]
@@ -1417,7 +1417,7 @@ func TestTestPlanner_TestFileWeight_ZeroP50FallsBackForFullDiscoveryAggregate(t 
 		},
 	}
 
-	runner.resolveSuiteDurations()
+	runner.estimateDiscoveredSuiteDurations()
 	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
 
 	aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite1"}]
@@ -1455,7 +1455,7 @@ func TestTestPlanner_TestFileWeight_SubMillisecondP50MinimumWeight(t *testing.T)
 		},
 	}
 
-	runner.resolveSuiteDurations()
+	runner.estimateDiscoveredSuiteDurations()
 	runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
 
 	if weight, ok := runner.testFileWeight("spec/fast_test.rb"); !ok || weight != 1 {
@@ -1488,7 +1488,7 @@ func TestTestPlanner_TestFileWeight_SkipsFullySkippedSuites(t *testing.T) {
 		t.Errorf("Expected fully skipped suite file to have no weight, got weight=%d ok=%t", weight, ok)
 	}
 
-	if weightedFiles := runner.weightedTestFiles(); len(weightedFiles) != 0 {
+	if weightedFiles := runner.calculateFileWeights(); len(weightedFiles) != 0 {
 		t.Errorf("Expected fully skipped suite file to be omitted from weighted files, got %v", weightedFiles)
 	}
 }
@@ -1577,6 +1577,53 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesBackendDurations(t *te
 
 	if weight, ok := runner.testFileWeight("spec/backend_only_spec.rb"); !ok || weight != 42 {
 		t.Errorf("Expected fast-discovery file to use backend p50 converted to 42ms, got weight=%d ok=%t", weight, ok)
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesOneBackendDurationPerSourceFile(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	mockFramework := &MockFramework{
+		FrameworkName:    "rspec",
+		TestFiles:        []string{"spec/backend_only_spec.rb"},
+		DiscoverTestsErr: errors.New("full discovery failed"),
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+		},
+		Framework: mockFramework,
+	}
+	mockDurationsClient := &MockTestSuiteDurationsClient{
+		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+			"rspec": {
+				"BackendOnlySuite": {
+					SourceFile: "spec/backend_only_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "42000000"},
+				},
+				"DuplicateBackendOnlySuite": {
+					SourceFile: "spec/backend_only_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "84000000"},
+				},
+			},
+		},
+	}
+
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, &MockTestOptimizationClient{}, mockDurationsClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PreparePlanningData(ctx)
+	if err != nil {
+		t.Fatalf("PreparePlanningData() should not fail when full discovery fails but fast discovery succeeds, got: %v", err)
+	}
+
+	if len(runner.suiteAggregates) != 1 {
+		t.Fatalf("Expected one backend fallback suite aggregate per source file, got %v", runner.suiteAggregates)
+	}
+	if suiteKeys := runner.suitesBySourceFile["spec/backend_only_spec.rb"]; len(suiteKeys) != 1 {
+		t.Fatalf("Expected rebuilt source-file index to contain one suite key, got %v", runner.suitesBySourceFile)
 	}
 }
 
@@ -1873,7 +1920,7 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryDoesNotRunStaleBackendFile
 		t.Fatalf("PreparePlanningData() should not fail, got: %v", err)
 	}
 
-	weightedFiles := runner.weightedTestFiles()
+	weightedFiles := runner.calculateFileWeights()
 	if len(weightedFiles) != 1 {
 		t.Fatalf("Expected only local fast-discovery file to be runnable, got %v", weightedFiles)
 	}
@@ -2264,7 +2311,7 @@ func TestTestPlanner_PreparePlanningData_AllTestsSkipped(t *testing.T) {
 		t.Errorf("PreparePlanningData() should keep all discovered files even when all tests are skipped, got %d", len(runner.testFiles))
 	}
 
-	if weightedFiles := runner.weightedTestFiles(); len(weightedFiles) != 0 {
+	if weightedFiles := runner.calculateFileWeights(); len(weightedFiles) != 0 {
 		t.Errorf("PreparePlanningData() should result in 0 weighted files when all tests are skipped, got %v", weightedFiles)
 	}
 
@@ -2780,7 +2827,7 @@ func TestPreparePlanningData_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd(t 
 			expectedSkippablePercentage, runner.skippablePercentage)
 	}
 
-	// All discovered source files should remain in testFiles, while weightedTestFiles omits the fully skipped role_spec.rb.
+	// All discovered source files should remain in testFiles, while calculateFileWeights omits the fully skipped role_spec.rb.
 	// The SuiteSourceFile paths should be normalized from "core/spec/..." to "spec/..." (CWD-relative).
 	expectedFiles := map[string]bool{
 		"spec/models/role_spec.rb":  true,
@@ -2797,7 +2844,7 @@ func TestPreparePlanningData_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd(t 
 		}
 	}
 
-	weightedFiles := runner.weightedTestFiles()
+	weightedFiles := runner.calculateFileWeights()
 	if len(weightedFiles) != 1 {
 		t.Fatalf("Expected 1 weighted test file (only order_spec.rb), got %d: %v", len(weightedFiles), weightedFiles)
 	}
