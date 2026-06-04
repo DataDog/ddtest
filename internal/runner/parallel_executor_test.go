@@ -26,7 +26,7 @@ func TestRunParallel_Success(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runParallel()
+	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}, roundRobinTestPlanner{}).runParallel()
 	report, err := result.report, result.err
 	if err != nil {
 		t.Fatalf("runParallel() should not return error, got: %v", err)
@@ -53,7 +53,7 @@ func TestRunParallel_MissingSplitDirectory(t *testing.T) {
 	// Don't create tests-split directory
 	mockFramework := &MockFramework{FrameworkName: "rspec"}
 
-	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}).runParallel()
+	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}, roundRobinTestPlanner{}).runParallel()
 	err := result.err
 	if err == nil {
 		t.Error("runParallel() should return error when tests-split directory is missing")

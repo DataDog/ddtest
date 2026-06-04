@@ -9,17 +9,23 @@ import (
 	"github.com/DataDog/ddtest/internal/framework"
 )
 
+type testFilePlanner interface {
+	DistributeTestFiles(testFiles []string, parallelRunners int) [][]string
+}
+
 type testExecutor struct {
 	ctx          context.Context
 	framework    framework.Framework
 	workerEnvMap map[string]string
+	planner      testFilePlanner
 }
 
-func newTestExecutor(ctx context.Context, framework framework.Framework, workerEnvMap map[string]string) testExecutor {
+func newTestExecutor(ctx context.Context, framework framework.Framework, workerEnvMap map[string]string, planner testFilePlanner) testExecutor {
 	return testExecutor{
 		ctx:          ctx,
 		framework:    framework,
 		workerEnvMap: workerEnvMap,
+		planner:      planner,
 	}
 }
 

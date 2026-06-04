@@ -1,4 +1,4 @@
-package runner
+package planner
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
-func TestTestRunner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
+func TestTestPlanner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -75,9 +75,12 @@ func TestTestRunner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
 	if !reflect.DeepEqual(restored.testFileWeights, runner.testFileWeights) {
 		t.Errorf("Expected restored test file weights to match stored weights.\nexpected: %v\nactual: %v", runner.testFileWeights, restored.testFileWeights)
 	}
+	if !reflect.DeepEqual(restored.planInfo, runner.planInfo) {
+		t.Errorf("Expected restored plan info to match stored plan info.\nexpected: %v\nactual: %v", runner.planInfo, restored.planInfo)
+	}
 }
 
-func TestTestRunner_StoreAndRestoreTestOptimizationPlanCache_RoundTripDurations(t *testing.T) {
+func TestTestPlanner_StoreAndRestoreTestOptimizationPlanCache_RoundTripDurations(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -156,7 +159,7 @@ func TestTestRunner_StoreAndRestoreTestOptimizationPlanCache_RoundTripDurations(
 	}
 }
 
-func TestTestRunner_RestoreTestOptimizationPlanCache_ComputesMissingWeights(t *testing.T) {
+func TestTestPlanner_RestoreTestOptimizationPlanCache_ComputesMissingWeights(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -212,6 +215,94 @@ func TestTestRunner_RestoreTestOptimizationPlanCache_ComputesMissingWeights(t *t
 	}
 	if !reflect.DeepEqual(restored.testFileWeights, expectedWeights) {
 		t.Errorf("Expected restored cache to compute missing test file weights.\nexpected: %v\nactual: %v", expectedWeights, restored.testFileWeights)
+	}
+}
+
+func TestLoadPlan_MigratesLegacyRunInfoPlanFields(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	type legacyTestOptimizationPlanCache struct {
+		RunInfo legacyRunInfo `json:"runInfo"`
+	}
+	cache := legacyTestOptimizationPlanCache{
+		RunInfo: legacyRunInfo{
+			Service:    "checkout-api",
+			Repository: "https://github.com/acme/checkout.git",
+			Commit:     "9f3a1c7d2b4e",
+			Branch:     "feature/split-report",
+			Platform:   "ruby",
+			Framework:  "rspec",
+			OSTags: map[string]string{
+				"os.platform":     "linux",
+				"os.architecture": "amd64",
+				"os.version":      "6.8.0",
+			},
+			RuntimeTags: map[string]string{
+				"runtime.name":    "ruby",
+				"runtime.version": "3.3.4",
+			},
+		},
+	}
+	if err := testoptimization.NewCacheManager().StoreTestOptimizationPlanCache(cache); err != nil {
+		t.Fatalf("StoreTestOptimizationPlanCache() should not return error, got: %v", err)
+	}
+
+	plan, err := LoadPlan()
+	if err != nil {
+		t.Fatalf("LoadPlan() should not return error, got: %v", err)
+	}
+
+	expected := PlanInfo{
+		Platform:  "ruby",
+		Framework: "rspec",
+		OSTags: map[string]string{
+			"os.platform":     "linux",
+			"os.architecture": "amd64",
+			"os.version":      "6.8.0",
+		},
+		RuntimeTags: map[string]string{
+			"runtime.name":    "ruby",
+			"runtime.version": "3.3.4",
+		},
+	}
+	if !reflect.DeepEqual(plan, expected) {
+		t.Errorf("Expected LoadPlan() to migrate legacy plan fields.\nexpected: %v\nactual: %v", expected, plan)
+	}
+}
+
+func TestTestPlanner_LoadPlan_UsesExistingPlannerState(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	cachePath := filepath.Join(constants.RunnerCacheDir, testoptimization.TestOptimizationPlanCacheFile)
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
+		t.Fatalf("failed to create cache dir: %v", err)
+	}
+	if err := os.WriteFile(cachePath, []byte("{"), 0644); err != nil {
+		t.Fatalf("failed to write corrupt cache: %v", err)
+	}
+
+	planner := newTestPlannerWithDefaults()
+	planner.planInfo = PlanInfo{
+		Platform:  "ruby",
+		Framework: "rspec",
+	}
+	planner.testFileWeights = map[string]int{
+		"spec/example_spec.rb": 123,
+	}
+	planner.planLoaded = true
+
+	plan, err := planner.LoadPlan()
+	if err != nil {
+		t.Fatalf("LoadPlan() should use existing planner state, got error: %v", err)
+	}
+	if plan.Platform != "ruby" || plan.Framework != "rspec" {
+		t.Fatalf("LoadPlan() returned wrong plan info: %v", plan)
 	}
 }
 

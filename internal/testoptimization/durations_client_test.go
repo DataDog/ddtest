@@ -1,13 +1,16 @@
 package testoptimization
 
 import (
+	"bytes"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/civisibility/constants"
+	ciUtils "github.com/DataDog/ddtest/civisibility/utils"
 )
 
 // MockDurationsAPI implements DurationsAPI for testing (equivalent of MockCIVisibilityIntegrations)
@@ -44,6 +47,24 @@ func (m *MockDurationsAPI) FetchTestSuiteDurations(repositoryURL, service, curso
 	}, nil
 }
 
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	originalLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() {
+		slog.SetDefault(originalLogger)
+	})
+	return &buf
+}
+
+func addRepositoryTag(t *testing.T, repositoryURL string) {
+	t.Helper()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+	ciUtils.AddCITagsMap(map[string]string{constants.GitRepositoryURL: repositoryURL})
+}
+
 func TestNewDurationsClientWithDependencies(t *testing.T) {
 	mockAPI := &MockDurationsAPI{}
 	client := NewDurationsClientWithDependencies(mockAPI)
@@ -53,7 +74,125 @@ func TestNewDurationsClientWithDependencies(t *testing.T) {
 	}
 }
 
-func TestDurationsClient_GetTestSuiteDurations_SinglePage(t *testing.T) {
+func TestDurationsClient_GetTestSuiteDurations_DerivesInputsAndLogsSuccess(t *testing.T) {
+	addRepositoryTag(t, "github.com/DataDog/foo")
+	t.Setenv("DD_SERVICE", "my-service")
+	logs := captureLogs(t)
+	mockAPI := &MockDurationsAPI{
+		Responses: []*durationsResponseAttributes{
+			{
+				TestSuites: map[string]map[string]TestSuiteDurationInfo{
+					"module1": {
+						"suite1": {
+							SourceFile: "spec/user_spec.rb",
+							Duration:   DurationPercentiles{P50: "280000000", P90: "350000000"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	client := NewDurationsClientWithDependencies(mockAPI)
+	result := client.GetTestSuiteDurations()
+
+	if !mockAPI.FetchCalled {
+		t.Error("GetTestSuiteDurations() should call FetchTestSuiteDurations")
+	}
+	if mockAPI.RepositoryURL != "github.com/DataDog/foo" {
+		t.Errorf("Expected repository URL 'github.com/DataDog/foo', got '%s'", mockAPI.RepositoryURL)
+	}
+	if mockAPI.Service != "my-service" {
+		t.Errorf("Expected service 'my-service', got '%s'", mockAPI.Service)
+	}
+	if len(result) != 1 {
+		t.Errorf("Expected 1 module, got %d", len(result))
+	}
+	if !strings.Contains(logs.String(), "level=INFO") ||
+		!strings.Contains(logs.String(), "Fetched test suite durations") ||
+		!strings.Contains(logs.String(), "modulesCount=1") ||
+		!strings.Contains(logs.String(), "testSuitesCount=1") ||
+		!strings.Contains(logs.String(), "duration=") {
+		t.Errorf("Expected INFO log for non-empty durations response, got logs: %s", logs.String())
+	}
+}
+
+func TestDurationsClient_GetTestSuiteDurations_MissingRepositoryReturnsEmptyAndLogsError(t *testing.T) {
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+	ciUtils.AddCITagsMap(map[string]string{constants.GitRepositoryURL: ""})
+	logs := captureLogs(t)
+	mockAPI := &MockDurationsAPI{}
+
+	client := NewDurationsClientWithDependencies(mockAPI)
+	result := client.GetTestSuiteDurations()
+
+	if mockAPI.FetchCalled {
+		t.Error("GetTestSuiteDurations() should not fetch without a repository URL")
+	}
+	if len(result) != 0 {
+		t.Errorf("Expected empty durations on missing repository URL, got %v", result)
+	}
+	if !strings.Contains(logs.String(), "level=ERROR") ||
+		!strings.Contains(logs.String(), "Test durations API errored") ||
+		!strings.Contains(logs.String(), "repository URL is required") ||
+		!strings.Contains(logs.String(), "duration=") {
+		t.Errorf("Expected ERROR log for missing repository URL, got logs: %s", logs.String())
+	}
+}
+
+func TestDurationsClient_GetTestSuiteDurations_APIErrorReturnsEmptyAndLogsError(t *testing.T) {
+	addRepositoryTag(t, "github.com/DataDog/foo")
+	t.Setenv("DD_SERVICE", "")
+	logs := captureLogs(t)
+	mockAPI := &MockDurationsAPI{
+		ResponseErrors: []error{fmt.Errorf("connection refused")},
+	}
+
+	client := NewDurationsClientWithDependencies(mockAPI)
+	result := client.GetTestSuiteDurations()
+
+	if len(result) != 0 {
+		t.Errorf("Expected empty durations on API error, got %v", result)
+	}
+	if !strings.Contains(logs.String(), "level=ERROR") ||
+		!strings.Contains(logs.String(), "Test durations API errored") ||
+		!strings.Contains(logs.String(), "repositoryURL=github.com/DataDog/foo") ||
+		!strings.Contains(logs.String(), "service=foo") ||
+		!strings.Contains(logs.String(), "connection refused") ||
+		!strings.Contains(logs.String(), "duration=") {
+		t.Errorf("Expected ERROR log for durations API failure, got logs: %s", logs.String())
+	}
+}
+
+func TestDurationsClient_GetTestSuiteDurations_EmptyResponseReturnsEmptyAndLogsWarn(t *testing.T) {
+	addRepositoryTag(t, "github.com/DataDog/foo")
+	t.Setenv("DD_SERVICE", "")
+	logs := captureLogs(t)
+	mockAPI := &MockDurationsAPI{
+		Responses: []*durationsResponseAttributes{
+			{
+				TestSuites: map[string]map[string]TestSuiteDurationInfo{},
+			},
+		},
+	}
+
+	client := NewDurationsClientWithDependencies(mockAPI)
+	result := client.GetTestSuiteDurations()
+
+	if len(result) != 0 {
+		t.Errorf("Expected empty durations on empty response, got %v", result)
+	}
+	if !strings.Contains(logs.String(), "level=WARN") ||
+		!strings.Contains(logs.String(), "Test durations API returned no test suites") ||
+		!strings.Contains(logs.String(), "modulesCount=0") ||
+		!strings.Contains(logs.String(), "testSuitesCount=0") ||
+		!strings.Contains(logs.String(), "duration=") {
+		t.Errorf("Expected WARN log for empty durations response, got logs: %s", logs.String())
+	}
+}
+
+func TestDurationsClient_FetchTestSuiteDurations_SinglePage(t *testing.T) {
 	mockAPI := &MockDurationsAPI{
 		Responses: []*durationsResponseAttributes{
 			{
@@ -80,14 +219,14 @@ func TestDurationsClient_GetTestSuiteDurations_SinglePage(t *testing.T) {
 	}
 
 	client := NewDurationsClientWithDependencies(mockAPI)
-	result, err := client.GetTestSuiteDurations("github.com/DataDog/foo", "my-service")
+	result, err := client.fetchTestSuiteDurations("github.com/DataDog/foo", "my-service")
 
 	if err != nil {
-		t.Errorf("GetTestSuiteDurations() should not return error, got: %v", err)
+		t.Errorf("fetchTestSuiteDurations() should not return error, got: %v", err)
 	}
 
 	if !mockAPI.FetchCalled {
-		t.Error("GetTestSuiteDurations() should call FetchTestSuiteDurations")
+		t.Error("fetchTestSuiteDurations() should call FetchTestSuiteDurations")
 	}
 
 	if mockAPI.RepositoryURL != "github.com/DataDog/foo" {
@@ -139,7 +278,7 @@ func TestDurationsClient_GetTestSuiteDurations_SinglePage(t *testing.T) {
 	}
 }
 
-func TestDurationsClient_GetTestSuiteDurations_Pagination(t *testing.T) {
+func TestDurationsClient_FetchTestSuiteDurations_Pagination(t *testing.T) {
 	mockAPI := &MockDurationsAPI{
 		Responses: []*durationsResponseAttributes{
 			{
@@ -182,10 +321,10 @@ func TestDurationsClient_GetTestSuiteDurations_Pagination(t *testing.T) {
 	}
 
 	client := NewDurationsClientWithDependencies(mockAPI)
-	result, err := client.GetTestSuiteDurations("github.com/DataDog/foo", "my-service")
+	result, err := client.fetchTestSuiteDurations("github.com/DataDog/foo", "my-service")
 
 	if err != nil {
-		t.Errorf("GetTestSuiteDurations() should not return error, got: %v", err)
+		t.Errorf("fetchTestSuiteDurations() should not return error, got: %v", err)
 	}
 
 	// Verify pagination cursors were passed correctly
@@ -234,7 +373,7 @@ func TestDurationsClient_GetTestSuiteDurations_Pagination(t *testing.T) {
 	}
 }
 
-func TestDurationsClient_GetTestSuiteDurations_EmptyResponse(t *testing.T) {
+func TestDurationsClient_FetchTestSuiteDurations_EmptyResponse(t *testing.T) {
 	mockAPI := &MockDurationsAPI{
 		Responses: []*durationsResponseAttributes{
 			{
@@ -244,22 +383,22 @@ func TestDurationsClient_GetTestSuiteDurations_EmptyResponse(t *testing.T) {
 	}
 
 	client := NewDurationsClientWithDependencies(mockAPI)
-	result, err := client.GetTestSuiteDurations("github.com/DataDog/foo", "my-service")
+	result, err := client.fetchTestSuiteDurations("github.com/DataDog/foo", "my-service")
 
 	if err != nil {
-		t.Errorf("GetTestSuiteDurations() should not return error, got: %v", err)
+		t.Errorf("fetchTestSuiteDurations() should not return error, got: %v", err)
 	}
 
 	if result == nil {
-		t.Error("GetTestSuiteDurations() should return non-nil map even with empty data")
+		t.Error("fetchTestSuiteDurations() should return non-nil map even with empty data")
 	}
 
 	if len(result) != 0 {
-		t.Errorf("GetTestSuiteDurations() should return empty map, got %d modules", len(result))
+		t.Errorf("fetchTestSuiteDurations() should return empty map, got %d modules", len(result))
 	}
 }
 
-func TestDurationsClient_GetTestSuiteDurations_NilTestSuites(t *testing.T) {
+func TestDurationsClient_FetchTestSuiteDurations_NilTestSuites(t *testing.T) {
 	mockAPI := &MockDurationsAPI{
 		Responses: []*durationsResponseAttributes{
 			{
@@ -269,39 +408,39 @@ func TestDurationsClient_GetTestSuiteDurations_NilTestSuites(t *testing.T) {
 	}
 
 	client := NewDurationsClientWithDependencies(mockAPI)
-	result, err := client.GetTestSuiteDurations("github.com/DataDog/foo", "my-service")
+	result, err := client.fetchTestSuiteDurations("github.com/DataDog/foo", "my-service")
 
 	if err != nil {
-		t.Errorf("GetTestSuiteDurations() should not return error, got: %v", err)
+		t.Errorf("fetchTestSuiteDurations() should not return error, got: %v", err)
 	}
 
 	if result == nil {
-		t.Error("GetTestSuiteDurations() should return non-nil map even with nil test suites")
+		t.Error("fetchTestSuiteDurations() should return non-nil map even with nil test suites")
 	}
 
 	if len(result) != 0 {
-		t.Errorf("GetTestSuiteDurations() should return empty map, got %d modules", len(result))
+		t.Errorf("fetchTestSuiteDurations() should return empty map, got %d modules", len(result))
 	}
 }
 
-func TestDurationsClient_GetTestSuiteDurations_APIError(t *testing.T) {
+func TestDurationsClient_FetchTestSuiteDurations_APIError(t *testing.T) {
 	mockAPI := &MockDurationsAPI{
 		ResponseErrors: []error{fmt.Errorf("connection refused")},
 	}
 
 	client := NewDurationsClientWithDependencies(mockAPI)
-	result, err := client.GetTestSuiteDurations("github.com/DataDog/foo", "my-service")
+	result, err := client.fetchTestSuiteDurations("github.com/DataDog/foo", "my-service")
 
 	if err == nil {
-		t.Error("GetTestSuiteDurations() should return error when API fails")
+		t.Error("fetchTestSuiteDurations() should return error when API fails")
 	}
 
 	if result != nil {
-		t.Error("GetTestSuiteDurations() should return nil result when API fails")
+		t.Error("fetchTestSuiteDurations() should return nil result when API fails")
 	}
 }
 
-func TestDurationsClient_GetTestSuiteDurations_PaginationError(t *testing.T) {
+func TestDurationsClient_FetchTestSuiteDurations_PaginationError(t *testing.T) {
 	mockAPI := &MockDurationsAPI{
 		Responses: []*durationsResponseAttributes{
 			{
@@ -324,18 +463,18 @@ func TestDurationsClient_GetTestSuiteDurations_PaginationError(t *testing.T) {
 	}
 
 	client := NewDurationsClientWithDependencies(mockAPI)
-	result, err := client.GetTestSuiteDurations("github.com/DataDog/foo", "my-service")
+	result, err := client.fetchTestSuiteDurations("github.com/DataDog/foo", "my-service")
 
 	if err == nil {
-		t.Error("GetTestSuiteDurations() should return error when pagination fails")
+		t.Error("fetchTestSuiteDurations() should return error when pagination fails")
 	}
 
 	if result != nil {
-		t.Error("GetTestSuiteDurations() should return nil result when pagination fails")
+		t.Error("fetchTestSuiteDurations() should return nil result when pagination fails")
 	}
 }
 
-func TestDurationsClient_GetTestSuiteDurations_NilPageInfo(t *testing.T) {
+func TestDurationsClient_FetchTestSuiteDurations_NilPageInfo(t *testing.T) {
 	mockAPI := &MockDurationsAPI{
 		Responses: []*durationsResponseAttributes{
 			{
@@ -353,10 +492,10 @@ func TestDurationsClient_GetTestSuiteDurations_NilPageInfo(t *testing.T) {
 	}
 
 	client := NewDurationsClientWithDependencies(mockAPI)
-	result, err := client.GetTestSuiteDurations("github.com/DataDog/foo", "my-service")
+	result, err := client.fetchTestSuiteDurations("github.com/DataDog/foo", "my-service")
 
 	if err != nil {
-		t.Errorf("GetTestSuiteDurations() should not return error, got: %v", err)
+		t.Errorf("fetchTestSuiteDurations() should not return error, got: %v", err)
 	}
 
 	if len(result) != 1 {
@@ -369,7 +508,7 @@ func TestDurationsClient_GetTestSuiteDurations_NilPageInfo(t *testing.T) {
 	}
 }
 
-func TestDurationsClient_GetTestSuiteDurations_ThreePages(t *testing.T) {
+func TestDurationsClient_FetchTestSuiteDurations_ThreePages(t *testing.T) {
 	mockAPI := &MockDurationsAPI{
 		Responses: []*durationsResponseAttributes{
 			{
@@ -409,10 +548,10 @@ func TestDurationsClient_GetTestSuiteDurations_ThreePages(t *testing.T) {
 	}
 
 	client := NewDurationsClientWithDependencies(mockAPI)
-	result, err := client.GetTestSuiteDurations("github.com/DataDog/foo", "my-service")
+	result, err := client.fetchTestSuiteDurations("github.com/DataDog/foo", "my-service")
 
 	if err != nil {
-		t.Errorf("GetTestSuiteDurations() should not return error, got: %v", err)
+		t.Errorf("fetchTestSuiteDurations() should not return error, got: %v", err)
 	}
 
 	if len(mockAPI.Cursors) != 3 {

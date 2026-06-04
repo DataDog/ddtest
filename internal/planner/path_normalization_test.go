@@ -1,4 +1,4 @@
-package runner
+package planner
 
 import (
 	"os"
@@ -155,12 +155,13 @@ func initGitRepoInDir(t *testing.T, dir string) {
 	t.Helper()
 	cmd := exec.Command("git", "init")
 	cmd.Dir = dir
+	cmd.Env = gitTestEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to init git repo in %s: %v\n%s", dir, err, string(out))
 	}
 	cmd = exec.Command("git", "commit", "--allow-empty", "-m", "init")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(gitTestEnv(),
 		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
 		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
 	)

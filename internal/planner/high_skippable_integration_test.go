@@ -1,4 +1,4 @@
-package runner
+package planner
 
 import (
 	"context"
@@ -25,7 +25,7 @@ type highSkippableIntegrationFixture struct {
 	ExpectedParallelRunners   int                                                          `json:"expectedParallelRunners"`
 }
 
-func TestTestRunner_Plan_HighSkippableIntegrationSelectsExpectedRunnerCountAndRunnableFiles(t *testing.T) {
+func TestTestPlanner_Plan_HighSkippableIntegrationSelectsExpectedRunnerCountAndRunnableFiles(t *testing.T) {
 	fixture := loadHighSkippableIntegrationFixture(t, "spree_26236954724.json")
 	if fixture.OriginalParallelRunners != 3 {
 		t.Fatalf("fixture should capture the original 3-runner plan, got %d", fixture.OriginalParallelRunners)

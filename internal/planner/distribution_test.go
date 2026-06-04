@@ -1,4 +1,4 @@
-package runner
+package planner
 
 import (
 	"fmt"
@@ -9,11 +9,14 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
-func TestDistributeTestFiles(t *testing.T) {
+func TestTestPlanner_DistributeWeightedTestFiles(t *testing.T) {
+	planner := newTestPlannerWithDefaults()
+
 	t.Run("empty test files", func(t *testing.T) {
-		result := DistributeTestFiles(map[string]int{}, 3)
+		result := planner.DistributeWeightedTestFiles(map[string]int{}, 3)
 		if len(result) != 3 {
 			t.Errorf("Expected 3 runners, got %d", len(result))
 		}
@@ -30,7 +33,7 @@ func TestDistributeTestFiles(t *testing.T) {
 			"test2.rb": 3,
 			"test3.rb": 2,
 		}
-		result := DistributeTestFiles(testFiles, 1)
+		result := planner.DistributeWeightedTestFiles(testFiles, 1)
 
 		if len(result) != 1 {
 			t.Errorf("Expected 1 runner, got %d", len(result))
@@ -56,12 +59,12 @@ func TestDistributeTestFiles(t *testing.T) {
 	t.Run("zero or negative runners defaults to 1", func(t *testing.T) {
 		testFiles := map[string]int{"test1.rb": 1}
 
-		result := DistributeTestFiles(testFiles, 0)
+		result := planner.DistributeWeightedTestFiles(testFiles, 0)
 		if len(result) != 1 {
 			t.Errorf("Expected 1 runner for parallelRunners=0, got %d", len(result))
 		}
 
-		result = DistributeTestFiles(testFiles, -1)
+		result = planner.DistributeWeightedTestFiles(testFiles, -1)
 		if len(result) != 1 {
 			t.Errorf("Expected 1 runner for parallelRunners=-1, got %d", len(result))
 		}
@@ -75,7 +78,7 @@ func TestDistributeTestFiles(t *testing.T) {
 			"test4.rb": 8,
 			"test5.rb": 4,
 		}
-		result := DistributeTestFiles(testFiles, 3)
+		result := planner.DistributeWeightedTestFiles(testFiles, 3)
 
 		if len(result) != 3 {
 			t.Errorf("Expected 3 runners, got %d", len(result))
@@ -140,7 +143,7 @@ func TestDistributeTestFiles(t *testing.T) {
 			"test1.rb": 5,
 			"test2.rb": 3,
 		}
-		result := DistributeTestFiles(testFiles, 5)
+		result := planner.DistributeWeightedTestFiles(testFiles, 5)
 
 		if len(result) != 5 {
 			t.Errorf("Expected 5 runners, got %d", len(result))
@@ -171,7 +174,7 @@ func TestDistributeTestFiles(t *testing.T) {
 			"large.rb":  100,
 			"medium.rb": 50,
 		}
-		result := DistributeTestFiles(testFiles, 3)
+		result := planner.DistributeWeightedTestFiles(testFiles, 3)
 
 		// The largest file should go to the first runner
 		// Find which runner has the large.rb file
@@ -205,7 +208,7 @@ func TestDistributeTestFiles(t *testing.T) {
 			"c.rb": 1,
 		}
 
-		result := DistributeTestFiles(testFiles, 2)
+		result := planner.DistributeWeightedTestFiles(testFiles, 2)
 		expected := [][]string{
 			{"a.rb", "c.rb"},
 			{"b.rb"},
@@ -230,8 +233,8 @@ func TestDistributeTestFiles(t *testing.T) {
 		}
 
 		// Run multiple times and check results are consistent
-		result1 := DistributeTestFiles(testFiles, 2)
-		result2 := DistributeTestFiles(testFiles, 2)
+		result1 := planner.DistributeWeightedTestFiles(testFiles, 2)
+		result2 := planner.DistributeWeightedTestFiles(testFiles, 2)
 
 		// Results should be identical (same distribution)
 		if len(result1) != len(result2) {
@@ -264,6 +267,129 @@ func TestDistributeTestFiles(t *testing.T) {
 					t.Errorf("Runner %d missing file %s in second result", i, file)
 				}
 			}
+		}
+	})
+}
+
+func TestTestPlanner_DistributeTestFiles_UsesCachedWeights(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	cache := testOptimizationPlanCache{
+		TestFileWeights: map[string]int{
+			"spec/slow_spec.rb":   10_000,
+			"spec/fast_a_spec.rb": 1,
+			"spec/fast_b_spec.rb": 1,
+		},
+	}
+	if err := testoptimization.NewCacheManager().StoreTestOptimizationPlanCache(cache); err != nil {
+		t.Fatalf("StoreTestOptimizationPlanCache() should not return error, got: %v", err)
+	}
+
+	planner := newTestPlannerWithDefaults()
+	result := planner.DistributeTestFiles([]string{
+		"spec/fast_a_spec.rb",
+		"spec/fast_b_spec.rb",
+		"spec/slow_spec.rb",
+	}, 2)
+
+	expected := [][]string{
+		{"spec/slow_spec.rb"},
+		{"spec/fast_a_spec.rb", "spec/fast_b_spec.rb"},
+	}
+	assertDistribution(t, result, expected)
+}
+
+func TestTestPlanner_DistributeTestFiles_UsesRestoredWeights(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	cache := testOptimizationPlanCache{
+		TestFileWeights: map[string]int{
+			"spec/slow_spec.rb":   10_000,
+			"spec/fast_a_spec.rb": 1,
+			"spec/fast_b_spec.rb": 1,
+		},
+	}
+	if err := testoptimization.NewCacheManager().StoreTestOptimizationPlanCache(cache); err != nil {
+		t.Fatalf("StoreTestOptimizationPlanCache() should not return error, got: %v", err)
+	}
+
+	planner := newTestPlannerWithDefaults()
+	if _, err := planner.LoadPlan(); err != nil {
+		t.Fatalf("LoadPlan() should not return error, got: %v", err)
+	}
+
+	cachePath := filepath.Join(constants.RunnerCacheDir, testoptimization.TestOptimizationPlanCacheFile)
+	if err := os.WriteFile(cachePath, []byte("{"), 0644); err != nil {
+		t.Fatalf("failed to corrupt cache: %v", err)
+	}
+
+	result := planner.DistributeTestFiles([]string{
+		"spec/fast_a_spec.rb",
+		"spec/fast_b_spec.rb",
+		"spec/slow_spec.rb",
+	}, 2)
+
+	expected := [][]string{
+		{"spec/slow_spec.rb"},
+		{"spec/fast_a_spec.rb", "spec/fast_b_spec.rb"},
+	}
+	assertDistribution(t, result, expected)
+}
+
+func TestTestPlanner_DistributeTestFiles_FallsBackToDefaultWeights(t *testing.T) {
+	t.Run("missing cache", func(t *testing.T) {
+		tempDir := t.TempDir()
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		_ = os.Chdir(tempDir)
+		logs := captureLogs(t)
+
+		planner := newTestPlannerWithDefaults()
+		result := planner.DistributeTestFiles([]string{"a", "b", "c", "d"}, 2)
+		expected := [][]string{
+			{"a", "c"},
+			{"b", "d"},
+		}
+		assertDistribution(t, result, expected)
+
+		if !strings.Contains(logs.String(), "level=DEBUG") ||
+			!strings.Contains(logs.String(), "Test optimization run artifacts not found; distributing test files with default weights") {
+			t.Errorf("Expected DEBUG log for missing cache fallback, got logs: %s", logs.String())
+		}
+	})
+
+	t.Run("corrupt cache", func(t *testing.T) {
+		tempDir := t.TempDir()
+		oldWd, _ := os.Getwd()
+		defer func() { _ = os.Chdir(oldWd) }()
+		_ = os.Chdir(tempDir)
+		logs := captureLogs(t)
+
+		cachePath := filepath.Join(constants.RunnerCacheDir, testoptimization.TestOptimizationPlanCacheFile)
+		if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
+			t.Fatalf("failed to create cache dir: %v", err)
+		}
+		if err := os.WriteFile(cachePath, []byte("{"), 0644); err != nil {
+			t.Fatalf("failed to write corrupt cache: %v", err)
+		}
+
+		planner := newTestPlannerWithDefaults()
+		result := planner.DistributeTestFiles([]string{"a", "b", "c"}, 2)
+		expected := [][]string{
+			{"a", "c"},
+			{"b"},
+		}
+		assertDistribution(t, result, expected)
+
+		if !strings.Contains(logs.String(), "level=WARN") ||
+			!strings.Contains(logs.String(), "Failed to load test optimization run artifacts; distributing test files with default weights") {
+			t.Errorf("Expected WARN log for corrupt cache fallback, got logs: %s", logs.String())
 		}
 	})
 }
@@ -379,7 +505,8 @@ func TestCreateTestSplits(t *testing.T) {
 			"test/file2_test.rb": 1,
 		}
 
-		err := CreateTestSplits(testFiles, 1, constants.TestFilesOutputPath)
+		planner := newTestPlannerWithDefaults()
+		err := planner.CreateTestSplits(testFiles, 1, constants.TestFilesOutputPath)
 		if err != nil {
 			t.Fatalf("CreateTestSplits() should not return error, got: %v", err)
 		}
@@ -418,7 +545,8 @@ func TestCreateTestSplits(t *testing.T) {
 			"test/file3_test.rb": 3,
 		}
 
-		err := CreateTestSplits(testFiles, 2, constants.TestFilesOutputPath)
+		planner := newTestPlannerWithDefaults()
+		err := planner.CreateTestSplits(testFiles, 2, constants.TestFilesOutputPath)
 		if err != nil {
 			t.Fatalf("CreateTestSplits() should not return error, got: %v", err)
 		}
@@ -469,7 +597,8 @@ func TestCreateTestSplits(t *testing.T) {
 		_ = os.MkdirAll(filepath.Dir(constants.TestFilesOutputPath), 0755)
 		_ = os.WriteFile(constants.TestFilesOutputPath, []byte(""), 0644)
 
-		err := CreateTestSplits(map[string]int{}, 2, constants.TestFilesOutputPath)
+		planner := newTestPlannerWithDefaults()
+		err := planner.CreateTestSplits(map[string]int{}, 2, constants.TestFilesOutputPath)
 		if err != nil {
 			t.Fatalf("CreateTestSplits() should not return error for empty files, got: %v", err)
 		}
@@ -492,7 +621,8 @@ func TestCreateTestSplits(t *testing.T) {
 		// Don't create test-files.txt
 		testFiles := map[string]int{"test/file1_test.rb": 1}
 
-		err := CreateTestSplits(testFiles, 1, constants.TestFilesOutputPath)
+		planner := newTestPlannerWithDefaults()
+		err := planner.CreateTestSplits(testFiles, 1, constants.TestFilesOutputPath)
 		if err == nil {
 			t.Error("CreateTestSplits() should return error when test-files.txt doesn't exist")
 		}

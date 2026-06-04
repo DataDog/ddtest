@@ -59,7 +59,7 @@ func TestRunBatch(t *testing.T) {
 		"STATIC":           "value",
 	}
 
-	err := newTestExecutor(context.Background(), mockFramework, workerEnvMap).runBatch(testFiles, 5, 3)
+	err := newTestExecutor(context.Background(), mockFramework, workerEnvMap, roundRobinTestPlanner{}).runBatch(testFiles, 5, 3)
 	if err != nil {
 		t.Fatalf("runBatch() should not return error, got: %v", err)
 	}
