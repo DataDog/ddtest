@@ -42,7 +42,7 @@ type (
 		GetKnownTestsRawResponse() json.RawMessage
 		GetCommits(localCommits []string) ([]string, error)
 		SendPackFiles(commitSha string, packFiles []string) (bytes int64, err error)
-		GetSkippableTests() (correlationID string, skippables map[string]map[string][]SkippableResponseDataAttributes, err error)
+		GetSkippableTests() (correlationID string, skippables SkippableTests, err error)
 		GetSkippableTestsRawResponse() json.RawMessage
 		GetTestManagementTests() (*TestManagementTestsResponseDataModules, error)
 		GetTestManagementTestsRawResponse() json.RawMessage

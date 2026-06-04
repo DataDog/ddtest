@@ -29,7 +29,7 @@ type MockCIVisibilityIntegrations struct {
 	ShutdownCalled                 bool
 	Settings                       *net.SettingsResponseData
 	SettingsRawResponse            json.RawMessage
-	SkippableTests                 map[string]map[string][]net.SkippableResponseDataAttributes
+	SkippableTests                 net.SkippableTests
 	SkippableTestsRawResponse      json.RawMessage
 	KnownTests                     *net.KnownTestsResponseData
 	KnownTestsRawResponse          json.RawMessage
@@ -53,7 +53,7 @@ func (m *MockCIVisibilityIntegrations) GetSettingsRawResponse() json.RawMessage 
 	return m.SettingsRawResponse
 }
 
-func (m *MockCIVisibilityIntegrations) GetSkippableTests() map[string]map[string][]net.SkippableResponseDataAttributes {
+func (m *MockCIVisibilityIntegrations) GetSkippableTests() net.SkippableTests {
 	return m.SkippableTests
 }
 
@@ -214,30 +214,10 @@ func TestDatadogClient_GetSkippableTests(t *testing.T) {
 			ItrEnabled:    true,
 			TestsSkipping: true,
 		},
-		SkippableTests: map[string]map[string][]net.SkippableResponseDataAttributes{
-			"module1": {
-				"suite1": []net.SkippableResponseDataAttributes{
-					{
-						Suite:      "TestSuite1",
-						Name:       "test_method_1",
-						Parameters: "param1",
-					},
-					{
-						Suite:      "TestSuite1",
-						Name:       "test_method_2",
-						Parameters: "param2",
-					},
-				},
-			},
-			"module2": {
-				"suite2": []net.SkippableResponseDataAttributes{
-					{
-						Suite:      "TestSuite2",
-						Name:       "test_method_3",
-						Parameters: "param3",
-					},
-				},
-			},
+		SkippableTests: net.SkippableTests{
+			"module1.TestSuite1.test_method_1.param1": true,
+			"module1.TestSuite1.test_method_2.param2": true,
+			"module2.TestSuite2.test_method_3.param3": true,
 		},
 	}
 	mockUtils := &MockUtils{}
@@ -257,9 +237,9 @@ func TestDatadogClient_GetSkippableTests(t *testing.T) {
 
 	// Verify expected test FQNs are present
 	expectedTests := []string{
-		"TestSuite1.test_method_1.param1",
-		"TestSuite1.test_method_2.param2",
-		"TestSuite2.test_method_3.param3",
+		"module1.TestSuite1.test_method_1.param1",
+		"module1.TestSuite1.test_method_2.param2",
+		"module2.TestSuite2.test_method_3.param3",
 	}
 
 	for _, expectedTest := range expectedTests {
@@ -336,28 +316,64 @@ func TestDatadogClient_StoreCacheAndExit_SkipsHTTPCacheWithoutResponse(t *testin
 
 func TestTest_FQN(t *testing.T) {
 	testCases := []struct {
+		module     string
 		suite      string
 		test       string
 		parameters string
 		expected   string
 	}{
-		{"TestSuite", "testMethod", "param1", "TestSuite.testMethod.param1"},
-		{"com.example.TestClass", "test_with_underscores", "param=value", "com.example.TestClass.test_with_underscores.param=value"},
-		{"", "test", "", ".test."},
-		{"suite", "", "params", "suite..params"},
+		{"module", "TestSuite", "testMethod", "param1", "module.TestSuite.testMethod.param1"},
+		{"module", "com.example.TestClass", "test_with_underscores", "param=value", "module.com.example.TestClass.test_with_underscores.param=value"},
+		{"", "", "test", "", "..test."},
+		{"module", "suite", "", "params", "module.suite..params"},
 	}
 
 	for _, tc := range testCases {
 		test := Test{
+			Module:     tc.module,
 			Suite:      tc.suite,
 			Name:       tc.test,
 			Parameters: tc.parameters,
 		}
 		result := test.FQN()
 		if result != tc.expected {
-			t.Errorf("Test{Suite: %q, Name: %q, Parameters: %q}.FQN() = %q, expected %q",
-				tc.suite, tc.test, tc.parameters, result, tc.expected)
+			t.Errorf("Test{Module: %q, Suite: %q, Name: %q, Parameters: %q}.FQN() = %q, expected %q",
+				tc.module, tc.suite, tc.test, tc.parameters, result, tc.expected)
 		}
+	}
+}
+
+func TestDisabledTestsFromTestManagementData(t *testing.T) {
+	disabledTests := DisabledTestsFromTestManagementData(&net.TestManagementTestsResponseDataModules{
+		Modules: map[string]net.TestManagementTestsResponseDataSuites{
+			"module-a": {
+				Suites: map[string]net.TestManagementTestsResponseDataTests{
+					"suite-a": {
+						Tests: map[string]net.TestManagementTestsResponseDataTestProperties{
+							"disabled":    {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+							"quarantined": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Quarantined: true}},
+						},
+					},
+				},
+			},
+			"module-b": {
+				Suites: map[string]net.TestManagementTestsResponseDataTests{
+					"suite-b": {
+						Tests: map[string]net.TestManagementTestsResponseDataTestProperties{
+							"also disabled": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	expected := map[string]bool{
+		"module-a.suite-a.disabled.":      true,
+		"module-b.suite-b.also disabled.": true,
+	}
+	if !maps.Equal(disabledTests, expected) {
+		t.Errorf("DisabledTestsFromTestManagementData() = %v, expected %v", disabledTests, expected)
 	}
 }
 
@@ -367,7 +383,7 @@ func TestDatadogClient_GetSkippableTests_EmptyData(t *testing.T) {
 			ItrEnabled:    true,
 			TestsSkipping: true,
 		},
-		SkippableTests: map[string]map[string][]net.SkippableResponseDataAttributes{},
+		SkippableTests: net.SkippableTests{},
 	}
 	mockUtils := &MockUtils{}
 	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
@@ -399,16 +415,8 @@ func TestDatadogClient_GetSkippableTests_WritesHTTPCache(t *testing.T) {
 			ItrEnabled:    true,
 			TestsSkipping: true,
 		},
-		SkippableTests: map[string]map[string][]net.SkippableResponseDataAttributes{
-			"module1": {
-				"suite1": []net.SkippableResponseDataAttributes{
-					{
-						Suite:      "TestSuite1",
-						Name:       "test_method_1",
-						Parameters: "param1",
-					},
-				},
-			},
+		SkippableTests: net.SkippableTests{
+			"module1.TestSuite1.test_method_1.param1": true,
 		},
 		SkippableTestsRawResponse: skippableTestsResponse,
 	}

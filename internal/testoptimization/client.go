@@ -26,7 +26,7 @@ type CIVisibilityIntegrations interface {
 	ExitCiVisibility()
 	GetSettings() *net.SettingsResponseData
 	GetSettingsRawResponse() json.RawMessage
-	GetSkippableTests() map[string]map[string][]net.SkippableResponseDataAttributes
+	GetSkippableTests() net.SkippableTests
 	GetSkippableTestsRawResponse() json.RawMessage
 	GetKnownTests() *net.KnownTestsResponseData
 	GetKnownTestsRawResponse() json.RawMessage
@@ -57,7 +57,7 @@ func (d *DatadogCIVisibilityIntegrations) GetSettingsRawResponse() json.RawMessa
 	return integrations.GetSettingsRawResponse()
 }
 
-func (d *DatadogCIVisibilityIntegrations) GetSkippableTests() map[string]map[string][]net.SkippableResponseDataAttributes {
+func (d *DatadogCIVisibilityIntegrations) GetSkippableTests() net.SkippableTests {
 	return integrations.GetSkippableTests()
 }
 
@@ -132,32 +132,21 @@ func (c *DatadogClient) GetSettings() *net.SettingsResponseData {
 
 func (c *DatadogClient) GetSkippableTests() map[string]bool {
 	startTime := time.Now()
-	skippedTests := make(map[string]bool)
 
 	slog.Debug("Fetching skippable tests...")
 	skippableTests := c.integrations.GetSkippableTests()
+	if skippableTests == nil {
+		skippableTests = net.SkippableTests{}
+	}
 
 	if err := c.cacheManager.StoreSkippableTestsCache(c.integrations.GetSkippableTestsRawResponse()); err != nil {
 		slog.Warn("Failed to store skippable tests cache", "error", err)
 	}
 
-	for _, suites := range skippableTests {
-		for _, tests := range suites {
-			for _, test := range tests {
-				t := Test{
-					Name:       test.Name,
-					Suite:      test.Suite,
-					Parameters: test.Parameters,
-				}
-				skippedTests[t.FQN()] = true
-			}
-		}
-	}
-
 	duration := time.Since(startTime)
-	slog.Debug("Finished fetching skippable tests", "count", len(skippedTests), "duration", duration)
+	slog.Debug("Finished fetching skippable tests", "count", len(skippableTests), "duration", duration)
 
-	return skippedTests
+	return skippableTests
 }
 
 func (c *DatadogClient) GetKnownTests() *net.KnownTestsResponseData {

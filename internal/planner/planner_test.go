@@ -241,6 +241,15 @@ func gitTestEnv() []string {
 	)
 }
 
+func testOptimizationSettings(tiaEnabled, testsSkipping, testManagementEnabled bool) *net.SettingsResponseData {
+	settings := &net.SettingsResponseData{
+		ItrEnabled:    tiaEnabled,
+		TestsSkipping: testsSkipping,
+	}
+	settings.TestManagement.Enabled = testManagementEnabled
+	return settings
+}
+
 func TestNew(t *testing.T) {
 	runner := New()
 
@@ -342,11 +351,11 @@ func TestTestPlanner_Setup_WithParallelRunners(t *testing.T) {
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
 		Tests: []testoptimization.Test{
-			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
-			{Suite: "TestSuite1", Name: "test2", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
-			{Suite: "TestSuite2", Name: "test3", Parameters: "", SuiteSourceFile: "test/file2_test.rb"},
-			{Suite: "TestSuite3", Name: "test4", Parameters: "", SuiteSourceFile: "test/file3_test.rb"},
-			{Suite: "TestSuite4", Name: "test5", Parameters: "", SuiteSourceFile: "test/file4_test.rb"},
+			{Module: "rspec", Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+			{Module: "rspec", Suite: "TestSuite1", Name: "test2", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+			{Module: "rspec", Suite: "TestSuite2", Name: "test3", Parameters: "", SuiteSourceFile: "test/file2_test.rb"},
+			{Module: "rspec", Suite: "TestSuite3", Name: "test4", Parameters: "", SuiteSourceFile: "test/file3_test.rb"},
+			{Module: "rspec", Suite: "TestSuite4", Name: "test5", Parameters: "", SuiteSourceFile: "test/file4_test.rb"},
 		},
 	}
 
@@ -358,9 +367,10 @@ func TestTestPlanner_Setup_WithParallelRunners(t *testing.T) {
 
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings: testOptimizationSettings(true, true, false),
 		SkippableTests: map[string]bool{
-			"TestSuite1.test2.": true, // Skip test2
-			"TestSuite4.test5.": true, // Skip test5
+			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite1", Name: "test2"}).FQN(): true, // Skip test2
+			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite4", Name: "test5"}).FQN(): true, // Skip test5
 		},
 	}
 
@@ -410,8 +420,8 @@ func TestTestPlanner_Plan_WritesManifestAndRunnerLayout(t *testing.T) {
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
 		Tests: []testoptimization.Test{
-			{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
-			{Suite: "TestSuite2", Name: "test2", Parameters: "", SuiteSourceFile: "test/file2_test.rb"},
+			{Module: "rspec", Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
+			{Module: "rspec", Suite: "TestSuite2", Name: "test2", Parameters: "", SuiteSourceFile: "test/file2_test.rb"},
 		},
 	}
 	mockPlatform := &MockPlatform{
@@ -509,14 +519,16 @@ func TestTestPlanner_Plan_ChoosesParallelismFromFanoutAdjustedSplit(t *testing.T
 		sourceFile := fmt.Sprintf("test/file%d_test.rb", suiteIndex)
 		for testIndex := range 10 {
 			name := fmt.Sprintf("test%d", testIndex)
-			tests = append(tests, testoptimization.Test{
+			test := testoptimization.Test{
+				Module:          "rspec",
 				Suite:           suite,
 				Name:            name,
 				Parameters:      "",
 				SuiteSourceFile: sourceFile,
-			})
+			}
+			tests = append(tests, test)
 			if testIndex > 0 {
-				skippableTests[fmt.Sprintf("%s.%s.", suite, name)] = true
+				skippableTests[test.FQN()] = true
 			}
 		}
 	}
@@ -533,7 +545,10 @@ func TestTestPlanner_Plan_ChoosesParallelismFromFanoutAdjustedSplit(t *testing.T
 
 	runner := NewWithDependencies(
 		&MockPlatformDetector{Platform: mockPlatform},
-		&MockTestOptimizationClient{SkippableTests: skippableTests},
+		&MockTestOptimizationClient{
+			Settings:       testOptimizationSettings(true, true, false),
+			SkippableTests: skippableTests,
+		},
 		&MockTestSuiteDurationsClient{},
 		newDefaultMockCIProviderDetector(),
 	)
@@ -583,8 +598,9 @@ func TestTestPlanner_Setup_WithCIProvider(t *testing.T) {
 
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings: testOptimizationSettings(true, true, false),
 		SkippableTests: map[string]bool{
-			"TestSuite1.test1": true, // Skip test1 = 50% skippable
+			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite1", Name: "test1"}).FQN(): true, // Skip test1 = 50% skippable
 		},
 	}
 
@@ -1039,9 +1055,10 @@ func TestTestPlanner_PreparePlanningData_Success(t *testing.T) {
 	}
 
 	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings: testOptimizationSettings(true, true, false),
 		SkippableTests: map[string]bool{
-			"TestSuite1.test2.": true, // Skip test2
-			"TestSuite3.test4.": true, // Skip test4
+			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite1", Name: "test2"}).FQN(): true, // Skip test2
+			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite3", Name: "test4"}).FQN(): true, // Skip test4
 		},
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
@@ -1136,6 +1153,219 @@ func TestTestPlanner_PreparePlanningData_Success(t *testing.T) {
 
 	if !mockDurationsClient.Called {
 		t.Error("PreparePlanningData() should fetch test suite durations")
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_DisabledTestManagementTestsAreSkipped(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Module: "rspec", Suite: "Suite1", Name: "test1", Parameters: "", SuiteSourceFile: "spec/file1_spec.rb"},
+			{Module: "rspec", Suite: "Suite1", Name: "test2", Parameters: "", SuiteSourceFile: "spec/file1_spec.rb"},
+			{Module: "rspec", Suite: "Suite2", Name: "test3", Parameters: "", SuiteSourceFile: "spec/file2_spec.rb"},
+			{Module: "rspec", Suite: "Suite3", Name: "test4", Parameters: "", SuiteSourceFile: "spec/file3_spec.rb"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings: testOptimizationSettings(true, true, true),
+		SkippableTests: map[string]bool{
+			(&testoptimization.Test{Module: "rspec", Suite: "Suite1", Name: "test2"}).FQN(): true,
+		},
+		TestManagementTests: &net.TestManagementTestsResponseDataModules{
+			Modules: map[string]net.TestManagementTestsResponseDataSuites{
+				"rspec": {
+					Suites: map[string]net.TestManagementTestsResponseDataTests{
+						"Suite2": {
+							Tests: map[string]net.TestManagementTestsResponseDataTestProperties{
+								"test3": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+							},
+						},
+						"Suite3": {
+							Tests: map[string]net.TestManagementTestsResponseDataTestProperties{
+								"test4": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Quarantined: true}},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		mockOptimizationClient,
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.PreparePlanningData(ctx); err != nil {
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
+	}
+
+	suite1 := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite1"}]
+	if suite1.NumTests != 2 || suite1.NumTestsSkipped != 1 {
+		t.Errorf("Expected Suite1 to skip only the TIA-skippable test, got %+v", suite1)
+	}
+
+	suite2 := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite2"}]
+	if suite2.NumTests != 1 || suite2.NumTestsSkipped != 1 {
+		t.Errorf("Expected Suite2 disabled test to be skipped, got %+v", suite2)
+	}
+
+	suite3 := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite3"}]
+	if suite3.NumTests != 1 || suite3.NumTestsSkipped != 0 {
+		t.Errorf("Expected Suite3 quarantined test to remain runnable, got %+v", suite3)
+	}
+
+	if runner.planReport.SkippableTestsCount != 2 {
+		t.Errorf("Expected planner skip set to include TIA-skippable and disabled tests, got %d", runner.planReport.SkippableTestsCount)
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_ModuleQualifiedSkipsDoNotCrossModules(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			{Module: "module-a", Suite: "SharedSuite", Name: "same name", Parameters: "", SuiteSourceFile: "spec/module_a_spec.rb"},
+			{Module: "module-b", Suite: "SharedSuite", Name: "same name", Parameters: "", SuiteSourceFile: "spec/module_b_spec.rb"},
+			{Module: "module-c", Suite: "ManagedSuite", Name: "same name", Parameters: "", SuiteSourceFile: "spec/module_c_spec.rb"},
+			{Module: "module-d", Suite: "ManagedSuite", Name: "same name", Parameters: "", SuiteSourceFile: "spec/module_d_spec.rb"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings: testOptimizationSettings(true, true, true),
+		SkippableTests: map[string]bool{
+			(&testoptimization.Test{Module: "module-a", Suite: "SharedSuite", Name: "same name"}).FQN(): true,
+		},
+		TestManagementTests: &net.TestManagementTestsResponseDataModules{
+			Modules: map[string]net.TestManagementTestsResponseDataSuites{
+				"module-c": {
+					Suites: map[string]net.TestManagementTestsResponseDataTests{
+						"ManagedSuite": {
+							Tests: map[string]net.TestManagementTestsResponseDataTestProperties{
+								"same name": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		mockOptimizationClient,
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.PreparePlanningData(ctx); err != nil {
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
+	}
+
+	expectSkipped := func(module, suite string, skipped int) {
+		t.Helper()
+		aggregate := runner.suiteAggregates[testSuiteKey{Module: module, Suite: suite}]
+		if aggregate.NumTests != 1 || aggregate.NumTestsSkipped != skipped {
+			t.Errorf("Expected %s/%s to skip %d tests, got %+v", module, suite, skipped, aggregate)
+		}
+	}
+
+	expectSkipped("module-a", "SharedSuite", 1)
+	expectSkipped("module-b", "SharedSuite", 0)
+	expectSkipped("module-c", "ManagedSuite", 1)
+	expectSkipped("module-d", "ManagedSuite", 0)
+}
+
+func TestTestPlanner_PreparePlanningData_TestManagementDoesNotKeepFullDiscoveryWhenTIASkippingDisabled(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	mockFramework := &MockFramework{
+		FrameworkName:    "rspec",
+		TestFiles:        []string{"spec/file1_spec.rb", "spec/file2_spec.rb", "spec/file3_spec.rb"},
+		DiscoverTestsErr: errors.New("full discovery cancelled because TIA skipping is disabled"),
+		Tests: []testoptimization.Test{
+			{Module: "rspec", Suite: "Suite1", Name: "runnable", Parameters: "", SuiteSourceFile: "spec/file1_spec.rb"},
+			{Module: "rspec", Suite: "Suite1", Name: "disabled", Parameters: "", SuiteSourceFile: "spec/file1_spec.rb"},
+			{Module: "rspec", Suite: "Suite2", Name: "not_applied", Parameters: "", SuiteSourceFile: "spec/file2_spec.rb"},
+			{Module: "rspec", Suite: "Suite3", Name: "disabled", Parameters: "", SuiteSourceFile: "spec/file3_spec.rb"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings: testOptimizationSettings(false, false, true),
+		SkippableTests: map[string]bool{
+			(&testoptimization.Test{Module: "rspec", Suite: "Suite2", Name: "not_applied"}).FQN(): true,
+		},
+		TestManagementTests: &net.TestManagementTestsResponseDataModules{
+			Modules: map[string]net.TestManagementTestsResponseDataSuites{
+				"rspec": {
+					Suites: map[string]net.TestManagementTestsResponseDataTests{
+						"Suite1": {
+							Tests: map[string]net.TestManagementTestsResponseDataTestProperties{
+								"disabled": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+							},
+						},
+						"Suite3": {
+							Tests: map[string]net.TestManagementTestsResponseDataTestProperties{
+								"disabled": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		mockOptimizationClient,
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.PreparePlanningData(ctx); err != nil {
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
+	}
+
+	if len(runner.suiteAggregates) != 0 {
+		t.Errorf("Expected fast discovery fallback without full-discovery suite aggregates, got %+v", runner.suiteAggregates)
+	}
+
+	if _, ok := runner.testFileWeights["spec/file3_spec.rb"]; !ok {
+		t.Errorf("Expected disabled test management file to remain runnable in fast discovery fallback, got %v", runner.testFileWeights)
+	}
+
+	if len(runner.testFileWeights) != len(mockFramework.TestFiles) {
+		t.Errorf("Expected fast discovery fallback to keep all discovered files, got %v", runner.testFileWeights)
+	}
+
+	if runner.planReport.SkippableTestsCount != 2 {
+		t.Errorf("Expected planner skip set to include fetched disabled tests for reporting, got %d", runner.planReport.SkippableTestsCount)
 	}
 }
 
@@ -1265,6 +1495,7 @@ func TestTestPlanner_PreparePlanningData_SkippablePercentageUsesDurations(t *tes
 	}
 	skippedTest := mockFramework.Tests[0]
 	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings:       testOptimizationSettings(true, true, false),
 		SkippableTests: map[string]bool{skippedTest.FQN(): true},
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
@@ -1959,6 +2190,7 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotReintroduceFullySkippedSu
 		Framework: mockFramework,
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings:       testOptimizationSettings(true, true, false),
 		SkippableTests: map[string]bool{skippedTest.FQN(): true},
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
@@ -2013,6 +2245,7 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotDuplicateDiscoveredSource
 		Framework: mockFramework,
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings:       testOptimizationSettings(true, true, false),
 		SkippableTests: map[string]bool{skippedTest.FQN(): true},
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
@@ -2281,8 +2514,8 @@ func TestTestPlanner_PreparePlanningData_AllTestsSkipped(t *testing.T) {
 
 	mockFramework := &MockFramework{
 		Tests: []testoptimization.Test{
-			{Suite: "Suite1", Name: "test1", Parameters: "", SuiteSourceFile: "file1.rb"},
-			{Suite: "Suite2", Name: "test2", Parameters: "", SuiteSourceFile: "file2.rb"},
+			{Module: "rspec", Suite: "Suite1", Name: "test1", Parameters: "", SuiteSourceFile: "file1.rb"},
+			{Module: "rspec", Suite: "Suite2", Name: "test2", Parameters: "", SuiteSourceFile: "file2.rb"},
 		},
 	}
 
@@ -2293,9 +2526,10 @@ func TestTestPlanner_PreparePlanningData_AllTestsSkipped(t *testing.T) {
 
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings: testOptimizationSettings(true, true, false),
 		SkippableTests: map[string]bool{
-			"Suite1.test1.": true,
-			"Suite2.test2.": true,
+			(&testoptimization.Test{Module: "rspec", Suite: "Suite1", Name: "test1"}).FQN(): true,
+			(&testoptimization.Test{Module: "rspec", Suite: "Suite2", Name: "test2"}).FQN(): true,
 		},
 	}
 
@@ -2807,6 +3041,7 @@ func TestPreparePlanningData_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd(t 
 		Suite: "Spree::Role at ./spec/models/role_spec.rb", Name: "should have permissions", Parameters: "",
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings: testOptimizationSettings(true, true, false),
 		SkippableTests: map[string]bool{
 			roleTest1.FQN(): true,
 			roleTest2.FQN(): true,

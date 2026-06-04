@@ -50,7 +50,7 @@ func newRawResponseTestServer(t *testing.T, responses map[string]string) *httpte
 func TestClientStoresRawBackendResponses(t *testing.T) {
 	settingsResponse := `{"data":{"id":"settings-id","type":"ci_app_test_service_libraries_settings","attributes":{"itr_enabled":true,"tests_skipping":true,"known_tests_enabled":true,"test_management":{"enabled":true,"attempt_to_fix_retries":3}}}}`
 	knownTestsResponse := `{"data":{"id":"known-tests-id","type":"ci_app_libraries_tests_request","attributes":{"tests":{"module-a":{"suite-a":["test-a"]}}}}}`
-	skippableTestsResponse := `{"meta":{"correlation_id":"correlation-id"},"data":[{"id":"skippable-id","type":"test","attributes":{"suite":"suite-a","name":"test-a","parameters":"params","configurations":{"os.platform":"linux","os.architecture":"amd64","runtime.name":"ruby","runtime.version":"3.3.0"}}}]}`
+	skippableTestsResponse := `{"meta":{"correlation_id":"correlation-id"},"data":[{"id":"skippable-id","type":"test","attributes":{"module":"module-a","suite":"suite-a","name":"test-a","parameters":"params","configurations":{"os.platform":"linux","os.architecture":"amd64","runtime.name":"ruby","runtime.version":"3.3.0"}}}]}`
 	testManagementResponse := `{"data":{"id":"test-management-id","type":"ci_app_libraries_tests_request","attributes":{"modules":{"module-a":{"suites":{"suite-a":{"tests":{"test-a":{"properties":{"quarantined":true,"disabled":false,"attempt_to_fix":true}}}}}}}}}}`
 
 	server := newRawResponseTestServer(t, map[string]string{
@@ -89,7 +89,7 @@ func TestClientStoresRawBackendResponses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSkippableTests() returned error: %v", err)
 	}
-	if correlationID != "correlation-id" || skippableTests["suite-a"]["test-a"][0].Parameters != "params" {
+	if correlationID != "correlation-id" || !skippableTests["module-a.suite-a.test-a.params"] {
 		t.Fatalf("GetSkippableTests() returned unexpected processed data: correlationID=%s skippableTests=%+v", correlationID, skippableTests)
 	}
 	if string(client.GetSkippableTestsRawResponse()) != skippableTestsResponse {
