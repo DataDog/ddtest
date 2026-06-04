@@ -106,23 +106,21 @@ func TestTestRunner_PrepareTestOptimization_Success(t *testing.T) {
 	}
 
 	expectedFiles := map[string]bool{
-		"test/file1_test.rb":     true, // test1 is not skipped
-		"test/file2_test.rb":     true, // test3 is not skipped
-		"test/file3_test.rb":     true, // test4 is skipped but the source file is discovered
-		"test/fast_only_test.rb": true, // from fast discovery only
+		"test/file1_test.rb": true, // test1 is not skipped
+		"test/file2_test.rb": true, // test3 is not skipped
+		"test/file3_test.rb": true, // test4 is skipped but the source file is discovered
 	}
 
 	if len(runner.testFiles) != len(expectedFiles) {
 		t.Errorf("PrepareTestOptimization() should result in %d test files, got %d", len(expectedFiles), len(runner.testFiles))
 	}
 
-	if weightedFiles := runner.weightedTestFiles(); len(weightedFiles) != 3 {
-		t.Errorf("Expected weighted files to omit fully skipped file and keep 3 files, got %v", weightedFiles)
+	if weightedFiles := runner.weightedTestFiles(); len(weightedFiles) != 2 {
+		t.Errorf("Expected weighted files to omit fully skipped and fast-only files, got %v", weightedFiles)
 	}
 	expectedTestFileWeights := map[string]int{
-		"test/file1_test.rb":     3,
-		"test/file2_test.rb":     defaultTestFileWeight,
-		"test/fast_only_test.rb": defaultTestFileWeight,
+		"test/file1_test.rb": 3,
+		"test/file2_test.rb": defaultTestFileWeight,
 	}
 	if len(runner.testFileWeights) != len(expectedTestFileWeights) {
 		t.Errorf("Expected precomputed test file weights to have %d entries, got %v", len(expectedTestFileWeights), runner.testFileWeights)
@@ -154,10 +152,6 @@ func TestTestRunner_PrepareTestOptimization_Success(t *testing.T) {
 	expectedFile2Weight := int(time.Second / time.Millisecond)
 	if weight, ok := runner.testFileWeight("test/file2_test.rb"); !ok || weight != expectedFile2Weight {
 		t.Errorf("Expected file2 weight to use count fallback %d, got weight=%d ok=%t", expectedFile2Weight, weight, ok)
-	}
-
-	if weight, ok := runner.testFileWeight("test/fast_only_test.rb"); !ok || weight != expectedFile2Weight {
-		t.Errorf("Expected fast-only file weight to use default %d, got weight=%d ok=%t", expectedFile2Weight, weight, ok)
 	}
 
 	// Verify skippable percentage was calculated correctly (2 out of 4 tests skipped = 50%)
@@ -812,6 +806,109 @@ func TestTestRunner_PrepareTestOptimization_IgnoresBackendDurationsForUndiscover
 	}
 }
 
+func TestTestRunner_PrepareTestOptimization_FullDiscoveryIgnoresFastOnlyFiles(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		TestFiles:     []string{"spec/discovered_spec.rb", "spec/fast_only_spec.rb"},
+		Tests: []testoptimization.Test{
+			{
+				Module:          "rspec",
+				Suite:           "DiscoveredSuite",
+				Name:            "test1",
+				SuiteSourceFile: "spec/discovered_spec.rb",
+			},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+		},
+		Framework: mockFramework,
+	}
+
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, &MockTestOptimizationClient{}, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not fail, got: %v", err)
+	}
+
+	if _, ok := runner.testFiles["spec/discovered_spec.rb"]; !ok {
+		t.Fatalf("Expected full-discovered file to be planned, got %v", runner.testFiles)
+	}
+	if _, ok := runner.testFiles["spec/fast_only_spec.rb"]; ok {
+		t.Errorf("Expected fast-only file to be ignored after successful full discovery, got %v", runner.testFiles)
+	}
+	if _, ok := runner.testFileWeights["spec/fast_only_spec.rb"]; ok {
+		t.Errorf("Expected fast-only file not to have a weight, got %v", runner.testFileWeights)
+	}
+	if _, ok := runner.testFileDurationSources["spec/fast_only_spec.rb"]; ok {
+		t.Errorf("Expected fast-only file not to have a duration source, got %v", runner.testFileDurationSources)
+	}
+}
+
+func TestTestRunner_PrepareTestOptimization_FullDiscoveryDoesNotReintroduceFastOnlyBackendSuite(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+	ciUtils.AddCITagsMap(map[string]string{ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest"})
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		TestFiles:     []string{"spec/discovered_spec.rb", "spec/fast_only_spec.rb"},
+		Tests: []testoptimization.Test{
+			{
+				Module:          "rspec",
+				Suite:           "DiscoveredSuite",
+				Name:            "test1",
+				SuiteSourceFile: "spec/discovered_spec.rb",
+			},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags: map[string]string{
+			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+		},
+		Framework: mockFramework,
+	}
+	mockDurationsClient := &MockTestSuiteDurationsClient{
+		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+			"rspec": {
+				"FastOnlySuite": {
+					SourceFile: "spec/fast_only_spec.rb",
+					Duration:   testoptimization.DurationPercentiles{P50: "42000000", P90: "84000000"},
+				},
+			},
+		},
+	}
+
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, &MockTestOptimizationClient{}, mockDurationsClient, newDefaultMockCIProviderDetector())
+
+	err := runner.PrepareTestOptimization(ctx)
+	if err != nil {
+		t.Fatalf("PrepareTestOptimization() should not fail, got: %v", err)
+	}
+	if !mockDurationsClient.Called {
+		t.Fatal("Expected durations client to be called")
+	}
+
+	if _, ok := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "FastOnlySuite"}]; ok {
+		t.Errorf("Expected backend suite for fast-only file not to be added, got aggregates %v", runner.suiteAggregates)
+	}
+	if _, ok := runner.testFiles["spec/fast_only_spec.rb"]; ok {
+		t.Errorf("Expected fast-only file not to be planned despite backend duration, got %v", runner.testFiles)
+	}
+	if _, ok := runner.testFileWeights["spec/fast_only_spec.rb"]; ok {
+		t.Errorf("Expected fast-only file not to be runnable despite backend duration, got %v", runner.testFileWeights)
+	}
+}
+
 func TestTestRunner_PrepareTestOptimization_FastDiscoveryDoesNotRunStaleBackendFilesWhenSkippingDisabled(t *testing.T) {
 	ctx := context.Background()
 	ciUtils.ResetCITags()
@@ -1170,9 +1267,11 @@ func TestTestRunner_PrepareTestOptimization_TestDiscoveryError(t *testing.T) {
 
 func TestTestRunner_PrepareTestOptimization_EmptyTests(t *testing.T) {
 	ctx := context.Background()
+	logs := captureLogs(t)
 
 	mockFramework := &MockFramework{
-		Tests: []testoptimization.Test{}, // Empty test list
+		TestFiles: []string{"file1.rb"},      // Fast discovery should be used when full discovery returns no tests.
+		Tests:     []testoptimization.Test{}, // Empty test list
 	}
 
 	mockPlatform := &MockPlatform{
@@ -1191,8 +1290,18 @@ func TestTestRunner_PrepareTestOptimization_EmptyTests(t *testing.T) {
 		t.Errorf("PrepareTestOptimization() should handle empty tests, got: %v", err)
 	}
 
-	if len(runner.testFiles) != 0 {
-		t.Errorf("PrepareTestOptimization() should result in 0 test files for empty tests, got %d", len(runner.testFiles))
+	if len(runner.testFiles) != 1 {
+		t.Errorf("PrepareTestOptimization() should use fast discovery fallback for empty full discovery, got %d files", len(runner.testFiles))
+	}
+	if _, ok := runner.testFiles["file1.rb"]; !ok {
+		t.Errorf("PrepareTestOptimization() should include fast-discovered file after empty full discovery, got %v", runner.testFiles)
+	}
+	if _, ok := runner.testFileWeights["file1.rb"]; !ok {
+		t.Errorf("PrepareTestOptimization() should schedule fast-discovered file after empty full discovery, got %v", runner.testFileWeights)
+	}
+	if !strings.Contains(logs.String(), "level=WARN") ||
+		!strings.Contains(logs.String(), "Full test discovery returned no tests") {
+		t.Errorf("Expected WARN log for empty full discovery, got logs: %s", logs.String())
 	}
 
 	// Division by zero should be handled gracefully

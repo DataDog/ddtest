@@ -114,6 +114,13 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 			slog.Warn("Full test discovery failed or was cancelled", "error", discErr)
 			return nil // Don't fail the entire process, we have fast discovery as fallback
 		}
+		if len(res) == 0 {
+			fullDiscoveryErr = fmt.Errorf("full test discovery returned no tests")
+			slog.Warn("Full test discovery returned no tests; using fast test file discovery fallback",
+				"duration", time.Since(startTime),
+				"error", fullDiscoveryErr)
+			return nil
+		}
 		discoveredTests = res
 		fullDiscoverySucceeded = true
 		slog.Info("Discovered local tests", "duration", time.Since(startTime), "count", len(discoveredTests))
@@ -160,12 +167,13 @@ func (tr *TestRunner) PrepareTestOptimization(ctx context.Context) error {
 	// This collection is used to calculate the skippable percentage and the weighted test files.
 	if fullDiscoverySucceeded {
 		tr.processDiscoveredTests(discoveredTests, skippableTests, subdirPrefix)
+		slog.Info("Full test discovery succeeded; using full discovery results and ignoring fast-discovered-only files",
+			"fastDiscoveredTestFilesCount", len(discoveredTestFiles))
 	} else {
-		slog.Info("Full test discovery did not run (failed or test impact analysis is not enabled)")
+		slog.Info("Full test discovery did not run or failed; using fast test file discovery fallback",
+			"fastDiscoveredTestFilesCount", len(discoveredTestFiles))
+		tr.processDiscoveredTestFiles(discoveredTestFiles)
 	}
-
-	// Add local test files conforming to test framework pattern (spec/*_spec.rb for example)
-	tr.processDiscoveredTestFiles(discoveredTestFiles)
 
 	// Enrich test suite aggregates with the duration data we got from the backend
 	tr.resolveSuiteDurations()
@@ -275,7 +283,7 @@ func (tr *TestRunner) processDiscoveredTests(
 ) {
 	discoveredTestsCount := len(discoveredTests)
 	if discoveredTestsCount == 0 {
-		slog.Info("Full test discovery returned no tests, using only fast test discovery results")
+		slog.Info("Full test discovery returned no tests")
 		return
 	}
 
