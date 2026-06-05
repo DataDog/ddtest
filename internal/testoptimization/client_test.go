@@ -314,7 +314,7 @@ func TestDatadogClient_StoreCacheAndExit_SkipsHTTPCacheWithoutResponse(t *testin
 	assertFileDoesNotExist(t, constants.HTTPCacheDir)
 }
 
-func TestTest_FQN(t *testing.T) {
+func TestTest_DatadogTestId(t *testing.T) {
 	testCases := []struct {
 		module     string
 		suite      string
@@ -335,10 +335,37 @@ func TestTest_FQN(t *testing.T) {
 			Name:       tc.test,
 			Parameters: tc.parameters,
 		}
+		result := test.DatadogTestId()
+		if result != tc.expected {
+			t.Errorf("Test{Module: %q, Suite: %q, Name: %q, Parameters: %q}.DatadogTestId() = %q, expected %q",
+				tc.module, tc.suite, tc.test, tc.parameters, result, tc.expected)
+		}
+	}
+}
+
+func TestTest_FQN(t *testing.T) {
+	testCases := []struct {
+		module   string
+		suite    string
+		test     string
+		expected string
+	}{
+		{"module", "TestSuite", "testMethod", "module.TestSuite.testMethod"},
+		{"module", "com.example.TestClass", "test_with_underscores", "module.com.example.TestClass.test_with_underscores"},
+		{"", "", "test", "..test"},
+		{"module", "suite", "", "module.suite."},
+	}
+
+	for _, tc := range testCases {
+		test := Test{
+			Module: tc.module,
+			Suite:  tc.suite,
+			Name:   tc.test,
+		}
 		result := test.FQN()
 		if result != tc.expected {
-			t.Errorf("Test{Module: %q, Suite: %q, Name: %q, Parameters: %q}.FQN() = %q, expected %q",
-				tc.module, tc.suite, tc.test, tc.parameters, result, tc.expected)
+			t.Errorf("Test{Module: %q, Suite: %q, Name: %q}.FQN() = %q, expected %q",
+				tc.module, tc.suite, tc.test, result, tc.expected)
 		}
 	}
 }
@@ -369,8 +396,8 @@ func TestDisabledTestsFromTestManagementData(t *testing.T) {
 	})
 
 	expected := map[string]bool{
-		"module-a.suite-a.disabled.":      true,
-		"module-b.suite-b.also disabled.": true,
+		"module-a.suite-a.disabled":      true,
+		"module-b.suite-b.also disabled": true,
 	}
 	if !maps.Equal(disabledTests, expected) {
 		t.Errorf("DisabledTestsFromTestManagementData() = %v, expected %v", disabledTests, expected)

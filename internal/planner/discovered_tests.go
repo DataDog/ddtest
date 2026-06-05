@@ -8,7 +8,7 @@ import (
 
 func (tp *TestPlanner) recordFullDiscoveryResults(
 	discoveredTests []testoptimization.Test,
-	skippableTests map[string]bool,
+	skippableTests testSkipper,
 	subdirPrefix string,
 ) {
 	discoveredTestsCount := len(discoveredTests)
@@ -25,8 +25,8 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 			tp.testFiles[normalizedSourceFile] = struct{}{}
 		}
 
-		if !skippableTests[test.FQN()] {
-			slog.Debug("Test is not skipped", "test", test.FQN(), "sourceFile", test.SuiteSourceFile)
+		if !skippableTests.Contains(test) {
+			slog.Debug("Test is not skipped", "test", test.DatadogTestId(), "sourceFile", test.SuiteSourceFile)
 			recordRunnableTest(tp.suiteAggregates, test, normalizedSourceFile)
 		} else {
 			recordSkippedTest(tp.suiteAggregates, test, normalizedSourceFile)
@@ -35,6 +35,26 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 	}
 
 	slog.Info("Processed the discovered tests", "skippableTestsCount", skippableTestsCount, "discoveredTestsCount", discoveredTestsCount)
+}
+
+type testSkipper struct {
+	tiaSkippableTests map[string]bool
+	disabledTests     map[string]bool
+}
+
+func newTestSkipper(tiaSkippableTests, disabledTests map[string]bool) testSkipper {
+	return testSkipper{
+		tiaSkippableTests: tiaSkippableTests,
+		disabledTests:     disabledTests,
+	}
+}
+
+func (s testSkipper) Contains(test testoptimization.Test) bool {
+	return s.tiaSkippableTests[test.DatadogTestId()] || s.disabledTests[test.FQN()]
+}
+
+func (s testSkipper) Count() int {
+	return len(s.tiaSkippableTests) + len(s.disabledTests)
 }
 
 func (tp *TestPlanner) recordFastDiscoveryFallbackFiles(discoveredTestFiles []string) {

@@ -144,7 +144,7 @@ func (f highSkippableIntegrationFixture) nonFullySkippedTestFiles() []string {
 		sourceFile := strings.TrimPrefix(test.SuiteSourceFile, "core/")
 		counts := countsByFile[sourceFile]
 		counts.total++
-		if skippableTests[test.FQN()] {
+		if skippableTests[test.DatadogTestId()] {
 			counts.skipped++
 		}
 		countsByFile[sourceFile] = counts

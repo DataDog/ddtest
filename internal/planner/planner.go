@@ -272,7 +272,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	discoveryCtx, cancelDiscovery := context.WithCancel(ctx)
 	defer cancelDiscovery()
 
-	var skippedTests map[string]bool
+	var skippedTests testSkipper
 	var discoveredTests []testoptimization.Test
 	var discoveredTestFiles []string
 	var fullDiscoverySucceeded bool
@@ -310,7 +310,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		tp.testSuiteDurations = tp.durationsClient.GetTestSuiteDurations()
 
 		skippedTests = tp.fetchTestsToSkip(tiaSkippingEnabled)
-		tp.planReport.SkippableTestsCount = len(skippedTests)
+		tp.planReport.SkippableTestsCount = skippedTests.Count()
 
 		return nil
 	})
@@ -403,7 +403,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	return nil
 }
 
-func (tp *TestPlanner) fetchTestsToSkip(tiaSkippingEnabled bool) map[string]bool {
+func (tp *TestPlanner) fetchTestsToSkip(tiaSkippingEnabled bool) testSkipper {
 	startTime := time.Now()
 	slog.Info("Fetching tests to skip from Datadog...")
 
@@ -417,14 +417,12 @@ func (tp *TestPlanner) fetchTestsToSkip(tiaSkippingEnabled bool) map[string]bool
 	tp.planReport.ManagedFlakyTests = newManagedFlakyTestsReport(testManagementTests)
 
 	disabledTests := testoptimization.DisabledTestsFromTestManagementData(testManagementTests)
-	skippedTests := maps.Clone(tiaSkippableTests)
-	maps.Copy(skippedTests, disabledTests)
 	slog.Info("Fetched tests to skip",
 		"duration", time.Since(startTime),
 		"tiaSkippableTestsCount", len(tiaSkippableTests),
 		"disabledTestsCount", len(disabledTests))
 
-	return skippedTests
+	return newTestSkipper(tiaSkippableTests, disabledTests)
 }
 
 func (tp *TestPlanner) estimateDiscoveredSuiteDurations() {

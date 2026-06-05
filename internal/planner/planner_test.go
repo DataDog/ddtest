@@ -369,8 +369,8 @@ func TestTestPlanner_Setup_WithParallelRunners(t *testing.T) {
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
 		SkippableTests: map[string]bool{
-			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite1", Name: "test2"}).FQN(): true, // Skip test2
-			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite4", Name: "test5"}).FQN(): true, // Skip test5
+			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite1", Name: "test2"}).DatadogTestId(): true, // Skip test2
+			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite4", Name: "test5"}).DatadogTestId(): true, // Skip test5
 		},
 	}
 
@@ -528,7 +528,7 @@ func TestTestPlanner_Plan_ChoosesParallelismFromFanoutAdjustedSplit(t *testing.T
 			}
 			tests = append(tests, test)
 			if testIndex > 0 {
-				skippableTests[test.FQN()] = true
+				skippableTests[test.DatadogTestId()] = true
 			}
 		}
 	}
@@ -600,7 +600,7 @@ func TestTestPlanner_Setup_WithCIProvider(t *testing.T) {
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
 		SkippableTests: map[string]bool{
-			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite1", Name: "test1"}).FQN(): true, // Skip test1 = 50% skippable
+			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite1", Name: "test1"}).DatadogTestId(): true, // Skip test1 = 50% skippable
 		},
 	}
 
@@ -1057,8 +1057,8 @@ func TestTestPlanner_PreparePlanningData_Success(t *testing.T) {
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
 		SkippableTests: map[string]bool{
-			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite1", Name: "test2"}).FQN(): true, // Skip test2
-			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite3", Name: "test4"}).FQN(): true, // Skip test4
+			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite1", Name: "test2"}).DatadogTestId(): true, // Skip test2
+			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite3", Name: "test4"}).DatadogTestId(): true, // Skip test4
 		},
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
@@ -1166,7 +1166,7 @@ func TestTestPlanner_PreparePlanningData_DisabledTestManagementTestsAreSkipped(t
 		Tests: []testoptimization.Test{
 			{Module: "rspec", Suite: "Suite1", Name: "test1", Parameters: "", SuiteSourceFile: "spec/file1_spec.rb"},
 			{Module: "rspec", Suite: "Suite1", Name: "test2", Parameters: "", SuiteSourceFile: "spec/file1_spec.rb"},
-			{Module: "rspec", Suite: "Suite2", Name: "test3", Parameters: "", SuiteSourceFile: "spec/file2_spec.rb"},
+			{Module: "rspec", Suite: "Suite2", Name: "test3", Parameters: `{"arguments":{},"metadata":{"scoped_id":"1:2"}}`, SuiteSourceFile: "spec/file2_spec.rb"},
 			{Module: "rspec", Suite: "Suite3", Name: "test4", Parameters: "", SuiteSourceFile: "spec/file3_spec.rb"},
 		},
 	}
@@ -1178,7 +1178,7 @@ func TestTestPlanner_PreparePlanningData_DisabledTestManagementTestsAreSkipped(t
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, true),
 		SkippableTests: map[string]bool{
-			(&testoptimization.Test{Module: "rspec", Suite: "Suite1", Name: "test2"}).FQN(): true,
+			(&testoptimization.Test{Module: "rspec", Suite: "Suite1", Name: "test2"}).DatadogTestId(): true,
 		},
 		TestManagementTests: &net.TestManagementTestsResponseDataModules{
 			Modules: map[string]net.TestManagementTestsResponseDataSuites{
@@ -1231,6 +1231,62 @@ func TestTestPlanner_PreparePlanningData_DisabledTestManagementTestsAreSkipped(t
 	}
 }
 
+func TestTestPlanner_PreparePlanningData_TIASkipsRequireParametersMatch(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	parameterizedRunnableTest := testoptimization.Test{
+		Module:          "rspec",
+		Suite:           "Suite1",
+		Name:            "same name",
+		Parameters:      `{"arguments":{},"metadata":{"scoped_id":"1:1"}}`,
+		SuiteSourceFile: "spec/file1_spec.rb",
+	}
+	parameterizedSkippedTest := testoptimization.Test{
+		Module:          "rspec",
+		Suite:           "Suite1",
+		Name:            "same name",
+		Parameters:      `{"arguments":{},"metadata":{"scoped_id":"1:2"}}`,
+		SuiteSourceFile: "spec/file1_spec.rb",
+	}
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		Tests: []testoptimization.Test{
+			parameterizedRunnableTest,
+			parameterizedSkippedTest,
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings: testOptimizationSettings(true, true, false),
+		SkippableTests: map[string]bool{
+			(&testoptimization.Test{Module: "rspec", Suite: "Suite1", Name: "same name"}).DatadogTestId(): true,
+			parameterizedSkippedTest.DatadogTestId():                                                      true,
+		},
+	}
+
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		mockOptimizationClient,
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.PreparePlanningData(ctx); err != nil {
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
+	}
+
+	aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite1"}]
+	if aggregate.NumTests != 2 || aggregate.NumTestsSkipped != 1 {
+		t.Errorf("Expected only the exact TIA parameter match to be skipped, got %+v", aggregate)
+	}
+}
+
 func TestTestPlanner_PreparePlanningData_ModuleQualifiedSkipsDoNotCrossModules(t *testing.T) {
 	ctx := context.Background()
 	ciUtils.ResetCITags()
@@ -1253,7 +1309,7 @@ func TestTestPlanner_PreparePlanningData_ModuleQualifiedSkipsDoNotCrossModules(t
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, true),
 		SkippableTests: map[string]bool{
-			(&testoptimization.Test{Module: "module-a", Suite: "SharedSuite", Name: "same name"}).FQN(): true,
+			(&testoptimization.Test{Module: "module-a", Suite: "SharedSuite", Name: "same name"}).DatadogTestId(): true,
 		},
 		TestManagementTests: &net.TestManagementTestsResponseDataModules{
 			Modules: map[string]net.TestManagementTestsResponseDataSuites{
@@ -1319,7 +1375,7 @@ func TestTestPlanner_PreparePlanningData_TestManagementDoesNotKeepFullDiscoveryW
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(false, false, true),
 		SkippableTests: map[string]bool{
-			(&testoptimization.Test{Module: "rspec", Suite: "Suite2", Name: "not_applied"}).FQN(): true,
+			(&testoptimization.Test{Module: "rspec", Suite: "Suite2", Name: "not_applied"}).DatadogTestId(): true,
 		},
 		TestManagementTests: &net.TestManagementTestsResponseDataModules{
 			Modules: map[string]net.TestManagementTestsResponseDataSuites{
@@ -1496,7 +1552,7 @@ func TestTestPlanner_PreparePlanningData_SkippablePercentageUsesDurations(t *tes
 	skippedTest := mockFramework.Tests[0]
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings:       testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{skippedTest.FQN(): true},
+		SkippableTests: map[string]bool{skippedTest.DatadogTestId(): true},
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
 		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
@@ -2191,7 +2247,7 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotReintroduceFullySkippedSu
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings:       testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{skippedTest.FQN(): true},
+		SkippableTests: map[string]bool{skippedTest.DatadogTestId(): true},
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
 		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
@@ -2246,7 +2302,7 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotDuplicateDiscoveredSource
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings:       testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{skippedTest.FQN(): true},
+		SkippableTests: map[string]bool{skippedTest.DatadogTestId(): true},
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
 		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
@@ -2528,8 +2584,8 @@ func TestTestPlanner_PreparePlanningData_AllTestsSkipped(t *testing.T) {
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
 		SkippableTests: map[string]bool{
-			(&testoptimization.Test{Module: "rspec", Suite: "Suite1", Name: "test1"}).FQN(): true,
-			(&testoptimization.Test{Module: "rspec", Suite: "Suite2", Name: "test2"}).FQN(): true,
+			(&testoptimization.Test{Module: "rspec", Suite: "Suite1", Name: "test1"}).DatadogTestId(): true,
+			(&testoptimization.Test{Module: "rspec", Suite: "Suite2", Name: "test2"}).DatadogTestId(): true,
 		},
 	}
 
@@ -3043,8 +3099,8 @@ func TestPreparePlanningData_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd(t 
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
 		SkippableTests: map[string]bool{
-			roleTest1.FQN(): true,
-			roleTest2.FQN(): true,
+			roleTest1.DatadogTestId(): true,
+			roleTest2.DatadogTestId(): true,
 		},
 	}
 
