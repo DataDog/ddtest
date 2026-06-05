@@ -3,6 +3,7 @@ package planner
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -55,7 +56,7 @@ func printDDTestSettingsReport(w io.Writer, config *settings.Config) {
 	reportFprintf(w, "  Min parallelism: %s\n", formatCount(config.MinParallelism))
 	reportFprintf(w, "  Max parallelism: %s\n", formatCount(config.MaxParallelism))
 	reportFprintf(w, "  CI job overhead: %s\n", formatDuration(config.ParallelRunnerOverhead))
-	reportFprintf(w, "  Worker env: %s\n", valueOrNotSet(config.WorkerEnv))
+	reportFprintf(w, "  Worker env: %s\n", formatWorkerEnvKeys(config.WorkerEnv))
 	reportFprintf(w, "  CI node: %s\n", formatCount(config.CiNode))
 	reportFprintf(w, "  CI node workers: %s\n", formatCount(config.CiNodeWorkers))
 	reportFprintf(w, "  Command: %s\n", valueOrNotSet(config.Command))
@@ -165,6 +166,42 @@ func formatScheduledTestSuiteCount(count int) string {
 		return "1 dedicated runner"
 	}
 	return formatCount(count) + " dedicated runners"
+}
+
+func formatWorkerEnvKeys(workerEnv string) string {
+	keys := parseWorkerEnvKeys(workerEnv)
+	if len(keys) == 0 {
+		return "not set"
+	}
+	return strings.Join(keys, ", ")
+}
+
+func parseWorkerEnvKeys(workerEnv string) []string {
+	if strings.TrimSpace(workerEnv) == "" {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	keys := make([]string, 0)
+	for pair := range strings.SplitSeq(workerEnv, ";") {
+		key, _, ok := strings.Cut(pair, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+
+	slices.Sort(keys)
+	return keys
 }
 
 func reportFprintln(w io.Writer, args ...any) {

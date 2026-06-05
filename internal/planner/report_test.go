@@ -39,7 +39,7 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 			MinParallelism:         2,
 			MaxParallelism:         8,
 			ParallelRunnerOverhead: 25 * time.Second,
-			WorkerEnv:              "RAILS_ENV=test",
+			WorkerEnv:              "RAILS_ENV=test;DATABASE_PASSWORD=secret",
 			CiNode:                 -1,
 			CiNodeWorkers:          2,
 			Command:                "bundle exec rspec",
@@ -136,7 +136,7 @@ DDTest settings
   Min parallelism: 2
   Max parallelism: 8
   CI job overhead: 25s
-  Worker env: RAILS_ENV=test
+  Worker env: DATABASE_PASSWORD, RAILS_ENV
   CI node: -1
   CI node workers: 2
   Command: bundle exec rspec
@@ -259,6 +259,17 @@ func TestReportSummaries(t *testing.T) {
 	})
 	if managed.Total != 3 || managed.Quarantined != 1 || managed.Disabled != 1 || managed.AttemptToFix != 1 {
 		t.Errorf("unexpected managed flaky test summary: %+v", managed)
+	}
+}
+
+func TestFormatWorkerEnvKeys(t *testing.T) {
+	report := formatWorkerEnvKeys("TOKEN=secret; RAILS_ENV = test ;BAD_NO_EQUALS;=NO_KEY;TOKEN=other")
+
+	if report != "RAILS_ENV, TOKEN" {
+		t.Fatalf("unexpected worker env report: %s", report)
+	}
+	if strings.Contains(report, "secret") || strings.Contains(report, "test") || strings.Contains(report, "other") {
+		t.Fatalf("worker env report leaked values: %s", report)
 	}
 }
 
