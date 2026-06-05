@@ -132,6 +132,15 @@ func (m *MockFramework) GetRunTestsCalls() []RunTestsCall {
 	return slices.Clone(m.RunTestsCalls)
 }
 
+type longRunningDiscoveryFramework struct {
+	MockFramework
+}
+
+func (m *longRunningDiscoveryFramework) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 // MockTestOptimizationClient mocks the test optimization client
 type MockTestOptimizationClient struct {
 	InitializeCalled    bool
@@ -248,6 +257,20 @@ func testOptimizationSettings(tiaEnabled, testsSkipping, testManagementEnabled b
 	}
 	settings.TestManagement.Enabled = testManagementEnabled
 	return settings
+}
+
+func testOptimizationClientRequiringFullDiscovery() *MockTestOptimizationClient {
+	unmatchedSkippableTest := testoptimization.Test{
+		Module: "rspec",
+		Suite:  "UnmatchedSuite",
+		Name:   "unmatched",
+	}
+	return &MockTestOptimizationClient{
+		Settings: testOptimizationSettings(true, true, false),
+		SkippableTests: map[string]bool{
+			unmatchedSkippableTest.DatadogTestId(): true,
+		},
+	}
 }
 
 func TestNew(t *testing.T) {
@@ -419,6 +442,7 @@ func TestTestPlanner_Plan_WritesManifestAndRunnerLayout(t *testing.T) {
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
+		TestFiles:     []string{"test/file1_test.rb", "test/file2_test.rb"},
 		Tests: []testoptimization.Test{
 			{Module: "rspec", Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
 			{Module: "rspec", Suite: "TestSuite2", Name: "test2", Parameters: "", SuiteSourceFile: "test/file2_test.rb"},
@@ -750,6 +774,7 @@ func TestTestPlanner_Setup_WithTestSplit(t *testing.T) {
 		// Setup mocks for single runner scenario
 		mockFramework := &MockFramework{
 			FrameworkName: "rspec",
+			TestFiles:     []string{"test/file1_test.rb", "test/file2_test.rb"},
 			Tests: []testoptimization.Test{
 				{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
 				{Suite: "TestSuite2", Name: "test2", Parameters: "", SuiteSourceFile: "test/file2_test.rb"},
@@ -824,6 +849,7 @@ func TestTestPlanner_Setup_WithTestSplit(t *testing.T) {
 		// Setup mocks with test files that will create a predictable distribution
 		mockFramework := &MockFramework{
 			FrameworkName: "rspec",
+			TestFiles:     []string{"test/file1_test.rb", "test/file2_test.rb", "test/file3_test.rb"},
 			Tests: []testoptimization.Test{
 				{Suite: "TestSuite1", Name: "test1", Parameters: "", SuiteSourceFile: "test/file1_test.rb"},
 				{Suite: "TestSuite1", Name: "test2", Parameters: "", SuiteSourceFile: "test/file1_test.rb"}, // 2 tests in file1
@@ -970,9 +996,7 @@ func TestTestPlanner_Plan_SubdirRootRelativeDiscovery_WritesNormalizedPaths(t *t
 	}
 
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
-	mockOptimizationClient := &MockTestOptimizationClient{
-		SkippableTests: map[string]bool{},
-	}
+	mockOptimizationClient := testOptimizationClientRequiringFullDiscovery()
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
@@ -1422,6 +1446,98 @@ func TestTestPlanner_PreparePlanningData_TestManagementDoesNotKeepFullDiscoveryW
 
 	if runner.planReport.SkippableTestsCount != 2 {
 		t.Errorf("Expected planner skip set to include fetched disabled tests for reporting, got %d", runner.planReport.SkippableTestsCount)
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_CancelsFullDiscoveryWhenNoTIASkippableTests(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+	logs := captureLogs(t)
+
+	mockFramework := &longRunningDiscoveryFramework{
+		MockFramework: MockFramework{
+			FrameworkName: "rspec",
+			TestFiles:     []string{"spec/local_spec.rb"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings:       testOptimizationSettings(true, true, false),
+		SkippableTests: map[string]bool{},
+	}
+
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		mockOptimizationClient,
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.PreparePlanningData(ctx); err != nil {
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
+	}
+
+	if _, ok := runner.testFiles["spec/local_spec.rb"]; !ok {
+		t.Errorf("Expected fast-discovered file after empty TIA skip set, got %v", runner.testFiles)
+	}
+	if len(runner.suiteAggregates) != 0 {
+		t.Errorf("Expected cancelled full discovery to leave no suite aggregates, got %+v", runner.suiteAggregates)
+	}
+	if runner.skippablePercentage != 0 {
+		t.Errorf("Expected zero skippable percentage without full discovery data, got %.2f", runner.skippablePercentage)
+	}
+	if !strings.Contains(logs.String(), "No TIA-skippable tests found for this run, cancelling full test discovery") {
+		t.Errorf("Expected log about cancelling full discovery when no TIA-skippable tests exist, got: %s", logs.String())
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_UsesCompletedFullDiscoveryWhenNoTIASkippableTests(t *testing.T) {
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		TestFiles:     []string{"spec/fast_discovery_spec.rb"},
+		Tests: []testoptimization.Test{
+			{Module: "rspec", Suite: "FullDiscoverySuite", Name: "test1", SuiteSourceFile: "spec/full_discovery_spec.rb"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings:       testOptimizationSettings(true, true, false),
+		SkippableTests: map[string]bool{},
+	}
+
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		mockOptimizationClient,
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.PreparePlanningData(ctx); err != nil {
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
+	}
+
+	if _, ok := runner.testFiles["spec/full_discovery_spec.rb"]; !ok {
+		t.Errorf("Expected full-discovered file to be planned when full discovery completes, got %v", runner.testFiles)
+	}
+	if _, ok := runner.testFiles["spec/fast_discovery_spec.rb"]; ok {
+		t.Errorf("Expected fast-discovered-only file to be ignored after successful full discovery, got %v", runner.testFiles)
+	}
+	if _, ok := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "FullDiscoverySuite"}]; !ok {
+		t.Errorf("Expected completed full discovery results to be recorded, got %+v", runner.suiteAggregates)
 	}
 }
 
@@ -2084,7 +2200,7 @@ func TestTestPlanner_PreparePlanningData_FullDiscoveryIgnoresFastOnlyFiles(t *te
 		Framework: mockFramework,
 	}
 
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, &MockTestOptimizationClient{}, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, testOptimizationClientRequiringFullDiscovery(), &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -2141,7 +2257,7 @@ func TestTestPlanner_PreparePlanningData_FullDiscoveryDoesNotReintroduceFastOnly
 		},
 	}
 
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, &MockTestOptimizationClient{}, mockDurationsClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, testOptimizationClientRequiringFullDiscovery(), mockDurationsClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -2852,9 +2968,7 @@ func TestPreparePlanningData_ITRFullDiscovery_SubdirRootRelativePath_NormalizesT
 	}
 
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
-	mockOptimizationClient := &MockTestOptimizationClient{
-		SkippableTests: map[string]bool{}, // No tests skipped (ITR enabled but all tests need to run)
-	}
+	mockOptimizationClient := testOptimizationClientRequiringFullDiscovery()
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
@@ -2916,9 +3030,7 @@ func TestPreparePlanningData_RepoRootRun_LeavesRepoRelativePathsUnchanged(t *tes
 	}
 
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
-	mockOptimizationClient := &MockTestOptimizationClient{
-		SkippableTests: map[string]bool{},
-	}
+	mockOptimizationClient := testOptimizationClientRequiringFullDiscovery()
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
@@ -2954,7 +3066,7 @@ func TestPreparePlanningData_FastDiscovery_PathsRemainUnchanged(t *testing.T) {
 
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{
-		SkippableTests: map[string]bool{},
+		Settings: testOptimizationSettings(true, false, false),
 	}
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
@@ -3018,9 +3130,7 @@ func TestPreparePlanningData_ITRPathNormalization_PrefixMismatchUnchanged(t *tes
 	}
 
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
-	mockOptimizationClient := &MockTestOptimizationClient{
-		SkippableTests: map[string]bool{},
-	}
+	mockOptimizationClient := testOptimizationClientRequiringFullDiscovery()
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
