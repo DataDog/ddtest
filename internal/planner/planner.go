@@ -272,7 +272,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	discoveryCtx, cancelDiscovery := context.WithCancel(ctx)
 	defer cancelDiscovery()
 
-	var skippableTests map[string]bool
+	var skippedTests testSkipper
 	var discoveredTests []testoptimization.Test
 	var discoveredTestFiles []string
 	var fullDiscoverySucceeded bool
@@ -296,24 +296,21 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 
 		repositorySettings := tp.optimizationClient.GetSettings()
 		tp.planReport.DatadogSettings = newDatadogSettingsReport(repositorySettings)
+		tiaSkippingEnabled := false
 		if repositorySettings != nil {
-			slog.Debug("Repository settings", "itr_enabled", repositorySettings.ItrEnabled, "tests_skipping", repositorySettings.TestsSkipping)
+			slog.Debug("Repository settings", "tia_enabled", repositorySettings.ItrEnabled, "tests_skipping", repositorySettings.TestsSkipping)
+			tiaSkippingEnabled = repositorySettings.ItrEnabled && repositorySettings.TestsSkipping
 
-			if !repositorySettings.ItrEnabled || !repositorySettings.TestsSkipping {
-				slog.Info("ITR or test skipping disabled, cancelling full test discovery")
+			if !tiaSkippingEnabled {
+				slog.Info("TIA or test skipping disabled, cancelling full test discovery")
 				cancelDiscovery()
 			}
 		}
 
 		tp.testSuiteDurations = tp.durationsClient.GetTestSuiteDurations()
 
-		startTime := time.Now()
-		slog.Info("Fetching skippable tests from Datadog...")
-		skippableTests = tp.optimizationClient.GetSkippableTests()
-		tp.planReport.SkippableTestsCount = len(skippableTests)
-		tp.planReport.KnownTests = newKnownTestsReport(tp.optimizationClient.GetKnownTests())
-		tp.planReport.ManagedFlakyTests = newManagedFlakyTestsReport(tp.optimizationClient.GetTestManagementTestsData())
-		slog.Info("Fetched skippable tests", "duration", time.Since(startTime))
+		skippedTests = tp.fetchTestsToSkip(tiaSkippingEnabled)
+		tp.planReport.SkippableTestsCount = skippedTests.Count()
 
 		return nil
 	})
@@ -380,7 +377,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	// into a collection of testSuiteAggregate structs.
 	// This collection is used to calculate the skippable percentage and the weighted test files.
 	if fullDiscoverySucceeded {
-		tp.recordFullDiscoveryResults(discoveredTests, skippableTests, subdirPrefix)
+		tp.recordFullDiscoveryResults(discoveredTests, skippedTests, subdirPrefix)
 		tp.estimateDiscoveredSuiteDurations()
 
 		slog.Info("Full test discovery succeeded; using full discovery results and ignoring fast-discovered-only files",
@@ -406,10 +403,32 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	return nil
 }
 
+func (tp *TestPlanner) fetchTestsToSkip(tiaSkippingEnabled bool) testSkipper {
+	startTime := time.Now()
+	slog.Info("Fetching tests to skip from Datadog...")
+
+	tiaSkippableTests := map[string]bool{}
+	if tiaSkippingEnabled {
+		tiaSkippableTests = tp.optimizationClient.GetSkippableTests()
+	}
+
+	tp.planReport.KnownTests = newKnownTestsReport(tp.optimizationClient.GetKnownTests())
+	testManagementTests := tp.optimizationClient.GetTestManagementTestsData()
+	tp.planReport.ManagedFlakyTests = newManagedFlakyTestsReport(testManagementTests)
+
+	disabledTests := testoptimization.DisabledTestsFromTestManagementData(testManagementTests)
+	slog.Info("Fetched tests to skip",
+		"duration", time.Since(startTime),
+		"tiaSkippableTestsCount", len(tiaSkippableTests),
+		"disabledTestsCount", len(disabledTests))
+
+	return newTestSkipper(tiaSkippableTests, disabledTests)
+}
+
 func (tp *TestPlanner) estimateDiscoveredSuiteDurations() {
 	for key, aggregate := range tp.suiteAggregates {
 		// Without backend timing data, use test counts as the estimate:
-		// TotalDuration is the full suite before ITR skips, while EstimatedDuration
+		// TotalDuration is the full suite before TIA skips, while EstimatedDuration
 		// is the runnable remainder after skipped tests are removed.
 		aggregate.TotalDuration = float64(aggregate.NumTests) * float64(time.Second)
 		aggregate.EstimatedDuration = float64(aggregate.NumTests-aggregate.NumTestsSkipped) * float64(time.Second)

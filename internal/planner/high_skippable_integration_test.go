@@ -77,7 +77,10 @@ func TestTestPlanner_Plan_HighSkippableIntegrationSelectsExpectedRunnerCountAndR
 	}
 	runner := NewWithDependencies(
 		&MockPlatformDetector{Platform: mockPlatform},
-		&MockTestOptimizationClient{SkippableTests: fixture.skippableTestSet()},
+		&MockTestOptimizationClient{
+			Settings:       testOptimizationSettings(true, true, false),
+			SkippableTests: fixture.skippableTestSet(),
+		},
 		&MockTestSuiteDurationsClient{Durations: fixture.TestSuiteDurations},
 		newDefaultMockCIProviderDetector(),
 	)
@@ -141,7 +144,7 @@ func (f highSkippableIntegrationFixture) nonFullySkippedTestFiles() []string {
 		sourceFile := strings.TrimPrefix(test.SuiteSourceFile, "core/")
 		counts := countsByFile[sourceFile]
 		counts.total++
-		if skippableTests[test.FQN()] {
+		if skippableTests[test.DatadogTestId()] {
 			counts.skipped++
 		}
 		countsByFile[sourceFile] = counts

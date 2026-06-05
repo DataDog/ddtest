@@ -68,7 +68,7 @@ var (
 	ciVisibilityFlakyRetriesSettings FlakyRetriesSetting
 
 	// ciVisibilitySkippables contains the CI Visibility skippable tests for this session
-	ciVisibilitySkippables map[string]map[string][]net.SkippableResponseDataAttributes
+	ciVisibilitySkippables net.SkippableTests
 
 	// ciVisibilityTestManagementTests contains the CI Visibility test management tests for this session
 	ciVisibilityTestManagementTests net.TestManagementTestsResponseDataModules
@@ -373,7 +373,7 @@ func GetFlakyRetriesSettings() *FlakyRetriesSetting {
 }
 
 // GetSkippableTests gets the skippable tests from the backend
-func GetSkippableTests() map[string]map[string][]net.SkippableResponseDataAttributes {
+func GetSkippableTests() net.SkippableTests {
 	// call to ensure the additional features initialization is completed
 	ensureAdditionalFeaturesInitialization(autoDetectServiceName)
 	return ciVisibilitySkippables

@@ -49,14 +49,17 @@ type (
 	}
 
 	SkippableResponseDataAttributes struct {
+		Module         string             `json:"module"`
 		Suite          string             `json:"suite"`
 		Name           string             `json:"name"`
 		Parameters     string             `json:"parameters"`
 		Configurations testConfigurations `json:"configurations"`
 	}
+
+	SkippableTests map[string]bool
 )
 
-func (c *client) GetSkippableTests() (correlationID string, skippables map[string]map[string][]SkippableResponseDataAttributes, err error) {
+func (c *client) GetSkippableTests() (correlationID string, skippables SkippableTests, err error) {
 	if c.repositoryURL == "" || c.commitSha == "" {
 		err = fmt.Errorf("civisibility.GetSkippableTests: repository URL and commit SHA are required")
 		return
@@ -91,7 +94,7 @@ func (c *client) GetSkippableTests() (correlationID string, skippables map[strin
 		return "", nil, fmt.Errorf("unmarshalling skippable tests response: %s", err)
 	}
 
-	skippableTestsMap := map[string]map[string][]SkippableResponseDataAttributes{}
+	skippableTestsMap := SkippableTests{}
 	for _, data := range responseObject.Data {
 
 		// Filter out the tests that do not match the test configurations
@@ -120,19 +123,12 @@ func (c *client) GetSkippableTests() (correlationID string, skippables map[strin
 			continue
 		}
 
-		var ok bool
-		var testsMap map[string][]SkippableResponseDataAttributes
-		if testsMap, ok = skippableTestsMap[data.Attributes.Suite]; !ok {
-			testsMap = map[string][]SkippableResponseDataAttributes{}
-			skippableTestsMap[data.Attributes.Suite] = testsMap
-		}
-
-		if test, ok := testsMap[data.Attributes.Name]; ok {
-			testsMap[data.Attributes.Name] = append(test, data.Attributes)
-		} else {
-			testsMap[data.Attributes.Name] = []SkippableResponseDataAttributes{data.Attributes}
-		}
+		skippableTestsMap[skippableTestKey(data.Attributes)] = true
 	}
 
 	return responseObject.Meta.CorrelationID, skippableTestsMap, nil
+}
+
+func skippableTestKey(test SkippableResponseDataAttributes) string {
+	return test.Module + "." + test.Suite + "." + test.Name + "." + test.Parameters
 }

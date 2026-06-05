@@ -10,7 +10,12 @@ type Test struct {
 	SuiteSourceFile string `json:"suiteSourceFile"`
 }
 
-// FQN returns the fully qualified name of the test
+// FQN returns the parameter-free test identity used for Test Management matching.
 func (t *Test) FQN() string {
-	return fmt.Sprintf("%s.%s.%s", t.Suite, t.Name, t.Parameters)
+	return fmt.Sprintf("%s.%s.%s", t.Module, t.Suite, t.Name)
+}
+
+// DatadogTestId returns the parameterized test identity used for TIA matching.
+func (t *Test) DatadogTestId() string {
+	return fmt.Sprintf("%s.%s.%s.%s", t.Module, t.Suite, t.Name, t.Parameters)
 }
