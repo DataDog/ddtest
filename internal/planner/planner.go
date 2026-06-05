@@ -307,10 +307,15 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 			}
 		}
 
-		tp.testSuiteDurations = tp.durationsClient.GetTestSuiteDurations()
-
 		skippedTests = tp.fetchTestsToSkip(tiaSkippingEnabled)
 		tp.planReport.SkippableTestsCount = skippedTests.Count()
+
+		if tiaSkippingEnabled && len(skippedTests.tiaSkippableTests) == 0 {
+			slog.Info("No TIA-skippable tests found for this run, cancelling full test discovery")
+			cancelDiscovery()
+		}
+
+		tp.testSuiteDurations = tp.durationsClient.GetTestSuiteDurations()
 
 		return nil
 	})
