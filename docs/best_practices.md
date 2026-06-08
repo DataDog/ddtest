@@ -61,6 +61,65 @@ After these changes the tests discovery will be faster and will not fail when
 database is not present. You can skip database setup for planning step completely
 and save a lot of time.
 
+### Cache Test Discovery
+
+If full discovery still spends most of its time loading the application, DB
+fixtures, or framework helpers, cache DDTest's discovery file between CI runs.
+The restored cache path can be passed with either the CLI flag or environment
+variable:
+
+```bash
+ddtest plan --test-discovery-cache .ddtest-cache/tests-discovery.json
+
+DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE=.ddtest-cache/tests-discovery.json ddtest plan
+```
+
+DDTest imports the restored file before planning, validates it, and skips full
+discovery when the cache is still safe to use. After planning, save the refreshed
+internal cache file for the next run:
+
+```bash
+if [ -f .testoptimization/tests-discovery/tests.json ]; then
+  mkdir -p .ddtest-cache
+  cp .testoptimization/tests-discovery/tests.json .ddtest-cache/tests-discovery.json
+fi
+```
+
+For GitHub Actions, the flow can look like this:
+
+```yaml
+- uses: actions/cache@v4
+  with:
+    path: .ddtest-cache/tests-discovery.json
+    key: ddtest-discovery-${{ github.ref_name }}
+    restore-keys: |
+      ddtest-discovery-
+
+- name: Plan tests
+  env:
+    DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE: .ddtest-cache/tests-discovery.json
+  run: ddtest plan
+
+- name: Save latest discovery cache
+  if: always()
+  run: |
+    if [ -f .testoptimization/tests-discovery/tests.json ]; then
+      mkdir -p .ddtest-cache
+      cp .testoptimization/tests-discovery/tests.json .ddtest-cache/tests-discovery.json
+    fi
+```
+
+DDTest ignores the cache and runs full discovery when the file is missing,
+corrupt, produced for a different platform/framework/test location/exclude
+pattern, or based on a commit that is not available locally. It also invalidates
+the cache when files under the current project's test root changed. For example,
+the default RSpec root is `spec/**` and the default Minitest root is `test/**`;
+with `--tests-location custom/spec/**/*_spec.rb`, the root is `custom/**`.
+
+In monorepos, run DDTest from the project subdirectory whose tests you are
+planning. Cache invalidation is scoped to that project's effective test root, so
+changes in sibling projects do not invalidate its discovery cache.
+
 ## Minitest Support In Non-Rails Projects
 
 We use `bundle exec rake test` command when we don't detect `rails` command to

@@ -74,6 +74,7 @@ func init() {
 	rootCmd.PersistentFlags().String("command", "", "Test command that ddtest should wrap")
 	rootCmd.PersistentFlags().String("tests-location", "", "Glob pattern used to discover test files")
 	rootCmd.PersistentFlags().String("tests-exclude-pattern", "", "Glob pattern used to exclude test files from discovery")
+	rootCmd.PersistentFlags().String("test-discovery-cache", "", "Path to a restored test discovery cache file to import before planning")
 	rootCmd.PersistentFlags().String("runtime-tags", "", "JSON string to override runtime tags (e.g. '{\"os.platform\":\"linux\",\"runtime.version\":\"3.2.0\"}')")
 	if err := viper.BindPFlag("platform", rootCmd.PersistentFlags().Lookup("platform")); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding platform flag: %v\n", err)
@@ -117,6 +118,10 @@ func init() {
 	}
 	if err := viper.BindPFlag("tests_exclude_pattern", rootCmd.PersistentFlags().Lookup("tests-exclude-pattern")); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding tests-exclude-pattern flag: %v\n", err)
+		os.Exit(1)
+	}
+	if err := viper.BindPFlag("test_discovery_cache", rootCmd.PersistentFlags().Lookup("test-discovery-cache")); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding test-discovery-cache flag: %v\n", err)
 		os.Exit(1)
 	}
 	if err := viper.BindPFlag("runtime_tags", rootCmd.PersistentFlags().Lookup("runtime-tags")); err != nil {

@@ -22,9 +22,9 @@ func TestStripCwdSubdirPrefix_SubdirPrefixMatch_StripsPrefix(t *testing.T) {
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(coreDir)
+	resetCwdSubdirPrefixCache(t)
 
-	prefix := CwdSubdirPrefix()
-	result := StripCwdSubdirPrefix("core/spec/models/order_spec.rb", prefix)
+	result := StripCwdSubdirPrefix("core/spec/models/order_spec.rb")
 	expected := "spec/models/order_spec.rb"
 	if result != expected {
 		t.Errorf("Expected %q, got %q", expected, result)
@@ -41,9 +41,9 @@ func TestStripCwdSubdirPrefix_NestedSubdirPrefixMatch_StripsFullPrefix(t *testin
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(nestedDir)
+	resetCwdSubdirPrefixCache(t)
 
-	prefix := CwdSubdirPrefix()
-	result := StripCwdSubdirPrefix("packages/core/spec/user_spec.rb", prefix)
+	result := StripCwdSubdirPrefix("packages/core/spec/user_spec.rb")
 	expected := "spec/user_spec.rb"
 	if result != expected {
 		t.Errorf("Expected %q, got %q", expected, result)
@@ -60,9 +60,9 @@ func TestStripCwdSubdirPrefix_AlreadyRelative_NoChange(t *testing.T) {
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(coreDir)
+	resetCwdSubdirPrefixCache(t)
 
-	prefix := CwdSubdirPrefix()
-	result := StripCwdSubdirPrefix("spec/models/order_spec.rb", prefix)
+	result := StripCwdSubdirPrefix("spec/models/order_spec.rb")
 	expected := "spec/models/order_spec.rb"
 	if result != expected {
 		t.Errorf("Expected %q unchanged, got %q", expected, result)
@@ -79,9 +79,9 @@ func TestStripCwdSubdirPrefix_PrefixMismatch_NoChange(t *testing.T) {
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(apiDir)
+	resetCwdSubdirPrefixCache(t)
 
-	prefix := CwdSubdirPrefix()
-	result := StripCwdSubdirPrefix("core/spec/models/order_spec.rb", prefix)
+	result := StripCwdSubdirPrefix("core/spec/models/order_spec.rb")
 	expected := "core/spec/models/order_spec.rb"
 	if result != expected {
 		t.Errorf("Expected %q unchanged, got %q", expected, result)
@@ -95,9 +95,9 @@ func TestStripCwdSubdirPrefix_AtRepoRoot_NoChange(t *testing.T) {
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(repoRoot)
+	resetCwdSubdirPrefixCache(t)
 
-	prefix := CwdSubdirPrefix()
-	result := StripCwdSubdirPrefix("spec/models/order_spec.rb", prefix)
+	result := StripCwdSubdirPrefix("spec/models/order_spec.rb")
 	expected := "spec/models/order_spec.rb"
 	if result != expected {
 		t.Errorf("Expected %q unchanged, got %q", expected, result)
@@ -110,9 +110,9 @@ func TestStripCwdSubdirPrefix_GitRootUnavailable_NoChange(t *testing.T) {
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(tempDir)
+	resetCwdSubdirPrefixCache(t)
 
-	prefix := CwdSubdirPrefix()
-	result := StripCwdSubdirPrefix("core/spec/models/order_spec.rb", prefix)
+	result := StripCwdSubdirPrefix("core/spec/models/order_spec.rb")
 	expected := "core/spec/models/order_spec.rb"
 	if result != expected {
 		t.Errorf("Expected %q unchanged when git root unavailable, got %q", expected, result)
@@ -129,20 +129,26 @@ func TestStripCwdSubdirPrefix_AbsolutePath_NoChange(t *testing.T) {
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(coreDir)
+	resetCwdSubdirPrefixCache(t)
 
 	absPath := "/absolute/path/to/spec.rb"
-	prefix := CwdSubdirPrefix()
-	result := StripCwdSubdirPrefix(absPath, prefix)
+	result := StripCwdSubdirPrefix(absPath)
 	if result != absPath {
 		t.Errorf("Expected %q unchanged, got %q", absPath, result)
 	}
 }
 
 func TestStripCwdSubdirPrefix_EmptyPath_NoChange(t *testing.T) {
-	result := StripCwdSubdirPrefix("", "core")
+	result := stripSubdirPrefix("", "core")
 	if result != "" {
 		t.Errorf("Expected empty string, got %q", result)
 	}
+}
+
+func resetCwdSubdirPrefixCache(t *testing.T) {
+	t.Helper()
+	ResetCwdSubdirPrefixForTesting()
+	t.Cleanup(ResetCwdSubdirPrefixForTesting)
 }
 
 func initGitRepoInDir(t *testing.T, dir string) {

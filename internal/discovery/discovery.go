@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"maps"
@@ -183,8 +184,9 @@ func DiscoverTests(
 		return nil, err
 	}
 
-	tests, err := ParseTests()
+	tests, err := parseTestsFile(TestsFilePath)
 	if err != nil {
+		slog.Error("Error parsing JSON", "error", err)
 		return nil, err
 	}
 
@@ -212,28 +214,27 @@ func executeCommand(ctx context.Context, executor ext.CommandExecutor, executabl
 	return nil
 }
 
-func ParseTests() ([]testoptimization.Test, error) {
-	file, err := os.Open(TestsFilePath)
+func parseTestsFile(filePath string) ([]testoptimization.Test, error) {
+	file, err := os.Open(filePath)
 	if err != nil {
-		slog.Error("Error opening JSON file", "error", err)
 		return nil, err
 	}
 	defer func() {
 		_ = file.Close()
 	}()
 
-	var tests []testoptimization.Test
 	decoder := json.NewDecoder(file)
-	for decoder.More() {
+	tests := make([]testoptimization.Test, 0)
+	for {
 		var test testoptimization.Test
 		if err := decoder.Decode(&test); err != nil {
-			slog.Error("Error parsing JSON", "error", err)
+			if err == io.EOF {
+				return tests, nil
+			}
 			return nil, err
 		}
 		tests = append(tests, test)
 	}
-
-	return tests, nil
 }
 
 // BaseEnv returns environment variables required for all test discovery processes.

@@ -10,9 +10,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
+var cwdSubdirPrefix = sync.OnceValue(computeCwdSubdirPrefix)
+
 func CwdSubdirPrefix() string {
+	return cwdSubdirPrefix()
+}
+
+func computeCwdSubdirPrefix() string {
 	gitRoot := GetSourceRoot()
 	if gitRoot == "" {
 		return ""
@@ -43,7 +50,16 @@ func CwdSubdirPrefix() string {
 	return filepath.ToSlash(rel)
 }
 
-func StripCwdSubdirPrefix(path string, subdirPrefix string) string {
+// ResetCwdSubdirPrefixForTesting resets the process-level cwd subdirectory cache.
+func ResetCwdSubdirPrefixForTesting() {
+	cwdSubdirPrefix = sync.OnceValue(computeCwdSubdirPrefix)
+}
+
+func StripCwdSubdirPrefix(path string) string {
+	return stripSubdirPrefix(path, CwdSubdirPrefix())
+}
+
+func stripSubdirPrefix(path string, subdirPrefix string) string {
 	if path == "" || subdirPrefix == "" {
 		return path
 	}
