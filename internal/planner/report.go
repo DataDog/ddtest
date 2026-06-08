@@ -3,158 +3,22 @@ package planner
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
-	"github.com/DataDog/ddtest/civisibility/utils/net"
 	"github.com/DataDog/ddtest/internal/runmetadata"
+	"github.com/DataDog/ddtest/internal/settings"
 )
-
-type datadogSettingsReport struct {
-	Available            bool
-	TestImpactAnalysis   bool
-	TestSkipping         bool
-	TestImpactCollection bool
-	KnownTests           bool
-	ImpactedTests        bool
-	EarlyFlakeDetection  bool
-	AutoTestRetries      bool
-	FlakyTestManagement  bool
-}
-
-func newDatadogSettingsReport(settings *net.SettingsResponseData) datadogSettingsReport {
-	if settings == nil {
-		return datadogSettingsReport{}
-	}
-	return datadogSettingsReport{
-		Available:            true,
-		TestImpactAnalysis:   settings.ItrEnabled,
-		TestSkipping:         settings.TestsSkipping,
-		TestImpactCollection: settings.CodeCoverage,
-		KnownTests:           settings.KnownTestsEnabled,
-		ImpactedTests:        settings.ImpactedTestsEnabled,
-		EarlyFlakeDetection:  settings.EarlyFlakeDetection.Enabled,
-		AutoTestRetries:      settings.FlakyTestRetriesEnabled,
-		FlakyTestManagement:  settings.TestManagement.Enabled,
-	}
-}
-
-type knownTestsReport struct {
-	Available bool
-	Modules   int
-	Suites    int
-	Tests     int
-}
-
-func newKnownTestsReport(knownTests *net.KnownTestsResponseData) knownTestsReport {
-	if knownTests == nil {
-		return knownTestsReport{}
-	}
-
-	report := knownTestsReport{
-		Available: true,
-		Modules:   len(knownTests.Tests),
-	}
-	for _, suites := range knownTests.Tests {
-		report.Suites += len(suites)
-		for _, tests := range suites {
-			report.Tests += len(tests)
-		}
-	}
-	return report
-}
-
-type managedFlakyTestsReport struct {
-	Available    bool
-	Total        int
-	Quarantined  int
-	Disabled     int
-	AttemptToFix int
-}
-
-func newManagedFlakyTestsReport(testManagementTests *net.TestManagementTestsResponseDataModules) managedFlakyTestsReport {
-	if testManagementTests == nil {
-		return managedFlakyTestsReport{}
-	}
-
-	report := managedFlakyTestsReport{Available: true}
-	for _, suites := range testManagementTests.Modules {
-		for _, tests := range suites.Suites {
-			for _, test := range tests.Tests {
-				report.Total++
-				if test.Properties.Quarantined {
-					report.Quarantined++
-				}
-				if test.Properties.Disabled {
-					report.Disabled++
-				}
-				if test.Properties.AttemptToFix {
-					report.AttemptToFix++
-				}
-			}
-		}
-	}
-	return report
-}
-
-type durationSourceReport struct {
-	Known   int
-	Default int
-}
-
-type planningReport struct {
-	TestFilesDiscovered int
-	FullySkippedFiles   int
-	TestFilesToRun      int
-	DurationSources     durationSourceReport
-	EstimatedTimeSaved  float64
-}
-
-type planReport struct {
-	RunInfo             runmetadata.RunInfo
-	PlanInfo            PlanInfo
-	DatadogSettings     datadogSettingsReport
-	KnownTests          knownTestsReport
-	SkippableTestsCount int
-	ManagedFlakyTests   managedFlakyTestsReport
-	Planning            planningReport
-	Split               splitScore
-}
-
-func (tp *TestPlanner) newPlanningReport() planningReport {
-	fullySkippedFiles := len(tp.testFiles) - len(tp.testFileWeights)
-	if fullySkippedFiles < 0 {
-		fullySkippedFiles = 0
-	}
-
-	return planningReport{
-		TestFilesDiscovered: len(tp.testFiles),
-		FullySkippedFiles:   fullySkippedFiles,
-		TestFilesToRun:      len(tp.testFileWeights),
-		DurationSources:     tp.durationSourceReport(),
-		EstimatedTimeSaved:  tp.skippablePercentage,
-	}
-}
-
-func (tp *TestPlanner) durationSourceReport() durationSourceReport {
-	var report durationSourceReport
-	for _, source := range tp.testFileDurationSources {
-		switch source {
-		case testFileDurationSourceKnown:
-			report.Known++
-		default:
-			report.Default++
-		}
-	}
-	return report
-}
 
 func printPlanReport(w io.Writer, report planReport) {
 	reportFprintln(w, "+++ DDTest: plan report")
 	reportFprintln(w)
 	printRunInfoReport(w, report.RunInfo, report.PlanInfo)
+	reportFprintln(w)
+	printDDTestSettingsReport(w, report.DDTestSettings)
 	reportFprintln(w)
 	printDatadogSettingsReport(w, report.DatadogSettings)
 	reportFprintln(w)
@@ -163,6 +27,10 @@ func printPlanReport(w io.Writer, report planReport) {
 	printPlanningReport(w, report.Planning)
 	reportFprintln(w)
 	printSplitReport(w, report.Split)
+	reportFprintln(w)
+	printLongSeparateRunnerSuitesReport(w, report.LongSeparateRunnerSuites)
+	reportFprintln(w)
+	printSlowestTestSuitesOverallReport(w, report.SlowestTestSuitesOverall)
 }
 
 func printRunInfoReport(w io.Writer, runInfo runmetadata.RunInfo, planInfo PlanInfo) {
@@ -176,8 +44,29 @@ func printRunInfoReport(w io.Writer, runInfo runmetadata.RunInfo, planInfo PlanI
 	reportFprintf(w, "  Runtime tags: %s\n", formatTagList(planInfo.RuntimeTags, ciConstants.RuntimeName, ciConstants.RuntimeVersion))
 }
 
+func printDDTestSettingsReport(w io.Writer, config *settings.Config) {
+	reportFprintln(w, "DDTest settings")
+	if config == nil {
+		reportFprintln(w, "  Settings: not available")
+		return
+	}
+
+	reportFprintf(w, "  Platform: %s\n", valueOrNotSet(config.Platform))
+	reportFprintf(w, "  Framework: %s\n", valueOrNotSet(config.Framework))
+	reportFprintf(w, "  Min parallelism: %s\n", formatCount(config.MinParallelism))
+	reportFprintf(w, "  Max parallelism: %s\n", formatCount(config.MaxParallelism))
+	reportFprintf(w, "  CI job overhead: %s\n", formatDuration(config.ParallelRunnerOverhead))
+	reportFprintf(w, "  Worker env: %s\n", formatWorkerEnvKeys(config.WorkerEnv))
+	reportFprintf(w, "  CI node: %s\n", formatCount(config.CiNode))
+	reportFprintf(w, "  CI node workers: %s\n", formatCount(config.CiNodeWorkers))
+	reportFprintf(w, "  Command: %s\n", valueOrNotSet(config.Command))
+	reportFprintf(w, "  Tests location: %s\n", valueOrNotSet(config.TestsLocation))
+	reportFprintf(w, "  Runtime tags: %s\n", valueOrNotSet(config.RuntimeTags))
+	reportFprintf(w, "  Report enabled: %s\n", strconv.FormatBool(config.ReportEnabled))
+}
+
 func printDatadogSettingsReport(w io.Writer, report datadogSettingsReport) {
-	reportFprintln(w, "Datadog")
+	reportFprintln(w, "Datadog settings")
 	if !report.Available {
 		reportFprintln(w, "  Settings: not available")
 		return
@@ -217,6 +106,102 @@ func printSplitReport(w io.Writer, report splitScore) {
 	reportFprintf(w, "  Expected wall time: %s\n", formatDuration(report.wallTimeDuration()))
 	reportFprintf(w, "  Imbalance: %s\n", formatDuration(report.imbalanceDuration()))
 	reportFprintf(w, "  Total estimated runtime: %s\n", formatDuration(report.totalRuntimeDuration()))
+}
+
+func printLongSeparateRunnerSuitesReport(w io.Writer, suites []testSuiteTimingReport) {
+	reportFprintln(w, "Slow suites on dedicated runners")
+	if len(suites) == 0 {
+		reportFprintln(w, "  None")
+		return
+	}
+
+	reportFprintf(w, "  ATTENTION: %s\n", formatScheduledTestSuiteCount(len(suites)))
+	for i, suite := range suites {
+		printTestSuiteTimingReport(w, i+1, suite, true)
+	}
+}
+
+func printSlowestTestSuitesOverallReport(w io.Writer, suites []testSuiteTimingReport) {
+	reportFprintln(w, "10 slowest test suites overall")
+	if len(suites) == 0 {
+		reportFprintln(w, "  No suite timing data available")
+		return
+	}
+
+	for i, suite := range suites {
+		printTestSuiteTimingReport(w, i+1, suite, false)
+	}
+}
+
+func printTestSuiteTimingReport(w io.Writer, index int, suite testSuiteTimingReport, includeRunner bool) {
+	runnerPrefix := ""
+	if includeRunner {
+		runnerPrefix = fmt.Sprintf("runner %d, ", suite.Runner)
+	}
+
+	reportFprintf(w, "  %d. %s%s (%s): historical duration %s, estimated runtime %s\n",
+		index,
+		runnerPrefix,
+		formatSuiteLabel(suite),
+		valueOrNotAvailable(suite.SourceFile),
+		formatDuration(suite.TotalDuration),
+		formatDuration(suite.EstimatedDuration))
+}
+
+func formatSuiteLabel(suite testSuiteTimingReport) string {
+	switch {
+	case suite.Module == "" && suite.Suite == "":
+		return "not available"
+	case suite.Module == "":
+		return suite.Suite
+	case suite.Suite == "":
+		return suite.Module
+	default:
+		return suite.Module + " / " + suite.Suite
+	}
+}
+
+func formatScheduledTestSuiteCount(count int) string {
+	if count == 1 {
+		return "1 dedicated runner"
+	}
+	return formatCount(count) + " dedicated runners"
+}
+
+func formatWorkerEnvKeys(workerEnv string) string {
+	keys := parseWorkerEnvKeys(workerEnv)
+	if len(keys) == 0 {
+		return "not set"
+	}
+	return strings.Join(keys, ", ")
+}
+
+func parseWorkerEnvKeys(workerEnv string) []string {
+	if strings.TrimSpace(workerEnv) == "" {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	keys := make([]string, 0)
+	for pair := range strings.SplitSeq(workerEnv, ";") {
+		key, _, ok := strings.Cut(pair, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+
+	slices.Sort(keys)
+	return keys
 }
 
 func reportFprintln(w io.Writer, args ...any) {
@@ -290,6 +275,13 @@ func formatPlatform(platformName, frameworkName string) string {
 func valueOrNotAvailable(value string) string {
 	if value == "" {
 		return "not available"
+	}
+	return value
+}
+
+func valueOrNotSet(value string) string {
+	if value == "" {
+		return "not set"
 	}
 	return value
 }

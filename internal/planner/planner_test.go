@@ -398,6 +398,8 @@ func TestTestPlanner_Setup_WithParallelRunners(t *testing.T) {
 	}
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
+	var reportOutput bytes.Buffer
+	runner.reportWriter = &reportOutput
 
 	// Run Setup
 	err := runner.Plan(context.Background())
@@ -416,13 +418,22 @@ func TestTestPlanner_Setup_WithParallelRunners(t *testing.T) {
 		t.Errorf("Expected parallel runners file content '%s', got '%s'", expected, string(content))
 	}
 
+	report := reportOutput.String()
+	for _, expectedReportLine := range []string{
+		"Split\n",
+		"  Runners: 1\n",
+		"  Expected wall time:",
+		"  Imbalance:",
+		"  Total estimated runtime:",
+	} {
+		if !strings.Contains(report, expectedReportLine) {
+			t.Errorf("Expected report to contain %q, got report: %s", expectedReportLine, report)
+		}
+	}
+
 	logOutput := logs.String()
-	if !strings.Contains(logOutput, "Test execution planning completed") ||
-		!strings.Contains(logOutput, "parallelRunners=1") ||
-		!strings.Contains(logOutput, "expectedWallTime=") ||
-		!strings.Contains(logOutput, "imbalance=") ||
-		!strings.Contains(logOutput, "expectedTotalRuntime=") {
-		t.Errorf("Expected planning log with selected split information, got logs: %s", logOutput)
+	if strings.Contains(logOutput, "Test execution planning completed") {
+		t.Errorf("Expected selected split information to be reported, not logged, got logs: %s", logOutput)
 	}
 }
 

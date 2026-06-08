@@ -218,14 +218,11 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 	}
 
 	tp.planReport.Split = parallelRunnerSplit
-	slog.Info("Test execution planning completed",
-		"parallelRunners", parallelRunners,
-		"expectedWallTime", parallelRunnerSplit.wallTimeDuration(),
-		"imbalance", parallelRunnerSplit.imbalanceDuration(),
-		"expectedTotalRuntime", parallelRunnerSplit.totalRuntimeDuration(),
-		"testFilesCount", len(tp.testFileWeights))
 
 	if settings.GetReportEnabled() {
+		tp.planReport.DDTestSettings = settings.Get()
+		tp.planReport.LongSeparateRunnerSuites = tp.longSeparateRunnerSuitesReport(parallelRunners, parallelRunnerSplit)
+		tp.planReport.SlowestTestSuitesOverall = tp.slowestTestSuitesOverallReport(slowestTestSuitesReportLimit)
 		printPlanReport(tp.reportWriter, tp.planReport)
 	}
 
