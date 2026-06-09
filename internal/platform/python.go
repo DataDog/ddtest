@@ -23,7 +23,7 @@ const (
 	requiredPackageDatadogTestLib = "datadog-test-lib"
 	requiredVersionDatadogTestLib = "0.1.0"
 	requiredPackageDdtrace        = "ddtrace"
-	requiredVersionDdtrace        = "1.0.0"
+	requiredVersionDdtrace        = "4.10.3"
 	pytestAddOptsEnvVar           = "PYTEST_ADDOPTS"
 	pytestDefaultAddOpts          = "--ddtrace"
 )
