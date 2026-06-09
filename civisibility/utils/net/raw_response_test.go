@@ -1,6 +1,8 @@
 package net
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -50,7 +52,7 @@ func newRawResponseTestServer(t *testing.T, responses map[string]string) *httpte
 func TestClientStoresRawBackendResponses(t *testing.T) {
 	settingsResponse := `{"data":{"id":"settings-id","type":"ci_app_test_service_libraries_settings","attributes":{"itr_enabled":true,"tests_skipping":true,"known_tests_enabled":true,"test_management":{"enabled":true,"attempt_to_fix_retries":3}}}}`
 	knownTestsResponse := `{"data":{"id":"known-tests-id","type":"ci_app_libraries_tests_request","attributes":{"tests":{"module-a":{"suite-a":["test-a"]}}}}}`
-	skippableTestsResponse := `{"meta":{"correlation_id":"correlation-id"},"data":[{"id":"skippable-id","type":"test","attributes":{"module":"module-a","suite":"suite-a","name":"test-a","parameters":"params","configurations":{"os.platform":"linux","os.architecture":"amd64","runtime.name":"ruby","runtime.version":"3.3.0"}}}]}`
+	skippableTestsResponse := `{"meta":{"correlation_id":"correlation-id"},"data":[{"id":"skippable-id","type":"test","attributes":{"suite":"suite-a","name":"test-a","parameters":"params","configurations":{"test.bundle":"module-a","os.platform":"linux","os.architecture":"amd64","runtime.name":"ruby","runtime.version":"3.3.0"}}}]}`
 	testManagementResponse := `{"data":{"id":"test-management-id","type":"ci_app_libraries_tests_request","attributes":{"modules":{"module-a":{"suites":{"suite-a":{"tests":{"test-a":{"properties":{"quarantined":true,"disabled":false,"attempt_to_fix":true}}}}}}}}}}`
 
 	server := newRawResponseTestServer(t, map[string]string{
@@ -107,6 +109,73 @@ func TestClientStoresRawBackendResponses(t *testing.T) {
 	if string(client.GetTestManagementTestsRawResponse()) != testManagementResponse {
 		t.Fatalf("test management raw response mismatch:\nexpected: %s\nactual:   %s", testManagementResponse, string(client.GetTestManagementTestsRawResponse()))
 	}
+}
+
+func TestClientBuildsSkippableKeyFromTestBundle(t *testing.T) {
+	skippableTestsResponse := `{"meta":{"correlation_id":"correlation-id"},"data":[{"id":"skippable-id","type":"test","attributes":{"suite":"suite-a","name":"test-a","parameters":"params","configurations":{"test.bundle":"rspec","runtime.name":"ruby"}}}]}`
+
+	server := newRawResponseTestServer(t, map[string]string{
+		skippableURLPath: skippableTestsResponse,
+	})
+	defer server.Close()
+
+	client := newRawResponseTestClient(server)
+	correlationID, skippableTests, err := client.GetSkippableTests()
+	if err != nil {
+		t.Fatalf("GetSkippableTests() returned error: %v", err)
+	}
+
+	if correlationID != "correlation-id" || !skippableTests["rspec.suite-a.test-a.params"] {
+		t.Fatalf("GetSkippableTests() returned unexpected processed data: correlationID=%s skippableTests=%+v", correlationID, skippableTests)
+	}
+}
+
+func TestClientWarnsWhenSkippableResponseIsMissingTestBundle(t *testing.T) {
+	logs := captureRawResponseTestLogs(t)
+	skippableTestsResponse := `{"meta":{"correlation_id":"correlation-id"},"data":[{"id":"skippable-id","type":"test","attributes":{"suite":"suite-a","name":"test-a","parameters":"params"}}]}`
+
+	server := newRawResponseTestServer(t, map[string]string{
+		skippableURLPath: skippableTestsResponse,
+	})
+	defer server.Close()
+
+	client := newRawResponseTestClient(server)
+	_, skippableTests, err := client.GetSkippableTests()
+	if err != nil {
+		t.Fatalf("GetSkippableTests() returned error: %v", err)
+	}
+
+	if !skippableTests[".suite-a.test-a.params"] {
+		t.Fatalf("GetSkippableTests() returned unexpected processed data: skippableTests=%+v", skippableTests)
+	}
+	if !strings.Contains(logs.String(), "Datadog backend did not return test.bundle for skippable tests; please contact Datadog support") {
+		t.Fatalf("Expected missing test.bundle warning, got logs: %s", logs.String())
+	}
+}
+
+func TestSkippableTestKeyUsesEmptyTestBundleSlot(t *testing.T) {
+	test := SkippableResponseDataAttributes{
+		Suite:      "suite-a",
+		Name:       "test-a",
+		Parameters: "params",
+	}
+
+	if got, want := skippableTestKey(test), ".suite-a.test-a.params"; got != want {
+		t.Fatalf("skippableTestKey() = %q, want %q", got, want)
+	}
+}
+
+func captureRawResponseTestLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+
+	var buf bytes.Buffer
+	originalLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() {
+		slog.SetDefault(originalLogger)
+	})
+
+	return &buf
 }
 
 func TestClientRawResponseIsCloned(t *testing.T) {
