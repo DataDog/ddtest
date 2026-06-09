@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"maps"
+	"path/filepath"
 
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -11,8 +12,9 @@ import (
 )
 
 const (
-	pytestTestFilePattern = "*_test.py"
-	pytestRootDir         = "tests"
+	// pytestDefaultPattern is used when no config file specifies testpaths/python_files.
+	// Matches both pytest conventions (test_*.py and *_test.py) everywhere in the tree.
+	pytestDefaultPattern = "**/{test_*,*_test}.py"
 )
 
 type PyTest struct {
@@ -55,7 +57,7 @@ func (p *PyTest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, er
 			return nil, err
 		}
 		slog.Info("Constraining test discovery to custom location",
-			"pattern", p.testPattern(), "fileCount", len(testFiles))
+			"pattern", settings.GetTestsLocation(), "fileCount", len(testFiles))
 		args = append(args, testFiles...)
 	}
 
@@ -80,20 +82,54 @@ func (p *PyTest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, er
 }
 
 func (p *PyTest) DiscoverTestFiles() ([]string, error) {
-	testFiles, err := globTestFiles(p.testPattern())
-	if err != nil {
-		return nil, err
+	seen := make(map[string]struct{})
+	var allFiles []string
+	for _, pattern := range p.testPatterns() {
+		files, err := globTestFiles(pattern)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range files {
+			if _, ok := seen[f]; !ok {
+				seen[f] = struct{}{}
+				allFiles = append(allFiles, f)
+			}
+		}
 	}
-
-	slog.Debug("Discovered pytest test files", "count", len(testFiles))
-	return testFiles, nil
+	slog.Debug("Discovered pytest test files", "count", len(allFiles))
+	return allFiles, nil
 }
 
-func (p *PyTest) testPattern() string {
+// testPatterns returns the glob patterns used to discover test files.
+// Priority: explicit --tests-location flag > pytest config file > built-in default.
+func (p *PyTest) testPatterns() []string {
 	if custom := settings.GetTestsLocation(); custom != "" {
-		return custom
+		return []string{custom}
 	}
-	return defaultTestPattern(pytestRootDir, pytestTestFilePattern)
+
+	cfg := loadPytestConfig()
+
+	filePatterns := cfg.PythonFiles
+	if len(filePatterns) == 0 {
+		filePatterns = []string{"{test_*,*_test}.py"}
+	}
+
+	if len(cfg.Testpaths) == 0 {
+		// No testpaths configured: search the whole tree.
+		patterns := make([]string, 0, len(filePatterns))
+		for _, fp := range filePatterns {
+			patterns = append(patterns, "**/"+fp)
+		}
+		return patterns
+	}
+
+	patterns := make([]string, 0, len(cfg.Testpaths)*len(filePatterns))
+	for _, tp := range cfg.Testpaths {
+		for _, fp := range filePatterns {
+			patterns = append(patterns, filepath.Join(tp, "**", fp))
+		}
+	}
+	return patterns
 }
 
 func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
