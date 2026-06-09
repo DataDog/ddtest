@@ -41,12 +41,15 @@ func (p *Python) Name() string {
 }
 
 // GetPlatformEnv returns environment variables required for Python commands.
-// It sets PYTEST_ADDOPTS to load the ddtrace pytest plugin if not already set.
+// It appends --ddtrace to PYTEST_ADDOPTS to load the ddtrace pytest plugin.
 func (p *Python) GetPlatformEnv() map[string]string {
 	envMap := make(map[string]string)
 
-	// Check if PYTEST_ADDOPTS is already set in the environment
-	if _, exists := os.LookupEnv(pytestAddOptsEnvVar); !exists {
+	// Get existing PYTEST_ADDOPTS if set, then append --ddtrace
+	existingOpts := os.Getenv(pytestAddOptsEnvVar)
+	if existingOpts != "" {
+		envMap[pytestAddOptsEnvVar] = existingOpts + " " + pytestDefaultAddOpts
+	} else {
 		envMap[pytestAddOptsEnvVar] = pytestDefaultAddOpts
 	}
 
