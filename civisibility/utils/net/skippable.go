@@ -7,6 +7,7 @@ package net
 
 import (
 	"fmt"
+	"log/slog"
 )
 
 const (
@@ -49,7 +50,6 @@ type (
 	}
 
 	SkippableResponseDataAttributes struct {
-		Module         string             `json:"module"`
 		Suite          string             `json:"suite"`
 		Name           string             `json:"name"`
 		Parameters     string             `json:"parameters"`
@@ -95,6 +95,7 @@ func (c *client) GetSkippableTests() (correlationID string, skippables Skippable
 	}
 
 	skippableTestsMap := SkippableTests{}
+	warnedMissingTestBundle := false
 	for _, data := range responseObject.Data {
 
 		// Filter out the tests that do not match the test configurations
@@ -123,6 +124,10 @@ func (c *client) GetSkippableTests() (correlationID string, skippables Skippable
 			continue
 		}
 
+		if data.Attributes.Configurations.TestBundle == "" && !warnedMissingTestBundle {
+			slog.Warn("Datadog backend did not return test.bundle for skippable tests; please contact Datadog support")
+			warnedMissingTestBundle = true
+		}
 		skippableTestsMap[skippableTestKey(data.Attributes)] = true
 	}
 
@@ -130,5 +135,5 @@ func (c *client) GetSkippableTests() (correlationID string, skippables Skippable
 }
 
 func skippableTestKey(test SkippableResponseDataAttributes) string {
-	return test.Module + "." + test.Suite + "." + test.Name + "." + test.Parameters
+	return test.Configurations.TestBundle + "." + test.Suite + "." + test.Name + "." + test.Parameters
 }

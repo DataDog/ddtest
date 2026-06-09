@@ -81,6 +81,7 @@ type (
 		RuntimeName         string            `json:"runtime.name,omitempty"`
 		RuntimeArchitecture string            `json:"runtime.architecture,omitempty"`
 		RuntimeVersion      string            `json:"runtime.version,omitempty"`
+		TestBundle          string            `json:"test.bundle,omitempty"`
 		Custom              map[string]string `json:"custom,omitempty"`
 	}
 )
