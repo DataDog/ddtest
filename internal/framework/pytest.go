@@ -44,15 +44,26 @@ func (p *PyTest) Name() string {
 func (p *PyTest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
-	pattern := p.testPattern()
 	args := []string{"-m", "pytest", "--collect-only", "-q"}
+
+	// When a custom tests location is configured, resolve the glob to actual files
+	// and pass them to pytest so collection is constrained to only those files.
+	// Without this, --tests-location would be silently ignored during discovery.
+	if settings.GetTestsLocation() != "" {
+		testFiles, err := p.DiscoverTestFiles()
+		if err != nil {
+			return nil, err
+		}
+		slog.Info("Constraining test discovery to custom location",
+			"pattern", p.testPattern(), "fileCount", len(testFiles))
+		args = append(args, testFiles...)
+	}
 
 	// Merge env maps: platform env -> base discovery env
 	envMap := make(map[string]string)
 	maps.Copy(envMap, p.platformEnv)
 	maps.Copy(envMap, BaseDiscoveryEnv())
 
-	slog.Info("Using test discovery pattern", "pattern", pattern)
 	slog.Info("Discovering tests with command", "command", "python", "args", args)
 	_, err := executeDiscoveryCommand(ctx, p.executor, "python", args, envMap, p.Name())
 	if err != nil {
