@@ -20,12 +20,10 @@ import (
 var pythonEnvScript string
 
 const (
-	requiredPackageDatadogTestLib = "datadog-test-lib"
-	requiredVersionDatadogTestLib = "0.1.0"
-	requiredPackageDdtrace        = "ddtrace"
-	requiredVersionDdtrace        = "4.10.3"
-	pytestAddOptsEnvVar           = "PYTEST_ADDOPTS"
-	pytestDefaultAddOpts          = "--ddtrace"
+	requiredPackageName    = "ddtrace"
+	requiredPackageVersion = "4.10.3"
+	pytestAddOptsEnvVar    = "PYTEST_ADDOPTS"
+	pytestDefaultAddOpts   = "--ddtrace"
 )
 
 type Python struct {
@@ -109,39 +107,28 @@ func (p *Python) DetectFramework() (framework.Framework, error) {
 }
 
 func (p *Python) SanityCheck() error {
-	// Check if required packages are installed and meet version requirements
-	if err := p.checkPackageVersion(requiredPackageDatadogTestLib, requiredVersionDatadogTestLib); err != nil {
-		return err
-	}
-	if err := p.checkPackageVersion(requiredPackageDdtrace, requiredVersionDdtrace); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (p *Python) checkPackageVersion(packageName, requiredVersionStr string) error {
-	args := []string{"-m", "pip", "show", packageName}
+	args := []string{"-m", "pip", "show", requiredPackageName}
 	output, err := p.executor.CombinedOutput(context.Background(), "python", args, nil)
 	if err != nil {
 		message := strings.TrimSpace(string(output))
 		if message == "" {
-			return fmt.Errorf("pip show %s command failed: %w", packageName, err)
+			return fmt.Errorf("pip show %s command failed: %w", requiredPackageName, err)
 		}
-		return fmt.Errorf("pip show %s command failed: %s", packageName, message)
+		return fmt.Errorf("pip show %s command failed: %s", requiredPackageName, message)
 	}
 
-	requiredVersion, err := version.Parse(requiredVersionStr)
+	requiredVersion, err := version.Parse(requiredPackageVersion)
 	if err != nil {
 		return err
 	}
 
-	pkgVersion, err := parsePipShowVersion(string(output), packageName)
+	pkgVersion, err := parsePipShowVersion(string(output), requiredPackageName)
 	if err != nil {
 		return err
 	}
 
 	if pkgVersion.Compare(requiredVersion) < 0 {
-		return fmt.Errorf("%s version %s is lower than required >= %s", packageName, pkgVersion.String(), requiredVersion.String())
+		return fmt.Errorf("%s version %s is lower than required >= %s", requiredPackageName, pkgVersion.String(), requiredVersion.String())
 	}
 
 	return nil
