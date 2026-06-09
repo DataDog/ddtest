@@ -110,22 +110,25 @@ func (p *Python) DetectFramework() (framework.Framework, error) {
 }
 
 func (p *Python) SanityCheck() error {
-	args := []string{"-m", "pip", "show", requiredPackageName}
+	// Use importlib.metadata to query the installed version — works with any
+	// package manager (pip, uv, poetry, conda), unlike `pip show`.
+	args := []string{
+		"-c",
+		"import importlib.metadata, sys; print(importlib.metadata.version(sys.argv[1]))",
+		requiredPackageName,
+	}
 	output, err := p.executor.CombinedOutput(context.Background(), "python", args, nil)
 	if err != nil {
-		message := strings.TrimSpace(string(output))
-		if message == "" {
-			return fmt.Errorf("pip show %s command failed: %w", requiredPackageName, err)
-		}
-		return fmt.Errorf("pip show %s command failed: %s", requiredPackageName, message)
+		return fmt.Errorf("%s is not installed: %w", requiredPackageName, err)
+	}
+
+	versionStr := strings.TrimSpace(string(output))
+	pkgVersion, err := version.Parse(versionStr)
+	if err != nil {
+		return fmt.Errorf("failed to parse %s version %q: %w", requiredPackageName, versionStr, err)
 	}
 
 	requiredVersion, err := version.Parse(requiredPackageVersion)
-	if err != nil {
-		return err
-	}
-
-	pkgVersion, err := parsePipShowVersion(string(output), requiredPackageName)
 	if err != nil {
 		return err
 	}
@@ -135,23 +138,4 @@ func (p *Python) SanityCheck() error {
 	}
 
 	return nil
-}
-
-func parsePipShowVersion(output, packageName string) (version.Version, error) {
-	for _, line := range strings.Split(output, "\n") {
-		if strings.HasPrefix(line, "Version:") {
-			// Format: "Version: 0.1.0"
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				versionString := strings.TrimSpace(parts[1])
-				parsed, err := version.Parse(versionString)
-				if err != nil {
-					return version.Version{}, fmt.Errorf("failed to parse version from pip show output: %w", err)
-				}
-				return parsed, nil
-			}
-		}
-	}
-
-	return version.Version{}, fmt.Errorf("unable to find %s version in pip show output", packageName)
 }
