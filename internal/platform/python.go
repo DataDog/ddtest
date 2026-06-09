@@ -22,7 +22,8 @@ var pythonEnvScript string
 const (
 	requiredPackageName       = "datadog-test-lib"
 	requiredPackageMinVersion = "0.1.0"
-	pythonOptEnvVar           = "PYTHONPATH"
+	pytestAddOptsEnvVar       = "PYTEST_ADDOPTS"
+	pytestDefaultAddOpts      = "-p ddtrace.pytest_plugin"
 )
 
 type Python struct {
@@ -37,6 +38,19 @@ func NewPython() *Python {
 
 func (p *Python) Name() string {
 	return "python"
+}
+
+// GetPlatformEnv returns environment variables required for Python commands.
+// It sets PYTEST_ADDOPTS to load the ddtrace pytest plugin if not already set.
+func (p *Python) GetPlatformEnv() map[string]string {
+	envMap := make(map[string]string)
+
+	// Check if PYTEST_ADDOPTS is already set in the environment
+	if _, exists := os.LookupEnv(pytestAddOptsEnvVar); !exists {
+		envMap[pytestAddOptsEnvVar] = pytestDefaultAddOpts
+	}
+
+	return envMap
 }
 
 func (p *Python) CreateTagsMap() (map[string]string, error) {
@@ -78,6 +92,7 @@ func (p *Python) CreateTagsMap() (map[string]string, error) {
 
 func (p *Python) DetectFramework() (framework.Framework, error) {
 	frameworkName := settings.GetFramework()
+	platformEnv := p.GetPlatformEnv()
 
 	var fw framework.Framework
 	switch frameworkName {
@@ -87,6 +102,7 @@ func (p *Python) DetectFramework() (framework.Framework, error) {
 		return nil, fmt.Errorf("framework '%s' is not supported by platform 'python'", frameworkName)
 	}
 
+	fw.SetPlatformEnv(platformEnv)
 	return fw, nil
 }
 
