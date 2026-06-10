@@ -324,7 +324,11 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		res, discErr := framework.DiscoverTests(discoveryCtx)
 		if discErr != nil {
 			fullDiscoveryErr = discErr
-			slog.Warn("Full test discovery failed or was cancelled", "error", discErr)
+			if discoveryCtx.Err() != nil {
+				slog.Debug("Full test discovery was cancelled")
+			} else {
+				slog.Warn("Full test discovery failed", "error", discErr)
+			}
 			return nil // Don't fail the entire process, we have fast discovery as fallback
 		}
 		if len(res) == 0 {
