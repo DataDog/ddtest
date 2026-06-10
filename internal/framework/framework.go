@@ -96,7 +96,7 @@ func BaseDiscoveryEnv() map[string]string {
 		"DD_CIVISIBILITY_ENABLED":                "1",
 		"DD_CIVISIBILITY_AGENTLESS_ENABLED":      "true",
 		"DD_API_KEY":                             "dummy_key",
-		"DD_CI_TEST_DISCOVERY_MODE_ENABLED": "true",
-		"DD_CI_TEST_DISCOVERY_OUTPUT_PATH":  TestsDiscoveryFilePath,
+		"DD_TEST_OPTIMIZATION_DISCOVERY_ENABLED": "1",
+		"DD_TEST_OPTIMIZATION_DISCOVERY_FILE":    TestsDiscoveryFilePath,
 	}
 }
