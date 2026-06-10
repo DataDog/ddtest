@@ -22,6 +22,44 @@ type Excluder struct {
 	pattern string
 }
 
+type TestFileSet struct {
+	Pattern       string
+	ExplicitFiles []string
+}
+
+func ResolveTestFiles(pattern, excludePattern, frameworkName string) (TestFileSet, error) {
+	testFiles := TestFileSet{Pattern: pattern}
+	if utils.NormalizePattern(excludePattern) == "" {
+		slog.Info("Using test discovery pattern", "framework", frameworkName, "pattern", pattern)
+		return testFiles, nil
+	}
+
+	filteredFiles, err := DiscoverTestFiles(pattern, excludePattern)
+	if err != nil {
+		return TestFileSet{}, err
+	}
+
+	testFiles.ExplicitFiles = filteredFiles
+	if len(filteredFiles) == 0 {
+		slog.Info("No test files remain after applying test discovery exclude pattern",
+			"framework", frameworkName, "pattern", pattern, "excludePattern", excludePattern)
+		return testFiles, nil
+	}
+
+	slog.Info("Using filtered test discovery files",
+		"framework", frameworkName, "pattern", pattern,
+		"excludePattern", excludePattern, "count", len(filteredFiles))
+	return testFiles, nil
+}
+
+func (t TestFileSet) UseExplicitFiles() bool {
+	return t.ExplicitFiles != nil
+}
+
+func (t TestFileSet) Empty() bool {
+	return t.UseExplicitFiles() && len(t.ExplicitFiles) == 0
+}
+
 func NewExcluder(pattern string) (Excluder, error) {
 	normalized := utils.NormalizePattern(pattern)
 	if normalized == "" {

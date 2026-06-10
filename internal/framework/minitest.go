@@ -12,7 +12,6 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
-	"github.com/DataDog/ddtest/internal/utils"
 )
 
 const (
@@ -50,21 +49,12 @@ func (m *Minitest) Name() string {
 func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
 	discovery.Cleanup()
 
-	pattern := m.testPattern()
-	excludePattern := settings.GetTestsExcludePattern()
-	useFilteredFiles := utils.NormalizePattern(excludePattern) != ""
-	var testFiles []string
-	if useFilteredFiles {
-		var err error
-		testFiles, err = discovery.DiscoverTestFiles(pattern, excludePattern)
-		if err != nil {
-			return nil, err
-		}
-		if len(testFiles) == 0 {
-			slog.Info("No Minitest test files remain after applying test discovery exclude pattern",
-				"pattern", pattern, "excludePattern", excludePattern)
-			return []testoptimization.Test{}, nil
-		}
+	testFiles, err := discovery.ResolveTestFiles(m.testPattern(), settings.GetTestsExcludePattern(), m.Name())
+	if err != nil {
+		return nil, err
+	}
+	if testFiles.Empty() {
+		return []testoptimization.Test{}, nil
 	}
 
 	name, args, isRails := m.getMinitestCommand()
@@ -73,20 +63,16 @@ func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, 
 	maps.Copy(envMap, m.platformEnv)
 	maps.Copy(envMap, discovery.BaseEnv())
 
-	if useFilteredFiles {
+	if testFiles.UseExplicitFiles() {
 		if isRails {
-			args = append(args, testFiles...)
+			args = append(args, testFiles.ExplicitFiles...)
 		} else {
-			envMap["TEST"] = strings.Join(testFiles, ",")
+			envMap["TEST"] = strings.Join(testFiles.ExplicitFiles, ",")
 		}
-		slog.Info("Using filtered Minitest test discovery files",
-			"pattern", pattern, "excludePattern", excludePattern, "count", len(testFiles))
 	} else if isRails {
-		args = append(args, pattern)
-		slog.Info("Using Minitest test discovery pattern", "pattern", pattern)
+		args = append(args, testFiles.Pattern)
 	} else {
-		envMap["TEST"] = pattern
-		slog.Info("Using Minitest test discovery pattern", "pattern", pattern)
+		envMap["TEST"] = testFiles.Pattern
 	}
 
 	slog.Info("Discovering tests with command", "command", name, "args", args)

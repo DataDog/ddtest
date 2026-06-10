@@ -11,7 +11,6 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
-	"github.com/DataDog/ddtest/internal/utils"
 )
 
 const (
@@ -49,32 +48,20 @@ func (r *RSpec) Name() string {
 func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
 	discovery.Cleanup()
 
-	pattern := r.testPattern()
-	excludePattern := settings.GetTestsExcludePattern()
-	useFilteredFiles := utils.NormalizePattern(excludePattern) != ""
-	var testFiles []string
-	if useFilteredFiles {
-		var err error
-		testFiles, err = discovery.DiscoverTestFiles(pattern, excludePattern)
-		if err != nil {
-			return nil, err
-		}
-		if len(testFiles) == 0 {
-			slog.Info("No RSpec test files remain after applying test discovery exclude pattern",
-				"pattern", pattern, "excludePattern", excludePattern)
-			return []testoptimization.Test{}, nil
-		}
+	testFiles, err := discovery.ResolveTestFiles(r.testPattern(), settings.GetTestsExcludePattern(), r.Name())
+	if err != nil {
+		return nil, err
+	}
+	if testFiles.Empty() {
+		return []testoptimization.Test{}, nil
 	}
 
 	name := "bundle"
 	args := []string{"exec", "rspec", "--format", "progress", "--dry-run"}
-	if useFilteredFiles {
-		args = append(args, testFiles...)
-		slog.Info("Using filtered RSpec test discovery files",
-			"pattern", pattern, "excludePattern", excludePattern, "count", len(testFiles))
+	if testFiles.UseExplicitFiles() {
+		args = append(args, testFiles.ExplicitFiles...)
 	} else {
-		args = append(args, "--pattern", pattern)
-		slog.Info("Using RSpec test discovery pattern", "pattern", pattern)
+		args = append(args, "--pattern", testFiles.Pattern)
 	}
 
 	envMap := make(map[string]string)
