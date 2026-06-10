@@ -5,11 +5,6 @@
 
 package filebitmap
 
-import (
-	"fmt"
-	"math/bits"
-)
-
 // FileBitmap represents a memory-efficient, modifiable bitmap.
 type FileBitmap struct {
 	data []byte
@@ -47,16 +42,6 @@ func getSize(numOfLines int) int {
 	return (numOfLines + 7) / 8
 }
 
-// Size returns the size of the bitmap in bytes.
-func (fb *FileBitmap) Size() int {
-	return len(fb.data)
-}
-
-// BitCount returns the total number of bits in the bitmap.
-func (fb *FileBitmap) BitCount() int {
-	return len(fb.data) * 8
-}
-
 // Set sets the bit at the given line (1-indexed) to 1.
 func (fb *FileBitmap) Set(line int) {
 	if fb.data == nil {
@@ -69,40 +54,6 @@ func (fb *FileBitmap) Set(line int) {
 	}
 	bitMask := byte(128 >> (idx % 8)) // 128 >> (idx mod 8) creates the proper mask
 	fb.data[byteIndex] |= bitMask
-}
-
-// Get returns true if the bit at the given line (1-indexed) is set to 1.
-func (fb *FileBitmap) Get(line int) bool {
-	if fb.data == nil {
-		return false
-	}
-	idx := line - 1
-	byteIndex := idx / 8
-	if byteIndex >= len(fb.data) {
-		return false
-	}
-	bitMask := byte(128 >> (idx % 8))
-	return (fb.data[byteIndex] & bitMask) != 0
-}
-
-// CountActiveBits counts the number of bits set to 1 in the bitmap.
-func (fb *FileBitmap) CountActiveBits() int {
-	count := 0
-	// Use the math/bits package to count the 1 bits in each byte.
-	for _, b := range fb.data {
-		count += bits.OnesCount8(b)
-	}
-	return count
-}
-
-// HasActiveBits returns true if at least one bit is set in the bitmap.
-func (fb *FileBitmap) HasActiveBits() bool {
-	for _, b := range fb.data {
-		if b != 0 {
-			return true
-		}
-	}
-	return false
 }
 
 // IntersectsWith returns true if this bitmap has at least one common set bit with the other bitmap.
@@ -119,38 +70,7 @@ func (fb *FileBitmap) IntersectsWith(other *FileBitmap) bool {
 	return false
 }
 
-// Not performs a bitwise NOT operation on a FileBitmap.
-// If reuseBuffer is true, the result is stored in the original bitmap; otherwise, a new FileBitmap is allocated.
-func Not(a *FileBitmap, reuseBuffer bool) *FileBitmap {
-	var res *FileBitmap
-	if reuseBuffer {
-		res = a
-	} else {
-		res = &FileBitmap{data: make([]byte, len(a.data))}
-	}
-	for i, b := range a.data {
-		res.data[i] = ^b
-	}
-	return res
-}
-
-// ToArray returns a new copy of the bitmap data.
-func (fb *FileBitmap) ToArray() []byte {
-	dst := make([]byte, len(fb.data))
-	copy(dst, fb.data)
-	return dst
-}
-
 // GetBuffer returns the internal byte buffer of the bitmap.
 func (fb *FileBitmap) GetBuffer() []byte {
 	return fb.data
-}
-
-// String returns a string representation of the bitmap as a binary string.
-func (fb *FileBitmap) String() string {
-	s := ""
-	for _, b := range fb.data {
-		s += fmt.Sprintf("%08b", b)
-	}
-	return s
 }

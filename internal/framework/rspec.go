@@ -5,10 +5,13 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"path/filepath"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/utils"
 )
 
 const (
@@ -20,31 +23,23 @@ const (
 type RSpec struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	discoveryConfig discovery.Config
+	platformEnv     map[string]string
 }
 
 func NewRSpec() *RSpec {
-	executor := &ext.DefaultCommandExecutor{}
-	rspec := &RSpec{
-		executor:        executor,
+	return &RSpec{
+		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
+		platformEnv:     make(map[string]string),
 	}
-	rspec.discoveryConfig = discovery.Config{
-		FrameworkName: "rspec",
-		RootDir:       rspecRootDir,
-		FilePattern:   rspecTestFilePattern,
-		Executor:      executor,
-		PlatformEnv:   make(map[string]string),
-	}
-	return rspec
 }
 
 func (r *RSpec) SetPlatformEnv(platformEnv map[string]string) {
-	r.discoveryConfig.SetPlatformEnv(platformEnv)
+	r.platformEnv = platformEnv
 }
 
 func (r *RSpec) GetPlatformEnv() map[string]string {
-	return r.discoveryConfig.PlatformEnvironment()
+	return r.platformEnv
 }
 
 func (r *RSpec) Name() string {
@@ -52,11 +47,56 @@ func (r *RSpec) Name() string {
 }
 
 func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
-	return discovery.DiscoverTests(ctx, r)
+	discovery.Cleanup()
+
+	pattern := r.testPattern()
+	excludePattern := settings.GetTestsExcludePattern()
+	useFilteredFiles := utils.NormalizePattern(excludePattern) != ""
+	var testFiles []string
+	if useFilteredFiles {
+		var err error
+		testFiles, err = discovery.DiscoverTestFiles(pattern, excludePattern)
+		if err != nil {
+			return nil, err
+		}
+		if len(testFiles) == 0 {
+			slog.Info("No RSpec test files remain after applying test discovery exclude pattern",
+				"pattern", pattern, "excludePattern", excludePattern)
+			return []testoptimization.Test{}, nil
+		}
+	}
+
+	name := "bundle"
+	args := []string{"exec", "rspec", "--format", "progress", "--dry-run"}
+	if useFilteredFiles {
+		args = append(args, testFiles...)
+		slog.Info("Using filtered RSpec test discovery files",
+			"pattern", pattern, "excludePattern", excludePattern, "count", len(testFiles))
+	} else {
+		args = append(args, "--pattern", pattern)
+		slog.Info("Using RSpec test discovery pattern", "pattern", pattern)
+	}
+
+	envMap := make(map[string]string)
+	maps.Copy(envMap, r.platformEnv)
+	maps.Copy(envMap, discovery.BaseEnv())
+
+	slog.Info("Discovering tests with command", "command", name, "args", args)
+	if err := discovery.ExecuteDiscoveryCommand(ctx, r.executor, name, args, envMap, r.Name()); err != nil {
+		return nil, err
+	}
+
+	tests, err := discovery.ParseTests()
+	if err != nil {
+		return nil, err
+	}
+
+	slog.Debug("Parsed RSpec report", "tests", len(tests))
+	return tests, nil
 }
 
 func (r *RSpec) DiscoverTestFiles() ([]string, error) {
-	testFiles, err := discovery.DiscoverFrameworkTestFiles(r)
+	testFiles, err := discovery.DiscoverTestFiles(r.testPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		return nil, err
 	}
@@ -65,13 +105,11 @@ func (r *RSpec) DiscoverTestFiles() ([]string, error) {
 	return testFiles, nil
 }
 
-func (r *RSpec) DiscoveryConfig() discovery.Config {
-	return r.discoveryConfig
-}
-
-func (r *RSpec) BuildDiscoveryCommand() (ext.Command, discovery.DiscoveryInput) {
-	name, args := r.buildDiscoveryCommand()
-	return ext.Command{Name: name, Args: args}, discovery.DiscoveryInput{PatternFlag: "--pattern"}
+func (r *RSpec) testPattern() string {
+	if custom := settings.GetTestsLocation(); custom != "" {
+		return custom
+	}
+	return filepath.Join(rspecRootDir, "**", rspecTestFilePattern)
 }
 
 func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
@@ -103,9 +141,4 @@ func (r *RSpec) getRSpecCommand() (string, []string) {
 
 	slog.Debug("Using bundle exec rspec for RSpec commands")
 	return "bundle", []string{"exec", "rspec"}
-}
-
-func (r *RSpec) buildDiscoveryCommand() (string, []string) {
-	// Always use bundle exec rspec for discovery, as bin/rspec is often customized
-	return "bundle", []string{"exec", "rspec", "--format", "progress", "--dry-run"}
 }

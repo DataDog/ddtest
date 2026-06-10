@@ -5,11 +5,14 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/utils"
 )
 
 const (
@@ -21,31 +24,23 @@ const (
 type Minitest struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	discoveryConfig discovery.Config
+	platformEnv     map[string]string
 }
 
 func NewMinitest() *Minitest {
-	executor := &ext.DefaultCommandExecutor{}
-	minitest := &Minitest{
-		executor:        executor,
+	return &Minitest{
+		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
+		platformEnv:     make(map[string]string),
 	}
-	minitest.discoveryConfig = discovery.Config{
-		FrameworkName: "minitest",
-		RootDir:       minitestRootDir,
-		FilePattern:   minitestTestFilePattern,
-		Executor:      executor,
-		PlatformEnv:   make(map[string]string),
-	}
-	return minitest
 }
 
 func (m *Minitest) SetPlatformEnv(platformEnv map[string]string) {
-	m.discoveryConfig.SetPlatformEnv(platformEnv)
+	m.platformEnv = platformEnv
 }
 
 func (m *Minitest) GetPlatformEnv() map[string]string {
-	return m.discoveryConfig.PlatformEnvironment()
+	return m.platformEnv
 }
 
 func (m *Minitest) Name() string {
@@ -53,11 +48,63 @@ func (m *Minitest) Name() string {
 }
 
 func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
-	return discovery.DiscoverTests(ctx, m)
+	discovery.Cleanup()
+
+	pattern := m.testPattern()
+	excludePattern := settings.GetTestsExcludePattern()
+	useFilteredFiles := utils.NormalizePattern(excludePattern) != ""
+	var testFiles []string
+	if useFilteredFiles {
+		var err error
+		testFiles, err = discovery.DiscoverTestFiles(pattern, excludePattern)
+		if err != nil {
+			return nil, err
+		}
+		if len(testFiles) == 0 {
+			slog.Info("No Minitest test files remain after applying test discovery exclude pattern",
+				"pattern", pattern, "excludePattern", excludePattern)
+			return []testoptimization.Test{}, nil
+		}
+	}
+
+	name, args, isRails := m.getMinitestCommand()
+
+	envMap := make(map[string]string)
+	maps.Copy(envMap, m.platformEnv)
+	maps.Copy(envMap, discovery.BaseEnv())
+
+	if useFilteredFiles {
+		if isRails {
+			args = append(args, testFiles...)
+		} else {
+			envMap["TEST"] = strings.Join(testFiles, ",")
+		}
+		slog.Info("Using filtered Minitest test discovery files",
+			"pattern", pattern, "excludePattern", excludePattern, "count", len(testFiles))
+	} else if isRails {
+		args = append(args, pattern)
+		slog.Info("Using Minitest test discovery pattern", "pattern", pattern)
+	} else {
+		envMap["TEST"] = pattern
+		slog.Info("Using Minitest test discovery pattern", "pattern", pattern)
+	}
+
+	slog.Info("Discovering tests with command", "command", name, "args", args)
+	if err := discovery.ExecuteDiscoveryCommand(ctx, m.executor, name, args, envMap, m.Name()); err != nil {
+		return nil, err
+	}
+
+	tests, err := discovery.ParseTests()
+	if err != nil {
+		return nil, err
+	}
+
+	slog.Debug("Parsed Minitest report", "tests", len(tests))
+	return tests, nil
 }
 
 func (m *Minitest) DiscoverTestFiles() ([]string, error) {
-	testFiles, err := discovery.DiscoverFrameworkTestFiles(m)
+	testFiles, err := discovery.DiscoverTestFiles(m.testPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		return nil, err
 	}
@@ -66,16 +113,11 @@ func (m *Minitest) DiscoverTestFiles() ([]string, error) {
 	return testFiles, nil
 }
 
-func (m *Minitest) DiscoveryConfig() discovery.Config {
-	return m.discoveryConfig
-}
-
-func (m *Minitest) BuildDiscoveryCommand() (ext.Command, discovery.DiscoveryInput) {
-	name, args, rails := m.buildDiscoveryCommand()
-	if rails {
-		return ext.Command{Name: name, Args: args}, discovery.DiscoveryInput{}
+func (m *Minitest) testPattern() string {
+	if custom := settings.GetTestsLocation(); custom != "" {
+		return custom
 	}
-	return ext.Command{Name: name, Args: args}, discovery.DiscoveryInput{EnvVar: "TEST", EnvFileSeparator: ","}
+	return filepath.Join(minitestRootDir, "**", minitestTestFilePattern)
 }
 
 func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
@@ -97,7 +139,7 @@ func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[
 	}
 
 	mergedEnv := make(map[string]string)
-	maps.Copy(mergedEnv, m.GetPlatformEnv())
+	maps.Copy(mergedEnv, m.platformEnv)
 	maps.Copy(mergedEnv, envMap)
 	return m.executor.Run(ctx, command, args, mergedEnv)
 }
@@ -162,9 +204,4 @@ func (m *Minitest) getMinitestCommand() (string, []string, bool) {
 
 	slog.Info("No Ruby on Rails found. Using bundle exec rake test for Minitest commands")
 	return "bundle", []string{"exec", "rake", "test"}, false
-}
-
-func (m *Minitest) buildDiscoveryCommand() (string, []string, bool) {
-	command, args, isRails := m.getMinitestCommand()
-	return command, args, isRails
 }

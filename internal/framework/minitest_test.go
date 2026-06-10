@@ -102,13 +102,13 @@ func TestMinitest_Name(t *testing.T) {
 	}
 }
 
-func TestMinitest_buildDiscoveryCommand(t *testing.T) {
+func TestMinitest_getMinitestCommand(t *testing.T) {
 	mockExecutor := &mockRailsCommandExecutor{
 		isRails: false,
 	}
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	command, args, isRails := minitest.buildDiscoveryCommand()
+	command, args, isRails := minitest.getMinitestCommand()
 
 	// Verify command structure: bundle exec rake test (non-Rails)
 	if command != "bundle" {
@@ -130,10 +130,10 @@ func TestMinitest_buildDiscoveryCommand(t *testing.T) {
 	}
 }
 
-func TestMinitest_buildDiscoveryCommand_WithOverride(t *testing.T) {
+func TestMinitest_getMinitestCommand_WithOverride(t *testing.T) {
 	mockExecutor := &mockRailsCommandExecutor{isRails: false}
 	minitest := newTestMinitestWithExecutorAndOverride(mockExecutor, []string{"./custom-minitest", "--flag"})
-	command, args, isRails := minitest.buildDiscoveryCommand()
+	command, args, isRails := minitest.getMinitestCommand()
 
 	if command != "./custom-minitest" {
 		t.Errorf("expected command to be './custom-minitest', got %q", command)
@@ -548,13 +548,13 @@ func TestMinitest_RunTests_RailsApplication(t *testing.T) {
 	}
 }
 
-func TestMinitest_buildDiscoveryCommand_RailsApplication(t *testing.T) {
+func TestMinitest_getMinitestCommand_RailsApplication(t *testing.T) {
 	mockExecutor := &mockRailsCommandExecutor{
 		isRails: true,
 	}
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	command, args, isRails := minitest.buildDiscoveryCommand()
+	command, args, isRails := minitest.getMinitestCommand()
 
 	// Verify command structure: bundle exec rails test (Rails)
 	if command != "bundle" {
@@ -1431,7 +1431,7 @@ func TestMinitest_RunTests_RailsApplication_WithBinRails(t *testing.T) {
 	}
 }
 
-func TestMinitest_buildDiscoveryCommand_RailsApplication_WithBinRails(t *testing.T) {
+func TestMinitest_getMinitestCommand_RailsApplication_WithBinRails(t *testing.T) {
 	// Create a temporary bin/rails file
 	if err := os.MkdirAll("bin", 0755); err != nil {
 		t.Fatalf("failed to create bin directory: %v", err)
@@ -1450,7 +1450,7 @@ func TestMinitest_buildDiscoveryCommand_RailsApplication_WithBinRails(t *testing
 	}
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	command, args, isRails := minitest.buildDiscoveryCommand()
+	command, args, isRails := minitest.getMinitestCommand()
 
 	// Verify command structure: bin/rails test (Rails with bin/rails)
 	if command != "bin/rails" {

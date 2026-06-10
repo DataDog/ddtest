@@ -86,6 +86,36 @@ func (m *mockCommandExecutor) Run(ctx context.Context, name string, args []strin
 	return m.err
 }
 
+func newTestRSpecWithExecutor(executor ext.CommandExecutor) *RSpec {
+	rspec := NewRSpec()
+	rspec.executor = executor
+	return rspec
+}
+
+func newTestRSpecWithOverride(commandOverride []string) *RSpec {
+	rspec := NewRSpec()
+	rspec.commandOverride = commandOverride
+	return rspec
+}
+
+func newTestRSpecWithExecutorAndOverride(executor ext.CommandExecutor, commandOverride []string) *RSpec {
+	rspec := newTestRSpecWithExecutor(executor)
+	rspec.commandOverride = commandOverride
+	return rspec
+}
+
+func newTestMinitestWithExecutor(executor ext.CommandExecutor) *Minitest {
+	minitest := NewMinitest()
+	minitest.executor = executor
+	return minitest
+}
+
+func newTestMinitestWithExecutorAndOverride(executor ext.CommandExecutor, commandOverride []string) *Minitest {
+	minitest := newTestMinitestWithExecutor(executor)
+	minitest.commandOverride = commandOverride
+	return minitest
+}
+
 func TestNewRSpec(t *testing.T) {
 	rspec := NewRSpec()
 	if rspec == nil {
@@ -206,52 +236,6 @@ func TestRSpec_getRSpecCommand_WithOverride(t *testing.T) {
 		if baseArgs[i] != expected {
 			t.Errorf("expected baseArgs[%d] to be %q, got %q", i, expected, baseArgs[i])
 		}
-	}
-}
-
-func TestRSpec_buildDiscoveryCommand(t *testing.T) {
-	_ = os.RemoveAll("bin")
-
-	rspec := NewRSpec()
-	command, args := rspec.buildDiscoveryCommand()
-
-	// Verify command contains necessary arguments
-	if !slices.Contains(args, "--format") {
-		t.Error("expected --format argument")
-	}
-	if !slices.Contains(args, "progress") {
-		t.Error("expected progress argument")
-	}
-	if !slices.Contains(args, "--dry-run") {
-		t.Error("expected --dry-run argument")
-	}
-
-	// Verify command is "bundle" with "rspec" in args
-	if command != "bundle" {
-		t.Errorf("expected command to be 'bundle', got %q", command)
-	}
-	if !slices.Contains(args, "rspec") {
-		t.Errorf("expected 'rspec' in arguments, got: %v", args)
-	}
-}
-
-func TestRSpec_buildDiscoveryCommand_WithOverride(t *testing.T) {
-	// Even with command override, discovery should always use bundle exec rspec
-	rspec := newTestRSpecWithOverride([]string{"./custom-rspec", "--profile"})
-
-	command, args := rspec.buildDiscoveryCommand()
-
-	if command != "bundle" {
-		t.Errorf("expected command to be 'bundle', got %q", command)
-	}
-	if !slices.Contains(args, "exec") {
-		t.Errorf("expected args to contain 'exec', got %v", args)
-	}
-	if !slices.Contains(args, "rspec") {
-		t.Errorf("expected args to contain 'rspec', got %v", args)
-	}
-	if !slices.Contains(args, "--dry-run") {
-		t.Error("expected args to contain '--dry-run'")
 	}
 }
 
@@ -508,45 +492,6 @@ func TestRSpec_RunTestsWithEnvMap(t *testing.T) {
 	}
 	if mockExecutor.capturedEnvMap["TEST_ENV"] != "rspec" {
 		t.Error("Expected TEST_ENV environment variable to be set")
-	}
-}
-
-func TestRSpec_buildDiscoveryCommand_WithBinRSpec(t *testing.T) {
-	// Even with bin/rspec present, discovery should always use bundle exec rspec
-	// because bin/rspec is often heavily customized and cannot be used for discovery
-	if err := os.MkdirAll("bin", 0755); err != nil {
-		t.Fatalf("failed to create bin directory: %v", err)
-	}
-	defer func() {
-		_ = os.RemoveAll("bin")
-	}()
-
-	// Create an executable bin/rspec file
-	if err := os.WriteFile("bin/rspec", []byte("#!/usr/bin/env ruby\n# test file"), 0755); err != nil {
-		t.Fatalf("failed to create bin/rspec: %v", err)
-	}
-
-	rspec := NewRSpec()
-	command, args := rspec.buildDiscoveryCommand()
-
-	// Verify discovery always uses bundle exec rspec
-	if command != "bundle" {
-		t.Errorf("expected command to use bundle, got %q", command)
-	}
-	if !slices.Contains(args, "exec") {
-		t.Error("expected 'exec' argument")
-	}
-	if !slices.Contains(args, "rspec") {
-		t.Error("expected 'rspec' argument")
-	}
-	if !slices.Contains(args, "--format") {
-		t.Error("expected --format argument")
-	}
-	if !slices.Contains(args, "progress") {
-		t.Error("expected progress argument")
-	}
-	if !slices.Contains(args, "--dry-run") {
-		t.Error("expected --dry-run argument")
 	}
 }
 
