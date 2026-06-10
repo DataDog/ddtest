@@ -3,7 +3,6 @@ package planner
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -325,7 +324,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		res, discErr := framework.DiscoverTests(discoveryCtx)
 		if discErr != nil {
 			fullDiscoveryErr = discErr
-			if errors.Is(discErr, context.Canceled) {
+			if discoveryCtx.Err() != nil {
 				slog.Debug("Full test discovery was cancelled")
 			} else {
 				slog.Warn("Full test discovery failed", "error", discErr)

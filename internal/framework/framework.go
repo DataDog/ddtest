@@ -3,7 +3,6 @@ package framework
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -41,7 +40,7 @@ func executeDiscoveryCommand(ctx context.Context, executor ext.CommandExecutor, 
 
 	output, err := executor.CombinedOutput(ctx, name, args, envMap)
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
+		if ctx.Err() != nil {
 			slog.Debug("Test discovery was cancelled", "framework", frameworkName)
 		} else {
 			slog.Warn("Failed to run test discovery", "framework", frameworkName, "output", string(output), "error", err)
