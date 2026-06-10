@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"maps"
-	"path/filepath"
+	"strings"
 
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -82,29 +82,21 @@ func (p *PyTest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, er
 }
 
 func (p *PyTest) DiscoverTestFiles() ([]string, error) {
-	seen := make(map[string]struct{})
-	var allFiles []string
-	for _, pattern := range p.testPatterns() {
-		files, err := globTestFiles(pattern)
-		if err != nil {
-			return nil, err
-		}
-		for _, f := range files {
-			if _, ok := seen[f]; !ok {
-				seen[f] = struct{}{}
-				allFiles = append(allFiles, f)
-			}
-		}
+	testFiles, err := globTestFiles(p.testPattern())
+	if err != nil {
+		return nil, err
 	}
-	slog.Debug("Discovered pytest test files", "count", len(allFiles))
-	return allFiles, nil
+	slog.Debug("Discovered pytest test files", "count", len(testFiles))
+	return testFiles, nil
 }
 
-// testPatterns returns the glob patterns used to discover test files.
+// testPattern returns the single glob pattern used to discover test files.
 // Priority: explicit --tests-location flag > pytest config file > built-in default.
-func (p *PyTest) testPatterns() []string {
+// Multiple testpaths or python_files from config are collapsed into brace-expansion
+// syntax that doublestar handles natively, e.g. {tests,src}/**/{test_*,*_test}.py.
+func (p *PyTest) testPattern() string {
 	if custom := settings.GetTestsLocation(); custom != "" {
-		return []string{custom}
+		return custom
 	}
 
 	cfg := loadPytestConfig()
@@ -113,23 +105,21 @@ func (p *PyTest) testPatterns() []string {
 	if len(filePatterns) == 0 {
 		filePatterns = []string{"{test_*,*_test}.py"}
 	}
+	filePart := braceExpand(filePatterns)
 
 	if len(cfg.Testpaths) == 0 {
-		// No testpaths configured: search the whole tree.
-		patterns := make([]string, 0, len(filePatterns))
-		for _, fp := range filePatterns {
-			patterns = append(patterns, "**/"+fp)
-		}
-		return patterns
+		return "**/" + filePart
 	}
+	return braceExpand(cfg.Testpaths) + "/**/" + filePart
+}
 
-	patterns := make([]string, 0, len(cfg.Testpaths)*len(filePatterns))
-	for _, tp := range cfg.Testpaths {
-		for _, fp := range filePatterns {
-			patterns = append(patterns, filepath.Join(tp, "**", fp))
-		}
+// braceExpand collapses a list into a single glob token.
+// A single item is returned as-is; multiple items are wrapped: {a,b,c}.
+func braceExpand(items []string) string {
+	if len(items) == 1 {
+		return items[0]
 	}
-	return patterns
+	return "{" + strings.Join(items, ",") + "}"
 }
 
 func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
