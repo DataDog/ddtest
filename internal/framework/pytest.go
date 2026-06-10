@@ -46,7 +46,7 @@ func (p *PyTest) Name() string {
 func (p *PyTest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
 	cleanupDiscoveryFile(TestsDiscoveryFilePath)
 
-	args := []string{"-m", "pytest", "--collect-only", "-q"}
+	args := []string{"-m", "pytest"}
 
 	// When a custom tests location is configured, resolve the glob to actual files
 	// and pass them to pytest so collection is constrained to only those files.
