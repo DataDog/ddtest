@@ -18,14 +18,14 @@ import (
 	"time"
 
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
-	ciUtils "github.com/DataDog/ddtest/civisibility/utils"
-	"github.com/DataDog/ddtest/civisibility/utils/net"
 	"github.com/DataDog/ddtest/internal/ciprovider"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	ciUtils "github.com/DataDog/ddtest/internal/utils"
+	"github.com/DataDog/ddtest/internal/utils/net"
 )
 
 // Mock implementations for testing
@@ -81,6 +81,28 @@ type MockFramework struct {
 type RunTestsCall struct {
 	TestFiles []string
 	EnvMap    map[string]string
+}
+
+func setPlannerTestsExcludePattern(t *testing.T, pattern string) {
+	t.Helper()
+	previous := os.Getenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN")
+	if err := os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN", pattern); err != nil {
+		t.Fatalf("failed to set tests_exclude_pattern env: %v", err)
+	}
+	settings.Init()
+
+	t.Cleanup(func() {
+		if previous == "" {
+			if err := os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN"); err != nil {
+				t.Errorf("failed to unset tests_exclude_pattern env: %v", err)
+			}
+		} else {
+			if err := os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN", previous); err != nil {
+				t.Errorf("failed to restore tests_exclude_pattern env: %v", err)
+			}
+		}
+		settings.Init()
+	})
 }
 
 func (m *MockFramework) Name() string {
@@ -2456,6 +2478,84 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotDuplicateDiscoveredSource
 
 	if weight, ok := runner.testFileWeight("spec/skipped_spec.rb"); ok || weight != 0 {
 		t.Errorf("Expected fully skipped file to remain omitted despite backend duplicate, got weight=%d ok=%t", weight, ok)
+	}
+}
+
+func TestTestPlanner_RecordFullDiscoveryResults_AppliesExcludeAfterSubdirNormalization(t *testing.T) {
+	setPlannerTestsExcludePattern(t, "spec/system/**/*_spec.rb")
+
+	runner := newTestPlannerWithDefaults()
+	tests := []testoptimization.Test{
+		{
+			Module:          "rspec",
+			Suite:           "User",
+			Name:            "should be valid",
+			SuiteSourceFile: "core/spec/models/user_spec.rb",
+		},
+		{
+			Module:          "rspec",
+			Suite:           "Checkout",
+			Name:            "checks out",
+			SuiteSourceFile: "core/spec/system/checkout_spec.rb",
+		},
+	}
+
+	err := runner.recordFullDiscoveryResults(tests, newTestSkipper(nil, nil), "core")
+	if err != nil {
+		t.Fatalf("recordFullDiscoveryResults() should not fail, got: %v", err)
+	}
+
+	if _, ok := runner.testFiles["spec/models/user_spec.rb"]; !ok {
+		t.Errorf("expected included normalized file to be recorded, got %v", runner.testFiles)
+	}
+	if _, ok := runner.testFiles["spec/system/checkout_spec.rb"]; ok {
+		t.Errorf("expected excluded normalized file not to be recorded, got %v", runner.testFiles)
+	}
+	if _, ok := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "User"}]; !ok {
+		t.Errorf("expected included suite aggregate to be recorded, got %v", runner.suiteAggregates)
+	}
+	if _, ok := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Checkout"}]; ok {
+		t.Errorf("expected excluded suite aggregate not to be recorded, got %v", runner.suiteAggregates)
+	}
+}
+
+func TestTestPlanner_RecordFastDiscoveryFallbackFiles_ExcludedBackendDurationsAreNotReintroduced(t *testing.T) {
+	setPlannerTestsExcludePattern(t, "spec/system/**/*_spec.rb")
+
+	runner := newTestPlannerWithDefaults()
+	err := runner.recordFastDiscoveryFallbackFiles([]string{
+		"spec/models/user_spec.rb",
+		"spec/system/checkout_spec.rb",
+	})
+	if err != nil {
+		t.Fatalf("recordFastDiscoveryFallbackFiles() should not fail, got: %v", err)
+	}
+
+	runner.testSuiteDurations = map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		"rspec": {
+			"User": {
+				SourceFile: "spec/models/user_spec.rb",
+				Duration:   testoptimization.DurationPercentiles{P50: "100000000"},
+			},
+			"Checkout": {
+				SourceFile: "spec/system/checkout_spec.rb",
+				Duration:   testoptimization.DurationPercentiles{P50: "200000000"},
+			},
+		},
+	}
+	runner.addDurationDataForFastDiscoveryFallback("")
+
+	if _, ok := runner.testFiles["spec/models/user_spec.rb"]; !ok {
+		t.Errorf("expected included fast-discovered file to be recorded, got %v", runner.testFiles)
+	}
+	if _, ok := runner.testFiles["spec/system/checkout_spec.rb"]; ok {
+		t.Errorf("expected excluded fast-discovered file not to be recorded, got %v", runner.testFiles)
+	}
+	if _, ok := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "User"}]; !ok {
+		t.Errorf("expected included backend duration suite to be recorded, got %v", runner.suiteAggregates)
+	}
+	if _, ok := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Checkout"}]; ok {
+		t.Errorf("expected excluded backend duration suite not to be reintroduced, got %v", runner.suiteAggregates)
 	}
 }
 

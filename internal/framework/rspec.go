@@ -6,8 +6,8 @@ import (
 	"maps"
 	"os"
 
+	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
-	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
@@ -20,23 +20,31 @@ const (
 type RSpec struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platformEnv     map[string]string
+	discoveryConfig discovery.Config
 }
 
 func NewRSpec() *RSpec {
-	return &RSpec{
-		executor:        &ext.DefaultCommandExecutor{},
+	executor := &ext.DefaultCommandExecutor{}
+	rspec := &RSpec{
+		executor:        executor,
 		commandOverride: loadCommandOverride(),
-		platformEnv:     make(map[string]string),
 	}
+	rspec.discoveryConfig = discovery.Config{
+		FrameworkName: "rspec",
+		RootDir:       rspecRootDir,
+		FilePattern:   rspecTestFilePattern,
+		Executor:      executor,
+		PlatformEnv:   make(map[string]string),
+	}
+	return rspec
 }
 
 func (r *RSpec) SetPlatformEnv(platformEnv map[string]string) {
-	r.platformEnv = platformEnv
+	r.discoveryConfig.SetPlatformEnv(platformEnv)
 }
 
 func (r *RSpec) GetPlatformEnv() map[string]string {
-	return r.platformEnv
+	return r.discoveryConfig.PlatformEnvironment()
 }
 
 func (r *RSpec) Name() string {
@@ -44,36 +52,11 @@ func (r *RSpec) Name() string {
 }
 
 func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
-	cleanupDiscoveryFile(TestsDiscoveryFilePath)
-
-	pattern := r.testPattern()
-
-	name, args := r.createDiscoveryCommand()
-	args = append(args, "--pattern", pattern)
-
-	// Merge env maps: platform env -> base discovery env
-	envMap := make(map[string]string)
-	maps.Copy(envMap, r.platformEnv)
-	maps.Copy(envMap, BaseDiscoveryEnv())
-
-	slog.Info("Using test discovery pattern", "pattern", pattern)
-	slog.Info("Discovering tests with command", "command", name, "args", args)
-	_, err := executeDiscoveryCommand(ctx, r.executor, name, args, envMap, r.Name())
-	if err != nil {
-		return nil, err
-	}
-
-	tests, err := parseDiscoveryFile(TestsDiscoveryFilePath)
-	if err != nil {
-		return nil, err
-	}
-
-	slog.Debug("Parsed RSpec report", "tests", len(tests))
-	return tests, nil
+	return discovery.DiscoverTests(ctx, r)
 }
 
 func (r *RSpec) DiscoverTestFiles() ([]string, error) {
-	testFiles, err := globTestFiles(r.testPattern())
+	testFiles, err := discovery.DiscoverFrameworkTestFiles(r)
 	if err != nil {
 		return nil, err
 	}
@@ -82,11 +65,13 @@ func (r *RSpec) DiscoverTestFiles() ([]string, error) {
 	return testFiles, nil
 }
 
-func (r *RSpec) testPattern() string {
-	if custom := settings.GetTestsLocation(); custom != "" {
-		return custom
-	}
-	return defaultTestPattern(rspecRootDir, rspecTestFilePattern)
+func (r *RSpec) DiscoveryConfig() discovery.Config {
+	return r.discoveryConfig
+}
+
+func (r *RSpec) BuildDiscoveryCommand() (ext.Command, discovery.DiscoveryInput) {
+	name, args := r.buildDiscoveryCommand()
+	return ext.Command{Name: name, Args: args}, discovery.DiscoveryInput{PatternFlag: "--pattern"}
 }
 
 func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
@@ -96,7 +81,7 @@ func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[str
 	args = append(args, testFiles...)
 
 	mergedEnv := make(map[string]string)
-	maps.Copy(mergedEnv, r.platformEnv)
+	maps.Copy(mergedEnv, r.GetPlatformEnv())
 	maps.Copy(mergedEnv, envMap)
 	return r.executor.Run(ctx, command, args, mergedEnv)
 }
@@ -120,7 +105,7 @@ func (r *RSpec) getRSpecCommand() (string, []string) {
 	return "bundle", []string{"exec", "rspec"}
 }
 
-func (r *RSpec) createDiscoveryCommand() (string, []string) {
+func (r *RSpec) buildDiscoveryCommand() (string, []string) {
 	// Always use bundle exec rspec for discovery, as bin/rspec is often customized
 	return "bundle", []string{"exec", "rspec", "--format", "progress", "--dry-run"}
 }

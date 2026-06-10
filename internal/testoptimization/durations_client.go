@@ -14,9 +14,9 @@ import (
 
 	"github.com/DataDog/ddtest/civisibility"
 	"github.com/DataDog/ddtest/civisibility/constants"
-	"github.com/DataDog/ddtest/civisibility/utils"
 	"github.com/DataDog/ddtest/internal/httptransport"
 	"github.com/DataDog/ddtest/internal/runmetadata"
+	"github.com/DataDog/ddtest/internal/utils"
 )
 
 const (

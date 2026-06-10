@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/civisibility/constants"
-	ciUtils "github.com/DataDog/ddtest/civisibility/utils"
+	ciUtils "github.com/DataDog/ddtest/internal/utils"
 )
 
 // MockDurationsAPI implements DurationsAPI for testing (equivalent of MockCIVisibilityIntegrations)

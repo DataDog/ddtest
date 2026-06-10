@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddtest/civisibility/utils/net"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/utils/net"
 )
 
 func TestPrintPlanReport_AllData(t *testing.T) {

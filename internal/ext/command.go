@@ -8,6 +8,23 @@ import (
 	"syscall"
 )
 
+type Command struct {
+	Name string
+	Args []string
+	Env  map[string]string
+}
+
+func (c *Command) AppendArgs(args ...string) {
+	c.Args = append(c.Args, args...)
+}
+
+func (c *Command) SetEnv(key string, value string) {
+	if c.Env == nil {
+		c.Env = make(map[string]string)
+	}
+	c.Env[key] = value
+}
+
 type CommandExecutor interface {
 	CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error)
 	Run(ctx context.Context, name string, args []string, envMap map[string]string) error

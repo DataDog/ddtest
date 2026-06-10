@@ -138,6 +138,9 @@ func TestInit(t *testing.T) {
 	if config.TestsLocation != "" {
 		t.Errorf("expected default tests_location to be empty, got %q", config.TestsLocation)
 	}
+	if config.TestsExcludePattern != "" {
+		t.Errorf("expected default tests_exclude_pattern to be empty, got %q", config.TestsExcludePattern)
+	}
 	if config.RuntimeTags != "" {
 		t.Errorf("expected default runtime_tags to be empty, got %q", config.RuntimeTags)
 	}
@@ -181,6 +184,9 @@ func TestSetDefaults(t *testing.T) {
 	}
 	if viper.GetString("tests_location") != "" {
 		t.Errorf("expected default tests_location to be empty, got %q", viper.GetString("tests_location"))
+	}
+	if viper.GetString("tests_exclude_pattern") != "" {
+		t.Errorf("expected default tests_exclude_pattern to be empty, got %q", viper.GetString("tests_exclude_pattern"))
 	}
 	if viper.GetString("runtime_tags") != "" {
 		t.Errorf("expected default runtime_tags to be empty, got %q", viper.GetString("runtime_tags"))
@@ -260,6 +266,7 @@ func TestEnvironmentVariables(t *testing.T) {
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS", "4")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND", "bundle exec rspec")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", "spec/**/*_spec.rb")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN", "spec/system/**/*_spec.rb")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS", `{"os.platform":"linux","runtime.version":"3.2.0"}`)
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED", "false")
 	defer func() {
@@ -273,6 +280,7 @@ func TestEnvironmentVariables(t *testing.T) {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED")
 	}()
@@ -308,6 +316,9 @@ func TestEnvironmentVariables(t *testing.T) {
 	}
 	if config.TestsLocation != "spec/**/*_spec.rb" {
 		t.Errorf("expected tests_location from env var to be 'spec/**/*_spec.rb', got %q", config.TestsLocation)
+	}
+	if config.TestsExcludePattern != "spec/system/**/*_spec.rb" {
+		t.Errorf("expected tests_exclude_pattern from env var to be 'spec/system/**/*_spec.rb', got %q", config.TestsExcludePattern)
 	}
 	if config.RuntimeTags != `{"os.platform":"linux","runtime.version":"3.2.0"}` {
 		t.Errorf("expected runtime_tags from env var to be JSON string, got %q", config.RuntimeTags)
@@ -418,6 +429,83 @@ func TestGetTestsLocation(t *testing.T) {
 	testsLocation = GetTestsLocation()
 	if testsLocation != "spec/**/*_spec.rb" {
 		t.Errorf("expected tests_location to be 'spec/**/*_spec.rb', got %q", testsLocation)
+	}
+}
+
+func TestGetTestsExcludePattern(t *testing.T) {
+	config = nil
+	viper.Reset()
+
+	testsExcludePattern := GetTestsExcludePattern()
+	if testsExcludePattern != "" {
+		t.Errorf("expected tests_exclude_pattern to be empty by default, got %q", testsExcludePattern)
+	}
+
+	config = &Config{TestsExcludePattern: "spec/system/**/*_spec.rb"}
+	testsExcludePattern = GetTestsExcludePattern()
+	if testsExcludePattern != "spec/system/**/*_spec.rb" {
+		t.Errorf("expected tests_exclude_pattern to be 'spec/system/**/*_spec.rb', got %q", testsExcludePattern)
+	}
+}
+
+func TestKnapsackTestFilePatternAlias(t *testing.T) {
+	config = nil
+	viper.Reset()
+
+	_ = os.Setenv(testsLocationEnv, "")
+	_ = os.Setenv(knapsackTestFilePatternEnv, "custom/spec/**/*_spec.rb")
+	defer func() {
+		_ = os.Unsetenv(testsLocationEnv)
+		_ = os.Unsetenv(knapsackTestFilePatternEnv)
+	}()
+
+	Init()
+
+	if config.TestsLocation != "custom/spec/**/*_spec.rb" {
+		t.Errorf("expected tests_location from Knapsack alias to be 'custom/spec/**/*_spec.rb', got %q", config.TestsLocation)
+	}
+}
+
+func TestKnapsackTestFileExcludePatternAlias(t *testing.T) {
+	config = nil
+	viper.Reset()
+
+	_ = os.Setenv(testsExcludePatternEnv, "")
+	_ = os.Setenv(knapsackTestFileExcludeEnv, "spec/system/**/*_spec.rb")
+	defer func() {
+		_ = os.Unsetenv(testsExcludePatternEnv)
+		_ = os.Unsetenv(knapsackTestFileExcludeEnv)
+	}()
+
+	Init()
+
+	if config.TestsExcludePattern != "spec/system/**/*_spec.rb" {
+		t.Errorf("expected tests_exclude_pattern from Knapsack alias to be 'spec/system/**/*_spec.rb', got %q", config.TestsExcludePattern)
+	}
+}
+
+func TestCanonicalTestPatternEnvVarsTakePrecedenceOverKnapsackAliases(t *testing.T) {
+	config = nil
+	viper.Reset()
+
+	_ = os.Setenv(testsLocationEnv, "spec/**/*_spec.rb")
+	_ = os.Setenv(knapsackTestFilePatternEnv, "custom/spec/**/*_spec.rb")
+	_ = os.Setenv(testsExcludePatternEnv, "spec/system/**/*_spec.rb")
+	_ = os.Setenv(knapsackTestFileExcludeEnv, "spec/features/**/*_spec.rb")
+	defer func() {
+		_ = os.Unsetenv(testsLocationEnv)
+		_ = os.Unsetenv(knapsackTestFilePatternEnv)
+		_ = os.Unsetenv(testsExcludePatternEnv)
+		_ = os.Unsetenv(knapsackTestFileExcludeEnv)
+	}()
+
+	Init()
+
+	if config.TestsLocation != "spec/**/*_spec.rb" {
+		t.Errorf("expected canonical tests_location env var to win, got %q", config.TestsLocation)
+	}
+	if config.TestsExcludePattern != "spec/system/**/*_spec.rb" {
+		t.Errorf("expected canonical tests_exclude_pattern env var to win, got %q", config.TestsExcludePattern)
 	}
 }
 

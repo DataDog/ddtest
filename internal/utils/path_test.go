@@ -1,4 +1,9 @@
-package planner
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2024 Datadog, Inc.
+
+package utils
 
 import (
 	"os"
@@ -8,8 +13,6 @@ import (
 )
 
 func TestStripCwdSubdirPrefix_SubdirPrefixMatch_StripsPrefix(t *testing.T) {
-	// Simulates: git root = /repo, CWD = /repo/core
-	// Path "core/spec/models/order_spec.rb" -> "spec/models/order_spec.rb"
 	repoRoot := t.TempDir()
 	initGitRepoInDir(t, repoRoot)
 
@@ -20,8 +23,8 @@ func TestStripCwdSubdirPrefix_SubdirPrefixMatch_StripsPrefix(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(coreDir)
 
-	prefix := getCwdSubdirPrefix()
-	result := stripCwdSubdirPrefix("core/spec/models/order_spec.rb", prefix)
+	prefix := CwdSubdirPrefix()
+	result := StripCwdSubdirPrefix("core/spec/models/order_spec.rb", prefix)
 	expected := "spec/models/order_spec.rb"
 	if result != expected {
 		t.Errorf("Expected %q, got %q", expected, result)
@@ -29,8 +32,6 @@ func TestStripCwdSubdirPrefix_SubdirPrefixMatch_StripsPrefix(t *testing.T) {
 }
 
 func TestStripCwdSubdirPrefix_NestedSubdirPrefixMatch_StripsFullPrefix(t *testing.T) {
-	// Simulates: git root = /repo, CWD = /repo/packages/core
-	// Path "packages/core/spec/user_spec.rb" -> "spec/user_spec.rb"
 	repoRoot := t.TempDir()
 	initGitRepoInDir(t, repoRoot)
 
@@ -41,8 +42,8 @@ func TestStripCwdSubdirPrefix_NestedSubdirPrefixMatch_StripsFullPrefix(t *testin
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(nestedDir)
 
-	prefix := getCwdSubdirPrefix()
-	result := stripCwdSubdirPrefix("packages/core/spec/user_spec.rb", prefix)
+	prefix := CwdSubdirPrefix()
+	result := StripCwdSubdirPrefix("packages/core/spec/user_spec.rb", prefix)
 	expected := "spec/user_spec.rb"
 	if result != expected {
 		t.Errorf("Expected %q, got %q", expected, result)
@@ -50,7 +51,6 @@ func TestStripCwdSubdirPrefix_NestedSubdirPrefixMatch_StripsFullPrefix(t *testin
 }
 
 func TestStripCwdSubdirPrefix_AlreadyRelative_NoChange(t *testing.T) {
-	// When path doesn't start with subdir prefix, it's already CWD-relative
 	repoRoot := t.TempDir()
 	initGitRepoInDir(t, repoRoot)
 
@@ -61,17 +61,15 @@ func TestStripCwdSubdirPrefix_AlreadyRelative_NoChange(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(coreDir)
 
-	// This path is already CWD-relative (doesn't start with "core/")
-	prefix := getCwdSubdirPrefix()
-	result := stripCwdSubdirPrefix("spec/models/order_spec.rb", prefix)
+	prefix := CwdSubdirPrefix()
+	result := StripCwdSubdirPrefix("spec/models/order_spec.rb", prefix)
 	expected := "spec/models/order_spec.rb"
 	if result != expected {
-		t.Errorf("Expected %q (unchanged), got %q", expected, result)
+		t.Errorf("Expected %q unchanged, got %q", expected, result)
 	}
 }
 
 func TestStripCwdSubdirPrefix_PrefixMismatch_NoChange(t *testing.T) {
-	// CWD is "api/" but path has "core/" prefix - should NOT be stripped
 	repoRoot := t.TempDir()
 	initGitRepoInDir(t, repoRoot)
 
@@ -82,16 +80,15 @@ func TestStripCwdSubdirPrefix_PrefixMismatch_NoChange(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(apiDir)
 
-	prefix := getCwdSubdirPrefix()
-	result := stripCwdSubdirPrefix("core/spec/models/order_spec.rb", prefix)
+	prefix := CwdSubdirPrefix()
+	result := StripCwdSubdirPrefix("core/spec/models/order_spec.rb", prefix)
 	expected := "core/spec/models/order_spec.rb"
 	if result != expected {
-		t.Errorf("Expected %q (unchanged), got %q", expected, result)
+		t.Errorf("Expected %q unchanged, got %q", expected, result)
 	}
 }
 
 func TestStripCwdSubdirPrefix_AtRepoRoot_NoChange(t *testing.T) {
-	// When CWD == git root, no prefix to strip
 	repoRoot := t.TempDir()
 	initGitRepoInDir(t, repoRoot)
 
@@ -99,32 +96,30 @@ func TestStripCwdSubdirPrefix_AtRepoRoot_NoChange(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(repoRoot)
 
-	prefix := getCwdSubdirPrefix()
-	result := stripCwdSubdirPrefix("spec/models/order_spec.rb", prefix)
+	prefix := CwdSubdirPrefix()
+	result := StripCwdSubdirPrefix("spec/models/order_spec.rb", prefix)
 	expected := "spec/models/order_spec.rb"
 	if result != expected {
-		t.Errorf("Expected %q (unchanged), got %q", expected, result)
+		t.Errorf("Expected %q unchanged, got %q", expected, result)
 	}
 }
 
 func TestStripCwdSubdirPrefix_GitRootUnavailable_NoChange(t *testing.T) {
-	// When not in a git repo, normalization should be a no-op (fail-safe)
 	tempDir := t.TempDir()
 
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(tempDir)
 
-	prefix := getCwdSubdirPrefix()
-	result := stripCwdSubdirPrefix("core/spec/models/order_spec.rb", prefix)
+	prefix := CwdSubdirPrefix()
+	result := StripCwdSubdirPrefix("core/spec/models/order_spec.rb", prefix)
 	expected := "core/spec/models/order_spec.rb"
 	if result != expected {
-		t.Errorf("Expected %q (unchanged when git root unavailable), got %q", expected, result)
+		t.Errorf("Expected %q unchanged when git root unavailable, got %q", expected, result)
 	}
 }
 
 func TestStripCwdSubdirPrefix_AbsolutePath_NoChange(t *testing.T) {
-	// Absolute paths should not be modified
 	repoRoot := t.TempDir()
 	initGitRepoInDir(t, repoRoot)
 
@@ -136,21 +131,20 @@ func TestStripCwdSubdirPrefix_AbsolutePath_NoChange(t *testing.T) {
 	_ = os.Chdir(coreDir)
 
 	absPath := "/absolute/path/to/spec.rb"
-	prefix := getCwdSubdirPrefix()
-	result := stripCwdSubdirPrefix(absPath, prefix)
+	prefix := CwdSubdirPrefix()
+	result := StripCwdSubdirPrefix(absPath, prefix)
 	if result != absPath {
-		t.Errorf("Expected %q (absolute path unchanged), got %q", absPath, result)
+		t.Errorf("Expected %q unchanged, got %q", absPath, result)
 	}
 }
 
 func TestStripCwdSubdirPrefix_EmptyPath_NoChange(t *testing.T) {
-	result := stripCwdSubdirPrefix("", "core")
+	result := StripCwdSubdirPrefix("", "core")
 	if result != "" {
 		t.Errorf("Expected empty string, got %q", result)
 	}
 }
 
-// initGitRepoInDir initializes a git repo in the specified directory.
 func initGitRepoInDir(t *testing.T, dir string) {
 	t.Helper()
 	cmd := exec.Command("git", "init")
@@ -168,4 +162,12 @@ func initGitRepoInDir(t *testing.T, dir string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to create initial commit in %s: %v\n%s", dir, err, string(out))
 	}
+}
+
+func gitTestEnv() []string {
+	return append(os.Environ(),
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_TERMINAL_PROMPT=0",
+	)
 }

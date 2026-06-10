@@ -13,13 +13,13 @@ import (
 	"time"
 
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
-	"github.com/DataDog/ddtest/civisibility/utils"
 	"github.com/DataDog/ddtest/internal/ciprovider"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/utils"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -374,7 +374,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	// When running from a monorepo subdirectory (e.g., "cd core && ddtest plan"),
 	// full discovery may return repo-root-relative paths (e.g., "core/spec/...").
 	// We normalize them to CWD-relative paths so workers can find the files.
-	subdirPrefix := getCwdSubdirPrefix()
+	subdirPrefix := utils.CwdSubdirPrefix()
 	if subdirPrefix != "" {
 		slog.Info("Running from subdirectory, will normalize repo-root-relative paths", "subdirPrefix", subdirPrefix)
 	}
@@ -383,13 +383,17 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	// into a collection of testSuiteAggregate structs.
 	// This collection is used to calculate the skippable percentage and the weighted test files.
 	if fullDiscoverySucceeded {
-		tp.recordFullDiscoveryResults(discoveredTests, skippedTests, subdirPrefix)
+		if err := tp.recordFullDiscoveryResults(discoveredTests, skippedTests, subdirPrefix); err != nil {
+			return err
+		}
 		tp.estimateDiscoveredSuiteDurations()
 
 		slog.Info("Full test discovery succeeded; using full discovery results and ignoring fast-discovered-only files",
 			"fastDiscoveredTestFilesCount", len(discoveredTestFiles))
 	} else {
-		tp.recordFastDiscoveryFallbackFiles(discoveredTestFiles)
+		if err := tp.recordFastDiscoveryFallbackFiles(discoveredTestFiles); err != nil {
+			return err
+		}
 		tp.addDurationDataForFastDiscoveryFallback(subdirPrefix)
 
 		slog.Info("Full test discovery did not run or failed; using fast test file discovery fallback",
@@ -464,7 +468,8 @@ func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback(subdirPrefix stri
 				continue
 			}
 
-			sourceFile := stripCwdSubdirPrefix(suiteInfo.SourceFile, subdirPrefix)
+			sourceFile := utils.StripCwdSubdirPrefix(suiteInfo.SourceFile, subdirPrefix)
+			sourceFile = utils.NormalizePath(sourceFile)
 			if _, ok := tp.testFiles[sourceFile]; !ok {
 				continue
 			}

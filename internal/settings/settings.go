@@ -18,6 +18,10 @@ const (
 	defaultParallelRunnerOverhead = 25 * time.Second
 	ncpuCiNodeWorkers             = "ncpu"
 	parallelRunnerOverheadEnv     = "DD_TEST_OPTIMIZATION_RUNNER_CI_JOB_OVERHEAD"
+	testsLocationEnv              = "DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION"
+	testsExcludePatternEnv        = "DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN"
+	knapsackTestFilePatternEnv    = "KNAPSACK_PRO_TEST_FILE_PATTERN"
+	knapsackTestFileExcludeEnv    = "KNAPSACK_PRO_TEST_FILE_EXCLUDE_PATTERN"
 )
 
 // DefaultParallelism returns the default parallelism value.
@@ -90,6 +94,7 @@ type Config struct {
 	CiNodeWorkers          int           `mapstructure:"ci_node_workers"`
 	Command                string        `mapstructure:"command"`
 	TestsLocation          string        `mapstructure:"tests_location"`
+	TestsExcludePattern    string        `mapstructure:"tests_exclude_pattern"`
 	RuntimeTags            string        `mapstructure:"runtime_tags"`
 	ReportEnabled          bool          `mapstructure:"report_enabled"`
 }
@@ -104,6 +109,14 @@ func Init() {
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	if err := viper.BindEnv("parallel_runner_overhead", parallelRunnerOverheadEnv); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding parallel runner overhead env: %v\n", err)
+		os.Exit(1)
+	}
+	if err := viper.BindEnv("tests_location", testsLocationEnv, knapsackTestFilePatternEnv); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding tests location env: %v\n", err)
+		os.Exit(1)
+	}
+	if err := viper.BindEnv("tests_exclude_pattern", testsExcludePatternEnv, knapsackTestFileExcludeEnv); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding tests exclude pattern env: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -140,6 +153,7 @@ func setDefaults() {
 	viper.SetDefault("ci_node_workers", strconv.Itoa(defaultCiNodeWorkers))
 	viper.SetDefault("command", "")
 	viper.SetDefault("tests_location", "")
+	viper.SetDefault("tests_exclude_pattern", "")
 	viper.SetDefault("runtime_tags", "")
 	viper.SetDefault("report_enabled", true)
 }
@@ -229,6 +243,10 @@ func GetCommand() string {
 
 func GetTestsLocation() string {
 	return Get().TestsLocation
+}
+
+func GetTestsExcludePattern() string {
+	return Get().TestsExcludePattern
 }
 
 func GetRuntimeTags() string {

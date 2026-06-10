@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
-	ciUtils "github.com/DataDog/ddtest/civisibility/utils"
 	"github.com/DataDog/ddtest/internal/constants"
+	ciUtils "github.com/DataDog/ddtest/internal/utils"
 )
 
 func unsetEnvForTest(t *testing.T, key string) {

@@ -80,6 +80,8 @@ parallelism details, see [Running DDTest](docs/running.md).
 | `--min-parallelism` | Minimum CI node or worker count DDTest considers when planning. |
 | `--max-parallelism` | Maximum CI node or worker count DDTest considers when planning. |
 | `--ci-node` | Run only the files assigned to CI node **N**. |
+| `--tests-location` | Override the default test file discovery glob. |
+| `--tests-exclude-pattern` | Exclude matching test files from discovery. |
 
 For all flags, environment variables, and defaults, see
 [Settings](docs/settings.md).

@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/DataDog/ddtest/civisibility/constants"
-	"github.com/DataDog/ddtest/civisibility/utils"
+	"github.com/DataDog/ddtest/internal/utils"
 )
 
 type CIProvider interface {
