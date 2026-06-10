@@ -19,6 +19,32 @@ func TestPython_Name(t *testing.T) {
 	}
 }
 
+func TestNormalizePyVersion(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"4.12.0rc1", "4.12.0-rc1"},
+		{"4.12.0b2", "4.12.0-b2"},
+		{"4.12.0a1", "4.12.0-a1"},
+		{"4.10.3", "4.10.3"},
+		{"1.2.3.4", "1.2.3.4"},
+	}
+	for _, c := range cases {
+		if got := normalizePyVersion(c.in); got != c.want {
+			t.Errorf("normalizePyVersion(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestPython_SanityCheck_SuccessWithPreRelease(t *testing.T) {
+	mockExecutor := &mockCommandExecutor{
+		combinedOutput: []byte("4.12.0rc1\n"),
+	}
+	python := NewPython()
+	python.executor = mockExecutor
+	if err := python.SanityCheck(); err != nil {
+		t.Fatalf("SanityCheck() unexpected error for pre-release version: %v", err)
+	}
+}
+
 func TestPython_SanityCheck_Success(t *testing.T) {
 	mockExecutor := &mockCommandExecutor{
 		combinedOutput: []byte("4.10.3\n"),
@@ -336,14 +362,13 @@ func TestDetectPlatform_Python(t *testing.T) {
 	}()
 
 	platform, err := DetectPlatform()
-	if err == nil {
-		t.Errorf("expected error for SanityCheck failure, but got platform: %v", platform)
-	} else if platform != nil {
-		t.Errorf("expected nil platform for SanityCheck failure, but got platform: %v", platform)
+	if err != nil {
+		t.Fatalf("DetectPlatform() unexpected error: %v", err)
 	}
-
-	expectedPrefix := "sanity check failed for platform python:"
-	if !strings.HasPrefix(err.Error(), expectedPrefix) {
-		t.Errorf("expected error to start with %q, got %q", expectedPrefix, err.Error())
+	if platform == nil {
+		t.Fatal("expected non-nil platform")
+	}
+	if platform.Name() != "python" {
+		t.Errorf("expected platform name 'python', got %q", platform.Name())
 	}
 }

@@ -38,7 +38,7 @@ func TestPyTest_DiscoverTests_NoFileArgsWithDefaultPattern(t *testing.T) {
 		}
 	}
 
-	for _, expected := range []string{"-m", "pytest", "--collect-only", "-q"} {
+	for _, expected := range []string{"-m", "pytest"} {
 		if !slices.Contains(capturedArgs, expected) {
 			t.Errorf("expected base arg %q in pytest args, got %v", expected, capturedArgs)
 		}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -15,6 +16,17 @@ import (
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/version"
 )
+
+// pep440PreReleaseRe matches PEP 440 pre-release suffixes (a/b/rc + digits) embedded
+// directly in a version component, e.g. "0rc1" or "12b3". We normalize these to
+// semver-style by inserting a hyphen so the existing parser can handle them.
+var pep440PreReleaseRe = regexp.MustCompile(`^(\d+\.\d+(?:\.\d+)*)((?:a|b|rc)\d+)$`)
+
+// normalizePyVersion converts PEP 440 version strings to semver-compatible ones.
+// "4.12.0rc1" → "4.12.0-rc1", "4.10.3" → "4.10.3" (unchanged).
+func normalizePyVersion(v string) string {
+	return pep440PreReleaseRe.ReplaceAllString(v, "$1-$2")
+}
 
 //go:embed scripts/python_env.py
 var pythonEnvScript string
@@ -122,7 +134,7 @@ func (p *Python) SanityCheck() error {
 		return fmt.Errorf("%s is not installed: %w", requiredPackageName, err)
 	}
 
-	versionStr := strings.TrimSpace(string(output))
+	versionStr := normalizePyVersion(strings.TrimSpace(string(output)))
 	pkgVersion, err := version.Parse(versionStr)
 	if err != nil {
 		return fmt.Errorf("failed to parse %s version %q: %w", requiredPackageName, versionStr, err)
