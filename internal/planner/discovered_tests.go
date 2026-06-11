@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -19,7 +20,7 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 
 	slog.Info("Using full test discovery results")
 
-	if slog.Default().Enabled(nil, slog.LevelDebug) {
+	if slog.Default().Enabled(context.TODO(), slog.LevelDebug) {
 		i := 0
 		for _, test := range discoveredTests {
 			slog.Debug("Discovered test ID (format: module.suite.name.params)", "id", test.DatadogTestId(), "module", test.Module, "suite", test.Suite, "name", test.Name)
