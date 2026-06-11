@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -79,28 +82,74 @@ func (e Excluder) Match(path string) bool {
 }
 
 func DiscoverTestFiles(includePattern, excludePattern string) ([]string, error) {
-	matches, err := doublestar.FilepathGlob(includePattern, doublestar.WithFilesOnly())
-	if err != nil {
-		return nil, fmt.Errorf("failed to discover test files with pattern %q: %w", includePattern, err)
-	}
-	return filterTestFiles(matches, excludePattern)
-}
-
-func filterTestFiles(files []string, excludePattern string) ([]string, error) {
 	excluder, err := NewExcluder(excludePattern)
 	if err != nil {
 		return nil, err
 	}
 
-	filtered := make([]string, 0, len(files))
-	for _, file := range files {
-		normalized := utils.NormalizePath(file)
-		if normalized == "" || excluder.Match(normalized) {
-			continue
-		}
-		filtered = append(filtered, normalized)
+	normalizedIncludePattern := normalizeDiscoveryPattern(includePattern)
+	if normalizedIncludePattern == "" {
+		return nil, nil
 	}
-	return filtered, nil
+	if !doublestar.ValidatePattern(normalizedIncludePattern) {
+		return nil, fmt.Errorf("failed to discover test files with pattern %q: %w", includePattern, doublestar.ErrBadPattern)
+	}
+
+	walkRoot := discoveryWalkRoot(normalizedIncludePattern)
+	if _, err := os.Lstat(walkRoot); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to discover test files with pattern %q: %w", includePattern, err)
+	}
+
+	testFiles := make([]string, 0)
+	err = filepath.WalkDir(walkRoot, func(filePath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			slog.Debug("Skipping path during test file discovery", "path", filePath, "error", walkErr)
+			return nil
+		}
+
+		normalizedPath := utils.NormalizePath(filePath)
+		if normalizedPath == "" {
+			return nil
+		}
+
+		if excluder.Match(normalizedPath) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if entry.IsDir() {
+			return nil
+		}
+
+		if doublestar.MatchUnvalidated(normalizedIncludePattern, normalizedPath) {
+			testFiles = append(testFiles, normalizedPath)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover test files with pattern %q: %w", includePattern, err)
+	}
+
+	slices.Sort(testFiles)
+	return testFiles, nil
+}
+
+func normalizeDiscoveryPattern(pattern string) string {
+	normalized := utils.NormalizePattern(pattern)
+	if normalized == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Clean(normalized))
+}
+
+func discoveryWalkRoot(includePattern string) string {
+	base, _ := doublestar.SplitPattern(includePattern)
+	return filepath.FromSlash(path.Clean(base))
 }
 
 func Cleanup() {
