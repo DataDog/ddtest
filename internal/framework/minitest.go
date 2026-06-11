@@ -46,13 +46,9 @@ func (m *Minitest) Name() string {
 	return "minitest"
 }
 
-func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
+func (m *Minitest) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
 	discovery.Cleanup()
 
-	testFiles, err := discovery.ResolveTestFiles(m.testPattern(), settings.GetTestsExcludePattern())
-	if err != nil {
-		return nil, err
-	}
 	if testFiles.Empty() {
 		return []testoptimization.Test{}, nil
 	}
@@ -76,17 +72,7 @@ func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, 
 	return discovery.DiscoverTests(ctx, m.executor, executable, args, envMap)
 }
 
-func (m *Minitest) DiscoverTestFiles() ([]string, error) {
-	testFiles, err := discovery.DiscoverTestFiles(m.testPattern(), settings.GetTestsExcludePattern())
-	if err != nil {
-		return nil, err
-	}
-
-	slog.Debug("Discovered Minitest test files", "count", len(testFiles))
-	return testFiles, nil
-}
-
-func (m *Minitest) testPattern() string {
+func (m *Minitest) TestPattern() string {
 	if custom := settings.GetTestsLocation(); custom != "" {
 		return custom
 	}

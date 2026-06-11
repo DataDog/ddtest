@@ -63,6 +63,15 @@ func setTestsExcludePattern(t *testing.T, pattern string) {
 	})
 }
 
+func resolveTestFilesForFramework(t *testing.T, pattern string) discovery.TestFileSet {
+	t.Helper()
+	testFiles, err := discovery.ResolveTestFiles(pattern, settings.GetTestsExcludePattern())
+	if err != nil {
+		t.Fatalf("failed to resolve test files: %v", err)
+	}
+	return testFiles
+}
+
 type mockCommandExecutor struct {
 	output         []byte
 	err            error
@@ -307,7 +316,7 @@ func TestRSpec_DiscoverTests_Success(t *testing.T) {
 
 	rspec := newTestRSpecWithExecutor(mockExecutor)
 
-	tests, err := rspec.DiscoverTests(context.Background())
+	tests, err := rspec.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, rspec.TestPattern()))
 	if err != nil {
 		t.Fatalf("DiscoverTests failed: %v", err)
 	}
@@ -354,7 +363,7 @@ func TestRSpec_DiscoverTests_CommandFailure(t *testing.T) {
 
 	rspec := newTestRSpecWithExecutor(mockExecutor)
 
-	tests, err := rspec.DiscoverTests(context.Background())
+	tests, err := rspec.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, rspec.TestPattern()))
 	if err == nil {
 		t.Error("expected error when command fails")
 	}
@@ -382,7 +391,7 @@ func TestRSpec_DiscoverTests_InvalidJSON(t *testing.T) {
 
 	rspec := newTestRSpecWithExecutor(mockExecutor)
 
-	tests, err := rspec.DiscoverTests(context.Background())
+	tests, err := rspec.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, rspec.TestPattern()))
 	if err == nil {
 		t.Error("expected error when JSON is invalid")
 	}
@@ -592,7 +601,7 @@ func TestRSpec_DiscoverTestFiles(t *testing.T) {
 	}
 
 	rspec := NewRSpec()
-	discoveredFiles, err := rspec.DiscoverTestFiles()
+	discoveredFiles, err := discovery.DiscoverTestFiles(rspec.TestPattern(), settings.GetTestsExcludePattern())
 
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
@@ -666,7 +675,7 @@ func TestRSpec_DiscoverTestFiles_WithTestsLocation(t *testing.T) {
 	setTestsLocation(t, filepath.Join("custom", "spec", "**", "*_spec.rb"))
 
 	rspec := NewRSpec()
-	files, err := rspec.DiscoverTestFiles()
+	files, err := discovery.DiscoverTestFiles(rspec.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
 	}
@@ -720,7 +729,7 @@ func TestRSpec_DiscoverTestFiles_WithTestsExcludePattern(t *testing.T) {
 	setTestsExcludePattern(t, filepath.Join("spec", "system", "**", "*_spec.rb"))
 
 	rspec := NewRSpec()
-	files, err := rspec.DiscoverTestFiles()
+	files, err := discovery.DiscoverTestFiles(rspec.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
 	}
@@ -799,7 +808,7 @@ func TestRSpec_DiscoverTests_WithTestsLocation(t *testing.T) {
 	}
 
 	rspec := newTestRSpecWithExecutor(mockExecutor)
-	tests, err := rspec.DiscoverTests(context.Background())
+	tests, err := rspec.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, rspec.TestPattern()))
 	if err != nil {
 		t.Fatalf("DiscoverTests failed: %v", err)
 	}
@@ -890,7 +899,7 @@ func TestRSpec_DiscoverTests_WithTestsExcludePattern(t *testing.T) {
 	}
 
 	rspec := newTestRSpecWithExecutor(mockExecutor)
-	tests, err := rspec.DiscoverTests(context.Background())
+	tests, err := rspec.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, rspec.TestPattern()))
 	if err != nil {
 		t.Fatalf("DiscoverTests failed: %v", err)
 	}
@@ -947,7 +956,7 @@ func TestRSpec_DiscoverTests_WithTestsExcludePattern_AllExcluded(t *testing.T) {
 	}
 
 	rspec := newTestRSpecWithExecutor(mockExecutor)
-	tests, err := rspec.DiscoverTests(context.Background())
+	tests, err := rspec.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, rspec.TestPattern()))
 	if err != nil {
 		t.Fatalf("DiscoverTests failed: %v", err)
 	}
@@ -1000,7 +1009,7 @@ func TestRSpec_DiscoverTests_WithTestsLocation_NoMatches(t *testing.T) {
 	}
 
 	rspec := newTestRSpecWithExecutor(mockExecutor)
-	tests, err := rspec.DiscoverTests(context.Background())
+	tests, err := rspec.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, rspec.TestPattern()))
 	if err != nil {
 		t.Fatalf("DiscoverTests should not fail when no matches: %v", err)
 	}
@@ -1046,7 +1055,7 @@ func TestRSpec_DiscoverTestFiles_NoSpecDirectory(t *testing.T) {
 	}()
 
 	rspec := NewRSpec()
-	discoveredFiles, err := rspec.DiscoverTestFiles()
+	discoveredFiles, err := discovery.DiscoverTestFiles(rspec.TestPattern(), settings.GetTestsExcludePattern())
 
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
@@ -1258,7 +1267,7 @@ func TestRSpec_DiscoverTests_UsesPlatformEnv(t *testing.T) {
 	}
 	rspec.SetPlatformEnv(platformEnv)
 
-	_, err := rspec.DiscoverTests(context.Background())
+	_, err := rspec.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, rspec.TestPattern()))
 	if err != nil {
 		t.Fatalf("DiscoverTests failed: %v", err)
 	}

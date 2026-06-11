@@ -22,6 +22,8 @@ import (
 
 var TestsFilePath = filepath.Join(".", constants.PlanDirectory, "tests-discovery/tests.json")
 
+const MaxExplicitTestFiles = 8_000
+
 type Excluder struct {
 	pattern string
 }
@@ -43,13 +45,20 @@ func ResolveTestFiles(pattern, excludePattern string) (TestFileSet, error) {
 		return TestFileSet{}, err
 	}
 
-	testFiles.ExplicitFiles = filteredFiles
 	if len(filteredFiles) == 0 {
+		testFiles.ExplicitFiles = filteredFiles
 		slog.Info("No test files remain after applying test discovery exclude pattern",
 			"pattern", pattern, "excludePattern", excludePattern)
 		return testFiles, nil
 	}
+	if len(filteredFiles) > MaxExplicitTestFiles {
+		slog.Warn("Too many test files remain after applying test discovery exclude pattern; using discovery pattern and planner-side post-filtering",
+			"pattern", pattern, "excludePattern", excludePattern,
+			"count", len(filteredFiles), "maxExplicitTestFiles", MaxExplicitTestFiles)
+		return testFiles, nil
+	}
 
+	testFiles.ExplicitFiles = filteredFiles
 	slog.Info("Using filtered test discovery files",
 		"pattern", pattern, "excludePattern", excludePattern, "count", len(filteredFiles))
 	return testFiles, nil
@@ -89,7 +98,7 @@ func DiscoverTestFiles(includePattern, excludePattern string) ([]string, error) 
 
 	normalizedIncludePattern := normalizeDiscoveryPattern(includePattern)
 	if normalizedIncludePattern == "" {
-		return nil, nil
+		return []string{}, nil
 	}
 	if !doublestar.ValidatePattern(normalizedIncludePattern) {
 		return nil, fmt.Errorf("failed to discover test files with pattern %q: %w", includePattern, doublestar.ErrBadPattern)
@@ -98,7 +107,7 @@ func DiscoverTestFiles(includePattern, excludePattern string) ([]string, error) 
 	walkRoot := discoveryWalkRoot(normalizedIncludePattern)
 	if _, err := os.Lstat(walkRoot); err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return []string{}, nil
 		}
 		return nil, fmt.Errorf("failed to discover test files with pattern %q: %w", includePattern, err)
 	}

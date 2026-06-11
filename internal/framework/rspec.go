@@ -45,13 +45,9 @@ func (r *RSpec) Name() string {
 	return "rspec"
 }
 
-func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
+func (r *RSpec) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
 	discovery.Cleanup()
 
-	testFiles, err := discovery.ResolveTestFiles(r.testPattern(), settings.GetTestsExcludePattern())
-	if err != nil {
-		return nil, err
-	}
 	if testFiles.Empty() {
 		return []testoptimization.Test{}, nil
 	}
@@ -67,17 +63,7 @@ func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, err
 	return discovery.DiscoverTests(ctx, r.executor, executable, args, r.platformEnv)
 }
 
-func (r *RSpec) DiscoverTestFiles() ([]string, error) {
-	testFiles, err := discovery.DiscoverTestFiles(r.testPattern(), settings.GetTestsExcludePattern())
-	if err != nil {
-		return nil, err
-	}
-
-	slog.Debug("Discovered RSpec test files", "count", len(testFiles))
-	return testFiles, nil
-}
-
-func (r *RSpec) testPattern() string {
+func (r *RSpec) TestPattern() string {
 	if custom := settings.GetTestsLocation(); custom != "" {
 		return custom
 	}

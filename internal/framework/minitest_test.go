@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/discovery"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
@@ -221,7 +222,7 @@ func TestMinitest_DiscoverTests_Success(t *testing.T) {
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
 
-	tests, err := minitest.DiscoverTests(context.Background())
+	tests, err := minitest.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, minitest.TestPattern()))
 	if err != nil {
 		t.Fatalf("DiscoverTests failed: %v", err)
 	}
@@ -277,7 +278,7 @@ func TestMinitest_DiscoverTests_CommandFailure(t *testing.T) {
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
 
-	tests, err := minitest.DiscoverTests(context.Background())
+	tests, err := minitest.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, minitest.TestPattern()))
 	if err == nil {
 		t.Error("expected error when command fails")
 	}
@@ -314,7 +315,7 @@ func TestMinitest_DiscoverTests_InvalidJSON(t *testing.T) {
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
 
-	tests, err := minitest.DiscoverTests(context.Background())
+	tests, err := minitest.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, minitest.TestPattern()))
 	if err == nil {
 		t.Error("expected error when JSON is invalid")
 	}
@@ -623,7 +624,7 @@ func TestMinitest_DiscoverTestFiles(t *testing.T) {
 	}
 
 	minitest := NewMinitest()
-	discoveredFiles, err := minitest.DiscoverTestFiles()
+	discoveredFiles, err := discovery.DiscoverTestFiles(minitest.TestPattern(), settings.GetTestsExcludePattern())
 
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
@@ -696,7 +697,7 @@ func TestMinitest_DiscoverTestFiles_WithTestsLocation(t *testing.T) {
 	setTestsLocation(t, filepath.Join("custom", "test", "**", "*_test.rb"))
 
 	minitest := NewMinitest()
-	files, err := minitest.DiscoverTestFiles()
+	files, err := discovery.DiscoverTestFiles(minitest.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
 	}
@@ -750,7 +751,7 @@ func TestMinitest_DiscoverTestFiles_WithTestsExcludePattern(t *testing.T) {
 	setTestsExcludePattern(t, filepath.Join("test", "system", "**", "*_test.rb"))
 
 	minitest := NewMinitest()
-	files, err := minitest.DiscoverTestFiles()
+	files, err := discovery.DiscoverTestFiles(minitest.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
 	}
@@ -786,7 +787,7 @@ func TestMinitest_DiscoverTestFiles_NoTestDirectory(t *testing.T) {
 	}()
 
 	minitest := NewMinitest()
-	discoveredFiles, err := minitest.DiscoverTestFiles()
+	discoveredFiles, err := discovery.DiscoverTestFiles(minitest.TestPattern(), settings.GetTestsExcludePattern())
 
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
@@ -866,7 +867,7 @@ func TestMinitest_DiscoverTests_WithTestsExcludePattern_NonRails(t *testing.T) {
 	}
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	tests, err := minitest.DiscoverTests(context.Background())
+	tests, err := minitest.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, minitest.TestPattern()))
 	if err != nil {
 		t.Fatalf("DiscoverTests failed: %v", err)
 	}
@@ -950,7 +951,7 @@ func TestMinitest_DiscoverTests_WithTestsExcludePattern_Rails(t *testing.T) {
 	}
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	tests, err := minitest.DiscoverTests(context.Background())
+	tests, err := minitest.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, minitest.TestPattern()))
 	if err != nil {
 		t.Fatalf("DiscoverTests failed: %v", err)
 	}
@@ -1001,7 +1002,7 @@ func TestMinitest_DiscoverTests_WithTestsExcludePattern_AllExcluded(t *testing.T
 
 	mockExecutor := &countingCommandExecutor{}
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	tests, err := minitest.DiscoverTests(context.Background())
+	tests, err := minitest.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, minitest.TestPattern()))
 	if err != nil {
 		t.Fatalf("DiscoverTests failed: %v", err)
 	}
@@ -1088,7 +1089,7 @@ func TestMinitest_DiscoverTests_WithTestsLocation(t *testing.T) {
 	}
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	tests, err := minitest.DiscoverTests(context.Background())
+	tests, err := minitest.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, minitest.TestPattern()))
 	if err != nil {
 		t.Fatalf("DiscoverTests failed: %v", err)
 	}
@@ -1187,7 +1188,7 @@ func TestMinitest_DiscoverTests_WithTestsLocation_Rails(t *testing.T) {
 	}
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	tests, err := minitest.DiscoverTests(context.Background())
+	tests, err := minitest.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, minitest.TestPattern()))
 	if err != nil {
 		t.Fatalf("DiscoverTests failed: %v", err)
 	}
@@ -1255,7 +1256,7 @@ func TestMinitest_DiscoverTests_WithTestsLocation_NoMatches(t *testing.T) {
 	}
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	tests, err := minitest.DiscoverTests(context.Background())
+	tests, err := minitest.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, minitest.TestPattern()))
 	if err != nil {
 		t.Fatalf("DiscoverTests should not fail when no matches: %v", err)
 	}
@@ -1647,7 +1648,7 @@ func TestMinitest_DiscoverTests_UsesPlatformEnv(t *testing.T) {
 	}
 	minitest.SetPlatformEnv(platformEnv)
 
-	_, err := minitest.DiscoverTests(context.Background())
+	_, err := minitest.DiscoverTests(context.Background(), resolveTestFilesForFramework(t, minitest.TestPattern()))
 	if err != nil {
 		t.Fatalf("DiscoverTests failed: %v", err)
 	}

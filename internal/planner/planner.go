@@ -15,6 +15,7 @@ import (
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/ciprovider"
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -269,6 +270,11 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	discoveryCtx, cancelDiscovery := context.WithCancel(ctx)
 	defer cancelDiscovery()
 
+	resolvedTestFiles, err := discovery.ResolveTestFiles(framework.TestPattern(), settings.GetTestsExcludePattern())
+	if err != nil {
+		return err
+	}
+
 	var skippedTests testSkipper
 	var discoveredTests []testoptimization.Test
 	var discoveredTestFiles []string
@@ -321,7 +327,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	g.Go(func() error {
 		startTime := time.Now()
 		slog.Info("Discovering local tests...", "framework", framework.Name())
-		res, discErr := framework.DiscoverTests(discoveryCtx)
+		res, discErr := framework.DiscoverTests(discoveryCtx, resolvedTestFiles)
 		if discErr != nil {
 			fullDiscoveryErr = discErr
 			if discoveryCtx.Err() != nil {
@@ -349,11 +355,17 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	g.Go(func() error {
 		startTime := time.Now()
 		slog.Info("Discovering test files (fast)...", "framework", framework.Name())
-		res, discErr := framework.DiscoverTestFiles()
-		if discErr != nil {
-			fastDiscoveryErr = discErr
-			slog.Warn("Fast test discovery failed", "error", discErr)
-			return nil // Don't fail the entire process if full discovery succeeded
+		var res []string
+		if resolvedTestFiles.UseExplicitFiles() {
+			res = resolvedTestFiles.ExplicitFiles
+		} else {
+			var discErr error
+			res, discErr = discovery.DiscoverTestFiles(resolvedTestFiles.Pattern, settings.GetTestsExcludePattern())
+			if discErr != nil {
+				fastDiscoveryErr = discErr
+				slog.Warn("Fast test discovery failed", "error", discErr)
+				return nil // Don't fail the entire process if full discovery succeeded
+			}
 		}
 		discoveredTestFiles = res
 		slog.Info("Discovered test files (fast)", "duration", time.Since(startTime), "count", len(discoveredTestFiles))
