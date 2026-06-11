@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 import json
-import sys
 import platform
+import sys
 
 tags = {
-    "runtime.name": "python",
+    "runtime.name": platform.python_implementation(),
     "runtime.version": platform.python_version(),
-    "os.platform": sys.platform,
+    "os.platform": platform.system(),
     "os.architecture": platform.machine(),
     "os.version": platform.release(),
 }
