@@ -49,7 +49,7 @@ func (m *Minitest) Name() string {
 func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
 	discovery.Cleanup()
 
-	testFiles, err := discovery.ResolveTestFiles(m.testPattern(), settings.GetTestsExcludePattern(), m.Name())
+	testFiles, err := discovery.ResolveTestFiles(m.testPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		return nil, err
 	}

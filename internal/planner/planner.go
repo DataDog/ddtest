@@ -468,6 +468,8 @@ func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback(subdirPrefix stri
 				continue
 			}
 
+			// Fast discovery stores normalized file paths in tp.testFiles, so normalize
+			// backend duration paths the same way before checking whether the file survived discovery.
 			sourceFile := utils.StripCwdSubdirPrefix(suiteInfo.SourceFile, subdirPrefix)
 			sourceFile = utils.NormalizePath(sourceFile)
 			if _, ok := tp.testFiles[sourceFile]; !ok {

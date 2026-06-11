@@ -48,7 +48,7 @@ func (r *RSpec) Name() string {
 func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
 	discovery.Cleanup()
 
-	testFiles, err := discovery.ResolveTestFiles(r.testPattern(), settings.GetTestsExcludePattern(), r.Name())
+	testFiles, err := discovery.ResolveTestFiles(r.testPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		return nil, err
 	}

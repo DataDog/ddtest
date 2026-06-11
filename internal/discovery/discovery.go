@@ -27,10 +27,10 @@ type TestFileSet struct {
 	ExplicitFiles []string
 }
 
-func ResolveTestFiles(pattern, excludePattern, frameworkName string) (TestFileSet, error) {
+func ResolveTestFiles(pattern, excludePattern string) (TestFileSet, error) {
 	testFiles := TestFileSet{Pattern: pattern}
 	if utils.NormalizePattern(excludePattern) == "" {
-		slog.Info("Using test discovery pattern", "framework", frameworkName, "pattern", pattern)
+		slog.Info("Using test discovery pattern", "pattern", pattern)
 		return testFiles, nil
 	}
 
@@ -42,13 +42,12 @@ func ResolveTestFiles(pattern, excludePattern, frameworkName string) (TestFileSe
 	testFiles.ExplicitFiles = filteredFiles
 	if len(filteredFiles) == 0 {
 		slog.Info("No test files remain after applying test discovery exclude pattern",
-			"framework", frameworkName, "pattern", pattern, "excludePattern", excludePattern)
+			"pattern", pattern, "excludePattern", excludePattern)
 		return testFiles, nil
 	}
 
 	slog.Info("Using filtered test discovery files",
-		"framework", frameworkName, "pattern", pattern,
-		"excludePattern", excludePattern, "count", len(filteredFiles))
+		"pattern", pattern, "excludePattern", excludePattern, "count", len(filteredFiles))
 	return testFiles, nil
 }
 
