@@ -353,6 +353,14 @@ func TestPython_EmbeddedScript(t *testing.T) {
 }
 
 func TestDetectPlatform_Python(t *testing.T) {
+	if _, err := exec.LookPath("python"); err != nil {
+		t.Skip("python not in PATH — skipping integration test")
+	}
+	checkCmd := exec.Command("python", "-c", "import importlib.metadata; importlib.metadata.version('ddtrace')")
+	if err := checkCmd.Run(); err != nil {
+		t.Skip("ddtrace not installed — skipping integration test")
+	}
+
 	viper.Reset()
 	viper.Set("platform", "python")
 	settings.Init()
