@@ -198,7 +198,11 @@ func executeCommand(ctx context.Context, executor ext.CommandExecutor, executabl
 
 	output, err := executor.CombinedOutput(ctx, executable, args, envMap)
 	if err != nil {
-		slog.Warn("Failed to run test discovery", "output", string(output), "error", err)
+		if ctx.Err() != nil {
+			slog.Debug("Test discovery was cancelled")
+		} else {
+			slog.Warn("Failed to run test discovery", "output", string(output), "error", err)
+		}
 		return err
 	}
 

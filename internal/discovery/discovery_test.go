@@ -1,10 +1,15 @@
 package discovery
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -126,6 +131,45 @@ func TestDiscoverTestFilesWithInvalidExcludePattern(t *testing.T) {
 	}
 }
 
+func TestExecuteCommandLogsCancelledDiscoveryAtDebug(t *testing.T) {
+	logs := captureDiscoveryLogs(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := executeCommand(ctx, failingDiscoveryExecutor{err: errors.New("signal: killed")}, "bundle", []string{"exec", "rspec"}, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	output := logs.String()
+	if !strings.Contains(output, "level=DEBUG") || !strings.Contains(output, "Test discovery was cancelled") {
+		t.Fatalf("expected cancelled discovery to log at DEBUG, got: %s", output)
+	}
+	if strings.Contains(output, "level=WARN") || strings.Contains(output, "Failed to run test discovery") {
+		t.Fatalf("expected cancelled discovery not to log a warning, got: %s", output)
+	}
+}
+
+func TestExecuteCommandLogsUnexpectedFailureAtWarn(t *testing.T) {
+	logs := captureDiscoveryLogs(t)
+
+	err := executeCommand(context.Background(), failingDiscoveryExecutor{
+		output: []byte("boom"),
+		err:    errors.New("exit status 1"),
+	}, "bundle", []string{"exec", "rspec"}, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	output := logs.String()
+	if !strings.Contains(output, "level=WARN") || !strings.Contains(output, "Failed to run test discovery") {
+		t.Fatalf("expected unexpected discovery failure to log at WARN, got: %s", output)
+	}
+	if strings.Contains(output, "Test discovery was cancelled") {
+		t.Fatalf("expected unexpected discovery failure not to log cancellation, got: %s", output)
+	}
+}
+
 func BenchmarkDiscoverTestFiles10000(b *testing.B) {
 	root := b.TempDir()
 	createBenchmarkTestFiles(b, root)
@@ -215,4 +259,30 @@ func createDiscoveryFixture(tb testing.TB) string {
 	}
 
 	return root
+}
+
+type failingDiscoveryExecutor struct {
+	output []byte
+	err    error
+}
+
+func (e failingDiscoveryExecutor) CombinedOutput(context.Context, string, []string, map[string]string) ([]byte, error) {
+	return e.output, e.err
+}
+
+func (e failingDiscoveryExecutor) Run(context.Context, string, []string, map[string]string) error {
+	return e.err
+}
+
+func captureDiscoveryLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+
+	var logs bytes.Buffer
+	originalLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() {
+		slog.SetDefault(originalLogger)
+	})
+
+	return &logs
 }
