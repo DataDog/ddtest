@@ -57,12 +57,10 @@ func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, 
 		return []testoptimization.Test{}, nil
 	}
 
-	name, args, isRails := m.getMinitestCommand()
+	executable, args, isRails := m.getMinitestCommand()
 
 	envMap := make(map[string]string)
 	maps.Copy(envMap, m.platformEnv)
-	maps.Copy(envMap, discovery.BaseEnv())
-
 	if testFiles.UseExplicitFiles() {
 		if isRails {
 			args = append(args, testFiles.ExplicitFiles...)
@@ -75,18 +73,7 @@ func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, 
 		envMap["TEST"] = testFiles.Pattern
 	}
 
-	slog.Info("Discovering tests with command", "command", name, "args", args)
-	if err := discovery.ExecuteDiscoveryCommand(ctx, m.executor, name, args, envMap, m.Name()); err != nil {
-		return nil, err
-	}
-
-	tests, err := discovery.ParseTests()
-	if err != nil {
-		return nil, err
-	}
-
-	slog.Debug("Parsed Minitest report", "tests", len(tests))
-	return tests, nil
+	return discovery.DiscoverTests(ctx, m.executor, executable, args, envMap)
 }
 
 func (m *Minitest) DiscoverTestFiles() ([]string, error) {

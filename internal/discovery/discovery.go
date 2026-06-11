@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"time"
@@ -108,18 +109,43 @@ func Cleanup() {
 	}
 }
 
-func ExecuteDiscoveryCommand(ctx context.Context, executor ext.CommandExecutor, name string, args []string, envMap map[string]string, frameworkName string) error {
-	slog.Debug("Starting test discovery...", "framework", frameworkName)
+func DiscoverTests(
+	ctx context.Context,
+	executor ext.CommandExecutor,
+	executable string,
+	args []string,
+	envMap map[string]string,
+) ([]testoptimization.Test, error) {
+	discoveryEnv := make(map[string]string)
+	maps.Copy(discoveryEnv, envMap)
+	maps.Copy(discoveryEnv, BaseEnv())
+
+	slog.Info("Discovering tests with command", "command", executable, "args", args)
+	if err := executeCommand(ctx, executor, executable, args, discoveryEnv); err != nil {
+		return nil, err
+	}
+
+	tests, err := ParseTests()
+	if err != nil {
+		return nil, err
+	}
+
+	slog.Debug("Parsed test discovery report", "tests", len(tests))
+	return tests, nil
+}
+
+func executeCommand(ctx context.Context, executor ext.CommandExecutor, executable string, args []string, envMap map[string]string) error {
+	slog.Debug("Starting test discovery...")
 	startTime := time.Now()
 
-	output, err := executor.CombinedOutput(ctx, name, args, envMap)
+	output, err := executor.CombinedOutput(ctx, executable, args, envMap)
 	if err != nil {
-		slog.Warn("Failed to run test discovery", "framework", frameworkName, "output", string(output), "error", err)
+		slog.Warn("Failed to run test discovery", "output", string(output), "error", err)
 		return err
 	}
 
 	duration := time.Since(startTime)
-	slog.Debug("Finished test discovery", "framework", frameworkName, "duration", duration)
+	slog.Debug("Finished test discovery", "duration", duration)
 
 	return nil
 }

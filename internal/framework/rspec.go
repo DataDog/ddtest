@@ -56,7 +56,7 @@ func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, err
 		return []testoptimization.Test{}, nil
 	}
 
-	name := "bundle"
+	executable := "bundle"
 	args := []string{"exec", "rspec", "--format", "progress", "--dry-run"}
 	if testFiles.UseExplicitFiles() {
 		args = append(args, testFiles.ExplicitFiles...)
@@ -64,22 +64,7 @@ func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, err
 		args = append(args, "--pattern", testFiles.Pattern)
 	}
 
-	envMap := make(map[string]string)
-	maps.Copy(envMap, r.platformEnv)
-	maps.Copy(envMap, discovery.BaseEnv())
-
-	slog.Info("Discovering tests with command", "command", name, "args", args)
-	if err := discovery.ExecuteDiscoveryCommand(ctx, r.executor, name, args, envMap, r.Name()); err != nil {
-		return nil, err
-	}
-
-	tests, err := discovery.ParseTests()
-	if err != nil {
-		return nil, err
-	}
-
-	slog.Debug("Parsed RSpec report", "tests", len(tests))
-	return tests, nil
+	return discovery.DiscoverTests(ctx, r.executor, executable, args, r.platformEnv)
 }
 
 func (r *RSpec) DiscoverTestFiles() ([]string, error) {
