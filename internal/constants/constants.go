@@ -5,7 +5,7 @@ import "path/filepath"
 // PlanDirectory is the directory where ddtest stores its output files and context data
 const PlanDirectory = ".testoptimization"
 
-const ManifestVersion = "2"
+const ManifestVersion = "1"
 
 var ManifestPath = filepath.Join(PlanDirectory, "manifest.txt")
 
