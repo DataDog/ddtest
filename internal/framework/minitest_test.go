@@ -875,11 +875,12 @@ func TestMinitest_DiscoverTests_WithTestsExcludePattern_NonRails(t *testing.T) {
 	if len(tests) != len(testData) {
 		t.Errorf("expected %d tests, got %d", len(testData), len(tests))
 	}
-	if mockExecutor.capturedEnvMap["TEST"] != includedFile {
-		t.Errorf("expected TEST env var to be %q, got %q", includedFile, mockExecutor.capturedEnvMap["TEST"])
+	expectedPattern := filepath.Join("test", "**", "*_test.rb")
+	if mockExecutor.capturedEnvMap["TEST"] != expectedPattern {
+		t.Errorf("expected TEST env var to use discovery pattern %q, got %q", expectedPattern, mockExecutor.capturedEnvMap["TEST"])
 	}
 	if slices.Contains(capturedArgs, includedFile) || slices.Contains(capturedArgs, excludedFile) {
-		t.Errorf("expected non-Rails discovery files to be passed through TEST env, got args %v", capturedArgs)
+		t.Errorf("expected non-Rails discovery files not to be passed as args, got %v", capturedArgs)
 	}
 }
 

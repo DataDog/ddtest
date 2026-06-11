@@ -57,15 +57,14 @@ func (m *Minitest) DiscoverTests(ctx context.Context, testFiles discovery.TestFi
 
 	envMap := make(map[string]string)
 	maps.Copy(envMap, m.platformEnv)
-	if testFiles.UseExplicitFiles() {
-		if isRails {
+	if isRails {
+		if testFiles.UseExplicitFiles() {
 			args = append(args, testFiles.ExplicitFiles...)
 		} else {
-			envMap["TEST"] = strings.Join(testFiles.ExplicitFiles, ",")
+			args = append(args, testFiles.Pattern)
 		}
-	} else if isRails {
-		args = append(args, testFiles.Pattern)
 	} else {
+		// Non-Rails Minitest discovery uses Rake's TEST pattern input; planner post-filtering removes excluded files.
 		envMap["TEST"] = testFiles.Pattern
 	}
 
