@@ -5,8 +5,10 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -44,54 +46,36 @@ func (m *Minitest) Name() string {
 	return "minitest"
 }
 
-func (m *Minitest) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
-	cleanupDiscoveryFile(TestsDiscoveryFilePath)
+func (m *Minitest) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
+	discovery.Cleanup()
 
-	pattern := m.testPattern()
-	name, args, isRails := m.createDiscoveryCommand()
-	slog.Debug("Using test discovery pattern", "pattern", pattern)
+	if testFiles.Empty() {
+		return []testoptimization.Test{}, nil
+	}
 
-	// Merge env maps: platform env -> base discovery env
+	executable, args, isRails := m.getMinitestCommand()
+
 	envMap := make(map[string]string)
 	maps.Copy(envMap, m.platformEnv)
-	maps.Copy(envMap, BaseDiscoveryEnv())
-
 	if isRails {
-		args = append(args, pattern)
+		if testFiles.UseExplicitFiles() {
+			args = append(args, testFiles.ExplicitFiles...)
+		} else {
+			args = append(args, testFiles.Pattern)
+		}
 	} else {
-		envMap["TEST"] = pattern
+		// Non-Rails Minitest discovery uses Rake's TEST pattern input; planner post-filtering removes excluded files.
+		envMap["TEST"] = testFiles.Pattern
 	}
 
-	slog.Info("Discovering tests with command", "command", name, "args", args)
-	_, err := executeDiscoveryCommand(ctx, m.executor, name, args, envMap, m.Name())
-	if err != nil {
-		return nil, err
-	}
-
-	tests, err := parseDiscoveryFile(TestsDiscoveryFilePath)
-	if err != nil {
-		return nil, err
-	}
-
-	slog.Debug("Parsed Minitest report", "tests", len(tests))
-	return tests, nil
+	return discovery.DiscoverTests(ctx, m.executor, executable, args, envMap)
 }
 
-func (m *Minitest) DiscoverTestFiles() ([]string, error) {
-	testFiles, err := globTestFiles(m.testPattern())
-	if err != nil {
-		return nil, err
-	}
-
-	slog.Debug("Discovered Minitest test files", "count", len(testFiles))
-	return testFiles, nil
-}
-
-func (m *Minitest) testPattern() string {
+func (m *Minitest) TestPattern() string {
 	if custom := settings.GetTestsLocation(); custom != "" {
 		return custom
 	}
-	return defaultTestPattern(minitestRootDir, minitestTestFilePattern)
+	return filepath.Join(minitestRootDir, "**", minitestTestFilePattern)
 }
 
 func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
@@ -178,9 +162,4 @@ func (m *Minitest) getMinitestCommand() (string, []string, bool) {
 
 	slog.Info("No Ruby on Rails found. Using bundle exec rake test for Minitest commands")
 	return "bundle", []string{"exec", "rake", "test"}, false
-}
-
-func (m *Minitest) createDiscoveryCommand() (string, []string, bool) {
-	command, args, isRails := m.getMinitestCommand()
-	return command, args, isRails
 }

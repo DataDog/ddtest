@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"math"
 	"math/rand/v2"
@@ -23,7 +22,7 @@ import (
 
 	"github.com/DataDog/ddtest/civisibility"
 	"github.com/DataDog/ddtest/civisibility/constants"
-	"github.com/DataDog/ddtest/civisibility/utils"
+	"github.com/DataDog/ddtest/internal/utils"
 )
 
 const (
@@ -46,7 +45,6 @@ type (
 		GetSkippableTestsRawResponse() json.RawMessage
 		GetTestManagementTests() (*TestManagementTestsResponseDataModules, error)
 		GetTestManagementTestsRawResponse() json.RawMessage
-		SendLogs(logsPayload io.Reader) error
 	}
 
 	// client is a client for sending requests to the Datadog backend.
@@ -255,11 +253,6 @@ func NewClientWithServiceNameAndSubdomain(serviceName, subdomain string) Client 
 // NewClientWithServiceName creates a new client with the given service name.
 func NewClientWithServiceName(serviceName string) Client {
 	return NewClientWithServiceNameAndSubdomain(serviceName, "api")
-}
-
-// NewClient creates a new client with the default service name.
-func NewClient() Client {
-	return NewClientWithServiceName("")
 }
 
 func cloneRawMessage(data []byte) json.RawMessage {

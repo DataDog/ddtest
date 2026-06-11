@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddtest/civisibility/utils/net"
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/utils/net"
 )
 
 // TestMain runs once for the entire package and handles global setup/teardown

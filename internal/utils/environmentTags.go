@@ -28,9 +28,8 @@ var (
 	ciTagsMutex    sync.Mutex
 
 	// ciMetrics holds the CI/CD environment numeric variable information
-	currentCiMetrics  map[string]float64 // currentCiMetrics holds the CI/CD metrics after originalCiMetrics + addedMetrics
+	currentCiMetrics  map[string]float64 // currentCiMetrics holds the cached CI/CD metrics
 	originalCiMetrics map[string]float64 // originalCiMetrics holds the original CI/CD metrics after all the CMDs
-	addedMetrics      map[string]float64 // addedMetrics holds the metrics added by the user
 	ciMetricsMutex    sync.Mutex
 )
 
@@ -64,21 +63,6 @@ func GetCITags() map[string]string {
 	// Update the current tags
 	currentCiTags = newTags
 	return currentCiTags
-}
-
-// AddCITags adds a new tag to the CI/CD tags map.
-func AddCITags(tagName, tagValue string) {
-	ciTagsMutex.Lock()
-	defer ciTagsMutex.Unlock()
-
-	// Add the tag to the added tags dictionary
-	if addedTags == nil {
-		addedTags = make(map[string]string)
-	}
-	addedTags[tagName] = tagValue
-
-	// Reset the current tags
-	currentCiTags = nil
 }
 
 // AddCITagsMap adds a new map of tags to the CI/CD tags map.
@@ -134,82 +118,8 @@ func GetCIMetrics() map[string]float64 {
 	}
 
 	// Create a new map with the added metrics
-	newMetrics := maps.Clone(originalCiMetrics)
-	for k, v := range addedMetrics {
-		newMetrics[k] = v
-	}
-
-	// Update the current metrics
-	currentCiMetrics = newMetrics
+	currentCiMetrics = maps.Clone(originalCiMetrics)
 	return currentCiMetrics
-}
-
-// AddCIMetrics adds a new metric to the CI/CD metrics map.
-func AddCIMetrics(metricName string, metricValue float64) {
-	ciMetricsMutex.Lock()
-	defer ciMetricsMutex.Unlock()
-
-	// Add the metric to the added metrics dictionary
-	if addedMetrics == nil {
-		addedMetrics = make(map[string]float64)
-	}
-	addedMetrics[metricName] = metricValue
-
-	// Reset the current metrics
-	currentCiMetrics = nil
-}
-
-// AddCIMetricsMap adds a new map of metrics to the CI/CD metrics map.
-func AddCIMetricsMap(metrics map[string]float64) {
-	if metrics == nil {
-		return
-	}
-
-	ciMetricsMutex.Lock()
-	defer ciMetricsMutex.Unlock()
-
-	// Add the metric to the added metrics dictionary
-	if addedMetrics == nil {
-		addedMetrics = make(map[string]float64)
-	}
-	for k, v := range metrics {
-		addedMetrics[k] = v
-	}
-
-	// Reset the current metrics
-	currentCiMetrics = nil
-}
-
-// ResetCIMetrics resets the CI/CD metrics to their original values.
-func ResetCIMetrics() {
-	ciMetricsMutex.Lock()
-	defer ciMetricsMutex.Unlock()
-
-	originalCiMetrics = nil
-	currentCiMetrics = nil
-	addedMetrics = nil
-}
-
-// GetRelativePathFromCITagsSourceRoot calculates the relative path from the CI workspace root to the specified path.
-// If the CI workspace root is not available in the tags, it returns the original path.
-//
-// Parameters:
-//
-//	path - The absolute or relative file path for which the relative path should be calculated.
-//
-// Returns:
-//
-//	The relative path from the CI workspace root to the specified path, or the original path if an error occurs.
-func GetRelativePathFromCITagsSourceRoot(path string) string {
-	tags := GetCITags()
-	if v, ok := tags[constants.CIWorkspacePath]; ok {
-		relPath, err := filepath.Rel(v, path)
-		if err == nil {
-			return filepath.ToSlash(relPath)
-		}
-	}
-
-	return path
 }
 
 // createCITagsMap creates a map of CI/CD tags by extracting information from environment variables and the local Git repository.

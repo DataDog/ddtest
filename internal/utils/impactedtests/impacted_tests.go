@@ -14,8 +14,8 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/civisibility/constants"
-	"github.com/DataDog/ddtest/civisibility/utils"
-	"github.com/DataDog/ddtest/civisibility/utils/filebitmap"
+	"github.com/DataDog/ddtest/internal/utils"
+	"github.com/DataDog/ddtest/internal/utils/filebitmap"
 )
 
 type (

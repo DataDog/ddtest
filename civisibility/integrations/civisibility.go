@@ -14,7 +14,7 @@ import (
 
 	"github.com/DataDog/ddtest/civisibility"
 	"github.com/DataDog/ddtest/civisibility/constants"
-	"github.com/DataDog/ddtest/civisibility/utils"
+	"github.com/DataDog/ddtest/internal/utils"
 	"github.com/DataDog/ddtest/stableconfig"
 )
 

@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	ciUtils "github.com/DataDog/ddtest/civisibility/utils"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/planner"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
+	ciUtils "github.com/DataDog/ddtest/internal/utils"
 )
 
 type Runner interface {

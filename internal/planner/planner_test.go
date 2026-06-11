@@ -18,14 +18,15 @@ import (
 	"time"
 
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
-	ciUtils "github.com/DataDog/ddtest/civisibility/utils"
-	"github.com/DataDog/ddtest/civisibility/utils/net"
 	"github.com/DataDog/ddtest/internal/ciprovider"
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	ciUtils "github.com/DataDog/ddtest/internal/utils"
+	"github.com/DataDog/ddtest/internal/utils/net"
 )
 
 // Mock implementations for testing
@@ -68,14 +69,15 @@ func (m *MockPlatform) SanityCheck() error {
 
 // MockFramework mocks a testing framework
 type MockFramework struct {
-	FrameworkName        string
-	Tests                []testoptimization.Test
-	TestFiles            []string
-	Err                  error // Used by both DiscoverTests and DiscoverTestFiles if specific errors are nil
-	DiscoverTestsErr     error // If set, overrides Err for DiscoverTests
-	DiscoverTestFilesErr error // If set, overrides Err for DiscoverTestFiles
-	RunTestsCalls        []RunTestsCall
-	mu                   sync.Mutex
+	FrameworkName      string
+	TestPatternValue   string
+	Tests              []testoptimization.Test
+	TestFiles          []string
+	Err                error
+	DiscoverTestsErr   error // If set, overrides Err for DiscoverTests
+	RunTestsCalls      []RunTestsCall
+	DiscoverTestsFiles []discovery.TestFileSet
+	mu                 sync.Mutex
 }
 
 type RunTestsCall struct {
@@ -83,22 +85,123 @@ type RunTestsCall struct {
 	EnvMap    map[string]string
 }
 
+func setPlannerTestsExcludePattern(t *testing.T, pattern string) {
+	t.Helper()
+	previous := os.Getenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN")
+	if err := os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN", pattern); err != nil {
+		t.Fatalf("failed to set tests_exclude_pattern env: %v", err)
+	}
+	settings.Init()
+
+	t.Cleanup(func() {
+		if previous == "" {
+			if err := os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN"); err != nil {
+				t.Errorf("failed to unset tests_exclude_pattern env: %v", err)
+			}
+		} else {
+			if err := os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN", previous); err != nil {
+				t.Errorf("failed to restore tests_exclude_pattern env: %v", err)
+			}
+		}
+		settings.Init()
+	})
+}
+
 func (m *MockFramework) Name() string {
 	return m.FrameworkName
 }
 
-func (m *MockFramework) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
+func (m *MockFramework) TestPattern() string {
+	if m.TestPatternValue != "" {
+		return m.TestPatternValue
+	}
+	if m.Err != nil && len(m.TestFiles) == 0 {
+		return "["
+	}
+	ensureMockTestFiles(m.TestFiles)
+	return mockTestFilesPattern(m.TestFiles)
+}
+
+var (
+	mockTestFilesMu      sync.Mutex
+	mockTestFilesCreated []string
+	mockTestDirsCreated  []string
+)
+
+func ensureMockTestFiles(files []string) {
+	mockTestFilesMu.Lock()
+	defer mockTestFilesMu.Unlock()
+
+	cleanupMockTestFilesLocked()
+	for _, file := range files {
+		if file == "" {
+			continue
+		}
+
+		absFile, err := filepath.Abs(file)
+		if err != nil {
+			panic(err)
+		}
+		if _, err := os.Stat(absFile); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			panic(err)
+		}
+
+		dir := filepath.Dir(absFile)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			panic(err)
+		}
+		mockTestDirsCreated = append(mockTestDirsCreated, dir)
+		if err := os.WriteFile(absFile, []byte("# mock test\n"), 0o644); err != nil {
+			panic(err)
+		}
+		mockTestFilesCreated = append(mockTestFilesCreated, absFile)
+	}
+}
+
+func cleanupMockTestFilesLocked() {
+	for _, file := range mockTestFilesCreated {
+		_ = os.Remove(file)
+	}
+	for i := len(mockTestDirsCreated) - 1; i >= 0; i-- {
+		_ = os.Remove(mockTestDirsCreated[i])
+	}
+	mockTestFilesCreated = nil
+	mockTestDirsCreated = nil
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	mockTestFilesMu.Lock()
+	cleanupMockTestFilesLocked()
+	mockTestFilesMu.Unlock()
+	os.Exit(code)
+}
+
+func mockTestFilesPattern(files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+
+	normalized := make([]string, 0, len(files))
+	for _, file := range files {
+		normalized = append(normalized, filepath.ToSlash(filepath.Clean(file)))
+	}
+	if len(normalized) == 1 {
+		return normalized[0]
+	}
+	return "{" + strings.Join(normalized, ",") + "}"
+}
+
+func (m *MockFramework) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
+	m.mu.Lock()
+	m.DiscoverTestsFiles = append(m.DiscoverTestsFiles, testFiles)
+	m.mu.Unlock()
 	if m.DiscoverTestsErr != nil {
 		return m.Tests, m.DiscoverTestsErr
 	}
 	return m.Tests, m.Err
-}
-
-func (m *MockFramework) DiscoverTestFiles() ([]string, error) {
-	if m.DiscoverTestFilesErr != nil {
-		return m.TestFiles, m.DiscoverTestFilesErr
-	}
-	return m.TestFiles, m.Err
 }
 
 func (m *MockFramework) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
@@ -136,7 +239,7 @@ type longRunningDiscoveryFramework struct {
 	MockFramework
 }
 
-func (m *longRunningDiscoveryFramework) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
+func (m *longRunningDiscoveryFramework) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
@@ -2456,6 +2559,221 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotDuplicateDiscoveredSource
 
 	if weight, ok := runner.testFileWeight("spec/skipped_spec.rb"); ok || weight != 0 {
 		t.Errorf("Expected fully skipped file to remain omitted despite backend duplicate, got weight=%d ok=%t", weight, ok)
+	}
+}
+
+func TestTestPlanner_RecordFullDiscoveryResults_AppliesExcludeAfterSubdirNormalization(t *testing.T) {
+	setPlannerTestsExcludePattern(t, "spec/system/**/*_spec.rb")
+
+	runner := newTestPlannerWithDefaults()
+	tests := []testoptimization.Test{
+		{
+			Module:          "rspec",
+			Suite:           "User",
+			Name:            "should be valid",
+			SuiteSourceFile: "core/spec/models/user_spec.rb",
+		},
+		{
+			Module:          "rspec",
+			Suite:           "Checkout",
+			Name:            "checks out",
+			SuiteSourceFile: "core/spec/system/checkout_spec.rb",
+		},
+	}
+
+	err := runner.recordFullDiscoveryResults(tests, newTestSkipper(nil, nil), "core")
+	if err != nil {
+		t.Fatalf("recordFullDiscoveryResults() should not fail, got: %v", err)
+	}
+
+	if _, ok := runner.testFiles["spec/models/user_spec.rb"]; !ok {
+		t.Errorf("expected included normalized file to be recorded, got %v", runner.testFiles)
+	}
+	if _, ok := runner.testFiles["spec/system/checkout_spec.rb"]; ok {
+		t.Errorf("expected excluded normalized file not to be recorded, got %v", runner.testFiles)
+	}
+	if _, ok := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "User"}]; !ok {
+		t.Errorf("expected included suite aggregate to be recorded, got %v", runner.suiteAggregates)
+	}
+	if _, ok := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Checkout"}]; ok {
+		t.Errorf("expected excluded suite aggregate not to be recorded, got %v", runner.suiteAggregates)
+	}
+}
+
+func TestTestPlanner_RecordFastDiscoveryFallbackFiles_ExcludedBackendDurationsAreNotReintroduced(t *testing.T) {
+	setPlannerTestsExcludePattern(t, "spec/system/**/*_spec.rb")
+
+	runner := newTestPlannerWithDefaults()
+	err := runner.recordFastDiscoveryFallbackFiles([]string{
+		"spec/models/user_spec.rb",
+		"spec/system/checkout_spec.rb",
+	})
+	if err != nil {
+		t.Fatalf("recordFastDiscoveryFallbackFiles() should not fail, got: %v", err)
+	}
+
+	runner.testSuiteDurations = map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		"rspec": {
+			"User": {
+				SourceFile: "spec/models/user_spec.rb",
+				Duration:   testoptimization.DurationPercentiles{P50: "100000000"},
+			},
+			"Checkout": {
+				SourceFile: "spec/system/checkout_spec.rb",
+				Duration:   testoptimization.DurationPercentiles{P50: "200000000"},
+			},
+		},
+	}
+	runner.addDurationDataForFastDiscoveryFallback("")
+
+	if _, ok := runner.testFiles["spec/models/user_spec.rb"]; !ok {
+		t.Errorf("expected included fast-discovered file to be recorded, got %v", runner.testFiles)
+	}
+	if _, ok := runner.testFiles["spec/system/checkout_spec.rb"]; ok {
+		t.Errorf("expected excluded fast-discovered file not to be recorded, got %v", runner.testFiles)
+	}
+	if _, ok := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "User"}]; !ok {
+		t.Errorf("expected included backend duration suite to be recorded, got %v", runner.suiteAggregates)
+	}
+	if _, ok := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Checkout"}]; ok {
+		t.Errorf("expected excluded backend duration suite not to be reintroduced, got %v", runner.suiteAggregates)
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_ResolvesFilteredTestFilesOnce(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.MkdirAll(filepath.Join(root, "spec", "models"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "spec", "system"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "spec", "models", "user_spec.rb"), []byte("# spec\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "spec", "system", "checkout_spec.rb"), []byte("# spec\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setPlannerTestsExcludePattern(t, filepath.Join("spec", "system", "**", "*_spec.rb"))
+
+	mockFramework := &MockFramework{
+		FrameworkName:    "rspec",
+		TestPatternValue: filepath.Join("spec", "**", "*_spec.rb"),
+		Tests:            []testoptimization.Test{},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+	mockOptimizationClient := &MockTestOptimizationClient{SkippableTests: map[string]bool{}}
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		mockOptimizationClient,
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.PreparePlanningData(ctx); err != nil {
+		t.Fatalf("PreparePlanningData() should not fail, got: %v", err)
+	}
+
+	expectedFiles := []string{"spec/models/user_spec.rb"}
+	if len(mockFramework.DiscoverTestsFiles) != 1 {
+		t.Fatalf("expected full discovery to receive test files once, got %d", len(mockFramework.DiscoverTestsFiles))
+	}
+	if !slices.Equal(mockFramework.DiscoverTestsFiles[0].ExplicitFiles, expectedFiles) {
+		t.Fatalf("full discovery files = %v, expected %v", mockFramework.DiscoverTestsFiles[0].ExplicitFiles, expectedFiles)
+	}
+	if _, ok := runner.testFiles["spec/models/user_spec.rb"]; !ok {
+		t.Fatalf("expected filtered included file to be planned, got %v", runner.testFiles)
+	}
+	if _, ok := runner.testFiles["spec/system/checkout_spec.rb"]; ok {
+		t.Fatalf("expected excluded file not to be planned, got %v", runner.testFiles)
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_PostFiltersFullDiscoveryWhenExplicitFileListIsTooLarge(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Chdir(root)
+
+	pattern := filepath.Join("spec", "**", "*_spec.rb")
+	excludePattern := filepath.Join("spec", "system", "**", "*_spec.rb")
+	setPlannerTestsExcludePattern(t, excludePattern)
+
+	discoveredTests := make([]testoptimization.Test, 0, discovery.MaxExplicitTestFiles+2)
+	for i := range discovery.MaxExplicitTestFiles + 1 {
+		file := filepath.Join("spec", "models", fmt.Sprintf("generated_%04d_spec.rb", i))
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			t.Fatalf("failed to create directory for %s: %v", file, err)
+		}
+		if err := os.WriteFile(file, []byte("# spec\n"), 0o644); err != nil {
+			t.Fatalf("failed to create file %s: %v", file, err)
+		}
+		discoveredTests = append(discoveredTests, testoptimization.Test{
+			Module:          "rspec",
+			Suite:           fmt.Sprintf("GeneratedSuite%d", i),
+			Name:            "test1",
+			SuiteSourceFile: file,
+		})
+	}
+
+	excludedFile := filepath.Join("spec", "system", "checkout_spec.rb")
+	if err := os.MkdirAll(filepath.Dir(excludedFile), 0o755); err != nil {
+		t.Fatalf("failed to create directory for %s: %v", excludedFile, err)
+	}
+	if err := os.WriteFile(excludedFile, []byte("# spec\n"), 0o644); err != nil {
+		t.Fatalf("failed to create file %s: %v", excludedFile, err)
+	}
+	discoveredTests = append(discoveredTests, testoptimization.Test{
+		Module:          "rspec",
+		Suite:           "ExcludedSuite",
+		Name:            "test1",
+		SuiteSourceFile: excludedFile,
+	})
+
+	mockFramework := &MockFramework{
+		FrameworkName:    "rspec",
+		TestPatternValue: pattern,
+		Tests:            discoveredTests,
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		testOptimizationClientRequiringFullDiscovery(),
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.PreparePlanningData(ctx); err != nil {
+		t.Fatalf("PreparePlanningData() should not fail, got: %v", err)
+	}
+
+	if len(mockFramework.DiscoverTestsFiles) != 1 {
+		t.Fatalf("expected full discovery to receive test file selection once, got %d", len(mockFramework.DiscoverTestsFiles))
+	}
+	if mockFramework.DiscoverTestsFiles[0].UseExplicitFiles() {
+		t.Fatalf("expected full discovery to receive pattern mode when filtered file count exceeds %d, got %d explicit files",
+			discovery.MaxExplicitTestFiles, len(mockFramework.DiscoverTestsFiles[0].ExplicitFiles))
+	}
+	if mockFramework.DiscoverTestsFiles[0].Pattern != pattern {
+		t.Fatalf("expected full discovery pattern %q, got %q", pattern, mockFramework.DiscoverTestsFiles[0].Pattern)
+	}
+	if len(runner.testFiles) != discovery.MaxExplicitTestFiles+1 {
+		t.Fatalf("expected %d included files in final plan, got %d", discovery.MaxExplicitTestFiles+1, len(runner.testFiles))
+	}
+	if _, ok := runner.testFiles[excludedFile]; ok {
+		t.Fatalf("expected excluded file %q not to be planned", excludedFile)
+	}
+	if _, ok := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "ExcludedSuite"}]; ok {
+		t.Fatalf("expected excluded full-discovery suite not to be recorded")
 	}
 }
 

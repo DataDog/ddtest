@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -61,14 +62,13 @@ func (m *MockPlatform) SanityCheck() error {
 }
 
 type MockFramework struct {
-	FrameworkName        string
-	Tests                []testoptimization.Test
-	TestFiles            []string
-	Err                  error
-	DiscoverTestsErr     error
-	DiscoverTestFilesErr error
-	RunTestsCalls        []RunTestsCall
-	mu                   sync.Mutex
+	FrameworkName    string
+	TestPatternValue string
+	Tests            []testoptimization.Test
+	Err              error
+	DiscoverTestsErr error
+	RunTestsCalls    []RunTestsCall
+	mu               sync.Mutex
 }
 
 type RunTestsCall struct {
@@ -80,18 +80,15 @@ func (m *MockFramework) Name() string {
 	return m.FrameworkName
 }
 
-func (m *MockFramework) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
+func (m *MockFramework) TestPattern() string {
+	return m.TestPatternValue
+}
+
+func (m *MockFramework) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
 	if m.DiscoverTestsErr != nil {
 		return m.Tests, m.DiscoverTestsErr
 	}
 	return m.Tests, m.Err
-}
-
-func (m *MockFramework) DiscoverTestFiles() ([]string, error) {
-	if m.DiscoverTestFilesErr != nil {
-		return m.TestFiles, m.DiscoverTestFilesErr
-	}
-	return m.TestFiles, m.Err
 }
 
 func (m *MockFramework) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {

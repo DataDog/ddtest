@@ -73,6 +73,7 @@ func init() {
 	rootCmd.PersistentFlags().String("ci-node-workers", "1", `Number of parallel workers per CI node (positive integer or "ncpu"; default: 1)`)
 	rootCmd.PersistentFlags().String("command", "", "Test command that ddtest should wrap")
 	rootCmd.PersistentFlags().String("tests-location", "", "Glob pattern used to discover test files")
+	rootCmd.PersistentFlags().String("tests-exclude-pattern", "", "Glob pattern used to exclude test files from discovery")
 	rootCmd.PersistentFlags().String("runtime-tags", "", "JSON string to override runtime tags (e.g. '{\"os.platform\":\"linux\",\"runtime.version\":\"3.2.0\"}')")
 	if err := viper.BindPFlag("platform", rootCmd.PersistentFlags().Lookup("platform")); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding platform flag: %v\n", err)
@@ -112,6 +113,10 @@ func init() {
 	}
 	if err := viper.BindPFlag("tests_location", rootCmd.PersistentFlags().Lookup("tests-location")); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding tests-location flag: %v\n", err)
+		os.Exit(1)
+	}
+	if err := viper.BindPFlag("tests_exclude_pattern", rootCmd.PersistentFlags().Lookup("tests-exclude-pattern")); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding tests-exclude-pattern flag: %v\n", err)
 		os.Exit(1)
 	}
 	if err := viper.BindPFlag("runtime_tags", rootCmd.PersistentFlags().Lookup("runtime-tags")); err != nil {

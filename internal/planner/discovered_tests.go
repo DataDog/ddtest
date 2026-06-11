@@ -3,24 +3,41 @@ package planner
 import (
 	"log/slog"
 
+	"github.com/DataDog/ddtest/internal/discovery"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/utils"
 )
 
 func (tp *TestPlanner) recordFullDiscoveryResults(
 	discoveredTests []testoptimization.Test,
 	skippableTests testSkipper,
 	subdirPrefix string,
-) {
+) error {
+	excluder, err := discovery.NewExcluder(settings.GetTestsExcludePattern())
+	if err != nil {
+		return err
+	}
+
 	discoveredTestsCount := len(discoveredTests)
 	if discoveredTestsCount == 0 {
 		slog.Info("Full test discovery returned no tests")
-		return
+		return nil
 	}
 
 	slog.Info("Using full test discovery results")
 	skippableTestsCount := 0
+	excludedTestsCount := 0
 	for _, test := range discoveredTests {
-		normalizedSourceFile := stripCwdSubdirPrefix(test.SuiteSourceFile, subdirPrefix)
+		normalizedSourceFile := utils.StripCwdSubdirPrefix(test.SuiteSourceFile, subdirPrefix)
+		normalizedSourceFile = utils.NormalizePath(normalizedSourceFile)
+		// Full discovery should already receive filtered files when exclude is configured.
+		// Keep this planner-side guard so normalized tracer-reported paths cannot re-enter
+		// the runnable file set or suite aggregates.
+		if normalizedSourceFile != "" && excluder.Match(normalizedSourceFile) {
+			excludedTestsCount++
+			continue
+		}
 		if normalizedSourceFile != "" {
 			tp.testFiles[normalizedSourceFile] = struct{}{}
 		}
@@ -34,7 +51,11 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 		}
 	}
 
-	slog.Info("Processed the discovered tests", "skippableTestsCount", skippableTestsCount, "discoveredTestsCount", discoveredTestsCount)
+	slog.Info("Processed the discovered tests",
+		"skippableTestsCount", skippableTestsCount,
+		"excludedTestsCount", excludedTestsCount,
+		"discoveredTestsCount", discoveredTestsCount)
+	return nil
 }
 
 type testSkipper struct {
@@ -57,12 +78,19 @@ func (s testSkipper) Count() int {
 	return len(s.tiaSkippableTests) + len(s.disabledTests)
 }
 
-func (tp *TestPlanner) recordFastDiscoveryFallbackFiles(discoveredTestFiles []string) {
+func (tp *TestPlanner) recordFastDiscoveryFallbackFiles(discoveredTestFiles []string) error {
+	excluder, err := discovery.NewExcluder(settings.GetTestsExcludePattern())
+	if err != nil {
+		return err
+	}
+
 	for _, testFile := range discoveredTestFiles {
-		if testFile != "" {
-			tp.testFiles[testFile] = struct{}{}
+		normalizedTestFile := utils.NormalizePath(testFile)
+		if normalizedTestFile != "" && !excluder.Match(normalizedTestFile) {
+			tp.testFiles[normalizedTestFile] = struct{}{}
 		}
 	}
+	return nil
 }
 
 func recordRunnableTest(suiteAggregates map[testSuiteKey]testSuiteAggregate, test testoptimization.Test, sourceFile string) {

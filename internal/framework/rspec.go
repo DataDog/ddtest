@@ -5,7 +5,9 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"path/filepath"
 
+	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -43,50 +45,29 @@ func (r *RSpec) Name() string {
 	return "rspec"
 }
 
-func (r *RSpec) DiscoverTests(ctx context.Context) ([]testoptimization.Test, error) {
-	cleanupDiscoveryFile(TestsDiscoveryFilePath)
+func (r *RSpec) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
+	discovery.Cleanup()
 
-	pattern := r.testPattern()
-
-	name, args := r.createDiscoveryCommand()
-	args = append(args, "--pattern", pattern)
-
-	// Merge env maps: platform env -> base discovery env
-	envMap := make(map[string]string)
-	maps.Copy(envMap, r.platformEnv)
-	maps.Copy(envMap, BaseDiscoveryEnv())
-
-	slog.Info("Using test discovery pattern", "pattern", pattern)
-	slog.Info("Discovering tests with command", "command", name, "args", args)
-	_, err := executeDiscoveryCommand(ctx, r.executor, name, args, envMap, r.Name())
-	if err != nil {
-		return nil, err
+	if testFiles.Empty() {
+		return []testoptimization.Test{}, nil
 	}
 
-	tests, err := parseDiscoveryFile(TestsDiscoveryFilePath)
-	if err != nil {
-		return nil, err
+	executable := "bundle"
+	args := []string{"exec", "rspec", "--format", "progress", "--dry-run"}
+	if testFiles.UseExplicitFiles() {
+		args = append(args, testFiles.ExplicitFiles...)
+	} else {
+		args = append(args, "--pattern", testFiles.Pattern)
 	}
 
-	slog.Debug("Parsed RSpec report", "tests", len(tests))
-	return tests, nil
+	return discovery.DiscoverTests(ctx, r.executor, executable, args, r.platformEnv)
 }
 
-func (r *RSpec) DiscoverTestFiles() ([]string, error) {
-	testFiles, err := globTestFiles(r.testPattern())
-	if err != nil {
-		return nil, err
-	}
-
-	slog.Debug("Discovered RSpec test files", "count", len(testFiles))
-	return testFiles, nil
-}
-
-func (r *RSpec) testPattern() string {
+func (r *RSpec) TestPattern() string {
 	if custom := settings.GetTestsLocation(); custom != "" {
 		return custom
 	}
-	return defaultTestPattern(rspecRootDir, rspecTestFilePattern)
+	return filepath.Join(rspecRootDir, "**", rspecTestFilePattern)
 }
 
 func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
@@ -96,7 +77,7 @@ func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[str
 	args = append(args, testFiles...)
 
 	mergedEnv := make(map[string]string)
-	maps.Copy(mergedEnv, r.platformEnv)
+	maps.Copy(mergedEnv, r.GetPlatformEnv())
 	maps.Copy(mergedEnv, envMap)
 	return r.executor.Run(ctx, command, args, mergedEnv)
 }
@@ -118,9 +99,4 @@ func (r *RSpec) getRSpecCommand() (string, []string) {
 
 	slog.Debug("Using bundle exec rspec for RSpec commands")
 	return "bundle", []string{"exec", "rspec"}
-}
-
-func (r *RSpec) createDiscoveryCommand() (string, []string) {
-	// Always use bundle exec rspec for discovery, as bin/rspec is often customized
-	return "bundle", []string{"exec", "rspec", "--format", "progress", "--dry-run"}
 }

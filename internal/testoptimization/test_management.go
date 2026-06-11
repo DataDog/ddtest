@@ -1,6 +1,6 @@
 package testoptimization
 
-import "github.com/DataDog/ddtest/civisibility/utils/net"
+import "github.com/DataDog/ddtest/internal/utils/net"
 
 func DisabledTestsFromTestManagementData(testManagementTests *net.TestManagementTestsResponseDataModules) map[string]bool {
 	disabledTests := make(map[string]bool)

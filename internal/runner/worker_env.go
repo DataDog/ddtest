@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
-	ciUtils "github.com/DataDog/ddtest/civisibility/utils"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/runmetadata"
+	ciUtils "github.com/DataDog/ddtest/internal/utils"
 )
 
 func createWorkerEnv(workerEnvMap map[string]string, nodeIndex int, workerIndex int) map[string]string {
