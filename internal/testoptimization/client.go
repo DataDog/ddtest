@@ -1,6 +1,7 @@
 package testoptimization
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"time"
@@ -145,6 +146,18 @@ func (c *DatadogClient) GetSkippableTests() map[string]bool {
 
 	duration := time.Since(startTime)
 	slog.Debug("Finished fetching skippable tests", "count", len(skippableTests), "duration", duration)
+
+	if slog.Default().Enabled(context.TODO(), slog.LevelDebug) {
+		i := 0
+		for key := range skippableTests {
+			slog.Debug("Skippable test key (format: test.bundle.suite.name.params)", "key", key)
+			i++
+			if i >= 5 {
+				slog.Debug("...and more skippable tests (showing first 5)")
+				break
+			}
+		}
+	}
 
 	return skippableTests
 }
