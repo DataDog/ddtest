@@ -18,6 +18,20 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 	}
 
 	slog.Info("Using full test discovery results")
+
+	if slog.Default().Enabled(nil, slog.LevelDebug) {
+		i := 0
+		for _, test := range discoveredTests {
+			slog.Debug("Discovered test ID (format: module.suite.name.params)", "id", test.DatadogTestId(), "module", test.Module, "suite", test.Suite, "name", test.Name)
+			i++
+			if i >= 5 {
+				slog.Debug("...and more discovered tests (showing first 5)")
+				break
+			}
+		}
+		slog.Debug("Skippable tests map size for matching", "size", skippableTests.Count())
+	}
+
 	skippableTestsCount := 0
 	for _, test := range discoveredTests {
 		normalizedSourceFile := stripCwdSubdirPrefix(test.SuiteSourceFile, subdirPrefix)
@@ -29,6 +43,7 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 			slog.Debug("Test is not skipped", "test", test.DatadogTestId(), "sourceFile", test.SuiteSourceFile)
 			recordRunnableTest(tp.suiteAggregates, test, normalizedSourceFile)
 		} else {
+			slog.Debug("Test will be skipped", "test", test.DatadogTestId(), "sourceFile", test.SuiteSourceFile)
 			recordSkippedTest(tp.suiteAggregates, test, normalizedSourceFile)
 			skippableTestsCount++
 		}
