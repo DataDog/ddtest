@@ -212,9 +212,10 @@ func (c discoveryCache) restore() ([]testoptimization.Test, bool) {
 	c.importExternal()
 
 	if err := c.validate(); err != nil {
-		slog.Debug("Cached test discovery not usable; full discovery will run", "reason", err)
 		if settings.GetTestDiscoveryCache() != "" {
 			slog.Info("Cached test discovery not usable; full discovery will run", "reason", err)
+		} else {
+			slog.Debug("Cached test discovery not usable; full discovery will run", "reason", err)
 		}
 		return nil, false
 	}
