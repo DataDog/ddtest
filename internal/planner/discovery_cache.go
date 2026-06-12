@@ -3,6 +3,7 @@ package planner
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,7 +25,8 @@ import (
 )
 
 const (
-	discoveryCacheSchemaVersion = 1
+	discoveryCacheSchemaVersion          = 1
+	discoveryCacheDebugGitOutputMaxBytes = 4096
 )
 
 type discoveryCacheMetadata struct {
@@ -70,7 +72,7 @@ func (c discoveryCache) importExternal() {
 	}
 
 	if err := copyFile(sourcePath, c.filePath); err != nil {
-		slog.Warn("Failed to import test discovery cache; full discovery may be required",
+		slog.Info("Failed to import test discovery cache; full discovery may be required",
 			"sourcePath", sourcePath,
 			"destinationPath", c.filePath,
 			"error", err)
@@ -210,19 +212,21 @@ func (c discoveryCache) restore() ([]testoptimization.Test, bool) {
 	c.importExternal()
 
 	if err := c.validate(); err != nil {
-		slog.Info("Cached test discovery not usable; full discovery will run", "reason", err)
+		slog.Debug("Cached test discovery not usable; full discovery will run", "reason", err)
+		if settings.GetTestDiscoveryCache() != "" {
+			slog.Info("Cached test discovery not usable; full discovery will run", "reason", err)
+		}
 		return nil, false
 	}
 
 	startTime := time.Now()
-	slog.Info("Using cached test discovery results")
 	tests, err := parseCachedDiscoveryTests(c.filePath)
 	if err != nil {
-		slog.Warn("Cached test discovery could not be used; full discovery will run", "error", err)
+		slog.Info("Cached test discovery could not be used; full discovery will run", "error", err)
 		return nil, false
 	}
 	if err := ensureDiscoveredTests(tests); err != nil {
-		slog.Warn("Cached test discovery could not be used; full discovery will run", "error", err)
+		slog.Info("Cached test discovery could not be used; full discovery will run", "error", err)
 		return nil, false
 	}
 
@@ -238,7 +242,7 @@ func ensureDiscoveredTests(tests []testoptimization.Test) error {
 }
 
 func (c discoveryCache) store() {
-	output, err := discoveryCacheGitOutput("rev-parse", "HEAD")
+	output, err := discoveryCacheGitOutputDebug("rev-parse", "HEAD")
 	if err != nil {
 		slog.Warn("Failed to append test discovery cache metadata", "error", err)
 		return
@@ -283,7 +287,7 @@ func (c discoveryCache) validate() error {
 	if metadata.SourceCommit == "" {
 		return errors.New("source commit missing")
 	}
-	if _, err := discoveryCacheGitOutput("cat-file", "-e", metadata.SourceCommit+"^{commit}"); err != nil {
+	if _, err := discoveryCacheGitOutputDebug("cat-file", "-e", metadata.SourceCommit+"^{commit}"); err != nil {
 		return fmt.Errorf("source commit unavailable: %w", err)
 	}
 
@@ -299,16 +303,42 @@ func (c discoveryCache) validate() error {
 }
 
 func discoveryCacheChangedFilesSince(commit string) ([]string, error) {
-	diffOutput, err := discoveryCacheGitOutput("diff", "--name-status", "-M", "-z", commit, "HEAD")
+	diffOutput, err := discoveryCacheGitOutputDebug("diff", "--name-status", "-M", "-z", commit, "HEAD")
 	if err != nil {
 		return nil, err
 	}
-	statusOutput, err := discoveryCacheGitOutput("status", "--porcelain=v1", "-z")
+	statusOutput, err := discoveryCacheGitOutputDebug("status", "--porcelain=v1", "-z")
 	if err != nil {
 		return nil, err
 	}
 
 	return append(discoveryCacheParseGitDiffNameStatus(diffOutput), discoveryCacheParseGitStatusPorcelain(statusOutput)...), nil
+}
+
+func discoveryCacheGitOutputDebug(args ...string) ([]byte, error) {
+	output, err := discoveryCacheGitOutput(args...)
+	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		return output, err
+	}
+
+	attrs := []any{
+		"args", args,
+		"outputBytes", len(output),
+		"outputTruncated", len(output) > discoveryCacheDebugGitOutputMaxBytes,
+		"output", discoveryCacheDebugGitOutput(output),
+	}
+	if err != nil {
+		attrs = append(attrs, "error", err)
+	}
+	slog.Debug("Test discovery cache git command result", attrs...)
+	return output, err
+}
+
+func discoveryCacheDebugGitOutput(output []byte) string {
+	if len(output) <= discoveryCacheDebugGitOutputMaxBytes {
+		return string(output)
+	}
+	return string(output[:discoveryCacheDebugGitOutputMaxBytes])
 }
 
 func discoveryCacheRootPattern(testPattern string) string {
