@@ -63,8 +63,8 @@ and save a lot of time.
 
 ### Cache Test Discovery
 
-If full discovery still spends most of its time loading the application, DB
-fixtures, or framework helpers, cache DDTest's discovery file between CI runs.
+If full test discovery still takes too long, cache DDTest's discovery file
+between CI runs.
 The restored cache path can be passed with either the CLI flag or environment
 variable:
 
