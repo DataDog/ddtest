@@ -86,7 +86,7 @@ func (m *MockFramework) TestPattern() string {
 
 func (m *MockFramework) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
 	if m.DiscoverTestsErr != nil {
-		return m.Tests, m.DiscoverTestsErr
+		return nil, m.DiscoverTestsErr
 	}
 	return m.Tests, m.Err
 }

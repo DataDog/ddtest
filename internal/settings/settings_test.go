@@ -141,6 +141,9 @@ func TestInit(t *testing.T) {
 	if config.TestsExcludePattern != "" {
 		t.Errorf("expected default tests_exclude_pattern to be empty, got %q", config.TestsExcludePattern)
 	}
+	if config.TestDiscoveryCache != "" {
+		t.Errorf("expected default test_discovery_cache to be empty, got %q", config.TestDiscoveryCache)
+	}
 	if config.RuntimeTags != "" {
 		t.Errorf("expected default runtime_tags to be empty, got %q", config.RuntimeTags)
 	}
@@ -187,6 +190,9 @@ func TestSetDefaults(t *testing.T) {
 	}
 	if viper.GetString("tests_exclude_pattern") != "" {
 		t.Errorf("expected default tests_exclude_pattern to be empty, got %q", viper.GetString("tests_exclude_pattern"))
+	}
+	if viper.GetString("test_discovery_cache") != "" {
+		t.Errorf("expected default test_discovery_cache to be empty, got %q", viper.GetString("test_discovery_cache"))
 	}
 	if viper.GetString("runtime_tags") != "" {
 		t.Errorf("expected default runtime_tags to be empty, got %q", viper.GetString("runtime_tags"))
@@ -267,6 +273,7 @@ func TestEnvironmentVariables(t *testing.T) {
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND", "bundle exec rspec")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", "spec/**/*_spec.rb")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN", "spec/system/**/*_spec.rb")
+	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE", "/tmp/ddtest-tests.json")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS", `{"os.platform":"linux","runtime.version":"3.2.0"}`)
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED", "false")
 	defer func() {
@@ -281,6 +288,7 @@ func TestEnvironmentVariables(t *testing.T) {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN")
+		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED")
 	}()
@@ -319,6 +327,9 @@ func TestEnvironmentVariables(t *testing.T) {
 	}
 	if config.TestsExcludePattern != "spec/system/**/*_spec.rb" {
 		t.Errorf("expected tests_exclude_pattern from env var to be 'spec/system/**/*_spec.rb', got %q", config.TestsExcludePattern)
+	}
+	if config.TestDiscoveryCache != "/tmp/ddtest-tests.json" {
+		t.Errorf("expected test_discovery_cache from env var to be '/tmp/ddtest-tests.json', got %q", config.TestDiscoveryCache)
 	}
 	if config.RuntimeTags != `{"os.platform":"linux","runtime.version":"3.2.0"}` {
 		t.Errorf("expected runtime_tags from env var to be JSON string, got %q", config.RuntimeTags)
@@ -445,6 +456,22 @@ func TestGetTestsExcludePattern(t *testing.T) {
 	testsExcludePattern = GetTestsExcludePattern()
 	if testsExcludePattern != "spec/system/**/*_spec.rb" {
 		t.Errorf("expected tests_exclude_pattern to be 'spec/system/**/*_spec.rb', got %q", testsExcludePattern)
+	}
+}
+
+func TestGetTestDiscoveryCache(t *testing.T) {
+	config = nil
+	viper.Reset()
+
+	cachePath := GetTestDiscoveryCache()
+	if cachePath != "" {
+		t.Errorf("expected test_discovery_cache to be empty by default, got %q", cachePath)
+	}
+
+	config = &Config{TestDiscoveryCache: "/tmp/ddtest-tests.json"}
+	cachePath = GetTestDiscoveryCache()
+	if cachePath != "/tmp/ddtest-tests.json" {
+		t.Errorf("expected test_discovery_cache to be '/tmp/ddtest-tests.json', got %q", cachePath)
 	}
 }
 

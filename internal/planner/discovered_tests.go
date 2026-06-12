@@ -9,10 +9,15 @@ import (
 	"github.com/DataDog/ddtest/internal/utils"
 )
 
+func (tp *TestPlanner) resetDiscoveryResults() {
+	tp.testFiles = make(map[string]struct{})
+	tp.suiteAggregates = make(map[testSuiteKey]testSuiteAggregate)
+	tp.suitesBySourceFile = make(map[string][]testSuiteKey)
+}
+
 func (tp *TestPlanner) recordFullDiscoveryResults(
 	discoveredTests []testoptimization.Test,
 	skippableTests testSkipper,
-	subdirPrefix string,
 ) error {
 	excluder, err := discovery.NewExcluder(settings.GetTestsExcludePattern())
 	if err != nil {
@@ -29,7 +34,7 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 	skippableTestsCount := 0
 	excludedTestsCount := 0
 	for _, test := range discoveredTests {
-		normalizedSourceFile := utils.StripCwdSubdirPrefix(test.SuiteSourceFile, subdirPrefix)
+		normalizedSourceFile := utils.StripCwdSubdirPrefix(test.SuiteSourceFile)
 		normalizedSourceFile = utils.NormalizePath(normalizedSourceFile)
 		// Full discovery should already receive filtered files when exclude is configured.
 		// Keep this planner-side guard so normalized tracer-reported paths cannot re-enter

@@ -3,6 +3,7 @@ package planner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -75,6 +76,7 @@ type MockFramework struct {
 	TestFiles          []string
 	Err                error
 	DiscoverTestsErr   error // If set, overrides Err for DiscoverTests
+	OnDiscoverTests    func()
 	RunTestsCalls      []RunTestsCall
 	DiscoverTestsFiles []discovery.TestFileSet
 	mu                 sync.Mutex
@@ -105,6 +107,35 @@ func setPlannerTestsExcludePattern(t *testing.T, pattern string) {
 		}
 		settings.Init()
 	})
+}
+
+func setPlannerTestsLocation(t *testing.T, pattern string) {
+	t.Helper()
+	previous := os.Getenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION")
+	if err := os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", pattern); err != nil {
+		t.Fatalf("failed to set tests_location env: %v", err)
+	}
+	settings.Init()
+
+	t.Cleanup(func() {
+		if previous == "" {
+			if err := os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION"); err != nil {
+				t.Errorf("failed to unset tests_location env: %v", err)
+			}
+		} else {
+			if err := os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", previous); err != nil {
+				t.Errorf("failed to restore tests_location env: %v", err)
+			}
+		}
+		settings.Init()
+	})
+}
+
+func setPlannerRuntimeTags(t *testing.T, tags string) {
+	t.Helper()
+	t.Cleanup(settings.Init)
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS", tags)
+	settings.Init()
 }
 
 func (m *MockFramework) Name() string {
@@ -172,10 +203,15 @@ func cleanupMockTestFilesLocked() {
 }
 
 func TestMain(m *testing.M) {
+	discoveryCacheGitOutput = func(args ...string) ([]byte, error) {
+		return nil, errors.New("test discovery cache disabled by default")
+	}
+	_ = os.RemoveAll(filepath.Dir(filepath.Dir(discovery.TestsFilePath)))
 	code := m.Run()
 	mockTestFilesMu.Lock()
 	cleanupMockTestFilesLocked()
 	mockTestFilesMu.Unlock()
+	_ = os.RemoveAll(filepath.Dir(filepath.Dir(discovery.TestsFilePath)))
 	os.Exit(code)
 }
 
@@ -198,10 +234,36 @@ func (m *MockFramework) DiscoverTests(ctx context.Context, testFiles discovery.T
 	m.mu.Lock()
 	m.DiscoverTestsFiles = append(m.DiscoverTestsFiles, testFiles)
 	m.mu.Unlock()
-	if m.DiscoverTestsErr != nil {
-		return m.Tests, m.DiscoverTestsErr
+	if m.OnDiscoverTests != nil {
+		m.OnDiscoverTests()
 	}
-	return m.Tests, m.Err
+	if m.DiscoverTestsErr != nil {
+		return nil, m.DiscoverTestsErr
+	}
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	return m.Tests, writeDiscoveryTests(m.Tests)
+}
+
+func writeDiscoveryTests(tests []testoptimization.Test) error {
+	if err := os.MkdirAll(filepath.Dir(discovery.TestsFilePath), 0755); err != nil {
+		return err
+	}
+	file, err := os.Create(discovery.TestsFilePath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+	encoder := json.NewEncoder(file)
+	for _, test := range tests {
+		if err := encoder.Encode(test); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *MockFramework) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
@@ -283,6 +345,30 @@ func (m *MockTestOptimizationClient) GetTestManagementTestsData() *net.TestManag
 
 func (m *MockTestOptimizationClient) StoreCacheAndExit() {
 	m.ShutdownCalled = true
+}
+
+type waitForDiscoveryOptimizationClient struct {
+	MockTestOptimizationClient
+	discoveryStarted <-chan struct{}
+	mu               sync.Mutex
+	timedOut         bool
+}
+
+func (m *waitForDiscoveryOptimizationClient) GetSettings() *net.SettingsResponseData {
+	select {
+	case <-m.discoveryStarted:
+	case <-time.After(500 * time.Millisecond):
+		m.mu.Lock()
+		m.timedOut = true
+		m.mu.Unlock()
+	}
+	return m.Settings
+}
+
+func (m *waitForDiscoveryOptimizationClient) TimedOut() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.timedOut
 }
 
 type MockTestSuiteDurationsClient struct {
@@ -1084,6 +1170,8 @@ func TestTestPlanner_Plan_SubdirRootRelativeDiscovery_WritesNormalizedPaths(t *t
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(coreDir)
+	ciUtils.ResetCwdSubdirPrefixForTesting()
+	t.Cleanup(ciUtils.ResetCwdSubdirPrefixForTesting)
 
 	// Set parallelism to 1
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "1")
@@ -1490,6 +1578,7 @@ func TestTestPlanner_PreparePlanningData_ModuleQualifiedSkipsDoNotCrossModules(t
 }
 
 func TestTestPlanner_PreparePlanningData_TestManagementDoesNotKeepFullDiscoveryWhenTIASkippingDisabled(t *testing.T) {
+	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -1607,7 +1696,68 @@ func TestTestPlanner_PreparePlanningData_CancelsFullDiscoveryWhenNoTIASkippableT
 		t.Errorf("Expected zero skippable percentage without full discovery data, got %.2f", runner.skippablePercentage)
 	}
 	if !strings.Contains(logs.String(), "No TIA-skippable tests found for this run, cancelling full test discovery") {
-		t.Errorf("Expected log about cancelling full discovery when no TIA-skippable tests exist, got: %s", logs.String())
+		t.Errorf("Expected log about skipping full discovery when no TIA-skippable tests exist, got: %s", logs.String())
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_RunsFullDiscoveryInParallelWithBackend(t *testing.T) {
+	t.Chdir(t.TempDir())
+	ctx := context.Background()
+	ciUtils.ResetCITags()
+	t.Cleanup(ciUtils.ResetCITags)
+
+	discoveredTest := testoptimization.Test{
+		Module:          "rspec",
+		Suite:           "ParallelSuite",
+		Name:            "test1",
+		SuiteSourceFile: "spec/parallel_spec.rb",
+	}
+	discoveryStarted := make(chan struct{})
+	var closeDiscoveryStarted sync.Once
+	mockFramework := &MockFramework{
+		FrameworkName:    "rspec",
+		TestPatternValue: filepath.Join("spec", "**", "*_spec.rb"),
+		Tests:            []testoptimization.Test{discoveredTest},
+		OnDiscoverTests: func() {
+			closeDiscoveryStarted.Do(func() {
+				close(discoveryStarted)
+			})
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+	mockOptimizationClient := &waitForDiscoveryOptimizationClient{
+		MockTestOptimizationClient: MockTestOptimizationClient{
+			Settings: testOptimizationSettings(true, true, false),
+			SkippableTests: map[string]bool{
+				discoveredTest.DatadogTestId(): true,
+			},
+		},
+		discoveryStarted: discoveryStarted,
+	}
+
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		mockOptimizationClient,
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.PreparePlanningData(ctx); err != nil {
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
+	}
+	if mockOptimizationClient.TimedOut() {
+		t.Fatal("backend settings finished before full discovery started; expected full discovery to run in parallel")
+	}
+	if len(mockFramework.DiscoverTestsFiles) != 1 {
+		t.Fatalf("expected full discovery to run once, got %d calls", len(mockFramework.DiscoverTestsFiles))
+	}
+	aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "ParallelSuite"}]
+	if aggregate.NumTests != 1 || aggregate.NumTestsSkipped != 1 {
+		t.Fatalf("aggregate = %+v, want one skipped test from full discovery", aggregate)
 	}
 }
 
@@ -1645,13 +1795,13 @@ func TestTestPlanner_PreparePlanningData_UsesCompletedFullDiscoveryWhenNoTIASkip
 	}
 
 	if _, ok := runner.testFiles["spec/full_discovery_spec.rb"]; !ok {
-		t.Errorf("Expected full-discovered file to be planned when full discovery completes, got %v", runner.testFiles)
+		t.Errorf("Expected completed full discovery result to be planned when no tests are skippable, got %v", runner.testFiles)
 	}
 	if _, ok := runner.testFiles["spec/fast_discovery_spec.rb"]; ok {
-		t.Errorf("Expected fast-discovered-only file to be ignored after successful full discovery, got %v", runner.testFiles)
+		t.Errorf("Expected completed full discovery to ignore fast-discovered-only files, got %v", runner.testFiles)
 	}
-	if _, ok := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "FullDiscoverySuite"}]; !ok {
-		t.Errorf("Expected completed full discovery results to be recorded, got %+v", runner.suiteAggregates)
+	if aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "FullDiscoverySuite"}]; aggregate.NumTests != 1 {
+		t.Errorf("Expected completed full discovery suite aggregate, got %+v", runner.suiteAggregates)
 	}
 }
 
@@ -2058,6 +2208,7 @@ func TestIndexSuitesBySourceFile_IgnoresEmptySourceFile(t *testing.T) {
 }
 
 func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesBackendDurations(t *testing.T) {
+	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -2098,6 +2249,7 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesBackendDurations(t *te
 }
 
 func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesOneBackendDurationPerSourceFile(t *testing.T) {
+	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -2145,6 +2297,7 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesOneBackendDurationPerS
 }
 
 func TestTestPlanner_PreparePlanningData_IgnoresZeroBackendDurationForFastDiscovery(t *testing.T) {
+	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -2201,6 +2354,8 @@ func TestTestPlanner_PreparePlanningData_BackendDurationSubdirMatchesFastDiscove
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(coreDir)
+	ciUtils.ResetCwdSubdirPrefixForTesting()
+	t.Cleanup(ciUtils.ResetCwdSubdirPrefixForTesting)
 
 	mockFramework := &MockFramework{
 		FrameworkName:    "rspec",
@@ -2246,6 +2401,7 @@ func TestTestPlanner_PreparePlanningData_BackendDurationSubdirMatchesFastDiscove
 }
 
 func TestTestPlanner_PreparePlanningData_IgnoresBackendDurationsForUndiscoveredFiles(t *testing.T) {
+	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -2290,6 +2446,7 @@ func TestTestPlanner_PreparePlanningData_IgnoresBackendDurationsForUndiscoveredF
 }
 
 func TestTestPlanner_PreparePlanningData_FullDiscoveryIgnoresFastOnlyFiles(t *testing.T) {
+	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -2336,6 +2493,7 @@ func TestTestPlanner_PreparePlanningData_FullDiscoveryIgnoresFastOnlyFiles(t *te
 }
 
 func TestTestPlanner_PreparePlanningData_FullDiscoveryDoesNotReintroduceFastOnlyBackendSuite(t *testing.T) {
+	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -2393,6 +2551,7 @@ func TestTestPlanner_PreparePlanningData_FullDiscoveryDoesNotReintroduceFastOnly
 }
 
 func TestTestPlanner_PreparePlanningData_FastDiscoveryDoesNotRunStaleBackendFilesWhenSkippingDisabled(t *testing.T) {
+	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -2453,6 +2612,7 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryDoesNotRunStaleBackendFile
 }
 
 func TestTestPlanner_PreparePlanningData_BackendDoesNotReintroduceFullySkippedSuite(t *testing.T) {
+	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -2508,6 +2668,7 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotReintroduceFullySkippedSu
 }
 
 func TestTestPlanner_PreparePlanningData_BackendDoesNotDuplicateDiscoveredSourceFile(t *testing.T) {
+	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
@@ -2564,6 +2725,15 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotDuplicateDiscoveredSource
 
 func TestTestPlanner_RecordFullDiscoveryResults_AppliesExcludeAfterSubdirNormalization(t *testing.T) {
 	setPlannerTestsExcludePattern(t, "spec/system/**/*_spec.rb")
+	repoRoot := t.TempDir()
+	initGitRepo(t, repoRoot)
+	coreDir := filepath.Join(repoRoot, "core")
+	if err := os.MkdirAll(coreDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(coreDir)
+	ciUtils.ResetCwdSubdirPrefixForTesting()
+	t.Cleanup(ciUtils.ResetCwdSubdirPrefixForTesting)
 
 	runner := newTestPlannerWithDefaults()
 	tests := []testoptimization.Test{
@@ -2581,7 +2751,7 @@ func TestTestPlanner_RecordFullDiscoveryResults_AppliesExcludeAfterSubdirNormali
 		},
 	}
 
-	err := runner.recordFullDiscoveryResults(tests, newTestSkipper(nil, nil), "core")
+	err := runner.recordFullDiscoveryResults(tests, newTestSkipper(nil, nil))
 	if err != nil {
 		t.Fatalf("recordFullDiscoveryResults() should not fail, got: %v", err)
 	}
@@ -2624,7 +2794,7 @@ func TestTestPlanner_RecordFastDiscoveryFallbackFiles_ExcludedBackendDurationsAr
 			},
 		},
 	}
-	runner.addDurationDataForFastDiscoveryFallback("")
+	runner.addDurationDataForFastDiscoveryFallback()
 
 	if _, ok := runner.testFiles["spec/models/user_spec.rb"]; !ok {
 		t.Errorf("expected included fast-discovered file to be recorded, got %v", runner.testFiles)
@@ -2661,14 +2831,21 @@ func TestTestPlanner_PreparePlanningData_ResolvesFilteredTestFilesOnce(t *testin
 	mockFramework := &MockFramework{
 		FrameworkName:    "rspec",
 		TestPatternValue: filepath.Join("spec", "**", "*_spec.rb"),
-		Tests:            []testoptimization.Test{},
+		Tests: []testoptimization.Test{
+			{Module: "rspec", Suite: "User", Name: "test1", SuiteSourceFile: "spec/models/user_spec.rb"},
+		},
 	}
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags:         map[string]string{"platform": "ruby"},
 		Framework:    mockFramework,
 	}
-	mockOptimizationClient := &MockTestOptimizationClient{SkippableTests: map[string]bool{}}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings: testOptimizationSettings(true, true, false),
+		SkippableTests: map[string]bool{
+			(&testoptimization.Test{Module: "rspec", Suite: "User", Name: "test1"}).DatadogTestId(): true,
+		},
+	}
 	runner := NewWithDependencies(
 		&MockPlatformDetector{Platform: mockPlatform},
 		mockOptimizationClient,
@@ -2980,7 +3157,12 @@ func TestTestPlanner_PreparePlanningData_EmptyTests(t *testing.T) {
 	}
 
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
-	mockOptimizationClient := &MockTestOptimizationClient{SkippableTests: map[string]bool{}}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings: testOptimizationSettings(true, true, false),
+		SkippableTests: map[string]bool{
+			(&testoptimization.Test{Module: "rspec", Suite: "Suite", Name: "test1"}).DatadogTestId(): true,
+		},
+	}
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, &MockTestSuiteDurationsClient{}, newDefaultMockCIProviderDetector())
 
@@ -3000,7 +3182,7 @@ func TestTestPlanner_PreparePlanningData_EmptyTests(t *testing.T) {
 		t.Errorf("PreparePlanningData() should schedule fast-discovered file after empty full discovery, got %v", runner.testFileWeights)
 	}
 	if !strings.Contains(logs.String(), "level=WARN") ||
-		!strings.Contains(logs.String(), "Full test discovery returned no tests") {
+		!strings.Contains(logs.String(), "Full test discovery results could not be processed") {
 		t.Errorf("Expected WARN log for empty full discovery, got logs: %s", logs.String())
 	}
 
@@ -3059,14 +3241,7 @@ func TestTestPlanner_PreparePlanningData_RuntimeTagsOverride(t *testing.T) {
 	ctx := context.Background()
 
 	// Set runtime tags override via environment variable - only override some tags
-	overrideTags := `{"os.platform":"linux","runtime.version":"3.2.0"}`
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS", overrideTags)
-	defer func() {
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS")
-	}()
-
-	// Reinitialize settings to pick up the environment variable
-	settings.Init()
+	setPlannerRuntimeTags(t, `{"os.platform":"linux","runtime.version":"3.2.0"}`)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -3136,13 +3311,7 @@ func TestTestPlanner_PreparePlanningData_RuntimeTagsOverrideInvalidJSON(t *testi
 	ctx := context.Background()
 
 	// Set invalid JSON as runtime tags override
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS", `{invalid json}`)
-	defer func() {
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS")
-	}()
-
-	// Reinitialize settings to pick up the environment variable
-	settings.Init()
+	setPlannerRuntimeTags(t, `{invalid json}`)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -3184,10 +3353,7 @@ func TestTestPlanner_PreparePlanningData_NoRuntimeTagsOverride(t *testing.T) {
 	ctx := context.Background()
 
 	// Ensure no runtime tags override is set
-	_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS")
-
-	// Reinitialize settings to ensure clean state
-	settings.Init()
+	setPlannerRuntimeTags(t, "")
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -3280,6 +3446,8 @@ func TestPreparePlanningData_ITRFullDiscovery_SubdirRootRelativePath_NormalizesT
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(coreDir)
+	ciUtils.ResetCwdSubdirPrefixForTesting()
+	t.Cleanup(ciUtils.ResetCwdSubdirPrefixForTesting)
 
 	// Full discovery returns repo-root-relative paths (the bug scenario)
 	mockFramework := &MockFramework{
@@ -3344,6 +3512,8 @@ func TestPreparePlanningData_RepoRootRun_LeavesRepoRelativePathsUnchanged(t *tes
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(repoRoot)
+	ciUtils.ResetCwdSubdirPrefixForTesting()
+	t.Cleanup(ciUtils.ResetCwdSubdirPrefixForTesting)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -3441,6 +3611,8 @@ func TestPreparePlanningData_ITRPathNormalization_PrefixMismatchUnchanged(t *tes
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(apiDir)
+	ciUtils.ResetCwdSubdirPrefixForTesting()
+	t.Cleanup(ciUtils.ResetCwdSubdirPrefixForTesting)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -3508,6 +3680,8 @@ func TestPreparePlanningData_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd(t 
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(coreDir)
+	ciUtils.ResetCwdSubdirPrefixForTesting()
+	t.Cleanup(ciUtils.ResetCwdSubdirPrefixForTesting)
 
 	// Both framework discovery and API use CWD-relative Suite names.
 	// SuiteSourceFile is repo-root-relative (comes from tracer's test discovery mode).

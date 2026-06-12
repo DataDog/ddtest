@@ -48,6 +48,12 @@ func TestRootCommandFlags(t *testing.T) {
 		return
 	}
 
+	testDiscoveryCacheFlag := rootCmd.PersistentFlags().Lookup("test-discovery-cache")
+	if testDiscoveryCacheFlag == nil {
+		t.Error("test-discovery-cache flag should be defined")
+		return
+	}
+
 	ciNodeWorkersFlag := rootCmd.PersistentFlags().Lookup("ci-node-workers")
 	if ciNodeWorkersFlag == nil {
 		t.Error("ci-node-workers flag should be defined")
@@ -85,6 +91,10 @@ func TestRootCommandFlags(t *testing.T) {
 
 	if testsExcludePatternFlag.DefValue != "" {
 		t.Errorf("expected tests-exclude-pattern default to be empty, got %q", testsExcludePatternFlag.DefValue)
+	}
+
+	if testDiscoveryCacheFlag.DefValue != "" {
+		t.Errorf("expected test-discovery-cache default to be empty, got %q", testDiscoveryCacheFlag.DefValue)
 	}
 
 	if ciNodeWorkersFlag.DefValue != "1" {
@@ -203,6 +213,9 @@ func TestFlagBinding(t *testing.T) {
 	if err := viper.BindPFlag("tests_exclude_pattern", rootCmd.PersistentFlags().Lookup("tests-exclude-pattern")); err != nil {
 		t.Fatalf("Error binding tests-exclude-pattern flag: %v", err)
 	}
+	if err := viper.BindPFlag("test_discovery_cache", rootCmd.PersistentFlags().Lookup("test-discovery-cache")); err != nil {
+		t.Fatalf("Error binding test-discovery-cache flag: %v", err)
+	}
 	if err := viper.BindPFlag("ci_node_workers", rootCmd.PersistentFlags().Lookup("ci-node-workers")); err != nil {
 		t.Fatalf("Error binding ci-node-workers flag: %v", err)
 	}
@@ -229,6 +242,9 @@ func TestFlagBinding(t *testing.T) {
 	if err := rootCmd.PersistentFlags().Set("tests-exclude-pattern", "spec/system/**/*_spec.rb"); err != nil {
 		t.Fatalf("Error setting tests-exclude-pattern flag: %v", err)
 	}
+	if err := rootCmd.PersistentFlags().Set("test-discovery-cache", "/tmp/ddtest-tests.json"); err != nil {
+		t.Fatalf("Error setting test-discovery-cache flag: %v", err)
+	}
 	if err := rootCmd.PersistentFlags().Set("ci-node-workers", "ncpu"); err != nil {
 		t.Fatalf("Error setting ci-node-workers flag: %v", err)
 	}
@@ -254,6 +270,9 @@ func TestFlagBinding(t *testing.T) {
 	}
 	if viper.GetString("tests_exclude_pattern") != "spec/system/**/*_spec.rb" {
 		t.Errorf("expected viper tests_exclude_pattern to be 'spec/system/**/*_spec.rb', got %q", viper.GetString("tests_exclude_pattern"))
+	}
+	if viper.GetString("test_discovery_cache") != "/tmp/ddtest-tests.json" {
+		t.Errorf("expected viper test_discovery_cache to be '/tmp/ddtest-tests.json', got %q", viper.GetString("test_discovery_cache"))
 	}
 	if viper.GetString("ci_node_workers") != "ncpu" {
 		t.Errorf("expected viper ci_node_workers to be 'ncpu', got %q", viper.GetString("ci_node_workers"))

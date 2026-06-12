@@ -20,6 +20,7 @@ const (
 	parallelRunnerOverheadEnv     = "DD_TEST_OPTIMIZATION_RUNNER_CI_JOB_OVERHEAD"
 	testsLocationEnv              = "DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION"
 	testsExcludePatternEnv        = "DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN"
+	testDiscoveryCacheEnv         = "DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE"
 	knapsackTestFilePatternEnv    = "KNAPSACK_PRO_TEST_FILE_PATTERN"
 	knapsackTestFileExcludeEnv    = "KNAPSACK_PRO_TEST_FILE_EXCLUDE_PATTERN"
 )
@@ -95,6 +96,7 @@ type Config struct {
 	Command                string        `mapstructure:"command"`
 	TestsLocation          string        `mapstructure:"tests_location"`
 	TestsExcludePattern    string        `mapstructure:"tests_exclude_pattern"`
+	TestDiscoveryCache     string        `mapstructure:"test_discovery_cache"`
 	RuntimeTags            string        `mapstructure:"runtime_tags"`
 	ReportEnabled          bool          `mapstructure:"report_enabled"`
 }
@@ -117,6 +119,10 @@ func Init() {
 	}
 	if err := viper.BindEnv("tests_exclude_pattern", testsExcludePatternEnv, knapsackTestFileExcludeEnv); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding tests exclude pattern env: %v\n", err)
+		os.Exit(1)
+	}
+	if err := viper.BindEnv("test_discovery_cache", testDiscoveryCacheEnv); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding test discovery cache env: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -154,6 +160,7 @@ func setDefaults() {
 	viper.SetDefault("command", "")
 	viper.SetDefault("tests_location", "")
 	viper.SetDefault("tests_exclude_pattern", "")
+	viper.SetDefault("test_discovery_cache", "")
 	viper.SetDefault("runtime_tags", "")
 	viper.SetDefault("report_enabled", true)
 }
@@ -247,6 +254,10 @@ func GetTestsLocation() string {
 
 func GetTestsExcludePattern() string {
 	return Get().TestsExcludePattern
+}
+
+func GetTestDiscoveryCache() string {
+	return Get().TestDiscoveryCache
 }
 
 func GetRuntimeTags() string {

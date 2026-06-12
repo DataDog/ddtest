@@ -16,6 +16,7 @@ import (
 	"github.com/DataDog/ddtest/internal/ciprovider"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/discovery"
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -266,28 +267,31 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	tp.runInfo = runmetadata.New(utils.GetCITags())
 	tp.planInfo = NewPlanInfo(tags, detectedPlatform.Name(), framework.Name())
 
-	// Create a cancellable context for test discovery
-	discoveryCtx, cancelDiscovery := context.WithCancel(ctx)
-	defer cancelDiscovery()
-
 	resolvedTestFiles, err := discovery.ResolveTestFiles(framework.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		return err
 	}
 
 	var skippedTests testSkipper
-	var discoveredTests []testoptimization.Test
 	var discoveredTestFiles []string
+	var discoveredTests []testoptimization.Test
 	var fullDiscoverySucceeded bool
-	var fullDiscoveryErr error
 	var fastDiscoveryErr error
+	var tiaSkippingEnabled bool
 
-	tp.testFiles = make(map[string]struct{})
-	tp.suiteAggregates = make(map[testSuiteKey]testSuiteAggregate)
-	tp.suitesBySourceFile = make(map[string][]testSuiteKey)
+	tp.resetDiscoveryResults()
 	tp.testSuiteDurations = make(map[string]map[string]testoptimization.TestSuiteDurationInfo)
 
-	g, _ := errgroup.WithContext(ctx)
+	if cwdSubdirPrefix := utils.CwdSubdirPrefix(); cwdSubdirPrefix != "" {
+		slog.Info("Running from subdirectory, will normalize repo-root-relative paths", "subdirPrefix", cwdSubdirPrefix)
+	}
+
+	discoveryCache := newDiscoveryCache(detectedPlatform.Name(), framework)
+	g, planningCtx := errgroup.WithContext(ctx)
+	// planningCtx cancels discovery if a required planning goroutine fails;
+	// cancelDiscovery lets backend settings stop only full discovery.
+	discoveryCtx, cancelDiscovery := context.WithCancel(planningCtx)
+	defer cancelDiscovery()
 
 	// Goroutine 1: Initialize optimization client and check settings
 	g.Go(func() error {
@@ -299,7 +303,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 
 		repositorySettings := tp.optimizationClient.GetSettings()
 		tp.planReport.DatadogSettings = newDatadogSettingsReport(repositorySettings)
-		tiaSkippingEnabled := false
+		tiaSkippingEnabled = false
 		if repositorySettings != nil {
 			slog.Debug("Repository settings", "tia_enabled", repositorySettings.ItrEnabled, "tests_skipping", repositorySettings.TestsSkipping)
 			tiaSkippingEnabled = repositorySettings.ItrEnabled && repositorySettings.TestsSkipping
@@ -325,28 +329,19 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 
 	// Goroutine 2: Tests discovery (respects context cancellation)
 	g.Go(func() error {
-		startTime := time.Now()
-		slog.Info("Discovering local tests...", "framework", framework.Name())
-		res, discErr := framework.DiscoverTests(discoveryCtx, resolvedTestFiles)
-		if discErr != nil {
-			fullDiscoveryErr = discErr
-			if discoveryCtx.Err() != nil {
-				slog.Debug("Full test discovery was cancelled")
-			} else {
-				slog.Warn("Full test discovery failed", "error", discErr)
-			}
-			return nil // Don't fail the entire process, we have fast discovery as fallback
-		}
-		if len(res) == 0 {
-			fullDiscoveryErr = fmt.Errorf("full test discovery returned no tests")
-			slog.Warn("Full test discovery returned no tests; using fast test file discovery fallback",
-				"duration", time.Since(startTime),
-				"error", fullDiscoveryErr)
+		if res, ok := discoveryCache.restore(); ok {
+			discoveredTests = res
+			fullDiscoverySucceeded = true
 			return nil
 		}
+
+		res, discoveryErr := discoverLocalTests(discoveryCtx, framework, resolvedTestFiles)
+		if discoveryErr != nil {
+			return nil // Don't fail the entire process, we have fast discovery as fallback.
+		}
+		discoveryCache.store()
 		discoveredTests = res
 		fullDiscoverySucceeded = true
-		slog.Info("Discovered local tests", "duration", time.Since(startTime), "count", len(discoveredTests))
 
 		return nil
 	})
@@ -377,36 +372,28 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		return err
 	}
 
-	// If both discovery methods failed, return an error
-	if fullDiscoveryErr != nil && fastDiscoveryErr != nil {
-		return fmt.Errorf("both test discovery methods failed - full: %w, fast: %v", fullDiscoveryErr, fastDiscoveryErr)
-	}
-
-	// Compute subdirectory prefix once for all paths.
-	// When running from a monorepo subdirectory (e.g., "cd core && ddtest plan"),
-	// full discovery may return repo-root-relative paths (e.g., "core/spec/...").
-	// We normalize them to CWD-relative paths so workers can find the files.
-	subdirPrefix := utils.CwdSubdirPrefix()
-	if subdirPrefix != "" {
-		slog.Info("Running from subdirectory, will normalize repo-root-relative paths", "subdirPrefix", subdirPrefix)
-	}
-
-	// if we have data on which tests exist in the local repository, we will aggregate them
-	// into a collection of testSuiteAggregate structs.
-	// This collection is used to calculate the skippable percentage and the weighted test files.
+	// Full discovery starts optimistically in parallel. If it finishes before
+	// backend data cancels it, use it even when TIA has no skips: full discovery
+	// is more precise than fast file discovery.
 	if fullDiscoverySucceeded {
-		if err := tp.recordFullDiscoveryResults(discoveredTests, skippedTests, subdirPrefix); err != nil {
+		if err := tp.recordFullDiscoveryResults(discoveredTests, skippedTests); err != nil {
 			return err
 		}
+		// if we have data on which tests exist in the local repository, we will aggregate them
+		// into a collection of testSuiteAggregate structs.
+		// This collection is used to calculate the skippable percentage and the weighted test files.
 		tp.estimateDiscoveredSuiteDurations()
 
 		slog.Info("Full test discovery succeeded; using full discovery results and ignoring fast-discovered-only files",
 			"fastDiscoveredTestFilesCount", len(discoveredTestFiles))
 	} else {
+		if fastDiscoveryErr != nil {
+			return fmt.Errorf("test discovery failed: %w", fastDiscoveryErr)
+		}
 		if err := tp.recordFastDiscoveryFallbackFiles(discoveredTestFiles); err != nil {
 			return err
 		}
-		tp.addDurationDataForFastDiscoveryFallback(subdirPrefix)
+		tp.addDurationDataForFastDiscoveryFallback()
 
 		slog.Info("Full test discovery did not run or failed; using fast test file discovery fallback",
 			"fastDiscoveredTestFilesCount", len(discoveredTestFiles))
@@ -423,6 +410,29 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	slog.Info("Test files prepared", "testFilesCount", len(tp.testFiles))
 
 	return nil
+}
+
+func discoverLocalTests(ctx context.Context, testFramework framework.Framework, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
+	startTime := time.Now()
+	slog.Info("Discovering local tests...", "framework", testFramework.Name())
+	tests, err := testFramework.DiscoverTests(ctx, testFiles)
+	if err != nil {
+		if ctx.Err() != nil {
+			slog.Debug("Full test discovery was cancelled")
+		} else {
+			slog.Warn("Full test discovery failed", "error", err)
+		}
+		return nil, err
+	}
+	if err := ensureDiscoveredTests(tests); err != nil {
+		slog.Warn("Full test discovery results could not be processed; using fast test file discovery fallback",
+			"duration", time.Since(startTime),
+			"error", err)
+		return nil, err
+	}
+
+	slog.Info("Discovered local tests", "duration", time.Since(startTime), "count", len(tests))
+	return tests, nil
 }
 
 func (tp *TestPlanner) fetchTestsToSkip(tiaSkippingEnabled bool) testSkipper {
@@ -471,7 +481,7 @@ func (tp *TestPlanner) estimateDiscoveredSuiteDurations() {
 	}
 }
 
-func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback(subdirPrefix string) {
+func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback() {
 	seenSourceFiles := make(map[string]struct{})
 	for module, suites := range tp.testSuiteDurations {
 		for suite, suiteInfo := range suites {
@@ -482,7 +492,7 @@ func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback(subdirPrefix stri
 
 			// Fast discovery stores normalized file paths in tp.testFiles, so normalize
 			// backend duration paths the same way before checking whether the file survived discovery.
-			sourceFile := utils.StripCwdSubdirPrefix(suiteInfo.SourceFile, subdirPrefix)
+			sourceFile := utils.StripCwdSubdirPrefix(suiteInfo.SourceFile)
 			sourceFile = utils.NormalizePath(sourceFile)
 			if _, ok := tp.testFiles[sourceFile]; !ok {
 				continue

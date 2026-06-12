@@ -13,6 +13,7 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	ciUtils "github.com/DataDog/ddtest/internal/utils"
 )
 
 type highSkippableIntegrationFixture struct {
@@ -55,6 +56,8 @@ func TestTestPlanner_Plan_HighSkippableIntegrationSelectsExpectedRunnerCountAndR
 	if err := os.Chdir(coreDir); err != nil {
 		t.Fatalf("failed to change working directory: %v", err)
 	}
+	ciUtils.ResetCwdSubdirPrefixForTesting()
+	t.Cleanup(ciUtils.ResetCwdSubdirPrefixForTesting)
 
 	t.Cleanup(settings.Init)
 	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "1")
