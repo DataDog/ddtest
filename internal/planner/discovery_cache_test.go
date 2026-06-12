@@ -2,6 +2,7 @@ package planner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -82,11 +83,10 @@ func TestReadDiscoveryCacheMetadata_LargeFileFindsFinalMetadata(t *testing.T) {
 
 func TestDiscoveryCacheHitUsesCachedTests(t *testing.T) {
 	t.Chdir(t.TempDir())
-	restoreGit := mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{
+	mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{
 		diffOutput:   "",
 		statusOutput: "",
 	})
-	defer restoreGit()
 
 	pattern := filepath.Join("spec", "**", "*_spec.rb")
 	cachedTest := testoptimization.Test{
@@ -134,8 +134,7 @@ func TestDiscoveryCacheHitUsesCachedTests(t *testing.T) {
 
 func TestDiscoveryCacheMissRunsFullDiscoveryAndStoresMetadata(t *testing.T) {
 	t.Chdir(t.TempDir())
-	restoreGit := mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{head: "head-sha"})
-	defer restoreGit()
+	mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{head: "head-sha"})
 
 	pattern := filepath.Join("spec", "**", "*_spec.rb")
 	discoveredTest := testoptimization.Test{
@@ -185,8 +184,7 @@ func TestDiscoveryCacheMissRunsFullDiscoveryAndStoresMetadata(t *testing.T) {
 func TestDiscoveryCacheImportsExternalCacheBeforeValidation(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	restoreGit := mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{})
-	defer restoreGit()
+	mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{})
 
 	pattern := filepath.Join("spec", "**", "*_spec.rb")
 	cachedTest := testoptimization.Test{
@@ -241,8 +239,7 @@ func TestDiscoveryCacheValidation(t *testing.T) {
 	framework := &MockFramework{FrameworkName: "rspec", TestPatternValue: pattern}
 
 	t.Run("test_root_change_invalidates", func(t *testing.T) {
-		restoreGit := mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{diffOutput: "M\x00spec/cart_spec.rb\x00"})
-		defer restoreGit()
+		mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{diffOutput: "M\x00spec/cart_spec.rb\x00"})
 		writePlannerDiscoveryCache(t, "base-sha", "ruby", "rspec", pattern, "", []testoptimization.Test{{
 			Module: "rspec", Suite: "Cart", Name: "adds item", SuiteSourceFile: "spec/cart_spec.rb",
 		}})
@@ -256,8 +253,7 @@ func TestDiscoveryCacheValidation(t *testing.T) {
 	})
 
 	t.Run("app_change_reuses", func(t *testing.T) {
-		restoreGit := mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{diffOutput: "M\x00app/models/cart.rb\x00"})
-		defer restoreGit()
+		mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{diffOutput: "M\x00app/models/cart.rb\x00"})
 		writePlannerDiscoveryCache(t, "base-sha", "ruby", "rspec", pattern, "", []testoptimization.Test{{
 			Module: "rspec", Suite: "Cart", Name: "adds item", SuiteSourceFile: "spec/cart_spec.rb",
 		}})
@@ -272,8 +268,7 @@ func TestDiscoveryCacheValidation(t *testing.T) {
 
 	t.Run("custom_test_location_support_file_change_invalidates", func(t *testing.T) {
 		setPlannerTestsLocation(t, pattern)
-		restoreGit := mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{diffOutput: "M\x00spec/support/shared_examples.rb\x00"})
-		defer restoreGit()
+		mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{diffOutput: "M\x00spec/support/shared_examples.rb\x00"})
 		writePlannerDiscoveryCache(t, "base-sha", "ruby", "rspec", pattern, "", []testoptimization.Test{{
 			Module: "rspec", Suite: "Cart", Name: "adds item", SuiteSourceFile: "spec/cart_spec.rb",
 		}})
@@ -297,8 +292,7 @@ func TestDiscoveryCacheValidation(t *testing.T) {
 		ciUtils.ResetCwdSubdirPrefixForTesting()
 		t.Cleanup(ciUtils.ResetCwdSubdirPrefixForTesting)
 		setPlannerTestsLocation(t, pattern)
-		restoreGit := mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{diffOutput: "M\x00other/spec/support/shared_examples.rb\x00"})
-		defer restoreGit()
+		mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{diffOutput: "M\x00other/spec/support/shared_examples.rb\x00"})
 		writePlannerDiscoveryCache(t, "base-sha", "ruby", "rspec", pattern, "", []testoptimization.Test{{
 			Module: "rspec", Suite: "Cart", Name: "adds item", SuiteSourceFile: "spec/cart_spec.rb",
 		}})
@@ -313,8 +307,7 @@ func TestDiscoveryCacheValidation(t *testing.T) {
 
 	t.Run("exclude_pattern_mismatch_invalidates", func(t *testing.T) {
 		setPlannerTestsExcludePattern(t, filepath.Join("spec", "system", "**", "*_spec.rb"))
-		restoreGit := mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{})
-		defer restoreGit()
+		mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{})
 		writePlannerDiscoveryCache(t, "base-sha", "ruby", "rspec", pattern, "", []testoptimization.Test{{
 			Module: "rspec", Suite: "Cart", Name: "adds item", SuiteSourceFile: "spec/cart_spec.rb",
 		}})
@@ -379,13 +372,13 @@ func (m mockDiscoveryCacheGitRunner) output(args ...string) ([]byte, error) {
 	}
 }
 
-func mockDiscoveryCacheGit(t *testing.T, runner mockDiscoveryCacheGitRunner) func() {
+func mockDiscoveryCacheGit(t *testing.T, runner mockDiscoveryCacheGitRunner) {
 	t.Helper()
-	originalGit := discoveryCacheGit
-	discoveryCacheGit = runner
-	return func() {
-		discoveryCacheGit = originalGit
-	}
+	originalGit := discoveryCacheGitOutput
+	discoveryCacheGitOutput = runner.output
+	t.Cleanup(func() {
+		discoveryCacheGitOutput = originalGit
+	})
 }
 
 func writePlannerDiscoveryCache(
@@ -412,14 +405,24 @@ func writeDiscoveryCacheFile(
 	tests []testoptimization.Test,
 ) {
 	t.Helper()
-	originalPath := discovery.TestsFilePath
-	discovery.TestsFilePath = filePath
-	defer func() {
-		discovery.TestsFilePath = originalPath
-	}()
-	if err := writeDiscoveryTests(tests); err != nil {
-		t.Fatalf("failed to write discovery tests: %v", err)
+
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		t.Fatalf("failed to create discovery cache directory: %v", err)
 	}
+	file, err := os.Create(filePath)
+	if err != nil {
+		t.Fatalf("failed to create discovery cache file: %v", err)
+	}
+	encoder := json.NewEncoder(file)
+	for _, test := range tests {
+		if err := encoder.Encode(test); err != nil {
+			t.Fatalf("failed to write discovery test: %v", err)
+		}
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("failed to close discovery cache file: %v", err)
+	}
+
 	metadata := testDiscoveryCacheMetadata(sourceCommit, platformName, frameworkName, testsLocation, testsExcludePattern)
 	if err := appendDiscoveryCacheMetadata(filePath, metadata); err != nil {
 		t.Fatalf("appendDiscoveryCacheMetadata() failed: %v", err)
@@ -439,22 +442,7 @@ func testDiscoveryCacheMetadata(sourceCommit, platformName, frameworkName, tests
 
 func setPlannerTestDiscoveryCache(t *testing.T, path string) {
 	t.Helper()
-	previous := os.Getenv("DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE")
-	if err := os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE", path); err != nil {
-		t.Fatalf("failed to set test discovery cache env: %v", err)
-	}
+	t.Cleanup(settings.Init)
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE", path)
 	settings.Init()
-
-	t.Cleanup(func() {
-		if previous == "" {
-			if err := os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE"); err != nil {
-				t.Errorf("failed to unset test discovery cache env: %v", err)
-			}
-		} else {
-			if err := os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE", previous); err != nil {
-				t.Errorf("failed to restore test discovery cache env: %v", err)
-			}
-		}
-		settings.Init()
-	})
 }

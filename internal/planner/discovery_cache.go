@@ -25,7 +25,6 @@ import (
 
 const (
 	discoveryCacheSchemaVersion = 1
-	discoveryCacheMetadataKey   = "_ddtest_discovery_cache_metadata"
 )
 
 type discoveryCacheMetadata struct {
@@ -52,17 +51,9 @@ type discoveryCache struct {
 	filePath      string
 }
 
-type discoveryCacheGitRunner interface {
-	output(args ...string) ([]byte, error)
-}
-
-type defaultDiscoveryCacheGitRunner struct{}
-
-func (defaultDiscoveryCacheGitRunner) output(args ...string) ([]byte, error) {
+var discoveryCacheGitOutput = func(args ...string) ([]byte, error) {
 	return exec.Command("git", args...).Output()
 }
-
-var discoveryCacheGit discoveryCacheGitRunner = defaultDiscoveryCacheGitRunner{}
 
 func newDiscoveryCache(platformName string, testFramework framework.Framework) discoveryCache {
 	return discoveryCache{
@@ -92,14 +83,6 @@ func (c discoveryCache) importExternal() {
 }
 
 func copyFile(sourcePath, destinationPath string) error {
-	same, err := sameFile(sourcePath, destinationPath)
-	if err != nil {
-		return err
-	}
-	if same {
-		return nil
-	}
-
 	source, err := os.Open(sourcePath)
 	if err != nil {
 		return err
@@ -107,6 +90,18 @@ func copyFile(sourcePath, destinationPath string) error {
 	defer func() {
 		_ = source.Close()
 	}()
+
+	sourceInfo, err := source.Stat()
+	if err != nil {
+		return err
+	}
+	if destinationInfo, err := os.Stat(destinationPath); err == nil {
+		if os.SameFile(sourceInfo, destinationInfo) {
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 
 	if err := os.MkdirAll(filepath.Dir(destinationPath), 0755); err != nil {
 		return err
@@ -121,33 +116,6 @@ func copyFile(sourcePath, destinationPath string) error {
 
 	_, err = io.Copy(destination, source)
 	return err
-}
-
-func sameFile(sourcePath, destinationPath string) (bool, error) {
-	sourceAbs, err := filepath.Abs(sourcePath)
-	if err != nil {
-		return false, err
-	}
-	destinationAbs, err := filepath.Abs(destinationPath)
-	if err != nil {
-		return false, err
-	}
-	if sourceAbs == destinationAbs {
-		return true, nil
-	}
-
-	sourceInfo, err := os.Stat(sourceAbs)
-	if err != nil {
-		return false, err
-	}
-	destinationInfo, err := os.Stat(destinationAbs)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return os.SameFile(sourceInfo, destinationInfo), nil
 }
 
 func parseCachedDiscoveryTests(filePath string) ([]testoptimization.Test, error) {
@@ -204,7 +172,7 @@ func readDiscoveryCacheMetadata(filePath string) (discoveryCacheMetadata, error)
 		return discoveryCacheMetadata{}, err
 	}
 	if record.Metadata == nil {
-		return discoveryCacheMetadata{}, fmt.Errorf("last discovery cache line does not contain %s", discoveryCacheMetadataKey)
+		return discoveryCacheMetadata{}, errors.New("last discovery cache line does not contain _ddtest_discovery_cache_metadata")
 	}
 	return *record.Metadata, nil
 }
@@ -270,7 +238,7 @@ func ensureDiscoveredTests(tests []testoptimization.Test) error {
 }
 
 func (c discoveryCache) store() {
-	sourceCommit, err := discoveryCacheCurrentHEAD()
+	output, err := discoveryCacheGitOutput("rev-parse", "HEAD")
 	if err != nil {
 		slog.Warn("Failed to append test discovery cache metadata", "error", err)
 		return
@@ -278,7 +246,7 @@ func (c discoveryCache) store() {
 
 	metadata := discoveryCacheMetadata{
 		SchemaVersion:       discoveryCacheSchemaVersion,
-		SourceCommit:        sourceCommit,
+		SourceCommit:        strings.TrimSpace(string(output)),
 		Platform:            c.platformName,
 		Framework:           c.testFramework.Name(),
 		TestsLocation:       c.testFramework.TestPattern(),
@@ -297,23 +265,25 @@ func (c discoveryCache) validate() error {
 	if metadata.SchemaVersion != discoveryCacheSchemaVersion {
 		return fmt.Errorf("schema version mismatch: %d", metadata.SchemaVersion)
 	}
-	if metadata.Platform != c.platformName {
-		return fmt.Errorf("platform mismatch: %s", metadata.Platform)
-	}
-	if metadata.Framework != c.testFramework.Name() {
-		return fmt.Errorf("framework mismatch: %s", metadata.Framework)
-	}
 	testPattern := c.testFramework.TestPattern()
-	if metadata.TestsLocation != testPattern {
-		return fmt.Errorf("tests location mismatch: %s", metadata.TestsLocation)
-	}
-	if metadata.TestsExcludePattern != settings.GetTestsExcludePattern() {
-		return fmt.Errorf("tests exclude pattern mismatch: %s", metadata.TestsExcludePattern)
+	for _, check := range []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"platform", metadata.Platform, c.platformName},
+		{"framework", metadata.Framework, c.testFramework.Name()},
+		{"tests location", metadata.TestsLocation, testPattern},
+		{"tests exclude pattern", metadata.TestsExcludePattern, settings.GetTestsExcludePattern()},
+	} {
+		if check.got != check.want {
+			return fmt.Errorf("%s mismatch: %s", check.name, check.got)
+		}
 	}
 	if metadata.SourceCommit == "" {
 		return errors.New("source commit missing")
 	}
-	if err := discoveryCacheCommitExists(metadata.SourceCommit); err != nil {
+	if _, err := discoveryCacheGitOutput("cat-file", "-e", metadata.SourceCommit+"^{commit}"); err != nil {
 		return fmt.Errorf("source commit unavailable: %w", err)
 	}
 
@@ -328,32 +298,17 @@ func (c discoveryCache) validate() error {
 	return nil
 }
 
-func discoveryCacheCurrentHEAD() (string, error) {
-	output, err := discoveryCacheGit.output("rev-parse", "HEAD")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(output)), nil
-}
-
-func discoveryCacheCommitExists(commit string) error {
-	_, err := discoveryCacheGit.output("cat-file", "-e", commit+"^{commit}")
-	return err
-}
-
 func discoveryCacheChangedFilesSince(commit string) ([]string, error) {
-	diffOutput, err := discoveryCacheGit.output("diff", "--name-status", "-M", "-z", commit, "HEAD")
+	diffOutput, err := discoveryCacheGitOutput("diff", "--name-status", "-M", "-z", commit, "HEAD")
 	if err != nil {
 		return nil, err
 	}
-	statusOutput, err := discoveryCacheGit.output("status", "--porcelain=v1", "-z")
+	statusOutput, err := discoveryCacheGitOutput("status", "--porcelain=v1", "-z")
 	if err != nil {
 		return nil, err
 	}
 
-	files := discoveryCacheParseGitDiffNameStatus(diffOutput)
-	files = append(files, discoveryCacheParseGitStatusPorcelain(statusOutput)...)
-	return files, nil
+	return append(discoveryCacheParseGitDiffNameStatus(diffOutput), discoveryCacheParseGitStatusPorcelain(statusOutput)...), nil
 }
 
 func discoveryCacheRootPattern(testPattern string) string {
@@ -369,18 +324,18 @@ func firstChangedDiscoveryFile(changedFiles []string, pattern string) (string, b
 	pattern = normalizeDiscoveryPath(pattern)
 	for _, changedFile := range changedFiles {
 		normalized := normalizeDiscoveryPath(changedFile)
-		if discoveryPathMatches(normalized, pattern) {
+		if discoveryPathMatches(pattern, normalized) {
 			return changedFile, true
 		}
 		stripped := normalizeDiscoveryPath(utils.StripCwdSubdirPrefix(normalized))
-		if stripped != normalized && discoveryPathMatches(stripped, pattern) {
+		if stripped != normalized && discoveryPathMatches(pattern, stripped) {
 			return changedFile, true
 		}
 	}
 	return "", false
 }
 
-func discoveryPathMatches(path, pattern string) bool {
+func discoveryPathMatches(pattern, path string) bool {
 	matched, err := doublestar.Match(pattern, path)
 	if err != nil {
 		slog.Warn("Invalid test discovery cache invalidation pattern", "pattern", pattern, "error", err)
@@ -401,9 +356,6 @@ func discoveryCacheParseGitDiffNameStatus(output []byte) []string {
 	for i := 0; i < len(fields); {
 		status := fields[i]
 		i++
-		if status == "" {
-			continue
-		}
 		if i >= len(fields) {
 			break
 		}
@@ -438,9 +390,7 @@ func discoveryCacheParseGitStatusPorcelain(output []byte) []string {
 			if i >= len(fields) {
 				break
 			}
-			if fields[i] != "" {
-				files = append(files, fields[i])
-			}
+			files = append(files, fields[i])
 			i++
 		}
 	}

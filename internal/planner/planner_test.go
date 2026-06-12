@@ -203,7 +203,9 @@ func cleanupMockTestFilesLocked() {
 }
 
 func TestMain(m *testing.M) {
-	discoveryCacheGit = mockDiscoveryCacheGitRunner{outputErr: errors.New("test discovery cache disabled by default")}
+	discoveryCacheGitOutput = func(args ...string) ([]byte, error) {
+		return nil, errors.New("test discovery cache disabled by default")
+	}
 	_ = os.RemoveAll(filepath.Dir(filepath.Dir(discovery.TestsFilePath)))
 	code := m.Run()
 	mockTestFilesMu.Lock()
