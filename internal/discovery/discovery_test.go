@@ -131,6 +131,45 @@ func TestDiscoverTestFilesWithInvalidExcludePattern(t *testing.T) {
 	}
 }
 
+func TestDiscoverTestsLogsTruncatedCommand(t *testing.T) {
+	logs := captureDiscoveryLogs(t)
+	root := t.TempDir()
+	t.Chdir(root)
+
+	if err := os.MkdirAll(filepath.Dir(TestsFilePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(TestsFilePath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	longArg := strings.Repeat("a", discoveryCommandLogMaxLength)
+	args := []string{"exec", "rspec", "spec/example_spec.rb", longArg}
+	_, err := DiscoverTests(context.Background(), successfulDiscoveryExecutor{}, "bundle", args, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loggedCommand := discoveryCommandLogValue("bundle", args)
+	if len(loggedCommand) != discoveryCommandLogMaxLength {
+		t.Fatalf("expected logged command to be %d characters, got %d", discoveryCommandLogMaxLength, len(loggedCommand))
+	}
+	if !strings.HasSuffix(loggedCommand, discoveryCommandLogTruncSuffix) {
+		t.Fatalf("expected logged command to have truncation suffix, got %q", loggedCommand)
+	}
+
+	output := logs.String()
+	if !strings.Contains(output, "Discovering tests with command") || !strings.Contains(output, loggedCommand) {
+		t.Fatalf("expected discovery command to be logged, got: %s", output)
+	}
+	if strings.Contains(output, "args=") {
+		t.Fatalf("expected discovery args not to be logged separately, got: %s", output)
+	}
+	if strings.Contains(output, longArg) {
+		t.Fatalf("expected full long arg not to appear in logs, got: %s", output)
+	}
+}
+
 func TestExecuteCommandLogsCancelledDiscoveryAtDebug(t *testing.T) {
 	logs := captureDiscoveryLogs(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -264,6 +303,16 @@ func createDiscoveryFixture(tb testing.TB) string {
 type failingDiscoveryExecutor struct {
 	output []byte
 	err    error
+}
+
+type successfulDiscoveryExecutor struct{}
+
+func (successfulDiscoveryExecutor) CombinedOutput(context.Context, string, []string, map[string]string) ([]byte, error) {
+	return nil, nil
+}
+
+func (successfulDiscoveryExecutor) Run(context.Context, string, []string, map[string]string) error {
+	return nil
 }
 
 func (e failingDiscoveryExecutor) CombinedOutput(context.Context, string, []string, map[string]string) ([]byte, error) {
