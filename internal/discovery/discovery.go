@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -23,7 +24,11 @@ import (
 
 var TestsFilePath = filepath.Join(".", constants.PlanDirectory, "tests-discovery/tests.json")
 
-const MaxExplicitTestFiles = 8_000
+const (
+	MaxExplicitTestFiles           = 8_000
+	discoveryCommandLogMaxLength   = 300
+	discoveryCommandLogTruncSuffix = "..."
+)
 
 type Excluder struct {
 	pattern string
@@ -179,7 +184,7 @@ func DiscoverTests(
 	maps.Copy(discoveryEnv, envMap)
 	maps.Copy(discoveryEnv, BaseEnv())
 
-	slog.Info("Discovering tests with command", "command", executable, "args", args)
+	slog.Info("Discovering tests with command", "command", discoveryCommandLogValue(executable, args))
 	if err := executeCommand(ctx, executor, executable, args, discoveryEnv); err != nil {
 		return nil, err
 	}
@@ -192,6 +197,19 @@ func DiscoverTests(
 
 	slog.Debug("Parsed test discovery report", "tests", len(tests))
 	return tests, nil
+}
+
+func discoveryCommandLogValue(executable string, args []string) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, executable)
+	parts = append(parts, args...)
+
+	command := strings.Join(parts, " ")
+	if len(command) <= discoveryCommandLogMaxLength {
+		return command
+	}
+
+	return command[:discoveryCommandLogMaxLength-len(discoveryCommandLogTruncSuffix)] + discoveryCommandLogTruncSuffix
 }
 
 func executeCommand(ctx context.Context, executor ext.CommandExecutor, executable string, args []string, envMap map[string]string) error {
