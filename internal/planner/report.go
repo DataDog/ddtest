@@ -76,7 +76,6 @@ func printDatadogSettingsReport(w io.Writer, report datadogSettingsReport) {
 	reportFprintf(w, "    Test skipping: %s\n", enabledWord(report.TestSkipping))
 	reportFprintf(w, "    Test impact collection: %s\n", enabledWord(report.TestImpactCollection))
 	reportFprintf(w, "  Known tests: %s\n", enabledWord(report.KnownTests))
-	reportFprintf(w, "  Impacted tests: %s\n", enabledWord(report.ImpactedTests))
 	reportFprintf(w, "  Early flake detection: %s\n", enabledWord(report.EarlyFlakeDetection))
 	reportFprintf(w, "  Auto test retries: %s\n", enabledWord(report.AutoTestRetries))
 	reportFprintf(w, "  Flaky test management: %s\n", enabledWord(report.FlakyTestManagement))

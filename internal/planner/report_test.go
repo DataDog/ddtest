@@ -53,7 +53,6 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 			TestSkipping:         true,
 			TestImpactCollection: false,
 			KnownTests:           true,
-			ImpactedTests:        false,
 			EarlyFlakeDetection:  true,
 			AutoTestRetries:      true,
 			FlakyTestManagement:  true,
@@ -149,7 +148,6 @@ Datadog settings
     Test skipping: enabled
     Test impact collection: disabled
   Known tests: enabled
-  Impacted tests: disabled
   Early flake detection: enabled
   Auto test retries: enabled
   Flaky test management: enabled

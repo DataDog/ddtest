@@ -19,14 +19,7 @@ import (
 )
 
 func init() {
-	// Change the default values for backwards compatibility on scenarios
-	if runtime.GOOS == "linux" {
-		osName = "Linux (Unknown Distribution)"
-		kernelName = "Linux"
-	}
-
 	if runtime.GOOS == "darwin" {
-		kernelName = "Darwin"
 		out, err := exec.Command("sw_vers", "-productVersion").Output()
 		if err != nil {
 			return
@@ -37,9 +30,7 @@ func init() {
 
 	var uts unix.Utsname
 	if err := unix.Uname(&uts); err == nil {
-		kernelName = string(bytes.TrimRight(uts.Sysname[:], "\x00"))
-		kernelVersion = string(bytes.TrimRight(uts.Version[:], "\x00"))
-		kernelRelease = strings.SplitN(strings.TrimRight(string(uts.Release[:]), "\x00"), "-", 2)[0]
+		kernelRelease := strings.SplitN(strings.TrimRight(string(uts.Release[:]), "\x00"), "-", 2)[0]
 
 		// Backwards compatibility on how data is reported for freebsd
 		if runtime.GOOS == "freebsd" {
@@ -59,8 +50,6 @@ func init() {
 	for scanner.Scan() {
 		parts := strings.SplitN(scanner.Text(), "=", 2)
 		switch parts[0] {
-		case "NAME":
-			osName = strings.Trim(parts[1], "\"")
 		case "VERSION":
 			osVersion = strings.Trim(parts[1], "\"")
 		case "VERSION_ID":

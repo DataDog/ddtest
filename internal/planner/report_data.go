@@ -17,7 +17,6 @@ type datadogSettingsReport struct {
 	TestSkipping         bool
 	TestImpactCollection bool
 	KnownTests           bool
-	ImpactedTests        bool
 	EarlyFlakeDetection  bool
 	AutoTestRetries      bool
 	FlakyTestManagement  bool
@@ -33,7 +32,6 @@ func newDatadogSettingsReport(settings *net.SettingsResponseData) datadogSetting
 		TestSkipping:         settings.TestsSkipping,
 		TestImpactCollection: settings.CodeCoverage,
 		KnownTests:           settings.KnownTestsEnabled,
-		ImpactedTests:        settings.ImpactedTestsEnabled,
 		EarlyFlakeDetection:  settings.EarlyFlakeDetection.Enabled,
 		AutoTestRetries:      settings.FlakyTestRetriesEnabled,
 		FlakyTestManagement:  settings.TestManagement.Enabled,

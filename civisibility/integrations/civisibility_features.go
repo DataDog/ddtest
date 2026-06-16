@@ -17,14 +17,10 @@ import (
 	"github.com/DataDog/ddtest/civisibility"
 	"github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/utils"
-	"github.com/DataDog/ddtest/internal/utils/impactedtests"
 	"github.com/DataDog/ddtest/internal/utils/net"
 )
 
 const (
-	DefaultFlakyRetryCount      = 5
-	DefaultFlakyTotalRetryCount = 1_000
-
 	// autoDetectServiceName preserves the existing public getter behavior:
 	// an empty service name makes net.NewClientWithServiceName derive the
 	// service from DD_SERVICE or repository tags. The ensure helpers are
@@ -34,13 +30,6 @@ const (
 )
 
 type (
-	// FlakyRetriesSetting struct to hold all the settings related to flaky tests retries
-	FlakyRetriesSetting struct {
-		RetryCount               int64
-		TotalRetryCount          int64
-		RemainingTotalRetryCount int64
-	}
-
 	searchCommitsResponse struct {
 		LocalCommits  []string
 		RemoteCommits []string
@@ -64,17 +53,11 @@ var (
 	// ciVisibilityKnownTests contains the CI Visibility Known Tests data for this session
 	ciVisibilityKnownTests net.KnownTestsResponseData
 
-	// ciVisibilityFlakyRetriesSettings contains the CI Visibility Flaky Retries settings for this session
-	ciVisibilityFlakyRetriesSettings FlakyRetriesSetting
-
 	// ciVisibilitySkippables contains the CI Visibility skippable tests for this session
 	ciVisibilitySkippables net.SkippableTests
 
 	// ciVisibilityTestManagementTests contains the CI Visibility test management tests for this session
 	ciVisibilityTestManagementTests net.TestManagementTestsResponseDataModules
-
-	// ciVisibilityImpactedTestsAnalyzer contains the CI Visibility impacted tests analyzer
-	ciVisibilityImpactedTestsAnalyzer *impactedtests.ImpactedTestAnalyzer
 )
 
 func ensureSettingsInitialization(serviceName string) {
@@ -158,12 +141,6 @@ func ensureSettingsInitialization(serviceName string) {
 			ciSettings.FlakyTestRetriesEnabled = false
 		}
 
-		// check if impacted tests is disabled by env-vars
-		if ciSettings.ImpactedTestsEnabled && !civisibility.BoolEnv(constants.CIVisibilityImpactedTestsDetectionEnabled, true) {
-			slog.Warn("civisibility: impacted tests was disabled by the environment variable")
-			ciSettings.ImpactedTestsEnabled = false
-		}
-
 		// check if test management is disabled by env-vars
 		if ciSettings.TestManagement.Enabled && !civisibility.BoolEnv(constants.CIVisibilityTestManagementEnabledEnvironmentVariable, true) {
 			slog.Warn("civisibility: test management was disabled by the environment variable")
@@ -183,15 +160,9 @@ func ensureSettingsInitialization(serviceName string) {
 		}
 		ciSettings.SubtestFeaturesEnabled = subtestFeaturesEnabled
 
-		// check if we need to wait for the upload to finish before continuing
-		if ciSettings.ImpactedTestsEnabled {
-			slog.Debug("civisibility: impacted tests is enabled we need to wait for the upload to finish (for the unshallow process)")
-			waitUpload(30 * time.Second)
-		} else {
-			slog.Debug("civisibility: no need to wait for the git upload to finish")
-			// Enqueue a close action to wait for the upload to finish before finishing the process
-			PushCiVisibilityCloseAction(waitUploadFactory(time.Minute))
-		}
+		slog.Debug("civisibility: no need to wait for the git upload to finish")
+		// Enqueue a close action to wait for the upload to finish before finishing the process
+		PushCiVisibilityCloseAction(waitUploadFactory(time.Minute))
 
 		// set the ciVisibilitySettings with the settings from the backend
 		ciVisibilitySettings = *ciSettings
@@ -236,18 +207,6 @@ func ensureAdditionalFeaturesInitialization(_ string) {
 			aTagsMutex.Lock()
 			defer aTagsMutex.Unlock()
 			additionalTags[key] = value
-		}
-
-		// if flaky test retries is enabled then let's load the flaky retries settings
-		if currentSettings.FlakyTestRetriesEnabled {
-			totalRetriesCount := (int64)(civisibility.IntEnv(constants.CIVisibilityTotalFlakyRetryCountEnvironmentVariable, DefaultFlakyTotalRetryCount))
-			retryCount := (int64)(civisibility.IntEnv(constants.CIVisibilityFlakyRetryCountEnvironmentVariable, DefaultFlakyRetryCount))
-			ciVisibilityFlakyRetriesSettings = FlakyRetriesSetting{
-				RetryCount:               retryCount,
-				TotalRetryCount:          totalRetriesCount,
-				RemainingTotalRetryCount: totalRetriesCount,
-			}
-			slog.Debug("civisibility: automatic test retries enabled", "retryCount", retryCount, "totalRetriesCount", totalRetriesCount)
 		}
 
 		// wait group to wait for all the additional features to be loaded
@@ -296,21 +255,6 @@ func ensureAdditionalFeaturesInitialization(_ string) {
 				} else if testManagementTests != nil {
 					ciVisibilityTestManagementTests = *testManagementTests
 					slog.Debug("civisibility: test management loaded", "attemptToFixRetries", currentSettings.TestManagement.AttemptToFixRetries)
-				}
-			}()
-		}
-
-		// if wheter the settings response or the env var is true we load the impacted tests analyzer
-		if currentSettings.ImpactedTestsEnabled {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				iTests, err := impactedtests.NewImpactedTestAnalyzer()
-				if err != nil {
-					slog.Error("civisibility: error getting CI visibility impacted tests analyzer", "err", err.Error())
-				} else {
-					ciVisibilityImpactedTestsAnalyzer = iTests
-					slog.Debug("civisibility: impacted tests analyzer loaded")
 				}
 			}()
 		}
@@ -365,13 +309,6 @@ func GetTestManagementTestsRawResponse() json.RawMessage {
 	return ciVisibilityClient.GetTestManagementTestsRawResponse()
 }
 
-// GetFlakyRetriesSettings gets the flaky retries settings
-func GetFlakyRetriesSettings() *FlakyRetriesSetting {
-	// call to ensure the additional features initialization is completed
-	ensureAdditionalFeaturesInitialization(autoDetectServiceName)
-	return &ciVisibilityFlakyRetriesSettings
-}
-
 // GetSkippableTests gets the skippable tests from the backend
 func GetSkippableTests() net.SkippableTests {
 	// call to ensure the additional features initialization is completed
@@ -385,13 +322,6 @@ func GetSkippableTestsRawResponse() json.RawMessage {
 		return nil
 	}
 	return ciVisibilityClient.GetSkippableTestsRawResponse()
-}
-
-// GetImpactedTestsAnalyzer gets the impacted tests analyzer
-func GetImpactedTestsAnalyzer() *impactedtests.ImpactedTestAnalyzer {
-	// call to ensure the additional features initialization is completed
-	ensureAdditionalFeaturesInitialization(autoDetectServiceName)
-	return ciVisibilityImpactedTestsAnalyzer
 }
 
 func uploadRepositoryChanges() (bytes int64, err error) {
