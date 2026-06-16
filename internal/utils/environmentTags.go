@@ -26,11 +26,6 @@ var (
 	originalCiTags map[string]string // originalCiTags holds the original CI/CD tags after all the CMDs
 	addedTags      map[string]string // addedTags holds the tags added by the user
 	ciTagsMutex    sync.Mutex
-
-	// ciMetrics holds the CI/CD environment numeric variable information
-	currentCiMetrics  map[string]float64 // currentCiMetrics holds the cached CI/CD metrics
-	originalCiMetrics map[string]float64 // originalCiMetrics holds the original CI/CD metrics after all the CMDs
-	ciMetricsMutex    sync.Mutex
 )
 
 // GetCITags retrieves and caches the CI/CD tags from environment variables.
@@ -94,32 +89,6 @@ func ResetCITags() {
 	originalCiTags = nil
 	currentCiTags = nil
 	addedTags = nil
-}
-
-// GetCIMetrics retrieves and caches the CI/CD metrics from environment variables.
-// It initializes the ciMetrics map if it is not already initialized.
-// This function is thread-safe due to the use of a mutex.
-//
-// Returns:
-//
-//	A map[string]float64 containing the CI/CD metrics.
-func GetCIMetrics() map[string]float64 {
-	ciMetricsMutex.Lock()
-	defer ciMetricsMutex.Unlock()
-
-	// Return the current metrics if they are already initialized
-	if currentCiMetrics != nil {
-		return currentCiMetrics
-	}
-
-	if originalCiMetrics == nil {
-		// If the original metrics are not initialized, create them
-		originalCiMetrics = createCIMetricsMap()
-	}
-
-	// Create a new map with the added metrics
-	currentCiMetrics = maps.Clone(originalCiMetrics)
-	return currentCiMetrics
 }
 
 // createCITagsMap creates a map of CI/CD tags by extracting information from environment variables and the local Git repository.
@@ -239,17 +208,4 @@ func createCITagsMap() map[string]string {
 	slog.Debug("civisibility: workspace directory", "workspacePath", localTags[constants.CIWorkspacePath])
 	slog.Debug("civisibility: common tags created", "count", len(localTags))
 	return localTags
-}
-
-// createCIMetricsMap creates a map of CI/CD tags by extracting information from environment variables and runtime information.
-//
-// Returns:
-//
-//	A map[string]float64 containing the metrics extracted
-func createCIMetricsMap() map[string]float64 {
-	localMetrics := make(map[string]float64)
-	localMetrics[constants.LogicalCPUCores] = float64(runtime.NumCPU())
-
-	slog.Debug("civisibility: common metrics created with", "items", len(localMetrics))
-	return localMetrics
 }

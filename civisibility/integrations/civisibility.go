@@ -57,12 +57,8 @@ func internalCiVisibilityInitialization() {
 		// Avoid sampling rate warning (in CI Visibility mode we send all data)
 		_ = os.Setenv("DD_TRACE_SAMPLE_RATE", "1")
 
-		// Preload the CodeOwner file
-		_ = utils.GetCodeOwners()
-
-		// Preload all CI, Git, and CodeOwners tags.
+		// Preload all CI and Git tags.
 		ciTags := utils.GetCITags()
-		_ = utils.GetCIMetrics()
 
 		if _, ok := ciTags[constants.GitRepositoryURL]; !ok {
 			slog.Debug("civisibility: git repository URL tag was not detected")
