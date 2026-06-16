@@ -70,16 +70,17 @@ func (m *MockPlatform) SanityCheck() error {
 
 // MockFramework mocks a testing framework
 type MockFramework struct {
-	FrameworkName      string
-	TestPatternValue   string
-	Tests              []testoptimization.Test
-	TestFiles          []string
-	Err                error
-	DiscoverTestsErr   error // If set, overrides Err for DiscoverTests
-	OnDiscoverTests    func()
-	RunTestsCalls      []RunTestsCall
-	DiscoverTestsFiles []discovery.TestFileSet
-	mu                 sync.Mutex
+	FrameworkName           string
+	TestPatternValue        string
+	TestExcludePatternValue string
+	Tests                   []testoptimization.Test
+	TestFiles               []string
+	Err                     error
+	DiscoverTestsErr        error // If set, overrides Err for DiscoverTests
+	OnDiscoverTests         func()
+	RunTestsCalls           []RunTestsCall
+	DiscoverTestsFiles      []discovery.TestFileSet
+	mu                      sync.Mutex
 }
 
 type RunTestsCall struct {
@@ -151,6 +152,10 @@ func (m *MockFramework) TestPattern() string {
 	}
 	ensureMockTestFiles(m.TestFiles)
 	return mockTestFilesPattern(m.TestFiles)
+}
+
+func (m *MockFramework) TestExcludePattern() string {
+	return m.TestExcludePatternValue
 }
 
 var (
@@ -306,16 +311,29 @@ func (m *longRunningDiscoveryFramework) DiscoverTests(ctx context.Context, testF
 	return nil, ctx.Err()
 }
 
+type noFullDiscoveryFramework struct {
+	MockFramework
+}
+
+func (m *noFullDiscoveryFramework) SupportsFullTestDiscovery() bool {
+	return false
+}
+
+func (m *noFullDiscoveryFramework) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
+	return nil, framework.ErrFullTestDiscoveryUnsupported
+}
+
 // MockTestOptimizationClient mocks the test optimization client
 type MockTestOptimizationClient struct {
-	InitializeCalled    bool
-	InitializeErr       error
-	Settings            *net.SettingsResponseData
-	SkippableTests      map[string]bool
-	KnownTests          *net.KnownTestsResponseData
-	TestManagementTests *net.TestManagementTestsResponseDataModules
-	ShutdownCalled      bool
-	Tags                map[string]string
+	InitializeCalled        bool
+	InitializeErr           error
+	Settings                *net.SettingsResponseData
+	SkippableTests          map[string]bool
+	GetSkippableTestsCalled bool
+	KnownTests              *net.KnownTestsResponseData
+	TestManagementTests     *net.TestManagementTestsResponseDataModules
+	ShutdownCalled          bool
+	Tags                    map[string]string
 }
 
 func (m *MockTestOptimizationClient) Initialize(tags map[string]string) error {
@@ -332,6 +350,7 @@ func (m *MockTestOptimizationClient) GetSettings() *net.SettingsResponseData {
 }
 
 func (m *MockTestOptimizationClient) GetSkippableTests() map[string]bool {
+	m.GetSkippableTestsCalled = true
 	return m.SkippableTests
 }
 
@@ -673,6 +692,57 @@ func TestTestPlanner_Plan_WritesManifestAndRunnerLayout(t *testing.T) {
 	assertFileContent(t, constants.ParallelRunnersOutputPath, "1")
 	assertFileContent(t, constants.SkippablePercentageOutputPath, "0.00")
 
+	assertFileContent(t, filepath.Join(constants.TestsSplitDir, "runner-0"), expectedTestFiles)
+}
+
+func TestTestPlanner_Plan_FrameworkWithoutFullDiscoveryDoesNotFetchSkippables(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+
+	t.Cleanup(func() { settings.Init() })
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "1")
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "1")
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED", "false")
+	settings.Init()
+
+	mockFramework := &noFullDiscoveryFramework{
+		MockFramework: MockFramework{
+			FrameworkName: "jest",
+			TestFiles:     []string{"src/a.test.js", "src/b.test.ts"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "javascript",
+		Tags:         map[string]string{"language": "javascript"},
+		Framework:    mockFramework,
+	}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings:       testOptimizationSettings(true, true, false),
+		SkippableTests: map[string]bool{"jest.src/a.test.js..": true},
+	}
+
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		mockOptimizationClient,
+		&MockTestSuiteDurationsClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.Plan(context.Background()); err != nil {
+		t.Fatalf("Plan() should not return error, got: %v", err)
+	}
+
+	if mockOptimizationClient.GetSkippableTestsCalled {
+		t.Fatal("expected planner not to fetch skippables when full test discovery is unsupported")
+	}
+
+	expectedTestFiles := "src/a.test.js\nsrc/b.test.ts\n"
+	assertFileContent(t, constants.TestFilesOutputPath, expectedTestFiles)
+	assertFileContent(t, constants.SkippablePercentageOutputPath, "0.00")
 	assertFileContent(t, filepath.Join(constants.TestsSplitDir, "runner-0"), expectedTestFiles)
 }
 

@@ -84,6 +84,10 @@ func (m *MockFramework) TestPattern() string {
 	return m.TestPatternValue
 }
 
+func (m *MockFramework) TestExcludePattern() string {
+	return ""
+}
+
 func (m *MockFramework) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
 	if m.DiscoverTestsErr != nil {
 		return nil, m.DiscoverTestsErr

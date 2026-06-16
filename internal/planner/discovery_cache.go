@@ -255,7 +255,7 @@ func (c discoveryCache) store() {
 		Platform:            c.platformName,
 		Framework:           c.testFramework.Name(),
 		TestsLocation:       c.testFramework.TestPattern(),
-		TestsExcludePattern: settings.GetTestsExcludePattern(),
+		TestsExcludePattern: effectiveTestExcludePattern(c.testFramework),
 	}
 	if err := appendDiscoveryCacheMetadata(c.filePath, metadata); err != nil {
 		slog.Warn("Failed to append test discovery cache metadata", "error", err)
@@ -271,6 +271,7 @@ func (c discoveryCache) validate() error {
 		return fmt.Errorf("schema version mismatch: %d", metadata.SchemaVersion)
 	}
 	testPattern := c.testFramework.TestPattern()
+	testExcludePattern := effectiveTestExcludePattern(c.testFramework)
 	for _, check := range []struct {
 		name string
 		got  string
@@ -279,7 +280,7 @@ func (c discoveryCache) validate() error {
 		{"platform", metadata.Platform, c.platformName},
 		{"framework", metadata.Framework, c.testFramework.Name()},
 		{"tests location", metadata.TestsLocation, testPattern},
-		{"tests exclude pattern", metadata.TestsExcludePattern, settings.GetTestsExcludePattern()},
+		{"tests exclude pattern", metadata.TestsExcludePattern, testExcludePattern},
 	} {
 		if check.got != check.want {
 			return fmt.Errorf("%s mismatch: %s", check.name, check.got)

@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
@@ -259,15 +260,17 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	}
 
 	// Detect framework once to avoid duplicate work
-	framework, err := detectedPlatform.DetectFramework()
+	testFramework, err := detectedPlatform.DetectFramework()
 	if err != nil {
 		return fmt.Errorf("failed to detect framework: %w", err)
 	}
-	slog.Info("Framework detected", "framework", framework.Name())
+	slog.Info("Framework detected", "framework", testFramework.Name())
+	fullTestDiscoverySupported := framework.SupportsFullTestDiscovery(testFramework)
 	tp.runInfo = runmetadata.New(utils.GetCITags())
-	tp.planInfo = NewPlanInfo(tags, detectedPlatform.Name(), framework.Name())
+	tp.planInfo = NewPlanInfo(tags, detectedPlatform.Name(), testFramework.Name())
 
-	resolvedTestFiles, err := discovery.ResolveTestFiles(framework.TestPattern(), settings.GetTestsExcludePattern())
+	testExcludePattern := effectiveTestExcludePattern(testFramework)
+	resolvedTestFiles, err := discovery.ResolveTestFiles(testFramework.TestPattern(), testExcludePattern)
 	if err != nil {
 		return err
 	}
@@ -286,7 +289,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		slog.Info("Running from subdirectory, will normalize repo-root-relative paths", "subdirPrefix", cwdSubdirPrefix)
 	}
 
-	discoveryCache := newDiscoveryCache(detectedPlatform.Name(), framework)
+	discoveryCache := newDiscoveryCache(detectedPlatform.Name(), testFramework)
 	g, planningCtx := errgroup.WithContext(ctx)
 	// planningCtx cancels discovery if a required planning goroutine fails;
 	// cancelDiscovery lets backend settings stop only full discovery.
@@ -307,6 +310,11 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		if repositorySettings != nil {
 			slog.Debug("Repository settings", "tia_enabled", repositorySettings.ItrEnabled, "tests_skipping", repositorySettings.TestsSkipping)
 			tiaSkippingEnabled = repositorySettings.ItrEnabled && repositorySettings.TestsSkipping
+
+			if tiaSkippingEnabled && !fullTestDiscoverySupported {
+				slog.Info("Framework does not support full test discovery; TIA skippables will not be applied during planning", "framework", testFramework.Name())
+				tiaSkippingEnabled = false
+			}
 
 			if !tiaSkippingEnabled {
 				slog.Info("TIA or test skipping disabled, cancelling full test discovery")
@@ -329,13 +337,18 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 
 	// Goroutine 2: Tests discovery (respects context cancellation)
 	g.Go(func() error {
+		if !fullTestDiscoverySupported {
+			slog.Info("Full test discovery is not supported by framework; using fast test file discovery fallback", "framework", testFramework.Name())
+			return nil
+		}
+
 		if res, ok := discoveryCache.restore(); ok {
 			discoveredTests = res
 			fullDiscoverySucceeded = true
 			return nil
 		}
 
-		res, discoveryErr := discoverLocalTests(discoveryCtx, framework, resolvedTestFiles)
+		res, discoveryErr := discoverLocalTests(discoveryCtx, testFramework, resolvedTestFiles)
 		if discoveryErr != nil {
 			return nil // Don't fail the entire process, we have fast discovery as fallback.
 		}
@@ -349,13 +362,13 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	// Goroutine 3: Test files discovery (fast, must always complete)
 	g.Go(func() error {
 		startTime := time.Now()
-		slog.Info("Discovering test files (fast)...", "framework", framework.Name())
+		slog.Info("Discovering test files (fast)...", "framework", testFramework.Name())
 		var res []string
 		if resolvedTestFiles.UseExplicitFiles() {
 			res = resolvedTestFiles.ExplicitFiles
 		} else {
 			var discErr error
-			res, discErr = discovery.DiscoverTestFiles(resolvedTestFiles.Pattern, settings.GetTestsExcludePattern())
+			res, discErr = discovery.DiscoverTestFiles(resolvedTestFiles.Pattern, testExcludePattern)
 			if discErr != nil {
 				fastDiscoveryErr = discErr
 				slog.Warn("Fast test discovery failed", "error", discErr)
@@ -410,6 +423,30 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	slog.Info("Test files prepared", "testFilesCount", len(tp.testFiles))
 
 	return nil
+}
+
+func effectiveTestExcludePattern(testFramework framework.Framework) string {
+	return mergeTestExcludePatterns(testFramework.TestExcludePattern(), settings.GetTestsExcludePattern())
+}
+
+func mergeTestExcludePatterns(patterns ...string) string {
+	normalizedPatterns := make([]string, 0, len(patterns))
+	for _, pattern := range patterns {
+		normalized := utils.NormalizePattern(pattern)
+		if normalized == "" {
+			continue
+		}
+		normalizedPatterns = append(normalizedPatterns, normalized)
+	}
+
+	switch len(normalizedPatterns) {
+	case 0:
+		return ""
+	case 1:
+		return normalizedPatterns[0]
+	default:
+		return "{" + strings.Join(normalizedPatterns, ",") + "}"
+	}
 }
 
 func discoverLocalTests(ctx context.Context, testFramework framework.Framework, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
