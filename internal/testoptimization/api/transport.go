@@ -3,7 +3,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package net
+package api
 
 import (
 	"context"
@@ -16,12 +16,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/DataDog/ddtest/civisibility"
 	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/utils"
 )
 
@@ -33,12 +33,13 @@ const (
 )
 
 type (
-	// Client is an interface for sending requests to the Datadog backend.
-	Client interface {
+	// Transport sends requests to the Datadog backend.
+	Transport interface {
 		GetSettings() (*SettingsResponseData, error)
 		GetSettingsRawResponse() json.RawMessage
 		GetKnownTests() (*KnownTestsResponseData, error)
 		GetKnownTestsRawResponse() json.RawMessage
+		GetTestSuiteDurations() map[string]map[string]TestSuiteDurationInfo
 		GetCommits(localCommits []string) ([]string, error)
 		SendPackFiles(commitSha string, packFiles []string) (bytes int64, err error)
 		GetSkippableTests() (correlationID string, skippables SkippableTests, err error)
@@ -47,8 +48,8 @@ type (
 		GetTestManagementTestsRawResponse() json.RawMessage
 	}
 
-	// client is a client for sending requests to the Datadog backend.
-	client struct {
+	// transport sends requests to the Datadog backend.
+	transport struct {
 		id                 string
 		agentless          bool
 		baseURL            string
@@ -85,11 +86,11 @@ type (
 )
 
 var (
-	_ Client = &client{}
+	_ Transport = &transport{}
 )
 
-// NewClientWithServiceNameAndSubdomain creates a new client with the given service name and subdomain.
-func NewClientWithServiceNameAndSubdomain(serviceName, subdomain string) Client {
+// NewTransportWithServiceNameAndSubdomain creates a new transport with the given service name and subdomain.
+func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Transport {
 	ciTags := utils.GetCITags()
 
 	// get the environment
@@ -100,18 +101,7 @@ func NewClientWithServiceNameAndSubdomain(serviceName, subdomain string) Client 
 
 	// get the service name
 	if serviceName == "" {
-		serviceName = os.Getenv("DD_SERVICE")
-		if serviceName == "" {
-			if repoURL, ok := ciTags[constants.GitRepositoryURL]; ok {
-				// regex to sanitize the repository url to be used as a service name
-				repoRegex := regexp.MustCompile(`(?m)/([a-zA-Z0-9\-_.]*)$`)
-				matches := repoRegex.FindStringSubmatch(repoURL)
-				if len(matches) > 1 {
-					repoURL = strings.TrimSuffix(matches[1], ".git")
-				}
-				serviceName = repoURL
-			}
-		}
+		serviceName = runmetadata.ResolveServiceName(ciTags[constants.GitRepositoryURL])
 	}
 
 	// get all custom configuration (test.configuration.*)
@@ -224,7 +214,7 @@ func NewClientWithServiceNameAndSubdomain(serviceName, subdomain string) Client 
 		bName = "auto:git-detached-head"
 	}
 
-	return &client{
+	return &transport{
 		id:                id,
 		agentless:         agentlessEnabled,
 		baseURL:           baseURL,
@@ -250,9 +240,9 @@ func NewClientWithServiceNameAndSubdomain(serviceName, subdomain string) Client 
 	}
 }
 
-// NewClientWithServiceName creates a new client with the given service name.
-func NewClientWithServiceName(serviceName string) Client {
-	return NewClientWithServiceNameAndSubdomain(serviceName, "api")
+// NewTransportWithServiceName creates a new transport with the given service name.
+func NewTransportWithServiceName(serviceName string) Transport {
+	return NewTransportWithServiceNameAndSubdomain(serviceName, "api")
 }
 
 func cloneRawMessage(data []byte) json.RawMessage {
@@ -262,24 +252,24 @@ func cloneRawMessage(data []byte) json.RawMessage {
 	return append(json.RawMessage(nil), data...)
 }
 
-func (c *client) GetSettingsRawResponse() json.RawMessage {
+func (c *transport) GetSettingsRawResponse() json.RawMessage {
 	return cloneRawMessage(c.settingsRawResponse)
 }
 
-func (c *client) GetKnownTestsRawResponse() json.RawMessage {
+func (c *transport) GetKnownTestsRawResponse() json.RawMessage {
 	return cloneRawMessage(c.knownTestsRawResponse)
 }
 
-func (c *client) GetSkippableTestsRawResponse() json.RawMessage {
+func (c *transport) GetSkippableTestsRawResponse() json.RawMessage {
 	return cloneRawMessage(c.skippableTestsRawResponse)
 }
 
-func (c *client) GetTestManagementTestsRawResponse() json.RawMessage {
+func (c *transport) GetTestManagementTestsRawResponse() json.RawMessage {
 	return cloneRawMessage(c.testManagementTestsRawResponse)
 }
 
 // getURLPath returns the full URL path for the given URL path.
-func (c *client) getURLPath(urlPath string) string {
+func (c *transport) getURLPath(urlPath string) string {
 	if c.agentless {
 		return fmt.Sprintf("%s/%s", c.baseURL, urlPath)
 	}
@@ -288,7 +278,7 @@ func (c *client) getURLPath(urlPath string) string {
 }
 
 // getPostRequestConfig	returns a new RequestConfig for a POST request.
-func (c *client) getPostRequestConfig(url string, body interface{}) *RequestConfig {
+func (c *transport) getPostRequestConfig(url string, body interface{}) *RequestConfig {
 	return &RequestConfig{
 		Method:     "POST",
 		URL:        c.getURLPath(url),

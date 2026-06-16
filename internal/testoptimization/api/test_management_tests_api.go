@@ -3,7 +3,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2025 Datadog, Inc.
 
-package net
+package api
 
 import (
 	"fmt"
@@ -64,7 +64,7 @@ type (
 	}
 )
 
-func (c *client) GetTestManagementTests() (*TestManagementTestsResponseDataModules, error) {
+func (c *transport) GetTestManagementTests() (*TestManagementTestsResponseDataModules, error) {
 	if c.repositoryURL == "" {
 		return nil, fmt.Errorf("civisibility.GetTestManagementTests: repository URL is required")
 	}

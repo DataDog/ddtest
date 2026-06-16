@@ -11,6 +11,7 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/testoptimization/api"
 )
 
 func TestTestPlanner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
@@ -92,11 +93,11 @@ func TestTestPlanner_StoreAndRestoreTestOptimizationPlanCache_RoundTripDurations
 		&MockTestSuiteDurationsClient{},
 		newDefaultMockCIProviderDetector(),
 	)
-	runner.testSuiteDurations = map[string]map[string]testoptimization.TestSuiteDurationInfo{
+	runner.testSuiteDurations = map[string]map[string]api.TestSuiteDurationInfo{
 		"rspec": {
 			"Suite1": {
 				SourceFile: "spec/suite1_spec.rb",
-				Duration:   testoptimization.DurationPercentiles{P50: "5000000000", P90: "7000000000"},
+				Duration:   api.DurationPercentiles{P50: "5000000000", P90: "7000000000"},
 			},
 		},
 	}
@@ -166,17 +167,17 @@ func TestTestPlanner_RestoreTestOptimizationPlanCache_ComputesMissingWeights(t *
 	_ = os.Chdir(tempDir)
 
 	type partialTestOptimizationPlanCache struct {
-		TestSuiteDurations map[string]map[string]testoptimization.TestSuiteDurationInfo `json:"testSuiteDurations"`
-		SuiteAggregates    map[testSuiteKey]testSuiteAggregate                          `json:"suiteAggregates"`
-		SuitesBySourceFile map[string][]testSuiteKey                                    `json:"suitesBySourceFile"`
+		TestSuiteDurations map[string]map[string]api.TestSuiteDurationInfo `json:"testSuiteDurations"`
+		SuiteAggregates    map[testSuiteKey]testSuiteAggregate             `json:"suiteAggregates"`
+		SuitesBySourceFile map[string][]testSuiteKey                       `json:"suitesBySourceFile"`
 	}
 
 	cache := partialTestOptimizationPlanCache{
-		TestSuiteDurations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		TestSuiteDurations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"Suite1": {
 					SourceFile: "spec/suite1_spec.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "5000000000", P90: "7000000000"},
+					Duration:   api.DurationPercentiles{P50: "5000000000", P90: "7000000000"},
 				},
 			},
 		},

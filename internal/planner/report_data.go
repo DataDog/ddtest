@@ -6,7 +6,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
-	"github.com/DataDog/ddtest/internal/utils/net"
+	"github.com/DataDog/ddtest/internal/testoptimization/api"
 )
 
 const slowestTestSuitesReportLimit = 10
@@ -22,7 +22,7 @@ type datadogSettingsReport struct {
 	FlakyTestManagement  bool
 }
 
-func newDatadogSettingsReport(settings *net.SettingsResponseData) datadogSettingsReport {
+func newDatadogSettingsReport(settings *api.SettingsResponseData) datadogSettingsReport {
 	if settings == nil {
 		return datadogSettingsReport{}
 	}
@@ -45,7 +45,7 @@ type knownTestsReport struct {
 	Tests     int
 }
 
-func newKnownTestsReport(knownTests *net.KnownTestsResponseData) knownTestsReport {
+func newKnownTestsReport(knownTests *api.KnownTestsResponseData) knownTestsReport {
 	if knownTests == nil {
 		return knownTestsReport{}
 	}
@@ -71,7 +71,7 @@ type managedFlakyTestsReport struct {
 	AttemptToFix int
 }
 
-func newManagedFlakyTestsReport(testManagementTests *net.TestManagementTestsResponseDataModules) managedFlakyTestsReport {
+func newManagedFlakyTestsReport(testManagementTests *api.TestManagementTestsResponseDataModules) managedFlakyTestsReport {
 	if testManagementTests == nil {
 		return managedFlakyTestsReport{}
 	}

@@ -13,17 +13,18 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	ciUtils "github.com/DataDog/ddtest/internal/utils"
 )
 
 type highSkippableIntegrationFixture struct {
-	Tests                     []testoptimization.Test                                      `json:"tests"`
-	TestFiles                 []string                                                     `json:"testFiles"`
-	SkippableTests            []string                                                     `json:"skippableTests"`
-	TestSuiteDurations        map[string]map[string]testoptimization.TestSuiteDurationInfo `json:"testSuiteDurations"`
-	ExpectedRunnableTestFiles []string                                                     `json:"expectedRunnableTestFiles"`
-	OriginalParallelRunners   int                                                          `json:"originalParallelRunners"`
-	ExpectedParallelRunners   int                                                          `json:"expectedParallelRunners"`
+	Tests                     []testoptimization.Test                         `json:"tests"`
+	TestFiles                 []string                                        `json:"testFiles"`
+	SkippableTests            []string                                        `json:"skippableTests"`
+	TestSuiteDurations        map[string]map[string]api.TestSuiteDurationInfo `json:"testSuiteDurations"`
+	ExpectedRunnableTestFiles []string                                        `json:"expectedRunnableTestFiles"`
+	OriginalParallelRunners   int                                             `json:"originalParallelRunners"`
+	ExpectedParallelRunners   int                                             `json:"expectedParallelRunners"`
 }
 
 func TestTestPlanner_Plan_HighSkippableIntegrationSelectsExpectedRunnerCountAndRunnableFiles(t *testing.T) {

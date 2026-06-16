@@ -26,8 +26,8 @@ import (
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	ciUtils "github.com/DataDog/ddtest/internal/utils"
-	"github.com/DataDog/ddtest/internal/utils/net"
 )
 
 // Mock implementations for testing
@@ -310,10 +310,10 @@ func (m *longRunningDiscoveryFramework) DiscoverTests(ctx context.Context, testF
 type MockTestOptimizationClient struct {
 	InitializeCalled    bool
 	InitializeErr       error
-	Settings            *net.SettingsResponseData
+	Settings            *api.SettingsResponseData
 	SkippableTests      map[string]bool
-	KnownTests          *net.KnownTestsResponseData
-	TestManagementTests *net.TestManagementTestsResponseDataModules
+	KnownTests          *api.KnownTestsResponseData
+	TestManagementTests *api.TestManagementTestsResponseDataModules
 	ShutdownCalled      bool
 	Tags                map[string]string
 }
@@ -327,7 +327,7 @@ func (m *MockTestOptimizationClient) Initialize(tags map[string]string) error {
 	return m.InitializeErr
 }
 
-func (m *MockTestOptimizationClient) GetSettings() *net.SettingsResponseData {
+func (m *MockTestOptimizationClient) GetSettings() *api.SettingsResponseData {
 	return m.Settings
 }
 
@@ -335,11 +335,11 @@ func (m *MockTestOptimizationClient) GetSkippableTests() map[string]bool {
 	return m.SkippableTests
 }
 
-func (m *MockTestOptimizationClient) GetKnownTests() *net.KnownTestsResponseData {
+func (m *MockTestOptimizationClient) GetKnownTests() *api.KnownTestsResponseData {
 	return m.KnownTests
 }
 
-func (m *MockTestOptimizationClient) GetTestManagementTestsData() *net.TestManagementTestsResponseDataModules {
+func (m *MockTestOptimizationClient) GetTestManagementTestsData() *api.TestManagementTestsResponseDataModules {
 	return m.TestManagementTests
 }
 
@@ -354,7 +354,7 @@ type waitForDiscoveryOptimizationClient struct {
 	timedOut         bool
 }
 
-func (m *waitForDiscoveryOptimizationClient) GetSettings() *net.SettingsResponseData {
+func (m *waitForDiscoveryOptimizationClient) GetSettings() *api.SettingsResponseData {
 	select {
 	case <-m.discoveryStarted:
 	case <-time.After(500 * time.Millisecond):
@@ -372,14 +372,14 @@ func (m *waitForDiscoveryOptimizationClient) TimedOut() bool {
 }
 
 type MockTestSuiteDurationsClient struct {
-	Durations map[string]map[string]testoptimization.TestSuiteDurationInfo
+	Durations map[string]map[string]api.TestSuiteDurationInfo
 	Called    bool
 }
 
-func (m *MockTestSuiteDurationsClient) GetTestSuiteDurations() map[string]map[string]testoptimization.TestSuiteDurationInfo {
+func (m *MockTestSuiteDurationsClient) GetTestSuiteDurations() map[string]map[string]api.TestSuiteDurationInfo {
 	m.Called = true
 	if m.Durations == nil {
-		return map[string]map[string]testoptimization.TestSuiteDurationInfo{}
+		return map[string]map[string]api.TestSuiteDurationInfo{}
 	}
 	return m.Durations
 }
@@ -439,8 +439,8 @@ func gitTestEnv() []string {
 	)
 }
 
-func testOptimizationSettings(tiaEnabled, testsSkipping, testManagementEnabled bool) *net.SettingsResponseData {
-	settings := &net.SettingsResponseData{
+func testOptimizationSettings(tiaEnabled, testsSkipping, testManagementEnabled bool) *api.SettingsResponseData {
+	settings := &api.SettingsResponseData{
 		ItrEnabled:    tiaEnabled,
 		TestsSkipping: testsSkipping,
 	}
@@ -1288,11 +1288,11 @@ func TestTestPlanner_PreparePlanningData_Success(t *testing.T) {
 		},
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
-		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"TestSuite1": {
 					SourceFile: "test/file1_test.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "7000000", P90: "2000000"},
+					Duration:   api.DurationPercentiles{P50: "7000000", P90: "2000000"},
 				},
 			},
 		},
@@ -1406,18 +1406,18 @@ func TestTestPlanner_PreparePlanningData_DisabledTestManagementTestsAreSkipped(t
 		SkippableTests: map[string]bool{
 			(&testoptimization.Test{Module: "rspec", Suite: "Suite1", Name: "test2"}).DatadogTestId(): true,
 		},
-		TestManagementTests: &net.TestManagementTestsResponseDataModules{
-			Modules: map[string]net.TestManagementTestsResponseDataSuites{
+		TestManagementTests: &api.TestManagementTestsResponseDataModules{
+			Modules: map[string]api.TestManagementTestsResponseDataSuites{
 				"rspec": {
-					Suites: map[string]net.TestManagementTestsResponseDataTests{
+					Suites: map[string]api.TestManagementTestsResponseDataTests{
 						"Suite2": {
-							Tests: map[string]net.TestManagementTestsResponseDataTestProperties{
-								"test3": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+							Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
+								"test3": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
 							},
 						},
 						"Suite3": {
-							Tests: map[string]net.TestManagementTestsResponseDataTestProperties{
-								"test4": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Quarantined: true}},
+							Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
+								"test4": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Quarantined: true}},
 							},
 						},
 					},
@@ -1537,13 +1537,13 @@ func TestTestPlanner_PreparePlanningData_ModuleQualifiedSkipsDoNotCrossModules(t
 		SkippableTests: map[string]bool{
 			(&testoptimization.Test{Module: "module-a", Suite: "SharedSuite", Name: "same name"}).DatadogTestId(): true,
 		},
-		TestManagementTests: &net.TestManagementTestsResponseDataModules{
-			Modules: map[string]net.TestManagementTestsResponseDataSuites{
+		TestManagementTests: &api.TestManagementTestsResponseDataModules{
+			Modules: map[string]api.TestManagementTestsResponseDataSuites{
 				"module-c": {
-					Suites: map[string]net.TestManagementTestsResponseDataTests{
+					Suites: map[string]api.TestManagementTestsResponseDataTests{
 						"ManagedSuite": {
-							Tests: map[string]net.TestManagementTestsResponseDataTestProperties{
-								"same name": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+							Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
+								"same name": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
 							},
 						},
 					},
@@ -1604,18 +1604,18 @@ func TestTestPlanner_PreparePlanningData_TestManagementDoesNotKeepFullDiscoveryW
 		SkippableTests: map[string]bool{
 			(&testoptimization.Test{Module: "rspec", Suite: "Suite2", Name: "not_applied"}).DatadogTestId(): true,
 		},
-		TestManagementTests: &net.TestManagementTestsResponseDataModules{
-			Modules: map[string]net.TestManagementTestsResponseDataSuites{
+		TestManagementTests: &api.TestManagementTestsResponseDataModules{
+			Modules: map[string]api.TestManagementTestsResponseDataSuites{
 				"rspec": {
-					Suites: map[string]net.TestManagementTestsResponseDataTests{
+					Suites: map[string]api.TestManagementTestsResponseDataTests{
 						"Suite1": {
-							Tests: map[string]net.TestManagementTestsResponseDataTestProperties{
-								"disabled": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+							Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
+								"disabled": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
 							},
 						},
 						"Suite3": {
-							Tests: map[string]net.TestManagementTestsResponseDataTestProperties{
-								"disabled": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+							Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
+								"disabled": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
 							},
 						},
 					},
@@ -1867,15 +1867,15 @@ func TestTestPlanner_PreparePlanningData_NonEmptyDurationsUsesP50ForMatchingSuit
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
-		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"Suite1": {
 					SourceFile: "spec/file1_test.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "10000000", P90: "20000000"},
+					Duration:   api.DurationPercentiles{P50: "10000000", P90: "20000000"},
 				},
 				"Suite2": {
 					SourceFile: "spec/file2_test.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "30000000", P90: "40000000"},
+					Duration:   api.DurationPercentiles{P50: "30000000", P90: "40000000"},
 				},
 			},
 		},
@@ -1935,15 +1935,15 @@ func TestTestPlanner_PreparePlanningData_SkippablePercentageUsesDurations(t *tes
 		SkippableTests: map[string]bool{skippedTest.DatadogTestId(): true},
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
-		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"SlowSuite": {
 					SourceFile: "spec/slow_spec.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "8000000000"},
+					Duration:   api.DurationPercentiles{P50: "8000000000"},
 				},
 				"FastSuite": {
 					SourceFile: "spec/fast_spec.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "2000000000"},
+					Duration:   api.DurationPercentiles{P50: "2000000000"},
 				},
 			},
 		},
@@ -1984,11 +1984,11 @@ func TestTestPlanner_TestFileWeight_CountFallbackForMissingSuiteDuration(t *test
 		},
 	}
 
-	runner.testSuiteDurations = map[string]map[string]testoptimization.TestSuiteDurationInfo{
+	runner.testSuiteDurations = map[string]map[string]api.TestSuiteDurationInfo{
 		"rspec": {
 			"Suite1": {
 				SourceFile: "spec/file1_test.rb",
-				Duration:   testoptimization.DurationPercentiles{P50: "11000000", P90: "22000000"},
+				Duration:   api.DurationPercentiles{P50: "11000000", P90: "22000000"},
 			},
 		},
 	}
@@ -2036,11 +2036,11 @@ func TestTestPlanner_TestFileWeight_InvalidP50FallsBackForFullDiscoveryAggregate
 		},
 	}
 
-	runner.testSuiteDurations = map[string]map[string]testoptimization.TestSuiteDurationInfo{
+	runner.testSuiteDurations = map[string]map[string]api.TestSuiteDurationInfo{
 		"rspec": {
 			"Suite1": {
 				SourceFile: "spec/file1_test.rb",
-				Duration:   testoptimization.DurationPercentiles{P50: "not-a-number"},
+				Duration:   api.DurationPercentiles{P50: "not-a-number"},
 			},
 		},
 	}
@@ -2075,11 +2075,11 @@ func TestTestPlanner_TestFileWeight_ZeroP50FallsBackForFullDiscoveryAggregate(t 
 		},
 	}
 
-	runner.testSuiteDurations = map[string]map[string]testoptimization.TestSuiteDurationInfo{
+	runner.testSuiteDurations = map[string]map[string]api.TestSuiteDurationInfo{
 		"rspec": {
 			"Suite1": {
 				SourceFile: "spec/file1_test.rb",
-				Duration:   testoptimization.DurationPercentiles{P50: "0"},
+				Duration:   api.DurationPercentiles{P50: "0"},
 			},
 		},
 	}
@@ -2113,11 +2113,11 @@ func TestTestPlanner_TestFileWeight_SubMillisecondP50MinimumWeight(t *testing.T)
 		},
 	}
 
-	runner.testSuiteDurations = map[string]map[string]testoptimization.TestSuiteDurationInfo{
+	runner.testSuiteDurations = map[string]map[string]api.TestSuiteDurationInfo{
 		"rspec": {
 			"FastSuite": {
 				SourceFile: "spec/fast_test.rb",
-				Duration:   testoptimization.DurationPercentiles{P50: "500000"},
+				Duration:   api.DurationPercentiles{P50: "500000"},
 			},
 		},
 	}
@@ -2226,11 +2226,11 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesBackendDurations(t *te
 		Framework: mockFramework,
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
-		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"BackendOnlySuite": {
 					SourceFile: "spec/backend_only_spec.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "42000000", P90: "84000000"},
+					Duration:   api.DurationPercentiles{P50: "42000000", P90: "84000000"},
 				},
 			},
 		},
@@ -2267,15 +2267,15 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesOneBackendDurationPerS
 		Framework: mockFramework,
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
-		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"BackendOnlySuite": {
 					SourceFile: "spec/backend_only_spec.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "42000000"},
+					Duration:   api.DurationPercentiles{P50: "42000000"},
 				},
 				"DuplicateBackendOnlySuite": {
 					SourceFile: "spec/backend_only_spec.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "84000000"},
+					Duration:   api.DurationPercentiles{P50: "84000000"},
 				},
 			},
 		},
@@ -2315,11 +2315,11 @@ func TestTestPlanner_PreparePlanningData_IgnoresZeroBackendDurationForFastDiscov
 		Framework: mockFramework,
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
-		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"BrokenZeroDurationSuite": {
 					SourceFile: "spec/backend_only_spec.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "0", P90: "0"},
+					Duration:   api.DurationPercentiles{P50: "0", P90: "0"},
 				},
 			},
 		},
@@ -2370,11 +2370,11 @@ func TestTestPlanner_PreparePlanningData_BackendDurationSubdirMatchesFastDiscove
 		Framework: mockFramework,
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
-		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"OrderSuite": {
 					SourceFile: "core/spec/models/order_spec.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "55000000", P90: "110000000"},
+					Duration:   api.DurationPercentiles{P50: "55000000", P90: "110000000"},
 				},
 			},
 		},
@@ -2419,11 +2419,11 @@ func TestTestPlanner_PreparePlanningData_IgnoresBackendDurationsForUndiscoveredF
 		Framework: mockFramework,
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
-		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"StaleSuite": {
 					SourceFile: "spec/stale_spec.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "99000000", P90: "198000000"},
+					Duration:   api.DurationPercentiles{P50: "99000000", P90: "198000000"},
 				},
 			},
 		},
@@ -2519,11 +2519,11 @@ func TestTestPlanner_PreparePlanningData_FullDiscoveryDoesNotReintroduceFastOnly
 		Framework: mockFramework,
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
-		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"FastOnlySuite": {
 					SourceFile: "spec/fast_only_spec.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "42000000", P90: "84000000"},
+					Duration:   api.DurationPercentiles{P50: "42000000", P90: "84000000"},
 				},
 			},
 		},
@@ -2569,21 +2569,21 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryDoesNotRunStaleBackendFile
 		Framework: mockFramework,
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
-		Settings: &net.SettingsResponseData{
+		Settings: &api.SettingsResponseData{
 			ItrEnabled:    true,
 			TestsSkipping: false,
 		},
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
-		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"LocalSuite": {
 					SourceFile: "spec/local_spec.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "11000000"},
+					Duration:   api.DurationPercentiles{P50: "11000000"},
 				},
 				"DeletedSuite": {
 					SourceFile: "spec/deleted_spec.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "99000000"},
+					Duration:   api.DurationPercentiles{P50: "99000000"},
 				},
 			},
 		},
@@ -2640,11 +2640,11 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotReintroduceFullySkippedSu
 		SkippableTests: map[string]bool{skippedTest.DatadogTestId(): true},
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
-		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"SkippedSuite": {
 					SourceFile: "spec/skipped_spec.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "99000000", P90: "198000000"},
+					Duration:   api.DurationPercentiles{P50: "99000000", P90: "198000000"},
 				},
 			},
 		},
@@ -2696,11 +2696,11 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotDuplicateDiscoveredSource
 		SkippableTests: map[string]bool{skippedTest.DatadogTestId(): true},
 	}
 	mockDurationsClient := &MockTestSuiteDurationsClient{
-		Durations: map[string]map[string]testoptimization.TestSuiteDurationInfo{
+		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"BackendDuplicateSuite": {
 					SourceFile: "spec/skipped_spec.rb",
-					Duration:   testoptimization.DurationPercentiles{P50: "99000000"},
+					Duration:   api.DurationPercentiles{P50: "99000000"},
 				},
 			},
 		},
@@ -2782,15 +2782,15 @@ func TestTestPlanner_RecordFastDiscoveryFallbackFiles_ExcludedBackendDurationsAr
 		t.Fatalf("recordFastDiscoveryFallbackFiles() should not fail, got: %v", err)
 	}
 
-	runner.testSuiteDurations = map[string]map[string]testoptimization.TestSuiteDurationInfo{
+	runner.testSuiteDurations = map[string]map[string]api.TestSuiteDurationInfo{
 		"rspec": {
 			"User": {
 				SourceFile: "spec/models/user_spec.rb",
-				Duration:   testoptimization.DurationPercentiles{P50: "100000000"},
+				Duration:   api.DurationPercentiles{P50: "100000000"},
 			},
 			"Checkout": {
 				SourceFile: "spec/system/checkout_spec.rb",
-				Duration:   testoptimization.DurationPercentiles{P50: "200000000"},
+				Duration:   api.DurationPercentiles{P50: "200000000"},
 			},
 		},
 	}

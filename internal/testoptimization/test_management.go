@@ -1,8 +1,8 @@
 package testoptimization
 
-import "github.com/DataDog/ddtest/internal/utils/net"
+import "github.com/DataDog/ddtest/internal/testoptimization/api"
 
-func DisabledTestsFromTestManagementData(testManagementTests *net.TestManagementTestsResponseDataModules) map[string]bool {
+func DisabledTestsFromTestManagementData(testManagementTests *api.TestManagementTestsResponseDataModules) map[string]bool {
 	disabledTests := make(map[string]bool)
 	if testManagementTests == nil {
 		return disabledTests

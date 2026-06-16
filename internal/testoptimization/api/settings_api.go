@@ -3,7 +3,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package net
+package api
 
 import (
 	"fmt"
@@ -68,7 +68,7 @@ type (
 	}
 )
 
-func (c *client) GetSettings() (*SettingsResponseData, error) {
+func (c *transport) GetSettings() (*SettingsResponseData, error) {
 	if c.repositoryURL == "" || c.commitSha == "" {
 		return nil, fmt.Errorf("civisibility.GetSettings: repository URL and commit SHA are required")
 	}

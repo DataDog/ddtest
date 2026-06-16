@@ -49,4 +49,10 @@ const (
 
 	// CIVisibilitySubtestFeaturesEnabled indicates if subtest-specific management and retry features are enabled.
 	CIVisibilitySubtestFeaturesEnabled = "DD_CIVISIBILITY_SUBTEST_FEATURES_ENABLED"
+
+	TestOptimizationEnabledEnvironmentVariable                = CIVisibilityEnabledEnvironmentVariable
+	TestOptimizationFlakyRetryEnabledEnvironmentVariable      = CIVisibilityFlakyRetryEnabledEnvironmentVariable
+	TestOptimizationManagementEnabledEnvironmentVariable      = CIVisibilityTestManagementEnabledEnvironmentVariable
+	TestOptimizationAttemptToFixRetriesEnvironmentVariable    = CIVisibilityTestManagementAttemptToFixRetriesEnvironmentVariable
+	TestOptimizationSubtestFeaturesEnabledEnvironmentVariable = CIVisibilitySubtestFeaturesEnabled
 )
