@@ -3,6 +3,7 @@ package framework
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -24,6 +25,20 @@ type Framework interface {
 	RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error
 	SetPlatformEnv(platformEnv map[string]string)
 	GetPlatformEnv() map[string]string
+}
+
+var ErrFullTestDiscoveryUnsupported = errors.New("full test discovery is not supported")
+
+type FullTestDiscoverySupporter interface {
+	SupportsFullTestDiscovery() bool
+}
+
+// Asumme, by default, that every framework supports full test discovery.
+// If it implements the FullTestDiscoverySupporter interface, then
+// delegate the choice to SupportFullTestDiscovery()
+func SupportsFullTestDiscovery(f Framework) bool {
+	supporter, ok := f.(FullTestDiscoverySupporter)
+	return !ok || supporter.SupportsFullTestDiscovery()
 }
 
 // cleanupDiscoveryFile removes the discovery file, ignoring "not exists" errors

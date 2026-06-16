@@ -3,6 +3,7 @@ package planner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 	"github.com/DataDog/ddtest/civisibility/utils"
 	"github.com/DataDog/ddtest/internal/ciprovider"
 	"github.com/DataDog/ddtest/internal/constants"
+	frameworkpkg "github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -262,6 +264,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		return fmt.Errorf("failed to detect framework: %w", err)
 	}
 	slog.Info("Framework detected", "framework", framework.Name())
+	fullTestDiscoverySupported := frameworkpkg.SupportsFullTestDiscovery(framework)
 	tp.runInfo = runmetadata.New(utils.GetCITags())
 	tp.planInfo = NewPlanInfo(tags, detectedPlatform.Name(), framework.Name())
 
@@ -298,6 +301,11 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 			slog.Debug("Repository settings", "tia_enabled", repositorySettings.ItrEnabled, "tests_skipping", repositorySettings.TestsSkipping)
 			tiaSkippingEnabled = repositorySettings.ItrEnabled && repositorySettings.TestsSkipping
 
+			if tiaSkippingEnabled && !fullTestDiscoverySupported {
+				slog.Info("Framework does not support full test discovery; TIA skippables will not be applied during planning", "framework", framework.Name())
+				tiaSkippingEnabled = false
+			}
+
 			if !tiaSkippingEnabled {
 				slog.Info("TIA or test skipping disabled, cancelling full test discovery")
 				cancelDiscovery()
@@ -319,12 +327,22 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 
 	// Goroutine 2: Tests discovery (respects context cancellation)
 	g.Go(func() error {
+		if !fullTestDiscoverySupported {
+			fullDiscoveryErr = frameworkpkg.ErrFullTestDiscoveryUnsupported
+			slog.Info("Full test discovery is not supported by framework; using fast test file discovery fallback", "framework", framework.Name())
+			return nil
+		}
+
 		startTime := time.Now()
 		slog.Info("Discovering local tests...", "framework", framework.Name())
 		res, discErr := framework.DiscoverTests(discoveryCtx)
 		if discErr != nil {
 			fullDiscoveryErr = discErr
-			slog.Warn("Full test discovery failed or was cancelled", "error", discErr)
+			if errors.Is(discErr, frameworkpkg.ErrFullTestDiscoveryUnsupported) {
+				slog.Info("Full test discovery is not supported by framework; using fast test file discovery fallback", "framework", framework.Name())
+			} else {
+				slog.Warn("Full test discovery failed or was cancelled", "error", discErr)
+			}
 			return nil // Don't fail the entire process, we have fast discovery as fallback
 		}
 		if len(res) == 0 {
