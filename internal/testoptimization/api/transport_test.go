@@ -349,7 +349,7 @@ func TestTransportConstructorAgentlessAndURLBranches(t *testing.T) {
 		constants.RuntimeName:      "ruby",
 		constants.RuntimeVersion:   "3.3.0",
 	})
-	t.Setenv(constants.CIVisibilityAgentlessEnabledEnvironmentVariable, "true")
+	t.Setenv(constants.TestOptimizationAgentlessEnabledEnvironmentVariable, "true")
 	t.Setenv(constants.APIKeyEnvironmentVariable, "api-key")
 	t.Setenv("DD_SITE", "datadoghq.eu")
 	t.Setenv("DD_ENV", "ci")
@@ -375,7 +375,7 @@ func TestTransportConstructorAgentlessAndURLBranches(t *testing.T) {
 		t.Fatalf("missing agentless headers: %#v", created.headers)
 	}
 
-	t.Setenv(constants.CIVisibilityAgentlessURLEnvironmentVariable, "https://custom.example")
+	t.Setenv(constants.TestOptimizationAgentlessURLEnvironmentVariable, "https://custom.example")
 	custom, ok := NewTransportWithServiceNameAndSubdomain("explicit-service", "api").(*transport)
 	if !ok {
 		t.Fatalf("expected *transport")

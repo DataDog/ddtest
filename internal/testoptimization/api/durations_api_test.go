@@ -419,7 +419,7 @@ func TestClientFetchTestSuiteDurationsEmptyRepositoryURL(t *testing.T) {
 }
 
 func TestNewTransportWithServiceNameAgentlessMissingAPIKeyReturnsNil(t *testing.T) {
-	t.Setenv(constants.CIVisibilityAgentlessEnabledEnvironmentVariable, "true")
+	t.Setenv(constants.TestOptimizationAgentlessEnabledEnvironmentVariable, "true")
 	t.Setenv(constants.APIKeyEnvironmentVariable, "")
 
 	client := NewTransportWithServiceName("my-service")
@@ -430,7 +430,7 @@ func TestNewTransportWithServiceNameAgentlessMissingAPIKeyReturnsNil(t *testing.
 
 func TestNewTransportWithServiceNameAgentUnixSocketConfiguresHTTPTransport(t *testing.T) {
 	socketPath := "/tmp/ddtest-agent.sock"
-	t.Setenv(constants.CIVisibilityAgentlessEnabledEnvironmentVariable, "false")
+	t.Setenv(constants.TestOptimizationAgentlessEnabledEnvironmentVariable, "false")
 	t.Setenv("DD_TRACE_AGENT_URL", "unix://"+socketPath)
 	t.Setenv("DD_AGENT_HOST", "")
 	t.Setenv("DD_TRACE_AGENT_PORT", "")

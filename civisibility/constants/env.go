@@ -10,22 +10,22 @@ const (
 	// This environment variable should be set to "1" or "true" to enable Test Optimization mode.
 	TestOptimizationEnabledEnvironmentVariable = "DD_CIVISIBILITY_ENABLED"
 
-	// CIVisibilityAgentlessEnabledEnvironmentVariable indicates if CI Visibility agentless mode is enabled.
-	// This environment variable should be set to "1" or "true" to enable agentless mode for CI Visibility, where traces
+	// TestOptimizationAgentlessEnabledEnvironmentVariable indicates if Test Optimization agentless mode is enabled.
+	// This environment variable should be set to "1" or "true" to enable agentless mode for Test Optimization, where traces
 	// are sent directly to Datadog without using a local agent.
-	CIVisibilityAgentlessEnabledEnvironmentVariable = "DD_CIVISIBILITY_AGENTLESS_ENABLED"
+	TestOptimizationAgentlessEnabledEnvironmentVariable = "DD_CIVISIBILITY_AGENTLESS_ENABLED"
 
-	// CIVisibilityAgentlessURLEnvironmentVariable forces the agentless URL to a custom one.
-	// This environment variable allows you to specify a custom URL for the agentless intake in CI Visibility mode.
-	CIVisibilityAgentlessURLEnvironmentVariable = "DD_CIVISIBILITY_AGENTLESS_URL"
+	// TestOptimizationAgentlessURLEnvironmentVariable forces the agentless URL to a custom one.
+	// This environment variable allows you to specify a custom URL for the agentless intake in Test Optimization mode.
+	TestOptimizationAgentlessURLEnvironmentVariable = "DD_CIVISIBILITY_AGENTLESS_URL"
 
 	// APIKeyEnvironmentVariable indicates the API key to be used for agentless intake.
 	// This environment variable should be set to your Datadog API key, allowing the agentless mode to authenticate and
 	// send data directly to the Datadog platform.
 	APIKeyEnvironmentVariable = "DD_API_KEY"
 
-	// CIVisibilityTestSessionNameEnvironmentVariable indicate the test session name to be used on CI Visibility payloads
-	CIVisibilityTestSessionNameEnvironmentVariable = "DD_TEST_SESSION_NAME"
+	// TestOptimizationTestSessionNameEnvironmentVariable indicates the test session name to be used on Test Optimization payloads.
+	TestOptimizationTestSessionNameEnvironmentVariable = "DD_TEST_SESSION_NAME"
 
 	// TestOptimizationFlakyRetryEnabledEnvironmentVariable kill-switch that allows to explicitly disable retries even if the remote setting is enabled.
 	// This environment variable should be set to "0" or "false" to disable the flaky retry feature.
@@ -37,6 +37,6 @@ const (
 	// TestOptimizationAttemptToFixRetriesEnvironmentVariable indicates the maximum number of retries for the attempt to fix a test.
 	TestOptimizationAttemptToFixRetriesEnvironmentVariable = "DD_TEST_MANAGEMENT_ATTEMPT_TO_FIX_RETRIES"
 
-	// CIVisibilityEnvironmentDataFilePath is the environment variable that holds the path to the file containing the environmental data.
-	CIVisibilityEnvironmentDataFilePath = "DD_TEST_OPTIMIZATION_ENV_DATA_FILE"
+	// TestOptimizationEnvironmentDataFilePath is the environment variable that holds the path to the file containing the environmental data.
+	TestOptimizationEnvironmentDataFilePath = "DD_TEST_OPTIMIZATION_ENV_DATA_FILE"
 )

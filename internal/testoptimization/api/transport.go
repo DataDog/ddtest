@@ -126,7 +126,7 @@ func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Tran
 	var agentURL *url.URL
 	var apiKeyValue string
 
-	agentlessEnabled := civisibility.BoolEnv(constants.CIVisibilityAgentlessEnabledEnvironmentVariable, false)
+	agentlessEnabled := civisibility.BoolEnv(constants.TestOptimizationAgentlessEnabledEnvironmentVariable, false)
 	if agentlessEnabled {
 		// Agentless mode is enabled.
 		apiKeyValue = os.Getenv(constants.APIKeyEnvironmentVariable)
@@ -138,7 +138,7 @@ func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Tran
 		defaultHeaders["dd-api-key"] = apiKeyValue
 
 		// Check for a custom agentless URL.
-		agentlessURL := os.Getenv(constants.CIVisibilityAgentlessURLEnvironmentVariable)
+		agentlessURL := os.Getenv(constants.TestOptimizationAgentlessURLEnvironmentVariable)
 
 		if agentlessURL == "" {
 			// Use the standard agentless URL format.

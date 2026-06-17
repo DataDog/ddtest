@@ -127,7 +127,7 @@ func createCITagsMap() map[string]string {
 	slog.Debug("civisibility: test command", "command", cmd)
 
 	// Populate the test session name
-	if testSessionName, ok := os.LookupEnv(constants.CIVisibilityTestSessionNameEnvironmentVariable); ok {
+	if testSessionName, ok := os.LookupEnv(constants.TestOptimizationTestSessionNameEnvironmentVariable); ok {
 		localTags[constants.TestSessionName] = testSessionName
 	} else if jobName, ok := localTags[constants.CIJobName]; ok {
 		localTags[constants.TestSessionName] = fmt.Sprintf("%s-%s", jobName, cmd)
