@@ -6,10 +6,9 @@
 package constants
 
 const (
-	// CIVisibilityEnabledEnvironmentVariable indicates if CI Visibility mode is enabled.
-	// This environment variable should be set to "1" or "true" to enable CI Visibility mode, which activates tracing and other
-	// features related to CI Visibility in the Datadog platform.
-	CIVisibilityEnabledEnvironmentVariable = "DD_CIVISIBILITY_ENABLED"
+	// TestOptimizationEnabledEnvironmentVariable indicates if Test Optimization mode is enabled.
+	// This environment variable should be set to "1" or "true" to enable Test Optimization mode.
+	TestOptimizationEnabledEnvironmentVariable = "DD_CIVISIBILITY_ENABLED"
 
 	// CIVisibilityAgentlessEnabledEnvironmentVariable indicates if CI Visibility agentless mode is enabled.
 	// This environment variable should be set to "1" or "true" to enable agentless mode for CI Visibility, where traces
@@ -28,15 +27,15 @@ const (
 	// CIVisibilityTestSessionNameEnvironmentVariable indicate the test session name to be used on CI Visibility payloads
 	CIVisibilityTestSessionNameEnvironmentVariable = "DD_TEST_SESSION_NAME"
 
-	// CIVisibilityFlakyRetryEnabledEnvironmentVariable kill-switch that allows to explicitly disable retries even if the remote setting is enabled.
+	// TestOptimizationFlakyRetryEnabledEnvironmentVariable kill-switch that allows to explicitly disable retries even if the remote setting is enabled.
 	// This environment variable should be set to "0" or "false" to disable the flaky retry feature.
-	CIVisibilityFlakyRetryEnabledEnvironmentVariable = "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED"
+	TestOptimizationFlakyRetryEnabledEnvironmentVariable = "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED"
 
-	// CIVisibilityTestManagementEnabledEnvironmentVariable indicates if the test management feature is enabled.
-	CIVisibilityTestManagementEnabledEnvironmentVariable = "DD_TEST_MANAGEMENT_ENABLED"
+	// TestOptimizationManagementEnabledEnvironmentVariable indicates if the test management feature is enabled.
+	TestOptimizationManagementEnabledEnvironmentVariable = "DD_TEST_MANAGEMENT_ENABLED"
 
-	// CIVisibilityTestManagementAttemptToFixRetriesEnvironmentVariable indicates the maximum number of retries for the attempt to fix a test.
-	CIVisibilityTestManagementAttemptToFixRetriesEnvironmentVariable = "DD_TEST_MANAGEMENT_ATTEMPT_TO_FIX_RETRIES"
+	// TestOptimizationAttemptToFixRetriesEnvironmentVariable indicates the maximum number of retries for the attempt to fix a test.
+	TestOptimizationAttemptToFixRetriesEnvironmentVariable = "DD_TEST_MANAGEMENT_ATTEMPT_TO_FIX_RETRIES"
 
 	// CIVisibilityAutoInstrumentationProviderEnvironmentVariable indicates that the auto-instrumentation script was used.
 	CIVisibilityAutoInstrumentationProviderEnvironmentVariable = "DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER"
@@ -47,12 +46,6 @@ const (
 	// CIVisibilityInternalParallelEarlyFlakeDetectionEnabled indicates if the internal parallel early flake detection feature is enabled.
 	CIVisibilityInternalParallelEarlyFlakeDetectionEnabled = "DD_CIVISIBILITY_INTERNAL_PARALLEL_EARLY_FLAKE_DETECTION_ENABLED"
 
-	// CIVisibilitySubtestFeaturesEnabled indicates if subtest-specific management and retry features are enabled.
-	CIVisibilitySubtestFeaturesEnabled = "DD_CIVISIBILITY_SUBTEST_FEATURES_ENABLED"
-
-	TestOptimizationEnabledEnvironmentVariable                = CIVisibilityEnabledEnvironmentVariable
-	TestOptimizationFlakyRetryEnabledEnvironmentVariable      = CIVisibilityFlakyRetryEnabledEnvironmentVariable
-	TestOptimizationManagementEnabledEnvironmentVariable      = CIVisibilityTestManagementEnabledEnvironmentVariable
-	TestOptimizationAttemptToFixRetriesEnvironmentVariable    = CIVisibilityTestManagementAttemptToFixRetriesEnvironmentVariable
-	TestOptimizationSubtestFeaturesEnabledEnvironmentVariable = CIVisibilitySubtestFeaturesEnabled
+	// TestOptimizationSubtestFeaturesEnabledEnvironmentVariable indicates if subtest-specific management and retry features are enabled.
+	TestOptimizationSubtestFeaturesEnabledEnvironmentVariable = "DD_CIVISIBILITY_SUBTEST_FEATURES_ENABLED"
 )
