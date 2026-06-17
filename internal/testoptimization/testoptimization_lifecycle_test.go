@@ -248,7 +248,6 @@ func TestApplyEnvironmentOverrides(t *testing.T) {
 	t.Setenv(ciConstants.TestOptimizationFlakyRetryEnabledEnvironmentVariable, "false")
 	t.Setenv(ciConstants.TestOptimizationManagementEnabledEnvironmentVariable, "false")
 	t.Setenv(ciConstants.TestOptimizationAttemptToFixRetriesEnvironmentVariable, "7")
-	t.Setenv(ciConstants.TestOptimizationSubtestFeaturesEnabledEnvironmentVariable, "false")
 
 	settings := &api.SettingsResponseData{
 		KnownTestsEnabled:       false,
@@ -270,9 +269,6 @@ func TestApplyEnvironmentOverrides(t *testing.T) {
 	}
 	if settings.TestManagement.AttemptToFixRetries != 7 {
 		t.Fatalf("attempt-to-fix retries = %d, want 7", settings.TestManagement.AttemptToFixRetries)
-	}
-	if settings.SubtestFeaturesEnabled {
-		t.Fatal("expected subtest features env override")
 	}
 }
 

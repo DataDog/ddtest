@@ -37,15 +37,6 @@ const (
 	// TestOptimizationAttemptToFixRetriesEnvironmentVariable indicates the maximum number of retries for the attempt to fix a test.
 	TestOptimizationAttemptToFixRetriesEnvironmentVariable = "DD_TEST_MANAGEMENT_ATTEMPT_TO_FIX_RETRIES"
 
-	// CIVisibilityAutoInstrumentationProviderEnvironmentVariable indicates that the auto-instrumentation script was used.
-	CIVisibilityAutoInstrumentationProviderEnvironmentVariable = "DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER"
-
 	// CIVisibilityEnvironmentDataFilePath is the environment variable that holds the path to the file containing the environmental data.
 	CIVisibilityEnvironmentDataFilePath = "DD_TEST_OPTIMIZATION_ENV_DATA_FILE"
-
-	// CIVisibilityInternalParallelEarlyFlakeDetectionEnabled indicates if the internal parallel early flake detection feature is enabled.
-	CIVisibilityInternalParallelEarlyFlakeDetectionEnabled = "DD_CIVISIBILITY_INTERNAL_PARALLEL_EARLY_FLAKE_DETECTION_ENABLED"
-
-	// TestOptimizationSubtestFeaturesEnabledEnvironmentVariable indicates if subtest-specific management and retry features are enabled.
-	TestOptimizationSubtestFeaturesEnabledEnvironmentVariable = "DD_CIVISIBILITY_SUBTEST_FEATURES_ENABLED"
 )

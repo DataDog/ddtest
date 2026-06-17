@@ -271,12 +271,6 @@ func applyEnvironmentOverrides(ciSettings *api.SettingsResponseData) {
 	if testManagementAttemptToFixRetriesEnv != -1 {
 		ciSettings.TestManagement.AttemptToFixRetries = testManagementAttemptToFixRetriesEnv
 	}
-
-	subtestFeaturesEnabled := testoptimizationstate.BoolEnv(ciConstants.TestOptimizationSubtestFeaturesEnabledEnvironmentVariable, true)
-	if !subtestFeaturesEnabled {
-		slog.Debug("testoptimization: subtest test management features disabled by environment variable")
-	}
-	ciSettings.SubtestFeaturesEnabled = subtestFeaturesEnabled
 }
 
 func (c *TestOptimizationClient) ensureTestOptimizationInitialized() {
