@@ -649,6 +649,7 @@ func CreatePackFiles(commitsToInclude []string, commitsToExclude []string) []str
 		if err == nil {
 			break
 		}
+		_ = os.RemoveAll(temporaryPath)
 	}
 
 	if err != nil {
@@ -658,16 +659,19 @@ func CreatePackFiles(commitsToInclude []string, commitsToExclude []string) []str
 
 	// construct the full path to the pack files
 	var packFiles []string
-	for i, packFile := range strings.Split(out, "\n") {
+	for _, packFile := range strings.Split(out, "\n") {
 		file := filepath.Join(temporaryPath, fmt.Sprintf("-%s.pack", packFile))
 
 		// check if the pack file exists
 		if _, err := os.Stat(file); os.IsNotExist(err) {
-			slog.Warn("testoptimization: pack file not found", "file", packFiles[i])
+			slog.Warn("testoptimization: pack file not found", "file", file)
 			continue
 		}
 
 		packFiles = append(packFiles, file)
+	}
+	if len(packFiles) == 0 {
+		_ = os.RemoveAll(temporaryPath)
 	}
 
 	return packFiles

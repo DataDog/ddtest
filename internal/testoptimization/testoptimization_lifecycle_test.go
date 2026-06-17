@@ -451,6 +451,7 @@ func TestUploadRepositoryChangesFromGitUploadsMissingCommits(t *testing.T) {
 	if len(mockTransport.SentPackFiles) == 0 {
 		t.Fatal("expected pack files to be sent")
 	}
+	sentPackDirectory := filepath.Dir(mockTransport.SentPackFiles[0])
 	if len(mockTransport.SentPackFileSizes) != len(mockTransport.SentPackFiles) {
 		t.Fatalf("packfile sizes = %#v, packfiles = %#v", mockTransport.SentPackFileSizes, mockTransport.SentPackFiles)
 	}
@@ -458,6 +459,9 @@ func TestUploadRepositoryChangesFromGitUploadsMissingCommits(t *testing.T) {
 		if size <= 0 {
 			t.Fatalf("expected non-empty packfiles, got sizes %#v", mockTransport.SentPackFileSizes)
 		}
+	}
+	if _, err := os.Stat(sentPackDirectory); !os.IsNotExist(err) {
+		t.Fatalf("expected pack directory %q to be cleaned up, got error %v", sentPackDirectory, err)
 	}
 }
 

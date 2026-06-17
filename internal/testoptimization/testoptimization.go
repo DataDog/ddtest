@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"sync"
 	"syscall"
@@ -516,13 +517,20 @@ func (c *TestOptimizationClient) sendObjectsPackFile(commitSha string, commitsTo
 
 	slog.Debug("testoptimization: sending pack file with missing commits", "count", packFiles) //nolint:gocritic // File list logging for debugging
 
-	defer func(files []string) {
-		for _, file := range files {
-			_ = os.Remove(file)
-		}
-	}(packFiles)
+	defer cleanupPackFiles(packFiles)
 
 	return c.apiTransport.SendPackFiles(commitSha, packFiles)
+}
+
+func cleanupPackFiles(packFiles []string) {
+	packDirectories := make(map[string]struct{})
+	for _, packFile := range packFiles {
+		_ = os.Remove(packFile)
+		packDirectories[filepath.Dir(packFile)] = struct{}{}
+	}
+	for packDirectory := range packDirectories {
+		_ = os.RemoveAll(packDirectory)
+	}
 }
 
 func disabledTestsFromTestManagementData(testManagementTests *api.TestManagementTestsResponseDataModules) map[string]bool {
