@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -45,10 +46,12 @@ type MockAPIClient struct {
 	TestSuiteDurations             map[string]map[string]api.TestSuiteDurationInfo
 	TestSuiteDurationsCalls        int
 	RemoteCommits                  []string
+	GetCommitsRequests             [][]string
 	GetCommitsErr                  error
 	GetCommitsCalls                int
 	SentCommitSha                  string
 	SentPackFiles                  []string
+	SentPackFileSizes              []int64
 	SendPackFilesBytes             int64
 	SendPackFilesErr               error
 	SendPackFilesCalls             int
@@ -95,8 +98,9 @@ func (m *MockAPIClient) GetTestManagementTestsRawResponse() json.RawMessage {
 	return m.TestManagementTestsRawResponse
 }
 
-func (m *MockAPIClient) GetCommits(_ []string) ([]string, error) {
+func (m *MockAPIClient) GetCommits(localCommits []string) ([]string, error) {
 	m.GetCommitsCalls++
+	m.GetCommitsRequests = append(m.GetCommitsRequests, slices.Clone(localCommits))
 	return m.RemoteCommits, m.GetCommitsErr
 }
 
@@ -104,6 +108,15 @@ func (m *MockAPIClient) SendPackFiles(commitSha string, packFiles []string) (byt
 	m.SendPackFilesCalls++
 	m.SentCommitSha = commitSha
 	m.SentPackFiles = append([]string(nil), packFiles...)
+	m.SentPackFileSizes = m.SentPackFileSizes[:0]
+	for _, packFile := range packFiles {
+		info, err := os.Stat(packFile)
+		if err != nil {
+			m.SentPackFileSizes = append(m.SentPackFileSizes, -1)
+			continue
+		}
+		m.SentPackFileSizes = append(m.SentPackFileSizes, info.Size())
+	}
 	return m.SendPackFilesBytes, m.SendPackFilesErr
 }
 
@@ -410,37 +423,82 @@ func TestTest_FQN(t *testing.T) {
 	}
 }
 
-func TestDisabledTestsFromTestManagementData(t *testing.T) {
-	disabledTests := DisabledTestsFromTestManagementData(&api.TestManagementTestsResponseDataModules{
-		Modules: map[string]api.TestManagementTestsResponseDataSuites{
-			"module-a": {
-				Suites: map[string]api.TestManagementTestsResponseDataTests{
-					"suite-a": {
-						Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
-							"disabled":    {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
-							"quarantined": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Quarantined: true}},
+func TestTestOptimizationClient_GetDisabledTests(t *testing.T) {
+	settings := &api.SettingsResponseData{}
+	settings.TestManagement.Enabled = true
+	mockAPIClient := &MockAPIClient{
+		Settings: settings,
+		TestManagementTestsData: &api.TestManagementTestsResponseDataModules{
+			Modules: map[string]api.TestManagementTestsResponseDataSuites{
+				"module-a": {
+					Suites: map[string]api.TestManagementTestsResponseDataTests{
+						"suite-a": {
+							Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
+								"disabled":    {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+								"quarantined": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Quarantined: true}},
+							},
 						},
 					},
 				},
-			},
-			"module-b": {
-				Suites: map[string]api.TestManagementTestsResponseDataTests{
-					"suite-b": {
-						Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
-							"also disabled": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+				"module-b": {
+					Suites: map[string]api.TestManagementTestsResponseDataTests{
+						"suite-b": {
+							Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
+								"also disabled": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+							},
 						},
 					},
 				},
 			},
 		},
-	})
+	}
+	client := newTestOptimizationClientForTest(t, mockAPIClient)
+	if err := client.Initialize(map[string]string{}); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	disabledTests := client.GetDisabledTests()
 
 	expected := map[string]bool{
 		"module-a.suite-a.disabled":      true,
 		"module-b.suite-b.also disabled": true,
 	}
 	if !maps.Equal(disabledTests, expected) {
-		t.Errorf("DisabledTestsFromTestManagementData() = %v, expected %v", disabledTests, expected)
+		t.Errorf("GetDisabledTests() = %v, expected %v", disabledTests, expected)
+	}
+	if mockAPIClient.TestManagementTestsCalls != 1 {
+		t.Fatalf("expected test management tests to be fetched once, got %d", mockAPIClient.TestManagementTestsCalls)
+	}
+}
+
+func TestTestOptimizationClient_GetDisabledTestsDisabled(t *testing.T) {
+	mockAPIClient := &MockAPIClient{
+		Settings: &api.SettingsResponseData{},
+		TestManagementTestsData: &api.TestManagementTestsResponseDataModules{
+			Modules: map[string]api.TestManagementTestsResponseDataSuites{
+				"module": {
+					Suites: map[string]api.TestManagementTestsResponseDataTests{
+						"suite": {
+							Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
+								"disabled": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	client := newTestOptimizationClientForTest(t, mockAPIClient)
+	if err := client.Initialize(map[string]string{}); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	disabledTests := client.GetDisabledTests()
+	if len(disabledTests) != 0 {
+		t.Fatalf("expected no disabled tests when test management is disabled, got %#v", disabledTests)
+	}
+	if mockAPIClient.TestManagementTestsCalls != 0 {
+		t.Fatalf("expected test management tests not to be fetched, got %d calls", mockAPIClient.TestManagementTestsCalls)
 	}
 }
 

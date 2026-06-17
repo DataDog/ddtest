@@ -30,7 +30,7 @@ type (
 
 func (c *transport) GetCommits(localCommits []string) ([]string, error) {
 	if c.repositoryURL == "" {
-		return nil, fmt.Errorf("civisibility.GetCommits: repository URL is required")
+		return nil, fmt.Errorf("testoptimization.GetCommits: repository URL is required")
 	}
 
 	body := searchCommits{

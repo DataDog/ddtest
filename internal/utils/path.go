@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/DataDog/ddtest/internal/git"
 )
 
 var cwdSubdirPrefix = sync.OnceValue(computeCwdSubdirPrefix)
@@ -20,7 +22,7 @@ func CwdSubdirPrefix() string {
 }
 
 func computeCwdSubdirPrefix() string {
-	gitRoot := GetSourceRoot()
+	gitRoot := git.GetSourceRoot()
 	if gitRoot == "" {
 		return ""
 	}

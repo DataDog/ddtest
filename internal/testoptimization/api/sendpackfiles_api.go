@@ -38,7 +38,7 @@ func (c *transport) SendPackFiles(commitSha string, packFiles []string) (bytes i
 	}
 
 	if c.repositoryURL == "" || commitSha == "" {
-		err = fmt.Errorf("civisibility.SendPackFiles: repository URL and commit SHA are required")
+		err = fmt.Errorf("testoptimization.SendPackFiles: repository URL and commit SHA are required")
 		return
 	}
 

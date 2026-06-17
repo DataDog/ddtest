@@ -18,11 +18,11 @@ import (
 	"testing"
 	"time"
 
-	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/ciprovider"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -314,6 +314,7 @@ type MockTestOptimizationClient struct {
 	SkippableTests      map[string]bool
 	KnownTests          *api.KnownTestsResponseData
 	TestManagementTests *api.TestManagementTestsResponseDataModules
+	DisabledTests       map[string]bool
 	Durations           map[string]map[string]api.TestSuiteDurationInfo
 	DurationsCalled     bool
 	ShutdownCalled      bool
@@ -343,6 +344,35 @@ func (m *MockTestOptimizationClient) GetKnownTests() *api.KnownTestsResponseData
 
 func (m *MockTestOptimizationClient) GetTestManagementTestsData() *api.TestManagementTestsResponseDataModules {
 	return m.TestManagementTests
+}
+
+func (m *MockTestOptimizationClient) GetDisabledTests() map[string]bool {
+	if m.DisabledTests != nil {
+		return m.DisabledTests
+	}
+
+	disabledTests := make(map[string]bool)
+	if m.TestManagementTests == nil {
+		return disabledTests
+	}
+
+	for module, suites := range m.TestManagementTests.Modules {
+		for suite, tests := range suites.Suites {
+			for name, test := range tests.Tests {
+				if !test.Properties.Disabled {
+					continue
+				}
+				disabledTest := testoptimization.Test{
+					Module: module,
+					Suite:  suite,
+					Name:   name,
+				}
+				disabledTests[disabledTest.FQN()] = true
+			}
+		}
+	}
+
+	return disabledTests
 }
 
 func (m *MockTestOptimizationClient) GetTestSuiteDurations() *api.TestSuiteDurationsResponseData {
@@ -1797,7 +1827,7 @@ func TestTestPlanner_PreparePlanningData_EmptyDurationsContinues(t *testing.T) {
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+			git.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -1837,7 +1867,7 @@ func TestTestPlanner_PreparePlanningData_NonEmptyDurationsUsesP50ForMatchingSuit
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+			git.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -1901,7 +1931,7 @@ func TestTestPlanner_PreparePlanningData_SkippablePercentageUsesDurations(t *tes
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+			git.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2195,7 +2225,7 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesBackendDurations(t *te
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+			git.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2236,7 +2266,7 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesOneBackendDurationPerS
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+			git.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2284,7 +2314,7 @@ func TestTestPlanner_PreparePlanningData_IgnoresZeroBackendDurationForFastDiscov
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+			git.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2339,7 +2369,7 @@ func TestTestPlanner_PreparePlanningData_BackendDurationSubdirMatchesFastDiscove
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			ciConstants.GitRepositoryURL: repoRoot,
+			git.GitRepositoryURL: repoRoot,
 		},
 		Framework: mockFramework,
 	}
@@ -2353,7 +2383,7 @@ func TestTestPlanner_PreparePlanningData_BackendDurationSubdirMatchesFastDiscove
 			},
 		},
 	}
-	ciUtils.AddCITagsMap(map[string]string{ciConstants.GitRepositoryURL: repoRoot})
+	ciUtils.AddCITagsMap(map[string]string{git.GitRepositoryURL: repoRoot})
 
 	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
@@ -2388,7 +2418,7 @@ func TestTestPlanner_PreparePlanningData_IgnoresBackendDurationsForUndiscoveredF
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+			git.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2440,7 +2470,7 @@ func TestTestPlanner_PreparePlanningData_FullDiscoveryIgnoresFastOnlyFiles(t *te
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+			git.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2471,7 +2501,7 @@ func TestTestPlanner_PreparePlanningData_FullDiscoveryDoesNotReintroduceFastOnly
 	ctx := context.Background()
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
-	ciUtils.AddCITagsMap(map[string]string{ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest"})
+	ciUtils.AddCITagsMap(map[string]string{git.GitRepositoryURL: "github.com/DataDog/ddtest"})
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -2488,7 +2518,7 @@ func TestTestPlanner_PreparePlanningData_FullDiscoveryDoesNotReintroduceFastOnly
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+			git.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2537,7 +2567,7 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryDoesNotRunStaleBackendFile
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+			git.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2602,7 +2632,7 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotReintroduceFullySkippedSu
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+			git.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2656,7 +2686,7 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotDuplicateDiscoveredSource
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			ciConstants.GitRepositoryURL: "github.com/DataDog/ddtest",
+			git.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}

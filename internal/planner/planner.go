@@ -38,6 +38,7 @@ type testOptimizationClient interface {
 	GetSkippableTests() map[string]bool
 	GetKnownTests() *api.KnownTestsResponseData
 	GetTestManagementTestsData() *api.TestManagementTestsResponseDataModules
+	GetDisabledTests() map[string]bool
 	GetTestSuiteDurations() *api.TestSuiteDurationsResponseData
 	StoreCacheAndExit()
 }
@@ -454,10 +455,9 @@ func (tp *TestPlanner) fetchTestsToSkip(tiaSkippingEnabled bool) testSkipper {
 	}
 
 	tp.planReport.KnownTests = newKnownTestsReport(tp.optimizationClient.GetKnownTests())
-	testManagementTests := tp.optimizationClient.GetTestManagementTestsData()
-	tp.planReport.ManagedFlakyTests = newManagedFlakyTestsReport(testManagementTests)
+	tp.planReport.ManagedFlakyTests = newManagedFlakyTestsReport(tp.optimizationClient.GetTestManagementTestsData())
 
-	disabledTests := testoptimization.DisabledTestsFromTestManagementData(testManagementTests)
+	disabledTests := tp.optimizationClient.GetDisabledTests()
 	slog.Info("Fetched tests to skip",
 		"duration", time.Since(startTime),
 		"tiaSkippableTestsCount", len(tiaSkippableTests),

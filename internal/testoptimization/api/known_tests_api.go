@@ -63,7 +63,7 @@ type (
 
 func (c *transport) GetKnownTests() (*KnownTestsResponseData, error) {
 	if c.repositoryURL == "" || c.commitSha == "" {
-		return nil, fmt.Errorf("civisibility.GetKnownTests: repository URL and commit SHA are required")
+		return nil, fmt.Errorf("testoptimization.GetKnownTests: repository URL and commit SHA are required")
 	}
 	c.knownTestsRawResponse = nil
 

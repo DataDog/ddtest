@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/utils"
 )
 
@@ -339,15 +340,15 @@ func TestTransportConstructorAgentlessAndURLBranches(t *testing.T) {
 	utils.ResetCITags()
 	t.Cleanup(utils.ResetCITags)
 	utils.AddCITagsMap(map[string]string{
-		constants.GitRepositoryURL: "https://github.com/DataDog/ddtest.git/",
-		constants.GitCommitSHA:     "sha",
-		constants.GitBranch:        "",
-		constants.GitTag:           "v1.2.3",
-		constants.OSPlatform:       "linux",
-		constants.OSArchitecture:   "amd64",
-		constants.OSVersion:        "ubuntu",
-		constants.RuntimeName:      "ruby",
-		constants.RuntimeVersion:   "3.3.0",
+		git.GitRepositoryURL:     "https://github.com/DataDog/ddtest.git/",
+		git.GitCommitSHA:         "sha",
+		git.GitBranch:            "",
+		git.GitTag:               "v1.2.3",
+		constants.OSPlatform:     "linux",
+		constants.OSArchitecture: "amd64",
+		constants.OSVersion:      "ubuntu",
+		constants.RuntimeName:    "ruby",
+		constants.RuntimeVersion: "3.3.0",
 	})
 	t.Setenv(constants.TestOptimizationAgentlessEnabledEnvironmentVariable, "true")
 	t.Setenv(constants.APIKeyEnvironmentVariable, "api-key")
