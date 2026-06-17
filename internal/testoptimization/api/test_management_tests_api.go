@@ -99,7 +99,7 @@ func (c *transport) GetTestManagementTests() (*TestManagementTestsResponseDataMo
 	response, err := c.handler.SendRequest(*request)
 
 	if err != nil {
-		return nil, fmt.Errorf("sending known tests request: %s", err)
+		return nil, fmt.Errorf("sending test management tests request: %s", err)
 	}
 	c.testManagementTestsRawResponse = cloneRawMessage(response.Body)
 
