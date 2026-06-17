@@ -100,8 +100,8 @@ func TestClientGetTestSuiteDurationsLogsSuccess(t *testing.T) {
 	if records[0].Cursor != "" || records[0].PageSize != defaultDurationsPageSize {
 		t.Errorf("expected first page request with default page size, got cursor=%q pageSize=%d", records[0].Cursor, records[0].PageSize)
 	}
-	if len(result) != 1 {
-		t.Errorf("expected 1 module, got %d", len(result))
+	if len(result.TestSuites) != 1 {
+		t.Errorf("expected 1 module, got %d", len(result.TestSuites))
 	}
 	if !strings.Contains(logs.String(), "level=INFO") ||
 		!strings.Contains(logs.String(), "Fetched test suite durations") ||
@@ -118,7 +118,7 @@ func TestClientGetTestSuiteDurationsMissingRepositoryReturnsEmptyAndLogsError(t 
 
 	result := client.GetTestSuiteDurations()
 
-	if len(result) != 0 {
+	if len(result.TestSuites) != 0 {
 		t.Errorf("expected empty durations on missing repository URL, got %v", result)
 	}
 	if !strings.Contains(logs.String(), "level=ERROR") ||
@@ -138,7 +138,7 @@ func TestClientGetTestSuiteDurationsAPIErrorReturnsEmptyAndLogsError(t *testing.
 	client := newDurationsTestClient(server)
 	result := client.GetTestSuiteDurations()
 
-	if len(result) != 0 {
+	if len(result.TestSuites) != 0 {
 		t.Errorf("expected empty durations on API error, got %v", result)
 	}
 	if !strings.Contains(logs.String(), "level=ERROR") ||
@@ -162,7 +162,7 @@ func TestClientGetTestSuiteDurationsEmptyResponseReturnsEmptyAndLogsWarn(t *test
 	client := newDurationsTestClient(server)
 	result := client.GetTestSuiteDurations()
 
-	if len(result) != 0 {
+	if len(result.TestSuites) != 0 {
 		t.Errorf("expected empty durations on empty response, got %v", result)
 	}
 	if !strings.Contains(logs.String(), "level=WARN") ||

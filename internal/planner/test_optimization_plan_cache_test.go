@@ -44,7 +44,6 @@ func TestTestPlanner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
 	runner := NewWithDependencies(
 		&MockPlatformDetector{Platform: mockPlatform},
 		&MockTestOptimizationClient{SkippableTests: map[string]bool{}},
-		&MockTestSuiteDurationsClient{},
 		newDefaultMockCIProviderDetector(),
 	)
 
@@ -60,7 +59,6 @@ func TestTestPlanner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
 	restored := NewWithDependencies(
 		&MockPlatformDetector{},
 		&MockTestOptimizationClient{},
-		&MockTestSuiteDurationsClient{},
 		newDefaultMockCIProviderDetector(),
 	)
 	if err := restored.restoreTestOptimizationPlanCache(); err != nil {
@@ -90,7 +88,6 @@ func TestTestPlanner_StoreAndRestoreTestOptimizationPlanCache_RoundTripDurations
 	runner := NewWithDependencies(
 		&MockPlatformDetector{},
 		&MockTestOptimizationClient{},
-		&MockTestSuiteDurationsClient{},
 		newDefaultMockCIProviderDetector(),
 	)
 	runner.testSuiteDurations = map[string]map[string]api.TestSuiteDurationInfo{
@@ -127,7 +124,6 @@ func TestTestPlanner_StoreAndRestoreTestOptimizationPlanCache_RoundTripDurations
 	restored := NewWithDependencies(
 		&MockPlatformDetector{},
 		&MockTestOptimizationClient{},
-		&MockTestSuiteDurationsClient{},
 		newDefaultMockCIProviderDetector(),
 	)
 	if err := restored.restoreTestOptimizationPlanCache(); err != nil {
@@ -204,7 +200,6 @@ func TestTestPlanner_RestoreTestOptimizationPlanCache_ComputesMissingWeights(t *
 	restored := NewWithDependencies(
 		&MockPlatformDetector{},
 		&MockTestOptimizationClient{},
-		&MockTestSuiteDurationsClient{},
 		newDefaultMockCIProviderDetector(),
 	)
 	if err := restored.restoreTestOptimizationPlanCache(); err != nil {
@@ -317,7 +312,6 @@ func TestTestSuiteKey_JSONMapKeyRoundTrip(t *testing.T) {
 	runner := NewWithDependencies(
 		&MockPlatformDetector{},
 		&MockTestOptimizationClient{},
-		&MockTestSuiteDurationsClient{},
 		newDefaultMockCIProviderDetector(),
 	)
 	runner.suiteAggregates = map[testSuiteKey]testSuiteAggregate{
@@ -339,7 +333,6 @@ func TestTestSuiteKey_JSONMapKeyRoundTrip(t *testing.T) {
 	restored := NewWithDependencies(
 		&MockPlatformDetector{},
 		&MockTestOptimizationClient{},
-		&MockTestSuiteDurationsClient{},
 		newDefaultMockCIProviderDetector(),
 	)
 	if err := restored.restoreTestOptimizationPlanCache(); err != nil {

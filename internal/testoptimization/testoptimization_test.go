@@ -42,6 +42,8 @@ type MockAPIClient struct {
 	TestManagementTestsErr         error
 	TestManagementTestsRawResponse json.RawMessage
 	TestManagementTestsCalls       int
+	TestSuiteDurations             map[string]map[string]api.TestSuiteDurationInfo
+	TestSuiteDurationsCalls        int
 	RemoteCommits                  []string
 	GetCommitsErr                  error
 	GetCommitsCalls                int
@@ -75,8 +77,9 @@ func (m *MockAPIClient) GetKnownTests() (*api.KnownTestsResponseData, error) {
 	return m.KnownTests, m.KnownTestsErr
 }
 
-func (m *MockAPIClient) GetTestSuiteDurations() map[string]map[string]api.TestSuiteDurationInfo {
-	return nil
+func (m *MockAPIClient) GetTestSuiteDurations() *api.TestSuiteDurationsResponseData {
+	m.TestSuiteDurationsCalls++
+	return &api.TestSuiteDurationsResponseData{TestSuites: m.TestSuiteDurations}
 }
 
 func (m *MockAPIClient) GetKnownTestsRawResponse() json.RawMessage {
@@ -156,6 +159,28 @@ func TestNewTestOptimizationClientWithDependencies(t *testing.T) {
 
 	if client == nil {
 		t.Error("NewTestOptimizationClientWithDependencies() should return non-nil client")
+	}
+}
+
+func TestTestOptimizationClient_GetTestSuiteDurations(t *testing.T) {
+	durations := map[string]map[string]api.TestSuiteDurationInfo{
+		"rspec": {
+			"Suite": {
+				SourceFile: "spec/suite_spec.rb",
+				Duration:   api.DurationPercentiles{P50: "42000000"},
+			},
+		},
+	}
+	mockAPIClient := &MockAPIClient{TestSuiteDurations: durations}
+	client := newTestOptimizationClientForTest(t, mockAPIClient)
+
+	result := client.GetTestSuiteDurations()
+
+	if mockAPIClient.TestSuiteDurationsCalls != 1 {
+		t.Fatalf("GetTestSuiteDurations() should fetch durations once, got %d calls", mockAPIClient.TestSuiteDurationsCalls)
+	}
+	if result.TestSuites["rspec"]["Suite"].SourceFile != "spec/suite_spec.rb" {
+		t.Fatalf("GetTestSuiteDurations() returned %#v, want %#v", result, durations)
 	}
 }
 

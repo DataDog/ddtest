@@ -59,6 +59,10 @@ type (
 
 	// public response types
 
+	TestSuiteDurationsResponseData struct {
+		TestSuites map[string]map[string]TestSuiteDurationInfo `json:"test_suites"`
+	}
+
 	TestSuiteDurationInfo struct {
 		SourceFile string              `json:"source_file"`
 		Duration   DurationPercentiles `json:"duration"`
@@ -70,11 +74,11 @@ type (
 	}
 )
 
-func (c *transport) GetTestSuiteDurations() map[string]map[string]TestSuiteDurationInfo {
+func (c *transport) GetTestSuiteDurations() *TestSuiteDurationsResponseData {
 	startTime := time.Now()
 	if c.repositoryURL == "" {
 		slog.Error("Test durations API errored", "duration", time.Since(startTime), "error", "repository URL is required")
-		return map[string]map[string]TestSuiteDurationInfo{}
+		return emptyTestSuiteDurationsResponseData()
 	}
 
 	durations, err := c.fetchTestSuiteDurations(c.repositoryURL, c.serviceName)
@@ -84,7 +88,7 @@ func (c *transport) GetTestSuiteDurations() map[string]map[string]TestSuiteDurat
 			"repositoryURL", c.repositoryURL,
 			"duration", time.Since(startTime),
 			"error", err)
-		return map[string]map[string]TestSuiteDurationInfo{}
+		return emptyTestSuiteDurationsResponseData()
 	}
 
 	totalSuites := countTestSuiteDurations(durations)
@@ -95,7 +99,7 @@ func (c *transport) GetTestSuiteDurations() map[string]map[string]TestSuiteDurat
 			"modulesCount", len(durations),
 			"testSuitesCount", totalSuites,
 			"duration", time.Since(startTime))
-		return map[string]map[string]TestSuiteDurationInfo{}
+		return emptyTestSuiteDurationsResponseData()
 	}
 
 	slog.Info("Fetched test suite durations",
@@ -104,7 +108,13 @@ func (c *transport) GetTestSuiteDurations() map[string]map[string]TestSuiteDurat
 		"modulesCount", len(durations),
 		"testSuitesCount", totalSuites,
 		"duration", time.Since(startTime))
-	return durations
+	return &TestSuiteDurationsResponseData{TestSuites: durations}
+}
+
+func emptyTestSuiteDurationsResponseData() *TestSuiteDurationsResponseData {
+	return &TestSuiteDurationsResponseData{
+		TestSuites: map[string]map[string]TestSuiteDurationInfo{},
+	}
 }
 
 func (c *transport) fetchTestSuiteDurations(repositoryURL, service string) (map[string]map[string]TestSuiteDurationInfo, error) {

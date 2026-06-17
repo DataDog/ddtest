@@ -39,7 +39,7 @@ type (
 		GetSettingsRawResponse() json.RawMessage
 		GetKnownTests() (*KnownTestsResponseData, error)
 		GetKnownTestsRawResponse() json.RawMessage
-		GetTestSuiteDurations() map[string]map[string]TestSuiteDurationInfo
+		GetTestSuiteDurations() *TestSuiteDurationsResponseData
 		GetCommits(localCommits []string) ([]string, error)
 		SendPackFiles(commitSha string, packFiles []string) (bytes int64, err error)
 		GetSkippableTests() (correlationID string, skippables SkippableTests, err error)

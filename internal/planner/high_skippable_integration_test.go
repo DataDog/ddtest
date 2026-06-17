@@ -84,8 +84,8 @@ func TestTestPlanner_Plan_HighSkippableIntegrationSelectsExpectedRunnerCountAndR
 		&MockTestOptimizationClient{
 			Settings:       testOptimizationSettings(true, true, false),
 			SkippableTests: fixture.skippableTestSet(),
+			Durations:      fixture.TestSuiteDurations,
 		},
-		&MockTestSuiteDurationsClient{Durations: fixture.TestSuiteDurations},
 		newDefaultMockCIProviderDetector(),
 	)
 

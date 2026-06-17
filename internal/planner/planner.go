@@ -38,11 +38,8 @@ type testOptimizationClient interface {
 	GetSkippableTests() map[string]bool
 	GetKnownTests() *api.KnownTestsResponseData
 	GetTestManagementTestsData() *api.TestManagementTestsResponseDataModules
+	GetTestSuiteDurations() *api.TestSuiteDurationsResponseData
 	StoreCacheAndExit()
-}
-
-type testSuiteDurationsClient interface {
-	GetTestSuiteDurations() map[string]map[string]api.TestSuiteDurationInfo
 }
 
 type PlanInfo struct {
@@ -82,7 +79,6 @@ type TestPlanner struct {
 	planInfo                PlanInfo
 	platformDetector        platform.PlatformDetector
 	optimizationClient      testOptimizationClient
-	durationsClient         testSuiteDurationsClient
 	ciProviderDetector      ciprovider.CIProviderDetector
 	reportWriter            io.Writer
 }
@@ -150,7 +146,6 @@ func New() *TestPlanner {
 	planner := newTestPlannerWithDefaults()
 	planner.platformDetector = platform.NewPlatformDetector()
 	planner.optimizationClient = testoptimization.NewTestOptimizationClient()
-	planner.durationsClient = api.NewTransportWithServiceName("")
 	planner.ciProviderDetector = ciprovider.NewCIProviderDetector()
 	return planner
 }
@@ -158,13 +153,11 @@ func New() *TestPlanner {
 func NewWithDependencies(
 	platformDetector platform.PlatformDetector,
 	optimizationClient testOptimizationClient,
-	durationsClient testSuiteDurationsClient,
 	ciProviderDetector ciprovider.CIProviderDetector,
 ) *TestPlanner {
 	planner := newTestPlannerWithDefaults()
 	planner.platformDetector = platformDetector
 	planner.optimizationClient = optimizationClient
-	planner.durationsClient = durationsClient
 	planner.ciProviderDetector = ciProviderDetector
 	return planner
 }
@@ -336,8 +329,8 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 			cancelDiscovery()
 		}
 
-		if tp.durationsClient != nil {
-			tp.testSuiteDurations = tp.durationsClient.GetTestSuiteDurations()
+		if testSuiteDurations := tp.optimizationClient.GetTestSuiteDurations(); testSuiteDurations != nil && testSuiteDurations.TestSuites != nil {
+			tp.testSuiteDurations = testSuiteDurations.TestSuites
 		}
 
 		return nil

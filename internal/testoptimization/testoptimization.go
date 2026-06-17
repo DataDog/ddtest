@@ -128,6 +128,16 @@ func (c *TestOptimizationClient) GetTestManagementTestsData() *api.TestManagemen
 	return &c.testManagementTests
 }
 
+func (c *TestOptimizationClient) GetTestSuiteDurations() *api.TestSuiteDurationsResponseData {
+	testOptimizationTransport := c.ensureAPITransport(autoDetectServiceName)
+	if testOptimizationTransport == nil {
+		return &api.TestSuiteDurationsResponseData{
+			TestSuites: map[string]map[string]api.TestSuiteDurationInfo{},
+		}
+	}
+	return testOptimizationTransport.GetTestSuiteDurations()
+}
+
 func (c *TestOptimizationClient) StoreCacheAndExit() {
 	repositorySettings := c.GetSettings()
 	if repositorySettings != nil {
