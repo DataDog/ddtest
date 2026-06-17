@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	"github.com/DataDog/ddtest/internal/utils"
@@ -135,6 +136,63 @@ func newTestOptimizationClientForTest(t *testing.T, apiTransport api.Transport) 
 	utils.ResetCITags()
 	t.Cleanup(utils.ResetCITags)
 	return NewTestOptimizationClientWithDependencies(apiTransport)
+}
+
+func withoutCIProviderEnvironment(t *testing.T) {
+	t.Helper()
+
+	envKeys := []string{
+		"APPVEYOR",
+		"TF_BUILD",
+		"BITBUCKET_COMMIT",
+		"BUDDY",
+		"BUILDKITE",
+		"CIRCLECI",
+		"GITHUB_SHA",
+		"GITLAB_CI",
+		"JENKINS_URL",
+		"TEAMCITY_VERSION",
+		"TRAVIS",
+		"BITRISE_BUILD_SLUG",
+		"CF_BUILD_ID",
+		"CODEBUILD_INITIATOR",
+		"DD_GIT_BRANCH",
+		"DD_GIT_TAG",
+		"DD_GIT_REPOSITORY_URL",
+		"DD_GIT_COMMIT_SHA",
+		"DD_GIT_COMMIT_MESSAGE",
+		"DD_GIT_COMMIT_AUTHOR_NAME",
+		"DD_GIT_COMMIT_AUTHOR_EMAIL",
+		"DD_GIT_COMMIT_AUTHOR_DATE",
+		"DD_GIT_COMMIT_COMMITTER_NAME",
+		"DD_GIT_COMMIT_COMMITTER_EMAIL",
+		"DD_GIT_COMMIT_COMMITTER_DATE",
+		ciConstants.TestOptimizationEnvironmentDataFilePath,
+	}
+
+	originalValues := make(map[string]string, len(envKeys))
+	originallySet := make(map[string]bool, len(envKeys))
+	for _, key := range envKeys {
+		if value, ok := os.LookupEnv(key); ok {
+			originalValues[key] = value
+			originallySet[key] = true
+		}
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("failed to unset %s: %v", key, err)
+		}
+	}
+	utils.ResetCITags()
+
+	t.Cleanup(func() {
+		for _, key := range envKeys {
+			if originallySet[key] {
+				_ = os.Setenv(key, originalValues[key])
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		}
+		utils.ResetCITags()
+	})
 }
 
 func assertFileDoesNotExist(t *testing.T, path string) {

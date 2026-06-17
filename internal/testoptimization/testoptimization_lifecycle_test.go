@@ -250,6 +250,7 @@ func TestEnsureTestOptimizationInitializedHandlesNilSettingsAndEndpointErrors(t 
 func TestInitializeAddsGitMetadataFromRealRepository(t *testing.T) {
 	repo := gittest.NewRepository(t)
 	t.Chdir(repo.Path)
+	withoutCIProviderEnvironment(t)
 
 	mockTransport := &MockAPIClient{
 		Settings: &api.SettingsResponseData{},
