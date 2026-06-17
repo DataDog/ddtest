@@ -1,4 +1,4 @@
-package net
+package api
 
 import (
 	"bytes"
@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-func newRawResponseTestClient(server *httptest.Server) *client {
-	return &client{
+func newRawResponseTestClient(server *httptest.Server) *transport {
+	return &transport{
 		agentless:     true,
 		baseURL:       server.URL,
 		environment:   "ci",

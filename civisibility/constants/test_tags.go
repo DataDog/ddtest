@@ -50,10 +50,6 @@ const (
 	// This constant is used to tag traces with the line number in the source file where the test ends.
 	TestSourceEndLine = "test.source.end"
 
-	// TestCodeOwners indicates the test code owners.
-	// This constant is used to tag traces with the code owners responsible for the test.
-	TestCodeOwners = "test.codeowners"
-
 	// TestCommand indicates the test command.
 	// This constant is used to tag traces with the command used to execute the test.
 	TestCommand = "test.command"

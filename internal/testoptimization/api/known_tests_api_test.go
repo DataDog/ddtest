@@ -1,4 +1,4 @@
-package net
+package api
 
 import (
 	"encoding/json"

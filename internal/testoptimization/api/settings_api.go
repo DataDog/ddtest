@@ -3,7 +3,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package net
+package api
 
 import (
 	"fmt"
@@ -60,16 +60,14 @@ type (
 		RequireGit              bool `json:"require_git"`
 		TestsSkipping           bool `json:"tests_skipping"`
 		KnownTestsEnabled       bool `json:"known_tests_enabled"`
-		ImpactedTestsEnabled    bool `json:"impacted_tests_enabled"`
 		TestManagement          struct {
 			Enabled             bool `json:"enabled"`
 			AttemptToFixRetries int  `json:"attempt_to_fix_retries"`
 		} `json:"test_management"`
-		SubtestFeaturesEnabled bool `json:"-"`
 	}
 )
 
-func (c *client) GetSettings() (*SettingsResponseData, error) {
+func (c *transport) GetSettings() (*SettingsResponseData, error) {
 	if c.repositoryURL == "" || c.commitSha == "" {
 		return nil, fmt.Errorf("civisibility.GetSettings: repository URL and commit SHA are required")
 	}

@@ -34,8 +34,7 @@ const (
 var DefaultTraceAgentUDSPath = "/var/run/datadog/apm.socket"
 
 var (
-	status     atomic.Int32
-	isTestMode atomic.Bool
+	status atomic.Int32
 )
 
 func GetState() State {
@@ -46,14 +45,6 @@ func GetState() State {
 func SetState(state State) {
 	// Set the state atomically
 	status.Store(int32(state))
-}
-
-func SetTestMode() {
-	isTestMode.Store(true)
-}
-
-func IsTestMode() bool {
-	return isTestMode.Load()
 }
 
 // AgentURLFromEnv resolves the URL for the trace agent based on

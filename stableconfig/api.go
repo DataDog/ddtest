@@ -28,15 +28,6 @@ func Bool(env string, def bool) (value bool, err error) {
 	return def, err
 }
 
-// String returns a string config value from managed file-based config, environment variable,
-// or local file-based config, in that order. If none are set, it returns the default value and origin.
-func String(env string, def string) string {
-	for value := range stableConfigByPriority(env) {
-		return value
-	}
-	return def
-}
-
 func stableConfigByPriority(env string) iter.Seq[string] {
 	return func(yield func(string) bool) {
 		if v, ok := os.LookupEnv(env); ok && !yield(v) {

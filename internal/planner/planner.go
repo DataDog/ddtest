@@ -21,6 +21,7 @@ import (
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	"github.com/DataDog/ddtest/internal/utils"
 	"golang.org/x/sync/errgroup"
 )
@@ -29,6 +30,16 @@ type Planner interface {
 	Plan(ctx context.Context) error
 	LoadPlan() (PlanInfo, error)
 	DistributeTestFiles(testFiles []string, parallelRunners int) [][]string
+}
+
+type testOptimizationClient interface {
+	Initialize(tags map[string]string) error
+	GetSettings() *api.SettingsResponseData
+	GetSkippableTests() map[string]bool
+	GetKnownTests() *api.KnownTestsResponseData
+	GetTestManagementTestsData() *api.TestManagementTestsResponseDataModules
+	GetTestSuiteDurations() *api.TestSuiteDurationsResponseData
+	StoreCacheAndExit()
 }
 
 type PlanInfo struct {
@@ -58,7 +69,7 @@ type TestPlanner struct {
 	testFiles               map[string]struct{}
 	suiteAggregates         map[testSuiteKey]testSuiteAggregate
 	suitesBySourceFile      map[string][]testSuiteKey
-	testSuiteDurations      map[string]map[string]testoptimization.TestSuiteDurationInfo
+	testSuiteDurations      map[string]map[string]api.TestSuiteDurationInfo
 	testFileWeights         map[string]int
 	testFileDurationSources map[string]testFileDurationSource
 	skippablePercentage     float64
@@ -67,8 +78,7 @@ type TestPlanner struct {
 	runInfo                 runmetadata.RunInfo
 	planInfo                PlanInfo
 	platformDetector        platform.PlatformDetector
-	optimizationClient      testoptimization.TestOptimizationClient
-	durationsClient         testoptimization.TestSuiteDurationsClient
+	optimizationClient      testOptimizationClient
 	ciProviderDetector      ciprovider.CIProviderDetector
 	reportWriter            io.Writer
 }
@@ -135,22 +145,19 @@ func Plan(ctx context.Context) error {
 func New() *TestPlanner {
 	planner := newTestPlannerWithDefaults()
 	planner.platformDetector = platform.NewPlatformDetector()
-	planner.optimizationClient = testoptimization.NewDatadogClient()
-	planner.durationsClient = testoptimization.NewDurationsClient()
+	planner.optimizationClient = testoptimization.NewTestOptimizationClient()
 	planner.ciProviderDetector = ciprovider.NewCIProviderDetector()
 	return planner
 }
 
 func NewWithDependencies(
 	platformDetector platform.PlatformDetector,
-	optimizationClient testoptimization.TestOptimizationClient,
-	durationsClient testoptimization.TestSuiteDurationsClient,
+	optimizationClient testOptimizationClient,
 	ciProviderDetector ciprovider.CIProviderDetector,
 ) *TestPlanner {
 	planner := newTestPlannerWithDefaults()
 	planner.platformDetector = platformDetector
 	planner.optimizationClient = optimizationClient
-	planner.durationsClient = durationsClient
 	planner.ciProviderDetector = ciProviderDetector
 	return planner
 }
@@ -160,7 +167,7 @@ func newTestPlannerWithDefaults() *TestPlanner {
 		testFiles:               make(map[string]struct{}),
 		suiteAggregates:         make(map[testSuiteKey]testSuiteAggregate),
 		suitesBySourceFile:      make(map[string][]testSuiteKey),
-		testSuiteDurations:      make(map[string]map[string]testoptimization.TestSuiteDurationInfo),
+		testSuiteDurations:      make(map[string]map[string]api.TestSuiteDurationInfo),
 		testFileWeights:         make(map[string]int),
 		testFileDurationSources: make(map[string]testFileDurationSource),
 		skippablePercentage:     0.0,
@@ -280,7 +287,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	var tiaSkippingEnabled bool
 
 	tp.resetDiscoveryResults()
-	tp.testSuiteDurations = make(map[string]map[string]testoptimization.TestSuiteDurationInfo)
+	tp.testSuiteDurations = make(map[string]map[string]api.TestSuiteDurationInfo)
 
 	if cwdSubdirPrefix := utils.CwdSubdirPrefix(); cwdSubdirPrefix != "" {
 		slog.Info("Running from subdirectory, will normalize repo-root-relative paths", "subdirPrefix", cwdSubdirPrefix)
@@ -322,7 +329,9 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 			cancelDiscovery()
 		}
 
-		tp.testSuiteDurations = tp.durationsClient.GetTestSuiteDurations()
+		if testSuiteDurations := tp.optimizationClient.GetTestSuiteDurations(); testSuiteDurations != nil && testSuiteDurations.TestSuites != nil {
+			tp.testSuiteDurations = testSuiteDurations.TestSuites
+		}
 
 		return nil
 	})
@@ -525,17 +534,17 @@ func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback() {
 }
 
 func getTestSuiteDuration(
-	testSuiteDurations map[string]map[string]testoptimization.TestSuiteDurationInfo,
+	testSuiteDurations map[string]map[string]api.TestSuiteDurationInfo,
 	key testSuiteKey,
-) (testoptimization.TestSuiteDurationInfo, bool) {
+) (api.TestSuiteDurationInfo, bool) {
 	if suiteDurations, ok := testSuiteDurations[key.Module]; ok {
 		suiteInfo, ok := suiteDurations[key.Suite]
 		return suiteInfo, ok
 	}
-	return testoptimization.TestSuiteDurationInfo{}, false
+	return api.TestSuiteDurationInfo{}, false
 }
 
-func parseDurationP50(suiteInfo testoptimization.TestSuiteDurationInfo) (float64, bool) {
+func parseDurationP50(suiteInfo api.TestSuiteDurationInfo) (float64, bool) {
 	p50, err := strconv.ParseInt(suiteInfo.Duration.P50, 10, 64)
 	if err != nil {
 		return 0, false

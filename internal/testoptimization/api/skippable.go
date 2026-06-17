@@ -3,7 +3,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package net
+package api
 
 import (
 	"fmt"
@@ -59,7 +59,7 @@ type (
 	SkippableTests map[string]bool
 )
 
-func (c *client) GetSkippableTests() (correlationID string, skippables SkippableTests, err error) {
+func (c *transport) GetSkippableTests() (correlationID string, skippables SkippableTests, err error) {
 	if c.repositoryURL == "" || c.commitSha == "" {
 		err = fmt.Errorf("civisibility.GetSkippableTests: repository URL and commit SHA are required")
 		return
