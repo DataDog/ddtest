@@ -7,13 +7,14 @@ import (
 	"testing"
 
 	appConstants "github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/testoptimization/api"
 )
 
 type testOptimizationPlanCacheFixture struct {
-	TestSuiteDurations map[string]map[string]TestSuiteDurationInfo `json:"testSuiteDurations"`
-	SuiteAggregates    []testSuiteAggregateCacheFixture            `json:"suiteAggregates"`
-	SuitesBySourceFile map[string][]testSuiteCacheKeyFixture       `json:"suitesBySourceFile"`
-	TestFileWeights    map[string]int                              `json:"testFileWeights"`
+	TestSuiteDurations map[string]map[string]api.TestSuiteDurationInfo `json:"testSuiteDurations"`
+	SuiteAggregates    []testSuiteAggregateCacheFixture                `json:"suiteAggregates"`
+	SuitesBySourceFile map[string][]testSuiteCacheKeyFixture           `json:"suitesBySourceFile"`
+	TestFileWeights    map[string]int                                  `json:"testFileWeights"`
 }
 
 type testSuiteCacheKeyFixture struct {
@@ -33,11 +34,11 @@ type testSuiteAggregateCacheFixture struct {
 
 func newTestOptimizationPlanCacheFixture(sourceFile string, weight int) testOptimizationPlanCacheFixture {
 	return testOptimizationPlanCacheFixture{
-		TestSuiteDurations: map[string]map[string]TestSuiteDurationInfo{
+		TestSuiteDurations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"Suite1": {
 					SourceFile: sourceFile,
-					Duration:   DurationPercentiles{P50: "5000000000", P90: "7000000000"},
+					Duration:   api.DurationPercentiles{P50: "5000000000", P90: "7000000000"},
 				},
 			},
 		},

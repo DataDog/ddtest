@@ -6,7 +6,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
-	"github.com/DataDog/ddtest/internal/utils/net"
+	"github.com/DataDog/ddtest/internal/testoptimization/api"
 )
 
 const slowestTestSuitesReportLimit = 10
@@ -17,13 +17,12 @@ type datadogSettingsReport struct {
 	TestSkipping         bool
 	TestImpactCollection bool
 	KnownTests           bool
-	ImpactedTests        bool
 	EarlyFlakeDetection  bool
 	AutoTestRetries      bool
 	FlakyTestManagement  bool
 }
 
-func newDatadogSettingsReport(settings *net.SettingsResponseData) datadogSettingsReport {
+func newDatadogSettingsReport(settings *api.SettingsResponseData) datadogSettingsReport {
 	if settings == nil {
 		return datadogSettingsReport{}
 	}
@@ -33,7 +32,6 @@ func newDatadogSettingsReport(settings *net.SettingsResponseData) datadogSetting
 		TestSkipping:         settings.TestsSkipping,
 		TestImpactCollection: settings.CodeCoverage,
 		KnownTests:           settings.KnownTestsEnabled,
-		ImpactedTests:        settings.ImpactedTestsEnabled,
 		EarlyFlakeDetection:  settings.EarlyFlakeDetection.Enabled,
 		AutoTestRetries:      settings.FlakyTestRetriesEnabled,
 		FlakyTestManagement:  settings.TestManagement.Enabled,
@@ -47,7 +45,7 @@ type knownTestsReport struct {
 	Tests     int
 }
 
-func newKnownTestsReport(knownTests *net.KnownTestsResponseData) knownTestsReport {
+func newKnownTestsReport(knownTests *api.KnownTestsResponseData) knownTestsReport {
 	if knownTests == nil {
 		return knownTestsReport{}
 	}
@@ -73,7 +71,7 @@ type managedFlakyTestsReport struct {
 	AttemptToFix int
 }
 
-func newManagedFlakyTestsReport(testManagementTests *net.TestManagementTestsResponseDataModules) managedFlakyTestsReport {
+func newManagedFlakyTestsReport(testManagementTests *api.TestManagementTestsResponseDataModules) managedFlakyTestsReport {
 	if testManagementTests == nil {
 		return managedFlakyTestsReport{}
 	}

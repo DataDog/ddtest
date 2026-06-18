@@ -3,7 +3,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package net
+package api
 
 import (
 	"encoding/json"
@@ -61,7 +61,7 @@ type (
 	KnownTestsResponseDataSuites  map[string][]string
 )
 
-func (c *client) GetKnownTests() (*KnownTestsResponseData, error) {
+func (c *transport) GetKnownTests() (*KnownTestsResponseData, error) {
 	if c.repositoryURL == "" || c.commitSha == "" {
 		return nil, fmt.Errorf("civisibility.GetKnownTests: repository URL and commit SHA are required")
 	}

@@ -9,7 +9,8 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
-	"github.com/DataDog/ddtest/internal/utils/net"
+	"github.com/DataDog/ddtest/internal/testoptimization/api"
+	"github.com/DataDog/ddtest/internal/utils"
 )
 
 // TestMain runs once for the entire package and handles global setup/teardown
@@ -23,69 +24,87 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// Mock implementations for testing
-type MockCIVisibilityIntegrations struct {
-	InitializationCalled           bool
-	ShutdownCalled                 bool
-	Settings                       *net.SettingsResponseData
+type MockAPIClient struct {
+	Settings                       *api.SettingsResponseData
+	SettingsErr                    error
 	SettingsRawResponse            json.RawMessage
-	SkippableTests                 net.SkippableTests
+	SettingsCalls                  int
+	SkippableTests                 api.SkippableTests
+	SkippableCorrelationID         string
+	SkippableErr                   error
 	SkippableTestsRawResponse      json.RawMessage
-	KnownTests                     *net.KnownTestsResponseData
+	SkippableTestsCalls            int
+	KnownTests                     *api.KnownTestsResponseData
+	KnownTestsErr                  error
 	KnownTestsRawResponse          json.RawMessage
-	TestManagementTestsData        *net.TestManagementTestsResponseDataModules
+	KnownTestsCalls                int
+	TestManagementTestsData        *api.TestManagementTestsResponseDataModules
+	TestManagementTestsErr         error
 	TestManagementTestsRawResponse json.RawMessage
+	TestManagementTestsCalls       int
+	TestSuiteDurations             map[string]map[string]api.TestSuiteDurationInfo
+	TestSuiteDurationsCalls        int
+	RemoteCommits                  []string
+	GetCommitsErr                  error
+	GetCommitsCalls                int
+	SentCommitSha                  string
+	SentPackFiles                  []string
+	SendPackFilesBytes             int64
+	SendPackFilesErr               error
+	SendPackFilesCalls             int
 }
 
-func (m *MockCIVisibilityIntegrations) EnsureCiVisibilityInitialization() {
-	m.InitializationCalled = true
+func (m *MockAPIClient) GetSettings() (*api.SettingsResponseData, error) {
+	m.SettingsCalls++
+	return m.Settings, m.SettingsErr
 }
 
-func (m *MockCIVisibilityIntegrations) ExitCiVisibility() {
-	m.ShutdownCalled = true
-}
-
-func (m *MockCIVisibilityIntegrations) GetSettings() *net.SettingsResponseData {
-	return m.Settings
-}
-
-func (m *MockCIVisibilityIntegrations) GetSettingsRawResponse() json.RawMessage {
+func (m *MockAPIClient) GetSettingsRawResponse() json.RawMessage {
 	return m.SettingsRawResponse
 }
 
-func (m *MockCIVisibilityIntegrations) GetSkippableTests() net.SkippableTests {
-	return m.SkippableTests
+func (m *MockAPIClient) GetSkippableTests() (string, api.SkippableTests, error) {
+	m.SkippableTestsCalls++
+	return m.SkippableCorrelationID, m.SkippableTests, m.SkippableErr
 }
 
-func (m *MockCIVisibilityIntegrations) GetSkippableTestsRawResponse() json.RawMessage {
+func (m *MockAPIClient) GetSkippableTestsRawResponse() json.RawMessage {
 	return m.SkippableTestsRawResponse
 }
 
-func (m *MockCIVisibilityIntegrations) GetKnownTests() *net.KnownTestsResponseData {
-	return m.KnownTests
+func (m *MockAPIClient) GetKnownTests() (*api.KnownTestsResponseData, error) {
+	m.KnownTestsCalls++
+	return m.KnownTests, m.KnownTestsErr
 }
 
-func (m *MockCIVisibilityIntegrations) GetKnownTestsRawResponse() json.RawMessage {
+func (m *MockAPIClient) GetTestSuiteDurations() *api.TestSuiteDurationsResponseData {
+	m.TestSuiteDurationsCalls++
+	return &api.TestSuiteDurationsResponseData{TestSuites: m.TestSuiteDurations}
+}
+
+func (m *MockAPIClient) GetKnownTestsRawResponse() json.RawMessage {
 	return m.KnownTestsRawResponse
 }
 
-func (m *MockCIVisibilityIntegrations) GetTestManagementTestsData() *net.TestManagementTestsResponseDataModules {
-	return m.TestManagementTestsData
+func (m *MockAPIClient) GetTestManagementTests() (*api.TestManagementTestsResponseDataModules, error) {
+	m.TestManagementTestsCalls++
+	return m.TestManagementTestsData, m.TestManagementTestsErr
 }
 
-func (m *MockCIVisibilityIntegrations) GetTestManagementTestsRawResponse() json.RawMessage {
+func (m *MockAPIClient) GetTestManagementTestsRawResponse() json.RawMessage {
 	return m.TestManagementTestsRawResponse
 }
 
-type MockUtils struct {
-	AddedTags map[string]string
+func (m *MockAPIClient) GetCommits(_ []string) ([]string, error) {
+	m.GetCommitsCalls++
+	return m.RemoteCommits, m.GetCommitsErr
 }
 
-func (m *MockUtils) AddCITagsMap(tags map[string]string) {
-	if m.AddedTags == nil {
-		m.AddedTags = make(map[string]string)
-	}
-	maps.Copy(m.AddedTags, tags)
+func (m *MockAPIClient) SendPackFiles(commitSha string, packFiles []string) (bytes int64, err error) {
+	m.SendPackFilesCalls++
+	m.SentCommitSha = commitSha
+	m.SentPackFiles = append([]string(nil), packFiles...)
+	return m.SendPackFilesBytes, m.SendPackFilesErr
 }
 
 func cleanPlanDirectory(t *testing.T) {
@@ -96,6 +115,13 @@ func cleanPlanDirectory(t *testing.T) {
 	t.Cleanup(func() {
 		_ = os.RemoveAll(constants.PlanDirectory)
 	})
+}
+
+func newTestOptimizationClientForTest(t *testing.T, apiTransport api.Transport) *TestOptimizationClient {
+	t.Helper()
+	utils.ResetCITags()
+	t.Cleanup(utils.ResetCITags)
+	return NewTestOptimizationClientWithDependencies(apiTransport)
 }
 
 func assertFileDoesNotExist(t *testing.T, path string) {
@@ -118,34 +144,54 @@ func assertJSONFile(t *testing.T, path string, expected json.RawMessage) {
 	}
 }
 
-func TestNewDatadogClient(t *testing.T) {
-	client := NewDatadogClient()
+func TestNewTestOptimizationClient(t *testing.T) {
+	client := NewTestOptimizationClient()
 
 	if client == nil {
-		t.Error("NewDatadogClient() should return non-nil client")
+		t.Error("NewTestOptimizationClient() should return non-nil client")
 	}
 }
 
-func TestNewDatadogClientWithDependencies(t *testing.T) {
-	mockIntegrations := &MockCIVisibilityIntegrations{}
-	mockUtils := &MockUtils{}
+func TestNewTestOptimizationClientWithDependencies(t *testing.T) {
+	mockAPIClient := &MockAPIClient{}
 
-	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+	client := newTestOptimizationClientForTest(t, mockAPIClient)
 
 	if client == nil {
-		t.Error("NewDatadogClientWithDependencies() should return non-nil client")
+		t.Error("NewTestOptimizationClientWithDependencies() should return non-nil client")
 	}
 }
 
-func TestDatadogClient_Initialize(t *testing.T) {
-	mockIntegrations := &MockCIVisibilityIntegrations{
-		Settings: &net.SettingsResponseData{
+func TestTestOptimizationClient_GetTestSuiteDurations(t *testing.T) {
+	durations := map[string]map[string]api.TestSuiteDurationInfo{
+		"rspec": {
+			"Suite": {
+				SourceFile: "spec/suite_spec.rb",
+				Duration:   api.DurationPercentiles{P50: "42000000"},
+			},
+		},
+	}
+	mockAPIClient := &MockAPIClient{TestSuiteDurations: durations}
+	client := newTestOptimizationClientForTest(t, mockAPIClient)
+
+	result := client.GetTestSuiteDurations()
+
+	if mockAPIClient.TestSuiteDurationsCalls != 1 {
+		t.Fatalf("GetTestSuiteDurations() should fetch durations once, got %d calls", mockAPIClient.TestSuiteDurationsCalls)
+	}
+	if result.TestSuites["rspec"]["Suite"].SourceFile != "spec/suite_spec.rb" {
+		t.Fatalf("GetTestSuiteDurations() returned %#v, want %#v", result, durations)
+	}
+}
+
+func TestTestOptimizationClient_Initialize(t *testing.T) {
+	mockAPIClient := &MockAPIClient{
+		Settings: &api.SettingsResponseData{
 			ItrEnabled:    true,
 			TestsSkipping: false,
 		},
 	}
-	mockUtils := &MockUtils{}
-	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+	client := newTestOptimizationClientForTest(t, mockAPIClient)
 
 	tags := map[string]string{
 		"test.key1": "value1",
@@ -160,19 +206,16 @@ func TestDatadogClient_Initialize(t *testing.T) {
 		t.Errorf("Initialize() should not return error, got: %v", err)
 	}
 
-	if !mockIntegrations.InitializationCalled {
-		t.Error("Initialize() should call EnsureCiVisibilityInitialization")
+	if mockAPIClient.SettingsCalls != 1 {
+		t.Errorf("Initialize() should fetch settings once, got %d calls", mockAPIClient.SettingsCalls)
 	}
 
-	if mockUtils.AddedTags == nil {
-		t.Error("Initialize() should call AddCITagsMap")
-	} else {
-		for key, expectedValue := range tags {
-			if actualValue, exists := mockUtils.AddedTags[key]; !exists {
-				t.Errorf("Expected tag %s to be added", key)
-			} else if actualValue != expectedValue {
-				t.Errorf("Expected tag %s to have value %s, got %s", key, expectedValue, actualValue)
-			}
+	ciTags := utils.GetCITags()
+	for key, expectedValue := range tags {
+		if actualValue, exists := ciTags[key]; !exists {
+			t.Errorf("Expected tag %s to be added", key)
+		} else if actualValue != expectedValue {
+			t.Errorf("Expected tag %s to have value %s, got %s", key, expectedValue, actualValue)
 		}
 	}
 
@@ -181,15 +224,14 @@ func TestDatadogClient_Initialize(t *testing.T) {
 	}
 }
 
-func TestDatadogClient_GetSkippableTests_NilResponse(t *testing.T) {
-	mockIntegrations := &MockCIVisibilityIntegrations{
-		Settings: &net.SettingsResponseData{
+func TestTestOptimizationClient_GetSkippableTests_NilResponse(t *testing.T) {
+	mockAPIClient := &MockAPIClient{
+		Settings: &api.SettingsResponseData{
 			ItrEnabled:    false,
 			TestsSkipping: false,
 		},
 	}
-	mockUtils := &MockUtils{}
-	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+	client := newTestOptimizationClientForTest(t, mockAPIClient)
 
 	// Initialize the client to set up settings
 	err := client.Initialize(map[string]string{})
@@ -208,20 +250,19 @@ func TestDatadogClient_GetSkippableTests_NilResponse(t *testing.T) {
 	}
 }
 
-func TestDatadogClient_GetSkippableTests(t *testing.T) {
-	mockIntegrations := &MockCIVisibilityIntegrations{
-		Settings: &net.SettingsResponseData{
+func TestTestOptimizationClient_GetSkippableTests(t *testing.T) {
+	mockAPIClient := &MockAPIClient{
+		Settings: &api.SettingsResponseData{
 			ItrEnabled:    true,
 			TestsSkipping: true,
 		},
-		SkippableTests: net.SkippableTests{
+		SkippableTests: api.SkippableTests{
 			"module1.TestSuite1.test_method_1.param1": true,
 			"module1.TestSuite1.test_method_2.param2": true,
 			"module2.TestSuite2.test_method_3.param3": true,
 		},
 	}
-	mockUtils := &MockUtils{}
-	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+	client := newTestOptimizationClientForTest(t, mockAPIClient)
 
 	// Initialize the client to set up settings
 	err := client.Initialize(map[string]string{})
@@ -253,42 +294,42 @@ func TestDatadogClient_GetSkippableTests(t *testing.T) {
 	}
 }
 
-func TestDatadogClient_StoreCacheAndExit(t *testing.T) {
-	mockIntegrations := &MockCIVisibilityIntegrations{}
-	mockUtils := &MockUtils{}
-	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+func TestTestOptimizationClient_StoreCacheAndExit(t *testing.T) {
+	mockAPIClient := &MockAPIClient{
+		Settings: &api.SettingsResponseData{},
+	}
+	client := newTestOptimizationClientForTest(t, mockAPIClient)
 
 	client.StoreCacheAndExit()
 
-	if !mockIntegrations.ShutdownCalled {
-		t.Error("Shutdown() should call ExitCiVisibility")
+	if mockAPIClient.SettingsCalls != 1 {
+		t.Errorf("StoreCacheAndExit() should fetch settings once, got %d calls", mockAPIClient.SettingsCalls)
 	}
 }
 
-func TestDatadogClient_StoreCacheAndExit_WritesHTTPCaches(t *testing.T) {
+func TestTestOptimizationClient_StoreCacheAndExit_WritesHTTPCaches(t *testing.T) {
 	cleanPlanDirectory(t)
 
 	settingsResponse := json.RawMessage(`{"data":{"id":"settings","type":"ci_app_test_service_settings","attributes":{"itr_enabled":true}}}`)
 	knownTestsResponse := json.RawMessage(`{"data":{"id":"known-tests","type":"ci_app_libraries_tests","attributes":{"tests":{}}}}`)
 	testManagementResponse := json.RawMessage(`{"data":{"id":"test-management","type":"test_management_tests","attributes":{"modules":{}}}}`)
 
-	mockIntegrations := &MockCIVisibilityIntegrations{
-		Settings: &net.SettingsResponseData{
+	mockAPIClient := &MockAPIClient{
+		Settings: &api.SettingsResponseData{
 			ItrEnabled:    true,
 			TestsSkipping: false,
 		},
 		SettingsRawResponse: settingsResponse,
-		KnownTests: &net.KnownTestsResponseData{
-			Tests: net.KnownTestsResponseDataModules{},
+		KnownTests: &api.KnownTestsResponseData{
+			Tests: api.KnownTestsResponseDataModules{},
 		},
 		KnownTestsRawResponse: knownTestsResponse,
-		TestManagementTestsData: &net.TestManagementTestsResponseDataModules{
-			Modules: map[string]net.TestManagementTestsResponseDataSuites{},
+		TestManagementTestsData: &api.TestManagementTestsResponseDataModules{
+			Modules: map[string]api.TestManagementTestsResponseDataSuites{},
 		},
 		TestManagementTestsRawResponse: testManagementResponse,
 	}
-	mockUtils := &MockUtils{}
-	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+	client := newTestOptimizationClientForTest(t, mockAPIClient)
 
 	client.StoreCacheAndExit()
 
@@ -297,17 +338,16 @@ func TestDatadogClient_StoreCacheAndExit_WritesHTTPCaches(t *testing.T) {
 	assertJSONFile(t, filepath.Join(constants.HTTPCacheDir, "test_management.json"), testManagementResponse)
 }
 
-func TestDatadogClient_StoreCacheAndExit_SkipsHTTPCacheWithoutResponse(t *testing.T) {
+func TestTestOptimizationClient_StoreCacheAndExit_SkipsHTTPCacheWithoutResponse(t *testing.T) {
 	cleanPlanDirectory(t)
 
-	mockIntegrations := &MockCIVisibilityIntegrations{
-		Settings: &net.SettingsResponseData{
+	mockAPIClient := &MockAPIClient{
+		Settings: &api.SettingsResponseData{
 			ItrEnabled:    true,
 			TestsSkipping: false,
 		},
 	}
-	mockUtils := &MockUtils{}
-	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+	client := newTestOptimizationClientForTest(t, mockAPIClient)
 
 	client.StoreCacheAndExit()
 
@@ -371,23 +411,24 @@ func TestTest_FQN(t *testing.T) {
 }
 
 func TestDisabledTestsFromTestManagementData(t *testing.T) {
-	disabledTests := DisabledTestsFromTestManagementData(&net.TestManagementTestsResponseDataModules{
-		Modules: map[string]net.TestManagementTestsResponseDataSuites{
+	disabledTests := DisabledTestsFromTestManagementData(&api.TestManagementTestsResponseDataModules{
+		Modules: map[string]api.TestManagementTestsResponseDataSuites{
 			"module-a": {
-				Suites: map[string]net.TestManagementTestsResponseDataTests{
+				Suites: map[string]api.TestManagementTestsResponseDataTests{
 					"suite-a": {
-						Tests: map[string]net.TestManagementTestsResponseDataTestProperties{
-							"disabled":    {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
-							"quarantined": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Quarantined: true}},
+						Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
+							"disabled":                {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+							"disabled attempt-to-fix": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true, AttemptToFix: true}},
+							"quarantined":             {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Quarantined: true}},
 						},
 					},
 				},
 			},
 			"module-b": {
-				Suites: map[string]net.TestManagementTestsResponseDataTests{
+				Suites: map[string]api.TestManagementTestsResponseDataTests{
 					"suite-b": {
-						Tests: map[string]net.TestManagementTestsResponseDataTestProperties{
-							"also disabled": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+						Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
+							"also disabled": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
 						},
 					},
 				},
@@ -404,16 +445,15 @@ func TestDisabledTestsFromTestManagementData(t *testing.T) {
 	}
 }
 
-func TestDatadogClient_GetSkippableTests_EmptyData(t *testing.T) {
-	mockIntegrations := &MockCIVisibilityIntegrations{
-		Settings: &net.SettingsResponseData{
+func TestTestOptimizationClient_GetSkippableTests_EmptyData(t *testing.T) {
+	mockAPIClient := &MockAPIClient{
+		Settings: &api.SettingsResponseData{
 			ItrEnabled:    true,
 			TestsSkipping: true,
 		},
-		SkippableTests: net.SkippableTests{},
+		SkippableTests: api.SkippableTests{},
 	}
-	mockUtils := &MockUtils{}
-	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+	client := newTestOptimizationClientForTest(t, mockAPIClient)
 
 	// Initialize the client to set up settings
 	err := client.Initialize(map[string]string{})
@@ -432,23 +472,22 @@ func TestDatadogClient_GetSkippableTests_EmptyData(t *testing.T) {
 	}
 }
 
-func TestDatadogClient_GetSkippableTests_WritesHTTPCache(t *testing.T) {
+func TestTestOptimizationClient_GetSkippableTests_WritesHTTPCache(t *testing.T) {
 	cleanPlanDirectory(t)
 
 	skippableTestsResponse := json.RawMessage(`{"data":[{"id":"test-id","type":"test","attributes":{"suite":"TestSuite1","name":"test_method_1"}}]}`)
 
-	mockIntegrations := &MockCIVisibilityIntegrations{
-		Settings: &net.SettingsResponseData{
+	mockAPIClient := &MockAPIClient{
+		Settings: &api.SettingsResponseData{
 			ItrEnabled:    true,
 			TestsSkipping: true,
 		},
-		SkippableTests: net.SkippableTests{
+		SkippableTests: api.SkippableTests{
 			"module1.TestSuite1.test_method_1.param1": true,
 		},
 		SkippableTestsRawResponse: skippableTestsResponse,
 	}
-	mockUtils := &MockUtils{}
-	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+	client := newTestOptimizationClientForTest(t, mockAPIClient)
 
 	err := client.Initialize(map[string]string{})
 	if err != nil {
@@ -463,22 +502,21 @@ func TestDatadogClient_GetSkippableTests_WritesHTTPCache(t *testing.T) {
 	assertJSONFile(t, filepath.Join(constants.HTTPCacheDir, "skippable_tests.json"), skippableTestsResponse)
 }
 
-func TestDatadogClient_StoreCacheAndExit_NilTestManagementTests(t *testing.T) {
+func TestTestOptimizationClient_StoreCacheAndExit_NilTestManagementTests(t *testing.T) {
 	cleanPlanDirectory(t)
 
-	mockIntegrations := &MockCIVisibilityIntegrations{
-		Settings: &net.SettingsResponseData{
+	mockAPIClient := &MockAPIClient{
+		Settings: &api.SettingsResponseData{
 			ItrEnabled:    true,
 			TestsSkipping: false,
 		},
 		TestManagementTestsData: nil,
 	}
-	mockUtils := &MockUtils{}
-	client := NewDatadogClientWithDependencies(mockIntegrations, mockUtils)
+	client := newTestOptimizationClientForTest(t, mockAPIClient)
 
 	client.StoreCacheAndExit()
 
-	if !mockIntegrations.ShutdownCalled {
-		t.Error("StoreCacheAndExit should still call ExitCiVisibility even with nil test management tests")
+	if mockAPIClient.SettingsCalls != 1 {
+		t.Errorf("StoreCacheAndExit() should fetch settings once, got %d calls", mockAPIClient.SettingsCalls)
 	}
 }

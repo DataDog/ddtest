@@ -3,7 +3,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package net
+package api
 
 import (
 	"fmt"
@@ -28,7 +28,7 @@ type (
 	}
 )
 
-func (c *client) GetCommits(localCommits []string) ([]string, error) {
+func (c *transport) GetCommits(localCommits []string) ([]string, error) {
 	if c.repositoryURL == "" {
 		return nil, fmt.Errorf("civisibility.GetCommits: repository URL is required")
 	}

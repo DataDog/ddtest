@@ -7,7 +7,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
-	"github.com/DataDog/ddtest/internal/utils/net"
+	"github.com/DataDog/ddtest/internal/testoptimization/api"
 )
 
 func TestPrintPlanReport_AllData(t *testing.T) {
@@ -53,7 +53,6 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 			TestSkipping:         true,
 			TestImpactCollection: false,
 			KnownTests:           true,
-			ImpactedTests:        false,
 			EarlyFlakeDetection:  true,
 			AutoTestRetries:      true,
 			FlakyTestManagement:  true,
@@ -149,7 +148,6 @@ Datadog settings
     Test skipping: enabled
     Test impact collection: disabled
   Known tests: enabled
-  Impacted tests: disabled
   Early flake detection: enabled
   Auto test retries: enabled
   Flaky test management: enabled
@@ -227,12 +225,12 @@ func TestPrintPlanReport_DisabledFeatures(t *testing.T) {
 }
 
 func TestReportSummaries(t *testing.T) {
-	known := newKnownTestsReport(&net.KnownTestsResponseData{
-		Tests: net.KnownTestsResponseDataModules{
-			"module-a": net.KnownTestsResponseDataSuites{
+	known := newKnownTestsReport(&api.KnownTestsResponseData{
+		Tests: api.KnownTestsResponseDataModules{
+			"module-a": api.KnownTestsResponseDataSuites{
 				"suite-a": []string{"test-a", "test-b"},
 			},
-			"module-b": net.KnownTestsResponseDataSuites{
+			"module-b": api.KnownTestsResponseDataSuites{
 				"suite-b": []string{"test-c"},
 				"suite-c": []string{"test-d", "test-e"},
 			},
@@ -242,15 +240,15 @@ func TestReportSummaries(t *testing.T) {
 		t.Errorf("unexpected known test summary: %+v", known)
 	}
 
-	managed := newManagedFlakyTestsReport(&net.TestManagementTestsResponseDataModules{
-		Modules: map[string]net.TestManagementTestsResponseDataSuites{
+	managed := newManagedFlakyTestsReport(&api.TestManagementTestsResponseDataModules{
+		Modules: map[string]api.TestManagementTestsResponseDataSuites{
 			"module-a": {
-				Suites: map[string]net.TestManagementTestsResponseDataTests{
+				Suites: map[string]api.TestManagementTestsResponseDataTests{
 					"suite-a": {
-						Tests: map[string]net.TestManagementTestsResponseDataTestProperties{
-							"test-a": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Quarantined: true}},
-							"test-b": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
-							"test-c": {Properties: net.TestManagementTestsResponseDataTestPropertiesAttributes{AttemptToFix: true}},
+						Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
+							"test-a": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Quarantined: true}},
+							"test-b": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+							"test-c": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{AttemptToFix: true}},
 						},
 					},
 				},

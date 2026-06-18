@@ -45,17 +45,17 @@ func replaceIndexPlaceholdersInString(value string, nodeIndex int, workerIndex i
 }
 
 func ensureTestSessionName(workerEnv map[string]string, nodeIndex int, workerIndex int) {
-	if _, ok := workerEnv[ciConstants.CIVisibilityTestSessionNameEnvironmentVariable]; ok {
+	if _, ok := workerEnv[ciConstants.TestOptimizationTestSessionNameEnvironmentVariable]; ok {
 		return
 	}
 
-	if sessionName, ok := os.LookupEnv(ciConstants.CIVisibilityTestSessionNameEnvironmentVariable); ok {
-		workerEnv[ciConstants.CIVisibilityTestSessionNameEnvironmentVariable] = replaceIndexPlaceholdersInString(sessionName, nodeIndex, workerIndex)
+	if sessionName, ok := os.LookupEnv(ciConstants.TestOptimizationTestSessionNameEnvironmentVariable); ok {
+		workerEnv[ciConstants.TestOptimizationTestSessionNameEnvironmentVariable] = replaceIndexPlaceholdersInString(sessionName, nodeIndex, workerIndex)
 		return
 	}
 
 	service := runmetadata.ResolveServiceName(ciUtils.GetCITags()[ciConstants.GitRepositoryURL])
-	workerEnv[ciConstants.CIVisibilityTestSessionNameEnvironmentVariable] = fmt.Sprintf("%s-node-%d-worker-%d", service, nodeIndex, workerIndex)
+	workerEnv[ciConstants.TestOptimizationTestSessionNameEnvironmentVariable] = fmt.Sprintf("%s-node-%d-worker-%d", service, nodeIndex, workerIndex)
 }
 
 func ensureManifestFile(workerEnv map[string]string) {

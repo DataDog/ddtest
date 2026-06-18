@@ -3,7 +3,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package net
+package api
 
 import (
 	"fmt"
@@ -28,7 +28,7 @@ type (
 	}
 )
 
-func (c *client) SendPackFiles(commitSha string, packFiles []string) (bytes int64, err error) {
+func (c *transport) SendPackFiles(commitSha string, packFiles []string) (bytes int64, err error) {
 	if len(packFiles) == 0 {
 		return 0, nil
 	}

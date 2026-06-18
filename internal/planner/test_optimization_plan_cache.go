@@ -6,16 +6,17 @@ import (
 
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/testoptimization/api"
 )
 
 type testOptimizationPlanCache struct {
-	TestSuiteDurations      map[string]map[string]testoptimization.TestSuiteDurationInfo `json:"testSuiteDurations"`
-	SuiteAggregates         map[testSuiteKey]testSuiteAggregate                          `json:"suiteAggregates"`
-	SuitesBySourceFile      map[string][]testSuiteKey                                    `json:"suitesBySourceFile"`
-	TestFileWeights         map[string]int                                               `json:"testFileWeights"`
-	TestFileDurationSources map[string]testFileDurationSource                            `json:"testFileDurationSources"`
-	RunInfo                 runmetadata.RunInfo                                          `json:"runInfo"`
-	PlanInfo                PlanInfo                                                     `json:"planInfo"`
+	TestSuiteDurations      map[string]map[string]api.TestSuiteDurationInfo `json:"testSuiteDurations"`
+	SuiteAggregates         map[testSuiteKey]testSuiteAggregate             `json:"suiteAggregates"`
+	SuitesBySourceFile      map[string][]testSuiteKey                       `json:"suitesBySourceFile"`
+	TestFileWeights         map[string]int                                  `json:"testFileWeights"`
+	TestFileDurationSources map[string]testFileDurationSource               `json:"testFileDurationSources"`
+	RunInfo                 runmetadata.RunInfo                             `json:"runInfo"`
+	PlanInfo                PlanInfo                                        `json:"planInfo"`
 }
 
 func (tp *TestPlanner) storeTestOptimizationPlanCache() error {
@@ -89,13 +90,13 @@ type legacyRunInfo struct {
 
 func (c *testOptimizationPlanCache) UnmarshalJSON(data []byte) error {
 	var decoded struct {
-		TestSuiteDurations      map[string]map[string]testoptimization.TestSuiteDurationInfo `json:"testSuiteDurations"`
-		SuiteAggregates         map[testSuiteKey]testSuiteAggregate                          `json:"suiteAggregates"`
-		SuitesBySourceFile      map[string][]testSuiteKey                                    `json:"suitesBySourceFile"`
-		TestFileWeights         map[string]int                                               `json:"testFileWeights"`
-		TestFileDurationSources map[string]testFileDurationSource                            `json:"testFileDurationSources"`
-		RunInfo                 legacyRunInfo                                                `json:"runInfo"`
-		PlanInfo                PlanInfo                                                     `json:"planInfo"`
+		TestSuiteDurations      map[string]map[string]api.TestSuiteDurationInfo `json:"testSuiteDurations"`
+		SuiteAggregates         map[testSuiteKey]testSuiteAggregate             `json:"suiteAggregates"`
+		SuitesBySourceFile      map[string][]testSuiteKey                       `json:"suitesBySourceFile"`
+		TestFileWeights         map[string]int                                  `json:"testFileWeights"`
+		TestFileDurationSources map[string]testFileDurationSource               `json:"testFileDurationSources"`
+		RunInfo                 legacyRunInfo                                   `json:"runInfo"`
+		PlanInfo                PlanInfo                                        `json:"planInfo"`
 	}
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
@@ -139,7 +140,7 @@ func readAndNormalizeTestOptimizationPlanCache(cache *testOptimizationPlanCache)
 	}
 
 	if cache.TestSuiteDurations == nil {
-		cache.TestSuiteDurations = make(map[string]map[string]testoptimization.TestSuiteDurationInfo)
+		cache.TestSuiteDurations = make(map[string]map[string]api.TestSuiteDurationInfo)
 	}
 	if cache.SuiteAggregates == nil {
 		cache.SuiteAggregates = make(map[testSuiteKey]testSuiteAggregate)
@@ -156,7 +157,7 @@ func readAndNormalizeTestOptimizationPlanCache(cache *testOptimizationPlanCache)
 	return nil
 }
 
-func countTestSuites(testSuiteDurations map[string]map[string]testoptimization.TestSuiteDurationInfo) int {
+func countTestSuites(testSuiteDurations map[string]map[string]api.TestSuiteDurationInfo) int {
 	totalSuites := 0
 	for _, suites := range testSuiteDurations {
 		totalSuites += len(suites)
