@@ -21,6 +21,7 @@ import (
 
 	"github.com/DataDog/ddtest/civisibility"
 	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/utils"
 )
@@ -101,7 +102,7 @@ func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Tran
 
 	// get the service name
 	if serviceName == "" {
-		serviceName = runmetadata.ResolveServiceName(ciTags[constants.GitRepositoryURL])
+		serviceName = runmetadata.ResolveServiceName(ciTags[git.GitRepositoryURL])
 	}
 
 	// get all custom configuration (test.configuration.*)
@@ -204,10 +205,10 @@ func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Tran
 		id, agentlessEnabled, baseURL, environment, serviceName, subdomain)
 
 	// we try to get the branch name
-	bName := ciTags[constants.GitBranch]
+	bName := ciTags[git.GitBranch]
 	if bName == "" {
 		// if not we try to use the tag (checkout over a tag)
-		bName = ciTags[constants.GitTag]
+		bName = ciTags[git.GitTag]
 	}
 	if bName == "" {
 		// if is still empty we assume the customer just used a detached HEAD
@@ -221,11 +222,11 @@ func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Tran
 		environment:       environment,
 		serviceName:       serviceName,
 		workingDirectory:  ciTags[constants.CIWorkspacePath],
-		repositoryURL:     ciTags[constants.GitRepositoryURL],
-		commitSha:         ciTags[constants.GitCommitSHA],
-		commitMessage:     ciTags[constants.GitCommitMessage],
-		headCommitSha:     ciTags[constants.GitHeadCommit],
-		headCommitMessage: ciTags[constants.GitHeadMessage],
+		repositoryURL:     ciTags[git.GitRepositoryURL],
+		commitSha:         ciTags[git.GitCommitSHA],
+		commitMessage:     ciTags[git.GitCommitMessage],
+		headCommitSha:     ciTags[git.GitHeadCommit],
+		headCommitMessage: ciTags[git.GitHeadMessage],
 		branchName:        bName,
 		testConfigurations: testConfigurations{
 			OsPlatform:     ciTags[constants.OSPlatform],

@@ -66,7 +66,7 @@ type (
 
 func (c *transport) GetTestManagementTests() (*TestManagementTestsResponseDataModules, error) {
 	if c.repositoryURL == "" {
-		return nil, fmt.Errorf("civisibility.GetTestManagementTests: repository URL is required")
+		return nil, fmt.Errorf("testoptimization.GetTestManagementTests: repository URL is required")
 	}
 	c.testManagementTestsRawResponse = nil
 

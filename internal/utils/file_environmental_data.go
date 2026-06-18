@@ -14,6 +14,7 @@ import (
 	_ "unsafe" // for go:linkname
 
 	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/git"
 )
 
 type (
@@ -79,12 +80,12 @@ type (
 func getEnvironmentalData() *fileEnvironmentalData {
 	envDataFileName := getEnvDataFileName()
 	if _, err := os.Stat(envDataFileName); os.IsNotExist(err) {
-		slog.Debug("civisibility: reading environmental data file not found", "filename", envDataFileName)
+		slog.Debug("testoptimization: reading environmental data file not found", "filename", envDataFileName)
 		return nil
 	}
 	file, err := os.Open(envDataFileName)
 	if err != nil {
-		slog.Error("civisibility: error reading environmental data from %s: %v", envDataFileName, err.Error())
+		slog.Error("testoptimization: error reading environmental data from %s: %v", envDataFileName, err.Error())
 		return nil
 	}
 	defer func() {
@@ -92,10 +93,10 @@ func getEnvironmentalData() *fileEnvironmentalData {
 	}()
 	var envData fileEnvironmentalData
 	if err := json.NewDecoder(file).Decode(&envData); err != nil {
-		slog.Error("civisibility: error decoding environmental data from %s: %v", envDataFileName, err.Error())
+		slog.Error("testoptimization: error decoding environmental data from %s: %v", envDataFileName, err.Error())
 		return nil
 	}
-	slog.Debug("civisibility: loaded environmental data", "filename", envDataFileName)
+	slog.Debug("testoptimization: loaded environmental data", "filename", envDataFileName)
 	return &envData
 }
 
@@ -122,58 +123,58 @@ func applyEnvironmentalDataIfRequired(tags map[string]string) {
 	}
 	envData := getEnvironmentalData()
 	if envData == nil {
-		slog.Debug("civisibility: no environmental data found")
+		slog.Debug("testoptimization: no environmental data found")
 		return
 	}
 
-	slog.Debug("civisibility: applying environmental data")
+	slog.Debug("testoptimization: applying environmental data")
 
 	if envData.WorkspacePath != "" && tags[constants.CIWorkspacePath] == "" {
 		tags[constants.CIWorkspacePath] = envData.WorkspacePath
 	}
 
-	if envData.RepositoryURL != "" && tags[constants.GitRepositoryURL] == "" {
-		tags[constants.GitRepositoryURL] = envData.RepositoryURL
+	if envData.RepositoryURL != "" && tags[git.GitRepositoryURL] == "" {
+		tags[git.GitRepositoryURL] = envData.RepositoryURL
 	}
 
-	if envData.CommitSHA != "" && tags[constants.GitCommitSHA] == "" {
-		tags[constants.GitCommitSHA] = envData.CommitSHA
+	if envData.CommitSHA != "" && tags[git.GitCommitSHA] == "" {
+		tags[git.GitCommitSHA] = envData.CommitSHA
 	}
 
-	if envData.Branch != "" && tags[constants.GitBranch] == "" {
-		tags[constants.GitBranch] = envData.Branch
+	if envData.Branch != "" && tags[git.GitBranch] == "" {
+		tags[git.GitBranch] = envData.Branch
 	}
 
-	if envData.Tag != "" && tags[constants.GitTag] == "" {
-		tags[constants.GitTag] = envData.Tag
+	if envData.Tag != "" && tags[git.GitTag] == "" {
+		tags[git.GitTag] = envData.Tag
 	}
 
-	if envData.CommitAuthorDate != "" && tags[constants.GitCommitAuthorDate] == "" {
-		tags[constants.GitCommitAuthorDate] = envData.CommitAuthorDate
+	if envData.CommitAuthorDate != "" && tags[git.GitCommitAuthorDate] == "" {
+		tags[git.GitCommitAuthorDate] = envData.CommitAuthorDate
 	}
 
-	if envData.CommitAuthorName != "" && tags[constants.GitCommitAuthorName] == "" {
-		tags[constants.GitCommitAuthorName] = envData.CommitAuthorName
+	if envData.CommitAuthorName != "" && tags[git.GitCommitAuthorName] == "" {
+		tags[git.GitCommitAuthorName] = envData.CommitAuthorName
 	}
 
-	if envData.CommitAuthorEmail != "" && tags[constants.GitCommitAuthorEmail] == "" {
-		tags[constants.GitCommitAuthorEmail] = envData.CommitAuthorEmail
+	if envData.CommitAuthorEmail != "" && tags[git.GitCommitAuthorEmail] == "" {
+		tags[git.GitCommitAuthorEmail] = envData.CommitAuthorEmail
 	}
 
-	if envData.CommitCommitterDate != "" && tags[constants.GitCommitCommitterDate] == "" {
-		tags[constants.GitCommitCommitterDate] = envData.CommitCommitterDate
+	if envData.CommitCommitterDate != "" && tags[git.GitCommitCommitterDate] == "" {
+		tags[git.GitCommitCommitterDate] = envData.CommitCommitterDate
 	}
 
-	if envData.CommitCommitterName != "" && tags[constants.GitCommitCommitterName] == "" {
-		tags[constants.GitCommitCommitterName] = envData.CommitCommitterName
+	if envData.CommitCommitterName != "" && tags[git.GitCommitCommitterName] == "" {
+		tags[git.GitCommitCommitterName] = envData.CommitCommitterName
 	}
 
-	if envData.CommitCommitterEmail != "" && tags[constants.GitCommitCommitterEmail] == "" {
-		tags[constants.GitCommitCommitterEmail] = envData.CommitCommitterEmail
+	if envData.CommitCommitterEmail != "" && tags[git.GitCommitCommitterEmail] == "" {
+		tags[git.GitCommitCommitterEmail] = envData.CommitCommitterEmail
 	}
 
-	if envData.CommitMessage != "" && tags[constants.GitCommitMessage] == "" {
-		tags[constants.GitCommitMessage] = envData.CommitMessage
+	if envData.CommitMessage != "" && tags[git.GitCommitMessage] == "" {
+		tags[git.GitCommitMessage] = envData.CommitMessage
 	}
 
 	if envData.CIProviderName != "" && tags[constants.CIProviderName] == "" {

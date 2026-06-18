@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"sync"
 	"syscall"
@@ -12,6 +13,7 @@ import (
 
 	testoptimizationstate "github.com/DataDog/ddtest/civisibility"
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	"github.com/DataDog/ddtest/internal/utils"
 	"github.com/DataDog/ddtest/stableconfig"
@@ -128,6 +130,10 @@ func (c *TestOptimizationClient) GetTestManagementTestsData() *api.TestManagemen
 	return &c.testManagementTests
 }
 
+func (c *TestOptimizationClient) GetDisabledTests() map[string]bool {
+	return disabledTestsFromTestManagementData(c.GetTestManagementTestsData())
+}
+
 func (c *TestOptimizationClient) GetTestSuiteDurations() *api.TestSuiteDurationsResponseData {
 	testOptimizationTransport := c.ensureAPITransport(autoDetectServiceName)
 	if testOptimizationTransport == nil {
@@ -177,7 +183,7 @@ func (c *TestOptimizationClient) ensureTestOptimizationSessionInitialized() {
 		_ = os.Setenv("DD_TRACE_SAMPLE_RATE", "1")
 
 		ciTags := utils.GetCITags()
-		if _, ok := ciTags[ciConstants.GitRepositoryURL]; !ok {
+		if _, ok := ciTags[git.GitRepositoryURL]; !ok {
 			slog.Debug("testoptimization: git repository URL tag was not detected")
 		}
 
@@ -443,7 +449,7 @@ func (c *TestOptimizationClient) uploadRepositoryChangesFromGit() (bytes int64, 
 		return 0, nil
 	}
 
-	hasBeenUnshallowed, err := utils.UnshallowGitRepository()
+	hasBeenUnshallowed, err := git.UnshallowGitRepository()
 	if err != nil || !hasBeenUnshallowed {
 		if err != nil {
 			slog.Warn(err.Error())
@@ -464,7 +470,7 @@ func (c *TestOptimizationClient) uploadRepositoryChangesFromGit() (bytes int64, 
 }
 
 func (c *TestOptimizationClient) getSearchCommits() (*searchCommitsResponse, error) {
-	localCommits := utils.GetLastLocalGitCommitShas()
+	localCommits := git.GetLastLocalGitCommitShas()
 	if len(localCommits) == 0 {
 		slog.Debug("testoptimization: no local commits found")
 		return newSearchCommitsResponse(nil, nil, false), nil
@@ -503,7 +509,7 @@ func (r *searchCommitsResponse) missingCommits() []string {
 }
 
 func (c *TestOptimizationClient) sendObjectsPackFile(commitSha string, commitsToInclude []string, commitsToExclude []string) (bytes int64, err error) {
-	packFiles := utils.CreatePackFiles(commitsToInclude, commitsToExclude)
+	packFiles := git.CreatePackFiles(commitsToInclude, commitsToExclude)
 	if len(packFiles) == 0 {
 		slog.Debug("testoptimization: no pack files to send")
 		return 0, nil
@@ -511,11 +517,43 @@ func (c *TestOptimizationClient) sendObjectsPackFile(commitSha string, commitsTo
 
 	slog.Debug("testoptimization: sending pack file with missing commits", "count", packFiles) //nolint:gocritic // File list logging for debugging
 
-	defer func(files []string) {
-		for _, file := range files {
-			_ = os.Remove(file)
-		}
-	}(packFiles)
+	defer cleanupPackFiles(packFiles)
 
 	return c.apiTransport.SendPackFiles(commitSha, packFiles)
+}
+
+func cleanupPackFiles(packFiles []string) {
+	packDirectories := make(map[string]struct{})
+	for _, packFile := range packFiles {
+		_ = os.Remove(packFile)
+		packDirectories[filepath.Dir(packFile)] = struct{}{}
+	}
+	for packDirectory := range packDirectories {
+		_ = os.RemoveAll(packDirectory)
+	}
+}
+
+func disabledTestsFromTestManagementData(testManagementTests *api.TestManagementTestsResponseDataModules) map[string]bool {
+	disabledTests := make(map[string]bool)
+	if testManagementTests == nil {
+		return disabledTests
+	}
+
+	for module, suites := range testManagementTests.Modules {
+		for suite, tests := range suites.Suites {
+			for name, test := range tests.Tests {
+				if !test.Properties.Disabled || test.Properties.AttemptToFix {
+					continue
+				}
+				disabledTest := Test{
+					Module: module,
+					Suite:  suite,
+					Name:   name,
+				}
+				disabledTests[disabledTest.FQN()] = true
+			}
+		}
+	}
+
+	return disabledTests
 }

@@ -69,7 +69,7 @@ type (
 
 func (c *transport) GetSettings() (*SettingsResponseData, error) {
 	if c.repositoryURL == "" || c.commitSha == "" {
-		return nil, fmt.Errorf("civisibility.GetSettings: repository URL and commit SHA are required")
+		return nil, fmt.Errorf("testoptimization.GetSettings: repository URL and commit SHA are required")
 	}
 	c.settingsRawResponse = nil
 
@@ -95,7 +95,7 @@ func (c *transport) GetSettings() (*SettingsResponseData, error) {
 		return nil, fmt.Errorf("sending get settings request: %s", err)
 	}
 
-	slog.Debug("civisibility.settings", "responseBody", string(response.Body))
+	slog.Debug("testoptimization.settings", "responseBody", string(response.Body))
 	c.settingsRawResponse = cloneRawMessage(response.Body)
 
 	var responseObject settingsResponse

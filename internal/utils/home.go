@@ -58,7 +58,7 @@ func ExpandPath(path string) string {
 //	The home directory of the current user.
 func getHomeDir() (homeDir string) {
 	defer func() {
-		slog.Debug("civisibility: home directory", "homeDir", homeDir)
+		slog.Debug("testoptimization: home directory", "homeDir", homeDir)
 	}()
 
 	if runtime.GOOS == "windows" {
