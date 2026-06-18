@@ -70,17 +70,18 @@ func (m *MockPlatform) SanityCheck() error {
 
 // MockFramework mocks a testing framework
 type MockFramework struct {
-	FrameworkName           string
-	TestPatternValue        string
-	TestExcludePatternValue string
-	Tests                   []testoptimization.Test
-	TestFiles               []string
-	Err                     error
-	DiscoverTestsErr        error // If set, overrides Err for DiscoverTests
-	OnDiscoverTests         func()
-	RunTestsCalls           []RunTestsCall
-	DiscoverTestsFiles      []discovery.TestFileSet
-	mu                      sync.Mutex
+	FrameworkName            string
+	TestPatternValue         string
+	TestExcludePatternValue  string
+	Tests                    []testoptimization.Test
+	TestFiles                []string
+	Err                      error
+	DiscoverTestsErr         error // If set, overrides Err for DiscoverTests
+	OnDiscoverTests          func()
+	RunTestsCalls            []RunTestsCall
+	DiscoverTestsFiles       []discovery.TestFileSet
+	FullDiscoveryUnsupported bool
+	mu                       sync.Mutex
 }
 
 type RunTestsCall struct {
@@ -239,6 +240,9 @@ func (m *MockFramework) DiscoverTests(ctx context.Context, testFiles discovery.T
 	m.mu.Lock()
 	m.DiscoverTestsFiles = append(m.DiscoverTestsFiles, testFiles)
 	m.mu.Unlock()
+	if m.FullDiscoveryUnsupported {
+		return nil, framework.ErrFullTestDiscoveryUnsupported
+	}
 	if m.OnDiscoverTests != nil {
 		m.OnDiscoverTests()
 	}
@@ -290,6 +294,10 @@ func (m *MockFramework) GetPlatformEnv() map[string]string {
 	return nil
 }
 
+func (m *MockFramework) SupportsFullTestDiscovery() bool {
+	return !m.FullDiscoveryUnsupported
+}
+
 func (m *MockFramework) GetRunTestsCallsCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -309,18 +317,6 @@ type longRunningDiscoveryFramework struct {
 func (m *longRunningDiscoveryFramework) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
-}
-
-type noFullDiscoveryFramework struct {
-	MockFramework
-}
-
-func (m *noFullDiscoveryFramework) SupportsFullTestDiscovery() bool {
-	return false
-}
-
-func (m *noFullDiscoveryFramework) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
-	return nil, framework.ErrFullTestDiscoveryUnsupported
 }
 
 // MockTestOptimizationClient mocks the test optimization client
@@ -698,11 +694,10 @@ func TestTestPlanner_Plan_FrameworkWithoutFullDiscoveryDoesNotFetchSkippables(t 
 	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED", "false")
 	settings.Init()
 
-	mockFramework := &noFullDiscoveryFramework{
-		MockFramework: MockFramework{
-			FrameworkName: "jest",
-			TestFiles:     []string{"src/a.test.js", "src/b.test.ts"},
-		},
+	mockFramework := &MockFramework{
+		FrameworkName:            "jest",
+		TestFiles:                []string{"src/a.test.js", "src/b.test.ts"},
+		FullDiscoveryUnsupported: true,
 	}
 	mockPlatform := &MockPlatform{
 		PlatformName: "javascript",

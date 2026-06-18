@@ -2,6 +2,7 @@ package framework
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"maps"
 	"os"
@@ -16,6 +17,8 @@ import (
 )
 
 const binJestPath = "node_modules/.bin/jest"
+
+var ErrFullTestDiscoveryUnsupported = errors.New("full test discovery is not supported")
 
 var (
 	jestTestFileExtensions = []string{"js", "jsx", "ts", "tsx", "mjs", "cjs"}
@@ -48,7 +51,6 @@ func (j *Jest) Name() string {
 	return "jest"
 }
 
-// Makes it a FullTestDiscoverySupporter.
 // We will not be discovering tests, but test suites.
 // We'll be working outside of the Node.js process
 func (j *Jest) SupportsFullTestDiscovery() bool {

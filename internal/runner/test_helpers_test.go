@@ -62,13 +62,14 @@ func (m *MockPlatform) SanityCheck() error {
 }
 
 type MockFramework struct {
-	FrameworkName    string
-	TestPatternValue string
-	Tests            []testoptimization.Test
-	Err              error
-	DiscoverTestsErr error
-	RunTestsCalls    []RunTestsCall
-	mu               sync.Mutex
+	FrameworkName            string
+	TestPatternValue         string
+	Tests                    []testoptimization.Test
+	Err                      error
+	DiscoverTestsErr         error
+	RunTestsCalls            []RunTestsCall
+	FullDiscoveryUnsupported bool
+	mu                       sync.Mutex
 }
 
 type RunTestsCall struct {
@@ -110,6 +111,10 @@ func (m *MockFramework) SetPlatformEnv(platformEnv map[string]string) {
 
 func (m *MockFramework) GetPlatformEnv() map[string]string {
 	return nil
+}
+
+func (m *MockFramework) SupportsFullTestDiscovery() bool {
+	return !m.FullDiscoveryUnsupported
 }
 
 func (m *MockFramework) GetRunTestsCallsCount() int {

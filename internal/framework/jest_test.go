@@ -38,7 +38,7 @@ func TestJest_DiscoverTests_Unsupported(t *testing.T) {
 	if !errors.Is(err, ErrFullTestDiscoveryUnsupported) {
 		t.Fatalf("expected ErrFullTestDiscoveryUnsupported, got %v", err)
 	}
-	if SupportsFullTestDiscovery(jest) {
+	if jest.SupportsFullTestDiscovery() {
 		t.Error("expected Jest to report unsupported full test discovery")
 	}
 }

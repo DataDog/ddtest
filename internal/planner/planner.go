@@ -272,7 +272,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		return fmt.Errorf("failed to detect framework: %w", err)
 	}
 	slog.Info("Framework detected", "framework", testFramework.Name())
-	fullTestDiscoverySupported := framework.SupportsFullTestDiscovery(testFramework)
+	fullTestDiscoverySupported := testFramework.SupportsFullTestDiscovery()
 	tp.runInfo = runmetadata.New(utils.GetCITags())
 	tp.planInfo = NewPlanInfo(tags, detectedPlatform.Name(), testFramework.Name())
 

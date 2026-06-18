@@ -104,3 +104,7 @@ func (r *RSpec) getRSpecCommand() (string, []string) {
 	slog.Debug("Using bundle exec rspec for RSpec commands")
 	return "bundle", []string{"exec", "rspec"}
 }
+
+func (r *RSpec) SupportsFullTestDiscovery() bool {
+	return true
+}
