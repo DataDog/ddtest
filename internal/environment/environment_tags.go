@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -27,13 +26,6 @@ type (
 	localGitData    = git.LocalGitData
 )
 
-const (
-	// manifestFilePathEnv points to the runfiles manifest or manifest rlocation used by offline Bazel flows.
-	manifestFilePathEnv = "DD_TEST_OPTIMIZATION_MANIFEST_FILE"
-	// payloadsInFilesEnv enables writing test optimization payloads to undeclared output files.
-	payloadsInFilesEnv = "DD_TEST_OPTIMIZATION_PAYLOADS_IN_FILES"
-)
-
 var (
 	// ciTags holds the CI/CD environment variable information.
 	currentCiTags  map[string]string // currentCiTags holds the CI/CD tags after originalCiTags + addedTags
@@ -41,10 +33,9 @@ var (
 	addedTags      map[string]string // addedTags holds the tags added by the user
 	ciTagsMutex    sync.Mutex
 
-	getProviderTagsFunc = getProviderTags
-	getLocalGitDataFunc = git.GetLocalGitData
-	fetchCommitDataFunc = git.FetchCommitData
-	// applyEnvironmentalDataIfRequiredFunc is a must-not-call test seam used to prove payload-file mode skips git enrichment.
+	getProviderTagsFunc                  = getProviderTags
+	getLocalGitDataFunc                  = git.GetLocalGitData
+	fetchCommitDataFunc                  = git.FetchCommitData
 	applyEnvironmentalDataIfRequiredFunc = applyEnvironmentalDataIfRequired
 )
 
@@ -159,93 +150,69 @@ func createCITagsMap() map[string]string {
 		localTags[constants.UserProvidedTestServiceTag] = "false"
 	}
 
-	if isPayloadFilesModeEnabled() {
-		// Payload-file mode relies on the environmental data file instead of invoking the Git CLI.
-		applyEnvironmentalDataIfRequiredFunc(localTags)
-		slog.Debug("civisibility: skipping local git enrichment in payload-file mode")
-	} else {
-		// Populate missing git data
-		gitData, _ := getLocalGitDataFunc()
+	// Populate missing git data
+	gitData, _ := getLocalGitDataFunc()
 
-		// Populate Git metadata from the local Git repository if not already present in localTags
-		if _, ok := localTags[constants.CIWorkspacePath]; !ok {
-			localTags[constants.CIWorkspacePath] = gitData.SourceRoot
-		}
-		if _, ok := localTags[git.GitRepositoryURL]; !ok {
-			localTags[git.GitRepositoryURL] = gitData.RepositoryURL
-		}
-		if _, ok := localTags[git.GitCommitSHA]; !ok {
-			localTags[git.GitCommitSHA] = gitData.CommitSha
-		}
-		if _, ok := localTags[git.GitBranch]; !ok {
-			localTags[git.GitBranch] = gitData.Branch
-		}
-
-		// If the commit SHA matches, populate additional Git metadata
-		if localTags[git.GitCommitSHA] == gitData.CommitSha {
-			if _, ok := localTags[git.GitCommitAuthorDate]; !ok {
-				localTags[git.GitCommitAuthorDate] = gitData.AuthorDate.String()
-			}
-			if _, ok := localTags[git.GitCommitAuthorName]; !ok {
-				localTags[git.GitCommitAuthorName] = gitData.AuthorName
-			}
-			if _, ok := localTags[git.GitCommitAuthorEmail]; !ok {
-				localTags[git.GitCommitAuthorEmail] = gitData.AuthorEmail
-			}
-			if _, ok := localTags[git.GitCommitCommitterDate]; !ok {
-				localTags[git.GitCommitCommitterDate] = gitData.CommitterDate.String()
-			}
-			if _, ok := localTags[git.GitCommitCommitterName]; !ok {
-				localTags[git.GitCommitCommitterName] = gitData.CommitterName
-			}
-			if _, ok := localTags[git.GitCommitCommitterEmail]; !ok {
-				localTags[git.GitCommitCommitterEmail] = gitData.CommitterEmail
-			}
-			if _, ok := localTags[git.GitCommitMessage]; !ok {
-				localTags[git.GitCommitMessage] = gitData.CommitMessage
-			}
-		}
-
-		// If the head commit SHA is available, populate additional Git head metadata
-		if headCommitSha, ok := localTags[git.GitHeadCommit]; ok {
-			if headCommitData, err := fetchCommitDataFunc(headCommitSha); err != nil {
-				slog.Warn("civisibility: failed to fetch head commit data", "headCommitSha", headCommitSha, "error", err.Error())
-			} else if headCommitSha == headCommitData.CommitSha {
-				localTags[git.GitHeadAuthorDate] = headCommitData.AuthorDate.String()
-				localTags[git.GitHeadAuthorName] = headCommitData.AuthorName
-				localTags[git.GitHeadAuthorEmail] = headCommitData.AuthorEmail
-				localTags[git.GitHeadCommitterDate] = headCommitData.CommitterDate.String()
-				localTags[git.GitHeadCommitterName] = headCommitData.CommitterName
-				localTags[git.GitHeadCommitterEmail] = headCommitData.CommitterEmail
-				localTags[git.GitHeadMessage] = headCommitData.CommitMessage
-			} else {
-				slog.Warn("civisibility: head commit SHA does not match fetched commit SHA", "headCommitSha", headCommitSha, "fetchedCommitSha", headCommitData.CommitSha)
-			}
-		}
-
-		// Apply environmental data if is available
-		applyEnvironmentalDataIfRequiredFunc(localTags)
+	// Populate Git metadata from the local Git repository if not already present in localTags
+	if _, ok := localTags[constants.CIWorkspacePath]; !ok {
+		localTags[constants.CIWorkspacePath] = gitData.SourceRoot
+	}
+	if _, ok := localTags[git.GitRepositoryURL]; !ok {
+		localTags[git.GitRepositoryURL] = gitData.RepositoryURL
+	}
+	if _, ok := localTags[git.GitCommitSHA]; !ok {
+		localTags[git.GitCommitSHA] = gitData.CommitSha
+	}
+	if _, ok := localTags[git.GitBranch]; !ok {
+		localTags[git.GitBranch] = gitData.Branch
 	}
 
-	// Apply the Bazel provider fallback only after all other CI provider sources had a chance to populate the tag.
-	if isBazelTestOptimizationEnvironment() && localTags[constants.CIProviderName] == "" {
-		localTags[constants.CIProviderName] = "bazel"
+	// If the commit SHA matches, populate additional Git metadata
+	if localTags[git.GitCommitSHA] == gitData.CommitSha {
+		if _, ok := localTags[git.GitCommitAuthorDate]; !ok {
+			localTags[git.GitCommitAuthorDate] = gitData.AuthorDate.String()
+		}
+		if _, ok := localTags[git.GitCommitAuthorName]; !ok {
+			localTags[git.GitCommitAuthorName] = gitData.AuthorName
+		}
+		if _, ok := localTags[git.GitCommitAuthorEmail]; !ok {
+			localTags[git.GitCommitAuthorEmail] = gitData.AuthorEmail
+		}
+		if _, ok := localTags[git.GitCommitCommitterDate]; !ok {
+			localTags[git.GitCommitCommitterDate] = gitData.CommitterDate.String()
+		}
+		if _, ok := localTags[git.GitCommitCommitterName]; !ok {
+			localTags[git.GitCommitCommitterName] = gitData.CommitterName
+		}
+		if _, ok := localTags[git.GitCommitCommitterEmail]; !ok {
+			localTags[git.GitCommitCommitterEmail] = gitData.CommitterEmail
+		}
+		if _, ok := localTags[git.GitCommitMessage]; !ok {
+			localTags[git.GitCommitMessage] = gitData.CommitMessage
+		}
 	}
+
+	// If the head commit SHA is available, populate additional Git head metadata
+	if headCommitSha, ok := localTags[git.GitHeadCommit]; ok {
+		if headCommitData, err := fetchCommitDataFunc(headCommitSha); err != nil {
+			slog.Warn("civisibility: failed to fetch head commit data", "headCommitSha", headCommitSha, "error", err.Error())
+		} else if headCommitSha == headCommitData.CommitSha {
+			localTags[git.GitHeadAuthorDate] = headCommitData.AuthorDate.String()
+			localTags[git.GitHeadAuthorName] = headCommitData.AuthorName
+			localTags[git.GitHeadAuthorEmail] = headCommitData.AuthorEmail
+			localTags[git.GitHeadCommitterDate] = headCommitData.CommitterDate.String()
+			localTags[git.GitHeadCommitterName] = headCommitData.CommitterName
+			localTags[git.GitHeadCommitterEmail] = headCommitData.CommitterEmail
+			localTags[git.GitHeadMessage] = headCommitData.CommitMessage
+		} else {
+			slog.Warn("civisibility: head commit SHA does not match fetched commit SHA", "headCommitSha", headCommitSha, "fetchedCommitSha", headCommitData.CommitSha)
+		}
+	}
+
+	// Apply environmental data if is available
+	applyEnvironmentalDataIfRequiredFunc(localTags)
 
 	slog.Debug("civisibility: workspace directory", "path", localTags[constants.CIWorkspacePath])
 	slog.Debug("civisibility: common tags created", "items", len(localTags))
 	return localTags
-}
-
-func isPayloadFilesModeEnabled() bool {
-	return parseBoolEnv(os.Getenv(payloadsInFilesEnv))
-}
-
-func isBazelTestOptimizationEnvironment() bool {
-	return strings.TrimSpace(os.Getenv(manifestFilePathEnv)) != "" || isPayloadFilesModeEnabled()
-}
-
-func parseBoolEnv(raw string) bool {
-	parsed, err := strconv.ParseBool(strings.TrimSpace(raw))
-	return err == nil && parsed
 }

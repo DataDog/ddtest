@@ -143,7 +143,6 @@ func TestRunBatch_WorkerEnvTestSessionNameTakesPrecedence(t *testing.T) {
 func TestRunBatch_DefaultManifestFile(t *testing.T) {
 	chdirForTest(t, t.TempDir())
 	unsetEnvForTest(t, constants.TestOptimizationManifestFileEnvVar)
-	unsetEnvForTest(t, "DD_TEST_OPTIMIZATION_PAYLOADS_IN_FILES")
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -166,10 +165,6 @@ func TestRunBatch_DefaultManifestFile(t *testing.T) {
 			constants.TestOptimizationManifestFileEnvVar,
 			expectedManifestPath,
 			call.EnvMap[constants.TestOptimizationManifestFileEnvVar])
-	}
-
-	if _, ok := call.EnvMap["DD_TEST_OPTIMIZATION_PAYLOADS_IN_FILES"]; ok {
-		t.Error("Expected DD_TEST_OPTIMIZATION_PAYLOADS_IN_FILES to not be set by ddtest run")
 	}
 }
 
