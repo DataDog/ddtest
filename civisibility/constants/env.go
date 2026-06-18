@@ -36,7 +36,4 @@ const (
 
 	// TestOptimizationAttemptToFixRetriesEnvironmentVariable indicates the maximum number of retries for the attempt to fix a test.
 	TestOptimizationAttemptToFixRetriesEnvironmentVariable = "DD_TEST_MANAGEMENT_ATTEMPT_TO_FIX_RETRIES"
-
-	// TestOptimizationEnvironmentDataFilePath is the environment variable that holds the path to the file containing the environmental data.
-	TestOptimizationEnvironmentDataFilePath = "DD_TEST_OPTIMIZATION_ENV_DATA_FILE"
 )

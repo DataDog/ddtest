@@ -51,17 +51,14 @@ func TestGetCITagsUsesGitEnrichment(t *testing.T) {
 	originalGetProviderTagsFunc := getProviderTagsFunc
 	originalGetLocalGitDataFunc := getLocalGitDataFunc
 	originalFetchCommitDataFunc := fetchCommitDataFunc
-	originalApplyEnvironmentalDataIfRequiredFunc := applyEnvironmentalDataIfRequiredFunc
 	t.Cleanup(func() {
 		getProviderTagsFunc = originalGetProviderTagsFunc
 		getLocalGitDataFunc = originalGetLocalGitDataFunc
 		fetchCommitDataFunc = originalFetchCommitDataFunc
-		applyEnvironmentalDataIfRequiredFunc = originalApplyEnvironmentalDataIfRequiredFunc
 	})
 
 	var getLocalGitDataCalls int
 	var fetchCommitDataCalls int
-	var applyEnvironmentalDataCalls int
 
 	getProviderTagsFunc = func() map[string]string {
 		return map[string]string{
@@ -89,20 +86,14 @@ func TestGetCITagsUsesGitEnrichment(t *testing.T) {
 			CommitMessage: "head-message",
 		}, nil
 	}
-	applyEnvironmentalDataIfRequiredFunc = func(tags map[string]string) {
-		applyEnvironmentalDataCalls++
-		tags["env.applied"] = "true"
-	}
 
 	tags := GetCITags()
 	assert.Equal(t, 1, getLocalGitDataCalls)
 	assert.Equal(t, 1, fetchCommitDataCalls)
-	assert.Equal(t, 1, applyEnvironmentalDataCalls)
 	assert.Equal(t, "/tmp/workspace", tags[constants.CIWorkspacePath])
 	assert.Equal(t, "https://example.com/repo.git", tags[git.GitRepositoryURL])
 	assert.Equal(t, "commit-sha", tags[git.GitCommitSHA])
 	assert.Equal(t, "head-message", tags[git.GitHeadMessage])
-	assert.Equal(t, "true", tags["env.applied"])
 }
 
 func TestGetCITagsDoesNotAddProviderWhenProviderCannotBeDetected(t *testing.T) {
@@ -112,12 +103,10 @@ func TestGetCITagsDoesNotAddProviderWhenProviderCannotBeDetected(t *testing.T) {
 	originalGetProviderTagsFunc := getProviderTagsFunc
 	originalGetLocalGitDataFunc := getLocalGitDataFunc
 	originalFetchCommitDataFunc := fetchCommitDataFunc
-	originalApplyEnvironmentalDataIfRequiredFunc := applyEnvironmentalDataIfRequiredFunc
 	t.Cleanup(func() {
 		getProviderTagsFunc = originalGetProviderTagsFunc
 		getLocalGitDataFunc = originalGetLocalGitDataFunc
 		fetchCommitDataFunc = originalFetchCommitDataFunc
-		applyEnvironmentalDataIfRequiredFunc = originalApplyEnvironmentalDataIfRequiredFunc
 	})
 
 	getProviderTagsFunc = func() map[string]string {
@@ -129,7 +118,6 @@ func TestGetCITagsDoesNotAddProviderWhenProviderCannotBeDetected(t *testing.T) {
 	fetchCommitDataFunc = func(commitSha string) (localCommitData, error) {
 		return localCommitData{}, nil
 	}
-	applyEnvironmentalDataIfRequiredFunc = func(tags map[string]string) {}
 
 	tags := GetCITags()
 	assert.NotContains(t, tags, constants.CIProviderName)

@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
@@ -167,7 +166,6 @@ func withoutCIProviderEnvironment(t *testing.T) {
 		"DD_GIT_COMMIT_COMMITTER_NAME",
 		"DD_GIT_COMMIT_COMMITTER_EMAIL",
 		"DD_GIT_COMMIT_COMMITTER_DATE",
-		ciConstants.TestOptimizationEnvironmentDataFilePath,
 	}
 
 	originalValues := make(map[string]string, len(envKeys))

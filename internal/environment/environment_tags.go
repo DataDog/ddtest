@@ -33,10 +33,9 @@ var (
 	addedTags      map[string]string // addedTags holds the tags added by the user
 	ciTagsMutex    sync.Mutex
 
-	getProviderTagsFunc                  = getProviderTags
-	getLocalGitDataFunc                  = git.GetLocalGitData
-	fetchCommitDataFunc                  = git.FetchCommitData
-	applyEnvironmentalDataIfRequiredFunc = applyEnvironmentalDataIfRequired
+	getProviderTagsFunc = getProviderTags
+	getLocalGitDataFunc = git.GetLocalGitData
+	fetchCommitDataFunc = git.FetchCommitData
 )
 
 // GetCITags retrieves and caches the CI/CD tags from environment variables.
@@ -208,9 +207,6 @@ func createCITagsMap() map[string]string {
 			slog.Warn("testoptimization: head commit SHA does not match fetched commit SHA", "headCommitSha", headCommitSha, "fetchedCommitSha", headCommitData.CommitSha)
 		}
 	}
-
-	// Apply environmental data if is available
-	applyEnvironmentalDataIfRequiredFunc(localTags)
 
 	slog.Debug("testoptimization: workspace directory", "path", localTags[constants.CIWorkspacePath])
 	slog.Debug("testoptimization: common tags created", "items", len(localTags))
