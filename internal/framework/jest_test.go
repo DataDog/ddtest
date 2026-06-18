@@ -59,6 +59,7 @@ func TestJest_DiscoverTestFiles_DefaultPatterns(t *testing.T) {
 		"node_modules/pkg/bad.test.js",
 		"dist/bad.spec.js",
 		"coverage/bad.test.ts",
+		".next/bad.test.tsx",
 	}
 	for _, file := range filesToCreate {
 		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
@@ -76,6 +77,9 @@ func TestJest_DiscoverTestFiles_DefaultPatterns(t *testing.T) {
 	}
 
 	expected := []string{
+		".next/bad.test.tsx",
+		"coverage/bad.test.ts",
+		"dist/bad.spec.js",
 		"src/__tests__/bar.jsx",
 		"src/foo.spec.ts",
 		"src/foo.test.js",

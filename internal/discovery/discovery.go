@@ -28,6 +28,7 @@ const (
 	MaxExplicitTestFiles           = 8_000
 	discoveryCommandLogMaxLength   = 300
 	discoveryCommandLogTruncSuffix = "..."
+	nodeModulesDir                 = "node_modules"
 )
 
 type Excluder struct {
@@ -123,6 +124,10 @@ func DiscoverTestFiles(includePattern, excludePattern string) ([]string, error) 
 		if walkErr != nil {
 			slog.Debug("Skipping path during test file discovery", "path", filePath, "error", walkErr)
 			return nil
+		}
+
+		if entry.IsDir() && entry.Name() == nodeModulesDir {
+			return filepath.SkipDir
 		}
 
 		normalizedPath := utils.NormalizePath(filePath)

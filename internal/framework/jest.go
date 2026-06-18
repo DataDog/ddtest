@@ -20,10 +20,7 @@ const binJestPath = "node_modules/.bin/jest"
 
 var ErrFullTestDiscoveryUnsupported = errors.New("full test discovery is not supported")
 
-var (
-	jestTestFileExtensions = []string{"js", "jsx", "ts", "tsx", "mjs", "cjs"}
-	jestExcludedDirs       = []string{"node_modules", ".git", "dist", "build", "coverage", ".next"}
-)
+var jestTestFileExtensions = []string{"js", "jsx", "ts", "tsx", "mjs", "cjs"}
 
 type Jest struct {
 	executor        ext.CommandExecutor
@@ -68,16 +65,7 @@ func (j *Jest) TestPattern() string {
 }
 
 func (j *Jest) TestExcludePattern() string {
-	patterns := make([]string, 0, len(jestExcludedDirs)*4)
-	for _, dir := range jestExcludedDirs {
-		patterns = append(patterns,
-			filepath.ToSlash(dir),
-			filepath.ToSlash(filepath.Join(dir, "**")),
-			filepath.ToSlash(filepath.Join("**", dir)),
-			filepath.ToSlash(filepath.Join("**", dir, "**")),
-		)
-	}
-	return "{" + strings.Join(patterns, ",") + "}"
+	return ""
 }
 
 func (j *Jest) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
