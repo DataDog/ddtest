@@ -113,9 +113,9 @@ func createCITagsMap() map[string]string {
 	localTags[constants.OSArchitecture] = runtime.GOARCH
 	localTags[constants.RuntimeName] = runtime.Compiler
 	localTags[constants.RuntimeVersion] = runtime.Version()
-	slog.Debug("civisibility: os platform", "platform", runtime.GOOS)
-	slog.Debug("civisibility: os architecture", "architecture", runtime.GOARCH)
-	slog.Debug("civisibility: runtime version", "version", runtime.Version())
+	slog.Debug("testoptimization: os platform", "platform", runtime.GOOS)
+	slog.Debug("testoptimization: os architecture", "architecture", runtime.GOARCH)
+	slog.Debug("testoptimization: runtime version", "version", runtime.Version())
 
 	// Get command line test command
 	var cmd string
@@ -131,7 +131,7 @@ func createCITagsMap() map[string]string {
 	cmd = regexp.MustCompile(`(?si)-test.testlogfile=(.*)\s`).ReplaceAllString(cmd, "")
 	cmd = strings.TrimSpace(cmd)
 	localTags[constants.TestCommand] = cmd
-	slog.Debug("civisibility: test command", "command", cmd)
+	slog.Debug("testoptimization: test command", "command", cmd)
 
 	// Populate the test session name
 	if testSessionName, ok := os.LookupEnv(constants.TestOptimizationTestSessionNameEnvironmentVariable); ok {
@@ -141,7 +141,7 @@ func createCITagsMap() map[string]string {
 	} else {
 		localTags[constants.TestSessionName] = cmd
 	}
-	slog.Debug("civisibility: test session name", "testSessionName", localTags[constants.TestSessionName])
+	slog.Debug("testoptimization: test session name", "testSessionName", localTags[constants.TestSessionName])
 
 	// Check if the user provided the test service
 	if ddService := os.Getenv("DD_SERVICE"); ddService != "" {
@@ -195,7 +195,7 @@ func createCITagsMap() map[string]string {
 	// If the head commit SHA is available, populate additional Git head metadata
 	if headCommitSha, ok := localTags[git.GitHeadCommit]; ok {
 		if headCommitData, err := fetchCommitDataFunc(headCommitSha); err != nil {
-			slog.Warn("civisibility: failed to fetch head commit data", "headCommitSha", headCommitSha, "error", err.Error())
+			slog.Warn("testoptimization: failed to fetch head commit data", "headCommitSha", headCommitSha, "error", err.Error())
 		} else if headCommitSha == headCommitData.CommitSha {
 			localTags[git.GitHeadAuthorDate] = headCommitData.AuthorDate.String()
 			localTags[git.GitHeadAuthorName] = headCommitData.AuthorName
@@ -205,14 +205,14 @@ func createCITagsMap() map[string]string {
 			localTags[git.GitHeadCommitterEmail] = headCommitData.CommitterEmail
 			localTags[git.GitHeadMessage] = headCommitData.CommitMessage
 		} else {
-			slog.Warn("civisibility: head commit SHA does not match fetched commit SHA", "headCommitSha", headCommitSha, "fetchedCommitSha", headCommitData.CommitSha)
+			slog.Warn("testoptimization: head commit SHA does not match fetched commit SHA", "headCommitSha", headCommitSha, "fetchedCommitSha", headCommitData.CommitSha)
 		}
 	}
 
 	// Apply environmental data if is available
 	applyEnvironmentalDataIfRequiredFunc(localTags)
 
-	slog.Debug("civisibility: workspace directory", "path", localTags[constants.CIWorkspacePath])
-	slog.Debug("civisibility: common tags created", "items", len(localTags))
+	slog.Debug("testoptimization: workspace directory", "path", localTags[constants.CIWorkspacePath])
+	slog.Debug("testoptimization: common tags created", "items", len(localTags))
 	return localTags
 }

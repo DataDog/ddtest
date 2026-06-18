@@ -138,7 +138,7 @@ func tryExtractJobIDFromDiag(diagDirs []string) (string, bool) {
 		// Find Worker_*.log files
 		files, err := filepath.Glob(filepath.Join(diagDir, "Worker_*.log"))
 		if err != nil {
-			slog.Debug("civisibility: error globbing worker logs", "dir", diagDir, "error", err.Error())
+			slog.Debug("testoptimization: error globbing worker logs", "dir", diagDir, "error", err.Error())
 			continue
 		}
 
@@ -173,30 +173,30 @@ func tryExtractJobIDFromFile(path string) (string, bool) {
 	// Check file size before reading
 	info, err := os.Stat(path)
 	if err != nil {
-		slog.Debug("civisibility: error stating file", "path", path, "error", err.Error())
+		slog.Debug("testoptimization: error stating file", "path", path, "error", err.Error())
 		return "", false
 	}
 	if info.Size() > githubMaxDiagFileSize {
-		slog.Debug("civisibility: skipping oversized diagnostics file", "path", path, "bytes", info.Size())
+		slog.Debug("testoptimization: skipping oversized diagnostics file", "path", path, "bytes", info.Size())
 		return "", false
 	}
 
 	// Read file content
 	content, err := os.ReadFile(path)
 	if err != nil {
-		slog.Debug("civisibility: error reading file", "path", path, "error", err.Error())
+		slog.Debug("testoptimization: error reading file", "path", path, "error", err.Error())
 		return "", false
 	}
 
 	// Try JSON parsing first
 	if jobID, ok := tryExtractJobIDFromJSON(content); ok {
-		slog.Debug("civisibility: extracted github actions job id via JSON", "jobID", jobID, "path", path)
+		slog.Debug("testoptimization: extracted github actions job id via JSON", "jobID", jobID, "path", path)
 		return jobID, true
 	}
 
 	// Fall back to regex extraction
 	if jobID, ok := tryExtractJobIDFromRegex(content); ok {
-		slog.Debug("civisibility: extracted github actions job id via regex", "jobID", jobID, "path", path)
+		slog.Debug("testoptimization: extracted github actions job id via regex", "jobID", jobID, "path", path)
 		return jobID, true
 	}
 
@@ -325,9 +325,9 @@ func getProviderTags() map[string]string {
 	}
 
 	if providerName, ok := tags[constants.CIProviderName]; ok {
-		slog.Debug("civisibility: detected ci provider", "provider", providerName)
+		slog.Debug("testoptimization: detected ci provider", "provider", providerName)
 	} else {
-		slog.Debug("civisibility: no ci provider was detected")
+		slog.Debug("testoptimization: no ci provider was detected")
 	}
 
 	return tags
@@ -689,11 +689,11 @@ func extractGithubActions() map[string]string {
 	if numericJobID != "" && pipelineID != "" {
 		tags[constants.CIJobID] = numericJobID
 		tags[constants.CIJobURL] = fmt.Sprintf("%s/actions/runs/%s/job/%s", rawRepository, pipelineID, numericJobID)
-		slog.Debug("civisibility: github actions job url with numeric job id", "url", tags[constants.CIJobURL])
+		slog.Debug("testoptimization: github actions job url with numeric job id", "url", tags[constants.CIJobURL])
 	} else {
 		tags[constants.CIJobID] = jobName
 		tags[constants.CIJobURL] = fmt.Sprintf("%s/commit/%s/checks", rawRepository, commitSha)
-		slog.Debug("civisibility: github actions job url fallback", "url", tags[constants.CIJobURL])
+		slog.Debug("testoptimization: github actions job url fallback", "url", tags[constants.CIJobURL])
 	}
 
 	jsonString, err := getEnvVarsJSON("GITHUB_SERVER_URL", "GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")

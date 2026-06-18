@@ -77,12 +77,12 @@ type (
 func getEnvironmentalData() *fileEnvironmentalData {
 	envDataFileName := getEnvDataFileName()
 	if _, err := os.Stat(envDataFileName); os.IsNotExist(err) {
-		slog.Debug("civisibility: environmental data file not found", "path", envDataFileName)
+		slog.Debug("testoptimization: environmental data file not found", "path", envDataFileName)
 		return nil
 	}
 	file, err := os.Open(envDataFileName)
 	if err != nil {
-		slog.Error("civisibility: error reading environmental data", "path", envDataFileName, "error", err.Error())
+		slog.Error("testoptimization: error reading environmental data", "path", envDataFileName, "error", err.Error())
 		return nil
 	}
 	defer func() {
@@ -90,10 +90,10 @@ func getEnvironmentalData() *fileEnvironmentalData {
 	}()
 	var envData fileEnvironmentalData
 	if err := json.NewDecoder(file).Decode(&envData); err != nil {
-		slog.Error("civisibility: error decoding environmental data", "path", envDataFileName, "error", err.Error())
+		slog.Error("testoptimization: error decoding environmental data", "path", envDataFileName, "error", err.Error())
 		return nil
 	}
-	slog.Debug("civisibility: loaded environmental data", "path", envDataFileName)
+	slog.Debug("testoptimization: loaded environmental data", "path", envDataFileName)
 	return &envData
 }
 
@@ -116,11 +116,11 @@ func applyEnvironmentalDataIfRequired(tags map[string]string) {
 	}
 	envData := getEnvironmentalData()
 	if envData == nil {
-		slog.Debug("civisibility: no environmental data found")
+		slog.Debug("testoptimization: no environmental data found")
 		return
 	}
 
-	slog.Debug("civisibility: applying environmental data")
+	slog.Debug("testoptimization: applying environmental data")
 
 	if envData.WorkspacePath != "" && tags[constants.CIWorkspacePath] == "" {
 		tags[constants.CIWorkspacePath] = envData.WorkspacePath
