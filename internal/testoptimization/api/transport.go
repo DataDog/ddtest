@@ -21,9 +21,9 @@ import (
 
 	"github.com/DataDog/ddtest/civisibility"
 	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/runmetadata"
-	"github.com/DataDog/ddtest/internal/utils"
 )
 
 const (
@@ -92,7 +92,7 @@ var (
 
 // NewTransportWithServiceNameAndSubdomain creates a new transport with the given service name and subdomain.
 func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Transport {
-	ciTags := utils.GetCITags()
+	ciTags := environment.GetCITags()
 
 	// get the environment
 	environment := os.Getenv("DD_ENV")

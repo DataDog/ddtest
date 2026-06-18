@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddtest/internal/ciprovider"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/discovery"
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/platform"
@@ -433,11 +433,11 @@ func (m *MockCIProvider) Configure(parallelRunners int) error {
 
 // MockCIProviderDetector mocks CI provider detection
 type MockCIProviderDetector struct {
-	CIProvider ciprovider.CIProvider
+	CIProvider environment.CIProvider
 	Err        error
 }
 
-func (m *MockCIProviderDetector) DetectCIProvider() (ciprovider.CIProvider, error) {
+func (m *MockCIProviderDetector) DetectCIProvider() (environment.CIProvider, error) {
 	return m.CIProvider, m.Err
 }
 
@@ -1265,8 +1265,8 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 
 func TestTestPlanner_PreparePlanningData_Success(t *testing.T) {
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	// Setup mocks
 	mockFramework := &MockFramework{
@@ -1399,8 +1399,8 @@ func TestTestPlanner_PreparePlanningData_Success(t *testing.T) {
 
 func TestTestPlanner_PreparePlanningData_DisabledTestManagementTestsAreSkipped(t *testing.T) {
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -1488,8 +1488,8 @@ func TestTestPlanner_PreparePlanningData_DisabledTestManagementTestsAreSkipped(t
 
 func TestTestPlanner_PreparePlanningData_TIASkipsRequireParametersMatch(t *testing.T) {
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	parameterizedRunnableTest := testoptimization.Test{
 		Module:          "rspec",
@@ -1543,8 +1543,8 @@ func TestTestPlanner_PreparePlanningData_TIASkipsRequireParametersMatch(t *testi
 
 func TestTestPlanner_PreparePlanningData_ModuleQualifiedSkipsDoNotCrossModules(t *testing.T) {
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -1607,8 +1607,8 @@ func TestTestPlanner_PreparePlanningData_ModuleQualifiedSkipsDoNotCrossModules(t
 func TestTestPlanner_PreparePlanningData_TestManagementDoesNotKeepFullDiscoveryWhenTIASkippingDisabled(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	mockFramework := &MockFramework{
 		FrameworkName:    "rspec",
@@ -1681,8 +1681,8 @@ func TestTestPlanner_PreparePlanningData_TestManagementDoesNotKeepFullDiscoveryW
 func TestTestPlanner_PreparePlanningData_CancelsFullDiscoveryWhenNoTIASkippableTests(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 	logs := captureLogs(t)
 
 	mockFramework := &longRunningDiscoveryFramework{
@@ -1728,8 +1728,8 @@ func TestTestPlanner_PreparePlanningData_CancelsFullDiscoveryWhenNoTIASkippableT
 func TestTestPlanner_PreparePlanningData_RunsFullDiscoveryInParallelWithBackend(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	discoveredTest := testoptimization.Test{
 		Module:          "rspec",
@@ -1787,8 +1787,8 @@ func TestTestPlanner_PreparePlanningData_RunsFullDiscoveryInParallelWithBackend(
 
 func TestTestPlanner_PreparePlanningData_UsesCompletedFullDiscoveryWhenNoTIASkippableTests(t *testing.T) {
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -1830,8 +1830,8 @@ func TestTestPlanner_PreparePlanningData_UsesCompletedFullDiscoveryWhenNoTIASkip
 
 func TestTestPlanner_PreparePlanningData_EmptyDurationsContinues(t *testing.T) {
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -1867,8 +1867,8 @@ func TestTestPlanner_PreparePlanningData_EmptyDurationsContinues(t *testing.T) {
 
 func TestTestPlanner_PreparePlanningData_NonEmptyDurationsUsesP50ForMatchingSuites(t *testing.T) {
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -1930,8 +1930,8 @@ func TestTestPlanner_PreparePlanningData_NonEmptyDurationsUsesP50ForMatchingSuit
 
 func TestTestPlanner_PreparePlanningData_SkippablePercentageUsesDurations(t *testing.T) {
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -2229,8 +2229,8 @@ func TestIndexSuitesBySourceFile_IgnoresEmptySourceFile(t *testing.T) {
 func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesBackendDurations(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	mockFramework := &MockFramework{
 		FrameworkName:    "rspec",
@@ -2270,8 +2270,8 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesBackendDurations(t *te
 func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesOneBackendDurationPerSourceFile(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	mockFramework := &MockFramework{
 		FrameworkName:    "rspec",
@@ -2318,8 +2318,8 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesOneBackendDurationPerS
 func TestTestPlanner_PreparePlanningData_IgnoresZeroBackendDurationForFastDiscovery(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	mockFramework := &MockFramework{
 		FrameworkName:    "rspec",
@@ -2362,8 +2362,8 @@ func TestTestPlanner_PreparePlanningData_IgnoresZeroBackendDurationForFastDiscov
 
 func TestTestPlanner_PreparePlanningData_BackendDurationSubdirMatchesFastDiscovery(t *testing.T) {
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	repoRoot := t.TempDir()
 	initGitRepo(t, repoRoot)
@@ -2398,7 +2398,7 @@ func TestTestPlanner_PreparePlanningData_BackendDurationSubdirMatchesFastDiscove
 			},
 		},
 	}
-	ciUtils.AddCITagsMap(map[string]string{git.GitRepositoryURL: repoRoot})
+	environment.AddCITagsMap(map[string]string{git.GitRepositoryURL: repoRoot})
 
 	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
@@ -2422,8 +2422,8 @@ func TestTestPlanner_PreparePlanningData_BackendDurationSubdirMatchesFastDiscove
 func TestTestPlanner_PreparePlanningData_IgnoresBackendDurationsForUndiscoveredFiles(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	mockFramework := &MockFramework{
 		FrameworkName:    "rspec",
@@ -2467,8 +2467,8 @@ func TestTestPlanner_PreparePlanningData_IgnoresBackendDurationsForUndiscoveredF
 func TestTestPlanner_PreparePlanningData_FullDiscoveryIgnoresFastOnlyFiles(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -2514,9 +2514,9 @@ func TestTestPlanner_PreparePlanningData_FullDiscoveryIgnoresFastOnlyFiles(t *te
 func TestTestPlanner_PreparePlanningData_FullDiscoveryDoesNotReintroduceFastOnlyBackendSuite(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
-	ciUtils.AddCITagsMap(map[string]string{git.GitRepositoryURL: "github.com/DataDog/ddtest"})
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
+	environment.AddCITagsMap(map[string]string{git.GitRepositoryURL: "github.com/DataDog/ddtest"})
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -2571,8 +2571,8 @@ func TestTestPlanner_PreparePlanningData_FullDiscoveryDoesNotReintroduceFastOnly
 func TestTestPlanner_PreparePlanningData_FastDiscoveryDoesNotRunStaleBackendFilesWhenSkippingDisabled(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	mockFramework := &MockFramework{
 		FrameworkName:    "rspec",
@@ -2630,8 +2630,8 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryDoesNotRunStaleBackendFile
 func TestTestPlanner_PreparePlanningData_BackendDoesNotReintroduceFullySkippedSuite(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	skippedTest := testoptimization.Test{
 		Module:          "rspec",
@@ -2684,8 +2684,8 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotReintroduceFullySkippedSu
 func TestTestPlanner_PreparePlanningData_BackendDoesNotDuplicateDiscoveredSourceFile(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
-	ciUtils.ResetCITags()
-	t.Cleanup(ciUtils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 
 	skippedTest := testoptimization.Test{
 		Module:          "rspec",

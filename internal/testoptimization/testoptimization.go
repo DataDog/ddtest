@@ -13,9 +13,9 @@ import (
 
 	testoptimizationstate "github.com/DataDog/ddtest/civisibility"
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
-	"github.com/DataDog/ddtest/internal/utils"
 	"github.com/DataDog/ddtest/stableconfig"
 )
 
@@ -75,7 +75,7 @@ func newTestOptimizationClient(
 }
 
 func (c *TestOptimizationClient) Initialize(tags map[string]string) error {
-	utils.AddCITagsMap(tags)
+	environment.AddCITagsMap(tags)
 
 	startTime := time.Now()
 	c.ensureTestOptimizationSessionInitialized()
@@ -182,7 +182,7 @@ func (c *TestOptimizationClient) ensureTestOptimizationSessionInitialized() {
 		_ = os.Setenv(ciConstants.TestOptimizationEnabledEnvironmentVariable, "1")
 		_ = os.Setenv("DD_TRACE_SAMPLE_RATE", "1")
 
-		ciTags := utils.GetCITags()
+		ciTags := environment.GetCITags()
 		if _, ok := ciTags[git.GitRepositoryURL]; !ok {
 			slog.Debug("testoptimization: git repository URL tag was not detected")
 		}
@@ -310,7 +310,7 @@ func (c *TestOptimizationClient) ensureTestOptimizationInitialized() {
 		defer func() {
 			if len(additionalTags) > 0 {
 				slog.Debug("testoptimization: adding additional tags", "tags", additionalTags) //nolint:gocritic // Map structure logging for debugging
-				utils.AddCITagsMap(additionalTags)
+				environment.AddCITagsMap(additionalTags)
 			}
 		}()
 

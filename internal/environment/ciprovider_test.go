@@ -1,4 +1,4 @@
-package ciprovider
+package environment
 
 import (
 	"os"
@@ -6,10 +6,11 @@ import (
 )
 
 func clearCIEnvVars() {
+	ResetCITags()
 	ciEnvVars := []string{
 		"GITHUB_SHA", "GITLAB_CI", "CIRCLECI", "JENKINS_URL", "BUILDKITE",
 		"TF_BUILD", "BITBUCKET_COMMIT", "BUDDY", "TRAVIS", "BITRISE_BUILD_SLUG",
-		"CF_BUILD_ID", "APPVEYOR", "TEAMCITY_VERSION", "CODEBUILD_INITIATOR",
+		"CF_BUILD_ID", "APPVEYOR", "TEAMCITY_VERSION", "CODEBUILD_INITIATOR", "DRONE",
 	}
 
 	for _, envVar := range ciEnvVars {

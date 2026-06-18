@@ -1,4 +1,4 @@
-package ciprovider
+package environment
 
 import (
 	"encoding/json"

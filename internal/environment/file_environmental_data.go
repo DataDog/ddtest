@@ -3,7 +3,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2025 Datadog, Inc.
 
-package utils
+package environment
 
 import (
 	"encoding/json"
@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	_ "unsafe" // for go:linkname
 
 	"github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/git"
@@ -75,17 +74,15 @@ type (
 )
 
 // getEnvironmentalData reads the environmental data from the file.
-//
-//go:linkname getEnvironmentalData
 func getEnvironmentalData() *fileEnvironmentalData {
 	envDataFileName := getEnvDataFileName()
 	if _, err := os.Stat(envDataFileName); os.IsNotExist(err) {
-		slog.Debug("testoptimization: reading environmental data file not found", "filename", envDataFileName)
+		slog.Debug("civisibility: environmental data file not found", "path", envDataFileName)
 		return nil
 	}
 	file, err := os.Open(envDataFileName)
 	if err != nil {
-		slog.Error("testoptimization: error reading environmental data from %s: %v", envDataFileName, err.Error())
+		slog.Error("civisibility: error reading environmental data", "path", envDataFileName, "error", err.Error())
 		return nil
 	}
 	defer func() {
@@ -93,16 +90,14 @@ func getEnvironmentalData() *fileEnvironmentalData {
 	}()
 	var envData fileEnvironmentalData
 	if err := json.NewDecoder(file).Decode(&envData); err != nil {
-		slog.Error("testoptimization: error decoding environmental data from %s: %v", envDataFileName, err.Error())
+		slog.Error("civisibility: error decoding environmental data", "path", envDataFileName, "error", err.Error())
 		return nil
 	}
-	slog.Debug("testoptimization: loaded environmental data", "filename", envDataFileName)
+	slog.Debug("civisibility: loaded environmental data", "path", envDataFileName)
 	return &envData
 }
 
 // getEnvDataFileName returns the environmental data file name.
-//
-//go:linkname getEnvDataFileName
 func getEnvDataFileName() string {
 	envDataFileName := strings.TrimSpace(os.Getenv(constants.TestOptimizationEnvironmentDataFilePath))
 	if envDataFileName != "" {
@@ -115,19 +110,17 @@ func getEnvDataFileName() string {
 }
 
 // applyEnvironmentalDataIfRequired applies the environmental data to the given tags if required.
-//
-//go:linkname applyEnvironmentalDataIfRequired
 func applyEnvironmentalDataIfRequired(tags map[string]string) {
 	if tags == nil {
 		return
 	}
 	envData := getEnvironmentalData()
 	if envData == nil {
-		slog.Debug("testoptimization: no environmental data found")
+		slog.Debug("civisibility: no environmental data found")
 		return
 	}
 
-	slog.Debug("testoptimization: applying environmental data")
+	slog.Debug("civisibility: applying environmental data")
 
 	if envData.WorkspacePath != "" && tags[constants.CIWorkspacePath] == "" {
 		tags[constants.CIWorkspacePath] = envData.WorkspacePath

@@ -1,10 +1,9 @@
-package ciprovider
+package environment
 
 import (
 	"fmt"
 
 	"github.com/DataDog/ddtest/civisibility/constants"
-	"github.com/DataDog/ddtest/internal/utils"
 )
 
 type CIProvider interface {
@@ -23,7 +22,7 @@ func (d *DatadogCIProviderDetector) DetectCIProvider() (CIProvider, error) {
 }
 
 func DetectCIProvider() (CIProvider, error) {
-	envTags := utils.GetCITags()
+	envTags := GetCITags()
 	providerName, ok := envTags[constants.CIProviderName]
 	if !ok {
 		return nil, fmt.Errorf("no CI provider detected")

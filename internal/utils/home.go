@@ -10,41 +10,12 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 )
 
 // This code is based on: https://github.com/mitchellh/go-homedir/blob/v1.1.0/homedir.go (MIT License)
-
-// ExpandPath expands a file path that starts with '~' to the user's home directory.
-// If the path does not start with '~', it is returned unchanged.
-//
-// Parameters:
-//
-//	path - The file path to be expanded.
-//
-// Returns:
-//
-//	The expanded file path, with '~' replaced by the user's home directory, if applicable.
-func ExpandPath(path string) string {
-	if len(path) == 0 || path[0] != '~' {
-		return path
-	}
-
-	// If the second character is not '/' or '\', return the path unchanged
-	if len(path) > 1 && path[1] != '/' && path[1] != '\\' {
-		return path
-	}
-
-	homeFolder := getHomeDir()
-	if len(homeFolder) > 0 {
-		return filepath.Join(homeFolder, path[1:])
-	}
-
-	return path
-}
 
 // getHomeDir returns the home directory of the current user.
 // The method used to determine the home directory depends on the operating system.

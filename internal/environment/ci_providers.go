@@ -3,20 +3,264 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package utils
+package environment
 
 import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/git"
+	"github.com/DataDog/ddtest/internal/utils"
 )
+
+// GitHub Actions job ID resolution constants and helpers
+const (
+	// githubJobCheckRunIDEnv is the environment variable name for the numeric job ID
+	githubJobCheckRunIDEnv = "JOB_CHECK_RUN_ID"
+	// githubMaxDiagFileSize is the maximum file size to read from diagnostics files (10MB)
+	githubMaxDiagFileSize = 10 * 1024 * 1024
+)
+
+// githubActionsDiagnosticsEnabled controls whether diagnostics file scanning is enabled.
+// This can be set to false in tests to prevent scanning real _diag directories.
+var githubActionsDiagnosticsEnabled = true
+
+// githubActionsDiagDirsLinux contains the possible diagnostics directories on Linux
+var githubActionsDiagDirsLinux = []string{
+	"/home/runner/actions-runner/cached/_diag",
+	"/home/runner/actions-runner/_diag",
+}
+
+// githubActionsDiagDirsDarwin contains the possible diagnostics directories on macOS
+var githubActionsDiagDirsDarwin = []string{
+	"/Users/runner/actions-runner/cached/_diag",
+	"/Users/runner/actions-runner/_diag",
+}
+
+// githubCheckRunIDRegex is used to extract the check_run_id from Worker log files
+var githubCheckRunIDRegex = regexp.MustCompile(`"k"\s*:\s*"check_run_id"\s*,\s*"v"\s*:\s*([0-9]+)(?:\.0)?`)
+
+// diagJobData represents the JSON structure of GitHub Actions diagnostics files
+type diagJobData struct {
+	Job struct {
+		D []struct {
+			K string `json:"k"`
+			V any    `json:"v"`
+		} `json:"d"`
+	} `json:"job"`
+}
+
+// getGithubActionsJobID returns the numeric job ID for GitHub Actions.
+// It first checks the JOB_CHECK_RUN_ID environment variable, then falls back
+// to reading the job ID from GitHub Actions diagnostics files.
+// Only returns valid numeric job IDs; non-numeric values are treated as not found.
+func getGithubActionsJobID() string {
+	// Priority 1: Environment variable (only if numeric)
+	if jobID := strings.TrimSpace(os.Getenv(githubJobCheckRunIDEnv)); jobID != "" && isNumericJobID(jobID) {
+		return jobID
+	}
+
+	// Priority 2: Diagnostics files (can be disabled in tests)
+	if githubActionsDiagnosticsEnabled {
+		if jobID, ok := tryExtractJobIDFromDiag(getGithubActionsDiagDirs()); ok {
+			return jobID
+		}
+	}
+
+	return ""
+}
+
+// getGithubActionsDiagDirs returns the OS-specific diagnostics directory paths.
+func getGithubActionsDiagDirs() []string {
+	switch runtime.GOOS {
+	case "windows":
+		var candidates []string
+		// Only add paths with ProgramFiles if the env var is set (avoid relative paths)
+		//nolint:forbidigo
+		if programFiles := os.Getenv("ProgramFiles"); programFiles != "" {
+			candidates = append(candidates,
+				filepath.Join(programFiles, "actions-runner", "cached", "_diag"),
+				filepath.Join(programFiles, "actions-runner", "_diag"),
+			)
+		}
+		//nolint:forbidigo
+		if programFilesX86 := os.Getenv("ProgramFiles(x86)"); programFilesX86 != "" {
+			candidates = append(candidates,
+				filepath.Join(programFilesX86, "actions-runner", "cached", "_diag"),
+				filepath.Join(programFilesX86, "actions-runner", "_diag"),
+			)
+		}
+		// Always include hardcoded fallback paths
+		candidates = append(candidates,
+			`C:\actions-runner\cached\_diag`,
+			`C:\actions-runner\_diag`,
+		)
+		return deduplicatePaths(candidates)
+	case "darwin":
+		return githubActionsDiagDirsDarwin
+	default:
+		return githubActionsDiagDirsLinux
+	}
+}
+
+// deduplicatePaths removes empty and duplicate paths from the slice.
+func deduplicatePaths(paths []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
+}
+
+// tryExtractJobIDFromDiag attempts to extract the job ID from GitHub Actions diagnostics files.
+// It scans Worker_*.log files in the diagnostics directories, sorted by modification time (newest first).
+func tryExtractJobIDFromDiag(diagDirs []string) (string, bool) {
+	for _, diagDir := range diagDirs {
+		// Check if directory exists
+		if info, err := os.Stat(diagDir); err != nil || !info.IsDir() {
+			continue
+		}
+
+		// Find Worker_*.log files
+		files, err := filepath.Glob(filepath.Join(diagDir, "Worker_*.log"))
+		if err != nil {
+			slog.Debug("civisibility: error globbing worker logs", "dir", diagDir, "error", err.Error())
+			continue
+		}
+
+		if len(files) == 0 {
+			continue
+		}
+
+		// Sort by modification time (newest first)
+		sort.Slice(files, func(i, j int) bool {
+			iInfo, _ := os.Stat(files[i])
+			jInfo, _ := os.Stat(files[j])
+			if iInfo == nil || jInfo == nil {
+				return false
+			}
+			return iInfo.ModTime().After(jInfo.ModTime())
+		})
+
+		// Try to extract job ID from each file
+		for _, file := range files {
+			if jobID, ok := tryExtractJobIDFromFile(file); ok {
+				return jobID, true
+			}
+		}
+	}
+
+	return "", false
+}
+
+// tryExtractJobIDFromFile attempts to extract the job ID from a single Worker log file.
+// It first tries JSON parsing, then falls back to regex extraction.
+func tryExtractJobIDFromFile(path string) (string, bool) {
+	// Check file size before reading
+	info, err := os.Stat(path)
+	if err != nil {
+		slog.Debug("civisibility: error stating file", "path", path, "error", err.Error())
+		return "", false
+	}
+	if info.Size() > githubMaxDiagFileSize {
+		slog.Debug("civisibility: skipping oversized diagnostics file", "path", path, "bytes", info.Size())
+		return "", false
+	}
+
+	// Read file content
+	content, err := os.ReadFile(path)
+	if err != nil {
+		slog.Debug("civisibility: error reading file", "path", path, "error", err.Error())
+		return "", false
+	}
+
+	// Try JSON parsing first
+	if jobID, ok := tryExtractJobIDFromJSON(content); ok {
+		slog.Debug("civisibility: extracted github actions job id via JSON", "jobID", jobID, "path", path)
+		return jobID, true
+	}
+
+	// Fall back to regex extraction
+	if jobID, ok := tryExtractJobIDFromRegex(content); ok {
+		slog.Debug("civisibility: extracted github actions job id via regex", "jobID", jobID, "path", path)
+		return jobID, true
+	}
+
+	return "", false
+}
+
+// tryExtractJobIDFromJSON attempts to parse the content as JSON and extract the check_run_id.
+func tryExtractJobIDFromJSON(content []byte) (string, bool) {
+	var data diagJobData
+	if err := json.Unmarshal(content, &data); err != nil {
+		return "", false
+	}
+
+	for _, item := range data.Job.D {
+		if item.K == "check_run_id" {
+			var jobID string
+			switch v := item.V.(type) {
+			case float64:
+				// Reject non-integer floats (e.g., 12345.5)
+				if v != float64(int64(v)) {
+					continue
+				}
+				jobID = strconv.FormatFloat(v, 'f', 0, 64)
+			case string:
+				jobID = v
+			case json.Number:
+				jobID = v.String()
+			default:
+				continue
+			}
+			jobID = strings.TrimSpace(jobID)
+			if jobID != "" && isNumericJobID(jobID) {
+				return jobID, true
+			}
+		}
+	}
+
+	return "", false
+}
+
+// tryExtractJobIDFromRegex attempts to extract the check_run_id using regex.
+func tryExtractJobIDFromRegex(content []byte) (string, bool) {
+	matches := githubCheckRunIDRegex.FindSubmatch(content)
+	if len(matches) >= 2 {
+		jobID := strings.TrimSpace(string(matches[1]))
+		if jobID != "" && isNumericJobID(jobID) {
+			return jobID, true
+		}
+	}
+	return "", false
+}
+
+// isNumericJobID validates that the job ID contains only digits.
+func isNumericJobID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, c := range id {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
 
 // providerType defines a function type that returns a map of string key-value pairs.
 type providerType = func() map[string]string
@@ -37,6 +281,7 @@ var providers = map[string]providerType{
 	"BITRISE_BUILD_SLUG":  extractBitrise,
 	"CF_BUILD_ID":         extractCodefresh,
 	"CODEBUILD_INITIATOR": extractAwsCodePipeline,
+	"DRONE":               extractDrone,
 }
 
 // getEnvVarsJSON returns a JSON representation of the specified environment variables.
@@ -69,7 +314,7 @@ func getProviderTags() map[string]string {
 
 	// Expand ~
 	if tag, ok := tags[constants.CIWorkspacePath]; ok && tag != "" {
-		tags[constants.CIWorkspacePath] = ExpandPath(tag)
+		tags[constants.CIWorkspacePath] = utils.ExpandPath(tag)
 	}
 
 	// remove empty values
@@ -80,9 +325,9 @@ func getProviderTags() map[string]string {
 	}
 
 	if providerName, ok := tags[constants.CIProviderName]; ok {
-		slog.Debug("testoptimization: detected ci provider", "provider", providerName)
+		slog.Debug("civisibility: detected ci provider", "provider", providerName)
 	} else {
-		slog.Debug("testoptimization: no ci provider was detected.")
+		slog.Debug("civisibility: no ci provider was detected")
 	}
 
 	return tags
@@ -98,6 +343,9 @@ func normalizeTags(tags map[string]string) {
 	}
 	if tag, ok := tags[git.GitTag]; ok && tag != "" {
 		tags[git.GitTag] = normalizeRef(tag)
+	}
+	if tag, ok := tags[git.GitPrBaseBranch]; ok && tag != "" {
+		tags[git.GitPrBaseBranch] = normalizeRef(tag)
 	}
 	if tag, ok := tags[git.GitRepositoryURL]; ok && tag != "" {
 		tags[git.GitRepositoryURL] = git.FilterSensitiveInfo(tag)
@@ -130,6 +378,8 @@ func replaceWithUserSpecificTags(tags map[string]string) {
 	replace(git.GitCommitCommitterName, "DD_GIT_COMMIT_COMMITTER_NAME")
 	replace(git.GitCommitCommitterEmail, "DD_GIT_COMMIT_COMMITTER_EMAIL")
 	replace(git.GitCommitCommitterDate, "DD_GIT_COMMIT_COMMITTER_DATE")
+	replace(git.GitPrBaseBranch, "DD_GIT_PULL_REQUEST_BASE_BRANCH")
+	replace(git.GitPrBaseCommit, "DD_GIT_PULL_REQUEST_BASE_BRANCH_SHA")
 }
 
 // getEnvironmentVariableIfIsNotEmpty returns the environment variable value if it is not empty, otherwise returns the default value.
@@ -147,7 +397,9 @@ func normalizeRef(name string) string {
 
 	// Iterate over prefixes and remove them if present
 	for _, prefix := range prefixes {
-		name = strings.TrimPrefix(name, prefix)
+		if after, ok := strings.CutPrefix(name, prefix); ok {
+			name = after
+		}
 	}
 	return name
 }
@@ -190,6 +442,8 @@ func extractAppveyor() map[string]string {
 	tags[git.GitCommitAuthorEmail] = os.Getenv("APPVEYOR_REPO_COMMIT_AUTHOR_EMAIL")
 
 	tags[git.GitPrBaseBranch] = os.Getenv("APPVEYOR_REPO_BRANCH")
+	tags[git.GitHeadCommit] = os.Getenv("APPVEYOR_PULL_REQUEST_HEAD_COMMIT")
+	tags[git.PrNumber] = os.Getenv("APPVEYOR_PULL_REQUEST_NUMBER")
 
 	return tags
 }
@@ -218,6 +472,7 @@ func extractAzurePipelines() map[string]string {
 
 	tags[constants.CIStageName] = os.Getenv("SYSTEM_STAGEDISPLAYNAME")
 
+	tags[constants.CIJobID] = os.Getenv("SYSTEM_JOBID")
 	tags[constants.CIJobName] = os.Getenv("SYSTEM_JOBDISPLAYNAME")
 	tags[constants.CIJobURL] = jobURL
 
@@ -235,6 +490,7 @@ func extractAzurePipelines() map[string]string {
 	}
 
 	tags[git.GitPrBaseBranch] = os.Getenv("SYSTEM_PULLREQUEST_TARGETBRANCH")
+	tags[git.PrNumber] = os.Getenv("SYSTEM_PULLREQUEST_PULLREQUESTNUMBER")
 
 	return tags
 }
@@ -255,6 +511,7 @@ func extractBitrise() map[string]string {
 	tags[git.GitCommitMessage] = os.Getenv("BITRISE_GIT_MESSAGE")
 
 	tags[git.GitPrBaseBranch] = os.Getenv("BITRISEIO_GIT_BRANCH_DEST")
+	tags[git.PrNumber] = os.Getenv("BITRISE_PULL_REQUEST")
 
 	return tags
 }
@@ -276,6 +533,7 @@ func extractBitbucket() map[string]string {
 	tags[constants.CIJobURL] = url
 
 	tags[git.GitPrBaseBranch] = os.Getenv("BITBUCKET_PR_DESTINATION_BRANCH")
+	tags[git.PrNumber] = os.Getenv("BITBUCKET_PR_ID")
 
 	return tags
 }
@@ -297,6 +555,7 @@ func extractBuddy() map[string]string {
 	tags[git.GitCommitCommitterEmail] = os.Getenv("BUDDY_EXECUTION_REVISION_COMMITTER_EMAIL")
 
 	tags[git.GitPrBaseBranch] = os.Getenv("BUDDY_RUN_PR_BASE_BRANCH")
+	tags[git.PrNumber] = os.Getenv("BUDDY_RUN_PR_NO")
 
 	return tags
 }
@@ -312,6 +571,7 @@ func extractBuildkite() map[string]string {
 	tags[constants.CIPipelineName] = os.Getenv("BUILDKITE_PIPELINE_SLUG")
 	tags[constants.CIPipelineNumber] = os.Getenv("BUILDKITE_BUILD_NUMBER")
 	tags[constants.CIPipelineURL] = os.Getenv("BUILDKITE_BUILD_URL")
+	tags[constants.CIJobID] = os.Getenv("BUILDKITE_JOB_ID")
 	tags[constants.CIJobURL] = fmt.Sprintf("%s#%s", os.Getenv("BUILDKITE_BUILD_URL"), os.Getenv("BUILDKITE_JOB_ID"))
 	tags[constants.CIProviderName] = "buildkite"
 	tags[constants.CIWorkspacePath] = os.Getenv("BUILDKITE_BUILD_CHECKOUT_PATH")
@@ -347,6 +607,7 @@ func extractBuildkite() map[string]string {
 	}
 
 	tags[git.GitPrBaseBranch] = os.Getenv("BUILDKITE_PULL_REQUEST_BASE_BRANCH")
+	tags[git.PrNumber] = os.Getenv("BUILDKITE_PULL_REQUEST")
 
 	return tags
 }
@@ -365,7 +626,9 @@ func extractCircleCI() map[string]string {
 	tags[constants.CIPipelineNumber] = os.Getenv("CIRCLE_BUILD_NUM")
 	tags[constants.CIPipelineURL] = fmt.Sprintf("https://app.circleci.com/pipelines/workflows/%s", os.Getenv("CIRCLE_WORKFLOW_ID"))
 	tags[constants.CIJobName] = os.Getenv("CIRCLE_JOB")
+	tags[constants.CIJobID] = os.Getenv("CIRCLE_BUILD_NUM")
 	tags[constants.CIJobURL] = os.Getenv("CIRCLE_BUILD_URL")
+	tags[git.PrNumber] = os.Getenv("CIRCLE_PR_NUMBER")
 
 	jsonString, err := getEnvVarsJSON("CIRCLE_BUILD_NUM", "CIRCLE_WORKFLOW_ID")
 	if err == nil {
@@ -403,17 +666,34 @@ func extractGithubActions() map[string]string {
 	tags[git.GitBranch] = branch
 	tags[git.GitTag] = tag
 	tags[constants.CIWorkspacePath] = os.Getenv("GITHUB_WORKSPACE")
-	tags[constants.CIPipelineID] = pipelineID
 	tags[constants.CIPipelineNumber] = os.Getenv("GITHUB_RUN_NUMBER")
 	tags[constants.CIPipelineName] = os.Getenv("GITHUB_WORKFLOW")
-	tags[constants.CIJobURL] = fmt.Sprintf("%s/commit/%s/checks", rawRepository, commitSha)
-	tags[constants.CIJobName] = os.Getenv("GITHUB_JOB")
 
-	attempts := os.Getenv("GITHUB_RUN_ATTEMPT")
-	if attempts == "" {
-		tags[constants.CIPipelineURL] = fmt.Sprintf("%s/actions/runs/%s", rawRepository, pipelineID)
+	// Only set pipeline ID and URL if GITHUB_RUN_ID is present
+	if pipelineID != "" {
+		tags[constants.CIPipelineID] = pipelineID
+		attempts := os.Getenv("GITHUB_RUN_ATTEMPT")
+		if attempts == "" {
+			tags[constants.CIPipelineURL] = fmt.Sprintf("%s/actions/runs/%s", rawRepository, pipelineID)
+		} else {
+			tags[constants.CIPipelineURL] = fmt.Sprintf("%s/actions/runs/%s/attempts/%s", rawRepository, pipelineID, attempts)
+		}
+	}
+
+	// Resolve job ID and URL
+	jobName := os.Getenv("GITHUB_JOB")
+	numericJobID := getGithubActionsJobID()
+
+	tags[constants.CIJobName] = jobName
+
+	if numericJobID != "" && pipelineID != "" {
+		tags[constants.CIJobID] = numericJobID
+		tags[constants.CIJobURL] = fmt.Sprintf("%s/actions/runs/%s/job/%s", rawRepository, pipelineID, numericJobID)
+		slog.Debug("civisibility: github actions job url with numeric job id", "url", tags[constants.CIJobURL])
 	} else {
-		tags[constants.CIPipelineURL] = fmt.Sprintf("%s/actions/runs/%s/attempts/%s", rawRepository, pipelineID, attempts)
+		tags[constants.CIJobID] = jobName
+		tags[constants.CIJobURL] = fmt.Sprintf("%s/commit/%s/checks", rawRepository, commitSha)
+		slog.Debug("civisibility: github actions job url fallback", "url", tags[constants.CIJobURL])
 	}
 
 	jsonString, err := getEnvVarsJSON("GITHUB_SERVER_URL", "GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")
@@ -430,6 +710,7 @@ func extractGithubActions() map[string]string {
 			}()
 
 			var eventJSON struct {
+				Number      int `json:"number"`
 				PullRequest struct {
 					Base struct {
 						Sha string `json:"sha"`
@@ -444,8 +725,9 @@ func extractGithubActions() map[string]string {
 			eventDecoder := json.NewDecoder(eventFile)
 			if eventDecoder.Decode(&eventJSON) == nil {
 				tags[git.GitHeadCommit] = eventJSON.PullRequest.Head.Sha
-				tags[git.GitPrBaseCommit] = eventJSON.PullRequest.Base.Sha
+				tags[git.GitPrBaseHeadCommit] = eventJSON.PullRequest.Base.Sha
 				tags[git.GitPrBaseBranch] = eventJSON.PullRequest.Base.Ref
+				tags[git.PrNumber] = fmt.Sprintf("%d", eventJSON.Number)
 			}
 		}
 	}
@@ -474,6 +756,7 @@ func extractGitlab() map[string]string {
 	tags[constants.CIPipelineNumber] = os.Getenv("CI_PIPELINE_IID")
 	tags[constants.CIPipelineURL] = url
 	tags[constants.CIJobURL] = os.Getenv("CI_JOB_URL")
+	tags[constants.CIJobID] = os.Getenv("CI_JOB_ID")
 	tags[constants.CIJobName] = os.Getenv("CI_JOB_NAME")
 	tags[constants.CIStageName] = os.Getenv("CI_JOB_STAGE")
 	tags[git.GitCommitMessage] = os.Getenv("CI_COMMIT_MESSAGE")
@@ -494,8 +777,10 @@ func extractGitlab() map[string]string {
 	}
 
 	tags[git.GitHeadCommit] = os.Getenv("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA")
-	tags[git.GitPrBaseCommit] = os.Getenv("CI_MERGE_REQUEST_TARGET_BRANCH_SHA")
+	tags[git.GitPrBaseHeadCommit] = os.Getenv("CI_MERGE_REQUEST_TARGET_BRANCH_SHA")
+	tags[git.GitPrBaseCommit] = os.Getenv("CI_MERGE_REQUEST_DIFF_BASE_SHA")
 	tags[git.GitPrBaseBranch] = os.Getenv("CI_MERGE_REQUEST_TARGET_BRANCH_NAME")
+	tags[git.PrNumber] = os.Getenv("CI_MERGE_REQUEST_IID")
 
 	return tags
 }
@@ -531,8 +816,10 @@ func extractJenkins() map[string]string {
 	tags[constants.CIPipelineName] = name
 	tags[constants.CIPipelineURL] = os.Getenv("BUILD_URL")
 	tags[constants.CINodeName] = os.Getenv("NODE_NAME")
+	tags[git.PrNumber] = os.Getenv("CHANGE_ID")
+	tags[git.GitPrBaseBranch] = os.Getenv("CHANGE_TARGET")
 
-	jsonString, err := getEnvVarsJSON("DD_CUSTOM_TRACE_ID")
+	jsonString, err := getEnvVarsJSON("DD_CUSTOM_TRACE_ID", "DD_CUSTOM_PARENT_ID")
 	if err == nil {
 		tags[constants.CIEnvVars] = string(jsonString)
 	}
@@ -555,6 +842,9 @@ func extractTeamcity() map[string]string {
 	tags[constants.CIProviderName] = "teamcity"
 	tags[constants.CIJobURL] = os.Getenv("BUILD_URL")
 	tags[constants.CIJobName] = os.Getenv("TEAMCITY_BUILDCONF_NAME")
+
+	tags[git.PrNumber] = os.Getenv("TEAMCITY_PULLREQUEST_NUMBER")
+	tags[git.GitPrBaseBranch] = os.Getenv("TEAMCITY_PULLREQUEST_TARGET_BRANCH")
 	return tags
 }
 
@@ -583,6 +873,7 @@ func extractCodefresh() map[string]string {
 	tags[refKey] = normalizeRef(cfBranch)
 
 	tags[git.GitPrBaseBranch] = os.Getenv("CF_PULL_REQUEST_TARGET")
+	tags[git.PrNumber] = os.Getenv("CF_PULL_REQUEST_NUMBER")
 
 	return tags
 }
@@ -608,7 +899,10 @@ func extractTravis() map[string]string {
 	tags[constants.CIJobURL] = os.Getenv("TRAVIS_JOB_WEB_URL")
 	tags[git.GitCommitMessage] = os.Getenv("TRAVIS_COMMIT_MESSAGE")
 
-	tags[git.GitPrBaseBranch] = os.Getenv("TRAVIS_PULL_REQUEST_BRANCH")
+	tags[git.GitPrBaseBranch] = os.Getenv("TRAVIS_BRANCH")
+	tags[git.GitHeadCommit] = os.Getenv("TRAVIS_PULL_REQUEST_SHA")
+	tags[git.PrNumber] = os.Getenv("TRAVIS_PULL_REQUEST")
+
 	return tags
 }
 
@@ -623,11 +917,34 @@ func extractAwsCodePipeline() map[string]string {
 
 	tags[constants.CIProviderName] = "awscodepipeline"
 	tags[constants.CIPipelineID] = os.Getenv("DD_PIPELINE_EXECUTION_ID")
+	tags[constants.CIJobID] = os.Getenv("DD_ACTION_EXECUTION_ID")
 
 	jsonString, err := getEnvVarsJSON("CODEBUILD_BUILD_ARN", "DD_ACTION_EXECUTION_ID", "DD_PIPELINE_EXECUTION_ID")
 	if err == nil {
 		tags[constants.CIEnvVars] = string(jsonString)
 	}
+
+	return tags
+}
+
+// extractDrone extracts CI information specific to Drone CI.
+func extractDrone() map[string]string {
+	tags := map[string]string{}
+	tags[constants.CIProviderName] = "drone"
+	tags[git.GitBranch] = os.Getenv("DRONE_BRANCH")
+	tags[git.GitCommitSHA] = os.Getenv("DRONE_COMMIT_SHA")
+	tags[git.GitRepositoryURL] = os.Getenv("DRONE_GIT_HTTP_URL")
+	tags[git.GitTag] = os.Getenv("DRONE_TAG")
+	tags[constants.CIPipelineNumber] = os.Getenv("DRONE_BUILD_NUMBER")
+	tags[constants.CIPipelineURL] = os.Getenv("DRONE_BUILD_LINK")
+	tags[git.GitCommitMessage] = os.Getenv("DRONE_COMMIT_MESSAGE")
+	tags[git.GitCommitAuthorName] = os.Getenv("DRONE_COMMIT_AUTHOR_NAME")
+	tags[git.GitCommitAuthorEmail] = os.Getenv("DRONE_COMMIT_AUTHOR_EMAIL")
+	tags[constants.CIWorkspacePath] = os.Getenv("DRONE_WORKSPACE")
+	tags[constants.CIJobName] = os.Getenv("DRONE_STEP_NAME")
+	tags[constants.CIStageName] = os.Getenv("DRONE_STAGE_NAME")
+	tags[git.PrNumber] = os.Getenv("DRONE_PULL_REQUEST")
+	tags[git.GitPrBaseBranch] = os.Getenv("DRONE_TARGET_BRANCH")
 
 	return tags
 }
