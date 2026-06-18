@@ -359,7 +359,7 @@ func (m *MockTestOptimizationClient) GetDisabledTests() map[string]bool {
 	for module, suites := range m.TestManagementTests.Modules {
 		for suite, tests := range suites.Suites {
 			for name, test := range tests.Tests {
-				if !test.Properties.Disabled {
+				if !test.Properties.Disabled || test.Properties.AttemptToFix {
 					continue
 				}
 				disabledTest := testoptimization.Test{
@@ -1409,6 +1409,7 @@ func TestTestPlanner_PreparePlanningData_DisabledTestManagementTestsAreSkipped(t
 			{Module: "rspec", Suite: "Suite1", Name: "test2", Parameters: "", SuiteSourceFile: "spec/file1_spec.rb"},
 			{Module: "rspec", Suite: "Suite2", Name: "test3", Parameters: `{"arguments":{},"metadata":{"scoped_id":"1:2"}}`, SuiteSourceFile: "spec/file2_spec.rb"},
 			{Module: "rspec", Suite: "Suite3", Name: "test4", Parameters: "", SuiteSourceFile: "spec/file3_spec.rb"},
+			{Module: "rspec", Suite: "Suite4", Name: "test5", Parameters: "", SuiteSourceFile: "spec/file4_spec.rb"},
 		},
 	}
 	mockPlatform := &MockPlatform{
@@ -1433,6 +1434,11 @@ func TestTestPlanner_PreparePlanningData_DisabledTestManagementTestsAreSkipped(t
 						"Suite3": {
 							Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
 								"test4": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Quarantined: true}},
+							},
+						},
+						"Suite4": {
+							Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
+								"test5": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true, AttemptToFix: true}},
 							},
 						},
 					},
@@ -1464,6 +1470,15 @@ func TestTestPlanner_PreparePlanningData_DisabledTestManagementTestsAreSkipped(t
 	suite3 := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite3"}]
 	if suite3.NumTests != 1 || suite3.NumTestsSkipped != 0 {
 		t.Errorf("Expected Suite3 quarantined test to remain runnable, got %+v", suite3)
+	}
+
+	suite4 := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite4"}]
+	if suite4.NumTests != 1 || suite4.NumTestsSkipped != 0 {
+		t.Errorf("Expected Suite4 attempt-to-fix test to remain runnable, got %+v", suite4)
+	}
+
+	if _, ok := runner.testFileWeights["spec/file4_spec.rb"]; !ok {
+		t.Errorf("Expected attempt-to-fix file to be scheduled, got %v", runner.testFileWeights)
 	}
 
 	if runner.planReport.SkippableTestsCount != 2 {

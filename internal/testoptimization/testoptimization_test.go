@@ -492,8 +492,9 @@ func TestTestOptimizationClient_GetDisabledTests(t *testing.T) {
 					Suites: map[string]api.TestManagementTestsResponseDataTests{
 						"suite-a": {
 							Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
-								"disabled":    {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
-								"quarantined": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Quarantined: true}},
+								"disabled":                {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+								"disabled attempt-to-fix": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true, AttemptToFix: true}},
+								"quarantined":             {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Quarantined: true}},
 							},
 						},
 					},
