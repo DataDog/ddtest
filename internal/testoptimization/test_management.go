@@ -11,7 +11,7 @@ func DisabledTestsFromTestManagementData(testManagementTests *api.TestManagement
 	for module, suites := range testManagementTests.Modules {
 		for suite, tests := range suites.Suites {
 			for name, test := range tests.Tests {
-				if !test.Properties.Disabled {
+				if !test.Properties.Disabled || test.Properties.AttemptToFix {
 					continue
 				}
 				disabledTest := Test{
