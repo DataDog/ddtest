@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -16,7 +17,6 @@ import (
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
-	"github.com/DataDog/ddtest/stableconfig"
 )
 
 const autoDetectServiceName = ""
@@ -173,7 +173,7 @@ func (c *TestOptimizationClient) ensureTestOptimizationSessionInitialized() {
 		defer testoptimizationstate.SetState(testoptimizationstate.StateInitialized)
 
 		slog.SetLogLoggerLevel(slog.LevelInfo)
-		if enabled, _ := stableconfig.Bool("DD_TRACE_DEBUG", false); enabled {
+		if traceDebugEnabled() {
 			slog.SetLogLoggerLevel(slog.LevelDebug)
 		}
 
@@ -191,6 +191,11 @@ func (c *TestOptimizationClient) ensureTestOptimizationSessionInitialized() {
 			c.registerSignalHandler()
 		}
 	})
+}
+
+func traceDebugEnabled() bool {
+	enabled, _ := strconv.ParseBool(os.Getenv("DD_TRACE_DEBUG"))
+	return enabled
 }
 
 func (c *TestOptimizationClient) ensureSettingsInitialization(serviceName string) *api.SettingsResponseData {

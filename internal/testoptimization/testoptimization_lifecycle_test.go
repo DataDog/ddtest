@@ -219,6 +219,44 @@ func TestEnsureTestOptimizationSessionInitializationBranches(t *testing.T) {
 	}
 }
 
+func TestTraceDebugEnabled(t *testing.T) {
+	originalValue, originallySet := os.LookupEnv("DD_TRACE_DEBUG")
+	t.Cleanup(func() {
+		if originallySet {
+			_ = os.Setenv("DD_TRACE_DEBUG", originalValue)
+		} else {
+			_ = os.Unsetenv("DD_TRACE_DEBUG")
+		}
+	})
+
+	tests := []struct {
+		name     string
+		value    string
+		set      bool
+		expected bool
+	}{
+		{name: "unset", expected: false},
+		{name: "true", value: "true", set: true, expected: true},
+		{name: "one", value: "1", set: true, expected: true},
+		{name: "false", value: "false", set: true, expected: false},
+		{name: "invalid", value: "definitely", set: true, expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.set {
+				_ = os.Setenv("DD_TRACE_DEBUG", tt.value)
+			} else {
+				_ = os.Unsetenv("DD_TRACE_DEBUG")
+			}
+
+			if got := traceDebugEnabled(); got != tt.expected {
+				t.Fatalf("traceDebugEnabled() = %t, want %t", got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestEnsureTestOptimizationInitializedHandlesNilSettingsAndEndpointErrors(t *testing.T) {
 	client := newTestOptimizationClient(&MockAPIClient{}, nil, func() (int64, error) { return 0, nil }, false)
 	client.ensureTestOptimizationInitialized()
