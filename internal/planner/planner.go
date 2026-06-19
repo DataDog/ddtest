@@ -13,9 +13,9 @@ import (
 	"time"
 
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
-	"github.com/DataDog/ddtest/internal/ciprovider"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/discovery"
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/runmetadata"
@@ -80,7 +80,7 @@ type TestPlanner struct {
 	planInfo                PlanInfo
 	platformDetector        platform.PlatformDetector
 	optimizationClient      testOptimizationClient
-	ciProviderDetector      ciprovider.CIProviderDetector
+	ciProviderDetector      environment.CIProviderDetector
 	reportWriter            io.Writer
 }
 
@@ -147,14 +147,14 @@ func New() *TestPlanner {
 	planner := newTestPlannerWithDefaults()
 	planner.platformDetector = platform.NewPlatformDetector()
 	planner.optimizationClient = testoptimization.NewTestOptimizationClient()
-	planner.ciProviderDetector = ciprovider.NewCIProviderDetector()
+	planner.ciProviderDetector = environment.NewCIProviderDetector()
 	return planner
 }
 
 func NewWithDependencies(
 	platformDetector platform.PlatformDetector,
 	optimizationClient testOptimizationClient,
-	ciProviderDetector ciprovider.CIProviderDetector,
+	ciProviderDetector environment.CIProviderDetector,
 ) *TestPlanner {
 	planner := newTestPlannerWithDefaults()
 	planner.platformDetector = platformDetector
@@ -213,14 +213,14 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 	}
 
 	if ciProvider, err := tp.ciProviderDetector.DetectCIProvider(); err == nil {
-		slog.Info("CI provider detected, configuring with parallel runners",
+		slog.Debug("CI provider detected, configuring with parallel runners",
 			"provider", ciProvider.Name(), "parallelRunners", parallelRunners)
 
 		if err := ciProvider.Configure(parallelRunners); err != nil {
 			slog.Warn("Failed to configure CI provider", "provider", ciProvider.Name(), "error", err)
 		}
 	} else {
-		slog.Info("No CI provider detected or CI provider is not supported, running tests without CI integration", "error", err)
+		slog.Info("No CI provider detected, running tests without CI integration", "error", err)
 	}
 
 	if err := tp.CreateTestSplits(tp.testFileWeights, parallelRunners, constants.TestFilesOutputPath); err != nil {
@@ -272,7 +272,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		return fmt.Errorf("failed to detect framework: %w", err)
 	}
 	slog.Info("Framework detected", "framework", framework.Name())
-	tp.runInfo = runmetadata.New(utils.GetCITags())
+	tp.runInfo = runmetadata.New(environment.GetCITags())
 	tp.planInfo = NewPlanInfo(tags, detectedPlatform.Name(), framework.Name())
 
 	resolvedTestFiles, err := discovery.ResolveTestFiles(framework.TestPattern(), settings.GetTestsExcludePattern())

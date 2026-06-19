@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/git"
-	"github.com/DataDog/ddtest/internal/utils"
 )
 
 type failingMsgpUnmarshaler struct{}
@@ -337,9 +337,9 @@ func TestCreateMultipartFormDataWithoutFileName(t *testing.T) {
 }
 
 func TestTransportConstructorAgentlessAndURLBranches(t *testing.T) {
-	utils.ResetCITags()
-	t.Cleanup(utils.ResetCITags)
-	utils.AddCITagsMap(map[string]string{
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
+	environment.AddCITagsMap(map[string]string{
 		git.GitRepositoryURL:     "https://github.com/DataDog/ddtest.git/",
 		git.GitCommitSHA:         "sha",
 		git.GitBranch:            "",

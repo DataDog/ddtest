@@ -9,10 +9,9 @@ import (
 	"testing"
 	"time"
 
-	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
-	"github.com/DataDog/ddtest/internal/utils"
 )
 
 // TestMain runs once for the entire package and handles global setup/teardown
@@ -133,8 +132,8 @@ func cleanPlanDirectory(t *testing.T) {
 
 func newTestOptimizationClientForTest(t *testing.T, apiTransport api.Transport) *TestOptimizationClient {
 	t.Helper()
-	utils.ResetCITags()
-	t.Cleanup(utils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 	return NewTestOptimizationClientWithDependencies(apiTransport)
 }
 
@@ -167,7 +166,6 @@ func withoutCIProviderEnvironment(t *testing.T) {
 		"DD_GIT_COMMIT_COMMITTER_NAME",
 		"DD_GIT_COMMIT_COMMITTER_EMAIL",
 		"DD_GIT_COMMIT_COMMITTER_DATE",
-		ciConstants.TestOptimizationEnvironmentDataFilePath,
 	}
 
 	originalValues := make(map[string]string, len(envKeys))
@@ -181,7 +179,7 @@ func withoutCIProviderEnvironment(t *testing.T) {
 			t.Fatalf("failed to unset %s: %v", key, err)
 		}
 	}
-	utils.ResetCITags()
+	environment.ResetCITags()
 
 	t.Cleanup(func() {
 		for _, key := range envKeys {
@@ -191,7 +189,7 @@ func withoutCIProviderEnvironment(t *testing.T) {
 				_ = os.Unsetenv(key)
 			}
 		}
-		utils.ResetCITags()
+		environment.ResetCITags()
 	})
 }
 
@@ -281,7 +279,7 @@ func TestTestOptimizationClient_Initialize(t *testing.T) {
 		t.Errorf("Initialize() should fetch settings once, got %d calls", mockAPIClient.SettingsCalls)
 	}
 
-	ciTags := utils.GetCITags()
+	ciTags := environment.GetCITags()
 	for key, expectedValue := range tags {
 		if actualValue, exists := ciTags[key]; !exists {
 			t.Errorf("Expected tag %s to be added", key)

@@ -3,7 +3,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package utils
+package environment
 
 import (
 	"fmt"
@@ -21,12 +21,21 @@ import (
 	"github.com/DataDog/ddtest/osinfo"
 )
 
+type (
+	localCommitData = git.LocalCommitData
+	localGitData    = git.LocalGitData
+)
+
 var (
 	// ciTags holds the CI/CD environment variable information.
 	currentCiTags  map[string]string // currentCiTags holds the CI/CD tags after originalCiTags + addedTags
 	originalCiTags map[string]string // originalCiTags holds the original CI/CD tags after all the CMDs
 	addedTags      map[string]string // addedTags holds the tags added by the user
 	ciTagsMutex    sync.Mutex
+
+	getProviderTagsFunc = getProviderTags
+	getLocalGitDataFunc = git.GetLocalGitData
+	fetchCommitDataFunc = git.FetchCommitData
 )
 
 // GetCITags retrieves and caches the CI/CD tags from environment variables.
@@ -52,9 +61,7 @@ func GetCITags() map[string]string {
 
 	// Create a new map with the added tags
 	newTags := maps.Clone(originalCiTags)
-	for k, v := range addedTags {
-		newTags[k] = v
-	}
+	maps.Copy(newTags, addedTags)
 
 	// Update the current tags
 	currentCiTags = newTags
@@ -74,9 +81,7 @@ func AddCITagsMap(tags map[string]string) {
 	if addedTags == nil {
 		addedTags = make(map[string]string)
 	}
-	for k, v := range tags {
-		addedTags[k] = v
-	}
+	maps.Copy(addedTags, tags)
 
 	// Reset the current tags
 	currentCiTags = nil
@@ -99,7 +104,7 @@ func ResetCITags() {
 //
 //	A map[string]string containing the extracted CI/CD tags.
 func createCITagsMap() map[string]string {
-	localTags := getProviderTags()
+	localTags := getProviderTagsFunc()
 
 	// Populate runtime values
 	localTags[constants.OSPlatform] = runtime.GOOS
@@ -135,7 +140,7 @@ func createCITagsMap() map[string]string {
 	} else {
 		localTags[constants.TestSessionName] = cmd
 	}
-	slog.Debug("testoptimization: test session name", "sessionName", localTags[constants.TestSessionName])
+	slog.Debug("testoptimization: test session name", "testSessionName", localTags[constants.TestSessionName])
 
 	// Check if the user provided the test service
 	if ddService := os.Getenv("DD_SERVICE"); ddService != "" {
@@ -145,7 +150,7 @@ func createCITagsMap() map[string]string {
 	}
 
 	// Populate missing git data
-	gitData, _ := git.GetLocalGitData()
+	gitData, _ := getLocalGitDataFunc()
 
 	// Populate Git metadata from the local Git repository if not already present in localTags
 	if _, ok := localTags[constants.CIWorkspacePath]; !ok {
@@ -188,8 +193,8 @@ func createCITagsMap() map[string]string {
 
 	// If the head commit SHA is available, populate additional Git head metadata
 	if headCommitSha, ok := localTags[git.GitHeadCommit]; ok {
-		if headCommitData, err := git.FetchCommitData(headCommitSha); err != nil {
-			slog.Warn("testoptimization: failed to fetch head commit data for", "commitSha", headCommitSha, "error", err.Error())
+		if headCommitData, err := fetchCommitDataFunc(headCommitSha); err != nil {
+			slog.Warn("testoptimization: failed to fetch head commit data", "headCommitSha", headCommitSha, "error", err.Error())
 		} else if headCommitSha == headCommitData.CommitSha {
 			localTags[git.GitHeadAuthorDate] = headCommitData.AuthorDate.String()
 			localTags[git.GitHeadAuthorName] = headCommitData.AuthorName
@@ -199,14 +204,11 @@ func createCITagsMap() map[string]string {
 			localTags[git.GitHeadCommitterEmail] = headCommitData.CommitterEmail
 			localTags[git.GitHeadMessage] = headCommitData.CommitMessage
 		} else {
-			slog.Warn("testoptimization: head commit SHA does not match the fetched commit SHA", "commitSha", headCommitSha, "fetchedCommitSha", headCommitData.CommitSha)
+			slog.Warn("testoptimization: head commit SHA does not match fetched commit SHA", "headCommitSha", headCommitSha, "fetchedCommitSha", headCommitData.CommitSha)
 		}
 	}
 
-	// Apply environmental data if is available
-	applyEnvironmentalDataIfRequired(localTags)
-
-	slog.Debug("testoptimization: workspace directory", "workspacePath", localTags[constants.CIWorkspacePath])
-	slog.Debug("testoptimization: common tags created", "count", len(localTags))
+	slog.Debug("testoptimization: workspace directory", "path", localTags[constants.CIWorkspacePath])
+	slog.Debug("testoptimization: common tags created", "items", len(localTags))
 	return localTags
 }

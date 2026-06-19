@@ -15,10 +15,10 @@ import (
 	testoptimizationstate "github.com/DataDog/ddtest/civisibility"
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/git/gittest"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
-	"github.com/DataDog/ddtest/internal/utils"
 )
 
 type settingsSequenceTransport struct {
@@ -91,7 +91,7 @@ func TestTestOptimizationClientFeatureGetters(t *testing.T) {
 			mockTransport.KnownTestsCalls, mockTransport.SkippableTestsCalls, mockTransport.TestManagementTestsCalls)
 	}
 
-	ciTags := utils.GetCITags()
+	ciTags := environment.GetCITags()
 	if ciTags[ciConstants.ItrCorrelationIDTag] != "correlation-id" {
 		t.Fatalf("expected correlation id tag, got %#v", ciTags)
 	}
@@ -201,8 +201,8 @@ func TestEnsureTestOptimizationSessionInitializationBranches(t *testing.T) {
 	t.Setenv("DD_TRACE_DEBUG", "true")
 	t.Setenv(ciConstants.TestOptimizationEnabledEnvironmentVariable, "")
 	t.Setenv("DD_TRACE_SAMPLE_RATE", "")
-	utils.ResetCITags()
-	t.Cleanup(utils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 	t.Cleanup(func() {
 		signal.Reset(syscall.SIGINT, syscall.SIGTERM)
 		testoptimizationstate.SetState(testoptimizationstate.StateExited)
@@ -260,7 +260,7 @@ func TestInitializeAddsGitMetadataFromRealRepository(t *testing.T) {
 		t.Fatalf("Initialize() returned error: %v", err)
 	}
 
-	ciTags := utils.GetCITags()
+	ciTags := environment.GetCITags()
 	if ciTags[git.GitRepositoryURL] != "https://example.com/org/repo.git" {
 		t.Fatalf("repository URL tag = %q", ciTags[git.GitRepositoryURL])
 	}

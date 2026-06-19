@@ -84,8 +84,14 @@ const (
 	// GitPrBaseCommit indicates the GIT PR base commit hash.
 	GitPrBaseCommit = "git.pull_request.base_branch_sha"
 
+	// GitPrBaseHeadCommit indicates the GIT PR base branch head commit hash.
+	GitPrBaseHeadCommit = "git.pull_request.base_branch_head_sha"
+
 	// GitPrBaseBranch indicates the GIT PR base branch name.
 	GitPrBaseBranch = "git.pull_request.base_branch"
+
+	// PrNumber indicates the pull request number.
+	PrNumber = "pr.number"
 )
 
 // LocalCommitData holds information about a single commit in the local Git repository.
