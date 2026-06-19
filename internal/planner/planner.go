@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"time"
 
-	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/environment"
@@ -54,8 +53,8 @@ func NewPlanInfo(tags map[string]string, platformName, frameworkName string) Pla
 	return PlanInfo{
 		Platform:    platformName,
 		Framework:   frameworkName,
-		OSTags:      selectTags(tags, ciConstants.OSPlatform, ciConstants.OSArchitecture, ciConstants.OSVersion),
-		RuntimeTags: selectTags(tags, ciConstants.RuntimeName, ciConstants.RuntimeVersion),
+		OSTags:      selectTags(tags, constants.OSPlatform, constants.OSArchitecture, constants.OSVersion),
+		RuntimeTags: selectTags(tags, constants.RuntimeName, constants.RuntimeVersion),
 	}
 }
 
@@ -84,7 +83,9 @@ type TestPlanner struct {
 	reportWriter            io.Writer
 }
 
-const DefaultTestFileWeight = int(time.Second / time.Millisecond)
+const (
+	slowestTestSuitesReportLimit = 10
+)
 
 type testSuiteKey struct {
 	Module string `json:"module"`
@@ -636,7 +637,7 @@ func (tp *TestPlanner) estimateTestFileWeight(testFile string) (testFileWeightEs
 	suiteKeys := tp.suitesBySourceFile[testFile]
 	if len(suiteKeys) == 0 {
 		return testFileWeightEstimate{
-			weight: DefaultTestFileWeight,
+			weight: constants.DefaultTestFileWeight,
 			source: testFileDurationSourceDefault,
 		}, true
 	}
@@ -661,7 +662,7 @@ func (tp *TestPlanner) estimateTestFileWeight(testFile string) (testFileWeightEs
 	}
 	if duration <= 0 {
 		return testFileWeightEstimate{
-			weight: DefaultTestFileWeight,
+			weight: constants.DefaultTestFileWeight,
 			source: source,
 		}, true
 	}

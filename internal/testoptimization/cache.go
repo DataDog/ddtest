@@ -7,11 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	appConstants "github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/constants"
 )
-
-// TestOptimizationPlanCacheFile keeps the historical filename used for plan/run handoff data.
-const TestOptimizationPlanCacheFile = "test_suite_durations.json"
 
 const (
 	httpSettingsCacheFile       = "settings.json"
@@ -29,11 +26,11 @@ func NewCacheManager() *CacheManager {
 }
 
 func (cm *CacheManager) createHTTPCacheDirectory() error {
-	return os.MkdirAll(appConstants.HTTPCacheDir, 0755)
+	return os.MkdirAll(constants.HTTPCacheDir, 0755)
 }
 
 func (cm *CacheManager) createRunnerCacheDirectory() error {
-	return os.MkdirAll(appConstants.RunnerCacheDir, 0755)
+	return os.MkdirAll(constants.RunnerCacheDir, 0755)
 }
 
 // writeJSONToFile writes data as JSON to the specified file path
@@ -84,7 +81,7 @@ func (cm *CacheManager) storeHTTPResponse(data json.RawMessage, fileName string)
 		return fmt.Errorf("failed to create HTTP cache directory: %w", err)
 	}
 
-	path := filepath.Join(appConstants.HTTPCacheDir, fileName)
+	path := filepath.Join(constants.HTTPCacheDir, fileName)
 	if err := cm.writeJSONBytesToFile(data, path); err != nil {
 		slog.Error("Failed to write backend response to file", "error", err, "path", path)
 		return err
@@ -116,7 +113,7 @@ func (cm *CacheManager) StoreTestOptimizationPlanCache(cache any) error {
 		return fmt.Errorf("failed to create runner cache directory: %w", err)
 	}
 
-	runnerPath := filepath.Join(appConstants.RunnerCacheDir, TestOptimizationPlanCacheFile)
+	runnerPath := filepath.Join(constants.RunnerCacheDir, constants.TestOptimizationPlanCacheFile)
 	if err := cm.writeJSONToFile(cache, runnerPath); err != nil {
 		slog.Error("Failed to write test optimization plan to file", "error", err, "path", runnerPath)
 		return err
@@ -128,7 +125,7 @@ func (cm *CacheManager) StoreTestOptimizationPlanCache(cache any) error {
 
 // ReadTestOptimizationPlanCache reads ddtest-private plan data from the runner cache.
 func (cm *CacheManager) ReadTestOptimizationPlanCache(cache any) error {
-	runnerPath := filepath.Join(appConstants.RunnerCacheDir, TestOptimizationPlanCacheFile)
+	runnerPath := filepath.Join(constants.RunnerCacheDir, constants.TestOptimizationPlanCacheFile)
 	if err := cm.readJSONFromFile(runnerPath, cache); err != nil {
 		return err
 	}

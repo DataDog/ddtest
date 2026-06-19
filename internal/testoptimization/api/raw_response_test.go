@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 func newRawResponseTestClient(server *httptest.Server) *transport {
@@ -44,7 +46,7 @@ func newRawResponseTestServer(t *testing.T, responses map[string]string) *httpte
 			t.Fatalf("unexpected request path %s", path)
 		}
 
-		w.Header().Set(HeaderContentType, ContentTypeJSON)
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 		_, _ = w.Write([]byte(responseBody))
 	}))
 }
@@ -207,7 +209,7 @@ func TestClientSettingsRawResponseUsesLatestResponse(t *testing.T) {
 		if path != settingsURLPath {
 			t.Fatalf("unexpected request path %s", path)
 		}
-		w.Header().Set(HeaderContentType, ContentTypeJSON)
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 		_, _ = w.Write([]byte(settingsResponses[requestCount]))
 		requestCount++
 	}))

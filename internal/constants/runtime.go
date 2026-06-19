@@ -6,11 +6,18 @@
 package constants
 
 const (
+	// OSPlatform indicates the operating system family.
+	OSPlatform = "os.platform"
+
+	// OSVersion indicates the version of the operating system.
+	OSVersion = "os.version"
+
+	// OSArchitecture indicates the architecture this SDK is built for.
+	OSArchitecture = "os.architecture"
+
 	// RuntimeName indicates the name of the runtime compiler.
-	// This constant is used to tag traces with the name of the runtime compiler being used (e.g., Go, JVM).
 	RuntimeName = "runtime.name"
 
 	// RuntimeVersion indicates the version of the runtime compiler.
-	// This constant is used to tag traces with the specific version of the runtime compiler being used.
 	RuntimeVersion = "runtime.version"
 )

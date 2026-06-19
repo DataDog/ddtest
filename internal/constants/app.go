@@ -19,14 +19,10 @@ var ParallelRunnersOutputPath = filepath.Join(RunnerDirectory, "parallel-runners
 var TestsSplitDir = filepath.Join(RunnerDirectory, "tests-split")
 var RunnerCacheDir = filepath.Join(RunnerDirectory, "cache")
 
+const TestOptimizationPlanCacheFile = "test_suite_durations.json"
+
 // Library-facing backend cache paths.
 var HTTPCacheDir = filepath.Join(PlanDirectory, "cache", "http")
 
 // Platform specific output file paths
 var RubyEnvOutputPath = filepath.Join(PlanDirectory, "ruby_env.json")
-
-// Executor constants
-const (
-	NodeIndexPlaceholder   = "{{nodeIndex}}"
-	WorkerIndexPlaceholder = "{{workerIndex}}"
-)

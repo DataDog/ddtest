@@ -8,8 +8,7 @@ package environment
 import (
 	"testing"
 
-	"github.com/DataDog/ddtest/civisibility/constants"
-	"github.com/DataDog/ddtest/internal/git"
+	"github.com/DataDog/ddtest/internal/constants"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -62,8 +61,8 @@ func TestGetCITagsUsesGitEnrichment(t *testing.T) {
 
 	getProviderTagsFunc = func() map[string]string {
 		return map[string]string{
-			constants.CIJobName: "job-name",
-			git.GitHeadCommit:   "head-sha",
+			constants.CIJobName:     "job-name",
+			constants.GitHeadCommit: "head-sha",
 		}
 	}
 	getLocalGitDataFunc = func() (localGitData, error) {
@@ -91,9 +90,9 @@ func TestGetCITagsUsesGitEnrichment(t *testing.T) {
 	assert.Equal(t, 1, getLocalGitDataCalls)
 	assert.Equal(t, 1, fetchCommitDataCalls)
 	assert.Equal(t, "/tmp/workspace", tags[constants.CIWorkspacePath])
-	assert.Equal(t, "https://example.com/repo.git", tags[git.GitRepositoryURL])
-	assert.Equal(t, "commit-sha", tags[git.GitCommitSHA])
-	assert.Equal(t, "head-message", tags[git.GitHeadMessage])
+	assert.Equal(t, "https://example.com/repo.git", tags[constants.GitRepositoryURL])
+	assert.Equal(t, "commit-sha", tags[constants.GitCommitSHA])
+	assert.Equal(t, "head-message", tags[constants.GitHeadMessage])
 }
 
 func TestGetCITagsDoesNotAddProviderWhenProviderCannotBeDetected(t *testing.T) {

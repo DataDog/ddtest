@@ -51,7 +51,7 @@ func TestTestPlanner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
 		t.Fatalf("Plan() should not return error, got: %v", err)
 	}
 
-	cachePath := filepath.Join(constants.RunnerCacheDir, testoptimization.TestOptimizationPlanCacheFile)
+	cachePath := filepath.Join(constants.RunnerCacheDir, constants.TestOptimizationPlanCacheFile)
 	if _, err := os.Stat(cachePath); err != nil {
 		t.Fatalf("Expected test optimization plan cache file to be written: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestTestPlanner_LoadPlan_UsesExistingPlannerState(t *testing.T) {
 	defer func() { _ = os.Chdir(oldWd) }()
 	_ = os.Chdir(tempDir)
 
-	cachePath := filepath.Join(constants.RunnerCacheDir, testoptimization.TestOptimizationPlanCacheFile)
+	cachePath := filepath.Join(constants.RunnerCacheDir, constants.TestOptimizationPlanCacheFile)
 	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
 		t.Fatalf("failed to create cache dir: %v", err)
 	}

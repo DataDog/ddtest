@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 func TestClientGetKnownTestsPaginatesWithAttributesPageInfo(t *testing.T) {
@@ -32,7 +34,7 @@ func TestClientGetKnownTestsPaginatesWithAttributesPageInfo(t *testing.T) {
 		}
 		requests = append(requests, request)
 
-		w.Header().Set(HeaderContentType, ContentTypeJSON)
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 		_, _ = w.Write([]byte(responses[len(requests)-1]))
 	}))
 	defer server.Close()
@@ -79,7 +81,7 @@ func TestClientGetKnownTestsDoesNotCachePartialRawResponseWhenFollowUpFails(t *t
 			t.Fatalf("unexpected extra request")
 		}
 
-		w.Header().Set(HeaderContentType, ContentTypeJSON)
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 		_, _ = w.Write([]byte(responses[requests-1]))
 	}))
 	defer server.Close()
@@ -97,7 +99,7 @@ func TestClientGetKnownTestsDoesNotCachePartialRawResponseWithoutFollowUpCursor(
 	response := `{"data":{"id":"known-tests-id","type":"ci_app_libraries_tests","attributes":{"tests":{"module-a":{"suite-a":["test-a"]}},"page_info":{"size":1,"has_next":true}}}}`
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set(HeaderContentType, ContentTypeJSON)
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 		_, _ = w.Write([]byte(response))
 	}))
 	defer server.Close()

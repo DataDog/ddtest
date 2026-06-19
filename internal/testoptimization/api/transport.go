@@ -19,19 +19,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/environment"
-	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/utils"
 )
 
 const (
-	// DefaultMaxRetries is the default number of retries for a request.
-	DefaultMaxRetries int = 3
-	// DefaultBackoff is the default backoff time for a request.
-	DefaultBackoff time.Duration = 100 * time.Millisecond
-
 	defaultAgentHostname  = "localhost"
 	defaultTraceAgentPort = "8126"
 	ddTagsDelimiter       = ":"
@@ -108,7 +102,7 @@ func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Tran
 
 	// get the service name
 	if serviceName == "" {
-		serviceName = runmetadata.ResolveServiceName(ciTags[git.GitRepositoryURL])
+		serviceName = runmetadata.ResolveServiceName(ciTags[constants.GitRepositoryURL])
 	}
 
 	// get all custom configuration (test.configuration.*)
@@ -211,10 +205,10 @@ func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Tran
 		id, agentlessEnabled, baseURL, environment, serviceName, subdomain)
 
 	// we try to get the branch name
-	bName := ciTags[git.GitBranch]
+	bName := ciTags[constants.GitBranch]
 	if bName == "" {
 		// if not we try to use the tag (checkout over a tag)
-		bName = ciTags[git.GitTag]
+		bName = ciTags[constants.GitTag]
 	}
 	if bName == "" {
 		// if is still empty we assume the customer just used a detached HEAD
@@ -228,11 +222,11 @@ func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Tran
 		environment:       environment,
 		serviceName:       serviceName,
 		workingDirectory:  ciTags[constants.CIWorkspacePath],
-		repositoryURL:     ciTags[git.GitRepositoryURL],
-		commitSha:         ciTags[git.GitCommitSHA],
-		commitMessage:     ciTags[git.GitCommitMessage],
-		headCommitSha:     ciTags[git.GitHeadCommit],
-		headCommitMessage: ciTags[git.GitHeadMessage],
+		repositoryURL:     ciTags[constants.GitRepositoryURL],
+		commitSha:         ciTags[constants.GitCommitSHA],
+		commitMessage:     ciTags[constants.GitCommitMessage],
+		headCommitSha:     ciTags[constants.GitHeadCommit],
+		headCommitMessage: ciTags[constants.GitHeadMessage],
 		branchName:        bName,
 		testConfigurations: testConfigurations{
 			OsPlatform:     ciTags[constants.OSPlatform],
@@ -366,10 +360,10 @@ func (c *transport) getPostRequestConfig(url string, body interface{}) *RequestC
 		URL:        c.getURLPath(url),
 		Headers:    c.headers,
 		Body:       body,
-		Format:     FormatJSON,
+		Format:     constants.FormatJSON,
 		Compressed: false,
 		Files:      nil,
-		MaxRetries: DefaultMaxRetries,
-		Backoff:    DefaultBackoff,
+		MaxRetries: constants.DefaultMaxRetries,
+		Backoff:    constants.DefaultBackoff,
 	}
 }

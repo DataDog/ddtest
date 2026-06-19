@@ -7,6 +7,8 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 )
 
+const runModeSequential = "sequential"
+
 // runSequential executes tests in a single sequential runner.
 func (e testExecutor) runSequential() runExecutionResult {
 	report := runExecutionReport{

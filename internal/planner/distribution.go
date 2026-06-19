@@ -42,7 +42,7 @@ func testFileWeightsForFiles(cacheWeights map[string]int, testFiles []string) ma
 		if cachedWeight, ok := cacheWeights[testFile]; ok && cachedWeight > 0 {
 			testFileWeights[testFile] = cachedWeight
 		} else {
-			testFileWeights[testFile] = DefaultTestFileWeight
+			testFileWeights[testFile] = constants.DefaultTestFileWeight
 		}
 	}
 	return testFileWeights

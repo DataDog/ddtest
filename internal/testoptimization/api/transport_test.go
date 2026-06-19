@@ -16,9 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/environment"
-	"github.com/DataDog/ddtest/internal/git"
 )
 
 type failingMsgpUnmarshaler struct{}
@@ -134,13 +133,13 @@ func TestRequestHandlerJSONCompressionAndGzipResponse(t *testing.T) {
 		URL:        server.URL,
 		Headers:    map[string]string{"X-Test": "custom"},
 		Body:       map[string]string{"key": "value"},
-		Format:     FormatJSON,
+		Format:     constants.FormatJSON,
 		Compressed: true,
 	})
 	if err != nil {
 		t.Fatalf("SendRequest() returned error: %v", err)
 	}
-	if !response.Compressed || response.Format != FormatJSON {
+	if !response.Compressed || response.Format != constants.FormatJSON {
 		t.Fatalf("unexpected response metadata: %#v", response)
 	}
 	var decoded map[string]string
@@ -183,7 +182,7 @@ func TestRequestHandlerMultipartCompression(t *testing.T) {
 		if string(file2Body) != "binary" {
 			t.Fatalf("unexpected binary file body: %s", string(file2Body))
 		}
-		w.Header().Set(HeaderContentType, ContentTypeJSON)
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer server.Close()
@@ -192,8 +191,8 @@ func TestRequestHandlerMultipartCompression(t *testing.T) {
 		Method: http.MethodPost,
 		URL:    server.URL,
 		Files: []FormFile{
-			{FieldName: "file1", FileName: "file1.json", Content: map[string]string{"key": "value"}, ContentType: ContentTypeJSON},
-			{FieldName: "file2", FileName: "file2.bin", Content: strings.NewReader("binary"), ContentType: ContentTypeOctetStream},
+			{FieldName: "file1", FileName: "file1.json", Content: map[string]string{"key": "value"}, ContentType: constants.ContentTypeJSON},
+			{FieldName: "file2", FileName: "file2.bin", Content: strings.NewReader("binary"), ContentType: constants.ContentTypeOctetStream},
 		},
 		Compressed: true,
 	})
@@ -282,7 +281,7 @@ func TestHTTPSerializationHelpersErrorBranches(t *testing.T) {
 	if _, err := serializeData(failingMsgpMarshaler{}, FormatMessagePack); err == nil {
 		t.Fatal("expected msgpack marshal error")
 	}
-	if _, err := prepareContent("not-bytes", ContentTypeOctetStream); err == nil {
+	if _, err := prepareContent("not-bytes", constants.ContentTypeOctetStream); err == nil {
 		t.Fatal("expected octet-stream content error")
 	}
 	if _, err := prepareContent("value", "application/unknown"); err == nil {
@@ -301,15 +300,15 @@ func TestHTTPSerializationHelpersErrorBranches(t *testing.T) {
 }
 
 func TestSerializeDataReaderAndBytes(t *testing.T) {
-	bytesData, err := serializeData([]byte("bytes"), FormatJSON)
+	bytesData, err := serializeData([]byte("bytes"), constants.FormatJSON)
 	if err != nil || string(bytesData) != "bytes" {
 		t.Fatalf("serialize bytes = %q, %v", string(bytesData), err)
 	}
-	readerData, err := serializeData(strings.NewReader("reader"), FormatJSON)
+	readerData, err := serializeData(strings.NewReader("reader"), constants.FormatJSON)
 	if err != nil || string(readerData) != "reader" {
 		t.Fatalf("serialize reader = %q, %v", string(readerData), err)
 	}
-	content, err := prepareContent(strings.NewReader("reader"), ContentTypeOctetStream)
+	content, err := prepareContent(strings.NewReader("reader"), constants.ContentTypeOctetStream)
 	if err != nil || string(content) != "reader" {
 		t.Fatalf("prepare reader content = %q, %v", string(content), err)
 	}
@@ -319,7 +318,7 @@ func TestCreateMultipartFormDataWithoutFileName(t *testing.T) {
 	body, contentType, err := createMultipartFormData([]FormFile{{
 		FieldName:   "field",
 		Content:     []byte("value"),
-		ContentType: ContentTypeOctetStream,
+		ContentType: constants.ContentTypeOctetStream,
 	}}, false)
 	if err != nil {
 		t.Fatalf("createMultipartFormData() returned error: %v", err)
@@ -342,15 +341,15 @@ func TestTransportConstructorAgentlessAndURLBranches(t *testing.T) {
 	environment.ResetCITags()
 	t.Cleanup(environment.ResetCITags)
 	environment.AddCITagsMap(map[string]string{
-		git.GitRepositoryURL:     "https://github.com/DataDog/ddtest.git/",
-		git.GitCommitSHA:         "sha",
-		git.GitBranch:            "",
-		git.GitTag:               "v1.2.3",
-		constants.OSPlatform:     "linux",
-		constants.OSArchitecture: "amd64",
-		constants.OSVersion:      "ubuntu",
-		constants.RuntimeName:    "ruby",
-		constants.RuntimeVersion: "3.3.0",
+		constants.GitRepositoryURL: "https://github.com/DataDog/ddtest.git/",
+		constants.GitCommitSHA:     "sha",
+		constants.GitBranch:        "",
+		constants.GitTag:           "v1.2.3",
+		constants.OSPlatform:       "linux",
+		constants.OSArchitecture:   "amd64",
+		constants.OSVersion:        "ubuntu",
+		constants.RuntimeName:      "ruby",
+		constants.RuntimeVersion:   "3.3.0",
 	})
 	t.Setenv(constants.TestOptimizationAgentlessEnabledEnvironmentVariable, "true")
 	t.Setenv(constants.APIKeyEnvironmentVariable, "api-key")

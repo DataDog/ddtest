@@ -324,7 +324,7 @@ func TestTestPlanner_DistributeTestFiles_UsesRestoredWeights(t *testing.T) {
 		t.Fatalf("LoadPlan() should not return error, got: %v", err)
 	}
 
-	cachePath := filepath.Join(constants.RunnerCacheDir, testoptimization.TestOptimizationPlanCacheFile)
+	cachePath := filepath.Join(constants.RunnerCacheDir, constants.TestOptimizationPlanCacheFile)
 	if err := os.WriteFile(cachePath, []byte("{"), 0644); err != nil {
 		t.Fatalf("failed to corrupt cache: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestTestPlanner_DistributeTestFiles_FallsBackToDefaultWeights(t *testing.T)
 		_ = os.Chdir(tempDir)
 		logs := captureLogs(t)
 
-		cachePath := filepath.Join(constants.RunnerCacheDir, testoptimization.TestOptimizationPlanCacheFile)
+		cachePath := filepath.Join(constants.RunnerCacheDir, constants.TestOptimizationPlanCacheFile)
 		if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
 			t.Fatalf("failed to create cache dir: %v", err)
 		}

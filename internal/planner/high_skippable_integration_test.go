@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
-	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
@@ -75,7 +74,7 @@ func TestTestPlanner_Plan_HighSkippableIntegrationSelectsExpectedRunnerCountAndR
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			git.GitRepositoryURL: repoRoot,
+			constants.GitRepositoryURL: repoRoot,
 		},
 		Framework: mockFramework,
 	}

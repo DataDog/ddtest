@@ -8,6 +8,8 @@ package api
 import (
 	"fmt"
 	"os"
+
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 const (
@@ -47,13 +49,13 @@ func (c *transport) SendPackFiles(commitSha string, packFiles []string) (bytes i
 		Content: pushedShaBody{
 			Data: pushedShaData{
 				ID:   commitSha,
-				Type: searchCommitsType,
+				Type: constants.SearchCommitsType,
 			},
 			Meta: pushedShaMeta{
 				RepositoryURL: c.repositoryURL,
 			},
 		},
-		ContentType: ContentTypeJSON,
+		ContentType: constants.ContentTypeJSON,
 	}
 
 	for _, file := range packFiles {
@@ -72,11 +74,11 @@ func (c *transport) SendPackFiles(commitSha string, packFiles []string) (bytes i
 				{
 					FieldName:   "packfile",
 					Content:     fileContent,
-					ContentType: ContentTypeOctetStream,
+					ContentType: constants.ContentTypeOctetStream,
 				},
 			},
-			MaxRetries: DefaultMaxRetries,
-			Backoff:    DefaultBackoff,
+			MaxRetries: constants.DefaultMaxRetries,
+			Backoff:    constants.DefaultBackoff,
 		}
 
 		response, responseErr := c.handler.SendRequest(request)

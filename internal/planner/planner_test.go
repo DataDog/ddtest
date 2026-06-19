@@ -22,7 +22,6 @@ import (
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/framework"
-	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -1351,7 +1350,7 @@ func TestTestPlanner_PreparePlanningData_Success(t *testing.T) {
 	}
 	expectedTestFileWeights := map[string]int{
 		"test/file1_test.rb": 3,
-		"test/file2_test.rb": DefaultTestFileWeight,
+		"test/file2_test.rb": constants.DefaultTestFileWeight,
 	}
 	if len(runner.testFileWeights) != len(expectedTestFileWeights) {
 		t.Errorf("Expected precomputed test file weights to have %d entries, got %v", len(expectedTestFileWeights), runner.testFileWeights)
@@ -1842,7 +1841,7 @@ func TestTestPlanner_PreparePlanningData_EmptyDurationsContinues(t *testing.T) {
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			git.GitRepositoryURL: "github.com/DataDog/ddtest",
+			constants.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -1882,7 +1881,7 @@ func TestTestPlanner_PreparePlanningData_NonEmptyDurationsUsesP50ForMatchingSuit
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			git.GitRepositoryURL: "github.com/DataDog/ddtest",
+			constants.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -1946,7 +1945,7 @@ func TestTestPlanner_PreparePlanningData_SkippablePercentageUsesDurations(t *tes
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			git.GitRepositoryURL: "github.com/DataDog/ddtest",
+			constants.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2240,7 +2239,7 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesBackendDurations(t *te
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			git.GitRepositoryURL: "github.com/DataDog/ddtest",
+			constants.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2281,7 +2280,7 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesOneBackendDurationPerS
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			git.GitRepositoryURL: "github.com/DataDog/ddtest",
+			constants.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2329,7 +2328,7 @@ func TestTestPlanner_PreparePlanningData_IgnoresZeroBackendDurationForFastDiscov
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			git.GitRepositoryURL: "github.com/DataDog/ddtest",
+			constants.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2355,7 +2354,7 @@ func TestTestPlanner_PreparePlanningData_IgnoresZeroBackendDurationForFastDiscov
 		t.Errorf("Expected zero-duration backend suite to be ignored, got aggregates: %v", runner.suiteAggregates)
 	}
 
-	if weight, ok := runner.testFileWeight("spec/backend_only_spec.rb"); !ok || weight != DefaultTestFileWeight {
+	if weight, ok := runner.testFileWeight("spec/backend_only_spec.rb"); !ok || weight != constants.DefaultTestFileWeight {
 		t.Errorf("Expected fast-discovery file with broken backend duration to use default weight, got weight=%d ok=%t", weight, ok)
 	}
 }
@@ -2384,7 +2383,7 @@ func TestTestPlanner_PreparePlanningData_BackendDurationSubdirMatchesFastDiscove
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			git.GitRepositoryURL: repoRoot,
+			constants.GitRepositoryURL: repoRoot,
 		},
 		Framework: mockFramework,
 	}
@@ -2398,7 +2397,7 @@ func TestTestPlanner_PreparePlanningData_BackendDurationSubdirMatchesFastDiscove
 			},
 		},
 	}
-	environment.AddCITagsMap(map[string]string{git.GitRepositoryURL: repoRoot})
+	environment.AddCITagsMap(map[string]string{constants.GitRepositoryURL: repoRoot})
 
 	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
@@ -2433,7 +2432,7 @@ func TestTestPlanner_PreparePlanningData_IgnoresBackendDurationsForUndiscoveredF
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			git.GitRepositoryURL: "github.com/DataDog/ddtest",
+			constants.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2485,7 +2484,7 @@ func TestTestPlanner_PreparePlanningData_FullDiscoveryIgnoresFastOnlyFiles(t *te
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			git.GitRepositoryURL: "github.com/DataDog/ddtest",
+			constants.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2516,7 +2515,7 @@ func TestTestPlanner_PreparePlanningData_FullDiscoveryDoesNotReintroduceFastOnly
 	ctx := context.Background()
 	environment.ResetCITags()
 	t.Cleanup(environment.ResetCITags)
-	environment.AddCITagsMap(map[string]string{git.GitRepositoryURL: "github.com/DataDog/ddtest"})
+	environment.AddCITagsMap(map[string]string{constants.GitRepositoryURL: "github.com/DataDog/ddtest"})
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -2533,7 +2532,7 @@ func TestTestPlanner_PreparePlanningData_FullDiscoveryDoesNotReintroduceFastOnly
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			git.GitRepositoryURL: "github.com/DataDog/ddtest",
+			constants.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2582,7 +2581,7 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryDoesNotRunStaleBackendFile
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			git.GitRepositoryURL: "github.com/DataDog/ddtest",
+			constants.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2647,7 +2646,7 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotReintroduceFullySkippedSu
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			git.GitRepositoryURL: "github.com/DataDog/ddtest",
+			constants.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}
@@ -2701,7 +2700,7 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotDuplicateDiscoveredSource
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			git.GitRepositoryURL: "github.com/DataDog/ddtest",
+			constants.GitRepositoryURL: "github.com/DataDog/ddtest",
 		},
 		Framework: mockFramework,
 	}

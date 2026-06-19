@@ -6,7 +6,7 @@
 package constants
 
 const (
-	// CIJobID indicates the id of the CI job.
+	// CIJobID indicates the ID of the CI job.
 	CIJobID = "ci.job.id"
 
 	// CIJobName indicates the name of the CI job.
@@ -33,15 +33,15 @@ const (
 	// CIStageName indicates the name of the CI stage.
 	CIStageName = "ci.stage.name"
 
-	// CINodeName indicates the name of the node in the CI environment.
+	// CINodeName indicates the name of the CI node.
 	CINodeName = "ci.node.name"
 
-	// CINodeLabels indicates the labels associated with the node in the CI environment.
+	// CINodeLabels indicates the labels of the CI node.
 	CINodeLabels = "ci.node.labels"
+
+	// CIEnvVars contains selected CI environment variables.
+	CIEnvVars = "_dd.ci.env_vars"
 
 	// CIWorkspacePath records an absolute path to the directory where the project has been checked out.
 	CIWorkspacePath = "ci.workspace_path"
-
-	// CIEnvVars contains environment variables used to get the pipeline correlation ID.
-	CIEnvVars = "_dd.ci.env_vars"
 )
