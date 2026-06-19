@@ -5,14 +5,11 @@
 
 package osinfo
 
-// Modified in init functions to provide OS-specific information
-var (
-	osVersion = "unknown"
-)
+// Modified in init functions to provide OS-specific information.
+var osVersion = "unknown"
 
 // OSVersion returns the operating system release, e.g. major/minor version
 // number and build ID.
 func OSVersion() string {
-	// call out to OS-specific implementation
 	return osVersion
 }

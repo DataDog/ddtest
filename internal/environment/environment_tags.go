@@ -18,7 +18,7 @@ import (
 
 	"github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/git"
-	"github.com/DataDog/ddtest/osinfo"
+	"github.com/DataDog/ddtest/internal/utils/osinfo"
 )
 
 type (

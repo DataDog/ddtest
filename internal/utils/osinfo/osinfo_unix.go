@@ -32,7 +32,7 @@ func init() {
 	if err := unix.Uname(&uts); err == nil {
 		kernelRelease := strings.SplitN(strings.TrimRight(string(uts.Release[:]), "\x00"), "-", 2)[0]
 
-		// Backwards compatibility on how data is reported for freebsd
+		// Backwards compatibility on how data is reported for freebsd.
 		if runtime.GOOS == "freebsd" {
 			osVersion = kernelRelease
 		}
@@ -53,7 +53,7 @@ func init() {
 		case "VERSION":
 			osVersion = strings.Trim(parts[1], "\"")
 		case "VERSION_ID":
-			if osVersion == "" { // Fallback to VERSION_ID if VERSION is not set
+			if osVersion == "" { // Fallback to VERSION_ID if VERSION is not set.
 				osVersion = strings.Trim(parts[1], "\"")
 			}
 		}
