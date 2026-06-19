@@ -213,14 +213,14 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 	}
 
 	if ciProvider, err := tp.ciProviderDetector.DetectCIProvider(); err == nil {
-		slog.Info("CI provider detected, configuring with parallel runners",
+		slog.Debug("CI provider detected, configuring with parallel runners",
 			"provider", ciProvider.Name(), "parallelRunners", parallelRunners)
 
 		if err := ciProvider.Configure(parallelRunners); err != nil {
 			slog.Warn("Failed to configure CI provider", "provider", ciProvider.Name(), "error", err)
 		}
 	} else {
-		slog.Info("No CI provider detected or CI provider is not supported, running tests without CI integration", "error", err)
+		slog.Info("No CI provider detected, running tests without CI integration", "error", err)
 	}
 
 	if err := tp.CreateTestSplits(tp.testFileWeights, parallelRunners, constants.TestFilesOutputPath); err != nil {

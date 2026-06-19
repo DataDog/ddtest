@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/git"
 )
 
@@ -44,6 +45,113 @@ func sortJSONKeys(jsonStr string) string {
 	_ = json.Unmarshal([]byte(jsonStr), &tmp)
 	jsonBytes, _ := json.Marshal(tmp)
 	return string(jsonBytes)
+}
+
+func setDetectedProvider(t *testing.T, providerName string) {
+	t.Helper()
+	ResetCITags()
+	originalCiTags = map[string]string{}
+	if providerName != "" {
+		originalCiTags[ciConstants.CIProviderName] = providerName
+	}
+	t.Cleanup(ResetCITags)
+}
+
+func TestDetectCIProvider_GitHub(t *testing.T) {
+	setDetectedProvider(t, "github")
+
+	provider, err := DetectCIProvider()
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if provider.Name() != "github" {
+		t.Errorf("Expected provider name 'github', got '%s'", provider.Name())
+	}
+}
+
+func TestDetectCIProvider_NoProvider(t *testing.T) {
+	setDetectedProvider(t, "")
+
+	provider, err := DetectCIProvider()
+	if err == nil {
+		t.Fatalf("Expected no provider error, got provider %q", provider.Name())
+	}
+}
+
+func TestDatadogCIProviderDetector_DetectCIProvider(t *testing.T) {
+	setDetectedProvider(t, "github")
+
+	detector := &DatadogCIProviderDetector{}
+	provider, err := detector.DetectCIProvider()
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if provider.Name() != "github" {
+		t.Errorf("Expected provider name 'github', got '%s'", provider.Name())
+	}
+}
+
+func TestNewCIProviderDetector(t *testing.T) {
+	detector := NewCIProviderDetector()
+	if detector == nil {
+		t.Fatal("Expected detector to be non-nil")
+	}
+
+	_, ok := detector.(*DatadogCIProviderDetector)
+	if !ok {
+		t.Errorf("Expected detector to be of type *DatadogCIProviderDetector")
+	}
+}
+
+func TestCIProviderConfigure(t *testing.T) {
+	t.Setenv(githubOutputEnvVar, "")
+
+	provider := NewGitHub()
+	err := provider.Configure(4) // Test with 4 parallel runners
+	if err != nil {
+		t.Errorf("Expected Configure(4) to return nil, got %v", err)
+	}
+}
+
+func TestDetectCIProvider_NonGitHubProvidersAreConfigurable(t *testing.T) {
+	providerNames := []string{
+		"appveyor",
+		"azurepipelines",
+		"bitbucket",
+		"bitrise",
+		"buddy",
+		"buildkite",
+		"circleci",
+		"codefresh",
+		"drone",
+		"gitlab",
+		"jenkins",
+		"teamcity",
+		"travisci",
+		"awscodepipeline",
+		"custom-provider",
+	}
+
+	for _, providerName := range providerNames {
+		t.Run(providerName, func(t *testing.T) {
+			setDetectedProvider(t, providerName)
+
+			provider, err := DetectCIProvider()
+			if err != nil {
+				t.Fatalf("Expected provider %q to be detected, got error: %v", providerName, err)
+			}
+
+			if provider.Name() != providerName {
+				t.Errorf("Expected provider name %q, got %q", providerName, provider.Name())
+			}
+
+			if err := provider.Configure(4); err != nil {
+				t.Errorf("Expected Configure(4) to succeed for %q, got %v", providerName, err)
+			}
+		})
+	}
 }
 
 // TestTags asserts that all tags are extracted from environment variables.
@@ -188,6 +296,92 @@ func TestGitHubEventFile(t *testing.T) {
 		tags := extractGithubActions()
 		checkValue(tags, git.GitPrBaseBranch, "my-base-ref")
 	})
+}
+
+func TestGitHubEventFileNonPullRequestDoesNotSetPRTags(t *testing.T) {
+	originalDiagEnabled := githubActionsDiagnosticsEnabled
+	githubActionsDiagnosticsEnabled = false
+	t.Cleanup(func() {
+		githubActionsDiagnosticsEnabled = originalDiagEnabled
+	})
+
+	eventFile := filepath.Join(t.TempDir(), "event.json")
+	if err := os.WriteFile(eventFile, []byte(`{"ref":"refs/heads/main","after":"abc123"}`), 0644); err != nil {
+		t.Fatalf("write event file: %v", err)
+	}
+
+	t.Setenv("GITHUB_EVENT_PATH", eventFile)
+	t.Setenv("GITHUB_BASE_REF", "")
+	t.Setenv("GITHUB_HEAD_REF", "")
+	t.Setenv("GITHUB_REF", "refs/heads/main")
+	t.Setenv("GITHUB_REPOSITORY", "DataDog/ddtest")
+	t.Setenv("GITHUB_RUN_ID", "123")
+	t.Setenv("GITHUB_SHA", "abc123")
+	t.Setenv("GITHUB_JOB", "test")
+	t.Setenv("JOB_CHECK_RUN_ID", "")
+
+	tags := extractGithubActions()
+	if got := tags[git.PrNumber]; got != "" {
+		t.Fatalf("expected no PR number for non-PR event, got %q", got)
+	}
+	if got := tags[git.GitHeadCommit]; got != "" {
+		t.Fatalf("expected no PR head commit for non-PR event, got %q", got)
+	}
+	if got := tags[git.GitPrBaseHeadCommit]; got != "" {
+		t.Fatalf("expected no PR base commit for non-PR event, got %q", got)
+	}
+}
+
+func TestBuildkitePullRequestFalseDoesNotSetPRNumber(t *testing.T) {
+	t.Setenv("BUILDKITE_PULL_REQUEST", "false")
+	t.Setenv("BUILDKITE_PULL_REQUEST_BASE_BRANCH", "main")
+
+	tags := extractBuildkite()
+	if got := tags[git.PrNumber]; got != "" {
+		t.Fatalf("expected no PR number for Buildkite false sentinel, got %q", got)
+	}
+	if got := tags[git.GitPrBaseBranch]; got != "" {
+		t.Fatalf("expected no PR base branch for Buildkite false sentinel, got %q", got)
+	}
+}
+
+func TestBuildkitePullRequestNumberIsSet(t *testing.T) {
+	t.Setenv("BUILDKITE_PULL_REQUEST", "42")
+	t.Setenv("BUILDKITE_PULL_REQUEST_BASE_BRANCH", "main")
+
+	tags := extractBuildkite()
+	if got := tags[git.PrNumber]; got != "42" {
+		t.Fatalf("expected Buildkite PR number 42, got %q", got)
+	}
+	if got := tags[git.GitPrBaseBranch]; got != "main" {
+		t.Fatalf("expected Buildkite PR base branch main, got %q", got)
+	}
+}
+
+func TestTravisPullRequestFalseDoesNotSetPRNumber(t *testing.T) {
+	t.Setenv("TRAVIS_PULL_REQUEST", "false")
+	t.Setenv("TRAVIS_BRANCH", "main")
+
+	tags := extractTravis()
+	if got := tags[git.PrNumber]; got != "" {
+		t.Fatalf("expected no PR number for Travis false sentinel, got %q", got)
+	}
+	if got := tags[git.GitPrBaseBranch]; got != "" {
+		t.Fatalf("expected no PR base branch for Travis false sentinel, got %q", got)
+	}
+}
+
+func TestTravisPullRequestNumberIsSet(t *testing.T) {
+	t.Setenv("TRAVIS_PULL_REQUEST", "42")
+	t.Setenv("TRAVIS_BRANCH", "main")
+
+	tags := extractTravis()
+	if got := tags[git.PrNumber]; got != "42" {
+		t.Fatalf("expected Travis PR number 42, got %q", got)
+	}
+	if got := tags[git.GitPrBaseBranch]; got != "main" {
+		t.Fatalf("expected Travis PR base branch main, got %q", got)
+	}
 }
 
 func TestIsNumericJobID(t *testing.T) {

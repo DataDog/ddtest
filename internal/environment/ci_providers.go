@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/civisibility/constants"
+	appConstants "github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/utils"
 )
@@ -26,9 +27,13 @@ import (
 const (
 	// githubJobCheckRunIDEnv is the environment variable name for the numeric job ID
 	githubJobCheckRunIDEnv = "JOB_CHECK_RUN_ID"
+	// githubOutputEnvVar is the environment variable GitHub Actions uses to pass step outputs.
+	githubOutputEnvVar = "GITHUB_OUTPUT"
 	// githubMaxDiagFileSize is the maximum file size to read from diagnostics files (10MB)
 	githubMaxDiagFileSize = 10 * 1024 * 1024
 )
+
+var GitHubMatrixPath = filepath.Join(appConstants.PlanDirectory, "github/config")
 
 // githubActionsDiagnosticsEnabled controls whether diagnostics file scanning is enabled.
 // This can be set to false in tests to prevent scanning real _diag directories.
@@ -57,6 +62,140 @@ type diagJobData struct {
 			V any    `json:"v"`
 		} `json:"d"`
 	} `json:"job"`
+}
+
+type CIProvider interface {
+	Name() string
+	Configure(parallelRunners int) error
+}
+
+type CIProviderDetector interface {
+	DetectCIProvider() (CIProvider, error)
+}
+
+type DatadogCIProviderDetector struct{}
+
+type genericCIProvider struct {
+	name string
+}
+
+type GitHub struct{}
+
+type matrixEntry struct {
+	CINodeIndex int `json:"ci_node_index"`
+	CINodeTotal int `json:"ci_node_total"`
+}
+
+type matrixConfig struct {
+	Include []matrixEntry `json:"include"`
+}
+
+func (d *DatadogCIProviderDetector) DetectCIProvider() (CIProvider, error) {
+	return DetectCIProvider()
+}
+
+func DetectCIProvider() (CIProvider, error) {
+	envTags := GetCITags()
+	providerName := strings.TrimSpace(envTags[constants.CIProviderName])
+	if providerName == "" {
+		return nil, fmt.Errorf("no CI provider detected")
+	}
+
+	return newCIProvider(providerName), nil
+}
+
+func newCIProvider(providerName string) CIProvider {
+	if providerName == "github" {
+		return NewGitHub()
+	}
+	return &genericCIProvider{name: providerName}
+}
+
+func NewCIProviderDetector() CIProviderDetector {
+	return &DatadogCIProviderDetector{}
+}
+
+func (p *genericCIProvider) Name() string {
+	return p.name
+}
+
+func (p *genericCIProvider) Configure(_ int) error {
+	return nil
+}
+
+func NewGitHub() *GitHub {
+	return &GitHub{}
+}
+
+func (g *GitHub) Name() string {
+	return "github"
+}
+
+func (g *GitHub) Configure(parallelRunners int) error {
+	if parallelRunners <= 0 {
+		return fmt.Errorf("parallelRunners must be greater than 0, got %d", parallelRunners)
+	}
+
+	matrix := matrixConfig{
+		Include: make([]matrixEntry, parallelRunners),
+	}
+
+	for i := range parallelRunners {
+		matrix.Include[i] = matrixEntry{
+			CINodeIndex: i,
+			CINodeTotal: parallelRunners,
+		}
+	}
+
+	jsonData, err := json.Marshal(matrix)
+	if err != nil {
+		return fmt.Errorf("failed to marshal matrix configuration: %w", err)
+	}
+
+	dir := filepath.Dir(GitHubMatrixPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", dir, err)
+	}
+
+	configContent := fmt.Sprintf("matrix=%s", jsonData)
+	if err := os.WriteFile(GitHubMatrixPath, []byte(configContent), 0644); err != nil {
+		return fmt.Errorf("failed to write matrix configuration to %s: %w", GitHubMatrixPath, err)
+	}
+
+	githubOutputPath := os.Getenv(githubOutputEnvVar)
+	if err := writeGitHubStepOutput(configContent); err != nil {
+		return err
+	}
+
+	slog.Info("testoptimization: wrote GitHub Actions matrix configuration",
+		"config", configContent,
+		"matrixPath", GitHubMatrixPath,
+		"githubOutputPath", githubOutputPath,
+		"githubOutputWritten", githubOutputPath != "",
+	)
+
+	return nil
+}
+
+func writeGitHubStepOutput(configContent string) error {
+	outputPath := os.Getenv(githubOutputEnvVar)
+	if outputPath == "" {
+		return nil
+	}
+
+	outputFile, err := os.OpenFile(outputPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open GitHub output file %s: %w", outputPath, err)
+	}
+	defer func() {
+		_ = outputFile.Close()
+	}()
+
+	if _, err := fmt.Fprintln(outputFile, configContent); err != nil {
+		return fmt.Errorf("failed to write matrix configuration to GitHub output file %s: %w", outputPath, err)
+	}
+
+	return nil
 }
 
 // getGithubActionsJobID returns the numeric job ID for GitHub Actions.
@@ -251,6 +390,11 @@ func tryExtractJobIDFromRegex(content []byte) (string, bool) {
 
 // isNumericJobID validates that the job ID contains only digits.
 func isNumericJobID(id string) bool {
+	return isNumericValue(id)
+}
+
+// isNumericValue validates that a value contains only digits.
+func isNumericValue(id string) bool {
 	if id == "" {
 		return false
 	}
@@ -606,8 +750,10 @@ func extractBuildkite() map[string]string {
 		}
 	}
 
-	tags[git.GitPrBaseBranch] = os.Getenv("BUILDKITE_PULL_REQUEST_BASE_BRANCH")
-	tags[git.PrNumber] = os.Getenv("BUILDKITE_PULL_REQUEST")
+	if prNumber := os.Getenv("BUILDKITE_PULL_REQUEST"); isNumericValue(prNumber) {
+		tags[git.GitPrBaseBranch] = os.Getenv("BUILDKITE_PULL_REQUEST_BASE_BRANCH")
+		tags[git.PrNumber] = prNumber
+	}
 
 	return tags
 }
@@ -711,7 +857,7 @@ func extractGithubActions() map[string]string {
 
 			var eventJSON struct {
 				Number      int `json:"number"`
-				PullRequest struct {
+				PullRequest *struct {
 					Base struct {
 						Sha string `json:"sha"`
 						Ref string `json:"ref"`
@@ -723,7 +869,7 @@ func extractGithubActions() map[string]string {
 			}
 
 			eventDecoder := json.NewDecoder(eventFile)
-			if eventDecoder.Decode(&eventJSON) == nil {
+			if eventDecoder.Decode(&eventJSON) == nil && eventJSON.Number > 0 && eventJSON.PullRequest != nil {
 				tags[git.GitHeadCommit] = eventJSON.PullRequest.Head.Sha
 				tags[git.GitPrBaseHeadCommit] = eventJSON.PullRequest.Base.Sha
 				tags[git.GitPrBaseBranch] = eventJSON.PullRequest.Base.Ref
@@ -899,9 +1045,11 @@ func extractTravis() map[string]string {
 	tags[constants.CIJobURL] = os.Getenv("TRAVIS_JOB_WEB_URL")
 	tags[git.GitCommitMessage] = os.Getenv("TRAVIS_COMMIT_MESSAGE")
 
-	tags[git.GitPrBaseBranch] = os.Getenv("TRAVIS_BRANCH")
 	tags[git.GitHeadCommit] = os.Getenv("TRAVIS_PULL_REQUEST_SHA")
-	tags[git.PrNumber] = os.Getenv("TRAVIS_PULL_REQUEST")
+	if prNumber := os.Getenv("TRAVIS_PULL_REQUEST"); isNumericValue(prNumber) {
+		tags[git.GitPrBaseBranch] = os.Getenv("TRAVIS_BRANCH")
+		tags[git.PrNumber] = prNumber
+	}
 
 	return tags
 }
