@@ -10,6 +10,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -383,6 +385,82 @@ func TestTransportConstructorAgentlessAndURLBranches(t *testing.T) {
 	}
 	if custom.baseURL != "https://custom.example" || custom.serviceName != "explicit-service" {
 		t.Fatalf("unexpected custom agentless transport: baseURL=%q service=%q", custom.baseURL, custom.serviceName)
+	}
+}
+
+func TestTraceAgentURLFromEnv(t *testing.T) {
+	originalUDSPath := defaultTraceAgentUDSPath
+	t.Cleanup(func() {
+		defaultTraceAgentUDSPath = originalUDSPath
+	})
+
+	clearTraceAgentEnv := func(t *testing.T) {
+		t.Helper()
+		t.Setenv("DD_TRACE_AGENT_URL", "")
+		t.Setenv("DD_AGENT_HOST", "")
+		t.Setenv("DD_TRACE_AGENT_PORT", "")
+	}
+
+	t.Run("defaults to localhost http url", func(t *testing.T) {
+		clearTraceAgentEnv(t)
+		defaultTraceAgentUDSPath = filepath.Join(t.TempDir(), "missing.sock")
+
+		if got := traceAgentURLFromEnv().String(); got != "http://localhost:8126" {
+			t.Fatalf("traceAgentURLFromEnv() = %q, want %q", got, "http://localhost:8126")
+		}
+	})
+
+	t.Run("uses explicit trace agent url", func(t *testing.T) {
+		clearTraceAgentEnv(t)
+		t.Setenv("DD_TRACE_AGENT_URL", "https://agent.example:8127")
+		defaultTraceAgentUDSPath = filepath.Join(t.TempDir(), "missing.sock")
+
+		if got := traceAgentURLFromEnv().String(); got != "https://agent.example:8127" {
+			t.Fatalf("traceAgentURLFromEnv() = %q, want %q", got, "https://agent.example:8127")
+		}
+	})
+
+	t.Run("uses host and port env", func(t *testing.T) {
+		clearTraceAgentEnv(t)
+		t.Setenv("DD_AGENT_HOST", "agent.internal")
+		t.Setenv("DD_TRACE_AGENT_PORT", "9126")
+		defaultTraceAgentUDSPath = filepath.Join(t.TempDir(), "missing.sock")
+
+		if got := traceAgentURLFromEnv().String(); got != "http://agent.internal:9126" {
+			t.Fatalf("traceAgentURLFromEnv() = %q, want %q", got, "http://agent.internal:9126")
+		}
+	})
+
+	t.Run("uses UDS when no env is set", func(t *testing.T) {
+		clearTraceAgentEnv(t)
+		defaultTraceAgentUDSPath = filepath.Join(t.TempDir(), "apm.socket")
+		if err := os.WriteFile(defaultTraceAgentUDSPath, nil, 0o600); err != nil {
+			t.Fatalf("write UDS placeholder: %v", err)
+		}
+
+		got := traceAgentURLFromEnv()
+		if got.Scheme != "unix" || got.Path != defaultTraceAgentUDSPath {
+			t.Fatalf("traceAgentURLFromEnv() = %#v, want unix path %q", got, defaultTraceAgentUDSPath)
+		}
+	})
+}
+
+func TestParseTagString(t *testing.T) {
+	tags := parseTagString("env:ci test.configuration.flavor:unit empty")
+
+	if tags["env"] != "ci" {
+		t.Fatalf("env tag = %q, want ci", tags["env"])
+	}
+	if tags["test.configuration.flavor"] != "unit" {
+		t.Fatalf("test configuration tag = %q, want unit", tags["test.configuration.flavor"])
+	}
+	if _, ok := tags["empty"]; !ok {
+		t.Fatal("expected key without value to be included")
+	}
+
+	commaTags := parseTagString("a:1,b:2")
+	if commaTags["a"] != "1" || commaTags["b"] != "2" {
+		t.Fatalf("comma tags = %#v, want a and b", commaTags)
 	}
 }
 

@@ -7,16 +7,15 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
 
-	testoptimizationstate "github.com/DataDog/ddtest/civisibility"
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
+	"github.com/DataDog/ddtest/internal/utils"
 )
 
 const autoDetectServiceName = ""
@@ -169,9 +168,6 @@ func (c *TestOptimizationClient) StoreCacheAndExit() {
 
 func (c *TestOptimizationClient) ensureTestOptimizationSessionInitialized() {
 	c.initializationOnce.Do(func() {
-		testoptimizationstate.SetState(testoptimizationstate.StateInitializing)
-		defer testoptimizationstate.SetState(testoptimizationstate.StateInitialized)
-
 		slog.SetLogLoggerLevel(slog.LevelInfo)
 		if traceDebugEnabled() {
 			slog.SetLogLoggerLevel(slog.LevelDebug)
@@ -194,8 +190,7 @@ func (c *TestOptimizationClient) ensureTestOptimizationSessionInitialized() {
 }
 
 func traceDebugEnabled() bool {
-	enabled, _ := strconv.ParseBool(os.Getenv("DD_TRACE_DEBUG"))
-	return enabled
+	return utils.BoolEnv("DD_TRACE_DEBUG", false)
 }
 
 func (c *TestOptimizationClient) ensureSettingsInitialization(serviceName string) *api.SettingsResponseData {
@@ -278,17 +273,17 @@ func applyEnvironmentOverrides(ciSettings *api.SettingsResponseData) {
 		ciSettings.EarlyFlakeDetection.Enabled = false
 	}
 
-	if ciSettings.FlakyTestRetriesEnabled && !testoptimizationstate.BoolEnv(ciConstants.TestOptimizationFlakyRetryEnabledEnvironmentVariable, true) {
+	if ciSettings.FlakyTestRetriesEnabled && !utils.BoolEnv(ciConstants.TestOptimizationFlakyRetryEnabledEnvironmentVariable, true) {
 		slog.Warn("testoptimization: flaky test retries was disabled by the environment variable")
 		ciSettings.FlakyTestRetriesEnabled = false
 	}
 
-	if ciSettings.TestManagement.Enabled && !testoptimizationstate.BoolEnv(ciConstants.TestOptimizationManagementEnabledEnvironmentVariable, true) {
+	if ciSettings.TestManagement.Enabled && !utils.BoolEnv(ciConstants.TestOptimizationManagementEnabledEnvironmentVariable, true) {
 		slog.Warn("testoptimization: test management was disabled by the environment variable")
 		ciSettings.TestManagement.Enabled = false
 	}
 
-	testManagementAttemptToFixRetriesEnv := testoptimizationstate.IntEnv(ciConstants.TestOptimizationAttemptToFixRetriesEnvironmentVariable, -1)
+	testManagementAttemptToFixRetriesEnv := utils.IntEnv(ciConstants.TestOptimizationAttemptToFixRetriesEnvironmentVariable, -1)
 	if testManagementAttemptToFixRetriesEnv != -1 {
 		ciSettings.TestManagement.AttemptToFixRetries = testManagementAttemptToFixRetriesEnv
 	}
@@ -382,13 +377,6 @@ func (c *TestOptimizationClient) pushTestOptimizationCloseAction(action testOpti
 }
 
 func (c *TestOptimizationClient) exitTestOptimization() {
-	if testoptimizationstate.GetState() != testoptimizationstate.StateInitialized {
-		slog.Debug("testoptimization: already closed or not initialized")
-		return
-	}
-
-	testoptimizationstate.SetState(testoptimizationstate.StateExiting)
-	defer testoptimizationstate.SetState(testoptimizationstate.StateExited)
 	slog.Debug("testoptimization: exiting")
 
 	c.closeActionsMutex.Lock()

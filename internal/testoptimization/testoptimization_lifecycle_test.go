@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	testoptimizationstate "github.com/DataDog/ddtest/civisibility"
 	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/environment"
@@ -205,7 +204,6 @@ func TestEnsureTestOptimizationSessionInitializationBranches(t *testing.T) {
 	t.Cleanup(environment.ResetCITags)
 	t.Cleanup(func() {
 		signal.Reset(syscall.SIGINT, syscall.SIGTERM)
-		testoptimizationstate.SetState(testoptimizationstate.StateExited)
 	})
 
 	client := newTestOptimizationClient(&MockAPIClient{}, nil, func() (int64, error) { return 0, nil }, true)
@@ -361,6 +359,31 @@ func TestApplyEnvironmentOverrides(t *testing.T) {
 	}
 	if settings.TestManagement.AttemptToFixRetries != 7 {
 		t.Fatalf("attempt-to-fix retries = %d, want 7", settings.TestManagement.AttemptToFixRetries)
+	}
+}
+
+func TestApplyEnvironmentOverridesInvalidEnvValuesUseDefaults(t *testing.T) {
+	t.Setenv(ciConstants.TestOptimizationFlakyRetryEnabledEnvironmentVariable, "invalid")
+	t.Setenv(ciConstants.TestOptimizationManagementEnabledEnvironmentVariable, "invalid")
+	t.Setenv(ciConstants.TestOptimizationAttemptToFixRetriesEnvironmentVariable, "invalid")
+
+	settings := &api.SettingsResponseData{
+		KnownTestsEnabled:       true,
+		FlakyTestRetriesEnabled: true,
+	}
+	settings.TestManagement.Enabled = true
+	settings.TestManagement.AttemptToFixRetries = 3
+
+	applyEnvironmentOverrides(settings)
+
+	if !settings.FlakyTestRetriesEnabled {
+		t.Fatal("expected invalid flaky retry env override to keep default true")
+	}
+	if !settings.TestManagement.Enabled {
+		t.Fatal("expected invalid test management env override to keep default true")
+	}
+	if settings.TestManagement.AttemptToFixRetries != 3 {
+		t.Fatalf("attempt-to-fix retries = %d, want 3", settings.TestManagement.AttemptToFixRetries)
 	}
 }
 
@@ -665,10 +688,7 @@ func TestSearchCommitsResponseHelpers(t *testing.T) {
 	}
 }
 
-func TestExitTestOptimizationRunsCloseActionsOnlyWhenInitialized(t *testing.T) {
-	testoptimizationstate.SetState(testoptimizationstate.StateInitialized)
-	t.Cleanup(func() { testoptimizationstate.SetState(testoptimizationstate.StateExited) })
-
+func TestExitTestOptimizationRunsCloseActionsOnce(t *testing.T) {
 	var calls []string
 	client := newTestOptimizationClient(nil, nil, nil, false)
 	client.pushTestOptimizationCloseAction(func() { calls = append(calls, "first") })
@@ -682,11 +702,11 @@ func TestExitTestOptimizationRunsCloseActionsOnlyWhenInitialized(t *testing.T) {
 	if len(client.closeActions) != 0 {
 		t.Fatalf("expected close actions to be cleared, got %d", len(client.closeActions))
 	}
-	if state := testoptimizationstate.GetState(); state != testoptimizationstate.StateExited {
-		t.Fatalf("state = %v, want exited", state)
-	}
 
 	client.exitTestOptimization()
+	if len(calls) != 2 {
+		t.Fatalf("close actions executed again: %#v", calls)
+	}
 }
 
 func TestStoreCacheAndExitLogsCacheWriteErrors(t *testing.T) {
