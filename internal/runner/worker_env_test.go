@@ -7,7 +7,6 @@ import (
 	"slices"
 	"testing"
 
-	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/constants"
 	ciUtils "github.com/DataDog/ddtest/internal/environment"
 )
@@ -48,7 +47,7 @@ func chdirForTest(t *testing.T, dir string) {
 func TestRunBatch_DefaultTestSessionName(t *testing.T) {
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
-	unsetEnvForTest(t, ciConstants.TestOptimizationTestSessionNameEnvironmentVariable)
+	unsetEnvForTest(t, constants.TestOptimizationTestSessionNameEnvironmentVariable)
 	unsetEnvForTest(t, "DD_SERVICE")
 	t.Setenv("DD_GIT_REPOSITORY_URL", "https://github.com/DataDog/orders.git")
 
@@ -63,7 +62,7 @@ func TestRunBatch_DefaultTestSessionName(t *testing.T) {
 	}
 
 	call := mockFramework.GetRunTestsCalls()[0]
-	sessionName := call.EnvMap[ciConstants.TestOptimizationTestSessionNameEnvironmentVariable]
+	sessionName := call.EnvMap[constants.TestOptimizationTestSessionNameEnvironmentVariable]
 	if sessionName != "orders-node-2-worker-4" {
 		t.Errorf("Expected default DD_TEST_SESSION_NAME=orders-node-2-worker-4, got %s", sessionName)
 	}
@@ -72,7 +71,7 @@ func TestRunBatch_DefaultTestSessionName(t *testing.T) {
 func TestRunBatch_DefaultTestSessionNameUsesDDService(t *testing.T) {
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
-	unsetEnvForTest(t, ciConstants.TestOptimizationTestSessionNameEnvironmentVariable)
+	unsetEnvForTest(t, constants.TestOptimizationTestSessionNameEnvironmentVariable)
 	t.Setenv("DD_SERVICE", "billing")
 	t.Setenv("DD_GIT_REPOSITORY_URL", "https://github.com/DataDog/orders.git")
 
@@ -87,7 +86,7 @@ func TestRunBatch_DefaultTestSessionNameUsesDDService(t *testing.T) {
 	}
 
 	call := mockFramework.GetRunTestsCalls()[0]
-	sessionName := call.EnvMap[ciConstants.TestOptimizationTestSessionNameEnvironmentVariable]
+	sessionName := call.EnvMap[constants.TestOptimizationTestSessionNameEnvironmentVariable]
 	if sessionName != "billing-node-3-worker-7" {
 		t.Errorf("Expected default DD_TEST_SESSION_NAME=billing-node-3-worker-7, got %s", sessionName)
 	}
@@ -96,7 +95,7 @@ func TestRunBatch_DefaultTestSessionNameUsesDDService(t *testing.T) {
 func TestRunBatch_UserTestSessionNameSupportsPlaceholders(t *testing.T) {
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
-	t.Setenv(ciConstants.TestOptimizationTestSessionNameEnvironmentVariable, "custom-node-{{nodeIndex}}-worker-{{workerIndex}}")
+	t.Setenv(constants.TestOptimizationTestSessionNameEnvironmentVariable, "custom-node-{{nodeIndex}}-worker-{{workerIndex}}")
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
@@ -109,7 +108,7 @@ func TestRunBatch_UserTestSessionNameSupportsPlaceholders(t *testing.T) {
 	}
 
 	call := mockFramework.GetRunTestsCalls()[0]
-	sessionName := call.EnvMap[ciConstants.TestOptimizationTestSessionNameEnvironmentVariable]
+	sessionName := call.EnvMap[constants.TestOptimizationTestSessionNameEnvironmentVariable]
 	if sessionName != "custom-node-5-worker-8" {
 		t.Errorf("Expected DD_TEST_SESSION_NAME placeholders to be replaced, got %s", sessionName)
 	}
@@ -118,14 +117,14 @@ func TestRunBatch_UserTestSessionNameSupportsPlaceholders(t *testing.T) {
 func TestRunBatch_WorkerEnvTestSessionNameTakesPrecedence(t *testing.T) {
 	ciUtils.ResetCITags()
 	t.Cleanup(ciUtils.ResetCITags)
-	t.Setenv(ciConstants.TestOptimizationTestSessionNameEnvironmentVariable, "outer-session")
+	t.Setenv(constants.TestOptimizationTestSessionNameEnvironmentVariable, "outer-session")
 
 	mockFramework := &MockFramework{
 		FrameworkName: "rspec",
 		RunTestsCalls: []RunTestsCall{},
 	}
 	workerEnvMap := map[string]string{
-		ciConstants.TestOptimizationTestSessionNameEnvironmentVariable: "worker-node-{{nodeIndex}}-worker-{{workerIndex}}",
+		constants.TestOptimizationTestSessionNameEnvironmentVariable: "worker-node-{{nodeIndex}}-worker-{{workerIndex}}",
 	}
 
 	err := newTestExecutor(context.Background(), mockFramework, workerEnvMap, roundRobinTestPlanner{}).runBatch([]string{"test/file1_test.rb"}, 9, 1)
@@ -134,7 +133,7 @@ func TestRunBatch_WorkerEnvTestSessionNameTakesPrecedence(t *testing.T) {
 	}
 
 	call := mockFramework.GetRunTestsCalls()[0]
-	sessionName := call.EnvMap[ciConstants.TestOptimizationTestSessionNameEnvironmentVariable]
+	sessionName := call.EnvMap[constants.TestOptimizationTestSessionNameEnvironmentVariable]
 	if sessionName != "worker-node-9-worker-1" {
 		t.Errorf("Expected worker env DD_TEST_SESSION_NAME to take precedence, got %s", sessionName)
 	}

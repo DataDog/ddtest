@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/planner"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 )
@@ -34,7 +35,7 @@ func TestPrintRunReport_Passed(t *testing.T) {
 			},
 		},
 		Execution: runExecutionReport{
-			Mode:         runModeCINode,
+			Mode:         constants.RunModeCINode,
 			CINode:       2,
 			LocalWorkers: 2,
 			TestFilesRun: 87,

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 func TestTransportGetSkippableTestsRequestAndResponse(t *testing.T) {
@@ -39,14 +41,14 @@ func TestTransportGetSkippableTestsRequestAndResponse(t *testing.T) {
 		if r.URL.Path != "/"+skippableURLPath {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
-		if !strings.Contains(r.Header.Get(HeaderContentType), ContentTypeJSON) {
+		if !strings.Contains(r.Header.Get(HeaderContentType), constants.ContentTypeJSON) {
 			t.Fatalf("content type = %q, want JSON", r.Header.Get(HeaderContentType))
 		}
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
 
-		w.Header().Set(HeaderContentType, ContentTypeJSON)
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
@@ -107,7 +109,7 @@ func TestTransportGetSkippableTestsErrors(t *testing.T) {
 
 	t.Run("unmarshal failure", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set(HeaderContentType, ContentTypeJSON)
+			w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 			_, _ = w.Write([]byte(`{"data":`))
 		}))
 		defer server.Close()

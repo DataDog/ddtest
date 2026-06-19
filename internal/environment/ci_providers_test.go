@@ -15,8 +15,7 @@ import (
 	"testing"
 	"time"
 
-	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
-	"github.com/DataDog/ddtest/internal/git"
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 func setEnvs(t *testing.T, env map[string]any) {
@@ -52,7 +51,7 @@ func setDetectedProvider(t *testing.T, providerName string) {
 	ResetCITags()
 	originalCiTags = map[string]string{}
 	if providerName != "" {
-		originalCiTags[ciConstants.CIProviderName] = providerName
+		originalCiTags[constants.CIProviderName] = providerName
 	}
 	t.Cleanup(ResetCITags)
 }
@@ -236,7 +235,7 @@ func TestTags(t *testing.T) {
 							if expectedKey == "_dd.ci.env_vars" {
 								expectedValue = sortJSONKeys(expectedValue.(string))
 							}
-							if providerName == "github" && expectedKey == git.GitPrBaseBranch || expectedKey == git.GitPrBaseCommit || expectedKey == git.GitHeadCommit {
+							if providerName == "github" && expectedKey == constants.GitPrBaseBranch || expectedKey == constants.GitPrBaseCommit || expectedKey == constants.GitHeadCommit {
 								continue
 							}
 							if fmt.Sprintln(expectedValue) != actualValue {
@@ -284,17 +283,17 @@ func TestGitHubEventFile(t *testing.T) {
 		expectedBaseRef := "main"
 		expectedPrNumber := "1"
 
-		checkValue(tags, git.GitHeadCommit, expectedHeadCommit)
-		checkValue(tags, git.GitPrBaseHeadCommit, expectedBaseCommit)
-		checkValue(tags, git.GitPrBaseBranch, expectedBaseRef)
-		checkValue(tags, git.PrNumber, expectedPrNumber)
+		checkValue(tags, constants.GitHeadCommit, expectedHeadCommit)
+		checkValue(tags, constants.GitPrBaseHeadCommit, expectedBaseCommit)
+		checkValue(tags, constants.GitPrBaseBranch, expectedBaseRef)
+		checkValue(tags, constants.PrNumber, expectedPrNumber)
 	})
 
 	t.Run("no event file", func(t *testing.T) {
 		t.Setenv("GITHUB_BASE_REF", "my-base-ref") // this should be ignored in favor of the event file value
 
 		tags := extractGithubActions()
-		checkValue(tags, git.GitPrBaseBranch, "my-base-ref")
+		checkValue(tags, constants.GitPrBaseBranch, "my-base-ref")
 	})
 }
 
@@ -321,13 +320,13 @@ func TestGitHubEventFileNonPullRequestDoesNotSetPRTags(t *testing.T) {
 	t.Setenv("JOB_CHECK_RUN_ID", "")
 
 	tags := extractGithubActions()
-	if got := tags[git.PrNumber]; got != "" {
+	if got := tags[constants.PrNumber]; got != "" {
 		t.Fatalf("expected no PR number for non-PR event, got %q", got)
 	}
-	if got := tags[git.GitHeadCommit]; got != "" {
+	if got := tags[constants.GitHeadCommit]; got != "" {
 		t.Fatalf("expected no PR head commit for non-PR event, got %q", got)
 	}
-	if got := tags[git.GitPrBaseHeadCommit]; got != "" {
+	if got := tags[constants.GitPrBaseHeadCommit]; got != "" {
 		t.Fatalf("expected no PR base commit for non-PR event, got %q", got)
 	}
 }
@@ -337,10 +336,10 @@ func TestBuildkitePullRequestFalseDoesNotSetPRNumber(t *testing.T) {
 	t.Setenv("BUILDKITE_PULL_REQUEST_BASE_BRANCH", "main")
 
 	tags := extractBuildkite()
-	if got := tags[git.PrNumber]; got != "" {
+	if got := tags[constants.PrNumber]; got != "" {
 		t.Fatalf("expected no PR number for Buildkite false sentinel, got %q", got)
 	}
-	if got := tags[git.GitPrBaseBranch]; got != "" {
+	if got := tags[constants.GitPrBaseBranch]; got != "" {
 		t.Fatalf("expected no PR base branch for Buildkite false sentinel, got %q", got)
 	}
 }
@@ -350,10 +349,10 @@ func TestBuildkitePullRequestNumberIsSet(t *testing.T) {
 	t.Setenv("BUILDKITE_PULL_REQUEST_BASE_BRANCH", "main")
 
 	tags := extractBuildkite()
-	if got := tags[git.PrNumber]; got != "42" {
+	if got := tags[constants.PrNumber]; got != "42" {
 		t.Fatalf("expected Buildkite PR number 42, got %q", got)
 	}
-	if got := tags[git.GitPrBaseBranch]; got != "main" {
+	if got := tags[constants.GitPrBaseBranch]; got != "main" {
 		t.Fatalf("expected Buildkite PR base branch main, got %q", got)
 	}
 }
@@ -363,10 +362,10 @@ func TestTravisPullRequestFalseDoesNotSetPRNumber(t *testing.T) {
 	t.Setenv("TRAVIS_BRANCH", "main")
 
 	tags := extractTravis()
-	if got := tags[git.PrNumber]; got != "" {
+	if got := tags[constants.PrNumber]; got != "" {
 		t.Fatalf("expected no PR number for Travis false sentinel, got %q", got)
 	}
-	if got := tags[git.GitPrBaseBranch]; got != "" {
+	if got := tags[constants.GitPrBaseBranch]; got != "" {
 		t.Fatalf("expected no PR base branch for Travis false sentinel, got %q", got)
 	}
 }
@@ -376,10 +375,10 @@ func TestTravisPullRequestNumberIsSet(t *testing.T) {
 	t.Setenv("TRAVIS_BRANCH", "main")
 
 	tags := extractTravis()
-	if got := tags[git.PrNumber]; got != "42" {
+	if got := tags[constants.PrNumber]; got != "42" {
 		t.Fatalf("expected Travis PR number 42, got %q", got)
 	}
-	if got := tags[git.GitPrBaseBranch]; got != "main" {
+	if got := tags[constants.GitPrBaseBranch]; got != "main" {
 		t.Fatalf("expected Travis PR base branch main, got %q", got)
 	}
 }

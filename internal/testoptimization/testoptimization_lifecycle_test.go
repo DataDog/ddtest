@@ -12,8 +12,6 @@ import (
 	"testing"
 	"time"
 
-	testoptimizationstate "github.com/DataDog/ddtest/civisibility"
-	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/git"
@@ -92,7 +90,7 @@ func TestTestOptimizationClientFeatureGetters(t *testing.T) {
 	}
 
 	ciTags := environment.GetCITags()
-	if ciTags[ciConstants.ItrCorrelationIDTag] != "correlation-id" {
+	if ciTags[constants.ItrCorrelationIDTag] != "correlation-id" {
 		t.Fatalf("expected correlation id tag, got %#v", ciTags)
 	}
 }
@@ -199,23 +197,60 @@ func TestEnsureAPITransportWithoutFactory(t *testing.T) {
 
 func TestEnsureTestOptimizationSessionInitializationBranches(t *testing.T) {
 	t.Setenv("DD_TRACE_DEBUG", "true")
-	t.Setenv(ciConstants.TestOptimizationEnabledEnvironmentVariable, "")
+	t.Setenv(constants.TestOptimizationEnabledEnvironmentVariable, "")
 	t.Setenv("DD_TRACE_SAMPLE_RATE", "")
 	environment.ResetCITags()
 	t.Cleanup(environment.ResetCITags)
 	t.Cleanup(func() {
 		signal.Reset(syscall.SIGINT, syscall.SIGTERM)
-		testoptimizationstate.SetState(testoptimizationstate.StateExited)
 	})
 
 	client := newTestOptimizationClient(&MockAPIClient{}, nil, func() (int64, error) { return 0, nil }, true)
 	client.ensureTestOptimizationSessionInitialized()
 
-	if got := os.Getenv(ciConstants.TestOptimizationEnabledEnvironmentVariable); got != "1" {
-		t.Fatalf("%s = %q, want 1", ciConstants.TestOptimizationEnabledEnvironmentVariable, got)
+	if got := os.Getenv(constants.TestOptimizationEnabledEnvironmentVariable); got != "1" {
+		t.Fatalf("%s = %q, want 1", constants.TestOptimizationEnabledEnvironmentVariable, got)
 	}
 	if got := os.Getenv("DD_TRACE_SAMPLE_RATE"); got != "1" {
 		t.Fatalf("DD_TRACE_SAMPLE_RATE = %q, want 1", got)
+	}
+}
+
+func TestTraceDebugEnabled(t *testing.T) {
+	originalValue, originallySet := os.LookupEnv("DD_TRACE_DEBUG")
+	t.Cleanup(func() {
+		if originallySet {
+			_ = os.Setenv("DD_TRACE_DEBUG", originalValue)
+		} else {
+			_ = os.Unsetenv("DD_TRACE_DEBUG")
+		}
+	})
+
+	tests := []struct {
+		name     string
+		value    string
+		set      bool
+		expected bool
+	}{
+		{name: "unset", expected: false},
+		{name: "true", value: "true", set: true, expected: true},
+		{name: "one", value: "1", set: true, expected: true},
+		{name: "false", value: "false", set: true, expected: false},
+		{name: "invalid", value: "definitely", set: true, expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.set {
+				_ = os.Setenv("DD_TRACE_DEBUG", tt.value)
+			} else {
+				_ = os.Unsetenv("DD_TRACE_DEBUG")
+			}
+
+			if got := traceDebugEnabled(); got != tt.expected {
+				t.Fatalf("traceDebugEnabled() = %t, want %t", got, tt.expected)
+			}
+		})
 	}
 }
 
@@ -261,47 +296,47 @@ func TestInitializeAddsGitMetadataFromRealRepository(t *testing.T) {
 	}
 
 	ciTags := environment.GetCITags()
-	if ciTags[git.GitRepositoryURL] != "https://example.com/org/repo.git" {
-		t.Fatalf("repository URL tag = %q", ciTags[git.GitRepositoryURL])
+	if ciTags[constants.GitRepositoryURL] != "https://example.com/org/repo.git" {
+		t.Fatalf("repository URL tag = %q", ciTags[constants.GitRepositoryURL])
 	}
-	if ciTags[git.GitCommitSHA] != repo.Commits[1] {
-		t.Fatalf("commit SHA tag = %q, want %q", ciTags[git.GitCommitSHA], repo.Commits[1])
+	if ciTags[constants.GitCommitSHA] != repo.Commits[1] {
+		t.Fatalf("commit SHA tag = %q, want %q", ciTags[constants.GitCommitSHA], repo.Commits[1])
 	}
-	if ciTags[git.GitBranch] != "main" {
-		t.Fatalf("branch tag = %q, want main", ciTags[git.GitBranch])
+	if ciTags[constants.GitBranch] != "main" {
+		t.Fatalf("branch tag = %q, want main", ciTags[constants.GitBranch])
 	}
-	if ciTags[git.GitCommitMessage] != "second commit\n\nMore details" {
-		t.Fatalf("commit message tag = %q", ciTags[git.GitCommitMessage])
+	if ciTags[constants.GitCommitMessage] != "second commit\n\nMore details" {
+		t.Fatalf("commit message tag = %q", ciTags[constants.GitCommitMessage])
 	}
-	if ciTags[git.GitCommitAuthorName] != gittest.AuthorName {
-		t.Fatalf("author name tag = %q", ciTags[git.GitCommitAuthorName])
+	if ciTags[constants.GitCommitAuthorName] != gittest.AuthorName {
+		t.Fatalf("author name tag = %q", ciTags[constants.GitCommitAuthorName])
 	}
-	if ciTags[git.GitCommitAuthorEmail] != gittest.AuthorEmail {
-		t.Fatalf("author email tag = %q", ciTags[git.GitCommitAuthorEmail])
+	if ciTags[constants.GitCommitAuthorEmail] != gittest.AuthorEmail {
+		t.Fatalf("author email tag = %q", ciTags[constants.GitCommitAuthorEmail])
 	}
 	expectedAuthorDate := time.Unix(repo.AuthorDates[1].Unix(), 0).String()
-	if ciTags[git.GitCommitAuthorDate] != expectedAuthorDate {
-		t.Fatalf("author date tag = %q, want %q", ciTags[git.GitCommitAuthorDate], expectedAuthorDate)
+	if ciTags[constants.GitCommitAuthorDate] != expectedAuthorDate {
+		t.Fatalf("author date tag = %q, want %q", ciTags[constants.GitCommitAuthorDate], expectedAuthorDate)
 	}
-	if ciTags[git.GitCommitCommitterName] != gittest.CommitterName {
-		t.Fatalf("committer name tag = %q", ciTags[git.GitCommitCommitterName])
+	if ciTags[constants.GitCommitCommitterName] != gittest.CommitterName {
+		t.Fatalf("committer name tag = %q", ciTags[constants.GitCommitCommitterName])
 	}
-	if ciTags[git.GitCommitCommitterEmail] != gittest.CommitterEmail {
-		t.Fatalf("committer email tag = %q", ciTags[git.GitCommitCommitterEmail])
+	if ciTags[constants.GitCommitCommitterEmail] != gittest.CommitterEmail {
+		t.Fatalf("committer email tag = %q", ciTags[constants.GitCommitCommitterEmail])
 	}
 	expectedCommitterDate := time.Unix(repo.AuthorDates[1].Add(time.Second).Unix(), 0).String()
-	if ciTags[git.GitCommitCommitterDate] != expectedCommitterDate {
-		t.Fatalf("committer date tag = %q, want %q", ciTags[git.GitCommitCommitterDate], expectedCommitterDate)
+	if ciTags[constants.GitCommitCommitterDate] != expectedCommitterDate {
+		t.Fatalf("committer date tag = %q, want %q", ciTags[constants.GitCommitCommitterDate], expectedCommitterDate)
 	}
-	if ciTags[ciConstants.CIWorkspacePath] != repo.Path {
-		t.Fatalf("workspace path tag = %q, want %q", ciTags[ciConstants.CIWorkspacePath], repo.Path)
+	if ciTags[constants.CIWorkspacePath] != repo.Path {
+		t.Fatalf("workspace path tag = %q, want %q", ciTags[constants.CIWorkspacePath], repo.Path)
 	}
 }
 
 func TestApplyEnvironmentOverrides(t *testing.T) {
-	t.Setenv(ciConstants.TestOptimizationFlakyRetryEnabledEnvironmentVariable, "false")
-	t.Setenv(ciConstants.TestOptimizationManagementEnabledEnvironmentVariable, "false")
-	t.Setenv(ciConstants.TestOptimizationAttemptToFixRetriesEnvironmentVariable, "7")
+	t.Setenv(constants.TestOptimizationFlakyRetryEnabledEnvironmentVariable, "false")
+	t.Setenv(constants.TestOptimizationManagementEnabledEnvironmentVariable, "false")
+	t.Setenv(constants.TestOptimizationAttemptToFixRetriesEnvironmentVariable, "7")
 
 	settings := &api.SettingsResponseData{
 		KnownTestsEnabled:       false,
@@ -323,6 +358,31 @@ func TestApplyEnvironmentOverrides(t *testing.T) {
 	}
 	if settings.TestManagement.AttemptToFixRetries != 7 {
 		t.Fatalf("attempt-to-fix retries = %d, want 7", settings.TestManagement.AttemptToFixRetries)
+	}
+}
+
+func TestApplyEnvironmentOverridesInvalidEnvValuesUseDefaults(t *testing.T) {
+	t.Setenv(constants.TestOptimizationFlakyRetryEnabledEnvironmentVariable, "invalid")
+	t.Setenv(constants.TestOptimizationManagementEnabledEnvironmentVariable, "invalid")
+	t.Setenv(constants.TestOptimizationAttemptToFixRetriesEnvironmentVariable, "invalid")
+
+	settings := &api.SettingsResponseData{
+		KnownTestsEnabled:       true,
+		FlakyTestRetriesEnabled: true,
+	}
+	settings.TestManagement.Enabled = true
+	settings.TestManagement.AttemptToFixRetries = 3
+
+	applyEnvironmentOverrides(settings)
+
+	if !settings.FlakyTestRetriesEnabled {
+		t.Fatal("expected invalid flaky retry env override to keep default true")
+	}
+	if !settings.TestManagement.Enabled {
+		t.Fatal("expected invalid test management env override to keep default true")
+	}
+	if settings.TestManagement.AttemptToFixRetries != 3 {
+		t.Fatalf("attempt-to-fix retries = %d, want 3", settings.TestManagement.AttemptToFixRetries)
 	}
 }
 
@@ -603,7 +663,7 @@ func TestCacheManagerWriteErrors(t *testing.T) {
 	}
 
 	constants.RunnerCacheDir = t.TempDir()
-	if err := os.Mkdir(filepath.Join(constants.RunnerCacheDir, TestOptimizationPlanCacheFile), 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(constants.RunnerCacheDir, constants.TestOptimizationPlanCacheFile), 0o755); err != nil {
 		t.Fatalf("create blocking plan cache directory: %v", err)
 	}
 	if err := manager.StoreTestOptimizationPlanCache(map[string]string{"x": "y"}); err == nil {
@@ -627,10 +687,7 @@ func TestSearchCommitsResponseHelpers(t *testing.T) {
 	}
 }
 
-func TestExitTestOptimizationRunsCloseActionsOnlyWhenInitialized(t *testing.T) {
-	testoptimizationstate.SetState(testoptimizationstate.StateInitialized)
-	t.Cleanup(func() { testoptimizationstate.SetState(testoptimizationstate.StateExited) })
-
+func TestExitTestOptimizationRunsCloseActionsOnce(t *testing.T) {
 	var calls []string
 	client := newTestOptimizationClient(nil, nil, nil, false)
 	client.pushTestOptimizationCloseAction(func() { calls = append(calls, "first") })
@@ -644,11 +701,11 @@ func TestExitTestOptimizationRunsCloseActionsOnlyWhenInitialized(t *testing.T) {
 	if len(client.closeActions) != 0 {
 		t.Fatalf("expected close actions to be cleared, got %d", len(client.closeActions))
 	}
-	if state := testoptimizationstate.GetState(); state != testoptimizationstate.StateExited {
-		t.Fatalf("state = %v, want exited", state)
-	}
 
 	client.exitTestOptimization()
+	if len(calls) != 2 {
+		t.Fatalf("close actions executed again: %#v", calls)
+	}
 }
 
 func TestStoreCacheAndExitLogsCacheWriteErrors(t *testing.T) {

@@ -16,14 +16,26 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/git"
-	"github.com/DataDog/ddtest/osinfo"
+	"github.com/DataDog/ddtest/internal/utils/osinfo"
 )
 
 type (
 	localCommitData = git.LocalCommitData
 	localGitData    = git.LocalGitData
+)
+
+const (
+	testCommandTag             = "test.command"
+	testSessionNameTag         = "test_session.name"
+	userProvidedTestServiceTag = "_dd.test.is_user_provided_service"
+	gitHeadAuthorDateTag       = "git.commit.head.author.date"
+	gitHeadAuthorEmailTag      = "git.commit.head.author.email"
+	gitHeadAuthorNameTag       = "git.commit.head.author.name"
+	gitHeadCommitterDateTag    = "git.commit.head.committer.date"
+	gitHeadCommitterEmailTag   = "git.commit.head.committer.email"
+	gitHeadCommitterNameTag    = "git.commit.head.committer.name"
 )
 
 var (
@@ -129,24 +141,24 @@ func createCITagsMap() map[string]string {
 	cmd = regexp.MustCompile(`(?si)-test.v=(.*)\s`).ReplaceAllString(cmd, "")
 	cmd = regexp.MustCompile(`(?si)-test.testlogfile=(.*)\s`).ReplaceAllString(cmd, "")
 	cmd = strings.TrimSpace(cmd)
-	localTags[constants.TestCommand] = cmd
+	localTags[testCommandTag] = cmd
 	slog.Debug("testoptimization: test command", "command", cmd)
 
 	// Populate the test session name
 	if testSessionName, ok := os.LookupEnv(constants.TestOptimizationTestSessionNameEnvironmentVariable); ok {
-		localTags[constants.TestSessionName] = testSessionName
+		localTags[testSessionNameTag] = testSessionName
 	} else if jobName, ok := localTags[constants.CIJobName]; ok {
-		localTags[constants.TestSessionName] = fmt.Sprintf("%s-%s", jobName, cmd)
+		localTags[testSessionNameTag] = fmt.Sprintf("%s-%s", jobName, cmd)
 	} else {
-		localTags[constants.TestSessionName] = cmd
+		localTags[testSessionNameTag] = cmd
 	}
-	slog.Debug("testoptimization: test session name", "testSessionName", localTags[constants.TestSessionName])
+	slog.Debug("testoptimization: test session name", "testSessionName", localTags[testSessionNameTag])
 
 	// Check if the user provided the test service
 	if ddService := os.Getenv("DD_SERVICE"); ddService != "" {
-		localTags[constants.UserProvidedTestServiceTag] = "true"
+		localTags[userProvidedTestServiceTag] = "true"
 	} else {
-		localTags[constants.UserProvidedTestServiceTag] = "false"
+		localTags[userProvidedTestServiceTag] = "false"
 	}
 
 	// Populate missing git data
@@ -156,53 +168,53 @@ func createCITagsMap() map[string]string {
 	if _, ok := localTags[constants.CIWorkspacePath]; !ok {
 		localTags[constants.CIWorkspacePath] = gitData.SourceRoot
 	}
-	if _, ok := localTags[git.GitRepositoryURL]; !ok {
-		localTags[git.GitRepositoryURL] = gitData.RepositoryURL
+	if _, ok := localTags[constants.GitRepositoryURL]; !ok {
+		localTags[constants.GitRepositoryURL] = gitData.RepositoryURL
 	}
-	if _, ok := localTags[git.GitCommitSHA]; !ok {
-		localTags[git.GitCommitSHA] = gitData.CommitSha
+	if _, ok := localTags[constants.GitCommitSHA]; !ok {
+		localTags[constants.GitCommitSHA] = gitData.CommitSha
 	}
-	if _, ok := localTags[git.GitBranch]; !ok {
-		localTags[git.GitBranch] = gitData.Branch
+	if _, ok := localTags[constants.GitBranch]; !ok {
+		localTags[constants.GitBranch] = gitData.Branch
 	}
 
 	// If the commit SHA matches, populate additional Git metadata
-	if localTags[git.GitCommitSHA] == gitData.CommitSha {
-		if _, ok := localTags[git.GitCommitAuthorDate]; !ok {
-			localTags[git.GitCommitAuthorDate] = gitData.AuthorDate.String()
+	if localTags[constants.GitCommitSHA] == gitData.CommitSha {
+		if _, ok := localTags[constants.GitCommitAuthorDate]; !ok {
+			localTags[constants.GitCommitAuthorDate] = gitData.AuthorDate.String()
 		}
-		if _, ok := localTags[git.GitCommitAuthorName]; !ok {
-			localTags[git.GitCommitAuthorName] = gitData.AuthorName
+		if _, ok := localTags[constants.GitCommitAuthorName]; !ok {
+			localTags[constants.GitCommitAuthorName] = gitData.AuthorName
 		}
-		if _, ok := localTags[git.GitCommitAuthorEmail]; !ok {
-			localTags[git.GitCommitAuthorEmail] = gitData.AuthorEmail
+		if _, ok := localTags[constants.GitCommitAuthorEmail]; !ok {
+			localTags[constants.GitCommitAuthorEmail] = gitData.AuthorEmail
 		}
-		if _, ok := localTags[git.GitCommitCommitterDate]; !ok {
-			localTags[git.GitCommitCommitterDate] = gitData.CommitterDate.String()
+		if _, ok := localTags[constants.GitCommitCommitterDate]; !ok {
+			localTags[constants.GitCommitCommitterDate] = gitData.CommitterDate.String()
 		}
-		if _, ok := localTags[git.GitCommitCommitterName]; !ok {
-			localTags[git.GitCommitCommitterName] = gitData.CommitterName
+		if _, ok := localTags[constants.GitCommitCommitterName]; !ok {
+			localTags[constants.GitCommitCommitterName] = gitData.CommitterName
 		}
-		if _, ok := localTags[git.GitCommitCommitterEmail]; !ok {
-			localTags[git.GitCommitCommitterEmail] = gitData.CommitterEmail
+		if _, ok := localTags[constants.GitCommitCommitterEmail]; !ok {
+			localTags[constants.GitCommitCommitterEmail] = gitData.CommitterEmail
 		}
-		if _, ok := localTags[git.GitCommitMessage]; !ok {
-			localTags[git.GitCommitMessage] = gitData.CommitMessage
+		if _, ok := localTags[constants.GitCommitMessage]; !ok {
+			localTags[constants.GitCommitMessage] = gitData.CommitMessage
 		}
 	}
 
 	// If the head commit SHA is available, populate additional Git head metadata
-	if headCommitSha, ok := localTags[git.GitHeadCommit]; ok {
+	if headCommitSha, ok := localTags[constants.GitHeadCommit]; ok {
 		if headCommitData, err := fetchCommitDataFunc(headCommitSha); err != nil {
 			slog.Warn("testoptimization: failed to fetch head commit data", "headCommitSha", headCommitSha, "error", err.Error())
 		} else if headCommitSha == headCommitData.CommitSha {
-			localTags[git.GitHeadAuthorDate] = headCommitData.AuthorDate.String()
-			localTags[git.GitHeadAuthorName] = headCommitData.AuthorName
-			localTags[git.GitHeadAuthorEmail] = headCommitData.AuthorEmail
-			localTags[git.GitHeadCommitterDate] = headCommitData.CommitterDate.String()
-			localTags[git.GitHeadCommitterName] = headCommitData.CommitterName
-			localTags[git.GitHeadCommitterEmail] = headCommitData.CommitterEmail
-			localTags[git.GitHeadMessage] = headCommitData.CommitMessage
+			localTags[gitHeadAuthorDateTag] = headCommitData.AuthorDate.String()
+			localTags[gitHeadAuthorNameTag] = headCommitData.AuthorName
+			localTags[gitHeadAuthorEmailTag] = headCommitData.AuthorEmail
+			localTags[gitHeadCommitterDateTag] = headCommitData.CommitterDate.String()
+			localTags[gitHeadCommitterNameTag] = headCommitData.CommitterName
+			localTags[gitHeadCommitterEmailTag] = headCommitData.CommitterEmail
+			localTags[constants.GitHeadMessage] = headCommitData.CommitMessage
 		} else {
 			slog.Warn("testoptimization: head commit SHA does not match fetched commit SHA", "headCommitSha", headCommitSha, "fetchedCommitSha", headCommitData.CommitSha)
 		}

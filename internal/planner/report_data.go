@@ -9,8 +9,6 @@ import (
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
 )
 
-const slowestTestSuitesReportLimit = 10
-
 type datadogSettingsReport struct {
 	Available            bool
 	TestImpactAnalysis   bool

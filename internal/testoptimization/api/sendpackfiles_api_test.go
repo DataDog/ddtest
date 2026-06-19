@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 func TestTransportSendPackFilesRequestAndResponse(t *testing.T) {
@@ -37,7 +39,7 @@ func TestTransportSendPackFilesRequestAndResponse(t *testing.T) {
 			body, _ := io.ReadAll(part)
 			switch part.FormName() {
 			case "pushedSha":
-				if part.Header.Get(HeaderContentType) != ContentTypeJSON {
+				if part.Header.Get(HeaderContentType) != constants.ContentTypeJSON {
 					t.Fatalf("pushedSha content type = %q", part.Header.Get(HeaderContentType))
 				}
 				if err := json.Unmarshal(body, &pushed); err != nil {
@@ -45,7 +47,7 @@ func TestTransportSendPackFilesRequestAndResponse(t *testing.T) {
 				}
 				sawPushedSha = true
 			case "packfile":
-				if part.Header.Get(HeaderContentType) != ContentTypeOctetStream {
+				if part.Header.Get(HeaderContentType) != constants.ContentTypeOctetStream {
 					t.Fatalf("packfile content type = %q", part.Header.Get(HeaderContentType))
 				}
 				packfiles = append(packfiles, append([]byte(nil), body...))
@@ -57,7 +59,7 @@ func TestTransportSendPackFilesRequestAndResponse(t *testing.T) {
 		if !sawPushedSha || !sawPackfile {
 			t.Fatalf("request should include pushedSha and packfile parts, saw pushedSha=%t packfile=%t", sawPushedSha, sawPackfile)
 		}
-		w.Header().Set(HeaderContentType, ContentTypeJSON)
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer server.Close()
@@ -83,7 +85,7 @@ func TestTransportSendPackFilesRequestAndResponse(t *testing.T) {
 	if bytesSent != int64(len("pack-one")+len("pack-two")) {
 		t.Fatalf("bytes sent = %d, want %d", bytesSent, len("pack-one")+len("pack-two"))
 	}
-	if pushed.Data.ID != transport.commitSha || pushed.Data.Type != searchCommitsType {
+	if pushed.Data.ID != transport.commitSha || pushed.Data.Type != constants.SearchCommitsType {
 		t.Fatalf("unexpected pushed sha body: %#v", pushed)
 	}
 	if pushed.Meta.RepositoryURL != transport.repositoryURL {

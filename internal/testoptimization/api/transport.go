@@ -19,18 +19,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DataDog/ddtest/civisibility"
-	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/environment"
-	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/runmetadata"
+	"github.com/DataDog/ddtest/internal/utils"
 )
 
 const (
-	// DefaultMaxRetries is the default number of retries for a request.
-	DefaultMaxRetries int = 3
-	// DefaultBackoff is the default backoff time for a request.
-	DefaultBackoff time.Duration = 100 * time.Millisecond
+	defaultAgentHostname  = "localhost"
+	defaultTraceAgentPort = "8126"
+	ddTagsDelimiter       = ":"
 )
 
 type (
@@ -90,6 +88,8 @@ var (
 	_ Transport = &transport{}
 )
 
+var defaultTraceAgentUDSPath = "/var/run/datadog/apm.socket"
+
 // NewTransportWithServiceNameAndSubdomain creates a new transport with the given service name and subdomain.
 func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Transport {
 	ciTags := environment.GetCITags()
@@ -102,14 +102,14 @@ func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Tran
 
 	// get the service name
 	if serviceName == "" {
-		serviceName = runmetadata.ResolveServiceName(ciTags[git.GitRepositoryURL])
+		serviceName = runmetadata.ResolveServiceName(ciTags[constants.GitRepositoryURL])
 	}
 
 	// get all custom configuration (test.configuration.*)
 	var customConfiguration map[string]string
 	if v := os.Getenv("DD_TAGS"); v != "" {
 		prefix := "test.configuration."
-		for k, v := range civisibility.ParseTagString(v) {
+		for k, v := range parseTagString(v) {
 			if strings.HasPrefix(k, prefix) {
 				if customConfiguration == nil {
 					customConfiguration = map[string]string{}
@@ -127,7 +127,7 @@ func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Tran
 	var agentURL *url.URL
 	var apiKeyValue string
 
-	agentlessEnabled := civisibility.BoolEnv(constants.TestOptimizationAgentlessEnabledEnvironmentVariable, false)
+	agentlessEnabled := utils.BoolEnv(constants.TestOptimizationAgentlessEnabledEnvironmentVariable, false)
 	if agentlessEnabled {
 		// Agentless mode is enabled.
 		apiKeyValue = os.Getenv(constants.APIKeyEnvironmentVariable)
@@ -159,7 +159,7 @@ func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Tran
 		// Use agent mode with the EVP proxy.
 		defaultHeaders["X-Datadog-EVP-Subdomain"] = subdomain
 
-		agentURL = civisibility.AgentURLFromEnv()
+		agentURL = traceAgentURLFromEnv()
 		if agentURL.Scheme == "unix" {
 			// If we're connecting over UDS we can just rely on the agent to provide the hostname
 			slog.Debug("connecting to agent over unix, do not set hostname on any traces")
@@ -205,10 +205,10 @@ func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Tran
 		id, agentlessEnabled, baseURL, environment, serviceName, subdomain)
 
 	// we try to get the branch name
-	bName := ciTags[git.GitBranch]
+	bName := ciTags[constants.GitBranch]
 	if bName == "" {
 		// if not we try to use the tag (checkout over a tag)
-		bName = ciTags[git.GitTag]
+		bName = ciTags[constants.GitTag]
 	}
 	if bName == "" {
 		// if is still empty we assume the customer just used a detached HEAD
@@ -222,11 +222,11 @@ func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Tran
 		environment:       environment,
 		serviceName:       serviceName,
 		workingDirectory:  ciTags[constants.CIWorkspacePath],
-		repositoryURL:     ciTags[git.GitRepositoryURL],
-		commitSha:         ciTags[git.GitCommitSHA],
-		commitMessage:     ciTags[git.GitCommitMessage],
-		headCommitSha:     ciTags[git.GitHeadCommit],
-		headCommitMessage: ciTags[git.GitHeadMessage],
+		repositoryURL:     ciTags[constants.GitRepositoryURL],
+		commitSha:         ciTags[constants.GitCommitSHA],
+		commitMessage:     ciTags[constants.GitCommitMessage],
+		headCommitSha:     ciTags[constants.GitHeadCommit],
+		headCommitMessage: ciTags[constants.GitHeadMessage],
 		branchName:        bName,
 		testConfigurations: testConfigurations{
 			OsPlatform:     ciTags[constants.OSPlatform],
@@ -244,6 +244,81 @@ func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Tran
 // NewTransportWithServiceName creates a new transport with the given service name.
 func NewTransportWithServiceName(serviceName string) Transport {
 	return NewTransportWithServiceNameAndSubdomain(serviceName, "api")
+}
+
+// traceAgentURLFromEnv resolves the URL for the trace agent based on
+// the default host/port and UDS path, and via standard environment variables.
+func traceAgentURLFromEnv() *url.URL {
+	if agentURL := os.Getenv("DD_TRACE_AGENT_URL"); agentURL != "" {
+		u, err := url.Parse(agentURL)
+		if err != nil {
+			slog.Warn("Failed to parse DD_TRACE_AGENT_URL", "error", err.Error())
+		} else {
+			switch u.Scheme {
+			case "unix", "http", "https":
+				return u
+			default:
+				slog.Warn("Unsupported protocol in Agent URL. Must be one of: http, https, unix.", "scheme", u.Scheme, "url", agentURL)
+			}
+		}
+	}
+
+	host, providedHost := os.LookupEnv("DD_AGENT_HOST")
+	port, providedPort := os.LookupEnv("DD_TRACE_AGENT_PORT")
+	if host == "" {
+		providedHost = false
+		host = defaultAgentHostname
+	}
+	if port == "" {
+		providedPort = false
+		port = defaultTraceAgentPort
+	}
+	httpURL := &url.URL{
+		Scheme: "http",
+		Host:   net.JoinHostPort(host, port),
+	}
+	if providedHost || providedPort {
+		return httpURL
+	}
+
+	if _, err := os.Stat(defaultTraceAgentUDSPath); err == nil {
+		return &url.URL{
+			Scheme: "unix",
+			Path:   defaultTraceAgentUDSPath,
+		}
+	}
+	return httpURL
+}
+
+func parseTagString(str string) map[string]string {
+	res := make(map[string]string)
+	forEachStringTag(str, ddTagsDelimiter, func(key string, val string) {
+		res[key] = val
+	})
+	return res
+}
+
+func forEachStringTag(str string, delimiter string, fn func(key string, val string)) {
+	sep := " "
+	if strings.Contains(str, ",") {
+		sep = ","
+	}
+	for _, tag := range strings.Split(str, sep) {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		kv := strings.SplitN(tag, delimiter, 2)
+		key := strings.TrimSpace(kv[0])
+		if key == "" {
+			continue
+		}
+		var val string
+		if len(kv) == 2 {
+			val = strings.TrimSpace(kv[1])
+		}
+		fn(key, val)
+	}
 }
 
 func cloneRawMessage(data []byte) json.RawMessage {
@@ -285,10 +360,10 @@ func (c *transport) getPostRequestConfig(url string, body interface{}) *RequestC
 		URL:        c.getURLPath(url),
 		Headers:    c.headers,
 		Body:       body,
-		Format:     FormatJSON,
+		Format:     constants.FormatJSON,
 		Compressed: false,
 		Files:      nil,
-		MaxRetries: DefaultMaxRetries,
-		Backoff:    DefaultBackoff,
+		MaxRetries: constants.DefaultMaxRetries,
+		Backoff:    constants.DefaultBackoff,
 	}
 }
