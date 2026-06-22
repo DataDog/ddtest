@@ -333,7 +333,9 @@ func TestJavaScript_DetectFramework_SetsPlatformEnv(t *testing.T) {
 func TestJavaScript_GetPlatformEnv_UnsetNODEOPTIONS(t *testing.T) {
 	// When NODE_OPTIONS is completely unset (not just empty), we should still
 	// set it to the dd-trace init argument.
-	os.Unsetenv(nodeOptionsEnvVar)
+	if err := os.Unsetenv(nodeOptionsEnvVar); err != nil {
+		t.Fatal(err)
+	}
 
 	javascript := NewJavaScript()
 	envMap := javascript.GetPlatformEnv()
