@@ -413,8 +413,8 @@ func TestDetectPlatform_Ruby(t *testing.T) {
 
 func TestDetectPlatform_Unsupported(t *testing.T) {
 	viper.Reset()
-	viper.Set("platform", "python") // Set BEFORE Init
-	settings.Init()                 // Re-initialize to set defaults
+	viper.Set("platform", "go") // Set BEFORE Init
+	settings.Init()             // Re-initialize to set defaults
 	defer func() {
 		viper.Reset()
 		settings.Init()
@@ -430,7 +430,7 @@ func TestDetectPlatform_Unsupported(t *testing.T) {
 		t.Error("expected nil platform for unsupported platform")
 	}
 
-	expectedError := "unsupported platform: python"
+	expectedError := "unsupported platform: go"
 	if err.Error() != expectedError {
 		t.Errorf("expected error %q, got %q", expectedError, err.Error())
 	}

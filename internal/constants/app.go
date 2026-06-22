@@ -13,6 +13,7 @@ const ManifestVersion = "1"
 var ManifestPath = filepath.Join(PlanDirectory, "manifest.txt")
 
 const TestOptimizationManifestFileEnvVar = "TEST_OPTIMIZATION_MANIFEST_FILE"
+const DDTestOptimizationManifestFileEnvVar = "DD_TEST_OPTIMIZATION_MANIFEST_FILE"
 
 // Runner layout paths.
 var RunnerDirectory = filepath.Join(PlanDirectory, "runner")
@@ -36,3 +37,4 @@ var HTTPCacheDir = filepath.Join(PlanDirectory, "cache", "http")
 
 // Platform specific output file paths
 var RubyEnvOutputPath = filepath.Join(PlanDirectory, "ruby_env.json")
+var PythonEnvOutputPath = filepath.Join(PlanDirectory, "python_env.json")

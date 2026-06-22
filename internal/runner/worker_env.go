@@ -69,6 +69,7 @@ func ensureManifestFile(workerEnv map[string]string) {
 
 	if manifestFile, ok := os.LookupEnv(constants.TestOptimizationManifestFileEnvVar); ok {
 		workerEnv[constants.TestOptimizationManifestFileEnvVar] = manifestFile
+		workerEnv[constants.DDTestOptimizationManifestFileEnvVar] = manifestFile
 		return
 	}
 
@@ -77,4 +78,5 @@ func ensureManifestFile(workerEnv map[string]string) {
 		manifestPath = constants.ManifestPath
 	}
 	workerEnv[constants.TestOptimizationManifestFileEnvVar] = manifestPath
+	workerEnv[constants.DDTestOptimizationManifestFileEnvVar] = manifestPath
 }
