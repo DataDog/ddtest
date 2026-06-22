@@ -1702,6 +1702,18 @@ func TestMinitest_RunTests_RailsApplication_UsesPlatformEnv(t *testing.T) {
 	}
 }
 
+func TestMinitest_DefaultTestPattern(t *testing.T) {
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", "")
+	settings.Init()
+	t.Cleanup(settings.Init)
+
+	minitest := NewMinitest()
+	expected := filepath.Join(minitestRootDir, "**", minitestTestFilePattern)
+	if got := minitest.TestPattern(); got != expected {
+		t.Errorf("expected default test pattern %q, got %q", expected, got)
+	}
+}
+
 func TestMinitest_TestExcludePattern(t *testing.T) {
 	minitest := NewMinitest()
 	if got := minitest.TestExcludePattern(); got != "" {

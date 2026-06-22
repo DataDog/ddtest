@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -121,6 +122,44 @@ func TestDiscoverTestFilesSkipsNodeModules(t *testing.T) {
 		"test/unit/order_test.rb",
 		"test/unit/user_test.rb",
 	}
+	if !slices.Equal(files, expected) {
+		t.Fatalf("expected %v, got %v", expected, files)
+	}
+}
+
+func TestDiscoverTestFilesSkipsUnreadableEntries(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permission semantics differ on windows")
+	}
+
+	root := t.TempDir()
+	t.Chdir(root)
+
+	visibleFile := filepath.Join("test", "visible_test.rb")
+	if err := os.MkdirAll(filepath.Dir(visibleFile), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(visibleFile, []byte("# test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	unreadableDir := filepath.Join("test", "unreadable")
+	if err := os.MkdirAll(unreadableDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unreadableDir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(unreadableDir, 0755)
+	})
+
+	files, err := DiscoverTestFiles(filepath.Join("test", "**", "*_test.rb"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := []string{visibleFile}
 	if !slices.Equal(files, expected) {
 		t.Fatalf("expected %v, got %v", expected, files)
 	}

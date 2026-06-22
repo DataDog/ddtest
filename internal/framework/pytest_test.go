@@ -178,9 +178,70 @@ func TestPyTest_DiscoverTests_Success(t *testing.T) {
 	}
 }
 
+func TestPyTest_MetadataAndPlatformEnv(t *testing.T) {
+	pytest := NewPytest()
+	if pytest.Name() != "pytest" {
+		t.Errorf("expected framework name pytest, got %q", pytest.Name())
+	}
+	if !pytest.SupportsFullTestDiscovery() {
+		t.Error("expected PyTest to support full test discovery")
+	}
+
+	platformEnv := map[string]string{"PYTEST_ADDOPTS": "--ddtrace"}
+	pytest.SetPlatformEnv(platformEnv)
+	if got := pytest.GetPlatformEnv(); got["PYTEST_ADDOPTS"] != platformEnv["PYTEST_ADDOPTS"] {
+		t.Errorf("expected platform env to be retained, got %v", got)
+	}
+}
+
 func TestPyTest_SupportsFullTestDiscovery(t *testing.T) {
 	pytest := NewPytest()
 	if !pytest.SupportsFullTestDiscovery() {
 		t.Error("expected PyTest to support full test discovery")
+	}
+}
+
+func TestPyTest_RunTests(t *testing.T) {
+	testFiles := []string{"tests/test_user.py", "tests/test_auth.py"}
+	envMap := map[string]string{
+		"APP_ENV":    "test",
+		"SHARED_VAR": "override",
+	}
+
+	var capturedName string
+	var capturedArgs []string
+	mockExecutor := &mockCommandExecutor{
+		onExecution: func(name string, args []string) {
+			capturedName = name
+			capturedArgs = args
+		},
+	}
+
+	pytest := &PyTest{
+		executor: mockExecutor,
+		platformEnv: map[string]string{
+			"PYTEST_ADDOPTS": "--ddtrace",
+			"SHARED_VAR":     "platform",
+		},
+	}
+	if err := pytest.RunTests(context.Background(), testFiles, envMap); err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	if capturedName != "python" {
+		t.Fatalf("expected command python, got %q", capturedName)
+	}
+	expectedArgs := []string{"-m", "pytest", "tests/test_user.py", "tests/test_auth.py"}
+	if !slices.Equal(capturedArgs, expectedArgs) {
+		t.Fatalf("expected args %v, got %v", expectedArgs, capturedArgs)
+	}
+	if mockExecutor.capturedEnvMap["PYTEST_ADDOPTS"] != "--ddtrace" {
+		t.Errorf("expected PYTEST_ADDOPTS from platform env, got %q", mockExecutor.capturedEnvMap["PYTEST_ADDOPTS"])
+	}
+	if mockExecutor.capturedEnvMap["APP_ENV"] != "test" {
+		t.Errorf("expected APP_ENV from run env, got %q", mockExecutor.capturedEnvMap["APP_ENV"])
+	}
+	if mockExecutor.capturedEnvMap["SHARED_VAR"] != "override" {
+		t.Errorf("expected run env to override platform env, got %q", mockExecutor.capturedEnvMap["SHARED_VAR"])
 	}
 }

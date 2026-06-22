@@ -1303,6 +1303,18 @@ func TestRSpec_DiscoverTests_UsesPlatformEnv(t *testing.T) {
 	}
 }
 
+func TestRSpec_DefaultTestPattern(t *testing.T) {
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", "")
+	settings.Init()
+	t.Cleanup(settings.Init)
+
+	rspec := NewRSpec()
+	expected := filepath.Join(rspecRootDir, "**", rspecTestFilePattern)
+	if got := rspec.TestPattern(); got != expected {
+		t.Errorf("expected default test pattern %q, got %q", expected, got)
+	}
+}
+
 func TestRSpec_TestExcludePattern(t *testing.T) {
 	rspec := NewRSpec()
 	if got := rspec.TestExcludePattern(); got != "" {
