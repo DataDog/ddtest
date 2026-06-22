@@ -268,15 +268,16 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	}
 
 	// Detect framework once to avoid duplicate work
-	framework, err := detectedPlatform.DetectFramework()
+	testFramework, err := detectedPlatform.DetectFramework()
 	if err != nil {
 		return fmt.Errorf("failed to detect framework: %w", err)
 	}
-	slog.Info("Framework detected", "framework", framework.Name())
+	slog.Info("Framework detected", "framework", testFramework.Name())
+	fullTestDiscoverySupported := testFramework.SupportsFullTestDiscovery()
 	tp.runInfo = runmetadata.New(environment.GetCITags())
-	tp.planInfo = NewPlanInfo(tags, detectedPlatform.Name(), framework.Name())
+	tp.planInfo = NewPlanInfo(tags, detectedPlatform.Name(), testFramework.Name())
 
-	resolvedTestFiles, err := discovery.ResolveTestFiles(framework.TestPattern(), settings.GetTestsExcludePattern())
+	resolvedTestFiles, err := discovery.ResolveTestFiles(testFramework.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		return err
 	}
@@ -295,7 +296,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		slog.Info("Running from subdirectory, will normalize repo-root-relative paths", "subdirPrefix", cwdSubdirPrefix)
 	}
 
-	discoveryCache := newDiscoveryCache(detectedPlatform.Name(), framework)
+	discoveryCache := newDiscoveryCache(detectedPlatform.Name(), testFramework)
 	g, planningCtx := errgroup.WithContext(ctx)
 	// planningCtx cancels discovery if a required planning goroutine fails;
 	// cancelDiscovery lets backend settings stop only full discovery.
@@ -316,6 +317,11 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		if repositorySettings != nil {
 			slog.Debug("Repository settings", "tia_enabled", repositorySettings.ItrEnabled, "tests_skipping", repositorySettings.TestsSkipping)
 			tiaSkippingEnabled = repositorySettings.ItrEnabled && repositorySettings.TestsSkipping
+
+			if tiaSkippingEnabled && !fullTestDiscoverySupported {
+				slog.Info("Framework does not support full test discovery; TIA skippables will not be applied during planning", "framework", testFramework.Name())
+				tiaSkippingEnabled = false
+			}
 
 			if !tiaSkippingEnabled {
 				slog.Info("TIA or test skipping disabled, cancelling full test discovery")
@@ -340,13 +346,18 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 
 	// Goroutine 2: Tests discovery (respects context cancellation)
 	g.Go(func() error {
+		if !fullTestDiscoverySupported {
+			slog.Info("Full test discovery is not supported by framework; using fast test file discovery fallback", "framework", testFramework.Name())
+			return nil
+		}
+
 		if res, ok := discoveryCache.restore(); ok {
 			discoveredTests = res
 			fullDiscoverySucceeded = true
 			return nil
 		}
 
-		res, discoveryErr := discoverLocalTests(discoveryCtx, framework, resolvedTestFiles)
+		res, discoveryErr := discoverLocalTests(discoveryCtx, testFramework, resolvedTestFiles)
 		if discoveryErr != nil {
 			return nil // Don't fail the entire process, we have fast discovery as fallback.
 		}
@@ -360,7 +371,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	// Goroutine 3: Test files discovery (fast, must always complete)
 	g.Go(func() error {
 		startTime := time.Now()
-		slog.Info("Discovering test files (fast)...", "framework", framework.Name())
+		slog.Info("Discovering test files (fast)...", "framework", testFramework.Name())
 		var res []string
 		if resolvedTestFiles.UseExplicitFiles() {
 			res = resolvedTestFiles.ExplicitFiles

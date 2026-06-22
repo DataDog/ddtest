@@ -32,6 +32,8 @@ func DetectPlatform() (Platform, error) {
 	switch platformName {
 	case "ruby":
 		platform = NewRuby()
+	case "javascript":
+		platform = NewJavaScript()
 	case "python":
 		platform = NewPython()
 	default:

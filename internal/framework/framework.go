@@ -14,4 +14,5 @@ type Framework interface {
 	RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error
 	SetPlatformEnv(platformEnv map[string]string)
 	GetPlatformEnv() map[string]string
+	SupportsFullTestDiscovery() bool
 }

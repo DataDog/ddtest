@@ -103,6 +103,10 @@ func braceExpand(items []string) string {
 	return "{" + strings.Join(items, ",") + "}"
 }
 
+func (p *PyTest) SupportsFullTestDiscovery() bool {
+	return true
+}
+
 func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command := "python"
 	args := []string{"-m", "pytest"}

@@ -1302,3 +1302,22 @@ func TestRSpec_DiscoverTests_UsesPlatformEnv(t *testing.T) {
 		t.Error("expected DD_API_KEY to be set")
 	}
 }
+
+func TestRSpec_DefaultTestPattern(t *testing.T) {
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", "")
+	settings.Init()
+	t.Cleanup(settings.Init)
+
+	rspec := NewRSpec()
+	expected := filepath.Join(rspecRootDir, "**", rspecTestFilePattern)
+	if got := rspec.TestPattern(); got != expected {
+		t.Errorf("expected default test pattern %q, got %q", expected, got)
+	}
+}
+
+func TestRSpec_SupportsFullTestDiscovery(t *testing.T) {
+	rspec := NewRSpec()
+	if !rspec.SupportsFullTestDiscovery() {
+		t.Error("expected RSpec to support full test discovery")
+	}
+}

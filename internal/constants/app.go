@@ -37,4 +37,12 @@ var HTTPCacheDir = filepath.Join(PlanDirectory, "cache", "http")
 
 // Platform specific output file paths
 var RubyEnvOutputPath = filepath.Join(PlanDirectory, "ruby_env.json")
+var JavaScriptEnvOutputPath = filepath.Join(PlanDirectory, "javascript_env.json")
+
+// Executor constants
+const (
+	NodeIndexPlaceholder   = "{{nodeIndex}}"
+	WorkerIndexPlaceholder = "{{workerIndex}}"
+)
+
 var PythonEnvOutputPath = filepath.Join(PlanDirectory, "python_env.json")

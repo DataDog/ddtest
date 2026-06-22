@@ -163,3 +163,7 @@ func (m *Minitest) getMinitestCommand() (string, []string, bool) {
 	slog.Info("No Ruby on Rails found. Using bundle exec rake test for Minitest commands")
 	return "bundle", []string{"exec", "rake", "test"}, false
 }
+
+func (m *Minitest) SupportsFullTestDiscovery() bool {
+	return true
+}
