@@ -85,3 +85,46 @@ func TestPrintRunReport_Failed(t *testing.T) {
 		t.Errorf("expected failed run report, got:\n%s", report)
 	}
 }
+
+func TestFormatPlatform(t *testing.T) {
+	tests := []struct {
+		name      string
+		platform  string
+		framework string
+		want      string
+	}{
+		{name: "none", want: "not available"},
+		{name: "platform only", platform: "ruby", want: "ruby"},
+		{name: "framework only", framework: "rspec", want: "rspec"},
+		{name: "both", platform: "python", framework: "pytest", want: "python / pytest"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatPlatform(tt.platform, tt.framework); got != tt.want {
+				t.Fatalf("formatPlatform() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatCount(t *testing.T) {
+	tests := []struct {
+		count int
+		want  string
+	}{
+		{count: 0, want: "0"},
+		{count: 999, want: "999"},
+		{count: 1000, want: "1,000"},
+		{count: 1234567, want: "1,234,567"},
+		{count: -1234567, want: "-1,234,567"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			if got := formatCount(tt.count); got != tt.want {
+				t.Fatalf("formatCount(%d) = %q, want %q", tt.count, got, tt.want)
+			}
+		})
+	}
+}

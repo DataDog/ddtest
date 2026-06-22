@@ -383,6 +383,30 @@ func TestTravisPullRequestNumberIsSet(t *testing.T) {
 	}
 }
 
+func TestGithubActionsJobIDFromEnvironment(t *testing.T) {
+	originalDiagEnabled := githubActionsDiagnosticsEnabled
+	githubActionsDiagnosticsEnabled = false
+	t.Cleanup(func() {
+		githubActionsDiagnosticsEnabled = originalDiagEnabled
+	})
+
+	t.Run("numeric env wins", func(t *testing.T) {
+		t.Setenv(githubJobCheckRunIDEnv, " 12345678901 ")
+
+		if got := getGithubActionsJobID(); got != "12345678901" {
+			t.Fatalf("getGithubActionsJobID() = %q, want 12345678901", got)
+		}
+	})
+
+	t.Run("non numeric env ignored", func(t *testing.T) {
+		t.Setenv(githubJobCheckRunIDEnv, "not-a-number")
+
+		if got := getGithubActionsJobID(); got != "" {
+			t.Fatalf("getGithubActionsJobID() = %q, want empty", got)
+		}
+	})
+}
+
 func TestIsNumericJobID(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -408,6 +432,27 @@ func TestIsNumericJobID(t *testing.T) {
 				t.Errorf("isNumericJobID(%q) = %v, want %v", tt.input, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestDeduplicatePaths(t *testing.T) {
+	got := deduplicatePaths([]string{
+		"",
+		"/tmp/actions-runner/_diag",
+		"/tmp/actions-runner/_diag",
+		"/var/actions-runner/_diag",
+		"",
+		"/tmp/actions-runner/_diag",
+	})
+	want := []string{"/tmp/actions-runner/_diag", "/var/actions-runner/_diag"}
+
+	if len(got) != len(want) {
+		t.Fatalf("deduplicatePaths() = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("deduplicatePaths()[%d] = %q, want %q; full result %#v", i, got[i], want[i], got)
+		}
 	}
 }
 

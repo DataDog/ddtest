@@ -13,7 +13,32 @@ type CommandExecutor interface {
 	Run(ctx context.Context, name string, args []string, envMap map[string]string) error
 }
 
-type DefaultCommandExecutor struct{}
+type signalNotifier interface {
+	Notify(chan<- os.Signal, ...os.Signal)
+	Stop(chan<- os.Signal)
+}
+
+type osSignalNotifier struct{}
+
+func (n osSignalNotifier) Notify(c chan<- os.Signal, signals ...os.Signal) {
+	signal.Notify(c, signals...)
+}
+
+func (n osSignalNotifier) Stop(c chan<- os.Signal) {
+	signal.Stop(c)
+}
+
+type DefaultCommandExecutor struct {
+	signalNotifier signalNotifier
+}
+
+func (e *DefaultCommandExecutor) notifier() signalNotifier {
+	if e.signalNotifier != nil {
+		return e.signalNotifier
+	}
+
+	return osSignalNotifier{}
+}
 
 // applyEnvMap applies environment variables from envMap to the command
 func applyEnvMap(cmd *exec.Cmd, envMap map[string]string) {
@@ -55,8 +80,9 @@ func (e *DefaultCommandExecutor) Run(ctx context.Context, name string, args []st
 	// SIGHUP - hangup/connection loss
 	// SIGQUIT - quit signal
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGQUIT)
-	defer signal.Stop(sigChan)
+	notifier := e.notifier()
+	notifier.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGQUIT)
+	defer notifier.Stop(sigChan)
 
 	// Wait for command completion in a goroutine
 	errChan := make(chan error, 1)

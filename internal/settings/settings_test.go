@@ -73,6 +73,14 @@ func TestPhysicalCPUCountFromTopology(t *testing.T) {
 			expected:              2,
 		},
 		{
+			name:                  "caps to detected physical cores without SMT topology",
+			availableLogicalCPUs:  8,
+			threadsPerCore:        1,
+			detectedPhysicalCores: 4,
+			detectedLogicalCores:  4,
+			expected:              4,
+		},
+		{
 			name:                 "clamps invalid available logical CPU count",
 			availableLogicalCPUs: 0,
 			threadsPerCore:       2,

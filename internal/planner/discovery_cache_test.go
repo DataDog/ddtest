@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -79,6 +80,72 @@ func TestReadDiscoveryCacheMetadata_LargeFileFindsFinalMetadata(t *testing.T) {
 	if restored.SourceCommit != "tail-sha" {
 		t.Fatalf("source commit = %q, want tail-sha", restored.SourceCommit)
 	}
+}
+
+func TestReadDiscoveryCacheMetadataErrors(t *testing.T) {
+	t.Run("missing file", func(t *testing.T) {
+		_, err := readDiscoveryCacheMetadata(filepath.Join(t.TempDir(), "missing.json"))
+		if err == nil {
+			t.Fatal("expected missing file error")
+		}
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		filePath := filepath.Join(t.TempDir(), "tests.json")
+		if err := os.WriteFile(filePath, []byte("{"), 0644); err != nil {
+			t.Fatalf("write discovery cache: %v", err)
+		}
+
+		_, err := readDiscoveryCacheMetadata(filePath)
+		if err == nil {
+			t.Fatal("expected invalid metadata JSON error")
+		}
+	})
+
+	t.Run("last record is not metadata", func(t *testing.T) {
+		filePath := filepath.Join(t.TempDir(), "tests.json")
+		if err := os.WriteFile(filePath, []byte(`{"module":"rspec","suite":"Cart","name":"adds item"}`+"\n"), 0644); err != nil {
+			t.Fatalf("write discovery cache: %v", err)
+		}
+
+		_, err := readDiscoveryCacheMetadata(filePath)
+		if err == nil || !strings.Contains(err.Error(), "does not contain") {
+			t.Fatalf("readDiscoveryCacheMetadata() error = %v, want missing metadata", err)
+		}
+	})
+
+	t.Run("empty file", func(t *testing.T) {
+		filePath := filepath.Join(t.TempDir(), "tests.json")
+		if err := os.WriteFile(filePath, []byte("\n\n"), 0644); err != nil {
+			t.Fatalf("write discovery cache: %v", err)
+		}
+
+		_, err := readDiscoveryCacheMetadata(filePath)
+		if !errors.Is(err, io.EOF) {
+			t.Fatalf("readDiscoveryCacheMetadata() error = %v, want EOF", err)
+		}
+	})
+}
+
+func TestParseCachedDiscoveryTestsErrors(t *testing.T) {
+	t.Run("missing file", func(t *testing.T) {
+		_, err := parseCachedDiscoveryTests(filepath.Join(t.TempDir(), "missing.json"))
+		if err == nil {
+			t.Fatal("expected missing file error")
+		}
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		filePath := filepath.Join(t.TempDir(), "tests.json")
+		if err := os.WriteFile(filePath, []byte("{"), 0644); err != nil {
+			t.Fatalf("write discovery cache: %v", err)
+		}
+
+		_, err := parseCachedDiscoveryTests(filePath)
+		if err == nil {
+			t.Fatal("expected invalid cached test JSON error")
+		}
+	})
 }
 
 func TestDiscoveryCacheHitUsesCachedTests(t *testing.T) {
@@ -228,6 +295,47 @@ func TestDiscoveryCacheImportsExternalCacheBeforeValidation(t *testing.T) {
 	}
 }
 
+func TestDiscoveryCacheRestoreRejectsEmptyCache(t *testing.T) {
+	t.Chdir(t.TempDir())
+	mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{})
+
+	pattern := filepath.Join("spec", "**", "*_spec.rb")
+	writePlannerDiscoveryCache(t, "base-sha", "ruby", "rspec", pattern, "", nil)
+	cache := newDiscoveryCache("ruby", &MockFramework{FrameworkName: "rspec", TestPatternValue: pattern})
+
+	tests, ok := cache.restore()
+	if ok || tests != nil {
+		t.Fatalf("expected empty cache restore to fail, got ok=%v tests=%v", ok, tests)
+	}
+}
+
+func TestDiscoveryCacheStoreSkipsWhenGitHeadFails(t *testing.T) {
+	t.Chdir(t.TempDir())
+	mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{outputErr: errors.New("git failed")})
+
+	cache := newDiscoveryCache("ruby", &MockFramework{FrameworkName: "rspec", TestPatternValue: "spec/**/*_spec.rb"})
+	cache.store()
+
+	if _, err := os.Stat(discovery.TestsFilePath); !os.IsNotExist(err) {
+		t.Fatalf("expected no discovery cache file to be created, got err=%v", err)
+	}
+}
+
+func TestDiscoveryCacheStoreHandlesAppendError(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{head: "head-sha"})
+	if err := os.MkdirAll(filepath.Dir(filepath.Dir(discovery.TestsFilePath)), 0755); err != nil {
+		t.Fatalf("failed to create discovery parent path: %v", err)
+	}
+	if err := os.WriteFile(filepath.Dir(discovery.TestsFilePath), []byte("not a directory"), 0644); err != nil {
+		t.Fatalf("failed to create broken discovery path: %v", err)
+	}
+
+	cache := newDiscoveryCache("ruby", &MockFramework{FrameworkName: "rspec", TestPatternValue: "spec/**/*_spec.rb"})
+	cache.store()
+}
+
 func TestDiscoveryCacheValidation(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ciUtils.ResetCwdSubdirPrefixForTesting()
@@ -316,6 +424,79 @@ func TestDiscoveryCacheValidation(t *testing.T) {
 			t.Fatalf("validation error = %v; want exclude mismatch", err)
 		}
 	})
+}
+
+func TestDiscoveryCacheParseGitDiffNameStatus(t *testing.T) {
+	output := []byte(strings.Join([]string{
+		"M",
+		"app/models/cart.rb",
+		"R100",
+		"spec/old_cart_spec.rb",
+		"spec/new_cart_spec.rb",
+		"C75",
+		"lib/source.rb",
+		"lib/copied.rb",
+		"R100",
+		"spec/dangling_old_spec.rb",
+	}, "\x00") + "\x00")
+
+	got := discoveryCacheParseGitDiffNameStatus(output)
+	want := []string{
+		"app/models/cart.rb",
+		"spec/old_cart_spec.rb",
+		"spec/new_cart_spec.rb",
+		"lib/source.rb",
+		"lib/copied.rb",
+		"spec/dangling_old_spec.rb",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("discoveryCacheParseGitDiffNameStatus() = %#v, want %#v", got, want)
+	}
+}
+
+func TestDiscoveryCacheParseGitStatusPorcelain(t *testing.T) {
+	output := []byte(strings.Join([]string{
+		" M app/models/cart.rb",
+		"?? spec/new_cart_spec.rb",
+		"R  spec/old_cart_spec.rb",
+		"spec/new_cart_spec.rb",
+		"C  lib/source.rb",
+		"lib/copied.rb",
+		"bad",
+		" M ",
+	}, "\x00") + "\x00")
+
+	got := discoveryCacheParseGitStatusPorcelain(output)
+	want := []string{
+		"app/models/cart.rb",
+		"spec/new_cart_spec.rb",
+		"spec/old_cart_spec.rb",
+		"spec/new_cart_spec.rb",
+		"lib/source.rb",
+		"lib/copied.rb",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("discoveryCacheParseGitStatusPorcelain() = %#v, want %#v", got, want)
+	}
+}
+
+func TestDiscoveryPathMatchesFailsClosedForInvalidPattern(t *testing.T) {
+	if !discoveryPathMatches("[", "app/models/cart.rb") {
+		t.Fatal("discoveryPathMatches() should match when the pattern is invalid")
+	}
+}
+
+func TestDiscoveryCacheDebugGitOutputTruncates(t *testing.T) {
+	output := []byte(strings.Repeat("a", discoveryCacheDebugGitOutputMaxBytes+10))
+
+	got := discoveryCacheDebugGitOutput(output)
+
+	if len(got) != discoveryCacheDebugGitOutputMaxBytes {
+		t.Fatalf("debug output length = %d, want %d", len(got), discoveryCacheDebugGitOutputMaxBytes)
+	}
+	if got != strings.Repeat("a", discoveryCacheDebugGitOutputMaxBytes) {
+		t.Fatal("debug output did not preserve the expected prefix")
+	}
 }
 
 func TestCopyFileSamePathDoesNotTruncate(t *testing.T) {

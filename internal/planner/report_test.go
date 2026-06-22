@@ -402,3 +402,88 @@ func TestTestPlanner_SlowestTestSuitesOverallReport(t *testing.T) {
 		t.Fatalf("expected 10th slowest suite to be SuiteC, got %+v", report[9])
 	}
 }
+
+func TestAverageRunnerRuntimeDuration(t *testing.T) {
+	tests := []struct {
+		name  string
+		split splitScore
+		want  time.Duration
+	}{
+		{name: "no runners", split: splitScore{parallelRunners: 0, totalRuntime: 1000}, want: 0},
+		{name: "no runtime", split: splitScore{parallelRunners: 2, totalRuntime: 0}, want: 0},
+		{name: "average", split: splitScore{parallelRunners: 4, totalRuntime: 10_000}, want: 2500 * time.Millisecond},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := averageRunnerRuntimeDuration(tt.split); got != tt.want {
+				t.Fatalf("averageRunnerRuntimeDuration() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompareSeparateRunnerSuiteTiming(t *testing.T) {
+	suite := func(runner int, sourceFile string, estimated, total time.Duration) testSuiteTimingReport {
+		return testSuiteTimingReport{
+			Runner:            runner,
+			Module:            "rspec",
+			Suite:             "Suite",
+			SourceFile:        sourceFile,
+			EstimatedDuration: estimated,
+			TotalDuration:     total,
+		}
+	}
+
+	tests := []struct {
+		name string
+		a    testSuiteTimingReport
+		b    testSuiteTimingReport
+		want int
+	}{
+		{name: "runner ascending", a: suite(0, "spec/a_spec.rb", time.Second, time.Second), b: suite(1, "spec/a_spec.rb", time.Second, time.Second), want: -1},
+		{name: "runner descending", a: suite(1, "spec/a_spec.rb", time.Second, time.Second), b: suite(0, "spec/a_spec.rb", time.Second, time.Second), want: 1},
+		{name: "estimated duration descending", a: suite(0, "spec/a_spec.rb", 2*time.Second, time.Second), b: suite(0, "spec/a_spec.rb", time.Second, time.Second), want: -1},
+		{name: "total duration descending", a: suite(0, "spec/a_spec.rb", time.Second, 2*time.Second), b: suite(0, "spec/a_spec.rb", time.Second, time.Second), want: -1},
+		{name: "source file tie breaker", a: suite(0, "spec/a_spec.rb", time.Second, time.Second), b: suite(0, "spec/b_spec.rb", time.Second, time.Second), want: -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := compareSeparateRunnerSuiteTiming(tt.a, tt.b); got != tt.want {
+				t.Fatalf("compareSeparateRunnerSuiteTiming() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompareSuiteIdentity(t *testing.T) {
+	base := testSuiteTimingReport{
+		Module:     "rspec",
+		Suite:      "CheckoutSuite",
+		SourceFile: "spec/checkout_spec.rb",
+	}
+
+	tests := []struct {
+		name string
+		a    testSuiteTimingReport
+		b    testSuiteTimingReport
+		want int
+	}{
+		{name: "source file before", a: testSuiteTimingReport{SourceFile: "spec/a_spec.rb", Module: base.Module, Suite: base.Suite}, b: base, want: -1},
+		{name: "source file after", a: testSuiteTimingReport{SourceFile: "spec/z_spec.rb", Module: base.Module, Suite: base.Suite}, b: base, want: 1},
+		{name: "module before", a: testSuiteTimingReport{SourceFile: base.SourceFile, Module: "minitest", Suite: base.Suite}, b: base, want: -1},
+		{name: "module after", a: testSuiteTimingReport{SourceFile: base.SourceFile, Module: "testunit", Suite: base.Suite}, b: base, want: 1},
+		{name: "suite before", a: testSuiteTimingReport{SourceFile: base.SourceFile, Module: base.Module, Suite: "CartSuite"}, b: base, want: -1},
+		{name: "suite after", a: testSuiteTimingReport{SourceFile: base.SourceFile, Module: base.Module, Suite: "OrderSuite"}, b: base, want: 1},
+		{name: "equal", a: base, b: base, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := compareSuiteIdentity(tt.a, tt.b); got != tt.want {
+				t.Fatalf("compareSuiteIdentity() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
