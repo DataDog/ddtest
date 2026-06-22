@@ -12,6 +12,57 @@ import (
 	"testing"
 )
 
+func TestExpandPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "empty", path: "", want: ""},
+		{name: "plain path", path: "spec/models/user_spec.rb", want: "spec/models/user_spec.rb"},
+		{name: "other user", path: "~other/spec.rb", want: "~other/spec.rb"},
+		{name: "home only", path: "~", want: home},
+		{name: "home path", path: "~/spec/models/user_spec.rb", want: filepath.Join(home, "spec/models/user_spec.rb")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ExpandPath(tt.path); got != tt.want {
+				t.Fatalf("ExpandPath(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizePath(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{path: "", want: ""},
+		{path: ".", want: ""},
+		{path: "./spec/../spec/models/user_spec.rb", want: "spec/models/user_spec.rb"},
+		{path: filepath.Join("spec", "models", "user_spec.rb"), want: "spec/models/user_spec.rb"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			if got := NormalizePath(tt.path); got != tt.want {
+				t.Fatalf("NormalizePath(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizePattern(t *testing.T) {
+	if got := NormalizePattern("  ./spec/**/*_spec.rb  "); got != "spec/**/*_spec.rb" {
+		t.Fatalf("NormalizePattern() = %q", got)
+	}
+}
+
 func TestStripCwdSubdirPrefix_SubdirPrefixMatch_StripsPrefix(t *testing.T) {
 	repoRoot := t.TempDir()
 	initGitRepoInDir(t, repoRoot)

@@ -29,6 +29,12 @@ var rootCmd = &cobra.Command{
 	},
 }
 
+var (
+	planCommand = planner.Plan
+	newRunner   = func() runner.Runner { return runner.New() }
+	exitProcess = os.Exit
+)
+
 var planCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Prepare test optimization data",
@@ -37,27 +43,35 @@ var planCmd = &cobra.Command{
 		constants.TestFilesOutputPath,
 		constants.SkippablePercentageOutputPath,
 	),
-	Run: func(cmd *cobra.Command, args []string) {
-		ctx := context.Background()
-		if err := planner.Plan(ctx); err != nil {
-			slog.Error("Planner failed", "error", err)
-			os.Exit(1)
-		}
-	},
+	Run: runPlanCommand,
 }
 
 var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run tests using test optimization",
 	Long:  "Runs tests using Datadog Test Optimization to execute only necessary test files based on code changes.",
-	Run: func(cmd *cobra.Command, args []string) {
-		ctx := context.Background()
-		testRunner := runner.New()
-		if err := testRunner.Run(ctx); err != nil {
-			slog.Error("Runner failed", "error", err)
-			os.Exit(1)
-		}
-	},
+	Run:   runTestCommand,
+}
+
+type persistentFlagBinding struct {
+	configKey string
+	flagName  string
+}
+
+var rootPersistentFlagBindings = []persistentFlagBinding{
+	{configKey: "platform", flagName: "platform"},
+	{configKey: "framework", flagName: "framework"},
+	{configKey: "min_parallelism", flagName: "min-parallelism"},
+	{configKey: "max_parallelism", flagName: "max-parallelism"},
+	{configKey: "parallel_runner_overhead", flagName: "ci-job-overhead"},
+	{configKey: "worker_env", flagName: "worker-env"},
+	{configKey: "ci_node", flagName: "ci-node"},
+	{configKey: "ci_node_workers", flagName: "ci-node-workers"},
+	{configKey: "command", flagName: "command"},
+	{configKey: "tests_location", flagName: "tests-location"},
+	{configKey: "tests_exclude_pattern", flagName: "tests-exclude-pattern"},
+	{configKey: "test_discovery_cache", flagName: "test-discovery-cache"},
+	{configKey: "runtime_tags", flagName: "runtime-tags"},
 }
 
 func init() {
@@ -76,56 +90,8 @@ func init() {
 	rootCmd.PersistentFlags().String("tests-exclude-pattern", "", "Glob pattern used to exclude test files from discovery")
 	rootCmd.PersistentFlags().String("test-discovery-cache", "", "Path to a restored test discovery cache file to import before planning")
 	rootCmd.PersistentFlags().String("runtime-tags", "", "JSON string to override runtime tags (e.g. '{\"os.platform\":\"linux\",\"runtime.version\":\"3.2.0\"}')")
-	if err := viper.BindPFlag("platform", rootCmd.PersistentFlags().Lookup("platform")); err != nil {
-		fmt.Fprintf(os.Stderr, "Error binding platform flag: %v\n", err)
-		os.Exit(1)
-	}
-	if err := viper.BindPFlag("framework", rootCmd.PersistentFlags().Lookup("framework")); err != nil {
-		fmt.Fprintf(os.Stderr, "Error binding framework flag: %v\n", err)
-		os.Exit(1)
-	}
-	if err := viper.BindPFlag("min_parallelism", rootCmd.PersistentFlags().Lookup("min-parallelism")); err != nil {
-		fmt.Fprintf(os.Stderr, "Error binding min-parallelism flag: %v\n", err)
-		os.Exit(1)
-	}
-	if err := viper.BindPFlag("max_parallelism", rootCmd.PersistentFlags().Lookup("max-parallelism")); err != nil {
-		fmt.Fprintf(os.Stderr, "Error binding max-parallelism flag: %v\n", err)
-		os.Exit(1)
-	}
-	if err := viper.BindPFlag("parallel_runner_overhead", rootCmd.PersistentFlags().Lookup("ci-job-overhead")); err != nil {
-		fmt.Fprintf(os.Stderr, "Error binding ci-job-overhead flag: %v\n", err)
-		os.Exit(1)
-	}
-	if err := viper.BindPFlag("worker_env", rootCmd.PersistentFlags().Lookup("worker-env")); err != nil {
-		fmt.Fprintf(os.Stderr, "Error binding worker-env flag: %v\n", err)
-		os.Exit(1)
-	}
-	if err := viper.BindPFlag("ci_node", rootCmd.PersistentFlags().Lookup("ci-node")); err != nil {
-		fmt.Fprintf(os.Stderr, "Error binding ci-node flag: %v\n", err)
-		os.Exit(1)
-	}
-	if err := viper.BindPFlag("ci_node_workers", rootCmd.PersistentFlags().Lookup("ci-node-workers")); err != nil {
-		fmt.Fprintf(os.Stderr, "Error binding ci-node-workers flag: %v\n", err)
-		os.Exit(1)
-	}
-	if err := viper.BindPFlag("command", rootCmd.PersistentFlags().Lookup("command")); err != nil {
-		fmt.Fprintf(os.Stderr, "Error binding command flag: %v\n", err)
-		os.Exit(1)
-	}
-	if err := viper.BindPFlag("tests_location", rootCmd.PersistentFlags().Lookup("tests-location")); err != nil {
-		fmt.Fprintf(os.Stderr, "Error binding tests-location flag: %v\n", err)
-		os.Exit(1)
-	}
-	if err := viper.BindPFlag("tests_exclude_pattern", rootCmd.PersistentFlags().Lookup("tests-exclude-pattern")); err != nil {
-		fmt.Fprintf(os.Stderr, "Error binding tests-exclude-pattern flag: %v\n", err)
-		os.Exit(1)
-	}
-	if err := viper.BindPFlag("test_discovery_cache", rootCmd.PersistentFlags().Lookup("test-discovery-cache")); err != nil {
-		fmt.Fprintf(os.Stderr, "Error binding test-discovery-cache flag: %v\n", err)
-		os.Exit(1)
-	}
-	if err := viper.BindPFlag("runtime_tags", rootCmd.PersistentFlags().Lookup("runtime-tags")); err != nil {
-		fmt.Fprintf(os.Stderr, "Error binding runtime-tags flag: %v\n", err)
+	if err := bindPersistentFlags(rootCmd, rootPersistentFlagBindings); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding CLI flags: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -133,6 +99,38 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 
 	cobra.OnInitialize(settings.Init)
+}
+
+func bindPersistentFlags(cmd *cobra.Command, bindings []persistentFlagBinding) error {
+	for _, binding := range bindings {
+		flag := cmd.PersistentFlags().Lookup(binding.flagName)
+		if flag == nil {
+			return fmt.Errorf("flag %q not found", binding.flagName)
+		}
+		if err := viper.BindPFlag(binding.configKey, flag); err != nil {
+			return fmt.Errorf("bind %s flag: %w", binding.flagName, err)
+		}
+	}
+	return nil
+}
+
+func runPlanCommand(cmd *cobra.Command, args []string) {
+	ctx := context.Background()
+	if err := planCommand(ctx); err != nil {
+		slog.Error("Planner failed", "error", err)
+		exitProcess(1)
+		return
+	}
+}
+
+func runTestCommand(cmd *cobra.Command, args []string) {
+	ctx := context.Background()
+	testRunner := newRunner()
+	if err := testRunner.Run(ctx); err != nil {
+		slog.Error("Runner failed", "error", err)
+		exitProcess(1)
+		return
+	}
 }
 
 func Execute() error {

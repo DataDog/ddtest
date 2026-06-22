@@ -253,4 +253,64 @@ func TestCompareStrings(t *testing.T) {
 	if _, err := CompareStrings("1.2", "1.a"); err == nil {
 		t.Fatal("expected invalid version comparison to fail")
 	}
+
+	if _, err := CompareStrings("1.a", "1.2"); err == nil {
+		t.Fatal("expected invalid first version to fail")
+	}
+}
+
+func TestMustParsePanicsForInvalidVersion(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected MustParse to panic")
+		}
+	}()
+
+	_ = MustParse("not-a-version")
+}
+
+func TestStringBuildsVersionWhenRawValueIsUnavailable(t *testing.T) {
+	tests := []struct {
+		name string
+		v    Version
+		want string
+	}{
+		{
+			name: "empty",
+			v:    Version{},
+			want: "",
+		},
+		{
+			name: "components only",
+			v:    Version{components: []int{1, 2, 3}},
+			want: "1.2.3",
+		},
+		{
+			name: "pre-release and build metadata",
+			v: Version{
+				components: []int{2, 0, 0},
+				preRelease: "rc.1",
+				buildMeta:  "build.7",
+			},
+			want: "2.0.0-rc.1+build.7",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.v.String(); got != tt.want {
+				t.Fatalf("String() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestComponentsReturnsDefensiveCopy(t *testing.T) {
+	v := Version{components: []int{1, 2, 3}}
+	components := v.Components()
+	components[0] = 99
+
+	if got := v.Components()[0]; got != 1 {
+		t.Fatalf("Components() exposed internal slice, got first component %d", got)
+	}
 }

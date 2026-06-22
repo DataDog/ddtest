@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/git"
+	runnerpkg "github.com/DataDog/ddtest/internal/runner"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -132,6 +134,116 @@ func TestCommandHierarchy(t *testing.T) {
 	}
 }
 
+func TestRootPersistentPreRunChecksGitAvailability(t *testing.T) {
+	originalLookPathFunc := git.LookPathFunc
+	git.LookPathFunc = func(file string) (string, error) {
+		return "", errors.New("missing git")
+	}
+	t.Cleanup(func() {
+		git.LookPathFunc = originalLookPathFunc
+	})
+
+	err := rootCmd.PersistentPreRunE(rootCmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "git executable not found") {
+		t.Fatalf("PersistentPreRunE() error = %v, want git availability error", err)
+	}
+}
+
+func TestRunPlanCommand(t *testing.T) {
+	originalPlanCommand := planCommand
+	originalExitProcess := exitProcess
+	t.Cleanup(func() {
+		planCommand = originalPlanCommand
+		exitProcess = originalExitProcess
+	})
+
+	calls := 0
+	planCommand = func(ctx context.Context) error {
+		calls++
+		return nil
+	}
+	exitProcess = func(code int) {
+		t.Fatalf("exitProcess(%d) should not be called", code)
+	}
+
+	runPlanCommand(&cobra.Command{}, nil)
+
+	if calls != 1 {
+		t.Fatalf("expected plan command to be called once, got %d", calls)
+	}
+}
+
+func TestRunPlanCommandExitsOnError(t *testing.T) {
+	originalPlanCommand := planCommand
+	originalExitProcess := exitProcess
+	t.Cleanup(func() {
+		planCommand = originalPlanCommand
+		exitProcess = originalExitProcess
+	})
+
+	planErr := errors.New("planner failed")
+	planCommand = func(ctx context.Context) error {
+		return planErr
+	}
+	var exitCodes []int
+	exitProcess = func(code int) {
+		exitCodes = append(exitCodes, code)
+	}
+
+	runPlanCommand(&cobra.Command{}, nil)
+
+	if len(exitCodes) != 1 || exitCodes[0] != 1 {
+		t.Fatalf("expected exit code 1, got %v", exitCodes)
+	}
+}
+
+func TestRunTestCommand(t *testing.T) {
+	originalNewRunner := newRunner
+	originalExitProcess := exitProcess
+	t.Cleanup(func() {
+		newRunner = originalNewRunner
+		exitProcess = originalExitProcess
+	})
+
+	fake := &fakeCommandRunner{}
+	newRunner = func() runnerpkg.Runner {
+		return fake
+	}
+	exitProcess = func(code int) {
+		t.Fatalf("exitProcess(%d) should not be called", code)
+	}
+
+	runTestCommand(&cobra.Command{}, nil)
+
+	if fake.calls != 1 {
+		t.Fatalf("expected runner to be called once, got %d", fake.calls)
+	}
+}
+
+func TestRunTestCommandExitsOnError(t *testing.T) {
+	originalNewRunner := newRunner
+	originalExitProcess := exitProcess
+	t.Cleanup(func() {
+		newRunner = originalNewRunner
+		exitProcess = originalExitProcess
+	})
+
+	fake := &fakeCommandRunner{err: errors.New("runner failed")}
+	newRunner = func() runnerpkg.Runner {
+		return fake
+	}
+	var exitCodes []int
+	exitProcess = func(code int) {
+		exitCodes = append(exitCodes, code)
+	}
+
+	runTestCommand(&cobra.Command{}, nil)
+
+	if len(exitCodes) != 1 || exitCodes[0] != 1 {
+		t.Fatalf("expected exit code 1, got %v", exitCodes)
+	}
+}
+
 func TestExecute(t *testing.T) {
 	// Save original args
 	originalArgs := os.Args
@@ -196,34 +308,9 @@ func TestFlagBinding(t *testing.T) {
 	// Reset viper
 	viper.Reset()
 
-	// Flags are already defined in init(), so we can use them directly
-	// Rebind flags to ensure they work with viper
-	if err := viper.BindPFlag("platform", rootCmd.PersistentFlags().Lookup("platform")); err != nil {
-		t.Fatalf("Error binding platform flag: %v", err)
-	}
-	if err := viper.BindPFlag("framework", rootCmd.PersistentFlags().Lookup("framework")); err != nil {
-		t.Fatalf("Error binding framework flag: %v", err)
-	}
-	if err := viper.BindPFlag("command", rootCmd.PersistentFlags().Lookup("command")); err != nil {
-		t.Fatalf("Error binding command flag: %v", err)
-	}
-	if err := viper.BindPFlag("tests_location", rootCmd.PersistentFlags().Lookup("tests-location")); err != nil {
-		t.Fatalf("Error binding tests-location flag: %v", err)
-	}
-	if err := viper.BindPFlag("tests_exclude_pattern", rootCmd.PersistentFlags().Lookup("tests-exclude-pattern")); err != nil {
-		t.Fatalf("Error binding tests-exclude-pattern flag: %v", err)
-	}
-	if err := viper.BindPFlag("test_discovery_cache", rootCmd.PersistentFlags().Lookup("test-discovery-cache")); err != nil {
-		t.Fatalf("Error binding test-discovery-cache flag: %v", err)
-	}
-	if err := viper.BindPFlag("ci_node_workers", rootCmd.PersistentFlags().Lookup("ci-node-workers")); err != nil {
-		t.Fatalf("Error binding ci-node-workers flag: %v", err)
-	}
-	if err := viper.BindPFlag("ci_node", rootCmd.PersistentFlags().Lookup("ci-node")); err != nil {
-		t.Fatalf("Error binding ci-node flag: %v", err)
-	}
-	if err := viper.BindPFlag("parallel_runner_overhead", rootCmd.PersistentFlags().Lookup("ci-job-overhead")); err != nil {
-		t.Fatalf("Error binding ci-job-overhead flag: %v", err)
+	// Flags are already defined in init(), so we can use them directly.
+	if err := bindPersistentFlags(rootCmd, rootPersistentFlagBindings); err != nil {
+		t.Fatalf("bindPersistentFlags() failed: %v", err)
 	}
 
 	// Set flag values
@@ -282,6 +369,40 @@ func TestFlagBinding(t *testing.T) {
 	}
 	if viper.GetString("parallel_runner_overhead") != "30s" {
 		t.Errorf("expected viper parallel_runner_overhead to be '30s', got %q", viper.GetString("parallel_runner_overhead"))
+	}
+}
+
+func TestBindPersistentFlags(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	testCmd := &cobra.Command{}
+	testCmd.PersistentFlags().String("example-flag", "default", "example flag")
+
+	err := bindPersistentFlags(testCmd, []persistentFlagBinding{
+		{configKey: "example_config", flagName: "example-flag"},
+	})
+	if err != nil {
+		t.Fatalf("bindPersistentFlags() failed: %v", err)
+	}
+
+	if err := testCmd.PersistentFlags().Set("example-flag", "configured"); err != nil {
+		t.Fatalf("failed to set example flag: %v", err)
+	}
+	if got := viper.GetString("example_config"); got != "configured" {
+		t.Fatalf("viper example_config = %q, want configured", got)
+	}
+}
+
+func TestBindPersistentFlagsMissingFlag(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	err := bindPersistentFlags(&cobra.Command{}, []persistentFlagBinding{
+		{configKey: "missing_config", flagName: "missing-flag"},
+	})
+	if err == nil || !strings.Contains(err.Error(), `flag "missing-flag" not found`) {
+		t.Fatalf("bindPersistentFlags() error = %v, want missing flag", err)
 	}
 }
 
@@ -363,4 +484,14 @@ func TestInitFunction(t *testing.T) {
 	if len(commands) == 0 {
 		t.Error("init should add commands to root")
 	}
+}
+
+type fakeCommandRunner struct {
+	calls int
+	err   error
+}
+
+func (f *fakeCommandRunner) Run(ctx context.Context) error {
+	f.calls++
+	return f.err
 }
