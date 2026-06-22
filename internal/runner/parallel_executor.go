@@ -10,6 +10,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const runModeParallel = "parallel"
+
 // runParallel executes tests across multiple parallel runners on a single node.
 func (e testExecutor) runParallel() runExecutionResult {
 	report := runExecutionReport{

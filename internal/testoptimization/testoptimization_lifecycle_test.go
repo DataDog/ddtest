@@ -6,16 +6,17 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
-	testoptimizationstate "github.com/DataDog/ddtest/civisibility"
-	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/git"
+	"github.com/DataDog/ddtest/internal/git/gittest"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
-	"github.com/DataDog/ddtest/internal/utils"
 )
 
 type settingsSequenceTransport struct {
@@ -88,8 +89,8 @@ func TestTestOptimizationClientFeatureGetters(t *testing.T) {
 			mockTransport.KnownTestsCalls, mockTransport.SkippableTestsCalls, mockTransport.TestManagementTestsCalls)
 	}
 
-	ciTags := utils.GetCITags()
-	if ciTags[ciConstants.ItrCorrelationIDTag] != "correlation-id" {
+	ciTags := environment.GetCITags()
+	if ciTags[constants.ItrCorrelationIDTag] != "correlation-id" {
 		t.Fatalf("expected correlation id tag, got %#v", ciTags)
 	}
 }
@@ -196,23 +197,60 @@ func TestEnsureAPITransportWithoutFactory(t *testing.T) {
 
 func TestEnsureTestOptimizationSessionInitializationBranches(t *testing.T) {
 	t.Setenv("DD_TRACE_DEBUG", "true")
-	t.Setenv(ciConstants.TestOptimizationEnabledEnvironmentVariable, "")
+	t.Setenv(constants.TestOptimizationEnabledEnvironmentVariable, "")
 	t.Setenv("DD_TRACE_SAMPLE_RATE", "")
-	utils.ResetCITags()
-	t.Cleanup(utils.ResetCITags)
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
 	t.Cleanup(func() {
 		signal.Reset(syscall.SIGINT, syscall.SIGTERM)
-		testoptimizationstate.SetState(testoptimizationstate.StateExited)
 	})
 
 	client := newTestOptimizationClient(&MockAPIClient{}, nil, func() (int64, error) { return 0, nil }, true)
 	client.ensureTestOptimizationSessionInitialized()
 
-	if got := os.Getenv(ciConstants.TestOptimizationEnabledEnvironmentVariable); got != "1" {
-		t.Fatalf("%s = %q, want 1", ciConstants.TestOptimizationEnabledEnvironmentVariable, got)
+	if got := os.Getenv(constants.TestOptimizationEnabledEnvironmentVariable); got != "1" {
+		t.Fatalf("%s = %q, want 1", constants.TestOptimizationEnabledEnvironmentVariable, got)
 	}
 	if got := os.Getenv("DD_TRACE_SAMPLE_RATE"); got != "1" {
 		t.Fatalf("DD_TRACE_SAMPLE_RATE = %q, want 1", got)
+	}
+}
+
+func TestTraceDebugEnabled(t *testing.T) {
+	originalValue, originallySet := os.LookupEnv("DD_TRACE_DEBUG")
+	t.Cleanup(func() {
+		if originallySet {
+			_ = os.Setenv("DD_TRACE_DEBUG", originalValue)
+		} else {
+			_ = os.Unsetenv("DD_TRACE_DEBUG")
+		}
+	})
+
+	tests := []struct {
+		name     string
+		value    string
+		set      bool
+		expected bool
+	}{
+		{name: "unset", expected: false},
+		{name: "true", value: "true", set: true, expected: true},
+		{name: "one", value: "1", set: true, expected: true},
+		{name: "false", value: "false", set: true, expected: false},
+		{name: "invalid", value: "definitely", set: true, expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.set {
+				_ = os.Setenv("DD_TRACE_DEBUG", tt.value)
+			} else {
+				_ = os.Unsetenv("DD_TRACE_DEBUG")
+			}
+
+			if got := traceDebugEnabled(); got != tt.expected {
+				t.Fatalf("traceDebugEnabled() = %t, want %t", got, tt.expected)
+			}
+		})
 	}
 }
 
@@ -244,10 +282,61 @@ func TestEnsureTestOptimizationInitializedHandlesNilSettingsAndEndpointErrors(t 
 	}
 }
 
+func TestInitializeAddsGitMetadataFromRealRepository(t *testing.T) {
+	repo := gittest.NewRepository(t)
+	t.Chdir(repo.Path)
+	withoutCIProviderEnvironment(t)
+
+	mockTransport := &MockAPIClient{
+		Settings: &api.SettingsResponseData{},
+	}
+	client := newTestOptimizationClientForTest(t, mockTransport)
+	if err := client.Initialize(map[string]string{}); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	ciTags := environment.GetCITags()
+	if ciTags[constants.GitRepositoryURL] != "https://example.com/org/repo.git" {
+		t.Fatalf("repository URL tag = %q", ciTags[constants.GitRepositoryURL])
+	}
+	if ciTags[constants.GitCommitSHA] != repo.Commits[1] {
+		t.Fatalf("commit SHA tag = %q, want %q", ciTags[constants.GitCommitSHA], repo.Commits[1])
+	}
+	if ciTags[constants.GitBranch] != "main" {
+		t.Fatalf("branch tag = %q, want main", ciTags[constants.GitBranch])
+	}
+	if ciTags[constants.GitCommitMessage] != "second commit\n\nMore details" {
+		t.Fatalf("commit message tag = %q", ciTags[constants.GitCommitMessage])
+	}
+	if ciTags[constants.GitCommitAuthorName] != gittest.AuthorName {
+		t.Fatalf("author name tag = %q", ciTags[constants.GitCommitAuthorName])
+	}
+	if ciTags[constants.GitCommitAuthorEmail] != gittest.AuthorEmail {
+		t.Fatalf("author email tag = %q", ciTags[constants.GitCommitAuthorEmail])
+	}
+	expectedAuthorDate := time.Unix(repo.AuthorDates[1].Unix(), 0).String()
+	if ciTags[constants.GitCommitAuthorDate] != expectedAuthorDate {
+		t.Fatalf("author date tag = %q, want %q", ciTags[constants.GitCommitAuthorDate], expectedAuthorDate)
+	}
+	if ciTags[constants.GitCommitCommitterName] != gittest.CommitterName {
+		t.Fatalf("committer name tag = %q", ciTags[constants.GitCommitCommitterName])
+	}
+	if ciTags[constants.GitCommitCommitterEmail] != gittest.CommitterEmail {
+		t.Fatalf("committer email tag = %q", ciTags[constants.GitCommitCommitterEmail])
+	}
+	expectedCommitterDate := time.Unix(repo.AuthorDates[1].Add(time.Second).Unix(), 0).String()
+	if ciTags[constants.GitCommitCommitterDate] != expectedCommitterDate {
+		t.Fatalf("committer date tag = %q, want %q", ciTags[constants.GitCommitCommitterDate], expectedCommitterDate)
+	}
+	if ciTags[constants.CIWorkspacePath] != repo.Path {
+		t.Fatalf("workspace path tag = %q, want %q", ciTags[constants.CIWorkspacePath], repo.Path)
+	}
+}
+
 func TestApplyEnvironmentOverrides(t *testing.T) {
-	t.Setenv(ciConstants.TestOptimizationFlakyRetryEnabledEnvironmentVariable, "false")
-	t.Setenv(ciConstants.TestOptimizationManagementEnabledEnvironmentVariable, "false")
-	t.Setenv(ciConstants.TestOptimizationAttemptToFixRetriesEnvironmentVariable, "7")
+	t.Setenv(constants.TestOptimizationFlakyRetryEnabledEnvironmentVariable, "false")
+	t.Setenv(constants.TestOptimizationManagementEnabledEnvironmentVariable, "false")
+	t.Setenv(constants.TestOptimizationAttemptToFixRetriesEnvironmentVariable, "7")
 
 	settings := &api.SettingsResponseData{
 		KnownTestsEnabled:       false,
@@ -269,6 +358,31 @@ func TestApplyEnvironmentOverrides(t *testing.T) {
 	}
 	if settings.TestManagement.AttemptToFixRetries != 7 {
 		t.Fatalf("attempt-to-fix retries = %d, want 7", settings.TestManagement.AttemptToFixRetries)
+	}
+}
+
+func TestApplyEnvironmentOverridesInvalidEnvValuesUseDefaults(t *testing.T) {
+	t.Setenv(constants.TestOptimizationFlakyRetryEnabledEnvironmentVariable, "invalid")
+	t.Setenv(constants.TestOptimizationManagementEnabledEnvironmentVariable, "invalid")
+	t.Setenv(constants.TestOptimizationAttemptToFixRetriesEnvironmentVariable, "invalid")
+
+	settings := &api.SettingsResponseData{
+		KnownTestsEnabled:       true,
+		FlakyTestRetriesEnabled: true,
+	}
+	settings.TestManagement.Enabled = true
+	settings.TestManagement.AttemptToFixRetries = 3
+
+	applyEnvironmentOverrides(settings)
+
+	if !settings.FlakyTestRetriesEnabled {
+		t.Fatal("expected invalid flaky retry env override to keep default true")
+	}
+	if !settings.TestManagement.Enabled {
+		t.Fatal("expected invalid test management env override to keep default true")
+	}
+	if settings.TestManagement.AttemptToFixRetries != 3 {
+		t.Fatalf("attempt-to-fix retries = %d, want 3", settings.TestManagement.AttemptToFixRetries)
 	}
 }
 
@@ -315,10 +429,10 @@ func TestRepositoryUploadAsyncErrorAndGitFallback(t *testing.T) {
 }
 
 func TestUploadRepositoryChangesFromGitAllCommitsKnown(t *testing.T) {
-	localCommits := utils.GetLastLocalGitCommitShas()
-	if len(localCommits) == 0 {
-		t.Skip("no local git commits available")
-	}
+	repo := gittest.NewRepository(t)
+	t.Chdir(repo.Path)
+
+	localCommits := []string{repo.Commits[1], repo.Commits[0]}
 
 	mockTransport := &MockAPIClient{RemoteCommits: localCommits}
 	client := newTestOptimizationClient(mockTransport, nil, nil, false)
@@ -333,13 +447,19 @@ func TestUploadRepositoryChangesFromGitAllCommitsKnown(t *testing.T) {
 	if mockTransport.GetCommitsCalls != 1 {
 		t.Fatalf("expected one search commits request, got %d", mockTransport.GetCommitsCalls)
 	}
+	if len(mockTransport.GetCommitsRequests) != 1 || !slices.Equal(mockTransport.GetCommitsRequests[0], localCommits) {
+		t.Fatalf("GetCommits() requests = %#v, want %#v", mockTransport.GetCommitsRequests, localCommits)
+	}
+	if mockTransport.SendPackFilesCalls != 0 {
+		t.Fatalf("expected no packfile upload when all commits are known, got %d calls", mockTransport.SendPackFilesCalls)
+	}
 }
 
 func TestUploadRepositoryChangesFromGitSearchError(t *testing.T) {
-	localCommits := utils.GetLastLocalGitCommitShas()
-	if len(localCommits) == 0 {
-		t.Skip("no local git commits available")
-	}
+	repo := gittest.NewRepository(t)
+	t.Chdir(repo.Path)
+
+	localCommits := []string{repo.Commits[1], repo.Commits[0]}
 
 	searchErr := errors.New("search commits failed")
 	client := newTestOptimizationClient(&MockAPIClient{GetCommitsErr: searchErr}, nil, nil, false)
@@ -351,15 +471,18 @@ func TestUploadRepositoryChangesFromGitSearchError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), searchErr.Error()) {
 		t.Fatalf("expected wrapped search error, got %v", err)
 	}
+	mockTransport := client.apiTransport.(*MockAPIClient)
+	if len(mockTransport.GetCommitsRequests) != 1 || !slices.Equal(mockTransport.GetCommitsRequests[0], localCommits) {
+		t.Fatalf("GetCommits() requests = %#v, want %#v", mockTransport.GetCommitsRequests, localCommits)
+	}
 }
 
 func TestUploadRepositoryChangesFromGitUploadsMissingCommits(t *testing.T) {
-	localCommits := utils.GetLastLocalGitCommitShas()
-	if len(localCommits) < 1 {
-		t.Skip("no local git commits available")
-	}
+	repo := gittest.NewRepository(t)
+	t.Chdir(repo.Path)
 
-	remoteCommits := append([]string(nil), localCommits[1:]...)
+	localCommits := []string{repo.Commits[1], repo.Commits[0]}
+	remoteCommits := []string{repo.Commits[0]}
 	mockTransport := &MockAPIClient{
 		RemoteCommits:      remoteCommits,
 		SendPackFilesBytes: 123,
@@ -370,11 +493,35 @@ func TestUploadRepositoryChangesFromGitUploadsMissingCommits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("uploadRepositoryChangesFromGit() returned error: %v", err)
 	}
-	if mockTransport.SendPackFilesCalls > 0 && bytes != 123 {
+	if bytes != 123 {
 		t.Fatalf("bytes = %d, want mock packfile bytes", bytes)
 	}
-	if mockTransport.GetCommitsCalls == 0 {
-		t.Fatal("expected search commits request")
+	if mockTransport.GetCommitsCalls != 1 {
+		t.Fatalf("expected one search commits request, got %d", mockTransport.GetCommitsCalls)
+	}
+	if len(mockTransport.GetCommitsRequests) != 1 || !slices.Equal(mockTransport.GetCommitsRequests[0], localCommits) {
+		t.Fatalf("GetCommits() requests = %#v, want %#v", mockTransport.GetCommitsRequests, localCommits)
+	}
+	if mockTransport.SendPackFilesCalls != 1 {
+		t.Fatalf("expected one packfile upload, got %d", mockTransport.SendPackFilesCalls)
+	}
+	if mockTransport.SentCommitSha != repo.Commits[1] {
+		t.Fatalf("sent commit SHA = %q, want %q", mockTransport.SentCommitSha, repo.Commits[1])
+	}
+	if len(mockTransport.SentPackFiles) == 0 {
+		t.Fatal("expected pack files to be sent")
+	}
+	sentPackDirectory := filepath.Dir(mockTransport.SentPackFiles[0])
+	if len(mockTransport.SentPackFileSizes) != len(mockTransport.SentPackFiles) {
+		t.Fatalf("packfile sizes = %#v, packfiles = %#v", mockTransport.SentPackFileSizes, mockTransport.SentPackFiles)
+	}
+	for _, size := range mockTransport.SentPackFileSizes {
+		if size <= 0 {
+			t.Fatalf("expected non-empty packfiles, got sizes %#v", mockTransport.SentPackFileSizes)
+		}
+	}
+	if _, err := os.Stat(sentPackDirectory); !os.IsNotExist(err) {
+		t.Fatalf("expected pack directory %q to be cleaned up, got error %v", sentPackDirectory, err)
 	}
 }
 
@@ -387,7 +534,7 @@ func TestUploadRepositoryChangesFromGitWithoutTransportIsNoop(t *testing.T) {
 }
 
 func TestGetSearchCommitsBranches(t *testing.T) {
-	localCommits := utils.GetLastLocalGitCommitShas()
+	localCommits := git.GetLastLocalGitCommitShas()
 	if len(localCommits) == 0 {
 		t.Skip("no local git commits available")
 	}
@@ -516,7 +663,7 @@ func TestCacheManagerWriteErrors(t *testing.T) {
 	}
 
 	constants.RunnerCacheDir = t.TempDir()
-	if err := os.Mkdir(filepath.Join(constants.RunnerCacheDir, TestOptimizationPlanCacheFile), 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(constants.RunnerCacheDir, constants.TestOptimizationPlanCacheFile), 0o755); err != nil {
 		t.Fatalf("create blocking plan cache directory: %v", err)
 	}
 	if err := manager.StoreTestOptimizationPlanCache(map[string]string{"x": "y"}); err == nil {
@@ -540,10 +687,7 @@ func TestSearchCommitsResponseHelpers(t *testing.T) {
 	}
 }
 
-func TestExitTestOptimizationRunsCloseActionsOnlyWhenInitialized(t *testing.T) {
-	testoptimizationstate.SetState(testoptimizationstate.StateInitialized)
-	t.Cleanup(func() { testoptimizationstate.SetState(testoptimizationstate.StateExited) })
-
+func TestExitTestOptimizationRunsCloseActionsOnce(t *testing.T) {
 	var calls []string
 	client := newTestOptimizationClient(nil, nil, nil, false)
 	client.pushTestOptimizationCloseAction(func() { calls = append(calls, "first") })
@@ -557,11 +701,11 @@ func TestExitTestOptimizationRunsCloseActionsOnlyWhenInitialized(t *testing.T) {
 	if len(client.closeActions) != 0 {
 		t.Fatalf("expected close actions to be cleared, got %d", len(client.closeActions))
 	}
-	if state := testoptimizationstate.GetState(); state != testoptimizationstate.StateExited {
-		t.Fatalf("state = %v, want exited", state)
-	}
 
 	client.exitTestOptimization()
+	if len(calls) != 2 {
+		t.Fatalf("close actions executed again: %#v", calls)
+	}
 }
 
 func TestStoreCacheAndExitLogsCacheWriteErrors(t *testing.T) {
@@ -588,8 +732,17 @@ func TestStoreCacheAndExitLogsCacheWriteErrors(t *testing.T) {
 	}
 }
 
-func TestDisabledTestsFromNilTestManagementData(t *testing.T) {
-	disabled := DisabledTestsFromTestManagementData(nil)
+func TestGetDisabledTestsFromNilTestManagementData(t *testing.T) {
+	settings := &api.SettingsResponseData{}
+	settings.TestManagement.Enabled = true
+	client := newTestOptimizationClientForTest(t, &MockAPIClient{
+		Settings: settings,
+	})
+	if err := client.Initialize(map[string]string{}); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+
+	disabled := client.GetDisabledTests()
 	if len(disabled) != 0 {
 		t.Fatalf("expected no disabled tests for nil data, got %#v", disabled)
 	}

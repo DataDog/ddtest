@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 func TestTransportGetTestManagementTestsRequiresRepository(t *testing.T) {
@@ -54,7 +56,7 @@ func TestTransportGetTestManagementTestsRequestAndResponse(t *testing.T) {
 		}
 
 		expectedResponse.Data.ID = captured.Data.ID
-		w.Header().Set(HeaderContentType, ContentTypeJSON)
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 		_ = json.NewEncoder(w).Encode(expectedResponse)
 	}))
 	defer server.Close()
@@ -105,7 +107,7 @@ func TestTransportGetTestManagementTestsUsesCommitWhenHeadCommitIsMissing(t *tes
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		w.Header().Set(HeaderContentType, ContentTypeJSON)
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 		_, _ = w.Write([]byte(`{"data":{"attributes":{"modules":{}}}}`))
 	}))
 	defer server.Close()
@@ -125,7 +127,7 @@ func TestTransportGetTestManagementTestsUsesCommitWhenHeadCommitIsMissing(t *tes
 func TestTransportGetTestManagementTestsErrors(t *testing.T) {
 	t.Run("unmarshal failure", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set(HeaderContentType, ContentTypeJSON)
+			w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 			_, _ = w.Write([]byte(`{"data":`))
 		}))
 		defer server.Close()

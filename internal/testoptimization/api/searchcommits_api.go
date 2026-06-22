@@ -7,10 +7,11 @@ package api
 
 import (
 	"fmt"
+
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 const (
-	searchCommitsType    string = "commit"
 	searchCommitsURLPath string = "api/v2/git/repository/search_commits"
 )
 
@@ -30,7 +31,7 @@ type (
 
 func (c *transport) GetCommits(localCommits []string) ([]string, error) {
 	if c.repositoryURL == "" {
-		return nil, fmt.Errorf("civisibility.GetCommits: repository URL is required")
+		return nil, fmt.Errorf("testoptimization.GetCommits: repository URL is required")
 	}
 
 	body := searchCommits{
@@ -43,7 +44,7 @@ func (c *transport) GetCommits(localCommits []string) ([]string, error) {
 	for _, localCommit := range localCommits {
 		body.Data = append(body.Data, searchCommitsData{
 			ID:   localCommit,
-			Type: searchCommitsType,
+			Type: constants.SearchCommitsType,
 		})
 	}
 

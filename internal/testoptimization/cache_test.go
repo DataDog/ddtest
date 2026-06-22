@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	appConstants "github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
 )
 
@@ -75,12 +75,12 @@ func TestCacheManager_StoreAndReadTestOptimizationPlanCache(t *testing.T) {
 		t.Fatalf("StoreTestOptimizationPlanCache() should not return error, got: %v", err)
 	}
 
-	runnerCachePath := filepath.Join(appConstants.RunnerCacheDir, TestOptimizationPlanCacheFile)
+	runnerCachePath := filepath.Join(constants.RunnerCacheDir, constants.TestOptimizationPlanCacheFile)
 	if _, err := os.Stat(runnerCachePath); err != nil {
 		t.Fatalf("Expected runner test optimization plan cache file to be written: %v", err)
 	}
 
-	httpCachePath := filepath.Join(appConstants.HTTPCacheDir, TestOptimizationPlanCacheFile)
+	httpCachePath := filepath.Join(constants.HTTPCacheDir, constants.TestOptimizationPlanCacheFile)
 	if _, err := os.Stat(httpCachePath); !os.IsNotExist(err) {
 		t.Fatalf("Expected test optimization plan cache to stay out of cache/http, got error: %v", err)
 	}

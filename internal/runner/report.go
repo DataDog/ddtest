@@ -7,15 +7,9 @@ import (
 	"strings"
 	"time"
 
-	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/planner"
 	"github.com/DataDog/ddtest/internal/runmetadata"
-)
-
-const (
-	runModeSequential = "sequential"
-	runModeParallel   = "parallel"
-	runModeCINode     = "CI node"
 )
 
 type runExecutionReport struct {
@@ -48,14 +42,14 @@ func printRunInfoReport(w io.Writer, runInfo runmetadata.RunInfo, planInfo plann
 	reportFprintf(w, "  Commit: %s\n", valueOrNotAvailable(runInfo.Commit))
 	reportFprintf(w, "  Branch: %s\n", valueOrNotAvailable(runInfo.Branch))
 	reportFprintf(w, "  Platform: %s\n", formatPlatform(planInfo.Platform, planInfo.Framework))
-	reportFprintf(w, "  OS tags: %s\n", formatTagList(planInfo.OSTags, ciConstants.OSPlatform, ciConstants.OSArchitecture, ciConstants.OSVersion))
-	reportFprintf(w, "  Runtime tags: %s\n", formatTagList(planInfo.RuntimeTags, ciConstants.RuntimeName, ciConstants.RuntimeVersion))
+	reportFprintf(w, "  OS tags: %s\n", formatTagList(planInfo.OSTags, constants.OSPlatform, constants.OSArchitecture, constants.OSVersion))
+	reportFprintf(w, "  Runtime tags: %s\n", formatTagList(planInfo.RuntimeTags, constants.RuntimeName, constants.RuntimeVersion))
 }
 
 func printExecutionReport(w io.Writer, report runReport) {
 	reportFprintln(w, "Execution")
 	reportFprintf(w, "  Mode: %s\n", valueOrNotAvailable(report.Execution.Mode))
-	if report.Execution.Mode == runModeCINode {
+	if report.Execution.Mode == constants.RunModeCINode {
 		reportFprintf(w, "  CI node: %d\n", report.Execution.CINode)
 	}
 	reportFprintf(w, "  Local workers: %s\n", formatCount(report.Execution.LocalWorkers))

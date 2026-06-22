@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/DataDog/ddtest/internal/git"
 )
 
 var cwdSubdirPrefix = sync.OnceValue(computeCwdSubdirPrefix)
@@ -19,8 +21,28 @@ func CwdSubdirPrefix() string {
 	return cwdSubdirPrefix()
 }
 
+// ExpandPath expands a file path that starts with '~' to the user's home directory.
+// If the path does not start with '~', it is returned unchanged.
+func ExpandPath(path string) string {
+	if len(path) == 0 || path[0] != '~' {
+		return path
+	}
+
+	// If the second character is not '/' or '\', return the path unchanged.
+	if len(path) > 1 && path[1] != '/' && path[1] != '\\' {
+		return path
+	}
+
+	homeFolder := getHomeDir()
+	if len(homeFolder) > 0 {
+		return filepath.Join(homeFolder, path[1:])
+	}
+
+	return path
+}
+
 func computeCwdSubdirPrefix() string {
-	gitRoot := GetSourceRoot()
+	gitRoot := git.GetSourceRoot()
 	if gitRoot == "" {
 		return ""
 	}

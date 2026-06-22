@@ -37,7 +37,7 @@ func newCINodeExecutionReport(ciNode int, ciNodeWorkers int) runExecutionReport 
 	}
 
 	return runExecutionReport{
-		Mode:         runModeCINode,
+		Mode:         constants.RunModeCINode,
 		CINode:       ciNode,
 		LocalWorkers: ciNodeWorkers,
 	}

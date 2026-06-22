@@ -7,10 +7,14 @@ import (
 	"slices"
 	"strings"
 
-	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/constants"
+	ciUtils "github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/runmetadata"
-	ciUtils "github.com/DataDog/ddtest/internal/utils"
+)
+
+const (
+	nodeIndexPlaceholder   = "{{nodeIndex}}"
+	workerIndexPlaceholder = "{{workerIndex}}"
 )
 
 func createWorkerEnv(workerEnvMap map[string]string, nodeIndex int, workerIndex int) map[string]string {
@@ -40,22 +44,22 @@ func replaceIndexPlaceholders(workerEnvMap map[string]string, nodeIndex int, wor
 func replaceIndexPlaceholdersInString(value string, nodeIndex int, workerIndex int) string {
 	nodeIndexValue := fmt.Sprintf("%d", nodeIndex)
 	workerIndexValue := fmt.Sprintf("%d", workerIndex)
-	value = strings.ReplaceAll(value, constants.NodeIndexPlaceholder, nodeIndexValue)
-	return strings.ReplaceAll(value, constants.WorkerIndexPlaceholder, workerIndexValue)
+	value = strings.ReplaceAll(value, nodeIndexPlaceholder, nodeIndexValue)
+	return strings.ReplaceAll(value, workerIndexPlaceholder, workerIndexValue)
 }
 
 func ensureTestSessionName(workerEnv map[string]string, nodeIndex int, workerIndex int) {
-	if _, ok := workerEnv[ciConstants.TestOptimizationTestSessionNameEnvironmentVariable]; ok {
+	if _, ok := workerEnv[constants.TestOptimizationTestSessionNameEnvironmentVariable]; ok {
 		return
 	}
 
-	if sessionName, ok := os.LookupEnv(ciConstants.TestOptimizationTestSessionNameEnvironmentVariable); ok {
-		workerEnv[ciConstants.TestOptimizationTestSessionNameEnvironmentVariable] = replaceIndexPlaceholdersInString(sessionName, nodeIndex, workerIndex)
+	if sessionName, ok := os.LookupEnv(constants.TestOptimizationTestSessionNameEnvironmentVariable); ok {
+		workerEnv[constants.TestOptimizationTestSessionNameEnvironmentVariable] = replaceIndexPlaceholdersInString(sessionName, nodeIndex, workerIndex)
 		return
 	}
 
-	service := runmetadata.ResolveServiceName(ciUtils.GetCITags()[ciConstants.GitRepositoryURL])
-	workerEnv[ciConstants.TestOptimizationTestSessionNameEnvironmentVariable] = fmt.Sprintf("%s-node-%d-worker-%d", service, nodeIndex, workerIndex)
+	service := runmetadata.ResolveServiceName(ciUtils.GetCITags()[constants.GitRepositoryURL])
+	workerEnv[constants.TestOptimizationTestSessionNameEnvironmentVariable] = fmt.Sprintf("%s-node-%d-worker-%d", service, nodeIndex, workerIndex)
 }
 
 func ensureManifestFile(workerEnv map[string]string) {

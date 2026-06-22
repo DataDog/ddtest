@@ -13,10 +13,9 @@ import (
 	"strings"
 	"time"
 
-	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
-	"github.com/DataDog/ddtest/internal/ciprovider"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/discovery"
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/runmetadata"
@@ -39,6 +38,7 @@ type testOptimizationClient interface {
 	GetSkippableTests() map[string]bool
 	GetKnownTests() *api.KnownTestsResponseData
 	GetTestManagementTestsData() *api.TestManagementTestsResponseDataModules
+	GetDisabledTests() map[string]bool
 	GetTestSuiteDurations() *api.TestSuiteDurationsResponseData
 	StoreCacheAndExit()
 }
@@ -54,8 +54,8 @@ func NewPlanInfo(tags map[string]string, platformName, frameworkName string) Pla
 	return PlanInfo{
 		Platform:    platformName,
 		Framework:   frameworkName,
-		OSTags:      selectTags(tags, ciConstants.OSPlatform, ciConstants.OSArchitecture, ciConstants.OSVersion),
-		RuntimeTags: selectTags(tags, ciConstants.RuntimeName, ciConstants.RuntimeVersion),
+		OSTags:      selectTags(tags, constants.OSPlatform, constants.OSArchitecture, constants.OSVersion),
+		RuntimeTags: selectTags(tags, constants.RuntimeName, constants.RuntimeVersion),
 	}
 }
 
@@ -80,11 +80,13 @@ type TestPlanner struct {
 	planInfo                PlanInfo
 	platformDetector        platform.PlatformDetector
 	optimizationClient      testOptimizationClient
-	ciProviderDetector      ciprovider.CIProviderDetector
+	ciProviderDetector      environment.CIProviderDetector
 	reportWriter            io.Writer
 }
 
-const DefaultTestFileWeight = int(time.Second / time.Millisecond)
+const (
+	slowestTestSuitesReportLimit = 10
+)
 
 type testSuiteKey struct {
 	Module string `json:"module"`
@@ -147,14 +149,14 @@ func New() *TestPlanner {
 	planner := newTestPlannerWithDefaults()
 	planner.platformDetector = platform.NewPlatformDetector()
 	planner.optimizationClient = testoptimization.NewTestOptimizationClient()
-	planner.ciProviderDetector = ciprovider.NewCIProviderDetector()
+	planner.ciProviderDetector = environment.NewCIProviderDetector()
 	return planner
 }
 
 func NewWithDependencies(
 	platformDetector platform.PlatformDetector,
 	optimizationClient testOptimizationClient,
-	ciProviderDetector ciprovider.CIProviderDetector,
+	ciProviderDetector environment.CIProviderDetector,
 ) *TestPlanner {
 	planner := newTestPlannerWithDefaults()
 	planner.platformDetector = platformDetector
@@ -213,14 +215,14 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 	}
 
 	if ciProvider, err := tp.ciProviderDetector.DetectCIProvider(); err == nil {
-		slog.Info("CI provider detected, configuring with parallel runners",
+		slog.Debug("CI provider detected, configuring with parallel runners",
 			"provider", ciProvider.Name(), "parallelRunners", parallelRunners)
 
 		if err := ciProvider.Configure(parallelRunners); err != nil {
 			slog.Warn("Failed to configure CI provider", "provider", ciProvider.Name(), "error", err)
 		}
 	} else {
-		slog.Info("No CI provider detected or CI provider is not supported, running tests without CI integration", "error", err)
+		slog.Info("No CI provider detected, running tests without CI integration", "error", err)
 	}
 
 	if err := tp.CreateTestSplits(tp.testFileWeights, parallelRunners, constants.TestFilesOutputPath); err != nil {
@@ -273,7 +275,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	}
 	slog.Info("Framework detected", "framework", testFramework.Name())
 	fullTestDiscoverySupported := testFramework.SupportsFullTestDiscovery()
-	tp.runInfo = runmetadata.New(utils.GetCITags())
+	tp.runInfo = runmetadata.New(environment.GetCITags())
 	tp.planInfo = NewPlanInfo(tags, detectedPlatform.Name(), testFramework.Name())
 
 	testExcludePattern := effectiveTestExcludePattern(testFramework)
@@ -491,10 +493,9 @@ func (tp *TestPlanner) fetchTestsToSkip(tiaSkippingEnabled bool) testSkipper {
 	}
 
 	tp.planReport.KnownTests = newKnownTestsReport(tp.optimizationClient.GetKnownTests())
-	testManagementTests := tp.optimizationClient.GetTestManagementTestsData()
-	tp.planReport.ManagedFlakyTests = newManagedFlakyTestsReport(testManagementTests)
+	tp.planReport.ManagedFlakyTests = newManagedFlakyTestsReport(tp.optimizationClient.GetTestManagementTestsData())
 
-	disabledTests := testoptimization.DisabledTestsFromTestManagementData(testManagementTests)
+	disabledTests := tp.optimizationClient.GetDisabledTests()
 	slog.Info("Fetched tests to skip",
 		"duration", time.Since(startTime),
 		"tiaSkippableTestsCount", len(tiaSkippableTests),
@@ -673,7 +674,7 @@ func (tp *TestPlanner) estimateTestFileWeight(testFile string) (testFileWeightEs
 	suiteKeys := tp.suitesBySourceFile[testFile]
 	if len(suiteKeys) == 0 {
 		return testFileWeightEstimate{
-			weight: DefaultTestFileWeight,
+			weight: constants.DefaultTestFileWeight,
 			source: testFileDurationSourceDefault,
 		}, true
 	}
@@ -698,7 +699,7 @@ func (tp *TestPlanner) estimateTestFileWeight(testFile string) (testFileWeightEs
 	}
 	if duration <= 0 {
 		return testFileWeightEstimate{
-			weight: DefaultTestFileWeight,
+			weight: constants.DefaultTestFileWeight,
 			source: source,
 		}, true
 	}

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
 )
@@ -40,8 +40,8 @@ func printRunInfoReport(w io.Writer, runInfo runmetadata.RunInfo, planInfo PlanI
 	reportFprintf(w, "  Commit: %s\n", valueOrNotAvailable(runInfo.Commit))
 	reportFprintf(w, "  Branch: %s\n", valueOrNotAvailable(runInfo.Branch))
 	reportFprintf(w, "  Platform: %s\n", formatPlatform(planInfo.Platform, planInfo.Framework))
-	reportFprintf(w, "  OS tags: %s\n", formatTagList(planInfo.OSTags, ciConstants.OSPlatform, ciConstants.OSArchitecture, ciConstants.OSVersion))
-	reportFprintf(w, "  Runtime tags: %s\n", formatTagList(planInfo.RuntimeTags, ciConstants.RuntimeName, ciConstants.RuntimeVersion))
+	reportFprintf(w, "  OS tags: %s\n", formatTagList(planInfo.OSTags, constants.OSPlatform, constants.OSArchitecture, constants.OSVersion))
+	reportFprintf(w, "  Runtime tags: %s\n", formatTagList(planInfo.RuntimeTags, constants.RuntimeName, constants.RuntimeVersion))
 }
 
 func printDDTestSettingsReport(w io.Writer, config *settings.Config) {

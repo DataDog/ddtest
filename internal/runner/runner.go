@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	ciUtils "github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/planner"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
-	ciUtils "github.com/DataDog/ddtest/internal/utils"
 )
 
 type Runner interface {

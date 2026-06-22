@@ -21,14 +21,13 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/tinylib/msgp/msgp"
 )
 
 // Constants for common strings
 const (
-	ContentTypeJSON            = "application/json"
 	ContentTypeJSONAlternative = "application/vnd.api+json"
-	ContentTypeOctetStream     = "application/octet-stream"
 	ContentTypeMessagePack     = "application/msgpack"
 	ContentEncodingGzip        = "gzip"
 	HeaderContentType          = "Content-Type"
@@ -36,7 +35,6 @@ const (
 	HeaderAcceptEncoding       = "Accept-Encoding"
 	HeaderRateLimitReset       = "x-ratelimit-reset"
 	HTTPStatusTooManyRequests  = 429
-	FormatJSON                 = "json"
 	FormatMessagePack          = "msgpack"
 )
 
@@ -77,7 +75,7 @@ func (r *Response) Unmarshal(target interface{}) error {
 	}
 
 	switch r.Format {
-	case FormatJSON:
+	case constants.FormatJSON:
 		return json.Unmarshal(r.Body, target)
 	case FormatMessagePack:
 		if target.(msgp.Unmarshaler) != nil {
@@ -138,10 +136,10 @@ func NewRequestHandlerWithClient(client *http.Client) *RequestHandler {
 // SendRequest sends an HTTP request based on the provided configuration.
 func (rh *RequestHandler) SendRequest(config RequestConfig) (*Response, error) {
 	if config.MaxRetries <= 0 {
-		config.MaxRetries = DefaultMaxRetries // Default retries
+		config.MaxRetries = constants.DefaultMaxRetries // Default retries
 	}
 	if config.Backoff <= 0 {
-		config.Backoff = DefaultBackoff // Default backoff
+		config.Backoff = constants.DefaultBackoff // Default backoff
 	}
 	if config.Method == "" {
 		return nil, errors.New("HTTP method is required")
@@ -202,7 +200,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 		}
 
 		strBody := "(binary data)"
-		if config.Format == FormatJSON {
+		if config.Format == constants.FormatJSON {
 			strBody = string(originalSerializedBody)
 			if len(strBody) > 4096 {
 				strBody = strBody[:4096] + "..." // Truncate for logging
@@ -214,8 +212,8 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 		if err != nil {
 			return true, nil, err
 		}
-		if config.Format == FormatJSON {
-			req.Header.Set(HeaderContentType, ContentTypeJSON)
+		if config.Format == constants.FormatJSON {
+			req.Header.Set(HeaderContentType, constants.ContentTypeJSON)
 		}
 		if config.Format == FormatMessagePack {
 			req.Header.Set(HeaderContentType, ContentTypeMessagePack)
@@ -309,8 +307,8 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 	responseFormat := "unknown"
 	mediaType, _, err := mime.ParseMediaType(resp.Header.Get(HeaderContentType))
 	if err == nil {
-		if mediaType == ContentTypeJSON || mediaType == ContentTypeJSONAlternative {
-			responseFormat = FormatJSON
+		if mediaType == constants.ContentTypeJSON || mediaType == ContentTypeJSONAlternative {
+			responseFormat = constants.FormatJSON
 		}
 	}
 
@@ -336,7 +334,7 @@ func serializeData(data interface{}, format string) ([]byte, error) {
 		return io.ReadAll(v)
 	default:
 		// Otherwise, serialize it according to the specified format
-		if format == FormatJSON {
+		if format == constants.FormatJSON {
 			return json.Marshal(data)
 		}
 		if format == FormatMessagePack {
@@ -399,11 +397,11 @@ func getExponentialBackoffDuration(retryCount int, initialDelay time.Duration) t
 // prepareContent prepares the content for a FormFile by serializing it if needed.
 func prepareContent(content interface{}, contentType string) ([]byte, error) {
 	switch contentType {
-	case ContentTypeJSON:
-		return serializeData(content, FormatJSON)
+	case constants.ContentTypeJSON:
+		return serializeData(content, constants.FormatJSON)
 	case ContentTypeMessagePack:
 		return serializeData(content, FormatMessagePack)
-	case ContentTypeOctetStream:
+	case constants.ContentTypeOctetStream:
 		// For binary data, ensure it's already in byte format
 		if data, ok := content.([]byte); ok {
 			return data, nil

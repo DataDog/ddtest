@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 func TestTransportGetCommitsRequestAndResponse(t *testing.T) {
@@ -17,11 +19,11 @@ func TestTransportGetCommitsRequestAndResponse(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		w.Header().Set(HeaderContentType, ContentTypeJSON)
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 		_ = json.NewEncoder(w).Encode(searchCommits{
 			Data: []searchCommitsData{
-				{ID: "remote-1", Type: searchCommitsType},
-				{ID: "remote-2", Type: searchCommitsType},
+				{ID: "remote-1", Type: constants.SearchCommitsType},
+				{ID: "remote-2", Type: constants.SearchCommitsType},
 			},
 		})
 	}))
@@ -39,8 +41,8 @@ func TestTransportGetCommitsRequestAndResponse(t *testing.T) {
 		t.Fatalf("unexpected commit request: %#v", captured.Data)
 	}
 	for _, commit := range captured.Data {
-		if commit.Type != searchCommitsType {
-			t.Fatalf("commit %q type = %q, want %q", commit.ID, commit.Type, searchCommitsType)
+		if commit.Type != constants.SearchCommitsType {
+			t.Fatalf("commit %q type = %q, want %q", commit.ID, commit.Type, constants.SearchCommitsType)
 		}
 	}
 	if len(commits) != 2 || commits[0] != "remote-1" || commits[1] != "remote-2" {
@@ -70,7 +72,7 @@ func TestTransportGetCommitsErrors(t *testing.T) {
 
 	t.Run("unmarshal failure", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set(HeaderContentType, ContentTypeJSON)
+			w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 			_, _ = w.Write([]byte(`{"data":`))
 		}))
 		defer server.Close()

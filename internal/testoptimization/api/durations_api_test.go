@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 type durationsRequestRecord struct {
@@ -60,7 +60,7 @@ func newDurationsTestServer(t *testing.T, responses []string, records *[]duratio
 		}
 		*records = append(*records, record)
 
-		w.Header().Set(HeaderContentType, ContentTypeJSON)
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 		_, _ = w.Write([]byte(responses[requestCount]))
 		requestCount++
 	}))

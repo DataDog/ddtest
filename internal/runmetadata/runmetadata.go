@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 var repositoryNameRegex = regexp.MustCompile(`(?m)/([a-zA-Z0-9\-_.]+)$`)
@@ -18,12 +18,12 @@ type RunInfo struct {
 }
 
 func New(ciTags map[string]string) RunInfo {
-	repository := ciTags[ciConstants.GitRepositoryURL]
+	repository := ciTags[constants.GitRepositoryURL]
 	return RunInfo{
 		Service:    ResolveServiceName(repository),
 		Repository: repository,
-		Commit:     ciTags[ciConstants.GitCommitSHA],
-		Branch:     ciTags[ciConstants.GitBranch],
+		Commit:     ciTags[constants.GitCommitSHA],
+		Branch:     ciTags[constants.GitBranch],
 	}
 }
 

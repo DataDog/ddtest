@@ -5,19 +5,29 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"sync"
 	"syscall"
 	"time"
 
-	testoptimizationstate "github.com/DataDog/ddtest/civisibility"
-	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
+	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	"github.com/DataDog/ddtest/internal/utils"
-	"github.com/DataDog/ddtest/stableconfig"
 )
 
 const autoDetectServiceName = ""
+
+const (
+	libraryCapabilitiesTestImpactAnalysis         = "_dd.library_capabilities.test_impact_analysis"
+	libraryCapabilitiesEarlyFlakeDetection        = "_dd.library_capabilities.early_flake_detection"
+	libraryCapabilitiesAutoTestRetries            = "_dd.library_capabilities.auto_test_retries"
+	libraryCapabilitiesTestManagementQuarantine   = "_dd.library_capabilities.test_management.quarantine"
+	libraryCapabilitiesTestManagementDisable      = "_dd.library_capabilities.test_management.disable"
+	libraryCapabilitiesTestManagementAttemptToFix = "_dd.library_capabilities.test_management.attempt_to_fix"
+)
 
 type testOptimizationCloseAction func()
 
@@ -73,7 +83,7 @@ func newTestOptimizationClient(
 }
 
 func (c *TestOptimizationClient) Initialize(tags map[string]string) error {
-	utils.AddCITagsMap(tags)
+	environment.AddCITagsMap(tags)
 
 	startTime := time.Now()
 	c.ensureTestOptimizationSessionInitialized()
@@ -128,6 +138,10 @@ func (c *TestOptimizationClient) GetTestManagementTestsData() *api.TestManagemen
 	return &c.testManagementTests
 }
 
+func (c *TestOptimizationClient) GetDisabledTests() map[string]bool {
+	return disabledTestsFromTestManagementData(c.GetTestManagementTestsData())
+}
+
 func (c *TestOptimizationClient) GetTestSuiteDurations() *api.TestSuiteDurationsResponseData {
 	testOptimizationTransport := c.ensureAPITransport(autoDetectServiceName)
 	if testOptimizationTransport == nil {
@@ -163,21 +177,18 @@ func (c *TestOptimizationClient) StoreCacheAndExit() {
 
 func (c *TestOptimizationClient) ensureTestOptimizationSessionInitialized() {
 	c.initializationOnce.Do(func() {
-		testoptimizationstate.SetState(testoptimizationstate.StateInitializing)
-		defer testoptimizationstate.SetState(testoptimizationstate.StateInitialized)
-
 		slog.SetLogLoggerLevel(slog.LevelInfo)
-		if enabled, _ := stableconfig.Bool("DD_TRACE_DEBUG", false); enabled {
+		if traceDebugEnabled() {
 			slog.SetLogLoggerLevel(slog.LevelDebug)
 		}
 
 		slog.Debug("testoptimization: initializing")
 
-		_ = os.Setenv(ciConstants.TestOptimizationEnabledEnvironmentVariable, "1")
+		_ = os.Setenv(constants.TestOptimizationEnabledEnvironmentVariable, "1")
 		_ = os.Setenv("DD_TRACE_SAMPLE_RATE", "1")
 
-		ciTags := utils.GetCITags()
-		if _, ok := ciTags[ciConstants.GitRepositoryURL]; !ok {
+		ciTags := environment.GetCITags()
+		if _, ok := ciTags[constants.GitRepositoryURL]; !ok {
 			slog.Debug("testoptimization: git repository URL tag was not detected")
 		}
 
@@ -185,6 +196,10 @@ func (c *TestOptimizationClient) ensureTestOptimizationSessionInitialized() {
 			c.registerSignalHandler()
 		}
 	})
+}
+
+func traceDebugEnabled() bool {
+	return utils.BoolEnv("DD_TRACE_DEBUG", false)
 }
 
 func (c *TestOptimizationClient) ensureSettingsInitialization(serviceName string) *api.SettingsResponseData {
@@ -267,17 +282,17 @@ func applyEnvironmentOverrides(ciSettings *api.SettingsResponseData) {
 		ciSettings.EarlyFlakeDetection.Enabled = false
 	}
 
-	if ciSettings.FlakyTestRetriesEnabled && !testoptimizationstate.BoolEnv(ciConstants.TestOptimizationFlakyRetryEnabledEnvironmentVariable, true) {
+	if ciSettings.FlakyTestRetriesEnabled && !utils.BoolEnv(constants.TestOptimizationFlakyRetryEnabledEnvironmentVariable, true) {
 		slog.Warn("testoptimization: flaky test retries was disabled by the environment variable")
 		ciSettings.FlakyTestRetriesEnabled = false
 	}
 
-	if ciSettings.TestManagement.Enabled && !testoptimizationstate.BoolEnv(ciConstants.TestOptimizationManagementEnabledEnvironmentVariable, true) {
+	if ciSettings.TestManagement.Enabled && !utils.BoolEnv(constants.TestOptimizationManagementEnabledEnvironmentVariable, true) {
 		slog.Warn("testoptimization: test management was disabled by the environment variable")
 		ciSettings.TestManagement.Enabled = false
 	}
 
-	testManagementAttemptToFixRetriesEnv := testoptimizationstate.IntEnv(ciConstants.TestOptimizationAttemptToFixRetriesEnvironmentVariable, -1)
+	testManagementAttemptToFixRetriesEnv := utils.IntEnv(constants.TestOptimizationAttemptToFixRetriesEnvironmentVariable, -1)
 	if testManagementAttemptToFixRetriesEnv != -1 {
 		ciSettings.TestManagement.AttemptToFixRetries = testManagementAttemptToFixRetriesEnv
 	}
@@ -294,17 +309,17 @@ func (c *TestOptimizationClient) ensureTestOptimizationInitialized() {
 		}
 
 		additionalTags := map[string]string{
-			ciConstants.LibraryCapabilitiesEarlyFlakeDetection:        "1",
-			ciConstants.LibraryCapabilitiesAutoTestRetries:            "1",
-			ciConstants.LibraryCapabilitiesTestImpactAnalysis:         "1",
-			ciConstants.LibraryCapabilitiesTestManagementQuarantine:   "1",
-			ciConstants.LibraryCapabilitiesTestManagementDisable:      "1",
-			ciConstants.LibraryCapabilitiesTestManagementAttemptToFix: "5",
+			libraryCapabilitiesEarlyFlakeDetection:        "1",
+			libraryCapabilitiesAutoTestRetries:            "1",
+			libraryCapabilitiesTestImpactAnalysis:         "1",
+			libraryCapabilitiesTestManagementQuarantine:   "1",
+			libraryCapabilitiesTestManagementDisable:      "1",
+			libraryCapabilitiesTestManagementAttemptToFix: "5",
 		}
 		defer func() {
 			if len(additionalTags) > 0 {
 				slog.Debug("testoptimization: adding additional tags", "tags", additionalTags) //nolint:gocritic // Map structure logging for debugging
-				utils.AddCITagsMap(additionalTags)
+				environment.AddCITagsMap(additionalTags)
 			}
 		}()
 
@@ -340,7 +355,7 @@ func (c *TestOptimizationClient) ensureTestOptimizationInitialized() {
 					slog.Error("testoptimization: error getting test optimization skippable tests", "err", err.Error())
 				} else if skippableTests != nil {
 					slog.Debug("testoptimization: skippable tests loaded", "count", len(skippableTests))
-					setAdditionalTags(ciConstants.ItrCorrelationIDTag, correlationID)
+					setAdditionalTags(constants.ItrCorrelationIDTag, correlationID)
 					c.skippableTests = skippableTests
 				}
 			}()
@@ -371,13 +386,6 @@ func (c *TestOptimizationClient) pushTestOptimizationCloseAction(action testOpti
 }
 
 func (c *TestOptimizationClient) exitTestOptimization() {
-	if testoptimizationstate.GetState() != testoptimizationstate.StateInitialized {
-		slog.Debug("testoptimization: already closed or not initialized")
-		return
-	}
-
-	testoptimizationstate.SetState(testoptimizationstate.StateExiting)
-	defer testoptimizationstate.SetState(testoptimizationstate.StateExited)
 	slog.Debug("testoptimization: exiting")
 
 	c.closeActionsMutex.Lock()
@@ -443,7 +451,7 @@ func (c *TestOptimizationClient) uploadRepositoryChangesFromGit() (bytes int64, 
 		return 0, nil
 	}
 
-	hasBeenUnshallowed, err := utils.UnshallowGitRepository()
+	hasBeenUnshallowed, err := git.UnshallowGitRepository()
 	if err != nil || !hasBeenUnshallowed {
 		if err != nil {
 			slog.Warn(err.Error())
@@ -464,7 +472,7 @@ func (c *TestOptimizationClient) uploadRepositoryChangesFromGit() (bytes int64, 
 }
 
 func (c *TestOptimizationClient) getSearchCommits() (*searchCommitsResponse, error) {
-	localCommits := utils.GetLastLocalGitCommitShas()
+	localCommits := git.GetLastLocalGitCommitShas()
 	if len(localCommits) == 0 {
 		slog.Debug("testoptimization: no local commits found")
 		return newSearchCommitsResponse(nil, nil, false), nil
@@ -503,7 +511,7 @@ func (r *searchCommitsResponse) missingCommits() []string {
 }
 
 func (c *TestOptimizationClient) sendObjectsPackFile(commitSha string, commitsToInclude []string, commitsToExclude []string) (bytes int64, err error) {
-	packFiles := utils.CreatePackFiles(commitsToInclude, commitsToExclude)
+	packFiles := git.CreatePackFiles(commitsToInclude, commitsToExclude)
 	if len(packFiles) == 0 {
 		slog.Debug("testoptimization: no pack files to send")
 		return 0, nil
@@ -511,11 +519,43 @@ func (c *TestOptimizationClient) sendObjectsPackFile(commitSha string, commitsTo
 
 	slog.Debug("testoptimization: sending pack file with missing commits", "count", packFiles) //nolint:gocritic // File list logging for debugging
 
-	defer func(files []string) {
-		for _, file := range files {
-			_ = os.Remove(file)
-		}
-	}(packFiles)
+	defer cleanupPackFiles(packFiles)
 
 	return c.apiTransport.SendPackFiles(commitSha, packFiles)
+}
+
+func cleanupPackFiles(packFiles []string) {
+	packDirectories := make(map[string]struct{})
+	for _, packFile := range packFiles {
+		_ = os.Remove(packFile)
+		packDirectories[filepath.Dir(packFile)] = struct{}{}
+	}
+	for packDirectory := range packDirectories {
+		_ = os.RemoveAll(packDirectory)
+	}
+}
+
+func disabledTestsFromTestManagementData(testManagementTests *api.TestManagementTestsResponseDataModules) map[string]bool {
+	disabledTests := make(map[string]bool)
+	if testManagementTests == nil {
+		return disabledTests
+	}
+
+	for module, suites := range testManagementTests.Modules {
+		for suite, tests := range suites.Suites {
+			for name, test := range tests.Tests {
+				if !test.Properties.Disabled || test.Properties.AttemptToFix {
+					continue
+				}
+				disabledTest := Test{
+					Module: module,
+					Suite:  suite,
+					Name:   name,
+				}
+				disabledTests[disabledTest.FQN()] = true
+			}
+		}
+	}
+
+	return disabledTests
 }

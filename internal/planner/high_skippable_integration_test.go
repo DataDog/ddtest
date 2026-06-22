@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	ciConstants "github.com/DataDog/ddtest/civisibility/constants"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -75,7 +74,7 @@ func TestTestPlanner_Plan_HighSkippableIntegrationSelectsExpectedRunnerCountAndR
 	mockPlatform := &MockPlatform{
 		PlatformName: "ruby",
 		Tags: map[string]string{
-			ciConstants.GitRepositoryURL: repoRoot,
+			constants.GitRepositoryURL: repoRoot,
 		},
 		Framework: mockFramework,
 	}

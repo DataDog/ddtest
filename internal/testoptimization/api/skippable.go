@@ -61,7 +61,7 @@ type (
 
 func (c *transport) GetSkippableTests() (correlationID string, skippables SkippableTests, err error) {
 	if c.repositoryURL == "" || c.commitSha == "" {
-		err = fmt.Errorf("civisibility.GetSkippableTests: repository URL and commit SHA are required")
+		err = fmt.Errorf("testoptimization.GetSkippableTests: repository URL and commit SHA are required")
 		return
 	}
 	c.skippableTestsRawResponse = nil
