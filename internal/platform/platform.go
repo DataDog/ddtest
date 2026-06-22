@@ -34,6 +34,8 @@ func DetectPlatform() (Platform, error) {
 		platform = NewRuby()
 	case "javascript":
 		platform = NewJavaScript()
+	case "python":
+		platform = NewPython()
 	default:
 		return nil, fmt.Errorf("unsupported platform: %s", platformName)
 	}

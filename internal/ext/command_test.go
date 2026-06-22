@@ -9,6 +9,55 @@ import (
 	"time"
 )
 
+type fakeSignalNotifier struct {
+	signal   os.Signal
+	notified chan []os.Signal
+}
+
+func (n *fakeSignalNotifier) Notify(c chan<- os.Signal, signals ...os.Signal) {
+	n.notified <- append([]os.Signal(nil), signals...)
+
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		c <- n.signal
+	}()
+}
+
+func (n *fakeSignalNotifier) Stop(c chan<- os.Signal) {}
+
+func assertSignalForwarded(t *testing.T, signal os.Signal) error {
+	t.Helper()
+
+	notifier := &fakeSignalNotifier{
+		signal:   signal,
+		notified: make(chan []os.Signal, 1),
+	}
+	executor := &DefaultCommandExecutor{signalNotifier: notifier}
+
+	err := executor.Run(context.Background(), "sleep", []string{"30"}, nil)
+
+	select {
+	case registeredSignals := <-notifier.notified:
+		if !containsSignal(registeredSignals, signal) {
+			t.Fatalf("expected %v to be registered, got %v", signal, registeredSignals)
+		}
+	default:
+		t.Fatal("expected signal notifier to be registered")
+	}
+
+	return err
+}
+
+func containsSignal(signals []os.Signal, target os.Signal) bool {
+	for _, signal := range signals {
+		if signal == target {
+			return true
+		}
+	}
+
+	return false
+}
+
 func TestDefaultCommandExecutor_CombinedOutput_Success(t *testing.T) {
 	executor := &DefaultCommandExecutor{}
 
@@ -253,25 +302,7 @@ func TestDefaultCommandExecutor_Run_ContextTimeout(t *testing.T) {
 }
 
 func TestDefaultCommandExecutor_Run_SignalForwarding(t *testing.T) {
-	executor := &DefaultCommandExecutor{}
-
-	// Send SIGINT to the test process itself after a delay
-	// The executor should forward this to the child sleep process
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		pid := os.Getpid()
-		process, err := os.FindProcess(pid)
-		if err != nil {
-			t.Errorf("failed to find test process: %v", err)
-			return
-		}
-		if err := process.Signal(syscall.SIGINT); err != nil {
-			t.Errorf("failed to send SIGINT to test process: %v", err)
-		}
-	}()
-
-	// Run a long-running command - it should be interrupted by the signal forwarding
-	err := executor.Run(context.Background(), "sleep", []string{"30"}, nil)
+	err := assertSignalForwarded(t, syscall.SIGINT)
 
 	// The process should have been interrupted
 	if err == nil {
@@ -282,25 +313,7 @@ func TestDefaultCommandExecutor_Run_SignalForwarding(t *testing.T) {
 }
 
 func TestDefaultCommandExecutor_Run_SignalForwardingSIGTERM(t *testing.T) {
-	executor := &DefaultCommandExecutor{}
-
-	// Send SIGTERM to the test process itself after a delay
-	// The executor should forward this to the child sleep process
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		pid := os.Getpid()
-		process, err := os.FindProcess(pid)
-		if err != nil {
-			t.Errorf("failed to find test process: %v", err)
-			return
-		}
-		if err := process.Signal(syscall.SIGTERM); err != nil {
-			t.Errorf("failed to send SIGTERM to test process: %v", err)
-		}
-	}()
-
-	// Run a long-running command - it should be terminated by the signal forwarding
-	err := executor.Run(context.Background(), "sleep", []string{"30"}, nil)
+	err := assertSignalForwarded(t, syscall.SIGTERM)
 
 	// The process should have been terminated
 	if err == nil {

@@ -158,6 +158,142 @@ func TestDiscoverTestFilesWithInvalidExcludePattern(t *testing.T) {
 	}
 }
 
+func TestDiscoverTestFilesEmptyAndMissingRoot(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	files, err := DiscoverTestFiles("", "")
+	if err != nil {
+		t.Fatalf("empty pattern returned error: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("empty pattern returned files: %v", files)
+	}
+
+	files, err = DiscoverTestFiles(filepath.Join("missing", "**", "*_test.rb"), "")
+	if err != nil {
+		t.Fatalf("missing root returned error: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("missing root returned files: %v", files)
+	}
+}
+
+func TestResolveTestFilesWithoutExcludePattern(t *testing.T) {
+	pattern := filepath.Join("test", "**", "*_test.rb")
+
+	files, err := ResolveTestFiles(pattern, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if files.Pattern != pattern {
+		t.Fatalf("Pattern = %q, want %q", files.Pattern, pattern)
+	}
+	if files.UseExplicitFiles() {
+		t.Fatalf("expected discovery pattern to be used, got explicit files %#v", files.ExplicitFiles)
+	}
+	if files.Empty() {
+		t.Fatal("pattern-based discovery should not be empty")
+	}
+}
+
+func TestResolveTestFilesWithExcludePattern(t *testing.T) {
+	root := createDiscoveryFixture(t)
+	t.Chdir(root)
+
+	files, err := ResolveTestFiles(
+		filepath.Join("test", "**", "*_test.rb"),
+		filepath.Join("test", "system", "**", "*_test.rb"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := []string{
+		"test/unit/order_test.rb",
+		"test/unit/user_test.rb",
+	}
+	if !files.UseExplicitFiles() {
+		t.Fatal("expected filtered discovery to use explicit files")
+	}
+	if !slices.Equal(files.ExplicitFiles, expected) {
+		t.Fatalf("expected %v, got %v", expected, files.ExplicitFiles)
+	}
+	if files.Empty() {
+		t.Fatal("filtered discovery should not be empty")
+	}
+}
+
+func TestResolveTestFilesWithExcludePatternEmptyResult(t *testing.T) {
+	root := createDiscoveryFixture(t)
+	t.Chdir(root)
+
+	files, err := ResolveTestFiles(
+		filepath.Join("test", "**", "*_test.rb"),
+		filepath.Join("test", "**", "*_test.rb"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !files.UseExplicitFiles() {
+		t.Fatal("expected empty filtered discovery to use explicit files")
+	}
+	if !files.Empty() {
+		t.Fatalf("expected empty explicit files, got %#v", files.ExplicitFiles)
+	}
+}
+
+func TestCleanupRemovesDiscoveryFile(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	if err := os.MkdirAll(filepath.Dir(TestsFilePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(TestsFilePath, []byte("[]"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	Cleanup()
+
+	if _, err := os.Stat(TestsFilePath); !os.IsNotExist(err) {
+		t.Fatalf("expected discovery file to be removed, stat error: %v", err)
+	}
+	Cleanup()
+}
+
+func TestDiscoverTestsReturnsParseError(t *testing.T) {
+	logs := captureDiscoveryLogs(t)
+	root := t.TempDir()
+	t.Chdir(root)
+
+	if err := os.MkdirAll(filepath.Dir(TestsFilePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(TestsFilePath, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests, err := DiscoverTests(context.Background(), successfulDiscoveryExecutor{}, "bundle", []string{"exec", "rspec"}, map[string]string{"APP_ENV": "test"})
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if tests != nil {
+		t.Fatalf("expected nil tests on parse error, got %+v", tests)
+	}
+	if !strings.Contains(logs.String(), "Error parsing JSON") {
+		t.Fatalf("expected parse error log, got: %s", logs.String())
+	}
+}
+
+func TestDiscoveryCommandLogValueShortCommand(t *testing.T) {
+	got := discoveryCommandLogValue("bundle", []string{"exec", "rspec"})
+	if got != "bundle exec rspec" {
+		t.Fatalf("discoveryCommandLogValue() = %q, want bundle exec rspec", got)
+	}
+}
+
 func TestDiscoverTestsLogsTruncatedCommand(t *testing.T) {
 	logs := captureDiscoveryLogs(t)
 	root := t.TempDir()

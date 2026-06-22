@@ -153,6 +153,30 @@ func TestGitVersion(t *testing.T) {
 	}
 }
 
+func TestGitVersionCommandError(t *testing.T) {
+	fakeBin := t.TempDir()
+	writeFakeGit(t, fakeBin, "#!/bin/sh\nexit 1\n")
+	t.Setenv("PATH", fakeBin)
+	resetGitPackageState(t)
+
+	_, _, _, err := getGitVersion()
+	if err == nil {
+		t.Fatal("expected git version error")
+	}
+}
+
+func TestGitVersionInvalidOutput(t *testing.T) {
+	fakeBin := t.TempDir()
+	writeFakeGit(t, fakeBin, "#!/bin/sh\nprintf 'git version wat\\n'\n")
+	t.Setenv("PATH", fakeBin)
+	resetGitPackageState(t)
+
+	_, _, _, err := getGitVersion()
+	if err == nil || !strings.Contains(err.Error(), "invalid git version") {
+		t.Fatalf("getGitVersion() error = %v, want invalid version", err)
+	}
+}
+
 func TestCheckAvailableIntegrationWithGitDir(t *testing.T) {
 	repo := gittest.NewRepository(t)
 	t.Setenv("GIT_DIR", filepath.Join(repo.Path, ".git"))
@@ -408,6 +432,67 @@ func TestExecGitStringWithInput(t *testing.T) {
 	}
 }
 
+func TestExecGitStringWithInputGitNotInstalled(t *testing.T) {
+	resetGitPackageState(t)
+	LookPathFunc = func(file string) (string, error) {
+		return "", errors.New("missing git")
+	}
+
+	_, err := execGitStringWithInput("hello", "hash-object", "--stdin")
+	if !errors.Is(err, errGitExecutableNotFound) {
+		t.Fatalf("execGitStringWithInput() error = %v, want git executable not found", err)
+	}
+}
+
+func TestGitHelpersOutsideRepositoryFallbacks(t *testing.T) {
+	gittest.RequireGit(t)
+	t.Chdir(t.TempDir())
+	resetGitPackageState(t)
+
+	if got := getSafeDirectoryConfig(); got != "" {
+		t.Fatalf("expected empty safe.directory outside repository, got %q", got)
+	}
+	if got := GetSourceRoot(); got != "" {
+		t.Fatalf("expected empty source root outside repository, got %q", got)
+	}
+	if got := GetLastLocalGitCommitShas(); len(got) != 0 {
+		t.Fatalf("expected no local commit SHAs outside repository, got %v", got)
+	}
+	if got := getObjectsSha([]string{"HEAD"}, nil); len(got) != 0 {
+		t.Fatalf("expected no object SHAs outside repository, got %v", got)
+	}
+	if got := CreatePackFiles([]string{"HEAD"}, nil); len(got) != 0 {
+		t.Fatalf("expected no pack files outside repository, got %v", got)
+	}
+	remote, err := getRemoteName()
+	if err != nil {
+		t.Fatalf("expected remote name fallback without error, got %v", err)
+	}
+	if remote != "origin" {
+		t.Fatalf("expected origin remote fallback, got %q", remote)
+	}
+}
+
+func TestGitLogHasMoreThanOneCommitFalseForSingleCommit(t *testing.T) {
+	repo := t.TempDir()
+	gittest.RequireGit(t)
+	gittest.Run(t, repo, "init")
+	gittest.Run(t, repo, "config", "user.name", gittest.AuthorName)
+	gittest.Run(t, repo, "config", "user.email", gittest.AuthorEmail)
+	gittest.WriteFile(t, repo, "README.md", "hello\n")
+	gittest.CommitAll(t, repo, "initial commit", time.Now().UTC().Truncate(time.Second))
+	t.Chdir(repo)
+	resetGitPackageState(t)
+
+	moreThanOne, err := hasTheGitLogHaveMoreThanOneCommits()
+	if err != nil {
+		t.Fatalf("expected git log count check to succeed, got %v", err)
+	}
+	if moreThanOne {
+		t.Fatal("expected single-commit repository not to have more than one commit")
+	}
+}
+
 func resetGitPackageState(t *testing.T) {
 	t.Helper()
 
@@ -434,6 +519,13 @@ func resetGitPackageState(t *testing.T) {
 		safeDirectoryOnce = sync.Once{}
 		safeDirectoryValue = origSafeDirectoryValue
 	})
+}
+
+func writeFakeGit(t *testing.T, dir string, script string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0755); err != nil {
+		t.Fatalf("failed to write fake git: %v", err)
+	}
 }
 
 func assertCommitData(t *testing.T, got LocalCommitData, wantSHA string, wantMessage string, wantAuthorDate time.Time) {

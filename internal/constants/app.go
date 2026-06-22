@@ -13,6 +13,7 @@ const ManifestVersion = "1"
 var ManifestPath = filepath.Join(PlanDirectory, "manifest.txt")
 
 const TestOptimizationManifestFileEnvVar = "TEST_OPTIMIZATION_MANIFEST_FILE"
+const DDTestOptimizationManifestFileEnvVar = "DD_TEST_OPTIMIZATION_MANIFEST_FILE"
 
 // Runner layout paths.
 var RunnerDirectory = filepath.Join(PlanDirectory, "runner")
@@ -43,3 +44,5 @@ const (
 	NodeIndexPlaceholder   = "{{nodeIndex}}"
 	WorkerIndexPlaceholder = "{{workerIndex}}"
 )
+
+var PythonEnvOutputPath = filepath.Join(PlanDirectory, "python_env.json")
