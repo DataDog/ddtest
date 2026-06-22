@@ -64,10 +64,6 @@ func (j *Jest) TestPattern() string {
 		"}"
 }
 
-func (j *Jest) TestExcludePattern() string {
-	return ""
-}
-
 func (j *Jest) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
 	return nil, ErrFullTestDiscoveryUnsupported
 }

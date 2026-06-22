@@ -1714,13 +1714,6 @@ func TestMinitest_DefaultTestPattern(t *testing.T) {
 	}
 }
 
-func TestMinitest_TestExcludePattern(t *testing.T) {
-	minitest := NewMinitest()
-	if got := minitest.TestExcludePattern(); got != "" {
-		t.Errorf("expected empty TestExcludePattern, got %q", got)
-	}
-}
-
 func TestMinitest_SupportsFullTestDiscovery(t *testing.T) {
 	minitest := NewMinitest()
 	if !minitest.SupportsFullTestDiscovery() {

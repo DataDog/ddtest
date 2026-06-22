@@ -1315,13 +1315,6 @@ func TestRSpec_DefaultTestPattern(t *testing.T) {
 	}
 }
 
-func TestRSpec_TestExcludePattern(t *testing.T) {
-	rspec := NewRSpec()
-	if got := rspec.TestExcludePattern(); got != "" {
-		t.Errorf("expected empty TestExcludePattern, got %q", got)
-	}
-}
-
 func TestRSpec_SupportsFullTestDiscovery(t *testing.T) {
 	rspec := NewRSpec()
 	if !rspec.SupportsFullTestDiscovery() {

@@ -71,7 +71,6 @@ func (m *MockPlatform) SanityCheck() error {
 type MockFramework struct {
 	FrameworkName            string
 	TestPatternValue         string
-	TestExcludePatternValue  string
 	Tests                    []testoptimization.Test
 	TestFiles                []string
 	Err                      error
@@ -152,10 +151,6 @@ func (m *MockFramework) TestPattern() string {
 	}
 	ensureMockTestFiles(m.TestFiles)
 	return mockTestFilesPattern(m.TestFiles)
-}
-
-func (m *MockFramework) TestExcludePattern() string {
-	return m.TestExcludePatternValue
 }
 
 var (

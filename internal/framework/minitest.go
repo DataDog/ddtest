@@ -78,10 +78,6 @@ func (m *Minitest) TestPattern() string {
 	return filepath.Join(minitestRootDir, "**", minitestTestFilePattern)
 }
 
-func (m *Minitest) TestExcludePattern() string {
-	return ""
-}
-
 func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, args, isRails := m.getMinitestCommand()
 	slog.Info("Running tests with command", "command", command, "args", args)

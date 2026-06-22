@@ -71,7 +71,7 @@ func TestJest_DiscoverTestFiles_DefaultPatterns(t *testing.T) {
 	}
 
 	jest := NewJest()
-	files, err := discovery.DiscoverTestFiles(jest.TestPattern(), jest.TestExcludePattern())
+	files, err := discovery.DiscoverTestFiles(jest.TestPattern(), "")
 	if err != nil {
 		t.Fatalf("generic discovery failed: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestJest_DiscoverTestFiles_WithTestsLocation(t *testing.T) {
 	setTestsLocation(t, "custom/*.check.js")
 
 	jest := NewJest()
-	files, err := discovery.DiscoverTestFiles(jest.TestPattern(), jest.TestExcludePattern())
+	files, err := discovery.DiscoverTestFiles(jest.TestPattern(), "")
 	if err != nil {
 		t.Fatalf("generic discovery failed: %v", err)
 	}
@@ -212,13 +212,6 @@ func TestJest_SetPlatformEnv(t *testing.T) {
 	}
 	if got["FOO"] != "bar" {
 		t.Errorf("expected FOO %q, got %q", "bar", got["FOO"])
-	}
-}
-
-func TestJest_TestExcludePattern(t *testing.T) {
-	jest := NewJest()
-	if got := jest.TestExcludePattern(); got != "" {
-		t.Errorf("expected empty TestExcludePattern, got %q", got)
 	}
 }
 

@@ -70,10 +70,6 @@ func (r *RSpec) TestPattern() string {
 	return filepath.Join(rspecRootDir, "**", rspecTestFilePattern)
 }
 
-func (r *RSpec) TestExcludePattern() string {
-	return ""
-}
-
 func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, baseArgs := r.getRSpecCommand()
 	args := append(baseArgs, "--format", "progress")
