@@ -10,7 +10,6 @@ import (
 	"os"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -278,8 +277,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	tp.runInfo = runmetadata.New(environment.GetCITags())
 	tp.planInfo = NewPlanInfo(tags, detectedPlatform.Name(), testFramework.Name())
 
-	testExcludePattern := effectiveTestExcludePattern(testFramework)
-	resolvedTestFiles, err := discovery.ResolveTestFiles(testFramework.TestPattern(), testExcludePattern)
+	resolvedTestFiles, err := discovery.ResolveTestFiles(testFramework.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		return err
 	}
@@ -379,7 +377,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 			res = resolvedTestFiles.ExplicitFiles
 		} else {
 			var discErr error
-			res, discErr = discovery.DiscoverTestFiles(resolvedTestFiles.Pattern, testExcludePattern)
+			res, discErr = discovery.DiscoverTestFiles(resolvedTestFiles.Pattern, settings.GetTestsExcludePattern())
 			if discErr != nil {
 				fastDiscoveryErr = discErr
 				slog.Warn("Fast test discovery failed", "error", discErr)
@@ -434,30 +432,6 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	slog.Info("Test files prepared", "testFilesCount", len(tp.testFiles))
 
 	return nil
-}
-
-func effectiveTestExcludePattern(testFramework framework.Framework) string {
-	return mergeTestExcludePatterns(testFramework.TestExcludePattern(), settings.GetTestsExcludePattern())
-}
-
-func mergeTestExcludePatterns(patterns ...string) string {
-	normalizedPatterns := make([]string, 0, len(patterns))
-	for _, pattern := range patterns {
-		normalized := utils.NormalizePattern(pattern)
-		if normalized == "" {
-			continue
-		}
-		normalizedPatterns = append(normalizedPatterns, normalized)
-	}
-
-	switch len(normalizedPatterns) {
-	case 0:
-		return ""
-	case 1:
-		return normalizedPatterns[0]
-	default:
-		return "{" + strings.Join(normalizedPatterns, ",") + "}"
-	}
 }
 
 func discoverLocalTests(ctx context.Context, testFramework framework.Framework, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
