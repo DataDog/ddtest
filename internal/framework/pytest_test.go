@@ -177,3 +177,10 @@ func TestPyTest_DiscoverTests_Success(t *testing.T) {
 		}
 	}
 }
+
+func TestPyTest_SupportsFullTestDiscovery(t *testing.T) {
+	pytest := NewPytest()
+	if !pytest.SupportsFullTestDiscovery() {
+		t.Error("expected PyTest to support full test discovery")
+	}
+}

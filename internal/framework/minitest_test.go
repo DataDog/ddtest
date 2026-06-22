@@ -1701,3 +1701,17 @@ func TestMinitest_RunTests_RailsApplication_UsesPlatformEnv(t *testing.T) {
 		t.Errorf("expected RUBYOPT to be %q, got %q", platformEnv["RUBYOPT"], mockExecutor.capturedEnvMap["RUBYOPT"])
 	}
 }
+
+func TestMinitest_TestExcludePattern(t *testing.T) {
+	minitest := NewMinitest()
+	if got := minitest.TestExcludePattern(); got != "" {
+		t.Errorf("expected empty TestExcludePattern, got %q", got)
+	}
+}
+
+func TestMinitest_SupportsFullTestDiscovery(t *testing.T) {
+	minitest := NewMinitest()
+	if !minitest.SupportsFullTestDiscovery() {
+		t.Error("expected Minitest to support full test discovery")
+	}
+}

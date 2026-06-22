@@ -201,6 +201,27 @@ func TestJest_RunTests_UsesNpxFallback(t *testing.T) {
 	}
 }
 
+func TestJest_SetPlatformEnv(t *testing.T) {
+	jest := NewJest()
+	env := map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init", "FOO": "bar"}
+	jest.SetPlatformEnv(env)
+
+	got := jest.GetPlatformEnv()
+	if got["NODE_OPTIONS"] != "-r dd-trace/ci/init" {
+		t.Errorf("expected NODE_OPTIONS %q, got %q", "-r dd-trace/ci/init", got["NODE_OPTIONS"])
+	}
+	if got["FOO"] != "bar" {
+		t.Errorf("expected FOO %q, got %q", "bar", got["FOO"])
+	}
+}
+
+func TestJest_TestExcludePattern(t *testing.T) {
+	jest := NewJest()
+	if got := jest.TestExcludePattern(); got != "" {
+		t.Errorf("expected empty TestExcludePattern, got %q", got)
+	}
+}
+
 func TestJest_RunTests_WithOverride(t *testing.T) {
 	var capturedName string
 	var capturedArgs []string

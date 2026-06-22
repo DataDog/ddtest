@@ -1302,3 +1302,17 @@ func TestRSpec_DiscoverTests_UsesPlatformEnv(t *testing.T) {
 		t.Error("expected DD_API_KEY to be set")
 	}
 }
+
+func TestRSpec_TestExcludePattern(t *testing.T) {
+	rspec := NewRSpec()
+	if got := rspec.TestExcludePattern(); got != "" {
+		t.Errorf("expected empty TestExcludePattern, got %q", got)
+	}
+}
+
+func TestRSpec_SupportsFullTestDiscovery(t *testing.T) {
+	rspec := NewRSpec()
+	if !rspec.SupportsFullTestDiscovery() {
+		t.Error("expected RSpec to support full test discovery")
+	}
+}

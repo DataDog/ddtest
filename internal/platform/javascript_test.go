@@ -330,6 +330,57 @@ func TestJavaScript_DetectFramework_SetsPlatformEnv(t *testing.T) {
 	}
 }
 
+func TestJavaScript_GetPlatformEnv_UnsetNODEOPTIONS(t *testing.T) {
+	// When NODE_OPTIONS is completely unset (not just empty), we should still
+	// set it to the dd-trace init argument.
+	os.Unsetenv(nodeOptionsEnvVar)
+
+	javascript := NewJavaScript()
+	envMap := javascript.GetPlatformEnv()
+
+	if envMap[nodeOptionsEnvVar] != nodeOptionsDDTraceCIArg {
+		t.Errorf("expected NODE_OPTIONS to be %q, got %q", nodeOptionsDDTraceCIArg, envMap[nodeOptionsEnvVar])
+	}
+}
+
+func TestJavaScript_SanityCheck_NodeFailsEmptyOutput(t *testing.T) {
+	javascript := &JavaScript{
+		executor: &mockCommandExecutor{
+			combinedOutput:    []byte(""),
+			combinedOutputErr: &exec.ExitError{},
+		},
+	}
+
+	err := javascript.SanityCheck()
+	if err == nil {
+		t.Fatal("expected sanity check error")
+	}
+	if !strings.Contains(err.Error(), "node --version command failed") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestJavaScript_SanityCheck_DDTraceFailsEmptyOutput(t *testing.T) {
+	mockExecutor := &sequentialMockExecutor{
+		responses: []struct {
+			output []byte
+			err    error
+		}{
+			{output: []byte("v22.16.0\n"), err: nil},
+			{output: []byte(""), err: &exec.ExitError{}},
+		},
+	}
+
+	javascript := &JavaScript{executor: mockExecutor}
+	err := javascript.SanityCheck()
+	if err == nil {
+		t.Fatal("expected sanity check error when dd-trace resolve fails with empty output")
+	}
+	if !strings.Contains(err.Error(), "failed to resolve "+ddTraceCIInitModule) {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestDetectPlatform_JavaScript(t *testing.T) {
 	viper.Reset()
 	viper.Set("platform", "javascript")
