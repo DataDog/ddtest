@@ -28,8 +28,9 @@ const (
 	MaxExplicitTestFiles           = 8_000
 	discoveryCommandLogMaxLength   = 300
 	discoveryCommandLogTruncSuffix = "..."
-	nodeModulesDir                 = "node_modules"
 )
+
+var excludedDirs = []string{"node_modules"}
 
 type Excluder struct {
 	pattern string
@@ -126,7 +127,7 @@ func DiscoverTestFiles(includePattern, excludePattern string) ([]string, error) 
 			return nil
 		}
 
-		if entry.IsDir() && entry.Name() == nodeModulesDir {
+		if entry.IsDir() && slices.Contains(excludedDirs, entry.Name()) {
 			return filepath.SkipDir
 		}
 
