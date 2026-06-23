@@ -17,15 +17,15 @@ import (
 	"github.com/DataDog/ddtest/internal/version"
 )
 
-// pep440PreReleaseRe matches PEP 440 pre-release suffixes (a/b/rc + digits) embedded
-// directly in a version component, e.g. "0rc1" or "12b3". We normalize these to
-// semver-style by inserting a hyphen so the existing parser can handle them.
-var pep440PreReleaseRe = regexp.MustCompile(`^(\d+\.\d+(?:\.\d+)*)((?:a|b|rc)\d+)$`)
+// pep440PreReleaseRe matches PEP 440 pre-release suffixes (a/b/rc + digits)
+// embedded directly in a Python package version, preserving optional local
+// version metadata, e.g. "4.12.0rc1+gabc123".
+var pep440PreReleaseRe = regexp.MustCompile(`^(\d+\.\d+(?:\.\d+)*)(a|b|rc)(\d+)(\+.*)?$`)
 
 // normalizePyVersion converts PEP 440 version strings to semver-compatible ones.
-// "4.12.0rc1" → "4.12.0-rc1", "4.10.3" → "4.10.3" (unchanged).
+// "4.12.0rc1+gabc123" -> "4.12.0-rc1+gabc123"; "4.10.3" is unchanged.
 func normalizePyVersion(v string) string {
-	return pep440PreReleaseRe.ReplaceAllString(v, "$1-$2")
+	return pep440PreReleaseRe.ReplaceAllString(v, "$1-$2$3$4")
 }
 
 //go:embed scripts/python_env.py

@@ -22,8 +22,11 @@ func TestPython_Name(t *testing.T) {
 func TestNormalizePyVersion(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"4.12.0rc1", "4.12.0-rc1"},
+		{"4.12.0rc1+g0e3e598", "4.12.0-rc1+g0e3e598"},
 		{"4.12.0b2", "4.12.0-b2"},
+		{"4.12.0b2+gabc123", "4.12.0-b2+gabc123"},
 		{"4.12.0a1", "4.12.0-a1"},
+		{"4.12.0a1+local.build", "4.12.0-a1+local.build"},
 		{"4.10.3", "4.10.3"},
 		{"1.2.3.4", "1.2.3.4"},
 	}
@@ -36,7 +39,7 @@ func TestNormalizePyVersion(t *testing.T) {
 
 func TestPython_SanityCheck_SuccessWithPreRelease(t *testing.T) {
 	mockExecutor := &mockCommandExecutor{
-		combinedOutput: []byte("4.12.0rc1\n"),
+		combinedOutput: []byte("4.12.0rc1+g0e3e598\n"),
 	}
 	python := NewPython()
 	python.executor = mockExecutor
