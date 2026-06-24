@@ -30,7 +30,7 @@ type MockAPIClient struct {
 	SettingsErr                    error
 	SettingsRawResponse            json.RawMessage
 	SettingsCalls                  int
-	SkippableTests                 api.SkippableTests
+	Skippables                     api.Skippables
 	SkippableCorrelationID         string
 	SkippableErr                   error
 	SkippableTestsRawResponse      json.RawMessage
@@ -66,9 +66,16 @@ func (m *MockAPIClient) GetSettingsRawResponse() json.RawMessage {
 	return m.SettingsRawResponse
 }
 
-func (m *MockAPIClient) GetSkippableTests() (string, api.SkippableTests, error) {
+func (m *MockAPIClient) GetSkippableTests() (string, api.Skippables, error) {
 	m.SkippableTestsCalls++
-	return m.SkippableCorrelationID, m.SkippableTests, m.SkippableErr
+	skippables := m.Skippables
+	if skippables.Tests == nil {
+		skippables.Tests = api.SkippableTests{}
+	}
+	if skippables.Suites == nil {
+		skippables.Suites = api.SkippableSuites{}
+	}
+	return m.SkippableCorrelationID, skippables, m.SkippableErr
 }
 
 func (m *MockAPIClient) GetSkippableTestsRawResponse() json.RawMessage {
@@ -293,7 +300,7 @@ func TestTestOptimizationClient_Initialize(t *testing.T) {
 	}
 }
 
-func TestTestOptimizationClient_GetSkippableTests_NilResponse(t *testing.T) {
+func TestTestOptimizationClient_GetSkippables_NilResponse(t *testing.T) {
 	mockAPIClient := &MockAPIClient{
 		Settings: &api.SettingsResponseData{
 			ItrEnabled:    false,
@@ -308,27 +315,29 @@ func TestTestOptimizationClient_GetSkippableTests_NilResponse(t *testing.T) {
 		t.Fatalf("Initialize() failed: %v", err)
 	}
 
-	result := client.GetSkippableTests()
+	result := client.GetSkippables().Tests
 
 	if result == nil {
-		t.Error("GetSkippableTests() should return non-nil map")
+		t.Error("GetSkippables().Tests should return non-nil map")
 	}
 
 	if len(result) != 0 {
-		t.Errorf("GetSkippableTests() should return empty map when ITR is disabled, got %d items", len(result))
+		t.Errorf("GetSkippables().Tests should return empty map when ITR is disabled, got %d items", len(result))
 	}
 }
 
-func TestTestOptimizationClient_GetSkippableTests(t *testing.T) {
+func TestTestOptimizationClient_GetSkippables(t *testing.T) {
 	mockAPIClient := &MockAPIClient{
 		Settings: &api.SettingsResponseData{
 			ItrEnabled:    true,
 			TestsSkipping: true,
 		},
-		SkippableTests: api.SkippableTests{
-			"module1.TestSuite1.test_method_1.param1": true,
-			"module1.TestSuite1.test_method_2.param2": true,
-			"module2.TestSuite2.test_method_3.param3": true,
+		Skippables: api.Skippables{
+			Tests: api.SkippableTests{
+				"module1.TestSuite1.test_method_1.param1": true,
+				"module1.TestSuite1.test_method_2.param2": true,
+				"module2.TestSuite2.test_method_3.param3": true,
+			},
 		},
 	}
 	client := newTestOptimizationClientForTest(t, mockAPIClient)
@@ -339,10 +348,10 @@ func TestTestOptimizationClient_GetSkippableTests(t *testing.T) {
 		t.Fatalf("Initialize() failed: %v", err)
 	}
 
-	result := client.GetSkippableTests()
+	result := client.GetSkippables().Tests
 
 	if result == nil {
-		t.Error("GetSkippableTests() should return non-nil map")
+		t.Error("GetSkippables().Tests should return non-nil map")
 	}
 
 	// Verify expected test FQNs are present
@@ -559,13 +568,13 @@ func TestTestOptimizationClient_GetDisabledTestsDisabled(t *testing.T) {
 	}
 }
 
-func TestTestOptimizationClient_GetSkippableTests_EmptyData(t *testing.T) {
+func TestTestOptimizationClient_GetSkippables_EmptyData(t *testing.T) {
 	mockAPIClient := &MockAPIClient{
 		Settings: &api.SettingsResponseData{
 			ItrEnabled:    true,
 			TestsSkipping: true,
 		},
-		SkippableTests: api.SkippableTests{},
+		Skippables: api.NewSkippables(),
 	}
 	client := newTestOptimizationClientForTest(t, mockAPIClient)
 
@@ -575,18 +584,18 @@ func TestTestOptimizationClient_GetSkippableTests_EmptyData(t *testing.T) {
 		t.Fatalf("Initialize() failed: %v", err)
 	}
 
-	result := client.GetSkippableTests()
+	result := client.GetSkippables().Tests
 
 	if result == nil {
-		t.Error("GetSkippableTests() should return non-nil map even with empty data")
+		t.Error("GetSkippables().Tests should return non-nil map even with empty data")
 	}
 
 	if len(result) != 0 {
-		t.Errorf("GetSkippableTests() should return empty map with empty data, got %d items", len(result))
+		t.Errorf("GetSkippables().Tests should return empty map with empty data, got %d items", len(result))
 	}
 }
 
-func TestTestOptimizationClient_GetSkippableTests_WritesHTTPCache(t *testing.T) {
+func TestTestOptimizationClient_GetSkippables_WritesHTTPCache(t *testing.T) {
 	cleanPlanDirectory(t)
 
 	skippableTestsResponse := json.RawMessage(`{"data":[{"id":"test-id","type":"test","attributes":{"suite":"TestSuite1","name":"test_method_1"}}]}`)
@@ -596,8 +605,10 @@ func TestTestOptimizationClient_GetSkippableTests_WritesHTTPCache(t *testing.T) 
 			ItrEnabled:    true,
 			TestsSkipping: true,
 		},
-		SkippableTests: api.SkippableTests{
-			"module1.TestSuite1.test_method_1.param1": true,
+		Skippables: api.Skippables{
+			Tests: api.SkippableTests{
+				"module1.TestSuite1.test_method_1.param1": true,
+			},
 		},
 		SkippableTestsRawResponse: skippableTestsResponse,
 	}
@@ -608,7 +619,7 @@ func TestTestOptimizationClient_GetSkippableTests_WritesHTTPCache(t *testing.T) 
 		t.Fatalf("Initialize() failed: %v", err)
 	}
 
-	result := client.GetSkippableTests()
+	result := client.GetSkippables().Tests
 
 	if len(result) != 1 {
 		t.Fatalf("Expected 1 skippable test, got %d", len(result))

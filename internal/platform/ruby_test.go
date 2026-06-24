@@ -35,13 +35,36 @@ func (m *mockCommandExecutor) Run(ctx context.Context, name string, args []strin
 	return m.runErr
 }
 
+func newTestRuby() *Ruby {
+	return NewRuby(settings.TestSkippingLevelTest)
+}
+
 func TestRuby_Name(t *testing.T) {
-	ruby := NewRuby()
+	ruby := newTestRuby()
 	expected := "ruby"
 	actual := ruby.Name()
 
 	if actual != expected {
 		t.Errorf("expected %q, got %q", expected, actual)
+	}
+}
+
+func TestRuby_TestSkippingLevel(t *testing.T) {
+	tests := []struct {
+		name  string
+		value settings.TestSkippingLevel
+		want  settings.TestSkippingLevel
+	}{
+		{name: "test", value: "test", want: settings.TestSkippingLevelTest},
+		{name: "suite", value: "suite", want: settings.TestSkippingLevelSuite},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NewRuby(tt.value).TestSkippingLevel(); got != tt.want {
+				t.Fatalf("TestSkippingLevel() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -58,7 +81,7 @@ func TestRuby_SanityCheck_Passes(t *testing.T) {
 		},
 	}
 
-	ruby := NewRuby()
+	ruby := newTestRuby()
 	ruby.executor = mockExecutor
 	if err := ruby.SanityCheck(); err != nil {
 		t.Fatalf("SanityCheck() unexpected error: %v", err)
@@ -71,7 +94,7 @@ func TestRuby_SanityCheck_FailsWhenBundleInfoFails(t *testing.T) {
 		combinedOutputErr: &exec.ExitError{},
 	}
 
-	ruby := NewRuby()
+	ruby := newTestRuby()
 	ruby.executor = mockExecutor
 	err := ruby.SanityCheck()
 	if err == nil {
@@ -88,7 +111,7 @@ func TestRuby_SanityCheck_FailsWhenVersionTooLow(t *testing.T) {
 		combinedOutput: []byte("  * datadog-ci (1.30.9)\n"),
 	}
 
-	ruby := NewRuby()
+	ruby := newTestRuby()
 	ruby.executor = mockExecutor
 	err := ruby.SanityCheck()
 	if err == nil {
@@ -108,7 +131,7 @@ func TestRuby_SanityCheck_FailsWhenVersionNotFound(t *testing.T) {
 		combinedOutput: []byte("  * datadog-ci\n    Summary: Datadog Test Optimization for your ruby application\n"),
 	}
 
-	ruby := NewRuby()
+	ruby := newTestRuby()
 	ruby.executor = mockExecutor
 	err := ruby.SanityCheck()
 	if err == nil {
@@ -133,7 +156,7 @@ func TestRuby_SanityCheck_SucceedsWithDebugLogs(t *testing.T) {
 		combinedOutput: []byte(output),
 	}
 
-	ruby := NewRuby()
+	ruby := newTestRuby()
 	ruby.executor = mockExecutor
 	if err := ruby.SanityCheck(); err != nil {
 		t.Fatalf("SanityCheck() unexpected error: %v", err)
@@ -145,7 +168,7 @@ func TestRuby_DetectFramework_RSpec(t *testing.T) {
 	viper.Set("framework", "rspec")
 	defer viper.Reset()
 
-	ruby := NewRuby()
+	ruby := newTestRuby()
 	fw, err := ruby.DetectFramework()
 
 	if err != nil {
@@ -174,7 +197,7 @@ func TestRuby_DetectFramework_Minitest(t *testing.T) {
 		settings.Init()
 	}()
 
-	ruby := NewRuby()
+	ruby := newTestRuby()
 	fw, err := ruby.DetectFramework()
 
 	if err != nil {
@@ -199,7 +222,7 @@ func TestRuby_DetectFramework_Unsupported(t *testing.T) {
 		settings.Init()
 	}()
 
-	ruby := NewRuby()
+	ruby := newTestRuby()
 	fw, err := ruby.DetectFramework()
 
 	if err == nil {
@@ -444,7 +467,7 @@ func TestRuby_GetPlatformEnv_SetsRUBYOPT_WhenNotSet(t *testing.T) {
 		defer func() { _ = os.Setenv("RUBYOPT", originalValue) }()
 	}
 
-	ruby := NewRuby()
+	ruby := newTestRuby()
 	envMap := ruby.GetPlatformEnv()
 
 	expectedValue := "-rbundler/setup -rdatadog/ci/auto_instrument"
@@ -466,7 +489,7 @@ func TestRuby_GetPlatformEnv_DoesNotOverride_WhenAlreadySet(t *testing.T) {
 		}
 	}()
 
-	ruby := NewRuby()
+	ruby := newTestRuby()
 	envMap := ruby.GetPlatformEnv()
 
 	// When RUBYOPT is already set, GetPlatformEnv should not include it
@@ -487,7 +510,7 @@ func TestRuby_DetectFramework_SetsPlatformEnv(t *testing.T) {
 	viper.Set("framework", "rspec")
 	defer viper.Reset()
 
-	ruby := NewRuby()
+	ruby := newTestRuby()
 	fw, err := ruby.DetectFramework()
 
 	if err != nil {

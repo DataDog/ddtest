@@ -3,10 +3,13 @@ package planner
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	"github.com/DataDog/ddtest/internal/utils"
 )
 
@@ -18,7 +21,7 @@ func (tp *TestPlanner) resetDiscoveryResults() {
 
 func (tp *TestPlanner) recordFullDiscoveryResults(
 	discoveredTests []testoptimization.Test,
-	skippableTests testSkipper,
+	skippableMatcher skippableMatcher,
 ) error {
 	excluder, err := discovery.NewExcluder(settings.GetTestsExcludePattern())
 	if err != nil {
@@ -43,7 +46,7 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 				break
 			}
 		}
-		slog.Debug("Skippable tests map size for matching", "size", skippableTests.Count())
+		slog.Debug("Skippable matcher size", "size", skippableMatcher.Count())
 	}
 
 	skippableTestsCount := 0
@@ -62,7 +65,7 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 			tp.testFiles[normalizedSourceFile] = struct{}{}
 		}
 
-		if !skippableTests.Contains(test) {
+		if !skippableMatcher.Contains(test) {
 			slog.Debug("Test is not skipped", "test", test.DatadogTestId(), "sourceFile", test.SuiteSourceFile)
 			recordRunnableTest(tp.suiteAggregates, test, normalizedSourceFile)
 		} else {
@@ -79,24 +82,43 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 	return nil
 }
 
-type testSkipper struct {
-	tiaSkippableTests map[string]bool
-	disabledTests     map[string]bool
+type skippableMatcher struct {
+	tiaSkippableTests  map[string]bool
+	tiaSkippableSuites api.SkippableSuites
+	disabledTests      map[string]bool
 }
 
-func newTestSkipper(tiaSkippableTests, disabledTests map[string]bool) testSkipper {
-	return testSkipper{
-		tiaSkippableTests: tiaSkippableTests,
-		disabledTests:     disabledTests,
+func newSkippableMatcher(skippables api.Skippables, disabledTests map[string]bool) skippableMatcher {
+	if skippables.Tests == nil {
+		skippables.Tests = api.SkippableTests{}
+	}
+	if skippables.Suites == nil {
+		skippables.Suites = api.SkippableSuites{}
+	}
+	if disabledTests == nil {
+		disabledTests = map[string]bool{}
+	}
+
+	return skippableMatcher{
+		tiaSkippableTests:  skippables.Tests,
+		tiaSkippableSuites: skippables.Suites,
+		disabledTests:      disabledTests,
 	}
 }
 
-func (s testSkipper) Contains(test testoptimization.Test) bool {
-	return s.tiaSkippableTests[test.DatadogTestId()] || s.disabledTests[test.FQN()]
+func (s skippableMatcher) Contains(test testoptimization.Test) bool {
+	suite := api.SkippableSuite{Module: test.Module, Suite: test.Suite}
+	return s.tiaSkippableTests[test.DatadogTestId()] ||
+		s.tiaSkippableSuites[suite] ||
+		s.disabledTests[test.FQN()]
 }
 
-func (s testSkipper) Count() int {
-	return len(s.tiaSkippableTests) + len(s.disabledTests)
+func (s skippableMatcher) Count() int {
+	return s.TIASkippablesCount() + len(s.disabledTests)
+}
+
+func (s skippableMatcher) TIASkippablesCount() int {
+	return len(s.tiaSkippableTests) + len(s.tiaSkippableSuites)
 }
 
 func (tp *TestPlanner) recordFastDiscoveryFallbackFiles(discoveredTestFiles []string) error {
@@ -112,6 +134,78 @@ func (tp *TestPlanner) recordFastDiscoveryFallbackFiles(discoveredTestFiles []st
 		}
 	}
 	return nil
+}
+
+func (tp *TestPlanner) recordSuiteLevelSkippables(skippableMatcher skippableMatcher, testFramework framework.Framework) {
+	if len(skippableMatcher.tiaSkippableSuites) == 0 {
+		return
+	}
+
+	for suite := range skippableMatcher.tiaSkippableSuites {
+		key := testSuiteKey{Module: suite.Module, Suite: suite.Suite}
+		sourceFile, ok := tp.sourceFileForSuite(key, testFramework)
+		if !ok {
+			slog.Debug("Could not resolve source file for skippable suite; keeping file runnable", "module", suite.Module, "suite", suite.Suite)
+			continue
+		}
+		if _, ok := tp.testFiles[sourceFile]; !ok {
+			slog.Debug("Skippable suite source file was not discovered or was excluded; ignoring suite", "module", suite.Module, "suite", suite.Suite, "sourceFile", sourceFile)
+			continue
+		}
+		if testFramework.HasUnskippableMarker(sourceFile) {
+			slog.Info("Skippable suite source file contains an unskippable marker; keeping file runnable", "sourceFile", sourceFile)
+			continue
+		}
+
+		duration := float64(time.Second)
+		durationSource := testFileDurationSourceDefault
+		if suiteInfo, ok := getTestSuiteDuration(tp.testSuiteDurations, key); ok {
+			if p50, ok := parseDurationP50(suiteInfo); ok {
+				duration = p50
+				durationSource = testFileDurationSourceKnown
+			}
+		}
+
+		aggregate := tp.suiteAggregates[key]
+		aggregate.Module = key.Module
+		aggregate.Suite = key.Suite
+		aggregate.SourceFile = sourceFile
+		if aggregate.TotalDuration <= 0 {
+			aggregate.TotalDuration = duration
+		}
+		aggregate.EstimatedDuration = 0
+		if aggregate.DurationSource == "" {
+			aggregate.DurationSource = durationSource
+		}
+		if aggregate.NumTests == 0 {
+			aggregate.NumTests = 1
+		}
+		aggregate.NumTestsSkipped = aggregate.NumTests
+		tp.suiteAggregates[key] = aggregate
+	}
+}
+
+func (tp *TestPlanner) sourceFileForSuite(key testSuiteKey, testFramework framework.Framework) (string, bool) {
+	if suiteInfo, ok := getTestSuiteDuration(tp.testSuiteDurations, key); ok {
+		if sourceFile := normalizeSuiteSourceFile(suiteInfo.SourceFile); sourceFile != "" {
+			return sourceFile, true
+		}
+	}
+
+	sourceFile, ok := testFramework.SourceFileForSuite(key.Suite)
+	if !ok {
+		return "", false
+	}
+	sourceFile = normalizeSuiteSourceFile(sourceFile)
+	if sourceFile == "" {
+		return "", false
+	}
+	return sourceFile, true
+}
+
+func normalizeSuiteSourceFile(sourceFile string) string {
+	sourceFile = utils.StripCwdSubdirPrefix(sourceFile)
+	return utils.NormalizePath(sourceFile)
 }
 
 func recordRunnableTest(suiteAggregates map[testSuiteKey]testSuiteAggregate, test testoptimization.Test, sourceFile string) {

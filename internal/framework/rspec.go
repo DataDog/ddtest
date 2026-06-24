@@ -6,17 +6,21 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/utils"
 )
 
 const (
-	binRSpecPath         = "bin/rspec"
-	rspecTestFilePattern = "*_spec.rb"
-	rspecRootDir         = "spec"
+	binRSpecPath                 = "bin/rspec"
+	rspecTestFilePattern         = "*_spec.rb"
+	rspecRootDir                 = "spec"
+	rubySuiteSourceFileSeparator = " at "
+	rubyCIQueueSuiteSuffix       = " (ci-queue running example "
 )
 
 type RSpec struct {
@@ -103,4 +107,28 @@ func (r *RSpec) getRSpecCommand() (string, []string) {
 
 func (r *RSpec) SupportsFullTestDiscovery() bool {
 	return true
+}
+
+func (r *RSpec) SourceFileForSuite(suite string) (string, bool) {
+	return trailingRubySuiteSourceFile(suite)
+}
+
+func (r *RSpec) HasUnskippableMarker(testFile string) bool {
+	return utils.FileContainsAll(testFile, "datadog_itr_unskippable")
+}
+
+func trailingRubySuiteSourceFile(suite string) (string, bool) {
+	separatorIndex := strings.LastIndex(suite, rubySuiteSourceFileSeparator)
+	if separatorIndex < 0 {
+		return "", false
+	}
+
+	sourceFile := strings.TrimSpace(suite[separatorIndex+len(rubySuiteSourceFileSeparator):])
+	if suffixIndex := strings.Index(sourceFile, rubyCIQueueSuiteSuffix); suffixIndex >= 0 {
+		sourceFile = strings.TrimSpace(sourceFile[:suffixIndex])
+	}
+	if sourceFile == "" {
+		return "", false
+	}
+	return sourceFile, true
 }

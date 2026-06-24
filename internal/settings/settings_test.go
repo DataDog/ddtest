@@ -152,6 +152,9 @@ func TestInit(t *testing.T) {
 	if config.TestDiscoveryCache != "" {
 		t.Errorf("expected default test_discovery_cache to be empty, got %q", config.TestDiscoveryCache)
 	}
+	if config.TestSkippingLevel != "test" {
+		t.Errorf("expected default test_skipping_mode to be 'test', got %q", config.TestSkippingLevel)
+	}
 	if config.RuntimeTags != "" {
 		t.Errorf("expected default runtime_tags to be empty, got %q", config.RuntimeTags)
 	}
@@ -201,6 +204,9 @@ func TestSetDefaults(t *testing.T) {
 	}
 	if viper.GetString("test_discovery_cache") != "" {
 		t.Errorf("expected default test_discovery_cache to be empty, got %q", viper.GetString("test_discovery_cache"))
+	}
+	if viper.GetString("test_skipping_mode") != "test" {
+		t.Errorf("expected default test_skipping_mode to be 'test', got %q", viper.GetString("test_skipping_mode"))
 	}
 	if viper.GetString("runtime_tags") != "" {
 		t.Errorf("expected default runtime_tags to be empty, got %q", viper.GetString("runtime_tags"))
@@ -282,6 +288,7 @@ func TestEnvironmentVariables(t *testing.T) {
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", "spec/**/*_spec.rb")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN", "spec/system/**/*_spec.rb")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE", "/tmp/ddtest-tests.json")
+	_ = os.Setenv("DD_TESTOPTIMIZATION_TIA_TEST_SKIPPING_MODE", "suite")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS", `{"os.platform":"linux","runtime.version":"3.2.0"}`)
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED", "false")
 	defer func() {
@@ -297,6 +304,7 @@ func TestEnvironmentVariables(t *testing.T) {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE")
+		_ = os.Unsetenv("DD_TESTOPTIMIZATION_TIA_TEST_SKIPPING_MODE")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED")
 	}()
@@ -338,6 +346,9 @@ func TestEnvironmentVariables(t *testing.T) {
 	}
 	if config.TestDiscoveryCache != "/tmp/ddtest-tests.json" {
 		t.Errorf("expected test_discovery_cache from env var to be '/tmp/ddtest-tests.json', got %q", config.TestDiscoveryCache)
+	}
+	if config.TestSkippingLevel != "suite" {
+		t.Errorf("expected test_skipping_mode from env var to be 'suite', got %q", config.TestSkippingLevel)
 	}
 	if config.RuntimeTags != `{"os.platform":"linux","runtime.version":"3.2.0"}` {
 		t.Errorf("expected runtime_tags from env var to be JSON string, got %q", config.RuntimeTags)
@@ -480,6 +491,68 @@ func TestGetTestDiscoveryCache(t *testing.T) {
 	cachePath = GetTestDiscoveryCache()
 	if cachePath != "/tmp/ddtest-tests.json" {
 		t.Errorf("expected test_discovery_cache to be '/tmp/ddtest-tests.json', got %q", cachePath)
+	}
+}
+
+func TestNormalizeTestSkippingLevel(t *testing.T) {
+	tests := []struct {
+		name  string
+		value TestSkippingLevel
+		want  TestSkippingLevel
+	}{
+		{name: "test", value: "test", want: "test"},
+		{name: "suite", value: "suite", want: "suite"},
+		{name: "invalid", value: "file", want: "test"},
+		{name: "empty", value: "", want: "test"},
+		{name: "trimmed suite", value: " suite ", want: "suite"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NormalizeTestSkippingLevel(tt.value); got != tt.want {
+				t.Fatalf("NormalizeTestSkippingLevel(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetTestSkippingLevel(t *testing.T) {
+	config = nil
+	viper.Reset()
+
+	if got := GetTestSkippingLevel(); got != "test" {
+		t.Fatalf("GetTestSkippingLevel() default = %q, want test", got)
+	}
+
+	config = nil
+	viper.Reset()
+	viper.Set("test_skipping_mode", "suite")
+	if got := GetTestSkippingLevel(); got != "suite" {
+		t.Fatalf("GetTestSkippingLevel() configured = %q, want suite", got)
+	}
+}
+
+func TestTestSkippingLevelRubyEnv(t *testing.T) {
+	config = nil
+	viper.Reset()
+	t.Setenv(testSkippingModeEnv, "suite")
+
+	Init()
+
+	if config.TestSkippingLevel != "suite" {
+		t.Fatalf("test_skipping_mode from Ruby env = %q, want suite", config.TestSkippingLevel)
+	}
+}
+
+func TestTestSkippingLevelInvalidFallsBackToTest(t *testing.T) {
+	config = nil
+	viper.Reset()
+	t.Setenv(testSkippingModeEnv, "invalid")
+
+	Init()
+
+	if config.TestSkippingLevel != "test" {
+		t.Fatalf("test_skipping_mode from invalid env = %q, want test", config.TestSkippingLevel)
 	}
 }
 

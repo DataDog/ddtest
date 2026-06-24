@@ -81,9 +81,9 @@ func TestTestPlanner_Plan_HighSkippableIntegrationSelectsExpectedRunnerCountAndR
 	runner := NewWithDependencies(
 		&MockPlatformDetector{Platform: mockPlatform},
 		&MockTestOptimizationClient{
-			Settings:       testOptimizationSettings(true, true, false),
-			SkippableTests: fixture.skippableTestSet(),
-			Durations:      fixture.TestSuiteDurations,
+			Settings:   testOptimizationSettings(true, true, false),
+			Skippables: testSkippables(fixture.skippableTestSet()),
+			Durations:  fixture.TestSuiteDurations,
 		},
 		newDefaultMockCIProviderDetector(),
 	)

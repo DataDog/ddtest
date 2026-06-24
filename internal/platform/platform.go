@@ -12,6 +12,7 @@ type Platform interface {
 	CreateTagsMap() (map[string]string, error)
 	DetectFramework() (framework.Framework, error)
 	SanityCheck() error
+	TestSkippingLevel() settings.TestSkippingLevel
 }
 
 // PlatformDetector defines interface for detecting platforms - needed to allow mocking in tests
@@ -31,7 +32,7 @@ func DetectPlatform() (Platform, error) {
 	var platform Platform
 	switch platformName {
 	case "ruby":
-		platform = NewRuby()
+		platform = NewRuby(settings.GetTestSkippingLevel())
 	case "javascript":
 		platform = NewJavaScript()
 	case "python":

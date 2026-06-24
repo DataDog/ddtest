@@ -8,6 +8,8 @@ package api
 import (
 	"fmt"
 	"log/slog"
+
+	"github.com/DataDog/ddtest/internal/settings"
 )
 
 const (
@@ -26,12 +28,12 @@ type (
 	}
 
 	skippableRequestData struct {
-		TestLevel      string             `json:"test_level"`
-		Configurations testConfigurations `json:"configurations"`
-		Service        string             `json:"service"`
-		Env            string             `json:"env"`
-		RepositoryURL  string             `json:"repository_url"`
-		Sha            string             `json:"sha"`
+		TestLevel      settings.TestSkippingLevel `json:"test_level"`
+		Configurations testConfigurations         `json:"configurations"`
+		Service        string                     `json:"service"`
+		Env            string                     `json:"env"`
+		RepositoryURL  string                     `json:"repository_url"`
+		Sha            string                     `json:"sha"`
 	}
 
 	skippableResponse struct {
@@ -57,9 +59,32 @@ type (
 	}
 
 	SkippableTests map[string]bool
+
+	SkippableSuite struct {
+		Module string
+		Suite  string
+	}
+
+	SkippableSuites map[SkippableSuite]bool
+
+	Skippables struct {
+		Tests  SkippableTests
+		Suites SkippableSuites
+	}
 )
 
-func (c *transport) GetSkippableTests() (correlationID string, skippables SkippableTests, err error) {
+func NewSkippables() Skippables {
+	return Skippables{
+		Tests:  SkippableTests{},
+		Suites: SkippableSuites{},
+	}
+}
+
+func (s Skippables) Count() int {
+	return len(s.Tests) + len(s.Suites)
+}
+
+func (c *transport) GetSkippableTests() (correlationID string, skippables Skippables, err error) {
 	if c.repositoryURL == "" || c.commitSha == "" {
 		err = fmt.Errorf("testoptimization.GetSkippableTests: repository URL and commit SHA are required")
 		return
@@ -70,7 +95,7 @@ func (c *transport) GetSkippableTests() (correlationID string, skippables Skippa
 		Data: skippableRequestHeader{
 			Type: skippableRequestType,
 			Attributes: skippableRequestData{
-				TestLevel:      "test",
+				TestLevel:      c.getTestSkippingLevel(),
 				Configurations: c.testConfigurations,
 				Service:        c.serviceName,
 				Env:            c.environment,
@@ -84,17 +109,17 @@ func (c *transport) GetSkippableTests() (correlationID string, skippables Skippa
 	response, err := c.handler.SendRequest(*request)
 
 	if err != nil {
-		return "", nil, fmt.Errorf("sending skippable tests request: %s", err)
+		return "", NewSkippables(), fmt.Errorf("sending skippable tests request: %s", err)
 	}
 	c.skippableTestsRawResponse = cloneRawMessage(response.Body)
 
 	var responseObject skippableResponse
 	err = response.Unmarshal(&responseObject)
 	if err != nil {
-		return "", nil, fmt.Errorf("unmarshalling skippable tests response: %s", err)
+		return "", NewSkippables(), fmt.Errorf("unmarshalling skippable tests response: %s", err)
 	}
 
-	skippableTestsMap := SkippableTests{}
+	skippables = NewSkippables()
 	warnedMissingTestBundle := false
 	for _, data := range responseObject.Data {
 
@@ -125,15 +150,30 @@ func (c *transport) GetSkippableTests() (correlationID string, skippables Skippa
 		}
 
 		if data.Attributes.Configurations.TestBundle == "" && !warnedMissingTestBundle {
-			slog.Warn("Datadog backend did not return test.bundle for skippable tests; please contact Datadog support")
+			slog.Warn("Datadog backend did not return test.bundle for skippable test or suite; please contact Datadog support")
 			warnedMissingTestBundle = true
 		}
-		skippableTestsMap[skippableTestKey(data.Attributes)] = true
+
+		switch data.Type {
+		case string(settings.TestSkippingLevelTest):
+			skippables.Tests[skippableTestKey(data.Attributes)] = true
+		case string(settings.TestSkippingLevelSuite):
+			if data.Attributes.Suite != "" {
+				skippables.Suites[skippableSuiteKey(data.Attributes)] = true
+			}
+		}
 	}
 
-	return responseObject.Meta.CorrelationID, skippableTestsMap, nil
+	return responseObject.Meta.CorrelationID, skippables, nil
 }
 
 func skippableTestKey(test SkippableResponseDataAttributes) string {
 	return test.Configurations.TestBundle + "." + test.Suite + "." + test.Name + "." + test.Parameters
+}
+
+func skippableSuiteKey(test SkippableResponseDataAttributes) SkippableSuite {
+	return SkippableSuite{
+		Module: test.Configurations.TestBundle,
+		Suite:  test.Suite,
+	}
 }

@@ -176,9 +176,9 @@ func TestDiscoveryCacheHitUsesCachedTests(t *testing.T) {
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{
+		Skippables: testSkippables(map[string]bool{
 			cachedTest.DatadogTestId(): true,
-		},
+		}),
 	}
 	runner := NewWithDependencies(
 		&MockPlatformDetector{Platform: mockPlatform},
@@ -221,9 +221,9 @@ func TestDiscoveryCacheMissRunsFullDiscoveryAndStoresMetadata(t *testing.T) {
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{
+		Skippables: testSkippables(map[string]bool{
 			discoveredTest.DatadogTestId(): true,
-		},
+		}),
 	}
 	runner := NewWithDependencies(
 		&MockPlatformDetector{Platform: mockPlatform},
@@ -274,9 +274,9 @@ func TestDiscoveryCacheImportsExternalCacheBeforeValidation(t *testing.T) {
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{
+		Skippables: testSkippables(map[string]bool{
 			cachedTest.DatadogTestId(): true,
-		},
+		}),
 	}
 	runner := NewWithDependencies(
 		&MockPlatformDetector{Platform: mockPlatform},

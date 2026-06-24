@@ -107,6 +107,14 @@ func (p *PyTest) SupportsFullTestDiscovery() bool {
 	return true
 }
 
+func (p *PyTest) SourceFileForSuite(suite string) (string, bool) {
+	return "", false
+}
+
+func (p *PyTest) HasUnskippableMarker(testFile string) bool {
+	return false
+}
+
 func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command := "python"
 	args := []string{"-m", "pytest"}

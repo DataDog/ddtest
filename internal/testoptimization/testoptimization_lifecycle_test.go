@@ -16,6 +16,7 @@ import (
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/git/gittest"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
 )
 
@@ -53,8 +54,10 @@ func TestTestOptimizationClientFeatureGetters(t *testing.T) {
 			},
 		},
 		SkippableCorrelationID: "correlation-id",
-		SkippableTests: api.SkippableTests{
-			"module.suite.test.": true,
+		Skippables: api.Skippables{
+			Tests: api.SkippableTests{
+				"module.suite.test.": true,
+			},
 		},
 		TestManagementTestsData: &api.TestManagementTestsResponseDataModules{
 			Modules: map[string]api.TestManagementTestsResponseDataSuites{
@@ -78,7 +81,7 @@ func TestTestOptimizationClientFeatureGetters(t *testing.T) {
 	if known := client.GetKnownTests(); known == nil || len(known.Tests) != 1 {
 		t.Fatalf("expected known tests, got %#v", known)
 	}
-	if skippable := client.GetSkippableTests(); len(skippable) != 1 || !skippable["module.suite.test."] {
+	if skippable := client.GetSkippables().Tests; len(skippable) != 1 || !skippable["module.suite.test."] {
 		t.Fatalf("expected skippable tests, got %#v", skippable)
 	}
 	if managed := client.GetTestManagementTestsData(); managed == nil || len(managed.Modules) != 1 {
@@ -92,6 +95,32 @@ func TestTestOptimizationClientFeatureGetters(t *testing.T) {
 	ciTags := environment.GetCITags()
 	if ciTags[constants.ItrCorrelationIDTag] != "correlation-id" {
 		t.Fatalf("expected correlation id tag, got %#v", ciTags)
+	}
+}
+
+func TestNewTestOptimizationClientWithTestSkippingLevelPropagatesToTransportFactory(t *testing.T) {
+	mockTransport := &MockAPIClient{
+		Settings: &api.SettingsResponseData{TestsSkipping: true},
+	}
+	var capturedLevel settings.TestSkippingLevel
+	client := newTestOptimizationClientWithTestSkippingLevel(
+		nil,
+		func(_ string, testSkippingLevel settings.TestSkippingLevel) api.Transport {
+			capturedLevel = testSkippingLevel
+			return mockTransport
+		},
+		func() (int64, error) { return 0, nil },
+		false,
+		settings.TestSkippingLevelSuite,
+	)
+
+	if err := client.Initialize(map[string]string{}); err != nil {
+		t.Fatalf("Initialize() returned error: %v", err)
+	}
+	client.GetSkippables()
+
+	if capturedLevel != settings.TestSkippingLevelSuite {
+		t.Fatalf("transport factory test skipping level = %q, want %q", capturedLevel, settings.TestSkippingLevelSuite)
 	}
 }
 
@@ -109,7 +138,7 @@ func TestTestOptimizationClientFeatureGettersDisabled(t *testing.T) {
 	if managed := client.GetTestManagementTestsData(); managed != nil {
 		t.Fatalf("expected nil test management tests when disabled, got %#v", managed)
 	}
-	if skippable := client.GetSkippableTests(); len(skippable) != 0 {
+	if skippable := client.GetSkippables().Tests; len(skippable) != 0 {
 		t.Fatalf("expected empty skippable map when disabled, got %#v", skippable)
 	}
 }
@@ -137,7 +166,7 @@ func TestEnsureSettingsInitializationRequireGitRetriesAfterUpload(t *testing.T) 
 }
 
 func TestEnsureSettingsInitializationHandlesMissingTransportAndErrors(t *testing.T) {
-	client := newTestOptimizationClient(nil, func(string) api.Transport { return nil }, nil, false)
+	client := newTestOptimizationClient(nil, func(string, settings.TestSkippingLevel) api.Transport { return nil }, nil, false)
 	if settings := client.GetSettings(); settings != nil {
 		t.Fatalf("expected nil settings without transport, got %#v", settings)
 	}

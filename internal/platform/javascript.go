@@ -39,6 +39,10 @@ func (j *JavaScript) Name() string {
 	return "javascript"
 }
 
+func (j *JavaScript) TestSkippingLevel() settings.TestSkippingLevel {
+	return settings.TestSkippingLevelSuite
+}
+
 // GetPlatformEnv returns environment variables required for JS commands.
 func (j *JavaScript) GetPlatformEnv() map[string]string {
 	// Check if the NODE_OPTIONS is set in the env, and if so,

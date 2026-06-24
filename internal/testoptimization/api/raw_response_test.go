@@ -9,20 +9,26 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/settings"
 )
 
 func newRawResponseTestClient(server *httptest.Server) *transport {
+	return newRawResponseTestClientWithTestSkippingLevel(server, settings.TestSkippingLevelTest)
+}
+
+func newRawResponseTestClientWithTestSkippingLevel(server *httptest.Server, testSkippingLevel settings.TestSkippingLevel) *transport {
 	return &transport{
-		agentless:     true,
-		baseURL:       server.URL,
-		environment:   "ci",
-		serviceName:   "service",
-		repositoryURL: "https://github.com/DataDog/ddtest.git",
-		commitSha:     "abc123",
-		commitMessage: "commit message",
-		branchName:    "main",
-		headers:       map[string]string{},
-		handler:       NewRequestHandlerWithClient(server.Client()),
+		agentless:         true,
+		baseURL:           server.URL,
+		environment:       "ci",
+		serviceName:       "service",
+		repositoryURL:     "https://github.com/DataDog/ddtest.git",
+		commitSha:         "abc123",
+		commitMessage:     "commit message",
+		branchName:        "main",
+		headers:           map[string]string{},
+		handler:           NewRequestHandlerWithClient(server.Client()),
+		testSkippingLevel: testSkippingLevel,
 		testConfigurations: testConfigurations{
 			OsPlatform:     "linux",
 			OsArchitecture: "amd64",
@@ -93,7 +99,7 @@ func TestClientStoresRawBackendResponses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSkippableTests() returned error: %v", err)
 	}
-	if correlationID != "correlation-id" || !skippableTests["module-a.suite-a.test-a.params"] {
+	if correlationID != "correlation-id" || !skippableTests.Tests["module-a.suite-a.test-a.params"] {
 		t.Fatalf("GetSkippableTests() returned unexpected processed data: correlationID=%s skippableTests=%+v", correlationID, skippableTests)
 	}
 	if string(client.GetSkippableTestsRawResponse()) != skippableTestsResponse {
@@ -127,7 +133,7 @@ func TestClientBuildsSkippableKeyFromTestBundle(t *testing.T) {
 		t.Fatalf("GetSkippableTests() returned error: %v", err)
 	}
 
-	if correlationID != "correlation-id" || !skippableTests["rspec.suite-a.test-a.params"] {
+	if correlationID != "correlation-id" || !skippableTests.Tests["rspec.suite-a.test-a.params"] {
 		t.Fatalf("GetSkippableTests() returned unexpected processed data: correlationID=%s skippableTests=%+v", correlationID, skippableTests)
 	}
 }
@@ -147,10 +153,10 @@ func TestClientWarnsWhenSkippableResponseIsMissingTestBundle(t *testing.T) {
 		t.Fatalf("GetSkippableTests() returned error: %v", err)
 	}
 
-	if !skippableTests[".suite-a.test-a.params"] {
+	if !skippableTests.Tests[".suite-a.test-a.params"] {
 		t.Fatalf("GetSkippableTests() returned unexpected processed data: skippableTests=%+v", skippableTests)
 	}
-	if !strings.Contains(logs.String(), "Datadog backend did not return test.bundle for skippable tests; please contact Datadog support") {
+	if !strings.Contains(logs.String(), "Datadog backend did not return test.bundle for skippable test or suite; please contact Datadog support") {
 		t.Fatalf("Expected missing test.bundle warning, got logs: %s", logs.String())
 	}
 }

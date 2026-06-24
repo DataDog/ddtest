@@ -8,6 +8,8 @@ package api
 import (
 	"fmt"
 	"log/slog"
+
+	"github.com/DataDog/ddtest/internal/settings"
 )
 
 const (
@@ -27,12 +29,13 @@ type (
 	}
 
 	SettingsRequestData struct {
-		Service        string             `json:"service,omitempty"`
-		Env            string             `json:"env,omitempty"`
-		RepositoryURL  string             `json:"repository_url,omitempty"`
-		Branch         string             `json:"branch,omitempty"`
-		Sha            string             `json:"sha,omitempty"`
-		Configurations testConfigurations `json:"configurations,omitempty"`
+		Service        string                     `json:"service,omitempty"`
+		Env            string                     `json:"env,omitempty"`
+		RepositoryURL  string                     `json:"repository_url,omitempty"`
+		Branch         string                     `json:"branch,omitempty"`
+		Sha            string                     `json:"sha,omitempty"`
+		TestLevel      settings.TestSkippingLevel `json:"test_level,omitempty"`
+		Configurations testConfigurations         `json:"configurations,omitempty"`
 	}
 
 	settingsResponse struct {
@@ -83,6 +86,7 @@ func (c *transport) GetSettings() (*SettingsResponseData, error) {
 				RepositoryURL:  c.repositoryURL,
 				Branch:         c.branchName,
 				Sha:            c.commitSha,
+				TestLevel:      c.getTestSkippingLevel(),
 				Configurations: c.testConfigurations,
 			},
 		},

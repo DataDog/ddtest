@@ -14,6 +14,7 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/utils"
 )
 
 const binJestPath = "node_modules/.bin/jest"
@@ -52,6 +53,18 @@ func (j *Jest) Name() string {
 // We'll be working outside of the Node.js process
 func (j *Jest) SupportsFullTestDiscovery() bool {
 	return false
+}
+
+func (j *Jest) SourceFileForSuite(suite string) (string, bool) {
+	suite = strings.TrimSpace(suite)
+	if suite == "" {
+		return "", false
+	}
+	return suite, true
+}
+
+func (j *Jest) HasUnskippableMarker(testFile string) bool {
+	return utils.FileContainsAll(testFile, "@datadog", "unskippable")
 }
 
 func (j *Jest) TestPattern() string {
