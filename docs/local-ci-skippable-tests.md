@@ -27,7 +27,9 @@ Use `--runtime-tags` to override your local runtime tags with the tags from CI.
    - `runtime.name`, for example `ruby`
    - `runtime.version`, for example `3.3.0`
 
-   For Python projects, `runtime.name` is `python` and `runtime.version` is the
+   For Python projects, `runtime.name` is the Python implementation name (for
+   example `CPython` for standard Python), and `runtime.version` is the
+   Python interpreter version used in CI.
    Python interpreter version used in CI.
 
 2. Create the runtime tags JSON.
