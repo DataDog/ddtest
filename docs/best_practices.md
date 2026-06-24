@@ -3,8 +3,8 @@
 ## Optimize Planning Step
 
 When using ddtest, you need to add a planning step that performs test discovery
-(e.g., RSpec dry-run) before execution. This stage adds overhead: you can
-optimize it with the practices below.
+(for example, RSpec dry-run or pytest collection) before execution. This stage
+adds overhead: you can optimize it with the practices below.
 
 ### Preinstall System Dependencies Via Docker
 
@@ -29,6 +29,15 @@ Use your CI's dependency cache. For GitHub Actions + Bundler:
   with:
     ruby-version: 3.3
     bundler-cache: true
+```
+
+For GitHub Actions + pip:
+
+```yaml
+- uses: actions/setup-python@v5
+  with:
+    python-version: "3.12"
+    cache: pip
 ```
 
 ### Disable Seeds/Fixtures During Discovery
@@ -113,12 +122,24 @@ DDTest ignores the cache and runs full discovery when the file is missing,
 corrupt, produced for a different platform/framework/test location/exclude
 pattern, or based on a commit that is not available locally. It also invalidates
 the cache when files under the current project's test root changed. For example,
-the default RSpec root is `spec/**` and the default Minitest root is `test/**`;
-with `--tests-location custom/spec/**/*_spec.rb`, the root is `custom/**`.
+the default RSpec root is `spec/**`, the default Minitest root is `test/**`,
+and pytest uses `testpaths` from pytest config when available. With
+`--tests-location custom/spec/**/*_spec.rb`, the root is `custom/**`.
 
 In monorepos, run DDTest from the project subdirectory whose tests you are
 planning. Cache invalidation is scoped to that project's effective test root, so
 changes in sibling projects do not invalidate its discovery cache.
+
+## Pytest Support
+
+DDTest runs pytest as `python -m pytest` and appends the selected test files.
+It also appends `--ddtrace` to `PYTEST_ADDOPTS`, preserving any existing
+`PYTEST_ADDOPTS` value, so the `ddtrace` pytest plugin loads without changing
+your pytest config.
+
+For discovery, DDTest reads `testpaths` and `python_files` from `pytest.ini`,
+`pyproject.toml`, `tox.ini`, or `setup.cfg`. If no pytest config defines those
+settings, DDTest uses `**/{test_*,*_test}.py`.
 
 ## Minitest Support In Non-Rails Projects
 

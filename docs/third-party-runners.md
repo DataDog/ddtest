@@ -18,6 +18,18 @@ For the full plan file layout, see [Plan file layout](layout.md).
 KNAPSACK_PRO_TEST_FILE_LIST_SOURCE_FILE=.testoptimization/runner/test-files.txt bundle exec rake knapsack_pro:queue:rspec
 ```
 
+## Pytest
+
+When another runner consumes DDTest's file list for pytest, make sure the
+`ddtrace` pytest plugin is enabled the same way `ddtest run` enables it:
+
+```bash
+export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:+$PYTEST_ADDOPTS }--ddtrace"
+if [ -s .testoptimization/runner/test-files.txt ]; then
+  xargs python -m pytest < .testoptimization/runner/test-files.txt
+fi
+```
+
 ## Custom Runners
 
 Read `.testoptimization/runner/test-files.txt` when your runner should handle
