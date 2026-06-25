@@ -12,6 +12,7 @@ import (
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
@@ -43,6 +44,7 @@ type MockPlatform struct {
 	Framework    framework.Framework
 	FrameworkErr error
 	SanityErr    error
+	TestLevel    settings.TestSkippingLevel
 }
 
 func (m *MockPlatform) Name() string {
@@ -61,6 +63,13 @@ func (m *MockPlatform) SanityCheck() error {
 	return m.SanityErr
 }
 
+func (m *MockPlatform) TestSkippingLevel() settings.TestSkippingLevel {
+	if m.TestLevel == "" {
+		return settings.TestSkippingLevelTest
+	}
+	return m.TestLevel
+}
+
 type MockFramework struct {
 	FrameworkName            string
 	TestPatternValue         string
@@ -69,6 +78,8 @@ type MockFramework struct {
 	DiscoverTestsErr         error
 	RunTestsCalls            []RunTestsCall
 	FullDiscoveryUnsupported bool
+	SuiteSourceFiles         map[string]string
+	UnskippableFiles         map[string]bool
 	mu                       sync.Mutex
 }
 
@@ -111,6 +122,21 @@ func (m *MockFramework) GetPlatformEnv() map[string]string {
 
 func (m *MockFramework) SupportsFullTestDiscovery() bool {
 	return !m.FullDiscoveryUnsupported
+}
+
+func (m *MockFramework) SourceFileForSuite(suite string) (string, bool) {
+	if m.SuiteSourceFiles != nil {
+		sourceFile, ok := m.SuiteSourceFiles[suite]
+		return sourceFile, ok
+	}
+	if suite == "" {
+		return "", false
+	}
+	return suite, true
+}
+
+func (m *MockFramework) HasUnskippableMarker(testFile string) bool {
+	return m.UnskippableFiles[testFile]
 }
 
 func (m *MockFramework) GetRunTestsCallsCount() int {

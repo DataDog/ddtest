@@ -82,6 +82,25 @@ func TestStripCwdSubdirPrefix_SubdirPrefixMatch_StripsPrefix(t *testing.T) {
 	}
 }
 
+func TestStripCwdSubdirPrefix_LeadingCurrentDir_StripsPrefix(t *testing.T) {
+	repoRoot := t.TempDir()
+	initGitRepoInDir(t, repoRoot)
+
+	coreDir := filepath.Join(repoRoot, "core")
+	_ = os.MkdirAll(coreDir, 0755)
+
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(coreDir)
+	resetCwdSubdirPrefixCache(t)
+
+	result := StripCwdSubdirPrefix("./core/spec/models/order_spec.rb")
+	expected := "spec/models/order_spec.rb"
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+}
+
 func TestStripCwdSubdirPrefix_NestedSubdirPrefixMatch_StripsFullPrefix(t *testing.T) {
 	repoRoot := t.TempDir()
 	initGitRepoInDir(t, repoRoot)

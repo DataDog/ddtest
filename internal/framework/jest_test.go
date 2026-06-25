@@ -43,6 +43,42 @@ func TestJest_DiscoverTests_Unsupported(t *testing.T) {
 	}
 }
 
+func TestJest_SourceFileForSuite(t *testing.T) {
+	jest := NewJest()
+
+	sourceFile, ok := jest.SourceFileForSuite("src/example.test.js")
+	if !ok || sourceFile != "src/example.test.js" {
+		t.Fatalf("SourceFileForSuite() = %q, %v; want suite path", sourceFile, ok)
+	}
+
+	if sourceFile, ok := jest.SourceFileForSuite(" "); ok || sourceFile != "" {
+		t.Fatalf("SourceFileForSuite(blank) = %q, %v; want unresolved", sourceFile, ok)
+	}
+}
+
+func TestJest_HasUnskippableMarker(t *testing.T) {
+	tempDir := t.TempDir()
+	markedFile := filepath.Join(tempDir, "marked.test.js")
+	if err := os.WriteFile(markedFile, []byte("// @datadog\n// unskippable"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	unmarkedFile := filepath.Join(tempDir, "unmarked.test.js")
+	if err := os.WriteFile(unmarkedFile, []byte("// unskippable"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	jest := NewJest()
+	if !jest.HasUnskippableMarker(markedFile) {
+		t.Fatal("expected marker when @datadog and unskippable are present")
+	}
+	if jest.HasUnskippableMarker(unmarkedFile) {
+		t.Fatal("expected no marker without @datadog")
+	}
+	if !jest.HasUnskippableMarker(filepath.Join(tempDir, "missing.test.js")) {
+		t.Fatal("expected missing file to be treated as guarded")
+	}
+}
+
 func TestJest_DiscoverTestFiles_DefaultPatterns(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()

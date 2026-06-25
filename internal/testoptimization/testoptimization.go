@@ -14,6 +14,7 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/git"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	"github.com/DataDog/ddtest/internal/utils"
 )
@@ -39,7 +40,7 @@ type searchCommitsResponse struct {
 
 type TestOptimizationClient struct {
 	apiTransport              api.Transport
-	newAPITransport           func(serviceName string) api.Transport
+	newAPITransport           func(serviceName string, testSkippingLevel settings.TestSkippingLevel) api.Transport
 	cacheManager              *CacheManager
 	repositoryChangesUploader func() (int64, error)
 	enableSignalHandler       bool
@@ -51,12 +52,17 @@ type TestOptimizationClient struct {
 	closeActions         []testOptimizationCloseAction
 	settings             *api.SettingsResponseData
 	knownTests           api.KnownTestsResponseData
-	skippableTests       api.SkippableTests
+	skippables           api.Skippables
+	testSkippingLevel    settings.TestSkippingLevel
 	testManagementTests  api.TestManagementTestsResponseDataModules
 }
 
 func NewTestOptimizationClient() *TestOptimizationClient {
-	return newTestOptimizationClient(nil, api.NewTransportWithServiceName, nil, true)
+	return NewTestOptimizationClientWithTestSkippingLevel(settings.TestSkippingLevelTest)
+}
+
+func NewTestOptimizationClientWithTestSkippingLevel(testSkippingLevel settings.TestSkippingLevel) *TestOptimizationClient {
+	return newTestOptimizationClientWithTestSkippingLevel(nil, api.NewTransportWithServiceNameAndTestSkippingLevel, nil, true, testSkippingLevel)
 }
 
 func NewTestOptimizationClientWithDependencies(apiTransport api.Transport) *TestOptimizationClient {
@@ -65,12 +71,28 @@ func NewTestOptimizationClientWithDependencies(apiTransport api.Transport) *Test
 
 func newTestOptimizationClient(
 	apiTransport api.Transport,
-	newAPITransport func(serviceName string) api.Transport,
+	newAPITransport func(serviceName string, testSkippingLevel settings.TestSkippingLevel) api.Transport,
 	repositoryChangesUploader func() (int64, error),
 	enableSignalHandler bool,
 ) *TestOptimizationClient {
+	return newTestOptimizationClientWithTestSkippingLevel(
+		apiTransport,
+		newAPITransport,
+		repositoryChangesUploader,
+		enableSignalHandler,
+		settings.TestSkippingLevelTest,
+	)
+}
+
+func newTestOptimizationClientWithTestSkippingLevel(
+	apiTransport api.Transport,
+	newAPITransport func(serviceName string, testSkippingLevel settings.TestSkippingLevel) api.Transport,
+	repositoryChangesUploader func() (int64, error),
+	enableSignalHandler bool,
+	testSkippingLevel settings.TestSkippingLevel,
+) *TestOptimizationClient {
 	if apiTransport == nil && newAPITransport == nil {
-		newAPITransport = api.NewTransportWithServiceName
+		newAPITransport = api.NewTransportWithServiceNameAndTestSkippingLevel
 	}
 
 	return &TestOptimizationClient{
@@ -79,6 +101,7 @@ func newTestOptimizationClient(
 		cacheManager:              NewCacheManager(),
 		repositoryChangesUploader: repositoryChangesUploader,
 		enableSignalHandler:       enableSignalHandler,
+		testSkippingLevel:         testSkippingLevel,
 	}
 }
 
@@ -101,13 +124,16 @@ func (c *TestOptimizationClient) GetSettings() *api.SettingsResponseData {
 	return c.ensureSettingsInitialization(autoDetectServiceName)
 }
 
-func (c *TestOptimizationClient) GetSkippableTests() map[string]bool {
+func (c *TestOptimizationClient) GetSkippables() api.Skippables {
 	startTime := time.Now()
 
-	slog.Debug("Fetching skippable tests...")
+	slog.Debug("Fetching skippable tests and suites...")
 	c.ensureTestOptimizationInitialized()
-	if c.skippableTests == nil {
-		c.skippableTests = api.SkippableTests{}
+	if c.skippables.Tests == nil {
+		c.skippables.Tests = api.SkippableTests{}
+	}
+	if c.skippables.Suites == nil {
+		c.skippables.Suites = api.SkippableSuites{}
 	}
 
 	if c.apiTransport != nil {
@@ -117,9 +143,12 @@ func (c *TestOptimizationClient) GetSkippableTests() map[string]bool {
 	}
 
 	duration := time.Since(startTime)
-	slog.Debug("Finished fetching skippable tests", "count", len(c.skippableTests), "duration", duration)
+	slog.Debug("Finished fetching skippable tests and suites",
+		"testsCount", len(c.skippables.Tests),
+		"suitesCount", len(c.skippables.Suites),
+		"duration", duration)
 
-	return c.skippableTests
+	return c.skippables
 }
 
 func (c *TestOptimizationClient) GetKnownTests() *api.KnownTestsResponseData {
@@ -273,7 +302,7 @@ func (c *TestOptimizationClient) ensureAPITransport(serviceName string) api.Tran
 	if c.newAPITransport == nil {
 		return nil
 	}
-	c.apiTransport = c.newAPITransport(serviceName)
+	c.apiTransport = c.newAPITransport(serviceName, c.testSkippingLevel)
 	return c.apiTransport
 }
 
@@ -350,13 +379,15 @@ func (c *TestOptimizationClient) ensureTestOptimizationInitialized() {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				correlationID, skippableTests, err := c.apiTransport.GetSkippableTests()
+				correlationID, skippables, err := c.apiTransport.GetSkippableTests()
 				if err != nil {
 					slog.Error("testoptimization: error getting test optimization skippable tests", "err", err.Error())
-				} else if skippableTests != nil {
-					slog.Debug("testoptimization: skippable tests loaded", "count", len(skippableTests))
+				} else {
+					slog.Debug("testoptimization: skippable tests loaded",
+						"testsCount", len(skippables.Tests),
+						"suitesCount", len(skippables.Suites))
 					setAdditionalTags(constants.ItrCorrelationIDTag, correlationID)
-					c.skippableTests = skippableTests
+					c.skippables = skippables
 				}
 			}()
 		}

@@ -43,6 +43,12 @@ func TestJavaScript_Name(t *testing.T) {
 	}
 }
 
+func TestJavaScript_TestSkippingLevel(t *testing.T) {
+	if got := NewJavaScript().TestSkippingLevel(); got != settings.TestSkippingLevelSuite {
+		t.Fatalf("TestSkippingLevel() = %q, want %q", got, settings.TestSkippingLevelSuite)
+	}
+}
+
 func TestJavaScript_GetPlatformEnv_SetsNODEOPTIONS(t *testing.T) {
 	t.Setenv(nodeOptionsEnvVar, "")
 

@@ -43,7 +43,7 @@ func TestTestPlanner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
 	}
 	runner := NewWithDependencies(
 		&MockPlatformDetector{Platform: mockPlatform},
-		&MockTestOptimizationClient{SkippableTests: map[string]bool{}},
+		&MockTestOptimizationClient{Skippables: testSkippables(map[string]bool{})},
 		newDefaultMockCIProviderDetector(),
 	)
 

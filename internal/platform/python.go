@@ -52,6 +52,10 @@ func (p *Python) Name() string {
 	return "python"
 }
 
+func (p *Python) TestSkippingLevel() settings.TestSkippingLevel {
+	return settings.TestSkippingLevelTest
+}
+
 // GetPlatformEnv returns environment variables required for Python commands.
 // It appends --ddtrace to PYTEST_ADDOPTS to load the ddtrace pytest plugin.
 func (p *Python) GetPlatformEnv() map[string]string {

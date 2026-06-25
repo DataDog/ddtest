@@ -199,6 +199,9 @@ func TestPyTest_SupportsFullTestDiscovery(t *testing.T) {
 	if !pytest.SupportsFullTestDiscovery() {
 		t.Error("expected PyTest to support full test discovery")
 	}
+	if sourceFile, ok := pytest.SourceFileForSuite("tests/test_user.py"); ok || sourceFile != "" {
+		t.Fatalf("SourceFileForSuite() = %q, %v; want unsupported", sourceFile, ok)
+	}
 }
 
 func TestPyTest_RunTests(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	ddsettings "github.com/DataDog/ddtest/internal/settings"
 )
 
 func TestTransportGetSettingsRequiresRepositoryAndCommit(t *testing.T) {
@@ -65,6 +66,9 @@ func TestTransportGetSettingsRequestAndResponse(t *testing.T) {
 		t.Fatalf("request type = %q, want %q", captured.Data.Type, settingsRequestType)
 	}
 	attributes := captured.Data.Attributes
+	if attributes.TestLevel != ddsettings.TestSkippingLevelTest {
+		t.Fatalf("test level = %q, want test", attributes.TestLevel)
+	}
 	if attributes.Service != client.serviceName || attributes.Env != client.environment {
 		t.Fatalf("service/env = %q/%q, want %q/%q", attributes.Service, attributes.Env, client.serviceName, client.environment)
 	}
@@ -85,6 +89,27 @@ func TestTransportGetSettingsRequestAndResponse(t *testing.T) {
 	}
 	if len(client.GetSettingsRawResponse()) == 0 {
 		t.Fatal("expected raw settings response to be stored")
+	}
+}
+
+func TestTransportGetSettingsRequestUsesConfiguredTestLevel(t *testing.T) {
+	var captured settingsRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
+		_, _ = w.Write([]byte(`{"data":{"attributes":{}}}`))
+	}))
+	defer server.Close()
+
+	client := newRawResponseTestClientWithTestSkippingLevel(server, ddsettings.TestSkippingLevelSuite)
+	if _, err := client.GetSettings(); err != nil {
+		t.Fatalf("GetSettings() returned error: %v", err)
+	}
+
+	if captured.Data.Attributes.TestLevel != ddsettings.TestSkippingLevelSuite {
+		t.Fatalf("test level = %q, want suite", captured.Data.Attributes.TestLevel)
 	}
 }
 

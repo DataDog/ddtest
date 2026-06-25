@@ -21,8 +21,16 @@ const (
 	testsLocationEnv              = "DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION"
 	testsExcludePatternEnv        = "DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN"
 	testDiscoveryCacheEnv         = "DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE"
+	testSkippingModeEnv           = "DD_TESTOPTIMIZATION_TIA_TEST_SKIPPING_MODE"
 	knapsackTestFilePatternEnv    = "KNAPSACK_PRO_TEST_FILE_PATTERN"
 	knapsackTestFileExcludeEnv    = "KNAPSACK_PRO_TEST_FILE_EXCLUDE_PATTERN"
+)
+
+type TestSkippingLevel string
+
+const (
+	TestSkippingLevelTest  TestSkippingLevel = "test"
+	TestSkippingLevelSuite TestSkippingLevel = "suite"
 )
 
 // DefaultParallelism returns the default parallelism value.
@@ -85,20 +93,21 @@ func ceilDiv(numerator, denominator int) int {
 }
 
 type Config struct {
-	Platform               string        `mapstructure:"platform"`
-	Framework              string        `mapstructure:"framework"`
-	MinParallelism         int           `mapstructure:"min_parallelism"`
-	MaxParallelism         int           `mapstructure:"max_parallelism"`
-	ParallelRunnerOverhead time.Duration `mapstructure:"parallel_runner_overhead"`
-	WorkerEnv              string        `mapstructure:"worker_env"`
-	CiNode                 int           `mapstructure:"ci_node"`
-	CiNodeWorkers          int           `mapstructure:"ci_node_workers"`
-	Command                string        `mapstructure:"command"`
-	TestsLocation          string        `mapstructure:"tests_location"`
-	TestsExcludePattern    string        `mapstructure:"tests_exclude_pattern"`
-	TestDiscoveryCache     string        `mapstructure:"test_discovery_cache"`
-	RuntimeTags            string        `mapstructure:"runtime_tags"`
-	ReportEnabled          bool          `mapstructure:"report_enabled"`
+	Platform               string            `mapstructure:"platform"`
+	Framework              string            `mapstructure:"framework"`
+	MinParallelism         int               `mapstructure:"min_parallelism"`
+	MaxParallelism         int               `mapstructure:"max_parallelism"`
+	ParallelRunnerOverhead time.Duration     `mapstructure:"parallel_runner_overhead"`
+	WorkerEnv              string            `mapstructure:"worker_env"`
+	CiNode                 int               `mapstructure:"ci_node"`
+	CiNodeWorkers          int               `mapstructure:"ci_node_workers"`
+	Command                string            `mapstructure:"command"`
+	TestsLocation          string            `mapstructure:"tests_location"`
+	TestsExcludePattern    string            `mapstructure:"tests_exclude_pattern"`
+	TestDiscoveryCache     string            `mapstructure:"test_discovery_cache"`
+	TestSkippingLevel      TestSkippingLevel `mapstructure:"test_skipping_mode"`
+	RuntimeTags            string            `mapstructure:"runtime_tags"`
+	ReportEnabled          bool              `mapstructure:"report_enabled"`
 }
 
 var (
@@ -125,6 +134,10 @@ func Init() {
 		fmt.Fprintf(os.Stderr, "Error binding test discovery cache env: %v\n", err)
 		os.Exit(1)
 	}
+	if err := viper.BindEnv("test_skipping_mode", testSkippingModeEnv); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding test skipping mode env: %v\n", err)
+		os.Exit(1)
+	}
 
 	setDefaults()
 
@@ -140,6 +153,7 @@ func Init() {
 		os.Exit(1)
 	}
 	viper.Set("parallel_runner_overhead", parallelRunnerOverhead)
+	viper.Set("test_skipping_mode", NormalizeTestSkippingLevel(TestSkippingLevel(viper.GetString("test_skipping_mode"))))
 
 	config = &Config{}
 	if err := viper.Unmarshal(config); err != nil {
@@ -161,8 +175,24 @@ func setDefaults() {
 	viper.SetDefault("tests_location", "")
 	viper.SetDefault("tests_exclude_pattern", "")
 	viper.SetDefault("test_discovery_cache", "")
+	viper.SetDefault("test_skipping_mode", TestSkippingLevelTest)
 	viper.SetDefault("runtime_tags", "")
 	viper.SetDefault("report_enabled", true)
+}
+
+// NormalizeTestSkippingLevel accepts only the backend-supported TIA skipping modes.
+// Invalid or empty values fall back to test-level skipping.
+func NormalizeTestSkippingLevel(level TestSkippingLevel) TestSkippingLevel {
+	switch TestSkippingLevel(strings.TrimSpace(string(level))) {
+	case TestSkippingLevelSuite:
+		return TestSkippingLevelSuite
+	default:
+		return TestSkippingLevelTest
+	}
+}
+
+func (level TestSkippingLevel) String() string {
+	return string(level)
 }
 
 // ParseParallelRunnerOverhead resolves the modeled overhead for adding another
@@ -258,6 +288,10 @@ func GetTestsExcludePattern() string {
 
 func GetTestDiscoveryCache() string {
 	return Get().TestDiscoveryCache
+}
+
+func GetTestSkippingLevel() TestSkippingLevel {
+	return Get().TestSkippingLevel
 }
 
 func GetRuntimeTags() string {

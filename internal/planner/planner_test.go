@@ -49,6 +49,7 @@ type MockPlatform struct {
 	Framework    framework.Framework
 	FrameworkErr error
 	SanityErr    error
+	TestLevel    settings.TestSkippingLevel
 }
 
 func (m *MockPlatform) Name() string {
@@ -67,6 +68,13 @@ func (m *MockPlatform) SanityCheck() error {
 	return m.SanityErr
 }
 
+func (m *MockPlatform) TestSkippingLevel() settings.TestSkippingLevel {
+	if m.TestLevel == "" {
+		return settings.TestSkippingLevelTest
+	}
+	return m.TestLevel
+}
+
 // MockFramework mocks a testing framework
 type MockFramework struct {
 	FrameworkName            string
@@ -79,6 +87,8 @@ type MockFramework struct {
 	RunTestsCalls            []RunTestsCall
 	DiscoverTestsFiles       []discovery.TestFileSet
 	FullDiscoveryUnsupported bool
+	SuiteSourceFiles         map[string]string
+	UnskippableFiles         map[string]bool
 	mu                       sync.Mutex
 }
 
@@ -292,6 +302,21 @@ func (m *MockFramework) SupportsFullTestDiscovery() bool {
 	return !m.FullDiscoveryUnsupported
 }
 
+func (m *MockFramework) SourceFileForSuite(suite string) (string, bool) {
+	if m.SuiteSourceFiles != nil {
+		sourceFile, ok := m.SuiteSourceFiles[suite]
+		return sourceFile, ok
+	}
+	if suite == "" {
+		return "", false
+	}
+	return suite, true
+}
+
+func (m *MockFramework) HasUnskippableMarker(testFile string) bool {
+	return m.UnskippableFiles[testFile]
+}
+
 func (m *MockFramework) GetRunTestsCallsCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -315,18 +340,26 @@ func (m *longRunningDiscoveryFramework) DiscoverTests(ctx context.Context, testF
 
 // MockTestOptimizationClient mocks the test optimization client
 type MockTestOptimizationClient struct {
-	InitializeCalled        bool
-	InitializeErr           error
-	Settings                *api.SettingsResponseData
-	SkippableTests          map[string]bool
-	GetSkippableTestsCalled bool
-	KnownTests              *api.KnownTestsResponseData
-	TestManagementTests     *api.TestManagementTestsResponseDataModules
-	DisabledTests           map[string]bool
-	Durations               map[string]map[string]api.TestSuiteDurationInfo
-	DurationsCalled         bool
-	ShutdownCalled          bool
-	Tags                    map[string]string
+	InitializeCalled    bool
+	InitializeErr       error
+	Settings            *api.SettingsResponseData
+	Skippables          api.Skippables
+	GetSkippablesCalled bool
+	KnownTests          *api.KnownTestsResponseData
+	TestManagementTests *api.TestManagementTestsResponseDataModules
+	DisabledTests       map[string]bool
+	Durations           map[string]map[string]api.TestSuiteDurationInfo
+	DurationsCalled     bool
+	ShutdownCalled      bool
+	Tags                map[string]string
+}
+
+func testSkippables(tests map[string]bool) api.Skippables {
+	skippables := api.NewSkippables()
+	if tests != nil {
+		skippables.Tests = api.SkippableTests(tests)
+	}
+	return skippables
 }
 
 func (m *MockTestOptimizationClient) Initialize(tags map[string]string) error {
@@ -342,9 +375,16 @@ func (m *MockTestOptimizationClient) GetSettings() *api.SettingsResponseData {
 	return m.Settings
 }
 
-func (m *MockTestOptimizationClient) GetSkippableTests() map[string]bool {
-	m.GetSkippableTestsCalled = true
-	return m.SkippableTests
+func (m *MockTestOptimizationClient) GetSkippables() api.Skippables {
+	m.GetSkippablesCalled = true
+	skippables := m.Skippables
+	if skippables.Tests == nil {
+		skippables.Tests = api.SkippableTests{}
+	}
+	if skippables.Suites == nil {
+		skippables.Suites = api.SkippableSuites{}
+	}
+	return skippables
 }
 
 func (m *MockTestOptimizationClient) GetKnownTests() *api.KnownTestsResponseData {
@@ -494,9 +534,9 @@ func testOptimizationClientRequiringFullDiscovery() *MockTestOptimizationClient 
 	}
 	return &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{
+		Skippables: testSkippables(map[string]bool{
 			unmatchedSkippableTest.DatadogTestId(): true,
-		},
+		}),
 	}
 }
 
@@ -528,8 +568,8 @@ func TestNew(t *testing.T) {
 		t.Error("New() should initialize platformDetector")
 	}
 
-	if runner.optimizationClient == nil {
-		t.Error("New() should initialize optimizationClient")
+	if runner.newOptimizationClient == nil {
+		t.Error("New() should initialize optimization client factory")
 	}
 }
 
@@ -563,6 +603,53 @@ func TestNewWithDependencies(t *testing.T) {
 
 	if len(runner.suitesBySourceFile) != 0 {
 		t.Error("NewWithDependencies() should initialize suitesBySourceFile to empty map")
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_CreatesOptimizationClientWithDetectedTestSkippingLevel(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	if err := os.MkdirAll("src", 0o755); err != nil {
+		t.Fatalf("failed to create test directory: %v", err)
+	}
+	if err := os.WriteFile("src/a.test.js", []byte("test('a', () => {})"), 0o644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings: testOptimizationSettings(false, false, false),
+	}
+	var capturedLevel settings.TestSkippingLevel
+	runner := newTestPlannerWithDefaults()
+	runner.platformDetector = &MockPlatformDetector{Platform: &MockPlatform{
+		PlatformName: "javascript",
+		Tags:         map[string]string{},
+		Framework: &MockFramework{
+			FrameworkName:            "jest",
+			TestFiles:                []string{"src/a.test.js"},
+			FullDiscoveryUnsupported: true,
+			SuiteSourceFiles: map[string]string{
+				"src/a.test.js": "src/a.test.js",
+			},
+		},
+		TestLevel: settings.TestSkippingLevelSuite,
+	}}
+	runner.newOptimizationClient = func(testSkippingLevel settings.TestSkippingLevel) testOptimizationClient {
+		capturedLevel = testSkippingLevel
+		return mockOptimizationClient
+	}
+	runner.ciProviderDetector = newDefaultMockCIProviderDetector()
+
+	if err := runner.PreparePlanningData(context.Background()); err != nil {
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
+	}
+
+	if capturedLevel != settings.TestSkippingLevelSuite {
+		t.Fatalf("optimization client test skipping level = %q, want %q", capturedLevel, settings.TestSkippingLevelSuite)
 	}
 }
 
@@ -609,10 +696,10 @@ func TestTestPlanner_Setup_WithParallelRunners(t *testing.T) {
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{
+		Skippables: testSkippables(map[string]bool{
 			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite1", Name: "test2"}).DatadogTestId(): true, // Skip test2
 			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite4", Name: "test5"}).DatadogTestId(): true, // Skip test5
-		},
+		}),
 	}
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
@@ -685,7 +772,7 @@ func TestTestPlanner_Plan_WritesManifestAndRunnerLayout(t *testing.T) {
 
 	runner := NewWithDependencies(
 		&MockPlatformDetector{Platform: mockPlatform},
-		&MockTestOptimizationClient{SkippableTests: map[string]bool{}},
+		&MockTestOptimizationClient{Skippables: testSkippables(map[string]bool{})},
 		newDefaultMockCIProviderDetector(),
 	)
 
@@ -704,7 +791,7 @@ func TestTestPlanner_Plan_WritesManifestAndRunnerLayout(t *testing.T) {
 	assertFileContent(t, filepath.Join(constants.TestsSplitDir, "runner-0"), expectedTestFiles)
 }
 
-func TestTestPlanner_Plan_FrameworkWithoutFullDiscoveryDoesNotFetchSkippables(t *testing.T) {
+func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -727,10 +814,21 @@ func TestTestPlanner_Plan_FrameworkWithoutFullDiscoveryDoesNotFetchSkippables(t 
 		PlatformName: "javascript",
 		Tags:         map[string]string{"language": "javascript"},
 		Framework:    mockFramework,
+		TestLevel:    settings.TestSkippingLevelSuite,
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
-		Settings:       testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{"jest.src/a.test.js..": true},
+		Settings: testOptimizationSettings(true, true, false),
+		Skippables: api.Skippables{
+			Suites: api.SkippableSuites{
+				{Module: "jest", Suite: "src/a.test.js"}: true,
+			},
+		},
+		Durations: map[string]map[string]api.TestSuiteDurationInfo{
+			"jest": {
+				"src/a.test.js": {SourceFile: "src/a.test.js", Duration: api.DurationPercentiles{P50: "1000000000"}},
+				"src/b.test.ts": {SourceFile: "src/b.test.ts", Duration: api.DurationPercentiles{P50: "1000000000"}},
+			},
+		},
 	}
 
 	runner := NewWithDependencies(
@@ -743,14 +841,182 @@ func TestTestPlanner_Plan_FrameworkWithoutFullDiscoveryDoesNotFetchSkippables(t 
 		t.Fatalf("Plan() should not return error, got: %v", err)
 	}
 
-	if mockOptimizationClient.GetSkippableTestsCalled {
-		t.Fatal("expected planner not to fetch skippables when full test discovery is unsupported")
+	if !mockOptimizationClient.GetSkippablesCalled {
+		t.Fatal("expected planner to fetch suite skippables when full test discovery is unsupported")
 	}
 
-	expectedTestFiles := "src/a.test.js\nsrc/b.test.ts\n"
+	expectedTestFiles := "src/b.test.ts\n"
 	assertFileContent(t, constants.TestFilesOutputPath, expectedTestFiles)
-	assertFileContent(t, constants.SkippablePercentageOutputPath, "0.00")
+	assertFileContent(t, constants.SkippablePercentageOutputPath, "50.00")
 	assertFileContent(t, filepath.Join(constants.TestsSplitDir, "runner-0"), expectedTestFiles)
+}
+
+func TestTestPlanner_PreparePlanningData_RubySuiteModeSkipsFullDiscoveryAndSkipsFile(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+
+	t.Cleanup(func() { settings.Init() })
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED", "false")
+	settings.Init()
+
+	skippedSuite := "Order at spec/models/order_spec.rb"
+	runnableSuite := "Payment at spec/models/payment_spec.rb"
+	mockFramework := &MockFramework{
+		FrameworkName: "rspec",
+		TestFiles:     []string{"spec/models/order_spec.rb", "spec/models/payment_spec.rb"},
+		SuiteSourceFiles: map[string]string{
+			skippedSuite:  "spec/models/order_spec.rb",
+			runnableSuite: "spec/models/payment_spec.rb",
+		},
+		OnDiscoverTests: func() {
+			t.Fatal("full discovery should not run in suite skipping mode")
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"language": "ruby"},
+		Framework:    mockFramework,
+		TestLevel:    settings.TestSkippingLevelSuite,
+	}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings: testOptimizationSettings(true, true, false),
+		Skippables: api.Skippables{
+			Suites: api.SkippableSuites{
+				{Module: "rspec", Suite: skippedSuite}: true,
+			},
+		},
+		Durations: map[string]map[string]api.TestSuiteDurationInfo{
+			"rspec": {
+				skippedSuite:  {SourceFile: "spec/models/order_spec.rb", Duration: api.DurationPercentiles{P50: "1000000000"}},
+				runnableSuite: {SourceFile: "spec/models/payment_spec.rb", Duration: api.DurationPercentiles{P50: "1000000000"}},
+			},
+		},
+	}
+
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		mockOptimizationClient,
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.PreparePlanningData(context.Background()); err != nil {
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
+	}
+
+	if len(mockFramework.DiscoverTestsFiles) != 0 {
+		t.Fatalf("expected full discovery not to run, got calls: %+v", mockFramework.DiscoverTestsFiles)
+	}
+	if _, ok := runner.testFileWeights["spec/models/order_spec.rb"]; ok {
+		t.Fatalf("expected skipped suite file to be omitted, got weights: %+v", runner.testFileWeights)
+	}
+	if _, ok := runner.testFileWeights["spec/models/payment_spec.rb"]; !ok {
+		t.Fatalf("expected runnable suite file to remain, got weights: %+v", runner.testFileWeights)
+	}
+	if runner.planInfo.TestSkippingLevel != settings.TestSkippingLevelSuite.String() {
+		t.Fatalf("plan test skipping level = %q, want suite", runner.planInfo.TestSkippingLevel)
+	}
+}
+
+func TestTestPlanner_RecordFullDiscoveryResults_SuiteSkippablesSkipDiscoveredTests(t *testing.T) {
+	runner := newTestPlannerWithDefaults()
+	tests := []testoptimization.Test{
+		{Module: "rspec", Suite: "Order", Name: "first", SuiteSourceFile: "spec/models/order_spec.rb"},
+		{Module: "rspec", Suite: "Order", Name: "second", SuiteSourceFile: "spec/models/order_spec.rb"},
+	}
+	skippables := api.Skippables{
+		Suites: api.SkippableSuites{
+			{Module: "rspec", Suite: "Order"}: true,
+		},
+	}
+
+	if err := runner.recordFullDiscoveryResults(tests, newSkippableMatcher(skippables, nil)); err != nil {
+		t.Fatalf("recordFullDiscoveryResults() should not fail, got: %v", err)
+	}
+
+	aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Order"}]
+	if aggregate.NumTests != 2 || aggregate.NumTestsSkipped != 2 {
+		t.Fatalf("expected whole suite to be skipped, got %+v", aggregate)
+	}
+}
+
+func TestTestPlanner_RecordSuiteLevelSkippables_SafetyGuardsKeepFilesRunnable(t *testing.T) {
+	tests := []struct {
+		name         string
+		testFiles    map[string]struct{}
+		durations    map[string]map[string]api.TestSuiteDurationInfo
+		framework    *MockFramework
+		expectedFile string
+	}{
+		{
+			name:      "unskippable marker",
+			testFiles: map[string]struct{}{"spec/models/order_spec.rb": {}},
+			durations: map[string]map[string]api.TestSuiteDurationInfo{
+				"rspec": {
+					"Order at spec/models/order_spec.rb": {SourceFile: "spec/models/order_spec.rb", Duration: api.DurationPercentiles{P50: "1000000000"}},
+				},
+			},
+			framework: &MockFramework{
+				UnskippableFiles: map[string]bool{"spec/models/order_spec.rb": true},
+			},
+			expectedFile: "spec/models/order_spec.rb",
+		},
+		{
+			name:      "unresolved suite source",
+			testFiles: map[string]struct{}{"spec/models/order_spec.rb": {}},
+			framework: &MockFramework{
+				SuiteSourceFiles: map[string]string{},
+			},
+			expectedFile: "spec/models/order_spec.rb",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := newTestPlannerWithDefaults()
+			runner.testFiles = tt.testFiles
+			runner.testSuiteDurations = tt.durations
+			runner.addDurationDataForFastDiscoveryFallback()
+			skippables := api.Skippables{
+				Suites: api.SkippableSuites{
+					{Module: "rspec", Suite: "Order at spec/models/order_spec.rb"}:   true,
+					{Module: "rspec", Suite: "Skipped at spec/models/order_spec.rb"}: true,
+				},
+			}
+
+			runner.recordSuiteLevelSkippables(newSkippableMatcher(skippables, nil), tt.framework)
+			runner.suitesBySourceFile = indexSuitesBySourceFile(runner.suiteAggregates)
+			weights := runner.calculateFileWeights()
+
+			if _, ok := weights[tt.expectedFile]; !ok {
+				t.Fatalf("expected %s to remain runnable, got weights %+v and aggregates %+v", tt.expectedFile, weights, runner.suiteAggregates)
+			}
+		})
+	}
+}
+
+func TestTestPlanner_RecordSuiteLevelSkippables_IgnoresExcludedOrUndiscoveredFile(t *testing.T) {
+	runner := newTestPlannerWithDefaults()
+	runner.testFiles = map[string]struct{}{"spec/models/payment_spec.rb": {}}
+	skippables := api.Skippables{
+		Suites: api.SkippableSuites{
+			{Module: "rspec", Suite: "Order at spec/models/order_spec.rb"}: true,
+		},
+	}
+	framework := &MockFramework{
+		SuiteSourceFiles: map[string]string{
+			"Order at spec/models/order_spec.rb": "spec/models/order_spec.rb",
+		},
+	}
+
+	runner.recordSuiteLevelSkippables(newSkippableMatcher(skippables, nil), framework)
+
+	if len(runner.suiteAggregates) != 0 {
+		t.Fatalf("expected suite for undiscovered file to be ignored, got %+v", runner.suiteAggregates)
+	}
 }
 
 func TestTestPlanner_Plan_DoesNotPrintReportWhenDisabled(t *testing.T) {
@@ -784,7 +1050,7 @@ func TestTestPlanner_Plan_DoesNotPrintReportWhenDisabled(t *testing.T) {
 
 	runner := NewWithDependencies(
 		&MockPlatformDetector{Platform: mockPlatform},
-		&MockTestOptimizationClient{SkippableTests: map[string]bool{}},
+		&MockTestOptimizationClient{Skippables: testSkippables(map[string]bool{})},
 		newDefaultMockCIProviderDetector(),
 	)
 	var output strings.Builder
@@ -846,8 +1112,8 @@ func TestTestPlanner_Plan_ChoosesParallelismFromFanoutAdjustedSplit(t *testing.T
 	runner := NewWithDependencies(
 		&MockPlatformDetector{Platform: mockPlatform},
 		&MockTestOptimizationClient{
-			Settings:       testOptimizationSettings(true, true, false),
-			SkippableTests: skippableTests,
+			Settings:   testOptimizationSettings(true, true, false),
+			Skippables: testSkippables(skippableTests),
 		},
 		newDefaultMockCIProviderDetector(),
 	)
@@ -898,9 +1164,9 @@ func TestTestPlanner_Setup_WithCIProvider(t *testing.T) {
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{
+		Skippables: testSkippables(map[string]bool{
 			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite1", Name: "test1"}).DatadogTestId(): true, // Skip test1 = 50% skippable
-		},
+		}),
 	}
 
 	// Mock CI provider that should be called
@@ -958,7 +1224,7 @@ func TestTestPlanner_Setup_CIProviderDetectionFailure(t *testing.T) {
 	}
 
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
-	mockOptimizationClient := &MockTestOptimizationClient{SkippableTests: map[string]bool{}}
+	mockOptimizationClient := &MockTestOptimizationClient{Skippables: testSkippables(map[string]bool{})}
 
 	// Mock CI provider detector that fails
 	mockCIProviderDetector := &MockCIProviderDetector{
@@ -999,7 +1265,7 @@ func TestTestPlanner_Setup_CIProviderConfigureFailure(t *testing.T) {
 	}
 
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
-	mockOptimizationClient := &MockTestOptimizationClient{SkippableTests: map[string]bool{}}
+	mockOptimizationClient := &MockTestOptimizationClient{Skippables: testSkippables(map[string]bool{})}
 
 	// Mock CI provider that fails during configuration
 	mockCIProvider := &MockCIProvider{
@@ -1064,7 +1330,7 @@ func TestTestPlanner_Setup_WithTestSplit(t *testing.T) {
 
 		mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 		mockOptimizationClient := &MockTestOptimizationClient{
-			SkippableTests: map[string]bool{}, // No tests skipped
+			Skippables: testSkippables(map[string]bool{}), // No tests skipped
 		}
 
 		runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
@@ -1141,7 +1407,7 @@ func TestTestPlanner_Setup_WithTestSplit(t *testing.T) {
 
 		mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 		mockOptimizationClient := &MockTestOptimizationClient{
-			SkippableTests: map[string]bool{}, // No tests skipped
+			Skippables: testSkippables(map[string]bool{}), // No tests skipped
 		}
 
 		expectedParallelRunnersCount := 2
@@ -1357,10 +1623,10 @@ func TestTestPlanner_PreparePlanningData_Success(t *testing.T) {
 
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{
+		Skippables: testSkippables(map[string]bool{
 			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite1", Name: "test2"}).DatadogTestId(): true, // Skip test2
 			(&testoptimization.Test{Module: "rspec", Suite: "TestSuite3", Name: "test4"}).DatadogTestId(): true, // Skip test4
-		},
+		}),
 		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"TestSuite1": {
@@ -1477,9 +1743,9 @@ func TestTestPlanner_PreparePlanningData_DisabledTestManagementTestsAreSkipped(t
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, true),
-		SkippableTests: map[string]bool{
+		Skippables: testSkippables(map[string]bool{
 			(&testoptimization.Test{Module: "rspec", Suite: "Suite1", Name: "test2"}).DatadogTestId(): true,
-		},
+		}),
 		TestManagementTests: &api.TestManagementTestsResponseDataModules{
 			Modules: map[string]api.TestManagementTestsResponseDataSuites{
 				"rspec": {
@@ -1577,10 +1843,10 @@ func TestTestPlanner_PreparePlanningData_TIASkipsRequireParametersMatch(t *testi
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{
+		Skippables: testSkippables(map[string]bool{
 			(&testoptimization.Test{Module: "rspec", Suite: "Suite1", Name: "same name"}).DatadogTestId(): true,
 			parameterizedSkippedTest.DatadogTestId():                                                      true,
-		},
+		}),
 	}
 
 	runner := NewWithDependencies(
@@ -1620,9 +1886,9 @@ func TestTestPlanner_PreparePlanningData_ModuleQualifiedSkipsDoNotCrossModules(t
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, true),
-		SkippableTests: map[string]bool{
+		Skippables: testSkippables(map[string]bool{
 			(&testoptimization.Test{Module: "module-a", Suite: "SharedSuite", Name: "same name"}).DatadogTestId(): true,
-		},
+		}),
 		TestManagementTests: &api.TestManagementTestsResponseDataModules{
 			Modules: map[string]api.TestManagementTestsResponseDataSuites{
 				"module-c": {
@@ -1686,9 +1952,9 @@ func TestTestPlanner_PreparePlanningData_TestManagementDoesNotKeepFullDiscoveryW
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(false, false, true),
-		SkippableTests: map[string]bool{
+		Skippables: testSkippables(map[string]bool{
 			(&testoptimization.Test{Module: "rspec", Suite: "Suite2", Name: "not_applied"}).DatadogTestId(): true,
-		},
+		}),
 		TestManagementTests: &api.TestManagementTestsResponseDataModules{
 			Modules: map[string]api.TestManagementTestsResponseDataSuites{
 				"rspec": {
@@ -1755,8 +2021,8 @@ func TestTestPlanner_PreparePlanningData_CancelsFullDiscoveryWhenNoTIASkippableT
 		Framework:    mockFramework,
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
-		Settings:       testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{},
+		Settings:   testOptimizationSettings(true, true, false),
+		Skippables: testSkippables(map[string]bool{}),
 	}
 
 	runner := NewWithDependencies(
@@ -1778,7 +2044,7 @@ func TestTestPlanner_PreparePlanningData_CancelsFullDiscoveryWhenNoTIASkippableT
 	if runner.skippablePercentage != 0 {
 		t.Errorf("Expected zero skippable percentage without full discovery data, got %.2f", runner.skippablePercentage)
 	}
-	if !strings.Contains(logs.String(), "No TIA-skippable tests found for this run, cancelling full test discovery") {
+	if !strings.Contains(logs.String(), "No TIA-skippable tests or suites found for this run, cancelling full test discovery") {
 		t.Errorf("Expected log about skipping full discovery when no TIA-skippable tests exist, got: %s", logs.String())
 	}
 }
@@ -1815,9 +2081,9 @@ func TestTestPlanner_PreparePlanningData_RunsFullDiscoveryInParallelWithBackend(
 	mockOptimizationClient := &waitForDiscoveryOptimizationClient{
 		MockTestOptimizationClient: MockTestOptimizationClient{
 			Settings: testOptimizationSettings(true, true, false),
-			SkippableTests: map[string]bool{
+			Skippables: testSkippables(map[string]bool{
 				discoveredTest.DatadogTestId(): true,
-			},
+			}),
 		},
 		discoveryStarted: discoveryStarted,
 	}
@@ -1861,8 +2127,8 @@ func TestTestPlanner_PreparePlanningData_UsesCompletedFullDiscoveryWhenNoTIASkip
 		Framework:    mockFramework,
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
-		Settings:       testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{},
+		Settings:   testOptimizationSettings(true, true, false),
+		Skippables: testSkippables(map[string]bool{}),
 	}
 
 	runner := NewWithDependencies(
@@ -2010,8 +2276,8 @@ func TestTestPlanner_PreparePlanningData_SkippablePercentageUsesDurations(t *tes
 	}
 	skippedTest := mockFramework.Tests[0]
 	mockOptimizationClient := &MockTestOptimizationClient{
-		Settings:       testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{skippedTest.DatadogTestId(): true},
+		Settings:   testOptimizationSettings(true, true, false),
+		Skippables: testSkippables(map[string]bool{skippedTest.DatadogTestId(): true}),
 		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"SlowSuite": {
@@ -2710,8 +2976,8 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotReintroduceFullySkippedSu
 		Framework: mockFramework,
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
-		Settings:       testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{skippedTest.DatadogTestId(): true},
+		Settings:   testOptimizationSettings(true, true, false),
+		Skippables: testSkippables(map[string]bool{skippedTest.DatadogTestId(): true}),
 		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"SkippedSuite": {
@@ -2764,8 +3030,8 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotDuplicateDiscoveredSource
 		Framework: mockFramework,
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
-		Settings:       testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{skippedTest.DatadogTestId(): true},
+		Settings:   testOptimizationSettings(true, true, false),
+		Skippables: testSkippables(map[string]bool{skippedTest.DatadogTestId(): true}),
 		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
 				"BackendDuplicateSuite": {
@@ -2821,7 +3087,7 @@ func TestTestPlanner_RecordFullDiscoveryResults_AppliesExcludeAfterSubdirNormali
 		},
 	}
 
-	err := runner.recordFullDiscoveryResults(tests, newTestSkipper(nil, nil))
+	err := runner.recordFullDiscoveryResults(tests, newSkippableMatcher(api.NewSkippables(), nil))
 	if err != nil {
 		t.Fatalf("recordFullDiscoveryResults() should not fail, got: %v", err)
 	}
@@ -2912,9 +3178,9 @@ func TestTestPlanner_PreparePlanningData_ResolvesFilteredTestFilesOnce(t *testin
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{
+		Skippables: testSkippables(map[string]bool{
 			(&testoptimization.Test{Module: "rspec", Suite: "User", Name: "test1"}).DatadogTestId(): true,
-		},
+		}),
 	}
 	runner := NewWithDependencies(
 		&MockPlatformDetector{Platform: mockPlatform},
@@ -3227,9 +3493,9 @@ func TestTestPlanner_PreparePlanningData_EmptyTests(t *testing.T) {
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{
+		Skippables: testSkippables(map[string]bool{
 			(&testoptimization.Test{Module: "rspec", Suite: "Suite", Name: "test1"}).DatadogTestId(): true,
-		},
+		}),
 	}
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
@@ -3278,10 +3544,10 @@ func TestTestPlanner_PreparePlanningData_AllTestsSkipped(t *testing.T) {
 	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{
+		Skippables: testSkippables(map[string]bool{
 			(&testoptimization.Test{Module: "rspec", Suite: "Suite1", Name: "test1"}).DatadogTestId(): true,
 			(&testoptimization.Test{Module: "rspec", Suite: "Suite2", Name: "test2"}).DatadogTestId(): true,
-		},
+		}),
 	}
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
@@ -3336,7 +3602,7 @@ func TestTestPlanner_PreparePlanningData_RuntimeTagsOverride(t *testing.T) {
 	}
 
 	mockOptimizationClient := &MockTestOptimizationClient{
-		SkippableTests: map[string]bool{},
+		Skippables: testSkippables(map[string]bool{}),
 	}
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
@@ -3446,7 +3712,7 @@ func TestTestPlanner_PreparePlanningData_NoRuntimeTagsOverride(t *testing.T) {
 	}
 
 	mockOptimizationClient := &MockTestOptimizationClient{
-		SkippableTests: map[string]bool{},
+		Skippables: testSkippables(map[string]bool{}),
 	}
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
@@ -3779,10 +4045,10 @@ func TestPreparePlanningData_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd(t 
 	}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
-		SkippableTests: map[string]bool{
+		Skippables: testSkippables(map[string]bool{
 			roleTest1.DatadogTestId(): true,
 			roleTest2.DatadogTestId(): true,
-		},
+		}),
 	}
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())

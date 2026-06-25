@@ -19,6 +19,12 @@ func TestPython_Name(t *testing.T) {
 	}
 }
 
+func TestPython_TestSkippingLevel(t *testing.T) {
+	if got := NewPython().TestSkippingLevel(); got != settings.TestSkippingLevelTest {
+		t.Fatalf("TestSkippingLevel() = %q, want %q", got, settings.TestSkippingLevelTest)
+	}
+}
+
 func TestNormalizePyVersion(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"4.12.0rc1", "4.12.0-rc1"},

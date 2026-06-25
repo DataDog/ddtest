@@ -1321,3 +1321,44 @@ func TestRSpec_SupportsFullTestDiscovery(t *testing.T) {
 		t.Error("expected RSpec to support full test discovery")
 	}
 }
+
+func TestRSpec_SourceFileForSuite(t *testing.T) {
+	rspec := NewRSpec()
+
+	sourceFile, ok := rspec.SourceFileForSuite("User model at spec/models/user_spec.rb")
+	if !ok || sourceFile != "spec/models/user_spec.rb" {
+		t.Fatalf("SourceFileForSuite() = %q, %v; want Ruby trailing path", sourceFile, ok)
+	}
+
+	sourceFile, ok = rspec.SourceFileForSuite("SomeTest at ./spec/some_test_rspec.rb (ci-queue running example [nested foo])")
+	if !ok || sourceFile != "./spec/some_test_rspec.rb" {
+		t.Fatalf("SourceFileForSuite(ci queue) = %q, %v; want Ruby path without ci-queue suffix", sourceFile, ok)
+	}
+
+	if sourceFile, ok := rspec.SourceFileForSuite("User model"); ok || sourceFile != "" {
+		t.Fatalf("SourceFileForSuite(no path) = %q, %v; want unresolved", sourceFile, ok)
+	}
+}
+
+func TestRSpec_HasUnskippableMarker(t *testing.T) {
+	tempDir := t.TempDir()
+	markedFile := filepath.Join(tempDir, "marked_spec.rb")
+	if err := os.WriteFile(markedFile, []byte("datadog_itr_unskippable"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	unmarkedFile := filepath.Join(tempDir, "unmarked_spec.rb")
+	if err := os.WriteFile(unmarkedFile, []byte("describe 'user'"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rspec := NewRSpec()
+	if !rspec.HasUnskippableMarker(markedFile) {
+		t.Fatal("expected Ruby unskippable marker")
+	}
+	if rspec.HasUnskippableMarker(unmarkedFile) {
+		t.Fatal("expected no Ruby unskippable marker")
+	}
+	if !rspec.HasUnskippableMarker(filepath.Join(tempDir, "missing_spec.rb")) {
+		t.Fatal("expected missing file to be treated as guarded")
+	}
+}

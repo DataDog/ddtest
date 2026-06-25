@@ -97,7 +97,7 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 	slog.Info("Framework detected", "framework", framework.Name())
 	runInfo := runmetadata.New(ciUtils.GetCITags())
 	if planInfo.IsZero() {
-		planInfo = planner.NewPlanInfo(nil, detectedPlatform.Name(), framework.Name())
+		planInfo = planner.NewPlanInfo(nil, detectedPlatform.Name(), framework.Name(), detectedPlatform.TestSkippingLevel())
 	}
 
 	ciNode := settings.GetCiNode()

@@ -89,8 +89,8 @@ func stripSubdirPrefix(path string, subdirPrefix string) string {
 		return path
 	}
 
-	normalizedPath := filepath.ToSlash(path)
-	prefixWithSlash := subdirPrefix + "/"
+	normalizedPath := NormalizePath(path)
+	prefixWithSlash := NormalizePath(subdirPrefix) + "/"
 	if strings.HasPrefix(normalizedPath, prefixWithSlash) {
 		stripped := strings.TrimPrefix(normalizedPath, prefixWithSlash)
 		slog.Debug("Normalized test file path for subdirectory execution",

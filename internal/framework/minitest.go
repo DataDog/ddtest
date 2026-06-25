@@ -12,6 +12,7 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/utils"
 )
 
 const (
@@ -166,4 +167,12 @@ func (m *Minitest) getMinitestCommand() (string, []string, bool) {
 
 func (m *Minitest) SupportsFullTestDiscovery() bool {
 	return true
+}
+
+func (m *Minitest) SourceFileForSuite(suite string) (string, bool) {
+	return trailingRubySuiteSourceFile(suite)
+}
+
+func (m *Minitest) HasUnskippableMarker(testFile string) bool {
+	return utils.FileContainsAll(testFile, "datadog_itr_unskippable")
 }

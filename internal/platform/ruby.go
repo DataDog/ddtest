@@ -29,17 +29,23 @@ const (
 )
 
 type Ruby struct {
-	executor ext.CommandExecutor
+	executor          ext.CommandExecutor
+	testSkippingLevel settings.TestSkippingLevel
 }
 
-func NewRuby() *Ruby {
+func NewRuby(testSkippingLevel settings.TestSkippingLevel) *Ruby {
 	return &Ruby{
-		executor: &ext.DefaultCommandExecutor{},
+		executor:          &ext.DefaultCommandExecutor{},
+		testSkippingLevel: testSkippingLevel,
 	}
 }
 
 func (r *Ruby) Name() string {
 	return "ruby"
+}
+
+func (r *Ruby) TestSkippingLevel() settings.TestSkippingLevel {
+	return r.testSkippingLevel
 }
 
 // GetPlatformEnv returns environment variables required for Ruby commands.

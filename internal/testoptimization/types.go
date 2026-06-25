@@ -19,3 +19,8 @@ func (t *Test) FQN() string {
 func (t *Test) DatadogTestId() string {
 	return fmt.Sprintf("%s.%s.%s.%s", t.Module, t.Suite, t.Name, t.Parameters)
 }
+
+// DatadogSuiteId returns the parameter-free suite identity used for suite-level TIA matching.
+func (t *Test) DatadogSuiteId() string {
+	return fmt.Sprintf("%s.%s", t.Module, t.Suite)
+}

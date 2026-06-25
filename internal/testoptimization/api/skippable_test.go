@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/settings"
 )
 
 func TestTransportGetSkippableTestsRequestAndResponse(t *testing.T) {
@@ -63,7 +64,7 @@ func TestTransportGetSkippableTestsRequestAndResponse(t *testing.T) {
 		t.Fatalf("request type = %q, want %q", captured.Data.Type, skippableRequestType)
 	}
 	attributes := captured.Data.Attributes
-	if attributes.TestLevel != "test" {
+	if attributes.TestLevel != settings.TestSkippingLevelTest {
 		t.Fatalf("test level = %q, want test", attributes.TestLevel)
 	}
 	if attributes.Service != client.serviceName || attributes.Env != client.environment {
@@ -82,11 +83,32 @@ func TestTransportGetSkippableTestsRequestAndResponse(t *testing.T) {
 	if correlationID != "correlation-id" {
 		t.Fatalf("correlation ID = %q, want correlation-id", correlationID)
 	}
-	if len(skippable) != 1 || !skippable["bundle.suite.name.params"] {
+	if len(skippable.Tests) != 1 || !skippable.Tests["bundle.suite.name.params"] {
 		t.Fatalf("unexpected skippable map: %#v", skippable)
 	}
 	if len(client.GetSkippableTestsRawResponse()) == 0 {
 		t.Fatal("expected raw skippable response to be stored")
+	}
+}
+
+func TestTransportGetSkippableTestsRequestUsesConfiguredTestLevel(t *testing.T) {
+	var captured skippableRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
+		_, _ = w.Write([]byte(`{"meta":{"correlation_id":"cid"},"data":[]}`))
+	}))
+	defer server.Close()
+
+	client := newRawResponseTestClientWithTestSkippingLevel(server, settings.TestSkippingLevelSuite)
+	if _, _, err := client.GetSkippableTests(); err != nil {
+		t.Fatalf("GetSkippableTests() returned error: %v", err)
+	}
+
+	if captured.Data.Attributes.TestLevel != settings.TestSkippingLevelSuite {
+		t.Fatalf("test level = %q, want suite", captured.Data.Attributes.TestLevel)
 	}
 }
 
@@ -123,14 +145,14 @@ func TestTransportGetSkippableTestsErrors(t *testing.T) {
 
 func TestTransportGetSkippableTestsFiltersConfigurations(t *testing.T) {
 	response := `{"meta":{"correlation_id":"cid"},"data":[
-		{"attributes":{"suite":"suite-a","name":"match","parameters":"","configurations":{"test.bundle":"rspec","os.platform":"linux","os.version":"ubuntu","os.architecture":"amd64","runtime.name":"ruby","runtime.architecture":"x86_64","runtime.version":"3.3.0"}}},
-		{"attributes":{"suite":"suite-a","name":"no-config","parameters":"","configurations":{"test.bundle":"rspec"}}},
-		{"attributes":{"suite":"suite-a","name":"wrong-os","parameters":"","configurations":{"test.bundle":"rspec","os.platform":"windows"}}},
-		{"attributes":{"suite":"suite-a","name":"wrong-os-version","parameters":"","configurations":{"test.bundle":"rspec","os.version":"debian"}}},
-		{"attributes":{"suite":"suite-a","name":"wrong-os-arch","parameters":"","configurations":{"test.bundle":"rspec","os.architecture":"arm64"}}},
-		{"attributes":{"suite":"suite-a","name":"wrong-runtime","parameters":"","configurations":{"test.bundle":"rspec","runtime.name":"python"}}},
-		{"attributes":{"suite":"suite-a","name":"wrong-runtime-arch","parameters":"","configurations":{"test.bundle":"rspec","runtime.architecture":"arm64"}}},
-		{"attributes":{"suite":"suite-a","name":"wrong-runtime-version","parameters":"","configurations":{"test.bundle":"rspec","runtime.version":"3.2.0"}}}
+		{"type":"test","attributes":{"suite":"suite-a","name":"match","parameters":"","configurations":{"test.bundle":"rspec","os.platform":"linux","os.version":"ubuntu","os.architecture":"amd64","runtime.name":"ruby","runtime.architecture":"x86_64","runtime.version":"3.3.0"}}},
+		{"type":"test","attributes":{"suite":"suite-a","name":"no-config","parameters":"","configurations":{"test.bundle":"rspec"}}},
+		{"type":"test","attributes":{"suite":"suite-a","name":"wrong-os","parameters":"","configurations":{"test.bundle":"rspec","os.platform":"windows"}}},
+		{"type":"test","attributes":{"suite":"suite-a","name":"wrong-os-version","parameters":"","configurations":{"test.bundle":"rspec","os.version":"debian"}}},
+		{"type":"test","attributes":{"suite":"suite-a","name":"wrong-os-arch","parameters":"","configurations":{"test.bundle":"rspec","os.architecture":"arm64"}}},
+		{"type":"test","attributes":{"suite":"suite-a","name":"wrong-runtime","parameters":"","configurations":{"test.bundle":"rspec","runtime.name":"python"}}},
+		{"type":"test","attributes":{"suite":"suite-a","name":"wrong-runtime-arch","parameters":"","configurations":{"test.bundle":"rspec","runtime.architecture":"arm64"}}},
+		{"type":"test","attributes":{"suite":"suite-a","name":"wrong-runtime-version","parameters":"","configurations":{"test.bundle":"rspec","runtime.version":"3.2.0"}}}
 	]}`
 	server := newRawResponseTestServer(t, map[string]string{skippableURLPath: response})
 	defer server.Close()
@@ -150,13 +172,34 @@ func TestTransportGetSkippableTestsFiltersConfigurations(t *testing.T) {
 		"rspec.suite-a.match.",
 		"rspec.suite-a.no-config.",
 	}
-	if len(skippable) != len(expected) {
+	if len(skippable.Tests) != len(expected) {
 		t.Fatalf("unexpected skippable map: %#v", skippable)
 	}
 	for _, key := range expected {
-		if !skippable[key] {
+		if !skippable.Tests[key] {
 			t.Fatalf("expected skippable key %q in %#v", key, skippable)
 		}
+	}
+}
+
+func TestTransportGetSkippableTestsParsesMixedResponse(t *testing.T) {
+	response := `{"meta":{"correlation_id":"cid"},"data":[
+		{"type":"test","attributes":{"suite":"suite-a","name":"test-a","parameters":"","configurations":{"test.bundle":"rspec"}}},
+		{"type":"suite","attributes":{"suite":"suite-b","configurations":{"test.bundle":"rspec"}}}
+	]}`
+	server := newRawResponseTestServer(t, map[string]string{skippableURLPath: response})
+	defer server.Close()
+
+	_, skippable, err := newRawResponseTestClient(server).GetSkippableTests()
+	if err != nil {
+		t.Fatalf("GetSkippableTests() returned error: %v", err)
+	}
+
+	if !skippable.Tests["rspec.suite-a.test-a."] {
+		t.Fatalf("expected skippable test, got %#v", skippable)
+	}
+	if !skippable.Suites[SkippableSuite{Module: "rspec", Suite: "suite-b"}] {
+		t.Fatalf("expected skippable suite, got %#v", skippable)
 	}
 }
 

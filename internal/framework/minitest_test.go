@@ -1720,3 +1720,28 @@ func TestMinitest_SupportsFullTestDiscovery(t *testing.T) {
 		t.Error("expected Minitest to support full test discovery")
 	}
 }
+
+func TestMinitest_SourceFileForSuite(t *testing.T) {
+	minitest := NewMinitest()
+
+	sourceFile, ok := minitest.SourceFileForSuite("UserTest at test/models/user_test.rb")
+	if !ok || sourceFile != "test/models/user_test.rb" {
+		t.Fatalf("SourceFileForSuite() = %q, %v; want Ruby trailing path", sourceFile, ok)
+	}
+}
+
+func TestMinitest_HasUnskippableMarker(t *testing.T) {
+	tempDir := t.TempDir()
+	markedFile := filepath.Join(tempDir, "marked_test.rb")
+	if err := os.WriteFile(markedFile, []byte("datadog_itr_unskippable"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	minitest := NewMinitest()
+	if !minitest.HasUnskippableMarker(markedFile) {
+		t.Fatal("expected Ruby unskippable marker")
+	}
+	if !minitest.HasUnskippableMarker(filepath.Join(tempDir, "missing_test.rb")) {
+		t.Fatal("expected missing file to be treated as guarded")
+	}
+}

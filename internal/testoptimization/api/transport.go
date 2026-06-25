@@ -22,6 +22,7 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/runmetadata"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/utils"
 )
 
@@ -41,7 +42,7 @@ type (
 		GetTestSuiteDurations() *TestSuiteDurationsResponseData
 		GetCommits(localCommits []string) ([]string, error)
 		SendPackFiles(commitSha string, packFiles []string) (bytes int64, err error)
-		GetSkippableTests() (correlationID string, skippables SkippableTests, err error)
+		GetSkippableTests() (correlationID string, skippables Skippables, err error)
 		GetSkippableTestsRawResponse() json.RawMessage
 		GetTestManagementTests() (*TestManagementTestsResponseDataModules, error)
 		GetTestManagementTestsRawResponse() json.RawMessage
@@ -62,6 +63,7 @@ type (
 		headCommitMessage  string
 		branchName         string
 		testConfigurations testConfigurations
+		testSkippingLevel  settings.TestSkippingLevel
 		headers            map[string]string
 		handler            *RequestHandler
 
@@ -92,6 +94,14 @@ var defaultTraceAgentUDSPath = "/var/run/datadog/apm.socket"
 
 // NewTransportWithServiceNameAndSubdomain creates a new transport with the given service name and subdomain.
 func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Transport {
+	return newTransportWithServiceNameAndSubdomain(serviceName, subdomain, settings.TestSkippingLevelTest)
+}
+
+func NewTransportWithServiceNameAndTestSkippingLevel(serviceName string, testSkippingLevel settings.TestSkippingLevel) Transport {
+	return newTransportWithServiceNameAndSubdomain(serviceName, "api", testSkippingLevel)
+}
+
+func newTransportWithServiceNameAndSubdomain(serviceName, subdomain string, testSkippingLevel settings.TestSkippingLevel) Transport {
 	ciTags := environment.GetCITags()
 
 	// get the environment
@@ -228,6 +238,7 @@ func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Tran
 		headCommitSha:     ciTags[constants.GitHeadCommit],
 		headCommitMessage: ciTags[constants.GitHeadMessage],
 		branchName:        bName,
+		testSkippingLevel: testSkippingLevel,
 		testConfigurations: testConfigurations{
 			OsPlatform:     ciTags[constants.OSPlatform],
 			OsVersion:      ciTags[constants.OSVersion],
@@ -338,6 +349,13 @@ func (c *transport) GetKnownTestsRawResponse() json.RawMessage {
 
 func (c *transport) GetSkippableTestsRawResponse() json.RawMessage {
 	return cloneRawMessage(c.skippableTestsRawResponse)
+}
+
+func (c *transport) getTestSkippingLevel() settings.TestSkippingLevel {
+	if c.testSkippingLevel == "" {
+		return settings.TestSkippingLevelTest
+	}
+	return c.testSkippingLevel
 }
 
 func (c *transport) GetTestManagementTestsRawResponse() json.RawMessage {

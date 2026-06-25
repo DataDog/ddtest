@@ -15,4 +15,6 @@ type Framework interface {
 	SetPlatformEnv(platformEnv map[string]string)
 	GetPlatformEnv() map[string]string
 	SupportsFullTestDiscovery() bool
+	SourceFileForSuite(suite string) (string, bool)
+	HasUnskippableMarker(testFile string) bool
 }
