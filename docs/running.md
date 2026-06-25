@@ -6,7 +6,7 @@
   also produce file lists for other runners.
 - A **CI node** is one CI execution environment, such as a GitHub Actions job
   executor, CircleCI parallel container, Kubernetes pod, VM, or local machine.
-- A **worker** is a Ruby process started by DDTest to execute tests. One CI node
+- A **worker** is a test process started by DDTest to execute tests. One CI node
   can run one worker or several workers.
 
 `ddtest plan` decides how many CI nodes or local workers are useful and assigns
@@ -20,6 +20,12 @@ DDTest starts.
 ddtest run --platform ruby --framework rspec
 ```
 
+For Python/pytest:
+
+```bash
+ddtest run --platform python --framework pytest
+```
+
 On one CI node, the default `--min-parallelism` and `--max-parallelism` equal
 the available physical CPU core count, so DDTest can start one worker per
 physical core without defaulting to one worker per hyperthread.
@@ -31,6 +37,12 @@ then on each CI node run only its assigned files:
 
 ```bash
 ddtest run --platform ruby --framework rspec --ci-node <CI_NODE_INDEX>
+```
+
+For Python/pytest:
+
+```bash
+ddtest run --platform python --framework pytest --ci-node <CI_NODE_INDEX>
 ```
 
 In CI-node mode, DDTest uses one local worker by default so database and other
@@ -64,7 +76,8 @@ starting each worker.
 
 ## Custom Commands
 
-Use `--command` to override the framework's default test command:
+For Ruby frameworks, use `--command` to override the framework's default test
+command:
 
 ```bash
 ddtest run --platform ruby --framework rspec --command "bundle exec rspec --profile"
@@ -86,6 +99,22 @@ ddtest run --command "bundle exec my-wrapper --"
 
 If your command contains `--`, DDTest will emit a warning and automatically
 remove the `--` separator and anything after it.
+
+For pytest, DDTest runs `python -m pytest` and appends the selected test files.
+Use `PYTEST_ADDOPTS` for pytest flags. DDTest appends `--ddtrace` to
+`PYTEST_ADDOPTS` so the `ddtrace` pytest plugin loads automatically.
+
+## Pytest Discovery
+
+For Python/pytest, DDTest discovers test files using this priority:
+
+1. `--tests-location` when set.
+2. Pytest configuration from `pytest.ini`, `pyproject.toml`, `tox.ini`, or
+   `setup.cfg`, using `testpaths` and `python_files`.
+3. The built-in pattern `**/{test_*,*_test}.py`.
+
+Pytest does not have an equivalent to RSpec's pattern flag, so DDTest resolves
+the pattern to explicit file paths before invoking `python -m pytest`.
 
 ## Parallelism Selection
 

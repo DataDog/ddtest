@@ -93,3 +93,43 @@ matrix={"include":[{"ci_node_index":0,"ci_node_total":3},{"ci_node_index":1,"ci_
 
 In GitHub Actions, `ddtest plan` also writes this matrix to `$GITHUB_OUTPUT`, so
 the plan step can expose it directly as `steps.dd_plan.outputs.matrix`.
+
+## Python / Pytest Variant
+
+Use the same plan/test job structure for Python projects, but configure the
+runner and setup steps for pytest:
+
+```yaml
+env:
+  DD_TEST_OPTIMIZATION_RUNNER_PLATFORM: python
+  DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK: pytest
+  DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM: 1
+  DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM: 8
+```
+
+Replace each Ruby setup step with Python dependency installation:
+
+```yaml
+- name: Setup Python
+  uses: actions/setup-python@v5
+  with:
+    python-version: "3.12"
+    cache: pip
+- name: Install Python dependencies
+  run: python -m pip install -r requirements.txt "ddtrace>=4.10.3" pytest
+```
+
+Configure Datadog Test Optimization for Python:
+
+```yaml
+- name: Configure Datadog Test Optimization
+  uses: datadog/test-visibility-github-action@v2
+  with:
+    languages: python
+    api_key: ${{ secrets.DD_API_KEY }}
+    site: datadoghq.com
+```
+
+The `ddtest plan` and `ddtest run --ci-node ${{ matrix.ci_node_index }}`
+commands can stay the same when the platform and framework are provided through
+the environment.

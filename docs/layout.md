@@ -237,7 +237,7 @@ Fields:
 | --- | --- |
 | `name` | Test name reported by the framework. |
 | `suite` | Test suite name reported by the framework. |
-| `module` | Framework module name, such as `rspec` or `minitest`. |
+| `module` | Framework module name, such as `rspec`, `minitest`, or `pytest`. |
 | `parameters` | Serialized test parameters. |
 | `suiteSourceFile` | Source file containing the suite. |
 

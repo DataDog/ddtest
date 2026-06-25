@@ -9,7 +9,10 @@ Use `ddtest plan` once to create a reusable `.testoptimization/` plan, then use
 DDTest can also write file lists for another runner, such as Knapsack Pro or
 `parallel_tests`.
 
-Currently supported: Ruby with RSpec or Minitest.
+Currently supported:
+
+- Ruby with RSpec or Minitest.
+- Python with pytest.
 
 ## Prerequisites
 
@@ -18,6 +21,7 @@ Before using DDTest, you must have **Datadog Test Optimization** already set up 
 Minimum supported library versions:
 
 - Ruby requires the `datadog-ci` gem **1.31.0** or higher.
+- Python requires the `ddtrace` package **4.10.3** or higher and `pytest`.
 
 For instructions on setting up Test Optimization, see the [Datadog Test Optimization documentation](https://docs.datadoghq.com/tests/setup/).
 
@@ -52,6 +56,16 @@ ddtest plan \
   --max-parallelism 32
 ```
 
+For Python/pytest:
+
+```bash
+ddtest plan \
+  --platform python \
+  --framework pytest \
+  --min-parallelism 8 \
+  --max-parallelism 32
+```
+
 This prepares the plan and writes it to `.testoptimization/` folder for later reuse.
 Copy `.testoptimization/` to any CI job that runs `ddtest run` or reads DDTest's
 plan file lists. For the full file layout and formats, see
@@ -67,6 +81,12 @@ executes.
 ddtest run --platform ruby --framework rspec
 ```
 
+For Python/pytest:
+
+```bash
+ddtest run --platform python --framework pytest
+```
+
 For CI-node mode, worker environment variables, custom commands, and
 parallelism details, see [Running DDTest](docs/running.md).
 
@@ -74,9 +94,9 @@ parallelism details, see [Running DDTest](docs/running.md).
 
 | CLI flag | What it does |
 | --- | --- |
-| `--platform` | Language/platform. Currently supported: `ruby`. |
-| `--framework` | Test framework. Currently supported: `rspec`, `minitest`. |
-| `--command` | Override the default test command used by the framework. |
+| `--platform` | Language/platform. Currently supported: `ruby`, `python`. |
+| `--framework` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`. |
+| `--command` | Override the default test command used by Ruby frameworks. For pytest, use `PYTEST_ADDOPTS` for pytest flags. |
 | `--min-parallelism` | Minimum CI node or worker count DDTest considers when planning. |
 | `--max-parallelism` | Maximum CI node or worker count DDTest considers when planning. |
 | `--ci-node` | Run only the files assigned to CI node **N**. |
@@ -126,6 +146,6 @@ The list of available precompiled artifacts is on [release page](https://github.
 - [Third party test runners](docs/third-party-runners.md)
 - [GitHub Actions example](docs/examples/github-actions.md)
 - [CircleCI example](docs/examples/circleci.md)
-- [Rails discovery optimization](docs/best_practices.md)
+- [Best practices](docs/best_practices.md)
 - [Running locally with CI skippable tests and runtime tags](docs/local-ci-skippable-tests.md)
 - [DDTest 1.0 upgrade guide](docs/upgrade-1.0.md)

@@ -130,3 +130,43 @@ workflows:
     jobs:
       - test
 ```
+
+## Python / Pytest Variant
+
+Use the same setup workflow pattern for Python projects, but use a Python image,
+install pytest dependencies, and configure the runner for pytest:
+
+```yaml
+jobs:
+  plan:
+    docker:
+      - image: cimg/python:3.12
+    environment:
+      DD_ENV: ci
+      DD_TEST_OPTIMIZATION_RUNNER_PLATFORM: python
+      DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK: pytest
+      DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM: 1
+      DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM: 4
+    steps:
+      - checkout
+      - run:
+          name: Install Python dependencies
+          command: python -m pip install -r requirements.txt "ddtrace>=4.10.3" pytest
+      - test-optimization-circleci-orb/autoinstrument:
+          languages: python
+          site: datadoghq.eu
+      - run:
+          name: Plan tests with ddtest
+          command: ./bin/ddtest plan
+```
+
+In the test job, keep the restored `.testoptimization/` plan and pass the
+CircleCI node index to DDTest:
+
+```yaml
+- run:
+    name: Run tests with ddtest
+    command: |
+      NODE_INDEX=${CIRCLE_NODE_INDEX:-0}
+      ./bin/ddtest run --platform python --framework pytest --ci-node "${NODE_INDEX}"
+```
