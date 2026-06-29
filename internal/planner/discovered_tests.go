@@ -186,6 +186,8 @@ func (tp *TestPlanner) keepUnskippableMarkerSuitesRunnable(testFramework framewo
 		return
 	}
 
+	startTime := time.Now()
+	forceRunnableSuiteAggregatesCount := 0
 	unskippableFiles := make(map[string]bool)
 	for key, aggregate := range tp.suiteAggregates {
 		if aggregate.SourceFile == "" || aggregate.NumTestsSkipped == 0 {
@@ -204,7 +206,12 @@ func (tp *TestPlanner) keepUnskippableMarkerSuitesRunnable(testFramework framewo
 		aggregate.NumTestsSkipped = 0
 		aggregate.EstimatedDuration = aggregate.TotalDuration
 		tp.suiteAggregates[key] = aggregate
+		forceRunnableSuiteAggregatesCount++
 	}
+
+	slog.Info("Checked unskippable marker suites",
+		"duration", time.Since(startTime),
+		"forceRunnableSuiteAggregatesCount", forceRunnableSuiteAggregatesCount)
 }
 
 func (tp *TestPlanner) sourceFileForSuite(key testSuiteKey, testFramework framework.Framework) (string, bool) {

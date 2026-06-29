@@ -7,7 +7,7 @@ CLI flags take precedence over environment variables.
 | --- | --- | --- | ---: | --- |
 | `--platform` | `DD_TEST_OPTIMIZATION_RUNNER_PLATFORM` | | `ruby` | Language/platform. Currently supported: `ruby`, `python`. |
 | `--framework` | `DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK` | | `rspec` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`. |
-| `--command` | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND` | | `""` | Override the default test command used by Ruby frameworks. DDTest appends test files and framework-specific flags to the command. For pytest, use `PYTEST_ADDOPTS` for pytest flags. |
+| `--command` | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND` | | `""` | Override the default base test command for supported framework modes. Currently used by RSpec and Minitest run/discovery, and Jest run; pytest ignores it. DDTest appends selected tests and framework-specific flags. For pytest, use `PYTEST_ADDOPTS` for pytest flags. |
 | `--min-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM` | | physical CPU count | Minimum count DDTest considers when planning. Interpret it as CI nodes in CI-node mode, or workers in a single-node run. |
 | `--max-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM` | | physical CPU count | Maximum count DDTest considers when planning. Interpret it as CI nodes in CI-node mode, or workers in a single-node run. |
 | `--ci-job-overhead` | `DD_TEST_OPTIMIZATION_RUNNER_CI_JOB_OVERHEAD` | | `25s` | Modeled overhead for adding one more CI node. Accepts durations such as `25s`, `1m`, `1500ms`, or `0s` to disable this bias. Increase it to use fewer CI nodes; decrease it to prefer faster wall time. |

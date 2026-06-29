@@ -1178,11 +1178,12 @@ func TestTestPlanner_RecordFullDiscoveryResults_SuiteSkippablesSkipDiscoveredTes
 
 func TestTestPlanner_RecordSuiteLevelSkippables_SafetyGuardsKeepFilesRunnable(t *testing.T) {
 	tests := []struct {
-		name         string
-		testFiles    map[string]struct{}
-		durations    map[string]map[string]api.TestSuiteDurationInfo
-		framework    *MockFramework
-		expectedFile string
+		name                                      string
+		testFiles                                 map[string]struct{}
+		durations                                 map[string]map[string]api.TestSuiteDurationInfo
+		framework                                 *MockFramework
+		expectedFile                              string
+		expectedForceRunnableSuiteAggregatesCount int
 	}{
 		{
 			name:      "unskippable marker",
@@ -1196,6 +1197,7 @@ func TestTestPlanner_RecordSuiteLevelSkippables_SafetyGuardsKeepFilesRunnable(t 
 				UnskippableFiles: map[string]bool{"spec/models/order_spec.rb": true},
 			},
 			expectedFile: "spec/models/order_spec.rb",
+			expectedForceRunnableSuiteAggregatesCount: 1,
 		},
 		{
 			name:      "unresolved suite source",
@@ -1204,11 +1206,13 @@ func TestTestPlanner_RecordSuiteLevelSkippables_SafetyGuardsKeepFilesRunnable(t 
 				SuiteSourceFiles: map[string]string{},
 			},
 			expectedFile: "spec/models/order_spec.rb",
+			expectedForceRunnableSuiteAggregatesCount: 0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			logs := captureLogs(t)
 			runner := newTestPlannerWithDefaults()
 			runner.testFiles = tt.testFiles
 			runner.testSuiteDurations = tt.durations
@@ -1227,6 +1231,13 @@ func TestTestPlanner_RecordSuiteLevelSkippables_SafetyGuardsKeepFilesRunnable(t 
 
 			if _, ok := weights[tt.expectedFile]; !ok {
 				t.Fatalf("expected %s to remain runnable, got weights %+v and aggregates %+v", tt.expectedFile, weights, runner.suiteAggregates)
+			}
+			if !strings.Contains(logs.String(), "Checked unskippable marker suites") {
+				t.Fatalf("expected unskippable marker suite guard log, got logs: %s", logs.String())
+			}
+			expectedCountLog := fmt.Sprintf("forceRunnableSuiteAggregatesCount=%d", tt.expectedForceRunnableSuiteAggregatesCount)
+			if !strings.Contains(logs.String(), expectedCountLog) {
+				t.Fatalf("expected unskippable marker suite guard log to include %s, got logs: %s", expectedCountLog, logs.String())
 			}
 		})
 	}
