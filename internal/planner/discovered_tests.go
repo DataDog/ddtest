@@ -152,10 +152,6 @@ func (tp *TestPlanner) recordSuiteLevelSkippables(skippableMatcher skippableMatc
 			slog.Debug("Skippable suite source file was not discovered or was excluded; ignoring suite", "module", suite.Module, "suite", suite.Suite, "sourceFile", sourceFile)
 			continue
 		}
-		if testFramework.HasUnskippableMarker(sourceFile) {
-			slog.Info("Skippable suite source file contains an unskippable marker; keeping file runnable", "sourceFile", sourceFile)
-			continue
-		}
 
 		duration := float64(time.Second)
 		durationSource := testFileDurationSourceDefault
@@ -181,6 +177,32 @@ func (tp *TestPlanner) recordSuiteLevelSkippables(skippableMatcher skippableMatc
 			aggregate.NumTests = 1
 		}
 		aggregate.NumTestsSkipped = aggregate.NumTests
+		tp.suiteAggregates[key] = aggregate
+	}
+}
+
+func (tp *TestPlanner) keepUnskippableMarkerSuitesRunnable(testFramework framework.Framework) {
+	if testFramework == nil {
+		return
+	}
+
+	unskippableFiles := make(map[string]bool)
+	for key, aggregate := range tp.suiteAggregates {
+		if aggregate.SourceFile == "" || aggregate.NumTestsSkipped == 0 {
+			continue
+		}
+
+		unskippable, ok := unskippableFiles[aggregate.SourceFile]
+		if !ok {
+			unskippable = testFramework.HasUnskippableMarker(aggregate.SourceFile)
+			unskippableFiles[aggregate.SourceFile] = unskippable
+		}
+		if !unskippable {
+			continue
+		}
+
+		aggregate.NumTestsSkipped = 0
+		aggregate.EstimatedDuration = aggregate.TotalDuration
 		tp.suiteAggregates[key] = aggregate
 	}
 }
