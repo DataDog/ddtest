@@ -62,6 +62,12 @@ func TestRootCommandFlags(t *testing.T) {
 		return
 	}
 
+	forceFullTestDiscoveryFlag := rootCmd.PersistentFlags().Lookup("force-full-test-discovery")
+	if forceFullTestDiscoveryFlag == nil {
+		t.Error("force-full-test-discovery flag should be defined")
+		return
+	}
+
 	ciNodeWorkersFlag := rootCmd.PersistentFlags().Lookup("ci-node-workers")
 	if ciNodeWorkersFlag == nil {
 		t.Error("ci-node-workers flag should be defined")
@@ -107,6 +113,10 @@ func TestRootCommandFlags(t *testing.T) {
 
 	if testSkippingModeFlag.DefValue != "test" {
 		t.Errorf("expected test-skipping-mode default to be 'test', got %q", testSkippingModeFlag.DefValue)
+	}
+
+	if forceFullTestDiscoveryFlag.DefValue != "false" {
+		t.Errorf("expected force-full-test-discovery default to be 'false', got %q", forceFullTestDiscoveryFlag.DefValue)
 	}
 
 	if ciNodeWorkersFlag.DefValue != "1" {
@@ -345,6 +355,9 @@ func TestFlagBinding(t *testing.T) {
 	if err := rootCmd.PersistentFlags().Set("test-skipping-mode", "suite"); err != nil {
 		t.Fatalf("Error setting test-skipping-mode flag: %v", err)
 	}
+	if err := rootCmd.PersistentFlags().Set("force-full-test-discovery", "true"); err != nil {
+		t.Fatalf("Error setting force-full-test-discovery flag: %v", err)
+	}
 	if err := rootCmd.PersistentFlags().Set("ci-node-workers", "ncpu"); err != nil {
 		t.Fatalf("Error setting ci-node-workers flag: %v", err)
 	}
@@ -376,6 +389,9 @@ func TestFlagBinding(t *testing.T) {
 	}
 	if viper.GetString("test_skipping_mode") != "suite" {
 		t.Errorf("expected viper test_skipping_mode to be 'suite', got %q", viper.GetString("test_skipping_mode"))
+	}
+	if !viper.GetBool("force_full_test_discovery") {
+		t.Error("expected viper force_full_test_discovery to be true")
 	}
 	if viper.GetString("ci_node_workers") != "ncpu" {
 		t.Errorf("expected viper ci_node_workers to be 'ncpu', got %q", viper.GetString("ci_node_workers"))

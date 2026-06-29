@@ -76,16 +76,17 @@ starting each worker.
 
 ## Custom Commands
 
-For Ruby frameworks, use `--command` to override the framework's default test
-command:
+Use `--command` to override the framework's default base test command where
+supported. DDTest currently applies this override to RSpec run and full
+discovery, Minitest run and full discovery, and Jest run:
 
 ```bash
 ddtest run --platform ruby --framework rspec --command "bundle exec rspec --profile"
 ```
 
 When using `--command`, do not include the `--` separator or test files in your
-command. DDTest automatically appends test files and framework-specific flags to
-the command you provide.
+command. DDTest automatically appends selected tests and framework-specific
+flags to the command you provide.
 
 Incorrect:
 
@@ -100,9 +101,10 @@ ddtest run --command "bundle exec my-wrapper --"
 If your command contains `--`, DDTest will emit a warning and automatically
 remove the `--` separator and anything after it.
 
-For pytest, DDTest runs `python -m pytest` and appends the selected test files.
-Use `PYTEST_ADDOPTS` for pytest flags. DDTest appends `--ddtrace` to
-`PYTEST_ADDOPTS` so the `ddtrace` pytest plugin loads automatically.
+For pytest, use `PYTEST_ADDOPTS` for pytest flags. DDTest currently runs
+`python -m pytest` and appends the selected test files. DDTest appends
+`--ddtrace` to `PYTEST_ADDOPTS` so the `ddtrace` pytest plugin loads
+automatically.
 
 ## Pytest Discovery
 

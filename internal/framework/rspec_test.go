@@ -287,12 +287,6 @@ func TestRSpec_DiscoverTests_Success(t *testing.T) {
 		err:    nil,
 		onExecution: func(name string, args []string) {
 			// Verify the command has necessary arguments
-			if !slices.Contains(args, "--format") {
-				t.Error("expected --format argument")
-			}
-			if !slices.Contains(args, "progress") {
-				t.Error("expected progress argument")
-			}
 			if !slices.Contains(args, "--dry-run") {
 				t.Error("expected --dry-run argument")
 			}
@@ -355,6 +349,76 @@ func TestRSpec_DiscoverTests_Success(t *testing.T) {
 		if actual.SuiteSourceFile != expected.SuiteSourceFile {
 			t.Errorf("test[%d].SuiteSourceFile: expected %q, got %q", i, expected.SuiteSourceFile, actual.SuiteSourceFile)
 		}
+	}
+}
+
+func TestRSpec_DiscoverTests_WithCommandOverride(t *testing.T) {
+	if err := os.MkdirAll(filepath.Dir(discovery.TestsFilePath), 0755); err != nil {
+		t.Fatalf("failed to create discovery directory: %v", err)
+	}
+	defer cleanupDiscoveryDir()
+
+	testFile := "spec/models/user_spec.rb"
+	testData := []testoptimization.Test{
+		{
+			Name:            "User should be valid",
+			Suite:           "User",
+			Module:          "rspec",
+			Parameters:      "{}",
+			SuiteSourceFile: testFile,
+		},
+	}
+
+	var capturedName string
+	var capturedArgs []string
+	mockExecutor := &mockCommandExecutor{
+		output: []byte("Finished in 0.12345 seconds"),
+		err:    nil,
+		onExecution: func(name string, args []string) {
+			capturedName = name
+			capturedArgs = append([]string(nil), args...)
+
+			file, err := os.Create(discovery.TestsFilePath)
+			if err != nil {
+				t.Fatalf("mock failed to create test file: %v", err)
+			}
+			defer func() { _ = file.Close() }()
+
+			encoder := json.NewEncoder(file)
+			for _, test := range testData {
+				if err := encoder.Encode(test); err != nil {
+					t.Fatalf("mock failed to encode test data: %v", err)
+				}
+			}
+		},
+	}
+
+	rspec := newTestRSpecWithExecutorAndOverride(
+		mockExecutor,
+		[]string{"./ci/rspec-wrapper", "-r", "/app/lib/spec_helper.rb"},
+	)
+	tests, err := discoverAndParseTests(t, rspec, discovery.TestFileSet{ExplicitFiles: []string{testFile}})
+	if err != nil {
+		t.Fatalf("DiscoverTests failed: %v", err)
+	}
+
+	if len(tests) != len(testData) {
+		t.Fatalf("expected %d discovered tests, got %d", len(testData), len(tests))
+	}
+	if capturedName != "./ci/rspec-wrapper" {
+		t.Fatalf("expected command override './ci/rspec-wrapper', got %q", capturedName)
+	}
+	if !slices.Contains(capturedArgs, "-r") || !slices.Contains(capturedArgs, "/app/lib/spec_helper.rb") {
+		t.Errorf("expected args to include custom require, got %v", capturedArgs)
+	}
+	if !slices.Contains(capturedArgs, "--dry-run") {
+		t.Errorf("expected args to include --dry-run, got %v", capturedArgs)
+	}
+	if !slices.Contains(capturedArgs, testFile) {
+		t.Errorf("expected args to include explicit test file %q, got %v", testFile, capturedArgs)
+	}
+	if slices.Contains(capturedArgs, "--pattern") {
+		t.Errorf("expected explicit-file discovery not to include --pattern, got %v", capturedArgs)
 	}
 }
 

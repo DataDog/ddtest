@@ -56,8 +56,9 @@ func (r *RSpec) DiscoverTests(ctx context.Context, testFiles discovery.TestFileS
 		return []testoptimization.Test{}, nil
 	}
 
-	executable := "bundle"
-	args := []string{"exec", "rspec", "--format", "progress", "--dry-run"}
+	executable, baseArgs := r.getRSpecCommand()
+	args := append([]string{}, baseArgs...)
+	args = append(args, "--dry-run")
 	if testFiles.UseExplicitFiles() {
 		args = append(args, testFiles.ExplicitFiles...)
 	} else {

@@ -283,7 +283,8 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	isSuiteLevelSkipping := testSkippingLevel == settings.TestSkippingLevelSuite
 	isTestLevelSkipping := testSkippingLevel == settings.TestSkippingLevelTest
 	fullTestDiscoverySupported := testFramework.SupportsFullTestDiscovery()
-	fullDiscoveryNeeded := isTestLevelSkipping && fullTestDiscoverySupported
+	forceFullTestDiscovery := settings.GetForceFullTestDiscovery()
+	fullDiscoveryNeeded := fullTestDiscoverySupported && (isTestLevelSkipping || forceFullTestDiscovery)
 	tp.runInfo = runmetadata.New(environment.GetCITags())
 	tp.planInfo = NewPlanInfo(tags, detectedPlatform.Name(), testFramework.Name(), testSkippingLevel)
 	if tp.optimizationClient == nil {
@@ -348,7 +349,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		skipMatcher = tp.fetchSkippables(tiaSkippingEnabled)
 		tp.planReport.SkippableTestsCount = skipMatcher.Count()
 
-		if tiaSkippingEnabled && skipMatcher.TIASkippablesCount() == 0 {
+		if tiaSkippingEnabled && skipMatcher.TIASkippablesCount() == 0 && !forceFullTestDiscovery {
 			slog.Info("No TIA-skippable tests or suites found for this run, cancelling full test discovery")
 			cancelDiscovery()
 		}
@@ -363,7 +364,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	// Goroutine 2: Tests discovery (respects context cancellation)
 	g.Go(func() error {
 		if !fullDiscoveryNeeded {
-			if isSuiteLevelSkipping {
+			if isSuiteLevelSkipping && !forceFullTestDiscovery {
 				slog.Info("Suite-level skipping does not require full test discovery; using fast test file discovery fallback", "framework", testFramework.Name())
 				return nil
 			}
@@ -444,6 +445,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 			"fastDiscoveredTestFilesCount", len(discoveredTestFiles))
 	}
 
+	tp.keepUnskippableMarkerSuitesRunnable(testFramework)
 	tp.suitesBySourceFile = indexSuitesBySourceFile(tp.suiteAggregates)
 	tp.skippablePercentage = calculateSavedTimePercentage(tp.suiteAggregates)
 	tp.testFileWeights = tp.calculateFileWeights()
