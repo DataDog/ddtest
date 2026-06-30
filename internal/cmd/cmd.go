@@ -73,6 +73,7 @@ var rootPersistentFlagBindings = []persistentFlagBinding{
 	{configKey: "test_discovery_cache", flagName: "test-discovery-cache"},
 	{configKey: "test_skipping_mode", flagName: "test-skipping-mode"},
 	{configKey: "force_full_test_discovery", flagName: "force-full-test-discovery"},
+	{configKey: "strict_discovery", flagName: "strict-discovery"},
 	{configKey: "runtime_tags", flagName: "runtime-tags"},
 }
 
@@ -93,6 +94,7 @@ func init() {
 	rootCmd.PersistentFlags().String("test-discovery-cache", "", "Path to a restored test discovery cache file to import before planning")
 	rootCmd.PersistentFlags().String("test-skipping-mode", "test", `TIA skipping granularity for Ruby ("test" or "suite"; invalid values fall back to "test")`)
 	rootCmd.PersistentFlags().Bool("force-full-test-discovery", false, "Force full test discovery when the framework supports it")
+	rootCmd.PersistentFlags().Bool("strict-discovery", false, "Fail planning when full test discovery fails")
 	rootCmd.PersistentFlags().String("runtime-tags", "", "JSON string to override runtime tags (e.g. '{\"os.platform\":\"linux\",\"runtime.version\":\"3.2.0\"}')")
 	if err := bindPersistentFlags(rootCmd, rootPersistentFlagBindings); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding CLI flags: %v\n", err)

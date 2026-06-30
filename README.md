@@ -102,6 +102,7 @@ parallelism details, see [Running DDTest](docs/running.md).
 | `--ci-node` | Run only the files assigned to CI node **N**. |
 | `--tests-location` | Override the default test file discovery glob. |
 | `--tests-exclude-pattern` | Exclude matching test files from discovery. |
+| `--strict-discovery` | Fail planning when full test discovery fails. |
 
 For all flags, environment variables, and defaults, see
 [Settings](docs/settings.md).

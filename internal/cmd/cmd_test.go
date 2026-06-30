@@ -68,6 +68,12 @@ func TestRootCommandFlags(t *testing.T) {
 		return
 	}
 
+	strictDiscoveryFlag := rootCmd.PersistentFlags().Lookup("strict-discovery")
+	if strictDiscoveryFlag == nil {
+		t.Error("strict-discovery flag should be defined")
+		return
+	}
+
 	ciNodeWorkersFlag := rootCmd.PersistentFlags().Lookup("ci-node-workers")
 	if ciNodeWorkersFlag == nil {
 		t.Error("ci-node-workers flag should be defined")
@@ -117,6 +123,10 @@ func TestRootCommandFlags(t *testing.T) {
 
 	if forceFullTestDiscoveryFlag.DefValue != "false" {
 		t.Errorf("expected force-full-test-discovery default to be 'false', got %q", forceFullTestDiscoveryFlag.DefValue)
+	}
+
+	if strictDiscoveryFlag.DefValue != "false" {
+		t.Errorf("expected strict-discovery default to be 'false', got %q", strictDiscoveryFlag.DefValue)
 	}
 
 	if ciNodeWorkersFlag.DefValue != "1" {
@@ -358,6 +368,9 @@ func TestFlagBinding(t *testing.T) {
 	if err := rootCmd.PersistentFlags().Set("force-full-test-discovery", "true"); err != nil {
 		t.Fatalf("Error setting force-full-test-discovery flag: %v", err)
 	}
+	if err := rootCmd.PersistentFlags().Set("strict-discovery", "true"); err != nil {
+		t.Fatalf("Error setting strict-discovery flag: %v", err)
+	}
 	if err := rootCmd.PersistentFlags().Set("ci-node-workers", "ncpu"); err != nil {
 		t.Fatalf("Error setting ci-node-workers flag: %v", err)
 	}
@@ -392,6 +405,9 @@ func TestFlagBinding(t *testing.T) {
 	}
 	if !viper.GetBool("force_full_test_discovery") {
 		t.Error("expected viper force_full_test_discovery to be true")
+	}
+	if !viper.GetBool("strict_discovery") {
+		t.Error("expected viper strict_discovery to be true")
 	}
 	if viper.GetString("ci_node_workers") != "ncpu" {
 		t.Errorf("expected viper ci_node_workers to be 'ncpu', got %q", viper.GetString("ci_node_workers"))

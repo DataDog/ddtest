@@ -155,6 +155,13 @@ func setPlannerForceFullTestDiscovery(t *testing.T, enabled bool) {
 	settings.Init()
 }
 
+func setPlannerStrictDiscovery(t *testing.T, enabled bool) {
+	t.Helper()
+	t.Cleanup(settings.Init)
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_STRICT_DISCOVERY", strconv.FormatBool(enabled))
+	settings.Init()
+}
+
 func (m *MockFramework) Name() string {
 	return m.FrameworkName
 }
@@ -1049,6 +1056,7 @@ func TestTestPlanner_PreparePlanningData_ForceFullDiscoveryKeepsRunningWithNoTIA
 func TestTestPlanner_PreparePlanningData_ForceFullDiscoveryUnsupportedFrameworkUsesSuiteFallback(t *testing.T) {
 	t.Chdir(t.TempDir())
 	setPlannerForceFullTestDiscovery(t, true)
+	logs := captureLogs(t)
 
 	mockFramework := &MockFramework{
 		FrameworkName:            "jest",
@@ -1088,6 +1096,10 @@ func TestTestPlanner_PreparePlanningData_ForceFullDiscoveryUnsupportedFrameworkU
 	}
 	if _, ok := runner.testFileWeights["src/b.test.js"]; !ok {
 		t.Fatalf("expected suite fallback to keep runnable file, got weights: %+v", runner.testFileWeights)
+	}
+	if !strings.Contains(logs.String(), "level=WARN") ||
+		!strings.Contains(logs.String(), "Full test discovery was forced but is not supported by framework") {
+		t.Fatalf("expected warning when forced full discovery is unsupported, got logs: %s", logs.String())
 	}
 }
 
@@ -2833,6 +2845,78 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesBackendDurations(t *te
 
 	if weight, ok := runner.testFileWeight("spec/backend_only_spec.rb"); !ok || weight != 42 {
 		t.Errorf("Expected fast-discovery file to use backend p50 converted to 42ms, got weight=%d ok=%t", weight, ok)
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_StrictDiscoveryFailsWhenFullDiscoveryFails(t *testing.T) {
+	t.Chdir(t.TempDir())
+	setPlannerStrictDiscovery(t, true)
+	ctx := context.Background()
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
+
+	mockFramework := &MockFramework{
+		FrameworkName:    "rspec",
+		TestFiles:        []string{"spec/local_spec.rb"},
+		DiscoverTestsErr: errors.New("duplicate shared_context name"),
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		&MockTestOptimizationClient{},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	err := runner.PreparePlanningData(ctx)
+	if err == nil {
+		t.Fatal("PreparePlanningData() should fail when strict discovery is enabled and full discovery fails")
+	}
+	if !strings.Contains(err.Error(), "full test discovery failed") {
+		t.Fatalf("PreparePlanningData() error = %v, want full discovery failure", err)
+	}
+	if !strings.Contains(err.Error(), "duplicate shared_context name") {
+		t.Fatalf("PreparePlanningData() error = %v, want original discovery error", err)
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_StrictDiscoveryDoesNotFailWhenFullDiscoveryIsCancelled(t *testing.T) {
+	t.Chdir(t.TempDir())
+	setPlannerStrictDiscovery(t, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	environment.ResetCITags()
+	t.Cleanup(environment.ResetCITags)
+
+	mockFramework := &longRunningDiscoveryFramework{
+		MockFramework: MockFramework{
+			FrameworkName: "rspec",
+			TestFiles:     []string{"spec/local_spec.rb"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings:   testOptimizationSettings(true, true, false),
+		Skippables: testSkippables(map[string]bool{}),
+	}
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		mockOptimizationClient,
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.PreparePlanningData(ctx); err != nil {
+		t.Fatalf("PreparePlanningData() should not fail when strict discovery is enabled and full discovery is cancelled, got: %v", err)
+	}
+	if _, ok := runner.testFiles["spec/local_spec.rb"]; !ok {
+		t.Fatalf("expected fast-discovered file after cancelled full discovery, got %v", runner.testFiles)
 	}
 }
 

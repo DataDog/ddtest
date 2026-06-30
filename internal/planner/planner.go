@@ -284,6 +284,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	isTestLevelSkipping := testSkippingLevel == settings.TestSkippingLevelTest
 	fullTestDiscoverySupported := testFramework.SupportsFullTestDiscovery()
 	forceFullTestDiscovery := settings.GetForceFullTestDiscovery()
+	strictDiscovery := settings.GetStrictDiscovery()
 	fullDiscoveryNeeded := fullTestDiscoverySupported && (isTestLevelSkipping || forceFullTestDiscovery)
 	tp.runInfo = runmetadata.New(environment.GetCITags())
 	tp.planInfo = NewPlanInfo(tags, detectedPlatform.Name(), testFramework.Name(), testSkippingLevel)
@@ -303,6 +304,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	var discoveredTestFiles []string
 	var discoveredTests []testoptimization.Test
 	var fullDiscoverySucceeded bool
+	var fullDiscoveryErr error
 	var fastDiscoveryErr error
 	var tiaSkippingEnabled bool
 
@@ -368,6 +370,10 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 				slog.Info("Suite-level skipping does not require full test discovery; using fast test file discovery fallback", "framework", testFramework.Name())
 				return nil
 			}
+			if forceFullTestDiscovery && !fullTestDiscoverySupported {
+				slog.Warn("Full test discovery was forced but is not supported by framework; using fast test file discovery fallback", "framework", testFramework.Name())
+				return nil
+			}
 			slog.Info("Full test discovery is not supported by framework; using fast test file discovery fallback", "framework", testFramework.Name())
 			return nil
 		}
@@ -380,6 +386,9 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 
 		res, discoveryErr := discoverLocalTests(discoveryCtx, testFramework, resolvedTestFiles)
 		if discoveryErr != nil {
+			if discoveryCtx.Err() == nil {
+				fullDiscoveryErr = discoveryErr
+			}
 			return nil // Don't fail the entire process, we have fast discovery as fallback.
 		}
 		discoveryCache.store()
@@ -430,6 +439,9 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		slog.Info("Full test discovery succeeded; using full discovery results and ignoring fast-discovered-only files",
 			"fastDiscoveredTestFilesCount", len(discoveredTestFiles))
 	} else {
+		if strictDiscovery && fullDiscoveryErr != nil {
+			return fmt.Errorf("full test discovery failed: %w", fullDiscoveryErr)
+		}
 		if fastDiscoveryErr != nil {
 			return fmt.Errorf("test discovery failed: %w", fastDiscoveryErr)
 		}

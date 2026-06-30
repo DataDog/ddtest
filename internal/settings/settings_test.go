@@ -158,6 +158,9 @@ func TestInit(t *testing.T) {
 	if config.ForceFullTestDiscovery {
 		t.Error("expected default force_full_test_discovery to be false")
 	}
+	if config.StrictDiscovery {
+		t.Error("expected default strict_discovery to be false")
+	}
 	if config.RuntimeTags != "" {
 		t.Errorf("expected default runtime_tags to be empty, got %q", config.RuntimeTags)
 	}
@@ -213,6 +216,9 @@ func TestSetDefaults(t *testing.T) {
 	}
 	if viper.GetBool("force_full_test_discovery") {
 		t.Error("expected default force_full_test_discovery to be false")
+	}
+	if viper.GetBool("strict_discovery") {
+		t.Error("expected default strict_discovery to be false")
 	}
 	if viper.GetString("runtime_tags") != "" {
 		t.Errorf("expected default runtime_tags to be empty, got %q", viper.GetString("runtime_tags"))
@@ -296,6 +302,7 @@ func TestEnvironmentVariables(t *testing.T) {
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE", "/tmp/ddtest-tests.json")
 	_ = os.Setenv("DD_TESTOPTIMIZATION_TIA_TEST_SKIPPING_MODE", "suite")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_FORCE_FULL_TEST_DISCOVERY", "true")
+	_ = os.Setenv(strictDiscoveryEnv, "true")
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS", `{"os.platform":"linux","runtime.version":"3.2.0"}`)
 	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED", "false")
 	defer func() {
@@ -313,6 +320,7 @@ func TestEnvironmentVariables(t *testing.T) {
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE")
 		_ = os.Unsetenv("DD_TESTOPTIMIZATION_TIA_TEST_SKIPPING_MODE")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_FORCE_FULL_TEST_DISCOVERY")
+		_ = os.Unsetenv(strictDiscoveryEnv)
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS")
 		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED")
 	}()
@@ -360,6 +368,9 @@ func TestEnvironmentVariables(t *testing.T) {
 	}
 	if !config.ForceFullTestDiscovery {
 		t.Error("expected force_full_test_discovery from env var to be true")
+	}
+	if !config.StrictDiscovery {
+		t.Error("expected strict_discovery from env var to be true")
 	}
 	if config.RuntimeTags != `{"os.platform":"linux","runtime.version":"3.2.0"}` {
 		t.Errorf("expected runtime_tags from env var to be JSON string, got %q", config.RuntimeTags)
@@ -554,6 +565,20 @@ func TestGetForceFullTestDiscovery(t *testing.T) {
 	config = &Config{ForceFullTestDiscovery: true}
 	if got := GetForceFullTestDiscovery(); !got {
 		t.Fatal("GetForceFullTestDiscovery() configured = false, want true")
+	}
+}
+
+func TestGetStrictDiscovery(t *testing.T) {
+	config = nil
+	viper.Reset()
+
+	if got := GetStrictDiscovery(); got {
+		t.Fatal("GetStrictDiscovery() default = true, want false")
+	}
+
+	config = &Config{StrictDiscovery: true}
+	if got := GetStrictDiscovery(); !got {
+		t.Fatal("GetStrictDiscovery() configured = false, want true")
 	}
 }
 

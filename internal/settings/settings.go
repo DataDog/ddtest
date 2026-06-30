@@ -23,6 +23,7 @@ const (
 	testDiscoveryCacheEnv         = "DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE"
 	testSkippingModeEnv           = "DD_TESTOPTIMIZATION_TIA_TEST_SKIPPING_MODE"
 	forceFullTestDiscoveryEnv     = "DD_TEST_OPTIMIZATION_RUNNER_FORCE_FULL_TEST_DISCOVERY"
+	strictDiscoveryEnv            = "DD_TEST_OPTIMIZATION_RUNNER_STRICT_DISCOVERY"
 	knapsackTestFilePatternEnv    = "KNAPSACK_PRO_TEST_FILE_PATTERN"
 	knapsackTestFileExcludeEnv    = "KNAPSACK_PRO_TEST_FILE_EXCLUDE_PATTERN"
 )
@@ -108,6 +109,7 @@ type Config struct {
 	TestDiscoveryCache     string            `mapstructure:"test_discovery_cache"`
 	TestSkippingLevel      TestSkippingLevel `mapstructure:"test_skipping_mode"`
 	ForceFullTestDiscovery bool              `mapstructure:"force_full_test_discovery"`
+	StrictDiscovery        bool              `mapstructure:"strict_discovery"`
 	RuntimeTags            string            `mapstructure:"runtime_tags"`
 	ReportEnabled          bool              `mapstructure:"report_enabled"`
 }
@@ -142,6 +144,10 @@ func Init() {
 	}
 	if err := viper.BindEnv("force_full_test_discovery", forceFullTestDiscoveryEnv); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding force full test discovery env: %v\n", err)
+		os.Exit(1)
+	}
+	if err := viper.BindEnv("strict_discovery", strictDiscoveryEnv); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding strict discovery env: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -183,6 +189,7 @@ func setDefaults() {
 	viper.SetDefault("test_discovery_cache", "")
 	viper.SetDefault("test_skipping_mode", TestSkippingLevelTest)
 	viper.SetDefault("force_full_test_discovery", false)
+	viper.SetDefault("strict_discovery", false)
 	viper.SetDefault("runtime_tags", "")
 	viper.SetDefault("report_enabled", true)
 }
@@ -303,6 +310,10 @@ func GetTestSkippingLevel() TestSkippingLevel {
 
 func GetForceFullTestDiscovery() bool {
 	return Get().ForceFullTestDiscovery
+}
+
+func GetStrictDiscovery() bool {
+	return Get().StrictDiscovery
 }
 
 func GetRuntimeTags() string {
