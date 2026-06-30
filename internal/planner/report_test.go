@@ -80,6 +80,11 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 			Disabled:     3,
 			AttemptToFix: 5,
 		},
+		TestSuiteDurations: testSuiteDurationsReport{
+			Available: true,
+			Modules:   3,
+			Suites:    1491,
+		},
 		Planning: planningReport{
 			TestFilesDiscovered: 642,
 			FullySkippedFiles:   118,
@@ -170,6 +175,7 @@ Backend data
   Known tests: 4 modules, 1,284 suites, 18,921 tests
   Skippable tests for this run: 312
   Managed flaky tests: 26 total, 8 quarantined, 3 disabled, 5 attempt-to-fix
+  Test suite durations: 3 modules, 1,491 suites
 
 Planning
   Test files discovered: 642
@@ -214,6 +220,9 @@ func TestPrintPlanReport_MissingSettingsAndData(t *testing.T) {
 	}
 	if !strings.Contains(report, "  Managed flaky tests: not available") {
 		t.Errorf("expected missing managed flaky tests message, got:\n%s", report)
+	}
+	if !strings.Contains(report, "  Test suite durations: not available") {
+		t.Errorf("expected missing test suite durations message, got:\n%s", report)
 	}
 }
 
@@ -346,6 +355,21 @@ func TestReportSummaries(t *testing.T) {
 	})
 	if managed.Total != 3 || managed.Quarantined != 1 || managed.Disabled != 1 || managed.AttemptToFix != 1 {
 		t.Errorf("unexpected managed flaky test summary: %+v", managed)
+	}
+
+	durations := newTestSuiteDurationsReport(&api.TestSuiteDurationsResponseData{
+		TestSuites: map[string]map[string]api.TestSuiteDurationInfo{
+			"module-a": {
+				"suite-a": {},
+				"suite-b": {},
+			},
+			"module-b": {
+				"suite-c": {},
+			},
+		},
+	})
+	if durations.Modules != 2 || durations.Suites != 3 {
+		t.Errorf("unexpected test suite durations summary: %+v", durations)
 	}
 }
 

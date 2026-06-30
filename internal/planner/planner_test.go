@@ -1976,6 +1976,11 @@ func TestTestPlanner_PreparePlanningData_Success(t *testing.T) {
 	if !mockOptimizationClient.DurationsCalled {
 		t.Error("PreparePlanningData() should fetch test suite durations")
 	}
+	if !runner.planReport.TestSuiteDurations.Available ||
+		runner.planReport.TestSuiteDurations.Modules != 1 ||
+		runner.planReport.TestSuiteDurations.Suites != 1 {
+		t.Errorf("Expected plan report to summarize fetched durations, got %+v", runner.planReport.TestSuiteDurations)
+	}
 }
 
 func TestTestPlanner_PreparePlanningData_DisabledTestManagementTestsAreSkipped(t *testing.T) {
@@ -2444,6 +2449,11 @@ func TestTestPlanner_PreparePlanningData_EmptyDurationsContinues(t *testing.T) {
 	if len(runner.testSuiteDurations) != 0 {
 		t.Errorf("Expected empty in-memory test suite durations on empty response, got %v", runner.testSuiteDurations)
 	}
+	if !runner.planReport.TestSuiteDurations.Available ||
+		runner.planReport.TestSuiteDurations.Modules != 0 ||
+		runner.planReport.TestSuiteDurations.Suites != 0 {
+		t.Errorf("Expected plan report to summarize empty durations response, got %+v", runner.planReport.TestSuiteDurations)
+	}
 }
 
 func TestTestPlanner_PreparePlanningData_NonEmptyDurationsUsesP50ForMatchingSuites(t *testing.T) {
@@ -2492,6 +2502,11 @@ func TestTestPlanner_PreparePlanningData_NonEmptyDurationsUsesP50ForMatchingSuit
 
 	if len(runner.testSuiteDurations) != 1 {
 		t.Fatalf("Expected stored durations data, got %v", runner.testSuiteDurations)
+	}
+	if !runner.planReport.TestSuiteDurations.Available ||
+		runner.planReport.TestSuiteDurations.Modules != 1 ||
+		runner.planReport.TestSuiteDurations.Suites != 2 {
+		t.Errorf("Expected plan report to summarize fetched durations, got %+v", runner.planReport.TestSuiteDurations)
 	}
 
 	if _, ok := runner.testFiles["spec/file1_test.rb"]; !ok {

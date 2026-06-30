@@ -151,6 +151,7 @@ func printBackendDataReport(w io.Writer, report planReport) {
 	reportFprintf(w, "  Known tests: %s\n", formatKnownTests(report.DatadogSettings, report.KnownTests))
 	reportFprintf(w, "  Skippable tests for this run: %s\n", formatSkippableTests(report.DatadogSettings, report.SkippableTestsCount))
 	reportFprintf(w, "  Managed flaky tests: %s\n", formatManagedFlakyTests(report.DatadogSettings, report.ManagedFlakyTests))
+	reportFprintf(w, "  Test suite durations: %s\n", formatTestSuiteDurations(report.TestSuiteDurations))
 }
 
 func printPlanningReport(w io.Writer, report planningReport) {
@@ -308,6 +309,15 @@ func formatManagedFlakyTests(settings datadogSettingsReport, managed managedFlak
 		formatCount(managed.Quarantined),
 		formatCount(managed.Disabled),
 		formatCount(managed.AttemptToFix))
+}
+
+func formatTestSuiteDurations(durations testSuiteDurationsReport) string {
+	if !durations.Available {
+		return "not available"
+	}
+	return fmt.Sprintf("%s modules, %s suites",
+		formatCount(durations.Modules),
+		formatCount(durations.Suites))
 }
 
 func formatTagList(tags map[string]string, keys ...string) string {

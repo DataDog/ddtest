@@ -356,7 +356,9 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 			cancelDiscovery()
 		}
 
-		if testSuiteDurations := tp.optimizationClient.GetTestSuiteDurations(); testSuiteDurations != nil && testSuiteDurations.TestSuites != nil {
+		testSuiteDurations := tp.optimizationClient.GetTestSuiteDurations()
+		tp.planReport.TestSuiteDurations = newTestSuiteDurationsReport(testSuiteDurations)
+		if testSuiteDurations != nil && testSuiteDurations.TestSuites != nil {
 			tp.testSuiteDurations = testSuiteDurations.TestSuites
 		}
 

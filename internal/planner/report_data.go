@@ -94,6 +94,27 @@ func newManagedFlakyTestsReport(testManagementTests *api.TestManagementTestsResp
 	return report
 }
 
+type testSuiteDurationsReport struct {
+	Available bool
+	Modules   int
+	Suites    int
+}
+
+func newTestSuiteDurationsReport(testSuiteDurations *api.TestSuiteDurationsResponseData) testSuiteDurationsReport {
+	if testSuiteDurations == nil {
+		return testSuiteDurationsReport{}
+	}
+
+	report := testSuiteDurationsReport{
+		Available: true,
+		Modules:   len(testSuiteDurations.TestSuites),
+	}
+	for _, suites := range testSuiteDurations.TestSuites {
+		report.Suites += len(suites)
+	}
+	return report
+}
+
 type durationSourceReport struct {
 	Known   int
 	Default int
@@ -125,6 +146,7 @@ type planReport struct {
 	KnownTests               knownTestsReport
 	SkippableTestsCount      int
 	ManagedFlakyTests        managedFlakyTestsReport
+	TestSuiteDurations       testSuiteDurationsReport
 	Planning                 planningReport
 	LongSeparateRunnerSuites []testSuiteTimingReport
 	SlowestTestSuitesOverall []testSuiteTimingReport
