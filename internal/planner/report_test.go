@@ -1,6 +1,8 @@
 package planner
 
 import (
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,8 @@ import (
 
 func TestPrintPlanReport_AllData(t *testing.T) {
 	var output strings.Builder
+	minParallelism := settings.DefaultParallelism() + 1
+	maxParallelism := settings.DefaultParallelism() + 2
 
 	printPlanReport(&output, planReport{
 		RunInfo: runmetadata.RunInfo{
@@ -34,18 +38,23 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 			},
 		},
 		DDTestSettings: &settings.Config{
-			Platform:               "ruby",
-			Framework:              "rspec",
-			MinParallelism:         2,
-			MaxParallelism:         8,
-			ParallelRunnerOverhead: 25 * time.Second,
+			Platform:               "python",
+			Framework:              "pytest",
+			MinParallelism:         minParallelism,
+			MaxParallelism:         maxParallelism,
+			ParallelRunnerOverhead: 30 * time.Second,
 			WorkerEnv:              "RAILS_ENV=test;DATABASE_PASSWORD=secret",
-			CiNode:                 -1,
+			CiNode:                 0,
 			CiNodeWorkers:          2,
-			Command:                "bundle exec rspec",
+			Command:                "pytest -q",
 			TestsLocation:          "spec/**/*_spec.rb",
+			TestsExcludePattern:    "spec/system/**/*_spec.rb",
+			TestDiscoveryCache:     ".ddtest-cache/tests.json",
+			TestSkippingLevel:      settings.TestSkippingLevelSuite,
+			ForceFullTestDiscovery: true,
+			StrictDiscovery:        true,
 			RuntimeTags:            `{"runtime.version":"3.3.4"}`,
-			ReportEnabled:          true,
+			ReportEnabled:          false,
 		},
 		DatadogSettings: datadogSettingsReport{
 			Available:            true,
@@ -118,7 +127,7 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 		},
 	})
 
-	expected := `+++ DDTest: plan report
+	expected := fmt.Sprintf(`+++ DDTest: plan report
 
 Run
   Service: checkout-api
@@ -130,18 +139,23 @@ Run
   Runtime tags: runtime.name=ruby, runtime.version=3.3.4
 
 DDTest settings
-  Platform: ruby
-  Framework: rspec
-  Min parallelism: 2
-  Max parallelism: 8
-  CI job overhead: 25s
+  Platform: python
+  Framework: pytest
+  Min parallelism: %s
+  Max parallelism: %s
+  CI job overhead: 30s
   Worker env: DATABASE_PASSWORD, RAILS_ENV
-  CI node: -1
+  CI node: 0
   CI node workers: 2
-  Command: bundle exec rspec
+  Command: pytest -q
   Tests location: spec/**/*_spec.rb
+  Tests exclude pattern: spec/system/**/*_spec.rb
+  Test discovery cache: .ddtest-cache/tests.json
+  Test skipping mode: suite
+  Force full test discovery: true
+  Strict discovery: true
   Runtime tags: {"runtime.version":"3.3.4"}
-  Report enabled: true
+  Report enabled: false
 
 Datadog settings
   Test Impact Analysis: enabled
@@ -162,7 +176,7 @@ Planning
   Fully skipped files: 118
   Test files to run: 524
   Duration source: 431 known, 90 default
-  Estimated time saved: 38.40%
+  Estimated time saved: 38.40%%
 
 Split
   Runners: 6
@@ -177,7 +191,7 @@ Slow suites on dedicated runners
 10 slowest test suites overall
   1. rspec / Checkout::VerySlow (spec/very_slow_spec.rb): historical duration 3m0s, estimated runtime 3m0s
   2. rspec / Checkout::Slow (spec/slow_spec.rb): historical duration 2m0s, estimated runtime 1m40s
-`
+`, formatCount(minParallelism), formatCount(maxParallelism))
 	if output.String() != expected {
 		t.Errorf("unexpected plan report:\n%s", output.String())
 	}
@@ -200,6 +214,81 @@ func TestPrintPlanReport_MissingSettingsAndData(t *testing.T) {
 	}
 	if !strings.Contains(report, "  Managed flaky tests: not available") {
 		t.Errorf("expected missing managed flaky tests message, got:\n%s", report)
+	}
+}
+
+func TestPrintPlanReport_DefaultSettings(t *testing.T) {
+	var output strings.Builder
+	defaults := settings.DefaultConfig()
+
+	printPlanReport(&output, planReport{
+		DDTestSettings: &defaults,
+	})
+
+	report := output.String()
+	if !strings.Contains(report, "DDTest settings\n  Settings: defaults") {
+		t.Errorf("expected default ddtest settings message, got:\n%s", report)
+	}
+}
+
+func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
+	config := settings.DefaultConfig()
+	config.Platform = "python"
+	config.Framework = "pytest"
+	config.Command = "pytest -q"
+	config.MinParallelism++
+	config.MaxParallelism += 2
+	config.ParallelRunnerOverhead += time.Second
+	config.CiNode = 0
+	config.CiNodeWorkers = 2
+	config.WorkerEnv = "TOKEN=secret"
+	config.TestsLocation = "tests/**/*_test.py"
+	config.TestsExcludePattern = "tests/system/**/*_test.py"
+	config.TestDiscoveryCache = ".ddtest-cache/tests.json"
+	config.TestSkippingLevel = settings.TestSkippingLevelSuite
+	config.ForceFullTestDiscovery = true
+	config.StrictDiscovery = true
+	config.RuntimeTags = `{"runtime.version":"3.3.4"}`
+	config.ReportEnabled = false
+
+	var output strings.Builder
+	printDDTestSettingsReport(&output, &config)
+
+	names := make([]string, 0)
+	for _, line := range strings.Split(output.String(), "\n") {
+		if !strings.HasPrefix(line, "  ") {
+			continue
+		}
+		name, _, ok := strings.Cut(strings.TrimSpace(line), ":")
+		if ok {
+			names = append(names, name)
+		}
+	}
+	if len(names) != reflect.TypeOf(settings.Config{}).NumField() {
+		t.Fatalf("expected every supported setting to be reported, got %d names from:\n%s", len(names), output.String())
+	}
+
+	expectedNames := []string{
+		"Platform",
+		"Framework",
+		"Min parallelism",
+		"Max parallelism",
+		"CI job overhead",
+		"Worker env",
+		"CI node",
+		"CI node workers",
+		"Command",
+		"Tests location",
+		"Tests exclude pattern",
+		"Test discovery cache",
+		"Test skipping mode",
+		"Force full test discovery",
+		"Strict discovery",
+		"Runtime tags",
+		"Report enabled",
+	}
+	if !reflect.DeepEqual(names, expectedNames) {
+		t.Fatalf("unexpected changed setting names:\ngot:  %v\nwant: %v", names, expectedNames)
 	}
 }
 

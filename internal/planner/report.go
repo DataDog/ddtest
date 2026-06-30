@@ -3,6 +3,7 @@ package planner
 import (
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -51,18 +52,82 @@ func printDDTestSettingsReport(w io.Writer, config *settings.Config) {
 		return
 	}
 
-	reportFprintf(w, "  Platform: %s\n", valueOrNotSet(config.Platform))
-	reportFprintf(w, "  Framework: %s\n", valueOrNotSet(config.Framework))
-	reportFprintf(w, "  Min parallelism: %s\n", formatCount(config.MinParallelism))
-	reportFprintf(w, "  Max parallelism: %s\n", formatCount(config.MaxParallelism))
-	reportFprintf(w, "  CI job overhead: %s\n", formatDuration(config.ParallelRunnerOverhead))
-	reportFprintf(w, "  Worker env: %s\n", formatWorkerEnvKeys(config.WorkerEnv))
-	reportFprintf(w, "  CI node: %s\n", formatCount(config.CiNode))
-	reportFprintf(w, "  CI node workers: %s\n", formatCount(config.CiNodeWorkers))
-	reportFprintf(w, "  Command: %s\n", valueOrNotSet(config.Command))
-	reportFprintf(w, "  Tests location: %s\n", valueOrNotSet(config.TestsLocation))
-	reportFprintf(w, "  Runtime tags: %s\n", valueOrNotSet(config.RuntimeTags))
-	reportFprintf(w, "  Report enabled: %s\n", strconv.FormatBool(config.ReportEnabled))
+	if !printChangedDDTestSettings(w, config) {
+		reportFprintln(w, "  Settings: defaults")
+	}
+}
+
+func printChangedDDTestSettings(w io.Writer, config *settings.Config) bool {
+	defaults := settings.DefaultConfig()
+	configValue := reflect.ValueOf(*config)
+	defaultsValue := reflect.ValueOf(defaults)
+	configType := configValue.Type()
+	printed := false
+
+	for i := range configValue.NumField() {
+		value := configValue.Field(i)
+		if reflect.DeepEqual(value.Interface(), defaultsValue.Field(i).Interface()) {
+			continue
+		}
+
+		field := configType.Field(i)
+		reportFprintf(w, "  %s: %s\n", formatDDTestSettingName(field), formatDDTestSettingValue(field, value))
+		printed = true
+	}
+
+	return printed
+}
+
+func formatDDTestSettingName(field reflect.StructField) string {
+	if label := field.Tag.Get("report"); label != "" {
+		return label
+	}
+
+	key := configFieldKey(field)
+	if key == "" {
+		return field.Name
+	}
+
+	words := strings.Split(key, "_")
+	for i, word := range words {
+		if word == "ci" {
+			words[i] = "CI"
+			continue
+		}
+		if i == 0 {
+			words[i] = strings.ToUpper(word[:1]) + word[1:]
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+func formatDDTestSettingValue(field reflect.StructField, value reflect.Value) string {
+	if configFieldKey(field) == "worker_env" {
+		return formatWorkerEnvKeys(value.String())
+	}
+
+	switch value.Type() {
+	case reflect.TypeOf(time.Duration(0)):
+		return formatDuration(time.Duration(value.Int()))
+	case reflect.TypeOf(settings.TestSkippingLevel("")):
+		return valueOrNotSet(value.Interface().(settings.TestSkippingLevel).String())
+	}
+
+	switch value.Kind() {
+	case reflect.String:
+		return valueOrNotSet(value.String())
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return formatCount(int(value.Int()))
+	case reflect.Bool:
+		return strconv.FormatBool(value.Bool())
+	default:
+		return fmt.Sprint(value.Interface())
+	}
+}
+
+func configFieldKey(field reflect.StructField) string {
+	key, _, _ := strings.Cut(field.Tag.Get("mapstructure"), ",")
+	return key
 }
 
 func printDatadogSettingsReport(w io.Writer, report datadogSettingsReport) {
