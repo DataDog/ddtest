@@ -349,7 +349,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		}
 
 		skipMatcher = tp.fetchSkippables(tiaSkippingEnabled)
-		tp.planReport.SkippableTestsCount = skipMatcher.Count()
+		tp.planReport.Skippables = newSkippablesReport(skipMatcher, testSkippingLevel)
 
 		if tiaSkippingEnabled && skipMatcher.TIASkippablesCount() == 0 && !forceFullTestDiscovery {
 			slog.Info("No TIA-skippable tests or suites found for this run, cancelling full test discovery")

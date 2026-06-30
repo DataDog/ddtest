@@ -858,6 +858,11 @@ func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery
 	if !mockOptimizationClient.GetSkippablesCalled {
 		t.Fatal("expected planner to fetch suite skippables when full test discovery is unsupported")
 	}
+	if runner.planReport.Skippables.TestSkippingLevel != settings.TestSkippingLevelSuite ||
+		runner.planReport.Skippables.TIATests != 0 ||
+		runner.planReport.Skippables.TIASuites != 1 {
+		t.Errorf("expected suite-level skippables to be reported separately, got %+v", runner.planReport.Skippables)
+	}
 
 	expectedTestFiles := "src/b.test.ts\n"
 	assertFileContent(t, constants.TestFilesOutputPath, expectedTestFiles)
@@ -2067,8 +2072,8 @@ func TestTestPlanner_PreparePlanningData_DisabledTestManagementTestsAreSkipped(t
 		t.Errorf("Expected attempt-to-fix file to be scheduled, got %v", runner.testFileWeights)
 	}
 
-	if runner.planReport.SkippableTestsCount != 2 {
-		t.Errorf("Expected planner skip set to include TIA-skippable and disabled tests, got %d", runner.planReport.SkippableTestsCount)
+	if runner.planReport.Skippables.TIATests != 1 || runner.planReport.Skippables.TIASuites != 0 || runner.planReport.Skippables.DisabledTests != 1 {
+		t.Errorf("Expected planner report to split TIA and disabled skippables, got %+v", runner.planReport.Skippables)
 	}
 }
 
@@ -2259,8 +2264,8 @@ func TestTestPlanner_PreparePlanningData_TestManagementDoesNotKeepFullDiscoveryW
 		t.Errorf("Expected fast discovery fallback to keep all discovered files, got %v", runner.testFileWeights)
 	}
 
-	if runner.planReport.SkippableTestsCount != 2 {
-		t.Errorf("Expected planner skip set to include fetched disabled tests for reporting, got %d", runner.planReport.SkippableTestsCount)
+	if runner.planReport.Skippables.TIATests != 0 || runner.planReport.Skippables.TIASuites != 0 || runner.planReport.Skippables.DisabledTests != 2 {
+		t.Errorf("Expected planner report to split TIA and disabled skippables, got %+v", runner.planReport.Skippables)
 	}
 }
 

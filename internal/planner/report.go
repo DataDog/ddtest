@@ -25,7 +25,7 @@ func printPlanReport(w io.Writer, report planReport) {
 	reportFprintln(w)
 	printBackendDataReport(w, report)
 	reportFprintln(w)
-	printPlanningReport(w, report.Planning)
+	printPlanningReport(w, report.Planning, report.Skippables)
 	reportFprintln(w)
 	printSplitReport(w, report.Split)
 	reportFprintln(w)
@@ -149,15 +149,16 @@ func printDatadogSettingsReport(w io.Writer, report datadogSettingsReport) {
 func printBackendDataReport(w io.Writer, report planReport) {
 	reportFprintln(w, "Backend data")
 	reportFprintf(w, "  Known tests: %s\n", formatKnownTests(report.DatadogSettings, report.KnownTests))
-	reportFprintf(w, "  Skippable tests for this run: %s\n", formatSkippableTests(report.DatadogSettings, report.SkippableTestsCount))
+	reportFprintf(w, "  TIA skippables returned: %s\n", formatTIASkippables(report.DatadogSettings, report.Skippables))
 	reportFprintf(w, "  Managed flaky tests: %s\n", formatManagedFlakyTests(report.DatadogSettings, report.ManagedFlakyTests))
 	reportFprintf(w, "  Test suite durations: %s\n", formatTestSuiteDurations(report.TestSuiteDurations))
 }
 
-func printPlanningReport(w io.Writer, report planningReport) {
+func printPlanningReport(w io.Writer, report planningReport, skippables skippablesReport) {
 	reportFprintln(w, "Planning")
 	reportFprintf(w, "  Test files discovered: %s\n", formatCount(report.TestFilesDiscovered))
 	reportFprintf(w, "  Fully skipped files: %s\n", formatCount(report.FullySkippedFiles))
+	reportFprintf(w, "  Test Management disabled tests applied: %s\n", formatDisabledTestsApplied(skippables))
 	reportFprintf(w, "  Test files to run: %s\n", formatCount(report.TestFilesToRun))
 	reportFprintf(w, "  Duration source: %s known, %s default\n",
 		formatCount(report.DurationSources.Known),
@@ -290,11 +291,30 @@ func formatKnownTests(settings datadogSettingsReport, known knownTestsReport) st
 		formatCount(known.Tests))
 }
 
-func formatSkippableTests(settings datadogSettingsReport, count int) string {
-	if settings.Available && !settings.TestSkipping {
+func formatTIASkippables(datadogSettings datadogSettingsReport, skippables skippablesReport) string {
+	if datadogSettings.Available && !datadogSettings.TestSkipping {
 		return "disabled"
 	}
-	return formatCount(count)
+	if !skippables.Available {
+		return "not available"
+	}
+	switch skippables.TestSkippingLevel {
+	case settings.TestSkippingLevelTest:
+		return fmt.Sprintf("%s tests", formatCount(skippables.TIATests))
+	case settings.TestSkippingLevelSuite:
+		return fmt.Sprintf("%s suites", formatCount(skippables.TIASuites))
+	case "":
+		return "skipping mode not available"
+	default:
+		return fmt.Sprintf("%s tests, %s suites", formatCount(skippables.TIATests), formatCount(skippables.TIASuites))
+	}
+}
+
+func formatDisabledTestsApplied(skippables skippablesReport) string {
+	if !skippables.Available {
+		return "not available"
+	}
+	return formatCount(skippables.DisabledTests)
 }
 
 func formatManagedFlakyTests(settings datadogSettingsReport, managed managedFlakyTestsReport) string {

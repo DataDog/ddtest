@@ -121,6 +121,18 @@ func (s skippableMatcher) TIASkippablesCount() int {
 	return len(s.tiaSkippableTests) + len(s.tiaSkippableSuites)
 }
 
+func (s skippableMatcher) TIATestsCount() int {
+	return len(s.tiaSkippableTests)
+}
+
+func (s skippableMatcher) TIASuitesCount() int {
+	return len(s.tiaSkippableSuites)
+}
+
+func (s skippableMatcher) DisabledTestsCount() int {
+	return len(s.disabledTests)
+}
+
 func (tp *TestPlanner) recordFastDiscoveryFallbackFiles(discoveredTestFiles []string) error {
 	excluder, err := discovery.NewExcluder(settings.GetTestsExcludePattern())
 	if err != nil {

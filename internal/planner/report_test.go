@@ -72,7 +72,12 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 			Suites:    1284,
 			Tests:     18921,
 		},
-		SkippableTestsCount: 312,
+		Skippables: skippablesReport{
+			Available:         true,
+			TestSkippingLevel: settings.TestSkippingLevelSuite,
+			TIASuites:         312,
+			DisabledTests:     3,
+		},
 		ManagedFlakyTests: managedFlakyTestsReport{
 			Available:    true,
 			Total:        26,
@@ -173,13 +178,14 @@ Datadog settings
 
 Backend data
   Known tests: 4 modules, 1,284 suites, 18,921 tests
-  Skippable tests for this run: 312
+  TIA skippables returned: 312 suites
   Managed flaky tests: 26 total, 8 quarantined, 3 disabled, 5 attempt-to-fix
   Test suite durations: 3 modules, 1,491 suites
 
 Planning
   Test files discovered: 642
   Fully skipped files: 118
+  Test Management disabled tests applied: 3
   Test files to run: 524
   Duration source: 431 known, 90 default
   Estimated time saved: 38.40%%
@@ -217,6 +223,12 @@ func TestPrintPlanReport_MissingSettingsAndData(t *testing.T) {
 	}
 	if !strings.Contains(report, "  Known tests: not available") {
 		t.Errorf("expected missing known tests message, got:\n%s", report)
+	}
+	if !strings.Contains(report, "  TIA skippables returned: not available") {
+		t.Errorf("expected missing TIA skippables message, got:\n%s", report)
+	}
+	if !strings.Contains(report, "  Test Management disabled tests applied: not available") {
+		t.Errorf("expected missing disabled tests message, got:\n%s", report)
 	}
 	if !strings.Contains(report, "  Managed flaky tests: not available") {
 		t.Errorf("expected missing managed flaky tests message, got:\n%s", report)
@@ -314,7 +326,7 @@ func TestPrintPlanReport_DisabledFeatures(t *testing.T) {
 	if !strings.Contains(report, "  Known tests: disabled") {
 		t.Errorf("expected disabled known tests, got:\n%s", report)
 	}
-	if !strings.Contains(report, "  Skippable tests for this run: disabled") {
+	if !strings.Contains(report, "  TIA skippables returned: disabled") {
 		t.Errorf("expected disabled skippable tests, got:\n%s", report)
 	}
 	if !strings.Contains(report, "  Managed flaky tests: disabled") {
@@ -370,6 +382,30 @@ func TestReportSummaries(t *testing.T) {
 	})
 	if durations.Modules != 2 || durations.Suites != 3 {
 		t.Errorf("unexpected test suite durations summary: %+v", durations)
+	}
+}
+
+func TestFormatTIASkippablesReportsOnlyActiveCount(t *testing.T) {
+	settingsReport := datadogSettingsReport{Available: true, TestSkipping: true}
+
+	testLevel := formatTIASkippables(settingsReport, skippablesReport{
+		Available:         true,
+		TestSkippingLevel: settings.TestSkippingLevelTest,
+		TIATests:          123,
+		TIASuites:         456,
+	})
+	if testLevel != "123 tests" {
+		t.Fatalf("unexpected test-level TIA skippables report: %s", testLevel)
+	}
+
+	suiteLevel := formatTIASkippables(settingsReport, skippablesReport{
+		Available:         true,
+		TestSkippingLevel: settings.TestSkippingLevelSuite,
+		TIATests:          123,
+		TIASuites:         456,
+	})
+	if suiteLevel != "456 suites" {
+		t.Fatalf("unexpected suite-level TIA skippables report: %s", suiteLevel)
 	}
 }
 

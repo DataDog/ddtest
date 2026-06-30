@@ -94,6 +94,24 @@ func newManagedFlakyTestsReport(testManagementTests *api.TestManagementTestsResp
 	return report
 }
 
+type skippablesReport struct {
+	Available         bool
+	TestSkippingLevel settings.TestSkippingLevel
+	TIATests          int
+	TIASuites         int
+	DisabledTests     int
+}
+
+func newSkippablesReport(skippables skippableMatcher, testSkippingLevel settings.TestSkippingLevel) skippablesReport {
+	return skippablesReport{
+		Available:         true,
+		TestSkippingLevel: testSkippingLevel,
+		TIATests:          skippables.TIATestsCount(),
+		TIASuites:         skippables.TIASuitesCount(),
+		DisabledTests:     skippables.DisabledTestsCount(),
+	}
+}
+
 type testSuiteDurationsReport struct {
 	Available bool
 	Modules   int
@@ -144,7 +162,7 @@ type planReport struct {
 	DDTestSettings           *settings.Config
 	DatadogSettings          datadogSettingsReport
 	KnownTests               knownTestsReport
-	SkippableTestsCount      int
+	Skippables               skippablesReport
 	ManagedFlakyTests        managedFlakyTestsReport
 	TestSuiteDurations       testSuiteDurationsReport
 	Planning                 planningReport
