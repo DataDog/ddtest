@@ -17,15 +17,7 @@ func (tp *TestPlanner) resetDiscoveryResults() {
 	tp.testFiles = make(map[string]struct{})
 	tp.suiteAggregates = make(map[testSuiteKey]testSuiteAggregate)
 	tp.suitesBySourceFile = make(map[string][]testSuiteKey)
-	tp.discoveryMode = discoveryModeUnknown
-	tp.discoveryCacheReport = discoveryCacheReport{}
-	tp.testDiscoveryDuration = 0
-	tp.localDiscoveredSuites = 0
-	tp.localDiscoveredTests = 0
-	tp.tiaSkippableTestsApplied = 0
-	tp.tiaSkippableSuitesApplied = make(map[testSuiteKey]struct{})
-	tp.disabledTestsApplied = 0
-	tp.unskippableMarkerSuitesForced = 0
+	tp.reportStats = newPlanningReportStats()
 }
 
 func (tp *TestPlanner) recordFullDiscoveryResults(
@@ -55,7 +47,6 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 				break
 			}
 		}
-		slog.Debug("Skippable matcher size", "size", skippableMatcher.Count())
 	}
 
 	skippableTestsCount := 0
@@ -81,7 +72,7 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 		} else {
 			slog.Debug("Test will be skipped", "test", test.DatadogTestId(), "sourceFile", test.SuiteSourceFile)
 			recordSkippedTest(tp.suiteAggregates, test, normalizedSourceFile)
-			tp.recordAppliedSkippable(match, testSuiteKey{Module: test.Module, Suite: test.Suite})
+			tp.recordAppliedSkippable(match)
 			skippableTestsCount++
 		}
 	}
@@ -99,17 +90,22 @@ type skippableMatcher struct {
 	disabledTests      map[string]bool
 }
 
-type skippableMatch int
+type skippableMatch struct {
+	kind     skippableMatchKind
+	suiteKey testSuiteKey
+}
+
+type skippableMatchKind int
 
 const (
-	skippableMatchNone skippableMatch = iota
+	skippableMatchNone skippableMatchKind = iota
 	skippableMatchTIATest
 	skippableMatchTIASuite
 	skippableMatchDisabledTest
 )
 
 func (m skippableMatch) Skipped() bool {
-	return m != skippableMatchNone
+	return m.kind != skippableMatchNone
 }
 
 func newSkippableMatcher(skippables api.Skippables, disabledTests map[string]bool) skippableMatcher {
@@ -130,60 +126,38 @@ func newSkippableMatcher(skippables api.Skippables, disabledTests map[string]boo
 	}
 }
 
-func (s skippableMatcher) Contains(test testoptimization.Test) bool {
-	return s.Match(test).Skipped()
-}
-
 func (s skippableMatcher) Match(test testoptimization.Test) skippableMatch {
 	suite := api.SkippableSuite{Module: test.Module, Suite: test.Suite}
 	if s.disabledTests[test.FQN()] {
-		return skippableMatchDisabledTest
+		return skippableMatch{kind: skippableMatchDisabledTest}
 	}
 	if s.tiaSkippableSuites[suite] {
-		return skippableMatchTIASuite
+		return skippableMatch{
+			kind:     skippableMatchTIASuite,
+			suiteKey: testSuiteKey{Module: test.Module, Suite: test.Suite},
+		}
 	}
 	if s.tiaSkippableTests[test.DatadogTestId()] {
-		return skippableMatchTIATest
+		return skippableMatch{kind: skippableMatchTIATest}
 	}
-	return skippableMatchNone
-}
-
-func (s skippableMatcher) Count() int {
-	return s.TIASkippablesCount() + len(s.disabledTests)
+	return skippableMatch{}
 }
 
 func (s skippableMatcher) TIASkippablesCount() int {
 	return len(s.tiaSkippableTests) + len(s.tiaSkippableSuites)
 }
 
-func (s skippableMatcher) TIATestsCount() int {
-	return len(s.tiaSkippableTests)
-}
-
-func (s skippableMatcher) TIASuitesCount() int {
-	return len(s.tiaSkippableSuites)
-}
-
-func (s skippableMatcher) DisabledTestsCount() int {
-	return len(s.disabledTests)
-}
-
-func (tp *TestPlanner) recordAppliedSkippable(match skippableMatch, key testSuiteKey) {
-	switch match {
+func (tp *TestPlanner) recordAppliedSkippable(match skippableMatch) {
+	switch match.kind {
 	case skippableMatchTIATest:
-		tp.tiaSkippableTestsApplied++
+		tp.reportStats.tiaSkippableTestsApplied++
 	case skippableMatchTIASuite:
-		tp.recordAppliedTIASuite(key)
+		// Full discovery sees suite-level skippables once per test, so keep a set
+		// and report the number of suites rather than the number of skipped tests.
+		tp.reportStats.uniqueTIASkippableSuitesApplied[match.suiteKey] = struct{}{}
 	case skippableMatchDisabledTest:
-		tp.disabledTestsApplied++
+		tp.reportStats.disabledTestsApplied++
 	}
-}
-
-func (tp *TestPlanner) recordAppliedTIASuite(key testSuiteKey) {
-	if tp.tiaSkippableSuitesApplied == nil {
-		tp.tiaSkippableSuitesApplied = make(map[testSuiteKey]struct{})
-	}
-	tp.tiaSkippableSuitesApplied[key] = struct{}{}
 }
 
 func (tp *TestPlanner) recordFastDiscoveryFallbackFiles(discoveredTestFiles []string) error {
@@ -243,13 +217,14 @@ func (tp *TestPlanner) recordSuiteLevelSkippables(skippableMatcher skippableMatc
 		}
 		aggregate.NumTestsSkipped = aggregate.NumTests
 		tp.suiteAggregates[key] = aggregate
-		tp.recordAppliedTIASuite(key)
+		tp.reportStats.uniqueTIASkippableSuitesApplied[key] = struct{}{}
 	}
 }
 
-func (tp *TestPlanner) keepUnskippableMarkerSuitesRunnable(testFramework framework.Framework) int {
+func (tp *TestPlanner) keepUnskippableMarkerSuitesRunnable(testFramework framework.Framework) {
 	if testFramework == nil {
-		return 0
+		tp.reportStats.unskippableMarkerSuitesForced = 0
+		return
 	}
 
 	startTime := time.Now()
@@ -278,7 +253,7 @@ func (tp *TestPlanner) keepUnskippableMarkerSuitesRunnable(testFramework framewo
 	slog.Info("Checked unskippable marker suites",
 		"duration", time.Since(startTime),
 		"forceRunnableSuiteAggregatesCount", forceRunnableSuiteAggregatesCount)
-	return forceRunnableSuiteAggregatesCount
+	tp.reportStats.unskippableMarkerSuitesForced = forceRunnableSuiteAggregatesCount
 }
 
 func (tp *TestPlanner) sourceFileForSuite(key testSuiteKey, testFramework framework.Framework) (string, bool) {

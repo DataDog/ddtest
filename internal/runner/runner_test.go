@@ -21,7 +21,7 @@ type fakePlanner struct {
 	distributeCalls       int
 	planFunc              func(context.Context) error
 	distributeFunc        func([]string, int) [][]string
-	plan                  planner.PlanInfo
+	plan                  planner.PlanMetadata
 	loadErr               error
 	distributedTestFiles  [][]string
 	distributedWorkerNums []int
@@ -35,7 +35,7 @@ func (f *fakePlanner) Plan(ctx context.Context) error {
 	return nil
 }
 
-func (f *fakePlanner) LoadPlan() (planner.PlanInfo, error) {
+func (f *fakePlanner) LoadPlan() (planner.PlanMetadata, error) {
 	f.loadCalls++
 	return f.plan, f.loadErr
 }
@@ -68,7 +68,7 @@ func TestTestRunner_Run_PlansThroughPublicClientWhenArtifactsMissing(t *testing.
 			writeRunnerTestFile(t, constants.TestFilesOutputPath, "spec/a_spec.rb\n")
 			return nil
 		},
-		plan: planner.PlanInfo{
+		plan: planner.PlanMetadata{
 			Platform:  "ruby",
 			Framework: "rspec",
 		},
@@ -258,7 +258,7 @@ func TestTestRunner_Run_WritesReportWhenEnabled(t *testing.T) {
 	framework := &MockFramework{FrameworkName: "rspec"}
 	platform := &MockPlatform{PlatformName: "ruby", Framework: framework}
 	testPlanner := &fakePlanner{
-		plan: planner.PlanInfo{
+		plan: planner.PlanMetadata{
 			Platform:  "ruby",
 			Framework: "rspec",
 		},

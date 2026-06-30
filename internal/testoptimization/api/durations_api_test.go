@@ -103,6 +103,9 @@ func TestClientGetTestSuiteDurationsLogsSuccess(t *testing.T) {
 	if len(result.TestSuites) != 1 {
 		t.Errorf("expected 1 module, got %d", len(result.TestSuites))
 	}
+	if duration := client.BackendRequestTimings().TestSuiteDurations; duration <= 0 {
+		t.Errorf("expected test suite durations fetch duration to be recorded, got %s", duration)
+	}
 	if !strings.Contains(logs.String(), "level=INFO") ||
 		!strings.Contains(logs.String(), "Fetched test suite durations") ||
 		!strings.Contains(logs.String(), "modulesCount=1") ||

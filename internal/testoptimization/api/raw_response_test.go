@@ -117,6 +117,20 @@ func TestClientStoresRawBackendResponses(t *testing.T) {
 	if string(client.GetTestManagementTestsRawResponse()) != testManagementResponse {
 		t.Fatalf("test management raw response mismatch:\nexpected: %s\nactual:   %s", testManagementResponse, string(client.GetTestManagementTestsRawResponse()))
 	}
+
+	timings := client.BackendRequestTimings()
+	if timings.Settings <= 0 {
+		t.Errorf("expected settings duration to be recorded, got %s", timings.Settings)
+	}
+	if timings.KnownTests <= 0 {
+		t.Errorf("expected known tests duration to be recorded, got %s", timings.KnownTests)
+	}
+	if timings.Skippables <= 0 {
+		t.Errorf("expected skippables duration to be recorded, got %s", timings.Skippables)
+	}
+	if timings.TestManagementTests <= 0 {
+		t.Errorf("expected test management duration to be recorded, got %s", timings.TestManagementTests)
+	}
 }
 
 func TestClientBuildsSkippableKeyFromTestBundle(t *testing.T) {

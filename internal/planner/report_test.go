@@ -9,6 +9,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/testoptimization"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
 )
 
@@ -17,14 +18,14 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 	minParallelism := settings.DefaultParallelism() + 1
 	maxParallelism := settings.DefaultParallelism() + 2
 
-	printPlanReport(&output, planReport{
+	printPlanReportData(&output, PlanReportData{
 		RunInfo: runmetadata.RunInfo{
 			Service:    "checkout-api",
 			Repository: "https://github.com/acme/checkout.git",
 			Commit:     "9f3a1c7d2b4e",
 			Branch:     "feature/split-report",
 		},
-		PlanInfo: PlanInfo{
+		PlanMetadata: PlanMetadata{
 			Platform:  "ruby",
 			Framework: "rspec",
 			OSTags: map[string]string{
@@ -79,7 +80,6 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 			FetchDuration:     110 * time.Millisecond,
 			TestSkippingLevel: settings.TestSkippingLevelSuite,
 			TIASuites:         312,
-			DisabledTests:     3,
 		},
 		ManagedFlakyTests: managedFlakyTestsReport{
 			Available:     true,
@@ -99,7 +99,7 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 			Discovery: discoveryReport{
 				Available: true,
 				Mode:      discoveryModeFull,
-				Cache: discoveryCacheReport{
+				Cache: discoveryCacheResult{
 					Configured: true,
 					Used:       true,
 				},
@@ -252,11 +252,11 @@ Slow suites on dedicated runners
 func TestPrintPlanReport_FastDiscovery(t *testing.T) {
 	var output strings.Builder
 
-	printPlanReport(&output, planReport{
+	printPlanReportData(&output, PlanReportData{
 		RunInfo: runmetadata.RunInfo{
 			Service: "checkout-api",
 		},
-		PlanInfo: PlanInfo{
+		PlanMetadata: PlanMetadata{
 			Platform: "ruby",
 		},
 		DatadogSettings: datadogSettingsReport{
@@ -290,10 +290,6 @@ func TestPrintPlanReport_FastDiscovery(t *testing.T) {
 			Discovery: discoveryReport{
 				Available: true,
 				Mode:      discoveryModeFast,
-				Cache: discoveryCacheReport{
-					Configured: true,
-					Reason:     "full discovery not required for suite-level skipping",
-				},
 				Duration:  120 * time.Millisecond,
 				TestFiles: 24,
 				Suites:    0,
@@ -372,7 +368,6 @@ Planning
   Discovery
     Method: fast
     Test files: 24
-    Cache: not used (full discovery not required for suite-level skipping)
     Duration: 120ms
   Duration estimates
     Backend durations used: 12 suites
@@ -380,7 +375,7 @@ Planning
     Backend-only suites added: 2
   Skipping
     TIA skippables applied: 8 suites
-    Disabled tests applied: 0 tests
+    Disabled tests applied: disabled
     Suites marked unskippable: 0
     Files fully skipped: 6
   Run set
@@ -408,7 +403,7 @@ Slow suites on dedicated runners
 func TestPrintPlanReport_MissingSettingsAndData(t *testing.T) {
 	var output strings.Builder
 
-	printPlanReport(&output, planReport{})
+	printPlanReportData(&output, PlanReportData{})
 
 	report := output.String()
 	if !strings.Contains(report, "DDTest settings\n  Settings: not available") {
@@ -448,9 +443,9 @@ func TestPrintPlanReport_MissingSettingsAndData(t *testing.T) {
 
 func TestPrintPlanReport_DefaultSettings(t *testing.T) {
 	var output strings.Builder
-	defaults := settings.DefaultConfig()
+	defaults := defaultDDTestSettings()
 
-	printPlanReport(&output, planReport{
+	printPlanReportData(&output, PlanReportData{
 		DDTestSettings: &defaults,
 	})
 
@@ -461,7 +456,7 @@ func TestPrintPlanReport_DefaultSettings(t *testing.T) {
 }
 
 func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
-	config := settings.DefaultConfig()
+	config := defaultDDTestSettings()
 	config.Platform = "python"
 	config.Framework = "pytest"
 	config.Command = "pytest -q"
@@ -524,7 +519,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 func TestPrintPlanReport_DisabledFeatures(t *testing.T) {
 	var output strings.Builder
 
-	printPlanReport(&output, planReport{
+	printPlanReportData(&output, PlanReportData{
 		DatadogSettings: datadogSettingsReport{
 			Available: true,
 		},
@@ -543,42 +538,39 @@ func TestPrintPlanReport_DisabledFeatures(t *testing.T) {
 }
 
 func TestReportSummaries(t *testing.T) {
-	known := newKnownTestsReport(&api.KnownTestsResponseData{
-		Tests: api.KnownTestsResponseDataModules{
-			"module-a": api.KnownTestsResponseDataSuites{
-				"suite-a": []string{"test-a", "test-b"},
-			},
-			"module-b": api.KnownTestsResponseDataSuites{
-				"suite-b": []string{"test-c"},
-				"suite-c": []string{"test-d", "test-e"},
+	client := &MockTestOptimizationClient{
+		KnownTests: &api.KnownTestsResponseData{
+			Tests: api.KnownTestsResponseDataModules{
+				"module-a": api.KnownTestsResponseDataSuites{
+					"suite-a": []string{"test-a", "test-b"},
+				},
+				"module-b": api.KnownTestsResponseDataSuites{
+					"suite-b": []string{"test-c"},
+					"suite-c": []string{"test-d", "test-e"},
+				},
 			},
 		},
-	}, time.Millisecond)
-	if known.Modules != 2 || known.Suites != 3 || known.Tests != 5 {
-		t.Errorf("unexpected known test summary: %+v", known)
-	}
-
-	managed := newManagedFlakyTestsReport(&api.TestManagementTestsResponseDataModules{
-		Modules: map[string]api.TestManagementTestsResponseDataSuites{
-			"module-a": {
-				Suites: map[string]api.TestManagementTestsResponseDataTests{
-					"suite-a": {
-						Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
-							"test-a": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Quarantined: true}},
-							"test-b": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
-							"test-c": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{AttemptToFix: true}},
+		TestManagementTests: &api.TestManagementTestsResponseDataModules{
+			Modules: map[string]api.TestManagementTestsResponseDataSuites{
+				"module-a": {
+					Suites: map[string]api.TestManagementTestsResponseDataTests{
+						"suite-a": {
+							Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
+								"test-a": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Quarantined: true}},
+								"test-b": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+								"test-c": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{AttemptToFix: true}},
+							},
 						},
 					},
 				},
 			},
 		},
-	}, time.Millisecond)
-	if managed.Total != 3 || managed.Quarantined != 1 || managed.Disabled != 1 || managed.AttemptToFix != 1 {
-		t.Errorf("unexpected managed flaky test summary: %+v", managed)
-	}
-
-	durations := newTestSuiteDurationsReport(&api.TestSuiteDurationsResponseData{
-		TestSuites: map[string]map[string]api.TestSuiteDurationInfo{
+		BackendRequestTimingValues: testoptimization.BackendRequestTimings{
+			KnownTests:          time.Millisecond,
+			TestManagementTests: time.Millisecond,
+			TestSuiteDurations:  time.Millisecond,
+		},
+		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"module-a": {
 				"suite-a": {},
 				"suite-b": {},
@@ -587,9 +579,24 @@ func TestReportSummaries(t *testing.T) {
 				"suite-c": {},
 			},
 		},
-	}, time.Millisecond)
-	if durations.Modules != 2 || durations.Suites != 3 {
-		t.Errorf("unexpected test suite durations summary: %+v", durations)
+	}
+
+	client.GetTestSuiteDurations()
+	timings := client.BackendRequestTimings()
+
+	known := reportKnownTests(client.GetKnownTests(), timings.KnownTests)
+	if known.Modules != 2 || known.Suites != 3 || known.Tests != 5 {
+		t.Errorf("unexpected known test summary: %+v", known)
+	}
+
+	managed := reportManagedFlakyTests(client.GetTestManagementTestsData(), timings.TestManagementTests)
+	if managed.Total != 3 || managed.Quarantined != 1 || managed.Disabled != 1 || managed.AttemptToFix != 1 {
+		t.Errorf("unexpected managed flaky test summary: %+v", managed)
+	}
+
+	durationReport := reportTestSuiteDurations(client.GetTestSuiteDurations(), timings.TestSuiteDurations)
+	if durationReport.Modules != 2 || durationReport.Suites != 3 {
+		t.Errorf("unexpected test suite durations summary: %+v", durationReport)
 	}
 }
 
@@ -653,10 +660,10 @@ func TestReportFormattingVariants(t *testing.T) {
 			{name: "three digit group count", got: formatCount(123456), want: "123,456"},
 			{name: "singular count unit", got: formatCountWithUnit(1, "suite", "suites"), want: "1 suite"},
 			{name: "sub-millisecond duration", got: formatDuration(500 * time.Microsecond), want: "500µs"},
-			{name: "cache not configured", got: formatDiscoveryCache(discoveryCacheReport{}), want: "not configured"},
-			{name: "cache used", got: formatDiscoveryCache(discoveryCacheReport{Configured: true, Used: true}), want: "used"},
-			{name: "cache configured but not used", got: formatDiscoveryCache(discoveryCacheReport{Configured: true}), want: "not used"},
-			{name: "cache configured but skipped with reason", got: formatDiscoveryCache(discoveryCacheReport{Configured: true, Reason: "full discovery not required"}), want: "not used (full discovery not required)"},
+			{name: "cache not configured", got: formatDiscoveryCache(discoveryCacheResult{}), want: "not configured"},
+			{name: "cache used", got: formatDiscoveryCache(discoveryCacheResult{Configured: true, Used: true}), want: "used"},
+			{name: "cache configured but not used", got: formatDiscoveryCache(discoveryCacheResult{Configured: true}), want: "not used"},
+			{name: "cache configured but skipped with reason", got: formatDiscoveryCache(discoveryCacheResult{Configured: true, NotUsedReason: "full discovery not required"}), want: "not used (full discovery not required)"},
 			{name: "backend data without duration", got: formatBackendDataValue("not available", 0), want: "not available"},
 			{name: "optional duration missing", got: formatOptionalDuration(0), want: "not available"},
 		}
@@ -752,8 +759,11 @@ func TestSkippableReportFormattingVariants(t *testing.T) {
 	})
 
 	t.Run("disabled tests", func(t *testing.T) {
-		if got := formatAppliedDisabledTests(skippablesReport{}, skippingApplicationReport{}); got != "not available" {
+		if got := formatAppliedDisabledTests(datadogSettingsReport{}, managedFlakyTestsReport{}, skippingApplicationReport{}); got != "not available" {
 			t.Fatalf("formatAppliedDisabledTests() = %q, want not available", got)
+		}
+		if got := formatAppliedDisabledTests(datadogSettingsReport{Available: true}, managedFlakyTestsReport{}, skippingApplicationReport{}); got != "disabled" {
+			t.Fatalf("formatAppliedDisabledTests() = %q, want disabled", got)
 		}
 	})
 }

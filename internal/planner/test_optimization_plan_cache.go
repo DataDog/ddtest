@@ -1,7 +1,6 @@
 package planner
 
 import (
-	"encoding/json"
 	"log/slog"
 
 	"github.com/DataDog/ddtest/internal/runmetadata"
@@ -16,7 +15,7 @@ type testOptimizationPlanCache struct {
 	TestFileWeights         map[string]int                                  `json:"testFileWeights"`
 	TestFileDurationSources map[string]testFileDurationSource               `json:"testFileDurationSources"`
 	RunInfo                 runmetadata.RunInfo                             `json:"runInfo"`
-	PlanInfo                PlanInfo                                        `json:"planInfo"`
+	PlanMetadata            PlanMetadata                                    `json:"planMetadata"`
 }
 
 func (tp *TestPlanner) storeTestOptimizationPlanCache() error {
@@ -27,24 +26,24 @@ func (tp *TestPlanner) storeTestOptimizationPlanCache() error {
 		TestFileWeights:         tp.testFileWeights,
 		TestFileDurationSources: tp.testFileDurationSources,
 		RunInfo:                 tp.runInfo,
-		PlanInfo:                tp.planInfo,
+		PlanMetadata:            tp.planMetadata,
 	}
 
 	return testoptimization.NewCacheManager().StoreTestOptimizationPlanCache(cache)
 }
 
-func LoadPlan() (PlanInfo, error) {
+func LoadPlan() (PlanMetadata, error) {
 	return newTestPlannerWithDefaults().LoadPlan()
 }
 
-func (tp *TestPlanner) LoadPlan() (PlanInfo, error) {
+func (tp *TestPlanner) LoadPlan() (PlanMetadata, error) {
 	if !tp.planLoaded {
 		if err := tp.restoreTestOptimizationPlanCache(); err != nil {
-			return PlanInfo{}, err
+			return PlanMetadata{}, err
 		}
 	}
 
-	return tp.planInfo, nil
+	return tp.planMetadata, nil
 }
 
 func (tp *TestPlanner) restoreTestOptimizationPlanCache() error {
@@ -59,7 +58,7 @@ func (tp *TestPlanner) restoreTestOptimizationPlanCache() error {
 	tp.testFileWeights = cache.TestFileWeights
 	tp.testFileDurationSources = cache.TestFileDurationSources
 	tp.runInfo = cache.RunInfo
-	tp.planInfo = cache.PlanInfo
+	tp.planMetadata = cache.PlanMetadata
 	tp.planLoaded = true
 
 	testSuitesCount := countTestSuites(tp.testSuiteDurations)
@@ -75,63 +74,6 @@ func (tp *TestPlanner) restoreTestOptimizationPlanCache() error {
 		"testFileWeightsCount", testFileWeightsCount)
 
 	return nil
-}
-
-type legacyRunInfo struct {
-	Service     string            `json:"service"`
-	Repository  string            `json:"repository"`
-	Commit      string            `json:"commit"`
-	Branch      string            `json:"branch"`
-	Platform    string            `json:"platform"`
-	Framework   string            `json:"framework"`
-	OSTags      map[string]string `json:"osTags"`
-	RuntimeTags map[string]string `json:"runtimeTags"`
-}
-
-func (c *testOptimizationPlanCache) UnmarshalJSON(data []byte) error {
-	var decoded struct {
-		TestSuiteDurations      map[string]map[string]api.TestSuiteDurationInfo `json:"testSuiteDurations"`
-		SuiteAggregates         map[testSuiteKey]testSuiteAggregate             `json:"suiteAggregates"`
-		SuitesBySourceFile      map[string][]testSuiteKey                       `json:"suitesBySourceFile"`
-		TestFileWeights         map[string]int                                  `json:"testFileWeights"`
-		TestFileDurationSources map[string]testFileDurationSource               `json:"testFileDurationSources"`
-		RunInfo                 legacyRunInfo                                   `json:"runInfo"`
-		PlanInfo                PlanInfo                                        `json:"planInfo"`
-	}
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-
-	c.TestSuiteDurations = decoded.TestSuiteDurations
-	c.SuiteAggregates = decoded.SuiteAggregates
-	c.SuitesBySourceFile = decoded.SuitesBySourceFile
-	c.TestFileWeights = decoded.TestFileWeights
-	c.TestFileDurationSources = decoded.TestFileDurationSources
-	c.RunInfo = decoded.RunInfo.runInfo()
-	c.PlanInfo = decoded.PlanInfo
-	if c.PlanInfo.IsZero() {
-		c.PlanInfo = decoded.RunInfo.planInfo()
-	}
-
-	return nil
-}
-
-func (r legacyRunInfo) runInfo() runmetadata.RunInfo {
-	return runmetadata.RunInfo{
-		Service:    r.Service,
-		Repository: r.Repository,
-		Commit:     r.Commit,
-		Branch:     r.Branch,
-	}
-}
-
-func (r legacyRunInfo) planInfo() PlanInfo {
-	return PlanInfo{
-		Platform:    r.Platform,
-		Framework:   r.Framework,
-		OSTags:      r.OSTags,
-		RuntimeTags: r.RuntimeTags,
-	}
 }
 
 func readAndNormalizeTestOptimizationPlanCache(cache *testOptimizationPlanCache) error {

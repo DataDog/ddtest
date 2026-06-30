@@ -21,24 +21,9 @@ import (
 
 const autoDetectServiceName = ""
 
-const (
-	libraryCapabilitiesTestImpactAnalysis         = "_dd.library_capabilities.test_impact_analysis"
-	libraryCapabilitiesEarlyFlakeDetection        = "_dd.library_capabilities.early_flake_detection"
-	libraryCapabilitiesAutoTestRetries            = "_dd.library_capabilities.auto_test_retries"
-	libraryCapabilitiesTestManagementQuarantine   = "_dd.library_capabilities.test_management.quarantine"
-	libraryCapabilitiesTestManagementDisable      = "_dd.library_capabilities.test_management.disable"
-	libraryCapabilitiesTestManagementAttemptToFix = "_dd.library_capabilities.test_management.attempt_to_fix"
-)
-
 type testOptimizationCloseAction func()
 
-type OperationDurations struct {
-	Settings            time.Duration
-	KnownTests          time.Duration
-	Skippables          time.Duration
-	TestManagementTests time.Duration
-	TestSuiteDurations  time.Duration
-}
+type BackendRequestTimings = api.BackendRequestTimings
 
 type searchCommitsResponse struct {
 	LocalCommits  []string
@@ -59,13 +44,11 @@ type TestOptimizationClient struct {
 	closeActionsMutex    sync.Mutex
 	closeActions         []testOptimizationCloseAction
 	settings             *api.SettingsResponseData
-	knownTests           api.KnownTestsResponseData
+	knownTests           *api.KnownTestsResponseData
 	skippables           api.Skippables
+	testManagementTests  *api.TestManagementTestsResponseDataModules
+	testSuiteDurations   *api.TestSuiteDurationsResponseData
 	testSkippingLevel    settings.TestSkippingLevel
-	testManagementTests  api.TestManagementTestsResponseDataModules
-
-	operationDurationsMutex sync.Mutex
-	operationDurations      OperationDurations
 }
 
 func NewTestOptimizationClient() *TestOptimizationClient {
@@ -136,9 +119,6 @@ func (c *TestOptimizationClient) GetSettings() *api.SettingsResponseData {
 }
 
 func (c *TestOptimizationClient) GetSkippables() api.Skippables {
-	startTime := time.Now()
-
-	slog.Debug("Fetching skippable tests and suites...")
 	c.ensureTestOptimizationInitialized()
 	if c.skippables.Tests == nil {
 		c.skippables.Tests = api.SkippableTests{}
@@ -153,12 +133,6 @@ func (c *TestOptimizationClient) GetSkippables() api.Skippables {
 		}
 	}
 
-	duration := time.Since(startTime)
-	slog.Debug("Finished fetching skippable tests and suites",
-		"testsCount", len(c.skippables.Tests),
-		"suitesCount", len(c.skippables.Suites),
-		"duration", duration)
-
 	return c.skippables
 }
 
@@ -167,7 +141,7 @@ func (c *TestOptimizationClient) GetKnownTests() *api.KnownTestsResponseData {
 		return nil
 	}
 	c.ensureTestOptimizationInitialized()
-	return &c.knownTests
+	return c.knownTests
 }
 
 func (c *TestOptimizationClient) GetTestManagementTestsData() *api.TestManagementTestsResponseDataModules {
@@ -175,7 +149,7 @@ func (c *TestOptimizationClient) GetTestManagementTestsData() *api.TestManagemen
 		return nil
 	}
 	c.ensureTestOptimizationInitialized()
-	return &c.testManagementTests
+	return c.testManagementTests
 }
 
 func (c *TestOptimizationClient) GetDisabledTests() map[string]bool {
@@ -183,32 +157,26 @@ func (c *TestOptimizationClient) GetDisabledTests() map[string]bool {
 }
 
 func (c *TestOptimizationClient) GetTestSuiteDurations() *api.TestSuiteDurationsResponseData {
-	startTime := time.Now()
-	defer func() {
-		c.recordOperationDuration(func(durations *OperationDurations) {
-			durations.TestSuiteDurations = time.Since(startTime)
-		})
-	}()
+	if c.testSuiteDurations != nil {
+		return c.testSuiteDurations
+	}
 
 	testOptimizationTransport := c.ensureAPITransport(autoDetectServiceName)
 	if testOptimizationTransport == nil {
-		return &api.TestSuiteDurationsResponseData{
+		c.testSuiteDurations = &api.TestSuiteDurationsResponseData{
 			TestSuites: map[string]map[string]api.TestSuiteDurationInfo{},
 		}
+		return c.testSuiteDurations
 	}
-	return testOptimizationTransport.GetTestSuiteDurations()
+	c.testSuiteDurations = testOptimizationTransport.GetTestSuiteDurations()
+	return c.testSuiteDurations
 }
 
-func (c *TestOptimizationClient) OperationDurations() OperationDurations {
-	c.operationDurationsMutex.Lock()
-	defer c.operationDurationsMutex.Unlock()
-	return c.operationDurations
-}
-
-func (c *TestOptimizationClient) recordOperationDuration(update func(*OperationDurations)) {
-	c.operationDurationsMutex.Lock()
-	defer c.operationDurationsMutex.Unlock()
-	update(&c.operationDurations)
+func (c *TestOptimizationClient) BackendRequestTimings() BackendRequestTimings {
+	if c.apiTransport == nil {
+		return BackendRequestTimings{}
+	}
+	return c.apiTransport.BackendRequestTimings()
 }
 
 func (c *TestOptimizationClient) StoreCacheAndExit() {
@@ -263,13 +231,6 @@ func traceDebugEnabled() bool {
 
 func (c *TestOptimizationClient) ensureSettingsInitialization(serviceName string) *api.SettingsResponseData {
 	c.settingsOnce.Do(func() {
-		startTime := time.Now()
-		defer func() {
-			c.recordOperationDuration(func(durations *OperationDurations) {
-				durations.Settings = time.Since(startTime)
-			})
-		}()
-
 		slog.Debug("testoptimization: initializing settings")
 		defer slog.Debug("testoptimization: settings initialization complete")
 
@@ -374,27 +335,7 @@ func (c *TestOptimizationClient) ensureTestOptimizationInitialized() {
 			return
 		}
 
-		additionalTags := map[string]string{
-			libraryCapabilitiesEarlyFlakeDetection:        "1",
-			libraryCapabilitiesAutoTestRetries:            "1",
-			libraryCapabilitiesTestImpactAnalysis:         "1",
-			libraryCapabilitiesTestManagementQuarantine:   "1",
-			libraryCapabilitiesTestManagementDisable:      "1",
-			libraryCapabilitiesTestManagementAttemptToFix: "5",
-		}
-		defer func() {
-			if len(additionalTags) > 0 {
-				slog.Debug("testoptimization: adding additional tags", "tags", additionalTags) //nolint:gocritic // Map structure logging for debugging
-				environment.AddCITagsMap(additionalTags)
-			}
-		}()
-
-		var additionalTagsMutex sync.Mutex
-		setAdditionalTags := func(key string, value string) {
-			additionalTagsMutex.Lock()
-			defer additionalTagsMutex.Unlock()
-			additionalTags[key] = value
-		}
+		var skippablesCorrelationID string
 
 		var wg sync.WaitGroup
 
@@ -402,17 +343,11 @@ func (c *TestOptimizationClient) ensureTestOptimizationInitialized() {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				startTime := time.Now()
-				defer func() {
-					c.recordOperationDuration(func(durations *OperationDurations) {
-						durations.KnownTests = time.Since(startTime)
-					})
-				}()
-				knownTests, err := c.apiTransport.GetKnownTests()
+				result, err := c.apiTransport.GetKnownTests()
 				if err != nil {
 					slog.Error("testoptimization: error getting test optimization known tests data", "err", err.Error())
-				} else if knownTests != nil {
-					c.knownTests = *knownTests
+				} else if result != nil {
+					c.knownTests = result
 					slog.Debug("testoptimization: known tests data loaded.")
 				}
 			}()
@@ -422,21 +357,12 @@ func (c *TestOptimizationClient) ensureTestOptimizationInitialized() {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				startTime := time.Now()
-				defer func() {
-					c.recordOperationDuration(func(durations *OperationDurations) {
-						durations.Skippables = time.Since(startTime)
-					})
-				}()
-				correlationID, skippables, err := c.apiTransport.GetSkippableTests()
+				correlationID, result, err := c.apiTransport.GetSkippableTests()
 				if err != nil {
 					slog.Error("testoptimization: error getting test optimization skippable tests", "err", err.Error())
 				} else {
-					slog.Debug("testoptimization: skippable tests loaded",
-						"testsCount", len(skippables.Tests),
-						"suitesCount", len(skippables.Suites))
-					setAdditionalTags(constants.ItrCorrelationIDTag, correlationID)
-					c.skippables = skippables
+					c.skippables = result
+					skippablesCorrelationID = correlationID
 				}
 			}()
 		}
@@ -445,23 +371,23 @@ func (c *TestOptimizationClient) ensureTestOptimizationInitialized() {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				startTime := time.Now()
-				defer func() {
-					c.recordOperationDuration(func(durations *OperationDurations) {
-						durations.TestManagementTests = time.Since(startTime)
-					})
-				}()
-				testManagementTests, err := c.apiTransport.GetTestManagementTests()
+				result, err := c.apiTransport.GetTestManagementTests()
 				if err != nil {
 					slog.Error("testoptimization: error getting test optimization test management tests", "err", err.Error())
-				} else if testManagementTests != nil {
-					c.testManagementTests = *testManagementTests
+				} else if result != nil {
+					c.testManagementTests = result
 					slog.Debug("testoptimization: test management loaded", "attemptToFixRetries", currentSettings.TestManagement.AttemptToFixRetries)
 				}
 			}()
 		}
 
 		wg.Wait()
+		if skippablesCorrelationID != "" {
+			slog.Debug("testoptimization: adding skippables correlation ID tag", "correlationID", skippablesCorrelationID)
+			environment.AddCITagsMap(map[string]string{
+				constants.ItrCorrelationIDTag: skippablesCorrelationID,
+			})
+		}
 	})
 }
 

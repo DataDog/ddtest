@@ -46,6 +46,15 @@ type (
 		GetSkippableTestsRawResponse() json.RawMessage
 		GetTestManagementTests() (*TestManagementTestsResponseDataModules, error)
 		GetTestManagementTestsRawResponse() json.RawMessage
+		BackendRequestTimings() BackendRequestTimings
+	}
+
+	BackendRequestTimings struct {
+		Settings            time.Duration
+		KnownTests          time.Duration
+		Skippables          time.Duration
+		TestManagementTests time.Duration
+		TestSuiteDurations  time.Duration
 	}
 
 	// transport sends requests to the Datadog backend.
@@ -71,6 +80,7 @@ type (
 		knownTestsRawResponse          json.RawMessage
 		skippableTestsRawResponse      json.RawMessage
 		testManagementTestsRawResponse json.RawMessage
+		backendRequestTimings          BackendRequestTimings
 	}
 
 	// testConfigurations represents the test configurations.
@@ -360,6 +370,10 @@ func (c *transport) getTestSkippingLevel() settings.TestSkippingLevel {
 
 func (c *transport) GetTestManagementTestsRawResponse() json.RawMessage {
 	return cloneRawMessage(c.testManagementTestsRawResponse)
+}
+
+func (c *transport) BackendRequestTimings() BackendRequestTimings {
+	return c.backendRequestTimings
 }
 
 // getURLPath returns the full URL path for the given URL path.

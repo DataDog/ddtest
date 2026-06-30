@@ -53,6 +53,12 @@ type discoveryCache struct {
 	filePath      string
 }
 
+type discoveryCacheResult struct {
+	Configured    bool
+	Used          bool
+	NotUsedReason string
+}
+
 var discoveryCacheGitOutput = func(args ...string) ([]byte, error) {
 	return exec.Command("git", args...).Output()
 }
@@ -208,39 +214,39 @@ func readLastNonEmptyLine(filePath string) ([]byte, error) {
 	}
 }
 
-func (c discoveryCache) restore() ([]testoptimization.Test, discoveryCacheReport) {
-	report := discoveryCacheReport{
+func (c discoveryCache) restore() ([]testoptimization.Test, discoveryCacheResult) {
+	result := discoveryCacheResult{
 		Configured: settings.GetTestDiscoveryCache() != "",
 	}
 
 	c.importExternal()
 
 	if err := c.validate(); err != nil {
-		report.Reason = err.Error()
-		if report.Configured {
+		result.NotUsedReason = err.Error()
+		if result.Configured {
 			slog.Info("Cached test discovery not usable; full discovery will run", "reason", err)
 		} else {
 			slog.Debug("Cached test discovery not usable; full discovery will run", "reason", err)
 		}
-		return nil, report
+		return nil, result
 	}
 
 	startTime := time.Now()
 	tests, err := parseCachedDiscoveryTests(c.filePath)
 	if err != nil {
-		report.Reason = err.Error()
+		result.NotUsedReason = err.Error()
 		slog.Info("Cached test discovery could not be used; full discovery will run", "error", err)
-		return nil, report
+		return nil, result
 	}
 	if err := ensureDiscoveredTests(tests); err != nil {
-		report.Reason = err.Error()
+		result.NotUsedReason = err.Error()
 		slog.Info("Cached test discovery could not be used; full discovery will run", "error", err)
-		return nil, report
+		return nil, result
 	}
 
-	report.Used = true
+	result.Used = true
 	slog.Info("Cached test discovery succeeded", "duration", time.Since(startTime), "count", len(tests))
-	return tests, report
+	return tests, result
 }
 
 func ensureDiscoveredTests(tests []testoptimization.Test) error {

@@ -55,6 +55,13 @@ func TestTestPlanner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
 	if _, err := os.Stat(cachePath); err != nil {
 		t.Fatalf("Expected test optimization plan cache file to be written: %v", err)
 	}
+	cacheData, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("Expected test optimization plan cache file to be readable: %v", err)
+	}
+	if !strings.Contains(string(cacheData), `"planMetadata"`) {
+		t.Fatalf("Expected test optimization plan cache to store planMetadata, got: %s", string(cacheData))
+	}
 
 	restored := NewWithDependencies(
 		&MockPlatformDetector{},
@@ -74,8 +81,8 @@ func TestTestPlanner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
 	if !reflect.DeepEqual(restored.testFileWeights, runner.testFileWeights) {
 		t.Errorf("Expected restored test file weights to match stored weights.\nexpected: %v\nactual: %v", runner.testFileWeights, restored.testFileWeights)
 	}
-	if !reflect.DeepEqual(restored.planInfo, runner.planInfo) {
-		t.Errorf("Expected restored plan info to match stored plan info.\nexpected: %v\nactual: %v", runner.planInfo, restored.planInfo)
+	if !reflect.DeepEqual(restored.planMetadata, runner.planMetadata) {
+		t.Errorf("Expected restored plan info to match stored plan info.\nexpected: %v\nactual: %v", runner.planMetadata, restored.planMetadata)
 	}
 }
 
@@ -214,61 +221,6 @@ func TestTestPlanner_RestoreTestOptimizationPlanCache_ComputesMissingWeights(t *
 	}
 }
 
-func TestLoadPlan_MigratesLegacyRunInfoPlanFields(t *testing.T) {
-	tempDir := t.TempDir()
-	oldWd, _ := os.Getwd()
-	defer func() { _ = os.Chdir(oldWd) }()
-	_ = os.Chdir(tempDir)
-
-	type legacyTestOptimizationPlanCache struct {
-		RunInfo legacyRunInfo `json:"runInfo"`
-	}
-	cache := legacyTestOptimizationPlanCache{
-		RunInfo: legacyRunInfo{
-			Service:    "checkout-api",
-			Repository: "https://github.com/acme/checkout.git",
-			Commit:     "9f3a1c7d2b4e",
-			Branch:     "feature/split-report",
-			Platform:   "ruby",
-			Framework:  "rspec",
-			OSTags: map[string]string{
-				"os.platform":     "linux",
-				"os.architecture": "amd64",
-				"os.version":      "6.8.0",
-			},
-			RuntimeTags: map[string]string{
-				"runtime.name":    "ruby",
-				"runtime.version": "3.3.4",
-			},
-		},
-	}
-	if err := testoptimization.NewCacheManager().StoreTestOptimizationPlanCache(cache); err != nil {
-		t.Fatalf("StoreTestOptimizationPlanCache() should not return error, got: %v", err)
-	}
-
-	plan, err := LoadPlan()
-	if err != nil {
-		t.Fatalf("LoadPlan() should not return error, got: %v", err)
-	}
-
-	expected := PlanInfo{
-		Platform:  "ruby",
-		Framework: "rspec",
-		OSTags: map[string]string{
-			"os.platform":     "linux",
-			"os.architecture": "amd64",
-			"os.version":      "6.8.0",
-		},
-		RuntimeTags: map[string]string{
-			"runtime.name":    "ruby",
-			"runtime.version": "3.3.4",
-		},
-	}
-	if !reflect.DeepEqual(plan, expected) {
-		t.Errorf("Expected LoadPlan() to migrate legacy plan fields.\nexpected: %v\nactual: %v", expected, plan)
-	}
-}
-
 func TestTestPlanner_LoadPlan_UsesExistingPlannerState(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
@@ -284,7 +236,7 @@ func TestTestPlanner_LoadPlan_UsesExistingPlannerState(t *testing.T) {
 	}
 
 	planner := newTestPlannerWithDefaults()
-	planner.planInfo = PlanInfo{
+	planner.planMetadata = PlanMetadata{
 		Platform:  "ruby",
 		Framework: "rspec",
 	}

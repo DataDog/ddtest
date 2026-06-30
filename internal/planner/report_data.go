@@ -22,7 +22,29 @@ type datadogSettingsReport struct {
 	FlakyTestManagement  bool
 }
 
-func newDatadogSettingsReport(settings *api.SettingsResponseData, fetchDuration time.Duration) datadogSettingsReport {
+func addBackendDataReports(report PlanReportData, client testOptimizationClient) PlanReportData {
+	timings := client.BackendRequestTimings()
+
+	report.DatadogSettings = reportDatadogSettings(client.GetSettings(), timings.Settings)
+	report.KnownTests = reportKnownTests(client.GetKnownTests(), timings.KnownTests)
+	report.Skippables = reportSkippables(
+		client.GetSkippables(),
+		settings.TestSkippingLevel(report.PlanMetadata.TestSkippingLevel),
+		timings.Skippables,
+	)
+	report.ManagedFlakyTests = reportManagedFlakyTests(
+		client.GetTestManagementTestsData(),
+		timings.TestManagementTests,
+	)
+	report.TestSuiteDurations = reportTestSuiteDurations(
+		client.GetTestSuiteDurations(),
+		timings.TestSuiteDurations,
+	)
+
+	return report
+}
+
+func reportDatadogSettings(settings *api.SettingsResponseData, fetchDuration time.Duration) datadogSettingsReport {
 	if settings == nil {
 		return datadogSettingsReport{FetchDuration: fetchDuration}
 	}
@@ -47,7 +69,7 @@ type knownTestsReport struct {
 	Tests         int
 }
 
-func newKnownTestsReport(knownTests *api.KnownTestsResponseData, fetchDuration time.Duration) knownTestsReport {
+func reportKnownTests(knownTests *api.KnownTestsResponseData, fetchDuration time.Duration) knownTestsReport {
 	if knownTests == nil {
 		return knownTestsReport{FetchDuration: fetchDuration}
 	}
@@ -75,7 +97,7 @@ type managedFlakyTestsReport struct {
 	AttemptToFix  int
 }
 
-func newManagedFlakyTestsReport(
+func reportManagedFlakyTests(
 	testManagementTests *api.TestManagementTestsResponseDataModules,
 	fetchDuration time.Duration,
 ) managedFlakyTestsReport {
@@ -109,21 +131,21 @@ type skippablesReport struct {
 	TestSkippingLevel settings.TestSkippingLevel
 	TIATests          int
 	TIASuites         int
-	DisabledTests     int
 }
 
-func newSkippablesReport(
-	skippables skippableMatcher,
+func reportSkippables(
+	skippables api.Skippables,
 	testSkippingLevel settings.TestSkippingLevel,
 	fetchDuration time.Duration,
 ) skippablesReport {
 	return skippablesReport{
-		Available:         true,
+		Available: skippables.Tests != nil ||
+			skippables.Suites != nil ||
+			fetchDuration > 0,
 		FetchDuration:     fetchDuration,
 		TestSkippingLevel: testSkippingLevel,
-		TIATests:          skippables.TIATestsCount(),
-		TIASuites:         skippables.TIASuitesCount(),
-		DisabledTests:     skippables.DisabledTestsCount(),
+		TIATests:          len(skippables.Tests),
+		TIASuites:         len(skippables.Suites),
 	}
 }
 
@@ -134,7 +156,7 @@ type testSuiteDurationsReport struct {
 	Suites        int
 }
 
-func newTestSuiteDurationsReport(
+func reportTestSuiteDurations(
 	testSuiteDurations *api.TestSuiteDurationsResponseData,
 	fetchDuration time.Duration,
 ) testSuiteDurationsReport {
@@ -166,25 +188,18 @@ type testSuiteTimingReport struct {
 type discoveryMode string
 
 const (
-	discoveryModeUnknown discoveryMode = ""
-	discoveryModeFast    discoveryMode = "fast"
-	discoveryModeFull    discoveryMode = "full"
+	discoveryModeFast discoveryMode = "fast"
+	discoveryModeFull discoveryMode = "full"
 )
 
 type discoveryReport struct {
 	Available bool
 	Mode      discoveryMode
-	Cache     discoveryCacheReport
+	Cache     discoveryCacheResult
 	Duration  time.Duration
 	TestFiles int
 	Suites    int
 	Tests     int
-}
-
-type discoveryCacheReport struct {
-	Configured bool
-	Used       bool
-	Reason     string
 }
 
 type durationApplicationReport struct {
@@ -213,9 +228,9 @@ type planningReport struct {
 	EstimatedTimeSaved float64
 }
 
-type planReport struct {
+type PlanReportData struct {
 	RunInfo                  runmetadata.RunInfo
-	PlanInfo                 PlanInfo
+	PlanMetadata             PlanMetadata
 	DDTestSettings           *settings.Config
 	DatadogSettings          datadogSettingsReport
 	KnownTests               knownTestsReport
@@ -228,36 +243,78 @@ type planReport struct {
 	Split                    splitScore
 }
 
+type planningReportStats struct {
+	discoveryMode                   discoveryMode
+	discoveryCache                  discoveryCacheResult
+	discoveryDuration               time.Duration
+	tiaSkippableTestsApplied        int
+	uniqueTIASkippableSuitesApplied map[testSuiteKey]struct{}
+	disabledTestsApplied            int
+	unskippableMarkerSuitesForced   int
+}
+
+func newPlanningReportStats() planningReportStats {
+	return planningReportStats{
+		uniqueTIASkippableSuitesApplied: make(map[testSuiteKey]struct{}),
+	}
+}
+
+func (tp *TestPlanner) newPlanReportData(split splitScore) PlanReportData {
+	report := PlanReportData{
+		RunInfo:                  tp.runInfo,
+		PlanMetadata:             tp.planMetadata,
+		DDTestSettings:           settings.Get(),
+		Planning:                 tp.newPlanningReport(),
+		LongSeparateRunnerSuites: tp.longSeparateRunnerSuitesReport(split.parallelRunners, split),
+		SlowestTestSuitesOverall: tp.slowestTestSuitesOverallReport(slowestTestSuitesReportLimit),
+		Split:                    split,
+	}
+	return addBackendDataReports(report, tp.optimizationClient)
+}
+
+func (tp *TestPlanner) recordDiscoveryReport(mode discoveryMode, cache discoveryCacheResult, duration time.Duration) {
+	tp.reportStats.discoveryMode = mode
+	tp.reportStats.discoveryCache = cache
+	tp.reportStats.discoveryDuration = duration
+}
+
 func (tp *TestPlanner) newPlanningReport() planningReport {
 	fullySkippedFiles := len(tp.testFiles) - len(tp.testFileWeights)
 	if fullySkippedFiles < 0 {
 		fullySkippedFiles = 0
 	}
+	discoveredSuites := 0
+	discoveredTests := 0
+	mode := tp.reportStats.discoveryMode
+	if mode == discoveryModeFull {
+		discoveredSuites = len(tp.suiteAggregates)
+		discoveredTests = countSuiteAggregateTests(tp.suiteAggregates)
+	}
 
 	return planningReport{
 		Discovery: discoveryReport{
 			Available: true,
-			Mode:      tp.discoveryMode,
-			Cache:     tp.discoveryCacheReport,
-			Duration:  tp.testDiscoveryDuration,
+			Mode:      mode,
+			Cache:     tp.reportStats.discoveryCache,
+			Duration:  tp.reportStats.discoveryDuration,
 			TestFiles: len(tp.testFiles),
-			Suites:    tp.localDiscoveredSuites,
-			Tests:     tp.localDiscoveredTests,
+			Suites:    discoveredSuites,
+			Tests:     discoveredTests,
 		},
 		Durations: durationApplicationReport{
 			Available:               true,
 			BackendDurationsApplied: tp.backendDurationApplicationsCount(),
-			BackendSuitesAdded:      tp.backendSuitesAddedCount(),
+			BackendSuitesAdded:      tp.backendSuitesAddedCount(mode),
 			SuitesWithoutDurations:  tp.suitesWithoutBackendDurationsCount(),
 			FilesWithoutDurations:   tp.filesWithoutBackendDurationsCount(),
 			ExpectedFullDuration:    tp.expectedFullDuration(),
 		},
 		Skipping: skippingApplicationReport{
 			Available:                     true,
-			TIATests:                      tp.tiaSkippableTestsApplied,
-			TIASuites:                     len(tp.tiaSkippableSuitesApplied),
-			DisabledTests:                 tp.disabledTestsApplied,
-			UnskippableMarkerSuitesForced: tp.unskippableMarkerSuitesForced,
+			TIATests:                      tp.reportStats.tiaSkippableTestsApplied,
+			TIASuites:                     len(tp.reportStats.uniqueTIASkippableSuitesApplied),
+			DisabledTests:                 tp.reportStats.disabledTestsApplied,
+			UnskippableMarkerSuitesForced: tp.reportStats.unskippableMarkerSuitesForced,
 			FullySkippedFiles:             fullySkippedFiles,
 		},
 		TestFilesToRun:     len(tp.testFileWeights),
@@ -275,12 +332,11 @@ func (tp *TestPlanner) backendDurationApplicationsCount() int {
 	return count
 }
 
-func (tp *TestPlanner) backendSuitesAddedCount() int {
-	count := len(tp.suiteAggregates) - tp.localDiscoveredSuites
-	if count < 0 {
+func (tp *TestPlanner) backendSuitesAddedCount(mode discoveryMode) int {
+	if mode == discoveryModeFull {
 		return 0
 	}
-	return count
+	return len(tp.suiteAggregates)
 }
 
 func (tp *TestPlanner) suitesWithoutBackendDurationsCount() int {

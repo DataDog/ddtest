@@ -192,8 +192,9 @@ func TestDiscoveryCacheHitUsesCachedTests(t *testing.T) {
 	if len(mockFramework.DiscoverTestsFiles) != 0 {
 		t.Fatalf("expected cache hit to avoid full discovery, got %d calls", len(mockFramework.DiscoverTestsFiles))
 	}
-	if !runner.planReport.Planning.Discovery.Cache.Used {
-		t.Fatalf("expected cache hit to be reported, got %+v", runner.planReport.Planning.Discovery.Cache)
+	report := runner.newPlanReportData(splitScore{})
+	if !report.Planning.Discovery.Cache.Used {
+		t.Fatalf("expected cache hit to be reported, got %+v", report.Planning.Discovery.Cache)
 	}
 	aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Cart"}]
 	if aggregate.NumTests != 1 || aggregate.NumTestsSkipped != 1 {
@@ -293,8 +294,9 @@ func TestDiscoveryCacheImportsExternalCacheBeforeValidation(t *testing.T) {
 	if len(mockFramework.DiscoverTestsFiles) != 0 {
 		t.Fatalf("expected imported cache to avoid full discovery, got %d calls", len(mockFramework.DiscoverTestsFiles))
 	}
-	if cacheReport := runner.planReport.Planning.Discovery.Cache; !cacheReport.Configured || !cacheReport.Used {
-		t.Fatalf("expected imported cache to be reported as configured and used, got %+v", cacheReport)
+	report := runner.newPlanReportData(splitScore{})
+	if cacheResult := report.Planning.Discovery.Cache; !cacheResult.Configured || !cacheResult.Used {
+		t.Fatalf("expected imported cache to be reported as configured and used, got %+v", cacheResult)
 	}
 	if _, err := os.Stat(discovery.TestsFilePath); err != nil {
 		t.Fatalf("expected imported cache at internal path: %v", err)
@@ -313,8 +315,8 @@ func TestDiscoveryCacheRestoreRejectsEmptyCache(t *testing.T) {
 	if report.Used || tests != nil {
 		t.Fatalf("expected empty cache restore to fail, got report=%+v tests=%v", report, tests)
 	}
-	if report.Reason != "test discovery returned no tests" {
-		t.Fatalf("unexpected empty cache restore reason: %q", report.Reason)
+	if report.NotUsedReason != "test discovery returned no tests" {
+		t.Fatalf("unexpected empty cache restore reason: %q", report.NotUsedReason)
 	}
 }
 

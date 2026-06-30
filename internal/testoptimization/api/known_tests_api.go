@@ -8,6 +8,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 const (
@@ -62,6 +63,11 @@ type (
 )
 
 func (c *transport) GetKnownTests() (*KnownTestsResponseData, error) {
+	startTime := time.Now()
+	defer func() {
+		c.backendRequestTimings.KnownTests = time.Since(startTime)
+	}()
+
 	if c.repositoryURL == "" || c.commitSha == "" {
 		return nil, fmt.Errorf("testoptimization.GetKnownTests: repository URL and commit SHA are required")
 	}

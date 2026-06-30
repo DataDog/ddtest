@@ -20,30 +20,30 @@ type runExecutionReport struct {
 }
 
 type runReport struct {
-	RunInfo   runmetadata.RunInfo
-	PlanInfo  planner.PlanInfo
-	Execution runExecutionReport
-	Duration  time.Duration
-	Err       error
+	RunInfo      runmetadata.RunInfo
+	PlanMetadata planner.PlanMetadata
+	Execution    runExecutionReport
+	Duration     time.Duration
+	Err          error
 }
 
 func printRunReport(w io.Writer, report runReport) {
 	reportFprintln(w, "+++ DDTest: run report")
 	reportFprintln(w)
-	printRunInfoReport(w, report.RunInfo, report.PlanInfo)
+	printRunInfoReport(w, report.RunInfo, report.PlanMetadata)
 	reportFprintln(w)
 	printExecutionReport(w, report)
 }
 
-func printRunInfoReport(w io.Writer, runInfo runmetadata.RunInfo, planInfo planner.PlanInfo) {
+func printRunInfoReport(w io.Writer, runInfo runmetadata.RunInfo, planMetadata planner.PlanMetadata) {
 	reportFprintln(w, "Run")
 	reportFprintf(w, "  Service: %s\n", valueOrNotAvailable(runInfo.Service))
 	reportFprintf(w, "  Repository: %s\n", valueOrNotAvailable(runInfo.Repository))
 	reportFprintf(w, "  Commit: %s\n", valueOrNotAvailable(runInfo.Commit))
 	reportFprintf(w, "  Branch: %s\n", valueOrNotAvailable(runInfo.Branch))
-	reportFprintf(w, "  Platform: %s\n", formatPlatform(planInfo.Platform, planInfo.Framework))
-	reportFprintf(w, "  OS tags: %s\n", formatTagList(planInfo.OSTags, constants.OSPlatform, constants.OSArchitecture, constants.OSVersion))
-	reportFprintf(w, "  Runtime tags: %s\n", formatTagList(planInfo.RuntimeTags, constants.RuntimeName, constants.RuntimeVersion))
+	reportFprintf(w, "  Platform: %s\n", formatPlatform(planMetadata.Platform, planMetadata.Framework))
+	reportFprintf(w, "  OS tags: %s\n", formatTagList(planMetadata.OSTags, constants.OSPlatform, constants.OSArchitecture, constants.OSVersion))
+	reportFprintf(w, "  Runtime tags: %s\n", formatTagList(planMetadata.RuntimeTags, constants.RuntimeName, constants.RuntimeVersion))
 }
 
 func printExecutionReport(w io.Writer, report runReport) {

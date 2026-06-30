@@ -55,6 +55,7 @@ type MockAPIClient struct {
 	SendPackFilesBytes             int64
 	SendPackFilesErr               error
 	SendPackFilesCalls             int
+	BackendRequestTimingValues     api.BackendRequestTimings
 }
 
 func (m *MockAPIClient) GetSettings() (*api.SettingsResponseData, error) {
@@ -125,6 +126,10 @@ func (m *MockAPIClient) SendPackFiles(commitSha string, packFiles []string) (byt
 		m.SentPackFileSizes = append(m.SentPackFileSizes, info.Size())
 	}
 	return m.SendPackFilesBytes, m.SendPackFilesErr
+}
+
+func (m *MockAPIClient) BackendRequestTimings() api.BackendRequestTimings {
+	return m.BackendRequestTimingValues
 }
 
 func cleanPlanDirectory(t *testing.T) {
@@ -251,6 +256,7 @@ func TestTestOptimizationClient_GetTestSuiteDurations(t *testing.T) {
 	client := newTestOptimizationClientForTest(t, mockAPIClient)
 
 	result := client.GetTestSuiteDurations()
+	cachedResult := client.GetTestSuiteDurations()
 
 	if mockAPIClient.TestSuiteDurationsCalls != 1 {
 		t.Fatalf("GetTestSuiteDurations() should fetch durations once, got %d calls", mockAPIClient.TestSuiteDurationsCalls)
@@ -258,8 +264,67 @@ func TestTestOptimizationClient_GetTestSuiteDurations(t *testing.T) {
 	if result.TestSuites["rspec"]["Suite"].SourceFile != "spec/suite_spec.rb" {
 		t.Fatalf("GetTestSuiteDurations() returned %#v, want %#v", result, durations)
 	}
-	if client.OperationDurations().TestSuiteDurations <= 0 {
-		t.Fatal("GetTestSuiteDurations() should record operation duration")
+	if cachedResult != result {
+		t.Fatal("GetTestSuiteDurations() should return cached durations on subsequent calls")
+	}
+}
+
+func TestTestOptimizationClient_BackendRequestTimings(t *testing.T) {
+	repositorySettings := &api.SettingsResponseData{
+		KnownTestsEnabled: true,
+		TestsSkipping:     true,
+	}
+	repositorySettings.TestManagement.Enabled = true
+
+	mockAPIClient := &MockAPIClient{
+		Settings:                repositorySettings,
+		KnownTests:              &api.KnownTestsResponseData{Tests: api.KnownTestsResponseDataModules{"module": {"suite": {"test"}}}},
+		Skippables:              api.NewSkippables(),
+		TestManagementTestsData: &api.TestManagementTestsResponseDataModules{Modules: map[string]api.TestManagementTestsResponseDataSuites{}},
+		TestSuiteDurations:      map[string]map[string]api.TestSuiteDurationInfo{"module": {"suite": {}}},
+		BackendRequestTimingValues: api.BackendRequestTimings{
+			Settings:            time.Millisecond,
+			KnownTests:          2 * time.Millisecond,
+			Skippables:          3 * time.Millisecond,
+			TestManagementTests: 4 * time.Millisecond,
+			TestSuiteDurations:  5 * time.Millisecond,
+		},
+	}
+	client := newTestOptimizationClientForTest(t, mockAPIClient)
+
+	if err := client.Initialize(map[string]string{}); err != nil {
+		t.Fatalf("Initialize() failed: %v", err)
+	}
+	client.GetSkippables()
+	client.GetTestSuiteDurations()
+
+	timings := client.BackendRequestTimings()
+	for name, duration := range map[string]time.Duration{
+		"settings":             timings.Settings,
+		"known tests":          timings.KnownTests,
+		"skippables":           timings.Skippables,
+		"test management":      timings.TestManagementTests,
+		"test suite durations": timings.TestSuiteDurations,
+	} {
+		if duration <= 0 {
+			t.Errorf("expected %s duration to be recorded, got %s", name, duration)
+		}
+	}
+
+	if client.GetSettings() != repositorySettings {
+		t.Errorf("expected settings operation to store fetched settings, got %+v", client.GetSettings())
+	}
+	if knownTests := client.GetKnownTests(); knownTests == nil || len(knownTests.Tests) != 1 {
+		t.Errorf("expected known tests operation to store fetched data, got %+v", knownTests)
+	}
+	if skippables := client.GetSkippables(); skippables.Tests == nil || skippables.Suites == nil {
+		t.Errorf("expected skippables operation to be recorded, got %+v", skippables)
+	}
+	if testManagementTests := client.GetTestManagementTestsData(); testManagementTests == nil {
+		t.Errorf("expected test management operation to store fetched data, got %+v", testManagementTests)
+	}
+	if testSuiteDurations := client.GetTestSuiteDurations(); testSuiteDurations == nil || len(testSuiteDurations.TestSuites) != 1 {
+		t.Errorf("expected duration operation to store fetched durations, got %+v", testSuiteDurations)
 	}
 }
 
@@ -300,9 +365,6 @@ func TestTestOptimizationClient_Initialize(t *testing.T) {
 
 	if duration < 0 {
 		t.Error("Initialize() duration should be non-negative")
-	}
-	if client.OperationDurations().Settings <= 0 {
-		t.Error("Initialize() should record settings fetch duration")
 	}
 }
 
@@ -375,9 +437,6 @@ func TestTestOptimizationClient_GetSkippables(t *testing.T) {
 
 	if len(result) != len(expectedTests) {
 		t.Errorf("Expected %d skippable tests, got %d", len(expectedTests), len(result))
-	}
-	if client.OperationDurations().Skippables <= 0 {
-		t.Error("GetSkippables() should record skippables fetch duration")
 	}
 }
 
@@ -543,9 +602,6 @@ func TestTestOptimizationClient_GetDisabledTests(t *testing.T) {
 	}
 	if mockAPIClient.TestManagementTestsCalls != 1 {
 		t.Fatalf("expected test management tests to be fetched once, got %d", mockAPIClient.TestManagementTestsCalls)
-	}
-	if client.OperationDurations().TestManagementTests <= 0 {
-		t.Fatal("GetDisabledTests() should record test management fetch duration")
 	}
 }
 

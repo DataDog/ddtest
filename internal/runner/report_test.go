@@ -21,7 +21,7 @@ func TestPrintRunReport_Passed(t *testing.T) {
 			Commit:     "9f3a1c7d2b4e",
 			Branch:     "feature/split-report",
 		},
-		PlanInfo: planner.PlanInfo{
+		PlanMetadata: planner.PlanMetadata{
 			Platform:  "ruby",
 			Framework: "rspec",
 			OSTags: map[string]string{

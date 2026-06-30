@@ -91,10 +91,6 @@ func TestTestOptimizationClientFeatureGetters(t *testing.T) {
 		t.Fatalf("expected each feature endpoint once, got known=%d skippable=%d testManagement=%d",
 			mockTransport.KnownTestsCalls, mockTransport.SkippableTestsCalls, mockTransport.TestManagementTestsCalls)
 	}
-	operationDurations := client.OperationDurations()
-	if operationDurations.KnownTests <= 0 || operationDurations.Skippables <= 0 || operationDurations.TestManagementTests <= 0 {
-		t.Fatalf("expected feature endpoint durations, got %+v", operationDurations)
-	}
 
 	ciTags := environment.GetCITags()
 	if ciTags[constants.ItrCorrelationIDTag] != "correlation-id" {

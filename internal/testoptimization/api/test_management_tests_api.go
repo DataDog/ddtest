@@ -7,6 +7,7 @@ package api
 
 import (
 	"fmt"
+	"time"
 )
 
 const (
@@ -65,6 +66,11 @@ type (
 )
 
 func (c *transport) GetTestManagementTests() (*TestManagementTestsResponseDataModules, error) {
+	startTime := time.Now()
+	defer func() {
+		c.backendRequestTimings.TestManagementTests = time.Since(startTime)
+	}()
+
 	if c.repositoryURL == "" {
 		return nil, fmt.Errorf("testoptimization.GetTestManagementTests: repository URL is required")
 	}

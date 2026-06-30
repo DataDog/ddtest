@@ -354,19 +354,19 @@ func (m *longRunningDiscoveryFramework) DiscoverTests(ctx context.Context, testF
 
 // MockTestOptimizationClient mocks the test optimization client
 type MockTestOptimizationClient struct {
-	InitializeCalled    bool
-	InitializeErr       error
-	Settings            *api.SettingsResponseData
-	Skippables          api.Skippables
-	GetSkippablesCalled bool
-	KnownTests          *api.KnownTestsResponseData
-	TestManagementTests *api.TestManagementTestsResponseDataModules
-	DisabledTests       map[string]bool
-	Durations           map[string]map[string]api.TestSuiteDurationInfo
-	DurationsCalled     bool
-	OperationTimes      testoptimization.OperationDurations
-	ShutdownCalled      bool
-	Tags                map[string]string
+	InitializeCalled           bool
+	InitializeErr              error
+	Settings                   *api.SettingsResponseData
+	Skippables                 api.Skippables
+	GetSkippablesCalled        bool
+	KnownTests                 *api.KnownTestsResponseData
+	TestManagementTests        *api.TestManagementTestsResponseDataModules
+	DisabledTests              map[string]bool
+	Durations                  map[string]map[string]api.TestSuiteDurationInfo
+	BackendRequestTimingValues testoptimization.BackendRequestTimings
+	DurationsCalled            bool
+	ShutdownCalled             bool
+	Tags                       map[string]string
 }
 
 func testSkippables(tests map[string]bool) api.Skippables {
@@ -392,6 +392,9 @@ func (m *MockTestOptimizationClient) GetSettings() *api.SettingsResponseData {
 
 func (m *MockTestOptimizationClient) GetSkippables() api.Skippables {
 	m.GetSkippablesCalled = true
+	if m.Settings != nil && !m.Settings.TestsSkipping {
+		return api.NewSkippables()
+	}
 	skippables := m.Skippables
 	if skippables.Tests == nil {
 		skippables.Tests = api.SkippableTests{}
@@ -399,6 +402,7 @@ func (m *MockTestOptimizationClient) GetSkippables() api.Skippables {
 	if skippables.Suites == nil {
 		skippables.Suites = api.SkippableSuites{}
 	}
+	m.Skippables = skippables
 	return skippables
 }
 
@@ -449,8 +453,8 @@ func (m *MockTestOptimizationClient) GetTestSuiteDurations() *api.TestSuiteDurat
 	return &api.TestSuiteDurationsResponseData{TestSuites: m.Durations}
 }
 
-func (m *MockTestOptimizationClient) OperationDurations() testoptimization.OperationDurations {
-	return m.OperationTimes
+func (m *MockTestOptimizationClient) BackendRequestTimings() testoptimization.BackendRequestTimings {
+	return m.BackendRequestTimingValues
 }
 
 func (m *MockTestOptimizationClient) StoreCacheAndExit() {
@@ -865,30 +869,29 @@ func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery
 	if !mockOptimizationClient.GetSkippablesCalled {
 		t.Fatal("expected planner to fetch suite skippables when full test discovery is unsupported")
 	}
-	if runner.planReport.Skippables.TestSkippingLevel != settings.TestSkippingLevelSuite ||
-		runner.planReport.Skippables.TIATests != 0 ||
-		runner.planReport.Skippables.TIASuites != 1 {
-		t.Errorf("expected suite-level skippables to be reported separately, got %+v", runner.planReport.Skippables)
+	report := runner.newPlanReportData(splitScore{})
+	if report.Skippables.TestSkippingLevel != settings.TestSkippingLevelSuite ||
+		report.Skippables.TIATests != 0 ||
+		report.Skippables.TIASuites != 1 {
+		t.Errorf("expected suite-level skippables to be reported separately, got %+v", report.Skippables)
 	}
-	if runner.planReport.Planning.Discovery.Mode != discoveryModeFast ||
-		runner.planReport.Planning.Discovery.TestFiles != 2 ||
-		runner.planReport.Planning.Discovery.Suites != 0 {
-		t.Errorf("expected fast discovery report with files but no local suites, got %+v", runner.planReport.Planning.Discovery)
+	if report.Planning.Discovery.Mode != discoveryModeFast ||
+		report.Planning.Discovery.TestFiles != 2 ||
+		report.Planning.Discovery.Suites != 0 {
+		t.Errorf("expected fast discovery report with files but no local suites, got %+v", report.Planning.Discovery)
 	}
-	if cacheReport := runner.planReport.Planning.Discovery.Cache; !cacheReport.Configured ||
-		cacheReport.Used ||
-		cacheReport.Reason != "full discovery not required for suite-level skipping" {
-		t.Errorf("expected configured cache skip reason for fast discovery, got %+v", cacheReport)
+	if cacheResult := report.Planning.Discovery.Cache; cacheResult != (discoveryCacheResult{}) {
+		t.Errorf("expected cache result to be empty when full discovery is not applicable, got %+v", cacheResult)
 	}
-	if runner.planReport.Planning.Durations.BackendDurationsApplied != 2 ||
-		runner.planReport.Planning.Durations.BackendSuitesAdded != 2 ||
-		runner.planReport.Planning.Durations.SuitesWithoutDurations != 0 {
-		t.Errorf("expected backend duration application report for fast discovery, got %+v", runner.planReport.Planning.Durations)
+	if report.Planning.Durations.BackendDurationsApplied != 2 ||
+		report.Planning.Durations.BackendSuitesAdded != 2 ||
+		report.Planning.Durations.SuitesWithoutDurations != 0 {
+		t.Errorf("expected backend duration application report for fast discovery, got %+v", report.Planning.Durations)
 	}
-	if runner.planReport.Planning.Skipping.TIASuites != 1 ||
-		runner.planReport.Planning.Skipping.FullySkippedFiles != 1 ||
-		runner.planReport.Planning.TestFilesToRun != 1 {
-		t.Errorf("expected suite skip application report, got planning=%+v", runner.planReport.Planning)
+	if report.Planning.Skipping.TIASuites != 1 ||
+		report.Planning.Skipping.FullySkippedFiles != 1 ||
+		report.Planning.TestFilesToRun != 1 {
+		t.Errorf("expected suite skip application report, got planning=%+v", report.Planning)
 	}
 
 	expectedTestFiles := "src/b.test.ts\n"
@@ -962,8 +965,8 @@ func TestTestPlanner_PreparePlanningData_RubySuiteModeSkipsFullDiscoveryAndSkips
 	if _, ok := runner.testFileWeights["spec/models/payment_spec.rb"]; !ok {
 		t.Fatalf("expected runnable suite file to remain, got weights: %+v", runner.testFileWeights)
 	}
-	if runner.planInfo.TestSkippingLevel != settings.TestSkippingLevelSuite.String() {
-		t.Fatalf("plan test skipping level = %q, want suite", runner.planInfo.TestSkippingLevel)
+	if runner.planMetadata.TestSkippingLevel != settings.TestSkippingLevelSuite.String() {
+		t.Fatalf("plan test skipping level = %q, want suite", runner.planMetadata.TestSkippingLevel)
 	}
 }
 
@@ -1045,15 +1048,16 @@ func TestTestPlanner_PreparePlanningData_RubySuiteModeForceFullDiscovery(t *test
 	if guarded.NumTests != 1 || guarded.NumTestsSkipped != 0 {
 		t.Fatalf("expected guarded suite to remain runnable, got %+v", guarded)
 	}
-	if runner.planReport.Planning.Discovery.Mode != discoveryModeFull ||
-		runner.planReport.Planning.Discovery.Suites != 4 ||
-		runner.planReport.Planning.Discovery.Tests != 5 {
-		t.Errorf("expected full discovery suite/test report, got %+v", runner.planReport.Planning.Discovery)
+	report := runner.newPlanReportData(splitScore{})
+	if report.Planning.Discovery.Mode != discoveryModeFull ||
+		report.Planning.Discovery.Suites != 4 ||
+		report.Planning.Discovery.Tests != 5 {
+		t.Errorf("expected full discovery suite/test report, got %+v", report.Planning.Discovery)
 	}
-	if runner.planReport.Planning.Skipping.TIASuites != 3 ||
-		runner.planReport.Planning.Skipping.UnskippableMarkerSuitesForced != 1 ||
-		runner.planReport.Planning.Skipping.FullySkippedFiles != 1 {
-		t.Errorf("expected full discovery skipping application report, got %+v", runner.planReport.Planning.Skipping)
+	if report.Planning.Skipping.TIASuites != 3 ||
+		report.Planning.Skipping.UnskippableMarkerSuitesForced != 1 ||
+		report.Planning.Skipping.FullySkippedFiles != 1 {
+		t.Errorf("expected full discovery skipping application report, got %+v", report.Planning.Skipping)
 	}
 }
 
@@ -2018,10 +2022,11 @@ func TestTestPlanner_PreparePlanningData_Success(t *testing.T) {
 	if !mockOptimizationClient.DurationsCalled {
 		t.Error("PreparePlanningData() should fetch test suite durations")
 	}
-	if !runner.planReport.TestSuiteDurations.Available ||
-		runner.planReport.TestSuiteDurations.Modules != 1 ||
-		runner.planReport.TestSuiteDurations.Suites != 1 {
-		t.Errorf("Expected plan report to summarize fetched durations, got %+v", runner.planReport.TestSuiteDurations)
+	report := runner.newPlanReportData(splitScore{})
+	if !report.TestSuiteDurations.Available ||
+		report.TestSuiteDurations.Modules != 1 ||
+		report.TestSuiteDurations.Suites != 1 {
+		t.Errorf("Expected plan report to summarize fetched durations, got %+v", report.TestSuiteDurations)
 	}
 }
 
@@ -2109,8 +2114,10 @@ func TestTestPlanner_PreparePlanningData_DisabledTestManagementTestsAreSkipped(t
 		t.Errorf("Expected attempt-to-fix file to be scheduled, got %v", runner.testFileWeights)
 	}
 
-	if runner.planReport.Skippables.TIATests != 1 || runner.planReport.Skippables.TIASuites != 0 || runner.planReport.Skippables.DisabledTests != 1 {
-		t.Errorf("Expected planner report to split TIA and disabled skippables, got %+v", runner.planReport.Skippables)
+	report := runner.newPlanReportData(splitScore{})
+	if report.Skippables.TIATests != 1 || report.Skippables.TIASuites != 0 || report.Planning.Skipping.DisabledTests != 1 {
+		t.Errorf("Expected planner report to split TIA skippables and disabled tests, got skippables=%+v planning=%+v",
+			report.Skippables, report.Planning.Skipping)
 	}
 }
 
@@ -2301,8 +2308,10 @@ func TestTestPlanner_PreparePlanningData_TestManagementDoesNotKeepFullDiscoveryW
 		t.Errorf("Expected fast discovery fallback to keep all discovered files, got %v", runner.testFileWeights)
 	}
 
-	if runner.planReport.Skippables.TIATests != 0 || runner.planReport.Skippables.TIASuites != 0 || runner.planReport.Skippables.DisabledTests != 2 {
-		t.Errorf("Expected planner report to split TIA and disabled skippables, got %+v", runner.planReport.Skippables)
+	report := runner.newPlanReportData(splitScore{})
+	if report.Skippables.TIATests != 0 || report.Skippables.TIASuites != 0 || report.Planning.Skipping.DisabledTests != 0 {
+		t.Errorf("Expected planner report to split TIA skippables and disabled tests, got skippables=%+v planning=%+v",
+			report.Skippables, report.Planning.Skipping)
 	}
 }
 
@@ -2491,10 +2500,11 @@ func TestTestPlanner_PreparePlanningData_EmptyDurationsContinues(t *testing.T) {
 	if len(runner.testSuiteDurations) != 0 {
 		t.Errorf("Expected empty in-memory test suite durations on empty response, got %v", runner.testSuiteDurations)
 	}
-	if !runner.planReport.TestSuiteDurations.Available ||
-		runner.planReport.TestSuiteDurations.Modules != 0 ||
-		runner.planReport.TestSuiteDurations.Suites != 0 {
-		t.Errorf("Expected plan report to summarize empty durations response, got %+v", runner.planReport.TestSuiteDurations)
+	report := runner.newPlanReportData(splitScore{})
+	if !report.TestSuiteDurations.Available ||
+		report.TestSuiteDurations.Modules != 0 ||
+		report.TestSuiteDurations.Suites != 0 {
+		t.Errorf("Expected plan report to summarize empty durations response, got %+v", report.TestSuiteDurations)
 	}
 }
 
@@ -2545,10 +2555,11 @@ func TestTestPlanner_PreparePlanningData_NonEmptyDurationsUsesP50ForMatchingSuit
 	if len(runner.testSuiteDurations) != 1 {
 		t.Fatalf("Expected stored durations data, got %v", runner.testSuiteDurations)
 	}
-	if !runner.planReport.TestSuiteDurations.Available ||
-		runner.planReport.TestSuiteDurations.Modules != 1 ||
-		runner.planReport.TestSuiteDurations.Suites != 2 {
-		t.Errorf("Expected plan report to summarize fetched durations, got %+v", runner.planReport.TestSuiteDurations)
+	report := runner.newPlanReportData(splitScore{})
+	if !report.TestSuiteDurations.Available ||
+		report.TestSuiteDurations.Modules != 1 ||
+		report.TestSuiteDurations.Suites != 2 {
+		t.Errorf("Expected plan report to summarize fetched durations, got %+v", report.TestSuiteDurations)
 	}
 
 	if _, ok := runner.testFiles["spec/file1_test.rb"]; !ok {

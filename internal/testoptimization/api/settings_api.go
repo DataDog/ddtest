@@ -8,6 +8,7 @@ package api
 import (
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/settings"
 )
@@ -71,6 +72,11 @@ type (
 )
 
 func (c *transport) GetSettings() (*SettingsResponseData, error) {
+	startTime := time.Now()
+	defer func() {
+		c.backendRequestTimings.Settings = time.Since(startTime)
+	}()
+
 	if c.repositoryURL == "" || c.commitSha == "" {
 		return nil, fmt.Errorf("testoptimization.GetSettings: repository URL and commit SHA are required")
 	}

@@ -99,7 +99,7 @@ type Config struct {
 	Framework              string            `mapstructure:"framework"`
 	MinParallelism         int               `mapstructure:"min_parallelism"`
 	MaxParallelism         int               `mapstructure:"max_parallelism"`
-	ParallelRunnerOverhead time.Duration     `mapstructure:"parallel_runner_overhead" report:"CI job overhead"`
+	ParallelRunnerOverhead time.Duration     `mapstructure:"parallel_runner_overhead"`
 	WorkerEnv              string            `mapstructure:"worker_env"`
 	CiNode                 int               `mapstructure:"ci_node"`
 	CiNodeWorkers          int               `mapstructure:"ci_node_workers"`
@@ -112,28 +112,6 @@ type Config struct {
 	StrictDiscovery        bool              `mapstructure:"strict_discovery"`
 	RuntimeTags            string            `mapstructure:"runtime_tags"`
 	ReportEnabled          bool              `mapstructure:"report_enabled"`
-}
-
-func DefaultConfig() Config {
-	return Config{
-		Platform:               "ruby",
-		Framework:              "rspec",
-		MinParallelism:         DefaultParallelism(),
-		MaxParallelism:         DefaultParallelism(),
-		ParallelRunnerOverhead: defaultParallelRunnerOverhead,
-		WorkerEnv:              "",
-		CiNode:                 -1,
-		CiNodeWorkers:          defaultCiNodeWorkers,
-		Command:                "",
-		TestsLocation:          "",
-		TestsExcludePattern:    "",
-		TestDiscoveryCache:     "",
-		TestSkippingLevel:      TestSkippingLevelTest,
-		ForceFullTestDiscovery: false,
-		StrictDiscovery:        false,
-		RuntimeTags:            "",
-		ReportEnabled:          true,
-	}
 }
 
 var (
@@ -197,24 +175,23 @@ func Init() {
 }
 
 func setDefaults() {
-	defaults := DefaultConfig()
-	viper.SetDefault("platform", defaults.Platform)
-	viper.SetDefault("framework", defaults.Framework)
-	viper.SetDefault("min_parallelism", defaults.MinParallelism)
-	viper.SetDefault("max_parallelism", defaults.MaxParallelism)
-	viper.SetDefault("parallel_runner_overhead", defaults.ParallelRunnerOverhead.String())
-	viper.SetDefault("worker_env", defaults.WorkerEnv)
-	viper.SetDefault("ci_node", defaults.CiNode)
-	viper.SetDefault("ci_node_workers", strconv.Itoa(defaults.CiNodeWorkers))
-	viper.SetDefault("command", defaults.Command)
-	viper.SetDefault("tests_location", defaults.TestsLocation)
-	viper.SetDefault("tests_exclude_pattern", defaults.TestsExcludePattern)
-	viper.SetDefault("test_discovery_cache", defaults.TestDiscoveryCache)
-	viper.SetDefault("test_skipping_mode", defaults.TestSkippingLevel.String())
-	viper.SetDefault("force_full_test_discovery", defaults.ForceFullTestDiscovery)
-	viper.SetDefault("strict_discovery", defaults.StrictDiscovery)
-	viper.SetDefault("runtime_tags", defaults.RuntimeTags)
-	viper.SetDefault("report_enabled", defaults.ReportEnabled)
+	viper.SetDefault("platform", "ruby")
+	viper.SetDefault("framework", "rspec")
+	viper.SetDefault("min_parallelism", DefaultParallelism())
+	viper.SetDefault("max_parallelism", DefaultParallelism())
+	viper.SetDefault("parallel_runner_overhead", defaultParallelRunnerOverhead.String())
+	viper.SetDefault("worker_env", "")
+	viper.SetDefault("ci_node", -1)
+	viper.SetDefault("ci_node_workers", strconv.Itoa(defaultCiNodeWorkers))
+	viper.SetDefault("command", "")
+	viper.SetDefault("tests_location", "")
+	viper.SetDefault("tests_exclude_pattern", "")
+	viper.SetDefault("test_discovery_cache", "")
+	viper.SetDefault("test_skipping_mode", TestSkippingLevelTest)
+	viper.SetDefault("force_full_test_discovery", false)
+	viper.SetDefault("strict_discovery", false)
+	viper.SetDefault("runtime_tags", "")
+	viper.SetDefault("report_enabled", true)
 }
 
 // NormalizeTestSkippingLevel accepts only the backend-supported TIA skipping modes.
