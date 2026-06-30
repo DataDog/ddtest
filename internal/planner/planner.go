@@ -76,6 +76,7 @@ type TestPlanner struct {
 	testFileWeights               map[string]int
 	testFileDurationSources       map[string]testFileDurationSource
 	discoveryMode                 discoveryMode
+	discoveryCacheReport          discoveryCacheReport
 	localDiscoveredSuites         int
 	localDiscoveredTests          int
 	tiaSkippableTestsApplied      int
@@ -378,17 +379,22 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		if !fullDiscoveryNeeded {
 			if isSuiteLevelSkipping && !forceFullTestDiscovery {
 				slog.Info("Suite-level skipping does not require full test discovery; using fast test file discovery fallback", "framework", testFramework.Name())
+				tp.discoveryCacheReport = newDiscoveryCacheReport(false, "full discovery not required for suite-level skipping")
 				return nil
 			}
 			if forceFullTestDiscovery && !fullTestDiscoverySupported {
 				slog.Warn("Full test discovery was forced but is not supported by framework; using fast test file discovery fallback", "framework", testFramework.Name())
+				tp.discoveryCacheReport = newDiscoveryCacheReport(false, "full discovery not supported by framework")
 				return nil
 			}
 			slog.Info("Full test discovery is not supported by framework; using fast test file discovery fallback", "framework", testFramework.Name())
+			tp.discoveryCacheReport = newDiscoveryCacheReport(false, "full discovery not supported by framework")
 			return nil
 		}
 
-		if res, ok := discoveryCache.restore(); ok {
+		res, cacheReport := discoveryCache.restore()
+		tp.discoveryCacheReport = cacheReport
+		if cacheReport.Used {
 			discoveredTests = res
 			fullDiscoverySucceeded = true
 			return nil
@@ -508,6 +514,14 @@ func discoverLocalTests(ctx context.Context, testFramework framework.Framework, 
 
 	slog.Info("Discovered local tests", "duration", time.Since(startTime), "count", len(tests))
 	return tests, nil
+}
+
+func newDiscoveryCacheReport(used bool, reason string) discoveryCacheReport {
+	return discoveryCacheReport{
+		Configured: settings.GetTestDiscoveryCache() != "",
+		Used:       used,
+		Reason:     reason,
+	}
 }
 
 func (tp *TestPlanner) fetchSkippables(tiaSkippingEnabled bool) skippableMatcher {

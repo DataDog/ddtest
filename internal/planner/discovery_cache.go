@@ -208,31 +208,39 @@ func readLastNonEmptyLine(filePath string) ([]byte, error) {
 	}
 }
 
-func (c discoveryCache) restore() ([]testoptimization.Test, bool) {
+func (c discoveryCache) restore() ([]testoptimization.Test, discoveryCacheReport) {
+	report := discoveryCacheReport{
+		Configured: settings.GetTestDiscoveryCache() != "",
+	}
+
 	c.importExternal()
 
 	if err := c.validate(); err != nil {
-		if settings.GetTestDiscoveryCache() != "" {
+		report.Reason = err.Error()
+		if report.Configured {
 			slog.Info("Cached test discovery not usable; full discovery will run", "reason", err)
 		} else {
 			slog.Debug("Cached test discovery not usable; full discovery will run", "reason", err)
 		}
-		return nil, false
+		return nil, report
 	}
 
 	startTime := time.Now()
 	tests, err := parseCachedDiscoveryTests(c.filePath)
 	if err != nil {
+		report.Reason = err.Error()
 		slog.Info("Cached test discovery could not be used; full discovery will run", "error", err)
-		return nil, false
+		return nil, report
 	}
 	if err := ensureDiscoveredTests(tests); err != nil {
+		report.Reason = err.Error()
 		slog.Info("Cached test discovery could not be used; full discovery will run", "error", err)
-		return nil, false
+		return nil, report
 	}
 
+	report.Used = true
 	slog.Info("Cached test discovery succeeded", "duration", time.Since(startTime), "count", len(tests))
-	return tests, true
+	return tests, report
 }
 
 func ensureDiscoveredTests(tests []testoptimization.Test) error {

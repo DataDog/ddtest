@@ -818,6 +818,7 @@ func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery
 	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "1")
 	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "1")
 	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED", "false")
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE", filepath.Join(tempDir, "test-discovery-cache.json"))
 	settings.Init()
 
 	mockFramework := &MockFramework{
@@ -868,6 +869,11 @@ func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery
 		runner.planReport.Planning.Discovery.TestFiles != 2 ||
 		runner.planReport.Planning.Discovery.Suites != 0 {
 		t.Errorf("expected fast discovery report with files but no local suites, got %+v", runner.planReport.Planning.Discovery)
+	}
+	if cacheReport := runner.planReport.Planning.Discovery.Cache; !cacheReport.Configured ||
+		cacheReport.Used ||
+		cacheReport.Reason != "full discovery not required for suite-level skipping" {
+		t.Errorf("expected configured cache skip reason for fast discovery, got %+v", cacheReport)
 	}
 	if runner.planReport.Planning.Durations.BackendDurationsApplied != 2 ||
 		runner.planReport.Planning.Durations.BackendSuitesAdded != 2 ||

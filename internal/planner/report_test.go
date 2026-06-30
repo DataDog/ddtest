@@ -94,6 +94,10 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 			Discovery: discoveryReport{
 				Available: true,
 				Mode:      discoveryModeFull,
+				Cache: discoveryCacheReport{
+					Configured: true,
+					Used:       true,
+				},
 				TestFiles: 642,
 				Suites:    1284,
 				Tests:     18921,
@@ -202,6 +206,7 @@ Planning
   Discovery
     Method: full
     Test files: 642
+    Cache: used
     Suites discovered: 1,284
     Tests discovered: 18,921
   Duration estimates
@@ -273,6 +278,10 @@ func TestPrintPlanReport_FastDiscovery(t *testing.T) {
 			Discovery: discoveryReport{
 				Available: true,
 				Mode:      discoveryModeFast,
+				Cache: discoveryCacheReport{
+					Configured: true,
+					Reason:     "full discovery not required for suite-level skipping",
+				},
 				TestFiles: 24,
 				Suites:    0,
 			},
@@ -349,6 +358,7 @@ Planning
   Discovery
     Method: fast
     Test files: 24
+    Cache: not used (full discovery not required for suite-level skipping)
   Duration estimates
     Backend durations used: 12 suites
     Default durations used: 1 suite
@@ -628,6 +638,10 @@ func TestReportFormattingVariants(t *testing.T) {
 			{name: "three digit group count", got: formatCount(123456), want: "123,456"},
 			{name: "singular count unit", got: formatCountWithUnit(1, "suite", "suites"), want: "1 suite"},
 			{name: "sub-millisecond duration", got: formatDuration(500 * time.Microsecond), want: "500µs"},
+			{name: "cache not configured", got: formatDiscoveryCache(discoveryCacheReport{}), want: "not configured"},
+			{name: "cache used", got: formatDiscoveryCache(discoveryCacheReport{Configured: true, Used: true}), want: "used"},
+			{name: "cache configured but not used", got: formatDiscoveryCache(discoveryCacheReport{Configured: true}), want: "not used"},
+			{name: "cache configured but skipped with reason", got: formatDiscoveryCache(discoveryCacheReport{Configured: true, Reason: "full discovery not required"}), want: "not used (full discovery not required)"},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {

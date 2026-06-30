@@ -274,11 +274,25 @@ func printDiscoveryPlanningReport(w io.Writer, discovery discoveryReport) {
 	reportFprintln(w, "  Discovery")
 	reportFprintf(w, "    Method: %s\n", valueOrNotAvailable(string(discovery.Mode)))
 	reportFprintf(w, "    Test files: %s\n", formatCount(discovery.TestFiles))
+	reportFprintf(w, "    Cache: %s\n", formatDiscoveryCache(discovery.Cache))
 	switch discovery.Mode {
 	case discoveryModeFull:
 		reportFprintf(w, "    Suites discovered: %s\n", formatCount(discovery.Suites))
 		reportFprintf(w, "    Tests discovered: %s\n", formatCount(discovery.Tests))
 	}
+}
+
+func formatDiscoveryCache(cache discoveryCacheReport) string {
+	if cache.Used {
+		return "used"
+	}
+	if !cache.Configured {
+		return "not configured"
+	}
+	if cache.Reason == "" {
+		return "not used"
+	}
+	return "not used (" + cache.Reason + ")"
 }
 
 func printDurationEstimatesPlanningReport(w io.Writer, durations durationApplicationReport) {

@@ -155,9 +155,16 @@ const (
 type discoveryReport struct {
 	Available bool
 	Mode      discoveryMode
+	Cache     discoveryCacheReport
 	TestFiles int
 	Suites    int
 	Tests     int
+}
+
+type discoveryCacheReport struct {
+	Configured bool
+	Used       bool
+	Reason     string
 }
 
 type durationApplicationReport struct {
@@ -211,6 +218,7 @@ func (tp *TestPlanner) newPlanningReport() planningReport {
 		Discovery: discoveryReport{
 			Available: true,
 			Mode:      tp.discoveryMode,
+			Cache:     tp.discoveryCacheReport,
 			TestFiles: len(tp.testFiles),
 			Suites:    tp.localDiscoveredSuites,
 			Tests:     tp.localDiscoveredTests,

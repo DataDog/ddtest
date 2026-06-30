@@ -192,6 +192,9 @@ func TestDiscoveryCacheHitUsesCachedTests(t *testing.T) {
 	if len(mockFramework.DiscoverTestsFiles) != 0 {
 		t.Fatalf("expected cache hit to avoid full discovery, got %d calls", len(mockFramework.DiscoverTestsFiles))
 	}
+	if !runner.planReport.Planning.Discovery.Cache.Used {
+		t.Fatalf("expected cache hit to be reported, got %+v", runner.planReport.Planning.Discovery.Cache)
+	}
 	aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Cart"}]
 	if aggregate.NumTests != 1 || aggregate.NumTestsSkipped != 1 {
 		t.Fatalf("cached aggregate = %+v, want one skipped test", aggregate)
@@ -290,6 +293,9 @@ func TestDiscoveryCacheImportsExternalCacheBeforeValidation(t *testing.T) {
 	if len(mockFramework.DiscoverTestsFiles) != 0 {
 		t.Fatalf("expected imported cache to avoid full discovery, got %d calls", len(mockFramework.DiscoverTestsFiles))
 	}
+	if cacheReport := runner.planReport.Planning.Discovery.Cache; !cacheReport.Configured || !cacheReport.Used {
+		t.Fatalf("expected imported cache to be reported as configured and used, got %+v", cacheReport)
+	}
 	if _, err := os.Stat(discovery.TestsFilePath); err != nil {
 		t.Fatalf("expected imported cache at internal path: %v", err)
 	}
@@ -303,9 +309,12 @@ func TestDiscoveryCacheRestoreRejectsEmptyCache(t *testing.T) {
 	writePlannerDiscoveryCache(t, "base-sha", "ruby", "rspec", pattern, "", nil)
 	cache := newDiscoveryCache("ruby", &MockFramework{FrameworkName: "rspec", TestPatternValue: pattern})
 
-	tests, ok := cache.restore()
-	if ok || tests != nil {
-		t.Fatalf("expected empty cache restore to fail, got ok=%v tests=%v", ok, tests)
+	tests, report := cache.restore()
+	if report.Used || tests != nil {
+		t.Fatalf("expected empty cache restore to fail, got report=%+v tests=%v", report, tests)
+	}
+	if report.Reason != "test discovery returned no tests" {
+		t.Fatalf("unexpected empty cache restore reason: %q", report.Reason)
 	}
 }
 
