@@ -91,13 +91,29 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 			Suites:    1491,
 		},
 		Planning: planningReport{
-			TestFilesDiscovered: 642,
-			FullySkippedFiles:   118,
-			TestFilesToRun:      524,
-			DurationSources: durationSourceReport{
-				Known:   431,
-				Default: 90,
+			Discovery: discoveryReport{
+				Available: true,
+				Mode:      discoveryModeFull,
+				TestFiles: 642,
+				Suites:    1284,
+				Tests:     18921,
 			},
+			Durations: durationApplicationReport{
+				Available:               true,
+				BackendDurationsApplied: 431,
+				BackendSuitesAdded:      12,
+				SuitesWithoutDurations:  90,
+				FilesWithoutDurations:   90,
+				ExpectedFullDuration:    37*time.Minute + 12*time.Second,
+			},
+			Skipping: skippingApplicationReport{
+				Available:                     true,
+				TIASuites:                     312,
+				DisabledTests:                 3,
+				UnskippableMarkerSuitesForced: 5,
+				FullySkippedFiles:             118,
+			},
+			TestFilesToRun:     524,
 			EstimatedTimeSaved: 38.4,
 		},
 		Split: splitScore{
@@ -183,18 +199,29 @@ Backend data
   Test suite durations: 3 modules, 1,491 suites
 
 Planning
-  Test files discovered: 642
-  Fully skipped files: 118
-  Test Management disabled tests applied: 3
-  Test files to run: 524
-  Duration source: 431 known, 90 default
-  Estimated time saved: 38.40%%
-
-Split
-  Runners: 6
-  Expected wall time: 4m12s
-  Imbalance: 11s
-  Total estimated runtime: 23m46s
+  Discovery
+    Method: full
+    Test files: 642
+    Suites discovered: 1,284
+    Tests discovered: 18,921
+  Duration estimates
+    Backend durations used: 431 suites
+    Default durations used: 90 suites
+    Backend-only suites added: 12
+  Skipping
+    TIA skippables applied: 312 suites
+    Disabled tests applied: 3 tests
+    Suites marked unskippable: 5
+    Files fully skipped: 118
+  Run set
+    Test files to run: 524
+    Estimated time saved: 38.40%%
+  Runner split
+    Full runtime: 37m12s
+    Estimated runtime: 23m46s
+    Runners: 6
+    Expected wall time: 4m12s
+    Imbalance: 11s
 
 Slow suites on dedicated runners
   ATTENTION: 1 dedicated runner
@@ -206,6 +233,150 @@ Slow suites on dedicated runners
 `, formatCount(minParallelism), formatCount(maxParallelism))
 	if output.String() != expected {
 		t.Errorf("unexpected plan report:\n%s", output.String())
+	}
+}
+
+func TestPrintPlanReport_FastDiscovery(t *testing.T) {
+	var output strings.Builder
+
+	printPlanReport(&output, planReport{
+		RunInfo: runmetadata.RunInfo{
+			Service: "checkout-api",
+		},
+		PlanInfo: PlanInfo{
+			Platform: "ruby",
+		},
+		DatadogSettings: datadogSettingsReport{
+			Available:            true,
+			TestImpactAnalysis:   true,
+			TestSkipping:         true,
+			TestImpactCollection: true,
+			KnownTests:           true,
+		},
+		KnownTests: knownTestsReport{
+			Available: true,
+			Modules:   1,
+			Suites:    10,
+			Tests:     125,
+		},
+		Skippables: skippablesReport{
+			Available:         true,
+			TestSkippingLevel: settings.TestSkippingLevelSuite,
+			TIASuites:         8,
+		},
+		TestSuiteDurations: testSuiteDurationsReport{
+			Available: true,
+			Modules:   1,
+			Suites:    12,
+		},
+		Planning: planningReport{
+			Discovery: discoveryReport{
+				Available: true,
+				Mode:      discoveryModeFast,
+				TestFiles: 24,
+				Suites:    0,
+			},
+			Durations: durationApplicationReport{
+				Available:               true,
+				BackendDurationsApplied: 12,
+				BackendSuitesAdded:      2,
+				SuitesWithoutDurations:  1,
+			},
+			Skipping: skippingApplicationReport{
+				Available:         true,
+				TIASuites:         8,
+				FullySkippedFiles: 6,
+			},
+			TestFilesToRun:     18,
+			EstimatedTimeSaved: 25,
+		},
+		Split: splitScore{
+			parallelRunners: 3,
+			wallTime:        90_000,
+			imbalance:       500,
+			totalRuntime:    210_000,
+		},
+		SlowestTestSuitesOverall: []testSuiteTimingReport{
+			{
+				Module:            "rspec",
+				Suite:             "Checkout::Order",
+				SourceFile:        "spec/models/order_spec.rb",
+				TotalDuration:     2*time.Minute + 30*time.Second,
+				EstimatedDuration: 105 * time.Second,
+				DurationSource:    testFileDurationSourceKnown,
+			},
+			{
+				Module:            "rspec",
+				Suite:             "Checkout::Payment",
+				SourceFile:        "spec/models/payment_spec.rb",
+				TotalDuration:     time.Minute,
+				EstimatedDuration: 30 * time.Second,
+				DurationSource:    testFileDurationSourceKnown,
+			},
+		},
+	})
+
+	expected := `+++ DDTest: plan report
+
+Run
+  Service: checkout-api
+  Repository: not available
+  Commit: not available
+  Branch: not available
+  Platform: ruby
+  OS tags: not available
+  Runtime tags: not available
+
+DDTest settings
+  Settings: not available
+
+Datadog settings
+  Test Impact Analysis: enabled
+    Test skipping: enabled
+    Test impact collection: enabled
+  Known tests: enabled
+  Early flake detection: disabled
+  Auto test retries: disabled
+  Flaky test management: disabled
+
+Backend data
+  Known tests: 1 modules, 10 suites, 125 tests
+  TIA skippables returned: 8 suites
+  Managed flaky tests: disabled
+  Test suite durations: 1 modules, 12 suites
+
+Planning
+  Discovery
+    Method: fast
+    Test files: 24
+  Duration estimates
+    Backend durations used: 12 suites
+    Default durations used: 1 suite
+    Backend-only suites added: 2
+  Skipping
+    TIA skippables applied: 8 suites
+    Disabled tests applied: 0 tests
+    Suites marked unskippable: 0
+    Files fully skipped: 6
+  Run set
+    Test files to run: 18
+    Estimated time saved: 25.00%
+  Runner split
+    Full runtime: not available
+    Estimated runtime: 3m30s
+    Runners: 3
+    Expected wall time: 1m30s
+    Imbalance: 500ms
+
+Slow suites on dedicated runners
+  None
+
+10 slowest test suites overall
+  1. rspec / Checkout::Order (spec/models/order_spec.rb): historical duration 2m30s, estimated runtime 1m45s
+  2. rspec / Checkout::Payment (spec/models/payment_spec.rb): historical duration 1m0s, estimated runtime 30s
+`
+	if output.String() != expected {
+		t.Errorf("unexpected fast discovery report:\n%s", output.String())
 	}
 }
 
@@ -221,20 +392,32 @@ func TestPrintPlanReport_MissingSettingsAndData(t *testing.T) {
 	if !strings.Contains(report, "  Settings: not available") {
 		t.Errorf("expected missing settings message, got:\n%s", report)
 	}
-	if !strings.Contains(report, "  Known tests: not available") {
-		t.Errorf("expected missing known tests message, got:\n%s", report)
+	if !strings.Contains(report, "Planning\n  Discovery: not available") {
+		t.Errorf("expected missing discovery message, got:\n%s", report)
+	}
+	if !strings.Contains(report, "Backend data\n  Known tests: not available") {
+		t.Errorf("expected missing backend data message, got:\n%s", report)
 	}
 	if !strings.Contains(report, "  TIA skippables returned: not available") {
 		t.Errorf("expected missing TIA skippables message, got:\n%s", report)
-	}
-	if !strings.Contains(report, "  Test Management disabled tests applied: not available") {
-		t.Errorf("expected missing disabled tests message, got:\n%s", report)
 	}
 	if !strings.Contains(report, "  Managed flaky tests: not available") {
 		t.Errorf("expected missing managed flaky tests message, got:\n%s", report)
 	}
 	if !strings.Contains(report, "  Test suite durations: not available") {
 		t.Errorf("expected missing test suite durations message, got:\n%s", report)
+	}
+	if !strings.Contains(report, "  Duration estimates: not available") {
+		t.Errorf("expected missing duration estimates message, got:\n%s", report)
+	}
+	if !strings.Contains(report, "  Skipping: not available") {
+		t.Errorf("expected missing skipping message, got:\n%s", report)
+	}
+	if !strings.Contains(report, "  Run set: not available") {
+		t.Errorf("expected missing run set message, got:\n%s", report)
+	}
+	if !strings.Contains(report, "  Runner split: not available") {
+		t.Errorf("expected missing runner split message, got:\n%s", report)
 	}
 }
 
@@ -407,6 +590,141 @@ func TestFormatTIASkippablesReportsOnlyActiveCount(t *testing.T) {
 	if suiteLevel != "456 suites" {
 		t.Fatalf("unexpected suite-level TIA skippables report: %s", suiteLevel)
 	}
+}
+
+func TestReportFormattingVariants(t *testing.T) {
+	t.Run("suite labels", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			suite testSuiteTimingReport
+			want  string
+		}{
+			{name: "missing", suite: testSuiteTimingReport{}, want: "not available"},
+			{name: "module only", suite: testSuiteTimingReport{Module: "rspec"}, want: "rspec"},
+			{name: "suite only", suite: testSuiteTimingReport{Suite: "CartSuite"}, want: "CartSuite"},
+			{name: "module and suite", suite: testSuiteTimingReport{Module: "rspec", Suite: "CartSuite"}, want: "rspec / CartSuite"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				if got := formatSuiteLabel(tt.suite); got != tt.want {
+					t.Fatalf("formatSuiteLabel() = %q, want %q", got, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("basic values", func(t *testing.T) {
+		tests := []struct {
+			name string
+			got  string
+			want string
+		}{
+			{name: "plural dedicated runners", got: formatScheduledTestSuiteCount(2), want: "2 dedicated runners"},
+			{name: "empty worker env", got: formatWorkerEnvKeys(" "), want: "not set"},
+			{name: "platform only", got: formatPlatform("ruby", ""), want: "ruby"},
+			{name: "framework only", got: formatPlatform("", "rspec"), want: "rspec"},
+			{name: "empty setting", got: valueOrNotSet(""), want: "not set"},
+			{name: "negative count", got: formatCount(-123456), want: "-123,456"},
+			{name: "three digit group count", got: formatCount(123456), want: "123,456"},
+			{name: "singular count unit", got: formatCountWithUnit(1, "suite", "suites"), want: "1 suite"},
+			{name: "sub-millisecond duration", got: formatDuration(500 * time.Microsecond), want: "500µs"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				if tt.got != tt.want {
+					t.Fatalf("got %q, want %q", tt.got, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("ddtest setting fallback formatting", func(t *testing.T) {
+		unnamedField := reflect.StructField{Name: "CustomSetting"}
+		if got := formatDDTestSettingName(unnamedField); got != "CustomSetting" {
+			t.Fatalf("formatDDTestSettingName() = %q, want CustomSetting", got)
+		}
+
+		field := reflect.StructField{Name: "CustomSetting", Tag: `mapstructure:"custom_setting"`}
+		value := reflect.ValueOf(struct{ Enabled bool }{Enabled: true})
+		if got := formatDDTestSettingValue(field, value); got != "{true}" {
+			t.Fatalf("formatDDTestSettingValue() = %q, want {true}", got)
+		}
+	})
+}
+
+func TestSkippableReportFormattingVariants(t *testing.T) {
+	t.Run("applied TIA skippables", func(t *testing.T) {
+		tests := []struct {
+			name            string
+			datadogSettings datadogSettingsReport
+			skippables      skippablesReport
+			skipping        skippingApplicationReport
+			want            string
+		}{
+			{
+				name:            "disabled",
+				datadogSettings: datadogSettingsReport{Available: true, TestSkipping: false},
+				skippables:      skippablesReport{Available: true, TestSkippingLevel: settings.TestSkippingLevelTest},
+				skipping:        skippingApplicationReport{TIATests: 4},
+				want:            "disabled",
+			},
+			{
+				name:     "not available",
+				skipping: skippingApplicationReport{TIATests: 4},
+				want:     "not available",
+			},
+			{
+				name:       "test level",
+				skippables: skippablesReport{Available: true, TestSkippingLevel: settings.TestSkippingLevelTest},
+				skipping:   skippingApplicationReport{TIATests: 1},
+				want:       "1 test",
+			},
+			{
+				name:       "mode not available",
+				skippables: skippablesReport{Available: true},
+				skipping:   skippingApplicationReport{TIATests: 2},
+				want:       "mode not available",
+			},
+			{
+				name:       "mixed mode fallback",
+				skippables: skippablesReport{Available: true, TestSkippingLevel: settings.TestSkippingLevel("mixed")},
+				skipping:   skippingApplicationReport{TIATests: 2, TIASuites: 3},
+				want:       "2 tests, 3 suites",
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got := formatAppliedTIASkippables(tt.datadogSettings, tt.skippables, tt.skipping)
+				if got != tt.want {
+					t.Fatalf("formatAppliedTIASkippables() = %q, want %q", got, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("returned TIA skippables", func(t *testing.T) {
+		got := formatTIASkippables(
+			datadogSettingsReport{Available: true, TestSkipping: true},
+			skippablesReport{Available: true},
+		)
+		if got != "skipping mode not available" {
+			t.Fatalf("formatTIASkippables() = %q, want skipping mode not available", got)
+		}
+
+		got = formatTIASkippables(
+			datadogSettingsReport{Available: true, TestSkipping: true},
+			skippablesReport{Available: true, TestSkippingLevel: settings.TestSkippingLevel("mixed"), TIATests: 1, TIASuites: 2},
+		)
+		if got != "1 test, 2 suites" {
+			t.Fatalf("formatTIASkippables() = %q, want mixed fallback", got)
+		}
+	})
+
+	t.Run("disabled tests", func(t *testing.T) {
+		if got := formatAppliedDisabledTests(skippablesReport{}, skippingApplicationReport{}); got != "not available" {
+			t.Fatalf("formatAppliedDisabledTests() = %q, want not available", got)
+		}
+	})
 }
 
 func TestFormatWorkerEnvKeys(t *testing.T) {

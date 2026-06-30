@@ -4,6 +4,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
@@ -133,19 +134,6 @@ func newTestSuiteDurationsReport(testSuiteDurations *api.TestSuiteDurationsRespo
 	return report
 }
 
-type durationSourceReport struct {
-	Known   int
-	Default int
-}
-
-type planningReport struct {
-	TestFilesDiscovered int
-	FullySkippedFiles   int
-	TestFilesToRun      int
-	DurationSources     durationSourceReport
-	EstimatedTimeSaved  float64
-}
-
 type testSuiteTimingReport struct {
 	Runner            int
 	Module            string
@@ -154,6 +142,48 @@ type testSuiteTimingReport struct {
 	TotalDuration     time.Duration
 	EstimatedDuration time.Duration
 	DurationSource    testFileDurationSource
+}
+
+type discoveryMode string
+
+const (
+	discoveryModeUnknown discoveryMode = ""
+	discoveryModeFast    discoveryMode = "fast"
+	discoveryModeFull    discoveryMode = "full"
+)
+
+type discoveryReport struct {
+	Available bool
+	Mode      discoveryMode
+	TestFiles int
+	Suites    int
+	Tests     int
+}
+
+type durationApplicationReport struct {
+	Available               bool
+	BackendDurationsApplied int
+	BackendSuitesAdded      int
+	SuitesWithoutDurations  int
+	FilesWithoutDurations   int
+	ExpectedFullDuration    time.Duration
+}
+
+type skippingApplicationReport struct {
+	Available                     bool
+	TIATests                      int
+	TIASuites                     int
+	DisabledTests                 int
+	UnskippableMarkerSuitesForced int
+	FullySkippedFiles             int
+}
+
+type planningReport struct {
+	Discovery          discoveryReport
+	Durations          durationApplicationReport
+	Skipping           skippingApplicationReport
+	TestFilesToRun     int
+	EstimatedTimeSaved float64
 }
 
 type planReport struct {
@@ -178,25 +208,85 @@ func (tp *TestPlanner) newPlanningReport() planningReport {
 	}
 
 	return planningReport{
-		TestFilesDiscovered: len(tp.testFiles),
-		FullySkippedFiles:   fullySkippedFiles,
-		TestFilesToRun:      len(tp.testFileWeights),
-		DurationSources:     tp.durationSourceReport(),
-		EstimatedTimeSaved:  tp.skippablePercentage,
+		Discovery: discoveryReport{
+			Available: true,
+			Mode:      tp.discoveryMode,
+			TestFiles: len(tp.testFiles),
+			Suites:    tp.localDiscoveredSuites,
+			Tests:     tp.localDiscoveredTests,
+		},
+		Durations: durationApplicationReport{
+			Available:               true,
+			BackendDurationsApplied: tp.backendDurationApplicationsCount(),
+			BackendSuitesAdded:      tp.backendSuitesAddedCount(),
+			SuitesWithoutDurations:  tp.suitesWithoutBackendDurationsCount(),
+			FilesWithoutDurations:   tp.filesWithoutBackendDurationsCount(),
+			ExpectedFullDuration:    tp.expectedFullDuration(),
+		},
+		Skipping: skippingApplicationReport{
+			Available:                     true,
+			TIATests:                      tp.tiaSkippableTestsApplied,
+			TIASuites:                     len(tp.tiaSkippableSuitesApplied),
+			DisabledTests:                 tp.disabledTestsApplied,
+			UnskippableMarkerSuitesForced: tp.unskippableMarkerSuitesForced,
+			FullySkippedFiles:             fullySkippedFiles,
+		},
+		TestFilesToRun:     len(tp.testFileWeights),
+		EstimatedTimeSaved: tp.skippablePercentage,
 	}
 }
 
-func (tp *TestPlanner) durationSourceReport() durationSourceReport {
-	var report durationSourceReport
-	for _, source := range tp.testFileDurationSources {
-		switch source {
-		case testFileDurationSourceKnown:
-			report.Known++
-		default:
-			report.Default++
+func (tp *TestPlanner) backendDurationApplicationsCount() int {
+	count := 0
+	for _, aggregate := range tp.suiteAggregates {
+		if aggregate.DurationSource == testFileDurationSourceKnown {
+			count++
 		}
 	}
-	return report
+	return count
+}
+
+func (tp *TestPlanner) backendSuitesAddedCount() int {
+	count := len(tp.suiteAggregates) - tp.localDiscoveredSuites
+	if count < 0 {
+		return 0
+	}
+	return count
+}
+
+func (tp *TestPlanner) suitesWithoutBackendDurationsCount() int {
+	count := 0
+	for _, aggregate := range tp.suiteAggregates {
+		if aggregate.DurationSource != testFileDurationSourceKnown {
+			count++
+		}
+	}
+	return count
+}
+
+func (tp *TestPlanner) filesWithoutBackendDurationsCount() int {
+	count := 0
+	for _, source := range tp.testFileDurationSources {
+		if source != testFileDurationSourceKnown {
+			count++
+		}
+	}
+	return count
+}
+
+func (tp *TestPlanner) expectedFullDuration() time.Duration {
+	var total float64
+	for testFile := range tp.testFiles {
+		suiteKeys := tp.suitesBySourceFile[testFile]
+		if len(suiteKeys) == 0 {
+			total += float64(time.Duration(constants.DefaultTestFileWeight) * time.Millisecond)
+			continue
+		}
+		for _, key := range suiteKeys {
+			total += tp.suiteAggregates[key].TotalDuration
+		}
+	}
+	return durationFromNanoseconds(total)
 }
 
 func (tp *TestPlanner) longSeparateRunnerSuitesReport(parallelRunners int, split splitScore) []testSuiteTimingReport {

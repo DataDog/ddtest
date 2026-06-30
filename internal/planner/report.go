@@ -25,9 +25,7 @@ func printPlanReport(w io.Writer, report planReport) {
 	reportFprintln(w)
 	printBackendDataReport(w, report)
 	reportFprintln(w)
-	printPlanningReport(w, report.Planning, report.Skippables)
-	reportFprintln(w)
-	printSplitReport(w, report.Split)
+	printPlanningReport(w, report)
 	reportFprintln(w)
 	printLongSeparateRunnerSuitesReport(w, report.LongSeparateRunnerSuites)
 	reportFprintln(w)
@@ -154,24 +152,13 @@ func printBackendDataReport(w io.Writer, report planReport) {
 	reportFprintf(w, "  Test suite durations: %s\n", formatTestSuiteDurations(report.TestSuiteDurations))
 }
 
-func printPlanningReport(w io.Writer, report planningReport, skippables skippablesReport) {
+func printPlanningReport(w io.Writer, report planReport) {
 	reportFprintln(w, "Planning")
-	reportFprintf(w, "  Test files discovered: %s\n", formatCount(report.TestFilesDiscovered))
-	reportFprintf(w, "  Fully skipped files: %s\n", formatCount(report.FullySkippedFiles))
-	reportFprintf(w, "  Test Management disabled tests applied: %s\n", formatDisabledTestsApplied(skippables))
-	reportFprintf(w, "  Test files to run: %s\n", formatCount(report.TestFilesToRun))
-	reportFprintf(w, "  Duration source: %s known, %s default\n",
-		formatCount(report.DurationSources.Known),
-		formatCount(report.DurationSources.Default))
-	reportFprintf(w, "  Estimated time saved: %.2f%%\n", report.EstimatedTimeSaved)
-}
-
-func printSplitReport(w io.Writer, report splitScore) {
-	reportFprintln(w, "Split")
-	reportFprintf(w, "  Runners: %s\n", formatCount(report.parallelRunners))
-	reportFprintf(w, "  Expected wall time: %s\n", formatDuration(report.wallTimeDuration()))
-	reportFprintf(w, "  Imbalance: %s\n", formatDuration(report.imbalanceDuration()))
-	reportFprintf(w, "  Total estimated runtime: %s\n", formatDuration(report.totalRuntimeDuration()))
+	printDiscoveryPlanningReport(w, report.Planning.Discovery)
+	printDurationEstimatesPlanningReport(w, report.Planning.Durations)
+	printSkippingPlanningReport(w, report.DatadogSettings, report.Skippables, report.Planning.Skipping)
+	printRunSetPlanningReport(w, report.Planning)
+	printRunnerSplitPlanningReport(w, report.Planning, report.Split)
 }
 
 func printLongSeparateRunnerSuitesReport(w io.Writer, suites []testSuiteTimingReport) {
@@ -278,6 +265,106 @@ func reportFprintf(w io.Writer, format string, args ...any) {
 	_, _ = fmt.Fprintf(w, format, args...)
 }
 
+func printDiscoveryPlanningReport(w io.Writer, discovery discoveryReport) {
+	if !discovery.Available {
+		reportFprintln(w, "  Discovery: not available")
+		return
+	}
+
+	reportFprintln(w, "  Discovery")
+	reportFprintf(w, "    Method: %s\n", valueOrNotAvailable(string(discovery.Mode)))
+	reportFprintf(w, "    Test files: %s\n", formatCount(discovery.TestFiles))
+	switch discovery.Mode {
+	case discoveryModeFull:
+		reportFprintf(w, "    Suites discovered: %s\n", formatCount(discovery.Suites))
+		reportFprintf(w, "    Tests discovered: %s\n", formatCount(discovery.Tests))
+	}
+}
+
+func printDurationEstimatesPlanningReport(w io.Writer, durations durationApplicationReport) {
+	if !durations.Available {
+		reportFprintln(w, "  Duration estimates: not available")
+		return
+	}
+
+	reportFprintln(w, "  Duration estimates")
+	reportFprintf(w, "    Backend durations used: %s\n", formatCountWithUnit(durations.BackendDurationsApplied, "suite", "suites"))
+	reportFprintf(w, "    Default durations used: %s\n", formatCountWithUnit(durations.SuitesWithoutDurations, "suite", "suites"))
+	reportFprintf(w, "    Backend-only suites added: %s\n", formatCount(durations.BackendSuitesAdded))
+}
+
+func printSkippingPlanningReport(w io.Writer, datadogSettings datadogSettingsReport, skippables skippablesReport, skipping skippingApplicationReport) {
+	if !skipping.Available {
+		reportFprintln(w, "  Skipping: not available")
+		return
+	}
+
+	reportFprintln(w, "  Skipping")
+	reportFprintf(w, "    TIA skippables applied: %s\n", formatAppliedTIASkippables(datadogSettings, skippables, skipping))
+	reportFprintf(w, "    Disabled tests applied: %s\n", formatAppliedDisabledTests(skippables, skipping))
+	reportFprintf(w, "    Suites marked unskippable: %s\n", formatCount(skipping.UnskippableMarkerSuitesForced))
+	reportFprintf(w, "    Files fully skipped: %s\n", formatCount(skipping.FullySkippedFiles))
+}
+
+func printRunSetPlanningReport(w io.Writer, planning planningReport) {
+	if !planning.Discovery.Available {
+		reportFprintln(w, "  Run set: not available")
+		return
+	}
+
+	reportFprintln(w, "  Run set")
+	reportFprintf(w, "    Test files to run: %s\n", formatCount(planning.TestFilesToRun))
+	reportFprintf(w, "    Estimated time saved: %.2f%%\n", planning.EstimatedTimeSaved)
+}
+
+func printRunnerSplitPlanningReport(w io.Writer, planning planningReport, split splitScore) {
+	if split.parallelRunners <= 0 {
+		reportFprintln(w, "  Runner split: not available")
+		return
+	}
+
+	fullDuration := "not available"
+	if planning.Durations.ExpectedFullDuration > 0 {
+		fullDuration = formatDuration(planning.Durations.ExpectedFullDuration)
+	}
+
+	reportFprintln(w, "  Runner split")
+	reportFprintf(w, "    Full runtime: %s\n", fullDuration)
+	reportFprintf(w, "    Estimated runtime: %s\n", formatDuration(split.totalRuntimeDuration()))
+	reportFprintf(w, "    Runners: %s\n", formatCount(split.parallelRunners))
+	reportFprintf(w, "    Expected wall time: %s\n", formatDuration(split.wallTimeDuration()))
+	reportFprintf(w, "    Imbalance: %s\n", formatDuration(split.imbalanceDuration()))
+}
+
+func formatAppliedTIASkippables(datadogSettings datadogSettingsReport, skippables skippablesReport, skipping skippingApplicationReport) string {
+	if datadogSettings.Available && !datadogSettings.TestSkipping {
+		return "disabled"
+	}
+	if !skippables.Available {
+		return "not available"
+	}
+
+	switch skippables.TestSkippingLevel {
+	case settings.TestSkippingLevelTest:
+		return formatCountWithUnit(skipping.TIATests, "test", "tests")
+	case settings.TestSkippingLevelSuite:
+		return formatCountWithUnit(skipping.TIASuites, "suite", "suites")
+	case "":
+		return "mode not available"
+	default:
+		return fmt.Sprintf("%s, %s",
+			formatCountWithUnit(skipping.TIATests, "test", "tests"),
+			formatCountWithUnit(skipping.TIASuites, "suite", "suites"))
+	}
+}
+
+func formatAppliedDisabledTests(skippables skippablesReport, skipping skippingApplicationReport) string {
+	if !skippables.Available {
+		return "not available"
+	}
+	return formatCountWithUnit(skipping.DisabledTests, "test", "tests")
+}
+
 func formatKnownTests(settings datadogSettingsReport, known knownTestsReport) string {
 	if settings.Available && !settings.KnownTests {
 		return "disabled"
@@ -300,21 +387,16 @@ func formatTIASkippables(datadogSettings datadogSettingsReport, skippables skipp
 	}
 	switch skippables.TestSkippingLevel {
 	case settings.TestSkippingLevelTest:
-		return fmt.Sprintf("%s tests", formatCount(skippables.TIATests))
+		return formatCountWithUnit(skippables.TIATests, "test", "tests")
 	case settings.TestSkippingLevelSuite:
-		return fmt.Sprintf("%s suites", formatCount(skippables.TIASuites))
+		return formatCountWithUnit(skippables.TIASuites, "suite", "suites")
 	case "":
 		return "skipping mode not available"
 	default:
-		return fmt.Sprintf("%s tests, %s suites", formatCount(skippables.TIATests), formatCount(skippables.TIASuites))
+		return fmt.Sprintf("%s, %s",
+			formatCountWithUnit(skippables.TIATests, "test", "tests"),
+			formatCountWithUnit(skippables.TIASuites, "suite", "suites"))
 	}
-}
-
-func formatDisabledTestsApplied(skippables skippablesReport) string {
-	if !skippables.Available {
-		return "not available"
-	}
-	return formatCount(skippables.DisabledTests)
 }
 
 func formatManagedFlakyTests(settings datadogSettingsReport, managed managedFlakyTestsReport) string {
@@ -412,6 +494,14 @@ func formatCount(count int) string {
 		builder.WriteString(value[i : i+3])
 	}
 	return builder.String()
+}
+
+func formatCountWithUnit(count int, singular string, plural string) string {
+	unit := plural
+	if count == 1 {
+		unit = singular
+	}
+	return formatCount(count) + " " + unit
 }
 
 func formatDuration(duration time.Duration) string {

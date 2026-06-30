@@ -739,11 +739,12 @@ func TestTestPlanner_Setup_WithParallelRunners(t *testing.T) {
 
 	report := reportOutput.String()
 	for _, expectedReportLine := range []string{
-		"Split\n",
-		"  Runners: 1\n",
-		"  Expected wall time:",
-		"  Imbalance:",
-		"  Total estimated runtime:",
+		"Planning\n",
+		"  Runner split\n",
+		"    Estimated runtime:",
+		"    Runners: 1",
+		"    Expected wall time:",
+		"    Imbalance:",
 	} {
 		if !strings.Contains(report, expectedReportLine) {
 			t.Errorf("Expected report to contain %q, got report: %s", expectedReportLine, report)
@@ -862,6 +863,21 @@ func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery
 		runner.planReport.Skippables.TIATests != 0 ||
 		runner.planReport.Skippables.TIASuites != 1 {
 		t.Errorf("expected suite-level skippables to be reported separately, got %+v", runner.planReport.Skippables)
+	}
+	if runner.planReport.Planning.Discovery.Mode != discoveryModeFast ||
+		runner.planReport.Planning.Discovery.TestFiles != 2 ||
+		runner.planReport.Planning.Discovery.Suites != 0 {
+		t.Errorf("expected fast discovery report with files but no local suites, got %+v", runner.planReport.Planning.Discovery)
+	}
+	if runner.planReport.Planning.Durations.BackendDurationsApplied != 2 ||
+		runner.planReport.Planning.Durations.BackendSuitesAdded != 2 ||
+		runner.planReport.Planning.Durations.SuitesWithoutDurations != 0 {
+		t.Errorf("expected backend duration application report for fast discovery, got %+v", runner.planReport.Planning.Durations)
+	}
+	if runner.planReport.Planning.Skipping.TIASuites != 1 ||
+		runner.planReport.Planning.Skipping.FullySkippedFiles != 1 ||
+		runner.planReport.Planning.TestFilesToRun != 1 {
+		t.Errorf("expected suite skip application report, got planning=%+v", runner.planReport.Planning)
 	}
 
 	expectedTestFiles := "src/b.test.ts\n"
@@ -1017,6 +1033,16 @@ func TestTestPlanner_PreparePlanningData_RubySuiteModeForceFullDiscovery(t *test
 	guarded := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: guardedSuite}]
 	if guarded.NumTests != 1 || guarded.NumTestsSkipped != 0 {
 		t.Fatalf("expected guarded suite to remain runnable, got %+v", guarded)
+	}
+	if runner.planReport.Planning.Discovery.Mode != discoveryModeFull ||
+		runner.planReport.Planning.Discovery.Suites != 4 ||
+		runner.planReport.Planning.Discovery.Tests != 5 {
+		t.Errorf("expected full discovery suite/test report, got %+v", runner.planReport.Planning.Discovery)
+	}
+	if runner.planReport.Planning.Skipping.TIASuites != 3 ||
+		runner.planReport.Planning.Skipping.UnskippableMarkerSuitesForced != 1 ||
+		runner.planReport.Planning.Skipping.FullySkippedFiles != 1 {
+		t.Errorf("expected full discovery skipping application report, got %+v", runner.planReport.Planning.Skipping)
 	}
 }
 
