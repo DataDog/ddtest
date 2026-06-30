@@ -132,9 +132,11 @@ func printDatadogSettingsReport(w io.Writer, report datadogSettingsReport) {
 	reportFprintln(w, "Datadog settings")
 	if !report.Available {
 		reportFprintln(w, "  Settings: not available")
+		printFetchDuration(w, report.FetchDuration)
 		return
 	}
 
+	printFetchDuration(w, report.FetchDuration)
 	reportFprintf(w, "  Test Impact Analysis: %s\n", enabledWord(report.TestImpactAnalysis))
 	reportFprintf(w, "    Test skipping: %s\n", enabledWord(report.TestSkipping))
 	reportFprintf(w, "    Test impact collection: %s\n", enabledWord(report.TestImpactCollection))
@@ -146,10 +148,10 @@ func printDatadogSettingsReport(w io.Writer, report datadogSettingsReport) {
 
 func printBackendDataReport(w io.Writer, report planReport) {
 	reportFprintln(w, "Backend data")
-	reportFprintf(w, "  Known tests: %s\n", formatKnownTests(report.DatadogSettings, report.KnownTests))
-	reportFprintf(w, "  TIA skippables returned: %s\n", formatTIASkippables(report.DatadogSettings, report.Skippables))
-	reportFprintf(w, "  Managed flaky tests: %s\n", formatManagedFlakyTests(report.DatadogSettings, report.ManagedFlakyTests))
-	reportFprintf(w, "  Test suite durations: %s\n", formatTestSuiteDurations(report.TestSuiteDurations))
+	reportFprintf(w, "  Known tests: %s\n", formatBackendDataValue(formatKnownTests(report.DatadogSettings, report.KnownTests), report.KnownTests.FetchDuration))
+	reportFprintf(w, "  TIA skippables returned: %s\n", formatBackendDataValue(formatTIASkippables(report.DatadogSettings, report.Skippables), report.Skippables.FetchDuration))
+	reportFprintf(w, "  Managed flaky tests: %s\n", formatBackendDataValue(formatManagedFlakyTests(report.DatadogSettings, report.ManagedFlakyTests), report.ManagedFlakyTests.FetchDuration))
+	reportFprintf(w, "  Test suite durations: %s\n", formatBackendDataValue(formatTestSuiteDurations(report.TestSuiteDurations), report.TestSuiteDurations.FetchDuration))
 }
 
 func printPlanningReport(w io.Writer, report planReport) {
@@ -275,6 +277,7 @@ func printDiscoveryPlanningReport(w io.Writer, discovery discoveryReport) {
 	reportFprintf(w, "    Method: %s\n", valueOrNotAvailable(string(discovery.Mode)))
 	reportFprintf(w, "    Test files: %s\n", formatCount(discovery.TestFiles))
 	reportFprintf(w, "    Cache: %s\n", formatDiscoveryCache(discovery.Cache))
+	reportFprintf(w, "    Duration: %s\n", formatOptionalDuration(discovery.Duration))
 	switch discovery.Mode {
 	case discoveryModeFull:
 		reportFprintf(w, "    Suites discovered: %s\n", formatCount(discovery.Suites))
@@ -293,6 +296,26 @@ func formatDiscoveryCache(cache discoveryCacheReport) string {
 		return "not used"
 	}
 	return "not used (" + cache.Reason + ")"
+}
+
+func printFetchDuration(w io.Writer, duration time.Duration) {
+	if duration > 0 {
+		reportFprintf(w, "  Fetch duration: %s\n", formatDuration(duration))
+	}
+}
+
+func formatBackendDataValue(value string, duration time.Duration) string {
+	if duration <= 0 {
+		return value
+	}
+	return fmt.Sprintf("%s (fetched in %s)", value, formatDuration(duration))
+}
+
+func formatOptionalDuration(duration time.Duration) string {
+	if duration <= 0 {
+		return "not available"
+	}
+	return formatDuration(duration)
 }
 
 func printDurationEstimatesPlanningReport(w io.Writer, durations durationApplicationReport) {

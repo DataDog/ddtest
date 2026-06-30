@@ -364,6 +364,7 @@ type MockTestOptimizationClient struct {
 	DisabledTests       map[string]bool
 	Durations           map[string]map[string]api.TestSuiteDurationInfo
 	DurationsCalled     bool
+	OperationTimes      testoptimization.OperationDurations
 	ShutdownCalled      bool
 	Tags                map[string]string
 }
@@ -446,6 +447,10 @@ func (m *MockTestOptimizationClient) GetTestSuiteDurations() *api.TestSuiteDurat
 		}
 	}
 	return &api.TestSuiteDurationsResponseData{TestSuites: m.Durations}
+}
+
+func (m *MockTestOptimizationClient) OperationDurations() testoptimization.OperationDurations {
+	return m.OperationTimes
 }
 
 func (m *MockTestOptimizationClient) StoreCacheAndExit() {

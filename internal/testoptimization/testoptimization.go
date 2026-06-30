@@ -32,6 +32,14 @@ const (
 
 type testOptimizationCloseAction func()
 
+type OperationDurations struct {
+	Settings            time.Duration
+	KnownTests          time.Duration
+	Skippables          time.Duration
+	TestManagementTests time.Duration
+	TestSuiteDurations  time.Duration
+}
+
 type searchCommitsResponse struct {
 	LocalCommits  []string
 	RemoteCommits []string
@@ -55,6 +63,9 @@ type TestOptimizationClient struct {
 	skippables           api.Skippables
 	testSkippingLevel    settings.TestSkippingLevel
 	testManagementTests  api.TestManagementTestsResponseDataModules
+
+	operationDurationsMutex sync.Mutex
+	operationDurations      OperationDurations
 }
 
 func NewTestOptimizationClient() *TestOptimizationClient {
@@ -172,6 +183,13 @@ func (c *TestOptimizationClient) GetDisabledTests() map[string]bool {
 }
 
 func (c *TestOptimizationClient) GetTestSuiteDurations() *api.TestSuiteDurationsResponseData {
+	startTime := time.Now()
+	defer func() {
+		c.recordOperationDuration(func(durations *OperationDurations) {
+			durations.TestSuiteDurations = time.Since(startTime)
+		})
+	}()
+
 	testOptimizationTransport := c.ensureAPITransport(autoDetectServiceName)
 	if testOptimizationTransport == nil {
 		return &api.TestSuiteDurationsResponseData{
@@ -179,6 +197,18 @@ func (c *TestOptimizationClient) GetTestSuiteDurations() *api.TestSuiteDurations
 		}
 	}
 	return testOptimizationTransport.GetTestSuiteDurations()
+}
+
+func (c *TestOptimizationClient) OperationDurations() OperationDurations {
+	c.operationDurationsMutex.Lock()
+	defer c.operationDurationsMutex.Unlock()
+	return c.operationDurations
+}
+
+func (c *TestOptimizationClient) recordOperationDuration(update func(*OperationDurations)) {
+	c.operationDurationsMutex.Lock()
+	defer c.operationDurationsMutex.Unlock()
+	update(&c.operationDurations)
 }
 
 func (c *TestOptimizationClient) StoreCacheAndExit() {
@@ -233,6 +263,13 @@ func traceDebugEnabled() bool {
 
 func (c *TestOptimizationClient) ensureSettingsInitialization(serviceName string) *api.SettingsResponseData {
 	c.settingsOnce.Do(func() {
+		startTime := time.Now()
+		defer func() {
+			c.recordOperationDuration(func(durations *OperationDurations) {
+				durations.Settings = time.Since(startTime)
+			})
+		}()
+
 		slog.Debug("testoptimization: initializing settings")
 		defer slog.Debug("testoptimization: settings initialization complete")
 
@@ -365,6 +402,12 @@ func (c *TestOptimizationClient) ensureTestOptimizationInitialized() {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				startTime := time.Now()
+				defer func() {
+					c.recordOperationDuration(func(durations *OperationDurations) {
+						durations.KnownTests = time.Since(startTime)
+					})
+				}()
 				knownTests, err := c.apiTransport.GetKnownTests()
 				if err != nil {
 					slog.Error("testoptimization: error getting test optimization known tests data", "err", err.Error())
@@ -379,6 +422,12 @@ func (c *TestOptimizationClient) ensureTestOptimizationInitialized() {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				startTime := time.Now()
+				defer func() {
+					c.recordOperationDuration(func(durations *OperationDurations) {
+						durations.Skippables = time.Since(startTime)
+					})
+				}()
 				correlationID, skippables, err := c.apiTransport.GetSkippableTests()
 				if err != nil {
 					slog.Error("testoptimization: error getting test optimization skippable tests", "err", err.Error())
@@ -396,6 +445,12 @@ func (c *TestOptimizationClient) ensureTestOptimizationInitialized() {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				startTime := time.Now()
+				defer func() {
+					c.recordOperationDuration(func(durations *OperationDurations) {
+						durations.TestManagementTests = time.Since(startTime)
+					})
+				}()
 				testManagementTests, err := c.apiTransport.GetTestManagementTests()
 				if err != nil {
 					slog.Error("testoptimization: error getting test optimization test management tests", "err", err.Error())

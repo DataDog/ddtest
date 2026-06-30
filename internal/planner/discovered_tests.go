@@ -19,6 +19,7 @@ func (tp *TestPlanner) resetDiscoveryResults() {
 	tp.suitesBySourceFile = make(map[string][]testSuiteKey)
 	tp.discoveryMode = discoveryModeUnknown
 	tp.discoveryCacheReport = discoveryCacheReport{}
+	tp.testDiscoveryDuration = 0
 	tp.localDiscoveredSuites = 0
 	tp.localDiscoveredTests = 0
 	tp.tiaSkippableTestsApplied = 0

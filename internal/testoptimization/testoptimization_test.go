@@ -258,6 +258,9 @@ func TestTestOptimizationClient_GetTestSuiteDurations(t *testing.T) {
 	if result.TestSuites["rspec"]["Suite"].SourceFile != "spec/suite_spec.rb" {
 		t.Fatalf("GetTestSuiteDurations() returned %#v, want %#v", result, durations)
 	}
+	if client.OperationDurations().TestSuiteDurations <= 0 {
+		t.Fatal("GetTestSuiteDurations() should record operation duration")
+	}
 }
 
 func TestTestOptimizationClient_Initialize(t *testing.T) {
@@ -297,6 +300,9 @@ func TestTestOptimizationClient_Initialize(t *testing.T) {
 
 	if duration < 0 {
 		t.Error("Initialize() duration should be non-negative")
+	}
+	if client.OperationDurations().Settings <= 0 {
+		t.Error("Initialize() should record settings fetch duration")
 	}
 }
 
@@ -369,6 +375,9 @@ func TestTestOptimizationClient_GetSkippables(t *testing.T) {
 
 	if len(result) != len(expectedTests) {
 		t.Errorf("Expected %d skippable tests, got %d", len(expectedTests), len(result))
+	}
+	if client.OperationDurations().Skippables <= 0 {
+		t.Error("GetSkippables() should record skippables fetch duration")
 	}
 }
 
@@ -534,6 +543,9 @@ func TestTestOptimizationClient_GetDisabledTests(t *testing.T) {
 	}
 	if mockAPIClient.TestManagementTestsCalls != 1 {
 		t.Fatalf("expected test management tests to be fetched once, got %d", mockAPIClient.TestManagementTestsCalls)
+	}
+	if client.OperationDurations().TestManagementTests <= 0 {
+		t.Fatal("GetDisabledTests() should record test management fetch duration")
 	}
 }
 

@@ -58,6 +58,7 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 		},
 		DatadogSettings: datadogSettingsReport{
 			Available:            true,
+			FetchDuration:        240 * time.Millisecond,
 			TestImpactAnalysis:   true,
 			TestSkipping:         true,
 			TestImpactCollection: false,
@@ -67,28 +68,32 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 			FlakyTestManagement:  true,
 		},
 		KnownTests: knownTestsReport{
-			Available: true,
-			Modules:   4,
-			Suites:    1284,
-			Tests:     18921,
+			Available:     true,
+			FetchDuration: 80 * time.Millisecond,
+			Modules:       4,
+			Suites:        1284,
+			Tests:         18921,
 		},
 		Skippables: skippablesReport{
 			Available:         true,
+			FetchDuration:     110 * time.Millisecond,
 			TestSkippingLevel: settings.TestSkippingLevelSuite,
 			TIASuites:         312,
 			DisabledTests:     3,
 		},
 		ManagedFlakyTests: managedFlakyTestsReport{
-			Available:    true,
-			Total:        26,
-			Quarantined:  8,
-			Disabled:     3,
-			AttemptToFix: 5,
+			Available:     true,
+			FetchDuration: 90 * time.Millisecond,
+			Total:         26,
+			Quarantined:   8,
+			Disabled:      3,
+			AttemptToFix:  5,
 		},
 		TestSuiteDurations: testSuiteDurationsReport{
-			Available: true,
-			Modules:   3,
-			Suites:    1491,
+			Available:     true,
+			FetchDuration: 140 * time.Millisecond,
+			Modules:       3,
+			Suites:        1491,
 		},
 		Planning: planningReport{
 			Discovery: discoveryReport{
@@ -98,6 +103,7 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 					Configured: true,
 					Used:       true,
 				},
+				Duration:  3 * time.Second,
 				TestFiles: 642,
 				Suites:    1284,
 				Tests:     18921,
@@ -188,6 +194,7 @@ DDTest settings
   Report enabled: false
 
 Datadog settings
+  Fetch duration: 240ms
   Test Impact Analysis: enabled
     Test skipping: enabled
     Test impact collection: disabled
@@ -197,16 +204,17 @@ Datadog settings
   Flaky test management: enabled
 
 Backend data
-  Known tests: 4 modules, 1,284 suites, 18,921 tests
-  TIA skippables returned: 312 suites
-  Managed flaky tests: 26 total, 8 quarantined, 3 disabled, 5 attempt-to-fix
-  Test suite durations: 3 modules, 1,491 suites
+  Known tests: 4 modules, 1,284 suites, 18,921 tests (fetched in 80ms)
+  TIA skippables returned: 312 suites (fetched in 110ms)
+  Managed flaky tests: 26 total, 8 quarantined, 3 disabled, 5 attempt-to-fix (fetched in 90ms)
+  Test suite durations: 3 modules, 1,491 suites (fetched in 140ms)
 
 Planning
   Discovery
     Method: full
     Test files: 642
     Cache: used
+    Duration: 3s
     Suites discovered: 1,284
     Tests discovered: 18,921
   Duration estimates
@@ -253,26 +261,30 @@ func TestPrintPlanReport_FastDiscovery(t *testing.T) {
 		},
 		DatadogSettings: datadogSettingsReport{
 			Available:            true,
+			FetchDuration:        50 * time.Millisecond,
 			TestImpactAnalysis:   true,
 			TestSkipping:         true,
 			TestImpactCollection: true,
 			KnownTests:           true,
 		},
 		KnownTests: knownTestsReport{
-			Available: true,
-			Modules:   1,
-			Suites:    10,
-			Tests:     125,
+			Available:     true,
+			FetchDuration: 20 * time.Millisecond,
+			Modules:       1,
+			Suites:        10,
+			Tests:         125,
 		},
 		Skippables: skippablesReport{
 			Available:         true,
+			FetchDuration:     30 * time.Millisecond,
 			TestSkippingLevel: settings.TestSkippingLevelSuite,
 			TIASuites:         8,
 		},
 		TestSuiteDurations: testSuiteDurationsReport{
-			Available: true,
-			Modules:   1,
-			Suites:    12,
+			Available:     true,
+			FetchDuration: 40 * time.Millisecond,
+			Modules:       1,
+			Suites:        12,
 		},
 		Planning: planningReport{
 			Discovery: discoveryReport{
@@ -282,6 +294,7 @@ func TestPrintPlanReport_FastDiscovery(t *testing.T) {
 					Configured: true,
 					Reason:     "full discovery not required for suite-level skipping",
 				},
+				Duration:  120 * time.Millisecond,
 				TestFiles: 24,
 				Suites:    0,
 			},
@@ -340,6 +353,7 @@ DDTest settings
   Settings: not available
 
 Datadog settings
+  Fetch duration: 50ms
   Test Impact Analysis: enabled
     Test skipping: enabled
     Test impact collection: enabled
@@ -349,16 +363,17 @@ Datadog settings
   Flaky test management: disabled
 
 Backend data
-  Known tests: 1 modules, 10 suites, 125 tests
-  TIA skippables returned: 8 suites
+  Known tests: 1 modules, 10 suites, 125 tests (fetched in 20ms)
+  TIA skippables returned: 8 suites (fetched in 30ms)
   Managed flaky tests: disabled
-  Test suite durations: 1 modules, 12 suites
+  Test suite durations: 1 modules, 12 suites (fetched in 40ms)
 
 Planning
   Discovery
     Method: fast
     Test files: 24
     Cache: not used (full discovery not required for suite-level skipping)
+    Duration: 120ms
   Duration estimates
     Backend durations used: 12 suites
     Default durations used: 1 suite
@@ -538,7 +553,7 @@ func TestReportSummaries(t *testing.T) {
 				"suite-c": []string{"test-d", "test-e"},
 			},
 		},
-	})
+	}, time.Millisecond)
 	if known.Modules != 2 || known.Suites != 3 || known.Tests != 5 {
 		t.Errorf("unexpected known test summary: %+v", known)
 	}
@@ -557,7 +572,7 @@ func TestReportSummaries(t *testing.T) {
 				},
 			},
 		},
-	})
+	}, time.Millisecond)
 	if managed.Total != 3 || managed.Quarantined != 1 || managed.Disabled != 1 || managed.AttemptToFix != 1 {
 		t.Errorf("unexpected managed flaky test summary: %+v", managed)
 	}
@@ -572,7 +587,7 @@ func TestReportSummaries(t *testing.T) {
 				"suite-c": {},
 			},
 		},
-	})
+	}, time.Millisecond)
 	if durations.Modules != 2 || durations.Suites != 3 {
 		t.Errorf("unexpected test suite durations summary: %+v", durations)
 	}
@@ -642,6 +657,8 @@ func TestReportFormattingVariants(t *testing.T) {
 			{name: "cache used", got: formatDiscoveryCache(discoveryCacheReport{Configured: true, Used: true}), want: "used"},
 			{name: "cache configured but not used", got: formatDiscoveryCache(discoveryCacheReport{Configured: true}), want: "not used"},
 			{name: "cache configured but skipped with reason", got: formatDiscoveryCache(discoveryCacheReport{Configured: true, Reason: "full discovery not required"}), want: "not used (full discovery not required)"},
+			{name: "backend data without duration", got: formatBackendDataValue("not available", 0), want: "not available"},
+			{name: "optional duration missing", got: formatOptionalDuration(0), want: "not available"},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {

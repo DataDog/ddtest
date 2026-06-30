@@ -12,6 +12,7 @@ import (
 
 type datadogSettingsReport struct {
 	Available            bool
+	FetchDuration        time.Duration
 	TestImpactAnalysis   bool
 	TestSkipping         bool
 	TestImpactCollection bool
@@ -21,12 +22,13 @@ type datadogSettingsReport struct {
 	FlakyTestManagement  bool
 }
 
-func newDatadogSettingsReport(settings *api.SettingsResponseData) datadogSettingsReport {
+func newDatadogSettingsReport(settings *api.SettingsResponseData, fetchDuration time.Duration) datadogSettingsReport {
 	if settings == nil {
-		return datadogSettingsReport{}
+		return datadogSettingsReport{FetchDuration: fetchDuration}
 	}
 	return datadogSettingsReport{
 		Available:            true,
+		FetchDuration:        fetchDuration,
 		TestImpactAnalysis:   settings.ItrEnabled,
 		TestSkipping:         settings.TestsSkipping,
 		TestImpactCollection: settings.CodeCoverage,
@@ -38,20 +40,22 @@ func newDatadogSettingsReport(settings *api.SettingsResponseData) datadogSetting
 }
 
 type knownTestsReport struct {
-	Available bool
-	Modules   int
-	Suites    int
-	Tests     int
+	Available     bool
+	FetchDuration time.Duration
+	Modules       int
+	Suites        int
+	Tests         int
 }
 
-func newKnownTestsReport(knownTests *api.KnownTestsResponseData) knownTestsReport {
+func newKnownTestsReport(knownTests *api.KnownTestsResponseData, fetchDuration time.Duration) knownTestsReport {
 	if knownTests == nil {
-		return knownTestsReport{}
+		return knownTestsReport{FetchDuration: fetchDuration}
 	}
 
 	report := knownTestsReport{
-		Available: true,
-		Modules:   len(knownTests.Tests),
+		Available:     true,
+		FetchDuration: fetchDuration,
+		Modules:       len(knownTests.Tests),
 	}
 	for _, suites := range knownTests.Tests {
 		report.Suites += len(suites)
@@ -63,19 +67,23 @@ func newKnownTestsReport(knownTests *api.KnownTestsResponseData) knownTestsRepor
 }
 
 type managedFlakyTestsReport struct {
-	Available    bool
-	Total        int
-	Quarantined  int
-	Disabled     int
-	AttemptToFix int
+	Available     bool
+	FetchDuration time.Duration
+	Total         int
+	Quarantined   int
+	Disabled      int
+	AttemptToFix  int
 }
 
-func newManagedFlakyTestsReport(testManagementTests *api.TestManagementTestsResponseDataModules) managedFlakyTestsReport {
+func newManagedFlakyTestsReport(
+	testManagementTests *api.TestManagementTestsResponseDataModules,
+	fetchDuration time.Duration,
+) managedFlakyTestsReport {
 	if testManagementTests == nil {
-		return managedFlakyTestsReport{}
+		return managedFlakyTestsReport{FetchDuration: fetchDuration}
 	}
 
-	report := managedFlakyTestsReport{Available: true}
+	report := managedFlakyTestsReport{Available: true, FetchDuration: fetchDuration}
 	for _, suites := range testManagementTests.Modules {
 		for _, tests := range suites.Suites {
 			for _, test := range tests.Tests {
@@ -97,15 +105,21 @@ func newManagedFlakyTestsReport(testManagementTests *api.TestManagementTestsResp
 
 type skippablesReport struct {
 	Available         bool
+	FetchDuration     time.Duration
 	TestSkippingLevel settings.TestSkippingLevel
 	TIATests          int
 	TIASuites         int
 	DisabledTests     int
 }
 
-func newSkippablesReport(skippables skippableMatcher, testSkippingLevel settings.TestSkippingLevel) skippablesReport {
+func newSkippablesReport(
+	skippables skippableMatcher,
+	testSkippingLevel settings.TestSkippingLevel,
+	fetchDuration time.Duration,
+) skippablesReport {
 	return skippablesReport{
 		Available:         true,
+		FetchDuration:     fetchDuration,
 		TestSkippingLevel: testSkippingLevel,
 		TIATests:          skippables.TIATestsCount(),
 		TIASuites:         skippables.TIASuitesCount(),
@@ -114,19 +128,24 @@ func newSkippablesReport(skippables skippableMatcher, testSkippingLevel settings
 }
 
 type testSuiteDurationsReport struct {
-	Available bool
-	Modules   int
-	Suites    int
+	Available     bool
+	FetchDuration time.Duration
+	Modules       int
+	Suites        int
 }
 
-func newTestSuiteDurationsReport(testSuiteDurations *api.TestSuiteDurationsResponseData) testSuiteDurationsReport {
+func newTestSuiteDurationsReport(
+	testSuiteDurations *api.TestSuiteDurationsResponseData,
+	fetchDuration time.Duration,
+) testSuiteDurationsReport {
 	if testSuiteDurations == nil {
-		return testSuiteDurationsReport{}
+		return testSuiteDurationsReport{FetchDuration: fetchDuration}
 	}
 
 	report := testSuiteDurationsReport{
-		Available: true,
-		Modules:   len(testSuiteDurations.TestSuites),
+		Available:     true,
+		FetchDuration: fetchDuration,
+		Modules:       len(testSuiteDurations.TestSuites),
 	}
 	for _, suites := range testSuiteDurations.TestSuites {
 		report.Suites += len(suites)
@@ -156,6 +175,7 @@ type discoveryReport struct {
 	Available bool
 	Mode      discoveryMode
 	Cache     discoveryCacheReport
+	Duration  time.Duration
 	TestFiles int
 	Suites    int
 	Tests     int
@@ -219,6 +239,7 @@ func (tp *TestPlanner) newPlanningReport() planningReport {
 			Available: true,
 			Mode:      tp.discoveryMode,
 			Cache:     tp.discoveryCacheReport,
+			Duration:  tp.testDiscoveryDuration,
 			TestFiles: len(tp.testFiles),
 			Suites:    tp.localDiscoveredSuites,
 			Tests:     tp.localDiscoveredTests,
