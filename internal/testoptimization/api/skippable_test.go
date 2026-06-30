@@ -12,6 +12,7 @@ import (
 )
 
 func TestTransportGetSkippableTestsRequestAndResponse(t *testing.T) {
+	logs := captureRawResponseTestLogs(t)
 	var captured skippableRequest
 	response := skippableResponse{
 		Meta: skippableResponseMeta{CorrelationID: "correlation-id"},
@@ -88,6 +89,12 @@ func TestTransportGetSkippableTestsRequestAndResponse(t *testing.T) {
 	}
 	if len(client.GetSkippableTestsRawResponse()) == 0 {
 		t.Fatal("expected raw skippable response to be stored")
+	}
+	if !strings.Contains(logs.String(), "Finished fetching skippable tests and suites") ||
+		!strings.Contains(logs.String(), "testsCount=1") ||
+		!strings.Contains(logs.String(), "suitesCount=0") ||
+		!strings.Contains(logs.String(), "duration=") {
+		t.Fatalf("expected skippable fetch duration log, got logs: %s", logs.String())
 	}
 }
 

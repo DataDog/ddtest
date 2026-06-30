@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -93,10 +94,7 @@ func TestTestPlanner_Plan_HighSkippableIntegrationSelectsExpectedRunnerCountAndR
 	}
 
 	expectedParallelRunners := fixture.ExpectedParallelRunners
-	if runner.planReport.Split.parallelRunners != expectedParallelRunners {
-		t.Fatalf("Plan() selected %d runners, expected %d", runner.planReport.Split.parallelRunners, expectedParallelRunners)
-	}
-	assertFileContent(t, constants.ParallelRunnersOutputPath, "1")
+	assertFileContent(t, constants.ParallelRunnersOutputPath, strconv.Itoa(expectedParallelRunners))
 
 	testFiles := readTestPlanLines(t, constants.TestFilesOutputPath)
 	if !slices.Equal(testFiles, expectedRunnableFiles) {

@@ -8,6 +8,7 @@ package api
 import (
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/settings"
 )
@@ -85,6 +86,18 @@ func (s Skippables) Count() int {
 }
 
 func (c *transport) GetSkippableTests() (correlationID string, skippables Skippables, err error) {
+	startTime := time.Now()
+	defer func() {
+		duration := time.Since(startTime)
+		c.backendRequestTimings.Skippables = duration
+		if err == nil {
+			slog.Debug("Finished fetching skippable tests and suites",
+				"testsCount", len(skippables.Tests),
+				"suitesCount", len(skippables.Suites),
+				"duration", duration)
+		}
+	}()
+
 	if c.repositoryURL == "" || c.commitSha == "" {
 		err = fmt.Errorf("testoptimization.GetSkippableTests: repository URL and commit SHA are required")
 		return

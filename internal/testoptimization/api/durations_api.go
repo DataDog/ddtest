@@ -76,6 +76,10 @@ type (
 
 func (c *transport) GetTestSuiteDurations() *TestSuiteDurationsResponseData {
 	startTime := time.Now()
+	defer func() {
+		c.backendRequestTimings.TestSuiteDurations = time.Since(startTime)
+	}()
+
 	if c.repositoryURL == "" {
 		slog.Error("Test durations API errored", "duration", time.Since(startTime), "error", "repository URL is required")
 		return emptyTestSuiteDurationsResponseData()

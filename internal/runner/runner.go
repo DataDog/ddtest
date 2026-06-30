@@ -23,7 +23,7 @@ type Runner interface {
 
 type Planner interface {
 	Plan(ctx context.Context) error
-	LoadPlan() (planner.PlanInfo, error)
+	LoadPlan() (planner.PlanMetadata, error)
 	DistributeTestFiles(testFiles []string, parallelRunners int) [][]string
 }
 
@@ -67,7 +67,7 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to check parallel runners count at %s: %w", constants.ParallelRunnersOutputPath, err)
 	}
 
-	planInfo, err := tr.planner.LoadPlan()
+	planMetadata, err := tr.planner.LoadPlan()
 	if err != nil {
 		slog.Error("Test optimization plan is not available", "error", err)
 		return fmt.Errorf("test optimization plan is not available: %w", err)
@@ -96,8 +96,8 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 	}
 	slog.Info("Framework detected", "framework", framework.Name())
 	runInfo := runmetadata.New(ciUtils.GetCITags())
-	if planInfo.IsZero() {
-		planInfo = planner.NewPlanInfo(nil, detectedPlatform.Name(), framework.Name(), detectedPlatform.TestSkippingLevel())
+	if planMetadata.IsZero() {
+		planMetadata = planner.NewPlanMetadata(nil, detectedPlatform.Name(), framework.Name(), detectedPlatform.TestSkippingLevel())
 	}
 
 	ciNode := settings.GetCiNode()
@@ -114,11 +114,11 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 
 	if settings.GetReportEnabled() {
 		printRunReport(tr.reportWriter, runReport{
-			RunInfo:   runInfo,
-			PlanInfo:  planInfo,
-			Execution: executionResult.report,
-			Duration:  time.Since(startTime),
-			Err:       executionResult.err,
+			RunInfo:      runInfo,
+			PlanMetadata: planMetadata,
+			Execution:    executionResult.report,
+			Duration:     time.Since(startTime),
+			Err:          executionResult.err,
 		})
 	}
 	return executionResult.err

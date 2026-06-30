@@ -27,7 +27,7 @@ import (
 
 type Planner interface {
 	Plan(ctx context.Context) error
-	LoadPlan() (PlanInfo, error)
+	LoadPlan() (PlanMetadata, error)
 	DistributeTestFiles(testFiles []string, parallelRunners int) [][]string
 }
 
@@ -39,10 +39,11 @@ type testOptimizationClient interface {
 	GetTestManagementTestsData() *api.TestManagementTestsResponseDataModules
 	GetDisabledTests() map[string]bool
 	GetTestSuiteDurations() *api.TestSuiteDurationsResponseData
+	BackendRequestTimings() testoptimization.BackendRequestTimings
 	StoreCacheAndExit()
 }
 
-type PlanInfo struct {
+type PlanMetadata struct {
 	Platform          string            `json:"platform"`
 	Framework         string            `json:"framework"`
 	TestSkippingLevel string            `json:"testSkippingLevel,omitempty"`
@@ -50,8 +51,8 @@ type PlanInfo struct {
 	RuntimeTags       map[string]string `json:"runtimeTags"`
 }
 
-func NewPlanInfo(tags map[string]string, platformName, frameworkName string, testSkippingLevel settings.TestSkippingLevel) PlanInfo {
-	return PlanInfo{
+func NewPlanMetadata(tags map[string]string, platformName, frameworkName string, testSkippingLevel settings.TestSkippingLevel) PlanMetadata {
+	return PlanMetadata{
 		Platform:          platformName,
 		Framework:         frameworkName,
 		TestSkippingLevel: testSkippingLevel.String(),
@@ -60,7 +61,7 @@ func NewPlanInfo(tags map[string]string, platformName, frameworkName string, tes
 	}
 }
 
-func (p PlanInfo) IsZero() bool {
+func (p PlanMetadata) IsZero() bool {
 	return p.Platform == "" &&
 		p.Framework == "" &&
 		p.TestSkippingLevel == "" &&
@@ -75,11 +76,11 @@ type TestPlanner struct {
 	testSuiteDurations      map[string]map[string]api.TestSuiteDurationInfo
 	testFileWeights         map[string]int
 	testFileDurationSources map[string]testFileDurationSource
+	reportStats             planningReportStats
 	skippablePercentage     float64
-	planReport              planReport
 	planLoaded              bool
 	runInfo                 runmetadata.RunInfo
-	planInfo                PlanInfo
+	planMetadata            PlanMetadata
 	platformDetector        platform.PlatformDetector
 	optimizationClient      testOptimizationClient
 	newOptimizationClient   func(testSkippingLevel settings.TestSkippingLevel) testOptimizationClient
@@ -178,6 +179,7 @@ func newTestPlannerWithDefaults() *TestPlanner {
 		testSuiteDurations:      make(map[string]map[string]api.TestSuiteDurationInfo),
 		testFileWeights:         make(map[string]int),
 		testFileDurationSources: make(map[string]testFileDurationSource),
+		reportStats:             newPlanningReportStats(),
 		skippablePercentage:     0.0,
 		reportWriter:            os.Stderr,
 	}
@@ -234,13 +236,8 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 		return fmt.Errorf("failed to create test splits: %w", err)
 	}
 
-	tp.planReport.Split = parallelRunnerSplit
-
 	if settings.GetReportEnabled() {
-		tp.planReport.DDTestSettings = settings.Get()
-		tp.planReport.LongSeparateRunnerSuites = tp.longSeparateRunnerSuitesReport(parallelRunners, parallelRunnerSplit)
-		tp.planReport.SlowestTestSuitesOverall = tp.slowestTestSuitesOverallReport(slowestTestSuitesReportLimit)
-		printPlanReport(tp.reportWriter, tp.planReport)
+		printPlanReport(tp.reportWriter, tp, parallelRunnerSplit)
 	}
 
 	tp.planLoaded = true
@@ -287,7 +284,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	strictDiscovery := settings.GetStrictDiscovery()
 	fullDiscoveryNeeded := fullTestDiscoverySupported && (isTestLevelSkipping || forceFullTestDiscovery)
 	tp.runInfo = runmetadata.New(environment.GetCITags())
-	tp.planInfo = NewPlanInfo(tags, detectedPlatform.Name(), testFramework.Name(), testSkippingLevel)
+	tp.planMetadata = NewPlanMetadata(tags, detectedPlatform.Name(), testFramework.Name(), testSkippingLevel)
 	if tp.optimizationClient == nil {
 		if tp.newOptimizationClient == nil {
 			return fmt.Errorf("failed to create optimization client: missing client factory")
@@ -307,6 +304,11 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	var fullDiscoveryErr error
 	var fastDiscoveryErr error
 	var tiaSkippingEnabled bool
+	var fullDiscoveryDuration time.Duration
+	var fastDiscoveryDuration time.Duration
+	var selectedDiscoveryMode discoveryMode
+	var selectedDiscoveryDuration time.Duration
+	var cacheResult discoveryCacheResult
 
 	tp.resetDiscoveryResults()
 	tp.testSuiteDurations = make(map[string]map[string]api.TestSuiteDurationInfo)
@@ -331,7 +333,6 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		}
 
 		repositorySettings := tp.optimizationClient.GetSettings()
-		tp.planReport.DatadogSettings = newDatadogSettingsReport(repositorySettings)
 		tiaSkippingEnabled = false
 		if repositorySettings != nil {
 			slog.Debug("Repository settings", "tia_enabled", repositorySettings.ItrEnabled, "tests_skipping", repositorySettings.TestsSkipping)
@@ -349,14 +350,14 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		}
 
 		skipMatcher = tp.fetchSkippables(tiaSkippingEnabled)
-		tp.planReport.SkippableTestsCount = skipMatcher.Count()
 
 		if tiaSkippingEnabled && skipMatcher.TIASkippablesCount() == 0 && !forceFullTestDiscovery {
 			slog.Info("No TIA-skippable tests or suites found for this run, cancelling full test discovery")
 			cancelDiscovery()
 		}
 
-		if testSuiteDurations := tp.optimizationClient.GetTestSuiteDurations(); testSuiteDurations != nil && testSuiteDurations.TestSuites != nil {
+		testSuiteDurations := tp.optimizationClient.GetTestSuiteDurations()
+		if testSuiteDurations != nil && testSuiteDurations.TestSuites != nil {
 			tp.testSuiteDurations = testSuiteDurations.TestSuites
 		}
 
@@ -365,6 +366,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 
 	// Goroutine 2: Tests discovery (respects context cancellation)
 	g.Go(func() error {
+		fullDiscoveryStartTime := time.Now()
 		if !fullDiscoveryNeeded {
 			if isSuiteLevelSkipping && !forceFullTestDiscovery {
 				slog.Info("Suite-level skipping does not require full test discovery; using fast test file discovery fallback", "framework", testFramework.Name())
@@ -378,9 +380,12 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 			return nil
 		}
 
-		if res, ok := discoveryCache.restore(); ok {
+		res, restoredCacheResult := discoveryCache.restore()
+		cacheResult = restoredCacheResult
+		if restoredCacheResult.Used {
 			discoveredTests = res
 			fullDiscoverySucceeded = true
+			fullDiscoveryDuration = time.Since(fullDiscoveryStartTime)
 			return nil
 		}
 
@@ -394,6 +399,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		discoveryCache.store()
 		discoveredTests = res
 		fullDiscoverySucceeded = true
+		fullDiscoveryDuration = time.Since(fullDiscoveryStartTime)
 
 		return nil
 	})
@@ -415,7 +421,8 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 			}
 		}
 		discoveredTestFiles = res
-		slog.Info("Discovered test files (fast)", "duration", time.Since(startTime), "count", len(discoveredTestFiles))
+		fastDiscoveryDuration = time.Since(startTime)
+		slog.Info("Discovered test files (fast)", "duration", fastDiscoveryDuration, "count", len(discoveredTestFiles))
 
 		return nil
 	})
@@ -431,6 +438,8 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		if err := tp.recordFullDiscoveryResults(discoveredTests, skipMatcher); err != nil {
 			return err
 		}
+		selectedDiscoveryMode = discoveryModeFull
+		selectedDiscoveryDuration = fullDiscoveryDuration
 		// if we have data on which tests exist in the local repository, we will aggregate them
 		// into a collection of testSuiteAggregate structs.
 		// This collection is used to calculate the skippable percentage and the weighted test files.
@@ -448,6 +457,8 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		if err := tp.recordFastDiscoveryFallbackFiles(discoveredTestFiles); err != nil {
 			return err
 		}
+		selectedDiscoveryMode = discoveryModeFast
+		selectedDiscoveryDuration = fastDiscoveryDuration
 		tp.addDurationDataForFastDiscoveryFallback()
 		if isSuiteLevelSkipping && tiaSkippingEnabled {
 			tp.recordSuiteLevelSkippables(skipMatcher, testFramework)
@@ -462,9 +473,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	tp.skippablePercentage = calculateSavedTimePercentage(tp.suiteAggregates)
 	tp.testFileWeights = tp.calculateFileWeights()
 
-	tp.planReport.RunInfo = tp.runInfo
-	tp.planReport.PlanInfo = tp.planInfo
-	tp.planReport.Planning = tp.newPlanningReport()
+	tp.recordDiscoveryReport(selectedDiscoveryMode, cacheResult, selectedDiscoveryDuration)
 
 	slog.Info("Test files prepared", "testFilesCount", len(tp.testFiles))
 
@@ -503,18 +512,16 @@ func (tp *TestPlanner) fetchSkippables(tiaSkippingEnabled bool) skippableMatcher
 		skippables = tp.optimizationClient.GetSkippables()
 	}
 
-	tp.planReport.KnownTests = newKnownTestsReport(tp.optimizationClient.GetKnownTests())
-	testManagementTestsData := tp.optimizationClient.GetTestManagementTestsData()
-	tp.planReport.ManagedFlakyTests = newManagedFlakyTestsReport(testManagementTestsData)
-
 	disabledTests := tp.optimizationClient.GetDisabledTests()
+	matcher := newSkippableMatcher(skippables, disabledTests)
+
 	slog.Info("Fetched skippables",
 		"duration", time.Since(startTime),
 		"tiaSkippableTestsCount", len(skippables.Tests),
 		"tiaSkippableSuitesCount", len(skippables.Suites),
 		"disabledTestsCount", len(disabledTests))
 
-	return newSkippableMatcher(skippables, disabledTests)
+	return matcher
 }
 
 func (tp *TestPlanner) estimateDiscoveredSuiteDurations() {
@@ -630,6 +637,14 @@ func calculateSavedTimePercentage(suiteAggregates map[testSuiteKey]testSuiteAggr
 	}
 
 	return (totalDuration - estimatedDuration) / totalDuration * 100.0
+}
+
+func countSuiteAggregateTests(suiteAggregates map[testSuiteKey]testSuiteAggregate) int {
+	count := 0
+	for _, aggregate := range suiteAggregates {
+		count += aggregate.NumTests
+	}
+	return count
 }
 
 func indexSuitesBySourceFile(suiteAggregates map[testSuiteKey]testSuiteAggregate) map[string][]testSuiteKey {
