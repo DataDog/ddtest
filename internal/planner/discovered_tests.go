@@ -2,11 +2,8 @@ package planner
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"time"
-
-	"github.com/bmatcuk/doublestar/v4"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
@@ -28,11 +25,7 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 	resolvedTestFiles discovery.TestFileSet,
 	skippableMatcher skippableMatcher,
 ) error {
-	excluder, err := discovery.NewExcluder(settings.GetTestsExcludePattern())
-	if err != nil {
-		return err
-	}
-	locationFilter, err := newTestFileLocationFilter(resolvedTestFiles)
+	testFileMatcher, err := discovery.NewTestFileSetMatcher(resolvedTestFiles, settings.GetTestsExcludePattern())
 	if err != nil {
 		return err
 	}
@@ -62,10 +55,10 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 	for _, test := range discoveredTests {
 		normalizedSourceFile := utils.StripCwdSubdirPrefix(test.SuiteSourceFile)
 		normalizedSourceFile = utils.NormalizePath(normalizedSourceFile)
-		// Full discovery should already receive filtered files when exclude is configured.
-		// Keep this planner-side guard so normalized tracer-reported paths cannot re-enter
-		// the runnable file set or suite aggregates.
-		if normalizedSourceFile != "" && (!locationFilter.Match(normalizedSourceFile) || excluder.Match(normalizedSourceFile)) {
+		// Full discovery receives the resolved test selection, but frameworks can still
+		// report extra tests loaded by process startup. Keep this planner-side guard so
+		// out-of-selection paths cannot enter the runnable file set or suite aggregates.
+		if normalizedSourceFile != "" && !testFileMatcher.MatchNormalizedPath(normalizedSourceFile) {
 			excludedTestsCount++
 			continue
 		}
@@ -90,52 +83,6 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 		"excludedTestsCount", excludedTestsCount,
 		"discoveredTestsCount", discoveredTestsCount)
 	return nil
-}
-
-type testFileLocationFilter struct {
-	pattern       string
-	explicitFiles map[string]struct{}
-	matchAll      bool
-}
-
-func newTestFileLocationFilter(testFiles discovery.TestFileSet) (testFileLocationFilter, error) {
-	if testFiles.UseExplicitFiles() {
-		explicitFiles := make(map[string]struct{}, len(testFiles.ExplicitFiles))
-		for _, testFile := range testFiles.ExplicitFiles {
-			normalized := utils.NormalizePath(testFile)
-			if normalized != "" {
-				explicitFiles[normalized] = struct{}{}
-			}
-		}
-		return testFileLocationFilter{explicitFiles: explicitFiles}, nil
-	}
-
-	pattern := utils.NormalizePattern(testFiles.Pattern)
-	if pattern == "" {
-		return testFileLocationFilter{matchAll: true}, nil
-	}
-	if !doublestar.ValidatePattern(pattern) {
-		return testFileLocationFilter{}, fmt.Errorf("invalid tests location pattern %q: %w", testFiles.Pattern, doublestar.ErrBadPattern)
-	}
-	return testFileLocationFilter{pattern: pattern}, nil
-}
-
-func (f testFileLocationFilter) Match(testFile string) bool {
-	if f.matchAll {
-		return true
-	}
-	normalized := utils.NormalizePath(testFile)
-	if normalized == "" {
-		return false
-	}
-	if f.explicitFiles != nil {
-		_, ok := f.explicitFiles[normalized]
-		return ok
-	}
-	if f.pattern == "" {
-		return false
-	}
-	return doublestar.MatchUnvalidated(f.pattern, normalized)
 }
 
 type skippableMatcher struct {
@@ -215,14 +162,14 @@ func (tp *TestPlanner) recordAppliedSkippable(match skippableMatch) {
 }
 
 func (tp *TestPlanner) recordFastDiscoveryFallbackFiles(discoveredTestFiles []string) error {
-	excluder, err := discovery.NewExcluder(settings.GetTestsExcludePattern())
+	testFileMatcher, err := discovery.NewTestFileSetMatcher(discovery.TestFileSet{}, settings.GetTestsExcludePattern())
 	if err != nil {
 		return err
 	}
 
 	for _, testFile := range discoveredTestFiles {
 		normalizedTestFile := utils.NormalizePath(testFile)
-		if normalizedTestFile != "" && !excluder.Match(normalizedTestFile) {
+		if normalizedTestFile != "" && testFileMatcher.MatchNormalizedPath(normalizedTestFile) {
 			tp.testFiles[normalizedTestFile] = struct{}{}
 		}
 	}

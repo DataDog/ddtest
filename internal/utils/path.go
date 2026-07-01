@@ -6,6 +6,7 @@
 package utils
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/DataDog/ddtest/internal/git"
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 var cwdSubdirPrefix = sync.OnceValue(computeCwdSubdirPrefix)
@@ -115,6 +117,44 @@ func NormalizePath(path string) string {
 func NormalizePattern(pattern string) string {
 	normalized := filepath.ToSlash(strings.TrimSpace(pattern))
 	return trimLeadingCurrentDir(normalized)
+}
+
+type PathMatcher struct {
+	pattern string
+}
+
+func NewPathMatcher(pattern string) (PathMatcher, error) {
+	normalized := NormalizePattern(pattern)
+	return newPathMatcher(normalized, pattern)
+}
+
+func NewNormalizedPathMatcher(normalizedPattern string) (PathMatcher, error) {
+	return newPathMatcher(normalizedPattern, normalizedPattern)
+}
+
+func newPathMatcher(normalizedPattern string, originalPattern string) (PathMatcher, error) {
+	if normalizedPattern == "" {
+		return PathMatcher{}, nil
+	}
+	if !doublestar.ValidatePattern(normalizedPattern) {
+		return PathMatcher{}, fmt.Errorf("invalid path pattern %q: %w", originalPattern, doublestar.ErrBadPattern)
+	}
+	return PathMatcher{pattern: normalizedPattern}, nil
+}
+
+func (m PathMatcher) Empty() bool {
+	return m.pattern == ""
+}
+
+func (m PathMatcher) Match(path string) bool {
+	return m.MatchNormalizedPath(NormalizePath(path))
+}
+
+func (m PathMatcher) MatchNormalizedPath(normalizedPath string) bool {
+	if m.pattern == "" || normalizedPath == "" {
+		return false
+	}
+	return doublestar.MatchUnvalidated(m.pattern, normalizedPath)
 }
 
 func trimLeadingCurrentDir(path string) string {

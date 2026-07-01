@@ -352,17 +352,6 @@ func (m *longRunningDiscoveryFramework) DiscoverTests(ctx context.Context, testF
 	return nil, ctx.Err()
 }
 
-type settingsAwareMockFramework struct {
-	MockFramework
-}
-
-func (m *settingsAwareMockFramework) TestPattern() string {
-	if custom := settings.GetTestsLocation(); custom != "" {
-		return custom
-	}
-	return m.MockFramework.TestPattern()
-}
-
 // MockTestOptimizationClient mocks the test optimization client
 type MockTestOptimizationClient struct {
 	InitializeCalled           bool
@@ -1134,15 +1123,14 @@ func TestTestPlanner_Plan_ForceFullDiscoveryFiltersPlanArtifactsToTestsLocation(
 	}
 
 	skippedSuite := "Billing::Skipped"
-	mockFramework := &settingsAwareMockFramework{
-		MockFramework: MockFramework{
-			FrameworkName: "rspec",
-			TestFiles:     []string{insideRunnableFile, insideSkippedFile, outsideRunnableFile},
-			Tests: []testoptimization.Test{
-				{Module: "rspec", Suite: "Billing::Payment", Name: "runs", SuiteSourceFile: insideRunnableFile},
-				{Module: "rspec", Suite: skippedSuite, Name: "skips", SuiteSourceFile: insideSkippedFile},
-				{Module: "rspec", Suite: "LintRules::Rule", Name: "runs", SuiteSourceFile: outsideRunnableFile},
-			},
+	mockFramework := &MockFramework{
+		FrameworkName:    "rspec",
+		TestPatternValue: testsLocation,
+		TestFiles:        []string{insideRunnableFile, insideSkippedFile, outsideRunnableFile},
+		Tests: []testoptimization.Test{
+			{Module: "rspec", Suite: "Billing::Payment", Name: "runs", SuiteSourceFile: insideRunnableFile},
+			{Module: "rspec", Suite: skippedSuite, Name: "skips", SuiteSourceFile: insideSkippedFile},
+			{Module: "rspec", Suite: "LintRules::Rule", Name: "runs", SuiteSourceFile: outsideRunnableFile},
 		},
 	}
 	mockPlatform := &MockPlatform{
