@@ -44,6 +44,7 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 			MinParallelism:         minParallelism,
 			MaxParallelism:         maxParallelism,
 			ParallelRunnerOverhead: 30 * time.Second,
+			TargetTime:             5 * time.Minute,
 			WorkerEnv:              "RAILS_ENV=test;DATABASE_PASSWORD=secret",
 			CiNode:                 0,
 			CiNodeWorkers:          2,
@@ -132,6 +133,49 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 			imbalance:       11000,
 			totalRuntime:    1426000,
 		},
+		SplitSelection: splitSelection{
+			selected: splitScore{
+				parallelRunners: 6,
+				wallTime:        252000,
+				imbalance:       11000,
+				totalRuntime:    1426000,
+			},
+			bestWithoutTarget: splitScore{
+				parallelRunners: 4,
+				wallTime:        305000,
+				imbalance:       20000,
+				totalRuntime:    1426000,
+			},
+			candidates: []splitScore{
+				{
+					parallelRunners: 1,
+					wallTime:        1426000,
+					imbalance:       0,
+					totalRuntime:    1426000,
+				},
+				{
+					parallelRunners: 4,
+					wallTime:        305000,
+					imbalance:       20000,
+					totalRuntime:    1426000,
+				},
+				{
+					parallelRunners: 5,
+					wallTime:        290000,
+					imbalance:       15000,
+					totalRuntime:    1426000,
+				},
+				{
+					parallelRunners: 6,
+					wallTime:        252000,
+					imbalance:       11000,
+					totalRuntime:    1426000,
+				},
+			},
+			parallelRunnerOverhead: 30 * time.Second,
+			targetTime:             5 * time.Minute,
+			available:              true,
+		},
 		LongSeparateRunnerSuites: []testSuiteTimingReport{
 			{
 				Runner:            0,
@@ -180,6 +224,7 @@ DDTest settings
   Min parallelism: %s
   Max parallelism: %s
   CI job overhead: 30s
+  Target time: 5m0s
   Worker env: DATABASE_PASSWORD, RAILS_ENV
   CI node: 0
   CI node workers: 2
@@ -229,12 +274,25 @@ Planning
   Run set
     Test files to run: 524
     Estimated time saved: 38.40%%
-  Runner split
-    Full runtime: 37m12s
-    Estimated runtime: 23m46s
-    Runners: 6
+  Split selection
+    Full test suite time without TIA: 37m12s
+    Estimated runtime with TIA: 23m46s
+    Selected: 6 runners
+    Reason: lowest selection score among splits that meet target time
+    Target time: 5m0s, satisfied
     Expected wall time: 4m12s
+    Modeled CI overhead: 3m0s (6 runners x configured CI job overhead 30s)
+    Selection score: 7m12s (wall time + modeled CI overhead)
     Imbalance: 11s
+
+    Without target time: 4 runners (wall 5m5s, overhead 2m0s, score 7m5s)
+      Selected vs without target: 53s faster wall time, 1m0s more CI overhead
+
+    Candidates
+      4 runners: wall 5m5s, overhead 2m0s, score 7m5s, missed target by 5s; would choose without target time
+      6 runners: wall 4m12s, overhead 3m0s, score 7m12s, met target; selected
+      5 runners: wall 4m50s, overhead 2m30s, score 7m20s, met target
+      1 runner: wall 23m46s, overhead 30s, score 24m16s, missed target by 18m46s
 
 Slow suites on dedicated runners
   ATTENTION: 1 dedicated runner
@@ -381,10 +439,10 @@ Planning
   Run set
     Test files to run: 18
     Estimated time saved: 25.00%
-  Runner split
-    Full runtime: not available
-    Estimated runtime: 3m30s
-    Runners: 3
+  Split selection
+    Full test suite time without TIA: not available
+    Estimated runtime with TIA: 3m30s
+    Selected: 3 runners
     Expected wall time: 1m30s
     Imbalance: 500ms
 
@@ -436,8 +494,53 @@ func TestPrintPlanReport_MissingSettingsAndData(t *testing.T) {
 	if !strings.Contains(report, "  Run set: not available") {
 		t.Errorf("expected missing run set message, got:\n%s", report)
 	}
-	if !strings.Contains(report, "  Runner split: not available") {
-		t.Errorf("expected missing runner split message, got:\n%s", report)
+	if !strings.Contains(report, "  Split selection: not available") {
+		t.Errorf("expected missing split selection message, got:\n%s", report)
+	}
+}
+
+func TestPrintSplitCandidatesReport_LimitsAndSortsByScore(t *testing.T) {
+	selection := splitSelection{
+		selected:               splitScore{parallelRunners: 2, wallTime: 80_000, totalRuntime: 100_000},
+		parallelRunnerOverhead: 10 * time.Second,
+		available:              true,
+		candidates: []splitScore{
+			{parallelRunners: 6, wallTime: 59_000, totalRuntime: 100_000},
+			{parallelRunners: 5, wallTime: 60_000, totalRuntime: 100_000},
+			{parallelRunners: 1, wallTime: 100_000, totalRuntime: 100_000},
+			{parallelRunners: 4, wallTime: 65_000, totalRuntime: 100_000},
+			{parallelRunners: 3, wallTime: 70_000, totalRuntime: 100_000},
+			{parallelRunners: 2, wallTime: 80_000, totalRuntime: 100_000},
+		},
+	}
+
+	var output strings.Builder
+	printSplitCandidatesReport(&output, selection)
+
+	report := output.String()
+	for _, want := range []string{
+		"Candidates (best 5 of 6 by score)",
+		"2 runners: wall 1m20s, overhead 20s, score 1m40s, selected",
+		"3 runners: wall 1m10s, overhead 30s, score 1m40s",
+		"4 runners: wall 1m5s, overhead 40s, score 1m45s",
+		"1 runner: wall 1m40s, overhead 10s, score 1m50s",
+		"5 runners: wall 1m0s, overhead 50s, score 1m50s",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("expected candidates report to contain %q, got:\n%s", want, report)
+		}
+	}
+	if strings.Contains(report, "6 runners:") {
+		t.Fatalf("expected candidates report to omit sixth candidate, got:\n%s", report)
+	}
+	orderedCandidates := []string{"2 runners:", "3 runners:", "4 runners:", "1 runner:", "5 runners:"}
+	previousIndex := -1
+	for _, candidate := range orderedCandidates {
+		index := strings.Index(report, candidate)
+		if index <= previousIndex {
+			t.Fatalf("expected candidates sorted by score, got:\n%s", report)
+		}
+		previousIndex = index
 	}
 }
 
@@ -463,6 +566,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 	config.MinParallelism++
 	config.MaxParallelism += 2
 	config.ParallelRunnerOverhead += time.Second
+	config.TargetTime = 12 * time.Minute
 	config.CiNode = 0
 	config.CiNodeWorkers = 2
 	config.WorkerEnv = "TOKEN=secret"
@@ -498,6 +602,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 		"Min parallelism",
 		"Max parallelism",
 		"CI job overhead",
+		"Target time",
 		"Worker env",
 		"CI node",
 		"CI node workers",

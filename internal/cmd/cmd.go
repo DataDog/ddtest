@@ -64,6 +64,7 @@ var rootPersistentFlagBindings = []persistentFlagBinding{
 	{configKey: "min_parallelism", flagName: "min-parallelism"},
 	{configKey: "max_parallelism", flagName: "max-parallelism"},
 	{configKey: "parallel_runner_overhead", flagName: "ci-job-overhead"},
+	{configKey: "target_time", flagName: "target-time"},
 	{configKey: "worker_env", flagName: "worker-env"},
 	{configKey: "ci_node", flagName: "ci-node"},
 	{configKey: "ci_node_workers", flagName: "ci-node-workers"},
@@ -85,6 +86,7 @@ func init() {
 	rootCmd.PersistentFlags().Int("min-parallelism", defaultParallelism, "Minimum number of parallel test processes (default: number of physical CPUs)")
 	rootCmd.PersistentFlags().Int("max-parallelism", defaultParallelism, "Maximum number of parallel test processes (default: number of physical CPUs)")
 	rootCmd.PersistentFlags().String("ci-job-overhead", settings.DefaultParallelRunnerOverhead().String(), "Modeled overhead for adding one more CI job / parallel runner (for example, 25s, 1m, 1500ms, or 0s to disable the bias). Increase it to use fewer CI jobs; decrease it to prefer faster wall time")
+	rootCmd.PersistentFlags().String("target-time", settings.DefaultTargetTime().String(), "Target wall time for selected CI job / parallel runner split (for example, 10m, 300s, 1500ms, or 0s to disable the target)")
 	rootCmd.PersistentFlags().String("worker-env", "", "Worker environment configuration")
 	rootCmd.PersistentFlags().Int("ci-node", -1, "CI node index to run (0-indexed; default: -1 disables CI-node mode)")
 	rootCmd.PersistentFlags().String("ci-node-workers", "1", `Number of parallel workers per CI node (positive integer or "ncpu"; default: 1)`)

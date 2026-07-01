@@ -241,6 +241,7 @@ type PlanReportData struct {
 	LongSeparateRunnerSuites []testSuiteTimingReport
 	SlowestTestSuitesOverall []testSuiteTimingReport
 	Split                    splitScore
+	SplitSelection           splitSelection
 }
 
 type planningReportStats struct {
@@ -270,6 +271,11 @@ func (tp *TestPlanner) newPlanReportData(split splitScore) PlanReportData {
 		Split:                    split,
 	}
 	return addBackendDataReports(report, tp.optimizationClient)
+}
+
+func (report PlanReportData) withSplitSelection(selection splitSelection) PlanReportData {
+	report.SplitSelection = selection
+	return report
 }
 
 func (tp *TestPlanner) recordDiscoveryReport(mode discoveryMode, cache discoveryCacheResult, duration time.Duration) {

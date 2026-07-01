@@ -14,7 +14,7 @@ import (
 const testParallelRunnerOverhead = 25 * time.Second
 
 func testCalculateParallelRunners(testFileWeights map[string]int, minParallelism, maxParallelism int) int {
-	return calculateParallelRunnerSplit(testFileWeights, minParallelism, maxParallelism, testParallelRunnerOverhead).parallelRunners
+	return calculateParallelRunnerSplit(testFileWeights, minParallelism, maxParallelism, testParallelRunnerOverhead, 0).parallelRunners
 }
 
 func TestCalculateParallelRunners_MaxParallelismIsOne(t *testing.T) {
@@ -144,7 +144,7 @@ func TestCalculateParallelRunnerSplit_ReturnsSelectedScore(t *testing.T) {
 		"test5.rb": 6,
 	}
 
-	result := calculateParallelRunnerSplit(testFileWeights, 3, 4, testParallelRunnerOverhead)
+	result := calculateParallelRunnerSplit(testFileWeights, 3, 4, testParallelRunnerOverhead, 0)
 	expected := splitScore{
 		parallelRunners: 3,
 		wallTime:        12,
@@ -201,7 +201,7 @@ func TestCalculateParallelRunnerSplit_RealGitHubActionsArtifacts(t *testing.T) {
 				)
 			}
 
-			result := calculateParallelRunnerSplit(fixture.TestFileWeights, 1, 8, testParallelRunnerOverhead)
+			result := calculateParallelRunnerSplit(fixture.TestFileWeights, 1, 8, testParallelRunnerOverhead, 0)
 			if result.parallelRunners != tt.expectedParallelRunners {
 				t.Fatalf(
 					"calculateParallelRunnerSplit() = %d runners, expected %d; artifact selected %d before this fix",
@@ -236,11 +236,64 @@ func TestCalculateParallelRunnerSplit_ParallelRunnerOverheadTunesFanout(t *testi
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := calculateParallelRunnerSplit(fixture.TestFileWeights, 1, 8, tt.parallelRunnerOverhead)
+			result := calculateParallelRunnerSplit(fixture.TestFileWeights, 1, 8, tt.parallelRunnerOverhead, 0)
 			if result.parallelRunners != tt.expectedParallelRunners {
 				t.Errorf("calculateParallelRunnerSplit() = %d runners, expected %d", result.parallelRunners, tt.expectedParallelRunners)
 			}
 		})
+	}
+}
+
+func TestCalculateParallelRunnerSplit_TargetTimeFiltersCandidateSplits(t *testing.T) {
+	testFileWeights := map[string]int{
+		"test1.rb": 60_000,
+		"test2.rb": 60_000,
+		"test3.rb": 60_000,
+		"test4.rb": 60_000,
+	}
+	minParallelism := 1
+	maxParallelism := 4
+	parallelRunnerOverhead := 5 * time.Minute
+	targetTime := 2 * time.Minute
+
+	result := calculateParallelRunnerSplit(testFileWeights, minParallelism, maxParallelism, parallelRunnerOverhead, targetTime)
+	if result.parallelRunners != 2 {
+		t.Errorf("calculateParallelRunnerSplit() = %d runners, expected 2 to satisfy target time with the lowest selection score", result.parallelRunners)
+	}
+	if result.wallTimeDuration() > targetTime {
+		t.Errorf("calculateParallelRunnerSplit() wall time = %s, expected at or below %s", result.wallTimeDuration(), targetTime)
+	}
+}
+
+func TestCalculateParallelRunnerSplit_TargetTimeImpossibleWarnsAndSelectsLowestWallTime(t *testing.T) {
+	logs := captureLogs(t)
+	testFileWeights := map[string]int{
+		"test1.rb": 60_000,
+		"test2.rb": 60_000,
+		"test3.rb": 60_000,
+		"test4.rb": 60_000,
+	}
+	minParallelism := 1
+	maxParallelism := 4
+	parallelRunnerOverhead := 5 * time.Minute
+	targetTime := 59 * time.Second
+
+	result := calculateParallelRunnerSplitSelection(testFileWeights, minParallelism, maxParallelism, parallelRunnerOverhead, targetTime)
+	if result.selected.parallelRunners != 4 {
+		t.Errorf("calculateParallelRunnerSplit() = %d runners, expected 4 from fallback lowest wall time split", result.selected.parallelRunners)
+	}
+	if result.selected.wallTimeDuration() != time.Minute {
+		t.Errorf("calculateParallelRunnerSplit() wall time = %s, expected 1m0s", result.selected.wallTimeDuration())
+	}
+	if result.bestWithoutTarget.parallelRunners != 1 {
+		t.Errorf("calculateParallelRunnerSplit() without target = %d runners, expected 1 from best selection score", result.bestWithoutTarget.parallelRunners)
+	}
+
+	logOutput := logs.String()
+	if !strings.Contains(logOutput, "No parallel runner split meets target time") ||
+		!strings.Contains(logOutput, "targetTime=59s") ||
+		!strings.Contains(logOutput, "selectedExpectedWallTime=1m0s") {
+		t.Errorf("expected target-time warning with fallback details, got logs: %s", logOutput)
 	}
 }
 
@@ -276,7 +329,7 @@ func TestCalculateParallelRunnerSplit_LogsCandidateSplits(t *testing.T) {
 		"test3.rb": 10,
 	}
 
-	_ = calculateParallelRunnerSplit(testFileWeights, 1, 3, testParallelRunnerOverhead)
+	_ = calculateParallelRunnerSplit(testFileWeights, 1, 3, testParallelRunnerOverhead, 0)
 
 	logOutput := logs.String()
 	if strings.Count(logOutput, "Considered parallel runner split") != 3 ||
@@ -298,6 +351,6 @@ func BenchmarkCalculateParallelRunners20000TestFiles(b *testing.B) {
 
 	b.ResetTimer()
 	for range b.N {
-		_ = calculateParallelRunnerSplit(testFileWeights, 1, 256, testParallelRunnerOverhead)
+		_ = calculateParallelRunnerSplit(testFileWeights, 1, 256, testParallelRunnerOverhead, 0)
 	}
 }

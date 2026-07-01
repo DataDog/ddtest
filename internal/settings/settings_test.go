@@ -2,6 +2,7 @@ package settings
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 )
 
 const expectedDefaultParallelRunnerOverhead = 25 * time.Second
+const expectedDefaultTargetTime = 0 * time.Second
 
 func TestDefaultParallelism(t *testing.T) {
 	result := DefaultParallelism()
@@ -25,6 +27,12 @@ func TestDefaultParallelism(t *testing.T) {
 func TestDefaultParallelRunnerOverhead(t *testing.T) {
 	if DefaultParallelRunnerOverhead() != expectedDefaultParallelRunnerOverhead {
 		t.Errorf("expected default parallel runner overhead to be %s, got %s", expectedDefaultParallelRunnerOverhead, DefaultParallelRunnerOverhead())
+	}
+}
+
+func TestDefaultTargetTime(t *testing.T) {
+	if DefaultTargetTime() != expectedDefaultTargetTime {
+		t.Errorf("expected default target time to be %s, got %s", expectedDefaultTargetTime, DefaultTargetTime())
 	}
 }
 
@@ -131,6 +139,9 @@ func TestInit(t *testing.T) {
 	if config.ParallelRunnerOverhead != expectedDefaultParallelRunnerOverhead {
 		t.Errorf("expected default parallel_runner_overhead to be %s, got %s", expectedDefaultParallelRunnerOverhead, config.ParallelRunnerOverhead)
 	}
+	if config.TargetTime != expectedDefaultTargetTime {
+		t.Errorf("expected default target_time to be %s, got %s", expectedDefaultTargetTime, config.TargetTime)
+	}
 	if config.WorkerEnv != "" {
 		t.Errorf("expected default worker_env to be empty, got %q", config.WorkerEnv)
 	}
@@ -189,6 +200,9 @@ func TestSetDefaults(t *testing.T) {
 	}
 	if viper.GetString("parallel_runner_overhead") != expectedDefaultParallelRunnerOverhead.String() {
 		t.Errorf("expected default parallel_runner_overhead to be %s, got %q", expectedDefaultParallelRunnerOverhead, viper.GetString("parallel_runner_overhead"))
+	}
+	if viper.GetString("target_time") != expectedDefaultTargetTime.String() {
+		t.Errorf("expected default target_time to be %s, got %q", expectedDefaultTargetTime, viper.GetString("target_time"))
 	}
 	if viper.GetString("worker_env") != "" {
 		t.Errorf("expected default worker_env to be empty, got %q", viper.GetString("worker_env"))
@@ -293,6 +307,7 @@ func TestEnvironmentVariables(t *testing.T) {
 	_ = os.Setenv(minParallelismEnv, "2")
 	_ = os.Setenv(maxParallelismEnv, "8")
 	_ = os.Setenv(parallelRunnerOverheadEnv, "40s")
+	_ = os.Setenv(targetTimeEnv, "10m")
 	_ = os.Setenv(workerEnv, "RAILS_DB=my_project_dev_{{nodeIndex}}")
 	_ = os.Setenv(ciNodeEnv, "5")
 	_ = os.Setenv(ciNodeWorkersEnv, "4")
@@ -311,6 +326,7 @@ func TestEnvironmentVariables(t *testing.T) {
 		_ = os.Unsetenv(minParallelismEnv)
 		_ = os.Unsetenv(maxParallelismEnv)
 		_ = os.Unsetenv(parallelRunnerOverheadEnv)
+		_ = os.Unsetenv(targetTimeEnv)
 		_ = os.Unsetenv(workerEnv)
 		_ = os.Unsetenv(ciNodeEnv)
 		_ = os.Unsetenv(ciNodeWorkersEnv)
@@ -341,6 +357,9 @@ func TestEnvironmentVariables(t *testing.T) {
 	}
 	if config.ParallelRunnerOverhead != 40*time.Second {
 		t.Errorf("expected parallel_runner_overhead from env var to be 40s, got %s", config.ParallelRunnerOverhead)
+	}
+	if config.TargetTime != 10*time.Minute {
+		t.Errorf("expected target_time from env var to be 10m, got %s", config.TargetTime)
 	}
 	if config.WorkerEnv != "RAILS_DB=my_project_dev_{{nodeIndex}}" {
 		t.Errorf("expected worker_env from env var to be 'RAILS_DB=my_project_dev_{{nodeIndex}}', got %q", config.WorkerEnv)
@@ -431,6 +450,22 @@ func TestGetParallelRunnerOverhead(t *testing.T) {
 	parallelRunnerOverhead = GetParallelRunnerOverhead()
 	if parallelRunnerOverhead != 45*time.Second {
 		t.Errorf("expected parallel_runner_overhead to be 45s, got %s", parallelRunnerOverhead)
+	}
+}
+
+func TestGetTargetTime(t *testing.T) {
+	config = nil
+	viper.Reset()
+
+	targetTime := GetTargetTime()
+	if targetTime != expectedDefaultTargetTime {
+		t.Errorf("expected target_time to be %s, got %s", expectedDefaultTargetTime, targetTime)
+	}
+
+	config = &Config{TargetTime: 12 * time.Minute}
+	targetTime = GetTargetTime()
+	if targetTime != 12*time.Minute {
+		t.Errorf("expected target_time to be 12m, got %s", targetTime)
 	}
 }
 
@@ -901,61 +936,82 @@ func TestParseCiNodeWorkers(t *testing.T) {
 	}
 }
 
-func TestParseParallelRunnerOverhead(t *testing.T) {
+func TestParseNonNegativeDurationSetting(t *testing.T) {
 	tests := []struct {
-		name      string
-		value     string
-		expected  time.Duration
-		expectErr bool
+		name         string
+		value        string
+		defaultValue time.Duration
+		settingName  string
+		expected     time.Duration
+		expectErr    bool
 	}{
 		{
-			name:     "empty value uses default",
-			value:    "",
-			expected: expectedDefaultParallelRunnerOverhead,
+			name:         "empty overhead value uses overhead default",
+			value:        "",
+			defaultValue: expectedDefaultParallelRunnerOverhead,
+			settingName:  "ci-job-overhead",
+			expected:     expectedDefaultParallelRunnerOverhead,
 		},
 		{
-			name:     "seconds",
-			value:    "25s",
-			expected: expectedDefaultParallelRunnerOverhead,
+			name:         "empty target value uses target default",
+			value:        "",
+			defaultValue: expectedDefaultTargetTime,
+			settingName:  "target-time",
+			expected:     expectedDefaultTargetTime,
 		},
 		{
-			name:     "minutes",
-			value:    "1m",
-			expected: time.Minute,
+			name:        "seconds",
+			value:       "25s",
+			settingName: "ci-job-overhead",
+			expected:    expectedDefaultParallelRunnerOverhead,
 		},
 		{
-			name:     "milliseconds",
-			value:    "1500ms",
-			expected: 1500 * time.Millisecond,
+			name:        "minutes",
+			value:       "1m",
+			settingName: "target-time",
+			expected:    time.Minute,
 		},
 		{
-			name:     "zero disables bias",
-			value:    "0s",
-			expected: 0,
+			name:        "milliseconds",
+			value:       "1500ms",
+			settingName: "target-time",
+			expected:    1500 * time.Millisecond,
 		},
 		{
-			name:      "rejects negative values",
-			value:     "-1s",
-			expectErr: true,
+			name:        "zero disables duration setting",
+			value:       "0s",
+			settingName: "target-time",
+			expected:    0,
 		},
 		{
-			name:      "rejects plain integers",
-			value:     "25",
-			expectErr: true,
+			name:        "rejects negative values",
+			value:       "-1s",
+			settingName: "target-time",
+			expectErr:   true,
 		},
 		{
-			name:      "rejects unknown strings",
-			value:     "many",
-			expectErr: true,
+			name:        "rejects plain integers",
+			value:       "25",
+			settingName: "ci-job-overhead",
+			expectErr:   true,
+		},
+		{
+			name:        "rejects unknown strings",
+			value:       "fast",
+			settingName: "target-time",
+			expectErr:   true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := ParseParallelRunnerOverhead(tt.value)
+			result, err := ParseNonNegativeDurationSetting(tt.value, tt.defaultValue, tt.settingName)
 			if tt.expectErr {
 				if err == nil {
 					t.Fatalf("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), tt.settingName) {
+					t.Fatalf("expected error to contain setting name %q, got %v", tt.settingName, err)
 				}
 				return
 			}
