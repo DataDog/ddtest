@@ -143,7 +143,7 @@ func TestJest_DiscoverTestFiles_UsesLocalJestListTests(t *testing.T) {
 	}
 	jest := &Jest{
 		executor:    mockExecutor,
-		platformEnv: map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init"},
+		platformEnv: map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init --max-old-space-size=4096", "CUSTOM_ENV": "value"},
 	}
 	files, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
 	if err != nil {
@@ -157,13 +157,50 @@ func TestJest_DiscoverTestFiles_UsesLocalJestListTests(t *testing.T) {
 	if !slices.Equal(capturedArgs, expectedArgs) {
 		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
 	}
-	if mockExecutor.capturedEnvMap["NODE_OPTIONS"] != "-r dd-trace/ci/init" {
-		t.Errorf("expected NODE_OPTIONS from platform env, got %q", mockExecutor.capturedEnvMap["NODE_OPTIONS"])
+	if mockExecutor.capturedEnvMap["NODE_OPTIONS"] != "--max-old-space-size=4096" {
+		t.Errorf("expected NODE_OPTIONS without dd-trace init, got %q", mockExecutor.capturedEnvMap["NODE_OPTIONS"])
+	}
+	if mockExecutor.capturedEnvMap["CUSTOM_ENV"] != "value" {
+		t.Errorf("expected CUSTOM_ENV from platform env, got %q", mockExecutor.capturedEnvMap["CUSTOM_ENV"])
 	}
 
 	expectedFiles := []string{"src/b.test.ts", "src/foo.test.js"}
 	if !slices.Equal(files, expectedFiles) {
 		t.Errorf("expected files %v, got %v", expectedFiles, files)
+	}
+}
+
+func TestJest_DiscoverTestFiles_StripsInheritedNodeOptions(t *testing.T) {
+	t.Setenv("NODE_OPTIONS", "--require dd-trace/ci/init --max-old-space-size=4096")
+
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	if err := os.MkdirAll("src", 0755); err != nil {
+		t.Fatalf("failed to create src dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join("src", "a.test.js"), []byte("test"), 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	mockExecutor := &jestCommandExecutor{
+		output: []byte(filepath.Join(tempDir, "src", "a.test.js") + "\n"),
+	}
+	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
+
+	files, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
+	if err != nil {
+		t.Fatalf("DiscoverTestFiles failed: %v", err)
+	}
+
+	if mockExecutor.capturedEnvMap["NODE_OPTIONS"] != "--max-old-space-size=4096" {
+		t.Errorf("expected inherited NODE_OPTIONS without dd-trace init, got %q", mockExecutor.capturedEnvMap["NODE_OPTIONS"])
+	}
+	if !slices.Equal(files, []string{"src/a.test.js"}) {
+		t.Errorf("expected discovered file, got %v", files)
 	}
 }
 
