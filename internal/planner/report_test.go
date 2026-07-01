@@ -44,6 +44,7 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 			MinParallelism:         minParallelism,
 			MaxParallelism:         maxParallelism,
 			ParallelRunnerOverhead: 30 * time.Second,
+			TargetTime:             12 * time.Minute,
 			WorkerEnv:              "RAILS_ENV=test;DATABASE_PASSWORD=secret",
 			CiNode:                 0,
 			CiNodeWorkers:          2,
@@ -180,6 +181,7 @@ DDTest settings
   Min parallelism: %s
   Max parallelism: %s
   CI job overhead: 30s
+  Target time: 12m0s
   Worker env: DATABASE_PASSWORD, RAILS_ENV
   CI node: 0
   CI node workers: 2
@@ -463,6 +465,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 	config.MinParallelism++
 	config.MaxParallelism += 2
 	config.ParallelRunnerOverhead += time.Second
+	config.TargetTime = 12 * time.Minute
 	config.CiNode = 0
 	config.CiNodeWorkers = 2
 	config.WorkerEnv = "TOKEN=secret"
@@ -498,6 +501,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 		"Min parallelism",
 		"Max parallelism",
 		"CI job overhead",
+		"Target time",
 		"Worker env",
 		"CI node",
 		"CI node workers",

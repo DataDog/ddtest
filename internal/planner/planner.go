@@ -214,6 +214,7 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 		settings.GetMinParallelism(),
 		settings.GetMaxParallelism(),
 		settings.GetParallelRunnerOverhead(),
+		settings.GetTargetTime(),
 	)
 	parallelRunners := parallelRunnerSplit.parallelRunners
 	runnersContent := fmt.Sprintf("%d", parallelRunners)

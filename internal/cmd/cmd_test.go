@@ -92,6 +92,12 @@ func TestRootCommandFlags(t *testing.T) {
 		return
 	}
 
+	targetTimeFlag := rootCmd.PersistentFlags().Lookup("target-time")
+	if targetTimeFlag == nil {
+		t.Error("target-time flag should be defined")
+		return
+	}
+
 	// Check default values
 	if platformFlag.DefValue != "ruby" {
 		t.Errorf("expected platform default to be 'ruby', got %q", platformFlag.DefValue)
@@ -140,6 +146,11 @@ func TestRootCommandFlags(t *testing.T) {
 	expectedParallelRunnerOverhead := settings.DefaultParallelRunnerOverhead().String()
 	if parallelRunnerOverheadFlag.DefValue != expectedParallelRunnerOverhead {
 		t.Errorf("expected ci-job-overhead default to be %q, got %q", expectedParallelRunnerOverhead, parallelRunnerOverheadFlag.DefValue)
+	}
+
+	expectedTargetTime := settings.DefaultTargetTime().String()
+	if targetTimeFlag.DefValue != expectedTargetTime {
+		t.Errorf("expected target-time default to be %q, got %q", expectedTargetTime, targetTimeFlag.DefValue)
 	}
 }
 
@@ -380,6 +391,9 @@ func TestFlagBinding(t *testing.T) {
 	if err := rootCmd.PersistentFlags().Set("ci-job-overhead", "30s"); err != nil {
 		t.Fatalf("Error setting ci-job-overhead flag: %v", err)
 	}
+	if err := rootCmd.PersistentFlags().Set("target-time", "10m"); err != nil {
+		t.Fatalf("Error setting target-time flag: %v", err)
+	}
 
 	// Check that viper picks up the flag values
 	if viper.GetString("platform") != "python" {
@@ -417,6 +431,9 @@ func TestFlagBinding(t *testing.T) {
 	}
 	if viper.GetString("parallel_runner_overhead") != "30s" {
 		t.Errorf("expected viper parallel_runner_overhead to be '30s', got %q", viper.GetString("parallel_runner_overhead"))
+	}
+	if viper.GetString("target_time") != "10m" {
+		t.Errorf("expected viper target_time to be '10m', got %q", viper.GetString("target_time"))
 	}
 }
 

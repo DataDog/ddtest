@@ -138,6 +138,7 @@ func defaultDDTestSettings() settings.Config {
 		MinParallelism:         settings.DefaultParallelism(),
 		MaxParallelism:         settings.DefaultParallelism(),
 		ParallelRunnerOverhead: settings.DefaultParallelRunnerOverhead(),
+		TargetTime:             settings.DefaultTargetTime(),
 		CiNode:                 -1,
 		CiNodeWorkers:          1,
 		TestSkippingLevel:      settings.TestSkippingLevelTest,

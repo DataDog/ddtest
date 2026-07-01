@@ -99,6 +99,7 @@ parallelism details, see [Running DDTest](docs/running.md).
 | `--command` | Override the default test command used by Ruby frameworks. For pytest, use `PYTEST_ADDOPTS` for pytest flags. |
 | `--min-parallelism` | Minimum CI node or worker count DDTest considers when planning. |
 | `--max-parallelism` | Maximum CI node or worker count DDTest considers when planning. |
+| `--target-time` | Target wall time DDTest tries to satisfy when selecting parallelism. |
 | `--ci-node` | Run only the files assigned to CI node **N**. |
 | `--tests-location` | Override the default test file discovery glob. |
 | `--tests-exclude-pattern` | Exclude matching test files from discovery. |

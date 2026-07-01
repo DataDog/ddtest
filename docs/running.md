@@ -133,3 +133,9 @@ decrease it to prefer faster wall time. Use duration values such as `25s`, `1m`,
 or `1500ms`; set `0s` to disable this overhead bias. When scores tie, DDTest
 prefers fewer CI nodes or workers, then lower wall time, then lower imbalance
 between workers.
+
+Set `--target-time` to make DDTest first choose among splits whose expected
+wall time is at or below that target. Use the same duration format, such as
+`10m`, `300s`, or `1500ms`; the default `0s` disables the target. If no split
+within `--min-parallelism` and `--max-parallelism` can meet the target, DDTest
+logs a warning and selects the best split from all candidates.
