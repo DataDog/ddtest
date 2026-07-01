@@ -17,13 +17,25 @@ const (
 	defaultCiNodeWorkers          = 1
 	defaultParallelRunnerOverhead = 25 * time.Second
 	ncpuCiNodeWorkers             = "ncpu"
+	envPrefix                     = "DD_TEST_OPTIMIZATION_RUNNER"
+	platformEnv                   = "DD_TEST_OPTIMIZATION_RUNNER_PLATFORM"
+	frameworkEnv                  = "DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK"
+	minParallelismEnv             = "DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM"
+	maxParallelismEnv             = "DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM"
 	parallelRunnerOverheadEnv     = "DD_TEST_OPTIMIZATION_RUNNER_CI_JOB_OVERHEAD"
+	workerEnv                     = "DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV"
+	ciNodeEnv                     = "DD_TEST_OPTIMIZATION_RUNNER_CI_NODE"
+	ciNodeWorkersEnv              = "DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS"
+	commandEnv                    = "DD_TEST_OPTIMIZATION_RUNNER_COMMAND"
 	testsLocationEnv              = "DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION"
 	testsExcludePatternEnv        = "DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN"
 	testDiscoveryCacheEnv         = "DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE"
 	testSkippingModeEnv           = "DD_TESTOPTIMIZATION_TIA_TEST_SKIPPING_MODE"
 	forceFullTestDiscoveryEnv     = "DD_TEST_OPTIMIZATION_RUNNER_FORCE_FULL_TEST_DISCOVERY"
 	strictDiscoveryEnv            = "DD_TEST_OPTIMIZATION_RUNNER_STRICT_DISCOVERY"
+	runtimeTagsEnv                = "DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS"
+	runtimeTagsAliasEnv           = "DD_TEST_OPTIMIZATION_RUNTIME_TAGS"
+	reportEnabledEnv              = "DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED"
 	knapsackTestFilePatternEnv    = "KNAPSACK_PRO_TEST_FILE_PATTERN"
 	knapsackTestFileExcludeEnv    = "KNAPSACK_PRO_TEST_FILE_EXCLUDE_PATTERN"
 )
@@ -120,7 +132,7 @@ var (
 
 func Init() {
 	viper.AutomaticEnv()
-	viper.SetEnvPrefix("DD_TEST_OPTIMIZATION_RUNNER")
+	viper.SetEnvPrefix(envPrefix)
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	if err := viper.BindEnv("parallel_runner_overhead", parallelRunnerOverheadEnv); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding parallel runner overhead env: %v\n", err)
@@ -148,6 +160,10 @@ func Init() {
 	}
 	if err := viper.BindEnv("strict_discovery", strictDiscoveryEnv); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding strict discovery env: %v\n", err)
+		os.Exit(1)
+	}
+	if err := viper.BindEnv("runtime_tags", runtimeTagsEnv, runtimeTagsAliasEnv); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding runtime tags env: %v\n", err)
 		os.Exit(1)
 	}
 
