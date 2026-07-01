@@ -435,7 +435,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	// backend data cancels it, use it even when TIA has no skips: full discovery
 	// is more precise than fast file discovery.
 	if fullDiscoverySucceeded {
-		if err := tp.recordFullDiscoveryResults(discoveredTests, skipMatcher); err != nil {
+		if err := tp.recordFullDiscoveryResults(discoveredTests, resolvedTestFiles, skipMatcher); err != nil {
 			return err
 		}
 		selectedDiscoveryMode = discoveryModeFull
