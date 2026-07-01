@@ -749,9 +749,9 @@ func TestTestPlanner_Setup_WithParallelRunners(t *testing.T) {
 	report := reportOutput.String()
 	for _, expectedReportLine := range []string{
 		"Planning\n",
-		"  Runner split\n",
-		"    Estimated runtime:",
-		"    Runners: 1",
+		"  Split selection\n",
+		"    Estimated test runtime:",
+		"    Selected: 1 runner",
 		"    Expected wall time:",
 		"    Imbalance:",
 	} {

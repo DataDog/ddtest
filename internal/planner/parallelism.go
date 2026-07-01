@@ -8,6 +8,10 @@ import (
 // calculateParallelRunnerSplit determines the selected runner split by
 // estimating candidates between the configured min and max parallelism.
 func calculateParallelRunnerSplit(testFileWeights map[string]int, minParallelism, maxParallelism int, parallelRunnerOverhead, targetTime time.Duration) splitScore {
+	return calculateParallelRunnerSplitSelection(testFileWeights, minParallelism, maxParallelism, parallelRunnerOverhead, targetTime).selected
+}
+
+func calculateParallelRunnerSplitSelection(testFileWeights map[string]int, minParallelism, maxParallelism int, parallelRunnerOverhead, targetTime time.Duration) splitSelection {
 	files := sortedWeightedTestFiles(testFileWeights)
 	selector := splitSelector{
 		parallelRunnerOverhead: parallelRunnerOverhead,
@@ -19,7 +23,7 @@ func calculateParallelRunnerSplit(testFileWeights map[string]int, minParallelism
 		score := scoreSortedWeightedRunnerSplit(files, 1)
 		selector.logCandidate(score)
 		selector.maybeWarnTargetTimeUnreachable(score, 1, 1)
-		return score
+		return selector.selection(score, score, []splitScore{score})
 	}
 
 	if minParallelism < 1 {
@@ -37,7 +41,7 @@ func calculateParallelRunnerSplit(testFileWeights map[string]int, minParallelism
 		score := scoreSortedWeightedRunnerSplit(files, minParallelism)
 		selector.logCandidate(score)
 		selector.maybeWarnTargetTimeUnreachable(score, minParallelism, maxParallelism)
-		return score
+		return selector.selection(score, score, []splitScore{score})
 	}
 
 	candidateMax := maxUsefulParallelism(minParallelism, maxParallelism, len(files))
@@ -45,9 +49,11 @@ func calculateParallelRunnerSplit(testFileWeights map[string]int, minParallelism
 	best := scoreSortedWeightedRunnerSplit(files, minParallelism)
 	targetBest := best
 	targetBestFound := selector.meetsTargetTime(best)
+	candidates := []splitScore{best}
 	selector.logCandidate(best)
 	for parallelRunners := minParallelism + 1; parallelRunners <= candidateMax; parallelRunners++ {
 		score := scoreSortedWeightedRunnerSplit(files, parallelRunners)
+		candidates = append(candidates, score)
 		selector.logCandidate(score)
 		if selector.better(score, best) {
 			best = score
@@ -59,11 +65,11 @@ func calculateParallelRunnerSplit(testFileWeights map[string]int, minParallelism
 	}
 
 	if targetBestFound {
-		return targetBest
+		return selector.selection(targetBest, best, candidates)
 	}
 
 	selector.maybeWarnTargetTimeUnreachable(best, minParallelism, maxParallelism)
-	return best
+	return selector.selection(best, best, candidates)
 }
 
 func maxUsefulParallelism(minParallelism, maxParallelism, filesCount int) int {
@@ -79,6 +85,15 @@ func maxUsefulParallelism(minParallelism, maxParallelism, filesCount int) int {
 type splitSelector struct {
 	parallelRunnerOverhead time.Duration
 	targetTime             time.Duration
+}
+
+type splitSelection struct {
+	selected               splitScore
+	bestWithoutTarget      splitScore
+	candidates             []splitScore
+	parallelRunnerOverhead time.Duration
+	targetTime             time.Duration
+	available              bool
 }
 
 func (s splitSelector) better(candidate, currentBest splitScore) bool {
@@ -108,6 +123,17 @@ func (s splitSelector) parallelRunnerOverheadMillis() int {
 		return 0
 	}
 	return int(s.parallelRunnerOverhead / time.Millisecond)
+}
+
+func (s splitSelector) selection(selected, bestWithoutTarget splitScore, candidates []splitScore) splitSelection {
+	return splitSelection{
+		selected:               selected,
+		bestWithoutTarget:      bestWithoutTarget,
+		candidates:             candidates,
+		parallelRunnerOverhead: s.parallelRunnerOverhead,
+		targetTime:             s.targetTime,
+		available:              true,
+	}
 }
 
 func (s splitSelector) meetsTargetTime(score splitScore) bool {

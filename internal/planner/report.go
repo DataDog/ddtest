@@ -14,8 +14,8 @@ import (
 	"github.com/DataDog/ddtest/internal/settings"
 )
 
-func printPlanReport(w io.Writer, tp *TestPlanner, split splitScore) {
-	printPlanReportData(w, tp.newPlanReportData(split))
+func printPlanReport(w io.Writer, tp *TestPlanner, selection splitSelection) {
+	printPlanReportData(w, tp.newPlanReportData(selection.selected).withSplitSelection(selection))
 }
 
 func printPlanReportData(w io.Writer, report PlanReportData) {
@@ -178,7 +178,7 @@ func printPlanningReport(w io.Writer, report PlanReportData) {
 	printDurationEstimatesPlanningReport(w, report.Planning.Durations)
 	printSkippingPlanningReport(w, report.DatadogSettings, report.Skippables, report.ManagedFlakyTests, report.Planning.Skipping)
 	printRunSetPlanningReport(w, report.Planning)
-	printRunnerSplitPlanningReport(w, report.Planning, report.Split)
+	printRunnerSplitPlanningReport(w, report)
 }
 
 func printLongSeparateRunnerSuitesReport(w io.Writer, suites []testSuiteTimingReport) {
@@ -380,9 +380,12 @@ func printRunSetPlanningReport(w io.Writer, planning planningReport) {
 	reportFprintf(w, "    Estimated time saved: %.2f%%\n", planning.EstimatedTimeSaved)
 }
 
-func printRunnerSplitPlanningReport(w io.Writer, planning planningReport, split splitScore) {
+func printRunnerSplitPlanningReport(w io.Writer, report PlanReportData) {
+	planning := report.Planning
+	selection := effectiveSplitSelection(report)
+	split := selection.selected
 	if split.parallelRunners <= 0 {
-		reportFprintln(w, "  Runner split: not available")
+		reportFprintln(w, "  Split selection: not available")
 		return
 	}
 
@@ -391,12 +394,209 @@ func printRunnerSplitPlanningReport(w io.Writer, planning planningReport, split 
 		fullDuration = formatDuration(planning.Durations.ExpectedFullDuration)
 	}
 
-	reportFprintln(w, "  Runner split")
+	reportFprintln(w, "  Split selection")
 	reportFprintf(w, "    Full runtime: %s\n", fullDuration)
-	reportFprintf(w, "    Estimated runtime: %s\n", formatDuration(split.totalRuntimeDuration()))
-	reportFprintf(w, "    Runners: %s\n", formatCount(split.parallelRunners))
+	reportFprintf(w, "    Selected: %s\n", formatRunnerCount(split.parallelRunners))
+	if selection.available {
+		reportFprintf(w, "    Reason: %s\n", formatSplitSelectionReason(selection))
+		printTargetTimeReport(w, selection)
+	}
+	reportFprintf(w, "    Estimated test runtime: %s\n", formatDuration(split.totalRuntimeDuration()))
 	reportFprintf(w, "    Expected wall time: %s\n", formatDuration(split.wallTimeDuration()))
+	if selection.available {
+		reportFprintf(w, "    Modeled CI overhead: %s (%s x configured CI job overhead %s)\n",
+			formatDuration(selection.overheadDuration(split)),
+			formatRunnerCount(split.parallelRunners),
+			formatDuration(selection.parallelRunnerOverhead))
+		reportFprintf(w, "    Selection score: %s (wall time + modeled CI overhead)\n", formatDuration(selection.scoreDuration(split)))
+	}
 	reportFprintf(w, "    Imbalance: %s\n", formatDuration(split.imbalanceDuration()))
+	if selection.available && selection.targetTime > 0 {
+		printWithoutTargetTimeReport(w, selection)
+	}
+	if selection.available && len(selection.candidates) > 0 {
+		printSplitCandidatesReport(w, selection)
+	}
+}
+
+func effectiveSplitSelection(report PlanReportData) splitSelection {
+	if report.SplitSelection.available {
+		return report.SplitSelection
+	}
+	return splitSelection{
+		selected:          report.Split,
+		bestWithoutTarget: report.Split,
+	}
+}
+
+func formatSplitSelectionReason(selection splitSelection) string {
+	if selection.targetTime <= 0 {
+		return "lowest selection score"
+	}
+	if selection.meetsTargetTime(selection.selected) {
+		if sameSplitScore(selection.selected, selection.bestWithoutTarget) {
+			return "lowest selection score; target time satisfied"
+		}
+		return "lowest selection score among splits that meet target time"
+	}
+	return "no split met target time; selected lowest score from all candidates"
+}
+
+func printTargetTimeReport(w io.Writer, selection splitSelection) {
+	if selection.targetTime <= 0 {
+		return
+	}
+	if selection.meetsTargetTime(selection.selected) {
+		reportFprintf(w, "    Target time: %s, satisfied\n", formatDuration(selection.targetTime))
+		return
+	}
+	reportFprintf(w, "    Target time: %s, not reachable (best wall time %s)\n",
+		formatDuration(selection.targetTime),
+		formatDuration(selection.bestWallTime()))
+}
+
+func printWithoutTargetTimeReport(w io.Writer, selection splitSelection) {
+	best := selection.bestWithoutTarget
+	if sameSplitScore(selection.selected, best) {
+		reportFprintln(w)
+		reportFprintln(w, "    Without target time: same as selected")
+		return
+	}
+
+	reportFprintln(w)
+	reportFprintf(w, "    Without target time: %s (wall %s, overhead %s, score %s)\n",
+		formatRunnerCount(best.parallelRunners),
+		formatDuration(best.wallTimeDuration()),
+		formatDuration(selection.overheadDuration(best)),
+		formatDuration(selection.scoreDuration(best)))
+	reportFprintf(w, "      Selected vs without target: %s\n", formatSelectedVsWithoutTarget(selection))
+}
+
+func printSplitCandidatesReport(w io.Writer, selection splitSelection) {
+	candidates := selection.sortedCandidatesByScore()
+	limit := 5
+	if len(candidates) < limit {
+		limit = len(candidates)
+	}
+
+	reportFprintln(w)
+	if len(candidates) > limit {
+		reportFprintf(w, "    Candidates (best %d of %d by score)\n", limit, len(candidates))
+	} else {
+		reportFprintln(w, "    Candidates")
+	}
+	for _, candidate := range candidates[:limit] {
+		reason := formatSplitCandidateReason(selection, candidate)
+		if reason != "" {
+			reason = ", " + reason
+		}
+		reportFprintf(w, "      %s: wall %s, overhead %s, score %s%s\n",
+			formatRunnerCount(candidate.parallelRunners),
+			formatDuration(candidate.wallTimeDuration()),
+			formatDuration(selection.overheadDuration(candidate)),
+			formatDuration(selection.scoreDuration(candidate)),
+			reason)
+	}
+}
+
+func formatSplitCandidateReason(selection splitSelection, candidate splitScore) string {
+	parts := make([]string, 0, 3)
+	if selection.targetTime > 0 {
+		if selection.meetsTargetTime(candidate) {
+			parts = append(parts, "met target")
+		} else {
+			parts = append(parts, "missed target by "+formatDuration(candidate.wallTimeDuration()-selection.targetTime))
+		}
+	}
+	if selection.targetTime > 0 && sameSplitScore(candidate, selection.bestWithoutTarget) && !sameSplitScore(candidate, selection.selected) {
+		parts = append(parts, "would choose without target time")
+	}
+	if sameSplitScore(candidate, selection.selected) {
+		parts = append(parts, "selected")
+	}
+	return strings.Join(parts, "; ")
+}
+
+func formatSelectedVsWithoutTarget(selection splitSelection) string {
+	return formatWallTimeDifference(selection.selected, selection.bestWithoutTarget) + ", " +
+		formatOverheadDifference(selection.overheadDuration(selection.selected), selection.overheadDuration(selection.bestWithoutTarget))
+}
+
+func formatWallTimeDifference(selected, withoutTarget splitScore) string {
+	switch {
+	case selected.wallTime < withoutTarget.wallTime:
+		return formatDuration(withoutTarget.wallTimeDuration()-selected.wallTimeDuration()) + " faster wall time"
+	case selected.wallTime > withoutTarget.wallTime:
+		return formatDuration(selected.wallTimeDuration()-withoutTarget.wallTimeDuration()) + " slower wall time"
+	default:
+		return "same wall time"
+	}
+}
+
+func formatOverheadDifference(selected, withoutTarget time.Duration) string {
+	switch {
+	case selected > withoutTarget:
+		return formatDuration(selected-withoutTarget) + " more CI overhead"
+	case selected < withoutTarget:
+		return formatDuration(withoutTarget-selected) + " less CI overhead"
+	default:
+		return "same CI overhead"
+	}
+}
+
+func formatRunnerCount(count int) string {
+	return formatCountWithUnit(count, "runner", "runners")
+}
+
+func sameSplitScore(a, b splitScore) bool {
+	return a.parallelRunners == b.parallelRunners &&
+		a.wallTime == b.wallTime &&
+		a.imbalance == b.imbalance &&
+		a.totalRuntime == b.totalRuntime
+}
+
+func (s splitSelection) overheadDuration(score splitScore) time.Duration {
+	if s.parallelRunnerOverhead <= 0 {
+		return 0
+	}
+	return time.Duration(score.parallelRunners) * s.parallelRunnerOverhead
+}
+
+func (s splitSelection) scoreDuration(score splitScore) time.Duration {
+	return score.wallTimeDuration() + s.overheadDuration(score)
+}
+
+func (s splitSelection) meetsTargetTime(score splitScore) bool {
+	return s.targetTime > 0 && score.wallTimeDuration() <= s.targetTime
+}
+
+func (s splitSelection) bestWallTime() time.Duration {
+	if len(s.candidates) == 0 {
+		return s.selected.wallTimeDuration()
+	}
+	best := s.candidates[0].wallTimeDuration()
+	for _, candidate := range s.candidates[1:] {
+		if candidate.wallTimeDuration() < best {
+			best = candidate.wallTimeDuration()
+		}
+	}
+	return best
+}
+
+func (s splitSelection) sortedCandidatesByScore() []splitScore {
+	candidates := slices.Clone(s.candidates)
+	selector := splitSelector{parallelRunnerOverhead: s.parallelRunnerOverhead}
+	slices.SortFunc(candidates, func(a, b splitScore) int {
+		switch {
+		case selector.better(a, b):
+			return -1
+		case selector.better(b, a):
+			return 1
+		default:
+			return 0
+		}
+	})
+	return candidates
 }
 
 func formatAppliedTIASkippables(datadogSettings datadogSettingsReport, skippables skippablesReport, skipping skippingApplicationReport) string {

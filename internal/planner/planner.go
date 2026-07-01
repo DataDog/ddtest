@@ -209,13 +209,14 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 		return fmt.Errorf("failed to write skippable percentage: %w", err)
 	}
 
-	parallelRunnerSplit := calculateParallelRunnerSplit(
+	parallelRunnerSelection := calculateParallelRunnerSplitSelection(
 		tp.testFileWeights,
 		settings.GetMinParallelism(),
 		settings.GetMaxParallelism(),
 		settings.GetParallelRunnerOverhead(),
 		settings.GetTargetTime(),
 	)
+	parallelRunnerSplit := parallelRunnerSelection.selected
 	parallelRunners := parallelRunnerSplit.parallelRunners
 	runnersContent := fmt.Sprintf("%d", parallelRunners)
 	if err := writePlanFile(constants.ParallelRunnersOutputPath, []byte(runnersContent)); err != nil {
@@ -238,7 +239,7 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 	}
 
 	if settings.GetReportEnabled() {
-		printPlanReport(tp.reportWriter, tp, parallelRunnerSplit)
+		printPlanReport(tp.reportWriter, tp, parallelRunnerSelection)
 	}
 
 	tp.planLoaded = true
