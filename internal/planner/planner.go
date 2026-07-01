@@ -411,16 +411,11 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		startTime := time.Now()
 		slog.Info("Discovering test files (fast)...", "framework", testFramework.Name())
 		var res []string
-		if resolvedTestFiles.UseExplicitFiles() {
-			res = resolvedTestFiles.ExplicitFiles
-		} else {
-			var discErr error
-			res, discErr = discovery.DiscoverTestFiles(resolvedTestFiles.Pattern, settings.GetTestsExcludePattern())
-			if discErr != nil {
-				fastDiscoveryErr = discErr
-				slog.Warn("Fast test discovery failed", "error", discErr)
-				return nil // Don't fail the entire process if full discovery succeeded
-			}
+		res, discErr := testFramework.DiscoverTestFiles(ctx, resolvedTestFiles)
+		if discErr != nil {
+			fastDiscoveryErr = discErr
+			slog.Warn("Fast test discovery failed", "error", discErr)
+			return nil // Don't fail the entire process if full discovery succeeded
 		}
 		discoveredTestFiles = res
 		fastDiscoveryDuration = time.Since(startTime)

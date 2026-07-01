@@ -3,6 +3,7 @@ package framework
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"os"
@@ -17,7 +18,14 @@ import (
 	"github.com/DataDog/ddtest/internal/utils"
 )
 
-const binJestPath = "node_modules/.bin/jest"
+const (
+	binJestPath            = "node_modules/.bin/jest"
+	nodeOptionsEnvVar      = "NODE_OPTIONS"
+	ddTraceCIInitModule    = "dd-trace/ci/init"
+	nodeRequireShortArg    = "-r"
+	nodeRequireLongArg     = "--require"
+	nodeRequireLongArgWith = nodeRequireLongArg + "="
+)
 
 var ErrFullTestDiscoveryUnsupported = errors.New("full test discovery is not supported")
 
@@ -81,6 +89,34 @@ func (j *Jest) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSe
 	return nil, ErrFullTestDiscoveryUnsupported
 }
 
+func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+	if testFiles.Empty() {
+		return []string{}, nil
+	}
+	if testFiles.UseExplicitFiles() {
+		return slices.Clone(testFiles.ExplicitFiles), nil
+	}
+
+	command, baseArgs := j.getJestCommand()
+	args := slices.Clone(baseArgs)
+	args = append(args, "--listTests")
+	if settings.GetTestsLocation() != "" && testFiles.Pattern != "" {
+		args = append(args, "--testMatch", testFiles.Pattern)
+	}
+
+	slog.Info("Discovering Jest test files with command", "command", command, "args", args)
+	output, err := j.executor.CombinedOutput(ctx, command, args, j.discoveryEnv())
+	if err != nil {
+		message := strings.TrimSpace(string(output))
+		if message == "" {
+			return nil, fmt.Errorf("failed to discover Jest test files: %w", err)
+		}
+		return nil, fmt.Errorf("failed to discover Jest test files: %s: %w", message, err)
+	}
+
+	return parseJestListTestsOutput(output), nil
+}
+
 func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, baseArgs := j.getJestCommand()
 	args := slices.Clone(baseArgs)
@@ -93,6 +129,23 @@ func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[stri
 	maps.Copy(mergedEnv, j.platformEnv)
 	maps.Copy(mergedEnv, envMap)
 	return j.executor.Run(ctx, command, args, mergedEnv)
+}
+
+func (j *Jest) discoveryEnv() map[string]string {
+	envMap := make(map[string]string, len(j.platformEnv)+1)
+	maps.Copy(envMap, j.platformEnv)
+
+	nodeOptions, ok := envMap[nodeOptionsEnvVar]
+	if !ok {
+		var found bool
+		nodeOptions, found = os.LookupEnv(nodeOptionsEnvVar)
+		if !found {
+			return envMap
+		}
+	}
+
+	envMap[nodeOptionsEnvVar] = stripNodeOptionsRequire(nodeOptions, ddTraceCIInitModule)
+	return envMap
 }
 
 // Decide between user custom command, local jest binary and npx jest
@@ -112,4 +165,69 @@ func (j *Jest) getJestCommand() (string, []string) {
 
 func jestTestFileExtensionPattern() string {
 	return "{" + strings.Join(jestTestFileExtensions, ",") + "}"
+}
+
+func stripNodeOptionsRequire(nodeOptions string, module string) string {
+	fields := strings.Fields(nodeOptions)
+	stripped := make([]string, 0, len(fields))
+	for i := 0; i < len(fields); i++ {
+		field := fields[i]
+
+		if field == nodeRequireShortArg || field == nodeRequireLongArg {
+			if i+1 < len(fields) && fields[i+1] == module {
+				i++
+				continue
+			}
+		}
+
+		if strings.HasPrefix(field, nodeRequireShortArg) && strings.TrimPrefix(field, nodeRequireShortArg) == module {
+			continue
+		}
+
+		if strings.HasPrefix(field, nodeRequireLongArgWith) && strings.TrimPrefix(field, nodeRequireLongArgWith) == module {
+			continue
+		}
+
+		stripped = append(stripped, field)
+	}
+
+	return strings.Join(stripped, " ")
+}
+
+func parseJestListTestsOutput(output []byte) []string {
+	cwd, _ := os.Getwd()
+	if resolvedCwd, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolvedCwd
+	}
+	testFiles := make([]string, 0)
+	for _, line := range strings.Split(string(output), "\n") {
+		testFile := strings.TrimSpace(line)
+		if testFile == "" {
+			continue
+		}
+
+		if filepath.IsAbs(testFile) && cwd != "" {
+			pathForRel := testFile
+			if resolvedPath, err := filepath.EvalSymlinks(testFile); err == nil {
+				pathForRel = resolvedPath
+			}
+			relativePath, err := filepath.Rel(cwd, pathForRel)
+			if err != nil || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) || relativePath == ".." {
+				continue
+			}
+			testFile = relativePath
+		}
+
+		normalizedTestFile := utils.NormalizePath(testFile)
+		if normalizedTestFile == "" {
+			continue
+		}
+		if _, err := os.Stat(normalizedTestFile); err != nil {
+			continue
+		}
+		testFiles = append(testFiles, normalizedTestFile)
+	}
+
+	slices.Sort(testFiles)
+	return slices.Compact(testFiles)
 }
