@@ -288,41 +288,41 @@ func TestEnvironmentVariables(t *testing.T) {
 	viper.Reset()
 
 	// Set environment variables
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM", "python")
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK", "pytest")
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "2")
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "8")
+	_ = os.Setenv(platformEnv, "python")
+	_ = os.Setenv(frameworkEnv, "pytest")
+	_ = os.Setenv(minParallelismEnv, "2")
+	_ = os.Setenv(maxParallelismEnv, "8")
 	_ = os.Setenv(parallelRunnerOverheadEnv, "40s")
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV", "RAILS_DB=my_project_dev_{{nodeIndex}}")
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE", "5")
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS", "4")
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND", "bundle exec rspec")
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", "spec/**/*_spec.rb")
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN", "spec/system/**/*_spec.rb")
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE", "/tmp/ddtest-tests.json")
-	_ = os.Setenv("DD_TESTOPTIMIZATION_TIA_TEST_SKIPPING_MODE", "suite")
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_FORCE_FULL_TEST_DISCOVERY", "true")
+	_ = os.Setenv(workerEnv, "RAILS_DB=my_project_dev_{{nodeIndex}}")
+	_ = os.Setenv(ciNodeEnv, "5")
+	_ = os.Setenv(ciNodeWorkersEnv, "4")
+	_ = os.Setenv(commandEnv, "bundle exec rspec")
+	_ = os.Setenv(testsLocationEnv, "spec/**/*_spec.rb")
+	_ = os.Setenv(testsExcludePatternEnv, "spec/system/**/*_spec.rb")
+	_ = os.Setenv(testDiscoveryCacheEnv, "/tmp/ddtest-tests.json")
+	_ = os.Setenv(testSkippingModeEnv, "suite")
+	_ = os.Setenv(forceFullTestDiscoveryEnv, "true")
 	_ = os.Setenv(strictDiscoveryEnv, "true")
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS", `{"os.platform":"linux","runtime.version":"3.2.0"}`)
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED", "false")
+	_ = os.Setenv(runtimeTagsEnv, `{"os.platform":"linux","runtime.version":"3.2.0"}`)
+	_ = os.Setenv(reportEnabledEnv, "false")
 	defer func() {
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM")
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK")
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM")
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM")
+		_ = os.Unsetenv(platformEnv)
+		_ = os.Unsetenv(frameworkEnv)
+		_ = os.Unsetenv(minParallelismEnv)
+		_ = os.Unsetenv(maxParallelismEnv)
 		_ = os.Unsetenv(parallelRunnerOverheadEnv)
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV")
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE")
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS")
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_COMMAND")
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION")
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN")
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE")
-		_ = os.Unsetenv("DD_TESTOPTIMIZATION_TIA_TEST_SKIPPING_MODE")
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_FORCE_FULL_TEST_DISCOVERY")
+		_ = os.Unsetenv(workerEnv)
+		_ = os.Unsetenv(ciNodeEnv)
+		_ = os.Unsetenv(ciNodeWorkersEnv)
+		_ = os.Unsetenv(commandEnv)
+		_ = os.Unsetenv(testsLocationEnv)
+		_ = os.Unsetenv(testsExcludePatternEnv)
+		_ = os.Unsetenv(testDiscoveryCacheEnv)
+		_ = os.Unsetenv(testSkippingModeEnv)
+		_ = os.Unsetenv(forceFullTestDiscoveryEnv)
 		_ = os.Unsetenv(strictDiscoveryEnv)
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS")
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED")
+		_ = os.Unsetenv(runtimeTagsEnv)
+		_ = os.Unsetenv(reportEnabledEnv)
 	}()
 
 	Init()
@@ -667,6 +667,42 @@ func TestCanonicalTestPatternEnvVarsTakePrecedenceOverKnapsackAliases(t *testing
 	}
 }
 
+func TestRuntimeTagsAlias(t *testing.T) {
+	config = nil
+	viper.Reset()
+
+	_ = os.Setenv(runtimeTagsEnv, "")
+	_ = os.Setenv(runtimeTagsAliasEnv, `{"os.platform":"linux","runtime.version":"3.2.0"}`)
+	defer func() {
+		_ = os.Unsetenv(runtimeTagsEnv)
+		_ = os.Unsetenv(runtimeTagsAliasEnv)
+	}()
+
+	Init()
+
+	if config.RuntimeTags != `{"os.platform":"linux","runtime.version":"3.2.0"}` {
+		t.Errorf("expected runtime_tags from alias env var to be JSON string, got %q", config.RuntimeTags)
+	}
+}
+
+func TestCanonicalRuntimeTagsEnvVarTakesPrecedenceOverAlias(t *testing.T) {
+	config = nil
+	viper.Reset()
+
+	_ = os.Setenv(runtimeTagsEnv, `{"os.platform":"linux"}`)
+	_ = os.Setenv(runtimeTagsAliasEnv, `{"os.platform":"darwin"}`)
+	defer func() {
+		_ = os.Unsetenv(runtimeTagsEnv)
+		_ = os.Unsetenv(runtimeTagsAliasEnv)
+	}()
+
+	Init()
+
+	if config.RuntimeTags != `{"os.platform":"linux"}` {
+		t.Errorf("expected canonical runtime_tags env var to win, got %q", config.RuntimeTags)
+	}
+}
+
 func TestGetRuntimeTags(t *testing.T) {
 	config = nil
 	viper.Reset()
@@ -938,9 +974,9 @@ func TestEnvironmentVariableCiNodeWorkersNCPU(t *testing.T) {
 	config = nil
 	viper.Reset()
 
-	_ = os.Setenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS", "ncpu")
+	_ = os.Setenv(ciNodeWorkersEnv, "ncpu")
 	defer func() {
-		_ = os.Unsetenv("DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS")
+		_ = os.Unsetenv(ciNodeWorkersEnv)
 	}()
 
 	Init()
