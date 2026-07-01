@@ -254,6 +254,16 @@ func mockTestFilesPattern(files []string) string {
 	return "{" + strings.Join(normalized, ",") + "}"
 }
 
+func (m *MockFramework) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+	if testFiles.Empty() {
+		return []string{}, nil
+	}
+	if testFiles.UseExplicitFiles() {
+		return testFiles.ExplicitFiles, nil
+	}
+	return discovery.DiscoverTestFiles(testFiles.Pattern, settings.GetTestsExcludePattern())
+}
+
 func (m *MockFramework) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
 	m.mu.Lock()
 	m.DiscoverTestsFiles = append(m.DiscoverTestsFiles, testFiles)

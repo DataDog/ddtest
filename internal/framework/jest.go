@@ -3,6 +3,7 @@ package framework
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"os"
@@ -81,6 +82,34 @@ func (j *Jest) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSe
 	return nil, ErrFullTestDiscoveryUnsupported
 }
 
+func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+	if testFiles.Empty() {
+		return []string{}, nil
+	}
+	if testFiles.UseExplicitFiles() {
+		return slices.Clone(testFiles.ExplicitFiles), nil
+	}
+
+	command, baseArgs := j.getJestCommand()
+	args := slices.Clone(baseArgs)
+	args = append(args, "--listTests")
+	if settings.GetTestsLocation() != "" && testFiles.Pattern != "" {
+		args = append(args, "--testMatch", testFiles.Pattern)
+	}
+
+	slog.Info("Discovering Jest test files with command", "command", command, "args", args)
+	output, err := j.executor.CombinedOutput(ctx, command, args, j.platformEnv)
+	if err != nil {
+		message := strings.TrimSpace(string(output))
+		if message == "" {
+			return nil, fmt.Errorf("failed to discover Jest test files: %w", err)
+		}
+		return nil, fmt.Errorf("failed to discover Jest test files: %s: %w", message, err)
+	}
+
+	return parseJestListTestsOutput(output), nil
+}
+
 func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, baseArgs := j.getJestCommand()
 	args := slices.Clone(baseArgs)
@@ -112,4 +141,42 @@ func (j *Jest) getJestCommand() (string, []string) {
 
 func jestTestFileExtensionPattern() string {
 	return "{" + strings.Join(jestTestFileExtensions, ",") + "}"
+}
+
+func parseJestListTestsOutput(output []byte) []string {
+	cwd, _ := os.Getwd()
+	if resolvedCwd, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolvedCwd
+	}
+	testFiles := make([]string, 0)
+	for _, line := range strings.Split(string(output), "\n") {
+		testFile := strings.TrimSpace(line)
+		if testFile == "" {
+			continue
+		}
+
+		if filepath.IsAbs(testFile) && cwd != "" {
+			pathForRel := testFile
+			if resolvedPath, err := filepath.EvalSymlinks(testFile); err == nil {
+				pathForRel = resolvedPath
+			}
+			relativePath, err := filepath.Rel(cwd, pathForRel)
+			if err != nil || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) || relativePath == ".." {
+				continue
+			}
+			testFile = relativePath
+		}
+
+		normalizedTestFile := utils.NormalizePath(testFile)
+		if normalizedTestFile == "" {
+			continue
+		}
+		if _, err := os.Stat(normalizedTestFile); err != nil {
+			continue
+		}
+		testFiles = append(testFiles, normalizedTestFile)
+	}
+
+	slices.Sort(testFiles)
+	return slices.Compact(testFiles)
 }

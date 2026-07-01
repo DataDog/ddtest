@@ -94,6 +94,16 @@ func (p *PyTest) DiscoverTests(ctx context.Context, testFiles discovery.TestFile
 	return discovery.DiscoverTests(ctx, p.executor, "python", args, p.platformEnv)
 }
 
+func (p *PyTest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+	if testFiles.Empty() {
+		return []string{}, nil
+	}
+	if testFiles.UseExplicitFiles() {
+		return testFiles.ExplicitFiles, nil
+	}
+	return discovery.DiscoverTestFiles(testFiles.Pattern, settings.GetTestsExcludePattern())
+}
+
 // braceExpand collapses a list into a single glob token.
 // A single item is returned as-is; multiple items are wrapped: {a,b,c}.
 func braceExpand(items []string) string {
