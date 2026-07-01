@@ -63,6 +63,54 @@ func TestNormalizePattern(t *testing.T) {
 	}
 }
 
+func TestPathMatcher(t *testing.T) {
+	matcher, err := NewPathMatcher(" ./spec/**/*_spec.rb ")
+	if err != nil {
+		t.Fatalf("NewPathMatcher() returned error: %v", err)
+	}
+	if matcher.Empty() {
+		t.Fatal("NewPathMatcher() returned empty matcher")
+	}
+	if !matcher.Match("./spec/models/user_spec.rb") {
+		t.Fatal("expected matcher to match normalized path")
+	}
+	if !matcher.MatchNormalizedPath("spec/models/user_spec.rb") {
+		t.Fatal("expected matcher to match already-normalized path")
+	}
+	if matcher.MatchNormalizedPath("test/models/user_test.rb") {
+		t.Fatal("expected matcher not to match outside path")
+	}
+}
+
+func TestPathMatcherEmptyPattern(t *testing.T) {
+	matcher, err := NewPathMatcher(" ./ ")
+	if err != nil {
+		t.Fatalf("NewPathMatcher() returned error: %v", err)
+	}
+	if !matcher.Empty() {
+		t.Fatal("expected empty matcher")
+	}
+	if matcher.MatchNormalizedPath("spec/models/user_spec.rb") {
+		t.Fatal("empty matcher should not match paths")
+	}
+}
+
+func TestPathMatcherInvalidPattern(t *testing.T) {
+	if _, err := NewPathMatcher("["); err == nil {
+		t.Fatal("expected invalid pattern error")
+	}
+}
+
+func TestNewNormalizedPathMatcher(t *testing.T) {
+	matcher, err := NewNormalizedPathMatcher("spec/**/*_spec.rb")
+	if err != nil {
+		t.Fatalf("NewNormalizedPathMatcher() returned error: %v", err)
+	}
+	if !matcher.MatchNormalizedPath("spec/models/user_spec.rb") {
+		t.Fatal("expected matcher to match already-normalized path")
+	}
+}
+
 func TestStripCwdSubdirPrefix_SubdirPrefixMatch_StripsPrefix(t *testing.T) {
 	repoRoot := t.TempDir()
 	initGitRepoInDir(t, repoRoot)

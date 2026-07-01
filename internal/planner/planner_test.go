@@ -1066,8 +1066,9 @@ func TestTestPlanner_PreparePlanningData_ForceFullDiscoveryKeepsRunningWithNoTIA
 	setPlannerForceFullTestDiscovery(t, true)
 
 	mockFramework := &MockFramework{
-		FrameworkName: "rspec",
-		TestFiles:     []string{"spec/fast_only_spec.rb"},
+		FrameworkName:    "rspec",
+		TestPatternValue: "spec/**/*_spec.rb",
+		TestFiles:        []string{"spec/fast_only_spec.rb"},
 		Tests: []testoptimization.Test{
 			{Module: "rspec", Suite: "Discovered", Name: "test", SuiteSourceFile: "spec/discovered_spec.rb"},
 		},
@@ -1096,6 +1097,109 @@ func TestTestPlanner_PreparePlanningData_ForceFullDiscoveryKeepsRunningWithNoTIA
 	}
 	if _, ok := runner.testFileWeights["spec/discovered_spec.rb"]; !ok {
 		t.Fatalf("expected forced full discovery result to be runnable, got weights: %+v", runner.testFileWeights)
+	}
+}
+
+func TestTestPlanner_Plan_ForceFullDiscoveryFiltersPlanArtifactsToTestsLocation(t *testing.T) {
+	t.Chdir(t.TempDir())
+	setPlannerForceFullTestDiscovery(t, true)
+	testsLocation := "spec/engines/billing/**/*_spec.rb"
+	setPlannerTestsLocation(t, testsLocation)
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM", "2")
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM", "2")
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED", "false")
+	settings.Init()
+
+	insideRunnableFile := "spec/engines/billing/payment_spec.rb"
+	insideSkippedFile := "spec/engines/billing/skipped_spec.rb"
+	outsideRunnableFile := "gems/lint_rules/spec/rule_spec.rb"
+	for _, file := range []string{insideRunnableFile, insideSkippedFile, outsideRunnableFile} {
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			t.Fatalf("failed to create directory for %s: %v", file, err)
+		}
+		if err := os.WriteFile(file, []byte("# spec\n"), 0o644); err != nil {
+			t.Fatalf("failed to write %s: %v", file, err)
+		}
+	}
+
+	skippedSuite := "Billing::Skipped"
+	mockFramework := &MockFramework{
+		FrameworkName:    "rspec",
+		TestPatternValue: testsLocation,
+		TestFiles:        []string{insideRunnableFile, insideSkippedFile, outsideRunnableFile},
+		Tests: []testoptimization.Test{
+			{Module: "rspec", Suite: "Billing::Payment", Name: "runs", SuiteSourceFile: insideRunnableFile},
+			{Module: "rspec", Suite: skippedSuite, Name: "skips", SuiteSourceFile: insideSkippedFile},
+			{Module: "rspec", Suite: "LintRules::Rule", Name: "runs", SuiteSourceFile: outsideRunnableFile},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"language": "ruby"},
+		Framework:    mockFramework,
+		TestLevel:    settings.TestSkippingLevelSuite,
+	}
+	mockOptimizationClient := &MockTestOptimizationClient{
+		Settings: testOptimizationSettings(true, true, false),
+		Skippables: api.Skippables{
+			Suites: api.SkippableSuites{
+				{Module: "rspec", Suite: skippedSuite}: true,
+			},
+		},
+	}
+
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		mockOptimizationClient,
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.Plan(context.Background()); err != nil {
+		t.Fatalf("Plan() should not return error, got: %v", err)
+	}
+
+	if len(mockFramework.DiscoverTestsFiles) != 1 {
+		t.Fatalf("expected full discovery to run once, got %d calls", len(mockFramework.DiscoverTestsFiles))
+	}
+	if mockFramework.DiscoverTestsFiles[0].Pattern != testsLocation {
+		t.Fatalf("expected full discovery pattern %q, got %q", testsLocation, mockFramework.DiscoverTestsFiles[0].Pattern)
+	}
+	if _, ok := runner.testFileWeights[insideRunnableFile]; !ok {
+		t.Fatalf("expected in-location runnable file in weights, got %+v", runner.testFileWeights)
+	}
+	if _, ok := runner.testFileWeights[insideSkippedFile]; ok {
+		t.Fatalf("expected fully skipped in-location file to be omitted, got %+v", runner.testFileWeights)
+	}
+	if _, ok := runner.testFileWeights[outsideRunnableFile]; ok {
+		t.Fatalf("expected out-of-location runnable file to be omitted, got %+v", runner.testFileWeights)
+	}
+
+	expectedTestFiles := insideRunnableFile + "\n"
+	assertFileContent(t, constants.TestFilesOutputPath, expectedTestFiles)
+
+	entries, err := os.ReadDir(constants.TestsSplitDir)
+	if err != nil {
+		t.Fatalf("failed to read tests split dir: %v", err)
+	}
+	foundInsideRunnableFile := false
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(constants.TestsSplitDir, entry.Name()))
+		if err != nil {
+			t.Fatalf("failed to read split file %s: %v", entry.Name(), err)
+		}
+		text := string(content)
+		if strings.Contains(text, insideRunnableFile) {
+			foundInsideRunnableFile = true
+		}
+		if strings.Contains(text, insideSkippedFile) || strings.Contains(text, outsideRunnableFile) {
+			t.Fatalf("expected split file %s to only contain files under TESTS_LOCATION after suite skips, got %q", entry.Name(), text)
+		}
+	}
+	if !foundInsideRunnableFile {
+		t.Fatalf("expected tests split artifacts to contain %s", insideRunnableFile)
 	}
 }
 
@@ -1224,7 +1328,7 @@ func TestTestPlanner_RecordFullDiscoveryResults_SuiteSkippablesSkipDiscoveredTes
 		},
 	}
 
-	if err := runner.recordFullDiscoveryResults(tests, newSkippableMatcher(skippables, nil)); err != nil {
+	if err := runner.recordFullDiscoveryResults(tests, discovery.TestFileSet{Pattern: "**/*"}, newSkippableMatcher(skippables, nil)); err != nil {
 		t.Fatalf("recordFullDiscoveryResults() should not fail, got: %v", err)
 	}
 
@@ -1897,7 +2001,8 @@ func TestTestPlanner_PreparePlanningData_Success(t *testing.T) {
 
 	// Setup mocks
 	mockFramework := &MockFramework{
-		FrameworkName: "rspec",
+		FrameworkName:    "rspec",
+		TestPatternValue: "test/**/*_test.rb",
 		TestFiles: []string{
 			"test/file1_test.rb",
 			"test/file2_test.rb",
@@ -2428,8 +2533,9 @@ func TestTestPlanner_PreparePlanningData_UsesCompletedFullDiscoveryWhenNoTIASkip
 	t.Cleanup(environment.ResetCITags)
 
 	mockFramework := &MockFramework{
-		FrameworkName: "rspec",
-		TestFiles:     []string{"spec/fast_discovery_spec.rb"},
+		FrameworkName:    "rspec",
+		TestPatternValue: "spec/**/*_spec.rb",
+		TestFiles:        []string{"spec/fast_discovery_spec.rb"},
 		Tests: []testoptimization.Test{
 			{Module: "rspec", Suite: "FullDiscoverySuite", Name: "test1", SuiteSourceFile: "spec/full_discovery_spec.rb"},
 		},
@@ -3484,7 +3590,7 @@ func TestTestPlanner_RecordFullDiscoveryResults_AppliesExcludeAfterSubdirNormali
 		},
 	}
 
-	err := runner.recordFullDiscoveryResults(tests, newSkippableMatcher(api.NewSkippables(), nil))
+	err := runner.recordFullDiscoveryResults(tests, discovery.TestFileSet{Pattern: "**/*"}, newSkippableMatcher(api.NewSkippables(), nil))
 	if err != nil {
 		t.Fatalf("recordFullDiscoveryResults() should not fail, got: %v", err)
 	}
