@@ -6,10 +6,34 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 )
+
+type jestCommandExecutor struct {
+	output         []byte
+	err            error
+	onExecution    func(name string, args []string)
+	capturedEnvMap map[string]string
+}
+
+func (m *jestCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
+	m.capturedEnvMap = envMap
+	if m.onExecution != nil {
+		m.onExecution(name, args)
+	}
+	return m.output, m.err
+}
+
+func (m *jestCommandExecutor) Run(ctx context.Context, name string, args []string, envMap map[string]string) error {
+	m.capturedEnvMap = envMap
+	if m.onExecution != nil {
+		m.onExecution(name, args)
+	}
+	return m.err
+}
 
 func TestNewJest(t *testing.T) {
 	jest := NewJest()
@@ -79,23 +103,23 @@ func TestJest_HasUnskippableMarker(t *testing.T) {
 	}
 }
 
-func TestJest_DiscoverTestFiles_DefaultPatterns(t *testing.T) {
+func TestJest_DiscoverTestFiles_UsesLocalJestListTests(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
 	if err := os.Chdir(tempDir); err != nil {
 		t.Fatalf("failed to chdir: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Dir(binJestPath), 0755); err != nil {
+		t.Fatalf("failed to create jest bin dir: %v", err)
+	}
+	if err := os.WriteFile(binJestPath, []byte("#!/usr/bin/env node\n"), 0755); err != nil {
+		t.Fatalf("failed to create jest bin: %v", err)
+	}
 
 	filesToCreate := []string{
+		"src/b.test.ts",
 		"src/foo.test.js",
-		"src/foo.spec.ts",
-		"src/__tests__/bar.jsx",
-		"src/not-test.js",
-		"node_modules/pkg/bad.test.js",
-		"dist/bad.spec.js",
-		"coverage/bad.test.ts",
-		".next/bad.test.tsx",
 	}
 	for _, file := range filesToCreate {
 		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
@@ -106,26 +130,44 @@ func TestJest_DiscoverTestFiles_DefaultPatterns(t *testing.T) {
 		}
 	}
 
-	jest := NewJest()
-	files, err := discovery.DiscoverTestFiles(jest.TestPattern(), "")
+	var capturedName string
+	var capturedArgs []string
+	mockExecutor := &jestCommandExecutor{
+		output: []byte(filepath.Join(tempDir, "src", "b.test.ts") + "\n" +
+			filepath.Join(tempDir, "src", "foo.test.js") + "\n" +
+			"warning: ignored because it is not a file\n"),
+		onExecution: func(name string, args []string) {
+			capturedName = name
+			capturedArgs = slices.Clone(args)
+		},
+	}
+	jest := &Jest{
+		executor:    mockExecutor,
+		platformEnv: map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init"},
+	}
+	files, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
 	if err != nil {
-		t.Fatalf("generic discovery failed: %v", err)
+		t.Fatalf("DiscoverTestFiles failed: %v", err)
 	}
 
-	expected := []string{
-		".next/bad.test.tsx",
-		"coverage/bad.test.ts",
-		"dist/bad.spec.js",
-		"src/__tests__/bar.jsx",
-		"src/foo.spec.ts",
-		"src/foo.test.js",
+	if capturedName != binJestPath {
+		t.Errorf("expected command %q, got %q", binJestPath, capturedName)
 	}
-	if !slices.Equal(files, expected) {
-		t.Errorf("expected files %v, got %v", expected, files)
+	expectedArgs := []string{"--listTests"}
+	if !slices.Equal(capturedArgs, expectedArgs) {
+		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
+	}
+	if mockExecutor.capturedEnvMap["NODE_OPTIONS"] != "-r dd-trace/ci/init" {
+		t.Errorf("expected NODE_OPTIONS from platform env, got %q", mockExecutor.capturedEnvMap["NODE_OPTIONS"])
+	}
+
+	expectedFiles := []string{"src/b.test.ts", "src/foo.test.js"}
+	if !slices.Equal(files, expectedFiles) {
+		t.Errorf("expected files %v, got %v", expectedFiles, files)
 	}
 }
 
-func TestJest_DiscoverTestFiles_WithTestsLocation(t *testing.T) {
+func TestJest_DiscoverTestFiles_WithTestsLocationUsesTestMatch(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -144,15 +186,92 @@ func TestJest_DiscoverTestFiles_WithTestsLocation(t *testing.T) {
 
 	setTestsLocation(t, "custom/*.check.js")
 
-	jest := NewJest()
-	files, err := discovery.DiscoverTestFiles(jest.TestPattern(), "")
+	var capturedName string
+	var capturedArgs []string
+	mockExecutor := &jestCommandExecutor{
+		output: []byte(filepath.Join(tempDir, "custom", "b.check.js") + "\n" +
+			filepath.Join(tempDir, "custom", "a.check.js") + "\n"),
+		onExecution: func(name string, args []string) {
+			capturedName = name
+			capturedArgs = slices.Clone(args)
+		},
+	}
+	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
+	files, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
 	if err != nil {
-		t.Fatalf("generic discovery failed: %v", err)
+		t.Fatalf("DiscoverTestFiles failed: %v", err)
+	}
+
+	if capturedName != "npx" {
+		t.Errorf("expected command %q, got %q", "npx", capturedName)
+	}
+	expectedArgs := []string{"jest", "--listTests", "--testMatch", "custom/*.check.js"}
+	if !slices.Equal(capturedArgs, expectedArgs) {
+		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
 	}
 
 	expected := []string{"custom/a.check.js", "custom/b.check.js"}
 	if !slices.Equal(files, expected) {
 		t.Errorf("expected files %v, got %v", expected, files)
+	}
+}
+
+func TestJest_DiscoverTestFiles_WithOverride(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	if err := os.MkdirAll("src", 0755); err != nil {
+		t.Fatalf("failed to create src dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join("src", "a.test.js"), []byte("test"), 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	var capturedName string
+	var capturedArgs []string
+	mockExecutor := &jestCommandExecutor{
+		output: []byte(filepath.Join(tempDir, "src", "a.test.js") + "\n"),
+		onExecution: func(name string, args []string) {
+			capturedName = name
+			capturedArgs = slices.Clone(args)
+		},
+	}
+	jest := &Jest{
+		executor:        mockExecutor,
+		commandOverride: []string{"pnpm", "jest", "--runInBand"},
+		platformEnv:     make(map[string]string),
+	}
+
+	if _, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()}); err != nil {
+		t.Fatalf("DiscoverTestFiles failed: %v", err)
+	}
+
+	if capturedName != "pnpm" {
+		t.Errorf("expected command %q, got %q", "pnpm", capturedName)
+	}
+	expectedArgs := []string{"jest", "--runInBand", "--listTests"}
+	if !slices.Equal(capturedArgs, expectedArgs) {
+		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
+	}
+}
+
+func TestJest_DiscoverTestFiles_CommandError(t *testing.T) {
+	mockExecutor := &jestCommandExecutor{
+		output: []byte("invalid jest config"),
+		err:    errors.New("exit status 1"),
+	}
+	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
+
+	_, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "failed to discover Jest test files") ||
+		!strings.Contains(err.Error(), "invalid jest config") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
