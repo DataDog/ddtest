@@ -46,30 +46,37 @@ func calculateParallelRunnerSplitSelection(testFileWeights map[string]int, minPa
 
 	candidateMax := maxUsefulParallelism(minParallelism, maxParallelism, len(files))
 
-	best := scoreSortedWeightedRunnerSplit(files, minParallelism)
-	targetBest := best
-	targetBestFound := selector.meetsTargetTime(best)
-	candidates := []splitScore{best}
-	selector.logCandidate(best)
+	bestWithoutTarget := scoreSortedWeightedRunnerSplit(files, minParallelism)
+	lowestWallTime := bestWithoutTarget
+	bestWithinTarget := bestWithoutTarget
+	targetBestFound := selector.meetsTargetTime(bestWithoutTarget)
+	candidates := []splitScore{bestWithoutTarget}
+	selector.logCandidate(bestWithoutTarget)
 	for parallelRunners := minParallelism + 1; parallelRunners <= candidateMax; parallelRunners++ {
 		score := scoreSortedWeightedRunnerSplit(files, parallelRunners)
 		candidates = append(candidates, score)
 		selector.logCandidate(score)
-		if selector.better(score, best) {
-			best = score
+		if selector.better(score, bestWithoutTarget) {
+			bestWithoutTarget = score
 		}
-		if selector.meetsTargetTime(score) && (!targetBestFound || selector.better(score, targetBest)) {
-			targetBest = score
+		if selector.betterWallTime(score, lowestWallTime) {
+			lowestWallTime = score
+		}
+		if selector.meetsTargetTime(score) && (!targetBestFound || selector.better(score, bestWithinTarget)) {
+			bestWithinTarget = score
 			targetBestFound = true
 		}
 	}
 
 	if targetBestFound {
-		return selector.selection(targetBest, best, candidates)
+		return selector.selection(bestWithinTarget, bestWithoutTarget, candidates)
+	}
+	if selector.targetTime <= 0 {
+		return selector.selection(bestWithoutTarget, bestWithoutTarget, candidates)
 	}
 
-	selector.maybeWarnTargetTimeUnreachable(best, minParallelism, maxParallelism)
-	return selector.selection(best, best, candidates)
+	selector.maybeWarnTargetTimeUnreachable(lowestWallTime, minParallelism, maxParallelism)
+	return selector.selection(lowestWallTime, bestWithoutTarget, candidates)
 }
 
 func maxUsefulParallelism(minParallelism, maxParallelism, filesCount int) int {
@@ -111,6 +118,16 @@ func (s splitSelector) better(candidate, currentBest splitScore) bool {
 	return candidate.imbalance < currentBest.imbalance
 }
 
+func (s splitSelector) betterWallTime(candidate, currentBest splitScore) bool {
+	if candidate.wallTime != currentBest.wallTime {
+		return candidate.wallTime < currentBest.wallTime
+	}
+	if candidate.parallelRunners != currentBest.parallelRunners {
+		return candidate.parallelRunners < currentBest.parallelRunners
+	}
+	return candidate.imbalance < currentBest.imbalance
+}
+
 // selectionScore models each candidate as wallTime + runners * overhead. When
 // scores tie, the selector intentionally prefers fewer runners before comparing
 // wall time and imbalance.
@@ -145,7 +162,7 @@ func (s splitSelector) maybeWarnTargetTimeUnreachable(best splitScore, minParall
 		return
 	}
 
-	slog.Warn("No parallel runner split meets target time; selecting best split from all candidates",
+	slog.Warn("No parallel runner split meets target time; selecting split with lowest expected wall time",
 		"targetTime", s.targetTime,
 		"minParallelism", minParallelism,
 		"maxParallelism", maxParallelism,

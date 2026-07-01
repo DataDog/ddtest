@@ -265,7 +265,7 @@ func TestCalculateParallelRunnerSplit_TargetTimeFiltersCandidateSplits(t *testin
 	}
 }
 
-func TestCalculateParallelRunnerSplit_TargetTimeImpossibleWarnsAndFallsBack(t *testing.T) {
+func TestCalculateParallelRunnerSplit_TargetTimeImpossibleWarnsAndSelectsLowestWallTime(t *testing.T) {
 	logs := captureLogs(t)
 	testFileWeights := map[string]int{
 		"test1.rb": 60_000,
@@ -278,15 +278,21 @@ func TestCalculateParallelRunnerSplit_TargetTimeImpossibleWarnsAndFallsBack(t *t
 	parallelRunnerOverhead := 5 * time.Minute
 	targetTime := 59 * time.Second
 
-	result := calculateParallelRunnerSplit(testFileWeights, minParallelism, maxParallelism, parallelRunnerOverhead, targetTime)
-	if result.parallelRunners != 1 {
-		t.Errorf("calculateParallelRunnerSplit() = %d runners, expected 1 from fallback best overall split", result.parallelRunners)
+	result := calculateParallelRunnerSplitSelection(testFileWeights, minParallelism, maxParallelism, parallelRunnerOverhead, targetTime)
+	if result.selected.parallelRunners != 4 {
+		t.Errorf("calculateParallelRunnerSplit() = %d runners, expected 4 from fallback lowest wall time split", result.selected.parallelRunners)
+	}
+	if result.selected.wallTimeDuration() != time.Minute {
+		t.Errorf("calculateParallelRunnerSplit() wall time = %s, expected 1m0s", result.selected.wallTimeDuration())
+	}
+	if result.bestWithoutTarget.parallelRunners != 1 {
+		t.Errorf("calculateParallelRunnerSplit() without target = %d runners, expected 1 from best selection score", result.bestWithoutTarget.parallelRunners)
 	}
 
 	logOutput := logs.String()
 	if !strings.Contains(logOutput, "No parallel runner split meets target time") ||
 		!strings.Contains(logOutput, "targetTime=59s") ||
-		!strings.Contains(logOutput, "selectedExpectedWallTime=4m0s") {
+		!strings.Contains(logOutput, "selectedExpectedWallTime=1m0s") {
 		t.Errorf("expected target-time warning with fallback details, got logs: %s", logOutput)
 	}
 }

@@ -138,4 +138,5 @@ Set `--target-time` to make DDTest first choose among splits whose expected
 wall time is at or below that target. Use the same duration format, such as
 `10m`, `300s`, or `1500ms`; the default `0s` disables the target. If no split
 within `--min-parallelism` and `--max-parallelism` can meet the target, DDTest
-logs a warning and selects the best split from all candidates.
+logs a warning and selects the split with the lowest expected wall time,
+ignoring CI job overhead, to get as close as possible to the target.

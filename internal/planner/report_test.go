@@ -276,10 +276,10 @@ Planning
     Estimated time saved: 38.40%%
   Split selection
     Full test suite time without TIA: 37m12s
+    Estimated runtime with TIA: 23m46s
     Selected: 6 runners
     Reason: lowest selection score among splits that meet target time
     Target time: 5m0s, satisfied
-    Estimated runtime with TIA: 23m46s
     Expected wall time: 4m12s
     Modeled CI overhead: 3m0s (6 runners x configured CI job overhead 30s)
     Selection score: 7m12s (wall time + modeled CI overhead)
@@ -441,8 +441,8 @@ Planning
     Estimated time saved: 25.00%
   Split selection
     Full test suite time without TIA: not available
-    Selected: 3 runners
     Estimated runtime with TIA: 3m30s
+    Selected: 3 runners
     Expected wall time: 1m30s
     Imbalance: 500ms
 
