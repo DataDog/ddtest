@@ -18,7 +18,14 @@ import (
 	"github.com/DataDog/ddtest/internal/utils"
 )
 
-const binJestPath = "node_modules/.bin/jest"
+const (
+	binJestPath            = "node_modules/.bin/jest"
+	nodeOptionsEnvVar      = "NODE_OPTIONS"
+	ddTraceCIInitModule    = "dd-trace/ci/init"
+	nodeRequireShortArg    = "-r"
+	nodeRequireLongArg     = "--require"
+	nodeRequireLongArgWith = nodeRequireLongArg + "="
+)
 
 var ErrFullTestDiscoveryUnsupported = errors.New("full test discovery is not supported")
 
@@ -98,7 +105,7 @@ func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFi
 	}
 
 	slog.Info("Discovering Jest test files with command", "command", command, "args", args)
-	output, err := j.executor.CombinedOutput(ctx, command, args, j.platformEnv)
+	output, err := j.executor.CombinedOutput(ctx, command, args, j.discoveryEnv())
 	if err != nil {
 		message := strings.TrimSpace(string(output))
 		if message == "" {
@@ -124,6 +131,23 @@ func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[stri
 	return j.executor.Run(ctx, command, args, mergedEnv)
 }
 
+func (j *Jest) discoveryEnv() map[string]string {
+	envMap := make(map[string]string, len(j.platformEnv)+1)
+	maps.Copy(envMap, j.platformEnv)
+
+	nodeOptions, ok := envMap[nodeOptionsEnvVar]
+	if !ok {
+		var found bool
+		nodeOptions, found = os.LookupEnv(nodeOptionsEnvVar)
+		if !found {
+			return envMap
+		}
+	}
+
+	envMap[nodeOptionsEnvVar] = stripNodeOptionsRequire(nodeOptions, ddTraceCIInitModule)
+	return envMap
+}
+
 // Decide between user custom command, local jest binary and npx jest
 func (j *Jest) getJestCommand() (string, []string) {
 	if len(j.commandOverride) > 0 {
@@ -141,6 +165,33 @@ func (j *Jest) getJestCommand() (string, []string) {
 
 func jestTestFileExtensionPattern() string {
 	return "{" + strings.Join(jestTestFileExtensions, ",") + "}"
+}
+
+func stripNodeOptionsRequire(nodeOptions string, module string) string {
+	fields := strings.Fields(nodeOptions)
+	stripped := make([]string, 0, len(fields))
+	for i := 0; i < len(fields); i++ {
+		field := fields[i]
+
+		if field == nodeRequireShortArg || field == nodeRequireLongArg {
+			if i+1 < len(fields) && fields[i+1] == module {
+				i++
+				continue
+			}
+		}
+
+		if strings.HasPrefix(field, nodeRequireShortArg) && strings.TrimPrefix(field, nodeRequireShortArg) == module {
+			continue
+		}
+
+		if strings.HasPrefix(field, nodeRequireLongArgWith) && strings.TrimPrefix(field, nodeRequireLongArgWith) == module {
+			continue
+		}
+
+		stripped = append(stripped, field)
+	}
+
+	return strings.Join(stripped, " ")
 }
 
 func parseJestListTestsOutput(output []byte) []string {
