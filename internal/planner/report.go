@@ -395,13 +395,13 @@ func printRunnerSplitPlanningReport(w io.Writer, report PlanReportData) {
 	}
 
 	reportFprintln(w, "  Split selection")
-	reportFprintf(w, "    Full runtime: %s\n", fullDuration)
+	reportFprintf(w, "    Full test suite time without TIA: %s\n", fullDuration)
 	reportFprintf(w, "    Selected: %s\n", formatRunnerCount(split.parallelRunners))
 	if selection.available {
 		reportFprintf(w, "    Reason: %s\n", formatSplitSelectionReason(selection))
 		printTargetTimeReport(w, selection)
 	}
-	reportFprintf(w, "    Estimated test runtime: %s\n", formatDuration(split.totalRuntimeDuration()))
+	reportFprintf(w, "    Estimated runtime with TIA: %s\n", formatDuration(split.totalRuntimeDuration()))
 	reportFprintf(w, "    Expected wall time: %s\n", formatDuration(split.wallTimeDuration()))
 	if selection.available {
 		reportFprintf(w, "    Modeled CI overhead: %s (%s x configured CI job overhead %s)\n",
