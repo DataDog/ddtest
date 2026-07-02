@@ -236,6 +236,73 @@ func TestResolveTestFilesWithoutExcludePattern(t *testing.T) {
 	}
 }
 
+func TestTestFileSetMatcherWithPattern(t *testing.T) {
+	matcher, err := NewTestFileSetMatcher(TestFileSet{Pattern: " ./spec/**/*_spec.rb "}, "")
+	if err != nil {
+		t.Fatalf("NewTestFileSetMatcher() returned error: %v", err)
+	}
+
+	if !matcher.Match("./spec/models/user_spec.rb") {
+		t.Fatal("expected matcher to match normalized path")
+	}
+	if !matcher.MatchNormalizedPath("spec/models/user_spec.rb") {
+		t.Fatal("expected matcher to match already-normalized path")
+	}
+	if matcher.MatchNormalizedPath("gems/lint_rules/spec/rule_spec.rb") {
+		t.Fatal("expected matcher not to match outside path")
+	}
+}
+
+func TestTestFileSetMatcherWithExplicitFiles(t *testing.T) {
+	matcher, err := NewTestFileSetMatcher(TestFileSet{
+		ExplicitFiles: []string{
+			"./spec/models/user_spec.rb",
+			"./spec/system/checkout_spec.rb",
+		},
+	}, "spec/system/**/*_spec.rb")
+	if err != nil {
+		t.Fatalf("NewTestFileSetMatcher() returned error: %v", err)
+	}
+
+	if !matcher.MatchNormalizedPath("spec/models/user_spec.rb") {
+		t.Fatal("expected matcher to match explicit file")
+	}
+	if matcher.MatchNormalizedPath("spec/system/checkout_spec.rb") {
+		t.Fatal("expected matcher not to match excluded explicit file")
+	}
+}
+
+func TestTestFileSetMatcherWithEmptyPatternMatchesAll(t *testing.T) {
+	matcher, err := NewTestFileSetMatcher(TestFileSet{}, "")
+	if err != nil {
+		t.Fatalf("NewTestFileSetMatcher() returned error: %v", err)
+	}
+
+	if !matcher.MatchNormalizedPath("spec/models/user_spec.rb") {
+		t.Fatal("expected empty pattern matcher to match all paths")
+	}
+}
+
+func TestTestFileSetMatcherWithExcludePattern(t *testing.T) {
+	matcher, err := NewTestFileSetMatcher(
+		TestFileSet{Pattern: "spec/**/*_spec.rb"},
+		"spec/system/**/*_spec.rb",
+	)
+	if err != nil {
+		t.Fatalf("NewTestFileSetMatcher() returned error: %v", err)
+	}
+
+	if !matcher.MatchNormalizedPath("spec/models/user_spec.rb") {
+		t.Fatal("expected matcher to match included path")
+	}
+	if matcher.MatchNormalizedPath("spec/system/checkout_spec.rb") {
+		t.Fatal("expected matcher not to match excluded path")
+	}
+	if matcher.MatchNormalizedPath("gems/lint_rules/spec/rule_spec.rb") {
+		t.Fatal("expected matcher not to match outside path")
+	}
+}
+
 func TestResolveTestFilesWithExcludePattern(t *testing.T) {
 	root := createDiscoveryFixture(t)
 	t.Chdir(root)

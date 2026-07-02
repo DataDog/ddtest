@@ -32,8 +32,11 @@ const (
 
 var excludedDirs = []string{"node_modules"}
 
-type Excluder struct {
-	pattern string
+type TestFileSetMatcher struct {
+	includeMatcher utils.PathMatcher
+	excludeMatcher utils.PathMatcher
+	explicitFiles  map[string]struct{}
+	matchAll       bool
 }
 
 type TestFileSet struct {
@@ -43,12 +46,16 @@ type TestFileSet struct {
 
 func ResolveTestFiles(pattern, excludePattern string) (TestFileSet, error) {
 	testFiles := TestFileSet{Pattern: pattern}
-	if utils.NormalizePattern(excludePattern) == "" {
+	testFileMatcher, err := NewTestFileSetMatcher(TestFileSet{}, excludePattern)
+	if err != nil {
+		return TestFileSet{}, err
+	}
+	if testFileMatcher.excludeEmpty() {
 		slog.Info("Using test discovery pattern", "pattern", pattern)
 		return testFiles, nil
 	}
 
-	filteredFiles, err := DiscoverTestFiles(pattern, excludePattern)
+	filteredFiles, err := discoverTestFiles(pattern, testFileMatcher)
 	if err != nil {
 		return TestFileSet{}, err
 	}
@@ -80,36 +87,87 @@ func (t TestFileSet) Empty() bool {
 	return t.UseExplicitFiles() && len(t.ExplicitFiles) == 0
 }
 
-func NewExcluder(pattern string) (Excluder, error) {
-	normalized := utils.NormalizePattern(pattern)
-	if normalized == "" {
-		return Excluder{}, nil
+func NewTestFileSetMatcher(testFiles TestFileSet, excludePattern string) (TestFileSetMatcher, error) {
+	excludeMatcher, err := utils.NewPathMatcher(excludePattern)
+	if err != nil {
+		return TestFileSetMatcher{}, fmt.Errorf("invalid tests exclude pattern %q: %w", excludePattern, err)
 	}
-	if !doublestar.ValidatePattern(normalized) {
-		return Excluder{}, fmt.Errorf("invalid tests exclude pattern %q", pattern)
+
+	if testFiles.UseExplicitFiles() {
+		explicitFiles := make(map[string]struct{}, len(testFiles.ExplicitFiles))
+		for _, testFile := range testFiles.ExplicitFiles {
+			normalized := utils.NormalizePath(testFile)
+			if normalized != "" {
+				explicitFiles[normalized] = struct{}{}
+			}
+		}
+		return TestFileSetMatcher{
+			excludeMatcher: excludeMatcher,
+			explicitFiles:  explicitFiles,
+		}, nil
 	}
-	return Excluder{pattern: normalized}, nil
+
+	matcher, err := utils.NewPathMatcher(testFiles.Pattern)
+	if err != nil {
+		return TestFileSetMatcher{}, fmt.Errorf("invalid tests location pattern %q: %w", testFiles.Pattern, err)
+	}
+	if matcher.Empty() {
+		return TestFileSetMatcher{
+			excludeMatcher: excludeMatcher,
+			matchAll:       true,
+		}, nil
+	}
+	return TestFileSetMatcher{
+		includeMatcher: matcher,
+		excludeMatcher: excludeMatcher,
+	}, nil
 }
 
-func (e Excluder) Match(path string) bool {
-	if e.pattern == "" {
+func (m TestFileSetMatcher) Match(path string) bool {
+	return m.MatchNormalizedPath(utils.NormalizePath(path))
+}
+
+func (m TestFileSetMatcher) MatchNormalizedPath(normalizedPath string) bool {
+	if normalizedPath == "" {
 		return false
 	}
-	return doublestar.MatchUnvalidated(e.pattern, utils.NormalizePath(path))
+	if m.excludesNormalizedPath(normalizedPath) {
+		return false
+	}
+	if m.matchAll {
+		return true
+	}
+	if m.explicitFiles != nil {
+		_, ok := m.explicitFiles[normalizedPath]
+		return ok
+	}
+	return m.includeMatcher.MatchNormalizedPath(normalizedPath)
+}
+
+func (m TestFileSetMatcher) excludeEmpty() bool {
+	return m.excludeMatcher.Empty()
+}
+
+func (m TestFileSetMatcher) excludesNormalizedPath(normalizedPath string) bool {
+	return m.excludeMatcher.MatchNormalizedPath(normalizedPath)
 }
 
 func DiscoverTestFiles(includePattern, excludePattern string) ([]string, error) {
-	excluder, err := NewExcluder(excludePattern)
+	testFileMatcher, err := NewTestFileSetMatcher(TestFileSet{}, excludePattern)
 	if err != nil {
 		return nil, err
 	}
+	return discoverTestFiles(includePattern, testFileMatcher)
+}
 
+func discoverTestFiles(includePattern string, testFileMatcher TestFileSetMatcher) ([]string, error) {
 	normalizedIncludePattern := normalizeDiscoveryPattern(includePattern)
 	if normalizedIncludePattern == "" {
 		return []string{}, nil
 	}
-	if !doublestar.ValidatePattern(normalizedIncludePattern) {
-		return nil, fmt.Errorf("failed to discover test files with pattern %q: %w", includePattern, doublestar.ErrBadPattern)
+	includeMatcher, err := utils.NewNormalizedPathMatcher(normalizedIncludePattern)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover test files with pattern %q: %w", includePattern, err)
 	}
 
 	walkRoot := discoveryWalkRoot(normalizedIncludePattern)
@@ -136,7 +194,7 @@ func DiscoverTestFiles(includePattern, excludePattern string) ([]string, error) 
 			return nil
 		}
 
-		if excluder.Match(normalizedPath) {
+		if testFileMatcher.excludesNormalizedPath(normalizedPath) {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
@@ -147,7 +205,7 @@ func DiscoverTestFiles(includePattern, excludePattern string) ([]string, error) 
 			return nil
 		}
 
-		if doublestar.MatchUnvalidated(normalizedIncludePattern, normalizedPath) {
+		if includeMatcher.MatchNormalizedPath(normalizedPath) {
 			testFiles = append(testFiles, normalizedPath)
 		}
 		return nil

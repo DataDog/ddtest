@@ -22,9 +22,10 @@ func (tp *TestPlanner) resetDiscoveryResults() {
 
 func (tp *TestPlanner) recordFullDiscoveryResults(
 	discoveredTests []testoptimization.Test,
+	resolvedTestFiles discovery.TestFileSet,
 	skippableMatcher skippableMatcher,
 ) error {
-	excluder, err := discovery.NewExcluder(settings.GetTestsExcludePattern())
+	testFileMatcher, err := discovery.NewTestFileSetMatcher(resolvedTestFiles, settings.GetTestsExcludePattern())
 	if err != nil {
 		return err
 	}
@@ -54,10 +55,10 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 	for _, test := range discoveredTests {
 		normalizedSourceFile := utils.StripCwdSubdirPrefix(test.SuiteSourceFile)
 		normalizedSourceFile = utils.NormalizePath(normalizedSourceFile)
-		// Full discovery should already receive filtered files when exclude is configured.
-		// Keep this planner-side guard so normalized tracer-reported paths cannot re-enter
-		// the runnable file set or suite aggregates.
-		if normalizedSourceFile != "" && excluder.Match(normalizedSourceFile) {
+		// Full discovery receives the resolved test selection, but frameworks can still
+		// report extra tests loaded by process startup. Keep this planner-side guard so
+		// out-of-selection paths cannot enter the runnable file set or suite aggregates.
+		if normalizedSourceFile != "" && !testFileMatcher.MatchNormalizedPath(normalizedSourceFile) {
 			excludedTestsCount++
 			continue
 		}
@@ -161,14 +162,14 @@ func (tp *TestPlanner) recordAppliedSkippable(match skippableMatch) {
 }
 
 func (tp *TestPlanner) recordFastDiscoveryFallbackFiles(discoveredTestFiles []string) error {
-	excluder, err := discovery.NewExcluder(settings.GetTestsExcludePattern())
+	testFileMatcher, err := discovery.NewTestFileSetMatcher(discovery.TestFileSet{}, settings.GetTestsExcludePattern())
 	if err != nil {
 		return err
 	}
 
 	for _, testFile := range discoveredTestFiles {
 		normalizedTestFile := utils.NormalizePath(testFile)
-		if normalizedTestFile != "" && !excluder.Match(normalizedTestFile) {
+		if normalizedTestFile != "" && testFileMatcher.MatchNormalizedPath(normalizedTestFile) {
 			tp.testFiles[normalizedTestFile] = struct{}{}
 		}
 	}
