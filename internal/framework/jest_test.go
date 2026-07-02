@@ -204,7 +204,7 @@ func TestJest_DiscoverTestFiles_StripsInheritedNodeOptions(t *testing.T) {
 	}
 }
 
-func TestJest_DiscoverTestFiles_WithTestsLocationUsesTestMatch(t *testing.T) {
+func TestJest_DiscoverTestFiles_WithTestsLocationFiltersListTestsOutput(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -212,7 +212,12 @@ func TestJest_DiscoverTestFiles_WithTestsLocationUsesTestMatch(t *testing.T) {
 		t.Fatalf("failed to chdir: %v", err)
 	}
 
-	for _, file := range []string{"custom/a.check.js", "custom/b.check.js", "src/c.test.js"} {
+	for _, file := range []string{
+		"custom/unit/a.check.js",
+		"custom/unit/b.check.js",
+		"custom/not-listed.check.js",
+		"src/c.test.js",
+	} {
 		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
 			t.Fatalf("failed to create dir for %s: %v", file, err)
 		}
@@ -221,13 +226,14 @@ func TestJest_DiscoverTestFiles_WithTestsLocationUsesTestMatch(t *testing.T) {
 		}
 	}
 
-	setTestsLocation(t, "custom/*.check.js")
+	setTestsLocation(t, "./custom/**/*.check.js")
 
 	var capturedName string
 	var capturedArgs []string
 	mockExecutor := &jestCommandExecutor{
-		output: []byte(filepath.Join(tempDir, "custom", "b.check.js") + "\n" +
-			filepath.Join(tempDir, "custom", "a.check.js") + "\n"),
+		output: []byte(filepath.Join(tempDir, "custom", "unit", "b.check.js") + "\n" +
+			filepath.Join(tempDir, "src", "c.test.js") + "\n" +
+			filepath.Join(tempDir, "custom", "unit", "a.check.js") + "\n"),
 		onExecution: func(name string, args []string) {
 			capturedName = name
 			capturedArgs = slices.Clone(args)
@@ -242,12 +248,73 @@ func TestJest_DiscoverTestFiles_WithTestsLocationUsesTestMatch(t *testing.T) {
 	if capturedName != "npx" {
 		t.Errorf("expected command %q, got %q", "npx", capturedName)
 	}
-	expectedArgs := []string{"jest", "--listTests", "--testMatch", "custom/*.check.js"}
+	expectedArgs := []string{"jest", "--listTests"}
 	if !slices.Equal(capturedArgs, expectedArgs) {
 		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
 	}
 
-	expected := []string{"custom/a.check.js", "custom/b.check.js"}
+	expected := []string{"custom/unit/a.check.js", "custom/unit/b.check.js"}
+	if !slices.Equal(files, expected) {
+		t.Errorf("expected files %v, got %v", expected, files)
+	}
+}
+
+func TestJest_DiscoverTestFiles_WithTestsLocationReturnsInvalidPatternError(t *testing.T) {
+	setTestsLocation(t, "custom/[")
+
+	mockExecutor := &jestCommandExecutor{
+		output: []byte("custom/a.check.js\n"),
+	}
+	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
+
+	_, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "invalid tests location pattern") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestJest_DiscoverTestFiles_WithTestsExcludePatternFiltersListTestsOutput(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+
+	for _, file := range []string{"src/a.test.js", "src/system/b.test.js"} {
+		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+			t.Fatalf("failed to create dir for %s: %v", file, err)
+		}
+		if err := os.WriteFile(file, []byte("test"), 0644); err != nil {
+			t.Fatalf("failed to create %s: %v", file, err)
+		}
+	}
+
+	setTestsExcludePattern(t, "src/system/**/*.test.js")
+
+	var capturedArgs []string
+	mockExecutor := &jestCommandExecutor{
+		output: []byte(filepath.Join(tempDir, "src", "system", "b.test.js") + "\n" +
+			filepath.Join(tempDir, "src", "a.test.js") + "\n"),
+		onExecution: func(name string, args []string) {
+			capturedArgs = slices.Clone(args)
+		},
+	}
+	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
+	files, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
+	if err != nil {
+		t.Fatalf("DiscoverTestFiles failed: %v", err)
+	}
+
+	expectedArgs := []string{"jest", "--listTests"}
+	if !slices.Equal(capturedArgs, expectedArgs) {
+		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
+	}
+
+	expected := []string{"src/a.test.js"}
 	if !slices.Equal(files, expected) {
 		t.Errorf("expected files %v, got %v", expected, files)
 	}

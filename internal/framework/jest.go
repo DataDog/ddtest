@@ -100,9 +100,6 @@ func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFi
 	command, baseArgs := j.getJestCommand()
 	args := slices.Clone(baseArgs)
 	args = append(args, "--listTests")
-	if settings.GetTestsLocation() != "" && testFiles.Pattern != "" {
-		args = append(args, "--testMatch", testFiles.Pattern)
-	}
 
 	slog.Info("Discovering Jest test files with command", "command", command, "args", args)
 	output, err := j.executor.CombinedOutput(ctx, command, args, j.discoveryEnv())
@@ -114,7 +111,12 @@ func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFi
 		return nil, fmt.Errorf("failed to discover Jest test files: %s: %w", message, err)
 	}
 
-	return parseJestListTestsOutput(output), nil
+	discoveredFiles := parseJestListTestsOutput(output)
+	if settings.GetTestsLocation() == "" && settings.GetTestsExcludePattern() == "" {
+		return discoveredFiles, nil
+	}
+
+	return filterJestTestFiles(discoveredFiles, testFiles)
 }
 
 func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
@@ -165,6 +167,31 @@ func (j *Jest) getJestCommand() (string, []string) {
 
 func jestTestFileExtensionPattern() string {
 	return "{" + strings.Join(jestTestFileExtensions, ",") + "}"
+}
+
+func filterJestTestFiles(testFiles []string, selectedTestFiles discovery.TestFileSet) ([]string, error) {
+	if settings.GetTestsLocation() == "" {
+		selectedTestFiles.Pattern = ""
+	}
+
+	testFileMatcher, err := discovery.NewTestFileSetMatcher(selectedTestFiles, settings.GetTestsExcludePattern())
+	if err != nil {
+		return nil, err
+	}
+
+	filteredFiles := make([]string, 0, len(testFiles))
+	for _, testFile := range testFiles {
+		normalizedTestFile := utils.NormalizePath(testFile)
+		if normalizedTestFile == "" {
+			continue
+		}
+		if testFileMatcher.MatchNormalizedPath(normalizedTestFile) {
+			filteredFiles = append(filteredFiles, normalizedTestFile)
+		}
+	}
+
+	slices.Sort(filteredFiles)
+	return slices.Compact(filteredFiles), nil
 }
 
 func stripNodeOptionsRequire(nodeOptions string, module string) string {
