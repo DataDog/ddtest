@@ -96,6 +96,16 @@ func (m *MockFramework) TestPattern() string {
 	return m.TestPatternValue
 }
 
+func (m *MockFramework) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+	if testFiles.Empty() {
+		return []string{}, nil
+	}
+	if testFiles.UseExplicitFiles() {
+		return testFiles.ExplicitFiles, nil
+	}
+	return discovery.DiscoverTestFiles(testFiles.Pattern, settings.GetTestsExcludePattern())
+}
+
 func (m *MockFramework) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
 	if m.DiscoverTestsErr != nil {
 		return nil, m.DiscoverTestsErr
