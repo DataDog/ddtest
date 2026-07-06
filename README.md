@@ -14,17 +14,19 @@ Currently supported:
 - Ruby with RSpec or Minitest.
 - Python with pytest.
 - JavaScript with Jest.
+- JavaScript with Jest.
 
 ## Prerequisites
 
 Before using DDTest, you must have **Datadog Test Optimization** already set up and enabled with a Datadog Test Optimization library for your language and framework. DDTest relies on this integration to discover your tests and plan test execution accordingly.
 
 Minimum supported library and runtime requirements:
+Minimum supported library and runtime requirements:
 
 - Ruby requires the `datadog-ci` gem **1.31.0** or higher.
 - Python requires the `ddtrace` package **4.10.3** or higher and `pytest`.
-- JavaScript requires Node.js, Jest, and the `dd-trace` package with
-  `dd-trace/ci/init` available.
+- JavaScript requires the `dd-trace` package **6.0.0** or higher, Node.js, and
+  Jest.
 
 For instructions on setting up Test Optimization, see the [Datadog Test Optimization documentation](https://docs.datadoghq.com/tests/setup/).
 
@@ -79,6 +81,16 @@ ddtest plan \
   --max-parallelism 32
 ```
 
+For JavaScript/Jest:
+
+```bash
+ddtest plan \
+  --platform javascript \
+  --framework jest \
+  --min-parallelism 8 \
+  --max-parallelism 32
+```
+
 This prepares the plan and writes it to `.testoptimization/` folder for later reuse.
 Copy `.testoptimization/` to any CI job that runs `ddtest run` or reads DDTest's
 plan file lists. For the full file layout and formats, see
@@ -106,6 +118,12 @@ For JavaScript/Jest:
 ddtest run --platform javascript --framework jest
 ```
 
+For JavaScript/Jest:
+
+```bash
+ddtest run --platform javascript --framework jest
+```
+
 For CI-node mode, worker environment variables, custom commands, and
 parallelism details, see [Running DDTest](docs/running.md).
 
@@ -113,6 +131,9 @@ parallelism details, see [Running DDTest](docs/running.md).
 
 | CLI flag | What it does |
 | --- | --- |
+| `--platform` | Language/platform. Currently supported: `ruby`, `python`, `javascript`. |
+| `--framework` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `jest`. |
+| `--command` | Override the default base command for supported framework modes. Currently used by RSpec and Minitest run/discovery, and Jest run/discovery. For pytest, use `PYTEST_ADDOPTS` for pytest flags. |
 | `--platform` | Language/platform. Currently supported: `ruby`, `python`, `javascript`. |
 | `--framework` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `jest`. |
 | `--command` | Override the default base command for supported framework modes. Currently used by RSpec and Minitest run/discovery, and Jest run/discovery. For pytest, use `PYTEST_ADDOPTS` for pytest flags. |
