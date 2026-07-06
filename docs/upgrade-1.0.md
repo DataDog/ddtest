@@ -7,7 +7,6 @@ Before upgrading to 1.0, update CI jobs and custom integrations to consume the
 ## Required Changes
 
 Minimum supported library and runtime requirements:
-Minimum supported library and runtime requirements:
 
 - Ruby requires the `datadog-ci` gem 1.31.0 or higher.
 - Python requires the `ddtrace` package 4.10.3 or higher and `pytest`.

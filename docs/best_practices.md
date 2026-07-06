@@ -51,15 +51,6 @@ For GitHub Actions + npm:
     cache: npm
 ```
 
-For GitHub Actions + npm:
-
-```yaml
-- uses: actions/setup-node@v4
-  with:
-    node-version: "22"
-    cache: npm
-```
-
 ### Disable Seeds/Fixtures During Discovery
 
 Discovery (planning) does not execute tests; you don't have to setup DB,
