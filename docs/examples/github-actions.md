@@ -133,3 +133,45 @@ Configure Datadog Test Optimization for Python:
 The `ddtest plan` and `ddtest run --ci-node ${{ matrix.ci_node_index }}`
 commands can stay the same when the platform and framework are provided through
 the environment.
+
+## JavaScript / Jest Variant
+
+Use the same plan/test job structure for JavaScript projects, but configure the
+runner and setup steps for Jest:
+
+```yaml
+env:
+  DD_TEST_OPTIMIZATION_RUNNER_PLATFORM: javascript
+  DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK: jest
+  DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM: 1
+  DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM: 8
+```
+
+Replace each Ruby setup step with Node.js dependency installation:
+
+```yaml
+- name: Setup Node.js
+  uses: actions/setup-node@v4
+  with:
+    node-version: "22"
+    cache: npm
+- name: Install JavaScript dependencies
+  run: npm ci
+```
+
+Configure Datadog Test Optimization for JavaScript:
+
+```yaml
+- name: Configure Datadog Test Optimization
+  uses: datadog/test-visibility-github-action@v2
+  with:
+    languages: js
+    api_key: ${{ secrets.DD_API_KEY }}
+    site: datadoghq.com
+```
+
+DDTest sets `NODE_OPTIONS=-r dd-trace/ci/init` for Jest worker processes, so the
+project dependencies installed before `ddtest plan` must include `dd-trace`.
+The `ddtest plan` and `ddtest run --ci-node ${{ matrix.ci_node_index }}`
+commands can stay the same when the platform and framework are provided through
+the environment.

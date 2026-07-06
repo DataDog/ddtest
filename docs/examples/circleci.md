@@ -170,3 +170,43 @@ CircleCI node index to DDTest:
       NODE_INDEX=${CIRCLE_NODE_INDEX:-0}
       ./bin/ddtest run --platform python --framework pytest --ci-node "${NODE_INDEX}"
 ```
+
+## JavaScript / Jest Variant
+
+Use the same setup workflow pattern for JavaScript projects, but use a Node.js
+image, install project dependencies, and configure the runner for Jest:
+
+```yaml
+jobs:
+  plan:
+    docker:
+      - image: cimg/node:22.14
+    environment:
+      DD_ENV: ci
+      DD_TEST_OPTIMIZATION_RUNNER_PLATFORM: javascript
+      DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK: jest
+      DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM: 1
+      DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM: 4
+    steps:
+      - checkout
+      - run:
+          name: Install JavaScript dependencies
+          command: npm ci
+      - test-optimization-circleci-orb/autoinstrument:
+          languages: js
+          site: datadoghq.eu
+      - run:
+          name: Plan tests with ddtest
+          command: ./bin/ddtest plan
+```
+
+In the test job, keep the restored `.testoptimization/` plan, install
+dependencies, and pass the CircleCI node index to DDTest:
+
+```yaml
+- run:
+    name: Run tests with ddtest
+    command: |
+      NODE_INDEX=${CIRCLE_NODE_INDEX:-0}
+      ./bin/ddtest run --platform javascript --framework jest --ci-node "${NODE_INDEX}"
+```

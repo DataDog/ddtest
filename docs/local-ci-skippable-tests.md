@@ -30,7 +30,10 @@ Use `--runtime-tags` to override your local runtime tags with the tags from CI.
    For Python projects, `runtime.name` is the Python implementation name (for
    example `CPython` for standard Python), and `runtime.version` is the
    Python interpreter version used in CI.
-   Python interpreter version used in CI.
+
+   For JavaScript projects, `runtime.name` is `node`, and `runtime.version` is
+   the Node.js version used in CI, including the leading `v` (for example,
+   `v22.16.0`).
 
 2. Create the runtime tags JSON.
 
