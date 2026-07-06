@@ -26,6 +26,12 @@ For Python/pytest:
 ddtest run --platform python --framework pytest
 ```
 
+For JavaScript/Jest:
+
+```bash
+ddtest run --platform javascript --framework jest
+```
+
 On one CI node, the default `--min-parallelism` and `--max-parallelism` equal
 the available physical CPU core count, so DDTest can start one worker per
 physical core without defaulting to one worker per hyperthread.
@@ -43,6 +49,12 @@ For Python/pytest:
 
 ```bash
 ddtest run --platform python --framework pytest --ci-node <CI_NODE_INDEX>
+```
+
+For JavaScript/Jest:
+
+```bash
+ddtest run --platform javascript --framework jest --ci-node <CI_NODE_INDEX>
 ```
 
 In CI-node mode, DDTest uses one local worker by default so database and other
@@ -78,10 +90,17 @@ starting each worker.
 
 Use `--command` to override the framework's default base test command where
 supported. DDTest currently applies this override to RSpec run and full
-discovery, Minitest run and full discovery, and Jest run:
+discovery, Minitest run and full discovery, and Jest run and file discovery:
 
 ```bash
 ddtest run --platform ruby --framework rspec --command "bundle exec rspec --profile"
+```
+
+For JavaScript/Jest, DDTest automatically appends `--listTests` during planning
+and `--runTestsByPath <files>` during execution:
+
+```bash
+ddtest run --platform javascript --framework jest --command "pnpm jest --runInBand"
 ```
 
 When using `--command`, do not include the `--` separator or test files in your
@@ -117,6 +136,23 @@ For Python/pytest, DDTest discovers test files using this priority:
 
 Pytest does not have an equivalent to RSpec's pattern flag, so DDTest resolves
 the pattern to explicit file paths before invoking `python -m pytest`.
+
+## Jest Discovery And Instrumentation
+
+For JavaScript/Jest, DDTest discovers test files with Jest's own `--listTests`
+command. It uses this priority:
+
+1. `--command` when set, with `--listTests` appended.
+2. The local executable `node_modules/.bin/jest` when present.
+3. `npx jest`.
+
+Jest uses its own configuration and default test matching for `--listTests`.
+When `--tests-location` or `--tests-exclude-pattern` is set, DDTest filters the
+file list returned by Jest after discovery; it does not pass `--tests-location`
+as Jest's `--testMatch`.
+
+DDTest prepends `-r dd-trace/ci/init` to `NODE_OPTIONS` for worker processes
+unless `NODE_OPTIONS` already loads `dd-trace/ci/init`.
 
 ## Parallelism Selection
 

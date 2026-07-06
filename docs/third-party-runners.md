@@ -30,6 +30,21 @@ if [ -s .testoptimization/runner/test-files.txt ]; then
 fi
 ```
 
+## Jest
+
+When another runner consumes DDTest's file list for Jest, make sure the
+`dd-trace` Test Optimization init is loaded the same way `ddtest run` loads it:
+
+```bash
+case "${NODE_OPTIONS:-}" in
+  *dd-trace/ci/init*) ;;
+  *) export NODE_OPTIONS="-r dd-trace/ci/init${NODE_OPTIONS:+ $NODE_OPTIONS}" ;;
+esac
+if [ -s .testoptimization/runner/test-files.txt ]; then
+  xargs ./node_modules/.bin/jest --runTestsByPath < .testoptimization/runner/test-files.txt
+fi
+```
+
 ## Custom Runners
 
 Read `.testoptimization/runner/test-files.txt` when your runner should handle

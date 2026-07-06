@@ -3,8 +3,10 @@
 ## Optimize Planning Step
 
 When using ddtest, you need to add a planning step that performs test discovery
-(for example, RSpec dry-run or pytest collection) before execution. This stage
-adds overhead: you can optimize it with the practices below.
+before execution. For Ruby and Python, this can involve full framework
+discovery such as RSpec dry-run or pytest collection. For Jest, DDTest uses
+Jest's `--listTests` command to discover test files. This planning stage adds
+overhead: you can optimize it with the practices below.
 
 ### Preinstall System Dependencies Via Docker
 
@@ -38,6 +40,15 @@ For GitHub Actions + pip:
   with:
     python-version: "3.12"
     cache: pip
+```
+
+For GitHub Actions + npm:
+
+```yaml
+- uses: actions/setup-node@v4
+  with:
+    node-version: "22"
+    cache: npm
 ```
 
 ### Disable Seeds/Fixtures During Discovery
@@ -123,7 +134,8 @@ corrupt, produced for a different platform/framework/test location/exclude
 pattern, or based on a commit that is not available locally. It also invalidates
 the cache when files under the current project's test root changed. For example,
 the default RSpec root is `spec/**`, the default Minitest root is `test/**`,
-and pytest uses `testpaths` from pytest config when available. With
+pytest uses `testpaths` from pytest config when available, and Jest uses
+DDTest's built-in Jest test file pattern unless `--tests-location` is set. With
 `--tests-location custom/spec/**/*_spec.rb`, the root is `custom/**`.
 
 In monorepos, run DDTest from the project subdirectory whose tests you are
@@ -140,6 +152,17 @@ your pytest config.
 For discovery, DDTest reads `testpaths` and `python_files` from `pytest.ini`,
 `pyproject.toml`, `tox.ini`, or `setup.cfg`. If no pytest config defines those
 settings, DDTest uses `**/{test_*,*_test}.py`.
+
+## Jest Support
+
+Use `--command` when your project runs Jest through a package manager or wrapper:
+
+```bash
+ddtest run --platform javascript --framework jest --command "pnpm jest --runInBand"
+```
+
+Do not include test files or a `--` separator in the command; DDTest appends the
+file list and Jest flags itself.
 
 ## Minitest Support In Non-Rails Projects
 
