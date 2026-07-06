@@ -143,10 +143,8 @@ corrupt, produced for a different platform/framework/test location/exclude
 pattern, or based on a commit that is not available locally. It also invalidates
 the cache when files under the current project's test root changed. For example,
 the default RSpec root is `spec/**`, the default Minitest root is `test/**`,
-pytest uses `testpaths` from pytest config when available, and Jest uses the
-project's Jest test matching unless `--tests-location` is set. With
-pytest uses `testpaths` from pytest config when available, and Jest uses the
-project's Jest test matching unless `--tests-location` is set. With
+pytest uses `testpaths` from pytest config when available, and Jest uses
+DDTest's built-in Jest test file pattern unless `--tests-location` is set. With
 `--tests-location custom/spec/**/*_spec.rb`, the root is `custom/**`.
 
 In monorepos, run DDTest from the project subdirectory whose tests you are
@@ -163,29 +161,6 @@ your pytest config.
 For discovery, DDTest reads `testpaths` and `python_files` from `pytest.ini`,
 `pyproject.toml`, `tox.ini`, or `setup.cfg`. If no pytest config defines those
 settings, DDTest uses `**/{test_*,*_test}.py`.
-
-## Jest Support
-
-DDTest runs Jest through the local `node_modules/.bin/jest` executable when it
-exists, or through `npx jest` otherwise. During planning it appends
-`--listTests`; during execution it appends `--runTestsByPath` and the selected
-test files.
-
-Use `--command` when your project runs Jest through a package manager or wrapper:
-
-```bash
-ddtest run --platform javascript --framework jest --command "pnpm jest --runInBand"
-```
-
-Do not include test files or a `--` separator in the command; DDTest appends the
-file list and Jest flags itself.
-
-DDTest prepends `-r dd-trace/ci/init` to `NODE_OPTIONS` for worker processes
-unless it is already present, so `dd-trace` must be resolvable from the project
-where DDTest runs.
-
-Jest support uses suite-level Test Impact Analysis. DDTest discovers and splits
-test files/suites, not individual Jest tests.
 
 ## Jest Support
 

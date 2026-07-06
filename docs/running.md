@@ -146,8 +146,10 @@ command. It uses this priority:
 2. The local executable `node_modules/.bin/jest` when present.
 3. `npx jest`.
 
-When `--tests-location` is set, DDTest passes it to Jest as `--testMatch`.
-Otherwise Jest uses its own configuration and default test matching.
+Jest uses its own configuration and default test matching for `--listTests`.
+When `--tests-location` or `--tests-exclude-pattern` is set, DDTest filters the
+file list returned by Jest after discovery; it does not pass `--tests-location`
+as Jest's `--testMatch`.
 
 Jest support uses suite-level Test Impact Analysis. DDTest works with test
 files/suites, not individual Jest tests, and executes selected files with
