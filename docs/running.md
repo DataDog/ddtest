@@ -151,10 +151,6 @@ When `--tests-location` or `--tests-exclude-pattern` is set, DDTest filters the
 file list returned by Jest after discovery; it does not pass `--tests-location`
 as Jest's `--testMatch`.
 
-Jest support uses suite-level Test Impact Analysis. DDTest works with test
-files/suites, not individual Jest tests, and executes selected files with
-`--runTestsByPath`.
-
 DDTest prepends `-r dd-trace/ci/init` to `NODE_OPTIONS` for worker processes
 unless `NODE_OPTIONS` already loads `dd-trace/ci/init`.
 

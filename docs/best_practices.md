@@ -155,11 +155,6 @@ settings, DDTest uses `**/{test_*,*_test}.py`.
 
 ## Jest Support
 
-DDTest runs Jest through the local `node_modules/.bin/jest` executable when it
-exists, or through `npx jest` otherwise. During planning it appends
-`--listTests`; during execution it appends `--runTestsByPath` and the selected
-test files.
-
 Use `--command` when your project runs Jest through a package manager or wrapper:
 
 ```bash
@@ -168,13 +163,6 @@ ddtest run --platform javascript --framework jest --command "pnpm jest --runInBa
 
 Do not include test files or a `--` separator in the command; DDTest appends the
 file list and Jest flags itself.
-
-DDTest prepends `-r dd-trace/ci/init` to `NODE_OPTIONS` for worker processes
-unless it is already present, so `dd-trace` must be resolvable from the project
-where DDTest runs.
-
-Jest support uses suite-level Test Impact Analysis. DDTest discovers and splits
-test files/suites, not individual Jest tests.
 
 ## Minitest Support In Non-Rails Projects
 
