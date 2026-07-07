@@ -10,7 +10,7 @@ Minimum supported library and runtime requirements:
 
 - Ruby requires the `datadog-ci` gem 1.31.0 or higher.
 - Python requires the `ddtrace` package 4.10.3 or higher and `pytest`.
-- JavaScript requires the `dd-trace` package 6.0.0 or higher, Node.js, and
+- JavaScript requires the `dd-trace` package 5.111.0 or higher, Node.js, and
   Jest.
 
 DDTest 1.0 writes plan files under `.testoptimization/runner/*`. If your
@@ -28,7 +28,7 @@ these paths:
 
 1. Verify the Datadog Test Optimization library version for your platform:
    `datadog-ci` 1.31.0 or higher for Ruby, or `ddtrace` 4.10.3 or higher for
-   Python, or `dd-trace` 6.0.0 or higher for JavaScript.
+   Python, or `dd-trace` 5.111.0 or higher for JavaScript.
 2. Remove references to legacy root plan paths from CI templates and custom scripts.
 3. Run `ddtest plan` in CI.
 4. Run one CI shard with `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE=0 ddtest run`.

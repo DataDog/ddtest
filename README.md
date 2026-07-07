@@ -23,7 +23,7 @@ Minimum supported library and runtime requirements:
 
 - Ruby requires the `datadog-ci` gem **1.31.0** or higher.
 - Python requires the `ddtrace` package **4.10.3** or higher and `pytest`.
-- JavaScript requires the `dd-trace` package **6.0.0** or higher, Node.js, and
+- JavaScript requires the `dd-trace` package **5.111.0** or higher, Node.js, and
   Jest.
 
 For instructions on setting up Test Optimization, see the [Datadog Test Optimization documentation](https://docs.datadoghq.com/tests/setup/).
