@@ -116,7 +116,7 @@ Replace each Ruby setup step with Python dependency installation:
     python-version: "3.12"
     cache: pip
 - name: Install Python dependencies
-  run: python -m pip install -r requirements.txt "ddtrace>=4.10.3" pytest
+  run: python -m pip install -r requirements.txt "ddtrace>=4.11.0" pytest
 ```
 
 Configure Datadog Test Optimization for Python:

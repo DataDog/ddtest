@@ -9,7 +9,7 @@ Before upgrading to 1.0, update CI jobs and custom integrations to consume the
 Minimum supported library and runtime requirements:
 
 - Ruby requires the `datadog-ci` gem 1.31.0 or higher.
-- Python requires the `ddtrace` package 4.10.3 or higher and `pytest`.
+- Python requires the `ddtrace` package 4.11.0 or higher and `pytest`.
 - JavaScript requires the `dd-trace` package 5.111.0 or higher, Node.js, and
   Jest.
 
@@ -27,7 +27,7 @@ these paths:
 ## Validation Checklist
 
 1. Verify the Datadog Test Optimization library version for your platform:
-   `datadog-ci` 1.31.0 or higher for Ruby, or `ddtrace` 4.10.3 or higher for
+   `datadog-ci` 1.31.0 or higher for Ruby, or `ddtrace` 4.11.0 or higher for
    Python, or `dd-trace` 5.111.0 or higher for JavaScript.
 2. Remove references to legacy root plan paths from CI templates and custom scripts.
 3. Run `ddtest plan` in CI.
