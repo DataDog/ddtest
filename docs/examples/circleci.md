@@ -151,7 +151,7 @@ jobs:
       - checkout
       - run:
           name: Install Python dependencies
-          command: python -m pip install -r requirements.txt "ddtrace>=4.10.3" pytest
+          command: python -m pip install -r requirements.txt "ddtrace>=4.11.0" pytest
       - test-optimization-circleci-orb/autoinstrument:
           languages: python
           site: datadoghq.eu
