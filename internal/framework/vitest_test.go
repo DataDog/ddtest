@@ -2,6 +2,7 @@ package framework
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -24,6 +25,20 @@ type vitestCommandExecutor struct {
 type vitestCommandCall struct {
 	name string
 	args []string
+}
+
+type vitestListOutputEntry struct {
+	File        string `json:"file"`
+	ProjectName string `json:"projectName,omitempty"`
+}
+
+func vitestListOutput(t *testing.T, entries ...vitestListOutputEntry) []byte {
+	t.Helper()
+	output, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return output
 }
 
 type vitestSequenceExecutor struct {
@@ -110,7 +125,11 @@ func TestVitest_DiscoverTestFiles_WithCustomCommand(t *testing.T) {
 	}
 
 	executor := &vitestCommandExecutor{
-		output: []byte(filepath.Join(tempDir, "packages", "b.spec.ts") + "\npackages/a.test.ts\npackages/a.test.ts\nnot-a-test-line\n"),
+		output: vitestListOutput(t,
+			vitestListOutputEntry{File: filepath.Join(tempDir, "packages", "b.spec.ts"), ProjectName: "integration"},
+			vitestListOutputEntry{File: "packages/a.test.ts", ProjectName: "unit"},
+			vitestListOutputEntry{File: "packages/a.test.ts", ProjectName: "duplicate"},
+		),
 	}
 	vitest := &Vitest{
 		executor:        executor,
@@ -127,7 +146,7 @@ func TestVitest_DiscoverTestFiles_WithCustomCommand(t *testing.T) {
 	if executor.capturedName != "pnpm" {
 		t.Fatalf("command = %q, want pnpm", executor.capturedName)
 	}
-	wantArgs := []string{"exec", "vitest", "list", "--project", "unit*", "--filesOnly"}
+	wantArgs := []string{"exec", "vitest", "list", "--project", "unit*", "--filesOnly", "--json"}
 	if !slices.Equal(executor.capturedArgs, wantArgs) {
 		t.Fatalf("args = %v, want %v", executor.capturedArgs, wantArgs)
 	}
@@ -169,7 +188,11 @@ func TestVitest_DiscoverTestFiles_ExcludeStillUsesVitestDiscovery(t *testing.T) 
 	setTestsExcludePattern(t, "excluded.test.ts")
 	vitest := &Vitest{
 		executor: &vitestCommandExecutor{
-			output: []byte("generic.test.ts\nexcluded.test.ts\ncustom.check.ts\n"),
+			output: vitestListOutput(t,
+				vitestListOutputEntry{File: "generic.test.ts", ProjectName: "unit"},
+				vitestListOutputEntry{File: "excluded.test.ts", ProjectName: "unit"},
+				vitestListOutputEntry{File: "custom.check.ts", ProjectName: "unit"},
+			),
 		},
 		platformEnv: make(map[string]string),
 	}
@@ -207,7 +230,10 @@ func TestVitest_DiscoverTestFiles_ExcludeWithEmptyCandidatesStillUsesVitestDisco
 	}
 
 	setTestsExcludePattern(t, "excluded.test.ts")
-	executor := &vitestCommandExecutor{output: []byte("excluded.test.ts\ncustom.check.ts\n")}
+	executor := &vitestCommandExecutor{output: vitestListOutput(t,
+		vitestListOutputEntry{File: "excluded.test.ts", ProjectName: "unit"},
+		vitestListOutputEntry{File: "custom.check.ts", ProjectName: "unit"},
+	)}
 	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
 	resolvedTestFiles, err := discovery.ResolveTestFiles(vitest.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
@@ -234,6 +260,15 @@ func TestVitest_DiscoverTestFiles_ErrorIncludesOutput(t *testing.T) {
 	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
 	_, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err == nil || !strings.Contains(err.Error(), "invalid Vitest config") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestVitest_DiscoverTestFiles_InvalidJSON(t *testing.T) {
+	executor := &vitestCommandExecutor{output: []byte("not JSON")}
+	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	_, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
+	if err == nil || !strings.Contains(err.Error(), "failed to parse Vitest test file list") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -277,7 +312,7 @@ func TestVitest_DiscoverTestFiles_Vitest16UsesConfigAwareFallback(t *testing.T) 
 	if len(executor.calls) != 2 {
 		t.Fatalf("calls = %v", executor.calls)
 	}
-	if executor.calls[0].name != "pnpm" || !slices.Equal(executor.calls[0].args, []string{"exec", "vitest", "list", "--project", "unit*", "--filesOnly"}) {
+	if executor.calls[0].name != "pnpm" || !slices.Equal(executor.calls[0].args, []string{"exec", "vitest", "list", "--project", "unit*", "--filesOnly", "--json"}) {
 		t.Fatalf("native discovery call = %#v", executor.calls[0])
 	}
 	if executor.calls[1].name != "node" || len(executor.calls[1].args) != 4 {
@@ -330,7 +365,10 @@ func TestVitest_DiscoverTestFiles_FiltersCustomLocation(t *testing.T) {
 	}
 	setTestsLocation(t, "custom/**/*.check.ts")
 
-	executor := &vitestCommandExecutor{output: []byte("src/b.test.ts\ncustom/a.check.ts\n")}
+	executor := &vitestCommandExecutor{output: vitestListOutput(t,
+		vitestListOutputEntry{File: "src/b.test.ts", ProjectName: "unit"},
+		vitestListOutputEntry{File: "custom/a.check.ts", ProjectName: "unit"},
+	)}
 	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
 	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err != nil {

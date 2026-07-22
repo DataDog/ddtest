@@ -174,7 +174,7 @@ ddtest run --platform javascript --framework vitest --command "pnpm exec vitest 
 ```
 
 The command must invoke Vitest directly. During planning, DDTest changes the
-`run` subcommand to `list --filesOnly` on Vitest 2.0 and newer. On Vitest 1.6,
+`run` subcommand to `list --filesOnly --json` on Vitest 2.0 and newer. On Vitest 1.6,
 DDTest passes the Vitest arguments to its config-aware discovery API. DDTest
 appends the selected test files during execution. Do not include test files or a
 `--` separator in the command.

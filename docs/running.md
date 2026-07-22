@@ -117,7 +117,7 @@ ddtest run --platform javascript --framework jest --command "pnpm jest --runInBa
 ```
 
 For JavaScript/Vitest, the command must invoke Vitest directly. During planning,
-DDTest uses `list --filesOnly` on Vitest 2.0 and newer and the config-aware
+DDTest uses `list --filesOnly --json` on Vitest 2.0 and newer and the config-aware
 discovery API on Vitest 1.6. It appends selected files during execution:
 
 ```bash
@@ -178,10 +178,10 @@ unless `NODE_OPTIONS` already loads `dd-trace/ci/init`.
 ## Vitest Discovery And Instrumentation
 
 For JavaScript/Vitest 2.0 or higher, DDTest discovers test files with Vitest's
-native `list --filesOnly` command. It uses this priority:
+native `list --filesOnly --json` command. It uses this priority:
 
 1. `--command` when set, replacing its Vitest subcommand with `list` and
-   appending `--filesOnly`.
+   appending `--filesOnly --json`.
 2. The local executable `node_modules/.bin/vitest` when present.
 3. `npx vitest`.
 

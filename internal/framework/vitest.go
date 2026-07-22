@@ -102,7 +102,7 @@ func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 
 	command, baseArgs := v.getVitestCommand()
 	args := vitestArgsForSubcommand(baseArgs, "list")
-	args = append(args, "--filesOnly")
+	args = append(args, "--filesOnly", "--json")
 
 	slog.Info("Discovering Vitest test files with command", "command", command, "args", args)
 	output, err := v.executor.CombinedOutput(ctx, command, args, v.discoveryEnv())
@@ -117,7 +117,10 @@ func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 		return nil, fmt.Errorf("failed to discover Vitest test files: %s: %w", message, err)
 	}
 
-	discoveredFiles := parseVitestListFilesOutput(output)
+	discoveredFiles, err := parseVitestListFilesOutput(output)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse Vitest test file list: %w", err)
+	}
 	if settings.GetTestsLocation() == "" && settings.GetTestsExcludePattern() == "" {
 		return discoveredFiles, nil
 	}
@@ -277,8 +280,19 @@ func filterVitestTestFiles(testFiles []string, selectedTestFiles discovery.TestF
 	return slices.Compact(filteredFiles), nil
 }
 
-func parseVitestListFilesOutput(output []byte) []string {
-	return normalizeVitestTestFiles(strings.Split(string(output), "\n"))
+func parseVitestListFilesOutput(output []byte) ([]string, error) {
+	var listedFiles []struct {
+		File string `json:"file"`
+	}
+	if err := json.Unmarshal(output, &listedFiles); err != nil {
+		return nil, err
+	}
+
+	paths := make([]string, 0, len(listedFiles))
+	for _, listedFile := range listedFiles {
+		paths = append(paths, listedFile.File)
+	}
+	return normalizeVitestTestFiles(paths), nil
 }
 
 func parseVitestV1DiscoveryOutput(output []byte) ([]string, error) {
