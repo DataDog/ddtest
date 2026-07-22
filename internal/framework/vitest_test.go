@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/discovery"
+	"github.com/DataDog/ddtest/internal/settings"
 )
 
 type vitestCommandExecutor struct {
@@ -149,6 +150,82 @@ func TestVitest_DiscoverTestFiles_ExplicitFiles(t *testing.T) {
 	}
 	if !slices.Equal(files, want) || executor.capturedName != "" {
 		t.Fatalf("files = %v, command = %q", files, executor.capturedName)
+	}
+}
+
+func TestVitest_DiscoverTestFiles_ExcludeStillUsesVitestDiscovery(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{"generic.test.ts", "excluded.test.ts", "custom.check.ts"} {
+		if err := os.WriteFile(file, []byte("test"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	setTestsExcludePattern(t, "excluded.test.ts")
+	vitest := &Vitest{
+		executor: &vitestCommandExecutor{
+			output: []byte("generic.test.ts\nexcluded.test.ts\ncustom.check.ts\n"),
+		},
+		platformEnv: make(map[string]string),
+	}
+	resolvedTestFiles, err := discovery.ResolveTestFiles(vitest.TestPattern(), settings.GetTestsExcludePattern())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolvedTestFiles.UseExplicitFiles() || slices.Contains(resolvedTestFiles.ExplicitFiles, "custom.check.ts") {
+		t.Fatalf("expected generic glob candidates without custom Vitest file, got %v", resolvedTestFiles.ExplicitFiles)
+	}
+
+	files, err := vitest.DiscoverTestFiles(context.Background(), resolvedTestFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(files, []string{"custom.check.ts", "generic.test.ts"}) {
+		t.Fatalf("files = %v", files)
+	}
+	if executor := vitest.executor.(*vitestCommandExecutor); executor.capturedName == "" {
+		t.Fatal("expected Vitest discovery command to run")
+	}
+}
+
+func TestVitest_DiscoverTestFiles_ExcludeWithEmptyCandidatesStillUsesVitestDiscovery(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{"excluded.test.ts", "custom.check.ts"} {
+		if err := os.WriteFile(file, []byte("test"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	setTestsExcludePattern(t, "excluded.test.ts")
+	executor := &vitestCommandExecutor{output: []byte("excluded.test.ts\ncustom.check.ts\n")}
+	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	resolvedTestFiles, err := discovery.ResolveTestFiles(vitest.TestPattern(), settings.GetTestsExcludePattern())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolvedTestFiles.Empty() {
+		t.Fatalf("expected empty generic glob candidates, got %v", resolvedTestFiles.ExplicitFiles)
+	}
+
+	files, err := vitest.DiscoverTestFiles(context.Background(), resolvedTestFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(files, []string{"custom.check.ts"}) {
+		t.Fatalf("files = %v", files)
+	}
+	if executor.capturedName == "" {
+		t.Fatal("expected Vitest discovery command to run")
 	}
 }
 

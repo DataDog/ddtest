@@ -89,11 +89,15 @@ func (v *Vitest) DiscoverTests(ctx context.Context, testFiles discovery.TestFile
 // DiscoverTestFiles uses Vitest's config-aware file listing when available,
 // then falls back to the Vitest 1.6 API and finally DDTest's filesystem glob.
 func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
-	if testFiles.Empty() {
-		return []string{}, nil
-	}
-	if testFiles.UseExplicitFiles() {
-		return slices.Clone(testFiles.ExplicitFiles), nil
+	// With an exclude pattern, ExplicitFiles contains candidates from DDTest's generic
+	// glob. Vitest discovery must remain authoritative before applying the exclude.
+	if settings.GetTestsExcludePattern() == "" {
+		if testFiles.Empty() {
+			return []string{}, nil
+		}
+		if testFiles.UseExplicitFiles() {
+			return slices.Clone(testFiles.ExplicitFiles), nil
+		}
 	}
 
 	command, baseArgs := v.getVitestCommand()
@@ -249,6 +253,9 @@ func supportsVitestV1DiscoveryFallback(output []byte) bool {
 }
 
 func filterVitestTestFiles(testFiles []string, selectedTestFiles discovery.TestFileSet) ([]string, error) {
+	if settings.GetTestsExcludePattern() != "" {
+		selectedTestFiles.ExplicitFiles = nil
+	}
 	if settings.GetTestsLocation() == "" {
 		selectedTestFiles.Pattern = ""
 	}
