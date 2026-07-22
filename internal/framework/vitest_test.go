@@ -16,6 +16,7 @@ import (
 
 type vitestCommandExecutor struct {
 	output         []byte
+	stderr         []byte
 	err            error
 	capturedName   string
 	capturedArgs   []string
@@ -53,6 +54,11 @@ func (m *vitestSequenceExecutor) CombinedOutput(_ context.Context, name string, 
 	return m.outputs[callIndex], m.errors[callIndex]
 }
 
+func (m *vitestSequenceExecutor) Output(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, []byte, error) {
+	output, err := m.CombinedOutput(ctx, name, args, envMap)
+	return output, nil, err
+}
+
 func (m *vitestSequenceExecutor) Run(_ context.Context, _ string, _ []string, _ map[string]string) error {
 	return nil
 }
@@ -61,7 +67,14 @@ func (m *vitestCommandExecutor) CombinedOutput(_ context.Context, name string, a
 	m.capturedName = name
 	m.capturedArgs = slices.Clone(args)
 	m.capturedEnvMap = envMap
-	return m.output, m.err
+	return append(slices.Clone(m.output), m.stderr...), m.err
+}
+
+func (m *vitestCommandExecutor) Output(_ context.Context, name string, args []string, envMap map[string]string) ([]byte, []byte, error) {
+	m.capturedName = name
+	m.capturedArgs = slices.Clone(args)
+	m.capturedEnvMap = envMap
+	return m.output, m.stderr, m.err
 }
 
 func (m *vitestCommandExecutor) Run(_ context.Context, name string, args []string, envMap map[string]string) error {
@@ -273,6 +286,31 @@ func TestVitest_DiscoverTestFiles_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestVitest_DiscoverTestFiles_ParsesJSONWithoutStderr(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatal(err)
+	}
+	testFile := filepath.Join(tempDir, "named.test.ts")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	executor := &vitestCommandExecutor{
+		output: vitestListOutput(t, vitestListOutputEntry{File: testFile, ProjectName: "unit"}),
+		stderr: []byte("Vite deprecation warning\n"),
+	}
+	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || filepath.Base(files[0]) != "named.test.ts" {
+		t.Fatalf("files = %v", files)
+	}
+}
+
 func TestVitest_DiscoverTestFiles_Vitest16UsesConfigAwareFallback(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
@@ -426,6 +464,7 @@ func TestVitestArgsForSubcommand(t *testing.T) {
 	}{
 		{name: "replace run", args: []string{"exec", "vitest", "run", "--project", "unit"}, want: []string{"exec", "vitest", "list", "--project", "unit"}},
 		{name: "insert after vitest", args: []string{"vitest", "--project", "unit"}, want: []string{"vitest", "list", "--project", "unit"}},
+		{name: "project named run", args: []string{"exec", "vitest", "--project", "run"}, want: []string{"exec", "vitest", "list", "--project", "run"}},
 		{name: "direct binary args", args: []string{"--project", "unit"}, want: []string{"list", "--project", "unit"}},
 	}
 	for _, tt := range tests {

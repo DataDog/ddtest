@@ -31,8 +31,13 @@ var vitestV1DiscoveryScript string
 
 var vitestTestFileExtensions = []string{"js", "jsx", "ts", "tsx", "mjs", "mts", "cjs", "cts"}
 
+type vitestExecutor interface {
+	ext.CommandExecutor
+	Output(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, []byte, error)
+}
+
 type Vitest struct {
-	executor        ext.CommandExecutor
+	executor        vitestExecutor
 	commandOverride []string
 	platformEnv     map[string]string
 }
@@ -105,8 +110,9 @@ func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 	args = append(args, "--filesOnly", "--json")
 
 	slog.Info("Discovering Vitest test files with command", "command", command, "args", args)
-	output, err := v.executor.CombinedOutput(ctx, command, args, v.discoveryEnv())
+	stdout, stderr, err := v.executor.Output(ctx, command, args, v.discoveryEnv())
 	if err != nil {
+		output := append(slices.Clone(stdout), stderr...)
 		if supportsVitestV1DiscoveryFallback(output) {
 			return v.discoverVitestV1TestFiles(ctx, command, baseArgs, testFiles)
 		}
@@ -117,9 +123,16 @@ func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 		return nil, fmt.Errorf("failed to discover Vitest test files: %s: %w", message, err)
 	}
 
-	discoveredFiles, err := parseVitestListFilesOutput(output)
+	if message := strings.TrimSpace(string(stderr)); message != "" {
+		slog.Debug("Vitest test file discovery wrote to stderr", "output", message)
+	}
+	discoveredFiles, err := parseVitestListFilesOutput(stdout)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse Vitest test file list: %w", err)
+		message := strings.TrimSpace(string(stderr))
+		if message == "" {
+			return nil, fmt.Errorf("failed to parse Vitest test file list: %w", err)
+		}
+		return nil, fmt.Errorf("failed to parse Vitest test file list: %w; stderr: %s", err, message)
 	}
 	if settings.GetTestsLocation() == "" && settings.GetTestsExcludePattern() == "" {
 		return discoveredFiles, nil
@@ -211,23 +224,23 @@ func (v *Vitest) getVitestCommand() (string, []string) {
 
 func vitestArgsForSubcommand(baseArgs []string, subcommand string) []string {
 	args := slices.Clone(baseArgs)
+	subcommandIndex := 0
 	for i, arg := range args {
-		switch arg {
+		if isVitestExecutable(arg) {
+			subcommandIndex = i + 1
+			break
+		}
+	}
+
+	if subcommandIndex < len(args) {
+		switch args[subcommandIndex] {
 		case "run", "watch", "dev", "list":
-			args[i] = subcommand
+			args[subcommandIndex] = subcommand
 			return args
 		}
 	}
 
-	for i, arg := range args {
-		base := filepath.Base(arg)
-		if base == "vitest" || base == "vitest.mjs" {
-			args = slices.Insert(args, i+1, subcommand)
-			return args
-		}
-	}
-
-	return append([]string{subcommand}, args...)
+	return slices.Insert(args, subcommandIndex, subcommand)
 }
 
 func vitestCLIArgs(command string, baseArgs []string) []string {
