@@ -164,6 +164,21 @@ ddtest run --platform javascript --framework jest --command "pnpm jest --runInBa
 Do not include test files or a `--` separator in the command; DDTest appends the
 file list and Jest flags itself.
 
+## Vitest Support
+
+Use `--command` when your project runs Vitest through a package manager or uses
+Vitest projects:
+
+```bash
+ddtest run --platform javascript --framework vitest --command "pnpm exec vitest run --project unit*"
+```
+
+The command must invoke Vitest directly. During planning, DDTest changes the
+`run` subcommand to `list --filesOnly --json` on Vitest 2.0 and newer. On Vitest 1.6,
+DDTest passes the Vitest arguments to its config-aware discovery API. DDTest
+appends the selected test files during execution. Do not include test files or a
+`--` separator in the command.
+
 ## Minitest Support In Non-Rails Projects
 
 We use `bundle exec rake test` command when we don't detect `rails` command to

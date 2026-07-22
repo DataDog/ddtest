@@ -20,9 +20,11 @@ import (
 var javascriptEnvScript string
 
 const (
-	nodeOptionsEnvVar       = "NODE_OPTIONS"
-	ddTraceCIInitModule     = "dd-trace/ci/init"
-	nodeOptionsDDTraceCIArg = "-r " + ddTraceCIInitModule
+	nodeOptionsEnvVar             = "NODE_OPTIONS"
+	ddTraceCIInitModule           = "dd-trace/ci/init"     // For Jest and Vitest.
+	ddTraceRegisterModule         = "dd-trace/register.js" // For Vitest.
+	nodeOptionsDDTraceCIArg       = "-r " + ddTraceCIInitModule
+	nodeOptionsDDTraceRegisterArg = "--import " + ddTraceRegisterModule
 )
 
 type JavaScript struct {
@@ -45,22 +47,26 @@ func (j *JavaScript) TestSkippingLevel() settings.TestSkippingLevel {
 
 // GetPlatformEnv returns environment variables required for JS commands.
 func (j *JavaScript) GetPlatformEnv() map[string]string {
-	// Check if the NODE_OPTIONS is set in the env, and if so,
-	// check if it contains the dd-trace init option
-	// (the minimum required to start the libary)
-	currentValue, exists := os.LookupEnv(nodeOptionsEnvVar)
-	if exists && strings.Contains(currentValue, ddTraceCIInitModule) {
+	// Jest needs CI initialization; Vitest additionally needs the module registration hook.
+	// Add only missing Datadog preloads and preserve existing NODE_OPTIONS.
+	currentValue, _ := os.LookupEnv(nodeOptionsEnvVar)
+	requiredOptions := make([]string, 0, 2)
+	if settings.GetFramework() == "vitest" && !strings.Contains(currentValue, ddTraceRegisterModule) {
+		requiredOptions = append(requiredOptions, nodeOptionsDDTraceRegisterArg)
+	}
+	if !strings.Contains(currentValue, ddTraceCIInitModule) {
+		requiredOptions = append(requiredOptions, nodeOptionsDDTraceCIArg)
+	}
+	if len(requiredOptions) == 0 {
 		return map[string]string{}
 	}
 
-	// If the NODE_OPTIONS contained something, prepend the dd-trace
-	// init option at the beggining
-	nodeOptions := nodeOptionsDDTraceCIArg
+	// Keep user-provided options after the required Datadog preloads.
 	if strings.TrimSpace(currentValue) != "" {
-		nodeOptions = nodeOptionsDDTraceCIArg + " " + currentValue
+		requiredOptions = append(requiredOptions, currentValue)
 	}
+	nodeOptions := strings.Join(requiredOptions, " ")
 
-	// If NODE_OPTIONS is not set, just set it to '-r dd-trace/ci/init'
 	slog.Debug("Setting NODE_OPTIONS to auto-instrument with dd-trace-js", "nodeOptions", nodeOptions)
 	return map[string]string{
 		nodeOptionsEnvVar: nodeOptions,
@@ -113,6 +119,8 @@ func (j *JavaScript) DetectFramework() (framework.Framework, error) {
 	switch frameworkName {
 	case "jest":
 		fw = framework.NewJest()
+	case "vitest":
+		fw = framework.NewVitest()
 	default:
 		return nil, fmt.Errorf("framework '%s' is not supported by platform 'javascript'", frameworkName)
 	}

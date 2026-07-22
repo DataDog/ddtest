@@ -204,6 +204,45 @@ func TestJavaScript_DetectFramework_Jest(t *testing.T) {
 	}
 }
 
+func TestJavaScript_DetectFramework_Vitest(t *testing.T) {
+	t.Setenv(nodeOptionsEnvVar, "")
+	viper.Reset()
+	viper.Set("framework", "vitest")
+	settings.Init()
+	defer func() {
+		viper.Reset()
+		settings.Init()
+	}()
+
+	fw, err := NewJavaScript().DetectFramework()
+	if err != nil {
+		t.Fatalf("DetectFramework failed: %v", err)
+	}
+	if fw.Name() != "vitest" {
+		t.Fatalf("framework name = %q, want vitest", fw.Name())
+	}
+	wantNodeOptions := nodeOptionsDDTraceRegisterArg + " " + nodeOptionsDDTraceCIArg
+	if got := fw.GetPlatformEnv()[nodeOptionsEnvVar]; got != wantNodeOptions {
+		t.Fatalf("NODE_OPTIONS = %q, want %q", got, wantNodeOptions)
+	}
+}
+
+func TestJavaScript_GetPlatformEnv_VitestPreservesExistingOptions(t *testing.T) {
+	t.Setenv(nodeOptionsEnvVar, nodeOptionsDDTraceCIArg+" --max-old-space-size=4096")
+	viper.Reset()
+	viper.Set("framework", "vitest")
+	settings.Init()
+	defer func() {
+		viper.Reset()
+		settings.Init()
+	}()
+
+	want := nodeOptionsDDTraceRegisterArg + " " + nodeOptionsDDTraceCIArg + " --max-old-space-size=4096"
+	if got := NewJavaScript().GetPlatformEnv()[nodeOptionsEnvVar]; got != want {
+		t.Fatalf("NODE_OPTIONS = %q, want %q", got, want)
+	}
+}
+
 func TestJavaScript_DetectFramework_Unsupported(t *testing.T) {
 	viper.Reset()
 	viper.Set("framework", "rspec")
