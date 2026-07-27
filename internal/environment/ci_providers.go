@@ -712,6 +712,7 @@ func extractBuildkite() map[string]string {
 	tags[constants.GitTag] = os.Getenv("BUILDKITE_TAG")
 	tags[constants.CIPipelineID] = os.Getenv("BUILDKITE_BUILD_ID")
 	tags[constants.CIPipelineName] = os.Getenv("BUILDKITE_PIPELINE_SLUG")
+	tags[constants.CIPipelineDisplayName] = os.Getenv("BUILDKITE_PIPELINE_NAME")
 	tags[constants.CIPipelineNumber] = os.Getenv("BUILDKITE_BUILD_NUMBER")
 	tags[constants.CIPipelineURL] = os.Getenv("BUILDKITE_BUILD_URL")
 	tags[constants.CIJobID] = os.Getenv("BUILDKITE_JOB_ID")

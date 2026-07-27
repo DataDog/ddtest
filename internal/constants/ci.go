@@ -21,6 +21,9 @@ const (
 	// CIPipelineName indicates the name of the CI pipeline.
 	CIPipelineName = "ci.pipeline.name"
 
+	// CIPipelineDisplayName indicates the human-readable display name of the CI pipeline.
+	CIPipelineDisplayName = "ci.pipeline.display_name"
+
 	// CIPipelineNumber indicates the number of the CI pipeline.
 	CIPipelineNumber = "ci.pipeline.number"
 
