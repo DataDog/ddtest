@@ -106,8 +106,15 @@ func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 	}
 
 	command, baseArgs := v.getVitestCommand()
+	outputDir, err := os.MkdirTemp("", "ddtest-vitest-list-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Vitest discovery output directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(outputDir) }()
+	outputFile := filepath.Join(outputDir, "files.json")
+
 	args := vitestArgsForSubcommand(baseArgs, "list")
-	args = append(args, "--filesOnly", "--json")
+	args = append(args, "--filesOnly", "--json="+outputFile)
 
 	slog.Info("Discovering Vitest test files with command", "command", command, "args", args)
 	stdout, stderr, err := v.executor.Output(ctx, command, args, v.discoveryEnv())
@@ -126,7 +133,14 @@ func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 	if message := strings.TrimSpace(string(stderr)); message != "" {
 		slog.Debug("Vitest test file discovery wrote to stderr", "output", message)
 	}
-	discoveredFiles, err := parseVitestListFilesOutput(stdout)
+	if message := strings.TrimSpace(string(stdout)); message != "" {
+		slog.Debug("Vitest test file discovery wrote to stdout", "output", message)
+	}
+	output, err := os.ReadFile(outputFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Vitest test file list: %w", err)
+	}
+	discoveredFiles, err := parseVitestListFilesOutput(output)
 	if err != nil {
 		message := strings.TrimSpace(string(stderr))
 		if message == "" {
@@ -245,16 +259,16 @@ func vitestArgsForSubcommand(baseArgs []string, subcommand string) []string {
 
 func vitestCLIArgs(command string, baseArgs []string) []string {
 	if isVitestExecutable(command) {
-		return append([]string{"vitest"}, baseArgs...)
+		return slices.Clone(baseArgs)
 	}
 
 	for i, arg := range baseArgs {
 		if isVitestExecutable(arg) {
-			return append([]string{"vitest"}, baseArgs[i+1:]...)
+			return slices.Clone(baseArgs[i+1:])
 		}
 	}
 
-	return []string{"vitest"}
+	return nil
 }
 
 func isVitestExecutable(value string) bool {

@@ -2,7 +2,7 @@ import { createVitest, parseCLI } from 'vitest/node'
 
 const outputMarker = '__DDTEST_VITEST_FILES__'
 const cliArgs = JSON.parse(process.argv[1])
-const { filter, options } = parseCLI(cliArgs)
+const { filter, options } = parseCLI(['node', 'vitest', ...cliArgs])
 const vitest = await createVitest('test', { ...options, watch: false })
 
 try {

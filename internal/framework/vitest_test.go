@@ -16,6 +16,7 @@ import (
 
 type vitestCommandExecutor struct {
 	output         []byte
+	stdout         []byte
 	stderr         []byte
 	err            error
 	capturedName   string
@@ -74,6 +75,16 @@ func (m *vitestCommandExecutor) Output(_ context.Context, name string, args []st
 	m.capturedName = name
 	m.capturedArgs = slices.Clone(args)
 	m.capturedEnvMap = envMap
+	if m.err == nil {
+		for _, arg := range args {
+			if outputFile, ok := strings.CutPrefix(arg, "--json="); ok {
+				if err := os.WriteFile(outputFile, m.output, 0644); err != nil {
+					return m.stdout, m.stderr, err
+				}
+				return m.stdout, m.stderr, nil
+			}
+		}
+	}
 	return m.output, m.stderr, m.err
 }
 
@@ -159,9 +170,11 @@ func TestVitest_DiscoverTestFiles_WithCustomCommand(t *testing.T) {
 	if executor.capturedName != "pnpm" {
 		t.Fatalf("command = %q, want pnpm", executor.capturedName)
 	}
-	wantArgs := []string{"exec", "vitest", "list", "--project", "unit*", "--filesOnly", "--json"}
-	if !slices.Equal(executor.capturedArgs, wantArgs) {
-		t.Fatalf("args = %v, want %v", executor.capturedArgs, wantArgs)
+	wantArgs := []string{"exec", "vitest", "list", "--project", "unit*", "--filesOnly"}
+	if len(executor.capturedArgs) != len(wantArgs)+1 ||
+		!slices.Equal(executor.capturedArgs[:len(wantArgs)], wantArgs) ||
+		!strings.HasPrefix(executor.capturedArgs[len(wantArgs)], "--json=") {
+		t.Fatalf("args = %v, want %v followed by --json=<file>", executor.capturedArgs, wantArgs)
 	}
 	if got := executor.capturedEnvMap["NODE_OPTIONS"]; got != "--max-old-space-size=4096" {
 		t.Fatalf("discovery NODE_OPTIONS = %q", got)
@@ -286,7 +299,7 @@ func TestVitest_DiscoverTestFiles_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestVitest_DiscoverTestFiles_ParsesJSONWithoutStderr(t *testing.T) {
+func TestVitest_DiscoverTestFiles_IgnoresStdoutAndStderrNoise(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -299,6 +312,7 @@ func TestVitest_DiscoverTestFiles_ParsesJSONWithoutStderr(t *testing.T) {
 	}
 	executor := &vitestCommandExecutor{
 		output: vitestListOutput(t, vitestListOutputEntry{File: testFile, ProjectName: "unit"}),
+		stdout: []byte("Vitest config log\n"),
 		stderr: []byte("Vite deprecation warning\n"),
 	}
 	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
@@ -350,13 +364,18 @@ func TestVitest_DiscoverTestFiles_Vitest16UsesConfigAwareFallback(t *testing.T) 
 	if len(executor.calls) != 2 {
 		t.Fatalf("calls = %v", executor.calls)
 	}
-	if executor.calls[0].name != "pnpm" || !slices.Equal(executor.calls[0].args, []string{"exec", "vitest", "list", "--project", "unit*", "--filesOnly", "--json"}) {
+	nativeArgs := executor.calls[0].args
+	wantNativeArgs := []string{"exec", "vitest", "list", "--project", "unit*", "--filesOnly"}
+	if executor.calls[0].name != "pnpm" ||
+		len(nativeArgs) != len(wantNativeArgs)+1 ||
+		!slices.Equal(nativeArgs[:len(wantNativeArgs)], wantNativeArgs) ||
+		!strings.HasPrefix(nativeArgs[len(wantNativeArgs)], "--json=") {
 		t.Fatalf("native discovery call = %#v", executor.calls[0])
 	}
 	if executor.calls[1].name != "node" || len(executor.calls[1].args) != 4 {
 		t.Fatalf("Vitest 1.6 discovery call = %#v", executor.calls[1])
 	}
-	if got := executor.calls[1].args[3]; got != `["vitest","run","--project","unit*"]` {
+	if got := executor.calls[1].args[3]; got != `["run","--project","unit*"]` {
 		t.Fatalf("Vitest 1.6 CLI args = %s", got)
 	}
 }
@@ -483,9 +502,9 @@ func TestVitestCLIArgs(t *testing.T) {
 		args    []string
 		want    []string
 	}{
-		{name: "package manager", command: "pnpm", args: []string{"exec", "vitest", "run", "--project", "unit"}, want: []string{"vitest", "run", "--project", "unit"}},
-		{name: "direct binary", command: "node_modules/.bin/vitest", args: []string{"--config", "vitest.unit.ts"}, want: []string{"vitest", "--config", "vitest.unit.ts"}},
-		{name: "npx default", command: "npx", args: []string{"vitest"}, want: []string{"vitest"}},
+		{name: "package manager", command: "pnpm", args: []string{"exec", "vitest", "run", "--project", "unit"}, want: []string{"run", "--project", "unit"}},
+		{name: "direct binary without subcommand", command: "node_modules/.bin/vitest", args: []string{"--config", "vitest.unit.ts"}, want: []string{"--config", "vitest.unit.ts"}},
+		{name: "npx default", command: "npx", args: []string{"vitest"}, want: nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
