@@ -83,6 +83,21 @@ func TestJavaScript_GetPlatformEnv_DoesNotDuplicateDDTraceInit(t *testing.T) {
 	}
 }
 
+func TestJavaScript_GetPlatformEnv_DoesNotDependOnFramework(t *testing.T) {
+	t.Setenv(nodeOptionsEnvVar, "")
+	viper.Reset()
+	viper.Set("framework", "vitest")
+	settings.Init()
+	defer func() {
+		viper.Reset()
+		settings.Init()
+	}()
+
+	if got := NewJavaScript().GetPlatformEnv()[nodeOptionsEnvVar]; got != nodeOptionsDDTraceCIArg {
+		t.Fatalf("NODE_OPTIONS = %q, want %q", got, nodeOptionsDDTraceCIArg)
+	}
+}
+
 func TestJavaScript_CreateTagsMap_Success(t *testing.T) {
 	defer func() {
 		_ = os.RemoveAll(constants.PlanDirectory)
@@ -201,6 +216,71 @@ func TestJavaScript_DetectFramework_Jest(t *testing.T) {
 	}
 	if fw.Name() != "jest" {
 		t.Errorf("expected framework name to be 'jest', got %q", fw.Name())
+	}
+}
+
+func TestJavaScript_DetectFramework_Vitest(t *testing.T) {
+	t.Setenv(nodeOptionsEnvVar, "")
+	viper.Reset()
+	viper.Set("framework", "vitest")
+	settings.Init()
+	defer func() {
+		viper.Reset()
+		settings.Init()
+	}()
+
+	fw, err := NewJavaScript().DetectFramework()
+	if err != nil {
+		t.Fatalf("DetectFramework failed: %v", err)
+	}
+	if fw.Name() != "vitest" {
+		t.Fatalf("framework name = %q, want vitest", fw.Name())
+	}
+	wantNodeOptions := nodeImportArg + " " + ddTraceRegisterModule + " " + nodeOptionsDDTraceCIArg
+	if got := fw.GetPlatformEnv()[nodeOptionsEnvVar]; got != wantNodeOptions {
+		t.Fatalf("NODE_OPTIONS = %q, want %q", got, wantNodeOptions)
+	}
+}
+
+func TestJavaScript_DetectFramework_VitestPreservesExistingOptions(t *testing.T) {
+	t.Setenv(nodeOptionsEnvVar, nodeOptionsDDTraceCIArg+" --max-old-space-size=4096")
+	viper.Reset()
+	viper.Set("framework", "vitest")
+	settings.Init()
+	defer func() {
+		viper.Reset()
+		settings.Init()
+	}()
+
+	fw, err := NewJavaScript().DetectFramework()
+	if err != nil {
+		t.Fatalf("DetectFramework failed: %v", err)
+	}
+
+	want := nodeImportArg + " " + ddTraceRegisterModule + " " + nodeOptionsDDTraceCIArg + " --max-old-space-size=4096"
+	if got := fw.GetPlatformEnv()[nodeOptionsEnvVar]; got != want {
+		t.Fatalf("NODE_OPTIONS = %q, want %q", got, want)
+	}
+}
+
+func TestJavaScript_DetectFramework_VitestDoesNotDuplicateRegister(t *testing.T) {
+	t.Setenv(nodeOptionsEnvVar, nodeImportArg+" "+ddTraceRegisterModule+" --max-old-space-size=4096")
+	viper.Reset()
+	viper.Set("framework", "vitest")
+	settings.Init()
+	defer func() {
+		viper.Reset()
+		settings.Init()
+	}()
+
+	fw, err := NewJavaScript().DetectFramework()
+	if err != nil {
+		t.Fatalf("DetectFramework failed: %v", err)
+	}
+
+	nodeOptions := fw.GetPlatformEnv()[nodeOptionsEnvVar]
+	if strings.Count(nodeOptions, ddTraceRegisterModule) != 1 {
+		t.Fatalf("NODE_OPTIONS contains duplicate registration: %q", nodeOptions)
 	}
 }
 

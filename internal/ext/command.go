@@ -1,6 +1,7 @@
 package ext
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -56,6 +57,19 @@ func (e *DefaultCommandExecutor) CombinedOutput(ctx context.Context, name string
 	applyEnvMap(cmd, envMap)
 
 	return cmd.CombinedOutput()
+}
+
+func (e *DefaultCommandExecutor) Output(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, []byte, error) {
+	// no-dd-sa:go-security/command-injection
+	cmd := exec.CommandContext(ctx, name, args...)
+	applyEnvMap(cmd, envMap)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stdout.Bytes(), stderr.Bytes(), err
 }
 
 func (e *DefaultCommandExecutor) Run(ctx context.Context, name string, args []string, envMap map[string]string) error {

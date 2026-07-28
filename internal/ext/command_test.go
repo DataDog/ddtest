@@ -75,6 +75,22 @@ func TestDefaultCommandExecutor_CombinedOutput_Success(t *testing.T) {
 	}
 }
 
+func TestDefaultCommandExecutor_Output_SeparatesStdoutAndStderr(t *testing.T) {
+	executor := &DefaultCommandExecutor{}
+	stdout, stderr, err := executor.Output(
+		context.Background(),
+		"sh",
+		[]string{"-c", "printf stdout; printf stderr >&2"},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stdout) != "stdout" || string(stderr) != "stderr" {
+		t.Fatalf("stdout = %q, stderr = %q", stdout, stderr)
+	}
+}
+
 func TestDefaultCommandExecutor_CombinedOutput_WithArgs(t *testing.T) {
 	executor := &DefaultCommandExecutor{}
 
