@@ -119,21 +119,52 @@ func TestMochaDiscoverTestFiles(t *testing.T) {
 	if !slices.Equal(files, []string{"test/a.spec.js", "test/b.spec.js"}) {
 		t.Fatalf("files = %v", files)
 	}
-	if executor.capturedName != "node" || len(executor.capturedArgs) != 3 || executor.capturedArgs[0] != "--eval" {
+	if executor.capturedName != "pnpm" || !slices.Equal(executor.capturedArgs, []string{"exec", "mocha", "--parallel"}) {
 		t.Fatalf("command = %q %v", executor.capturedName, executor.capturedArgs)
 	}
 	var request struct {
 		Mode    string   `json:"mode"`
 		CLIArgs []string `json:"cliArgs"`
 	}
-	if err := json.Unmarshal([]byte(executor.capturedArgs[2]), &request); err != nil {
+	if err := json.Unmarshal([]byte(executor.capturedEnv[mochaRequestEnvVar]), &request); err != nil {
 		t.Fatal(err)
 	}
 	if request.Mode != "discover" || !slices.Equal(request.CLIArgs, []string{"--parallel"}) {
 		t.Fatalf("request = %#v", request)
 	}
-	if executor.capturedEnv["NODE_OPTIONS"] != "--max-old-space-size=4096" || executor.capturedEnv["CUSTOM"] != "value" {
+	if !strings.HasPrefix(executor.capturedEnv["NODE_OPTIONS"], "--max-old-space-size=4096 --require ") || executor.capturedEnv["CUSTOM"] != "value" {
 		t.Fatalf("discovery env = %v", executor.capturedEnv)
+	}
+}
+
+func TestMochaDiscoverTestFilesPassesCustomLocation(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	setTestsLocation(t, "spec/**/*.js")
+	writeMochaFixture(t, root, "spec/custom.spec.js", "test")
+	absCustom, _ := filepath.Abs("spec/custom.spec.js")
+	executor := &mochaCommandExecutor{output: []byte(mochaDiscoveryMarker + "[" + strconvQuote(absCustom) + "]\n")}
+	mocha := &Mocha{
+		executor:        executor,
+		commandOverride: []string{"mocha"},
+		platformEnv:     make(map[string]string),
+	}
+
+	files, err := mocha.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: mocha.TestPattern()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(files, []string{"spec/custom.spec.js"}) {
+		t.Fatalf("files = %v", files)
+	}
+	var request struct {
+		Spec []string `json:"spec"`
+	}
+	if err := json.Unmarshal([]byte(executor.capturedEnv[mochaRequestEnvVar]), &request); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(request.Spec, []string{"spec/**/*.js"}) {
+		t.Fatalf("discovery spec = %v", request.Spec)
 	}
 }
 
@@ -148,7 +179,8 @@ func TestMochaRunTests(t *testing.T) {
 	if err := mocha.RunTests(context.Background(), files, map[string]string{"WORKER": "1"}); err != nil {
 		t.Fatal(err)
 	}
-	if executor.capturedName != "node" || executor.capturedEnv["NODE_OPTIONS"] != "-r dd-trace/ci/init" || executor.capturedEnv["WORKER"] != "1" {
+	if executor.capturedName != "npx" || !slices.Equal(executor.capturedArgs, []string{"mocha", "--parallel"}) ||
+		!strings.HasPrefix(executor.capturedEnv["NODE_OPTIONS"], "-r dd-trace/ci/init --require ") || executor.capturedEnv["WORKER"] != "1" {
 		t.Fatalf("run = %q env=%v", executor.capturedName, executor.capturedEnv)
 	}
 	var request struct {
@@ -156,7 +188,7 @@ func TestMochaRunTests(t *testing.T) {
 		CLIArgs []string `json:"cliArgs"`
 		Files   []string `json:"files"`
 	}
-	if err := json.Unmarshal([]byte(executor.capturedArgs[2]), &request); err != nil {
+	if err := json.Unmarshal([]byte(executor.capturedEnv[mochaRequestEnvVar]), &request); err != nil {
 		t.Fatal(err)
 	}
 	if request.Mode != "run" || !slices.Equal(request.CLIArgs, []string{"--parallel"}) || !slices.Equal(request.Files, files) {
@@ -221,6 +253,41 @@ func TestMochaAdapterIntegration(t *testing.T) {
 	}
 	if !slices.Equal(files, want) {
 		t.Fatalf("default discovered files = %v, want %v", files, want)
+	}
+}
+
+func TestMochaAdapterCustomLocationAndCommandIntegration(t *testing.T) {
+	nodeModules := os.Getenv("DDTEST_MOCHA_NODE_MODULES")
+	if nodeModules == "" {
+		t.Skip("DDTEST_MOCHA_NODE_MODULES is not set")
+	}
+
+	root := t.TempDir()
+	mochaCommand := filepath.Join(nodeModules, ".bin", "mocha")
+	wrapper := filepath.Join(root, "mocha-wrapper.sh")
+	writeMochaFixture(t, root, "mocha-wrapper.sh", "#!/bin/sh\nexport DDTEST_MOCHA_WRAPPER=preserved\nexec \"$@\"\n")
+	if err := os.Chmod(wrapper, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeMochaFixture(t, root, ".mocharc.json", `{"spec":["test/**/*.spec.js"]}`)
+	writeMochaFixture(t, root, "spec/custom.spec.js", `const assert = require("assert"); describe("custom", () => { it("uses wrapper", () => assert.equal(process.env.DDTEST_MOCHA_WRAPPER, "preserved")) })`)
+	t.Chdir(root)
+	setTestsLocation(t, "spec/**/*.js")
+
+	mocha := &Mocha{
+		executor:        &ext.DefaultCommandExecutor{},
+		commandOverride: []string{wrapper, mochaCommand},
+		platformEnv:     make(map[string]string),
+	}
+	files, err := mocha.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: mocha.TestPattern()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(files, []string{"spec/custom.spec.js"}) {
+		t.Fatalf("discovered files = %v", files)
+	}
+	if err := mocha.RunTests(context.Background(), files, nil); err != nil {
+		t.Fatalf("custom-command run failed: %v", err)
 	}
 }
 

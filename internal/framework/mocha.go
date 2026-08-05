@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/discovery"
@@ -22,6 +23,7 @@ import (
 const (
 	binMochaPath         = "node_modules/.bin/mocha"
 	mochaDiscoveryMarker = "__DDTEST_MOCHA_FILES__"
+	mochaRequestEnvVar   = "DDTEST_MOCHA_REQUEST"
 )
 
 //go:embed scripts/mocha_adapter.js
@@ -84,13 +86,22 @@ func (m *Mocha) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestF
 	if err != nil {
 		return nil, err
 	}
-	request, err := json.Marshal(map[string]any{"mode": "discover", "cliArgs": cliArgs})
+	requestBody := map[string]any{"mode": "discover", "cliArgs": cliArgs}
+	if settings.GetTestsLocation() != "" {
+		requestBody["spec"] = []string{testFiles.Pattern}
+	}
+	request, err := json.Marshal(requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode Mocha discovery request: %w", err)
 	}
+	adapterPath, adapterEnv, err := prepareMochaAdapter(m.discoveryEnv(), request)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.Remove(adapterPath) }()
 
 	slog.Info("Discovering Mocha test files", "command", command, "args", baseArgs)
-	output, err := m.executor.CombinedOutput(ctx, "node", []string{"--eval", mochaAdapterScript, string(request)}, m.discoveryEnv())
+	output, err := m.executor.CombinedOutput(ctx, command, baseArgs, adapterEnv)
 	if err != nil {
 		message := strings.TrimSpace(string(output))
 		if message == "" {
@@ -124,7 +135,40 @@ func (m *Mocha) RunTests(ctx context.Context, testFiles []string, envMap map[str
 	mergedEnv := make(map[string]string)
 	maps.Copy(mergedEnv, m.platformEnv)
 	maps.Copy(mergedEnv, envMap)
-	return m.executor.Run(ctx, "node", []string{"--eval", mochaAdapterScript, string(request)}, mergedEnv)
+	adapterPath, adapterEnv, err := prepareMochaAdapter(mergedEnv, request)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(adapterPath) }()
+	return m.executor.Run(ctx, command, baseArgs, adapterEnv)
+}
+
+func prepareMochaAdapter(baseEnv map[string]string, request []byte) (string, map[string]string, error) {
+	adapterFile, err := os.CreateTemp("", "ddtest-mocha-adapter-*.js")
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create Mocha adapter: %w", err)
+	}
+	adapterPath := adapterFile.Name()
+	removeAdapter := func() { _ = os.Remove(adapterPath) }
+	if _, err := adapterFile.WriteString(mochaAdapterScript); err != nil {
+		_ = adapterFile.Close()
+		removeAdapter()
+		return "", nil, fmt.Errorf("failed to write Mocha adapter: %w", err)
+	}
+	if err := adapterFile.Close(); err != nil {
+		removeAdapter()
+		return "", nil, fmt.Errorf("failed to close Mocha adapter: %w", err)
+	}
+
+	adapterEnv := make(map[string]string, len(baseEnv)+2)
+	maps.Copy(adapterEnv, baseEnv)
+	nodeOptions, ok := adapterEnv[nodeOptionsEnvVar]
+	if !ok {
+		nodeOptions = os.Getenv(nodeOptionsEnvVar)
+	}
+	adapterEnv[nodeOptionsEnvVar] = strings.TrimSpace(nodeOptions + " --require " + strconv.Quote(adapterPath))
+	adapterEnv[mochaRequestEnvVar] = string(request)
+	return adapterPath, adapterEnv, nil
 }
 
 func (m *Mocha) discoveryEnv() map[string]string {
