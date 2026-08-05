@@ -12,6 +12,7 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/planner"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/telemetry"
 	"github.com/spf13/viper"
 )
 
@@ -53,6 +54,15 @@ func (f *fakePlanner) DistributeTestFiles(testFiles []string, parallelRunners in
 func TestNew(t *testing.T) {
 	if runner := New(); runner == nil {
 		t.Fatal("New() returned nil")
+	}
+}
+
+func TestNewWithTelemetry(t *testing.T) {
+	telemetryClient := telemetry.NoopClient()
+	runner := NewWithTelemetry(telemetryClient)
+
+	if runner.telemetryClient != telemetryClient {
+		t.Fatal("NewWithTelemetry() did not retain the injected client")
 	}
 }
 

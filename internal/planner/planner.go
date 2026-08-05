@@ -19,6 +19,7 @@ import (
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/telemetry"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	"github.com/DataDog/ddtest/internal/utils"
@@ -85,6 +86,7 @@ type TestPlanner struct {
 	optimizationClient      testOptimizationClient
 	newOptimizationClient   func(testSkippingLevel settings.TestSkippingLevel) testOptimizationClient
 	ciProviderDetector      environment.CIProviderDetector
+	telemetryClient         telemetry.Client
 	reportWriter            io.Writer
 }
 
@@ -159,6 +161,14 @@ func New() *TestPlanner {
 	return planner
 }
 
+// NewWithTelemetry creates a planner that reports internal metrics through the
+// provided telemetry client.
+func NewWithTelemetry(telemetryClient telemetry.Client) *TestPlanner {
+	planner := New()
+	planner.telemetryClient = telemetryClient
+	return planner
+}
+
 func NewWithDependencies(
 	platformDetector platform.PlatformDetector,
 	optimizationClient testOptimizationClient,
@@ -181,6 +191,7 @@ func newTestPlannerWithDefaults() *TestPlanner {
 		testFileDurationSources: make(map[string]testFileDurationSource),
 		reportStats:             newPlanningReportStats(),
 		skippablePercentage:     0.0,
+		telemetryClient:         telemetry.NoopClient(),
 		reportWriter:            os.Stderr,
 	}
 }

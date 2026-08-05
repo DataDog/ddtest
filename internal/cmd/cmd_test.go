@@ -11,6 +11,7 @@ import (
 	"github.com/DataDog/ddtest/internal/git"
 	runnerpkg "github.com/DataDog/ddtest/internal/runner"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/telemetry"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -192,15 +193,22 @@ func TestRootPersistentPreRunChecksGitAvailability(t *testing.T) {
 
 func TestRunPlanCommand(t *testing.T) {
 	originalPlanCommand := planCommand
+	originalNewTelemetryClient := newTelemetryClient
 	originalExitProcess := exitProcess
 	t.Cleanup(func() {
 		planCommand = originalPlanCommand
+		newTelemetryClient = originalNewTelemetryClient
 		exitProcess = originalExitProcess
 	})
 
+	telemetryClient := &fakeTelemetryClient{}
+	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
 	calls := 0
-	planCommand = func(ctx context.Context) error {
+	planCommand = func(ctx context.Context, got telemetry.Client) error {
 		calls++
+		if got != telemetryClient {
+			t.Fatal("plan command did not receive the command telemetry client")
+		}
 		return nil
 	}
 	exitProcess = func(code int) {
@@ -212,18 +220,25 @@ func TestRunPlanCommand(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("expected plan command to be called once, got %d", calls)
 	}
+	if telemetryClient.flushCalls != 1 {
+		t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
+	}
 }
 
 func TestRunPlanCommandExitsOnError(t *testing.T) {
 	originalPlanCommand := planCommand
+	originalNewTelemetryClient := newTelemetryClient
 	originalExitProcess := exitProcess
 	t.Cleanup(func() {
 		planCommand = originalPlanCommand
+		newTelemetryClient = originalNewTelemetryClient
 		exitProcess = originalExitProcess
 	})
 
+	telemetryClient := &fakeTelemetryClient{}
+	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
 	planErr := errors.New("planner failed")
-	planCommand = func(ctx context.Context) error {
+	planCommand = func(ctx context.Context, got telemetry.Client) error {
 		return planErr
 	}
 	var exitCodes []int
@@ -236,18 +251,28 @@ func TestRunPlanCommandExitsOnError(t *testing.T) {
 	if len(exitCodes) != 1 || exitCodes[0] != 1 {
 		t.Fatalf("expected exit code 1, got %v", exitCodes)
 	}
+	if telemetryClient.flushCalls != 1 {
+		t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
+	}
 }
 
 func TestRunTestCommand(t *testing.T) {
 	originalNewRunner := newRunner
+	originalNewTelemetryClient := newTelemetryClient
 	originalExitProcess := exitProcess
 	t.Cleanup(func() {
 		newRunner = originalNewRunner
+		newTelemetryClient = originalNewTelemetryClient
 		exitProcess = originalExitProcess
 	})
 
+	telemetryClient := &fakeTelemetryClient{}
+	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
 	fake := &fakeCommandRunner{}
-	newRunner = func() runnerpkg.Runner {
+	newRunner = func(got telemetry.Client) runnerpkg.Runner {
+		if got != telemetryClient {
+			t.Fatal("runner did not receive the command telemetry client")
+		}
 		return fake
 	}
 	exitProcess = func(code int) {
@@ -259,18 +284,25 @@ func TestRunTestCommand(t *testing.T) {
 	if fake.calls != 1 {
 		t.Fatalf("expected runner to be called once, got %d", fake.calls)
 	}
+	if telemetryClient.flushCalls != 1 {
+		t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
+	}
 }
 
 func TestRunTestCommandExitsOnError(t *testing.T) {
 	originalNewRunner := newRunner
+	originalNewTelemetryClient := newTelemetryClient
 	originalExitProcess := exitProcess
 	t.Cleanup(func() {
 		newRunner = originalNewRunner
+		newTelemetryClient = originalNewTelemetryClient
 		exitProcess = originalExitProcess
 	})
 
+	telemetryClient := &fakeTelemetryClient{}
+	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
 	fake := &fakeCommandRunner{err: errors.New("runner failed")}
-	newRunner = func() runnerpkg.Runner {
+	newRunner = func(got telemetry.Client) runnerpkg.Runner {
 		return fake
 	}
 	var exitCodes []int
@@ -282,6 +314,47 @@ func TestRunTestCommandExitsOnError(t *testing.T) {
 
 	if len(exitCodes) != 1 || exitCodes[0] != 1 {
 		t.Fatalf("expected exit code 1, got %v", exitCodes)
+	}
+	if telemetryClient.flushCalls != 1 {
+		t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
+	}
+}
+
+func TestRunWithTelemetryFallsBackWhenCreationFails(t *testing.T) {
+	originalNewTelemetryClient := newTelemetryClient
+	t.Cleanup(func() { newTelemetryClient = originalNewTelemetryClient })
+	newTelemetryClient = func() (telemetry.Client, error) {
+		return nil, errors.New("telemetry unavailable")
+	}
+
+	operationErr := errors.New("operation failed")
+	got := runWithTelemetry(context.Background(), func(client telemetry.Client) error {
+		if client == nil {
+			t.Fatal("operation received nil telemetry client")
+		}
+		client.Count("safe", nil).Submit(1)
+		return operationErr
+	})
+	if !errors.Is(got, operationErr) {
+		t.Fatalf("runWithTelemetry() error = %v, want operation error", got)
+	}
+}
+
+func TestRunWithTelemetryDoesNotReplaceCommandErrorWithFlushError(t *testing.T) {
+	originalNewTelemetryClient := newTelemetryClient
+	t.Cleanup(func() { newTelemetryClient = originalNewTelemetryClient })
+	telemetryClient := &fakeTelemetryClient{flushErr: errors.New("flush failed")}
+	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
+	operationErr := errors.New("operation failed")
+
+	got := runWithTelemetry(context.Background(), func(telemetry.Client) error {
+		return operationErr
+	})
+	if !errors.Is(got, operationErr) {
+		t.Fatalf("runWithTelemetry() error = %v, want operation error", got)
+	}
+	if telemetryClient.flushCalls != 1 {
+		t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
 	}
 }
 
@@ -560,3 +633,25 @@ func (f *fakeCommandRunner) Run(ctx context.Context) error {
 	f.calls++
 	return f.err
 }
+
+type fakeTelemetryClient struct {
+	flushCalls int
+	flushErr   error
+}
+
+func (f *fakeTelemetryClient) Count(string, []string) telemetry.Metric {
+	return fakeTelemetryMetric{}
+}
+
+func (f *fakeTelemetryClient) Distribution(string, []string) telemetry.Metric {
+	return fakeTelemetryMetric{}
+}
+
+func (f *fakeTelemetryClient) Flush(context.Context) error {
+	f.flushCalls++
+	return f.flushErr
+}
+
+type fakeTelemetryMetric struct{}
+
+func (fakeTelemetryMetric) Submit(float64) {}

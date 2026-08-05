@@ -24,6 +24,7 @@ import (
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/telemetry"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	ciUtils "github.com/DataDog/ddtest/internal/utils"
@@ -603,6 +604,15 @@ func TestNew(t *testing.T) {
 
 	if runner.newOptimizationClient == nil {
 		t.Error("New() should initialize optimization client factory")
+	}
+}
+
+func TestNewWithTelemetry(t *testing.T) {
+	telemetryClient := telemetry.NoopClient()
+	planner := NewWithTelemetry(telemetryClient)
+
+	if planner.telemetryClient != telemetryClient {
+		t.Fatal("NewWithTelemetry() did not retain the injected client")
 	}
 }
 

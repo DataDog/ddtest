@@ -15,13 +15,13 @@ import (
 	"log/slog"
 	"mime"
 	"mime/multipart"
-	"net"
 	"net/http"
 	"net/textproto"
 	"strconv"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/httptransport"
 	"github.com/tinylib/msgp/msgp"
 )
 
@@ -98,26 +98,7 @@ type RequestHandler struct {
 // This also permits orchestrion to disable tracing on this client.
 // See https://golang.org/pkg/net/http/#DefaultTransport .
 // Except we use a higher timeout for this
-var defaultHTTPClient = createNewHTTPClient()
-
-// createNewHTTPClient creates a new HTTP client with custom transport settings.
-func createNewHTTPClient() *http.Client {
-	return &http.Client{
-		Timeout: 45 * time.Second,
-		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          100,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-		},
-	}
-}
+var defaultHTTPClient = httptransport.NewHTTPClient(45 * time.Second)
 
 // NewRequestHandler creates a new RequestHandler with a default HTTP client.
 func NewRequestHandler() *RequestHandler {

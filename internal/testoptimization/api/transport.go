@@ -6,30 +6,24 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
 	"math/rand/v2"
-	"net"
-	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/httptransport"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
-	"github.com/DataDog/ddtest/internal/utils"
 )
 
 const (
-	defaultAgentHostname  = "localhost"
-	defaultTraceAgentPort = "8126"
-	ddTagsDelimiter       = ":"
+	ddTagsDelimiter = ":"
 )
 
 type (
@@ -100,8 +94,6 @@ var (
 	_ Transport = &transport{}
 )
 
-var defaultTraceAgentUDSPath = "/var/run/datadog/apm.socket"
-
 // NewTransportWithServiceNameAndSubdomain creates a new transport with the given service name and subdomain.
 func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Transport {
 	return newTransportWithServiceNameAndSubdomain(serviceName, subdomain, settings.TestSkippingLevelTest)
@@ -144,31 +136,26 @@ func newTransportWithServiceNameAndSubdomain(serviceName, subdomain string, test
 	defaultHeaders := map[string]string{}
 	var baseURL string
 	var requestHandler *RequestHandler
-	var agentURL *url.URL
 	var apiKeyValue string
 
-	agentlessEnabled := utils.BoolEnv(constants.TestOptimizationAgentlessEnabledEnvironmentVariable, false)
+	connection, err := httptransport.ResolveDatadogConnection()
+	if err != nil {
+		slog.Error("Failed to resolve Datadog connection", "error", err)
+		return nil
+	}
+	agentlessEnabled := connection.Agentless
 	if agentlessEnabled {
 		// Agentless mode is enabled.
-		apiKeyValue = os.Getenv(constants.APIKeyEnvironmentVariable)
-		if apiKeyValue == "" {
-			slog.Error("An API key is required for agentless mode. Use the DD_API_KEY env variable to set it")
-			return nil
-		}
+		apiKeyValue = connection.APIKey
 
 		defaultHeaders["dd-api-key"] = apiKeyValue
 
 		// Check for a custom agentless URL.
-		agentlessURL := os.Getenv(constants.TestOptimizationAgentlessURLEnvironmentVariable)
+		agentlessURL := connection.AgentlessURL
 
 		if agentlessURL == "" {
 			// Use the standard agentless URL format.
-			site := "datadoghq.com"
-			if v := os.Getenv("DD_SITE"); v != "" {
-				site = v
-			}
-
-			baseURL = fmt.Sprintf("https://%s.%s", subdomain, site)
+			baseURL = fmt.Sprintf("https://%s.%s", subdomain, connection.Site)
 		} else {
 			// Use the custom agentless URL.
 			baseURL = agentlessURL
@@ -179,41 +166,17 @@ func newTransportWithServiceNameAndSubdomain(serviceName, subdomain string, test
 		// Use agent mode with the EVP proxy.
 		defaultHeaders["X-Datadog-EVP-Subdomain"] = subdomain
 
-		agentURL = traceAgentURLFromEnv()
+		agentURL := connection.AgentURL
 		if agentURL.Scheme == "unix" {
 			// If we're connecting over UDS we can just rely on the agent to provide the hostname
 			slog.Debug("connecting to agent over unix, do not set hostname on any traces")
-			dialer := &net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-				DualStack: true,
-			}
-			requestHandler = NewRequestHandlerWithClient(&http.Client{
-				Transport: &http.Transport{
-					Proxy: http.ProxyFromEnvironment,
-					DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-						return dialer.DialContext(ctx, "unix", (&net.UnixAddr{
-							Name: agentURL.Path,
-							Net:  "unix",
-						}).String())
-					},
-					MaxIdleConns:          100,
-					IdleConnTimeout:       90 * time.Second,
-					TLSHandshakeTimeout:   10 * time.Second,
-					ExpectContinueTimeout: 1 * time.Second,
-				},
-				Timeout: 10 * time.Second,
-			})
-			// TODO(darccio): use internal.UnixDataSocketURL instead
-			agentURL = &url.URL{
-				Scheme: "http",
-				Host:   fmt.Sprintf("UDS_%s", strings.NewReplacer(":", "_", "/", "_", `\`, "_").Replace(agentURL.Path)),
-			}
+			agentURL, client := httptransport.AgentHTTPTransport(agentURL, 10*time.Second)
+			requestHandler = NewRequestHandlerWithClient(client)
+			baseURL = agentURL.String()
 		} else {
 			requestHandler = NewRequestHandler()
+			baseURL = agentURL.String()
 		}
-
-		baseURL = agentURL.String()
 	}
 
 	// create random id (the backend associate all transactions with the client request)
@@ -265,50 +228,6 @@ func newTransportWithServiceNameAndSubdomain(serviceName, subdomain string, test
 // NewTransportWithServiceName creates a new transport with the given service name.
 func NewTransportWithServiceName(serviceName string) Transport {
 	return NewTransportWithServiceNameAndSubdomain(serviceName, "api")
-}
-
-// traceAgentURLFromEnv resolves the URL for the trace agent based on
-// the default host/port and UDS path, and via standard environment variables.
-func traceAgentURLFromEnv() *url.URL {
-	if agentURL := os.Getenv("DD_TRACE_AGENT_URL"); agentURL != "" {
-		u, err := url.Parse(agentURL)
-		if err != nil {
-			slog.Warn("Failed to parse DD_TRACE_AGENT_URL", "error", err.Error())
-		} else {
-			switch u.Scheme {
-			case "unix", "http", "https":
-				return u
-			default:
-				slog.Warn("Unsupported protocol in Agent URL. Must be one of: http, https, unix.", "scheme", u.Scheme, "url", agentURL)
-			}
-		}
-	}
-
-	host, providedHost := os.LookupEnv("DD_AGENT_HOST")
-	port, providedPort := os.LookupEnv("DD_TRACE_AGENT_PORT")
-	if host == "" {
-		providedHost = false
-		host = defaultAgentHostname
-	}
-	if port == "" {
-		providedPort = false
-		port = defaultTraceAgentPort
-	}
-	httpURL := &url.URL{
-		Scheme: "http",
-		Host:   net.JoinHostPort(host, port),
-	}
-	if providedHost || providedPort {
-		return httpURL
-	}
-
-	if _, err := os.Stat(defaultTraceAgentUDSPath); err == nil {
-		return &url.URL{
-			Scheme: "unix",
-			Path:   defaultTraceAgentUDSPath,
-		}
-	}
-	return httpURL
 }
 
 func parseTagString(str string) map[string]string {
