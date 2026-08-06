@@ -179,6 +179,18 @@ DDTest passes the Vitest arguments to its config-aware discovery API. DDTest
 appends the selected test files during execution. Do not include test files or a
 `--` separator in the command.
 
+## Mocha Support
+
+Use a command that invokes Mocha directly when passing framework flags:
+
+```bash
+ddtest run --platform javascript --framework mocha --command "pnpm exec mocha --parallel"
+```
+
+Do not include test files or a `--` separator. DDTest reads Mocha's effective
+configuration for discovery and replaces configured `spec` inputs with the
+files assigned to each worker during execution.
+
 ## Minitest Support In Non-Rails Projects
 
 We use `bundle exec rake test` command when we don't detect `rails` command to

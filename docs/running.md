@@ -38,6 +38,12 @@ For JavaScript/Vitest:
 ddtest run --platform javascript --framework vitest
 ```
 
+For JavaScript/Mocha:
+
+```bash
+ddtest run --platform javascript --framework mocha
+```
+
 On one CI node, the default `--min-parallelism` and `--max-parallelism` equal
 the available physical CPU core count, so DDTest can start one worker per
 physical core without defaulting to one worker per hyperthread.
@@ -67,6 +73,12 @@ For JavaScript/Vitest:
 
 ```bash
 ddtest run --platform javascript --framework vitest --ci-node <CI_NODE_INDEX>
+```
+
+For JavaScript/Mocha:
+
+```bash
+ddtest run --platform javascript --framework mocha --ci-node <CI_NODE_INDEX>
 ```
 
 In CI-node mode, DDTest uses one local worker by default so database and other
@@ -102,8 +114,8 @@ starting each worker.
 
 Use `--command` to override the framework's default base test command where
 supported. DDTest currently applies this override to RSpec run and full
-discovery, Minitest run and full discovery, and Jest and Vitest run and file
-discovery:
+discovery, Minitest run and full discovery, and Jest, Mocha, and Vitest run and
+file discovery:
 
 ```bash
 ddtest run --platform ruby --framework rspec --command "bundle exec rspec --profile"
@@ -114,6 +126,14 @@ and `--runTestsByPath <files>` during execution:
 
 ```bash
 ddtest run --platform javascript --framework jest --command "pnpm jest --runInBand"
+```
+
+For JavaScript/Mocha, the command must invoke Mocha directly. DDTest loads its
+effective configuration, discovers files without loading test modules, and
+replaces configured `spec` entries with each worker's assigned files:
+
+```bash
+ddtest run --platform javascript --framework mocha --command "pnpm exec mocha --parallel"
 ```
 
 For JavaScript/Vitest, the command must invoke Vitest directly. During planning,
@@ -174,6 +194,25 @@ as Jest's `--testMatch`.
 
 DDTest prepends `-r dd-trace/ci/init` to `NODE_OPTIONS` for worker processes
 unless `NODE_OPTIONS` already loads `dd-trace/ci/init`.
+
+## Mocha Discovery And Instrumentation
+
+DDTest supports Mocha 8 and newer. It uses Mocha's own option loader and file
+collector, so discovery honors `.mocharc.*`, the `mocha` property in
+`package.json`, `MOCHA_OPTIONS` on versions that support it, `spec`,
+`extension`, `recursive`, `ignore`, and `sort` without loading test modules or
+running hooks. Files configured with `--file` are treated as shared setup and
+are loaded by every worker rather than being partitioned.
+
+Mocha normally adds positional files to configured `spec` patterns. During a
+DDTest run, the adapter replaces that merged list with the worker's assigned
+files while preserving the rest of the effective Mocha configuration. This
+prevents every worker from running the entire configured suite.
+
+DDTest uses the local `node_modules/.bin/mocha` when present and otherwise
+expects Mocha to be resolvable from the current project. Discovery removes
+`-r dd-trace/ci/init` from `NODE_OPTIONS`; test runs retain it for Test
+Optimization instrumentation.
 
 ## Vitest Discovery And Instrumentation
 

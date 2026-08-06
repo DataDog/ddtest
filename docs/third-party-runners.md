@@ -57,6 +57,18 @@ if [ -s .testoptimization/runner/test-files.txt ]; then
 fi
 ```
 
+## Mocha
+
+When another runner consumes DDTest's Mocha file list, load Test Optimization
+initialization before invoking Mocha:
+
+```bash
+export NODE_OPTIONS="-r dd-trace/ci/init${NODE_OPTIONS:+ $NODE_OPTIONS}"
+if [ -s .testoptimization/runner/test-files.txt ]; then
+  xargs ./node_modules/.bin/mocha < .testoptimization/runner/test-files.txt
+fi
+```
+
 ## Custom Runners
 
 Read `.testoptimization/runner/test-files.txt` when your runner should handle
