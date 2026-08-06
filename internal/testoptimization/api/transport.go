@@ -20,6 +20,7 @@ import (
 	"github.com/DataDog/ddtest/internal/httptransport"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
 const (
@@ -69,6 +70,7 @@ type (
 		testSkippingLevel  settings.TestSkippingLevel
 		headers            map[string]string
 		handler            *RequestHandler
+		telemetryClient    telemetry.Client
 
 		settingsRawResponse            json.RawMessage
 		knownTestsRawResponse          json.RawMessage
@@ -96,14 +98,20 @@ var (
 
 // NewTransportWithServiceNameAndSubdomain creates a new transport with the given service name and subdomain.
 func NewTransportWithServiceNameAndSubdomain(serviceName, subdomain string) Transport {
-	return newTransportWithServiceNameAndSubdomain(serviceName, subdomain, settings.TestSkippingLevelTest)
+	return newTransportWithServiceNameAndSubdomain(serviceName, subdomain, settings.TestSkippingLevelTest, telemetry.NoopClient())
 }
 
 func NewTransportWithServiceNameAndTestSkippingLevel(serviceName string, testSkippingLevel settings.TestSkippingLevel) Transport {
-	return newTransportWithServiceNameAndSubdomain(serviceName, "api", testSkippingLevel)
+	return NewTransportWithTelemetry(serviceName, testSkippingLevel, telemetry.NoopClient())
 }
 
-func newTransportWithServiceNameAndSubdomain(serviceName, subdomain string, testSkippingLevel settings.TestSkippingLevel) Transport {
+// NewTransportWithTelemetry creates a transport that reports CI Visibility
+// backend request metrics through telemetryClient.
+func NewTransportWithTelemetry(serviceName string, testSkippingLevel settings.TestSkippingLevel, telemetryClient telemetry.Client) Transport {
+	return newTransportWithServiceNameAndSubdomain(serviceName, "api", testSkippingLevel, telemetryClient)
+}
+
+func newTransportWithServiceNameAndSubdomain(serviceName, subdomain string, testSkippingLevel settings.TestSkippingLevel, telemetryClient telemetry.Client) Transport {
 	ciTags := environment.GetCITags()
 
 	// get the environment
@@ -220,8 +228,9 @@ func newTransportWithServiceNameAndSubdomain(serviceName, subdomain string, test
 			RuntimeVersion: ciTags[constants.RuntimeVersion],
 			Custom:         customConfiguration,
 		},
-		headers: defaultHeaders,
-		handler: requestHandler,
+		headers:         defaultHeaders,
+		handler:         requestHandler,
+		telemetryClient: telemetryClient,
 	}
 }
 

@@ -7,8 +7,10 @@ package api
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
 const (
@@ -49,9 +51,16 @@ func (c *transport) GetCommits(localCommits []string) ([]string, error) {
 	}
 
 	request := c.getPostRequestConfig(searchCommitsURLPath, body)
+	telemetry.GitRequestsSearchCommits(c.telemetryClient, request.Compressed)
+	startTime := time.Now()
 	response, err := c.handler.SendRequest(*request)
 	if err != nil {
+		telemetry.GitRequestsSearchCommitsErrors(c.telemetryClient, 0)
 		return nil, fmt.Errorf("sending search commits request: %s", err.Error())
+	}
+	telemetry.GitRequestsSearchCommitsMs(c.telemetryClient, response.Compressed, time.Since(startTime))
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		telemetry.GitRequestsSearchCommitsErrors(c.telemetryClient, response.StatusCode)
 	}
 
 	var responseObject searchCommits

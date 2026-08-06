@@ -15,6 +15,7 @@ import (
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/telemetry"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	"github.com/DataDog/ddtest/internal/utils"
 )
@@ -35,6 +36,7 @@ type TestOptimizationClient struct {
 	apiTransport              api.Transport
 	newAPITransport           func(serviceName string, testSkippingLevel settings.TestSkippingLevel) api.Transport
 	cacheManager              *CacheManager
+	gitCommands               *git.CommandRunner
 	repositoryChangesUploader func() (int64, error)
 	enableSignalHandler       bool
 
@@ -56,7 +58,18 @@ func NewTestOptimizationClient() *TestOptimizationClient {
 }
 
 func NewTestOptimizationClientWithTestSkippingLevel(testSkippingLevel settings.TestSkippingLevel) *TestOptimizationClient {
-	return newTestOptimizationClientWithTestSkippingLevel(nil, api.NewTransportWithServiceNameAndTestSkippingLevel, nil, true, testSkippingLevel)
+	return NewTestOptimizationClientWithTelemetry(testSkippingLevel, telemetry.NoopClient())
+}
+
+// NewTestOptimizationClientWithTelemetry creates a Test Optimization client
+// whose backend transport reports internal metrics through telemetryClient.
+func NewTestOptimizationClientWithTelemetry(testSkippingLevel settings.TestSkippingLevel, telemetryClient telemetry.Client) *TestOptimizationClient {
+	newAPITransport := func(serviceName string, level settings.TestSkippingLevel) api.Transport {
+		return api.NewTransportWithTelemetry(serviceName, level, telemetryClient)
+	}
+	client := newTestOptimizationClientWithTestSkippingLevel(nil, newAPITransport, nil, true, testSkippingLevel)
+	client.gitCommands = git.NewCommandRunner(telemetry.NewGitCommandTelemetry(telemetryClient))
+	return client
 }
 
 func NewTestOptimizationClientWithDependencies(apiTransport api.Transport) *TestOptimizationClient {
@@ -93,6 +106,7 @@ func newTestOptimizationClientWithTestSkippingLevel(
 		apiTransport:              apiTransport,
 		newAPITransport:           newAPITransport,
 		cacheManager:              NewCacheManager(),
+		gitCommands:               git.NewCommandRunner(nil),
 		repositoryChangesUploader: repositoryChangesUploader,
 		enableSignalHandler:       enableSignalHandler,
 		testSkippingLevel:         testSkippingLevel,
@@ -463,7 +477,7 @@ func (c *TestOptimizationClient) uploadRepositoryChangesFromGit() (bytes int64, 
 		return 0, nil
 	}
 
-	hasBeenUnshallowed, err := git.UnshallowGitRepository()
+	hasBeenUnshallowed, err := c.gitCommands.UnshallowGitRepository()
 	if err != nil || !hasBeenUnshallowed {
 		if err != nil {
 			slog.Warn(err.Error())
@@ -484,7 +498,7 @@ func (c *TestOptimizationClient) uploadRepositoryChangesFromGit() (bytes int64, 
 }
 
 func (c *TestOptimizationClient) getSearchCommits() (*searchCommitsResponse, error) {
-	localCommits := git.GetLastLocalGitCommitShas()
+	localCommits := c.gitCommands.GetLastLocalGitCommitShas()
 	if len(localCommits) == 0 {
 		slog.Debug("testoptimization: no local commits found")
 		return newSearchCommitsResponse(nil, nil, false), nil
@@ -523,7 +537,7 @@ func (r *searchCommitsResponse) missingCommits() []string {
 }
 
 func (c *TestOptimizationClient) sendObjectsPackFile(commitSha string, commitsToInclude []string, commitsToExclude []string) (bytes int64, err error) {
-	packFiles := git.CreatePackFiles(commitsToInclude, commitsToExclude)
+	packFiles := c.gitCommands.CreatePackFiles(commitsToInclude, commitsToExclude)
 	if len(packFiles) == 0 {
 		slog.Debug("testoptimization: no pack files to send")
 		return 0, nil

@@ -13,6 +13,48 @@ import (
 	"github.com/DataDog/ddtest/internal/git/gittest"
 )
 
+type gitTelemetryClient struct {
+	mu      sync.Mutex
+	metrics map[string]float64
+}
+
+func newGitTelemetryClient() *gitTelemetryClient {
+	return &gitTelemetryClient{metrics: make(map[string]float64)}
+}
+
+func (c *gitTelemetryClient) Command(commandType CommandType) {
+	c.add("command", commandType)
+}
+
+func (c *gitTelemetryClient) CommandError(commandType CommandType, err error) {
+	if err != nil {
+		c.add("error", commandType)
+	}
+}
+
+func (c *gitTelemetryClient) CommandDuration(commandType CommandType, _ time.Duration) {
+	c.add("duration", commandType)
+}
+
+func (c *gitTelemetryClient) add(kind string, commandType CommandType) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.metrics[kind+"|"+string(commandType)]++
+}
+
+func (c *gitTelemetryClient) value(kind string, commandType CommandType) float64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.metrics[kind+"|"+string(commandType)]
+}
+
+func (c *gitTelemetryClient) recorded(kind string, commandType CommandType) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.metrics[kind+"|"+string(commandType)]
+	return ok
+}
+
 func TestCheckAvailableSuccess(t *testing.T) {
 	repo := gittest.NewRepository(t)
 	t.Chdir(repo.Path)
@@ -271,6 +313,60 @@ func TestGitIntegrationLastLocalCommitShas(t *testing.T) {
 	}
 }
 
+func TestCommandRunnerRecordsGitCommandTelemetry(t *testing.T) {
+	repo := gittest.NewRepository(t)
+	t.Chdir(repo.Path)
+	resetGitPackageState(t)
+
+	recorder := newGitTelemetryClient()
+	runner := NewCommandRunner(recorder)
+	shas := runner.GetLastLocalGitCommitShas()
+	if len(shas) < 2 {
+		t.Fatalf("expected at least two commits, got %v", shas)
+	}
+	if got := recorder.value("command", CommandGetLocalCommits); got != 1 {
+		t.Errorf("get_local_commits command count = %v, want 1", got)
+	}
+	if !recorder.recorded("duration", CommandGetLocalCommits) {
+		t.Error("get_local_commits duration was not recorded")
+	}
+	if got := recorder.value("error", CommandGetLocalCommits); got != 0 {
+		t.Errorf("unexpected get_local_commits error count = %v", got)
+	}
+}
+
+func TestCommandRunnerRecordsMissingAndKnownExitCodes(t *testing.T) {
+	t.Run("missing exit code", func(t *testing.T) {
+		resetGitPackageState(t)
+		LookPathFunc = func(string) (string, error) {
+			return "", errors.New("missing git")
+		}
+
+		recorder := newGitTelemetryClient()
+		if got := NewCommandRunner(recorder).GetLastLocalGitCommitShas(); len(got) != 0 {
+			t.Fatalf("expected no commits, got %v", got)
+		}
+		if got := recorder.value("error", CommandGetLocalCommits); got != 1 {
+			t.Errorf("missing-exit-code error count = %v, want 1", got)
+		}
+	})
+
+	t.Run("known exit code", func(t *testing.T) {
+		fakeBin := t.TempDir()
+		writeFakeGit(t, fakeBin, "#!/bin/sh\nexit 1\n")
+		t.Setenv("PATH", fakeBin)
+		resetGitPackageState(t)
+
+		recorder := newGitTelemetryClient()
+		if got := NewCommandRunner(recorder).GetLastLocalGitCommitShas(); len(got) != 0 {
+			t.Fatalf("expected no commits, got %v", got)
+		}
+		if got := recorder.value("error", CommandGetLocalCommits); got != 1 {
+			t.Errorf("exit-code-1 error count = %v, want 1", got)
+		}
+	})
+}
+
 func TestGitIntegrationShallowHelpersOnNormalRepository(t *testing.T) {
 	repo := gittest.NewRepository(t)
 	t.Chdir(repo.Path)
@@ -305,8 +401,10 @@ func TestGitIntegrationUnshallowRepository(t *testing.T) {
 	repo := gittest.NewShallowRepository(t)
 	t.Chdir(repo.Path)
 	resetGitPackageState(t)
+	recorder := newGitTelemetryClient()
+	runner := NewCommandRunner(recorder)
 
-	shallow, err := isAShallowCloneRepository()
+	shallow, err := runner.isAShallowCloneRepository()
 	if err != nil {
 		t.Fatalf("expected shallow check to succeed, got %v", err)
 	}
@@ -314,12 +412,12 @@ func TestGitIntegrationUnshallowRepository(t *testing.T) {
 		t.Fatal("expected depth-1 clone to be shallow")
 	}
 
-	commits := GetLastLocalGitCommitShas()
+	commits := runner.GetLastLocalGitCommitShas()
 	if len(commits) != 1 {
 		t.Fatalf("expected shallow clone to see one commit before unshallowing, got %v", commits)
 	}
 
-	unshallowed, err := UnshallowGitRepository()
+	unshallowed, err := runner.UnshallowGitRepository()
 	if err != nil {
 		t.Fatalf("expected unshallow to succeed against local origin, got %v", err)
 	}
@@ -327,7 +425,7 @@ func TestGitIntegrationUnshallowRepository(t *testing.T) {
 		t.Fatal("expected shallow clone to be unshallowed")
 	}
 
-	shallow, err = isAShallowCloneRepository()
+	shallow, err = runner.isAShallowCloneRepository()
 	if err != nil {
 		t.Fatalf("expected shallow check after unshallow to succeed, got %v", err)
 	}
@@ -335,12 +433,26 @@ func TestGitIntegrationUnshallowRepository(t *testing.T) {
 		t.Fatal("expected repository not to be shallow after unshallowing")
 	}
 
-	commits = GetLastLocalGitCommitShas()
+	commits = runner.GetLastLocalGitCommitShas()
 	if len(commits) < 3 {
 		t.Fatalf("expected unshallowed clone to see full local history, got %v", commits)
 	}
 	if commits[0] != repo.Commits[2] || commits[1] != repo.Commits[1] || commits[2] != repo.Commits[0] {
 		t.Fatalf("expected latest commits %v, got %v", repo.Commits, commits[:3])
+	}
+	for _, command := range []string{
+		"check_shallow",
+		"get_local_commits",
+		"get_remote_upstream_tracking",
+		"get_head",
+		"unshallow",
+	} {
+		if got := recorder.value("command", CommandType(command)); got == 0 {
+			t.Errorf("expected %s command telemetry", command)
+		}
+		if !recorder.recorded("duration", CommandType(command)) {
+			t.Errorf("expected %s duration telemetry", command)
+		}
 	}
 }
 
@@ -388,7 +500,9 @@ func TestGitIntegrationObjectCollectionAndPackFiles(t *testing.T) {
 	t.Chdir(repo.Path)
 	resetGitPackageState(t)
 
-	objects := getObjectsSha([]string{repo.Commits[1]}, []string{repo.Commits[0]})
+	recorder := newGitTelemetryClient()
+	runner := NewCommandRunner(recorder)
+	objects := runner.getObjectsSha([]string{repo.Commits[1]}, []string{repo.Commits[0]})
 	if len(objects) == 0 {
 		t.Fatal("expected objects for latest commit")
 	}
@@ -398,7 +512,7 @@ func TestGitIntegrationObjectCollectionAndPackFiles(t *testing.T) {
 		}
 	}
 
-	packFiles := CreatePackFiles([]string{repo.Commits[1]}, []string{repo.Commits[0]})
+	packFiles := runner.CreatePackFiles([]string{repo.Commits[1]}, []string{repo.Commits[0]})
 	if len(packFiles) == 0 {
 		t.Fatal("expected pack files")
 	}
@@ -413,6 +527,16 @@ func TestGitIntegrationObjectCollectionAndPackFiles(t *testing.T) {
 		t.Cleanup(func() {
 			_ = os.RemoveAll(filepath.Dir(packFile))
 		})
+	}
+	if got := recorder.value("command", CommandGetObjects); got != 2 {
+		t.Errorf("get_objects command count = %v, want 2", got)
+	}
+	if got := recorder.value("command", CommandPackObjects); got != 1 {
+		t.Errorf("pack_objects command count = %v, want 1", got)
+	}
+	if !recorder.recorded("duration", CommandGetObjects) ||
+		!recorder.recorded("duration", CommandPackObjects) {
+		t.Error("object and pack command durations were not both recorded")
 	}
 }
 

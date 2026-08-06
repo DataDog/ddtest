@@ -8,8 +8,10 @@ package api
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
 const (
@@ -80,20 +82,27 @@ func (c *transport) SendPackFiles(commitSha string, packFiles []string) (bytes i
 			MaxRetries: constants.DefaultMaxRetries,
 			Backoff:    constants.DefaultBackoff,
 		}
+		telemetry.GitRequestsObjectsPack(c.telemetryClient, request.Compressed)
 
+		startTime := time.Now()
 		response, responseErr := c.handler.SendRequest(request)
+		telemetry.GitRequestsObjectsPackMs(c.telemetryClient, time.Since(startTime))
 
 		if responseErr != nil {
+			telemetry.GitRequestsObjectsPackErrors(c.telemetryClient, 0)
 			err = fmt.Errorf("failed to send packfile request: %s", responseErr)
 			return
 		}
 
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			telemetry.GitRequestsObjectsPackErrors(c.telemetryClient, response.StatusCode)
 			err = fmt.Errorf("unexpected response code %d: %s", response.StatusCode, string(response.Body))
 		}
 
 		bytes += int64(len(fileContent))
 	}
+	telemetry.GitRequestsObjectsPackFiles(c.telemetryClient, len(packFiles))
+	telemetry.GitRequestsObjectsPackBytes(c.telemetryClient, bytes)
 
 	return
 }

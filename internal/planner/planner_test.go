@@ -38,6 +38,42 @@ type MockPlatformDetector struct {
 	Err      error
 }
 
+type plannerTelemetryClient struct {
+	mu      sync.Mutex
+	metrics map[string]float64
+}
+
+type plannerTelemetryMetric struct {
+	client *plannerTelemetryClient
+	key    string
+}
+
+func newPlannerTelemetryClient() *plannerTelemetryClient {
+	return &plannerTelemetryClient{metrics: make(map[string]float64)}
+}
+
+func (c *plannerTelemetryClient) Count(name string, tags []string) telemetry.Metric {
+	return &plannerTelemetryMetric{client: c, key: name + "|" + strings.Join(tags, ",")}
+}
+
+func (c *plannerTelemetryClient) Distribution(name string, tags []string) telemetry.Metric {
+	return &plannerTelemetryMetric{client: c, key: name + "|" + strings.Join(tags, ",")}
+}
+
+func (c *plannerTelemetryClient) Flush(context.Context) error { return nil }
+
+func (m *plannerTelemetryMetric) Submit(value float64) {
+	m.client.mu.Lock()
+	defer m.client.mu.Unlock()
+	m.client.metrics[m.key] += value
+}
+
+func (c *plannerTelemetryClient) value(name string, tags ...string) float64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.metrics[name+"|"+strings.Join(tags, ",")]
+}
+
 func (m *MockPlatformDetector) DetectPlatform() (platform.Platform, error) {
 	return m.Platform, m.Err
 }
@@ -1039,6 +1075,8 @@ func TestTestPlanner_PreparePlanningData_RubySuiteModeForceFullDiscovery(t *test
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
+	telemetryClient := newPlannerTelemetryClient()
+	runner.telemetryClient = telemetryClient
 
 	if err := runner.PreparePlanningData(context.Background()); err != nil {
 		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
@@ -1078,6 +1116,15 @@ func TestTestPlanner_PreparePlanningData_RubySuiteModeForceFullDiscovery(t *test
 		report.Planning.Skipping.UnskippableMarkerSuitesForced != 1 ||
 		report.Planning.Skipping.FullySkippedFiles != 1 {
 		t.Errorf("expected full discovery skipping application report, got %+v", report.Planning.Skipping)
+	}
+	if got := telemetryClient.value("itr_skipped", "event_type:suite"); got != 3 {
+		t.Errorf("itr_skipped suite count = %v, want 3", got)
+	}
+	if got := telemetryClient.value("itr_unskippable", "event_type:suite"); got != 0 {
+		t.Errorf("itr_unskippable suite count = %v, want 0", got)
+	}
+	if got := telemetryClient.value("itr_forced_run", "event_type:suite"); got != 0 {
+		t.Errorf("itr_forced_run suite count = %v, want 0", got)
 	}
 }
 
@@ -1314,6 +1361,8 @@ func TestTestPlanner_PreparePlanningData_TestLevelFullDiscoveryKeepsUnskippableM
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
+	telemetryClient := newPlannerTelemetryClient()
+	runner.telemetryClient = telemetryClient
 
 	if err := runner.PreparePlanningData(context.Background()); err != nil {
 		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
@@ -1333,6 +1382,15 @@ func TestTestPlanner_PreparePlanningData_TestLevelFullDiscoveryKeepsUnskippableM
 	unguardedAggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: unguardedTest.Suite}]
 	if unguardedAggregate.NumTests != 1 || unguardedAggregate.NumTestsSkipped != 1 {
 		t.Fatalf("expected unguarded test to remain skipped, got %+v", unguardedAggregate)
+	}
+	if got := telemetryClient.value("itr_skipped", "event_type:test"); got != 2 {
+		t.Errorf("itr_skipped test count = %v, want 2", got)
+	}
+	if got := telemetryClient.value("itr_unskippable", "event_type:test"); got != 0 {
+		t.Errorf("itr_unskippable test count = %v, want 0", got)
+	}
+	if got := telemetryClient.value("itr_forced_run", "event_type:test"); got != 0 {
+		t.Errorf("itr_forced_run test count = %v, want 0", got)
 	}
 }
 

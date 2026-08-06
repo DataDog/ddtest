@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
 const (
@@ -99,11 +101,19 @@ func (c *transport) GetKnownTests() (*KnownTestsResponseData, error) {
 		}
 
 		request := c.getPostRequestConfig(knownTestsURLPath, body)
+		telemetry.KnownTestsRequest(c.telemetryClient, request.Compressed)
+		requestStartTime := time.Now()
 		response, err := c.handler.SendRequest(*request)
+		telemetry.KnownTestsRequestMs(c.telemetryClient, time.Since(requestStartTime))
 
 		if err != nil {
+			telemetry.KnownTestsRequestErrors(c.telemetryClient, 0)
 			return nil, fmt.Errorf("sending known tests request: %s", err)
 		}
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			telemetry.KnownTestsRequestErrors(c.telemetryClient, response.StatusCode)
+		}
+		telemetry.KnownTestsResponseBytes(c.telemetryClient, response.Compressed, len(response.Body))
 		pageCount++
 		if pageCount == 1 {
 			firstRawResponse = cloneRawMessage(response.Body)
@@ -131,6 +141,7 @@ func (c *transport) GetKnownTests() (*KnownTestsResponseData, error) {
 		}
 		cursor = allKnownTests.PageInfo.Cursor
 	}
+	telemetry.KnownTestsResponseTests(c.telemetryClient, knownTestsResponseTestCount(&allKnownTests))
 
 	if pageCount == 1 {
 		c.knownTestsRawResponse = firstRawResponse
@@ -144,6 +155,19 @@ func (c *transport) GetKnownTests() (*KnownTestsResponseData, error) {
 	}
 
 	return &allKnownTests, nil
+}
+
+func knownTestsResponseTestCount(response *KnownTestsResponseData) int {
+	if response == nil {
+		return 0
+	}
+	testCount := 0
+	for _, suites := range response.Tests {
+		for _, tests := range suites {
+			testCount += len(tests)
+		}
+	}
+	return testCount
 }
 
 func mergeKnownTests(dst, src KnownTestsResponseDataModules) {

@@ -166,6 +166,9 @@ func New() *TestPlanner {
 func NewWithTelemetry(telemetryClient telemetry.Client) *TestPlanner {
 	planner := New()
 	planner.telemetryClient = telemetryClient
+	planner.newOptimizationClient = func(testSkippingLevel settings.TestSkippingLevel) testOptimizationClient {
+		return testoptimization.NewTestOptimizationClientWithTelemetry(testSkippingLevel, telemetryClient)
+	}
 	return planner
 }
 
@@ -477,6 +480,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	}
 
 	tp.keepUnskippableMarkerSuitesRunnable(testFramework)
+	tp.recordITRSkippedTelemetry(isSuiteLevelSkipping)
 	tp.suitesBySourceFile = indexSuitesBySourceFile(tp.suiteAggregates)
 	tp.skippablePercentage = calculateSavedTimePercentage(tp.suiteAggregates)
 	tp.testFileWeights = tp.calculateFileWeights()

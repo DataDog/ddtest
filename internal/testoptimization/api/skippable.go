@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
 const (
@@ -119,11 +120,19 @@ func (c *transport) GetSkippableTests() (correlationID string, skippables Skippa
 	}
 
 	request := c.getPostRequestConfig(skippableURLPath, body)
+	telemetry.ITRSkippableTestsRequest(c.telemetryClient, request.Compressed)
+	requestStartTime := time.Now()
 	response, err := c.handler.SendRequest(*request)
+	telemetry.ITRSkippableTestsRequestMs(c.telemetryClient, time.Since(requestStartTime))
 
 	if err != nil {
+		telemetry.ITRSkippableTestsRequestErrors(c.telemetryClient, 0)
 		return "", NewSkippables(), fmt.Errorf("sending skippable tests request: %s", err)
 	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		telemetry.ITRSkippableTestsRequestErrors(c.telemetryClient, response.StatusCode)
+	}
+	telemetry.ITRSkippableTestsResponseBytes(c.telemetryClient, response.Compressed, len(response.Body))
 	c.skippableTestsRawResponse = cloneRawMessage(response.Body)
 
 	var responseObject skippableResponse
@@ -131,6 +140,7 @@ func (c *transport) GetSkippableTests() (correlationID string, skippables Skippa
 	if err != nil {
 		return "", NewSkippables(), fmt.Errorf("unmarshalling skippable tests response: %s", err)
 	}
+	telemetry.ITRSkippableTestsResponseTests(c.telemetryClient, len(responseObject.Data))
 
 	skippables = NewSkippables()
 	warnedMissingTestBundle := false

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
 const (
@@ -99,10 +100,17 @@ func (c *transport) GetSettings() (*SettingsResponseData, error) {
 	}
 
 	request := c.getPostRequestConfig(settingsURLPath, body)
+	telemetry.GitRequestsSettings(c.telemetryClient, request.Compressed)
 
+	requestStartTime := time.Now()
 	response, err := c.handler.SendRequest(*request)
+	telemetry.GitRequestsSettingsMs(c.telemetryClient, time.Since(requestStartTime))
 	if err != nil {
+		telemetry.GitRequestsSettingsErrors(c.telemetryClient, 0)
 		return nil, fmt.Errorf("sending get settings request: %s", err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		telemetry.GitRequestsSettingsErrors(c.telemetryClient, response.StatusCode)
 	}
 
 	slog.Debug("testoptimization.settings", "responseBody", string(response.Body))
@@ -113,6 +121,14 @@ func (c *transport) GetSettings() (*SettingsResponseData, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unmarshalling settings response: %s", err)
 	}
+	settings := &responseObject.Data.Attributes
+	telemetry.GitRequestsSettingsResponse(c.telemetryClient, telemetry.SettingsResponse{
+		CodeCoverageEnabled:        settings.CodeCoverage,
+		ITRSkippingEnabled:         settings.TestsSkipping,
+		EarlyFlakeDetectionEnabled: settings.EarlyFlakeDetection.Enabled,
+		FlakyTestRetriesEnabled:    settings.FlakyTestRetriesEnabled,
+		TestManagementEnabled:      settings.TestManagement.Enabled,
+	})
 
-	return &responseObject.Data.Attributes, nil
+	return settings, nil
 }
