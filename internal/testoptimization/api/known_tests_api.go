@@ -107,13 +107,13 @@ func (c *transport) GetKnownTests() (*KnownTestsResponseData, error) {
 		telemetry.KnownTestsRequestMs(c.telemetryClient, time.Since(requestStartTime))
 
 		if err != nil {
-			telemetry.KnownTestsRequestErrors(c.telemetryClient, 0)
+			telemetry.KnownTestsRequestErrors(c.telemetryClient, responseStatusCode(response))
 			return nil, fmt.Errorf("sending known tests request: %s", err)
 		}
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
 			telemetry.KnownTestsRequestErrors(c.telemetryClient, response.StatusCode)
 		}
-		telemetry.KnownTestsResponseBytes(c.telemetryClient, response.Compressed, len(response.Body))
+		telemetry.KnownTestsResponseBytes(c.telemetryClient, response.Compressed, response.BodySize)
 		pageCount++
 		if pageCount == 1 {
 			firstRawResponse = cloneRawMessage(response.Body)

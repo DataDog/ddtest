@@ -183,6 +183,72 @@ func TestTransportRecordsBackendTelemetry(t *testing.T) {
 	recorder.assertValue(t, "distribution", "git_requests.objects_pack_bytes", nil, 3)
 }
 
+func TestTransportRecordsCompressedResponseWireBytes(t *testing.T) {
+	responseBodies := map[string]string{
+		knownTestsURLPath:          `{"data":{"attributes":{"tests":{"module-a":{"suite-a":["test-a"]}}}}}`,
+		skippableURLPath:           `{"meta":{"correlation_id":"cid"},"data":[{"type":"test","attributes":{"suite":"suite-a","name":"test-a","configurations":{"test.bundle":"module-a"}}}]}`,
+		testManagementTestsURLPath: `{"data":{"attributes":{"modules":{"module-a":{"suites":{"suite-a":{"tests":{"test-a":{"properties":{}}}}}}}}}}`,
+	}
+	compressedBodies := make(map[string][]byte, len(responseBodies))
+	for path, body := range responseBodies {
+		compressed, err := compressData([]byte(body))
+		if err != nil {
+			t.Fatalf("compress %s response: %v", path, err)
+		}
+		compressedBodies[path] = compressed
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		body, ok := compressedBodies[path]
+		if !ok {
+			t.Fatalf("unexpected request path %s", r.URL.Path)
+		}
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
+		w.Header().Set(HeaderContentEncoding, ContentEncodingGzip)
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	recorder := &apiRecordingClient{}
+	client := newRawResponseTestClient(server)
+	client.telemetryClient = recorder
+
+	if _, err := client.GetKnownTests(); err != nil {
+		t.Fatalf("GetKnownTests() error = %v", err)
+	}
+	if _, _, err := client.GetSkippableTests(); err != nil {
+		t.Fatalf("GetSkippableTests() error = %v", err)
+	}
+	if _, err := client.GetTestManagementTests(); err != nil {
+		t.Fatalf("GetTestManagementTests() error = %v", err)
+	}
+
+	tags := []string{"rs_compressed:true"}
+	recorder.assertValue(t, "distribution", "known_tests.response_bytes", tags, float64(len(compressedBodies[knownTestsURLPath])))
+	recorder.assertValue(t, "distribution", "itr_skippable_tests.response_bytes", tags, float64(len(compressedBodies[skippableURLPath])))
+	recorder.assertValue(t, "distribution", "test_management_tests.response_bytes", tags, float64(len(compressedBodies[testManagementTestsURLPath])))
+}
+
+func TestTransportRecordsTerminalRetryStatusAndFailedSearchCommitsLatency(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	recorder := &apiRecordingClient{}
+	client := newRawResponseTestClient(server)
+	client.telemetryClient = recorder
+
+	if _, err := client.GetCommits([]string{"local-commit"}); err == nil {
+		t.Fatal("GetCommits() should fail after exhausting retries")
+	}
+
+	recorder.assertValue(t, "count", "git_requests.search_commits_errors", []string{"error_type:status_code_5xx_response"}, 1)
+	recorder.assertSamples(t, "count", "git_requests.search_commits_errors", []string{"error_type:network"}, 0)
+	recorder.assertSamples(t, "distribution", "git_requests.search_commits_ms", nil, 1)
+}
+
 func TestTransportRecordsBackendStatusErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)

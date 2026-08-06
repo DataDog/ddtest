@@ -47,6 +47,12 @@ func TestResponseUnmarshalBranches(t *testing.T) {
 	if err := (&Response{CanUnmarshal: true, Format: FormatMessagePack}).Unmarshal(&failingMsgpUnmarshaler{}); err == nil {
 		t.Fatal("expected msgpack unmarshal error")
 	}
+	if got := responseStatusCode(nil); got != 0 {
+		t.Fatalf("nil response status code = %d, want 0", got)
+	}
+	if got := responseStatusCode(&Response{StatusCode: http.StatusTeapot}); got != http.StatusTeapot {
+		t.Fatalf("response status code = %d, want %d", got, http.StatusTeapot)
+	}
 }
 
 func TestRequestHandlerValidationAndRetryBranches(t *testing.T) {
@@ -84,6 +90,11 @@ func TestRequestHandlerValidationAndRetryBranches(t *testing.T) {
 }
 
 func TestRequestHandlerJSONCompressionAndGzipResponse(t *testing.T) {
+	var encodedResponse bytes.Buffer
+	gzipWriter := gzip.NewWriter(&encodedResponse)
+	_, _ = gzipWriter.Write([]byte(`{"ok":"yes"}`))
+	_ = gzipWriter.Close()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("X-Test"); got != "custom" {
 			t.Fatalf("expected custom header, got %q", got)
@@ -115,14 +126,9 @@ func TestRequestHandlerJSONCompressionAndGzipResponse(t *testing.T) {
 			t.Fatalf("unexpected request body: %#v", request)
 		}
 
-		var response bytes.Buffer
-		gzipWriter := gzip.NewWriter(&response)
-		_, _ = gzipWriter.Write([]byte(`{"ok":"yes"}`))
-		_ = gzipWriter.Close()
-
 		w.Header().Set(HeaderContentType, ContentTypeJSONAlternative)
 		w.Header().Set(HeaderContentEncoding, ContentEncodingGzip)
-		_, _ = w.Write(response.Bytes())
+		_, _ = w.Write(encodedResponse.Bytes())
 	}))
 	defer server.Close()
 
@@ -139,6 +145,9 @@ func TestRequestHandlerJSONCompressionAndGzipResponse(t *testing.T) {
 	}
 	if !response.Compressed || response.Format != constants.FormatJSON {
 		t.Fatalf("unexpected response metadata: %#v", response)
+	}
+	if response.BodySize != encodedResponse.Len() {
+		t.Fatalf("response body size = %d, want compressed size %d", response.BodySize, encodedResponse.Len())
 	}
 	var decoded map[string]string
 	if err := response.Unmarshal(&decoded); err != nil {
@@ -217,8 +226,8 @@ func TestRequestHandlerStatusRetryAndRateLimitBranches(t *testing.T) {
 			MaxRetries: 1,
 			Backoff:    time.Nanosecond,
 		})
-		if err == nil || response != nil {
-			t.Fatalf("expected retry exhaustion, got response=%v err=%v", response, err)
+		if err == nil || response == nil || response.StatusCode != http.StatusInternalServerError {
+			t.Fatalf("expected retry exhaustion with status %d, got response=%v err=%v", http.StatusInternalServerError, response, err)
 		}
 		if attempts != 2 {
 			t.Fatalf("expected 2 attempts, got %d", attempts)
@@ -240,8 +249,8 @@ func TestRequestHandlerStatusRetryAndRateLimitBranches(t *testing.T) {
 			MaxRetries: 1,
 			Backoff:    time.Nanosecond,
 		})
-		if err == nil || response != nil {
-			t.Fatalf("expected rate-limit retry exhaustion, got response=%v err=%v", response, err)
+		if err == nil || response == nil || response.StatusCode != HTTPStatusTooManyRequests {
+			t.Fatalf("expected rate-limit retry exhaustion with status %d, got response=%v err=%v", HTTPStatusTooManyRequests, response, err)
 		}
 		if attempts != 2 {
 			t.Fatalf("expected 2 attempts, got %d", attempts)
@@ -260,8 +269,8 @@ func TestRequestHandlerStatusRetryAndRateLimitBranches(t *testing.T) {
 			MaxRetries: 0,
 			Backoff:    time.Nanosecond,
 		})
-		if err == nil || response != nil {
-			t.Fatalf("expected rate-limit fallback exhaustion, got response=%v err=%v", response, err)
+		if err == nil || response == nil || response.StatusCode != HTTPStatusTooManyRequests {
+			t.Fatalf("expected rate-limit fallback exhaustion with status %d, got response=%v err=%v", HTTPStatusTooManyRequests, response, err)
 		}
 	})
 }

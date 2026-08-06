@@ -54,11 +54,12 @@ func (c *transport) GetCommits(localCommits []string) ([]string, error) {
 	telemetry.GitRequestsSearchCommits(c.telemetryClient, request.Compressed)
 	startTime := time.Now()
 	response, err := c.handler.SendRequest(*request)
+	responseCompressed := response != nil && response.Compressed
+	telemetry.GitRequestsSearchCommitsMs(c.telemetryClient, responseCompressed, time.Since(startTime))
 	if err != nil {
-		telemetry.GitRequestsSearchCommitsErrors(c.telemetryClient, 0)
+		telemetry.GitRequestsSearchCommitsErrors(c.telemetryClient, responseStatusCode(response))
 		return nil, fmt.Errorf("sending search commits request: %s", err.Error())
 	}
-	telemetry.GitRequestsSearchCommitsMs(c.telemetryClient, response.Compressed, time.Since(startTime))
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		telemetry.GitRequestsSearchCommitsErrors(c.telemetryClient, response.StatusCode)
 	}

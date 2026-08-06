@@ -110,13 +110,13 @@ func (c *transport) GetTestManagementTests() (*TestManagementTestsResponseDataMo
 	telemetry.TestManagementTestsRequestMs(c.telemetryClient, time.Since(requestStartTime))
 
 	if err != nil {
-		telemetry.TestManagementTestsRequestErrors(c.telemetryClient, 0)
+		telemetry.TestManagementTestsRequestErrors(c.telemetryClient, responseStatusCode(response))
 		return nil, fmt.Errorf("sending test management tests request: %s", err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		telemetry.TestManagementTestsRequestErrors(c.telemetryClient, response.StatusCode)
 	}
-	telemetry.TestManagementTestsResponseBytes(c.telemetryClient, response.Compressed, len(response.Body))
+	telemetry.TestManagementTestsResponseBytes(c.telemetryClient, response.Compressed, response.BodySize)
 	c.testManagementTestsRawResponse = cloneRawMessage(response.Body)
 
 	var responseObject testManagementTestsResponse

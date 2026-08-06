@@ -126,13 +126,13 @@ func (c *transport) GetSkippableTests() (correlationID string, skippables Skippa
 	telemetry.ITRSkippableTestsRequestMs(c.telemetryClient, time.Since(requestStartTime))
 
 	if err != nil {
-		telemetry.ITRSkippableTestsRequestErrors(c.telemetryClient, 0)
+		telemetry.ITRSkippableTestsRequestErrors(c.telemetryClient, responseStatusCode(response))
 		return "", NewSkippables(), fmt.Errorf("sending skippable tests request: %s", err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		telemetry.ITRSkippableTestsRequestErrors(c.telemetryClient, response.StatusCode)
 	}
-	telemetry.ITRSkippableTestsResponseBytes(c.telemetryClient, response.Compressed, len(response.Body))
+	telemetry.ITRSkippableTestsResponseBytes(c.telemetryClient, response.Compressed, response.BodySize)
 	c.skippableTestsRawResponse = cloneRawMessage(response.Body)
 
 	var responseObject skippableResponse

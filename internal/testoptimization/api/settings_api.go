@@ -106,7 +106,7 @@ func (c *transport) GetSettings() (*SettingsResponseData, error) {
 	response, err := c.handler.SendRequest(*request)
 	telemetry.GitRequestsSettingsMs(c.telemetryClient, time.Since(requestStartTime))
 	if err != nil {
-		telemetry.GitRequestsSettingsErrors(c.telemetryClient, 0)
+		telemetry.GitRequestsSettingsErrors(c.telemetryClient, responseStatusCode(response))
 		return nil, fmt.Errorf("sending get settings request: %s", err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {

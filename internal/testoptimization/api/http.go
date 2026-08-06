@@ -61,11 +61,19 @@ type RequestConfig struct {
 
 // Response represents the HTTP response with deserialization capabilities and status code.
 type Response struct {
-	Body         []byte // Response body in raw format
+	Body         []byte // Response body, decompressed when gzip encoded
+	BodySize     int    // Response body size before decompression
 	Format       string // Format of the response (json or msgpack)
 	StatusCode   int    // HTTP status code
 	CanUnmarshal bool   // Whether the response body can be unmarshalled
 	Compressed   bool   // Whether to use gzip compression
+}
+
+func responseStatusCode(response *Response) int {
+	if response == nil {
+		return 0
+	}
+	return response.StatusCode
 }
 
 // Unmarshal deserializes the response body into the provided target based on the response format.
@@ -129,14 +137,16 @@ func (rh *RequestHandler) SendRequest(config RequestConfig) (*Response, error) {
 		return nil, errors.New("URL is required")
 	}
 
+	var response *Response
 	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
 		stopRetries, rs, err := rh.internalSendRequest(&config, attempt)
+		response = rs
 		if stopRetries {
 			return rs, err
 		}
 	}
 
-	return nil, errors.New("max retries exceeded")
+	return response, errors.New("max retries exceeded")
 }
 
 func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int) (stopRetries bool, response *Response, requestError error) {
@@ -233,6 +243,10 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 
 	// Capture the status code
 	statusCode := resp.StatusCode
+	retryResponse := &Response{
+		StatusCode: statusCode,
+		Compressed: resp.Header.Get(HeaderContentEncoding) == ContentEncodingGzip,
+	}
 
 	// Check for rate-limiting (HTTP 429)
 	if resp.StatusCode == HTTPStatusTooManyRequests {
@@ -252,13 +266,13 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 				if waitDuration > 0 {
 					time.Sleep(waitDuration)
 				}
-				return false, nil, nil
+				return false, retryResponse, nil
 			}
 		}
 
 		// Fallback to exponential backoff if header is missing or invalid
 		exponentialBackoff(attempt, config.Backoff)
-		return false, nil, nil
+		return false, retryResponse, nil
 	}
 
 	// Check status code for retries
@@ -266,13 +280,14 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 		// Retry if the status code is >= 406
 		slog.Debug("ciVisibilityHttpClient: response status code", "statusCode", resp.StatusCode)
 		exponentialBackoff(attempt, config.Backoff)
-		return false, nil, nil
+		return false, retryResponse, nil
 	}
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return true, nil, err
 	}
+	responseBodySize := len(responseBody)
 
 	// Decompress response if it is gzip compressed
 	compressedResponse := false
@@ -299,7 +314,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 	canUnmarshal := statusCode >= 200 && statusCode < 300
 
 	// Return the successful response with status code and unmarshal capability
-	return true, &Response{Body: responseBody, Format: responseFormat, StatusCode: statusCode, CanUnmarshal: canUnmarshal, Compressed: compressedResponse}, nil
+	return true, &Response{Body: responseBody, BodySize: responseBodySize, Format: responseFormat, StatusCode: statusCode, CanUnmarshal: canUnmarshal, Compressed: compressedResponse}, nil
 }
 
 // Helper functions for data serialization, compression, and handling multipart form data

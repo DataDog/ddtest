@@ -89,7 +89,7 @@ func (c *transport) SendPackFiles(commitSha string, packFiles []string) (bytes i
 		telemetry.GitRequestsObjectsPackMs(c.telemetryClient, time.Since(startTime))
 
 		if responseErr != nil {
-			telemetry.GitRequestsObjectsPackErrors(c.telemetryClient, 0)
+			telemetry.GitRequestsObjectsPackErrors(c.telemetryClient, responseStatusCode(response))
 			err = fmt.Errorf("failed to send packfile request: %s", responseErr)
 			return
 		}
