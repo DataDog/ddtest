@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 type receivedRequest struct {
@@ -46,19 +48,40 @@ type wireMessage struct {
 func clientForTest(t *testing.T, endpoint string, httpClient *http.Client) *client {
 	t.Helper()
 
-	telemetryClient, err := NewClient(Config{
-		Endpoint:       endpoint,
-		APIKey:         "api-key",
+	parsedEndpoint, err := parseEndpoint(endpoint)
+	if err != nil {
+		t.Fatalf("parseEndpoint() error = %v", err)
+	}
+	telemetryClient, err := newClient(Config{
 		ServiceName:    "test-service",
 		Environment:    "ci",
 		LibraryVersion: "1.2.3",
-		RuntimeID:      "runtime-id",
-		HTTPClient:     httpClient,
+	}, destination{
+		endpoint:   parsedEndpoint,
+		apiKey:     "api-key",
+		httpClient: httpClient,
 	})
 	if err != nil {
-		t.Fatalf("NewClient() error = %v", err)
+		t.Fatalf("newClient() error = %v", err)
 	}
-	return telemetryClient.(*client)
+	client := telemetryClient.(*client)
+	client.sender.body.RuntimeID = "runtime-id"
+	return client
+}
+
+func clearDestinationEnvironment(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		constants.TestOptimizationAgentlessEnabledEnvironmentVariable,
+		constants.TestOptimizationAgentlessURLEnvironmentVariable,
+		constants.APIKeyEnvironmentVariable,
+		"DD_SITE",
+		"DD_TRACE_AGENT_URL",
+		"DD_AGENT_HOST",
+		"DD_TRACE_AGENT_PORT",
+	} {
+		t.Setenv(name, "")
+	}
 }
 
 func decodeWireBody(t *testing.T, encoded []byte) wireBody {
@@ -72,6 +95,7 @@ func decodeWireBody(t *testing.T, encoded []byte) wireBody {
 }
 
 func TestNewClientValidation(t *testing.T) {
+	clearDestinationEnvironment(t)
 	tests := []struct {
 		name    string
 		config  Config
@@ -80,7 +104,6 @@ func TestNewClientValidation(t *testing.T) {
 		{
 			name: "valid",
 			config: Config{
-				Endpoint:       "https://example.com/api/v2/apmtelemetry",
 				ServiceName:    "ddtest",
 				LibraryVersion: "1.0.0",
 			},
@@ -88,7 +111,6 @@ func TestNewClientValidation(t *testing.T) {
 		{
 			name: "missing service name",
 			config: Config{
-				Endpoint:       "https://example.com/api/v2/apmtelemetry",
 				LibraryVersion: "1.0.0",
 			},
 			wantErr: "service name must not be empty",
@@ -96,37 +118,9 @@ func TestNewClientValidation(t *testing.T) {
 		{
 			name: "missing library version",
 			config: Config{
-				Endpoint:    "https://example.com/api/v2/apmtelemetry",
 				ServiceName: "ddtest",
 			},
 			wantErr: "library version must not be empty",
-		},
-		{
-			name: "invalid endpoint",
-			config: Config{
-				Endpoint:       "://bad",
-				ServiceName:    "ddtest",
-				LibraryVersion: "1.0.0",
-			},
-			wantErr: "invalid endpoint",
-		},
-		{
-			name: "unsupported endpoint scheme",
-			config: Config{
-				Endpoint:       "ftp://example.com/telemetry",
-				ServiceName:    "ddtest",
-				LibraryVersion: "1.0.0",
-			},
-			wantErr: "endpoint must use http or https",
-		},
-		{
-			name: "missing endpoint host",
-			config: Config{
-				Endpoint:       "http:///telemetry",
-				ServiceName:    "ddtest",
-				LibraryVersion: "1.0.0",
-			},
-			wantErr: "endpoint host must not be empty",
 		},
 	}
 
@@ -144,6 +138,142 @@ func TestNewClientValidation(t *testing.T) {
 			}
 			if err == nil || !regexp.MustCompile(regexp.QuoteMeta(test.wantErr)).MatchString(err.Error()) {
 				t.Fatalf("NewClient() error = %v, want error containing %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestResolveDestinationAgentless(t *testing.T) {
+	t.Run("standard intake", func(t *testing.T) {
+		clearDestinationEnvironment(t)
+		t.Setenv(constants.TestOptimizationAgentlessEnabledEnvironmentVariable, "true")
+		t.Setenv(constants.APIKeyEnvironmentVariable, "api-key")
+		t.Setenv("DD_SITE", "datadoghq.eu")
+
+		destination, err := resolveDestination()
+		if err != nil {
+			t.Fatalf("resolveDestination() error = %v", err)
+		}
+		want := "https://instrumentation-telemetry-intake.datadoghq.eu/api/v2/apmtelemetry"
+		if destination.endpoint.String() != want || destination.apiKey != "api-key" {
+			t.Fatalf("destination = %#v, want endpoint %q and API key", destination, want)
+		}
+		if destination.httpClient == nil || destination.httpClient.Timeout != telemetryHTTPTimeout {
+			t.Fatalf("unexpected HTTP client: %#v", destination.httpClient)
+		}
+	})
+
+	t.Run("CI Visibility test intake", func(t *testing.T) {
+		clearDestinationEnvironment(t)
+		t.Setenv(constants.TestOptimizationAgentlessEnabledEnvironmentVariable, "true")
+		t.Setenv(constants.APIKeyEnvironmentVariable, "api-key")
+		t.Setenv(constants.TestOptimizationAgentlessURLEnvironmentVariable, "https://tests.example/intake")
+
+		destination, err := resolveDestination()
+		if err != nil {
+			t.Fatalf("resolveDestination() error = %v", err)
+		}
+		want := "https://tests.example/intake/api/v2/apmtelemetry"
+		if destination.endpoint.String() != want {
+			t.Fatalf("endpoint = %q, want %q", destination.endpoint, want)
+		}
+	})
+
+	t.Run("missing API key", func(t *testing.T) {
+		clearDestinationEnvironment(t)
+		t.Setenv(constants.TestOptimizationAgentlessEnabledEnvironmentVariable, "true")
+
+		_, err := resolveDestination()
+		if err == nil || !strings.Contains(err.Error(), "API key must not be empty") {
+			t.Fatalf("resolveDestination() error = %v, want missing API key error", err)
+		}
+	})
+
+	t.Run("invalid CI Visibility test intake", func(t *testing.T) {
+		clearDestinationEnvironment(t)
+		t.Setenv(constants.TestOptimizationAgentlessEnabledEnvironmentVariable, "true")
+		t.Setenv(constants.APIKeyEnvironmentVariable, "api-key")
+		t.Setenv(constants.TestOptimizationAgentlessURLEnvironmentVariable, "://bad")
+
+		_, err := resolveDestination()
+		if err == nil {
+			t.Fatal("resolveDestination() error = nil, want invalid URL error")
+		}
+	})
+}
+
+func TestResolveDestinationAgent(t *testing.T) {
+	t.Run("explicit HTTP URL", func(t *testing.T) {
+		clearDestinationEnvironment(t)
+		t.Setenv("DD_TRACE_AGENT_URL", "https://agent.example:9126")
+
+		destination, err := resolveDestination()
+		if err != nil {
+			t.Fatalf("resolveDestination() error = %v", err)
+		}
+		want := "https://agent.example:9126/telemetry/proxy/api/v2/apmtelemetry"
+		if destination.endpoint.String() != want || destination.apiKey != "" {
+			t.Fatalf("destination = %#v, want endpoint %q without API key", destination, want)
+		}
+		if destination.httpClient == nil || destination.httpClient.Timeout != telemetryHTTPTimeout {
+			t.Fatalf("unexpected HTTP client: %#v", destination.httpClient)
+		}
+	})
+
+	t.Run("host and port", func(t *testing.T) {
+		clearDestinationEnvironment(t)
+		t.Setenv("DD_AGENT_HOST", "agent.internal")
+		t.Setenv("DD_TRACE_AGENT_PORT", "8127")
+
+		destination, err := resolveDestination()
+		if err != nil {
+			t.Fatalf("resolveDestination() error = %v", err)
+		}
+		want := "http://agent.internal:8127/telemetry/proxy/api/v2/apmtelemetry"
+		if destination.endpoint.String() != want {
+			t.Fatalf("endpoint = %q, want %q", destination.endpoint, want)
+		}
+	})
+
+	t.Run("Unix socket", func(t *testing.T) {
+		clearDestinationEnvironment(t)
+		t.Setenv("DD_TRACE_AGENT_URL", "unix:///tmp/ddtest-apm.socket")
+
+		destination, err := resolveDestination()
+		if err != nil {
+			t.Fatalf("resolveDestination() error = %v", err)
+		}
+		want := "http://UDS__tmp_ddtest-apm.socket/telemetry/proxy/api/v2/apmtelemetry"
+		if destination.endpoint.String() != want {
+			t.Fatalf("endpoint = %q, want %q", destination.endpoint, want)
+		}
+		if _, ok := destination.httpClient.Transport.(*http.Transport); !ok {
+			t.Fatalf("HTTP transport = %T, want *http.Transport", destination.httpClient.Transport)
+		}
+	})
+}
+
+func TestParseEndpointValidation(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		value   string
+		wantErr string
+	}{
+		{name: "valid", value: "https://example.com/api/v2/apmtelemetry"},
+		{name: "invalid", value: "://bad", wantErr: "parse endpoint"},
+		{name: "unsupported scheme", value: "ftp://example.com/telemetry", wantErr: "must use HTTP(S)"},
+		{name: "missing host", value: "http:///telemetry", wantErr: "host must not be empty"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			endpoint, err := parseEndpoint(test.value)
+			if test.wantErr == "" {
+				if err != nil || endpoint.String() != test.value {
+					t.Fatalf("parseEndpoint() = %v, %v, want %q, nil", endpoint, err, test.value)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("parseEndpoint() error = %v, want error containing %q", err, test.wantErr)
 			}
 		})
 	}

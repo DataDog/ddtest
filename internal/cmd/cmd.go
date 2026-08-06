@@ -4,15 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
-	"time"
 
 	"github.com/DataDog/ddtest/internal/buildinfo"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/git"
-	"github.com/DataDog/ddtest/internal/httptransport"
 	"github.com/DataDog/ddtest/internal/planner"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/runner"
@@ -20,12 +17,6 @@ import (
 	"github.com/DataDog/ddtest/internal/telemetry"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-)
-
-const (
-	telemetryAPIPath     = "/api/v2/apmtelemetry"
-	telemetryAgentPath   = "/telemetry/proxy/api/v2/apmtelemetry"
-	telemetryHTTPTimeout = 5 * time.Second
 )
 
 // defaultParallelism stores the computed default at init time for CLI flags
@@ -162,37 +153,11 @@ func runTestCommand(cmd *cobra.Command, args []string) {
 }
 
 func createTelemetryClient() (telemetry.Client, error) {
-	connection, err := httptransport.ResolveDatadogConnection()
-	if err != nil {
-		return nil, err
-	}
-
-	var endpoint, apiKey string
-	httpClient := httptransport.NewHTTPClient(telemetryHTTPTimeout)
-	if connection.Agentless {
-		baseURL := connection.AgentlessURL
-		if baseURL == "" {
-			baseURL = fmt.Sprintf("https://instrumentation-telemetry-intake.%s", connection.Site)
-		}
-		apiKey = connection.APIKey
-		endpoint, err = url.JoinPath(baseURL, telemetryAPIPath)
-	} else {
-		agentURL, agentHTTPClient := httptransport.AgentHTTPTransport(connection.AgentURL, telemetryHTTPTimeout)
-		httpClient = agentHTTPClient
-		endpoint, err = url.JoinPath(agentURL.String(), telemetryAgentPath)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("create telemetry endpoint: %w", err)
-	}
-
 	ciTags := environment.GetCITags()
 	return telemetry.NewClient(telemetry.Config{
-		Endpoint:       endpoint,
-		APIKey:         apiKey,
 		ServiceName:    runmetadata.New(ciTags).Service,
 		Environment:    os.Getenv("DD_ENV"),
 		LibraryVersion: buildinfo.CurrentVersion(),
-		HTTPClient:     httpClient,
 	})
 }
 
@@ -204,9 +169,7 @@ func runWithTelemetry(ctx context.Context, operation func(telemetry.Client) erro
 	}
 
 	operationErr := operation(telemetryClient)
-	flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), telemetryHTTPTimeout)
-	defer cancel()
-	if err := telemetryClient.Flush(flushCtx); err != nil {
+	if err := telemetryClient.Flush(context.WithoutCancel(ctx)); err != nil {
 		slog.Debug("Failed to flush telemetry metrics", "error", err)
 	}
 	return operationErr

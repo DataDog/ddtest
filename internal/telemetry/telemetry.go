@@ -13,9 +13,6 @@ package telemetry
 import (
 	"context"
 	"errors"
-	"fmt"
-	"net/http"
-	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -45,16 +42,13 @@ type Client interface {
 	Flush(ctx context.Context) error
 }
 
-// Config describes the destination and application metadata attached to every
-// telemetry request.
+// Config describes the application metadata attached to every telemetry
+// request. NewClient resolves the destination from ddtest's standard Datadog
+// Agent/agentless configuration.
 type Config struct {
-	Endpoint       string
-	APIKey         string
 	ServiceName    string
 	Environment    string
 	LibraryVersion string
-	RuntimeID      string
-	HTTPClient     *http.Client
 }
 
 type metricKind uint8
@@ -125,24 +119,28 @@ func NoopClient() Client {
 
 // NewClient creates a metrics-only telemetry client.
 func NewClient(config Config) (Client, error) {
+	if err := validateConfig(config); err != nil {
+		return nil, err
+	}
+	destination, err := resolveDestination()
+	if err != nil {
+		return nil, err
+	}
+	return newClient(config, destination)
+}
+
+func validateConfig(config Config) error {
 	if config.ServiceName == "" {
-		return nil, errors.New("telemetry: service name must not be empty")
+		return errors.New("telemetry: service name must not be empty")
 	}
 	if config.LibraryVersion == "" {
-		return nil, errors.New("telemetry: library version must not be empty")
+		return errors.New("telemetry: library version must not be empty")
 	}
-	endpoint, err := url.Parse(config.Endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("telemetry: invalid endpoint: %w", err)
-	}
-	if endpoint.Scheme != "http" && endpoint.Scheme != "https" {
-		return nil, errors.New("telemetry: endpoint must use http or https")
-	}
-	if endpoint.Host == "" {
-		return nil, errors.New("telemetry: endpoint host must not be empty")
-	}
+	return nil
+}
 
-	telemetrySender, err := newSender(config, endpoint)
+func newClient(config Config, destination destination) (Client, error) {
+	telemetrySender, err := newSender(config, destination)
 	if err != nil {
 		return nil, err
 	}

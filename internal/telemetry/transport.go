@@ -22,12 +22,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/httptransport"
 	"github.com/DataDog/ddtest/internal/utils/osinfo"
 )
 
 const (
 	apiVersion              = "v2"
 	languageName            = "ddtest"
+	telemetryAPIPath        = "/api/v2/apmtelemetry"
+	telemetryAgentPath      = "/telemetry/proxy/api/v2/apmtelemetry"
+	telemetryHTTPTimeout    = 5 * time.Second
 	requestTypeMetrics      = "generate-metrics"
 	requestTypeDistribution = "distributions"
 	requestTypeMessageBatch = "message-batch"
@@ -181,28 +185,75 @@ type sender struct {
 	requestTime func() time.Time
 }
 
-func newSender(config Config, endpoint *url.URL) (*sender, error) {
-	runtimeID := config.RuntimeID
-	if runtimeID == "" {
-		var err error
-		runtimeID, err = newRuntimeID()
-		if err != nil {
-			return nil, fmt.Errorf("telemetry: create runtime ID: %w", err)
+type destination struct {
+	endpoint   *url.URL
+	apiKey     string
+	httpClient *http.Client
+}
+
+func resolveDestination() (destination, error) {
+	connection, err := httptransport.ResolveDatadogConnection()
+	if err != nil {
+		return destination{}, err
+	}
+
+	httpClient := httptransport.NewHTTPClient(telemetryHTTPTimeout)
+	if connection.Agentless {
+		baseURL := connection.AgentlessURL
+		if baseURL == "" {
+			baseURL = fmt.Sprintf("https://instrumentation-telemetry-intake.%s", connection.Site)
 		}
+		endpoint, err := url.JoinPath(baseURL, telemetryAPIPath)
+		if err != nil {
+			return destination{}, fmt.Errorf("telemetry: create agentless endpoint: %w", err)
+		}
+		parsedEndpoint, err := parseEndpoint(endpoint)
+		if err != nil {
+			return destination{}, err
+		}
+		return destination{endpoint: parsedEndpoint, apiKey: connection.APIKey, httpClient: httpClient}, nil
+	}
+
+	agentURL, httpClient := httptransport.AgentHTTPTransport(connection.AgentURL, telemetryHTTPTimeout)
+	endpoint, err := url.JoinPath(agentURL.String(), telemetryAgentPath)
+	if err != nil {
+		return destination{}, fmt.Errorf("telemetry: create Agent endpoint: %w", err)
+	}
+	parsedEndpoint, err := parseEndpoint(endpoint)
+	if err != nil {
+		return destination{}, err
+	}
+	return destination{endpoint: parsedEndpoint, httpClient: httpClient}, nil
+}
+
+func parseEndpoint(value string) (*url.URL, error) {
+	endpoint, err := url.Parse(value)
+	if err != nil {
+		return nil, fmt.Errorf("telemetry: parse endpoint: %w", err)
+	}
+	if endpoint.Scheme != "http" && endpoint.Scheme != "https" {
+		return nil, fmt.Errorf("telemetry: endpoint must use HTTP(S): %q", value)
+	}
+	if endpoint.Host == "" {
+		return nil, fmt.Errorf("telemetry: endpoint host must not be empty: %q", value)
+	}
+	return endpoint, nil
+}
+
+func newSender(config Config, destination destination) (*sender, error) {
+	runtimeID, err := newRuntimeID()
+	if err != nil {
+		return nil, fmt.Errorf("telemetry: create runtime ID: %w", err)
 	}
 
 	hostname, err := os.Hostname()
 	if err != nil || hostname == "" {
 		hostname = "unknown"
 	}
-	httpClient := config.HTTPClient
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 5 * time.Second}
-	}
 	return &sender{
-		endpoint:    endpoint,
-		apiKey:      config.APIKey,
-		httpClient:  httpClient,
+		endpoint:    destination.endpoint,
+		apiKey:      destination.apiKey,
+		httpClient:  destination.httpClient,
 		requestTime: time.Now,
 		body: body{
 			APIVersion: apiVersion,
