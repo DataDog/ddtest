@@ -1,6 +1,7 @@
 package testoptimization
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -39,6 +40,7 @@ type TestOptimizationClient struct {
 	gitCommands               *git.CommandRunner
 	repositoryChangesUploader func() (int64, error)
 	enableSignalHandler       bool
+	telemetryClient           telemetry.Client
 
 	initializationOnce   sync.Once
 	settingsOnce         sync.Once
@@ -64,11 +66,15 @@ func NewTestOptimizationClientWithTestSkippingLevel(testSkippingLevel settings.T
 // NewTestOptimizationClientWithTelemetry creates a Test Optimization client
 // whose backend transport reports internal metrics through telemetryClient.
 func NewTestOptimizationClientWithTelemetry(testSkippingLevel settings.TestSkippingLevel, telemetryClient telemetry.Client) *TestOptimizationClient {
+	if telemetryClient == nil {
+		telemetryClient = telemetry.NoopClient()
+	}
 	newAPITransport := func(serviceName string, level settings.TestSkippingLevel) api.Transport {
 		return api.NewTransportWithTelemetry(serviceName, level, telemetryClient)
 	}
 	client := newTestOptimizationClientWithTestSkippingLevel(nil, newAPITransport, nil, true, testSkippingLevel)
 	client.gitCommands = git.NewCommandRunner(telemetry.NewGitCommandTelemetry(telemetryClient))
+	client.telemetryClient = telemetryClient
 	return client
 }
 
@@ -109,6 +115,7 @@ func newTestOptimizationClientWithTestSkippingLevel(
 		gitCommands:               git.NewCommandRunner(nil),
 		repositoryChangesUploader: repositoryChangesUploader,
 		enableSignalHandler:       enableSignalHandler,
+		telemetryClient:           telemetry.NoopClient(),
 		testSkippingLevel:         testSkippingLevel,
 	}
 }
@@ -430,9 +437,16 @@ func (c *TestOptimizationClient) registerSignalHandler() {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
-		c.StoreCacheAndExit()
+		c.handleSignal()
 		os.Exit(1)
 	}()
+}
+
+func (c *TestOptimizationClient) handleSignal() {
+	c.StoreCacheAndExit()
+	if err := c.telemetryClient.Flush(context.Background()); err != nil {
+		slog.Debug("Failed to flush telemetry metrics during shutdown", "error", err)
+	}
 }
 
 func (c *TestOptimizationClient) uploadRepositoryChangesAsync() chan struct{} {
