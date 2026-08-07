@@ -184,6 +184,7 @@ func TestTransportRecordsBackendTelemetry(t *testing.T) {
 	recorder.assertValue(t, "distribution", "itr_skippable_tests.response_bytes", nil, float64(len(skippableBody)))
 	recorder.assertValue(t, "count", "itr_skippable_tests.response_tests", nil, 2)
 	recorder.assertSamples(t, "count", "itr_skippable_tests.response_suites", nil, 0)
+	recorder.assertSamples(t, "count", "itr_skippable_tests.is_empty", nil, 0)
 	recorder.assertValue(t, "count", "test_management_tests.request", nil, 1)
 	recorder.assertSamples(t, "distribution", "test_management_tests.request_ms", nil, 1)
 	recorder.assertValue(t, "distribution", "test_management_tests.response_bytes", nil, float64(len(testManagementBody)))
@@ -218,6 +219,28 @@ func TestTransportRecordsSuiteOnlySkippableResponse(t *testing.T) {
 
 	recorder.assertValue(t, "count", "itr_skippable_tests.response_suites", nil, 1)
 	recorder.assertSamples(t, "count", "itr_skippable_tests.response_tests", nil, 0)
+	recorder.assertSamples(t, "count", "itr_skippable_tests.is_empty", nil, 0)
+}
+
+func TestTransportRecordsEmptySkippableResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
+		_, _ = io.WriteString(w, `{"meta":{"correlation_id":"cid"},"data":[]}`)
+	}))
+	defer server.Close()
+
+	recorder := &apiRecordingClient{}
+	client := newRawResponseTestClient(server)
+	client.telemetryClient = recorder
+
+	if _, skippables, err := client.GetSkippableTests(); err != nil {
+		t.Fatalf("GetSkippableTests() error = %v", err)
+	} else if len(skippables.Tests) != 0 || len(skippables.Suites) != 0 {
+		t.Fatalf("GetSkippableTests() = %#v, want no skippables", skippables)
+	}
+
+	recorder.assertValue(t, "count", "itr_skippable_tests.response_tests", nil, 0)
+	recorder.assertValue(t, "count", "itr_skippable_tests.is_empty", nil, 1)
 }
 
 func TestTransportRecordsCompressedResponseWireBytes(t *testing.T) {
@@ -369,6 +392,7 @@ func TestTransportRecordsBackendStatusErrors(t *testing.T) {
 	} {
 		recorder.assertValue(t, "count", name, tags, 1)
 	}
+	recorder.assertSamples(t, "count", "itr_skippable_tests.is_empty", nil, 0)
 }
 
 func TestNewTransportWithTelemetryRetainsClient(t *testing.T) {
