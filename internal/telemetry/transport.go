@@ -117,7 +117,8 @@ type distributionSeries struct {
 }
 
 type distributions struct {
-	Series []distributionSeries `json:"series"`
+	Namespace string               `json:"namespace"`
+	Series    []distributionSeries `json:"series"`
 }
 
 func (distributions) requestType() string {
@@ -141,7 +142,7 @@ func distributionsPayload(values map[metricKey][]float64) distributions {
 		}
 		return strings.Compare(strings.Join(a.Tags, ","), strings.Join(b.Tags, ","))
 	})
-	return distributions{Series: series}
+	return distributions{Namespace: namespaceCIVisibility, Series: series}
 }
 
 type application struct {
@@ -321,6 +322,7 @@ func (s *sender) send(ctx context.Context, metrics payload) error {
 	request.Header.Set("DD-Telemetry-Request-Type", metrics.requestType())
 	request.Header.Set("DD-Client-Library-Language", s.body.Application.LanguageName)
 	request.Header.Set("DD-Client-Library-Version", s.body.Application.LibraryVersion)
+	request.Header.Set("DD-Session-ID", s.body.RuntimeID)
 	request.Header.Set("DD-Agent-Env", s.body.Application.Environment)
 	request.Header.Set("DD-Agent-Hostname", s.body.Host.Hostname)
 	if s.apiKey != "" {

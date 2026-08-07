@@ -79,8 +79,26 @@ func clearDestinationEnvironment(t *testing.T) {
 		"DD_TRACE_AGENT_URL",
 		"DD_AGENT_HOST",
 		"DD_TRACE_AGENT_PORT",
+		telemetryEnabledEnvironmentVariable,
 	} {
 		t.Setenv(name, "")
+	}
+}
+
+func TestNewClientDisabled(t *testing.T) {
+	clearDestinationEnvironment(t)
+	t.Setenv(telemetryEnabledEnvironmentVariable, "false")
+
+	client, err := NewClient(Config{})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	if _, ok := client.(noopClient); !ok {
+		t.Fatalf("NewClient() = %T, want noopClient", client)
+	}
+	client.Count("count", nil).Submit(1)
+	if err := client.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush() error = %v", err)
 	}
 }
 
@@ -338,6 +356,9 @@ func TestFlushSendsOnlyMetricPayloads(t *testing.T) {
 	if got := request.header.Get("DD-Client-Library-Version"); got != "1.2.3" {
 		t.Errorf("DD-Client-Library-Version = %q, want 1.2.3", got)
 	}
+	if got := request.header.Get("DD-Session-ID"); got != "runtime-id" {
+		t.Errorf("DD-Session-ID = %q, want runtime-id", got)
+	}
 	if got := request.header.Get("DD-API-KEY"); got != "api-key" {
 		t.Errorf("DD-API-KEY = %q, want api-key", got)
 	}
@@ -397,6 +418,9 @@ func TestFlushSendsOnlyMetricPayloads(t *testing.T) {
 	}
 	if len(distributionPayload.Series) != 1 {
 		t.Fatalf("distributions series count = %d, want 1", len(distributionPayload.Series))
+	}
+	if distributionPayload.Namespace != namespaceCIVisibility {
+		t.Errorf("distributions namespace = %q, want %q", distributionPayload.Namespace, namespaceCIVisibility)
 	}
 	distributionMetric := distributionPayload.Series[0]
 	if distributionMetric.Metric != "endpoint_payload.bytes" || distributionMetric.Namespace != namespaceCIVisibility || !distributionMetric.Common {

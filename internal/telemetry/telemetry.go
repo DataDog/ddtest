@@ -13,13 +13,18 @@ package telemetry
 import (
 	"context"
 	"errors"
+	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-const namespaceCIVisibility = "civisibility"
+const (
+	namespaceCIVisibility               = "civisibility"
+	telemetryEnabledEnvironmentVariable = "DD_INSTRUMENTATION_TELEMETRY_ENABLED"
+)
 
 // Metric receives values for one metric name and tag combination. Metric
 // handles are safe for concurrent use.
@@ -119,6 +124,9 @@ func NoopClient() Client {
 
 // NewClient creates a metrics-only telemetry client.
 func NewClient(config Config) (Client, error) {
+	if !telemetryEnabled() {
+		return NoopClient(), nil
+	}
 	if err := validateConfig(config); err != nil {
 		return nil, err
 	}
@@ -127,6 +135,15 @@ func NewClient(config Config) (Client, error) {
 		return nil, err
 	}
 	return newClient(config, destination)
+}
+
+func telemetryEnabled() bool {
+	value, found := os.LookupEnv(telemetryEnabledEnvironmentVariable)
+	if !found {
+		return true
+	}
+	enabled, err := strconv.ParseBool(strings.TrimSpace(value))
+	return err != nil || enabled
 }
 
 func validateConfig(config Config) error {
