@@ -37,9 +37,16 @@ var (
 	planCommand = func(ctx context.Context, telemetryClient telemetry.Client) error {
 		return planner.NewWithTelemetry(telemetryClient).Plan(ctx)
 	}
-	newRunner          = func(telemetryClient telemetry.Client) runner.Runner { return runner.NewWithTelemetry(telemetryClient) }
-	newTelemetryClient = createTelemetryClient
-	exitProcess        = os.Exit
+	newRunner            = func(telemetryClient telemetry.Client) runner.Runner { return runner.NewWithTelemetry(telemetryClient) }
+	newTelemetryClient   = createTelemetryClient
+	cliCommandAttributes = func() telemetry.CLICommandAttributes {
+		return telemetry.CLICommandAttributes{
+			Platform:         settings.GetPlatform(),
+			Framework:        settings.GetFramework(),
+			TestSkippingMode: settings.GetTestSkippingLevel().String(),
+		}
+	}
+	exitProcess = os.Exit
 )
 
 var planCmd = &cobra.Command{
@@ -131,7 +138,7 @@ func bindPersistentFlags(cmd *cobra.Command, bindings []persistentFlagBinding) e
 
 func runPlanCommand(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
-	err := runWithTelemetry(ctx, telemetry.CLICommandPlan, func(telemetryClient telemetry.Client) error {
+	err := runWithTelemetry(ctx, telemetry.CLICommandPlan, cliCommandAttributes(), func(telemetryClient telemetry.Client) error {
 		return planCommand(ctx, telemetryClient)
 	})
 	if err != nil {
@@ -143,7 +150,7 @@ func runPlanCommand(cmd *cobra.Command, args []string) {
 
 func runTestCommand(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
-	err := runWithTelemetry(ctx, telemetry.CLICommandRun, func(telemetryClient telemetry.Client) error {
+	err := runWithTelemetry(ctx, telemetry.CLICommandRun, cliCommandAttributes(), func(telemetryClient telemetry.Client) error {
 		return newRunner(telemetryClient).Run(ctx)
 	})
 	if err != nil {
@@ -162,7 +169,7 @@ func createTelemetryClient() (telemetry.Client, error) {
 	})
 }
 
-func runWithTelemetry(ctx context.Context, commandType telemetry.CLICommandType, operation func(telemetry.Client) error) error {
+func runWithTelemetry(ctx context.Context, commandType telemetry.CLICommandType, attributes telemetry.CLICommandAttributes, operation func(telemetry.Client) error) error {
 	startTime := time.Now()
 	telemetryClient, err := newTelemetryClient()
 	if err != nil {
@@ -175,8 +182,8 @@ func runWithTelemetry(ctx context.Context, commandType telemetry.CLICommandType,
 	if operationErr != nil {
 		exitCode = 1
 	}
-	telemetry.CLICommand(telemetryClient, commandType, exitCode)
-	telemetry.CLICommandMs(telemetryClient, commandType, exitCode, time.Since(startTime))
+	telemetry.CLICommand(telemetryClient, commandType, exitCode, attributes)
+	telemetry.CLICommandMs(telemetryClient, commandType, exitCode, attributes, time.Since(startTime))
 	if err := telemetryClient.Flush(context.WithoutCancel(ctx)); err != nil {
 		slog.Debug("Failed to flush telemetry metrics", "error", err)
 	}

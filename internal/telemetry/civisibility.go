@@ -30,6 +30,14 @@ const (
 	CLICommandRun  CLICommandType = "run"
 )
 
+// CLICommandAttributes describes the resolved configuration attached to CLI
+// command telemetry.
+type CLICommandAttributes struct {
+	Platform         string
+	Framework        string
+	TestSkippingMode string
+}
+
 // SettingsResponse describes the settings flags represented in telemetry.
 type SettingsResponse struct {
 	CodeCoverageEnabled        bool
@@ -130,16 +138,22 @@ func GitCommandMs(client Client, commandType git.CommandType, duration time.Dura
 	distribution(client, "git.command_ms", []string{"command:" + string(commandType)}, milliseconds(duration))
 }
 
-func CLICommand(client Client, commandType CLICommandType, exitCode int) {
-	count(client, "cli.command", cliCommandTags(commandType, exitCode), 1)
+func CLICommand(client Client, commandType CLICommandType, exitCode int, attributes CLICommandAttributes) {
+	count(client, "cli.command", cliCommandTags(commandType, exitCode, attributes), 1)
 }
 
-func CLICommandMs(client Client, commandType CLICommandType, exitCode int, duration time.Duration) {
-	distribution(client, "cli.command_ms", cliCommandTags(commandType, exitCode), milliseconds(duration))
+func CLICommandMs(client Client, commandType CLICommandType, exitCode int, attributes CLICommandAttributes, duration time.Duration) {
+	distribution(client, "cli.command_ms", cliCommandTags(commandType, exitCode, attributes), milliseconds(duration))
 }
 
-func cliCommandTags(commandType CLICommandType, exitCode int) []string {
-	return []string{"command:" + string(commandType), "exit_code:" + strconv.Itoa(exitCode)}
+func cliCommandTags(commandType CLICommandType, exitCode int, attributes CLICommandAttributes) []string {
+	return []string{
+		"command:" + string(commandType),
+		"exit_code:" + strconv.Itoa(exitCode),
+		"platform:" + attributes.Platform,
+		"framework:" + attributes.Framework,
+		"test_skipping_mode:" + attributes.TestSkippingMode,
+	}
 }
 
 func gitCommandErrorTags(err error) []string {

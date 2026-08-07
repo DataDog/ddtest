@@ -198,16 +198,30 @@ func TestGitCommandMetrics(t *testing.T) {
 
 func TestCLICommandMetrics(t *testing.T) {
 	client := &recordingClient{}
-	CLICommand(client, CLICommandPlan, 0)
-	CLICommandMs(client, CLICommandPlan, 0, 1500*time.Millisecond)
-	CLICommand(client, CLICommandRun, 1)
-	CLICommandMs(client, CLICommandRun, 1, 2*time.Second)
+	attributes := CLICommandAttributes{
+		Platform:         "ruby",
+		Framework:        "rspec",
+		TestSkippingMode: "suite",
+	}
+	CLICommand(client, CLICommandPlan, 0, attributes)
+	CLICommandMs(client, CLICommandPlan, 0, attributes, 1500*time.Millisecond)
+	CLICommand(client, CLICommandRun, 1, attributes)
+	CLICommandMs(client, CLICommandRun, 1, attributes, 2*time.Second)
+	tags := func(command, exitCode string) []string {
+		return []string{
+			"command:" + command,
+			"exit_code:" + exitCode,
+			"platform:ruby",
+			"framework:rspec",
+			"test_skipping_mode:suite",
+		}
+	}
 
 	want := []recordedMetric{
-		{kind: "count", name: "cli.command", tags: []string{"command:plan", "exit_code:0"}, value: 1},
-		{kind: "distribution", name: "cli.command_ms", tags: []string{"command:plan", "exit_code:0"}, value: 1500},
-		{kind: "count", name: "cli.command", tags: []string{"command:run", "exit_code:1"}, value: 1},
-		{kind: "distribution", name: "cli.command_ms", tags: []string{"command:run", "exit_code:1"}, value: 2000},
+		{kind: "count", name: "cli.command", tags: tags("plan", "0"), value: 1},
+		{kind: "distribution", name: "cli.command_ms", tags: tags("plan", "0"), value: 1500},
+		{kind: "count", name: "cli.command", tags: tags("run", "1"), value: 1},
+		{kind: "distribution", name: "cli.command_ms", tags: tags("run", "1"), value: 2000},
 	}
 	assertRecordedMetrics(t, client.metrics, want)
 }
