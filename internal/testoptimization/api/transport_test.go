@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -303,6 +304,40 @@ func TestHTTPSerializationHelpersErrorBranches(t *testing.T) {
 	}
 	if delay := getExponentialBackoffDuration(20, time.Second); delay != 10*time.Second {
 		t.Fatalf("expected max backoff cap, got %s", delay)
+	}
+}
+
+func TestParseRateLimitReset(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		want      time.Duration
+		wantValid bool
+	}{
+		{name: "seconds", value: "2", want: 2 * time.Second, wantValid: true},
+		{
+			name:      "largest safe duration",
+			value:     strconv.FormatInt(maxRateLimitResetSeconds, 10),
+			want:      time.Duration(maxRateLimitResetSeconds) * time.Second,
+			wantValid: true,
+		},
+		{name: "zero", value: "0"},
+		{name: "negative", value: "-1"},
+		{name: "negative duration overflow", value: strconv.FormatInt(-maxRateLimitResetSeconds-1, 10)},
+		{name: "positive duration overflow", value: strconv.FormatInt(maxRateLimitResetSeconds+1, 10)},
+		{name: "not an integer", value: "soon"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, valid := parseRateLimitReset(tt.value)
+			if valid != tt.wantValid {
+				t.Fatalf("parseRateLimitReset(%q) valid = %t, want %t", tt.value, valid, tt.wantValid)
+			}
+			if got != tt.want {
+				t.Fatalf("parseRateLimitReset(%q) = %s, want %s", tt.value, got, tt.want)
+			}
+		})
 	}
 }
 

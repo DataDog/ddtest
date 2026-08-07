@@ -98,6 +98,7 @@ func TestCIVisibilityRequestMetrics(t *testing.T) {
 	ITRSkippableTestsResponseBytes(client, true, 43)
 	ITRSkippableTestsResponseTests(client, 3)
 	ITRSkippableTestsResponseSuites(client, 2)
+	ITRSkippableTestsIsEmpty(client)
 	KnownTestsRequest(client, false)
 	KnownTestsRequestErrors(client, 0)
 	KnownTestsRequestMs(client, duration)
@@ -108,6 +109,12 @@ func TestCIVisibilityRequestMetrics(t *testing.T) {
 	TestManagementTestsRequestMs(client, duration)
 	TestManagementTestsResponseBytes(client, true, 45)
 	TestManagementTestsResponseTests(client, 5)
+	TestSuiteDurationsRequest(client, true)
+	TestSuiteDurationsRequestErrors(client, 429)
+	TestSuiteDurationsRequestMs(client, duration)
+	TestSuiteDurationsResponseBytes(client, true, 46)
+	TestSuiteDurationsResponseSuites(client, 6)
+	TestSuiteDurationsIsEmpty(client)
 
 	want := []recordedMetric{
 		{kind: "count", name: "git_requests.search_commits", tags: []string{"rq_compressed:true"}, value: 1},
@@ -127,6 +134,7 @@ func TestCIVisibilityRequestMetrics(t *testing.T) {
 		{kind: "distribution", name: "itr_skippable_tests.response_bytes", tags: []string{"rs_compressed:true"}, value: 43},
 		{kind: "count", name: "itr_skippable_tests.response_tests", value: 3},
 		{kind: "count", name: "itr_skippable_tests.response_suites", value: 2},
+		{kind: "count", name: "itr_skippable_tests.is_empty", value: 1},
 		{kind: "count", name: "known_tests.request", value: 1},
 		{kind: "count", name: "known_tests.request_errors", tags: []string{"error_type:network"}, value: 1},
 		{kind: "distribution", name: "known_tests.request_ms", value: 1500},
@@ -137,6 +145,12 @@ func TestCIVisibilityRequestMetrics(t *testing.T) {
 		{kind: "distribution", name: "test_management_tests.request_ms", value: 1500},
 		{kind: "distribution", name: "test_management_tests.response_bytes", tags: []string{"rs_compressed:true"}, value: 45},
 		{kind: "distribution", name: "test_management_tests.response_tests", value: 5},
+		{kind: "count", name: "test_suite_durations.request", tags: []string{"rq_compressed:true"}, value: 1},
+		{kind: "count", name: "test_suite_durations.request_errors", tags: []string{"error_type:status_code_4xx_response", "status_code:429"}, value: 1},
+		{kind: "distribution", name: "test_suite_durations.request_ms", value: 1500},
+		{kind: "distribution", name: "test_suite_durations.response_bytes", tags: []string{"rs_compressed:true"}, value: 46},
+		{kind: "distribution", name: "test_suite_durations.response_suites", value: 6},
+		{kind: "count", name: "test_suite_durations.is_empty", value: 1},
 	}
 	assertRecordedMetrics(t, client.metrics, want)
 }
@@ -178,6 +192,36 @@ func TestGitCommandMetrics(t *testing.T) {
 		{kind: "count", name: "git.command", tags: []string{"command:get_objects"}, value: 1},
 		{kind: "distribution", name: "git.command_ms", tags: []string{"command:get_objects"}, value: 1500},
 		{kind: "count", name: "git.command_errors", tags: []string{"command:get_objects", "exit_code:missing"}, value: 1},
+	}
+	assertRecordedMetrics(t, client.metrics, want)
+}
+
+func TestCLICommandMetrics(t *testing.T) {
+	client := &recordingClient{}
+	attributes := CLICommandAttributes{
+		Platform:         "ruby",
+		Framework:        "rspec",
+		TestSkippingMode: "suite",
+	}
+	CLICommand(client, CLICommandPlan, 0, attributes)
+	CLICommandMs(client, CLICommandPlan, 0, attributes, 1500*time.Millisecond)
+	CLICommand(client, CLICommandRun, 1, attributes)
+	CLICommandMs(client, CLICommandRun, 1, attributes, 2*time.Second)
+	tags := func(command, exitCode string) []string {
+		return []string{
+			"command:" + command,
+			"exit_code:" + exitCode,
+			"platform:ruby",
+			"framework:rspec",
+			"test_skipping_mode:suite",
+		}
+	}
+
+	want := []recordedMetric{
+		{kind: "count", name: "cli.command", tags: tags("plan", "0"), value: 1},
+		{kind: "distribution", name: "cli.command_ms", tags: tags("plan", "0"), value: 1500},
+		{kind: "count", name: "cli.command", tags: tags("run", "1"), value: 1},
+		{kind: "distribution", name: "cli.command_ms", tags: tags("run", "1"), value: 2000},
 	}
 	assertRecordedMetrics(t, client.metrics, want)
 }

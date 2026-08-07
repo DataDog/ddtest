@@ -145,6 +145,9 @@ func (c *transport) GetSkippableTests() (correlationID string, skippables Skippa
 	} else {
 		telemetry.ITRSkippableTestsResponseTests(c.telemetryClient, len(responseObject.Data))
 	}
+	if len(responseObject.Data) == 0 {
+		telemetry.ITRSkippableTestsIsEmpty(c.telemetryClient)
+	}
 
 	skippables = NewSkippables()
 	warnedMissingTestBundle := false

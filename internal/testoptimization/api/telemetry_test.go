@@ -7,6 +7,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -98,8 +99,13 @@ func TestTransportRecordsBackendTelemetry(t *testing.T) {
 	}
 	skippableBody := `{"meta":{"correlation_id":"cid"},"data":[{"type":"test","attributes":{"suite":"suite-a","name":"test-a","configurations":{"test.bundle":"module-a"}}},{"type":"test","attributes":{"suite":"suite-b","name":"test-b","configurations":{"test.bundle":"module-b"}}}]}`
 	testManagementBody := `{"data":{"attributes":{"modules":{"module-a":{"suites":{"suite-a":{"tests":{"test-a":{"properties":{}},"test-b":{"properties":{}}}}}}}}}}`
+	durationsBodies := []string{
+		`{"data":{"attributes":{"test_suites":{"module-a":{"suite-a":{"source_file":"a_test.go","duration":{"p50":"100","p90":"200"}}}},"page_info":{"cursor":"page-2","has_next":true}}}}`,
+		`{"data":{"attributes":{"test_suites":{"module-a":{"suite-b":{"source_file":"b_test.go","duration":{"p50":"300","p90":"400"}}},"module-b":{"suite-c":{"source_file":"c_test.go","duration":{"p50":"500","p90":"600"}}}},"page_info":{"has_next":false}}}}`,
+	}
 	searchCommitsBody := `{"data":[{"id":"remote-commit","type":"commit"}]}`
 	knownRequests := 0
+	durationsRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 		var body string
@@ -113,6 +119,9 @@ func TestTransportRecordsBackendTelemetry(t *testing.T) {
 			body = skippableBody
 		case testManagementTestsURLPath:
 			body = testManagementBody
+		case durationsURLPath:
+			body = durationsBodies[durationsRequests]
+			durationsRequests++
 		case searchCommitsURLPath:
 			body = searchCommitsBody
 		case sendPackFilesURLPath:
@@ -139,6 +148,9 @@ func TestTransportRecordsBackendTelemetry(t *testing.T) {
 	}
 	if _, err := client.GetTestManagementTests(); err != nil {
 		t.Fatalf("GetTestManagementTests() error = %v", err)
+	}
+	if durations := client.GetTestSuiteDurations(); len(durations.TestSuites) != 2 {
+		t.Fatalf("GetTestSuiteDurations() modules = %d, want 2", len(durations.TestSuites))
 	}
 	if _, err := client.GetCommits([]string{"local-commit"}); err != nil {
 		t.Fatalf("GetCommits() error = %v", err)
@@ -172,10 +184,16 @@ func TestTransportRecordsBackendTelemetry(t *testing.T) {
 	recorder.assertValue(t, "distribution", "itr_skippable_tests.response_bytes", nil, float64(len(skippableBody)))
 	recorder.assertValue(t, "count", "itr_skippable_tests.response_tests", nil, 2)
 	recorder.assertSamples(t, "count", "itr_skippable_tests.response_suites", nil, 0)
+	recorder.assertSamples(t, "count", "itr_skippable_tests.is_empty", nil, 0)
 	recorder.assertValue(t, "count", "test_management_tests.request", nil, 1)
 	recorder.assertSamples(t, "distribution", "test_management_tests.request_ms", nil, 1)
 	recorder.assertValue(t, "distribution", "test_management_tests.response_bytes", nil, float64(len(testManagementBody)))
 	recorder.assertValue(t, "distribution", "test_management_tests.response_tests", nil, 2)
+	recorder.assertSamples(t, "count", "test_suite_durations.request", nil, 2)
+	recorder.assertSamples(t, "distribution", "test_suite_durations.request_ms", nil, 2)
+	recorder.assertSamples(t, "distribution", "test_suite_durations.response_bytes", nil, 2)
+	recorder.assertValue(t, "distribution", "test_suite_durations.response_suites", nil, 3)
+	recorder.assertSamples(t, "count", "test_suite_durations.is_empty", nil, 0)
 	recorder.assertValue(t, "count", "git_requests.search_commits", nil, 1)
 	recorder.assertSamples(t, "distribution", "git_requests.search_commits_ms", nil, 1)
 	recorder.assertSamples(t, "count", "git_requests.objects_pack", nil, 2)
@@ -201,6 +219,28 @@ func TestTransportRecordsSuiteOnlySkippableResponse(t *testing.T) {
 
 	recorder.assertValue(t, "count", "itr_skippable_tests.response_suites", nil, 1)
 	recorder.assertSamples(t, "count", "itr_skippable_tests.response_tests", nil, 0)
+	recorder.assertSamples(t, "count", "itr_skippable_tests.is_empty", nil, 0)
+}
+
+func TestTransportRecordsEmptySkippableResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
+		_, _ = io.WriteString(w, `{"meta":{"correlation_id":"cid"},"data":[]}`)
+	}))
+	defer server.Close()
+
+	recorder := &apiRecordingClient{}
+	client := newRawResponseTestClient(server)
+	client.telemetryClient = recorder
+
+	if _, skippables, err := client.GetSkippableTests(); err != nil {
+		t.Fatalf("GetSkippableTests() error = %v", err)
+	} else if len(skippables.Tests) != 0 || len(skippables.Suites) != 0 {
+		t.Fatalf("GetSkippableTests() = %#v, want no skippables", skippables)
+	}
+
+	recorder.assertValue(t, "count", "itr_skippable_tests.response_tests", nil, 0)
+	recorder.assertValue(t, "count", "itr_skippable_tests.is_empty", nil, 1)
 }
 
 func TestTransportRecordsCompressedResponseWireBytes(t *testing.T) {
@@ -208,6 +248,7 @@ func TestTransportRecordsCompressedResponseWireBytes(t *testing.T) {
 		knownTestsURLPath:          `{"data":{"attributes":{"tests":{"module-a":{"suite-a":["test-a"]}}}}}`,
 		skippableURLPath:           `{"meta":{"correlation_id":"cid"},"data":[{"type":"test","attributes":{"suite":"suite-a","name":"test-a","configurations":{"test.bundle":"module-a"}}}]}`,
 		testManagementTestsURLPath: `{"data":{"attributes":{"modules":{"module-a":{"suites":{"suite-a":{"tests":{"test-a":{"properties":{}}}}}}}}}}`,
+		durationsURLPath:           `{"data":{"attributes":{"test_suites":{"module-a":{"suite-a":{"source_file":"a_test.go","duration":{"p50":"100","p90":"200"}}}}}}}`,
 	}
 	compressedBodies := make(map[string][]byte, len(responseBodies))
 	for path, body := range responseBodies {
@@ -243,11 +284,15 @@ func TestTransportRecordsCompressedResponseWireBytes(t *testing.T) {
 	if _, err := client.GetTestManagementTests(); err != nil {
 		t.Fatalf("GetTestManagementTests() error = %v", err)
 	}
+	if durations := client.GetTestSuiteDurations(); len(durations.TestSuites) != 1 {
+		t.Fatalf("GetTestSuiteDurations() modules = %d, want 1", len(durations.TestSuites))
+	}
 
 	tags := []string{"rs_compressed:true"}
 	recorder.assertValue(t, "distribution", "known_tests.response_bytes", tags, float64(len(compressedBodies[knownTestsURLPath])))
 	recorder.assertValue(t, "distribution", "itr_skippable_tests.response_bytes", tags, float64(len(compressedBodies[skippableURLPath])))
 	recorder.assertValue(t, "distribution", "test_management_tests.response_bytes", tags, float64(len(compressedBodies[testManagementTestsURLPath])))
+	recorder.assertValue(t, "distribution", "test_suite_durations.response_bytes", tags, float64(len(compressedBodies[durationsURLPath])))
 }
 
 func TestTransportRecordsTerminalRetryStatusAndFailedSearchCommitsLatency(t *testing.T) {
@@ -269,6 +314,51 @@ func TestTransportRecordsTerminalRetryStatusAndFailedSearchCommitsLatency(t *tes
 	recorder.assertSamples(t, "distribution", "git_requests.search_commits_ms", nil, 1)
 }
 
+func TestTransportRecordsTestSuiteDurationsNetworkError(t *testing.T) {
+	recorder := &apiRecordingClient{}
+	client := &transport{
+		agentless:     true,
+		baseURL:       "https://example.test",
+		serviceName:   "my-service",
+		repositoryURL: "github.com/DataDog/foo",
+		headers:       map[string]string{},
+		handler: NewRequestHandlerWithClient(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("network unavailable")
+		})}),
+		telemetryClient: recorder,
+	}
+
+	if durations := client.GetTestSuiteDurations(); len(durations.TestSuites) != 0 {
+		t.Fatalf("GetTestSuiteDurations() suites = %d, want 0", len(durations.TestSuites))
+	}
+
+	recorder.assertValue(t, "count", "test_suite_durations.request", nil, 1)
+	recorder.assertSamples(t, "distribution", "test_suite_durations.request_ms", nil, 1)
+	recorder.assertValue(t, "count", "test_suite_durations.request_errors", []string{"error_type:network"}, 1)
+	recorder.assertSamples(t, "distribution", "test_suite_durations.response_bytes", nil, 0)
+	recorder.assertSamples(t, "distribution", "test_suite_durations.response_suites", nil, 0)
+	recorder.assertSamples(t, "count", "test_suite_durations.is_empty", nil, 0)
+}
+
+func TestTransportRecordsEmptyTestSuiteDurationsResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
+		_, _ = io.WriteString(w, `{"data":{"attributes":{"test_suites":{}}}}`)
+	}))
+	defer server.Close()
+
+	recorder := &apiRecordingClient{}
+	client := newRawResponseTestClient(server)
+	client.telemetryClient = recorder
+
+	if durations := client.GetTestSuiteDurations(); len(durations.TestSuites) != 0 {
+		t.Fatalf("GetTestSuiteDurations() suites = %d, want 0", len(durations.TestSuites))
+	}
+
+	recorder.assertValue(t, "distribution", "test_suite_durations.response_suites", nil, 0)
+	recorder.assertValue(t, "count", "test_suite_durations.is_empty", nil, 1)
+}
+
 func TestTransportRecordsBackendStatusErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -282,6 +372,7 @@ func TestTransportRecordsBackendStatusErrors(t *testing.T) {
 	_, _ = client.GetKnownTests()
 	_, _, _ = client.GetSkippableTests()
 	_, _ = client.GetTestManagementTests()
+	_ = client.GetTestSuiteDurations()
 	_, _ = client.GetCommits([]string{"local-commit"})
 	packFile := filepath.Join(t.TempDir(), "objects.pack")
 	if err := os.WriteFile(packFile, []byte("pack"), 0o600); err != nil {
@@ -295,11 +386,13 @@ func TestTransportRecordsBackendStatusErrors(t *testing.T) {
 		"known_tests.request_errors",
 		"itr_skippable_tests.request_errors",
 		"test_management_tests.request_errors",
+		"test_suite_durations.request_errors",
 		"git_requests.search_commits_errors",
 		"git_requests.objects_pack_errors",
 	} {
 		recorder.assertValue(t, "count", name, tags, 1)
 	}
+	recorder.assertSamples(t, "count", "itr_skippable_tests.is_empty", nil, 0)
 }
 
 func TestNewTransportWithTelemetryRetainsClient(t *testing.T) {
