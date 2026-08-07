@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -36,6 +37,7 @@ const (
 	HeaderRateLimitReset       = "x-ratelimit-reset"
 	HTTPStatusTooManyRequests  = 429
 	FormatMessagePack          = "msgpack"
+	maxRateLimitResetSeconds   = math.MaxInt64 / int64(time.Second)
 )
 
 // FormFile represents a file to be uploaded in a multipart form request.
@@ -253,21 +255,9 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 		slog.Debug("ciVisibilityHttpClient: response status code", "statusCode", resp.StatusCode)
 
 		rateLimitReset := resp.Header.Get(HeaderRateLimitReset)
-		if rateLimitReset != "" {
-			if resetTime, err := strconv.ParseInt(rateLimitReset, 10, 64); err == nil {
-				var waitDuration time.Duration
-				if resetTime > time.Now().Unix() {
-					// Assume it's a Unix timestamp
-					waitDuration = time.Until(time.Unix(resetTime, 0))
-				} else {
-					// Assume it's a duration in seconds
-					waitDuration = time.Duration(resetTime) * time.Second
-				}
-				if waitDuration > 0 {
-					time.Sleep(waitDuration)
-				}
-				return false, retryResponse, nil
-			}
+		if waitDuration, ok := parseRateLimitReset(rateLimitReset); ok {
+			time.Sleep(waitDuration)
+			return false, retryResponse, nil
 		}
 
 		// Fallback to exponential backoff if header is missing or invalid
@@ -315,6 +305,15 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 
 	// Return the successful response with status code and unmarshal capability
 	return true, &Response{Body: responseBody, BodySize: responseBodySize, Format: responseFormat, StatusCode: statusCode, CanUnmarshal: canUnmarshal, Compressed: compressedResponse}, nil
+}
+
+func parseRateLimitReset(value string) (time.Duration, bool) {
+	resetSeconds, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || resetSeconds <= 0 || resetSeconds > maxRateLimitResetSeconds {
+		return 0, false
+	}
+
+	return time.Duration(resetSeconds) * time.Second, true
 }
 
 // Helper functions for data serialization, compression, and handling multipart form data
