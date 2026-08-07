@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
 const (
@@ -150,9 +152,10 @@ func (c *transport) fetchTestSuiteDurations(repositoryURL, service string) (map[
 	}
 
 	duration := time.Since(startTime)
-	totalSuites := 0
-	for _, suites := range allSuites {
-		totalSuites += len(suites)
+	totalSuites := countTestSuiteDurations(allSuites)
+	telemetry.TestSuiteDurationsResponseSuites(c.telemetryClient, totalSuites)
+	if totalSuites == 0 {
+		telemetry.TestSuiteDurationsIsEmpty(c.telemetryClient)
 	}
 	slog.Debug("Finished fetching test suite durations", "modules", len(allSuites), "suites", totalSuites, "duration", duration)
 
@@ -184,10 +187,18 @@ func (c *transport) fetchTestSuiteDurationsPage(repositoryURL, service, cursor s
 	}
 
 	request := c.getPostRequestConfig(durationsURLPath, body)
+	telemetry.TestSuiteDurationsRequest(c.telemetryClient, request.Compressed)
+	requestStartTime := time.Now()
 	response, err := c.handler.SendRequest(*request)
+	telemetry.TestSuiteDurationsRequestMs(c.telemetryClient, time.Since(requestStartTime))
 	if err != nil {
+		telemetry.TestSuiteDurationsRequestErrors(c.telemetryClient, responseStatusCode(response))
 		return nil, fmt.Errorf("sending test suite durations request: %s", err)
 	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		telemetry.TestSuiteDurationsRequestErrors(c.telemetryClient, response.StatusCode)
+	}
+	telemetry.TestSuiteDurationsResponseBytes(c.telemetryClient, response.Compressed, response.BodySize)
 
 	slog.Debug("test_suite_durations", "responseBody", string(response.Body))
 

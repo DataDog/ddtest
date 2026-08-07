@@ -266,3 +266,27 @@ func TestManagementTestsResponseBytes(client Client, responseCompressed bool, va
 func TestManagementTestsResponseTests(client Client, value int) {
 	distribution(client, "test_management_tests.response_tests", nil, float64(value))
 }
+
+func TestSuiteDurationsRequest(client Client, requestCompressed bool) {
+	count(client, "test_suite_durations.request", requestCompressedTags(requestCompressed), 1)
+}
+
+func TestSuiteDurationsRequestErrors(client Client, statusCode int) {
+	count(client, "test_suite_durations.request_errors", requestErrorTags(statusCode), 1)
+}
+
+func TestSuiteDurationsRequestMs(client Client, duration time.Duration) {
+	distribution(client, "test_suite_durations.request_ms", nil, milliseconds(duration))
+}
+
+func TestSuiteDurationsResponseBytes(client Client, responseCompressed bool, value int) {
+	distribution(client, "test_suite_durations.response_bytes", responseCompressedTags(responseCompressed), float64(value))
+}
+
+func TestSuiteDurationsResponseSuites(client Client, value int) {
+	distribution(client, "test_suite_durations.response_suites", nil, float64(value))
+}
+
+func TestSuiteDurationsIsEmpty(client Client) {
+	count(client, "test_suite_durations.is_empty", nil, 1)
+}

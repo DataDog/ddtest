@@ -108,6 +108,12 @@ func TestCIVisibilityRequestMetrics(t *testing.T) {
 	TestManagementTestsRequestMs(client, duration)
 	TestManagementTestsResponseBytes(client, true, 45)
 	TestManagementTestsResponseTests(client, 5)
+	TestSuiteDurationsRequest(client, true)
+	TestSuiteDurationsRequestErrors(client, 429)
+	TestSuiteDurationsRequestMs(client, duration)
+	TestSuiteDurationsResponseBytes(client, true, 46)
+	TestSuiteDurationsResponseSuites(client, 6)
+	TestSuiteDurationsIsEmpty(client)
 
 	want := []recordedMetric{
 		{kind: "count", name: "git_requests.search_commits", tags: []string{"rq_compressed:true"}, value: 1},
@@ -137,6 +143,12 @@ func TestCIVisibilityRequestMetrics(t *testing.T) {
 		{kind: "distribution", name: "test_management_tests.request_ms", value: 1500},
 		{kind: "distribution", name: "test_management_tests.response_bytes", tags: []string{"rs_compressed:true"}, value: 45},
 		{kind: "distribution", name: "test_management_tests.response_tests", value: 5},
+		{kind: "count", name: "test_suite_durations.request", tags: []string{"rq_compressed:true"}, value: 1},
+		{kind: "count", name: "test_suite_durations.request_errors", tags: []string{"error_type:status_code_4xx_response", "status_code:429"}, value: 1},
+		{kind: "distribution", name: "test_suite_durations.request_ms", value: 1500},
+		{kind: "distribution", name: "test_suite_durations.response_bytes", tags: []string{"rs_compressed:true"}, value: 46},
+		{kind: "distribution", name: "test_suite_durations.response_suites", value: 6},
+		{kind: "count", name: "test_suite_durations.is_empty", value: 1},
 	}
 	assertRecordedMetrics(t, client.metrics, want)
 }
