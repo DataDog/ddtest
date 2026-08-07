@@ -15,6 +15,7 @@ import (
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
 type Runner interface {
@@ -30,11 +31,23 @@ type Planner interface {
 type TestRunner struct {
 	platformDetector platform.PlatformDetector
 	planner          Planner
+	telemetryClient  telemetry.Client
 	reportWriter     io.Writer
 }
 
 func New() *TestRunner {
-	return NewWithDependencies(platform.NewPlatformDetector(), planner.New())
+	return NewWithTelemetry(telemetry.NoopClient())
+}
+
+// NewWithTelemetry creates a runner and planner that share one telemetry
+// client for the lifetime of the command.
+func NewWithTelemetry(telemetryClient telemetry.Client) *TestRunner {
+	runner := NewWithDependencies(
+		platform.NewPlatformDetector(),
+		planner.NewWithTelemetry(telemetryClient),
+	)
+	runner.telemetryClient = telemetryClient
+	return runner
 }
 
 func NewWithDependencies(
@@ -49,8 +62,9 @@ func NewWithDependencies(
 
 func newTestRunnerWithDefaults() *TestRunner {
 	return &TestRunner{
-		planner:      planner.New(),
-		reportWriter: os.Stderr,
+		planner:         planner.New(),
+		telemetryClient: telemetry.NoopClient(),
+		reportWriter:    os.Stderr,
 	}
 }
 

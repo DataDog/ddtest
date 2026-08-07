@@ -10,8 +10,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +46,12 @@ func TestResponseUnmarshalBranches(t *testing.T) {
 	}
 	if err := (&Response{CanUnmarshal: true, Format: FormatMessagePack}).Unmarshal(&failingMsgpUnmarshaler{}); err == nil {
 		t.Fatal("expected msgpack unmarshal error")
+	}
+	if got := responseStatusCode(nil); got != 0 {
+		t.Fatalf("nil response status code = %d, want 0", got)
+	}
+	if got := responseStatusCode(&Response{StatusCode: http.StatusTeapot}); got != http.StatusTeapot {
+		t.Fatalf("response status code = %d, want %d", got, http.StatusTeapot)
 	}
 }
 
@@ -86,6 +90,11 @@ func TestRequestHandlerValidationAndRetryBranches(t *testing.T) {
 }
 
 func TestRequestHandlerJSONCompressionAndGzipResponse(t *testing.T) {
+	var encodedResponse bytes.Buffer
+	gzipWriter := gzip.NewWriter(&encodedResponse)
+	_, _ = gzipWriter.Write([]byte(`{"ok":"yes"}`))
+	_ = gzipWriter.Close()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("X-Test"); got != "custom" {
 			t.Fatalf("expected custom header, got %q", got)
@@ -117,14 +126,9 @@ func TestRequestHandlerJSONCompressionAndGzipResponse(t *testing.T) {
 			t.Fatalf("unexpected request body: %#v", request)
 		}
 
-		var response bytes.Buffer
-		gzipWriter := gzip.NewWriter(&response)
-		_, _ = gzipWriter.Write([]byte(`{"ok":"yes"}`))
-		_ = gzipWriter.Close()
-
 		w.Header().Set(HeaderContentType, ContentTypeJSONAlternative)
 		w.Header().Set(HeaderContentEncoding, ContentEncodingGzip)
-		_, _ = w.Write(response.Bytes())
+		_, _ = w.Write(encodedResponse.Bytes())
 	}))
 	defer server.Close()
 
@@ -141,6 +145,9 @@ func TestRequestHandlerJSONCompressionAndGzipResponse(t *testing.T) {
 	}
 	if !response.Compressed || response.Format != constants.FormatJSON {
 		t.Fatalf("unexpected response metadata: %#v", response)
+	}
+	if response.BodySize != encodedResponse.Len() {
+		t.Fatalf("response body size = %d, want compressed size %d", response.BodySize, encodedResponse.Len())
 	}
 	var decoded map[string]string
 	if err := response.Unmarshal(&decoded); err != nil {
@@ -219,8 +226,8 @@ func TestRequestHandlerStatusRetryAndRateLimitBranches(t *testing.T) {
 			MaxRetries: 1,
 			Backoff:    time.Nanosecond,
 		})
-		if err == nil || response != nil {
-			t.Fatalf("expected retry exhaustion, got response=%v err=%v", response, err)
+		if err == nil || response == nil || response.StatusCode != http.StatusInternalServerError {
+			t.Fatalf("expected retry exhaustion with status %d, got response=%v err=%v", http.StatusInternalServerError, response, err)
 		}
 		if attempts != 2 {
 			t.Fatalf("expected 2 attempts, got %d", attempts)
@@ -242,8 +249,8 @@ func TestRequestHandlerStatusRetryAndRateLimitBranches(t *testing.T) {
 			MaxRetries: 1,
 			Backoff:    time.Nanosecond,
 		})
-		if err == nil || response != nil {
-			t.Fatalf("expected rate-limit retry exhaustion, got response=%v err=%v", response, err)
+		if err == nil || response == nil || response.StatusCode != HTTPStatusTooManyRequests {
+			t.Fatalf("expected rate-limit retry exhaustion with status %d, got response=%v err=%v", HTTPStatusTooManyRequests, response, err)
 		}
 		if attempts != 2 {
 			t.Fatalf("expected 2 attempts, got %d", attempts)
@@ -262,8 +269,8 @@ func TestRequestHandlerStatusRetryAndRateLimitBranches(t *testing.T) {
 			MaxRetries: 0,
 			Backoff:    time.Nanosecond,
 		})
-		if err == nil || response != nil {
-			t.Fatalf("expected rate-limit fallback exhaustion, got response=%v err=%v", response, err)
+		if err == nil || response == nil || response.StatusCode != HTTPStatusTooManyRequests {
+			t.Fatalf("expected rate-limit fallback exhaustion with status %d, got response=%v err=%v", HTTPStatusTooManyRequests, response, err)
 		}
 	})
 }
@@ -385,63 +392,6 @@ func TestTransportConstructorAgentlessAndURLBranches(t *testing.T) {
 	if custom.baseURL != "https://custom.example" || custom.serviceName != "explicit-service" {
 		t.Fatalf("unexpected custom agentless transport: baseURL=%q service=%q", custom.baseURL, custom.serviceName)
 	}
-}
-
-func TestTraceAgentURLFromEnv(t *testing.T) {
-	originalUDSPath := defaultTraceAgentUDSPath
-	t.Cleanup(func() {
-		defaultTraceAgentUDSPath = originalUDSPath
-	})
-
-	clearTraceAgentEnv := func(t *testing.T) {
-		t.Helper()
-		t.Setenv("DD_TRACE_AGENT_URL", "")
-		t.Setenv("DD_AGENT_HOST", "")
-		t.Setenv("DD_TRACE_AGENT_PORT", "")
-	}
-
-	t.Run("defaults to localhost http url", func(t *testing.T) {
-		clearTraceAgentEnv(t)
-		defaultTraceAgentUDSPath = filepath.Join(t.TempDir(), "missing.sock")
-
-		if got := traceAgentURLFromEnv().String(); got != "http://localhost:8126" {
-			t.Fatalf("traceAgentURLFromEnv() = %q, want %q", got, "http://localhost:8126")
-		}
-	})
-
-	t.Run("uses explicit trace agent url", func(t *testing.T) {
-		clearTraceAgentEnv(t)
-		t.Setenv("DD_TRACE_AGENT_URL", "https://agent.example:8127")
-		defaultTraceAgentUDSPath = filepath.Join(t.TempDir(), "missing.sock")
-
-		if got := traceAgentURLFromEnv().String(); got != "https://agent.example:8127" {
-			t.Fatalf("traceAgentURLFromEnv() = %q, want %q", got, "https://agent.example:8127")
-		}
-	})
-
-	t.Run("uses host and port env", func(t *testing.T) {
-		clearTraceAgentEnv(t)
-		t.Setenv("DD_AGENT_HOST", "agent.internal")
-		t.Setenv("DD_TRACE_AGENT_PORT", "9126")
-		defaultTraceAgentUDSPath = filepath.Join(t.TempDir(), "missing.sock")
-
-		if got := traceAgentURLFromEnv().String(); got != "http://agent.internal:9126" {
-			t.Fatalf("traceAgentURLFromEnv() = %q, want %q", got, "http://agent.internal:9126")
-		}
-	})
-
-	t.Run("uses UDS when no env is set", func(t *testing.T) {
-		clearTraceAgentEnv(t)
-		defaultTraceAgentUDSPath = filepath.Join(t.TempDir(), "apm.socket")
-		if err := os.WriteFile(defaultTraceAgentUDSPath, nil, 0o600); err != nil {
-			t.Fatalf("write UDS placeholder: %v", err)
-		}
-
-		got := traceAgentURLFromEnv()
-		if got.Scheme != "unix" || got.Path != defaultTraceAgentUDSPath {
-			t.Fatalf("traceAgentURLFromEnv() = %#v, want unix path %q", got, defaultTraceAgentUDSPath)
-		}
-	})
 }
 
 func TestParseTagString(t *testing.T) {

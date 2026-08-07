@@ -25,6 +25,28 @@ const (
 	MaxPackFileSizeInMb = 3
 )
 
+// CommandType identifies the purpose of a Git command.
+type CommandType string
+
+const (
+	CommandGetRemote                 CommandType = "get_remote"
+	CommandGetRemoteUpstreamTracking CommandType = "get_remote_upstream_tracking"
+	CommandGetHead                   CommandType = "get_head"
+	CommandGetBranch                 CommandType = "get_branch"
+	CommandCheckShallow              CommandType = "check_shallow"
+	CommandUnshallow                 CommandType = "unshallow"
+	CommandGetLocalCommits           CommandType = "get_local_commits"
+	CommandGetObjects                CommandType = "get_objects"
+	CommandPackObjects               CommandType = "pack_objects"
+)
+
+// CommandTelemetry observes Git command executions.
+type CommandTelemetry interface {
+	Command(commandType CommandType)
+	CommandError(commandType CommandType, err error)
+	CommandDuration(commandType CommandType, duration time.Duration)
+}
+
 // LocalCommitData holds information about a single commit in the local Git repository.
 type LocalCommitData struct {
 	CommitSha      string
@@ -87,6 +109,51 @@ var (
 	// safeDirectoryValue holds the cached repository root path for safe.directory config.
 	safeDirectoryValue string
 )
+
+// CommandRunner runs the Git operations used during Test Optimization and
+// reports their command-level telemetry.
+type CommandRunner struct {
+	telemetry CommandTelemetry
+}
+
+// NewCommandRunner creates a Git command runner using commandTelemetry.
+func NewCommandRunner(commandTelemetry CommandTelemetry) *CommandRunner {
+	return &CommandRunner{telemetry: commandTelemetry}
+}
+
+func (r *CommandRunner) execGit(commandType CommandType, args ...string) (val []byte, err error) {
+	startTime := time.Now()
+	if r.telemetry != nil {
+		r.telemetry.Command(commandType)
+	}
+	defer func() {
+		if r.telemetry != nil {
+			r.telemetry.CommandDuration(commandType, time.Since(startTime))
+			r.telemetry.CommandError(commandType, err)
+		}
+	}()
+	return execGit(args...)
+}
+
+func (r *CommandRunner) execGitString(commandType CommandType, args ...string) (string, error) {
+	out, err := r.execGit(commandType, args...)
+	strOut := strings.TrimSpace(strings.Trim(string(out), "\n"))
+	return strOut, err
+}
+
+func (r *CommandRunner) execGitStringWithInput(commandType CommandType, input string, args ...string) (val string, err error) {
+	startTime := time.Now()
+	if r.telemetry != nil {
+		r.telemetry.Command(commandType)
+	}
+	defer func() {
+		if r.telemetry != nil {
+			r.telemetry.CommandDuration(commandType, time.Since(startTime))
+			r.telemetry.CommandError(commandType, err)
+		}
+	}()
+	return execGitStringWithInput(input, args...)
+}
 
 // CheckAvailable verifies that git is available and the current directory is a git repository.
 // Returns an error if git is not installed or the current directory is not a git repository.
@@ -351,9 +418,14 @@ func FetchCommitData(commitSha string) (LocalCommitData, error) {
 
 // GetLastLocalGitCommitShas retrieves the commit SHAs of the last 1000 commits in the local Git repository.
 func GetLastLocalGitCommitShas() []string {
+	return NewCommandRunner(nil).GetLastLocalGitCommitShas()
+}
+
+// GetLastLocalGitCommitShas retrieves recent commit SHAs and records the Git command telemetry.
+func (r *CommandRunner) GetLastLocalGitCommitShas() []string {
 	// git log --format=%H -n 1000 --since=\"1 month ago\"
 	slog.Debug("testoptimization.git: getting the commit SHAs of the last 1000 commits in the local Git repository")
-	out, err := execGitString("log", "--format=%H", "-n", "1000", "--since=\"1 month ago\"")
+	out, err := r.execGitString(CommandGetLocalCommits, "log", "--format=%H", "-n", "1000", "--since=\"1 month ago\"")
 	if err != nil || out == "" {
 		return []string{}
 	}
@@ -362,10 +434,15 @@ func GetLastLocalGitCommitShas() []string {
 
 // UnshallowGitRepository converts a shallow clone into a complete clone by fetching all missing commits without git content (only commits and tree objects).
 func UnshallowGitRepository() (bool, error) {
+	return NewCommandRunner(nil).UnshallowGitRepository()
+}
+
+// UnshallowGitRepository fetches missing commit history and records the Git command telemetry.
+func (r *CommandRunner) UnshallowGitRepository() (bool, error) {
 
 	// let's do a first check to see if the repository is a shallow clone
 	slog.Debug("testoptimization.unshallow: checking if the repository is a shallow clone")
-	isAShallowClone, err := isAShallowCloneRepository()
+	isAShallowClone, err := r.isAShallowCloneRepository()
 	if err != nil {
 		return false, fmt.Errorf("testoptimization.unshallow: error checking if the repository is a shallow clone: %s", err)
 	}
@@ -378,7 +455,7 @@ func UnshallowGitRepository() (bool, error) {
 
 	// the git repo is a shallow clone, we need to double check if there are more than just 1 commit in the logs.
 	slog.Debug("testoptimization.unshallow: the repository is a shallow clone, checking if there are more than one commit in the logs")
-	hasMoreThanOneCommits, err := hasTheGitLogHaveMoreThanOneCommits()
+	hasMoreThanOneCommits, err := r.hasTheGitLogHaveMoreThanOneCommits()
 	if err != nil {
 		return false, fmt.Errorf("testoptimization.unshallow: error checking if the git log has more than one commit: %s", err)
 	}
@@ -405,7 +482,7 @@ func UnshallowGitRepository() (bool, error) {
 	// to ask for git commits and trees of the last month (no blobs)
 
 	// let's get the remote name
-	remoteName, err := getRemoteName()
+	remoteName, err := r.getRemoteName()
 	if err != nil {
 		return false, fmt.Errorf("testoptimization.unshallow: error getting the remote name: %s\n%s", err, remoteName)
 	}
@@ -416,13 +493,13 @@ func UnshallowGitRepository() (bool, error) {
 	slog.Debug("testoptimization.unshallow: remote name", "remoteName", remoteName)
 
 	// let's get the sha of the HEAD (git rev-parse HEAD)
-	headSha, err := execGitString("rev-parse", "HEAD")
+	headSha, err := r.execGitString(CommandGetHead, "rev-parse", "HEAD")
 	if err != nil {
 		return false, fmt.Errorf("testoptimization.unshallow: error getting the HEAD sha: %s\n%s", err, headSha)
 	}
 	if headSha == "" {
 		// if the HEAD is empty, we fallback to the current branch (git branch --show-current)
-		headSha, err = execGitString("branch", "--show-current")
+		headSha, err = r.execGitString(CommandGetBranch, "branch", "--show-current")
 		if err != nil {
 			return false, fmt.Errorf("testoptimization.unshallow: error getting the current branch: %s\n%s", err, headSha)
 		}
@@ -432,7 +509,7 @@ func UnshallowGitRepository() (bool, error) {
 	// let's fetch the missing commits and trees from the last month
 	// git fetch --shallow-since="1 month ago" --update-shallow --filter="blob:none" --recurse-submodules=no $(git config --default origin --get clone.defaultRemoteName) $(git rev-parse HEAD)
 	slog.Debug("testoptimization.unshallow: fetching the missing commits and trees from the last month")
-	fetchOutput, err := execGitString("fetch", "--shallow-since=\"1 month ago\"", "--update-shallow", "--filter=blob:none", "--recurse-submodules=no", remoteName, headSha)
+	fetchOutput, err := r.execGitString(CommandUnshallow, "fetch", "--shallow-since=\"1 month ago\"", "--update-shallow", "--filter=blob:none", "--recurse-submodules=no", remoteName, headSha)
 
 	// let's check if the last command was unsuccessful
 	if err != nil || fetchOutput == "" {
@@ -446,11 +523,11 @@ func UnshallowGitRepository() (bool, error) {
 		// let's get the remote branch name: git rev-parse --abbrev-ref --symbolic-full-name @{upstream}
 		var remoteBranchName string
 		slog.Debug("testoptimization.unshallow: getting the remote branch name")
-		remoteBranchName, err = execGitString("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+		remoteBranchName, err = r.execGitString(CommandUnshallow, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
 		if err == nil {
 			// let's try the alternative: git fetch --shallow-since="1 month ago" --update-shallow --filter="blob:none" --recurse-submodules=no $(git config --default origin --get clone.defaultRemoteName) $(git rev-parse --abbrev-ref --symbolic-full-name @{upstream})
 			slog.Debug("testoptimization.unshallow: fetching the missing commits and trees from the last month using the remote branch name")
-			fetchOutput, err = execGitString("fetch", "--shallow-since=\"1 month ago\"", "--update-shallow", "--filter=blob:none", "--recurse-submodules=no", remoteName, remoteBranchName)
+			fetchOutput, err = r.execGitString(CommandUnshallow, "fetch", "--shallow-since=\"1 month ago\"", "--update-shallow", "--filter=blob:none", "--recurse-submodules=no", remoteName, remoteBranchName)
 		}
 	}
 
@@ -465,7 +542,7 @@ func UnshallowGitRepository() (bool, error) {
 
 		// let's try the last fallback: git fetch --shallow-since="1 month ago" --update-shallow --filter="blob:none" --recurse-submodules=no $(git config --default origin --get clone.defaultRemoteName)
 		slog.Debug("testoptimization.unshallow: fetching the missing commits and trees from the last month using the origin name")
-		fetchOutput, err = execGitString("fetch", "--shallow-since=\"1 month ago\"", "--update-shallow", "--filter=blob:none", "--recurse-submodules=no", remoteName)
+		fetchOutput, err = r.execGitString(CommandUnshallow, "fetch", "--shallow-since=\"1 month ago\"", "--update-shallow", "--filter=blob:none", "--recurse-submodules=no", remoteName)
 	}
 
 	if err != nil {
@@ -494,6 +571,10 @@ func FilterSensitiveInfo(url string) string {
 
 // isAShallowCloneRepository checks if the local Git repository is a shallow clone.
 func isAShallowCloneRepository() (bool, error) {
+	return NewCommandRunner(nil).isAShallowCloneRepository()
+}
+
+func (r *CommandRunner) isAShallowCloneRepository() (bool, error) {
 	var fErr error
 	var sOnce *sync.Once
 	sOnce = isAShallowCloneRepositoryOnce.Load()
@@ -503,7 +584,7 @@ func isAShallowCloneRepository() (bool, error) {
 	}
 	sOnce.Do(func() {
 		// git rev-parse --is-shallow-repository
-		out, err := execGitString("rev-parse", "--is-shallow-repository")
+		out, err := r.execGitString(CommandCheckShallow, "rev-parse", "--is-shallow-repository")
 		if err != nil {
 			isAShallowCloneRepositoryValue = false
 			fErr = err
@@ -518,8 +599,12 @@ func isAShallowCloneRepository() (bool, error) {
 
 // hasTheGitLogHaveMoreThanOneCommits checks if the local Git repository has more than one commit.
 func hasTheGitLogHaveMoreThanOneCommits() (bool, error) {
+	return NewCommandRunner(nil).hasTheGitLogHaveMoreThanOneCommits()
+}
+
+func (r *CommandRunner) hasTheGitLogHaveMoreThanOneCommits() (bool, error) {
 	// git log --format=oneline -n 2
-	out, err := execGitString("log", "--format=oneline", "-n", "2")
+	out, err := r.execGitString(CommandCheckShallow, "log", "--format=oneline", "-n", "2")
 	if err != nil || out == "" {
 		return false, err
 	}
@@ -530,13 +615,17 @@ func hasTheGitLogHaveMoreThanOneCommits() (bool, error) {
 
 // getObjectsSha get the objects shas from the git repository based on the commits to include and exclude
 func getObjectsSha(commitsToInclude []string, commitsToExclude []string) []string {
+	return NewCommandRunner(nil).getObjectsSha(commitsToInclude, commitsToExclude)
+}
+
+func (r *CommandRunner) getObjectsSha(commitsToInclude []string, commitsToExclude []string) []string {
 	// git rev-list --objects --no-object-names --filter=blob:none --since="1 month ago" HEAD " + string.Join(" ", commitsToExclude.Select(c => "^" + c)) + " " + string.Join(" ", commitsToInclude);
 	commitsToExcludeArgs := make([]string, len(commitsToExclude))
 	for i, c := range commitsToExclude {
 		commitsToExcludeArgs[i] = "^" + c
 	}
 	args := append([]string{"rev-list", "--objects", "--no-object-names", "--filter=blob:none", "--since=\"1 month ago\"", "HEAD"}, append(commitsToExcludeArgs, commitsToInclude...)...)
-	out, err := execGitString(args...)
+	out, err := r.execGitString(CommandGetObjects, args...)
 	if err != nil {
 		return []string{}
 	}
@@ -545,8 +634,13 @@ func getObjectsSha(commitsToInclude []string, commitsToExclude []string) []strin
 
 // CreatePackFiles creates pack files from the given commits to include and exclude.
 func CreatePackFiles(commitsToInclude []string, commitsToExclude []string) []string {
+	return NewCommandRunner(nil).CreatePackFiles(commitsToInclude, commitsToExclude)
+}
+
+// CreatePackFiles creates pack files and records the Git command telemetry.
+func (r *CommandRunner) CreatePackFiles(commitsToInclude []string, commitsToExclude []string) []string {
 	// get the objects shas to send
-	objectsShas := getObjectsSha(commitsToInclude, commitsToExclude)
+	objectsShas := r.getObjectsSha(commitsToInclude, commitsToExclude)
 	if len(objectsShas) == 0 {
 		slog.Debug("testoptimization: no objects found to send")
 		return nil
@@ -581,7 +675,7 @@ func CreatePackFiles(commitsToInclude []string, commitsToExclude []string) []str
 		}
 
 		// git pack-objects --compression=9 --max-pack-size={MaxPackFileSizeInMb}m "{temporaryPath}"
-		out, err = execGitStringWithInput(objectsShasString,
+		out, err = r.execGitStringWithInput(CommandPackObjects, objectsShasString,
 			"pack-objects", "--compression=9", "--max-pack-size="+strconv.Itoa(MaxPackFileSizeInMb)+"m", temporaryPath+"/")
 		if err == nil {
 			break
@@ -644,8 +738,12 @@ func getParentGitFolder(innerFolder string) (string, error) {
 
 // getRemoteName determines the remote name.
 func getRemoteName() (string, error) {
+	return NewCommandRunner(nil).getRemoteName()
+}
+
+func (r *CommandRunner) getRemoteName() (string, error) {
 	// Try to find remote from upstream tracking
-	upstream, err := execGitString("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+	upstream, err := r.execGitString(CommandGetRemoteUpstreamTracking, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
 	if err == nil && upstream != "" {
 		parts := strings.Split(upstream, "/")
 		if len(parts) > 0 {
@@ -654,7 +752,7 @@ func getRemoteName() (string, error) {
 	}
 
 	// Fallback to first remote if no upstream
-	remotes, err := execGitString("remote")
+	remotes, err := r.execGitString(CommandGetRemote, "remote")
 	if err != nil {
 		return "origin", nil // ultimate fallback
 	}

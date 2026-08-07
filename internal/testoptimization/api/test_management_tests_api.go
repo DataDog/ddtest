@@ -8,6 +8,8 @@ package api
 import (
 	"fmt"
 	"time"
+
+	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
 const (
@@ -102,11 +104,19 @@ func (c *transport) GetTestManagementTests() (*TestManagementTestsResponseDataMo
 	}
 
 	request := c.getPostRequestConfig(testManagementTestsURLPath, body)
+	telemetry.TestManagementTestsRequest(c.telemetryClient, request.Compressed)
+	requestStartTime := time.Now()
 	response, err := c.handler.SendRequest(*request)
+	telemetry.TestManagementTestsRequestMs(c.telemetryClient, time.Since(requestStartTime))
 
 	if err != nil {
+		telemetry.TestManagementTestsRequestErrors(c.telemetryClient, responseStatusCode(response))
 		return nil, fmt.Errorf("sending test management tests request: %s", err)
 	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		telemetry.TestManagementTestsRequestErrors(c.telemetryClient, response.StatusCode)
+	}
+	telemetry.TestManagementTestsResponseBytes(c.telemetryClient, response.Compressed, response.BodySize)
 	c.testManagementTestsRawResponse = cloneRawMessage(response.Body)
 
 	var responseObject testManagementTestsResponse
@@ -114,6 +124,21 @@ func (c *transport) GetTestManagementTests() (*TestManagementTestsResponseDataMo
 	if err != nil {
 		return nil, fmt.Errorf("unmarshalling test management tests response: %s", err)
 	}
+	responseData := &responseObject.Data.Attributes
+	telemetry.TestManagementTestsResponseTests(c.telemetryClient, testManagementResponseTestCount(responseData))
 
-	return &responseObject.Data.Attributes, nil
+	return responseData, nil
+}
+
+func testManagementResponseTestCount(response *TestManagementTestsResponseDataModules) int {
+	if response == nil {
+		return 0
+	}
+	testCount := 0
+	for _, module := range response.Modules {
+		for _, suite := range module.Suites {
+			testCount += len(suite.Tests)
+		}
+	}
+	return testCount
 }

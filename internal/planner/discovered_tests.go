@@ -8,6 +8,7 @@ import (
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/telemetry"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	"github.com/DataDog/ddtest/internal/utils"
@@ -158,6 +159,18 @@ func (tp *TestPlanner) recordAppliedSkippable(match skippableMatch) {
 		tp.reportStats.uniqueTIASkippableSuitesApplied[match.suiteKey] = struct{}{}
 	case skippableMatchDisabledTest:
 		tp.reportStats.disabledTestsApplied++
+	}
+}
+
+func (tp *TestPlanner) recordITRSkippedTelemetry(suiteLevel bool) {
+	eventType := telemetry.EventTypeTest
+	count := tp.reportStats.tiaSkippableTestsApplied
+	if suiteLevel {
+		eventType = telemetry.EventTypeSuite
+		count = len(tp.reportStats.uniqueTIASkippableSuitesApplied)
+	}
+	if count > 0 {
+		telemetry.ITRSkipped(tp.telemetryClient, eventType, count)
 	}
 }
 

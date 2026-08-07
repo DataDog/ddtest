@@ -8,10 +8,13 @@ import (
 
 	"github.com/DataDog/ddtest/internal/buildinfo"
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/planner"
+	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/runner"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/telemetry"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -30,9 +33,12 @@ var rootCmd = &cobra.Command{
 }
 
 var (
-	planCommand = planner.Plan
-	newRunner   = func() runner.Runner { return runner.New() }
-	exitProcess = os.Exit
+	planCommand = func(ctx context.Context, telemetryClient telemetry.Client) error {
+		return planner.NewWithTelemetry(telemetryClient).Plan(ctx)
+	}
+	newRunner          = func(telemetryClient telemetry.Client) runner.Runner { return runner.NewWithTelemetry(telemetryClient) }
+	newTelemetryClient = createTelemetryClient
+	exitProcess        = os.Exit
 )
 
 var planCmd = &cobra.Command{
@@ -124,7 +130,10 @@ func bindPersistentFlags(cmd *cobra.Command, bindings []persistentFlagBinding) e
 
 func runPlanCommand(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
-	if err := planCommand(ctx); err != nil {
+	err := runWithTelemetry(ctx, func(telemetryClient telemetry.Client) error {
+		return planCommand(ctx, telemetryClient)
+	})
+	if err != nil {
 		slog.Error("Planner failed", "error", err)
 		exitProcess(1)
 		return
@@ -133,12 +142,37 @@ func runPlanCommand(cmd *cobra.Command, args []string) {
 
 func runTestCommand(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
-	testRunner := newRunner()
-	if err := testRunner.Run(ctx); err != nil {
+	err := runWithTelemetry(ctx, func(telemetryClient telemetry.Client) error {
+		return newRunner(telemetryClient).Run(ctx)
+	})
+	if err != nil {
 		slog.Error("Runner failed", "error", err)
 		exitProcess(1)
 		return
 	}
+}
+
+func createTelemetryClient() (telemetry.Client, error) {
+	ciTags := environment.GetCITags()
+	return telemetry.NewClient(telemetry.Config{
+		ServiceName:    runmetadata.New(ciTags).Service,
+		Environment:    os.Getenv("DD_ENV"),
+		LibraryVersion: buildinfo.CurrentVersion(),
+	})
+}
+
+func runWithTelemetry(ctx context.Context, operation func(telemetry.Client) error) error {
+	telemetryClient, err := newTelemetryClient()
+	if err != nil {
+		slog.Debug("Failed to create telemetry client", "error", err)
+		telemetryClient = telemetry.NoopClient()
+	}
+
+	operationErr := operation(telemetryClient)
+	if err := telemetryClient.Flush(context.WithoutCancel(ctx)); err != nil {
+		slog.Debug("Failed to flush telemetry metrics", "error", err)
+	}
+	return operationErr
 }
 
 func Execute() error {
