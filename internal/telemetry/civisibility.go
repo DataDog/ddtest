@@ -22,6 +22,14 @@ const (
 	EventTypeSuite EventType = "suite"
 )
 
+// CLICommandType identifies a top-level ddtest command.
+type CLICommandType string
+
+const (
+	CLICommandPlan CLICommandType = "plan"
+	CLICommandRun  CLICommandType = "run"
+)
+
 // SettingsResponse describes the settings flags represented in telemetry.
 type SettingsResponse struct {
 	CodeCoverageEnabled        bool
@@ -120,6 +128,18 @@ func GitCommandErrors(client Client, commandType git.CommandType, err error) {
 
 func GitCommandMs(client Client, commandType git.CommandType, duration time.Duration) {
 	distribution(client, "git.command_ms", []string{"command:" + string(commandType)}, milliseconds(duration))
+}
+
+func CLICommand(client Client, commandType CLICommandType, exitCode int) {
+	count(client, "cli.command", cliCommandTags(commandType, exitCode), 1)
+}
+
+func CLICommandMs(client Client, commandType CLICommandType, exitCode int, duration time.Duration) {
+	distribution(client, "cli.command_ms", cliCommandTags(commandType, exitCode), milliseconds(duration))
+}
+
+func cliCommandTags(commandType CLICommandType, exitCode int) []string {
+	return []string{"command:" + string(commandType), "exit_code:" + strconv.Itoa(exitCode)}
 }
 
 func gitCommandErrorTags(err error) []string {

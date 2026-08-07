@@ -10,6 +10,8 @@ are common metrics and are not sent to customer organizations.
 
 | Metric | Type | Data type | Allowed tags | Description |
 | --- | --- | --- | --- | --- |
+| `cli.command` | count | command | `command`, `exit_code` | Number of completed top-level ddtest commands. `command` is `plan` or `run`; `exit_code` is `0` or `1`. |
+| `cli.command_ms` | distribution | milliseconds | `command`, `exit_code` | Duration of a top-level ddtest command, tagged by command and exit code. |
 | `itr_skippable_tests.is_empty` | count | responses | None | Number of successful skippable-tests fetches that returned zero skippable tests or suites. |
 | `test_suite_durations.request` | count | requests | `rq_compressed` | Number of requests sent to the test suite durations endpoint, regardless of success. |
 | `test_suite_durations.request_errors` | count | requests | `error_type`, `status_code` | Number of terminal test suite durations request errors. `status_code` is emitted only for 400, 401, 403, 404, 408, and 429 responses. |

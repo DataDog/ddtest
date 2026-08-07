@@ -196,6 +196,22 @@ func TestGitCommandMetrics(t *testing.T) {
 	assertRecordedMetrics(t, client.metrics, want)
 }
 
+func TestCLICommandMetrics(t *testing.T) {
+	client := &recordingClient{}
+	CLICommand(client, CLICommandPlan, 0)
+	CLICommandMs(client, CLICommandPlan, 0, 1500*time.Millisecond)
+	CLICommand(client, CLICommandRun, 1)
+	CLICommandMs(client, CLICommandRun, 1, 2*time.Second)
+
+	want := []recordedMetric{
+		{kind: "count", name: "cli.command", tags: []string{"command:plan", "exit_code:0"}, value: 1},
+		{kind: "distribution", name: "cli.command_ms", tags: []string{"command:plan", "exit_code:0"}, value: 1500},
+		{kind: "count", name: "cli.command", tags: []string{"command:run", "exit_code:1"}, value: 1},
+		{kind: "distribution", name: "cli.command_ms", tags: []string{"command:run", "exit_code:1"}, value: 2000},
+	}
+	assertRecordedMetrics(t, client.metrics, want)
+}
+
 func TestGitCommandExitCode(t *testing.T) {
 	for _, test := range []struct {
 		exitCode int

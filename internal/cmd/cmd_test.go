@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -223,6 +224,11 @@ func TestRunPlanCommand(t *testing.T) {
 	if telemetryClient.flushCalls != 1 {
 		t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
 	}
+	if telemetryClient.metricsAtFlush < 2 {
+		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
+	}
+	telemetryClient.assertValue(t, "count", "cli.command", []string{"command:plan", "exit_code:0"}, 1)
+	telemetryClient.assertSamples(t, "distribution", "cli.command_ms", []string{"command:plan", "exit_code:0"}, 1)
 }
 
 func TestRunPlanCommandExitsOnError(t *testing.T) {
@@ -254,6 +260,11 @@ func TestRunPlanCommandExitsOnError(t *testing.T) {
 	if telemetryClient.flushCalls != 1 {
 		t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
 	}
+	if telemetryClient.metricsAtFlush < 2 {
+		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
+	}
+	telemetryClient.assertValue(t, "count", "cli.command", []string{"command:plan", "exit_code:1"}, 1)
+	telemetryClient.assertSamples(t, "distribution", "cli.command_ms", []string{"command:plan", "exit_code:1"}, 1)
 }
 
 func TestRunTestCommand(t *testing.T) {
@@ -287,6 +298,11 @@ func TestRunTestCommand(t *testing.T) {
 	if telemetryClient.flushCalls != 1 {
 		t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
 	}
+	if telemetryClient.metricsAtFlush < 2 {
+		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
+	}
+	telemetryClient.assertValue(t, "count", "cli.command", []string{"command:run", "exit_code:0"}, 1)
+	telemetryClient.assertSamples(t, "distribution", "cli.command_ms", []string{"command:run", "exit_code:0"}, 1)
 }
 
 func TestRunTestCommandExitsOnError(t *testing.T) {
@@ -318,6 +334,11 @@ func TestRunTestCommandExitsOnError(t *testing.T) {
 	if telemetryClient.flushCalls != 1 {
 		t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
 	}
+	if telemetryClient.metricsAtFlush < 2 {
+		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
+	}
+	telemetryClient.assertValue(t, "count", "cli.command", []string{"command:run", "exit_code:1"}, 1)
+	telemetryClient.assertSamples(t, "distribution", "cli.command_ms", []string{"command:run", "exit_code:1"}, 1)
 }
 
 func TestRunWithTelemetryFallsBackWhenCreationFails(t *testing.T) {
@@ -328,7 +349,7 @@ func TestRunWithTelemetryFallsBackWhenCreationFails(t *testing.T) {
 	}
 
 	operationErr := errors.New("operation failed")
-	got := runWithTelemetry(context.Background(), func(client telemetry.Client) error {
+	got := runWithTelemetry(context.Background(), telemetry.CLICommandPlan, func(client telemetry.Client) error {
 		if client == nil {
 			t.Fatal("operation received nil telemetry client")
 		}
@@ -347,7 +368,7 @@ func TestRunWithTelemetryDoesNotReplaceCommandErrorWithFlushError(t *testing.T) 
 	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
 	operationErr := errors.New("operation failed")
 
-	got := runWithTelemetry(context.Background(), func(telemetry.Client) error {
+	got := runWithTelemetry(context.Background(), telemetry.CLICommandRun, func(telemetry.Client) error {
 		return operationErr
 	})
 	if !errors.Is(got, operationErr) {
@@ -635,23 +656,70 @@ func (f *fakeCommandRunner) Run(ctx context.Context) error {
 }
 
 type fakeTelemetryClient struct {
-	flushCalls int
-	flushErr   error
+	flushCalls     int
+	metricsAtFlush int
+	flushErr       error
+	metrics        []fakeRecordedMetric
 }
 
-func (f *fakeTelemetryClient) Count(string, []string) telemetry.Metric {
-	return fakeTelemetryMetric{}
+type fakeRecordedMetric struct {
+	kind  string
+	name  string
+	tags  []string
+	value float64
 }
 
-func (f *fakeTelemetryClient) Distribution(string, []string) telemetry.Metric {
-	return fakeTelemetryMetric{}
+func (f *fakeTelemetryClient) Count(name string, tags []string) telemetry.Metric {
+	return &fakeTelemetryMetric{client: f, kind: "count", name: name, tags: slices.Clone(tags)}
+}
+
+func (f *fakeTelemetryClient) Distribution(name string, tags []string) telemetry.Metric {
+	return &fakeTelemetryMetric{client: f, kind: "distribution", name: name, tags: slices.Clone(tags)}
 }
 
 func (f *fakeTelemetryClient) Flush(context.Context) error {
 	f.flushCalls++
+	f.metricsAtFlush = len(f.metrics)
 	return f.flushErr
 }
 
-type fakeTelemetryMetric struct{}
+func (f *fakeTelemetryClient) values(kind, name string, tags []string) []float64 {
+	var values []float64
+	for _, metric := range f.metrics {
+		if metric.kind == kind && metric.name == name && slices.Equal(metric.tags, tags) {
+			values = append(values, metric.value)
+		}
+	}
+	return values
+}
 
-func (fakeTelemetryMetric) Submit(float64) {}
+func (f *fakeTelemetryClient) assertValue(t *testing.T, kind, name string, tags []string, want float64) {
+	t.Helper()
+	values := f.values(kind, name, tags)
+	if len(values) != 1 || values[0] != want {
+		t.Errorf("%s %s %v values = %v, want [%v]", kind, name, tags, values, want)
+	}
+}
+
+func (f *fakeTelemetryClient) assertSamples(t *testing.T, kind, name string, tags []string, want int) {
+	t.Helper()
+	if values := f.values(kind, name, tags); len(values) != want {
+		t.Errorf("%s %s %v sample count = %d, want %d; values=%v", kind, name, tags, len(values), want, values)
+	}
+}
+
+type fakeTelemetryMetric struct {
+	client *fakeTelemetryClient
+	kind   string
+	name   string
+	tags   []string
+}
+
+func (m *fakeTelemetryMetric) Submit(value float64) {
+	m.client.metrics = append(m.client.metrics, fakeRecordedMetric{
+		kind:  m.kind,
+		name:  m.name,
+		tags:  m.tags,
+		value: value,
+	})
+}
