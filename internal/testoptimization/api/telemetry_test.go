@@ -96,7 +96,7 @@ func TestTransportRecordsBackendTelemetry(t *testing.T) {
 		`{"data":{"attributes":{"tests":{"module-a":{"suite-a":["test-a"]}},"page_info":{"cursor":"page-2","has_next":true}}}}`,
 		`{"data":{"attributes":{"tests":{"module-a":{"suite-a":["test-b"]},"module-b":{"suite-b":["test-c"]}},"page_info":{"has_next":false}}}}`,
 	}
-	skippableBody := `{"meta":{"correlation_id":"cid"},"data":[{"type":"test","attributes":{"suite":"suite-a","name":"test-a","configurations":{"test.bundle":"module-a"}}},{"type":"suite","attributes":{"suite":"suite-b","configurations":{"test.bundle":"module-b"}}}]}`
+	skippableBody := `{"meta":{"correlation_id":"cid"},"data":[{"type":"test","attributes":{"suite":"suite-a","name":"test-a","configurations":{"test.bundle":"module-a"}}},{"type":"test","attributes":{"suite":"suite-b","name":"test-b","configurations":{"test.bundle":"module-b"}}}]}`
 	testManagementBody := `{"data":{"attributes":{"modules":{"module-a":{"suites":{"suite-a":{"tests":{"test-a":{"properties":{}},"test-b":{"properties":{}}}}}}}}}}`
 	searchCommitsBody := `{"data":[{"id":"remote-commit","type":"commit"}]}`
 	knownRequests := 0
@@ -171,6 +171,7 @@ func TestTransportRecordsBackendTelemetry(t *testing.T) {
 	recorder.assertSamples(t, "distribution", "itr_skippable_tests.request_ms", nil, 1)
 	recorder.assertValue(t, "distribution", "itr_skippable_tests.response_bytes", nil, float64(len(skippableBody)))
 	recorder.assertValue(t, "count", "itr_skippable_tests.response_tests", nil, 2)
+	recorder.assertSamples(t, "count", "itr_skippable_tests.response_suites", nil, 0)
 	recorder.assertValue(t, "count", "test_management_tests.request", nil, 1)
 	recorder.assertSamples(t, "distribution", "test_management_tests.request_ms", nil, 1)
 	recorder.assertValue(t, "distribution", "test_management_tests.response_bytes", nil, float64(len(testManagementBody)))
@@ -181,6 +182,25 @@ func TestTransportRecordsBackendTelemetry(t *testing.T) {
 	recorder.assertSamples(t, "distribution", "git_requests.objects_pack_ms", nil, 2)
 	recorder.assertValue(t, "distribution", "git_requests.objects_pack_files", nil, 2)
 	recorder.assertValue(t, "distribution", "git_requests.objects_pack_bytes", nil, 3)
+}
+
+func TestTransportRecordsSuiteOnlySkippableResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
+		_, _ = io.WriteString(w, `{"meta":{"correlation_id":"cid"},"data":[{"type":"suite","attributes":{"suite":"suite-a","configurations":{"test.bundle":"module-a"}}}]}`)
+	}))
+	defer server.Close()
+
+	recorder := &apiRecordingClient{}
+	client := newRawResponseTestClientWithTestSkippingLevel(server, settings.TestSkippingLevelSuite)
+	client.telemetryClient = recorder
+
+	if _, _, err := client.GetSkippableTests(); err != nil {
+		t.Fatalf("GetSkippableTests() error = %v", err)
+	}
+
+	recorder.assertValue(t, "count", "itr_skippable_tests.response_suites", nil, 1)
+	recorder.assertSamples(t, "count", "itr_skippable_tests.response_tests", nil, 0)
 }
 
 func TestTransportRecordsCompressedResponseWireBytes(t *testing.T) {

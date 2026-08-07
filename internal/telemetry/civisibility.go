@@ -211,6 +211,10 @@ func ITRSkippableTestsResponseTests(client Client, value int) {
 	count(client, "itr_skippable_tests.response_tests", nil, float64(value))
 }
 
+func ITRSkippableTestsResponseSuites(client Client, value int) {
+	count(client, "itr_skippable_tests.response_suites", nil, float64(value))
+}
+
 func ITRSkippableTestsRequestMs(client Client, duration time.Duration) {
 	distribution(client, "itr_skippable_tests.request_ms", nil, milliseconds(duration))
 }

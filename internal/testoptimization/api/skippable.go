@@ -140,7 +140,11 @@ func (c *transport) GetSkippableTests() (correlationID string, skippables Skippa
 	if err != nil {
 		return "", NewSkippables(), fmt.Errorf("unmarshalling skippable tests response: %s", err)
 	}
-	telemetry.ITRSkippableTestsResponseTests(c.telemetryClient, len(responseObject.Data))
+	if c.getTestSkippingLevel() == settings.TestSkippingLevelSuite {
+		telemetry.ITRSkippableTestsResponseSuites(c.telemetryClient, len(responseObject.Data))
+	} else {
+		telemetry.ITRSkippableTestsResponseTests(c.telemetryClient, len(responseObject.Data))
+	}
 
 	skippables = NewSkippables()
 	warnedMissingTestBundle := false

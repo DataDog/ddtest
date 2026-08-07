@@ -97,6 +97,7 @@ func TestCIVisibilityRequestMetrics(t *testing.T) {
 	ITRSkippableTestsRequestMs(client, duration)
 	ITRSkippableTestsResponseBytes(client, true, 43)
 	ITRSkippableTestsResponseTests(client, 3)
+	ITRSkippableTestsResponseSuites(client, 2)
 	KnownTestsRequest(client, false)
 	KnownTestsRequestErrors(client, 0)
 	KnownTestsRequestMs(client, duration)
@@ -125,6 +126,7 @@ func TestCIVisibilityRequestMetrics(t *testing.T) {
 		{kind: "distribution", name: "itr_skippable_tests.request_ms", value: 1500},
 		{kind: "distribution", name: "itr_skippable_tests.response_bytes", tags: []string{"rs_compressed:true"}, value: 43},
 		{kind: "count", name: "itr_skippable_tests.response_tests", value: 3},
+		{kind: "count", name: "itr_skippable_tests.response_suites", value: 2},
 		{kind: "count", name: "known_tests.request", value: 1},
 		{kind: "count", name: "known_tests.request_errors", tags: []string{"error_type:network"}, value: 1},
 		{kind: "distribution", name: "known_tests.request_ms", value: 1500},
