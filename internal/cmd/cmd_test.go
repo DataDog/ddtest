@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/git"
 	runnerpkg "github.com/DataDog/ddtest/internal/runner"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -228,7 +229,7 @@ func TestRunPlanCommand(t *testing.T) {
 	if telemetryClient.metricsAtFlush < 2 {
 		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
 	}
-	tags := cliMetricTags("plan", "0", attributes)
+	tags := cliMetricTags("plan", "0", errcode.None, attributes)
 	telemetryClient.assertValue(t, "count", "cli.command", tags, 1)
 	telemetryClient.assertSamples(t, "distribution", "cli.command_ms", tags, 1)
 }
@@ -246,7 +247,7 @@ func TestRunPlanCommandExitsOnError(t *testing.T) {
 
 	telemetryClient := &fakeTelemetryClient{}
 	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
-	planErr := errors.New("planner failed")
+	planErr := errcode.New(errcode.PlanFastTestDiscoveryFailed, "planner failed")
 	planCommand = func(ctx context.Context, got telemetry.Client) error {
 		return planErr
 	}
@@ -266,7 +267,7 @@ func TestRunPlanCommandExitsOnError(t *testing.T) {
 	if telemetryClient.metricsAtFlush < 2 {
 		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
 	}
-	tags := cliMetricTags("plan", "1", attributes)
+	tags := cliMetricTags("plan", "1", errcode.PlanFastTestDiscoveryFailed, attributes)
 	telemetryClient.assertValue(t, "count", "cli.command", tags, 1)
 	telemetryClient.assertSamples(t, "distribution", "cli.command_ms", tags, 1)
 }
@@ -306,7 +307,7 @@ func TestRunTestCommand(t *testing.T) {
 	if telemetryClient.metricsAtFlush < 2 {
 		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
 	}
-	tags := cliMetricTags("run", "0", attributes)
+	tags := cliMetricTags("run", "0", errcode.None, attributes)
 	telemetryClient.assertValue(t, "count", "cli.command", tags, 1)
 	telemetryClient.assertSamples(t, "distribution", "cli.command_ms", tags, 1)
 }
@@ -324,7 +325,7 @@ func TestRunTestCommandExitsOnError(t *testing.T) {
 
 	telemetryClient := &fakeTelemetryClient{}
 	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
-	fake := &fakeCommandRunner{err: errors.New("runner failed")}
+	fake := &fakeCommandRunner{err: errcode.New(errcode.RunParallelTestsFailed, "runner failed")}
 	newRunner = func(got telemetry.Client) runnerpkg.Runner {
 		return fake
 	}
@@ -344,7 +345,7 @@ func TestRunTestCommandExitsOnError(t *testing.T) {
 	if telemetryClient.metricsAtFlush < 2 {
 		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
 	}
-	tags := cliMetricTags("run", "1", attributes)
+	tags := cliMetricTags("run", "1", errcode.RunParallelTestsFailed, attributes)
 	telemetryClient.assertValue(t, "count", "cli.command", tags, 1)
 	telemetryClient.assertSamples(t, "distribution", "cli.command_ms", tags, 1)
 }
@@ -671,10 +672,11 @@ func stubCLICommandAttributes(t *testing.T) telemetry.CLICommandAttributes {
 	return attributes
 }
 
-func cliMetricTags(command, exitCode string, attributes telemetry.CLICommandAttributes) []string {
+func cliMetricTags(command, exitCode string, errorCode errcode.Code, attributes telemetry.CLICommandAttributes) []string {
 	return []string{
 		"command:" + command,
 		"exit_code:" + exitCode,
+		"error_code:" + string(errorCode),
 		"platform:" + attributes.Platform,
 		"framework:" + attributes.Framework,
 		"test_skipping_mode:" + attributes.TestSkippingMode,

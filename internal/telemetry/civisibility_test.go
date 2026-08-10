@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/git"
 )
 
@@ -203,14 +204,15 @@ func TestCLICommandMetrics(t *testing.T) {
 		Framework:        "rspec",
 		TestSkippingMode: "suite",
 	}
-	CLICommand(client, CLICommandPlan, 0, attributes)
-	CLICommandMs(client, CLICommandPlan, 0, attributes, 1500*time.Millisecond)
-	CLICommand(client, CLICommandRun, 1, attributes)
-	CLICommandMs(client, CLICommandRun, 1, attributes, 2*time.Second)
-	tags := func(command, exitCode string) []string {
+	CLICommand(client, CLICommandPlan, 0, errcode.None, attributes)
+	CLICommandMs(client, CLICommandPlan, 0, errcode.None, attributes, 1500*time.Millisecond)
+	CLICommand(client, CLICommandRun, 1, errcode.RunParallelTestsFailed, attributes)
+	CLICommandMs(client, CLICommandRun, 1, errcode.RunParallelTestsFailed, attributes, 2*time.Second)
+	tags := func(command, exitCode string, errorCode errcode.Code) []string {
 		return []string{
 			"command:" + command,
 			"exit_code:" + exitCode,
+			"error_code:" + string(errorCode),
 			"platform:ruby",
 			"framework:rspec",
 			"test_skipping_mode:suite",
@@ -218,10 +220,10 @@ func TestCLICommandMetrics(t *testing.T) {
 	}
 
 	want := []recordedMetric{
-		{kind: "count", name: "cli.command", tags: tags("plan", "0"), value: 1},
-		{kind: "distribution", name: "cli.command_ms", tags: tags("plan", "0"), value: 1500},
-		{kind: "count", name: "cli.command", tags: tags("run", "1"), value: 1},
-		{kind: "distribution", name: "cli.command_ms", tags: tags("run", "1"), value: 2000},
+		{kind: "count", name: "cli.command", tags: tags("plan", "0", errcode.None), value: 1},
+		{kind: "distribution", name: "cli.command_ms", tags: tags("plan", "0", errcode.None), value: 1500},
+		{kind: "count", name: "cli.command", tags: tags("run", "1", errcode.RunParallelTestsFailed), value: 1},
+		{kind: "distribution", name: "cli.command_ms", tags: tags("run", "1", errcode.RunParallelTestsFailed), value: 2000},
 	}
 	assertRecordedMetrics(t, client.metrics, want)
 }

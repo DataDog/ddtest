@@ -15,6 +15,7 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/runmetadata"
@@ -207,20 +208,20 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 	}
 
 	if err := writePlanFile(constants.ManifestPath, []byte(constants.ManifestVersion+"\n")); err != nil {
-		return fmt.Errorf("failed to write test optimization manifest: %w", err)
+		return errcode.WithCode(errcode.PlanManifestWriteFailed, fmt.Errorf("failed to write test optimization manifest: %w", err))
 	}
 
 	if err := tp.storeTestOptimizationPlanCache(); err != nil {
-		return fmt.Errorf("failed to store test optimization plan cache: %w", err)
+		return errcode.WithCode(errcode.PlanCacheWriteFailed, fmt.Errorf("failed to store test optimization plan cache: %w", err))
 	}
 
 	if err := writeTestFilesArtifact(tp.testFileWeights); err != nil {
-		return err
+		return errcode.WithCode(errcode.PlanTestFilesWriteFailed, err)
 	}
 
 	percentageContent := fmt.Sprintf("%.2f", tp.skippablePercentage)
 	if err := writePlanFile(constants.SkippablePercentageOutputPath, []byte(percentageContent)); err != nil {
-		return fmt.Errorf("failed to write skippable percentage: %w", err)
+		return errcode.WithCode(errcode.PlanSkippablePercentageWriteFailed, fmt.Errorf("failed to write skippable percentage: %w", err))
 	}
 
 	parallelRunnerSelection := calculateParallelRunnerSplitSelection(
@@ -234,7 +235,7 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 	parallelRunners := parallelRunnerSplit.parallelRunners
 	runnersContent := fmt.Sprintf("%d", parallelRunners)
 	if err := writePlanFile(constants.ParallelRunnersOutputPath, []byte(runnersContent)); err != nil {
-		return fmt.Errorf("failed to write parallel runners: %w", err)
+		return errcode.WithCode(errcode.PlanParallelRunnersWriteFailed, fmt.Errorf("failed to write parallel runners: %w", err))
 	}
 
 	if ciProvider, err := tp.ciProviderDetector.DetectCIProvider(); err == nil {
@@ -249,7 +250,7 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 	}
 
 	if err := tp.CreateTestSplits(tp.testFileWeights, parallelRunners, constants.TestFilesOutputPath); err != nil {
-		return fmt.Errorf("failed to create test splits: %w", err)
+		return errcode.WithCode(errcode.PlanTestSplitsWriteFailed, fmt.Errorf("failed to create test splits: %w", err))
 	}
 
 	if settings.GetReportEnabled() {
@@ -263,19 +264,19 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	detectedPlatform, err := tp.platformDetector.DetectPlatform()
 	if err != nil {
-		return fmt.Errorf("failed to detect platform: %w", err)
+		return errcode.WithCode(errcode.PlanPlatformDetectionFailed, fmt.Errorf("failed to detect platform: %w", err))
 	}
 
 	// Get platform-detected tags first
 	tags, err := detectedPlatform.CreateTagsMap()
 	if err != nil {
-		return fmt.Errorf("failed to create platform tags: %w", err)
+		return errcode.WithCode(errcode.PlanPlatformTagsCreationFailed, fmt.Errorf("failed to create platform tags: %w", err))
 	}
 
 	// Check if runtime tags override is provided and merge onto detected tags
 	overrideTags, err := settings.GetRuntimeTagsMap()
 	if err != nil {
-		return fmt.Errorf("failed to parse runtime tags override: %w", err)
+		return errcode.WithCode(errcode.PlanRuntimeTagsInvalid, fmt.Errorf("failed to parse runtime tags override: %w", err))
 	}
 
 	if overrideTags != nil {
@@ -289,7 +290,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	// Detect framework once to avoid duplicate work
 	testFramework, err := detectedPlatform.DetectFramework()
 	if err != nil {
-		return fmt.Errorf("failed to detect framework: %w", err)
+		return errcode.WithCode(errcode.PlanFrameworkDetectionFailed, fmt.Errorf("failed to detect framework: %w", err))
 	}
 	slog.Info("Framework detected", "framework", testFramework.Name())
 	testSkippingLevel := detectedPlatform.TestSkippingLevel()
@@ -303,14 +304,14 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	tp.planMetadata = NewPlanMetadata(tags, detectedPlatform.Name(), testFramework.Name(), testSkippingLevel)
 	if tp.optimizationClient == nil {
 		if tp.newOptimizationClient == nil {
-			return fmt.Errorf("failed to create optimization client: missing client factory")
+			return errcode.New(errcode.PlanOptimizationClientCreationFailed, "failed to create optimization client: missing client factory")
 		}
 		tp.optimizationClient = tp.newOptimizationClient(testSkippingLevel)
 	}
 
 	resolvedTestFiles, err := discovery.ResolveTestFiles(testFramework.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
-		return err
+		return errcode.WithCode(errcode.PlanTestFilesResolutionFailed, err)
 	}
 
 	var skipMatcher skippableMatcher
@@ -345,7 +346,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		defer tp.optimizationClient.StoreCacheAndExit()
 
 		if err := tp.optimizationClient.Initialize(tags); err != nil {
-			return fmt.Errorf("failed to initialize optimization client: %w", err)
+			return errcode.WithCode(errcode.PlanOptimizationClientInitializationFailed, fmt.Errorf("failed to initialize optimization client: %w", err))
 		}
 
 		repositorySettings := tp.optimizationClient.GetSettings()
@@ -447,7 +448,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	// is more precise than fast file discovery.
 	if fullDiscoverySucceeded {
 		if err := tp.recordFullDiscoveryResults(discoveredTests, resolvedTestFiles, skipMatcher); err != nil {
-			return err
+			return errcode.WithCode(errcode.PlanFullDiscoveryResultsProcessingFailed, err)
 		}
 		selectedDiscoveryMode = discoveryModeFull
 		selectedDiscoveryDuration = fullDiscoveryDuration
@@ -460,13 +461,13 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 			"fastDiscoveredTestFilesCount", len(discoveredTestFiles))
 	} else {
 		if strictDiscovery && fullDiscoveryErr != nil {
-			return fmt.Errorf("full test discovery failed: %w", fullDiscoveryErr)
+			return errcode.WithCode(errcode.PlanFullTestDiscoveryFailed, fmt.Errorf("full test discovery failed: %w", fullDiscoveryErr))
 		}
 		if fastDiscoveryErr != nil {
-			return fmt.Errorf("test discovery failed: %w", fastDiscoveryErr)
+			return errcode.WithCode(errcode.PlanFastTestDiscoveryFailed, fmt.Errorf("test discovery failed: %w", fastDiscoveryErr))
 		}
 		if err := tp.recordFastDiscoveryFallbackFiles(discoveredTestFiles); err != nil {
-			return err
+			return errcode.WithCode(errcode.PlanFastDiscoveryResultsProcessingFailed, err)
 		}
 		selectedDiscoveryMode = discoveryModeFast
 		selectedDiscoveryDuration = fastDiscoveryDuration

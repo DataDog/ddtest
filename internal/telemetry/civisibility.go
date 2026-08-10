@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/git"
 )
 
@@ -138,18 +139,19 @@ func GitCommandMs(client Client, commandType git.CommandType, duration time.Dura
 	distribution(client, "git.command_ms", []string{"command:" + string(commandType)}, milliseconds(duration))
 }
 
-func CLICommand(client Client, commandType CLICommandType, exitCode int, attributes CLICommandAttributes) {
-	count(client, "cli.command", cliCommandTags(commandType, exitCode, attributes), 1)
+func CLICommand(client Client, commandType CLICommandType, exitCode int, errorCode errcode.Code, attributes CLICommandAttributes) {
+	count(client, "cli.command", cliCommandTags(commandType, exitCode, errorCode, attributes), 1)
 }
 
-func CLICommandMs(client Client, commandType CLICommandType, exitCode int, attributes CLICommandAttributes, duration time.Duration) {
-	distribution(client, "cli.command_ms", cliCommandTags(commandType, exitCode, attributes), milliseconds(duration))
+func CLICommandMs(client Client, commandType CLICommandType, exitCode int, errorCode errcode.Code, attributes CLICommandAttributes, duration time.Duration) {
+	distribution(client, "cli.command_ms", cliCommandTags(commandType, exitCode, errorCode, attributes), milliseconds(duration))
 }
 
-func cliCommandTags(commandType CLICommandType, exitCode int, attributes CLICommandAttributes) []string {
+func cliCommandTags(commandType CLICommandType, exitCode int, errorCode errcode.Code, attributes CLICommandAttributes) []string {
 	return []string{
 		"command:" + string(commandType),
 		"exit_code:" + strconv.Itoa(exitCode),
+		"error_code:" + string(errorCode),
 		"platform:" + attributes.Platform,
 		"framework:" + attributes.Framework,
 		"test_skipping_mode:" + attributes.TestSkippingMode,

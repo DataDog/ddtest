@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/errcode"
 )
 
 const runModeSequential = "sequential"
@@ -19,7 +20,7 @@ func (e testExecutor) runSequential() runExecutionResult {
 
 	testFiles, err := loadTestBatch(constants.TestFilesOutputPath)
 	if err != nil {
-		return report.failure(fmt.Errorf("failed to read test files from %s: %w", constants.TestFilesOutputPath, err))
+		return report.failure(errcode.WithCode(errcode.RunSequentialTestFilesReadFailed, fmt.Errorf("failed to read test files from %s: %w", constants.TestFilesOutputPath, err)))
 	}
 	report.TestFilesRun = len(testFiles)
 
@@ -29,7 +30,7 @@ func (e testExecutor) runSequential() runExecutionResult {
 	}
 
 	if err := e.runBatch(testFiles, 0, 0); err != nil {
-		return report.failure(fmt.Errorf("failed to run tests: %w", err))
+		return report.failure(errcode.WithCode(errcode.RunSequentialTestsFailed, fmt.Errorf("failed to run tests: %w", err)))
 	}
 	return report.success()
 }

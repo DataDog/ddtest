@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/planner"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/telemetry"
@@ -151,6 +152,7 @@ func TestTestRunner_Run_ReturnsErrorWhenPlanUnavailable(t *testing.T) {
 	if !errors.Is(err, loadErr) {
 		t.Fatalf("expected Run() to return LoadPlan() error, got %v", err)
 	}
+	assertRunnerErrorCode(t, err, errcode.RunPlanLoadFailed)
 	if testPlanner.loadCalls != 1 {
 		t.Fatalf("expected LoadPlan() to be called once, got %d", testPlanner.loadCalls)
 	}
@@ -179,6 +181,7 @@ func TestTestRunner_Run_ReturnsPlanErrorWhenArtifactsAreMissing(t *testing.T) {
 	if !errors.Is(err, planErr) {
 		t.Fatalf("expected Run() to return planning error, got %v", err)
 	}
+	assertRunnerErrorCode(t, err, errcode.RunPlanningFailed)
 	if testPlanner.planCalls != 1 {
 		t.Fatalf("expected Plan() to be called once, got %d", testPlanner.planCalls)
 	}
@@ -201,6 +204,7 @@ func TestTestRunner_Run_ReturnsStatErrorForBrokenRunnerArtifactsPath(t *testing.
 	if err == nil || !strings.Contains(err.Error(), "failed to check parallel runners count") {
 		t.Fatalf("Run() error = %v, want stat failure", err)
 	}
+	assertRunnerErrorCode(t, err, errcode.RunPlanStatusCheckFailed)
 	if testPlanner.planCalls != 0 {
 		t.Fatalf("expected Plan() not to be called for stat failure, got %d", testPlanner.planCalls)
 	}
@@ -218,6 +222,7 @@ func TestTestRunner_Run_ReturnsErrorForInvalidParallelRunnerCount(t *testing.T) 
 	if err == nil || !strings.Contains(err.Error(), "failed to parse parallel runners count") {
 		t.Fatalf("Run() error = %v, want parse failure", err)
 	}
+	assertRunnerErrorCode(t, err, errcode.RunParallelRunnersParseFailed)
 }
 
 func TestTestRunner_Run_ReturnsPlatformDetectionError(t *testing.T) {
@@ -233,6 +238,7 @@ func TestTestRunner_Run_ReturnsPlatformDetectionError(t *testing.T) {
 	if !errors.Is(err, detectErr) {
 		t.Fatalf("expected Run() to return platform detection error, got %v", err)
 	}
+	assertRunnerErrorCode(t, err, errcode.RunPlatformDetectionFailed)
 }
 
 func TestTestRunner_Run_ReturnsFrameworkDetectionError(t *testing.T) {
@@ -249,6 +255,7 @@ func TestTestRunner_Run_ReturnsFrameworkDetectionError(t *testing.T) {
 	if !errors.Is(err, frameworkErr) {
 		t.Fatalf("expected Run() to return framework detection error, got %v", err)
 	}
+	assertRunnerErrorCode(t, err, errcode.RunFrameworkDetectionFailed)
 }
 
 func TestTestRunner_Run_WritesReportWhenEnabled(t *testing.T) {
@@ -294,6 +301,7 @@ func TestRunSequentialMissingTestFile(t *testing.T) {
 	if result.err == nil || !strings.Contains(result.err.Error(), "failed to read test files") {
 		t.Fatalf("runSequential() error = %v, want missing test file error", result.err)
 	}
+	assertRunnerErrorCode(t, result.err, errcode.RunSequentialTestFilesReadFailed)
 }
 
 func TestRunSequentialWithEmptyTestFile(t *testing.T) {
@@ -326,6 +334,7 @@ func TestRunSequentialReturnsWorkerError(t *testing.T) {
 	if result.err == nil || !strings.Contains(result.err.Error(), "failed to run tests") {
 		t.Fatalf("runSequential() error = %v, want worker error", result.err)
 	}
+	assertRunnerErrorCode(t, result.err, errcode.RunSequentialTestsFailed)
 }
 
 func TestRunParallelMissingSplitDirectory(t *testing.T) {
@@ -337,6 +346,7 @@ func TestRunParallelMissingSplitDirectory(t *testing.T) {
 	if result.err == nil || !strings.Contains(result.err.Error(), "failed to read tests split directory") {
 		t.Fatalf("runParallel() error = %v, want missing split directory error", result.err)
 	}
+	assertRunnerErrorCode(t, result.err, errcode.RunParallelSplitsReadFailed)
 }
 
 func TestRunParallelSkipsDirectoriesAndEmptyBatches(t *testing.T) {
@@ -372,6 +382,7 @@ func TestRunParallelReturnsWorkerError(t *testing.T) {
 	if result.err == nil || !strings.Contains(result.err.Error(), "failed to run parallel tests") {
 		t.Fatalf("runParallel() error = %v, want worker error", result.err)
 	}
+	assertRunnerErrorCode(t, result.err, errcode.RunParallelTestsFailed)
 }
 
 func TestNewCINodeExecutionReportDefaultsWorkers(t *testing.T) {
@@ -392,6 +403,7 @@ func TestLoadCINodeTestFilesMissingFile(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "runner file for ci-node 7 does not exist") {
 		t.Fatalf("loadCINodeTestFiles() error = %v, want missing runner file", err)
 	}
+	assertRunnerErrorCode(t, err, errcode.RunCINodeTestFilesMissing)
 }
 
 func TestRunCINodeSingleWorkerWithEmptyBatch(t *testing.T) {
@@ -538,5 +550,12 @@ func writeRunnerTestFile(t *testing.T, path string, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write %s: %v", path, err)
+	}
+}
+
+func assertRunnerErrorCode(t *testing.T, err error, want errcode.Code) {
+	t.Helper()
+	if got := errcode.CodeOf(err); got != want {
+		t.Fatalf("error code = %q, want %q; error: %v", got, want, err)
 	}
 }

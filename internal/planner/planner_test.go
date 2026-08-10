@@ -21,6 +21,7 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -3133,6 +3134,7 @@ func TestTestPlanner_PreparePlanningData_StrictDiscoveryFailsWhenFullDiscoveryFa
 	if !strings.Contains(err.Error(), "duplicate shared_context name") {
 		t.Fatalf("PreparePlanningData() error = %v, want original discovery error", err)
 	}
+	assertPlannerErrorCode(t, err, errcode.PlanFullTestDiscoveryFailed)
 }
 
 func TestTestPlanner_PreparePlanningData_StrictDiscoveryDoesNotFailWhenFullDiscoveryIsCancelled(t *testing.T) {
@@ -3932,6 +3934,7 @@ func TestTestPlanner_PreparePlanningData_PlatformDetectionError(t *testing.T) {
 	if !strings.Contains(err.Error(), expectedMsg) {
 		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
+	assertPlannerErrorCode(t, err, errcode.PlanPlatformDetectionFailed)
 }
 
 func TestTestPlanner_PreparePlanningData_TagsCreationError(t *testing.T) {
@@ -3959,6 +3962,7 @@ func TestTestPlanner_PreparePlanningData_TagsCreationError(t *testing.T) {
 	if !strings.Contains(err.Error(), expectedMsg) {
 		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
+	assertPlannerErrorCode(t, err, errcode.PlanPlatformTagsCreationFailed)
 }
 
 func TestTestPlanner_PreparePlanningData_OptimizationClientInitError(t *testing.T) {
@@ -3995,6 +3999,7 @@ func TestTestPlanner_PreparePlanningData_OptimizationClientInitError(t *testing.
 	if !strings.Contains(err.Error(), expectedMsg) {
 		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
+	assertPlannerErrorCode(t, err, errcode.PlanOptimizationClientInitializationFailed)
 }
 
 func TestTestPlanner_PreparePlanningData_FrameworkDetectionError(t *testing.T) {
@@ -4023,6 +4028,7 @@ func TestTestPlanner_PreparePlanningData_FrameworkDetectionError(t *testing.T) {
 	if !strings.Contains(err.Error(), expectedMsg) {
 		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
+	assertPlannerErrorCode(t, err, errcode.PlanFrameworkDetectionFailed)
 }
 
 func TestTestPlanner_PreparePlanningData_TestDiscoveryError(t *testing.T) {
@@ -4055,6 +4061,7 @@ func TestTestPlanner_PreparePlanningData_TestDiscoveryError(t *testing.T) {
 	if !strings.Contains(err.Error(), expectedMsg) {
 		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
+	assertPlannerErrorCode(t, err, errcode.PlanFastTestDiscoveryFailed)
 }
 
 func TestTestPlanner_PreparePlanningData_EmptyTests(t *testing.T) {
@@ -4257,6 +4264,7 @@ func TestTestPlanner_PreparePlanningData_RuntimeTagsOverrideInvalidJSON(t *testi
 	if !strings.Contains(err.Error(), expectedMsg) {
 		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
+	assertPlannerErrorCode(t, err, errcode.PlanRuntimeTagsInvalid)
 
 	// Optimization client should not be initialized when there's a parse error
 	if mockOptimizationClient.InitializeCalled {
@@ -4669,5 +4677,12 @@ func TestPreparePlanningData_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd(t 
 	}
 	if _, ok := weightedFiles["spec/models/order_spec.rb"]; !ok {
 		t.Errorf("Expected weighted test files to contain only order_spec.rb, got %v", weightedFiles)
+	}
+}
+
+func assertPlannerErrorCode(t *testing.T, err error, want errcode.Code) {
+	t.Helper()
+	if got := errcode.CodeOf(err); got != want {
+		t.Fatalf("error code = %q, want %q; error: %v", got, want, err)
 	}
 }

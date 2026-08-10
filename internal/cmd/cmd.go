@@ -10,6 +10,7 @@ import (
 	"github.com/DataDog/ddtest/internal/buildinfo"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/planner"
 	"github.com/DataDog/ddtest/internal/runmetadata"
@@ -182,8 +183,9 @@ func runWithTelemetry(ctx context.Context, commandType telemetry.CLICommandType,
 	if operationErr != nil {
 		exitCode = 1
 	}
-	telemetry.CLICommand(telemetryClient, commandType, exitCode, attributes)
-	telemetry.CLICommandMs(telemetryClient, commandType, exitCode, attributes, time.Since(startTime))
+	errorCode := errcode.CodeOf(operationErr)
+	telemetry.CLICommand(telemetryClient, commandType, exitCode, errorCode, attributes)
+	telemetry.CLICommandMs(telemetryClient, commandType, exitCode, errorCode, attributes, time.Since(startTime))
 	if err := telemetryClient.Flush(context.WithoutCancel(ctx)); err != nil {
 		slog.Debug("Failed to flush telemetry metrics", "error", err)
 	}
