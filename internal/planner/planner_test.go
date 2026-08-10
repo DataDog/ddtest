@@ -21,6 +21,7 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -72,6 +73,13 @@ func (c *plannerTelemetryClient) value(name string, tags ...string) float64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.metrics[name+"|"+strings.Join(tags, ",")]
+}
+
+func (c *plannerTelemetryClient) has(name string, tags ...string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.metrics[name+"|"+strings.Join(tags, ",")]
+	return ok
 }
 
 func (m *MockPlatformDetector) DetectPlatform() (platform.Platform, error) {
@@ -917,9 +925,20 @@ func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
+	telemetryClient := newPlannerTelemetryClient()
+	commandAttributeTracker := telemetry.NewCLICommandAttributeTracker(telemetryClient)
+	runner.telemetryClient = commandAttributeTracker
 
 	if err := runner.Plan(context.Background()); err != nil {
 		t.Fatalf("Plan() should not return error, got: %v", err)
+	}
+	wantCommandAttributes := telemetry.CLICommandAttributes{
+		Platform:         "javascript",
+		Framework:        "jest",
+		TestSkippingMode: "suite",
+	}
+	if got := commandAttributeTracker.Attributes(); got != wantCommandAttributes {
+		t.Fatalf("CLI command attributes = %#v, want %#v", got, wantCommandAttributes)
 	}
 
 	if !mockOptimizationClient.GetSkippablesCalled {
@@ -954,6 +973,153 @@ func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery
 	assertFileContent(t, constants.TestFilesOutputPath, expectedTestFiles)
 	assertFileContent(t, constants.SkippablePercentageOutputPath, "50.00")
 	assertFileContent(t, filepath.Join(constants.TestsSplitDir, "runner-0"), expectedTestFiles)
+	discoveryTags := []string{"discovery_mode:fast", "success:true", "platform:javascript", "framework:jest"}
+	if !telemetryClient.has("ddtest.test_discovery.duration_ms", discoveryTags...) {
+		t.Fatal("expected fast discovery duration telemetry")
+	}
+	if got := telemetryClient.value("ddtest.test_discovery.test_files", discoveryTags...); got != 2 {
+		t.Fatalf("fast discovery test files = %v, want 2", got)
+	}
+	planningTags := []string{
+		"platform:javascript",
+		"framework:jest",
+		"test_skipping_mode:suite",
+		"discovery_mode:fast",
+		"tia_enabled:true",
+	}
+	if !telemetryClient.has("ddtest.planning.decision", append(slices.Clone(planningTags),
+		"reason:single_runner_only", "target_status:disabled")...) {
+		t.Fatal("expected planning decision telemetry")
+	}
+	if got := telemetryClient.value("ddtest.planning.test_files", append(slices.Clone(planningTags), "state:discovered")...); got != 2 {
+		t.Fatalf("planning discovered test files = %v, want 2", got)
+	}
+	if got := telemetryClient.value("ddtest.planning.test_files", append(slices.Clone(planningTags), "state:runnable")...); got != 1 {
+		t.Fatalf("planning runnable test files = %v, want 1", got)
+	}
+	if got := telemetryClient.value("ddtest.planning.test_files", append(slices.Clone(planningTags), "state:fully_skipped")...); got != 1 {
+		t.Fatalf("planning fully skipped test files = %v, want 1", got)
+	}
+	if got := telemetryClient.value("ddtest.planning.test_file_durations", append(slices.Clone(planningTags), "source:backend")...); got != 1 {
+		t.Fatalf("planning backend duration test files = %v, want 1", got)
+	}
+	if got := telemetryClient.value("ddtest.planning.test_file_durations", append(slices.Clone(planningTags), "source:default")...); got != 0 {
+		t.Fatalf("planning default duration test files = %v, want 0", got)
+	}
+	if got := telemetryClient.value("ddtest.planning.estimated_time_saved_pct", planningTags...); got != 50 {
+		t.Fatalf("planning estimated time saved = %v, want 50", got)
+	}
+	if got := telemetryClient.value("ddtest.planning.parallel_runners", planningTags...); got != 1 {
+		t.Fatalf("planning parallel runners = %v, want 1", got)
+	}
+	if got := telemetryClient.value("ddtest.planning.expected_full_runtime_ms", planningTags...); got != 2000 {
+		t.Fatalf("planning expected full runtime = %v, want 2000", got)
+	}
+	if got := telemetryClient.value("ddtest.planning.expected_runnable_runtime_ms", planningTags...); got != 1000 {
+		t.Fatalf("planning expected runnable runtime = %v, want 1000", got)
+	}
+	if got := telemetryClient.value("ddtest.planning.expected_wall_time_ms", planningTags...); got != 1000 {
+		t.Fatalf("planning expected wall time = %v, want 1000", got)
+	}
+	if got := telemetryClient.value("ddtest.planning.split_imbalance_pct", planningTags...); got != 0 {
+		t.Fatalf("planning split imbalance = %v, want 0", got)
+	}
+	if got := telemetryClient.value("ddtest.planning.disabled_tests", planningTags...); got != 0 {
+		t.Fatalf("planning disabled tests = %v, want 0", got)
+	}
+	if got := telemetryClient.value("ddtest.planning.forced_run_suites", planningTags...); got != 0 {
+		t.Fatalf("planning forced run suites = %v, want 0", got)
+	}
+}
+
+func TestPlanningDecisionReason(t *testing.T) {
+	tests := []struct {
+		name              string
+		selection         splitSelection
+		runnableTestFiles int
+		wantReason        telemetry.PlanningDecisionReason
+		wantTargetStatus  telemetry.PlanningTargetStatus
+	}{
+		{
+			name:              "no runnable tests",
+			selection:         splitSelection{selected: splitScore{parallelRunners: 2}},
+			runnableTestFiles: 0,
+			wantReason:        telemetry.PlanningDecisionNoRunnableTests,
+			wantTargetStatus:  telemetry.PlanningTargetDisabled,
+		},
+		{
+			name: "single runner only",
+			selection: splitSelection{
+				selected:   splitScore{parallelRunners: 1, wallTime: 1000},
+				candidates: []splitScore{{parallelRunners: 1, wallTime: 1000}},
+			},
+			runnableTestFiles: 1,
+			wantReason:        telemetry.PlanningDecisionSingleRunnerOnly,
+			wantTargetStatus:  telemetry.PlanningTargetDisabled,
+		},
+		{
+			name: "lowest score without target",
+			selection: splitSelection{
+				selected:   splitScore{parallelRunners: 2, wallTime: 1000},
+				candidates: []splitScore{{parallelRunners: 1, wallTime: 2000}, {parallelRunners: 2, wallTime: 1000}},
+			},
+			runnableTestFiles: 2,
+			wantReason:        telemetry.PlanningDecisionLowestScore,
+			wantTargetStatus:  telemetry.PlanningTargetDisabled,
+		},
+		{
+			name: "target met by lowest score",
+			selection: splitSelection{
+				selected:          splitScore{parallelRunners: 2, wallTime: 1000},
+				bestWithoutTarget: splitScore{parallelRunners: 2, wallTime: 1000},
+				targetTime:        1500 * time.Millisecond,
+			},
+			runnableTestFiles: 2,
+			wantReason:        telemetry.PlanningDecisionTargetMetLowestScore,
+			wantTargetStatus:  telemetry.PlanningTargetMet,
+		},
+		{
+			name: "target changes selection",
+			selection: splitSelection{
+				selected:          splitScore{parallelRunners: 3, wallTime: 900},
+				bestWithoutTarget: splitScore{parallelRunners: 2, wallTime: 1100},
+				targetTime:        time.Second,
+			},
+			runnableTestFiles: 3,
+			wantReason:        telemetry.PlanningDecisionTargetMetChangedSelection,
+			wantTargetStatus:  telemetry.PlanningTargetMet,
+		},
+		{
+			name: "target unreachable",
+			selection: splitSelection{
+				selected:   splitScore{parallelRunners: 3, wallTime: 1100},
+				targetTime: time.Second,
+			},
+			runnableTestFiles: 3,
+			wantReason:        telemetry.PlanningDecisionTargetUnreachableLowestWall,
+			wantTargetStatus:  telemetry.PlanningTargetMissed,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := planningDecisionReason(test.selection, test.runnableTestFiles); got != test.wantReason {
+				t.Errorf("planningDecisionReason() = %q, want %q", got, test.wantReason)
+			}
+			if got := planningTargetStatus(test.selection); got != test.wantTargetStatus {
+				t.Errorf("planningTargetStatus() = %q, want %q", got, test.wantTargetStatus)
+			}
+		})
+	}
+}
+
+func TestSplitImbalancePercent(t *testing.T) {
+	if got := splitImbalancePercent(splitScore{wallTime: 1000, imbalance: 250}); got != 25 {
+		t.Fatalf("splitImbalancePercent() = %v, want 25", got)
+	}
+	if got := splitImbalancePercent(splitScore{}); got != 0 {
+		t.Fatalf("splitImbalancePercent() for empty split = %v, want 0", got)
+	}
 }
 
 func TestTestPlanner_PreparePlanningData_RubySuiteModeSkipsFullDiscoveryAndSkipsFile(t *testing.T) {
@@ -1125,6 +1291,13 @@ func TestTestPlanner_PreparePlanningData_RubySuiteModeForceFullDiscovery(t *test
 	}
 	if got := telemetryClient.value("itr_forced_run", "event_type:suite"); got != 0 {
 		t.Errorf("itr_forced_run suite count = %v, want 0", got)
+	}
+	discoveryTags := []string{"discovery_mode:full", "success:true", "platform:ruby", "framework:rspec"}
+	if !telemetryClient.has("ddtest.test_discovery.duration_ms", discoveryTags...) {
+		t.Fatal("expected full discovery duration telemetry")
+	}
+	if got := telemetryClient.value("ddtest.test_discovery.tests", discoveryTags...); got != 5 {
+		t.Fatalf("full discovery tests = %v, want 5", got)
 	}
 }
 
@@ -3122,6 +3295,8 @@ func TestTestPlanner_PreparePlanningData_StrictDiscoveryFailsWhenFullDiscoveryFa
 		&MockTestOptimizationClient{},
 		newDefaultMockCIProviderDetector(),
 	)
+	telemetryClient := newPlannerTelemetryClient()
+	runner.telemetryClient = telemetryClient
 
 	err := runner.PreparePlanningData(ctx)
 	if err == nil {
@@ -3132,6 +3307,12 @@ func TestTestPlanner_PreparePlanningData_StrictDiscoveryFailsWhenFullDiscoveryFa
 	}
 	if !strings.Contains(err.Error(), "duplicate shared_context name") {
 		t.Fatalf("PreparePlanningData() error = %v, want original discovery error", err)
+	}
+	assertPlannerErrorCode(t, err, errcode.PlanFullTestDiscoveryFailed)
+	discoveryTags := []string{"discovery_mode:full", "success:false", "platform:ruby", "framework:rspec"}
+	if !telemetryClient.has("ddtest.test_discovery.duration_ms", discoveryTags...) ||
+		!telemetryClient.has("ddtest.test_discovery.tests", discoveryTags...) {
+		t.Fatal("expected failed full discovery telemetry")
 	}
 }
 
@@ -3932,6 +4113,7 @@ func TestTestPlanner_PreparePlanningData_PlatformDetectionError(t *testing.T) {
 	if !strings.Contains(err.Error(), expectedMsg) {
 		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
+	assertPlannerErrorCode(t, err, errcode.PlanPlatformDetectionFailed)
 }
 
 func TestTestPlanner_PreparePlanningData_TagsCreationError(t *testing.T) {
@@ -3959,6 +4141,7 @@ func TestTestPlanner_PreparePlanningData_TagsCreationError(t *testing.T) {
 	if !strings.Contains(err.Error(), expectedMsg) {
 		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
+	assertPlannerErrorCode(t, err, errcode.PlanPlatformTagsCreationFailed)
 }
 
 func TestTestPlanner_PreparePlanningData_OptimizationClientInitError(t *testing.T) {
@@ -3995,6 +4178,7 @@ func TestTestPlanner_PreparePlanningData_OptimizationClientInitError(t *testing.
 	if !strings.Contains(err.Error(), expectedMsg) {
 		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
+	assertPlannerErrorCode(t, err, errcode.PlanOptimizationClientInitializationFailed)
 }
 
 func TestTestPlanner_PreparePlanningData_FrameworkDetectionError(t *testing.T) {
@@ -4023,18 +4207,21 @@ func TestTestPlanner_PreparePlanningData_FrameworkDetectionError(t *testing.T) {
 	if !strings.Contains(err.Error(), expectedMsg) {
 		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
+	assertPlannerErrorCode(t, err, errcode.PlanFrameworkDetectionFailed)
 }
 
 func TestTestPlanner_PreparePlanningData_TestDiscoveryError(t *testing.T) {
 	ctx := context.Background()
 
 	mockFramework := &MockFramework{
-		Err: errors.New("test discovery failed"),
+		FrameworkName: "rspec",
+		Err:           errors.New("test discovery failed"),
 	}
 
 	mockPlatform := &MockPlatform{
-		Tags:      map[string]string{"platform": "ruby"},
-		Framework: mockFramework,
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
 	}
 
 	mockPlatformDetector := &MockPlatformDetector{
@@ -4044,6 +4231,8 @@ func TestTestPlanner_PreparePlanningData_TestDiscoveryError(t *testing.T) {
 	mockOptimizationClient := &MockTestOptimizationClient{}
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	telemetryClient := newPlannerTelemetryClient()
+	runner.telemetryClient = telemetryClient
 
 	err := runner.PreparePlanningData(ctx)
 
@@ -4054,6 +4243,12 @@ func TestTestPlanner_PreparePlanningData_TestDiscoveryError(t *testing.T) {
 	expectedMsg := "test discovery failed"
 	if !strings.Contains(err.Error(), expectedMsg) {
 		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
+	}
+	assertPlannerErrorCode(t, err, errcode.PlanFastTestDiscoveryFailed)
+	discoveryTags := []string{"discovery_mode:fast", "success:false", "platform:ruby", "framework:rspec"}
+	if !telemetryClient.has("ddtest.test_discovery.duration_ms", discoveryTags...) ||
+		!telemetryClient.has("ddtest.test_discovery.test_files", discoveryTags...) {
+		t.Fatal("expected failed fast discovery telemetry")
 	}
 }
 
@@ -4257,6 +4452,7 @@ func TestTestPlanner_PreparePlanningData_RuntimeTagsOverrideInvalidJSON(t *testi
 	if !strings.Contains(err.Error(), expectedMsg) {
 		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
+	assertPlannerErrorCode(t, err, errcode.PlanRuntimeTagsInvalid)
 
 	// Optimization client should not be initialized when there's a parse error
 	if mockOptimizationClient.InitializeCalled {
@@ -4669,5 +4865,12 @@ func TestPreparePlanningData_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd(t 
 	}
 	if _, ok := weightedFiles["spec/models/order_spec.rb"]; !ok {
 		t.Errorf("Expected weighted test files to contain only order_spec.rb, got %v", weightedFiles)
+	}
+}
+
+func assertPlannerErrorCode(t *testing.T, err error, want errcode.Code) {
+	t.Helper()
+	if got := errcode.CodeOf(err); got != want {
+		t.Fatalf("error code = %q, want %q; error: %v", got, want, err)
 	}
 }

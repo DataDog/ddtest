@@ -15,6 +15,7 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/runmetadata"
@@ -88,6 +89,7 @@ type TestPlanner struct {
 	ciProviderDetector      environment.CIProviderDetector
 	telemetryClient         telemetry.Client
 	reportWriter            io.Writer
+	tiaSkippingEnabled      bool
 }
 
 const (
@@ -207,20 +209,20 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 	}
 
 	if err := writePlanFile(constants.ManifestPath, []byte(constants.ManifestVersion+"\n")); err != nil {
-		return fmt.Errorf("failed to write test optimization manifest: %w", err)
+		return errcode.WithCode(errcode.PlanManifestWriteFailed, fmt.Errorf("failed to write test optimization manifest: %w", err))
 	}
 
 	if err := tp.storeTestOptimizationPlanCache(); err != nil {
-		return fmt.Errorf("failed to store test optimization plan cache: %w", err)
+		return errcode.WithCode(errcode.PlanCacheWriteFailed, fmt.Errorf("failed to store test optimization plan cache: %w", err))
 	}
 
 	if err := writeTestFilesArtifact(tp.testFileWeights); err != nil {
-		return err
+		return errcode.WithCode(errcode.PlanTestFilesWriteFailed, err)
 	}
 
 	percentageContent := fmt.Sprintf("%.2f", tp.skippablePercentage)
 	if err := writePlanFile(constants.SkippablePercentageOutputPath, []byte(percentageContent)); err != nil {
-		return fmt.Errorf("failed to write skippable percentage: %w", err)
+		return errcode.WithCode(errcode.PlanSkippablePercentageWriteFailed, fmt.Errorf("failed to write skippable percentage: %w", err))
 	}
 
 	parallelRunnerSelection := calculateParallelRunnerSplitSelection(
@@ -234,7 +236,7 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 	parallelRunners := parallelRunnerSplit.parallelRunners
 	runnersContent := fmt.Sprintf("%d", parallelRunners)
 	if err := writePlanFile(constants.ParallelRunnersOutputPath, []byte(runnersContent)); err != nil {
-		return fmt.Errorf("failed to write parallel runners: %w", err)
+		return errcode.WithCode(errcode.PlanParallelRunnersWriteFailed, fmt.Errorf("failed to write parallel runners: %w", err))
 	}
 
 	if ciProvider, err := tp.ciProviderDetector.DetectCIProvider(); err == nil {
@@ -249,13 +251,14 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 	}
 
 	if err := tp.CreateTestSplits(tp.testFileWeights, parallelRunners, constants.TestFilesOutputPath); err != nil {
-		return fmt.Errorf("failed to create test splits: %w", err)
+		return errcode.WithCode(errcode.PlanTestSplitsWriteFailed, fmt.Errorf("failed to create test splits: %w", err))
 	}
 
 	if settings.GetReportEnabled() {
 		printPlanReport(tp.reportWriter, tp, parallelRunnerSelection)
 	}
 
+	tp.recordPlanningTelemetry(parallelRunnerSelection)
 	tp.planLoaded = true
 	return nil
 }
@@ -263,19 +266,19 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	detectedPlatform, err := tp.platformDetector.DetectPlatform()
 	if err != nil {
-		return fmt.Errorf("failed to detect platform: %w", err)
+		return errcode.WithCode(errcode.PlanPlatformDetectionFailed, fmt.Errorf("failed to detect platform: %w", err))
 	}
 
 	// Get platform-detected tags first
 	tags, err := detectedPlatform.CreateTagsMap()
 	if err != nil {
-		return fmt.Errorf("failed to create platform tags: %w", err)
+		return errcode.WithCode(errcode.PlanPlatformTagsCreationFailed, fmt.Errorf("failed to create platform tags: %w", err))
 	}
 
 	// Check if runtime tags override is provided and merge onto detected tags
 	overrideTags, err := settings.GetRuntimeTagsMap()
 	if err != nil {
-		return fmt.Errorf("failed to parse runtime tags override: %w", err)
+		return errcode.WithCode(errcode.PlanRuntimeTagsInvalid, fmt.Errorf("failed to parse runtime tags override: %w", err))
 	}
 
 	if overrideTags != nil {
@@ -289,10 +292,15 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	// Detect framework once to avoid duplicate work
 	testFramework, err := detectedPlatform.DetectFramework()
 	if err != nil {
-		return fmt.Errorf("failed to detect framework: %w", err)
+		return errcode.WithCode(errcode.PlanFrameworkDetectionFailed, fmt.Errorf("failed to detect framework: %w", err))
 	}
 	slog.Info("Framework detected", "framework", testFramework.Name())
 	testSkippingLevel := detectedPlatform.TestSkippingLevel()
+	telemetry.RecordCLICommandAttributes(tp.telemetryClient, telemetry.CLICommandAttributes{
+		Platform:         detectedPlatform.Name(),
+		Framework:        testFramework.Name(),
+		TestSkippingMode: testSkippingLevel.String(),
+	})
 	isSuiteLevelSkipping := testSkippingLevel == settings.TestSkippingLevelSuite
 	isTestLevelSkipping := testSkippingLevel == settings.TestSkippingLevelTest
 	fullTestDiscoverySupported := testFramework.SupportsFullTestDiscovery()
@@ -303,14 +311,14 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	tp.planMetadata = NewPlanMetadata(tags, detectedPlatform.Name(), testFramework.Name(), testSkippingLevel)
 	if tp.optimizationClient == nil {
 		if tp.newOptimizationClient == nil {
-			return fmt.Errorf("failed to create optimization client: missing client factory")
+			return errcode.New(errcode.PlanOptimizationClientCreationFailed, "failed to create optimization client: missing client factory")
 		}
 		tp.optimizationClient = tp.newOptimizationClient(testSkippingLevel)
 	}
 
 	resolvedTestFiles, err := discovery.ResolveTestFiles(testFramework.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
-		return err
+		return errcode.WithCode(errcode.PlanTestFilesResolutionFailed, err)
 	}
 
 	var skipMatcher skippableMatcher
@@ -325,6 +333,9 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	var selectedDiscoveryMode discoveryMode
 	var selectedDiscoveryDuration time.Duration
 	var cacheResult discoveryCacheResult
+	recordDiscoveryTelemetry := func(mode telemetry.TestDiscoveryMode, success bool, duration time.Duration, discovered int) {
+		telemetry.TestDiscovery(tp.telemetryClient, mode, success, detectedPlatform.Name(), testFramework.Name(), duration, discovered)
+	}
 
 	tp.resetDiscoveryResults()
 	tp.testSuiteDurations = make(map[string]map[string]api.TestSuiteDurationInfo)
@@ -345,7 +356,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		defer tp.optimizationClient.StoreCacheAndExit()
 
 		if err := tp.optimizationClient.Initialize(tags); err != nil {
-			return fmt.Errorf("failed to initialize optimization client: %w", err)
+			return errcode.WithCode(errcode.PlanOptimizationClientInitializationFailed, fmt.Errorf("failed to initialize optimization client: %w", err))
 		}
 
 		repositorySettings := tp.optimizationClient.GetSettings()
@@ -406,6 +417,8 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		}
 
 		res, discoveryErr := discoverLocalTests(discoveryCtx, testFramework, resolvedTestFiles)
+		discoveredTests = res
+		fullDiscoveryDuration = time.Since(fullDiscoveryStartTime)
 		if discoveryErr != nil {
 			if discoveryCtx.Err() == nil {
 				fullDiscoveryErr = discoveryErr
@@ -413,9 +426,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 			return nil // Don't fail the entire process, we have fast discovery as fallback.
 		}
 		discoveryCache.store()
-		discoveredTests = res
 		fullDiscoverySucceeded = true
-		fullDiscoveryDuration = time.Since(fullDiscoveryStartTime)
 
 		return nil
 	})
@@ -426,13 +437,13 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		slog.Info("Discovering test files (fast)...", "framework", testFramework.Name())
 		var res []string
 		res, discErr := testFramework.DiscoverTestFiles(ctx, resolvedTestFiles)
+		discoveredTestFiles = res
+		fastDiscoveryDuration = time.Since(startTime)
 		if discErr != nil {
 			fastDiscoveryErr = discErr
 			slog.Warn("Fast test discovery failed", "error", discErr)
 			return nil // Don't fail the entire process if full discovery succeeded
 		}
-		discoveredTestFiles = res
-		fastDiscoveryDuration = time.Since(startTime)
 		slog.Info("Discovered test files (fast)", "duration", fastDiscoveryDuration, "count", len(discoveredTestFiles))
 
 		return nil
@@ -446,8 +457,9 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	// backend data cancels it, use it even when TIA has no skips: full discovery
 	// is more precise than fast file discovery.
 	if fullDiscoverySucceeded {
+		recordDiscoveryTelemetry(telemetry.TestDiscoveryModeFull, true, fullDiscoveryDuration, len(discoveredTests))
 		if err := tp.recordFullDiscoveryResults(discoveredTests, resolvedTestFiles, skipMatcher); err != nil {
-			return err
+			return errcode.WithCode(errcode.PlanFullDiscoveryResultsProcessingFailed, err)
 		}
 		selectedDiscoveryMode = discoveryModeFull
 		selectedDiscoveryDuration = fullDiscoveryDuration
@@ -460,13 +472,16 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 			"fastDiscoveredTestFilesCount", len(discoveredTestFiles))
 	} else {
 		if strictDiscovery && fullDiscoveryErr != nil {
-			return fmt.Errorf("full test discovery failed: %w", fullDiscoveryErr)
+			recordDiscoveryTelemetry(telemetry.TestDiscoveryModeFull, false, fullDiscoveryDuration, len(discoveredTests))
+			return errcode.WithCode(errcode.PlanFullTestDiscoveryFailed, fmt.Errorf("full test discovery failed: %w", fullDiscoveryErr))
 		}
 		if fastDiscoveryErr != nil {
-			return fmt.Errorf("test discovery failed: %w", fastDiscoveryErr)
+			recordDiscoveryTelemetry(telemetry.TestDiscoveryModeFast, false, fastDiscoveryDuration, len(discoveredTestFiles))
+			return errcode.WithCode(errcode.PlanFastTestDiscoveryFailed, fmt.Errorf("test discovery failed: %w", fastDiscoveryErr))
 		}
+		recordDiscoveryTelemetry(telemetry.TestDiscoveryModeFast, true, fastDiscoveryDuration, len(discoveredTestFiles))
 		if err := tp.recordFastDiscoveryFallbackFiles(discoveredTestFiles); err != nil {
-			return err
+			return errcode.WithCode(errcode.PlanFastDiscoveryResultsProcessingFailed, err)
 		}
 		selectedDiscoveryMode = discoveryModeFast
 		selectedDiscoveryDuration = fastDiscoveryDuration
@@ -486,10 +501,89 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	tp.testFileWeights = tp.calculateFileWeights()
 
 	tp.recordDiscoveryReport(selectedDiscoveryMode, cacheResult, selectedDiscoveryDuration)
+	tp.tiaSkippingEnabled = tiaSkippingEnabled
 
 	slog.Info("Test files prepared", "testFilesCount", len(tp.testFiles))
 
 	return nil
+}
+
+func (tp *TestPlanner) recordPlanningTelemetry(selection splitSelection) {
+	backendDurationTestFiles := 0
+	defaultDurationTestFiles := 0
+	for _, source := range tp.testFileDurationSources {
+		if source == testFileDurationSourceKnown {
+			backendDurationTestFiles++
+		} else {
+			defaultDurationTestFiles++
+		}
+	}
+
+	fullySkippedTestFiles := len(tp.testFiles) - len(tp.testFileWeights)
+	if fullySkippedTestFiles < 0 {
+		fullySkippedTestFiles = 0
+	}
+
+	telemetry.Planning(tp.telemetryClient, telemetry.PlanningMetrics{
+		Attributes: telemetry.PlanningAttributes{
+			Platform:         tp.planMetadata.Platform,
+			Framework:        tp.planMetadata.Framework,
+			TestSkippingMode: tp.planMetadata.TestSkippingLevel,
+			DiscoveryMode:    telemetry.TestDiscoveryMode(tp.reportStats.discoveryMode),
+			TIAEnabled:       tp.tiaSkippingEnabled,
+		},
+		DecisionReason:            planningDecisionReason(selection, len(tp.testFileWeights)),
+		TargetStatus:              planningTargetStatus(selection),
+		DiscoveredTestFiles:       len(tp.testFiles),
+		RunnableTestFiles:         len(tp.testFileWeights),
+		FullySkippedTestFiles:     fullySkippedTestFiles,
+		BackendDurationTestFiles:  backendDurationTestFiles,
+		DefaultDurationTestFiles:  defaultDurationTestFiles,
+		EstimatedTimeSavedPercent: tp.skippablePercentage,
+		ParallelRunners:           selection.selected.parallelRunners,
+		ExpectedFullRuntime:       tp.expectedFullDuration(),
+		ExpectedRunnableRuntime:   selection.selected.totalRuntimeDuration(),
+		ExpectedWallTime:          selection.selected.wallTimeDuration(),
+		SplitImbalancePercent:     splitImbalancePercent(selection.selected),
+		DisabledTests:             tp.reportStats.disabledTestsApplied,
+		UnskippableMarkerSuites:   tp.reportStats.unskippableMarkerSuitesForced,
+	})
+}
+
+func planningDecisionReason(selection splitSelection, runnableTestFiles int) telemetry.PlanningDecisionReason {
+	if runnableTestFiles == 0 {
+		return telemetry.PlanningDecisionNoRunnableTests
+	}
+	if len(selection.candidates) == 1 && selection.selected.parallelRunners == 1 {
+		return telemetry.PlanningDecisionSingleRunnerOnly
+	}
+	if selection.targetTime <= 0 {
+		return telemetry.PlanningDecisionLowestScore
+	}
+	if selection.meetsTargetTime(selection.selected) {
+		if sameSplitScore(selection.selected, selection.bestWithoutTarget) {
+			return telemetry.PlanningDecisionTargetMetLowestScore
+		}
+		return telemetry.PlanningDecisionTargetMetChangedSelection
+	}
+	return telemetry.PlanningDecisionTargetUnreachableLowestWall
+}
+
+func planningTargetStatus(selection splitSelection) telemetry.PlanningTargetStatus {
+	if selection.targetTime <= 0 {
+		return telemetry.PlanningTargetDisabled
+	}
+	if selection.meetsTargetTime(selection.selected) {
+		return telemetry.PlanningTargetMet
+	}
+	return telemetry.PlanningTargetMissed
+}
+
+func splitImbalancePercent(split splitScore) float64 {
+	if split.wallTime <= 0 {
+		return 0
+	}
+	return float64(split.imbalance) / float64(split.wallTime) * 100
 }
 
 func discoverLocalTests(ctx context.Context, testFramework framework.Framework, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {

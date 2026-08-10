@@ -306,6 +306,41 @@ func TestHTTPSerializationHelpersErrorBranches(t *testing.T) {
 	}
 }
 
+func TestParseRateLimitReset(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		want      time.Duration
+		wantValid bool
+	}{
+		{name: "seconds", value: "2", want: 2 * time.Second, wantValid: true},
+		{
+			name:      "maximum accepted delay",
+			value:     "30",
+			want:      30 * time.Second,
+			wantValid: true,
+		},
+		{name: "excessive delay", value: "31"},
+		{name: "Unix timestamp", value: "2000000005"},
+		{name: "zero", value: "0"},
+		{name: "negative", value: "-1"},
+		{name: "integer overflow", value: "9223372036854775808"},
+		{name: "not an integer", value: "soon"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, valid := parseRateLimitReset(tt.value)
+			if valid != tt.wantValid {
+				t.Fatalf("parseRateLimitReset(%q) valid = %t, want %t", tt.value, valid, tt.wantValid)
+			}
+			if got != tt.want {
+				t.Fatalf("parseRateLimitReset(%q) = %s, want %s", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSerializeDataReaderAndBytes(t *testing.T) {
 	bytesData, err := serializeData([]byte("bytes"), constants.FormatJSON)
 	if err != nil || string(bytesData) != "bytes" {

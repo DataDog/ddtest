@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/git"
 )
 
@@ -98,6 +99,7 @@ func TestCIVisibilityRequestMetrics(t *testing.T) {
 	ITRSkippableTestsResponseBytes(client, true, 43)
 	ITRSkippableTestsResponseTests(client, 3)
 	ITRSkippableTestsResponseSuites(client, 2)
+	ITRSkippableTestsIsEmpty(client)
 	KnownTestsRequest(client, false)
 	KnownTestsRequestErrors(client, 0)
 	KnownTestsRequestMs(client, duration)
@@ -108,6 +110,12 @@ func TestCIVisibilityRequestMetrics(t *testing.T) {
 	TestManagementTestsRequestMs(client, duration)
 	TestManagementTestsResponseBytes(client, true, 45)
 	TestManagementTestsResponseTests(client, 5)
+	TestSuiteDurationsRequest(client, true)
+	TestSuiteDurationsRequestErrors(client, 429)
+	TestSuiteDurationsRequestMs(client, duration)
+	TestSuiteDurationsResponseBytes(client, true, 46)
+	TestSuiteDurationsResponseSuites(client, 6)
+	TestSuiteDurationsIsEmpty(client)
 
 	want := []recordedMetric{
 		{kind: "count", name: "git_requests.search_commits", tags: []string{"rq_compressed:true"}, value: 1},
@@ -127,6 +135,7 @@ func TestCIVisibilityRequestMetrics(t *testing.T) {
 		{kind: "distribution", name: "itr_skippable_tests.response_bytes", tags: []string{"rs_compressed:true"}, value: 43},
 		{kind: "count", name: "itr_skippable_tests.response_tests", value: 3},
 		{kind: "count", name: "itr_skippable_tests.response_suites", value: 2},
+		{kind: "count", name: "ddtest.itr_skippable_tests.is_empty", value: 1},
 		{kind: "count", name: "known_tests.request", value: 1},
 		{kind: "count", name: "known_tests.request_errors", tags: []string{"error_type:network"}, value: 1},
 		{kind: "distribution", name: "known_tests.request_ms", value: 1500},
@@ -137,6 +146,12 @@ func TestCIVisibilityRequestMetrics(t *testing.T) {
 		{kind: "distribution", name: "test_management_tests.request_ms", value: 1500},
 		{kind: "distribution", name: "test_management_tests.response_bytes", tags: []string{"rs_compressed:true"}, value: 45},
 		{kind: "distribution", name: "test_management_tests.response_tests", value: 5},
+		{kind: "count", name: "test_suite_durations.request", tags: []string{"rq_compressed:true"}, value: 1},
+		{kind: "count", name: "test_suite_durations.request_errors", tags: []string{"error_type:status_code_4xx_response", "status_code:429"}, value: 1},
+		{kind: "distribution", name: "test_suite_durations.request_ms", value: 1500},
+		{kind: "distribution", name: "test_suite_durations.response_bytes", tags: []string{"rs_compressed:true"}, value: 46},
+		{kind: "distribution", name: "test_suite_durations.response_suites", value: 6},
+		{kind: "count", name: "test_suite_durations.is_empty", value: 1},
 	}
 	assertRecordedMetrics(t, client.metrics, want)
 }
@@ -178,6 +193,141 @@ func TestGitCommandMetrics(t *testing.T) {
 		{kind: "count", name: "git.command", tags: []string{"command:get_objects"}, value: 1},
 		{kind: "distribution", name: "git.command_ms", tags: []string{"command:get_objects"}, value: 1500},
 		{kind: "count", name: "git.command_errors", tags: []string{"command:get_objects", "exit_code:missing"}, value: 1},
+	}
+	assertRecordedMetrics(t, client.metrics, want)
+}
+
+func TestCLICommandMetrics(t *testing.T) {
+	client := &recordingClient{}
+	attributes := CLICommandAttributes{
+		Platform:         "ruby",
+		Framework:        "rspec",
+		TestSkippingMode: "suite",
+	}
+	CLICommand(client, CLICommandPlan, 0, errcode.None, attributes)
+	CLICommandMs(client, CLICommandPlan, 0, errcode.None, attributes, 1500*time.Millisecond)
+	CLICommand(client, CLICommandRun, 1, errcode.RunParallelTestsFailed, attributes)
+	CLICommandMs(client, CLICommandRun, 1, errcode.RunParallelTestsFailed, attributes, 2*time.Second)
+	tags := func(command, exitCode string, errorCode errcode.Code) []string {
+		return []string{
+			"command:" + command,
+			"exit_code:" + exitCode,
+			"error_code:" + string(errorCode),
+			"platform:ruby",
+			"framework:rspec",
+			"test_skipping_mode:suite",
+		}
+	}
+
+	want := []recordedMetric{
+		{kind: "count", name: "ddtest.cli.command", tags: tags("plan", "0", errcode.None), value: 1},
+		{kind: "distribution", name: "ddtest.cli.command_ms", tags: tags("plan", "0", errcode.None), value: 1500},
+		{kind: "count", name: "ddtest.cli.command", tags: tags("run", "1", errcode.RunParallelTestsFailed), value: 1},
+		{kind: "distribution", name: "ddtest.cli.command_ms", tags: tags("run", "1", errcode.RunParallelTestsFailed), value: 2000},
+	}
+	assertRecordedMetrics(t, client.metrics, want)
+}
+
+func TestCLICommandAttributeTracker(t *testing.T) {
+	client := &recordingClient{}
+	tracker := NewCLICommandAttributeTracker(client)
+
+	unknown := CLICommandAttributes{
+		Platform:         "unknown",
+		Framework:        "unknown",
+		TestSkippingMode: "unknown",
+	}
+	if got := tracker.Attributes(); got != unknown {
+		t.Fatalf("initial attributes = %#v, want %#v", got, unknown)
+	}
+
+	detected := CLICommandAttributes{
+		Platform:         "javascript",
+		Framework:        "jest",
+		TestSkippingMode: "suite",
+	}
+	RecordCLICommandAttributes(tracker, detected)
+	if got := tracker.Attributes(); got != detected {
+		t.Fatalf("detected attributes = %#v, want %#v", got, detected)
+	}
+
+	tracker.Count("forwarded", nil).Submit(1)
+	assertRecordedMetrics(t, client.metrics, []recordedMetric{{kind: "count", name: "forwarded", value: 1}})
+}
+
+func TestTestDiscoveryMetrics(t *testing.T) {
+	client := &recordingClient{}
+	TestDiscovery(client, TestDiscoveryModeFull, true, "ruby", "rspec", 1500*time.Millisecond, 42)
+	TestDiscovery(client, TestDiscoveryModeFast, false, "javascript", "jest", 2*time.Second, 3)
+
+	fullTags := []string{"discovery_mode:full", "success:true", "platform:ruby", "framework:rspec"}
+	fastTags := []string{"discovery_mode:fast", "success:false", "platform:javascript", "framework:jest"}
+	want := []recordedMetric{
+		{kind: "distribution", name: "ddtest.test_discovery.duration_ms", tags: fullTags, value: 1500},
+		{kind: "distribution", name: "ddtest.test_discovery.tests", tags: fullTags, value: 42},
+		{kind: "distribution", name: "ddtest.test_discovery.duration_ms", tags: fastTags, value: 2000},
+		{kind: "distribution", name: "ddtest.test_discovery.test_files", tags: fastTags, value: 3},
+	}
+	assertRecordedMetrics(t, client.metrics, want)
+}
+
+func TestPlanningMetrics(t *testing.T) {
+	client := &recordingClient{}
+	Planning(client, PlanningMetrics{
+		Attributes: PlanningAttributes{
+			Platform:         "ruby",
+			Framework:        "rspec",
+			TestSkippingMode: "test",
+			DiscoveryMode:    TestDiscoveryModeFull,
+			TIAEnabled:       true,
+		},
+		DecisionReason:            PlanningDecisionTargetMetChangedSelection,
+		TargetStatus:              PlanningTargetMet,
+		DiscoveredTestFiles:       10,
+		RunnableTestFiles:         7,
+		FullySkippedTestFiles:     3,
+		BackendDurationTestFiles:  5,
+		DefaultDurationTestFiles:  2,
+		EstimatedTimeSavedPercent: 30,
+		ParallelRunners:           3,
+		ExpectedFullRuntime:       10 * time.Second,
+		ExpectedRunnableRuntime:   7 * time.Second,
+		ExpectedWallTime:          2500 * time.Millisecond,
+		SplitImbalancePercent:     20,
+		DisabledTests:             4,
+		UnskippableMarkerSuites:   1,
+	})
+
+	commonTags := []string{
+		"platform:ruby",
+		"framework:rspec",
+		"test_skipping_mode:test",
+		"discovery_mode:full",
+		"tia_enabled:true",
+	}
+	withTag := func(tag string) []string {
+		return append(slices.Clone(commonTags), tag)
+	}
+	want := []recordedMetric{
+		{
+			kind:  "count",
+			name:  "ddtest.planning.decision",
+			tags:  append(withTag("reason:target_met_changed_selection"), "target_status:met"),
+			value: 1,
+		},
+		{kind: "distribution", name: "ddtest.planning.test_files", tags: withTag("state:discovered"), value: 10},
+		{kind: "distribution", name: "ddtest.planning.test_files", tags: withTag("state:runnable"), value: 7},
+		{kind: "distribution", name: "ddtest.planning.test_files", tags: withTag("state:fully_skipped"), value: 3},
+		{kind: "distribution", name: "ddtest.planning.estimated_time_saved_pct", tags: commonTags, value: 30},
+		{kind: "distribution", name: "ddtest.planning.test_file_durations", tags: withTag("source:backend"), value: 5},
+		{kind: "distribution", name: "ddtest.planning.test_file_durations", tags: withTag("source:default"), value: 2},
+		{kind: "distribution", name: "ddtest.planning.parallel_runners", tags: commonTags, value: 3},
+		{kind: "distribution", name: "ddtest.planning.expected_full_runtime_ms", tags: commonTags, value: 10000},
+		{kind: "distribution", name: "ddtest.planning.expected_runnable_runtime_ms", tags: commonTags, value: 7000},
+		{kind: "distribution", name: "ddtest.planning.expected_wall_time_ms", tags: commonTags, value: 2500},
+		{kind: "distribution", name: "ddtest.planning.split_imbalance_pct", tags: commonTags, value: 20},
+		{kind: "distribution", name: "ddtest.planning.disabled_tests", tags: commonTags, value: 4},
+		{kind: "distribution", name: "ddtest.planning.forced_run_suites", tags: commonTags, value: 1},
 	}
 	assertRecordedMetrics(t, client.metrics, want)
 }

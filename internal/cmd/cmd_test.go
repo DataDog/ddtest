@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/git"
 	runnerpkg "github.com/DataDog/ddtest/internal/runner"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -176,22 +178,50 @@ func TestCommandHierarchy(t *testing.T) {
 	}
 }
 
-func TestRootPersistentPreRunChecksGitAvailability(t *testing.T) {
+func TestRootPersistentPreRunReportsGitAvailabilityFailures(t *testing.T) {
 	originalLookPathFunc := git.LookPathFunc
+	originalNewTelemetryClient := newTelemetryClient
 	git.LookPathFunc = func(file string) (string, error) {
 		return "", errors.New("missing git")
 	}
 	t.Cleanup(func() {
 		git.LookPathFunc = originalLookPathFunc
+		newTelemetryClient = originalNewTelemetryClient
 	})
 
-	err := rootCmd.PersistentPreRunE(rootCmd, nil)
-	if err == nil || !strings.Contains(err.Error(), "git executable not found") {
-		t.Fatalf("PersistentPreRunE() error = %v, want git availability error", err)
+	tests := []struct {
+		name        string
+		command     *cobra.Command
+		commandType string
+		errorCode   errcode.Code
+	}{
+		{name: "plan", command: planCmd, commandType: "plan", errorCode: errcode.PlanGitUnavailable},
+		{name: "run", command: runCmd, commandType: "run", errorCode: errcode.RunGitUnavailable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			telemetryClient := &fakeTelemetryClient{}
+			newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
+
+			err := rootCmd.PersistentPreRunE(test.command, nil)
+			if err == nil || !strings.Contains(err.Error(), "git executable not found") {
+				t.Fatalf("PersistentPreRunE() error = %v, want git availability error", err)
+			}
+			if got := errcode.CodeOf(err); got != test.errorCode {
+				t.Fatalf("PersistentPreRunE() error code = %q, want %q", got, test.errorCode)
+			}
+			if telemetryClient.flushCalls != 1 {
+				t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
+			}
+			tags := cliMetricTags(test.commandType, "1", test.errorCode, unknownCLICommandAttributes())
+			telemetryClient.assertValue(t, "count", "ddtest.cli.command", tags, 1)
+			telemetryClient.assertSamples(t, "distribution", "ddtest.cli.command_ms", tags, 1)
+		})
 	}
 }
 
 func TestRunPlanCommand(t *testing.T) {
+	attributes := detectedCLICommandAttributes()
 	originalPlanCommand := planCommand
 	originalNewTelemetryClient := newTelemetryClient
 	originalExitProcess := exitProcess
@@ -206,9 +236,7 @@ func TestRunPlanCommand(t *testing.T) {
 	calls := 0
 	planCommand = func(ctx context.Context, got telemetry.Client) error {
 		calls++
-		if got != telemetryClient {
-			t.Fatal("plan command did not receive the command telemetry client")
-		}
+		telemetry.RecordCLICommandAttributes(got, attributes)
 		return nil
 	}
 	exitProcess = func(code int) {
@@ -223,6 +251,12 @@ func TestRunPlanCommand(t *testing.T) {
 	if telemetryClient.flushCalls != 1 {
 		t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
 	}
+	if telemetryClient.metricsAtFlush < 2 {
+		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
+	}
+	tags := cliMetricTags("plan", "0", errcode.None, attributes)
+	telemetryClient.assertValue(t, "count", "ddtest.cli.command", tags, 1)
+	telemetryClient.assertSamples(t, "distribution", "ddtest.cli.command_ms", tags, 1)
 }
 
 func TestRunPlanCommandExitsOnError(t *testing.T) {
@@ -237,7 +271,7 @@ func TestRunPlanCommandExitsOnError(t *testing.T) {
 
 	telemetryClient := &fakeTelemetryClient{}
 	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
-	planErr := errors.New("planner failed")
+	planErr := errcode.New(errcode.PlanPlatformDetectionFailed, "planner failed")
 	planCommand = func(ctx context.Context, got telemetry.Client) error {
 		return planErr
 	}
@@ -254,9 +288,16 @@ func TestRunPlanCommandExitsOnError(t *testing.T) {
 	if telemetryClient.flushCalls != 1 {
 		t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
 	}
+	if telemetryClient.metricsAtFlush < 2 {
+		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
+	}
+	tags := cliMetricTags("plan", "1", errcode.PlanPlatformDetectionFailed, unknownCLICommandAttributes())
+	telemetryClient.assertValue(t, "count", "ddtest.cli.command", tags, 1)
+	telemetryClient.assertSamples(t, "distribution", "ddtest.cli.command_ms", tags, 1)
 }
 
 func TestRunTestCommand(t *testing.T) {
+	attributes := detectedCLICommandAttributes()
 	originalNewRunner := newRunner
 	originalNewTelemetryClient := newTelemetryClient
 	originalExitProcess := exitProcess
@@ -270,9 +311,7 @@ func TestRunTestCommand(t *testing.T) {
 	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
 	fake := &fakeCommandRunner{}
 	newRunner = func(got telemetry.Client) runnerpkg.Runner {
-		if got != telemetryClient {
-			t.Fatal("runner did not receive the command telemetry client")
-		}
+		telemetry.RecordCLICommandAttributes(got, attributes)
 		return fake
 	}
 	exitProcess = func(code int) {
@@ -287,9 +326,16 @@ func TestRunTestCommand(t *testing.T) {
 	if telemetryClient.flushCalls != 1 {
 		t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
 	}
+	if telemetryClient.metricsAtFlush < 2 {
+		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
+	}
+	tags := cliMetricTags("run", "0", errcode.None, attributes)
+	telemetryClient.assertValue(t, "count", "ddtest.cli.command", tags, 1)
+	telemetryClient.assertSamples(t, "distribution", "ddtest.cli.command_ms", tags, 1)
 }
 
 func TestRunTestCommandExitsOnError(t *testing.T) {
+	attributes := detectedCLICommandAttributes()
 	originalNewRunner := newRunner
 	originalNewTelemetryClient := newTelemetryClient
 	originalExitProcess := exitProcess
@@ -301,8 +347,9 @@ func TestRunTestCommandExitsOnError(t *testing.T) {
 
 	telemetryClient := &fakeTelemetryClient{}
 	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
-	fake := &fakeCommandRunner{err: errors.New("runner failed")}
+	fake := &fakeCommandRunner{err: errcode.New(errcode.RunParallelTestsFailed, "runner failed")}
 	newRunner = func(got telemetry.Client) runnerpkg.Runner {
+		telemetry.RecordCLICommandAttributes(got, attributes)
 		return fake
 	}
 	var exitCodes []int
@@ -318,6 +365,12 @@ func TestRunTestCommandExitsOnError(t *testing.T) {
 	if telemetryClient.flushCalls != 1 {
 		t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
 	}
+	if telemetryClient.metricsAtFlush < 2 {
+		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
+	}
+	tags := cliMetricTags("run", "1", errcode.RunParallelTestsFailed, attributes)
+	telemetryClient.assertValue(t, "count", "ddtest.cli.command", tags, 1)
+	telemetryClient.assertSamples(t, "distribution", "ddtest.cli.command_ms", tags, 1)
 }
 
 func TestRunWithTelemetryFallsBackWhenCreationFails(t *testing.T) {
@@ -328,7 +381,7 @@ func TestRunWithTelemetryFallsBackWhenCreationFails(t *testing.T) {
 	}
 
 	operationErr := errors.New("operation failed")
-	got := runWithTelemetry(context.Background(), func(client telemetry.Client) error {
+	got := runWithTelemetry(context.Background(), telemetry.CLICommandPlan, func(client telemetry.Client) error {
 		if client == nil {
 			t.Fatal("operation received nil telemetry client")
 		}
@@ -347,7 +400,7 @@ func TestRunWithTelemetryDoesNotReplaceCommandErrorWithFlushError(t *testing.T) 
 	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
 	operationErr := errors.New("operation failed")
 
-	got := runWithTelemetry(context.Background(), func(telemetry.Client) error {
+	got := runWithTelemetry(context.Background(), telemetry.CLICommandRun, func(telemetry.Client) error {
 		return operationErr
 	})
 	if !errors.Is(got, operationErr) {
@@ -629,29 +682,103 @@ type fakeCommandRunner struct {
 	err   error
 }
 
+func detectedCLICommandAttributes() telemetry.CLICommandAttributes {
+	return telemetry.CLICommandAttributes{
+		Platform:         "javascript",
+		Framework:        "jest",
+		TestSkippingMode: "suite",
+	}
+}
+
+func unknownCLICommandAttributes() telemetry.CLICommandAttributes {
+	return telemetry.CLICommandAttributes{
+		Platform:         "unknown",
+		Framework:        "unknown",
+		TestSkippingMode: "unknown",
+	}
+}
+
+func cliMetricTags(command, exitCode string, errorCode errcode.Code, attributes telemetry.CLICommandAttributes) []string {
+	return []string{
+		"command:" + command,
+		"exit_code:" + exitCode,
+		"error_code:" + string(errorCode),
+		"platform:" + attributes.Platform,
+		"framework:" + attributes.Framework,
+		"test_skipping_mode:" + attributes.TestSkippingMode,
+	}
+}
+
 func (f *fakeCommandRunner) Run(ctx context.Context) error {
 	f.calls++
 	return f.err
 }
 
 type fakeTelemetryClient struct {
-	flushCalls int
-	flushErr   error
+	flushCalls     int
+	metricsAtFlush int
+	flushErr       error
+	metrics        []fakeRecordedMetric
 }
 
-func (f *fakeTelemetryClient) Count(string, []string) telemetry.Metric {
-	return fakeTelemetryMetric{}
+type fakeRecordedMetric struct {
+	kind  string
+	name  string
+	tags  []string
+	value float64
 }
 
-func (f *fakeTelemetryClient) Distribution(string, []string) telemetry.Metric {
-	return fakeTelemetryMetric{}
+func (f *fakeTelemetryClient) Count(name string, tags []string) telemetry.Metric {
+	return &fakeTelemetryMetric{client: f, kind: "count", name: name, tags: slices.Clone(tags)}
+}
+
+func (f *fakeTelemetryClient) Distribution(name string, tags []string) telemetry.Metric {
+	return &fakeTelemetryMetric{client: f, kind: "distribution", name: name, tags: slices.Clone(tags)}
 }
 
 func (f *fakeTelemetryClient) Flush(context.Context) error {
 	f.flushCalls++
+	f.metricsAtFlush = len(f.metrics)
 	return f.flushErr
 }
 
-type fakeTelemetryMetric struct{}
+func (f *fakeTelemetryClient) values(kind, name string, tags []string) []float64 {
+	var values []float64
+	for _, metric := range f.metrics {
+		if metric.kind == kind && metric.name == name && slices.Equal(metric.tags, tags) {
+			values = append(values, metric.value)
+		}
+	}
+	return values
+}
 
-func (fakeTelemetryMetric) Submit(float64) {}
+func (f *fakeTelemetryClient) assertValue(t *testing.T, kind, name string, tags []string, want float64) {
+	t.Helper()
+	values := f.values(kind, name, tags)
+	if len(values) != 1 || values[0] != want {
+		t.Errorf("%s %s %v values = %v, want [%v]", kind, name, tags, values, want)
+	}
+}
+
+func (f *fakeTelemetryClient) assertSamples(t *testing.T, kind, name string, tags []string, want int) {
+	t.Helper()
+	if values := f.values(kind, name, tags); len(values) != want {
+		t.Errorf("%s %s %v sample count = %d, want %d; values=%v", kind, name, tags, len(values), want, values)
+	}
+}
+
+type fakeTelemetryMetric struct {
+	client *fakeTelemetryClient
+	kind   string
+	name   string
+	tags   []string
+}
+
+func (m *fakeTelemetryMetric) Submit(value float64) {
+	m.client.metrics = append(m.client.metrics, fakeRecordedMetric{
+		kind:  m.kind,
+		name:  m.name,
+		tags:  m.tags,
+		value: value,
+	})
+}

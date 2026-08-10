@@ -9,8 +9,10 @@ import (
 	"errors"
 	"os/exec"
 	"strconv"
+	"sync"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/git"
 )
 
@@ -21,6 +23,129 @@ const (
 	EventTypeTest  EventType = "test"
 	EventTypeSuite EventType = "suite"
 )
+
+// CLICommandType identifies a top-level ddtest command.
+type CLICommandType string
+
+const (
+	CLICommandPlan CLICommandType = "plan"
+	CLICommandRun  CLICommandType = "run"
+)
+
+// TestDiscoveryMode identifies the discovery strategy selected by the planner.
+type TestDiscoveryMode string
+
+const (
+	TestDiscoveryModeFull TestDiscoveryMode = "full"
+	TestDiscoveryModeFast TestDiscoveryMode = "fast"
+)
+
+// PlanningDecisionReason identifies the constraint that determined the
+// selected parallel runner split.
+type PlanningDecisionReason string
+
+const (
+	PlanningDecisionNoRunnableTests             PlanningDecisionReason = "no_runnable_tests"
+	PlanningDecisionSingleRunnerOnly            PlanningDecisionReason = "single_runner_only"
+	PlanningDecisionLowestScore                 PlanningDecisionReason = "lowest_score"
+	PlanningDecisionTargetMetLowestScore        PlanningDecisionReason = "target_met_lowest_score"
+	PlanningDecisionTargetMetChangedSelection   PlanningDecisionReason = "target_met_changed_selection"
+	PlanningDecisionTargetUnreachableLowestWall PlanningDecisionReason = "target_unreachable_lowest_wall_time"
+)
+
+// PlanningTargetStatus identifies whether a configured target time affected
+// the planning decision.
+type PlanningTargetStatus string
+
+const (
+	PlanningTargetDisabled PlanningTargetStatus = "disabled"
+	PlanningTargetMet      PlanningTargetStatus = "met"
+	PlanningTargetMissed   PlanningTargetStatus = "missed"
+)
+
+// PlanningAttributes contains the bounded dimensions common to planning
+// metrics.
+type PlanningAttributes struct {
+	Platform         string
+	Framework        string
+	TestSkippingMode string
+	DiscoveryMode    TestDiscoveryMode
+	TIAEnabled       bool
+}
+
+// PlanningMetrics contains the outcome of one completed planning operation.
+type PlanningMetrics struct {
+	Attributes                PlanningAttributes
+	DecisionReason            PlanningDecisionReason
+	TargetStatus              PlanningTargetStatus
+	DiscoveredTestFiles       int
+	RunnableTestFiles         int
+	FullySkippedTestFiles     int
+	BackendDurationTestFiles  int
+	DefaultDurationTestFiles  int
+	EstimatedTimeSavedPercent float64
+	ParallelRunners           int
+	ExpectedFullRuntime       time.Duration
+	ExpectedRunnableRuntime   time.Duration
+	ExpectedWallTime          time.Duration
+	SplitImbalancePercent     float64
+	DisabledTests             int
+	UnskippableMarkerSuites   int
+}
+
+// CLICommandAttributes describes the resolved configuration attached to CLI
+// command telemetry.
+type CLICommandAttributes struct {
+	Platform         string
+	Framework        string
+	TestSkippingMode string
+}
+
+const unknownCLICommandAttributeValue = "unknown"
+
+// CLICommandAttributeTracker forwards metrics to Client and retains the
+// platform configuration detected during the command. Attributes remain
+// unknown until platform and framework detection both succeed.
+type CLICommandAttributeTracker struct {
+	Client
+	mu         sync.RWMutex
+	attributes CLICommandAttributes
+}
+
+func NewCLICommandAttributeTracker(client Client) *CLICommandAttributeTracker {
+	return &CLICommandAttributeTracker{
+		Client: client,
+		attributes: CLICommandAttributes{
+			Platform:         unknownCLICommandAttributeValue,
+			Framework:        unknownCLICommandAttributeValue,
+			TestSkippingMode: unknownCLICommandAttributeValue,
+		},
+	}
+}
+
+func (t *CLICommandAttributeTracker) Attributes() CLICommandAttributes {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.attributes
+}
+
+func (t *CLICommandAttributeTracker) record(attributes CLICommandAttributes) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.attributes = attributes
+}
+
+type cliCommandAttributeRecorder interface {
+	record(CLICommandAttributes)
+}
+
+// RecordCLICommandAttributes records values obtained from successful platform
+// and framework detection when client is tracking top-level command telemetry.
+func RecordCLICommandAttributes(client Client, attributes CLICommandAttributes) {
+	if recorder, ok := client.(cliCommandAttributeRecorder); ok {
+		recorder.record(attributes)
+	}
+}
 
 // SettingsResponse describes the settings flags represented in telemetry.
 type SettingsResponse struct {
@@ -122,6 +247,81 @@ func GitCommandMs(client Client, commandType git.CommandType, duration time.Dura
 	distribution(client, "git.command_ms", []string{"command:" + string(commandType)}, milliseconds(duration))
 }
 
+func CLICommand(client Client, commandType CLICommandType, exitCode int, errorCode errcode.Code, attributes CLICommandAttributes) {
+	count(client, "ddtest.cli.command", cliCommandTags(commandType, exitCode, errorCode, attributes), 1)
+}
+
+func CLICommandMs(client Client, commandType CLICommandType, exitCode int, errorCode errcode.Code, attributes CLICommandAttributes, duration time.Duration) {
+	distribution(client, "ddtest.cli.command_ms", cliCommandTags(commandType, exitCode, errorCode, attributes), milliseconds(duration))
+}
+
+func TestDiscovery(client Client, mode TestDiscoveryMode, success bool, platform, framework string, duration time.Duration, discovered int) {
+	tags := []string{
+		"discovery_mode:" + string(mode),
+		"success:" + strconv.FormatBool(success),
+		"platform:" + platform,
+		"framework:" + framework,
+	}
+	distribution(client, "ddtest.test_discovery.duration_ms", tags, milliseconds(duration))
+
+	switch mode {
+	case TestDiscoveryModeFull:
+		distribution(client, "ddtest.test_discovery.tests", tags, float64(discovered))
+	case TestDiscoveryModeFast:
+		distribution(client, "ddtest.test_discovery.test_files", tags, float64(discovered))
+	}
+}
+
+// Planning records the decisions and estimates from one completed plan.
+func Planning(client Client, metrics PlanningMetrics) {
+	commonTags := planningTags(metrics.Attributes)
+	count(client, "ddtest.planning.decision", appendPlanningTags(commonTags,
+		"reason:"+string(metrics.DecisionReason),
+		"target_status:"+string(metrics.TargetStatus),
+	), 1)
+
+	distribution(client, "ddtest.planning.test_files", appendPlanningTags(commonTags, "state:discovered"), float64(metrics.DiscoveredTestFiles))
+	distribution(client, "ddtest.planning.test_files", appendPlanningTags(commonTags, "state:runnable"), float64(metrics.RunnableTestFiles))
+	distribution(client, "ddtest.planning.test_files", appendPlanningTags(commonTags, "state:fully_skipped"), float64(metrics.FullySkippedTestFiles))
+	distribution(client, "ddtest.planning.estimated_time_saved_pct", commonTags, metrics.EstimatedTimeSavedPercent)
+	distribution(client, "ddtest.planning.test_file_durations", appendPlanningTags(commonTags, "source:backend"), float64(metrics.BackendDurationTestFiles))
+	distribution(client, "ddtest.planning.test_file_durations", appendPlanningTags(commonTags, "source:default"), float64(metrics.DefaultDurationTestFiles))
+	distribution(client, "ddtest.planning.parallel_runners", commonTags, float64(metrics.ParallelRunners))
+	distribution(client, "ddtest.planning.expected_full_runtime_ms", commonTags, milliseconds(metrics.ExpectedFullRuntime))
+	distribution(client, "ddtest.planning.expected_runnable_runtime_ms", commonTags, milliseconds(metrics.ExpectedRunnableRuntime))
+	distribution(client, "ddtest.planning.expected_wall_time_ms", commonTags, milliseconds(metrics.ExpectedWallTime))
+	distribution(client, "ddtest.planning.split_imbalance_pct", commonTags, metrics.SplitImbalancePercent)
+	distribution(client, "ddtest.planning.disabled_tests", commonTags, float64(metrics.DisabledTests))
+	distribution(client, "ddtest.planning.forced_run_suites", commonTags, float64(metrics.UnskippableMarkerSuites))
+}
+
+func planningTags(attributes PlanningAttributes) []string {
+	return []string{
+		"platform:" + attributes.Platform,
+		"framework:" + attributes.Framework,
+		"test_skipping_mode:" + attributes.TestSkippingMode,
+		"discovery_mode:" + string(attributes.DiscoveryMode),
+		"tia_enabled:" + strconv.FormatBool(attributes.TIAEnabled),
+	}
+}
+
+func appendPlanningTags(tags []string, additional ...string) []string {
+	result := make([]string, 0, len(tags)+len(additional))
+	result = append(result, tags...)
+	return append(result, additional...)
+}
+
+func cliCommandTags(commandType CLICommandType, exitCode int, errorCode errcode.Code, attributes CLICommandAttributes) []string {
+	return []string{
+		"command:" + string(commandType),
+		"exit_code:" + strconv.Itoa(exitCode),
+		"error_code:" + string(errorCode),
+		"platform:" + attributes.Platform,
+		"framework:" + attributes.Framework,
+		"test_skipping_mode:" + attributes.TestSkippingMode,
+	}
+}
+
 func gitCommandErrorTags(err error) []string {
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
@@ -215,6 +415,10 @@ func ITRSkippableTestsResponseSuites(client Client, value int) {
 	count(client, "itr_skippable_tests.response_suites", nil, float64(value))
 }
 
+func ITRSkippableTestsIsEmpty(client Client) {
+	count(client, "ddtest.itr_skippable_tests.is_empty", nil, 1)
+}
+
 func ITRSkippableTestsRequestMs(client Client, duration time.Duration) {
 	distribution(client, "itr_skippable_tests.request_ms", nil, milliseconds(duration))
 }
@@ -265,4 +469,28 @@ func TestManagementTestsResponseBytes(client Client, responseCompressed bool, va
 
 func TestManagementTestsResponseTests(client Client, value int) {
 	distribution(client, "test_management_tests.response_tests", nil, float64(value))
+}
+
+func TestSuiteDurationsRequest(client Client, requestCompressed bool) {
+	count(client, "test_suite_durations.request", requestCompressedTags(requestCompressed), 1)
+}
+
+func TestSuiteDurationsRequestErrors(client Client, statusCode int) {
+	count(client, "test_suite_durations.request_errors", requestErrorTags(statusCode), 1)
+}
+
+func TestSuiteDurationsRequestMs(client Client, duration time.Duration) {
+	distribution(client, "test_suite_durations.request_ms", nil, milliseconds(duration))
+}
+
+func TestSuiteDurationsResponseBytes(client Client, responseCompressed bool, value int) {
+	distribution(client, "test_suite_durations.response_bytes", responseCompressedTags(responseCompressed), float64(value))
+}
+
+func TestSuiteDurationsResponseSuites(client Client, value int) {
+	distribution(client, "test_suite_durations.response_suites", nil, float64(value))
+}
+
+func TestSuiteDurationsIsEmpty(client Client) {
+	count(client, "test_suite_durations.is_empty", nil, 1)
 }

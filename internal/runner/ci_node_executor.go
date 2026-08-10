@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/errcode"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -47,10 +48,10 @@ func loadCINodeTestFiles(ciNode int) ([]string, error) {
 	runnerFilePath := filepath.Join(constants.TestsSplitDir, fmt.Sprintf("runner-%d", ciNode))
 	testFiles, err := loadTestBatch(runnerFilePath)
 	if os.IsNotExist(err) {
-		return nil, fmt.Errorf("runner file for ci-node %d does not exist: %s", ciNode, runnerFilePath)
+		return nil, errcode.New(errcode.RunCINodeTestFilesMissing, fmt.Sprintf("runner file for ci-node %d does not exist: %s", ciNode, runnerFilePath))
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to read test files for ci-node %d from %s: %w", ciNode, runnerFilePath, err)
+		return nil, errcode.WithCode(errcode.RunCINodeTestFilesReadFailed, fmt.Errorf("failed to read test files for ci-node %d from %s: %w", ciNode, runnerFilePath, err))
 	}
 	return testFiles, nil
 }
@@ -61,7 +62,10 @@ func (e testExecutor) runCINodeSingleWorker(ciNode int, testFiles []string) erro
 		slog.Info("No tests to run", "nodeIndex", ciNode, "workerIndex", 0)
 		return nil
 	}
-	return e.runBatch(testFiles, ciNode, 0)
+	if err := e.runBatch(testFiles, ciNode, 0); err != nil {
+		return errcode.WithCode(errcode.RunCINodeTestsFailed, fmt.Errorf("failed to run tests for ci-node %d: %w", ciNode, err))
+	}
+	return nil
 }
 
 func (e testExecutor) runCINodeWorkers(ciNode int, ciNodeWorkers int, testFiles []string) error {
@@ -95,7 +99,7 @@ func (e testExecutor) runCINodeWorkerGroups(ciNode int, groups [][]string) error
 	}
 
 	if err := g.Wait(); err != nil {
-		return fmt.Errorf("failed to run tests for ci-node %d: %w", ciNode, err)
+		return errcode.WithCode(errcode.RunCINodeTestsFailed, fmt.Errorf("failed to run tests for ci-node %d: %w", ciNode, err))
 	}
 	return nil
 }

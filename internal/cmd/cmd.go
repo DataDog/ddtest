@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/buildinfo"
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/planner"
 	"github.com/DataDog/ddtest/internal/runmetadata"
@@ -23,13 +25,11 @@ import (
 var defaultParallelism = settings.DefaultParallelism()
 
 var rootCmd = &cobra.Command{
-	Use:     "ddtest",
-	Short:   "A test runner from Datadog",
-	Long:    "Command line tool for running tests with Datadog Test Optimization.",
-	Version: buildinfo.CurrentVersion(),
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		return git.CheckAvailable()
-	},
+	Use:               "ddtest",
+	Short:             "A test runner from Datadog",
+	Long:              "Command line tool for running tests with Datadog Test Optimization.",
+	Version:           buildinfo.CurrentVersion(),
+	PersistentPreRunE: runPersistentPreRun,
 }
 
 var (
@@ -128,9 +128,33 @@ func bindPersistentFlags(cmd *cobra.Command, bindings []persistentFlagBinding) e
 	return nil
 }
 
+func runPersistentPreRun(cmd *cobra.Command, _ []string) error {
+	if err := git.CheckAvailable(); err != nil {
+		commandType, errorCode, ok := gitAvailabilityTelemetryContext(cmd)
+		if !ok {
+			return err
+		}
+		return runWithTelemetry(context.Background(), commandType, func(telemetry.Client) error {
+			return errcode.WithCode(errorCode, err)
+		})
+	}
+	return nil
+}
+
+func gitAvailabilityTelemetryContext(cmd *cobra.Command) (telemetry.CLICommandType, errcode.Code, bool) {
+	switch cmd.Name() {
+	case string(telemetry.CLICommandPlan):
+		return telemetry.CLICommandPlan, errcode.PlanGitUnavailable, true
+	case string(telemetry.CLICommandRun):
+		return telemetry.CLICommandRun, errcode.RunGitUnavailable, true
+	default:
+		return "", errcode.Unknown, false
+	}
+}
+
 func runPlanCommand(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
-	err := runWithTelemetry(ctx, func(telemetryClient telemetry.Client) error {
+	err := runWithTelemetry(ctx, telemetry.CLICommandPlan, func(telemetryClient telemetry.Client) error {
 		return planCommand(ctx, telemetryClient)
 	})
 	if err != nil {
@@ -142,7 +166,7 @@ func runPlanCommand(cmd *cobra.Command, args []string) {
 
 func runTestCommand(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
-	err := runWithTelemetry(ctx, func(telemetryClient telemetry.Client) error {
+	err := runWithTelemetry(ctx, telemetry.CLICommandRun, func(telemetryClient telemetry.Client) error {
 		return newRunner(telemetryClient).Run(ctx)
 	})
 	if err != nil {
@@ -161,15 +185,25 @@ func createTelemetryClient() (telemetry.Client, error) {
 	})
 }
 
-func runWithTelemetry(ctx context.Context, operation func(telemetry.Client) error) error {
+func runWithTelemetry(ctx context.Context, commandType telemetry.CLICommandType, operation func(telemetry.Client) error) error {
+	startTime := time.Now()
 	telemetryClient, err := newTelemetryClient()
 	if err != nil {
 		slog.Debug("Failed to create telemetry client", "error", err)
 		telemetryClient = telemetry.NoopClient()
 	}
+	commandTelemetryClient := telemetry.NewCLICommandAttributeTracker(telemetryClient)
 
-	operationErr := operation(telemetryClient)
-	if err := telemetryClient.Flush(context.WithoutCancel(ctx)); err != nil {
+	operationErr := operation(commandTelemetryClient)
+	exitCode := 0
+	if operationErr != nil {
+		exitCode = 1
+	}
+	errorCode := errcode.CodeOf(operationErr)
+	attributes := commandTelemetryClient.Attributes()
+	telemetry.CLICommand(commandTelemetryClient, commandType, exitCode, errorCode, attributes)
+	telemetry.CLICommandMs(commandTelemetryClient, commandType, exitCode, errorCode, attributes, time.Since(startTime))
+	if err := commandTelemetryClient.Flush(context.WithoutCancel(ctx)); err != nil {
 		slog.Debug("Failed to flush telemetry metrics", "error", err)
 	}
 	return operationErr

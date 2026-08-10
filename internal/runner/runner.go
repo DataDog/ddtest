@@ -11,6 +11,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/constants"
 	ciUtils "github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/planner"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/runmetadata"
@@ -75,16 +76,16 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 
 		// Run Setup if the file doesn't exist
 		if err := tr.planner.Plan(ctx); err != nil {
-			return fmt.Errorf("failed to run planning phase: %w", err)
+			return errcode.WithCode(errcode.RunPlanningFailed, fmt.Errorf("failed to run planning phase: %w", err))
 		}
 	} else if err != nil {
-		return fmt.Errorf("failed to check parallel runners count at %s: %w", constants.ParallelRunnersOutputPath, err)
+		return errcode.WithCode(errcode.RunPlanStatusCheckFailed, fmt.Errorf("failed to check parallel runners count at %s: %w", constants.ParallelRunnersOutputPath, err))
 	}
 
 	planMetadata, err := tr.planner.LoadPlan()
 	if err != nil {
 		slog.Error("Test optimization plan is not available", "error", err)
-		return fmt.Errorf("test optimization plan is not available: %w", err)
+		return errcode.WithCode(errcode.RunPlanLoadFailed, fmt.Errorf("test optimization plan is not available: %w", err))
 	}
 
 	parallelRunners, err := readParallelRunnersCount()
@@ -100,15 +101,20 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 	// Detect platform and framework
 	detectedPlatform, err := tr.platformDetector.DetectPlatform()
 	if err != nil {
-		return fmt.Errorf("failed to detect platform: %w", err)
+		return errcode.WithCode(errcode.RunPlatformDetectionFailed, fmt.Errorf("failed to detect platform: %w", err))
 	}
 	slog.Info("Platform detected", "platform", detectedPlatform.Name())
 
 	framework, err := detectedPlatform.DetectFramework()
 	if err != nil {
-		return fmt.Errorf("failed to detect framework: %w", err)
+		return errcode.WithCode(errcode.RunFrameworkDetectionFailed, fmt.Errorf("failed to detect framework: %w", err))
 	}
 	slog.Info("Framework detected", "framework", framework.Name())
+	telemetry.RecordCLICommandAttributes(tr.telemetryClient, telemetry.CLICommandAttributes{
+		Platform:         detectedPlatform.Name(),
+		Framework:        framework.Name(),
+		TestSkippingMode: detectedPlatform.TestSkippingLevel().String(),
+	})
 	runInfo := runmetadata.New(ciUtils.GetCITags())
 	if planMetadata.IsZero() {
 		planMetadata = planner.NewPlanMetadata(nil, detectedPlatform.Name(), framework.Name(), detectedPlatform.TestSkippingLevel())
@@ -141,13 +147,13 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 func readParallelRunnersCount() (int, error) {
 	runnersData, err := os.ReadFile(constants.ParallelRunnersOutputPath)
 	if err != nil {
-		return 0, fmt.Errorf("failed to read parallel runners count from %s: %w", constants.ParallelRunnersOutputPath, err)
+		return 0, errcode.WithCode(errcode.RunParallelRunnersReadFailed, fmt.Errorf("failed to read parallel runners count from %s: %w", constants.ParallelRunnersOutputPath, err))
 	}
 	runnersString := strings.TrimSpace(string(runnersData))
 
 	parallelRunners := 0
 	if _, err := fmt.Sscanf(runnersString, "%d", &parallelRunners); err != nil {
-		return 0, fmt.Errorf("failed to parse parallel runners count from %s: %w", runnersString, err)
+		return 0, errcode.WithCode(errcode.RunParallelRunnersParseFailed, fmt.Errorf("failed to parse parallel runners count from %s: %w", runnersString, err))
 	}
 
 	return parallelRunners, nil

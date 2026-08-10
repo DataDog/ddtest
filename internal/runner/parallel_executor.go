@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/errcode"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -21,7 +22,7 @@ func (e testExecutor) runParallel() runExecutionResult {
 
 	entries, err := os.ReadDir(constants.TestsSplitDir)
 	if err != nil {
-		return report.failure(fmt.Errorf("failed to read tests split directory %s: %w", constants.TestsSplitDir, err))
+		return report.failure(errcode.WithCode(errcode.RunParallelSplitsReadFailed, fmt.Errorf("failed to read tests split directory %s: %w", constants.TestsSplitDir, err)))
 	}
 
 	var g errgroup.Group
@@ -35,7 +36,7 @@ func (e testExecutor) runParallel() runExecutionResult {
 		splitFilePath := filepath.Join(constants.TestsSplitDir, entry.Name())
 		testFiles, err := loadTestBatch(splitFilePath)
 		if err != nil {
-			return report.failure(fmt.Errorf("failed to read test files from %s: %w", splitFilePath, err))
+			return report.failure(errcode.WithCode(errcode.RunParallelTestFilesReadFailed, fmt.Errorf("failed to read test files from %s: %w", splitFilePath, err)))
 		}
 		report.TestFilesRun += len(testFiles)
 		if len(testFiles) == 0 {
@@ -48,7 +49,7 @@ func (e testExecutor) runParallel() runExecutionResult {
 	}
 
 	if err := g.Wait(); err != nil {
-		return report.failure(fmt.Errorf("failed to run parallel tests: %w", err))
+		return report.failure(errcode.WithCode(errcode.RunParallelTestsFailed, fmt.Errorf("failed to run parallel tests: %w", err)))
 	}
 	return report.success()
 }
