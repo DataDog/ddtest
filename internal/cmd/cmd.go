@@ -25,13 +25,11 @@ import (
 var defaultParallelism = settings.DefaultParallelism()
 
 var rootCmd = &cobra.Command{
-	Use:     "ddtest",
-	Short:   "A test runner from Datadog",
-	Long:    "Command line tool for running tests with Datadog Test Optimization.",
-	Version: buildinfo.CurrentVersion(),
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		return git.CheckAvailable()
-	},
+	Use:               "ddtest",
+	Short:             "A test runner from Datadog",
+	Long:              "Command line tool for running tests with Datadog Test Optimization.",
+	Version:           buildinfo.CurrentVersion(),
+	PersistentPreRunE: runPersistentPreRun,
 }
 
 var (
@@ -128,6 +126,30 @@ func bindPersistentFlags(cmd *cobra.Command, bindings []persistentFlagBinding) e
 		}
 	}
 	return nil
+}
+
+func runPersistentPreRun(cmd *cobra.Command, _ []string) error {
+	if err := git.CheckAvailable(); err != nil {
+		commandType, errorCode, ok := gitAvailabilityTelemetryContext(cmd)
+		if !ok {
+			return err
+		}
+		return runWithTelemetry(context.Background(), commandType, func(telemetry.Client) error {
+			return errcode.WithCode(errorCode, err)
+		})
+	}
+	return nil
+}
+
+func gitAvailabilityTelemetryContext(cmd *cobra.Command) (telemetry.CLICommandType, errcode.Code, bool) {
+	switch cmd.Name() {
+	case string(telemetry.CLICommandPlan):
+		return telemetry.CLICommandPlan, errcode.PlanGitUnavailable, true
+	case string(telemetry.CLICommandRun):
+		return telemetry.CLICommandRun, errcode.RunGitUnavailable, true
+	default:
+		return "", errcode.Unknown, false
+	}
 }
 
 func runPlanCommand(cmd *cobra.Command, args []string) {

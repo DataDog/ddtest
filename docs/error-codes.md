@@ -20,6 +20,7 @@ or API cause. Existing codes must not be reused for a different condition.
 
 | Code | Condition |
 | --- | --- |
+| `plan_git_unavailable` | Git was not installed or could not be found before planning. |
 | `plan_platform_detection_failed` | The configured platform could not be selected or did not pass its sanity check. |
 | `plan_platform_tags_creation_failed` | Runtime or operating-system tags could not be collected from the selected platform. |
 | `plan_runtime_tags_invalid` | The `runtime-tags` override could not be parsed. |
@@ -42,6 +43,7 @@ or API cause. Existing codes must not be reused for a different condition.
 
 | Code | Condition |
 | --- | --- |
+| `run_git_unavailable` | Git was not installed or could not be found before running tests. |
 | `run_planning_failed` | The automatic planning phase returned an unclassified error. A classified planning failure retains its more precise `plan_*` code. |
 | `run_plan_status_check_failed` | DDTest could not check whether planning artifacts exist. |
 | `run_plan_load_failed` | The Test Optimization plan cache could not be loaded. |

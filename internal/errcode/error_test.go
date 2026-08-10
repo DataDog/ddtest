@@ -51,6 +51,7 @@ func TestCodeOfSpecialValues(t *testing.T) {
 
 func TestFatalCodesAreUnique(t *testing.T) {
 	codes := []Code{
+		PlanGitUnavailable,
 		PlanPlatformDetectionFailed,
 		PlanPlatformTagsCreationFailed,
 		PlanRuntimeTagsInvalid,
@@ -68,6 +69,7 @@ func TestFatalCodesAreUnique(t *testing.T) {
 		PlanSkippablePercentageWriteFailed,
 		PlanParallelRunnersWriteFailed,
 		PlanTestSplitsWriteFailed,
+		RunGitUnavailable,
 		RunPlanningFailed,
 		RunPlanStatusCheckFailed,
 		RunPlanLoadFailed,

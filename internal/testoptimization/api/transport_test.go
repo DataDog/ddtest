@@ -10,7 +10,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -316,15 +315,16 @@ func TestParseRateLimitReset(t *testing.T) {
 	}{
 		{name: "seconds", value: "2", want: 2 * time.Second, wantValid: true},
 		{
-			name:      "largest safe duration",
-			value:     strconv.FormatInt(maxRateLimitResetSeconds, 10),
-			want:      time.Duration(maxRateLimitResetSeconds) * time.Second,
+			name:      "maximum accepted delay",
+			value:     "30",
+			want:      30 * time.Second,
 			wantValid: true,
 		},
+		{name: "excessive delay", value: "31"},
+		{name: "Unix timestamp", value: "2000000005"},
 		{name: "zero", value: "0"},
 		{name: "negative", value: "-1"},
-		{name: "negative duration overflow", value: strconv.FormatInt(-maxRateLimitResetSeconds-1, 10)},
-		{name: "positive duration overflow", value: strconv.FormatInt(maxRateLimitResetSeconds+1, 10)},
+		{name: "integer overflow", value: "9223372036854775808"},
 		{name: "not an integer", value: "soon"},
 	}
 

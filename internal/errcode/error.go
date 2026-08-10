@@ -19,6 +19,7 @@ const (
 	None    Code = "none"
 	Unknown Code = "unknown"
 
+	PlanGitUnavailable                         Code = "plan_git_unavailable"
 	PlanPlatformDetectionFailed                Code = "plan_platform_detection_failed"
 	PlanPlatformTagsCreationFailed             Code = "plan_platform_tags_creation_failed"
 	PlanRuntimeTagsInvalid                     Code = "plan_runtime_tags_invalid"
@@ -36,6 +37,7 @@ const (
 	PlanSkippablePercentageWriteFailed         Code = "plan_skippable_percentage_write_failed"
 	PlanParallelRunnersWriteFailed             Code = "plan_parallel_runners_write_failed"
 	PlanTestSplitsWriteFailed                  Code = "plan_test_splits_write_failed"
+	RunGitUnavailable                          Code = "run_git_unavailable"
 	RunPlanningFailed                          Code = "run_planning_failed"
 	RunPlanStatusCheckFailed                   Code = "run_plan_status_check_failed"
 	RunPlanLoadFailed                          Code = "run_plan_load_failed"

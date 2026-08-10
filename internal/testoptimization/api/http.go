@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -37,8 +36,10 @@ const (
 	HeaderRateLimitReset       = "x-ratelimit-reset"
 	HTTPStatusTooManyRequests  = 429
 	FormatMessagePack          = "msgpack"
-	maxRateLimitResetSeconds   = math.MaxInt64 / int64(time.Second)
 )
+
+// Longer or malformed reset delays fall back to the existing capped backoff.
+const maxRateLimitResetSeconds = 30
 
 // FormFile represents a file to be uploaded in a multipart form request.
 type FormFile struct {
@@ -308,11 +309,13 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 }
 
 func parseRateLimitReset(value string) (time.Duration, bool) {
+	// Datadog defines X-RateLimit-Reset as the number of seconds until reset
+	// (not a Unix timestamp); reject invalid or excessive delays so a response
+	// cannot block the CLI indefinitely.
 	resetSeconds, err := strconv.ParseInt(value, 10, 64)
 	if err != nil || resetSeconds <= 0 || resetSeconds > maxRateLimitResetSeconds {
 		return 0, false
 	}
-
 	return time.Duration(resetSeconds) * time.Second, true
 }
 

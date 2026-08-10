@@ -178,18 +178,45 @@ func TestCommandHierarchy(t *testing.T) {
 	}
 }
 
-func TestRootPersistentPreRunChecksGitAvailability(t *testing.T) {
+func TestRootPersistentPreRunReportsGitAvailabilityFailures(t *testing.T) {
 	originalLookPathFunc := git.LookPathFunc
+	originalNewTelemetryClient := newTelemetryClient
 	git.LookPathFunc = func(file string) (string, error) {
 		return "", errors.New("missing git")
 	}
 	t.Cleanup(func() {
 		git.LookPathFunc = originalLookPathFunc
+		newTelemetryClient = originalNewTelemetryClient
 	})
 
-	err := rootCmd.PersistentPreRunE(rootCmd, nil)
-	if err == nil || !strings.Contains(err.Error(), "git executable not found") {
-		t.Fatalf("PersistentPreRunE() error = %v, want git availability error", err)
+	tests := []struct {
+		name        string
+		command     *cobra.Command
+		commandType string
+		errorCode   errcode.Code
+	}{
+		{name: "plan", command: planCmd, commandType: "plan", errorCode: errcode.PlanGitUnavailable},
+		{name: "run", command: runCmd, commandType: "run", errorCode: errcode.RunGitUnavailable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			telemetryClient := &fakeTelemetryClient{}
+			newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
+
+			err := rootCmd.PersistentPreRunE(test.command, nil)
+			if err == nil || !strings.Contains(err.Error(), "git executable not found") {
+				t.Fatalf("PersistentPreRunE() error = %v, want git availability error", err)
+			}
+			if got := errcode.CodeOf(err); got != test.errorCode {
+				t.Fatalf("PersistentPreRunE() error code = %q, want %q", got, test.errorCode)
+			}
+			if telemetryClient.flushCalls != 1 {
+				t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
+			}
+			tags := cliMetricTags(test.commandType, "1", test.errorCode, unknownCLICommandAttributes())
+			telemetryClient.assertValue(t, "count", "ddtest.cli.command", tags, 1)
+			telemetryClient.assertSamples(t, "distribution", "ddtest.cli.command_ms", tags, 1)
+		})
 	}
 }
 
