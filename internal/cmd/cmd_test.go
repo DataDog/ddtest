@@ -230,8 +230,8 @@ func TestRunPlanCommand(t *testing.T) {
 		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
 	}
 	tags := cliMetricTags("plan", "0", errcode.None, attributes)
-	telemetryClient.assertValue(t, "count", "cli.command", tags, 1)
-	telemetryClient.assertSamples(t, "distribution", "cli.command_ms", tags, 1)
+	telemetryClient.assertValue(t, "count", "ddtest.cli.command", tags, 1)
+	telemetryClient.assertSamples(t, "distribution", "ddtest.cli.command_ms", tags, 1)
 }
 
 func TestRunPlanCommandExitsOnError(t *testing.T) {
@@ -268,8 +268,8 @@ func TestRunPlanCommandExitsOnError(t *testing.T) {
 		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
 	}
 	tags := cliMetricTags("plan", "1", errcode.PlanFastTestDiscoveryFailed, attributes)
-	telemetryClient.assertValue(t, "count", "cli.command", tags, 1)
-	telemetryClient.assertSamples(t, "distribution", "cli.command_ms", tags, 1)
+	telemetryClient.assertValue(t, "count", "ddtest.cli.command", tags, 1)
+	telemetryClient.assertSamples(t, "distribution", "ddtest.cli.command_ms", tags, 1)
 }
 
 func TestRunTestCommand(t *testing.T) {
@@ -308,8 +308,8 @@ func TestRunTestCommand(t *testing.T) {
 		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
 	}
 	tags := cliMetricTags("run", "0", errcode.None, attributes)
-	telemetryClient.assertValue(t, "count", "cli.command", tags, 1)
-	telemetryClient.assertSamples(t, "distribution", "cli.command_ms", tags, 1)
+	telemetryClient.assertValue(t, "count", "ddtest.cli.command", tags, 1)
+	telemetryClient.assertSamples(t, "distribution", "ddtest.cli.command_ms", tags, 1)
 }
 
 func TestRunTestCommandExitsOnError(t *testing.T) {
@@ -346,8 +346,8 @@ func TestRunTestCommandExitsOnError(t *testing.T) {
 		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
 	}
 	tags := cliMetricTags("run", "1", errcode.RunParallelTestsFailed, attributes)
-	telemetryClient.assertValue(t, "count", "cli.command", tags, 1)
-	telemetryClient.assertSamples(t, "distribution", "cli.command_ms", tags, 1)
+	telemetryClient.assertValue(t, "count", "ddtest.cli.command", tags, 1)
+	telemetryClient.assertSamples(t, "distribution", "ddtest.cli.command_ms", tags, 1)
 }
 
 func TestRunWithTelemetryFallsBackWhenCreationFails(t *testing.T) {

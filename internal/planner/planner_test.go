@@ -965,10 +965,10 @@ func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery
 	assertFileContent(t, constants.SkippablePercentageOutputPath, "50.00")
 	assertFileContent(t, filepath.Join(constants.TestsSplitDir, "runner-0"), expectedTestFiles)
 	discoveryTags := []string{"discovery_mode:fast", "success:true", "platform:javascript", "framework:jest"}
-	if !telemetryClient.has("test_discovery.duration_ms", discoveryTags...) {
+	if !telemetryClient.has("ddtest.test_discovery.duration_ms", discoveryTags...) {
 		t.Fatal("expected fast discovery duration telemetry")
 	}
-	if got := telemetryClient.value("test_discovery.test_files", discoveryTags...); got != 2 {
+	if got := telemetryClient.value("ddtest.test_discovery.test_files", discoveryTags...); got != 2 {
 		t.Fatalf("fast discovery test files = %v, want 2", got)
 	}
 	planningTags := []string{
@@ -978,47 +978,47 @@ func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery
 		"discovery_mode:fast",
 		"tia_enabled:true",
 	}
-	if !telemetryClient.has("planning.decision", append(slices.Clone(planningTags),
+	if !telemetryClient.has("ddtest.planning.decision", append(slices.Clone(planningTags),
 		"reason:single_runner_only", "target_status:disabled")...) {
 		t.Fatal("expected planning decision telemetry")
 	}
-	if got := telemetryClient.value("planning.test_files", append(slices.Clone(planningTags), "state:discovered")...); got != 2 {
+	if got := telemetryClient.value("ddtest.planning.test_files", append(slices.Clone(planningTags), "state:discovered")...); got != 2 {
 		t.Fatalf("planning discovered test files = %v, want 2", got)
 	}
-	if got := telemetryClient.value("planning.test_files", append(slices.Clone(planningTags), "state:runnable")...); got != 1 {
+	if got := telemetryClient.value("ddtest.planning.test_files", append(slices.Clone(planningTags), "state:runnable")...); got != 1 {
 		t.Fatalf("planning runnable test files = %v, want 1", got)
 	}
-	if got := telemetryClient.value("planning.test_files", append(slices.Clone(planningTags), "state:fully_skipped")...); got != 1 {
+	if got := telemetryClient.value("ddtest.planning.test_files", append(slices.Clone(planningTags), "state:fully_skipped")...); got != 1 {
 		t.Fatalf("planning fully skipped test files = %v, want 1", got)
 	}
-	if got := telemetryClient.value("planning.test_file_durations", append(slices.Clone(planningTags), "source:backend")...); got != 1 {
+	if got := telemetryClient.value("ddtest.planning.test_file_durations", append(slices.Clone(planningTags), "source:backend")...); got != 1 {
 		t.Fatalf("planning backend duration test files = %v, want 1", got)
 	}
-	if got := telemetryClient.value("planning.test_file_durations", append(slices.Clone(planningTags), "source:default")...); got != 0 {
+	if got := telemetryClient.value("ddtest.planning.test_file_durations", append(slices.Clone(planningTags), "source:default")...); got != 0 {
 		t.Fatalf("planning default duration test files = %v, want 0", got)
 	}
-	if got := telemetryClient.value("planning.estimated_time_saved_pct", planningTags...); got != 50 {
+	if got := telemetryClient.value("ddtest.planning.estimated_time_saved_pct", planningTags...); got != 50 {
 		t.Fatalf("planning estimated time saved = %v, want 50", got)
 	}
-	if got := telemetryClient.value("planning.parallel_runners", planningTags...); got != 1 {
+	if got := telemetryClient.value("ddtest.planning.parallel_runners", planningTags...); got != 1 {
 		t.Fatalf("planning parallel runners = %v, want 1", got)
 	}
-	if got := telemetryClient.value("planning.expected_full_runtime_ms", planningTags...); got != 2000 {
+	if got := telemetryClient.value("ddtest.planning.expected_full_runtime_ms", planningTags...); got != 2000 {
 		t.Fatalf("planning expected full runtime = %v, want 2000", got)
 	}
-	if got := telemetryClient.value("planning.expected_runnable_runtime_ms", planningTags...); got != 1000 {
+	if got := telemetryClient.value("ddtest.planning.expected_runnable_runtime_ms", planningTags...); got != 1000 {
 		t.Fatalf("planning expected runnable runtime = %v, want 1000", got)
 	}
-	if got := telemetryClient.value("planning.expected_wall_time_ms", planningTags...); got != 1000 {
+	if got := telemetryClient.value("ddtest.planning.expected_wall_time_ms", planningTags...); got != 1000 {
 		t.Fatalf("planning expected wall time = %v, want 1000", got)
 	}
-	if got := telemetryClient.value("planning.split_imbalance_pct", planningTags...); got != 0 {
+	if got := telemetryClient.value("ddtest.planning.split_imbalance_pct", planningTags...); got != 0 {
 		t.Fatalf("planning split imbalance = %v, want 0", got)
 	}
-	if got := telemetryClient.value("planning.disabled_tests", planningTags...); got != 0 {
+	if got := telemetryClient.value("ddtest.planning.disabled_tests", planningTags...); got != 0 {
 		t.Fatalf("planning disabled tests = %v, want 0", got)
 	}
-	if got := telemetryClient.value("planning.forced_run_suites", planningTags...); got != 0 {
+	if got := telemetryClient.value("ddtest.planning.forced_run_suites", planningTags...); got != 0 {
 		t.Fatalf("planning forced run suites = %v, want 0", got)
 	}
 }
@@ -1274,20 +1274,20 @@ func TestTestPlanner_PreparePlanningData_RubySuiteModeForceFullDiscovery(t *test
 		report.Planning.Skipping.FullySkippedFiles != 1 {
 		t.Errorf("expected full discovery skipping application report, got %+v", report.Planning.Skipping)
 	}
-	if got := telemetryClient.value("itr_skipped", "event_type:suite"); got != 3 {
+	if got := telemetryClient.value("ddtest.itr_skipped", "event_type:suite"); got != 3 {
 		t.Errorf("itr_skipped suite count = %v, want 3", got)
 	}
-	if got := telemetryClient.value("itr_unskippable", "event_type:suite"); got != 0 {
+	if got := telemetryClient.value("ddtest.itr_unskippable", "event_type:suite"); got != 0 {
 		t.Errorf("itr_unskippable suite count = %v, want 0", got)
 	}
-	if got := telemetryClient.value("itr_forced_run", "event_type:suite"); got != 0 {
+	if got := telemetryClient.value("ddtest.itr_forced_run", "event_type:suite"); got != 0 {
 		t.Errorf("itr_forced_run suite count = %v, want 0", got)
 	}
 	discoveryTags := []string{"discovery_mode:full", "success:true", "platform:ruby", "framework:rspec"}
-	if !telemetryClient.has("test_discovery.duration_ms", discoveryTags...) {
+	if !telemetryClient.has("ddtest.test_discovery.duration_ms", discoveryTags...) {
 		t.Fatal("expected full discovery duration telemetry")
 	}
-	if got := telemetryClient.value("test_discovery.tests", discoveryTags...); got != 5 {
+	if got := telemetryClient.value("ddtest.test_discovery.tests", discoveryTags...); got != 5 {
 		t.Fatalf("full discovery tests = %v, want 5", got)
 	}
 }
@@ -1547,13 +1547,13 @@ func TestTestPlanner_PreparePlanningData_TestLevelFullDiscoveryKeepsUnskippableM
 	if unguardedAggregate.NumTests != 1 || unguardedAggregate.NumTestsSkipped != 1 {
 		t.Fatalf("expected unguarded test to remain skipped, got %+v", unguardedAggregate)
 	}
-	if got := telemetryClient.value("itr_skipped", "event_type:test"); got != 2 {
+	if got := telemetryClient.value("ddtest.itr_skipped", "event_type:test"); got != 2 {
 		t.Errorf("itr_skipped test count = %v, want 2", got)
 	}
-	if got := telemetryClient.value("itr_unskippable", "event_type:test"); got != 0 {
+	if got := telemetryClient.value("ddtest.itr_unskippable", "event_type:test"); got != 0 {
 		t.Errorf("itr_unskippable test count = %v, want 0", got)
 	}
-	if got := telemetryClient.value("itr_forced_run", "event_type:test"); got != 0 {
+	if got := telemetryClient.value("ddtest.itr_forced_run", "event_type:test"); got != 0 {
 		t.Errorf("itr_forced_run test count = %v, want 0", got)
 	}
 }
@@ -3301,8 +3301,8 @@ func TestTestPlanner_PreparePlanningData_StrictDiscoveryFailsWhenFullDiscoveryFa
 	}
 	assertPlannerErrorCode(t, err, errcode.PlanFullTestDiscoveryFailed)
 	discoveryTags := []string{"discovery_mode:full", "success:false", "platform:ruby", "framework:rspec"}
-	if !telemetryClient.has("test_discovery.duration_ms", discoveryTags...) ||
-		!telemetryClient.has("test_discovery.tests", discoveryTags...) {
+	if !telemetryClient.has("ddtest.test_discovery.duration_ms", discoveryTags...) ||
+		!telemetryClient.has("ddtest.test_discovery.tests", discoveryTags...) {
 		t.Fatal("expected failed full discovery telemetry")
 	}
 }
@@ -4237,8 +4237,8 @@ func TestTestPlanner_PreparePlanningData_TestDiscoveryError(t *testing.T) {
 	}
 	assertPlannerErrorCode(t, err, errcode.PlanFastTestDiscoveryFailed)
 	discoveryTags := []string{"discovery_mode:fast", "success:false", "platform:ruby", "framework:rspec"}
-	if !telemetryClient.has("test_discovery.duration_ms", discoveryTags...) ||
-		!telemetryClient.has("test_discovery.test_files", discoveryTags...) {
+	if !telemetryClient.has("ddtest.test_discovery.duration_ms", discoveryTags...) ||
+		!telemetryClient.has("ddtest.test_discovery.test_files", discoveryTags...) {
 		t.Fatal("expected failed fast discovery telemetry")
 	}
 }

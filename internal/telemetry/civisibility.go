@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/errcode"
@@ -111,14 +112,21 @@ type SettingsResponse struct {
 
 func count(client Client, name string, tags []string, value float64) {
 	if client != nil {
-		client.Count(name, tags).Submit(value)
+		client.Count(ddtestMetricName(name), tags).Submit(value)
 	}
 }
 
 func distribution(client Client, name string, tags []string, value float64) {
 	if client != nil {
-		client.Distribution(name, tags).Submit(value)
+		client.Distribution(ddtestMetricName(name), tags).Submit(value)
 	}
+}
+
+func ddtestMetricName(name string) string {
+	if strings.HasPrefix(name, "test_suite_durations.") {
+		return name
+	}
+	return "ddtest." + name
 }
 
 func requestCompressedTags(compressed bool) []string {

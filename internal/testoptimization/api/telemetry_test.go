@@ -166,40 +166,40 @@ func TestTransportRecordsBackendTelemetry(t *testing.T) {
 		t.Fatalf("SendPackFiles() error = %v", err)
 	}
 
-	recorder.assertValue(t, "count", "git_requests.settings", nil, 1)
-	recorder.assertValue(t, "count", "git_requests.settings_response", []string{
+	recorder.assertValue(t, "count", "ddtest.git_requests.settings", nil, 1)
+	recorder.assertValue(t, "count", "ddtest.git_requests.settings_response", []string{
 		"coverage_enabled",
 		"itrskip_enabled",
 		"early_flake_detection_enabled:true",
 		"flaky_test_retries_enabled:true",
 		"test_management_enabled:true",
 	}, 1)
-	recorder.assertSamples(t, "distribution", "git_requests.settings_ms", nil, 1)
-	recorder.assertSamples(t, "count", "known_tests.request", nil, 2)
-	recorder.assertSamples(t, "distribution", "known_tests.request_ms", nil, 2)
-	recorder.assertSamples(t, "distribution", "known_tests.response_bytes", nil, 2)
-	recorder.assertValue(t, "distribution", "known_tests.response_tests", nil, 3)
-	recorder.assertValue(t, "count", "itr_skippable_tests.request", nil, 1)
-	recorder.assertSamples(t, "distribution", "itr_skippable_tests.request_ms", nil, 1)
-	recorder.assertValue(t, "distribution", "itr_skippable_tests.response_bytes", nil, float64(len(skippableBody)))
-	recorder.assertValue(t, "count", "itr_skippable_tests.response_tests", nil, 2)
-	recorder.assertSamples(t, "count", "itr_skippable_tests.response_suites", nil, 0)
-	recorder.assertSamples(t, "count", "itr_skippable_tests.is_empty", nil, 0)
-	recorder.assertValue(t, "count", "test_management_tests.request", nil, 1)
-	recorder.assertSamples(t, "distribution", "test_management_tests.request_ms", nil, 1)
-	recorder.assertValue(t, "distribution", "test_management_tests.response_bytes", nil, float64(len(testManagementBody)))
-	recorder.assertValue(t, "distribution", "test_management_tests.response_tests", nil, 2)
+	recorder.assertSamples(t, "distribution", "ddtest.git_requests.settings_ms", nil, 1)
+	recorder.assertSamples(t, "count", "ddtest.known_tests.request", nil, 2)
+	recorder.assertSamples(t, "distribution", "ddtest.known_tests.request_ms", nil, 2)
+	recorder.assertSamples(t, "distribution", "ddtest.known_tests.response_bytes", nil, 2)
+	recorder.assertValue(t, "distribution", "ddtest.known_tests.response_tests", nil, 3)
+	recorder.assertValue(t, "count", "ddtest.itr_skippable_tests.request", nil, 1)
+	recorder.assertSamples(t, "distribution", "ddtest.itr_skippable_tests.request_ms", nil, 1)
+	recorder.assertValue(t, "distribution", "ddtest.itr_skippable_tests.response_bytes", nil, float64(len(skippableBody)))
+	recorder.assertValue(t, "count", "ddtest.itr_skippable_tests.response_tests", nil, 2)
+	recorder.assertSamples(t, "count", "ddtest.itr_skippable_tests.response_suites", nil, 0)
+	recorder.assertSamples(t, "count", "ddtest.itr_skippable_tests.is_empty", nil, 0)
+	recorder.assertValue(t, "count", "ddtest.test_management_tests.request", nil, 1)
+	recorder.assertSamples(t, "distribution", "ddtest.test_management_tests.request_ms", nil, 1)
+	recorder.assertValue(t, "distribution", "ddtest.test_management_tests.response_bytes", nil, float64(len(testManagementBody)))
+	recorder.assertValue(t, "distribution", "ddtest.test_management_tests.response_tests", nil, 2)
 	recorder.assertSamples(t, "count", "test_suite_durations.request", nil, 2)
 	recorder.assertSamples(t, "distribution", "test_suite_durations.request_ms", nil, 2)
 	recorder.assertSamples(t, "distribution", "test_suite_durations.response_bytes", nil, 2)
 	recorder.assertValue(t, "distribution", "test_suite_durations.response_suites", nil, 3)
 	recorder.assertSamples(t, "count", "test_suite_durations.is_empty", nil, 0)
-	recorder.assertValue(t, "count", "git_requests.search_commits", nil, 1)
-	recorder.assertSamples(t, "distribution", "git_requests.search_commits_ms", nil, 1)
-	recorder.assertSamples(t, "count", "git_requests.objects_pack", nil, 2)
-	recorder.assertSamples(t, "distribution", "git_requests.objects_pack_ms", nil, 2)
-	recorder.assertValue(t, "distribution", "git_requests.objects_pack_files", nil, 2)
-	recorder.assertValue(t, "distribution", "git_requests.objects_pack_bytes", nil, 3)
+	recorder.assertValue(t, "count", "ddtest.git_requests.search_commits", nil, 1)
+	recorder.assertSamples(t, "distribution", "ddtest.git_requests.search_commits_ms", nil, 1)
+	recorder.assertSamples(t, "count", "ddtest.git_requests.objects_pack", nil, 2)
+	recorder.assertSamples(t, "distribution", "ddtest.git_requests.objects_pack_ms", nil, 2)
+	recorder.assertValue(t, "distribution", "ddtest.git_requests.objects_pack_files", nil, 2)
+	recorder.assertValue(t, "distribution", "ddtest.git_requests.objects_pack_bytes", nil, 3)
 }
 
 func TestTransportRecordsSuiteOnlySkippableResponse(t *testing.T) {
@@ -217,9 +217,9 @@ func TestTransportRecordsSuiteOnlySkippableResponse(t *testing.T) {
 		t.Fatalf("GetSkippableTests() error = %v", err)
 	}
 
-	recorder.assertValue(t, "count", "itr_skippable_tests.response_suites", nil, 1)
-	recorder.assertSamples(t, "count", "itr_skippable_tests.response_tests", nil, 0)
-	recorder.assertSamples(t, "count", "itr_skippable_tests.is_empty", nil, 0)
+	recorder.assertValue(t, "count", "ddtest.itr_skippable_tests.response_suites", nil, 1)
+	recorder.assertSamples(t, "count", "ddtest.itr_skippable_tests.response_tests", nil, 0)
+	recorder.assertSamples(t, "count", "ddtest.itr_skippable_tests.is_empty", nil, 0)
 }
 
 func TestTransportRecordsEmptySkippableResponse(t *testing.T) {
@@ -239,8 +239,8 @@ func TestTransportRecordsEmptySkippableResponse(t *testing.T) {
 		t.Fatalf("GetSkippableTests() = %#v, want no skippables", skippables)
 	}
 
-	recorder.assertValue(t, "count", "itr_skippable_tests.response_tests", nil, 0)
-	recorder.assertValue(t, "count", "itr_skippable_tests.is_empty", nil, 1)
+	recorder.assertValue(t, "count", "ddtest.itr_skippable_tests.response_tests", nil, 0)
+	recorder.assertValue(t, "count", "ddtest.itr_skippable_tests.is_empty", nil, 1)
 }
 
 func TestTransportRecordsCompressedResponseWireBytes(t *testing.T) {
@@ -289,9 +289,9 @@ func TestTransportRecordsCompressedResponseWireBytes(t *testing.T) {
 	}
 
 	tags := []string{"rs_compressed:true"}
-	recorder.assertValue(t, "distribution", "known_tests.response_bytes", tags, float64(len(compressedBodies[knownTestsURLPath])))
-	recorder.assertValue(t, "distribution", "itr_skippable_tests.response_bytes", tags, float64(len(compressedBodies[skippableURLPath])))
-	recorder.assertValue(t, "distribution", "test_management_tests.response_bytes", tags, float64(len(compressedBodies[testManagementTestsURLPath])))
+	recorder.assertValue(t, "distribution", "ddtest.known_tests.response_bytes", tags, float64(len(compressedBodies[knownTestsURLPath])))
+	recorder.assertValue(t, "distribution", "ddtest.itr_skippable_tests.response_bytes", tags, float64(len(compressedBodies[skippableURLPath])))
+	recorder.assertValue(t, "distribution", "ddtest.test_management_tests.response_bytes", tags, float64(len(compressedBodies[testManagementTestsURLPath])))
 	recorder.assertValue(t, "distribution", "test_suite_durations.response_bytes", tags, float64(len(compressedBodies[durationsURLPath])))
 }
 
@@ -309,9 +309,9 @@ func TestTransportRecordsTerminalRetryStatusAndFailedSearchCommitsLatency(t *tes
 		t.Fatal("GetCommits() should fail after exhausting retries")
 	}
 
-	recorder.assertValue(t, "count", "git_requests.search_commits_errors", []string{"error_type:status_code_5xx_response"}, 1)
-	recorder.assertSamples(t, "count", "git_requests.search_commits_errors", []string{"error_type:network"}, 0)
-	recorder.assertSamples(t, "distribution", "git_requests.search_commits_ms", nil, 1)
+	recorder.assertValue(t, "count", "ddtest.git_requests.search_commits_errors", []string{"error_type:status_code_5xx_response"}, 1)
+	recorder.assertSamples(t, "count", "ddtest.git_requests.search_commits_errors", []string{"error_type:network"}, 0)
+	recorder.assertSamples(t, "distribution", "ddtest.git_requests.search_commits_ms", nil, 1)
 }
 
 func TestTransportRecordsTestSuiteDurationsNetworkError(t *testing.T) {
@@ -382,17 +382,17 @@ func TestTransportRecordsBackendStatusErrors(t *testing.T) {
 
 	tags := []string{"error_type:status_code_4xx_response", "status_code:400"}
 	for _, name := range []string{
-		"git_requests.settings_errors",
-		"known_tests.request_errors",
-		"itr_skippable_tests.request_errors",
-		"test_management_tests.request_errors",
+		"ddtest.git_requests.settings_errors",
+		"ddtest.known_tests.request_errors",
+		"ddtest.itr_skippable_tests.request_errors",
+		"ddtest.test_management_tests.request_errors",
 		"test_suite_durations.request_errors",
-		"git_requests.search_commits_errors",
-		"git_requests.objects_pack_errors",
+		"ddtest.git_requests.search_commits_errors",
+		"ddtest.git_requests.objects_pack_errors",
 	} {
 		recorder.assertValue(t, "count", name, tags, 1)
 	}
-	recorder.assertSamples(t, "count", "itr_skippable_tests.is_empty", nil, 0)
+	recorder.assertSamples(t, "count", "ddtest.itr_skippable_tests.is_empty", nil, 0)
 }
 
 func TestNewTransportWithTelemetryRetainsClient(t *testing.T) {

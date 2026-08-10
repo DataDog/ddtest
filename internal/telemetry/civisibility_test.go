@@ -118,34 +118,34 @@ func TestCIVisibilityRequestMetrics(t *testing.T) {
 	TestSuiteDurationsIsEmpty(client)
 
 	want := []recordedMetric{
-		{kind: "count", name: "git_requests.search_commits", tags: []string{"rq_compressed:true"}, value: 1},
-		{kind: "count", name: "git_requests.search_commits_errors", tags: []string{"error_type:status_code_4xx_response", "status_code:404"}, value: 1},
-		{kind: "distribution", name: "git_requests.search_commits_ms", tags: []string{"rs_compressed:true"}, value: 1500},
-		{kind: "count", name: "git_requests.objects_pack", value: 1},
-		{kind: "count", name: "git_requests.objects_pack_errors", tags: []string{"error_type:network"}, value: 1},
-		{kind: "distribution", name: "git_requests.objects_pack_ms", value: 1500},
-		{kind: "distribution", name: "git_requests.objects_pack_bytes", value: 42},
-		{kind: "distribution", name: "git_requests.objects_pack_files", value: 2},
-		{kind: "count", name: "git_requests.settings", value: 1},
-		{kind: "count", name: "git_requests.settings_errors", tags: []string{"error_type:status_code_5xx_response"}, value: 1},
-		{kind: "distribution", name: "git_requests.settings_ms", value: 1500},
-		{kind: "count", name: "itr_skippable_tests.request", tags: []string{"rq_compressed:true"}, value: 1},
-		{kind: "count", name: "itr_skippable_tests.request_errors", tags: []string{"error_type:status_code_4xx_response"}, value: 1},
-		{kind: "distribution", name: "itr_skippable_tests.request_ms", value: 1500},
-		{kind: "distribution", name: "itr_skippable_tests.response_bytes", tags: []string{"rs_compressed:true"}, value: 43},
-		{kind: "count", name: "itr_skippable_tests.response_tests", value: 3},
-		{kind: "count", name: "itr_skippable_tests.response_suites", value: 2},
-		{kind: "count", name: "itr_skippable_tests.is_empty", value: 1},
-		{kind: "count", name: "known_tests.request", value: 1},
-		{kind: "count", name: "known_tests.request_errors", tags: []string{"error_type:network"}, value: 1},
-		{kind: "distribution", name: "known_tests.request_ms", value: 1500},
-		{kind: "distribution", name: "known_tests.response_bytes", value: 44},
-		{kind: "distribution", name: "known_tests.response_tests", value: 4},
-		{kind: "count", name: "test_management_tests.request", tags: []string{"rq_compressed:true"}, value: 1},
-		{kind: "count", name: "test_management_tests.request_errors", tags: []string{"error_type:status_code_4xx_response", "status_code:400"}, value: 1},
-		{kind: "distribution", name: "test_management_tests.request_ms", value: 1500},
-		{kind: "distribution", name: "test_management_tests.response_bytes", tags: []string{"rs_compressed:true"}, value: 45},
-		{kind: "distribution", name: "test_management_tests.response_tests", value: 5},
+		{kind: "count", name: "ddtest.git_requests.search_commits", tags: []string{"rq_compressed:true"}, value: 1},
+		{kind: "count", name: "ddtest.git_requests.search_commits_errors", tags: []string{"error_type:status_code_4xx_response", "status_code:404"}, value: 1},
+		{kind: "distribution", name: "ddtest.git_requests.search_commits_ms", tags: []string{"rs_compressed:true"}, value: 1500},
+		{kind: "count", name: "ddtest.git_requests.objects_pack", value: 1},
+		{kind: "count", name: "ddtest.git_requests.objects_pack_errors", tags: []string{"error_type:network"}, value: 1},
+		{kind: "distribution", name: "ddtest.git_requests.objects_pack_ms", value: 1500},
+		{kind: "distribution", name: "ddtest.git_requests.objects_pack_bytes", value: 42},
+		{kind: "distribution", name: "ddtest.git_requests.objects_pack_files", value: 2},
+		{kind: "count", name: "ddtest.git_requests.settings", value: 1},
+		{kind: "count", name: "ddtest.git_requests.settings_errors", tags: []string{"error_type:status_code_5xx_response"}, value: 1},
+		{kind: "distribution", name: "ddtest.git_requests.settings_ms", value: 1500},
+		{kind: "count", name: "ddtest.itr_skippable_tests.request", tags: []string{"rq_compressed:true"}, value: 1},
+		{kind: "count", name: "ddtest.itr_skippable_tests.request_errors", tags: []string{"error_type:status_code_4xx_response"}, value: 1},
+		{kind: "distribution", name: "ddtest.itr_skippable_tests.request_ms", value: 1500},
+		{kind: "distribution", name: "ddtest.itr_skippable_tests.response_bytes", tags: []string{"rs_compressed:true"}, value: 43},
+		{kind: "count", name: "ddtest.itr_skippable_tests.response_tests", value: 3},
+		{kind: "count", name: "ddtest.itr_skippable_tests.response_suites", value: 2},
+		{kind: "count", name: "ddtest.itr_skippable_tests.is_empty", value: 1},
+		{kind: "count", name: "ddtest.known_tests.request", value: 1},
+		{kind: "count", name: "ddtest.known_tests.request_errors", tags: []string{"error_type:network"}, value: 1},
+		{kind: "distribution", name: "ddtest.known_tests.request_ms", value: 1500},
+		{kind: "distribution", name: "ddtest.known_tests.response_bytes", value: 44},
+		{kind: "distribution", name: "ddtest.known_tests.response_tests", value: 4},
+		{kind: "count", name: "ddtest.test_management_tests.request", tags: []string{"rq_compressed:true"}, value: 1},
+		{kind: "count", name: "ddtest.test_management_tests.request_errors", tags: []string{"error_type:status_code_4xx_response", "status_code:400"}, value: 1},
+		{kind: "distribution", name: "ddtest.test_management_tests.request_ms", value: 1500},
+		{kind: "distribution", name: "ddtest.test_management_tests.response_bytes", tags: []string{"rs_compressed:true"}, value: 45},
+		{kind: "distribution", name: "ddtest.test_management_tests.response_tests", value: 5},
 		{kind: "count", name: "test_suite_durations.request", tags: []string{"rq_compressed:true"}, value: 1},
 		{kind: "count", name: "test_suite_durations.request_errors", tags: []string{"error_type:status_code_4xx_response", "status_code:429"}, value: 1},
 		{kind: "distribution", name: "test_suite_durations.request_ms", value: 1500},
@@ -170,11 +170,11 @@ func TestCIVisibilitySettingsAndITRMetrics(t *testing.T) {
 	want := []recordedMetric{
 		{
 			kind:  "count",
-			name:  "git_requests.settings_response",
+			name:  "ddtest.git_requests.settings_response",
 			tags:  []string{"coverage_enabled", "itrskip_enabled", "early_flake_detection_enabled:true", "flaky_test_retries_enabled:true", "test_management_enabled:true"},
 			value: 1,
 		},
-		{kind: "count", name: "itr_skipped", tags: []string{"event_type:test"}, value: 2},
+		{kind: "count", name: "ddtest.itr_skipped", tags: []string{"event_type:test"}, value: 2},
 	}
 	assertRecordedMetrics(t, client.metrics, want)
 
@@ -190,9 +190,9 @@ func TestGitCommandMetrics(t *testing.T) {
 	GitCommandErrors(client, git.CommandGetObjects, nil)
 
 	want := []recordedMetric{
-		{kind: "count", name: "git.command", tags: []string{"command:get_objects"}, value: 1},
-		{kind: "distribution", name: "git.command_ms", tags: []string{"command:get_objects"}, value: 1500},
-		{kind: "count", name: "git.command_errors", tags: []string{"command:get_objects", "exit_code:missing"}, value: 1},
+		{kind: "count", name: "ddtest.git.command", tags: []string{"command:get_objects"}, value: 1},
+		{kind: "distribution", name: "ddtest.git.command_ms", tags: []string{"command:get_objects"}, value: 1500},
+		{kind: "count", name: "ddtest.git.command_errors", tags: []string{"command:get_objects", "exit_code:missing"}, value: 1},
 	}
 	assertRecordedMetrics(t, client.metrics, want)
 }
@@ -220,10 +220,10 @@ func TestCLICommandMetrics(t *testing.T) {
 	}
 
 	want := []recordedMetric{
-		{kind: "count", name: "cli.command", tags: tags("plan", "0", errcode.None), value: 1},
-		{kind: "distribution", name: "cli.command_ms", tags: tags("plan", "0", errcode.None), value: 1500},
-		{kind: "count", name: "cli.command", tags: tags("run", "1", errcode.RunParallelTestsFailed), value: 1},
-		{kind: "distribution", name: "cli.command_ms", tags: tags("run", "1", errcode.RunParallelTestsFailed), value: 2000},
+		{kind: "count", name: "ddtest.cli.command", tags: tags("plan", "0", errcode.None), value: 1},
+		{kind: "distribution", name: "ddtest.cli.command_ms", tags: tags("plan", "0", errcode.None), value: 1500},
+		{kind: "count", name: "ddtest.cli.command", tags: tags("run", "1", errcode.RunParallelTestsFailed), value: 1},
+		{kind: "distribution", name: "ddtest.cli.command_ms", tags: tags("run", "1", errcode.RunParallelTestsFailed), value: 2000},
 	}
 	assertRecordedMetrics(t, client.metrics, want)
 }
@@ -236,10 +236,10 @@ func TestTestDiscoveryMetrics(t *testing.T) {
 	fullTags := []string{"discovery_mode:full", "success:true", "platform:ruby", "framework:rspec"}
 	fastTags := []string{"discovery_mode:fast", "success:false", "platform:javascript", "framework:jest"}
 	want := []recordedMetric{
-		{kind: "distribution", name: "test_discovery.duration_ms", tags: fullTags, value: 1500},
-		{kind: "distribution", name: "test_discovery.tests", tags: fullTags, value: 42},
-		{kind: "distribution", name: "test_discovery.duration_ms", tags: fastTags, value: 2000},
-		{kind: "distribution", name: "test_discovery.test_files", tags: fastTags, value: 3},
+		{kind: "distribution", name: "ddtest.test_discovery.duration_ms", tags: fullTags, value: 1500},
+		{kind: "distribution", name: "ddtest.test_discovery.tests", tags: fullTags, value: 42},
+		{kind: "distribution", name: "ddtest.test_discovery.duration_ms", tags: fastTags, value: 2000},
+		{kind: "distribution", name: "ddtest.test_discovery.test_files", tags: fastTags, value: 3},
 	}
 	assertRecordedMetrics(t, client.metrics, want)
 }
@@ -284,23 +284,23 @@ func TestPlanningMetrics(t *testing.T) {
 	want := []recordedMetric{
 		{
 			kind:  "count",
-			name:  "planning.decision",
+			name:  "ddtest.planning.decision",
 			tags:  append(withTag("reason:target_met_changed_selection"), "target_status:met"),
 			value: 1,
 		},
-		{kind: "distribution", name: "planning.test_files", tags: withTag("state:discovered"), value: 10},
-		{kind: "distribution", name: "planning.test_files", tags: withTag("state:runnable"), value: 7},
-		{kind: "distribution", name: "planning.test_files", tags: withTag("state:fully_skipped"), value: 3},
-		{kind: "distribution", name: "planning.estimated_time_saved_pct", tags: commonTags, value: 30},
-		{kind: "distribution", name: "planning.test_file_durations", tags: withTag("source:backend"), value: 5},
-		{kind: "distribution", name: "planning.test_file_durations", tags: withTag("source:default"), value: 2},
-		{kind: "distribution", name: "planning.parallel_runners", tags: commonTags, value: 3},
-		{kind: "distribution", name: "planning.expected_full_runtime_ms", tags: commonTags, value: 10000},
-		{kind: "distribution", name: "planning.expected_runnable_runtime_ms", tags: commonTags, value: 7000},
-		{kind: "distribution", name: "planning.expected_wall_time_ms", tags: commonTags, value: 2500},
-		{kind: "distribution", name: "planning.split_imbalance_pct", tags: commonTags, value: 20},
-		{kind: "distribution", name: "planning.disabled_tests", tags: commonTags, value: 4},
-		{kind: "distribution", name: "planning.forced_run_suites", tags: commonTags, value: 1},
+		{kind: "distribution", name: "ddtest.planning.test_files", tags: withTag("state:discovered"), value: 10},
+		{kind: "distribution", name: "ddtest.planning.test_files", tags: withTag("state:runnable"), value: 7},
+		{kind: "distribution", name: "ddtest.planning.test_files", tags: withTag("state:fully_skipped"), value: 3},
+		{kind: "distribution", name: "ddtest.planning.estimated_time_saved_pct", tags: commonTags, value: 30},
+		{kind: "distribution", name: "ddtest.planning.test_file_durations", tags: withTag("source:backend"), value: 5},
+		{kind: "distribution", name: "ddtest.planning.test_file_durations", tags: withTag("source:default"), value: 2},
+		{kind: "distribution", name: "ddtest.planning.parallel_runners", tags: commonTags, value: 3},
+		{kind: "distribution", name: "ddtest.planning.expected_full_runtime_ms", tags: commonTags, value: 10000},
+		{kind: "distribution", name: "ddtest.planning.expected_runnable_runtime_ms", tags: commonTags, value: 7000},
+		{kind: "distribution", name: "ddtest.planning.expected_wall_time_ms", tags: commonTags, value: 2500},
+		{kind: "distribution", name: "ddtest.planning.split_imbalance_pct", tags: commonTags, value: 20},
+		{kind: "distribution", name: "ddtest.planning.disabled_tests", tags: commonTags, value: 4},
+		{kind: "distribution", name: "ddtest.planning.forced_run_suites", tags: commonTags, value: 1},
 	}
 	assertRecordedMetrics(t, client.metrics, want)
 }
