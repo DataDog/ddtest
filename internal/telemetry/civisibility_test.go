@@ -135,7 +135,7 @@ func TestCIVisibilityRequestMetrics(t *testing.T) {
 		{kind: "distribution", name: "itr_skippable_tests.response_bytes", tags: []string{"rs_compressed:true"}, value: 43},
 		{kind: "count", name: "itr_skippable_tests.response_tests", value: 3},
 		{kind: "count", name: "itr_skippable_tests.response_suites", value: 2},
-		{kind: "count", name: "itr_skippable_tests.is_empty", value: 1},
+		{kind: "count", name: "ddtest.itr_skippable_tests.is_empty", value: 1},
 		{kind: "count", name: "known_tests.request", value: 1},
 		{kind: "count", name: "known_tests.request_errors", tags: []string{"error_type:network"}, value: 1},
 		{kind: "distribution", name: "known_tests.request_ms", value: 1500},
@@ -220,10 +220,10 @@ func TestCLICommandMetrics(t *testing.T) {
 	}
 
 	want := []recordedMetric{
-		{kind: "count", name: "cli.command", tags: tags("plan", "0", errcode.None), value: 1},
-		{kind: "distribution", name: "cli.command_ms", tags: tags("plan", "0", errcode.None), value: 1500},
-		{kind: "count", name: "cli.command", tags: tags("run", "1", errcode.RunParallelTestsFailed), value: 1},
-		{kind: "distribution", name: "cli.command_ms", tags: tags("run", "1", errcode.RunParallelTestsFailed), value: 2000},
+		{kind: "count", name: "ddtest.cli.command", tags: tags("plan", "0", errcode.None), value: 1},
+		{kind: "distribution", name: "ddtest.cli.command_ms", tags: tags("plan", "0", errcode.None), value: 1500},
+		{kind: "count", name: "ddtest.cli.command", tags: tags("run", "1", errcode.RunParallelTestsFailed), value: 1},
+		{kind: "distribution", name: "ddtest.cli.command_ms", tags: tags("run", "1", errcode.RunParallelTestsFailed), value: 2000},
 	}
 	assertRecordedMetrics(t, client.metrics, want)
 }
@@ -236,10 +236,10 @@ func TestTestDiscoveryMetrics(t *testing.T) {
 	fullTags := []string{"discovery_mode:full", "success:true", "platform:ruby", "framework:rspec"}
 	fastTags := []string{"discovery_mode:fast", "success:false", "platform:javascript", "framework:jest"}
 	want := []recordedMetric{
-		{kind: "distribution", name: "test_discovery.duration_ms", tags: fullTags, value: 1500},
-		{kind: "distribution", name: "test_discovery.tests", tags: fullTags, value: 42},
-		{kind: "distribution", name: "test_discovery.duration_ms", tags: fastTags, value: 2000},
-		{kind: "distribution", name: "test_discovery.test_files", tags: fastTags, value: 3},
+		{kind: "distribution", name: "ddtest.test_discovery.duration_ms", tags: fullTags, value: 1500},
+		{kind: "distribution", name: "ddtest.test_discovery.tests", tags: fullTags, value: 42},
+		{kind: "distribution", name: "ddtest.test_discovery.duration_ms", tags: fastTags, value: 2000},
+		{kind: "distribution", name: "ddtest.test_discovery.test_files", tags: fastTags, value: 3},
 	}
 	assertRecordedMetrics(t, client.metrics, want)
 }
@@ -284,23 +284,23 @@ func TestPlanningMetrics(t *testing.T) {
 	want := []recordedMetric{
 		{
 			kind:  "count",
-			name:  "planning.decision",
+			name:  "ddtest.planning.decision",
 			tags:  append(withTag("reason:target_met_changed_selection"), "target_status:met"),
 			value: 1,
 		},
-		{kind: "distribution", name: "planning.test_files", tags: withTag("state:discovered"), value: 10},
-		{kind: "distribution", name: "planning.test_files", tags: withTag("state:runnable"), value: 7},
-		{kind: "distribution", name: "planning.test_files", tags: withTag("state:fully_skipped"), value: 3},
-		{kind: "distribution", name: "planning.estimated_time_saved_pct", tags: commonTags, value: 30},
-		{kind: "distribution", name: "planning.test_file_durations", tags: withTag("source:backend"), value: 5},
-		{kind: "distribution", name: "planning.test_file_durations", tags: withTag("source:default"), value: 2},
-		{kind: "distribution", name: "planning.parallel_runners", tags: commonTags, value: 3},
-		{kind: "distribution", name: "planning.expected_full_runtime_ms", tags: commonTags, value: 10000},
-		{kind: "distribution", name: "planning.expected_runnable_runtime_ms", tags: commonTags, value: 7000},
-		{kind: "distribution", name: "planning.expected_wall_time_ms", tags: commonTags, value: 2500},
-		{kind: "distribution", name: "planning.split_imbalance_pct", tags: commonTags, value: 20},
-		{kind: "distribution", name: "planning.disabled_tests", tags: commonTags, value: 4},
-		{kind: "distribution", name: "planning.forced_run_suites", tags: commonTags, value: 1},
+		{kind: "distribution", name: "ddtest.planning.test_files", tags: withTag("state:discovered"), value: 10},
+		{kind: "distribution", name: "ddtest.planning.test_files", tags: withTag("state:runnable"), value: 7},
+		{kind: "distribution", name: "ddtest.planning.test_files", tags: withTag("state:fully_skipped"), value: 3},
+		{kind: "distribution", name: "ddtest.planning.estimated_time_saved_pct", tags: commonTags, value: 30},
+		{kind: "distribution", name: "ddtest.planning.test_file_durations", tags: withTag("source:backend"), value: 5},
+		{kind: "distribution", name: "ddtest.planning.test_file_durations", tags: withTag("source:default"), value: 2},
+		{kind: "distribution", name: "ddtest.planning.parallel_runners", tags: commonTags, value: 3},
+		{kind: "distribution", name: "ddtest.planning.expected_full_runtime_ms", tags: commonTags, value: 10000},
+		{kind: "distribution", name: "ddtest.planning.expected_runnable_runtime_ms", tags: commonTags, value: 7000},
+		{kind: "distribution", name: "ddtest.planning.expected_wall_time_ms", tags: commonTags, value: 2500},
+		{kind: "distribution", name: "ddtest.planning.split_imbalance_pct", tags: commonTags, value: 20},
+		{kind: "distribution", name: "ddtest.planning.disabled_tests", tags: commonTags, value: 4},
+		{kind: "distribution", name: "ddtest.planning.forced_run_suites", tags: commonTags, value: 1},
 	}
 	assertRecordedMetrics(t, client.metrics, want)
 }

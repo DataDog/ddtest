@@ -184,7 +184,7 @@ func TestTransportRecordsBackendTelemetry(t *testing.T) {
 	recorder.assertValue(t, "distribution", "itr_skippable_tests.response_bytes", nil, float64(len(skippableBody)))
 	recorder.assertValue(t, "count", "itr_skippable_tests.response_tests", nil, 2)
 	recorder.assertSamples(t, "count", "itr_skippable_tests.response_suites", nil, 0)
-	recorder.assertSamples(t, "count", "itr_skippable_tests.is_empty", nil, 0)
+	recorder.assertSamples(t, "count", "ddtest.itr_skippable_tests.is_empty", nil, 0)
 	recorder.assertValue(t, "count", "test_management_tests.request", nil, 1)
 	recorder.assertSamples(t, "distribution", "test_management_tests.request_ms", nil, 1)
 	recorder.assertValue(t, "distribution", "test_management_tests.response_bytes", nil, float64(len(testManagementBody)))
@@ -219,7 +219,7 @@ func TestTransportRecordsSuiteOnlySkippableResponse(t *testing.T) {
 
 	recorder.assertValue(t, "count", "itr_skippable_tests.response_suites", nil, 1)
 	recorder.assertSamples(t, "count", "itr_skippable_tests.response_tests", nil, 0)
-	recorder.assertSamples(t, "count", "itr_skippable_tests.is_empty", nil, 0)
+	recorder.assertSamples(t, "count", "ddtest.itr_skippable_tests.is_empty", nil, 0)
 }
 
 func TestTransportRecordsEmptySkippableResponse(t *testing.T) {
@@ -240,7 +240,7 @@ func TestTransportRecordsEmptySkippableResponse(t *testing.T) {
 	}
 
 	recorder.assertValue(t, "count", "itr_skippable_tests.response_tests", nil, 0)
-	recorder.assertValue(t, "count", "itr_skippable_tests.is_empty", nil, 1)
+	recorder.assertValue(t, "count", "ddtest.itr_skippable_tests.is_empty", nil, 1)
 }
 
 func TestTransportRecordsCompressedResponseWireBytes(t *testing.T) {
@@ -392,7 +392,7 @@ func TestTransportRecordsBackendStatusErrors(t *testing.T) {
 	} {
 		recorder.assertValue(t, "count", name, tags, 1)
 	}
-	recorder.assertSamples(t, "count", "itr_skippable_tests.is_empty", nil, 0)
+	recorder.assertSamples(t, "count", "ddtest.itr_skippable_tests.is_empty", nil, 0)
 }
 
 func TestNewTransportWithTelemetryRetainsClient(t *testing.T) {

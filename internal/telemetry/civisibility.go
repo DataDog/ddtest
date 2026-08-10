@@ -201,11 +201,11 @@ func GitCommandMs(client Client, commandType git.CommandType, duration time.Dura
 }
 
 func CLICommand(client Client, commandType CLICommandType, exitCode int, errorCode errcode.Code, attributes CLICommandAttributes) {
-	count(client, "cli.command", cliCommandTags(commandType, exitCode, errorCode, attributes), 1)
+	count(client, "ddtest.cli.command", cliCommandTags(commandType, exitCode, errorCode, attributes), 1)
 }
 
 func CLICommandMs(client Client, commandType CLICommandType, exitCode int, errorCode errcode.Code, attributes CLICommandAttributes, duration time.Duration) {
-	distribution(client, "cli.command_ms", cliCommandTags(commandType, exitCode, errorCode, attributes), milliseconds(duration))
+	distribution(client, "ddtest.cli.command_ms", cliCommandTags(commandType, exitCode, errorCode, attributes), milliseconds(duration))
 }
 
 func TestDiscovery(client Client, mode TestDiscoveryMode, success bool, platform, framework string, duration time.Duration, discovered int) {
@@ -215,37 +215,37 @@ func TestDiscovery(client Client, mode TestDiscoveryMode, success bool, platform
 		"platform:" + platform,
 		"framework:" + framework,
 	}
-	distribution(client, "test_discovery.duration_ms", tags, milliseconds(duration))
+	distribution(client, "ddtest.test_discovery.duration_ms", tags, milliseconds(duration))
 
 	switch mode {
 	case TestDiscoveryModeFull:
-		distribution(client, "test_discovery.tests", tags, float64(discovered))
+		distribution(client, "ddtest.test_discovery.tests", tags, float64(discovered))
 	case TestDiscoveryModeFast:
-		distribution(client, "test_discovery.test_files", tags, float64(discovered))
+		distribution(client, "ddtest.test_discovery.test_files", tags, float64(discovered))
 	}
 }
 
 // Planning records the decisions and estimates from one completed plan.
 func Planning(client Client, metrics PlanningMetrics) {
 	commonTags := planningTags(metrics.Attributes)
-	count(client, "planning.decision", appendPlanningTags(commonTags,
+	count(client, "ddtest.planning.decision", appendPlanningTags(commonTags,
 		"reason:"+string(metrics.DecisionReason),
 		"target_status:"+string(metrics.TargetStatus),
 	), 1)
 
-	distribution(client, "planning.test_files", appendPlanningTags(commonTags, "state:discovered"), float64(metrics.DiscoveredTestFiles))
-	distribution(client, "planning.test_files", appendPlanningTags(commonTags, "state:runnable"), float64(metrics.RunnableTestFiles))
-	distribution(client, "planning.test_files", appendPlanningTags(commonTags, "state:fully_skipped"), float64(metrics.FullySkippedTestFiles))
-	distribution(client, "planning.estimated_time_saved_pct", commonTags, metrics.EstimatedTimeSavedPercent)
-	distribution(client, "planning.test_file_durations", appendPlanningTags(commonTags, "source:backend"), float64(metrics.BackendDurationTestFiles))
-	distribution(client, "planning.test_file_durations", appendPlanningTags(commonTags, "source:default"), float64(metrics.DefaultDurationTestFiles))
-	distribution(client, "planning.parallel_runners", commonTags, float64(metrics.ParallelRunners))
-	distribution(client, "planning.expected_full_runtime_ms", commonTags, milliseconds(metrics.ExpectedFullRuntime))
-	distribution(client, "planning.expected_runnable_runtime_ms", commonTags, milliseconds(metrics.ExpectedRunnableRuntime))
-	distribution(client, "planning.expected_wall_time_ms", commonTags, milliseconds(metrics.ExpectedWallTime))
-	distribution(client, "planning.split_imbalance_pct", commonTags, metrics.SplitImbalancePercent)
-	distribution(client, "planning.disabled_tests", commonTags, float64(metrics.DisabledTests))
-	distribution(client, "planning.forced_run_suites", commonTags, float64(metrics.UnskippableMarkerSuites))
+	distribution(client, "ddtest.planning.test_files", appendPlanningTags(commonTags, "state:discovered"), float64(metrics.DiscoveredTestFiles))
+	distribution(client, "ddtest.planning.test_files", appendPlanningTags(commonTags, "state:runnable"), float64(metrics.RunnableTestFiles))
+	distribution(client, "ddtest.planning.test_files", appendPlanningTags(commonTags, "state:fully_skipped"), float64(metrics.FullySkippedTestFiles))
+	distribution(client, "ddtest.planning.estimated_time_saved_pct", commonTags, metrics.EstimatedTimeSavedPercent)
+	distribution(client, "ddtest.planning.test_file_durations", appendPlanningTags(commonTags, "source:backend"), float64(metrics.BackendDurationTestFiles))
+	distribution(client, "ddtest.planning.test_file_durations", appendPlanningTags(commonTags, "source:default"), float64(metrics.DefaultDurationTestFiles))
+	distribution(client, "ddtest.planning.parallel_runners", commonTags, float64(metrics.ParallelRunners))
+	distribution(client, "ddtest.planning.expected_full_runtime_ms", commonTags, milliseconds(metrics.ExpectedFullRuntime))
+	distribution(client, "ddtest.planning.expected_runnable_runtime_ms", commonTags, milliseconds(metrics.ExpectedRunnableRuntime))
+	distribution(client, "ddtest.planning.expected_wall_time_ms", commonTags, milliseconds(metrics.ExpectedWallTime))
+	distribution(client, "ddtest.planning.split_imbalance_pct", commonTags, metrics.SplitImbalancePercent)
+	distribution(client, "ddtest.planning.disabled_tests", commonTags, float64(metrics.DisabledTests))
+	distribution(client, "ddtest.planning.forced_run_suites", commonTags, float64(metrics.UnskippableMarkerSuites))
 }
 
 func planningTags(attributes PlanningAttributes) []string {
@@ -369,7 +369,7 @@ func ITRSkippableTestsResponseSuites(client Client, value int) {
 }
 
 func ITRSkippableTestsIsEmpty(client Client) {
-	count(client, "itr_skippable_tests.is_empty", nil, 1)
+	count(client, "ddtest.itr_skippable_tests.is_empty", nil, 1)
 }
 
 func ITRSkippableTestsRequestMs(client Client, duration time.Duration) {
