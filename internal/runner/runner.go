@@ -110,6 +110,11 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 		return errcode.WithCode(errcode.RunFrameworkDetectionFailed, fmt.Errorf("failed to detect framework: %w", err))
 	}
 	slog.Info("Framework detected", "framework", framework.Name())
+	telemetry.RecordCLICommandAttributes(tr.telemetryClient, telemetry.CLICommandAttributes{
+		Platform:         detectedPlatform.Name(),
+		Framework:        framework.Name(),
+		TestSkippingMode: detectedPlatform.TestSkippingLevel().String(),
+	})
 	runInfo := runmetadata.New(ciUtils.GetCITags())
 	if planMetadata.IsZero() {
 		planMetadata = planner.NewPlanMetadata(nil, detectedPlatform.Name(), framework.Name(), detectedPlatform.TestSkippingLevel())

@@ -228,6 +228,33 @@ func TestCLICommandMetrics(t *testing.T) {
 	assertRecordedMetrics(t, client.metrics, want)
 }
 
+func TestCLICommandAttributeTracker(t *testing.T) {
+	client := &recordingClient{}
+	tracker := NewCLICommandAttributeTracker(client)
+
+	unknown := CLICommandAttributes{
+		Platform:         "unknown",
+		Framework:        "unknown",
+		TestSkippingMode: "unknown",
+	}
+	if got := tracker.Attributes(); got != unknown {
+		t.Fatalf("initial attributes = %#v, want %#v", got, unknown)
+	}
+
+	detected := CLICommandAttributes{
+		Platform:         "javascript",
+		Framework:        "jest",
+		TestSkippingMode: "suite",
+	}
+	RecordCLICommandAttributes(tracker, detected)
+	if got := tracker.Attributes(); got != detected {
+		t.Fatalf("detected attributes = %#v, want %#v", got, detected)
+	}
+
+	tracker.Count("forwarded", nil).Submit(1)
+	assertRecordedMetrics(t, client.metrics, []recordedMetric{{kind: "count", name: "forwarded", value: 1}})
+}
+
 func TestTestDiscoveryMetrics(t *testing.T) {
 	client := &recordingClient{}
 	TestDiscovery(client, TestDiscoveryModeFull, true, "ruby", "rspec", 1500*time.Millisecond, 42)

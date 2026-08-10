@@ -296,6 +296,11 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	}
 	slog.Info("Framework detected", "framework", testFramework.Name())
 	testSkippingLevel := detectedPlatform.TestSkippingLevel()
+	telemetry.RecordCLICommandAttributes(tp.telemetryClient, telemetry.CLICommandAttributes{
+		Platform:         detectedPlatform.Name(),
+		Framework:        testFramework.Name(),
+		TestSkippingMode: testSkippingLevel.String(),
+	})
 	isSuiteLevelSkipping := testSkippingLevel == settings.TestSkippingLevelSuite
 	isTestLevelSkipping := testSkippingLevel == settings.TestSkippingLevelTest
 	fullTestDiscoverySupported := testFramework.SupportsFullTestDiscovery()

@@ -115,9 +115,19 @@ func TestTestRunner_Run_UsesExistingArtifactsWithoutPlanning(t *testing.T) {
 	platform := &MockPlatform{PlatformName: "ruby", Framework: framework}
 	testPlanner := &fakePlanner{}
 	runner := NewWithDependencies(&MockPlatformDetector{Platform: platform}, testPlanner)
+	commandAttributeTracker := telemetry.NewCLICommandAttributeTracker(telemetry.NoopClient())
+	runner.telemetryClient = commandAttributeTracker
 
 	if err := runner.Run(context.Background()); err != nil {
 		t.Fatalf("Run() returned error: %v", err)
+	}
+	wantCommandAttributes := telemetry.CLICommandAttributes{
+		Platform:         "ruby",
+		Framework:        "rspec",
+		TestSkippingMode: "test",
+	}
+	if got := commandAttributeTracker.Attributes(); got != wantCommandAttributes {
+		t.Fatalf("CLI command attributes = %#v, want %#v", got, wantCommandAttributes)
 	}
 
 	if testPlanner.planCalls != 0 {
@@ -250,12 +260,22 @@ func TestTestRunner_Run_ReturnsFrameworkDetectionError(t *testing.T) {
 	platform := &MockPlatform{PlatformName: "ruby", FrameworkErr: frameworkErr}
 	testPlanner := &fakePlanner{}
 	runner := NewWithDependencies(&MockPlatformDetector{Platform: platform}, testPlanner)
+	commandAttributeTracker := telemetry.NewCLICommandAttributeTracker(telemetry.NoopClient())
+	runner.telemetryClient = commandAttributeTracker
 
 	err := runner.Run(context.Background())
 	if !errors.Is(err, frameworkErr) {
 		t.Fatalf("expected Run() to return framework detection error, got %v", err)
 	}
 	assertRunnerErrorCode(t, err, errcode.RunFrameworkDetectionFailed)
+	wantCommandAttributes := telemetry.CLICommandAttributes{
+		Platform:         "unknown",
+		Framework:        "unknown",
+		TestSkippingMode: "unknown",
+	}
+	if got := commandAttributeTracker.Attributes(); got != wantCommandAttributes {
+		t.Fatalf("CLI command attributes = %#v, want %#v", got, wantCommandAttributes)
+	}
 }
 
 func TestTestRunner_Run_WritesReportWhenEnabled(t *testing.T) {

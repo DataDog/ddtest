@@ -194,7 +194,7 @@ func TestRootPersistentPreRunChecksGitAvailability(t *testing.T) {
 }
 
 func TestRunPlanCommand(t *testing.T) {
-	attributes := stubCLICommandAttributes(t)
+	attributes := detectedCLICommandAttributes()
 	originalPlanCommand := planCommand
 	originalNewTelemetryClient := newTelemetryClient
 	originalExitProcess := exitProcess
@@ -209,9 +209,7 @@ func TestRunPlanCommand(t *testing.T) {
 	calls := 0
 	planCommand = func(ctx context.Context, got telemetry.Client) error {
 		calls++
-		if got != telemetryClient {
-			t.Fatal("plan command did not receive the command telemetry client")
-		}
+		telemetry.RecordCLICommandAttributes(got, attributes)
 		return nil
 	}
 	exitProcess = func(code int) {
@@ -235,7 +233,6 @@ func TestRunPlanCommand(t *testing.T) {
 }
 
 func TestRunPlanCommandExitsOnError(t *testing.T) {
-	attributes := stubCLICommandAttributes(t)
 	originalPlanCommand := planCommand
 	originalNewTelemetryClient := newTelemetryClient
 	originalExitProcess := exitProcess
@@ -247,7 +244,7 @@ func TestRunPlanCommandExitsOnError(t *testing.T) {
 
 	telemetryClient := &fakeTelemetryClient{}
 	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
-	planErr := errcode.New(errcode.PlanFastTestDiscoveryFailed, "planner failed")
+	planErr := errcode.New(errcode.PlanPlatformDetectionFailed, "planner failed")
 	planCommand = func(ctx context.Context, got telemetry.Client) error {
 		return planErr
 	}
@@ -267,13 +264,13 @@ func TestRunPlanCommandExitsOnError(t *testing.T) {
 	if telemetryClient.metricsAtFlush < 2 {
 		t.Fatalf("telemetry metrics at flush = %d, want at least 2", telemetryClient.metricsAtFlush)
 	}
-	tags := cliMetricTags("plan", "1", errcode.PlanFastTestDiscoveryFailed, attributes)
+	tags := cliMetricTags("plan", "1", errcode.PlanPlatformDetectionFailed, unknownCLICommandAttributes())
 	telemetryClient.assertValue(t, "count", "ddtest.cli.command", tags, 1)
 	telemetryClient.assertSamples(t, "distribution", "ddtest.cli.command_ms", tags, 1)
 }
 
 func TestRunTestCommand(t *testing.T) {
-	attributes := stubCLICommandAttributes(t)
+	attributes := detectedCLICommandAttributes()
 	originalNewRunner := newRunner
 	originalNewTelemetryClient := newTelemetryClient
 	originalExitProcess := exitProcess
@@ -287,9 +284,7 @@ func TestRunTestCommand(t *testing.T) {
 	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
 	fake := &fakeCommandRunner{}
 	newRunner = func(got telemetry.Client) runnerpkg.Runner {
-		if got != telemetryClient {
-			t.Fatal("runner did not receive the command telemetry client")
-		}
+		telemetry.RecordCLICommandAttributes(got, attributes)
 		return fake
 	}
 	exitProcess = func(code int) {
@@ -313,7 +308,7 @@ func TestRunTestCommand(t *testing.T) {
 }
 
 func TestRunTestCommandExitsOnError(t *testing.T) {
-	attributes := stubCLICommandAttributes(t)
+	attributes := detectedCLICommandAttributes()
 	originalNewRunner := newRunner
 	originalNewTelemetryClient := newTelemetryClient
 	originalExitProcess := exitProcess
@@ -327,6 +322,7 @@ func TestRunTestCommandExitsOnError(t *testing.T) {
 	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
 	fake := &fakeCommandRunner{err: errcode.New(errcode.RunParallelTestsFailed, "runner failed")}
 	newRunner = func(got telemetry.Client) runnerpkg.Runner {
+		telemetry.RecordCLICommandAttributes(got, attributes)
 		return fake
 	}
 	var exitCodes []int
@@ -358,7 +354,7 @@ func TestRunWithTelemetryFallsBackWhenCreationFails(t *testing.T) {
 	}
 
 	operationErr := errors.New("operation failed")
-	got := runWithTelemetry(context.Background(), telemetry.CLICommandPlan, telemetry.CLICommandAttributes{}, func(client telemetry.Client) error {
+	got := runWithTelemetry(context.Background(), telemetry.CLICommandPlan, func(client telemetry.Client) error {
 		if client == nil {
 			t.Fatal("operation received nil telemetry client")
 		}
@@ -377,7 +373,7 @@ func TestRunWithTelemetryDoesNotReplaceCommandErrorWithFlushError(t *testing.T) 
 	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
 	operationErr := errors.New("operation failed")
 
-	got := runWithTelemetry(context.Background(), telemetry.CLICommandRun, telemetry.CLICommandAttributes{}, func(telemetry.Client) error {
+	got := runWithTelemetry(context.Background(), telemetry.CLICommandRun, func(telemetry.Client) error {
 		return operationErr
 	})
 	if !errors.Is(got, operationErr) {
@@ -659,17 +655,20 @@ type fakeCommandRunner struct {
 	err   error
 }
 
-func stubCLICommandAttributes(t *testing.T) telemetry.CLICommandAttributes {
-	t.Helper()
-	original := cliCommandAttributes
-	attributes := telemetry.CLICommandAttributes{
+func detectedCLICommandAttributes() telemetry.CLICommandAttributes {
+	return telemetry.CLICommandAttributes{
 		Platform:         "javascript",
 		Framework:        "jest",
 		TestSkippingMode: "suite",
 	}
-	cliCommandAttributes = func() telemetry.CLICommandAttributes { return attributes }
-	t.Cleanup(func() { cliCommandAttributes = original })
-	return attributes
+}
+
+func unknownCLICommandAttributes() telemetry.CLICommandAttributes {
+	return telemetry.CLICommandAttributes{
+		Platform:         "unknown",
+		Framework:        "unknown",
+		TestSkippingMode: "unknown",
+	}
 }
 
 func cliMetricTags(command, exitCode string, errorCode errcode.Code, attributes telemetry.CLICommandAttributes) []string {

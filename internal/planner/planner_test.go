@@ -926,10 +926,19 @@ func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery
 		newDefaultMockCIProviderDetector(),
 	)
 	telemetryClient := newPlannerTelemetryClient()
-	runner.telemetryClient = telemetryClient
+	commandAttributeTracker := telemetry.NewCLICommandAttributeTracker(telemetryClient)
+	runner.telemetryClient = commandAttributeTracker
 
 	if err := runner.Plan(context.Background()); err != nil {
 		t.Fatalf("Plan() should not return error, got: %v", err)
+	}
+	wantCommandAttributes := telemetry.CLICommandAttributes{
+		Platform:         "javascript",
+		Framework:        "jest",
+		TestSkippingMode: "suite",
+	}
+	if got := commandAttributeTracker.Attributes(); got != wantCommandAttributes {
+		t.Fatalf("CLI command attributes = %#v, want %#v", got, wantCommandAttributes)
 	}
 
 	if !mockOptimizationClient.GetSkippablesCalled {

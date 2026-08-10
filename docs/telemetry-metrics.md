@@ -34,6 +34,11 @@ are common metrics and are not sent to customer organizations.
 | `test_suite_durations.response_suites` | distribution | suites | None | Total number of test suites returned across all response pages. |
 | `test_suite_durations.is_empty` | count | responses | None | Number of successful test suite durations fetches that returned zero test suites. |
 
+For `ddtest.cli.command` and `ddtest.cli.command_ms`, `platform`, `framework`,
+and `test_skipping_mode` are reported as `unknown` until platform and framework
+detection succeeds. The detected values are then used for the rest of the
+command. Raw CLI configuration values are never used as telemetry tags.
+
 ### Planning tag values
 
 - `reason`: `no_runnable_tests`, `single_runner_only`, `lowest_score`,

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os/exec"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/errcode"
@@ -98,6 +99,52 @@ type CLICommandAttributes struct {
 	Platform         string
 	Framework        string
 	TestSkippingMode string
+}
+
+const unknownCLICommandAttributeValue = "unknown"
+
+// CLICommandAttributeTracker forwards metrics to Client and retains the
+// platform configuration detected during the command. Attributes remain
+// unknown until platform and framework detection both succeed.
+type CLICommandAttributeTracker struct {
+	Client
+	mu         sync.RWMutex
+	attributes CLICommandAttributes
+}
+
+func NewCLICommandAttributeTracker(client Client) *CLICommandAttributeTracker {
+	return &CLICommandAttributeTracker{
+		Client: client,
+		attributes: CLICommandAttributes{
+			Platform:         unknownCLICommandAttributeValue,
+			Framework:        unknownCLICommandAttributeValue,
+			TestSkippingMode: unknownCLICommandAttributeValue,
+		},
+	}
+}
+
+func (t *CLICommandAttributeTracker) Attributes() CLICommandAttributes {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.attributes
+}
+
+func (t *CLICommandAttributeTracker) record(attributes CLICommandAttributes) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.attributes = attributes
+}
+
+type cliCommandAttributeRecorder interface {
+	record(CLICommandAttributes)
+}
+
+// RecordCLICommandAttributes records values obtained from successful platform
+// and framework detection when client is tracking top-level command telemetry.
+func RecordCLICommandAttributes(client Client, attributes CLICommandAttributes) {
+	if recorder, ok := client.(cliCommandAttributeRecorder); ok {
+		recorder.record(attributes)
+	}
 }
 
 // SettingsResponse describes the settings flags represented in telemetry.
