@@ -31,6 +31,14 @@ const (
 	CLICommandRun  CLICommandType = "run"
 )
 
+// TestDiscoveryMode identifies the discovery strategy selected by the planner.
+type TestDiscoveryMode string
+
+const (
+	TestDiscoveryModeFull TestDiscoveryMode = "full"
+	TestDiscoveryModeFast TestDiscoveryMode = "fast"
+)
+
 // CLICommandAttributes describes the resolved configuration attached to CLI
 // command telemetry.
 type CLICommandAttributes struct {
@@ -145,6 +153,23 @@ func CLICommand(client Client, commandType CLICommandType, exitCode int, errorCo
 
 func CLICommandMs(client Client, commandType CLICommandType, exitCode int, errorCode errcode.Code, attributes CLICommandAttributes, duration time.Duration) {
 	distribution(client, "cli.command_ms", cliCommandTags(commandType, exitCode, errorCode, attributes), milliseconds(duration))
+}
+
+func TestDiscovery(client Client, mode TestDiscoveryMode, success bool, platform, framework string, duration time.Duration, discovered int) {
+	tags := []string{
+		"discovery_mode:" + string(mode),
+		"success:" + strconv.FormatBool(success),
+		"platform:" + platform,
+		"framework:" + framework,
+	}
+	distribution(client, "test_discovery.duration_ms", tags, milliseconds(duration))
+
+	switch mode {
+	case TestDiscoveryModeFull:
+		distribution(client, "test_discovery.tests", tags, float64(discovered))
+	case TestDiscoveryModeFast:
+		distribution(client, "test_discovery.test_files", tags, float64(discovered))
+	}
 }
 
 func cliCommandTags(commandType CLICommandType, exitCode int, errorCode errcode.Code, attributes CLICommandAttributes) []string {

@@ -326,6 +326,9 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	var selectedDiscoveryMode discoveryMode
 	var selectedDiscoveryDuration time.Duration
 	var cacheResult discoveryCacheResult
+	recordDiscoveryTelemetry := func(mode telemetry.TestDiscoveryMode, success bool, duration time.Duration, discovered int) {
+		telemetry.TestDiscovery(tp.telemetryClient, mode, success, detectedPlatform.Name(), testFramework.Name(), duration, discovered)
+	}
 
 	tp.resetDiscoveryResults()
 	tp.testSuiteDurations = make(map[string]map[string]api.TestSuiteDurationInfo)
@@ -407,6 +410,8 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		}
 
 		res, discoveryErr := discoverLocalTests(discoveryCtx, testFramework, resolvedTestFiles)
+		discoveredTests = res
+		fullDiscoveryDuration = time.Since(fullDiscoveryStartTime)
 		if discoveryErr != nil {
 			if discoveryCtx.Err() == nil {
 				fullDiscoveryErr = discoveryErr
@@ -414,9 +419,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 			return nil // Don't fail the entire process, we have fast discovery as fallback.
 		}
 		discoveryCache.store()
-		discoveredTests = res
 		fullDiscoverySucceeded = true
-		fullDiscoveryDuration = time.Since(fullDiscoveryStartTime)
 
 		return nil
 	})
@@ -427,13 +430,13 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		slog.Info("Discovering test files (fast)...", "framework", testFramework.Name())
 		var res []string
 		res, discErr := testFramework.DiscoverTestFiles(ctx, resolvedTestFiles)
+		discoveredTestFiles = res
+		fastDiscoveryDuration = time.Since(startTime)
 		if discErr != nil {
 			fastDiscoveryErr = discErr
 			slog.Warn("Fast test discovery failed", "error", discErr)
 			return nil // Don't fail the entire process if full discovery succeeded
 		}
-		discoveredTestFiles = res
-		fastDiscoveryDuration = time.Since(startTime)
 		slog.Info("Discovered test files (fast)", "duration", fastDiscoveryDuration, "count", len(discoveredTestFiles))
 
 		return nil
@@ -447,6 +450,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	// backend data cancels it, use it even when TIA has no skips: full discovery
 	// is more precise than fast file discovery.
 	if fullDiscoverySucceeded {
+		recordDiscoveryTelemetry(telemetry.TestDiscoveryModeFull, true, fullDiscoveryDuration, len(discoveredTests))
 		if err := tp.recordFullDiscoveryResults(discoveredTests, resolvedTestFiles, skipMatcher); err != nil {
 			return errcode.WithCode(errcode.PlanFullDiscoveryResultsProcessingFailed, err)
 		}
@@ -461,11 +465,14 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 			"fastDiscoveredTestFilesCount", len(discoveredTestFiles))
 	} else {
 		if strictDiscovery && fullDiscoveryErr != nil {
+			recordDiscoveryTelemetry(telemetry.TestDiscoveryModeFull, false, fullDiscoveryDuration, len(discoveredTests))
 			return errcode.WithCode(errcode.PlanFullTestDiscoveryFailed, fmt.Errorf("full test discovery failed: %w", fullDiscoveryErr))
 		}
 		if fastDiscoveryErr != nil {
+			recordDiscoveryTelemetry(telemetry.TestDiscoveryModeFast, false, fastDiscoveryDuration, len(discoveredTestFiles))
 			return errcode.WithCode(errcode.PlanFastTestDiscoveryFailed, fmt.Errorf("test discovery failed: %w", fastDiscoveryErr))
 		}
+		recordDiscoveryTelemetry(telemetry.TestDiscoveryModeFast, true, fastDiscoveryDuration, len(discoveredTestFiles))
 		if err := tp.recordFastDiscoveryFallbackFiles(discoveredTestFiles); err != nil {
 			return errcode.WithCode(errcode.PlanFastDiscoveryResultsProcessingFailed, err)
 		}

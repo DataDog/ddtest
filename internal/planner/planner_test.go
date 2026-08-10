@@ -75,6 +75,13 @@ func (c *plannerTelemetryClient) value(name string, tags ...string) float64 {
 	return c.metrics[name+"|"+strings.Join(tags, ",")]
 }
 
+func (c *plannerTelemetryClient) has(name string, tags ...string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.metrics[name+"|"+strings.Join(tags, ",")]
+	return ok
+}
+
 func (m *MockPlatformDetector) DetectPlatform() (platform.Platform, error) {
 	return m.Platform, m.Err
 }
@@ -918,6 +925,8 @@ func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
+	telemetryClient := newPlannerTelemetryClient()
+	runner.telemetryClient = telemetryClient
 
 	if err := runner.Plan(context.Background()); err != nil {
 		t.Fatalf("Plan() should not return error, got: %v", err)
@@ -955,6 +964,13 @@ func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery
 	assertFileContent(t, constants.TestFilesOutputPath, expectedTestFiles)
 	assertFileContent(t, constants.SkippablePercentageOutputPath, "50.00")
 	assertFileContent(t, filepath.Join(constants.TestsSplitDir, "runner-0"), expectedTestFiles)
+	discoveryTags := []string{"discovery_mode:fast", "success:true", "platform:javascript", "framework:jest"}
+	if !telemetryClient.has("test_discovery.duration_ms", discoveryTags...) {
+		t.Fatal("expected fast discovery duration telemetry")
+	}
+	if got := telemetryClient.value("test_discovery.test_files", discoveryTags...); got != 2 {
+		t.Fatalf("fast discovery test files = %v, want 2", got)
+	}
 }
 
 func TestTestPlanner_PreparePlanningData_RubySuiteModeSkipsFullDiscoveryAndSkipsFile(t *testing.T) {
@@ -1126,6 +1142,13 @@ func TestTestPlanner_PreparePlanningData_RubySuiteModeForceFullDiscovery(t *test
 	}
 	if got := telemetryClient.value("itr_forced_run", "event_type:suite"); got != 0 {
 		t.Errorf("itr_forced_run suite count = %v, want 0", got)
+	}
+	discoveryTags := []string{"discovery_mode:full", "success:true", "platform:ruby", "framework:rspec"}
+	if !telemetryClient.has("test_discovery.duration_ms", discoveryTags...) {
+		t.Fatal("expected full discovery duration telemetry")
+	}
+	if got := telemetryClient.value("test_discovery.tests", discoveryTags...); got != 5 {
+		t.Fatalf("full discovery tests = %v, want 5", got)
 	}
 }
 
@@ -3123,6 +3146,8 @@ func TestTestPlanner_PreparePlanningData_StrictDiscoveryFailsWhenFullDiscoveryFa
 		&MockTestOptimizationClient{},
 		newDefaultMockCIProviderDetector(),
 	)
+	telemetryClient := newPlannerTelemetryClient()
+	runner.telemetryClient = telemetryClient
 
 	err := runner.PreparePlanningData(ctx)
 	if err == nil {
@@ -3135,6 +3160,11 @@ func TestTestPlanner_PreparePlanningData_StrictDiscoveryFailsWhenFullDiscoveryFa
 		t.Fatalf("PreparePlanningData() error = %v, want original discovery error", err)
 	}
 	assertPlannerErrorCode(t, err, errcode.PlanFullTestDiscoveryFailed)
+	discoveryTags := []string{"discovery_mode:full", "success:false", "platform:ruby", "framework:rspec"}
+	if !telemetryClient.has("test_discovery.duration_ms", discoveryTags...) ||
+		!telemetryClient.has("test_discovery.tests", discoveryTags...) {
+		t.Fatal("expected failed full discovery telemetry")
+	}
 }
 
 func TestTestPlanner_PreparePlanningData_StrictDiscoveryDoesNotFailWhenFullDiscoveryIsCancelled(t *testing.T) {
@@ -4035,12 +4065,14 @@ func TestTestPlanner_PreparePlanningData_TestDiscoveryError(t *testing.T) {
 	ctx := context.Background()
 
 	mockFramework := &MockFramework{
-		Err: errors.New("test discovery failed"),
+		FrameworkName: "rspec",
+		Err:           errors.New("test discovery failed"),
 	}
 
 	mockPlatform := &MockPlatform{
-		Tags:      map[string]string{"platform": "ruby"},
-		Framework: mockFramework,
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
 	}
 
 	mockPlatformDetector := &MockPlatformDetector{
@@ -4050,6 +4082,8 @@ func TestTestPlanner_PreparePlanningData_TestDiscoveryError(t *testing.T) {
 	mockOptimizationClient := &MockTestOptimizationClient{}
 
 	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	telemetryClient := newPlannerTelemetryClient()
+	runner.telemetryClient = telemetryClient
 
 	err := runner.PreparePlanningData(ctx)
 
@@ -4062,6 +4096,11 @@ func TestTestPlanner_PreparePlanningData_TestDiscoveryError(t *testing.T) {
 		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
 	assertPlannerErrorCode(t, err, errcode.PlanFastTestDiscoveryFailed)
+	discoveryTags := []string{"discovery_mode:fast", "success:false", "platform:ruby", "framework:rspec"}
+	if !telemetryClient.has("test_discovery.duration_ms", discoveryTags...) ||
+		!telemetryClient.has("test_discovery.test_files", discoveryTags...) {
+		t.Fatal("expected failed fast discovery telemetry")
+	}
 }
 
 func TestTestPlanner_PreparePlanningData_EmptyTests(t *testing.T) {

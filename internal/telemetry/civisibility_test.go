@@ -228,6 +228,22 @@ func TestCLICommandMetrics(t *testing.T) {
 	assertRecordedMetrics(t, client.metrics, want)
 }
 
+func TestTestDiscoveryMetrics(t *testing.T) {
+	client := &recordingClient{}
+	TestDiscovery(client, TestDiscoveryModeFull, true, "ruby", "rspec", 1500*time.Millisecond, 42)
+	TestDiscovery(client, TestDiscoveryModeFast, false, "javascript", "jest", 2*time.Second, 3)
+
+	fullTags := []string{"discovery_mode:full", "success:true", "platform:ruby", "framework:rspec"}
+	fastTags := []string{"discovery_mode:fast", "success:false", "platform:javascript", "framework:jest"}
+	want := []recordedMetric{
+		{kind: "distribution", name: "test_discovery.duration_ms", tags: fullTags, value: 1500},
+		{kind: "distribution", name: "test_discovery.tests", tags: fullTags, value: 42},
+		{kind: "distribution", name: "test_discovery.duration_ms", tags: fastTags, value: 2000},
+		{kind: "distribution", name: "test_discovery.test_files", tags: fastTags, value: 3},
+	}
+	assertRecordedMetrics(t, client.metrics, want)
+}
+
 func TestGitCommandExitCode(t *testing.T) {
 	for _, test := range []struct {
 		exitCode int
