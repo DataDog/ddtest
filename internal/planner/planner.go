@@ -89,6 +89,7 @@ type TestPlanner struct {
 	ciProviderDetector      environment.CIProviderDetector
 	telemetryClient         telemetry.Client
 	reportWriter            io.Writer
+	tiaSkippingEnabled      bool
 }
 
 const (
@@ -257,6 +258,7 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 		printPlanReport(tp.reportWriter, tp, parallelRunnerSelection)
 	}
 
+	tp.recordPlanningTelemetry(parallelRunnerSelection)
 	tp.planLoaded = true
 	return nil
 }
@@ -494,10 +496,89 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	tp.testFileWeights = tp.calculateFileWeights()
 
 	tp.recordDiscoveryReport(selectedDiscoveryMode, cacheResult, selectedDiscoveryDuration)
+	tp.tiaSkippingEnabled = tiaSkippingEnabled
 
 	slog.Info("Test files prepared", "testFilesCount", len(tp.testFiles))
 
 	return nil
+}
+
+func (tp *TestPlanner) recordPlanningTelemetry(selection splitSelection) {
+	backendDurationTestFiles := 0
+	defaultDurationTestFiles := 0
+	for _, source := range tp.testFileDurationSources {
+		if source == testFileDurationSourceKnown {
+			backendDurationTestFiles++
+		} else {
+			defaultDurationTestFiles++
+		}
+	}
+
+	fullySkippedTestFiles := len(tp.testFiles) - len(tp.testFileWeights)
+	if fullySkippedTestFiles < 0 {
+		fullySkippedTestFiles = 0
+	}
+
+	telemetry.Planning(tp.telemetryClient, telemetry.PlanningMetrics{
+		Attributes: telemetry.PlanningAttributes{
+			Platform:         tp.planMetadata.Platform,
+			Framework:        tp.planMetadata.Framework,
+			TestSkippingMode: tp.planMetadata.TestSkippingLevel,
+			DiscoveryMode:    telemetry.TestDiscoveryMode(tp.reportStats.discoveryMode),
+			TIAEnabled:       tp.tiaSkippingEnabled,
+		},
+		DecisionReason:            planningDecisionReason(selection, len(tp.testFileWeights)),
+		TargetStatus:              planningTargetStatus(selection),
+		DiscoveredTestFiles:       len(tp.testFiles),
+		RunnableTestFiles:         len(tp.testFileWeights),
+		FullySkippedTestFiles:     fullySkippedTestFiles,
+		BackendDurationTestFiles:  backendDurationTestFiles,
+		DefaultDurationTestFiles:  defaultDurationTestFiles,
+		EstimatedTimeSavedPercent: tp.skippablePercentage,
+		ParallelRunners:           selection.selected.parallelRunners,
+		ExpectedFullRuntime:       tp.expectedFullDuration(),
+		ExpectedRunnableRuntime:   selection.selected.totalRuntimeDuration(),
+		ExpectedWallTime:          selection.selected.wallTimeDuration(),
+		SplitImbalancePercent:     splitImbalancePercent(selection.selected),
+		DisabledTests:             tp.reportStats.disabledTestsApplied,
+		UnskippableMarkerSuites:   tp.reportStats.unskippableMarkerSuitesForced,
+	})
+}
+
+func planningDecisionReason(selection splitSelection, runnableTestFiles int) telemetry.PlanningDecisionReason {
+	if runnableTestFiles == 0 {
+		return telemetry.PlanningDecisionNoRunnableTests
+	}
+	if len(selection.candidates) == 1 && selection.selected.parallelRunners == 1 {
+		return telemetry.PlanningDecisionSingleRunnerOnly
+	}
+	if selection.targetTime <= 0 {
+		return telemetry.PlanningDecisionLowestScore
+	}
+	if selection.meetsTargetTime(selection.selected) {
+		if sameSplitScore(selection.selected, selection.bestWithoutTarget) {
+			return telemetry.PlanningDecisionTargetMetLowestScore
+		}
+		return telemetry.PlanningDecisionTargetMetChangedSelection
+	}
+	return telemetry.PlanningDecisionTargetUnreachableLowestWall
+}
+
+func planningTargetStatus(selection splitSelection) telemetry.PlanningTargetStatus {
+	if selection.targetTime <= 0 {
+		return telemetry.PlanningTargetDisabled
+	}
+	if selection.meetsTargetTime(selection.selected) {
+		return telemetry.PlanningTargetMet
+	}
+	return telemetry.PlanningTargetMissed
+}
+
+func splitImbalancePercent(split splitScore) float64 {
+	if split.wallTime <= 0 {
+		return 0
+	}
+	return float64(split.imbalance) / float64(split.wallTime) * 100
 }
 
 func discoverLocalTests(ctx context.Context, testFramework framework.Framework, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {

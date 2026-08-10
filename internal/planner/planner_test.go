@@ -971,6 +971,146 @@ func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery
 	if got := telemetryClient.value("test_discovery.test_files", discoveryTags...); got != 2 {
 		t.Fatalf("fast discovery test files = %v, want 2", got)
 	}
+	planningTags := []string{
+		"platform:javascript",
+		"framework:jest",
+		"test_skipping_mode:suite",
+		"discovery_mode:fast",
+		"tia_enabled:true",
+	}
+	if !telemetryClient.has("planning.decision", append(slices.Clone(planningTags),
+		"reason:single_runner_only", "target_status:disabled")...) {
+		t.Fatal("expected planning decision telemetry")
+	}
+	if got := telemetryClient.value("planning.test_files", append(slices.Clone(planningTags), "state:discovered")...); got != 2 {
+		t.Fatalf("planning discovered test files = %v, want 2", got)
+	}
+	if got := telemetryClient.value("planning.test_files", append(slices.Clone(planningTags), "state:runnable")...); got != 1 {
+		t.Fatalf("planning runnable test files = %v, want 1", got)
+	}
+	if got := telemetryClient.value("planning.test_files", append(slices.Clone(planningTags), "state:fully_skipped")...); got != 1 {
+		t.Fatalf("planning fully skipped test files = %v, want 1", got)
+	}
+	if got := telemetryClient.value("planning.test_file_durations", append(slices.Clone(planningTags), "source:backend")...); got != 1 {
+		t.Fatalf("planning backend duration test files = %v, want 1", got)
+	}
+	if got := telemetryClient.value("planning.test_file_durations", append(slices.Clone(planningTags), "source:default")...); got != 0 {
+		t.Fatalf("planning default duration test files = %v, want 0", got)
+	}
+	if got := telemetryClient.value("planning.estimated_time_saved_pct", planningTags...); got != 50 {
+		t.Fatalf("planning estimated time saved = %v, want 50", got)
+	}
+	if got := telemetryClient.value("planning.parallel_runners", planningTags...); got != 1 {
+		t.Fatalf("planning parallel runners = %v, want 1", got)
+	}
+	if got := telemetryClient.value("planning.expected_full_runtime_ms", planningTags...); got != 2000 {
+		t.Fatalf("planning expected full runtime = %v, want 2000", got)
+	}
+	if got := telemetryClient.value("planning.expected_runnable_runtime_ms", planningTags...); got != 1000 {
+		t.Fatalf("planning expected runnable runtime = %v, want 1000", got)
+	}
+	if got := telemetryClient.value("planning.expected_wall_time_ms", planningTags...); got != 1000 {
+		t.Fatalf("planning expected wall time = %v, want 1000", got)
+	}
+	if got := telemetryClient.value("planning.split_imbalance_pct", planningTags...); got != 0 {
+		t.Fatalf("planning split imbalance = %v, want 0", got)
+	}
+	if got := telemetryClient.value("planning.disabled_tests", planningTags...); got != 0 {
+		t.Fatalf("planning disabled tests = %v, want 0", got)
+	}
+	if got := telemetryClient.value("planning.forced_run_suites", planningTags...); got != 0 {
+		t.Fatalf("planning forced run suites = %v, want 0", got)
+	}
+}
+
+func TestPlanningDecisionReason(t *testing.T) {
+	tests := []struct {
+		name              string
+		selection         splitSelection
+		runnableTestFiles int
+		wantReason        telemetry.PlanningDecisionReason
+		wantTargetStatus  telemetry.PlanningTargetStatus
+	}{
+		{
+			name:              "no runnable tests",
+			selection:         splitSelection{selected: splitScore{parallelRunners: 2}},
+			runnableTestFiles: 0,
+			wantReason:        telemetry.PlanningDecisionNoRunnableTests,
+			wantTargetStatus:  telemetry.PlanningTargetDisabled,
+		},
+		{
+			name: "single runner only",
+			selection: splitSelection{
+				selected:   splitScore{parallelRunners: 1, wallTime: 1000},
+				candidates: []splitScore{{parallelRunners: 1, wallTime: 1000}},
+			},
+			runnableTestFiles: 1,
+			wantReason:        telemetry.PlanningDecisionSingleRunnerOnly,
+			wantTargetStatus:  telemetry.PlanningTargetDisabled,
+		},
+		{
+			name: "lowest score without target",
+			selection: splitSelection{
+				selected:   splitScore{parallelRunners: 2, wallTime: 1000},
+				candidates: []splitScore{{parallelRunners: 1, wallTime: 2000}, {parallelRunners: 2, wallTime: 1000}},
+			},
+			runnableTestFiles: 2,
+			wantReason:        telemetry.PlanningDecisionLowestScore,
+			wantTargetStatus:  telemetry.PlanningTargetDisabled,
+		},
+		{
+			name: "target met by lowest score",
+			selection: splitSelection{
+				selected:          splitScore{parallelRunners: 2, wallTime: 1000},
+				bestWithoutTarget: splitScore{parallelRunners: 2, wallTime: 1000},
+				targetTime:        1500 * time.Millisecond,
+			},
+			runnableTestFiles: 2,
+			wantReason:        telemetry.PlanningDecisionTargetMetLowestScore,
+			wantTargetStatus:  telemetry.PlanningTargetMet,
+		},
+		{
+			name: "target changes selection",
+			selection: splitSelection{
+				selected:          splitScore{parallelRunners: 3, wallTime: 900},
+				bestWithoutTarget: splitScore{parallelRunners: 2, wallTime: 1100},
+				targetTime:        time.Second,
+			},
+			runnableTestFiles: 3,
+			wantReason:        telemetry.PlanningDecisionTargetMetChangedSelection,
+			wantTargetStatus:  telemetry.PlanningTargetMet,
+		},
+		{
+			name: "target unreachable",
+			selection: splitSelection{
+				selected:   splitScore{parallelRunners: 3, wallTime: 1100},
+				targetTime: time.Second,
+			},
+			runnableTestFiles: 3,
+			wantReason:        telemetry.PlanningDecisionTargetUnreachableLowestWall,
+			wantTargetStatus:  telemetry.PlanningTargetMissed,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := planningDecisionReason(test.selection, test.runnableTestFiles); got != test.wantReason {
+				t.Errorf("planningDecisionReason() = %q, want %q", got, test.wantReason)
+			}
+			if got := planningTargetStatus(test.selection); got != test.wantTargetStatus {
+				t.Errorf("planningTargetStatus() = %q, want %q", got, test.wantTargetStatus)
+			}
+		})
+	}
+}
+
+func TestSplitImbalancePercent(t *testing.T) {
+	if got := splitImbalancePercent(splitScore{wallTime: 1000, imbalance: 250}); got != 25 {
+		t.Fatalf("splitImbalancePercent() = %v, want 25", got)
+	}
+	if got := splitImbalancePercent(splitScore{}); got != 0 {
+		t.Fatalf("splitImbalancePercent() for empty split = %v, want 0", got)
+	}
 }
 
 func TestTestPlanner_PreparePlanningData_RubySuiteModeSkipsFullDiscoveryAndSkipsFile(t *testing.T) {

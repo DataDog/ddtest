@@ -244,6 +244,67 @@ func TestTestDiscoveryMetrics(t *testing.T) {
 	assertRecordedMetrics(t, client.metrics, want)
 }
 
+func TestPlanningMetrics(t *testing.T) {
+	client := &recordingClient{}
+	Planning(client, PlanningMetrics{
+		Attributes: PlanningAttributes{
+			Platform:         "ruby",
+			Framework:        "rspec",
+			TestSkippingMode: "test",
+			DiscoveryMode:    TestDiscoveryModeFull,
+			TIAEnabled:       true,
+		},
+		DecisionReason:            PlanningDecisionTargetMetChangedSelection,
+		TargetStatus:              PlanningTargetMet,
+		DiscoveredTestFiles:       10,
+		RunnableTestFiles:         7,
+		FullySkippedTestFiles:     3,
+		BackendDurationTestFiles:  5,
+		DefaultDurationTestFiles:  2,
+		EstimatedTimeSavedPercent: 30,
+		ParallelRunners:           3,
+		ExpectedFullRuntime:       10 * time.Second,
+		ExpectedRunnableRuntime:   7 * time.Second,
+		ExpectedWallTime:          2500 * time.Millisecond,
+		SplitImbalancePercent:     20,
+		DisabledTests:             4,
+		UnskippableMarkerSuites:   1,
+	})
+
+	commonTags := []string{
+		"platform:ruby",
+		"framework:rspec",
+		"test_skipping_mode:test",
+		"discovery_mode:full",
+		"tia_enabled:true",
+	}
+	withTag := func(tag string) []string {
+		return append(slices.Clone(commonTags), tag)
+	}
+	want := []recordedMetric{
+		{
+			kind:  "count",
+			name:  "planning.decision",
+			tags:  append(withTag("reason:target_met_changed_selection"), "target_status:met"),
+			value: 1,
+		},
+		{kind: "distribution", name: "planning.test_files", tags: withTag("state:discovered"), value: 10},
+		{kind: "distribution", name: "planning.test_files", tags: withTag("state:runnable"), value: 7},
+		{kind: "distribution", name: "planning.test_files", tags: withTag("state:fully_skipped"), value: 3},
+		{kind: "distribution", name: "planning.estimated_time_saved_pct", tags: commonTags, value: 30},
+		{kind: "distribution", name: "planning.test_file_durations", tags: withTag("source:backend"), value: 5},
+		{kind: "distribution", name: "planning.test_file_durations", tags: withTag("source:default"), value: 2},
+		{kind: "distribution", name: "planning.parallel_runners", tags: commonTags, value: 3},
+		{kind: "distribution", name: "planning.expected_full_runtime_ms", tags: commonTags, value: 10000},
+		{kind: "distribution", name: "planning.expected_runnable_runtime_ms", tags: commonTags, value: 7000},
+		{kind: "distribution", name: "planning.expected_wall_time_ms", tags: commonTags, value: 2500},
+		{kind: "distribution", name: "planning.split_imbalance_pct", tags: commonTags, value: 20},
+		{kind: "distribution", name: "planning.disabled_tests", tags: commonTags, value: 4},
+		{kind: "distribution", name: "planning.forced_run_suites", tags: commonTags, value: 1},
+	}
+	assertRecordedMetrics(t, client.metrics, want)
+}
+
 func TestGitCommandExitCode(t *testing.T) {
 	for _, test := range []struct {
 		exitCode int
