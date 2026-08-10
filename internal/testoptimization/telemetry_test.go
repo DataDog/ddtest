@@ -97,22 +97,22 @@ func TestNewTestOptimizationClientWithTelemetryWiresBackendTransport(t *testing.
 		t.Fatalf("GetSettings() error = %v", err)
 	}
 
-	if got := recorder.value("ddtest.git_requests.settings"); got != 1 {
+	if got := recorder.value("git_requests.settings"); got != 1 {
 		t.Errorf("settings request count = %v, want 1", got)
 	}
-	if got := recorder.value("ddtest.git_requests.settings_response"); got != 1 {
+	if got := recorder.value("git_requests.settings_response"); got != 1 {
 		t.Errorf("settings response count = %v, want 1", got)
 	}
-	if _, ok := recorder.metrics["ddtest.git_requests.settings_ms"]; !ok {
+	if _, ok := recorder.metrics["git_requests.settings_ms"]; !ok {
 		t.Error("settings request duration was not recorded")
 	}
 	if commits := client.gitCommands.GetLastLocalGitCommitShas(); len(commits) == 0 {
 		t.Fatal("telemetry-aware Git runner returned no commits")
 	}
-	if got := recorder.value("ddtest.git.command"); got != 1 {
+	if got := recorder.value("git.command"); got != 1 {
 		t.Errorf("Git command count = %v, want 1", got)
 	}
-	if _, ok := recorder.metrics["ddtest.git.command_ms"]; !ok {
+	if _, ok := recorder.metrics["git.command_ms"]; !ok {
 		t.Error("Git command duration was not recorded")
 	}
 }

@@ -2,8 +2,7 @@
 
 Fatal `ddtest plan` and `ddtest run` errors include a stable error code in the
 form `[error_code] error message`. The same value is reported by the
-`error_code` tag on the `ddtest.cli.command` and `ddtest.cli.command_ms`
-telemetry metrics.
+`error_code` tag on the `cli.command` and `cli.command_ms` telemetry metrics.
 
 Error codes identify the actionable failure point while the rest of the error
 message and its wrapped Go error retain the specific OS, platform, framework,
