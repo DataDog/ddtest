@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.26.3 or later
+- Go 1.26.5 or later
 
 ## Building
 
