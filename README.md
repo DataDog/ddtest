@@ -21,6 +21,7 @@ Before using DDTest, you must have **Datadog Test Optimization** already set up 
 
 Minimum supported library and runtime requirements:
 
+- Building DDTest from source requires Go **1.26.5**.
 - Ruby requires the `datadog-ci` gem **1.31.0** or higher.
 - Python requires the `ddtrace` package **4.11.0** or higher and `pytest`.
 - JavaScript requires the `dd-trace` package **5.111.0** or higher and Node.js.
