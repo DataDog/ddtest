@@ -313,6 +313,7 @@ func TestCypressAdapterIntegration(t *testing.T) {
 	}
 	config := `export default {
   e2e: {
+    supportFile: false,
     async setupNodeEvents(_on, config) {
       return { ...config, specPattern: "custom/**/*.cy.ts" }
     },
