@@ -69,6 +69,18 @@ if [ -s .testoptimization/runner/test-files.txt ]; then
 fi
 ```
 
+## Cypress
+
+Keep the project's existing `dd-trace` Cypress plugin and support-file setup.
+Cypress accepts its selected specs as one comma-separated `--spec` value:
+
+```bash
+if [ -s .testoptimization/runner/test-files.txt ]; then
+  specs=$(paste -sd, .testoptimization/runner/test-files.txt)
+  ./node_modules/.bin/cypress run --spec "$specs"
+fi
+```
+
 ## Custom Runners
 
 Read `.testoptimization/runner/test-files.txt` when your runner should handle

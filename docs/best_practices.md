@@ -191,6 +191,19 @@ Do not include test files or a `--` separator. DDTest reads Mocha's effective
 configuration for discovery and replaces configured `spec` inputs with the
 files assigned to each worker during execution.
 
+## Cypress Support
+
+Use a command that invokes Cypress directly when selecting component testing,
+an alternate project root, or a custom config file:
+
+```bash
+ddtest run --platform javascript --framework cypress --command "pnpm exec cypress run --project apps/web --component"
+```
+
+Do not include test files or a `--` separator. DDTest asks Cypress to resolve
+its effective configuration during planning and replaces any command-level
+`--spec` value with the files assigned to each worker during execution.
+
 ## Minitest Support In Non-Rails Projects
 
 We use `bundle exec rake test` command when we don't detect `rails` command to
