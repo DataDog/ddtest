@@ -25,6 +25,13 @@ type playwrightCommandExecutor struct {
 	capturedEnv  map[string]string
 }
 
+type playwrightCommandExitError struct {
+	code int
+}
+
+func (e playwrightCommandExitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+func (e playwrightCommandExitError) ExitCode() int { return e.code }
+
 func (e *playwrightCommandExecutor) CombinedOutput(_ context.Context, name string, args []string, env map[string]string) ([]byte, error) {
 	e.capture(name, args, env)
 	return e.output, e.err
@@ -113,21 +120,30 @@ func TestPlaywrightCommandConstruction(t *testing.T) {
 	}
 
 	runArgs := playwrightRunArgs("pnpm", baseArgs, []string{"apps/web/tests/a[1].spec.ts", "apps/web/tests/b.spec.ts"})
-	wantRunPrefix := []string{
-		"exec", "playwright", "test", "--config", "apps/web/playwright.config.ts", "--project", "chromium", "firefox",
+	wantRunOptions := []string{
+		"--config", "apps/web/playwright.config.ts", "--project", "chromium", "firefox",
 		"--grep", "smoke", "--reporter", "html", "--debug",
 	}
-	if len(runArgs) < len(wantRunPrefix)+4 || !slices.Equal(runArgs[:len(wantRunPrefix)], wantRunPrefix) {
-		t.Fatalf("playwrightRunArgs() = %v, want prefix %v", runArgs, wantRunPrefix)
+	if len(runArgs) < len(wantRunOptions)+7 || !slices.Equal(runArgs[:3], []string{"exec", "playwright", "test"}) {
+		t.Fatalf("playwrightRunArgs() = %v", runArgs)
 	}
 	if slices.Contains(runArgs, "original.spec.ts") || slices.Contains(runArgs, "--shard=1/2") || slices.Contains(runArgs, "--ui-port") {
 		t.Fatalf("playwrightRunArgs() retained conflicting arguments: %v", runArgs)
 	}
-	if !strings.HasPrefix(runArgs[len(wantRunPrefix)], "^") || !strings.Contains(runArgs[len(wantRunPrefix)], `a\[1\]\.spec\.ts$`) {
-		t.Fatalf("first file filter is not an exact escaped regex: %q", runArgs[len(wantRunPrefix)])
+	if !strings.HasPrefix(runArgs[3], "^") || !strings.Contains(runArgs[3], `a\[1\]\.spec\.ts$`) {
+		t.Fatalf("first file filter is not an exact escaped regex: %q", runArgs[3])
+	}
+	if !strings.HasPrefix(runArgs[4], "^") || !slices.Equal(runArgs[5:5+len(wantRunOptions)], wantRunOptions) {
+		t.Fatalf("file filters must precede preserved options: %v", runArgs)
 	}
 	if !slices.Equal(runArgs[len(runArgs)-2:], []string{"--", "custom-argument"}) {
 		t.Fatalf("custom argv tail was not preserved: %v", runArgs)
+	}
+
+	trailingProjectArgs := playwrightRunArgs("playwright", []string{"test", "--project", "chromium"}, []string{"tests/a.spec.ts"})
+	if len(trailingProjectArgs) != 4 || !strings.HasPrefix(trailingProjectArgs[1], "^") ||
+		!slices.Equal(trailingProjectArgs[2:], []string{"--project", "chromium"}) {
+		t.Fatalf("trailing --project consumed the file filter: %v", trailingProjectArgs)
 	}
 }
 
@@ -204,8 +220,9 @@ func TestPlaywrightDiscoveryAcceptsOnlyTheNoTestsExit(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
 	executor := &playwrightCommandExecutor{
-		output: []byte(playwrightDiscoveryMarker + `{"rootDir":"` + root + `","files":[]}`),
-		err:    errors.New("no tests found"),
+		output: []byte(playwrightDiscoveryMarker + `{"rootDir":"` + root + `","files":[]}` + "\n" +
+			playwrightErrorMarker + `{"message":"Error: No tests found"}`),
+		err: playwrightCommandExitError{code: 1},
 	}
 	playwright := &Playwright{executor: executor, commandOverride: []string{"playwright", "test"}, platformEnv: map[string]string{}}
 	files, err := playwright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
@@ -213,10 +230,61 @@ func TestPlaywrightDiscoveryAcceptsOnlyTheNoTestsExit(t *testing.T) {
 		t.Fatalf("empty discovery = %v, %v", files, err)
 	}
 
-	testFile := filepath.Join(root, "a.spec.ts")
-	executor.output = []byte(playwrightDiscoveryMarker + `{"rootDir":"` + root + `","files":["` + testFile + `"]}`)
-	if _, err := playwright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{}); err == nil {
-		t.Fatal("expected a non-empty failed Playwright listing to return its command error")
+	tests := []struct {
+		name   string
+		output string
+		err    error
+	}{
+		{
+			name: "collection failure followed by no tests",
+			output: playwrightDiscoveryMarker + `{"rootDir":"` + root + `","files":[]}` + "\n" +
+				playwrightErrorMarker + `{"message":"Error: collection exploded"}` + "\n" +
+				playwrightErrorMarker + `{"message":"Error: No tests found"}`,
+			err: playwrightCommandExitError{code: 1},
+		},
+		{
+			name: "wrong exit code",
+			output: playwrightDiscoveryMarker + `{"rootDir":"` + root + `","files":[]}` + "\n" +
+				playwrightErrorMarker + `{"message":"Error: No tests found"}`,
+			err: playwrightCommandExitError{code: 2},
+		},
+		{
+			name: "non-exit error",
+			output: playwrightDiscoveryMarker + `{"rootDir":"` + root + `","files":[]}` + "\n" +
+				playwrightErrorMarker + `{"message":"Error: No tests found"}`,
+			err: errors.New("command failed"),
+		},
+		{
+			name: "malformed file payload",
+			output: playwrightDiscoveryMarker + `not-json` + "\n" +
+				playwrightErrorMarker + `{"message":"Error: No tests found"}`,
+			err: playwrightCommandExitError{code: 1},
+		},
+		{
+			name: "failed listing with files",
+			output: playwrightDiscoveryMarker + `{"rootDir":"` + root + `","files":["` + filepath.Join(root, "a.spec.ts") + `"]}` + "\n" +
+				playwrightErrorMarker + `{"message":"Error: No tests found"}`,
+			err: playwrightCommandExitError{code: 1},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			executor.output = []byte(test.output)
+			executor.err = test.err
+			if _, err := playwright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{}); err == nil {
+				t.Fatal("expected failed Playwright listing to return its command error")
+			}
+		})
+	}
+
+	// Playwright 1.18 reports no tests before onBegin, so there is no file
+	// marker. The structured reporter error and exit code are still enough to
+	// identify the expected empty-suite result.
+	executor.output = []byte(playwrightErrorMarker + `{"message":"=================\n no tests found.\n================="}`)
+	executor.err = playwrightCommandExitError{code: 1}
+	files, err = playwright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
+	if err != nil || len(files) != 0 {
+		t.Fatalf("legacy empty discovery = %v, %v", files, err)
 	}
 }
 
@@ -333,11 +401,34 @@ func TestPlaywrightAdapterIntegration(t *testing.T) {
 	if !slices.Equal(files, want) {
 		t.Fatalf("files = %v, want %v", files, want)
 	}
+	playwright.commandOverride = []string{binary, "test", "--config", "apps/web/playwright.config.js", "--project", "one"}
 	if err := playwright.RunTests(context.Background(), []string{"apps/web/tests/a.spec.ts"}, nil); err != nil {
 		t.Fatalf("running one assigned file failed: %v", err)
 	}
 	if source, ok := playwright.SourceFileForSuite("a.spec.ts"); !ok || source != "apps/web/tests/a.spec.ts" {
 		t.Fatalf("SourceFileForSuite() = %q, %v", source, ok)
+	}
+
+	emptyPlaywright := &Playwright{
+		executor:        &ext.DefaultCommandExecutor{},
+		commandOverride: []string{binary, "test", "--config", "apps/web/playwright.config.js", "__ddtest_no_match__"},
+		platformEnv:     map[string]string{},
+	}
+	if files, err := emptyPlaywright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{}); err != nil || len(files) != 0 {
+		t.Fatalf("empty native discovery = %v, %v", files, err)
+	}
+
+	brokenFile := filepath.Join(projectRoot, "tests", "broken.spec.ts")
+	if err := os.WriteFile(brokenFile, []byte("throw new Error('collection exploded')\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	brokenPlaywright := &Playwright{
+		executor:        &ext.DefaultCommandExecutor{},
+		commandOverride: []string{binary, "test", "--config", "apps/web/playwright.config.js", "broken.spec.ts"},
+		platformEnv:     map[string]string{},
+	}
+	if _, err := brokenPlaywright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{}); err == nil {
+		t.Fatal("collection failure was accepted as an empty discovery")
 	}
 }
 

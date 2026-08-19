@@ -3,6 +3,11 @@ class DDTestPlaywrightDiscoveryReporter {
     return false
   }
 
+  onError(error) {
+    const message = error && error.message ? error.message : String(error)
+    process.stdout.write('__DDTEST_PLAYWRIGHT_ERROR__' + JSON.stringify({ message }) + '\n')
+  }
+
   onBegin(config, suite) {
     // Dependency and teardown projects are shared setup, not independently
     // shardable specs. Playwright runs them automatically with the selected

@@ -24,6 +24,7 @@ import (
 const (
 	binPlaywrightPath          = "node_modules/.bin/playwright"
 	playwrightDiscoveryMarker  = "__DDTEST_PLAYWRIGHT_FILES__"
+	playwrightErrorMarker      = "__DDTEST_PLAYWRIGHT_ERROR__"
 	playwrightDefaultPattern   = "**/*.@(spec|test).?(c|m)[jt]s?(x)"
 	playwrightReporterFileMode = 0600
 )
@@ -41,6 +42,10 @@ type Playwright struct {
 type playwrightDiscoveryResult struct {
 	RootDir string   `json:"rootDir"`
 	Files   []string `json:"files"`
+}
+
+type playwrightDiscoveryError struct {
+	Message string `json:"message"`
 }
 
 func NewPlaywright() *Playwright {
@@ -117,12 +122,21 @@ func (p *Playwright) DiscoverTestFiles(ctx context.Context, selectedFiles discov
 	slog.Info("Discovering Playwright test files with command", "command", command, "args", args)
 	output, commandErr := p.executor.CombinedOutput(ctx, command, args, p.discoveryEnv())
 	discoveryResult, parseErr := parsePlaywrightDiscoveryOutput(output)
-	if commandErr != nil && (parseErr != nil || len(discoveryResult.Files) > 0) {
+	if commandErr != nil && (!isPlaywrightNoTestsExit(output, commandErr) || len(discoveryResult.Files) > 0) {
 		message := strings.TrimSpace(string(output))
 		if message == "" {
 			return nil, fmt.Errorf("failed to list Playwright tests: %w", commandErr)
 		}
 		return nil, fmt.Errorf("failed to list Playwright tests: %s: %w", message, commandErr)
+	}
+	if commandErr != nil && parseErr != nil {
+		// Playwright 1.18 reports the no-tests error before onBegin, so the
+		// reporter cannot emit a file payload. A verified no-tests exit still
+		// represents a successful empty discovery.
+		if strings.Contains(string(output), playwrightDiscoveryMarker) {
+			return nil, parseErr
+		}
+		return filterPlaywrightTestFiles(nil, selectedFiles)
 	}
 	if parseErr != nil {
 		return nil, parseErr
@@ -251,10 +265,13 @@ func playwrightRunArgs(command string, baseArgs, testFiles []string) []string {
 	prefix, cliArgs := splitPlaywrightCommand(command, baseArgs)
 	filtered, tail := filterPlaywrightArgs(cliArgs, true)
 	args := append(prefix, "test")
-	args = append(args, filtered...)
 	for _, testFile := range testFiles {
 		args = append(args, playwrightExactFileFilter(testFile))
 	}
+	// --project has a variadic value in Playwright's CLI. Keep file filters
+	// before all preserved options so a trailing space-form --project value
+	// cannot consume them as additional project names.
+	args = append(args, filtered...)
 	return append(args, tail...)
 }
 
@@ -376,6 +393,45 @@ func parsePlaywrightDiscoveryOutput(output []byte) (playwrightDiscoveryResult, e
 		return playwrightDiscoveryResult{}, fmt.Errorf("failed to parse Playwright test file list: %w", err)
 	}
 	return result, nil
+}
+
+type exitCoder interface {
+	ExitCode() int
+}
+
+func isPlaywrightNoTestsExit(output []byte, commandErr error) bool {
+	var exitErr exitCoder
+	if !errors.As(commandErr, &exitErr) || exitErr.ExitCode() != 1 {
+		return false
+	}
+	errors, err := parsePlaywrightDiscoveryErrors(output)
+	return err == nil && len(errors) == 1 && isPlaywrightNoTestsMessage(errors[0].Message)
+}
+
+func parsePlaywrightDiscoveryErrors(output []byte) ([]playwrightDiscoveryError, error) {
+	var result []playwrightDiscoveryError
+	for _, line := range strings.Split(string(output), "\n") {
+		markerIndex := strings.Index(line, playwrightErrorMarker)
+		if markerIndex < 0 {
+			continue
+		}
+		var discoveryErr playwrightDiscoveryError
+		if err := json.Unmarshal([]byte(line[markerIndex+len(playwrightErrorMarker):]), &discoveryErr); err != nil {
+			return nil, fmt.Errorf("failed to parse Playwright discovery error: %w", err)
+		}
+		result = append(result, discoveryErr)
+	}
+	return result, nil
+}
+
+func isPlaywrightNoTestsMessage(message string) bool {
+	trimmed := strings.TrimSpace(message)
+	if strings.EqualFold(trimmed, "=================\n no tests found.\n=================") {
+		return true
+	}
+	firstLine, _, _ := strings.Cut(trimmed, "\n")
+	firstLine = strings.TrimSpace(strings.TrimPrefix(firstLine, "Error:"))
+	return strings.TrimSuffix(firstLine, ".") == "No tests found"
 }
 
 func normalizePlaywrightTestFiles(testFiles []string) ([]string, error) {
