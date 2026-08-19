@@ -346,21 +346,34 @@ func TestCucumberAdapterIntegration(t *testing.T) {
 	if nodeModules == "" {
 		t.Fatal("DDTEST_CUCUMBER_NODE_MODULES is not set")
 	}
+	cucumberVersion := os.Getenv("DDTEST_CUCUMBER_VERSION")
+	if cucumberVersion == "" {
+		t.Fatal("DDTEST_CUCUMBER_VERSION is not set")
+	}
 
 	root := t.TempDir()
 	t.Chdir(root)
 	if err := os.Symlink(nodeModules, "node_modules"); err != nil {
 		t.Fatal(err)
 	}
-	files := map[string]string{
-		"cucumber.js": `module.exports = {
+	cucumberConfig := `module.exports = {
   default: {
     paths: ['features/**/*.feature'],
     tags: 'not @excluded',
     require: ['features/support/**/*.js']
   }
 }
-`,
+`
+	if strings.HasPrefix(cucumberVersion, "7.") {
+		// Cucumber 7 profiles are CLI argument strings. Object-based profiles were
+		// introduced later and are silently treated as empty by Cucumber 7.
+		cucumberConfig = `module.exports = {
+  default: "--require 'features/support/**/*.js' --tags 'not @excluded' 'features/**/*.feature'"
+}
+`
+	}
+	files := map[string]string{
+		"cucumber.js": cucumberConfig,
 		"features/included.feature": `Feature: included
   Scenario: selected by the default profile
     Given a passing step

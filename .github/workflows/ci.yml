@@ -149,6 +149,7 @@ jobs:
           npm install --prefix "${cucumber_dir}" "@cucumber/cucumber@${{ matrix.cucumber }}"
           DDTEST_CUCUMBER_BINARY="${cucumber_dir}/node_modules/.bin/cucumber-js" \
             DDTEST_CUCUMBER_NODE_MODULES="${cucumber_dir}/node_modules" \
+            DDTEST_CUCUMBER_VERSION="${{ matrix.cucumber }}" \
             go test -v ./internal/framework -run TestCucumberAdapterIntegration
 
   lint:
