@@ -131,6 +131,8 @@ func (j *JavaScript) DetectFramework() (framework.Framework, error) {
 		fw = framework.NewJest()
 	case "mocha":
 		fw = framework.NewMocha()
+	case "cypress":
+		fw = framework.NewCypress()
 	case "vitest":
 		platformEnv = addNodeImport(platformEnv, ddTraceRegisterModule)
 		fw = framework.NewVitest()

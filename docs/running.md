@@ -44,6 +44,12 @@ For JavaScript/Mocha:
 ddtest run --platform javascript --framework mocha
 ```
 
+For JavaScript/Cypress:
+
+```bash
+ddtest run --platform javascript --framework cypress
+```
+
 On one CI node, the default `--min-parallelism` and `--max-parallelism` equal
 the available physical CPU core count, so DDTest can start one worker per
 physical core without defaulting to one worker per hyperthread.
@@ -81,6 +87,12 @@ For JavaScript/Mocha:
 ddtest run --platform javascript --framework mocha --ci-node <CI_NODE_INDEX>
 ```
 
+For JavaScript/Cypress:
+
+```bash
+ddtest run --platform javascript --framework cypress --ci-node <CI_NODE_INDEX>
+```
+
 In CI-node mode, DDTest uses one local worker by default so database and other
 per-worker resources stay easy to isolate. To fan out within each CI node, set
 `--ci-node-workers` to a positive integer, or use `--ci-node-workers ncpu` to
@@ -114,8 +126,8 @@ starting each worker.
 
 Use `--command` to override the framework's default base test command where
 supported. DDTest currently applies this override to RSpec run and full
-discovery, Minitest run and full discovery, and Jest, Mocha, and Vitest run and
-file discovery:
+discovery, Minitest run and full discovery, and Cypress, Jest, Mocha, and Vitest
+run and file discovery:
 
 ```bash
 ddtest run --platform ruby --framework rspec --command "bundle exec rspec --profile"
@@ -142,6 +154,15 @@ discovery API on Vitest 1.6. It appends selected files during execution:
 
 ```bash
 ddtest run --platform javascript --framework vitest --command "pnpm exec vitest run --project unit*"
+```
+
+For JavaScript/Cypress, the command must invoke Cypress directly. DDTest keeps
+configuration options such as `--project`, `--config-file`, `--config`,
+`--component`, and `--e2e` during discovery and execution, and replaces any
+configured `--spec` value with each worker's assigned specs:
+
+```bash
+ddtest run --platform javascript --framework cypress --command "pnpm exec cypress run --component"
 ```
 
 When using `--command`, do not include the `--` separator or test files in your
@@ -239,6 +260,29 @@ DDTest prepends both `--import dd-trace/register.js` and
 `-r dd-trace/ci/init` to `NODE_OPTIONS` for Vitest worker processes unless they
 are already present. Discovery removes these options to avoid instrumenting the
 file-listing process.
+
+## Cypress Discovery And Instrumentation
+
+DDTest supports Cypress 12 and newer. During planning it runs Cypress with a
+temporary config wrapper and a guaranteed-missing `--spec` value. Cypress loads
+the project's real JavaScript, TypeScript, ESM, or CommonJS config, applies CLI
+and environment overrides, and runs `setupNodeEvents`; the wrapper reports the
+resolved `projectRoot`, testing type, `specPattern`, and `excludeSpecPattern`.
+DDTest then discovers matching files without opening a browser or executing a
+spec. For component testing it also excludes specs matched by the E2E pattern,
+matching Cypress's own behavior.
+
+DDTest uses this command priority:
+
+1. `--command` when set; it must invoke Cypress directly.
+2. The local executable `node_modules/.bin/cypress` when present.
+3. `npx cypress`.
+
+During execution DDTest invokes `cypress run --spec` with the files assigned to
+the worker. Cypress Test Optimization instrumentation must already be configured
+in the project's Cypress plugin and support files as documented by `dd-trace`.
+Discovery removes `-r dd-trace/ci/init` from `NODE_OPTIONS`; test runs retain the
+configured platform environment.
 
 ## Parallelism Selection
 
