@@ -17,7 +17,7 @@ const minimatch = typeof minimatchModule === "function"
 if (typeof minimatch !== "function") {
   throw new Error("Cypress did not provide a compatible minimatch implementation")
 }
-const minimatchOptions = { dot: true, matchBase: true }
+const minimatchOptions = { dot: true, matchBase: true, nonegate: true }
 
 function patterns(value: unknown): string[] {
   if (typeof value === "string") {
@@ -29,8 +29,19 @@ function patterns(value: unknown): string[] {
   return []
 }
 
-function matchesAny(file: string, filePatterns: string[]): boolean {
-  return filePatterns.some((pattern) => minimatch(file, pattern, minimatchOptions))
+function matchesPatterns(file: string, filePatterns: string[]): boolean {
+  let matched = false
+  for (const rawPattern of filePatterns) {
+    let bangCount = 0
+    while (rawPattern[bangCount] === "!") {
+      bangCount++
+    }
+    const pattern = rawPattern.slice(bangCount)
+    if (pattern && minimatch(file, pattern, minimatchOptions)) {
+      matched = bangCount % 2 === 0
+    }
+  }
+  return matched
 }
 
 function discoverSpecFiles(
@@ -39,19 +50,30 @@ function discoverSpecFiles(
 ): string[] {
   const projectRoot = String(effectiveConfig.projectRoot || process.cwd())
   const includePatterns = patterns(effectiveConfig.specPattern)
-  const excludePatterns = [
-    ...patterns(effectiveConfig.excludeSpecPattern),
-    ...patterns(effectiveConfig.additionalIgnorePattern),
-  ]
+  const excludePatterns = patterns(effectiveConfig.excludeSpecPattern)
+  const additionalIgnorePatterns = patterns(effectiveConfig.additionalIgnorePattern)
+  let e2ePatterns: string[] = []
   if (testingType === "component") {
-    const e2ePatterns = patterns(config.e2e?.specPattern)
-    excludePatterns.push(...(e2ePatterns.length > 0
-      ? e2ePatterns
-      : ["cypress/e2e/**/*.cy.{js,jsx,ts,tsx}"]))
+    e2ePatterns = patterns(config.e2e?.specPattern)
+    if (e2ePatterns.length === 0) {
+      e2ePatterns = ["cypress/e2e/**/*.cy.{js,jsx,ts,tsx}"]
+    }
   }
 
   const files: string[] = []
-  function walk(directory: string) {
+  function walk(directory: string, ancestorRealDirectories: Set<string>) {
+    let realDirectory: string
+    try {
+      realDirectory = fs.realpathSync(directory)
+    } catch {
+      return
+    }
+    if (ancestorRealDirectories.has(realDirectory)) {
+      return
+    }
+    const nextAncestors = new Set(ancestorRealDirectories)
+    nextAncestors.add(realDirectory)
+
     let entries: fs.Dirent[]
     try {
       entries = fs.readdirSync(directory, { withFileTypes: true })
@@ -60,22 +82,39 @@ function discoverSpecFiles(
     }
     for (const entry of entries) {
       const absolute = path.join(directory, entry.name)
-      if (entry.isDirectory()) {
-        if (entry.name !== "node_modules" && entry.name !== ".git") {
-          walk(absolute)
+      let isDirectory = entry.isDirectory()
+      let isFile = entry.isFile()
+      if (entry.isSymbolicLink()) {
+        try {
+          const target = fs.statSync(absolute)
+          isDirectory = target.isDirectory()
+          isFile = target.isFile()
+        } catch {
+          continue
         }
+      }
+      if (isDirectory) {
+        if (entry.name !== "node_modules" && entry.name !== ".git") {
+          walk(absolute, nextAncestors)
+        }
+        continue
+      }
+      if (!isFile) {
         continue
       }
       if (path.resolve(absolute) === path.resolve(discoveryConfigPath)) {
         continue
       }
       const relative = path.relative(projectRoot, absolute).split(path.sep).join("/")
-      if (matchesAny(relative, includePatterns) && !matchesAny(relative, excludePatterns)) {
+      if (matchesPatterns(relative, includePatterns) &&
+          !matchesPatterns(relative, excludePatterns) &&
+          !matchesPatterns(relative, additionalIgnorePatterns) &&
+          !(testingType === "component" && matchesPatterns(relative, e2ePatterns))) {
         files.push(relative)
       }
     }
   }
-  walk(projectRoot)
+  walk(projectRoot, new Set())
   return files.sort()
 }
 

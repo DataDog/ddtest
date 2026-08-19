@@ -74,6 +74,8 @@ func TestCypressCLIArgs(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "local", command: "node_modules/.bin/cypress", args: []string{"run", "--e2e"}, want: []string{"run", "--e2e"}},
+		{name: "Windows command shim", command: `node_modules\.bin\cypress.cmd`, args: []string{"run", "--e2e"}, want: []string{"run", "--e2e"}},
+		{name: "Windows PowerShell shim", command: "CYPRESS.PS1", args: []string{"run"}, want: []string{"run"}},
 		{name: "npx", command: "npx", args: []string{"cypress", "run"}, want: []string{"run"}},
 		{name: "pnpm", command: "pnpm", args: []string{"exec", "cypress", "run"}, want: []string{"run"}},
 		{name: "indirect", command: "npm", args: []string{"test"}, wantErr: true},
@@ -341,8 +343,11 @@ func TestCypressAdapterIntegration(t *testing.T) {
 		projectName    string
 		configFilename string
 		configExport   string
-		specPattern    string
+		specPattern    any
 		files          []string
+		symlinkName    string
+		symlinkTarget  string
+		addSymlinkLoop bool
 		want           []string
 	}{
 		{
@@ -370,6 +375,27 @@ func TestCypressAdapterIntegration(t *testing.T) {
 			files:          []string{"specs/discovered.ts", "specs/not-discovered.js"},
 			want:           []string{"broad/specs/discovered.ts"},
 		},
+		{
+			name:           "negated spec pattern subtracts matches",
+			projectName:    "negated",
+			configFilename: "cypress.config.js",
+			configExport:   "module.exports =",
+			specPattern:    []string{"**/*.cy.ts", "!**/slow.cy.ts"},
+			files:          []string{"specs/fast.cy.ts", "specs/slow.cy.ts", "specs/helper.ts"},
+			want:           []string{"negated/specs/fast.cy.ts"},
+		},
+		{
+			name:           "symlinked spec directory with cycle",
+			projectName:    "symlinked",
+			configFilename: "cypress.config.js",
+			configExport:   "module.exports =",
+			specPattern:    "linked/**/*.cy.ts",
+			files:          []string{"target/discovered.cy.ts"},
+			symlinkName:    "linked",
+			symlinkTarget:  "target",
+			addSymlinkLoop: true,
+			want:           []string{"symlinked/linked/discovered.cy.ts"},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -380,11 +406,15 @@ func TestCypressAdapterIntegration(t *testing.T) {
 			if err := os.Symlink(nodeModules, filepath.Join(projectRoot, "node_modules")); err != nil {
 				t.Fatal(err)
 			}
+			specPattern, err := json.Marshal(test.specPattern)
+			if err != nil {
+				t.Fatal(err)
+			}
 			config := test.configExport + ` {
   e2e: {
     supportFile: false,
     async setupNodeEvents(_on, config) {
-      return { ...config, specPattern: "` + test.specPattern + `" }
+      return { ...config, specPattern: ` + string(specPattern) + ` }
     },
   },
 }
@@ -394,6 +424,16 @@ func TestCypressAdapterIntegration(t *testing.T) {
 			}
 			for _, filename := range test.files {
 				writeCypressFixture(t, filepath.Join(test.projectName, filename))
+			}
+			if test.symlinkName != "" {
+				if err := os.Symlink(test.symlinkTarget, filepath.Join(projectRoot, test.symlinkName)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.addSymlinkLoop {
+				if err := os.Symlink(projectRoot, filepath.Join(projectRoot, test.symlinkTarget, "loop")); err != nil {
+					t.Fatal(err)
+				}
 			}
 
 			cypress := &Cypress{

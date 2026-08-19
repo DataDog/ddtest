@@ -214,8 +214,9 @@ func cypressCLIArgs(command string, baseArgs []string) ([]string, error) {
 }
 
 func isCypressExecutable(value string) bool {
-	base := filepath.Base(value)
-	return base == "cypress" || base == "cypress.js"
+	base := strings.ToLower(filepath.Base(strings.ReplaceAll(value, `\`, "/")))
+	return base == "cypress" || base == "cypress.js" ||
+		base == "cypress.cmd" || base == "cypress.ps1"
 }
 
 func cypressDiscoveryArgs(command string, baseArgs []string, configPath string) []string {
