@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
@@ -347,7 +349,6 @@ func TestCypressAdapterIntegration(t *testing.T) {
 		files          []string
 		symlinkName    string
 		symlinkTarget  string
-		addSymlinkLoop bool
 		want           []string
 	}{
 		{
@@ -385,7 +386,7 @@ func TestCypressAdapterIntegration(t *testing.T) {
 			want:           []string{"negated/specs/fast.cy.ts"},
 		},
 		{
-			name:           "symlinked spec directory with cycle",
+			name:           "symlinked spec directory",
 			projectName:    "symlinked",
 			configFilename: "cypress.config.js",
 			configExport:   "module.exports =",
@@ -393,7 +394,6 @@ func TestCypressAdapterIntegration(t *testing.T) {
 			files:          []string{"target/discovered.cy.ts"},
 			symlinkName:    "linked",
 			symlinkTarget:  "target",
-			addSymlinkLoop: true,
 			want:           []string{"symlinked/linked/discovered.cy.ts"},
 		},
 	}
@@ -430,18 +430,14 @@ func TestCypressAdapterIntegration(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if test.addSymlinkLoop {
-				if err := os.Symlink(projectRoot, filepath.Join(projectRoot, test.symlinkTarget, "loop")); err != nil {
-					t.Fatal(err)
-				}
-			}
-
 			cypress := &Cypress{
 				executor:        &ext.DefaultCommandExecutor{},
 				commandOverride: []string{binary, "run", "--project", test.projectName},
 				platformEnv:     make(map[string]string),
 			}
-			files, err := cypress.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			files, err := cypress.DiscoverTestFiles(ctx, discovery.TestFileSet{})
+			cancel()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -449,6 +445,76 @@ func TestCypressAdapterIntegration(t *testing.T) {
 				t.Fatalf("files = %v, want %v", files, test.want)
 			}
 		})
+	}
+}
+
+func TestCypressDiscoverySymlinkCycle(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	projectRoot := t.TempDir()
+	writeCypressFixture(t, filepath.Join(projectRoot, "target", "discovered.spec.cy.ts"))
+	writeCypressFixture(t, filepath.Join(projectRoot, "target", "slow.test.cy.ts"))
+	if err := os.Symlink("target", filepath.Join(projectRoot, "linked")); err != nil {
+		t.Skipf("directory symlinks are unavailable: %v", err)
+	}
+	loopPath := filepath.Join(projectRoot, "target", "loop")
+	if err := os.Symlink(projectRoot, loopPath); err != nil {
+		t.Skipf("directory symlinks are unavailable: %v", err)
+	}
+	defer func() { _ = os.Remove(loopPath) }()
+
+	discoveryConfig, err := prepareCypressDiscoveryConfig(projectRoot, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(discoveryConfig) }()
+	discoveryModule := filepath.Join(projectRoot, "discovery.mjs")
+	moduleSource, err := os.ReadFile(discoveryConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(discoveryModule, moduleSource, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	encodedProjectRoot, err := json.Marshal(projectRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness := `import { discoverSpecFiles } from "./discovery.mjs"
+const files = discoverSpecFiles({
+  projectRoot: ` + string(encodedProjectRoot) + `,
+  specPattern: ["linked/**/*.@(spec|test).cy.ts", "!**/slow.test.cy.ts"],
+}, "e2e", (file, pattern) => {
+  if (pattern === "linked/**/*.@(spec|test).cy.ts") {
+    return /^linked\/.+\.(spec|test)\.cy\.ts$/.test(file)
+  }
+  return pattern === "**/slow.test.cy.ts" && file.endsWith("/slow.test.cy.ts")
+})
+process.stdout.write(JSON.stringify(files))
+`
+	harnessPath := filepath.Join(projectRoot, "run-discovery.mjs")
+	if err := os.WriteFile(harnessPath, []byte(harness), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, node, harnessPath).CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("Cypress discovery did not terminate for a symlink cycle: %v", ctx.Err())
+	}
+	if err != nil {
+		t.Fatalf("Cypress discovery module failed: %v\n%s", err, output)
+	}
+	var files []string
+	if err := json.Unmarshal(output, &files); err != nil {
+		t.Fatalf("failed to parse discovery output %q: %v", output, err)
+	}
+	if want := []string{"linked/discovered.spec.cy.ts"}; !slices.Equal(files, want) {
+		t.Fatalf("files = %v, want %v", files, want)
 	}
 }
 

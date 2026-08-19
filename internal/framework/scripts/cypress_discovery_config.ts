@@ -6,30 +6,36 @@ import { createRequire } from "node:module"
 
 const discoveryMarker = "__DDTEST_CYPRESS_CONFIG__"
 const discoveryConfigPath = __DDTEST_DISCOVERY_CONFIG_PATH__
-const config: any = originalConfig || {}
-// Resolve minimatch from Cypress's config-process entrypoint so discovery uses
-// the matcher and export shape bundled with the selected Cypress version.
-const cypressRequire = createRequire(process.argv[1])
-const minimatchModule = cypressRequire("minimatch")
-const minimatch = typeof minimatchModule === "function"
-  ? minimatchModule
-  : minimatchModule.minimatch
-if (typeof minimatch !== "function") {
-  throw new Error("Cypress did not provide a compatible minimatch implementation")
+const config = originalConfig || {}
+// Resolve minimatch lazily from Cypress's config-process entrypoint so normal
+// discovery uses the matcher and export shape bundled with that Cypress version.
+let minimatch
+function cypressMinimatch(file, pattern, options) {
+  if (!minimatch) {
+    const cypressRequire = createRequire(process.argv[1])
+    const minimatchModule = cypressRequire("minimatch")
+    minimatch = typeof minimatchModule === "function"
+      ? minimatchModule
+      : minimatchModule.minimatch
+    if (typeof minimatch !== "function") {
+      throw new Error("Cypress did not provide a compatible minimatch implementation")
+    }
+  }
+  return minimatch(file, pattern, options)
 }
 const minimatchOptions = { dot: true, matchBase: true, nonegate: true }
 
-function patterns(value: unknown): string[] {
+function patterns(value) {
   if (typeof value === "string") {
     return [value]
   }
   if (Array.isArray(value)) {
-    return value.filter((pattern): pattern is string => typeof pattern === "string")
+    return value.filter((pattern) => typeof pattern === "string")
   }
   return []
 }
 
-function matchesPatterns(file: string, filePatterns: string[]): boolean {
+function matchesPatterns(file, filePatterns, match) {
   let matched = false
   for (const rawPattern of filePatterns) {
     let bangCount = 0
@@ -37,7 +43,7 @@ function matchesPatterns(file: string, filePatterns: string[]): boolean {
       bangCount++
     }
     const pattern = rawPattern.slice(bangCount)
-    if (pattern && minimatch(file, pattern, minimatchOptions)) {
+    if (pattern && match(file, pattern, minimatchOptions)) {
       matched = bangCount % 2 === 0
     }
   }
@@ -45,14 +51,17 @@ function matchesPatterns(file: string, filePatterns: string[]): boolean {
 }
 
 function discoverSpecFiles(
-  effectiveConfig: Record<string, unknown>,
-  testingType: "e2e" | "component",
-): string[] {
+  effectiveConfig,
+  testingType,
+  // Injection keeps cycle handling directly testable without launching Cypress,
+  // whose own project scanner cannot safely consume a cyclic directory tree.
+  match = cypressMinimatch,
+) {
   const projectRoot = String(effectiveConfig.projectRoot || process.cwd())
   const includePatterns = patterns(effectiveConfig.specPattern)
   const excludePatterns = patterns(effectiveConfig.excludeSpecPattern)
   const additionalIgnorePatterns = patterns(effectiveConfig.additionalIgnorePattern)
-  let e2ePatterns: string[] = []
+  let e2ePatterns = []
   if (testingType === "component") {
     e2ePatterns = patterns(config.e2e?.specPattern)
     if (e2ePatterns.length === 0) {
@@ -60,9 +69,9 @@ function discoverSpecFiles(
     }
   }
 
-  const files: string[] = []
-  function walk(directory: string, ancestorRealDirectories: Set<string>) {
-    let realDirectory: string
+  const files = []
+  function walk(directory, ancestorRealDirectories) {
+    let realDirectory
     try {
       realDirectory = fs.realpathSync(directory)
     } catch {
@@ -74,7 +83,7 @@ function discoverSpecFiles(
     const nextAncestors = new Set(ancestorRealDirectories)
     nextAncestors.add(realDirectory)
 
-    let entries: fs.Dirent[]
+    let entries
     try {
       entries = fs.readdirSync(directory, { withFileTypes: true })
     } catch {
@@ -106,10 +115,10 @@ function discoverSpecFiles(
         continue
       }
       const relative = path.relative(projectRoot, absolute).split(path.sep).join("/")
-      if (matchesPatterns(relative, includePatterns) &&
-          !matchesPatterns(relative, excludePatterns) &&
-          !matchesPatterns(relative, additionalIgnorePatterns) &&
-          !(testingType === "component" && matchesPatterns(relative, e2ePatterns))) {
+      if (matchesPatterns(relative, includePatterns, match) &&
+          !matchesPatterns(relative, excludePatterns, match) &&
+          !matchesPatterns(relative, additionalIgnorePatterns, match) &&
+          !(testingType === "component" && matchesPatterns(relative, e2ePatterns, match))) {
         files.push(relative)
       }
     }
@@ -118,14 +127,14 @@ function discoverSpecFiles(
   return files.sort()
 }
 
-function testingTypeConfig(testingType: "e2e" | "component") {
+function testingTypeConfig(testingType) {
   const originalTestingTypeConfig = config[testingType] || {}
   const originalSetupNodeEvents = originalTestingTypeConfig.setupNodeEvents
 
   return {
     ...originalTestingTypeConfig,
-    async setupNodeEvents(on: unknown, resolvedConfig: Record<string, unknown>) {
-      let returnedConfig: unknown
+    async setupNodeEvents(on, resolvedConfig) {
+      let returnedConfig
       if (typeof originalSetupNodeEvents === "function") {
         returnedConfig = await originalSetupNodeEvents(on, resolvedConfig)
       }
@@ -149,3 +158,5 @@ export default {
   e2e: testingTypeConfig("e2e"),
   component: testingTypeConfig("component"),
 }
+
+export { discoverSpecFiles }

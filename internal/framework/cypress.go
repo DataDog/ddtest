@@ -412,7 +412,7 @@ func cypressOptionValue(args []string, options ...string) string {
 }
 
 func prepareCypressDiscoveryConfig(projectRoot, originalConfig string) (string, error) {
-	configImport := "const originalConfig: Record<string, any> = {}"
+	configImport := "const originalConfig = {}"
 	if originalConfig != "" {
 		importPath, err := filepath.Rel(projectRoot, originalConfig)
 		if err != nil {
