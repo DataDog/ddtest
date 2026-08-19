@@ -145,6 +145,7 @@ func TestCucumberArgsWithoutPaths(t *testing.T) {
 		"--profile", "ci",
 		"features/a.feature:12",
 		"--tags=@smoke",
+		"--publish-token", "secret-token",
 		"--world-parameters", `{"browser":"firefox"}`,
 		"@rerun.txt",
 		"--", "features/b.feature",
@@ -158,6 +159,7 @@ func TestCucumberArgsWithoutPaths(t *testing.T) {
 		"exec", "cucumber-js",
 		"--profile", "ci",
 		"--tags=@smoke",
+		"--publish-token", "secret-token",
 		"--world-parameters", `{"browser":"firefox"}`,
 	}
 	if !slices.Equal(got, want) {

@@ -45,6 +45,7 @@ var cucumberValueOptions = map[string]bool{
 	"--plugin-options":    true,
 	"--profile":           true,
 	"-p":                  true,
+	"--publish-token":     true,
 	"--require":           true,
 	"-r":                  true,
 	"--require-module":    true,
