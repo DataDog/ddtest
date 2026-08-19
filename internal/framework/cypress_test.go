@@ -238,6 +238,40 @@ func TestCypressDiscoverTestFilesLoadsConfigAndFilters(t *testing.T) {
 	}
 }
 
+func TestCypressDiscoverTestFilesRemovesWrapperBeforeMatchingBroadPattern(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.WriteFile("cypress.config.js", []byte("module.exports = {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeCypressFixture(t, "specs/discovered.ts")
+
+	payload, err := json.Marshal(map[string]any{
+		"projectRoot": root,
+		"testingType": "e2e",
+		"specPattern": "**/*.ts",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cypress := &Cypress{
+		executor: &cypressCommandExecutor{
+			output: append([]byte(cypressDiscoveryMarker), payload...),
+			err:    errors.New("Cypress found no specs"),
+		},
+		commandOverride: []string{"npx", "cypress", "run"},
+		platformEnv:     make(map[string]string),
+	}
+
+	files, err := cypress.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(files, []string{"specs/discovered.ts"}) {
+		t.Fatalf("files = %v, want only the real spec", files)
+	}
+}
+
 func TestPrepareCypressDiscoveryConfig(t *testing.T) {
 	root := t.TempDir()
 	original := filepath.Join(root, "cypress.config.mjs")

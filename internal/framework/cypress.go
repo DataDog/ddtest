@@ -175,6 +175,9 @@ func (c *Cypress) DiscoverTestFiles(ctx context.Context, selectedFiles discovery
 	if config.ProjectRoot == "" {
 		config.ProjectRoot = projectRoot
 	}
+	if err := os.Remove(discoveryConfigPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("failed to remove temporary Cypress discovery config: %w", err)
+	}
 	discoveredFiles, err := discoverCypressSpecFiles(config)
 	if err != nil {
 		return nil, err
