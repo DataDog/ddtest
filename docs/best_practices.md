@@ -204,6 +204,24 @@ Do not include test files or a `--` separator. DDTest asks Cypress to resolve
 its effective configuration during planning and replaces any command-level
 `--spec` value with the files assigned to each worker during execution.
 
+## Cucumber Support
+
+Use a command that invokes `cucumber-js` directly when selecting profiles or
+passing Cucumber filters:
+
+```bash
+ddtest run --platform javascript --framework cucumber --command "pnpm exec cucumber-js --profile ci --tags=@smoke"
+```
+
+DDTest is tested with `@cucumber/cucumber` 7 through 13. During planning, it performs a
+serial dry run and consumes Cucumber Messages to discover only feature files
+that contain scenarios selected by the effective paths, profile, tags, and
+name filters. Step bodies are not executed. During execution, DDTest replaces
+positional feature paths and rerun files in `--command` with the files assigned
+to each worker while preserving Cucumber options. Prefer tag or name filters
+over scenario line selectors because DDTest's execution plan is feature-file
+granular.
+
 ## Minitest Support In Non-Rails Projects
 
 We use `bundle exec rake test` command when we don't detect `rails` command to

@@ -13,7 +13,7 @@ Currently supported:
 
 - Ruby with RSpec or Minitest.
 - Python with pytest.
-- JavaScript with Cypress, Jest, Mocha, or Vitest.
+- JavaScript with Cucumber, Cypress, Jest, Mocha, or Vitest.
 
 ## Prerequisites
 
@@ -25,8 +25,9 @@ Minimum supported library and runtime requirements:
 - Ruby requires the `datadog-ci` gem **1.31.0** or higher.
 - Python requires the `ddtrace` package **4.11.0** or higher and `pytest`.
 - JavaScript requires the `dd-trace` package **5.111.0** or higher and Node.js.
-  Cypress support requires Cypress 12 or higher; Mocha support requires Mocha
-  8 or higher; Vitest support requires Vitest 1.6 or higher.
+  Cucumber support is tested with `@cucumber/cucumber` 7 through 13; Cypress
+  support requires Cypress 12 or higher; Mocha support requires Mocha 8 or higher;
+  Vitest support requires Vitest 1.6 or higher.
 
 For instructions on setting up Test Optimization, see the [Datadog Test Optimization documentation](https://docs.datadoghq.com/tests/setup/).
 
@@ -111,6 +112,16 @@ ddtest plan \
   --max-parallelism 32
 ```
 
+For JavaScript/Cucumber:
+
+```bash
+ddtest plan \
+  --platform javascript \
+  --framework cucumber \
+  --min-parallelism 8 \
+  --max-parallelism 32
+```
+
 This prepares the plan and writes it to `.testoptimization/` folder for later reuse.
 Copy `.testoptimization/` to any CI job that runs `ddtest run` or reads DDTest's
 plan file lists. For the full file layout and formats, see
@@ -156,6 +167,12 @@ For JavaScript/Cypress:
 ddtest run --platform javascript --framework cypress
 ```
 
+For JavaScript/Cucumber:
+
+```bash
+ddtest run --platform javascript --framework cucumber
+```
+
 For CI-node mode, worker environment variables, custom commands, and
 parallelism details, see [Running DDTest](docs/running.md).
 
@@ -164,8 +181,8 @@ parallelism details, see [Running DDTest](docs/running.md).
 | CLI flag | What it does |
 | --- | --- |
 | `--platform` | Language/platform. Currently supported: `ruby`, `python`, `javascript`. |
-| `--framework` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cypress`, `jest`, `mocha`, `vitest`. |
-| `--command` | Override the default base command for supported framework modes. Currently used by RSpec and Minitest run/discovery, and Cypress, Jest, Mocha, and Vitest run/discovery. For pytest, use `PYTEST_ADDOPTS` for pytest flags. |
+| `--framework` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cucumber`, `cypress`, `jest`, `mocha`, `vitest`. |
+| `--command` | Override the default base command for supported framework modes. Currently used by RSpec and Minitest run/discovery, and Cucumber, Cypress, Jest, Mocha, and Vitest run/discovery. For pytest, use `PYTEST_ADDOPTS` for pytest flags. |
 | `--min-parallelism` | Minimum CI node or worker count DDTest considers when planning. |
 | `--max-parallelism` | Maximum CI node or worker count DDTest considers when planning. |
 | `--target-time` | Target wall time DDTest tries to satisfy when selecting parallelism. |
