@@ -41,6 +41,26 @@ func TestLoadCommandOverride(t *testing.T) {
 			command:  "./custom-rspec-wrapper --custom-flag",
 			expected: []string{"./custom-rspec-wrapper", "--custom-flag"},
 		},
+		{
+			name:     "single-quoted multiword value",
+			command:  "pnpm exec cucumber-js --tags 'not @slow'",
+			expected: []string{"pnpm", "exec", "cucumber-js", "--tags", "not @slow"},
+		},
+		{
+			name:     "double-quoted multiword value",
+			command:  `cucumber-js --name "checkout flow"`,
+			expected: []string{"cucumber-js", "--name", "checkout flow"},
+		},
+		{
+			name:     "escaped space",
+			command:  `cucumber-js --name checkout\ flow`,
+			expected: []string{"cucumber-js", "--name", "checkout flow"},
+		},
+		{
+			name:     "empty quoted value",
+			command:  `cucumber-js --name ""`,
+			expected: []string{"cucumber-js", "--name", ""},
+		},
 	}
 
 	for _, tt := range tests {
