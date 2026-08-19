@@ -119,15 +119,13 @@ func TestCypressCommandConstruction(t *testing.T) {
 }
 
 func TestParseCypressDiscoveryOutput(t *testing.T) {
-	output := []byte("config log\n" + cypressDiscoveryMarker + `{"projectRoot":"/repo","testingType":"component","specPattern":["src/**/*.cy.ts","lib/**/*.cy.ts"],"excludeSpecPattern":"**/ignored/**","otherTestingTypeSpecPattern":"cypress/e2e/**/*.cy.ts"}` + "\nmore logs")
+	output := []byte("config log\n" + cypressDiscoveryMarker + `{"projectRoot":"/repo","testingType":"component","specFiles":["src/button.spec.cy.ts","lib/card.test.cy.ts"]}` + "\nmore logs")
 	config, err := parseCypressDiscoveryOutput(output)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if config.ProjectRoot != "/repo" || config.TestingType != "component" ||
-		!slices.Equal(config.SpecPattern, []string{"src/**/*.cy.ts", "lib/**/*.cy.ts"}) ||
-		!slices.Equal(config.ExcludeSpecPattern, []string{"**/ignored/**"}) ||
-		!slices.Equal(config.OtherTestingTypeSpecPattern, []string{"cypress/e2e/**/*.cy.ts"}) {
+		!slices.Equal(config.SpecFiles, []string{"src/button.spec.cy.ts", "lib/card.test.cy.ts"}) {
 		t.Fatalf("config = %#v", config)
 	}
 
@@ -139,39 +137,27 @@ func TestParseCypressDiscoveryOutput(t *testing.T) {
 	}
 }
 
-func TestDiscoverCypressSpecFilesUsesResolvedPatterns(t *testing.T) {
+func TestDiscoverCypressSpecFilesNormalizesResolvedFiles(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	writeCypressFixture(t, "cypress/e2e/login.cy.ts")
-	writeCypressFixture(t, "src/button.cy.tsx")
-	writeCypressFixture(t, "src/ignored.cy.tsx")
-	writeCypressFixture(t, "src/app.tsx")
-
-	e2eFiles, err := discoverCypressSpecFiles(cypressDiscoveryConfig{
-		ProjectRoot:        root,
-		TestingType:        "e2e",
-		SpecPattern:        []string{"cypress/e2e/**/*.cy.{js,ts}"},
-		ExcludeSpecPattern: []string{"*.hot-update.js"},
+	projectRoot := filepath.Join(root, "web")
+	if err := os.MkdirAll(projectRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	files, err := discoverCypressSpecFiles(cypressDiscoveryConfig{
+		ProjectRoot: projectRoot,
+		TestingType: "e2e",
+		SpecFiles: []string{
+			"src/z.test.cy.ts",
+			"src/a.spec.cy.ts",
+			"src/a.spec.cy.ts",
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(e2eFiles, []string{"cypress/e2e/login.cy.ts"}) {
-		t.Fatalf("e2e files = %v", e2eFiles)
-	}
-
-	componentFiles, err := discoverCypressSpecFiles(cypressDiscoveryConfig{
-		ProjectRoot:                 root,
-		TestingType:                 "component",
-		SpecPattern:                 []string{"**/*.cy.{ts,tsx}"},
-		ExcludeSpecPattern:          []string{"**/ignored.cy.tsx"},
-		OtherTestingTypeSpecPattern: []string{"cypress/e2e/**/*.cy.{js,ts}"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(componentFiles, []string{"src/button.cy.tsx"}) {
-		t.Fatalf("component files = %v", componentFiles)
+	if !slices.Equal(files, []string{"web/src/a.spec.cy.ts", "web/src/z.test.cy.ts"}) {
+		t.Fatalf("files = %v", files)
 	}
 }
 
@@ -191,10 +177,9 @@ func TestCypressDiscoverTestFilesLoadsConfigAndFilters(t *testing.T) {
 	writeCypressFixture(t, "web/specs/ignored.cy.ts")
 
 	payload, err := json.Marshal(map[string]any{
-		"projectRoot":        projectRoot,
-		"testingType":        "e2e",
-		"specPattern":        "specs/**/*.cy.ts",
-		"excludeSpecPattern": []string{"**/ignored.cy.ts"},
+		"projectRoot": projectRoot,
+		"testingType": "e2e",
+		"specFiles":   []string{"specs/b.cy.ts", "specs/a.cy.ts"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -238,40 +223,6 @@ func TestCypressDiscoverTestFilesLoadsConfigAndFilters(t *testing.T) {
 	}
 }
 
-func TestCypressDiscoverTestFilesRemovesWrapperBeforeMatchingBroadPattern(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-	if err := os.WriteFile("cypress.config.js", []byte("module.exports = {}\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	writeCypressFixture(t, "specs/discovered.ts")
-
-	payload, err := json.Marshal(map[string]any{
-		"projectRoot": root,
-		"testingType": "e2e",
-		"specPattern": "**/*.ts",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	cypress := &Cypress{
-		executor: &cypressCommandExecutor{
-			output: append([]byte(cypressDiscoveryMarker), payload...),
-			err:    errors.New("Cypress found no specs"),
-		},
-		commandOverride: []string{"npx", "cypress", "run"},
-		platformEnv:     make(map[string]string),
-	}
-
-	files, err := cypress.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(files, []string{"specs/discovered.ts"}) {
-		t.Fatalf("files = %v, want only the real spec", files)
-	}
-}
-
 func TestPrepareCypressDiscoveryConfig(t *testing.T) {
 	root := t.TempDir()
 	original := filepath.Join(root, "cypress.config.mjs")
@@ -287,9 +238,15 @@ func TestPrepareCypressDiscoveryConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	encodedGenerated, err := json.Marshal(generated)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(string(content), `import originalConfig from "./cypress.config.mjs"`) ||
 		!strings.Contains(string(content), cypressDiscoveryMarker) ||
-		strings.Contains(string(content), cypressConfigImportToken) {
+		strings.Contains(string(content), cypressConfigImportToken) ||
+		strings.Contains(string(content), cypressDiscoveryConfigPathToken) ||
+		!strings.Contains(string(content), string(encodedGenerated)) {
 		t.Fatalf("generated config = %s", content)
 	}
 }
@@ -379,35 +336,79 @@ func TestCypressAdapterIntegration(t *testing.T) {
 
 	root := t.TempDir()
 	t.Chdir(root)
-	if err := os.Symlink(nodeModules, filepath.Join(root, "node_modules")); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name           string
+		projectName    string
+		configFilename string
+		configExport   string
+		specPattern    string
+		files          []string
+		want           []string
+	}{
+		{
+			name:           "minimatch extglob",
+			projectName:    "extglob",
+			configFilename: "cypress.config.ts",
+			configExport:   "export default",
+			specPattern:    "custom/**/*.@(spec|test).cy.ts",
+			files: []string{
+				"custom/discovered.spec.cy.ts",
+				"custom/discovered.test.cy.ts",
+				"custom/not-discovered.cy.ts",
+			},
+			want: []string{
+				"extglob/custom/discovered.spec.cy.ts",
+				"extglob/custom/discovered.test.cy.ts",
+			},
+		},
+		{
+			name:           "broad pattern excludes discovery wrapper",
+			projectName:    "broad",
+			configFilename: "cypress.config.js",
+			configExport:   "module.exports =",
+			specPattern:    "**/*.ts",
+			files:          []string{"specs/discovered.ts", "specs/not-discovered.js"},
+			want:           []string{"broad/specs/discovered.ts"},
+		},
 	}
-	config := `export default {
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			projectRoot := filepath.Join(root, test.projectName)
+			if err := os.MkdirAll(projectRoot, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(nodeModules, filepath.Join(projectRoot, "node_modules")); err != nil {
+				t.Fatal(err)
+			}
+			config := test.configExport + ` {
   e2e: {
     supportFile: false,
     async setupNodeEvents(_on, config) {
-      return { ...config, specPattern: "custom/**/*.cy.ts" }
+      return { ...config, specPattern: "` + test.specPattern + `" }
     },
   },
 }
 `
-	if err := os.WriteFile("cypress.config.ts", []byte(config), 0644); err != nil {
-		t.Fatal(err)
-	}
-	writeCypressFixture(t, "custom/discovered.cy.ts")
-	writeCypressFixture(t, "cypress/e2e/not-discovered.cy.ts")
+			if err := os.WriteFile(filepath.Join(projectRoot, test.configFilename), []byte(config), 0644); err != nil {
+				t.Fatal(err)
+			}
+			for _, filename := range test.files {
+				writeCypressFixture(t, filepath.Join(test.projectName, filename))
+			}
 
-	cypress := &Cypress{
-		executor:        &ext.DefaultCommandExecutor{},
-		commandOverride: []string{binary, "run"},
-		platformEnv:     make(map[string]string),
-	}
-	files, err := cypress.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(files, []string{"custom/discovered.cy.ts"}) {
-		t.Fatalf("files = %v", files)
+			cypress := &Cypress{
+				executor:        &ext.DefaultCommandExecutor{},
+				commandOverride: []string{binary, "run", "--project", test.projectName},
+				platformEnv:     make(map[string]string),
+			}
+			files, err := cypress.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(files, test.want) {
+				t.Fatalf("files = %v, want %v", files, test.want)
+			}
+		})
 	}
 }
 

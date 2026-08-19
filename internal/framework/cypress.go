@@ -6,11 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"maps"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -23,12 +21,12 @@ import (
 )
 
 const (
-	binCypressPath                 = "node_modules/.bin/cypress"
-	cypressDiscoveryMarker         = "__DDTEST_CYPRESS_CONFIG__"
-	cypressMissingDiscoverySpec    = "__ddtest_cypress_discovery_no_match__"
-	cypressConfigImportToken       = "__DDTEST_CONFIG_IMPORT__"
-	cypressDefaultE2EPattern       = "cypress/e2e/**/*.cy.{js,jsx,ts,tsx}"
-	cypressDefaultComponentPattern = "**/*.cy.{js,jsx,ts,tsx}"
+	binCypressPath                  = "node_modules/.bin/cypress"
+	cypressDiscoveryMarker          = "__DDTEST_CYPRESS_CONFIG__"
+	cypressMissingDiscoverySpec     = "__ddtest_cypress_discovery_no_match__"
+	cypressConfigImportToken        = "__DDTEST_CONFIG_IMPORT__"
+	cypressDiscoveryConfigPathToken = "__DDTEST_DISCOVERY_CONFIG_PATH__"
+	cypressDefaultE2EPattern        = "cypress/e2e/**/*.cy.{js,jsx,ts,tsx}"
 )
 
 var cypressConfigFilenames = []string{
@@ -48,38 +46,9 @@ type Cypress struct {
 }
 
 type cypressDiscoveryConfig struct {
-	ProjectRoot                 string   `json:"projectRoot"`
-	TestingType                 string   `json:"testingType"`
-	SpecPattern                 []string `json:"-"`
-	ExcludeSpecPattern          []string `json:"-"`
-	OtherTestingTypeSpecPattern []string `json:"-"`
-}
-
-func (c *cypressDiscoveryConfig) UnmarshalJSON(data []byte) error {
-	type rawConfig struct {
-		ProjectRoot                 string          `json:"projectRoot"`
-		TestingType                 string          `json:"testingType"`
-		SpecPattern                 json.RawMessage `json:"specPattern"`
-		ExcludeSpecPattern          json.RawMessage `json:"excludeSpecPattern"`
-		OtherTestingTypeSpecPattern json.RawMessage `json:"otherTestingTypeSpecPattern"`
-	}
-	var raw rawConfig
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	c.ProjectRoot = raw.ProjectRoot
-	c.TestingType = raw.TestingType
-	var err error
-	if c.SpecPattern, err = decodeCypressPatterns(raw.SpecPattern); err != nil {
-		return fmt.Errorf("invalid specPattern: %w", err)
-	}
-	if c.ExcludeSpecPattern, err = decodeCypressPatterns(raw.ExcludeSpecPattern); err != nil {
-		return fmt.Errorf("invalid excludeSpecPattern: %w", err)
-	}
-	if c.OtherTestingTypeSpecPattern, err = decodeCypressPatterns(raw.OtherTestingTypeSpecPattern); err != nil {
-		return fmt.Errorf("invalid other testing type specPattern: %w", err)
-	}
-	return nil
+	ProjectRoot string   `json:"projectRoot"`
+	TestingType string   `json:"testingType"`
+	SpecFiles   []string `json:"specFiles"`
 }
 
 func NewCypress() *Cypress {
@@ -463,6 +432,13 @@ func prepareCypressDiscoveryConfig(projectRoot, originalConfig string) (string, 
 	configPath := configFile.Name()
 	removeConfig := func() { _ = os.Remove(configPath) }
 	script := strings.Replace(cypressDiscoveryConfigScript, cypressConfigImportToken, configImport, 1)
+	encodedConfigPath, err := json.Marshal(configPath)
+	if err != nil {
+		_ = configFile.Close()
+		removeConfig()
+		return "", fmt.Errorf("failed to encode Cypress discovery config path: %w", err)
+	}
+	script = strings.Replace(script, cypressDiscoveryConfigPathToken, string(encodedConfigPath), 1)
 	if _, err := configFile.WriteString(script); err != nil {
 		_ = configFile.Close()
 		removeConfig()
@@ -491,29 +467,7 @@ func parseCypressDiscoveryOutput(output []byte) (cypressDiscoveryConfig, error) 
 	if config.TestingType != "e2e" && config.TestingType != "component" {
 		return cypressDiscoveryConfig{}, fmt.Errorf("Cypress returned unsupported testing type %q", config.TestingType)
 	}
-	if len(config.SpecPattern) == 0 {
-		if config.TestingType == "component" {
-			config.SpecPattern = []string{cypressDefaultComponentPattern}
-		} else {
-			config.SpecPattern = []string{cypressDefaultE2EPattern}
-		}
-	}
 	return config, nil
-}
-
-func decodeCypressPatterns(raw json.RawMessage) ([]string, error) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil, nil
-	}
-	var single string
-	if err := json.Unmarshal(raw, &single); err == nil {
-		return []string{single}, nil
-	}
-	var patterns []string
-	if err := json.Unmarshal(raw, &patterns); err != nil {
-		return nil, err
-	}
-	return patterns, nil
 }
 
 func discoverCypressSpecFiles(config cypressDiscoveryConfig) ([]string, error) {
@@ -524,97 +478,24 @@ func discoverCypressSpecFiles(config cypressDiscoveryConfig) ([]string, error) {
 	if resolvedRoot, resolveErr := filepath.EvalSymlinks(projectRoot); resolveErr == nil {
 		projectRoot = resolvedRoot
 	}
-	includeMatchers, err := newCypressPatternMatchers(config.SpecPattern)
-	if err != nil {
-		return nil, fmt.Errorf("invalid Cypress specPattern: %w", err)
-	}
-	excludePatterns := slices.Clone(config.ExcludeSpecPattern)
-	if config.TestingType == "component" {
-		otherPatterns := config.OtherTestingTypeSpecPattern
-		if len(otherPatterns) == 0 {
-			otherPatterns = []string{cypressDefaultE2EPattern}
-		}
-		excludePatterns = append(excludePatterns, otherPatterns...)
-	}
-	excludeMatchers, err := newCypressPatternMatchers(excludePatterns)
-	if err != nil {
-		return nil, fmt.Errorf("invalid Cypress excludeSpecPattern: %w", err)
-	}
-
 	cwd, _ := os.Getwd()
 	if resolvedCwd, resolveErr := filepath.EvalSymlinks(cwd); resolveErr == nil {
 		cwd = resolvedCwd
 	}
-	testFiles := make([]string, 0)
-	err = filepath.WalkDir(projectRoot, func(filePath string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			slog.Debug("Skipping path during Cypress discovery", "path", filePath, "error", walkErr)
-			return nil
-		}
-		if entry.IsDir() {
-			if entry.Name() == "node_modules" || entry.Name() == ".git" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		relativeToProject, err := filepath.Rel(projectRoot, filePath)
-		if err != nil {
-			return nil
-		}
-		normalizedProjectPath := utils.NormalizePath(relativeToProject)
-		if !matchesAnyCypressPattern(includeMatchers, normalizedProjectPath) ||
-			matchesAnyCypressPattern(excludeMatchers, normalizedProjectPath) {
-			return nil
+	testFiles := make([]string, 0, len(config.SpecFiles))
+	for _, specFile := range config.SpecFiles {
+		filePath := filepath.FromSlash(specFile)
+		if !filepath.IsAbs(filePath) {
+			filePath = filepath.Join(projectRoot, filePath)
 		}
 		relativeToCwd, err := filepath.Rel(cwd, filePath)
 		if err != nil {
-			return nil
+			return nil, fmt.Errorf("failed to resolve Cypress spec file %q: %w", specFile, err)
 		}
 		testFiles = append(testFiles, utils.NormalizePath(relativeToCwd))
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to discover Cypress specs: %w", err)
 	}
 	slices.Sort(testFiles)
 	return slices.Compact(testFiles), nil
-}
-
-type cypressPatternMatcher struct {
-	matcher   utils.PathMatcher
-	matchBase bool
-}
-
-func newCypressPatternMatchers(patterns []string) ([]cypressPatternMatcher, error) {
-	matchers := make([]cypressPatternMatcher, 0, len(patterns))
-	for _, pattern := range patterns {
-		pattern = strings.TrimPrefix(utils.NormalizePattern(pattern), "/")
-		if pattern == "" {
-			continue
-		}
-		matcher, err := utils.NewNormalizedPathMatcher(pattern)
-		if err != nil {
-			return nil, err
-		}
-		matchers = append(matchers, cypressPatternMatcher{
-			matcher:   matcher,
-			matchBase: !strings.Contains(pattern, "/"),
-		})
-	}
-	return matchers, nil
-}
-
-func matchesAnyCypressPattern(matchers []cypressPatternMatcher, normalizedPath string) bool {
-	for _, matcher := range matchers {
-		candidate := normalizedPath
-		if matcher.matchBase {
-			candidate = path.Base(normalizedPath)
-		}
-		if matcher.matcher.MatchNormalizedPath(candidate) {
-			return true
-		}
-	}
-	return false
 }
 
 func filterCypressTestFiles(testFiles []string, selectedFiles discovery.TestFileSet) ([]string, error) {
