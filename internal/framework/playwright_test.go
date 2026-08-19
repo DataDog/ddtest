@@ -277,6 +277,17 @@ func TestPlaywrightAdapterIntegration(t *testing.T) {
 	lifecycleFiles := []string{}
 	if playwrightVersionAtLeast(t, binary, 1, 31) {
 		projects = `[
+	    { name: 'setup', testMatch: '**/setup.spec.ts' },
+	    { name: 'one', testIgnore: /(?:setup|ignored)\.spec\.ts/, dependencies: ['setup'] },
+	    { name: 'two', testIgnore: /(?:setup|ignored)\.spec\.ts/, dependencies: ['setup'] },
+	  ]`
+		lifecycleFiles = []string{"setup.spec.ts"}
+	}
+	// Project teardown was added after project dependencies. Older versions
+	// ignore the teardown property and treat the named project as a normal
+	// project, so only exercise teardown filtering where Playwright supports it.
+	if playwrightVersionAtLeast(t, binary, 1, 38) {
+		projects = `[
     { name: 'setup', testMatch: '**/setup.spec.ts', teardown: 'teardown' },
     { name: 'teardown', testMatch: '**/teardown.spec.ts' },
     { name: 'one', testIgnore: /(?:setup|teardown|ignored)\.spec\.ts/, dependencies: ['setup'] },
@@ -284,13 +295,12 @@ func TestPlaywrightAdapterIntegration(t *testing.T) {
   ]`
 		lifecycleFiles = []string{"setup.spec.ts", "teardown.spec.ts"}
 	}
-	config := fmt.Sprintf(`const { defineConfig } = require('@playwright/test')
-module.exports = defineConfig({
+	config := fmt.Sprintf(`module.exports = {
   testDir: './tests',
   testMatch: '**/*.@(spec|test).ts',
   testIgnore: '**/ignored.*',
   projects: %s,
-})
+}
 `, projects)
 	if err := os.WriteFile(filepath.Join(projectRoot, "playwright.config.js"), []byte(config), 0644); err != nil {
 		t.Fatal(err)
