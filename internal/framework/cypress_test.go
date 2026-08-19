@@ -286,6 +286,43 @@ func TestCypressRunTests(t *testing.T) {
 	}
 }
 
+func TestCypressRunTestsUsesPathsRelativeToSelectedProject(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.MkdirAll(filepath.Join("apps", "web"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	executor := &cypressCommandExecutor{}
+	cypress := &Cypress{
+		executor: executor,
+		commandOverride: []string{
+			"npx", "cypress", "run", "--project", "apps/web",
+		},
+		platformEnv: make(map[string]string),
+	}
+
+	testFiles := []string{
+		"apps/web/cypress/e2e/a.cy.ts",
+		"apps/web/cypress/e2e/b.cy.ts",
+	}
+	if err := cypress.RunTests(context.Background(), testFiles, nil); err != nil {
+		t.Fatal(err)
+	}
+	wantArgs := []string{
+		"cypress", "run", "--project", "apps/web", "--spec",
+		"cypress/e2e/a.cy.ts,cypress/e2e/b.cy.ts",
+	}
+	if !slices.Equal(executor.capturedArgs, wantArgs) {
+		t.Fatalf("run args = %v, want %v", executor.capturedArgs, wantArgs)
+	}
+	if !slices.Equal(testFiles, []string{
+		"apps/web/cypress/e2e/a.cy.ts",
+		"apps/web/cypress/e2e/b.cy.ts",
+	}) {
+		t.Fatalf("RunTests mutated planned test files: %v", testFiles)
+	}
+}
+
 func TestCypressUnskippableMarker(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "marked.cy.ts")
 	if err := os.WriteFile(file, []byte("// @datadog unskippable\n"), 0644); err != nil {

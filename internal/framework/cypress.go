@@ -187,7 +187,15 @@ func (c *Cypress) RunTests(ctx context.Context, testFiles []string, envMap map[s
 		return nil
 	}
 	command, baseArgs := c.getCypressCommand()
-	args := cypressRunArgs(command, baseArgs, testFiles)
+	cliArgs, err := cypressCLIArgs(command, baseArgs)
+	if err != nil {
+		return err
+	}
+	projectTestFiles, err := cypressTestFilesRelativeToProject(cliArgs, testFiles)
+	if err != nil {
+		return err
+	}
+	args := cypressRunArgs(command, baseArgs, projectTestFiles)
 
 	slog.Info("Running Cypress tests", "command", command, "args", args, "testFiles", testFiles)
 	mergedEnv := make(map[string]string)
@@ -253,6 +261,37 @@ func cypressRunArgs(command string, baseArgs, testFiles []string) []string {
 	args := append(prefix, "run")
 	args = append(args, removeCypressOption(cliArgs, "--spec", "-s")...)
 	return append(args, "--spec", strings.Join(testFiles, ","))
+}
+
+func cypressTestFilesRelativeToProject(cliArgs, testFiles []string) ([]string, error) {
+	projectRoot, err := cypressProjectRoot(cliArgs)
+	if err != nil {
+		return nil, err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve working directory: %w", err)
+	}
+	if resolvedCwd, resolveErr := filepath.EvalSymlinks(cwd); resolveErr == nil {
+		cwd = resolvedCwd
+	}
+
+	result := make([]string, 0, len(testFiles))
+	for _, testFile := range testFiles {
+		absolute := filepath.FromSlash(testFile)
+		if !filepath.IsAbs(absolute) {
+			absolute = filepath.Join(cwd, absolute)
+		}
+		if resolved, resolveErr := filepath.EvalSymlinks(absolute); resolveErr == nil {
+			absolute = resolved
+		}
+		relative, err := filepath.Rel(projectRoot, absolute)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve Cypress test file %q relative to project root: %w", testFile, err)
+		}
+		result = append(result, utils.NormalizePath(relative))
+	}
+	return result, nil
 }
 
 func splitCypressCommand(command string, baseArgs []string) ([]string, []string) {
