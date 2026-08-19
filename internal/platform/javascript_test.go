@@ -263,6 +263,28 @@ func TestJavaScript_DetectFramework_Cypress(t *testing.T) {
 	}
 }
 
+func TestJavaScript_DetectFramework_Playwright(t *testing.T) {
+	t.Setenv(nodeOptionsEnvVar, "")
+	viper.Reset()
+	viper.Set("framework", "playwright")
+	settings.Init()
+	defer func() {
+		viper.Reset()
+		settings.Init()
+	}()
+
+	fw, err := NewJavaScript().DetectFramework()
+	if err != nil {
+		t.Fatalf("DetectFramework failed: %v", err)
+	}
+	if fw.Name() != "playwright" {
+		t.Fatalf("framework name = %q, want playwright", fw.Name())
+	}
+	if got := fw.GetPlatformEnv()[nodeOptionsEnvVar]; got != nodeOptionsDDTraceCIArg {
+		t.Fatalf("NODE_OPTIONS = %q, want %q", got, nodeOptionsDDTraceCIArg)
+	}
+}
+
 func TestJavaScript_DetectFramework_Vitest(t *testing.T) {
 	t.Setenv(nodeOptionsEnvVar, "")
 	viper.Reset()
