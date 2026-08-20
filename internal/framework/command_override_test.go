@@ -3,6 +3,7 @@ package framework
 import (
 	"bytes"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 
@@ -40,6 +41,31 @@ func TestLoadCommandOverride(t *testing.T) {
 			name:     "custom wrapper command",
 			command:  "./custom-rspec-wrapper --custom-flag",
 			expected: []string{"./custom-rspec-wrapper", "--custom-flag"},
+		},
+		{
+			name:     "single-quoted multiword value",
+			command:  "pnpm exec cucumber-js --tags 'not @slow'",
+			expected: []string{"pnpm", "exec", "cucumber-js", "--tags", "not @slow"},
+		},
+		{
+			name:     "double-quoted multiword value",
+			command:  `cucumber-js --name "checkout flow"`,
+			expected: []string{"cucumber-js", "--name", "checkout flow"},
+		},
+		{
+			name:     "double-quoted regular expression",
+			command:  `cucumber-js --name "^I see \d+ items$"`,
+			expected: []string{"cucumber-js", "--name", `^I see \d+ items$`},
+		},
+		{
+			name:     "escaped space",
+			command:  `cucumber-js --name checkout\ flow`,
+			expected: []string{"cucumber-js", "--name", "checkout flow"},
+		},
+		{
+			name:     "empty quoted value",
+			command:  `cucumber-js --name ""`,
+			expected: []string{"cucumber-js", "--name", ""},
 		},
 	}
 
@@ -168,6 +194,33 @@ func TestLoadCommandOverride_WithSeparator(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLoadCommandOverride_InvalidQuotingPreservesPreviousBehavior(t *testing.T) {
+	const command = `cucumber-js --publish-token "secret-token`
+	t.Cleanup(func() {
+		viper.Reset()
+		settings.Init()
+	})
+	viper.Reset()
+	viper.Set("command", command)
+	settings.Init()
+
+	var logBuf bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	result := loadCommandOverride()
+	expected := strings.Fields(command)
+	if !slices.Equal(result, expected) {
+		t.Fatalf("loadCommandOverride() = %v, want %v", result, expected)
+	}
+	if logOutput := logBuf.String(); !strings.Contains(logOutput, "invalid quoting") {
+		t.Fatalf("expected invalid quoting warning, got %q", logOutput)
+	} else if strings.Contains(logOutput, "secret-token") {
+		t.Fatalf("warning exposed command contents: %q", logOutput)
 	}
 }
 

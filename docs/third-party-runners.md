@@ -90,6 +90,18 @@ Keep `-r dd-trace/ci/init` in `NODE_OPTIONS` so Test Optimization remains
 enabled. Do not add Playwright's own `--shard`; DDTest has already partitioned
 the files.
 
+## Cucumber
+
+Load Test Optimization initialization and pass DDTest's feature list to
+`cucumber-js`:
+
+```bash
+export NODE_OPTIONS="-r dd-trace/ci/init${NODE_OPTIONS:+ $NODE_OPTIONS}"
+if [ -s .testoptimization/runner/test-files.txt ]; then
+  xargs ./node_modules/.bin/cucumber-js < .testoptimization/runner/test-files.txt
+fi
+```
+
 ## Custom Runners
 
 Read `.testoptimization/runner/test-files.txt` when your runner should handle

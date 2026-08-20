@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/kballard/go-shellquote"
 )
 
 func loadCommandOverride() []string {
@@ -13,7 +14,11 @@ func loadCommandOverride() []string {
 		return nil
 	}
 
-	parts := strings.Fields(command)
+	parts, err := shellquote.Split(command)
+	if err != nil {
+		slog.Warn("Command contains invalid quoting; falling back to whitespace parsing.", "error", err)
+		parts = strings.Fields(command)
+	}
 	if len(parts) == 0 {
 		return nil
 	}

@@ -152,7 +152,7 @@ func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 		return discoveredFiles, nil
 	}
 
-	return filterVitestTestFiles(discoveredFiles, testFiles)
+	return filterJavaScriptTestFiles(discoveredFiles, testFiles)
 }
 
 // discoverVitestV1TestFiles uses the project's vitest/node API to load its
@@ -173,7 +173,7 @@ func (v *Vitest) discoverVitestV1TestFiles(ctx context.Context, command string, 
 				if settings.GetTestsLocation() == "" && settings.GetTestsExcludePattern() == "" {
 					return discoveredFiles, nil
 				}
-				return filterVitestTestFiles(discoveredFiles, testFiles)
+				return filterJavaScriptTestFiles(discoveredFiles, testFiles)
 			}
 			err = parseErr
 		} else {
@@ -282,31 +282,6 @@ func supportsVitestV1DiscoveryFallback(output []byte) bool {
 		(strings.Contains(message, "filesonly") || strings.Contains(message, "files-only"))
 }
 
-func filterVitestTestFiles(testFiles []string, selectedTestFiles discovery.TestFileSet) ([]string, error) {
-	if settings.GetTestsExcludePattern() != "" {
-		selectedTestFiles.ExplicitFiles = nil
-	}
-	if settings.GetTestsLocation() == "" {
-		selectedTestFiles.Pattern = ""
-	}
-
-	testFileMatcher, err := discovery.NewTestFileSetMatcher(selectedTestFiles, settings.GetTestsExcludePattern())
-	if err != nil {
-		return nil, err
-	}
-
-	filteredFiles := make([]string, 0, len(testFiles))
-	for _, testFile := range testFiles {
-		normalizedTestFile := utils.NormalizePath(testFile)
-		if normalizedTestFile != "" && testFileMatcher.MatchNormalizedPath(normalizedTestFile) {
-			filteredFiles = append(filteredFiles, normalizedTestFile)
-		}
-	}
-
-	slices.Sort(filteredFiles)
-	return slices.Compact(filteredFiles), nil
-}
-
 func parseVitestListFilesOutput(output []byte) ([]string, error) {
 	var listedFiles []struct {
 		File string `json:"file"`
@@ -319,7 +294,7 @@ func parseVitestListFilesOutput(output []byte) ([]string, error) {
 	for _, listedFile := range listedFiles {
 		paths = append(paths, listedFile.File)
 	}
-	return normalizeVitestTestFiles(paths), nil
+	return normalizeJavaScriptTestFiles(paths), nil
 }
 
 func parseVitestV1DiscoveryOutput(output []byte) ([]string, error) {
@@ -336,46 +311,7 @@ func parseVitestV1DiscoveryOutput(output []byte) ([]string, error) {
 	if err := json.Unmarshal([]byte(encodedFiles), &testFiles); err != nil {
 		return nil, fmt.Errorf("failed to parse Vitest 1.6 discovery output: %w", err)
 	}
-	return normalizeVitestTestFiles(testFiles), nil
-}
-
-func normalizeVitestTestFiles(paths []string) []string {
-	cwd, _ := os.Getwd()
-	if resolvedCwd, err := filepath.EvalSymlinks(cwd); err == nil {
-		cwd = resolvedCwd
-	}
-
-	testFiles := make([]string, 0)
-	for _, path := range paths {
-		testFile := strings.TrimSpace(path)
-		if testFile == "" {
-			continue
-		}
-
-		if filepath.IsAbs(testFile) && cwd != "" {
-			pathForRel := testFile
-			if resolvedPath, err := filepath.EvalSymlinks(testFile); err == nil {
-				pathForRel = resolvedPath
-			}
-			relativePath, err := filepath.Rel(cwd, pathForRel)
-			if err != nil || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) || relativePath == ".." {
-				continue
-			}
-			testFile = relativePath
-		}
-
-		normalizedTestFile := utils.NormalizePath(testFile)
-		if normalizedTestFile == "" {
-			continue
-		}
-		if _, err := os.Stat(normalizedTestFile); err != nil {
-			continue
-		}
-		testFiles = append(testFiles, normalizedTestFile)
-	}
-
-	slices.Sort(testFiles)
-	return slices.Compact(testFiles)
+	return normalizeJavaScriptTestFiles(testFiles), nil
 }
 
 func stripNodeOptionsImport(nodeOptions string, module string) string {

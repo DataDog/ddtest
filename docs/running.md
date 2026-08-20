@@ -56,6 +56,12 @@ For JavaScript/Playwright:
 ddtest run --platform javascript --framework playwright
 ```
 
+For JavaScript/Cucumber:
+
+```bash
+ddtest run --platform javascript --framework cucumber
+```
+
 On one CI node, the default `--min-parallelism` and `--max-parallelism` equal
 the available physical CPU core count, so DDTest can start one worker per
 physical core without defaulting to one worker per hyperthread.
@@ -105,6 +111,12 @@ For JavaScript/Playwright:
 ddtest run --platform javascript --framework playwright --ci-node <CI_NODE_INDEX>
 ```
 
+For JavaScript/Cucumber:
+
+```bash
+ddtest run --platform javascript --framework cucumber --ci-node <CI_NODE_INDEX>
+```
+
 In CI-node mode, DDTest uses one local worker by default so database and other
 per-worker resources stay easy to isolate. To fan out within each CI node, set
 `--ci-node-workers` to a positive integer, or use `--ci-node-workers ncpu` to
@@ -138,7 +150,7 @@ starting each worker.
 
 Use `--command` to override the framework's default base test command where
 supported. DDTest currently applies this override to RSpec run and full
-discovery, Minitest run and full discovery, and Cypress, Jest, Mocha,
+discovery, Minitest run and full discovery, and Cucumber, Cypress, Jest, Mocha,
 Playwright, and Vitest run and file discovery:
 
 ```bash
@@ -185,9 +197,18 @@ replaces positional file filters with each worker's assigned files:
 ddtest run --platform javascript --framework playwright --command "pnpm exec playwright test --config apps/web/playwright.config.ts --project chromium"
 ```
 
-When using `--command`, do not include the `--` separator or test files in your
-command. DDTest automatically appends selected tests and framework-specific
-flags to the command you provide.
+For JavaScript/Cucumber, the command must invoke `cucumber-js` directly. DDTest
+uses its profiles, configuration, paths, tags, and name filters for discovery,
+then replaces positional feature paths with each worker's assigned files:
+
+```bash
+ddtest run --platform javascript --framework cucumber --command "pnpm exec cucumber-js features/v1/*.feature --profile ci"
+```
+
+When using `--command`, do not include the `--` separator. Except for Cucumber,
+do not include test files in the command. DDTest automatically appends selected
+tests and framework-specific flags; the Cucumber adapter also recognizes and
+replaces positional feature paths and rerun files.
 
 Incorrect:
 
@@ -235,6 +256,36 @@ as Jest's `--testMatch`.
 
 DDTest prepends `-r dd-trace/ci/init` to `NODE_OPTIONS` for worker processes
 unless `NODE_OPTIONS` already loads `dd-trace/ci/init`.
+
+## Cucumber Discovery And Instrumentation
+
+DDTest is tested with `@cucumber/cucumber` 7 through 13. It discovers feature files
+using Cucumber's own dry-run planner and stable Messages formatter. This honors
+`cucumber.js`, `cucumber.cjs`, `cucumber.mjs`, JSON/YAML configuration on
+versions that support it, selected profiles, positional paths and rerun files,
+Gherkin dialects, `.feature.md`, and tag/name filters. DDTest selects only the
+feature URIs referenced by planned test cases, so a file whose scenarios are
+all filtered out is not added to the execution plan.
+
+Discovery forces Cucumber's internal parallelism to zero, does not execute step
+bodies, disables report publishing through `CUCUMBER_PUBLISH_ENABLED`, and
+removes `-r dd-trace/ci/init` from `NODE_OPTIONS`. Cucumber still loads its
+configuration and support code as part of a normal dry run.
+
+DDTest uses this command priority:
+
+1. `--command` when set; it must invoke `cucumber-js` directly.
+2. The local executable `node_modules/.bin/cucumber-js` when present.
+3. `npx cucumber-js`.
+
+During execution, DDTest removes positional feature paths, globs, line filters,
+and rerun files from the base command and appends the current worker's assigned
+feature files. Other supported Cucumber CLI options are preserved. Worker
+processes retain `-r dd-trace/ci/init` for Test Optimization instrumentation.
+Because DDTest plans at feature-file granularity, scenario line selectors and
+rerun files narrow discovery but are not retained as scenario-level selectors
+during worker execution. Use Cucumber tag or name filters when that scenario
+scope must remain active in every worker.
 
 ## Mocha Discovery And Instrumentation
 

@@ -135,6 +135,8 @@ func (j *JavaScript) DetectFramework() (framework.Framework, error) {
 		fw = framework.NewCypress()
 	case "playwright":
 		fw = framework.NewPlaywright()
+	case "cucumber":
+		fw = framework.NewCucumber()
 	case "vitest":
 		platformEnv = addNodeImport(platformEnv, ddTraceRegisterModule)
 		fw = framework.NewVitest()
