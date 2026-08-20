@@ -81,6 +81,15 @@ if [ -s .testoptimization/runner/test-files.txt ]; then
 fi
 ```
 
+## Playwright
+
+Playwright treats positional file arguments as regular expressions matched
+against absolute paths. Escape the paths before passing a DDTest file list, or
+use a small script that invokes Playwright with one exact expression per file.
+Keep `-r dd-trace/ci/init` in `NODE_OPTIONS` so Test Optimization remains
+enabled. Do not add Playwright's own `--shard`; DDTest has already partitioned
+the files.
+
 ## Cucumber
 
 Load Test Optimization initialization and pass DDTest's feature list to

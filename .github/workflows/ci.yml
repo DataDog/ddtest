@@ -123,6 +123,31 @@ jobs:
             DDTEST_CYPRESS_NODE_MODULES="${cypress_dir}/node_modules" \
             go test -v ./internal/framework -run TestCypressAdapterIntegration
 
+  playwright-compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        playwright: ["1.18.0", "1.31.1", "1.38.0", "1.59.1", "1.60.0", "1.62.1"]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version: "1.26.5"
+
+      - name: Test Playwright adapter
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: |
+          playwright_dir="${RUNNER_TEMP}/playwright-${{ matrix.playwright }}"
+          npm install --prefix "${playwright_dir}" "@playwright/test@${{ matrix.playwright }}"
+          DDTEST_PLAYWRIGHT_BINARY="${playwright_dir}/node_modules/.bin/playwright" \
+            DDTEST_PLAYWRIGHT_NODE_MODULES="${playwright_dir}/node_modules" \
+            go test -v ./internal/framework -run TestPlaywrightAdapterIntegration
+
   cucumber-compatibility:
     runs-on: ubuntu-latest
     strategy:

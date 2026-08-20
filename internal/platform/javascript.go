@@ -133,6 +133,8 @@ func (j *JavaScript) DetectFramework() (framework.Framework, error) {
 		fw = framework.NewMocha()
 	case "cypress":
 		fw = framework.NewCypress()
+	case "playwright":
+		fw = framework.NewPlaywright()
 	case "cucumber":
 		fw = framework.NewCucumber()
 	case "vitest":

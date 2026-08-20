@@ -50,6 +50,12 @@ For JavaScript/Cypress:
 ddtest run --platform javascript --framework cypress
 ```
 
+For JavaScript/Playwright:
+
+```bash
+ddtest run --platform javascript --framework playwright
+```
+
 For JavaScript/Cucumber:
 
 ```bash
@@ -99,6 +105,12 @@ For JavaScript/Cypress:
 ddtest run --platform javascript --framework cypress --ci-node <CI_NODE_INDEX>
 ```
 
+For JavaScript/Playwright:
+
+```bash
+ddtest run --platform javascript --framework playwright --ci-node <CI_NODE_INDEX>
+```
+
 For JavaScript/Cucumber:
 
 ```bash
@@ -139,7 +151,7 @@ starting each worker.
 Use `--command` to override the framework's default base test command where
 supported. DDTest currently applies this override to RSpec run and full
 discovery, Minitest run and full discovery, and Cucumber, Cypress, Jest, Mocha,
-and Vitest run and file discovery:
+Playwright, and Vitest run and file discovery:
 
 ```bash
 ddtest run --platform ruby --framework rspec --command "bundle exec rspec --profile"
@@ -175,6 +187,14 @@ configured `--spec` value with each worker's assigned specs:
 
 ```bash
 ddtest run --platform javascript --framework cypress --command "pnpm exec cypress run --component"
+```
+
+For JavaScript/Playwright, the command must invoke `playwright test` directly.
+DDTest keeps configuration and selection options during native discovery and
+replaces positional file filters with each worker's assigned files:
+
+```bash
+ddtest run --platform javascript --framework playwright --command "pnpm exec playwright test --config apps/web/playwright.config.ts --project chromium"
 ```
 
 For JavaScript/Cucumber, the command must invoke `cucumber-js` directly. DDTest
@@ -334,6 +354,41 @@ the worker. Cypress Test Optimization instrumentation must already be configured
 in the project's Cypress plugin and support files as documented by `dd-trace`.
 Discovery removes `-r dd-trace/ci/init` from `NODE_OPTIONS`; test runs retain the
 configured platform environment.
+
+## Playwright Discovery And Instrumentation
+
+DDTest supports Playwright 1.18 and newer. During planning it invokes
+`playwright test --list` with a temporary custom reporter. Playwright itself
+loads the effective configuration and collects tests, so discovery honors
+`testDir`, string and regular-expression `testMatch` and `testIgnore` values,
+projects, project dependencies, grep filters, `.only`, positional filters, and
+other supported selection options. The reporter returns source file paths;
+DDTest deduplicates files that occur in multiple projects and leaves dependency
+and teardown projects out of the partition because Playwright runs that shared
+lifecycle automatically with each selected primary project. Discovery never
+launches a browser or executes a test.
+
+DDTest uses this command priority:
+
+1. `--command` when set; it must invoke `playwright test` directly.
+2. The local executable `node_modules/.bin/playwright` when present.
+3. `npx playwright`.
+
+During execution DDTest passes exact file-path regular expressions for the
+files assigned to each worker. It removes original positional filters so they
+cannot add unassigned files. It also removes Playwright's `--shard` because
+DDTest owns the file partition, and removes interactive `--ui` options. Other
+options, including `--config`, `--project`, `--grep`, reporters, retries, and
+workers, are retained. When `--tests-location` or
+`--tests-exclude-pattern` is set, DDTest applies that additional filter to the
+native file list.
+
+Playwright Test Optimization instrumentation is provided by `dd-trace` through
+`NODE_OPTIONS`, as with other JavaScript frameworks. Discovery temporarily
+removes `-r dd-trace/ci/init` so listing is not reported as a test session; test
+runs retain it. Check the `dd-trace` compatibility range for the Playwright
+version in the project; current `dd-trace` 6 releases require Playwright 1.38
+or newer.
 
 ## Parallelism Selection
 

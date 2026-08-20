@@ -204,6 +204,21 @@ Do not include test files or a `--` separator. DDTest asks Cypress to resolve
 its effective configuration during planning and replaces any command-level
 `--spec` value with the files assigned to each worker during execution.
 
+## Playwright Support
+
+Use a command that invokes `playwright test` directly when selecting a config,
+projects, or other Playwright options:
+
+```bash
+ddtest run --platform javascript --framework playwright --command "pnpm exec playwright test --config apps/web/playwright.config.ts --project chromium"
+```
+
+Do not include test files or Playwright's `--shard` option. DDTest asks
+Playwright to list tests with its effective configuration, deduplicates files
+shared by multiple projects, and passes each worker only its assigned files.
+Configuration, project, grep, reporter, retry, and worker options are preserved.
+DDTest removes interactive UI options because workers run non-interactively.
+
 ## Cucumber Support
 
 Use a command that invokes `cucumber-js` directly when selecting profiles or
