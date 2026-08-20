@@ -25,7 +25,7 @@ const (
 	binPlaywrightPath          = "node_modules/.bin/playwright"
 	playwrightDiscoveryMarker  = "__DDTEST_PLAYWRIGHT_FILES__"
 	playwrightErrorMarker      = "__DDTEST_PLAYWRIGHT_ERROR__"
-	playwrightDefaultPattern   = "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+	playwrightDefaultPattern   = "**/*.{spec,test}.{js,jsx,ts,tsx,mjs,mts,cjs,cts}"
 	playwrightReporterFileMode = 0600
 )
 
@@ -360,20 +360,24 @@ func preparePlaywrightDiscoveryReporter() (string, error) {
 }
 
 func parsePlaywrightDiscoveryOutput(output []byte) (playwrightDiscoveryResult, error) {
-	text := string(output)
-	markerIndex := strings.LastIndex(text, playwrightDiscoveryMarker)
-	if markerIndex < 0 {
-		return playwrightDiscoveryResult{}, errors.New("Playwright discovery output did not contain a test file list")
+	var parseErr error
+	lines := strings.Split(string(output), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		encoded, ok := strings.CutPrefix(lines[i], playwrightDiscoveryMarker)
+		if !ok {
+			continue
+		}
+		var result playwrightDiscoveryResult
+		if err := json.Unmarshal([]byte(encoded), &result); err != nil {
+			parseErr = err
+			continue
+		}
+		return result, nil
 	}
-	encoded := text[markerIndex+len(playwrightDiscoveryMarker):]
-	if lineEnd := strings.IndexByte(encoded, '\n'); lineEnd >= 0 {
-		encoded = encoded[:lineEnd]
+	if parseErr != nil {
+		return playwrightDiscoveryResult{}, fmt.Errorf("failed to parse Playwright test file list: %w", parseErr)
 	}
-	var result playwrightDiscoveryResult
-	if err := json.Unmarshal([]byte(encoded), &result); err != nil {
-		return playwrightDiscoveryResult{}, fmt.Errorf("failed to parse Playwright test file list: %w", err)
-	}
-	return result, nil
+	return playwrightDiscoveryResult{}, errors.New("Playwright discovery output did not contain a test file list")
 }
 
 type exitCoder interface {

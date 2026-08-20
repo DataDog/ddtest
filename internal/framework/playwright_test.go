@@ -61,6 +61,10 @@ func TestPlaywrightFrameworkMetadata(t *testing.T) {
 	if playwright.TestPattern() != playwrightDefaultPattern {
 		t.Fatalf("TestPattern() = %q", playwright.TestPattern())
 	}
+	matcher, err := discovery.NewTestFileSetMatcher(discovery.TestFileSet{Pattern: playwright.TestPattern()}, "")
+	if err != nil || !matcher.Match("tests/example.spec.ts") || matcher.Match("tests/example.ts") {
+		t.Fatalf("default Playwright pattern did not match expected test files: %v", err)
+	}
 	if source, ok := playwright.SourceFileForSuite(" tests/a.spec.ts "); !ok || source != "tests/a.spec.ts" {
 		t.Fatalf("SourceFileForSuite() = %q, %v", source, ok)
 	}
@@ -144,12 +148,21 @@ func TestPlaywrightCommandConstruction(t *testing.T) {
 }
 
 func TestParsePlaywrightDiscoveryOutput(t *testing.T) {
-	output := []byte("config log\n" + playwrightDiscoveryMarker + `{"rootDir":"/repo","files":["/repo/z.spec.ts","/repo/a.test.ts"]}` + "\nother output")
+	root := "/repo/" + playwrightDiscoveryMarker
+	validPayload, err := json.Marshal(playwrightDiscoveryResult{
+		RootDir: root,
+		Files:   []string{"z.spec.ts", "a.test.ts"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := []byte("config log\n" + playwrightDiscoveryMarker + string(validPayload) + "\n" +
+		playwrightDiscoveryMarker + "not-json\nother output mentioning " + playwrightDiscoveryMarker)
 	result, err := parsePlaywrightDiscoveryOutput(output)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.RootDir != "/repo" || !slices.Equal(result.Files, []string{"/repo/z.spec.ts", "/repo/a.test.ts"}) {
+	if result.RootDir != root || !slices.Equal(result.Files, []string{"z.spec.ts", "a.test.ts"}) {
 		t.Fatalf("result = %#v", result)
 	}
 	if _, err := parsePlaywrightDiscoveryOutput([]byte("noise")); err == nil {
