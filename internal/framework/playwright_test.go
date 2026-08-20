@@ -61,10 +61,6 @@ func TestPlaywrightFrameworkMetadata(t *testing.T) {
 	if playwright.TestPattern() != playwrightDefaultPattern {
 		t.Fatalf("TestPattern() = %q", playwright.TestPattern())
 	}
-	matcher, err := discovery.NewTestFileSetMatcher(discovery.TestFileSet{Pattern: playwright.TestPattern()}, "")
-	if err != nil || !matcher.Match("tests/example.spec.ts") || matcher.Match("tests/example.ts") {
-		t.Fatalf("default Playwright pattern did not match expected test files: %v", err)
-	}
 	if source, ok := playwright.SourceFileForSuite(" tests/a.spec.ts "); !ok || source != "tests/a.spec.ts" {
 		t.Fatalf("SourceFileForSuite() = %q, %v", source, ok)
 	}

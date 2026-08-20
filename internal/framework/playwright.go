@@ -25,7 +25,7 @@ const (
 	binPlaywrightPath          = "node_modules/.bin/playwright"
 	playwrightDiscoveryMarker  = "__DDTEST_PLAYWRIGHT_FILES__"
 	playwrightErrorMarker      = "__DDTEST_PLAYWRIGHT_ERROR__"
-	playwrightDefaultPattern   = "**/*.{spec,test}.{js,jsx,ts,tsx,mjs,mts,cjs,cts}"
+	playwrightDefaultPattern   = "**/*.@(spec|test).?(c|m)[jt]s?(x)"
 	playwrightReporterFileMode = 0600
 )
 
