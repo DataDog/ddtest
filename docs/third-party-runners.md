@@ -81,6 +81,18 @@ if [ -s .testoptimization/runner/test-files.txt ]; then
 fi
 ```
 
+## Cucumber
+
+Load Test Optimization initialization and pass DDTest's feature list to
+`cucumber-js`:
+
+```bash
+export NODE_OPTIONS="-r dd-trace/ci/init${NODE_OPTIONS:+ $NODE_OPTIONS}"
+if [ -s .testoptimization/runner/test-files.txt ]; then
+  xargs ./node_modules/.bin/cucumber-js < .testoptimization/runner/test-files.txt
+fi
+```
+
 ## Custom Runners
 
 Read `.testoptimization/runner/test-files.txt` when your runner should handle

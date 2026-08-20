@@ -117,7 +117,7 @@ func (m *Mocha) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestF
 	if settings.GetTestsLocation() == "" && settings.GetTestsExcludePattern() == "" {
 		return discoveredFiles, nil
 	}
-	return filterMochaTestFiles(discoveredFiles, testFiles)
+	return filterJavaScriptTestFiles(discoveredFiles, testFiles)
 }
 
 func (m *Mocha) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
@@ -226,62 +226,5 @@ func parseMochaDiscoveryOutput(output []byte) ([]string, error) {
 	if err := json.Unmarshal([]byte(encodedFiles), &paths); err != nil {
 		return nil, fmt.Errorf("failed to parse Mocha test file list: %w", err)
 	}
-	return normalizeMochaTestFiles(paths), nil
-}
-
-func normalizeMochaTestFiles(paths []string) []string {
-	cwd, _ := os.Getwd()
-	if resolvedCwd, err := filepath.EvalSymlinks(cwd); err == nil {
-		cwd = resolvedCwd
-	}
-	files := make([]string, 0, len(paths))
-	for _, candidate := range paths {
-		testFile := strings.TrimSpace(candidate)
-		if testFile == "" {
-			continue
-		}
-		if filepath.IsAbs(testFile) && cwd != "" {
-			pathForRel := testFile
-			if resolvedPath, err := filepath.EvalSymlinks(testFile); err == nil {
-				pathForRel = resolvedPath
-			}
-			relativePath, err := filepath.Rel(cwd, pathForRel)
-			if err != nil || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
-				continue
-			}
-			testFile = relativePath
-		}
-		normalized := utils.NormalizePath(testFile)
-		if normalized == "" {
-			continue
-		}
-		if _, err := os.Stat(normalized); err != nil {
-			continue
-		}
-		files = append(files, normalized)
-	}
-	slices.Sort(files)
-	return slices.Compact(files)
-}
-
-func filterMochaTestFiles(testFiles []string, selectedTestFiles discovery.TestFileSet) ([]string, error) {
-	if settings.GetTestsExcludePattern() != "" {
-		selectedTestFiles.ExplicitFiles = nil
-	}
-	if settings.GetTestsLocation() == "" {
-		selectedTestFiles.Pattern = ""
-	}
-	matcher, err := discovery.NewTestFileSetMatcher(selectedTestFiles, settings.GetTestsExcludePattern())
-	if err != nil {
-		return nil, err
-	}
-	filtered := make([]string, 0, len(testFiles))
-	for _, testFile := range testFiles {
-		normalized := utils.NormalizePath(testFile)
-		if normalized != "" && matcher.MatchNormalizedPath(normalized) {
-			filtered = append(filtered, normalized)
-		}
-	}
-	slices.Sort(filtered)
-	return slices.Compact(filtered), nil
+	return normalizeJavaScriptTestFiles(paths), nil
 }
