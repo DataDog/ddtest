@@ -52,6 +52,11 @@ func TestLoadCommandOverride(t *testing.T) {
 			expected: []string{"cucumber-js", "--name", "checkout flow"},
 		},
 		{
+			name:     "double-quoted regular expression",
+			command:  `cucumber-js --name "^I see \d+ items$"`,
+			expected: []string{"cucumber-js", "--name", `^I see \d+ items$`},
+		},
+		{
 			name:     "escaped space",
 			command:  `cucumber-js --name checkout\ flow`,
 			expected: []string{"cucumber-js", "--name", "checkout flow"},
