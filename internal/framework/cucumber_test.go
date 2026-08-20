@@ -371,7 +371,7 @@ func TestParseCucumberMessagesRejectsMalformedLine(t *testing.T) {
 	if err := os.WriteFile(filename, []byte("{invalid}\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parseCucumberMessages(filename); err == nil || !strings.Contains(err.Error(), "line 1") {
+	if _, err := parseCucumberMessages(filename); err == nil || !strings.Contains(err.Error(), "failed to parse Cucumber discovery output") {
 		t.Fatalf("error = %v", err)
 	}
 }

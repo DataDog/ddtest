@@ -1,10 +1,10 @@
 package framework
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"os"
@@ -20,10 +20,9 @@ import (
 )
 
 const (
-	binCucumberPath          = "node_modules/.bin/cucumber-js"
-	cucumberPublishEnabled   = "CUCUMBER_PUBLISH_ENABLED"
-	cucumberDiscoveryMaxLine = 64 * 1024 * 1024
-	cucumberRedactedValue    = "[REDACTED]"
+	binCucumberPath        = "node_modules/.bin/cucumber-js"
+	cucumberPublishEnabled = "CUCUMBER_PUBLISH_ENABLED"
+	cucumberRedactedValue  = "[REDACTED]"
 )
 
 var cucumberValueOptions = map[string]bool{
@@ -156,7 +155,7 @@ func (c *Cucumber) DiscoverTestFiles(ctx context.Context, selectedFiles discover
 	if settings.GetTestsLocation() == "" && settings.GetTestsExcludePattern() == "" {
 		return discoveredFiles, nil
 	}
-	return filterCucumberTestFiles(discoveredFiles, selectedFiles)
+	return filterJavaScriptTestFiles(discoveredFiles, selectedFiles)
 }
 
 func (c *Cucumber) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
@@ -264,14 +263,14 @@ func parseCucumberMessages(filename string) ([]string, error) {
 
 	pickleURIs := make(map[string]string)
 	selectedPickles := make(map[string]struct{})
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), cucumberDiscoveryMaxLine)
-	line := 0
-	for scanner.Scan() {
-		line++
+	decoder := json.NewDecoder(file)
+	for {
 		var envelope cucumberEnvelope
-		if err := json.Unmarshal(scanner.Bytes(), &envelope); err != nil {
-			return nil, fmt.Errorf("failed to parse Cucumber discovery output at line %d: %w", line, err)
+		if err := decoder.Decode(&envelope); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("failed to parse Cucumber discovery output: %w", err)
 		}
 		if envelope.Pickle != nil && envelope.Pickle.ID != "" && envelope.Pickle.URI != "" {
 			pickleURIs[envelope.Pickle.ID] = envelope.Pickle.URI
@@ -280,68 +279,9 @@ func parseCucumberMessages(filename string) ([]string, error) {
 			selectedPickles[envelope.TestCase.PickleID] = struct{}{}
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed to scan Cucumber discovery output: %w", err)
-	}
-
 	files := make([]string, 0, len(selectedPickles))
 	for pickleID := range selectedPickles {
-		if uri := normalizeCucumberTestFile(pickleURIs[pickleID]); uri != "" {
-			files = append(files, uri)
-		}
+		files = append(files, pickleURIs[pickleID])
 	}
-	slices.Sort(files)
-	return slices.Compact(files), nil
-}
-
-func normalizeCucumberTestFile(candidate string) string {
-	testFile := strings.TrimSpace(candidate)
-	if testFile == "" {
-		return ""
-	}
-	cwd, _ := os.Getwd()
-	if resolvedCwd, err := filepath.EvalSymlinks(cwd); err == nil {
-		cwd = resolvedCwd
-	}
-	if filepath.IsAbs(testFile) && cwd != "" {
-		pathForRel := testFile
-		if resolvedPath, err := filepath.EvalSymlinks(testFile); err == nil {
-			pathForRel = resolvedPath
-		}
-		relativePath, err := filepath.Rel(cwd, pathForRel)
-		if err != nil || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
-			return ""
-		}
-		testFile = relativePath
-	}
-	normalized := utils.NormalizePath(testFile)
-	if normalized == "" {
-		return ""
-	}
-	if _, err := os.Stat(normalized); err != nil {
-		return ""
-	}
-	return normalized
-}
-
-func filterCucumberTestFiles(testFiles []string, selectedFiles discovery.TestFileSet) ([]string, error) {
-	if settings.GetTestsExcludePattern() != "" {
-		selectedFiles.ExplicitFiles = nil
-	}
-	if settings.GetTestsLocation() == "" {
-		selectedFiles.Pattern = ""
-	}
-	matcher, err := discovery.NewTestFileSetMatcher(selectedFiles, settings.GetTestsExcludePattern())
-	if err != nil {
-		return nil, err
-	}
-	filtered := make([]string, 0, len(testFiles))
-	for _, testFile := range testFiles {
-		normalized := utils.NormalizePath(testFile)
-		if normalized != "" && matcher.MatchNormalizedPath(normalized) {
-			filtered = append(filtered, normalized)
-		}
-	}
-	slices.Sort(filtered)
-	return slices.Compact(filtered), nil
+	return normalizeJavaScriptTestFiles(files), nil
 }

@@ -16,8 +16,8 @@ func loadCommandOverride() []string {
 
 	parts, err := shellquote.Split(command)
 	if err != nil {
-		slog.Warn("Command contains invalid quoting and will be ignored.", "original_command", command, "error", err)
-		return nil
+		slog.Warn("Command contains invalid quoting; falling back to whitespace parsing.", "error", err)
+		parts = strings.Fields(command)
 	}
 	if len(parts) == 0 {
 		return nil
