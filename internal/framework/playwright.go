@@ -142,11 +142,11 @@ func (p *Playwright) DiscoverTestFiles(ctx context.Context, selectedFiles discov
 		return nil, parseErr
 	}
 	p.discoveryRoot = discoveryResult.RootDir
-	discovered, err := normalizePlaywrightTestFiles(discoveryResult.Files)
-	if err != nil {
-		return nil, err
+	for i := range discoveryResult.Files {
+		discoveryResult.Files[i] = utils.NormalizePath(discoveryResult.Files[i])
 	}
-	return filterPlaywrightTestFiles(discovered, selectedFiles)
+	slices.Sort(discoveryResult.Files)
+	return filterPlaywrightTestFiles(slices.Compact(discoveryResult.Files), selectedFiles)
 }
 
 func (p *Playwright) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
@@ -234,36 +234,45 @@ func splitPlaywrightCommand(command string, baseArgs []string) ([]string, []stri
 	return slices.Clone(baseArgs), nil
 }
 
-var playwrightValueOptions = map[string]bool{
-	"--browser": true, "-c": true, "--config": true, "--global-timeout": true,
-	"-g": true, "--grep": true, "-G": true, "--grep-invert": true,
-	"--last-failed-file": true, "--max-failures": true, "--output": true,
-	"--repeat-each": true, "--reporter": true, "--retries": true, "--shard": true,
-	"--test-list": true, "--test-list-invert": true, "--timeout": true,
-	"--trace": true, "--tsconfig": true, "--ui-host": true, "--ui-port": true,
-	"--update-source-method": true, "-j": true, "--workers": true, "--run-agents": true,
+type playwrightOptionArity uint8
+
+const (
+	playwrightNoValue playwrightOptionArity = iota
+	playwrightSingleValue
+	playwrightOptionalValue
+	playwrightVariadicValue
+)
+
+var playwrightOptionArities = map[string]playwrightOptionArity{
+	"--browser": playwrightSingleValue, "-c": playwrightSingleValue, "--config": playwrightSingleValue,
+	"--global-timeout": playwrightSingleValue, "-g": playwrightSingleValue, "--grep": playwrightSingleValue,
+	"-G": playwrightSingleValue, "--grep-invert": playwrightSingleValue, "--last-failed-file": playwrightSingleValue,
+	"--max-failures": playwrightSingleValue, "--output": playwrightSingleValue, "--repeat-each": playwrightSingleValue,
+	"--reporter": playwrightSingleValue, "--retries": playwrightSingleValue, "--shard": playwrightSingleValue,
+	"--test-list": playwrightSingleValue, "--test-list-invert": playwrightSingleValue, "--timeout": playwrightSingleValue,
+	"--trace": playwrightSingleValue, "--tsconfig": playwrightSingleValue, "--ui-host": playwrightSingleValue,
+	"--ui-port": playwrightSingleValue, "--update-source-method": playwrightSingleValue, "-j": playwrightSingleValue,
+	"--workers": playwrightSingleValue, "--run-agents": playwrightSingleValue,
+
+	"--only-changed": playwrightOptionalValue, "-u": playwrightOptionalValue, "--update-snapshots": playwrightOptionalValue,
+
+	"--project": playwrightVariadicValue,
 }
 
-var playwrightVariadicValueOptions = map[string]bool{
-	"--project": true,
-}
+var playwrightRunOverrides = []string{"--shard", "--list", "--ui", "--ui-host", "--ui-port"}
 
-var playwrightOptionalValueOptions = map[string]bool{
-	"--only-changed": true, "-u": true, "--update-snapshots": true,
-}
+var playwrightDiscoveryOverrides = append(slices.Clone(playwrightRunOverrides), "--reporter", "--debug")
 
 func playwrightDiscoveryArgs(command string, baseArgs []string, reporterPath string) []string {
 	prefix, cliArgs := splitPlaywrightCommand(command, baseArgs)
-	filtered, tail := filterPlaywrightArgs(cliArgs, false)
 	args := append(prefix, "test")
-	args = append(args, filtered...)
+	args = append(args, filterPlaywrightArgs(cliArgs, playwrightDiscoveryOverrides, false)...)
 	args = append(args, "--list", "--reporter="+reporterPath)
-	return append(args, tail...)
+	return args
 }
 
 func playwrightRunArgs(command string, baseArgs, testFiles []string) []string {
 	prefix, cliArgs := splitPlaywrightCommand(command, baseArgs)
-	filtered, tail := filterPlaywrightArgs(cliArgs, true)
 	args := append(prefix, "test")
 	for _, testFile := range testFiles {
 		args = append(args, playwrightExactFileFilter(testFile))
@@ -271,73 +280,45 @@ func playwrightRunArgs(command string, baseArgs, testFiles []string) []string {
 	// --project has a variadic value in Playwright's CLI. Keep file filters
 	// before all preserved options so a trailing space-form --project value
 	// cannot consume them as additional project names.
-	args = append(args, filtered...)
-	return append(args, tail...)
+	return append(args, filterPlaywrightArgs(cliArgs, playwrightRunOverrides, true)...)
 }
 
-// filterPlaywrightArgs removes options that conflict with DDTest's discovery or
-// sharding. For execution, it also removes the user's original positional file
-// filters so they cannot re-add files that were assigned to another worker.
-func filterPlaywrightArgs(args []string, running bool) ([]string, []string) {
+func filterPlaywrightArgs(args, overridden []string, removeFiles bool) []string {
 	result := make([]string, 0, len(args))
-	for i := 0; i < len(args); i++ {
+	for i := 0; i < len(args); {
 		arg := args[i]
-		if arg == "--" {
-			return result, slices.Clone(args[i:])
+		name, _, _ := strings.Cut(arg, "=")
+		end := playwrightArgumentEnd(args, i)
+		if !slices.Contains(overridden, name) && (!removeFiles || strings.HasPrefix(arg, "-")) {
+			result = append(result, args[i:end]...)
 		}
-		name := arg
-		if before, _, ok := strings.Cut(arg, "="); ok {
-			name = before
-		}
-		remove := name == "--shard" || name == "--list" || name == "--ui" || name == "--ui-host" || name == "--ui-port" ||
-			(!running && (name == "--reporter" || name == "--debug"))
+		i = end
+	}
+	return result
+}
 
-		if playwrightValueOptions[name] {
-			if !remove {
-				result = append(result, arg)
-			}
-			if arg == name && i+1 < len(args) {
-				i++
-				if !remove {
-					result = append(result, args[i])
-				}
-			}
-			continue
+func playwrightArgumentEnd(args []string, index int) int {
+	name, _, hasInlineValue := strings.Cut(args[index], "=")
+	end := index + 1
+	if hasInlineValue {
+		return end
+	}
+
+	switch playwrightOptionArities[name] {
+	case playwrightSingleValue:
+		if end < len(args) {
+			end++
 		}
-		if playwrightVariadicValueOptions[name] {
-			if !remove {
-				result = append(result, arg)
-			}
-			if arg == name {
-				for i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-					i++
-					if !remove {
-						result = append(result, args[i])
-					}
-				}
-			}
-			continue
+	case playwrightOptionalValue:
+		if end < len(args) && !strings.HasPrefix(args[end], "-") {
+			end++
 		}
-		if playwrightOptionalValueOptions[name] {
-			if !remove {
-				result = append(result, arg)
-			}
-			if arg == name && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				i++
-				if !remove {
-					result = append(result, args[i])
-				}
-			}
-			continue
-		}
-		if running && !strings.HasPrefix(arg, "-") {
-			continue
-		}
-		if !remove {
-			result = append(result, arg)
+	case playwrightVariadicValue:
+		for end < len(args) && !strings.HasPrefix(args[end], "-") {
+			end++
 		}
 	}
-	return result, nil
+	return end
 }
 
 func playwrightExactFileFilter(testFile string) string {
@@ -432,41 +413,6 @@ func isPlaywrightNoTestsMessage(message string) bool {
 	firstLine, _, _ := strings.Cut(trimmed, "\n")
 	firstLine = strings.TrimSpace(strings.TrimPrefix(firstLine, "Error:"))
 	return strings.TrimSuffix(firstLine, ".") == "No tests found"
-}
-
-func normalizePlaywrightTestFiles(testFiles []string) ([]string, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve working directory: %w", err)
-	}
-	if resolvedCwd, resolveErr := filepath.EvalSymlinks(cwd); resolveErr == nil {
-		cwd = resolvedCwd
-	}
-	result := make([]string, 0, len(testFiles))
-	for _, testFile := range testFiles {
-		path := filepath.FromSlash(testFile)
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(cwd, path)
-		}
-		relative, err := filepath.Rel(cwd, path)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve Playwright test file %q: %w", testFile, err)
-		}
-		// macOS commonly exposes the same temporary directory through /var and
-		// /private/var. Canonicalize only when the original path appears outside
-		// the working directory so ordinary spec-directory symlinks stay intact.
-		if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			if resolvedPath, resolveErr := filepath.EvalSymlinks(path); resolveErr == nil {
-				if resolvedRelative, relErr := filepath.Rel(cwd, resolvedPath); relErr == nil &&
-					resolvedRelative != ".." && !strings.HasPrefix(resolvedRelative, ".."+string(filepath.Separator)) {
-					relative = resolvedRelative
-				}
-			}
-		}
-		result = append(result, utils.NormalizePath(relative))
-	}
-	slices.Sort(result)
-	return slices.Compact(result), nil
 }
 
 func filterPlaywrightTestFiles(testFiles []string, selectedFiles discovery.TestFileSet) ([]string, error) {

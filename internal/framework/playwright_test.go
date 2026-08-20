@@ -2,6 +2,7 @@ package framework
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -107,13 +108,12 @@ func TestPlaywrightCommandConstruction(t *testing.T) {
 	baseArgs := []string{
 		"exec", "playwright", "test", "original.spec.ts", "--config", "apps/web/playwright.config.ts",
 		"--project", "chromium", "firefox", "--grep", "smoke", "--reporter", "html",
-		"--shard=1/2", "--ui", "--ui-port", "3000", "--debug", "--", "custom-argument",
+		"--shard=1/2", "--ui", "--ui-port", "3000", "--debug",
 	}
 	discoveryArgs := playwrightDiscoveryArgs("pnpm", baseArgs, reporter)
 	wantDiscovery := []string{
 		"exec", "playwright", "test", "original.spec.ts", "--config", "apps/web/playwright.config.ts",
 		"--project", "chromium", "firefox", "--grep", "smoke", "--list", "--reporter=" + reporter,
-		"--", "custom-argument",
 	}
 	if !slices.Equal(discoveryArgs, wantDiscovery) {
 		t.Fatalf("playwrightDiscoveryArgs() = %v, want %v", discoveryArgs, wantDiscovery)
@@ -124,7 +124,7 @@ func TestPlaywrightCommandConstruction(t *testing.T) {
 		"--config", "apps/web/playwright.config.ts", "--project", "chromium", "firefox",
 		"--grep", "smoke", "--reporter", "html", "--debug",
 	}
-	if len(runArgs) < len(wantRunOptions)+7 || !slices.Equal(runArgs[:3], []string{"exec", "playwright", "test"}) {
+	if len(runArgs) < len(wantRunOptions)+5 || !slices.Equal(runArgs[:3], []string{"exec", "playwright", "test"}) {
 		t.Fatalf("playwrightRunArgs() = %v", runArgs)
 	}
 	if slices.Contains(runArgs, "original.spec.ts") || slices.Contains(runArgs, "--shard=1/2") || slices.Contains(runArgs, "--ui-port") {
@@ -136,10 +136,6 @@ func TestPlaywrightCommandConstruction(t *testing.T) {
 	if !strings.HasPrefix(runArgs[4], "^") || !slices.Equal(runArgs[5:5+len(wantRunOptions)], wantRunOptions) {
 		t.Fatalf("file filters must precede preserved options: %v", runArgs)
 	}
-	if !slices.Equal(runArgs[len(runArgs)-2:], []string{"--", "custom-argument"}) {
-		t.Fatalf("custom argv tail was not preserved: %v", runArgs)
-	}
-
 	trailingProjectArgs := playwrightRunArgs("playwright", []string{"test", "--project", "chromium"}, []string{"tests/a.spec.ts"})
 	if len(trailingProjectArgs) != 4 || !strings.HasPrefix(trailingProjectArgs[1], "^") ||
 		!slices.Equal(trailingProjectArgs[2:], []string{"--project", "chromium"}) {
@@ -168,19 +164,23 @@ func TestPlaywrightDiscoverTestFilesUsesNativeListAndNormalizes(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
 	files := []string{
-		filepath.Join(root, "apps/web/tests/b.test.ts"),
-		filepath.Join(root, "apps/web/tests/a.spec.ts"),
-		filepath.Join(root, "apps/web/tests/a.spec.ts"),
+		"apps/web/tests/b.test.ts",
+		"apps/web/tests/a.spec.ts",
+		"apps/web/tests/a.spec.ts",
 	}
 	if err := os.MkdirAll(filepath.Join(root, "apps/web/tests"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	for _, file := range files[:2] {
-		if err := os.WriteFile(file, []byte("test\n"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(root, file), []byte("test\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	payload := playwrightDiscoveryMarker + `{"rootDir":"` + root + `","files":["` + strings.Join(files, `","`) + `"]}`
+	encoded, err := json.Marshal(playwrightDiscoveryResult{RootDir: root, Files: files})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := playwrightDiscoveryMarker + string(encoded)
 	executor := &playwrightCommandExecutor{output: []byte("noise\n" + payload)}
 	playwright := &Playwright{
 		executor: executor,

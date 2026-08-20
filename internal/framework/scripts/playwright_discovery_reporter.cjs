@@ -1,3 +1,5 @@
+const path = require('path')
+
 class DDTestPlaywrightDiscoveryReporter {
   printsToStdio() {
     return false
@@ -23,7 +25,7 @@ class DDTestPlaywrightDiscoveryReporter {
     }
     const primarySuites = projectSuites.filter(projectSuite => !dependencyProjects.has(projectSuite.project().name))
     const tests = primarySuites.length ? primarySuites.flatMap(projectSuite => projectSuite.allTests()) : suite.allTests()
-    const files = [...new Set(tests.map(test => test.location.file))]
+    const files = tests.map(test => path.relative(process.cwd(), test.location.file))
     process.stdout.write('__DDTEST_PLAYWRIGHT_FILES__' + JSON.stringify({ rootDir: config.rootDir, files }) + '\n')
   }
 }
