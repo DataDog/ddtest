@@ -167,6 +167,43 @@ func TestCucumberArgsWithoutPaths(t *testing.T) {
 	}
 }
 
+func TestRedactCucumberArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "separate value",
+			args: []string{"--publish-token", "secret-token", "--profile", "ci"},
+			want: []string{"--publish-token", cucumberRedactedValue, "--profile", "ci"},
+		},
+		{
+			name: "equals value",
+			args: []string{"--publish-token=secret-token", "--profile", "ci"},
+			want: []string{"--publish-token=" + cucumberRedactedValue, "--profile", "ci"},
+		},
+		{
+			name: "no token",
+			args: []string{"--profile", "ci"},
+			want: []string{"--profile", "ci"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			original := slices.Clone(test.args)
+			got := redactCucumberArgs(test.args)
+			if !slices.Equal(got, test.want) {
+				t.Fatalf("redactCucumberArgs() = %v, want %v", got, test.want)
+			}
+			if !slices.Equal(test.args, original) {
+				t.Fatalf("redactCucumberArgs() mutated input: %v", test.args)
+			}
+		})
+	}
+}
+
 func TestCucumberDiscoverTestFilesUsesSelectedTestCases(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)

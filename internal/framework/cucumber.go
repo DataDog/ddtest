@@ -23,6 +23,7 @@ const (
 	binCucumberPath          = "node_modules/.bin/cucumber-js"
 	cucumberPublishEnabled   = "CUCUMBER_PUBLISH_ENABLED"
 	cucumberDiscoveryMaxLine = 64 * 1024 * 1024
+	cucumberRedactedValue    = "[REDACTED]"
 )
 
 var cucumberValueOptions = map[string]bool{
@@ -138,7 +139,7 @@ func (c *Cucumber) DiscoverTestFiles(ctx context.Context, selectedFiles discover
 		"--parallel", "0",
 		"--format", "message:"+filepath.Base(messagePath),
 	)
-	slog.Info("Discovering Cucumber test files with command", "command", command, "args", args)
+	slog.Info("Discovering Cucumber test files with command", "command", command, "args", redactCucumberArgs(args))
 	output, err := c.executor.CombinedOutput(ctx, command, args, c.discoveryEnv())
 	if err != nil {
 		message := strings.TrimSpace(string(output))
@@ -170,7 +171,7 @@ func (c *Cucumber) RunTests(ctx context.Context, testFiles []string, envMap map[
 	args := cucumberArgsWithoutPaths(baseArgs, cliArgs)
 	args = append(args, testFiles...)
 
-	slog.Info("Running Cucumber tests with command", "command", command, "args", args)
+	slog.Info("Running Cucumber tests with command", "command", command, "args", redactCucumberArgs(args))
 	mergedEnv := make(map[string]string)
 	maps.Copy(mergedEnv, c.platformEnv)
 	maps.Copy(mergedEnv, envMap)
@@ -239,6 +240,19 @@ func cucumberArgsWithoutPaths(baseArgs, cliArgs []string) []string {
 		}
 	}
 	return args
+}
+
+func redactCucumberArgs(args []string) []string {
+	redacted := slices.Clone(args)
+	for i, arg := range redacted {
+		switch {
+		case arg == "--publish-token" && i+1 < len(redacted):
+			redacted[i+1] = cucumberRedactedValue
+		case strings.HasPrefix(arg, "--publish-token="):
+			redacted[i] = "--publish-token=" + cucumberRedactedValue
+		}
+	}
+	return redacted
 }
 
 func parseCucumberMessages(filename string) ([]string, error) {
