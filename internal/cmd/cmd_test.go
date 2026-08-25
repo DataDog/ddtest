@@ -233,9 +233,16 @@ func TestRunPlanCommand(t *testing.T) {
 
 	telemetryClient := &fakeTelemetryClient{}
 	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
+	commandContext, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	command := &cobra.Command{}
+	command.SetContext(commandContext)
 	calls := 0
 	planCommand = func(ctx context.Context, got telemetry.Client) error {
 		calls++
+		if ctx != commandContext {
+			t.Fatal("plan command did not receive the Cobra command context")
+		}
 		telemetry.RecordCLICommandAttributes(got, attributes)
 		return nil
 	}
@@ -243,7 +250,7 @@ func TestRunPlanCommand(t *testing.T) {
 		t.Fatalf("exitProcess(%d) should not be called", code)
 	}
 
-	runPlanCommand(&cobra.Command{}, nil)
+	runPlanCommand(command, nil)
 
 	if calls != 1 {
 		t.Fatalf("expected plan command to be called once, got %d", calls)
@@ -309,6 +316,10 @@ func TestRunTestCommand(t *testing.T) {
 
 	telemetryClient := &fakeTelemetryClient{}
 	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
+	commandContext, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	command := &cobra.Command{}
+	command.SetContext(commandContext)
 	fake := &fakeCommandRunner{}
 	newRunner = func(got telemetry.Client) runnerpkg.Runner {
 		telemetry.RecordCLICommandAttributes(got, attributes)
@@ -318,10 +329,13 @@ func TestRunTestCommand(t *testing.T) {
 		t.Fatalf("exitProcess(%d) should not be called", code)
 	}
 
-	runTestCommand(&cobra.Command{}, nil)
+	runTestCommand(command, nil)
 
 	if fake.calls != 1 {
 		t.Fatalf("expected runner to be called once, got %d", fake.calls)
+	}
+	if fake.ctx != commandContext {
+		t.Fatal("test runner did not receive the Cobra command context")
 	}
 	if telemetryClient.flushCalls != 1 {
 		t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
@@ -680,6 +694,7 @@ func TestInitFunction(t *testing.T) {
 type fakeCommandRunner struct {
 	calls int
 	err   error
+	ctx   context.Context
 }
 
 func detectedCLICommandAttributes() telemetry.CLICommandAttributes {
@@ -711,6 +726,7 @@ func cliMetricTags(command, exitCode string, errorCode errcode.Code, attributes 
 
 func (f *fakeCommandRunner) Run(ctx context.Context) error {
 	f.calls++
+	f.ctx = ctx
 	return f.err
 }
 

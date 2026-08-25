@@ -2718,6 +2718,33 @@ func TestTestPlanner_PreparePlanningData_CancelsFullDiscoveryWhenNoTIASkippableT
 	}
 }
 
+func TestTestPlanner_PreparePlanningData_ReturnsParentContextCancellation(t *testing.T) {
+	t.Chdir(t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	mockFramework := &longRunningDiscoveryFramework{
+		MockFramework: MockFramework{
+			FrameworkName: "rspec",
+			TestFiles:     []string{"spec/local_spec.rb"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		testOptimizationClientRequiringFullDiscovery(),
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.PreparePlanningData(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("PreparePlanningData() error = %v, want context cancellation", err)
+	}
+}
+
 func TestTestPlanner_PreparePlanningData_RunsFullDiscoveryInParallelWithBackend(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()

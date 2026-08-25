@@ -452,6 +452,9 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	if err := g.Wait(); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	// Full discovery starts optimistically in parallel. If it finishes before
 	// backend data cancels it, use it even when TIA has no skips: full discovery

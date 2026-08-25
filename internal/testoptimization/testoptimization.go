@@ -72,7 +72,9 @@ func NewTestOptimizationClientWithTelemetry(testSkippingLevel settings.TestSkipp
 	newAPITransport := func(serviceName string, level settings.TestSkippingLevel) api.Transport {
 		return api.NewTransportWithTelemetry(serviceName, level, telemetryClient)
 	}
-	client := newTestOptimizationClientWithTestSkippingLevel(nil, newAPITransport, nil, true, testSkippingLevel)
+	// The CLI owns signal cancellation so in-flight discovery commands can stop
+	// their process groups before the process exits.
+	client := newTestOptimizationClientWithTestSkippingLevel(nil, newAPITransport, nil, false, testSkippingLevel)
 	client.gitCommands = git.NewCommandRunner(telemetry.NewGitCommandTelemetry(telemetryClient))
 	client.telemetryClient = telemetryClient
 	return client

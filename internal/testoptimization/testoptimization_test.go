@@ -229,7 +229,10 @@ func TestNewTestOptimizationClient(t *testing.T) {
 	client := NewTestOptimizationClient()
 
 	if client == nil {
-		t.Error("NewTestOptimizationClient() should return non-nil client")
+		t.Fatal("NewTestOptimizationClient() should return non-nil client")
+	}
+	if client.enableSignalHandler {
+		t.Error("CLI-owned signal cancellation should disable the legacy process-exit handler")
 	}
 }
 
