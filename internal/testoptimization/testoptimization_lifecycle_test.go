@@ -4,11 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -110,7 +108,6 @@ func TestNewTestOptimizationClientWithTestSkippingLevelPropagatesToTransportFact
 			return mockTransport
 		},
 		func() (int64, error) { return 0, nil },
-		false,
 		settings.TestSkippingLevelSuite,
 	)
 
@@ -153,7 +150,6 @@ func TestEnsureSettingsInitializationRequireGitRetriesAfterUpload(t *testing.T) 
 		transport,
 		nil,
 		func() (int64, error) { return 42, nil },
-		false,
 	)
 
 	settings := client.GetSettings()
@@ -166,7 +162,7 @@ func TestEnsureSettingsInitializationRequireGitRetriesAfterUpload(t *testing.T) 
 }
 
 func TestEnsureSettingsInitializationHandlesMissingTransportAndErrors(t *testing.T) {
-	client := newTestOptimizationClient(nil, func(string, settings.TestSkippingLevel) api.Transport { return nil }, nil, false)
+	client := newTestOptimizationClient(nil, func(string, settings.TestSkippingLevel) api.Transport { return nil }, nil)
 	if settings := client.GetSettings(); settings != nil {
 		t.Fatalf("expected nil settings without transport, got %#v", settings)
 	}
@@ -174,7 +170,7 @@ func TestEnsureSettingsInitializationHandlesMissingTransportAndErrors(t *testing
 	transport := &settingsSequenceTransport{
 		errors: []error{errors.New("settings failed")},
 	}
-	client = newTestOptimizationClient(transport, nil, func() (int64, error) { return 0, nil }, false)
+	client = newTestOptimizationClient(transport, nil, func() (int64, error) { return 0, nil })
 	if settings := client.GetSettings(); settings != nil {
 		t.Fatalf("expected nil settings on transport error, got %#v", settings)
 	}
@@ -187,7 +183,7 @@ func TestEnsureSettingsInitializationHandlesNilResponsesAfterUpload(t *testing.T
 	transport := &settingsSequenceTransport{
 		settings: []*api.SettingsResponseData{nil},
 	}
-	client := newTestOptimizationClient(transport, nil, func() (int64, error) { return 0, nil }, false)
+	client := newTestOptimizationClient(transport, nil, func() (int64, error) { return 0, nil })
 	if settings := client.GetSettings(); settings != nil {
 		t.Fatalf("expected nil settings from nil response, got %#v", settings)
 	}
@@ -198,7 +194,7 @@ func TestEnsureSettingsInitializationHandlesNilResponsesAfterUpload(t *testing.T
 	transport = &settingsSequenceTransport{
 		settings: []*api.SettingsResponseData{{RequireGit: true}, nil},
 	}
-	client = newTestOptimizationClient(transport, nil, func() (int64, error) { return 0, nil }, false)
+	client = newTestOptimizationClient(transport, nil, func() (int64, error) { return 0, nil })
 	if settings := client.GetSettings(); settings != nil {
 		t.Fatalf("expected nil settings when require-git retry returns nil, got %#v", settings)
 	}
@@ -211,7 +207,7 @@ func TestEnsureSettingsInitializationHandlesNilResponsesAfterUpload(t *testing.T
 		settings: []*api.SettingsResponseData{{RequireGit: true}, nil},
 		errors:   []error{nil, secondErr},
 	}
-	client = newTestOptimizationClient(transport, nil, func() (int64, error) { return 0, nil }, false)
+	client = newTestOptimizationClient(transport, nil, func() (int64, error) { return 0, nil })
 	if settings := client.GetSettings(); settings != nil {
 		t.Fatalf("expected nil settings when require-git retry fails, got %#v", settings)
 	}
@@ -230,11 +226,7 @@ func TestEnsureTestOptimizationSessionInitializationBranches(t *testing.T) {
 	t.Setenv("DD_TRACE_SAMPLE_RATE", "")
 	environment.ResetCITags()
 	t.Cleanup(environment.ResetCITags)
-	t.Cleanup(func() {
-		signal.Reset(syscall.SIGINT, syscall.SIGTERM)
-	})
-
-	client := newTestOptimizationClient(&MockAPIClient{}, nil, func() (int64, error) { return 0, nil }, true)
+	client := newTestOptimizationClient(&MockAPIClient{}, nil, func() (int64, error) { return 0, nil })
 	client.ensureTestOptimizationSessionInitialized()
 
 	if got := os.Getenv(constants.TestOptimizationEnabledEnvironmentVariable); got != "1" {
@@ -284,7 +276,7 @@ func TestTraceDebugEnabled(t *testing.T) {
 }
 
 func TestEnsureTestOptimizationInitializedHandlesNilSettingsAndEndpointErrors(t *testing.T) {
-	client := newTestOptimizationClient(&MockAPIClient{}, nil, func() (int64, error) { return 0, nil }, false)
+	client := newTestOptimizationClient(&MockAPIClient{}, nil, func() (int64, error) { return 0, nil })
 	client.ensureTestOptimizationInitialized()
 
 	settings := &api.SettingsResponseData{
@@ -417,12 +409,12 @@ func TestApplyEnvironmentOverridesInvalidEnvValuesUseDefaults(t *testing.T) {
 
 func TestRepositoryUploadHelpers(t *testing.T) {
 	uploadErr := errors.New("upload failed")
-	client := newTestOptimizationClient(nil, nil, func() (int64, error) { return 0, uploadErr }, false)
+	client := newTestOptimizationClient(nil, nil, func() (int64, error) { return 0, uploadErr })
 	if bytes, err := client.uploadRepositoryChanges(); bytes != 0 || !errors.Is(err, uploadErr) {
 		t.Fatalf("uploadRepositoryChanges() = %d, %v", bytes, err)
 	}
 
-	client = newTestOptimizationClient(nil, nil, func() (int64, error) { return 99, nil }, false)
+	client = newTestOptimizationClient(nil, nil, func() (int64, error) { return 99, nil })
 	if bytes, err := client.uploadRepositoryChanges(); bytes != 99 || err != nil {
 		t.Fatalf("uploadRepositoryChanges() = %d, %v", bytes, err)
 	}
@@ -434,7 +426,7 @@ func TestRepositoryUploadHelpers(t *testing.T) {
 		t.Fatal("uploadRepositoryChangesAsync() did not finish")
 	}
 
-	client = newTestOptimizationClient(&MockAPIClient{}, nil, nil, false)
+	client = newTestOptimizationClient(&MockAPIClient{}, nil, nil)
 	if bytes, err := client.sendObjectsPackFile("commit", nil, nil); bytes != 0 || err != nil {
 		t.Fatalf("sendObjectsPackFile() empty = %d, %v", bytes, err)
 	}
@@ -442,7 +434,7 @@ func TestRepositoryUploadHelpers(t *testing.T) {
 
 func TestRepositoryUploadAsyncErrorAndGitFallback(t *testing.T) {
 	uploadErr := errors.New("upload failed")
-	client := newTestOptimizationClient(nil, nil, func() (int64, error) { return 0, uploadErr }, false)
+	client := newTestOptimizationClient(nil, nil, func() (int64, error) { return 0, uploadErr })
 	done := client.uploadRepositoryChangesAsync()
 	select {
 	case <-done:
@@ -450,7 +442,7 @@ func TestRepositoryUploadAsyncErrorAndGitFallback(t *testing.T) {
 		t.Fatal("uploadRepositoryChangesAsync() with error did not finish")
 	}
 
-	client = newTestOptimizationClient(nil, nil, nil, false)
+	client = newTestOptimizationClient(nil, nil, nil)
 	bytes, err := client.uploadRepositoryChanges()
 	if err != nil || bytes != 0 {
 		t.Fatalf("expected git fallback noop without transport, got bytes=%d err=%v", bytes, err)
@@ -464,7 +456,7 @@ func TestUploadRepositoryChangesFromGitAllCommitsKnown(t *testing.T) {
 	localCommits := []string{repo.Commits[1], repo.Commits[0]}
 
 	mockTransport := &MockAPIClient{RemoteCommits: localCommits}
-	client := newTestOptimizationClient(mockTransport, nil, nil, false)
+	client := newTestOptimizationClient(mockTransport, nil, nil)
 
 	bytes, err := client.uploadRepositoryChangesFromGit()
 	if err != nil {
@@ -491,7 +483,7 @@ func TestUploadRepositoryChangesFromGitSearchError(t *testing.T) {
 	localCommits := []string{repo.Commits[1], repo.Commits[0]}
 
 	searchErr := errors.New("search commits failed")
-	client := newTestOptimizationClient(&MockAPIClient{GetCommitsErr: searchErr}, nil, nil, false)
+	client := newTestOptimizationClient(&MockAPIClient{GetCommitsErr: searchErr}, nil, nil)
 
 	bytes, err := client.uploadRepositoryChangesFromGit()
 	if bytes != 0 {
@@ -516,7 +508,7 @@ func TestUploadRepositoryChangesFromGitUploadsMissingCommits(t *testing.T) {
 		RemoteCommits:      remoteCommits,
 		SendPackFilesBytes: 123,
 	}
-	client := newTestOptimizationClient(mockTransport, nil, nil, false)
+	client := newTestOptimizationClient(mockTransport, nil, nil)
 
 	bytes, err := client.uploadRepositoryChangesFromGit()
 	if err != nil {
@@ -555,7 +547,7 @@ func TestUploadRepositoryChangesFromGitUploadsMissingCommits(t *testing.T) {
 }
 
 func TestUploadRepositoryChangesFromGitWithoutTransportIsNoop(t *testing.T) {
-	client := newTestOptimizationClient(nil, nil, nil, false)
+	client := newTestOptimizationClient(nil, nil, nil)
 	bytes, err := client.uploadRepositoryChangesFromGit()
 	if err != nil || bytes != 0 {
 		t.Fatalf("expected noop without transport, got bytes=%d err=%v", bytes, err)
@@ -568,7 +560,7 @@ func TestGetSearchCommitsBranches(t *testing.T) {
 		t.Skip("no local git commits available")
 	}
 
-	client := newTestOptimizationClient(nil, nil, nil, false)
+	client := newTestOptimizationClient(nil, nil, nil)
 	response, err := client.getSearchCommits()
 	if err != nil {
 		t.Fatalf("getSearchCommits() without transport returned error: %v", err)
@@ -579,7 +571,7 @@ func TestGetSearchCommitsBranches(t *testing.T) {
 
 	searchErr := errors.New("search failed")
 	mockTransport := &MockAPIClient{GetCommitsErr: searchErr}
-	client = newTestOptimizationClient(mockTransport, nil, nil, false)
+	client = newTestOptimizationClient(mockTransport, nil, nil)
 	response, err = client.getSearchCommits()
 	if !errors.Is(err, searchErr) {
 		t.Fatalf("expected search error, got response=%#v err=%v", response, err)
@@ -601,7 +593,7 @@ func TestGetSearchCommitsWithoutGitRepository(t *testing.T) {
 		t.Fatalf("chdir temp dir: %v", err)
 	}
 
-	client := newTestOptimizationClient(&MockAPIClient{}, nil, nil, false)
+	client := newTestOptimizationClient(&MockAPIClient{}, nil, nil)
 	response, err := client.getSearchCommits()
 	if err != nil {
 		t.Fatalf("getSearchCommits() returned error: %v", err)
@@ -718,7 +710,7 @@ func TestSearchCommitsResponseHelpers(t *testing.T) {
 
 func TestExitTestOptimizationRunsCloseActionsOnce(t *testing.T) {
 	var calls []string
-	client := newTestOptimizationClient(nil, nil, nil, false)
+	client := newTestOptimizationClient(nil, nil, nil)
 	client.pushTestOptimizationCloseAction(func() { calls = append(calls, "first") })
 	client.pushTestOptimizationCloseAction(func() { calls = append(calls, "second") })
 

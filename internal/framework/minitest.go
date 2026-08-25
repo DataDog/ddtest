@@ -54,7 +54,7 @@ func (m *Minitest) DiscoverTests(ctx context.Context, testFiles discovery.TestFi
 		return []testoptimization.Test{}, nil
 	}
 
-	executable, args, isRails := m.getMinitestCommand()
+	executable, args, isRails := m.getMinitestCommand(ctx)
 
 	envMap := make(map[string]string)
 	maps.Copy(envMap, m.platformEnv)
@@ -90,7 +90,7 @@ func (m *Minitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Te
 }
 
 func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
-	command, args, isRails := m.getMinitestCommand()
+	command, args, isRails := m.getMinitestCommand(ctx)
 	slog.Info("Running tests with command", "command", command, "args", args)
 
 	// Add test files if provided
@@ -114,9 +114,9 @@ func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[
 }
 
 // isRailsApplication determines if the current project is a Rails application
-func (m *Minitest) isRailsApplication() bool {
+func (m *Minitest) isRailsApplication(ctx context.Context) bool {
 	// Check if rails gem is installed
-	output, err := m.executor.CombinedOutput(context.Background(), "bundle", []string{"show", "rails"}, nil)
+	output, err := m.executor.CombinedOutput(ctx, "bundle", []string{"show", "rails"}, nil)
 	if err != nil {
 		slog.Debug("Not a Rails application: bundle show rails failed", "output", string(output), "error", err)
 		return false
@@ -134,7 +134,7 @@ func (m *Minitest) isRailsApplication() bool {
 	}
 
 	// Check if rails command works
-	output, err = m.executor.CombinedOutput(context.Background(), "bundle", []string{"exec", "rails", "version"}, nil)
+	output, err = m.executor.CombinedOutput(ctx, "bundle", []string{"exec", "rails", "version"}, nil)
 	if err != nil {
 		slog.Debug("Not a Rails application: bundle exec rails version failed", "output", string(output), "error", err)
 		return false
@@ -153,8 +153,8 @@ func (m *Minitest) isRailsApplication() bool {
 
 // getMinitestCommand determines whether to use rails test or rake test
 // Returns: command, args, isRails
-func (m *Minitest) getMinitestCommand() (string, []string, bool) {
-	isRails := m.isRailsApplication()
+func (m *Minitest) getMinitestCommand(ctx context.Context) (string, []string, bool) {
+	isRails := m.isRailsApplication(ctx)
 	if len(m.commandOverride) > 0 {
 		return m.commandOverride[0], m.commandOverride[1:], isRails
 	}

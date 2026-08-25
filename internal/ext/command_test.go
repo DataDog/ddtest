@@ -3,6 +3,7 @@ package ext
 import (
 	"context"
 	"os"
+	"os/exec"
 	"strings"
 	"syscall"
 	"testing"
@@ -207,6 +208,47 @@ func TestDefaultCommandExecutor_Run_WithEnvMap(t *testing.T) {
 	}
 }
 
+func TestDefaultCommandExecutor_Run_DoesNotInheritStdin(t *testing.T) {
+	replaceStdin(t, "unexpected input\n")
+
+	err := (&DefaultCommandExecutor{}).Run(
+		context.Background(),
+		"sh",
+		[]string{"-c", `if IFS= read -r line; then exit 1; fi`},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("expected disconnected stdin to return EOF, got %v", err)
+	}
+}
+
+func TestDefaultCommandExecutor_Run_RelineHandlesDisconnectedStdin(t *testing.T) {
+	rubyPath, err := exec.LookPath("ruby")
+	if err != nil {
+		t.Skip("Ruby is required to test Reline")
+	}
+	if err := exec.Command(rubyPath, "-rreline", "-e", "exit").Run(); err != nil {
+		t.Skipf("Reline is unavailable: %v", err)
+	}
+
+	replaceStdin(t, "unexpected input\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err = (&DefaultCommandExecutor{}).Run(
+		ctx,
+		rubyPath,
+		[]string{
+			"-rreline",
+			"-e",
+			`Reline.output = File.open(File::NULL, "w"); abort "expected Reline to receive EOF" unless Reline.readline("", false).nil?`,
+		},
+		map[string]string{"TERM": "xterm-256color"},
+	)
+	if err != nil {
+		t.Fatalf("Reline did not handle disconnected stdin: %v", err)
+	}
+}
+
 func TestDefaultCommandExecutor_Run_ProcessCompletesNormally(t *testing.T) {
 	executor := &DefaultCommandExecutor{}
 
@@ -337,4 +379,29 @@ func TestDefaultCommandExecutor_Run_SignalForwardingSIGTERM(t *testing.T) {
 	}
 
 	t.Logf("Process correctly terminated with: %v", err)
+}
+
+func replaceStdin(t *testing.T, contents string) {
+	t.Helper()
+
+	stdin, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stdin pipe: %v", err)
+	}
+	if _, err := writer.WriteString(contents); err != nil {
+		_ = stdin.Close()
+		_ = writer.Close()
+		t.Fatalf("write stdin pipe: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		_ = stdin.Close()
+		t.Fatalf("close stdin writer: %v", err)
+	}
+
+	originalStdin := os.Stdin
+	os.Stdin = stdin
+	t.Cleanup(func() {
+		os.Stdin = originalStdin
+		_ = stdin.Close()
+	})
 }

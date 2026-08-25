@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
+	"sync"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/buildinfo"
@@ -134,7 +136,7 @@ func runPersistentPreRun(cmd *cobra.Command, _ []string) error {
 		if !ok {
 			return err
 		}
-		return runWithTelemetry(context.Background(), commandType, func(telemetry.Client) error {
+		return runWithTelemetry(commandContext(cmd), commandType, func(telemetry.Client) error {
 			return errcode.WithCode(errorCode, err)
 		})
 	}
@@ -153,7 +155,7 @@ func gitAvailabilityTelemetryContext(cmd *cobra.Command) (telemetry.CLICommandTy
 }
 
 func runPlanCommand(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx := commandContext(cmd)
 	err := runWithTelemetry(ctx, telemetry.CLICommandPlan, func(telemetryClient telemetry.Client) error {
 		return planCommand(ctx, telemetryClient)
 	})
@@ -165,7 +167,7 @@ func runPlanCommand(cmd *cobra.Command, args []string) {
 }
 
 func runTestCommand(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
+	ctx := commandContext(cmd)
 	err := runWithTelemetry(ctx, telemetry.CLICommandRun, func(telemetryClient telemetry.Client) error {
 		return newRunner(telemetryClient).Run(ctx)
 	})
@@ -174,6 +176,13 @@ func runTestCommand(cmd *cobra.Command, args []string) {
 		exitProcess(1)
 		return
 	}
+}
+
+func commandContext(cmd *cobra.Command) context.Context {
+	if ctx := cmd.Context(); ctx != nil {
+		return ctx
+	}
+	return context.Background()
 }
 
 func createTelemetryClient() (telemetry.Client, error) {
@@ -209,6 +218,51 @@ func runWithTelemetry(ctx context.Context, commandType telemetry.CLICommandType,
 	return operationErr
 }
 
+type commandSignalCancellation struct {
+	signal os.Signal
+}
+
+func (c commandSignalCancellation) Error() string {
+	return fmt.Sprintf("command cancelled by %s", c.signal)
+}
+
+func (c commandSignalCancellation) Signal() os.Signal {
+	return c.signal
+}
+
+func commandSignalContext(parent context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(parent)
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, commandCancellationSignals()...)
+
+	var stopSignalsOnce sync.Once
+	stopSignals := func() {
+		stopSignalsOnce.Do(func() {
+			signal.Stop(signals)
+		})
+	}
+	stop := func() {
+		stopSignals()
+		cancel(context.Canceled)
+	}
+
+	go func() {
+		select {
+		case receivedSignal := <-signals:
+			stopSignals()
+			cancel(commandSignalCancellation{signal: receivedSignal})
+		case <-parent.Done():
+			stopSignals()
+			cancel(context.Cause(parent))
+		case <-ctx.Done():
+		}
+	}()
+
+	return ctx, stop
+}
+
 func Execute() error {
-	return rootCmd.Execute()
+	ctx, stop := commandSignalContext(context.Background())
+	defer stop()
+	return rootCmd.ExecuteContext(ctx)
 }

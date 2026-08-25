@@ -229,7 +229,7 @@ func TestNewTestOptimizationClient(t *testing.T) {
 	client := NewTestOptimizationClient()
 
 	if client == nil {
-		t.Error("NewTestOptimizationClient() should return non-nil client")
+		t.Fatal("NewTestOptimizationClient() should return non-nil client")
 	}
 }
 

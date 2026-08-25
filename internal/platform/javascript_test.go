@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -117,7 +118,7 @@ func TestJavaScript_CreateTagsMap_Success(t *testing.T) {
 	}
 
 	mockExecutor := &mockCommandExecutor{
-		onRun: func(name string, args []string, envMap map[string]string) {
+		onCombinedOutput: func(name string, args []string, envMap map[string]string) {
 			if name != "node" {
 				t.Errorf("expected command to be 'node', got %q", name)
 			}
@@ -138,7 +139,7 @@ func TestJavaScript_CreateTagsMap_Success(t *testing.T) {
 	}
 
 	javascript := &JavaScript{executor: mockExecutor}
-	tags, err := javascript.CreateTagsMap()
+	tags, err := javascript.CreateTagsMap(context.Background())
 	if err != nil {
 		t.Fatalf("CreateTagsMap failed: %v", err)
 	}
@@ -158,11 +159,15 @@ func TestJavaScript_CreateTagsMap_CommandFailure(t *testing.T) {
 		_ = os.RemoveAll(constants.PlanDirectory)
 	}()
 
+	probeErr := errors.New("probe failed")
 	javascript := &JavaScript{
-		executor: &mockCommandExecutor{runErr: &exec.ExitError{}},
+		executor: &mockCommandExecutor{
+			combinedOutput:    []byte(" Invalid NODE_OPTIONS\n"),
+			combinedOutputErr: probeErr,
+		},
 	}
 
-	tags, err := javascript.CreateTagsMap()
+	tags, err := javascript.CreateTagsMap(context.Background())
 	if err == nil {
 		t.Fatal("expected error when node command fails")
 	}
@@ -172,6 +177,12 @@ func TestJavaScript_CreateTagsMap_CommandFailure(t *testing.T) {
 	if !strings.Contains(err.Error(), "failed to execute JavaScript script") {
 		t.Errorf("expected JavaScript execution error, got %v", err)
 	}
+	if !strings.Contains(err.Error(), "Invalid NODE_OPTIONS") {
+		t.Errorf("expected error to include probe output, got %q", err.Error())
+	}
+	if !errors.Is(err, probeErr) {
+		t.Errorf("expected error to wrap probe failure, got %v", err)
+	}
 }
 
 func TestJavaScript_CreateTagsMap_InvalidJSON(t *testing.T) {
@@ -180,7 +191,7 @@ func TestJavaScript_CreateTagsMap_InvalidJSON(t *testing.T) {
 	}()
 
 	mockExecutor := &mockCommandExecutor{
-		onRun: func(name string, args []string, envMap map[string]string) {
+		onCombinedOutput: func(name string, args []string, envMap map[string]string) {
 			if err := os.WriteFile(args[2], []byte("{invalid json}"), 0644); err != nil {
 				t.Errorf("failed to write temp file: %v", err)
 			}
@@ -188,7 +199,7 @@ func TestJavaScript_CreateTagsMap_InvalidJSON(t *testing.T) {
 	}
 
 	javascript := &JavaScript{executor: mockExecutor}
-	tags, err := javascript.CreateTagsMap()
+	tags, err := javascript.CreateTagsMap(context.Background())
 	if err == nil {
 		t.Fatal("expected error when JSON is invalid")
 	}
@@ -414,7 +425,7 @@ func TestJavaScript_SanityCheck_Passes(t *testing.T) {
 	}
 
 	javascript := &JavaScript{executor: mockExecutor}
-	if err := javascript.SanityCheck(); err != nil {
+	if err := javascript.SanityCheck(context.Background()); err != nil {
 		t.Fatalf("SanityCheck() unexpected error: %v", err)
 	}
 	if calls != 2 {
@@ -430,7 +441,7 @@ func TestJavaScript_SanityCheck_FailsWhenNodeMissing(t *testing.T) {
 		},
 	}
 
-	err := javascript.SanityCheck()
+	err := javascript.SanityCheck(context.Background())
 	if err == nil {
 		t.Fatal("expected sanity check error")
 	}
@@ -469,7 +480,7 @@ func TestJavaScript_SanityCheck_FailsWhenDDTraceMissing(t *testing.T) {
 	}
 
 	javascript := &JavaScript{executor: mockExecutor}
-	err := javascript.SanityCheck()
+	err := javascript.SanityCheck(context.Background())
 	if err == nil {
 		t.Fatal("expected sanity check error when dd-trace is missing")
 	}
@@ -527,7 +538,7 @@ func TestJavaScript_SanityCheck_NodeFailsEmptyOutput(t *testing.T) {
 		},
 	}
 
-	err := javascript.SanityCheck()
+	err := javascript.SanityCheck(context.Background())
 	if err == nil {
 		t.Fatal("expected sanity check error")
 	}
@@ -548,7 +559,7 @@ func TestJavaScript_SanityCheck_DDTraceFailsEmptyOutput(t *testing.T) {
 	}
 
 	javascript := &JavaScript{executor: mockExecutor}
-	err := javascript.SanityCheck()
+	err := javascript.SanityCheck(context.Background())
 	if err == nil {
 		t.Fatal("expected sanity check error when dd-trace resolve fails with empty output")
 	}
@@ -566,7 +577,7 @@ func TestDetectPlatform_JavaScript(t *testing.T) {
 		settings.Init()
 	}()
 
-	platform, err := DetectPlatform()
+	platform, err := DetectPlatform(context.Background())
 	if err != nil {
 		// SanityCheck failed — verify the error names the javascript platform
 		if !strings.Contains(err.Error(), "javascript") {

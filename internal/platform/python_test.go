@@ -1,7 +1,9 @@
 package platform
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -49,7 +51,7 @@ func TestPython_SanityCheck_SuccessWithPreRelease(t *testing.T) {
 	}
 	python := NewPython()
 	python.executor = mockExecutor
-	if err := python.SanityCheck(); err != nil {
+	if err := python.SanityCheck(context.Background()); err != nil {
 		t.Fatalf("SanityCheck() unexpected error for pre-release version: %v", err)
 	}
 }
@@ -72,7 +74,7 @@ func TestPython_SanityCheck_Success(t *testing.T) {
 
 	python := NewPython()
 	python.executor = mockExecutor
-	if err := python.SanityCheck(); err != nil {
+	if err := python.SanityCheck(context.Background()); err != nil {
 		t.Fatalf("SanityCheck() unexpected error: %v", err)
 	}
 }
@@ -85,7 +87,7 @@ func TestPython_SanityCheck_NotInstalled(t *testing.T) {
 
 	python := NewPython()
 	python.executor = mockExecutor
-	err := python.SanityCheck()
+	err := python.SanityCheck(context.Background())
 	if err == nil {
 		t.Fatal("SanityCheck() expected error when package is not installed")
 	}
@@ -102,7 +104,7 @@ func TestPython_SanityCheck_VersionTooOld(t *testing.T) {
 
 	python := NewPython()
 	python.executor = mockExecutor
-	err := python.SanityCheck()
+	err := python.SanityCheck(context.Background())
 	if err == nil {
 		t.Fatal("SanityCheck() expected error for outdated ddtrace version")
 	}
@@ -122,7 +124,7 @@ func TestPython_SanityCheck_InvalidVersion(t *testing.T) {
 
 	python := NewPython()
 	python.executor = mockExecutor
-	err := python.SanityCheck()
+	err := python.SanityCheck(context.Background())
 	if err == nil {
 		t.Fatal("SanityCheck() expected error for unparseable version")
 	}
@@ -185,7 +187,7 @@ func TestPython_CreateTagsMap_Success(t *testing.T) {
 	}
 
 	mockExecutor := &mockCommandExecutor{
-		onRun: func(name string, args []string, envMap map[string]string) {
+		onCombinedOutput: func(name string, args []string, envMap map[string]string) {
 			if name != "python" {
 				t.Errorf("expected command 'python', got %q", name)
 			}
@@ -210,7 +212,7 @@ func TestPython_CreateTagsMap_Success(t *testing.T) {
 	}
 
 	python := &Python{executor: mockExecutor}
-	tags, err := python.CreateTagsMap()
+	tags, err := python.CreateTagsMap(context.Background())
 	if err != nil {
 		t.Fatalf("CreateTagsMap failed: %v", err)
 	}
@@ -231,12 +233,14 @@ func TestPython_CreateTagsMap_Success(t *testing.T) {
 func TestPython_CreateTagsMap_CommandFailure(t *testing.T) {
 	defer func() { _ = os.RemoveAll(constants.PlanDirectory) }()
 
+	probeErr := errors.New("probe failed")
 	mockExecutor := &mockCommandExecutor{
-		runErr: &exec.ExitError{},
+		combinedOutput:    []byte(" Python startup hook failed\n"),
+		combinedOutputErr: probeErr,
 	}
 
 	python := &Python{executor: mockExecutor}
-	tags, err := python.CreateTagsMap()
+	tags, err := python.CreateTagsMap(context.Background())
 
 	if err == nil {
 		t.Error("expected error when python command fails")
@@ -249,6 +253,12 @@ func TestPython_CreateTagsMap_CommandFailure(t *testing.T) {
 	if !strings.HasPrefix(err.Error(), expectedPrefix) {
 		t.Errorf("expected error to start with %q, got %q", expectedPrefix, err.Error())
 	}
+	if !strings.Contains(err.Error(), "Python startup hook failed") {
+		t.Errorf("expected error to include probe output, got %q", err.Error())
+	}
+	if !errors.Is(err, probeErr) {
+		t.Errorf("expected error to wrap probe failure, got %v", err)
+	}
 }
 
 func TestPython_CreateTagsMap_InvalidJSON(t *testing.T) {
@@ -256,7 +266,7 @@ func TestPython_CreateTagsMap_InvalidJSON(t *testing.T) {
 
 	invalidJSON := `{invalid json}`
 	mockExecutor := &mockCommandExecutor{
-		onRun: func(name string, args []string, envMap map[string]string) {
+		onCombinedOutput: func(name string, args []string, envMap map[string]string) {
 			if len(args) < 3 {
 				t.Errorf("expected at least 3 args, got %d", len(args))
 				return
@@ -269,7 +279,7 @@ func TestPython_CreateTagsMap_InvalidJSON(t *testing.T) {
 	}
 
 	python := &Python{executor: mockExecutor}
-	tags, err := python.CreateTagsMap()
+	tags, err := python.CreateTagsMap(context.Background())
 
 	if err == nil {
 		t.Error("expected error when JSON is invalid")
@@ -382,7 +392,7 @@ func TestDetectPlatform_Python(t *testing.T) {
 		settings.Init()
 	}()
 
-	platform, err := DetectPlatform()
+	platform, err := DetectPlatform(context.Background())
 	if err != nil {
 		t.Fatalf("DetectPlatform() unexpected error: %v", err)
 	}

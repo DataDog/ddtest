@@ -264,13 +264,13 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 }
 
 func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
-	detectedPlatform, err := tp.platformDetector.DetectPlatform()
+	detectedPlatform, err := tp.platformDetector.DetectPlatform(ctx)
 	if err != nil {
 		return errcode.WithCode(errcode.PlanPlatformDetectionFailed, fmt.Errorf("failed to detect platform: %w", err))
 	}
 
 	// Get platform-detected tags first
-	tags, err := detectedPlatform.CreateTagsMap()
+	tags, err := detectedPlatform.CreateTagsMap(ctx)
 	if err != nil {
 		return errcode.WithCode(errcode.PlanPlatformTagsCreationFailed, fmt.Errorf("failed to create platform tags: %w", err))
 	}
@@ -450,6 +450,9 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	})
 
 	if err := g.Wait(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 

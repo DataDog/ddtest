@@ -82,7 +82,7 @@ func (c *plannerTelemetryClient) has(name string, tags ...string) bool {
 	return ok
 }
 
-func (m *MockPlatformDetector) DetectPlatform() (platform.Platform, error) {
+func (m *MockPlatformDetector) DetectPlatform(context.Context) (platform.Platform, error) {
 	return m.Platform, m.Err
 }
 
@@ -101,7 +101,7 @@ func (m *MockPlatform) Name() string {
 	return m.PlatformName
 }
 
-func (m *MockPlatform) CreateTagsMap() (map[string]string, error) {
+func (m *MockPlatform) CreateTagsMap(context.Context) (map[string]string, error) {
 	return m.Tags, m.TagsErr
 }
 
@@ -109,7 +109,7 @@ func (m *MockPlatform) DetectFramework() (framework.Framework, error) {
 	return m.Framework, m.FrameworkErr
 }
 
-func (m *MockPlatform) SanityCheck() error {
+func (m *MockPlatform) SanityCheck(context.Context) error {
 	return m.SanityErr
 }
 
@@ -2715,6 +2715,33 @@ func TestTestPlanner_PreparePlanningData_CancelsFullDiscoveryWhenNoTIASkippableT
 	}
 	if !strings.Contains(logs.String(), "No TIA-skippable tests or suites found for this run, cancelling full test discovery") {
 		t.Errorf("Expected log about skipping full discovery when no TIA-skippable tests exist, got: %s", logs.String())
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_ReturnsParentContextCancellation(t *testing.T) {
+	t.Chdir(t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	mockFramework := &longRunningDiscoveryFramework{
+		MockFramework: MockFramework{
+			FrameworkName: "rspec",
+			TestFiles:     []string{"spec/local_spec.rb"},
+		},
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+	runner := NewWithDependencies(
+		&MockPlatformDetector{Platform: mockPlatform},
+		testOptimizationClientRequiringFullDiscovery(),
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.PreparePlanningData(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("PreparePlanningData() error = %v, want context cancellation", err)
 	}
 }
 
