@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/buildinfo"
@@ -234,7 +233,7 @@ func (c commandSignalCancellation) Signal() os.Signal {
 func commandSignalContext(parent context.Context) (context.Context, func()) {
 	ctx, cancel := context.WithCancelCause(parent)
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(signals, commandCancellationSignals()...)
 
 	var stopSignalsOnce sync.Once
 	stopSignals := func() {
