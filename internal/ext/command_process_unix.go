@@ -22,6 +22,10 @@ func configureCommandProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
+func commandSignals() []os.Signal {
+	return []os.Signal{syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGQUIT}
+}
+
 func signalCommand(cmd *exec.Cmd, signal os.Signal) error {
 	if cmd.Process == nil {
 		return os.ErrProcessDone

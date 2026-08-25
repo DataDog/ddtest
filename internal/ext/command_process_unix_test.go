@@ -195,6 +195,42 @@ func TestDefaultCommandExecutor_Run_GracePeriodForcesTermination(t *testing.T) {
 	waitForProcessExit(t, childPID)
 }
 
+func TestDefaultCommandExecutor_Run_CancellationCleansUpDescendantsAfterWrapperExits(t *testing.T) {
+	readyFile := filepath.Join(t.TempDir(), "ready")
+	childPIDFile := filepath.Join(t.TempDir(), "child.pid")
+	notifier := &manualSignalNotifier{registered: make(chan chan<- os.Signal, 1)}
+	executor := &DefaultCommandExecutor{
+		signalNotifier:         notifier,
+		terminationGracePeriod: 2 * time.Second,
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- executor.Run(context.Background(), "sh", []string{
+			"-c",
+			`trap 'exit 0' TERM; sh -c 'trap "" TERM; echo "$$" > "$DDTEST_CHILD_PID_FILE"; while :; do sleep 0.05; done' & echo ready > "$DDTEST_READY_FILE"; wait`,
+		}, map[string]string{
+			"DDTEST_READY_FILE":     readyFile,
+			"DDTEST_CHILD_PID_FILE": childPIDFile,
+		})
+	}()
+
+	signalChannel := <-notifier.registered
+	waitForFile(t, readyFile)
+	childPID := waitForChildPID(t, childPIDFile)
+	signalChannel <- syscall.SIGTERM
+
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("gracefully handled command returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("command did not exit after gracefully handling SIGTERM")
+	}
+
+	waitForProcessExit(t, childPID)
+}
+
 func TestDefaultCommandExecutor_CombinedOutput_CancellationTerminatesDescendants(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
 	ctx, cancel := context.WithCancel(context.Background())

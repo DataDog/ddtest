@@ -131,7 +131,7 @@ func (e *DefaultCommandExecutor) Run(ctx context.Context, name string, args []st
 	// SIGQUIT - quit signal
 	sigChan := make(chan os.Signal, 1)
 	notifier := e.notifier()
-	notifier.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGQUIT)
+	notifier.Notify(sigChan, commandSignals()...)
 	defer notifier.Stop(sigChan)
 	// Close the gap between the initial context check and process startup. Once
 	// signals are registered, any cancellation racing Start is retained in
@@ -194,6 +194,12 @@ func (e *DefaultCommandExecutor) Run(ctx context.Context, name string, args []st
 			forceTermination()
 		case err := <-errChan:
 			// Command finished
+			// A wrapper can exit after handling the graceful signal while one of
+			// its ordinary descendants remains alive in the process group. Do not
+			// leave those descendants behind once cancellation has been requested.
+			if terminationRequested || ctx.Err() != nil {
+				forceTermination()
+			}
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
