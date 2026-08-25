@@ -17,13 +17,11 @@ import (
 	"github.com/DataDog/ddtest/internal/git/gittest"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/telemetry"
-	"github.com/DataDog/ddtest/internal/testoptimization/api"
 )
 
 type optimizationTelemetryClient struct {
 	mu      sync.Mutex
 	metrics map[string]float64
-	flushes int
 }
 
 type optimizationTelemetryMetric struct {
@@ -40,9 +38,6 @@ func (c *optimizationTelemetryClient) Distribution(name string, _ []string) tele
 }
 
 func (c *optimizationTelemetryClient) Flush(context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.flushes++
 	return nil
 }
 
@@ -56,12 +51,6 @@ func (c *optimizationTelemetryClient) value(name string) float64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.metrics[name]
-}
-
-func (c *optimizationTelemetryClient) flushCount() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.flushes
 }
 
 func TestNewTestOptimizationClientWithTelemetryWiresBackendTransport(t *testing.T) {
@@ -114,20 +103,5 @@ func TestNewTestOptimizationClientWithTelemetryWiresBackendTransport(t *testing.
 	}
 	if _, ok := recorder.metrics["git.command_ms"]; !ok {
 		t.Error("Git command duration was not recorded")
-	}
-}
-
-func TestTestOptimizationClientHandleSignalFlushesTelemetry(t *testing.T) {
-	recorder := &optimizationTelemetryClient{metrics: make(map[string]float64)}
-	client := newTestOptimizationClient(nil, nil, nil, false)
-	client.telemetryClient = recorder
-	client.settingsOnce.Do(func() {
-		client.settings = &api.SettingsResponseData{}
-	})
-
-	client.handleSignal()
-
-	if got := recorder.flushCount(); got != 1 {
-		t.Fatalf("telemetry flush count = %d, want 1", got)
 	}
 }

@@ -1,15 +1,12 @@
 package testoptimization
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"slices"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -39,8 +36,6 @@ type TestOptimizationClient struct {
 	cacheManager              *CacheManager
 	gitCommands               *git.CommandRunner
 	repositoryChangesUploader func() (int64, error)
-	enableSignalHandler       bool
-	telemetryClient           telemetry.Client
 
 	initializationOnce   sync.Once
 	settingsOnce         sync.Once
@@ -72,29 +67,24 @@ func NewTestOptimizationClientWithTelemetry(testSkippingLevel settings.TestSkipp
 	newAPITransport := func(serviceName string, level settings.TestSkippingLevel) api.Transport {
 		return api.NewTransportWithTelemetry(serviceName, level, telemetryClient)
 	}
-	// The CLI owns signal cancellation so in-flight discovery commands can stop
-	// their process groups before the process exits.
-	client := newTestOptimizationClientWithTestSkippingLevel(nil, newAPITransport, nil, false, testSkippingLevel)
+	client := newTestOptimizationClientWithTestSkippingLevel(nil, newAPITransport, nil, testSkippingLevel)
 	client.gitCommands = git.NewCommandRunner(telemetry.NewGitCommandTelemetry(telemetryClient))
-	client.telemetryClient = telemetryClient
 	return client
 }
 
 func NewTestOptimizationClientWithDependencies(apiTransport api.Transport) *TestOptimizationClient {
-	return newTestOptimizationClient(apiTransport, nil, func() (int64, error) { return 0, nil }, false)
+	return newTestOptimizationClient(apiTransport, nil, func() (int64, error) { return 0, nil })
 }
 
 func newTestOptimizationClient(
 	apiTransport api.Transport,
 	newAPITransport func(serviceName string, testSkippingLevel settings.TestSkippingLevel) api.Transport,
 	repositoryChangesUploader func() (int64, error),
-	enableSignalHandler bool,
 ) *TestOptimizationClient {
 	return newTestOptimizationClientWithTestSkippingLevel(
 		apiTransport,
 		newAPITransport,
 		repositoryChangesUploader,
-		enableSignalHandler,
 		settings.TestSkippingLevelTest,
 	)
 }
@@ -103,7 +93,6 @@ func newTestOptimizationClientWithTestSkippingLevel(
 	apiTransport api.Transport,
 	newAPITransport func(serviceName string, testSkippingLevel settings.TestSkippingLevel) api.Transport,
 	repositoryChangesUploader func() (int64, error),
-	enableSignalHandler bool,
 	testSkippingLevel settings.TestSkippingLevel,
 ) *TestOptimizationClient {
 	if apiTransport == nil && newAPITransport == nil {
@@ -116,8 +105,6 @@ func newTestOptimizationClientWithTestSkippingLevel(
 		cacheManager:              NewCacheManager(),
 		gitCommands:               git.NewCommandRunner(nil),
 		repositoryChangesUploader: repositoryChangesUploader,
-		enableSignalHandler:       enableSignalHandler,
-		telemetryClient:           telemetry.NoopClient(),
 		testSkippingLevel:         testSkippingLevel,
 	}
 }
@@ -240,10 +227,6 @@ func (c *TestOptimizationClient) ensureTestOptimizationSessionInitialized() {
 		ciTags := environment.GetCITags()
 		if _, ok := ciTags[constants.GitRepositoryURL]; !ok {
 			slog.Debug("testoptimization: git repository URL tag was not detected")
-		}
-
-		if c.enableSignalHandler {
-			c.registerSignalHandler()
 		}
 	})
 }
@@ -431,23 +414,6 @@ func (c *TestOptimizationClient) exitTestOptimization() {
 	}()
 	for _, action := range c.closeActions {
 		action()
-	}
-}
-
-func (c *TestOptimizationClient) registerSignalHandler() {
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-signals
-		c.handleSignal()
-		os.Exit(1)
-	}()
-}
-
-func (c *TestOptimizationClient) handleSignal() {
-	c.StoreCacheAndExit()
-	if err := c.telemetryClient.Flush(context.Background()); err != nil {
-		slog.Debug("Failed to flush telemetry metrics during shutdown", "error", err)
 	}
 }
 
