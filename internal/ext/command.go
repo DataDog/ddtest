@@ -118,9 +118,10 @@ func (e *DefaultCommandExecutor) Run(ctx context.Context, name string, args []st
 	applyEnvMap(cmd, envMap)
 	configureCommandProcessGroup(cmd)
 
-	// Connect command's stdin/stdout/stderr to parent's stdin/stdout/stderr for proper streaming
-	// stdin is needed even for non-interactive commands because some gems (like reline) check terminal properties
-	cmd.Stdin = os.Stdin
+	// Stream test output while keeping execution non-interactive. With a nil
+	// Stdin, os/exec connects the command to the null device, so accidental
+	// reads receive EOF instead of blocking on a pipe or background terminal.
+	cmd.Stdin = nil
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 

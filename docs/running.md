@@ -62,6 +62,11 @@ For JavaScript/Cucumber:
 ddtest run --platform javascript --framework cucumber
 ```
 
+DDTest streams test stdout and stderr, but test execution is non-interactive.
+Worker stdin is connected to the null device, so accidental reads receive EOF.
+Prompts, interactive debuggers, and other commands that require stdin are not
+supported.
+
 On one CI node, the default `--min-parallelism` and `--max-parallelism` equal
 the available physical CPU core count, so DDTest can start one worker per
 physical core without defaulting to one worker per hyperthread.
