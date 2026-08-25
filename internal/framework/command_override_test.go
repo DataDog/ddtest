@@ -2,6 +2,7 @@ package framework
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"slices"
 	"strings"
@@ -297,7 +298,7 @@ func TestLoadCommandOverride_Integration(t *testing.T) {
 				}
 			case "minitest":
 				minitest := NewMinitest()
-				command, args, _ := minitest.getMinitestCommand()
+				command, args, _ := minitest.getMinitestCommand(context.Background())
 
 				if command != tt.expectedCommand {
 					t.Errorf("expected command %q, got %q", tt.expectedCommand, command)

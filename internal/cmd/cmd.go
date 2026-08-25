@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -218,8 +219,51 @@ func runWithTelemetry(ctx context.Context, commandType telemetry.CLICommandType,
 	return operationErr
 }
 
+type commandSignalCancellation struct {
+	signal os.Signal
+}
+
+func (c commandSignalCancellation) Error() string {
+	return fmt.Sprintf("command cancelled by %s", c.signal)
+}
+
+func (c commandSignalCancellation) Signal() os.Signal {
+	return c.signal
+}
+
+func commandSignalContext(parent context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(parent)
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+
+	var stopSignalsOnce sync.Once
+	stopSignals := func() {
+		stopSignalsOnce.Do(func() {
+			signal.Stop(signals)
+		})
+	}
+	stop := func() {
+		stopSignals()
+		cancel(context.Canceled)
+	}
+
+	go func() {
+		select {
+		case receivedSignal := <-signals:
+			stopSignals()
+			cancel(commandSignalCancellation{signal: receivedSignal})
+		case <-parent.Done():
+			stopSignals()
+			cancel(context.Cause(parent))
+		case <-ctx.Done():
+		}
+	}()
+
+	return ctx, stop
+}
+
 func Execute() error {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := commandSignalContext(context.Background())
 	defer stop()
 	return rootCmd.ExecuteContext(ctx)
 }

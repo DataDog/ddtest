@@ -33,7 +33,7 @@ type MockPlatformDetector struct {
 	Err      error
 }
 
-func (m *MockPlatformDetector) DetectPlatform() (platform.Platform, error) {
+func (m *MockPlatformDetector) DetectPlatform(context.Context) (platform.Platform, error) {
 	return m.Platform, m.Err
 }
 
@@ -51,7 +51,7 @@ func (m *MockPlatform) Name() string {
 	return m.PlatformName
 }
 
-func (m *MockPlatform) CreateTagsMap() (map[string]string, error) {
+func (m *MockPlatform) CreateTagsMap(context.Context) (map[string]string, error) {
 	return m.Tags, m.TagsErr
 }
 
@@ -59,7 +59,7 @@ func (m *MockPlatform) DetectFramework() (framework.Framework, error) {
 	return m.Framework, m.FrameworkErr
 }
 
-func (m *MockPlatform) SanityCheck() error {
+func (m *MockPlatform) SanityCheck(context.Context) error {
 	return m.SanityErr
 }
 
@@ -86,6 +86,7 @@ type MockFramework struct {
 type RunTestsCall struct {
 	TestFiles []string
 	EnvMap    map[string]string
+	Context   context.Context
 }
 
 func (m *MockFramework) Name() string {
@@ -119,6 +120,7 @@ func (m *MockFramework) RunTests(ctx context.Context, testFiles []string, envMap
 	m.RunTestsCalls = append(m.RunTestsCalls, RunTestsCall{
 		TestFiles: slices.Clone(testFiles),
 		EnvMap:    maps.Clone(envMap),
+		Context:   ctx,
 	})
 	return m.Err
 }

@@ -10,12 +10,16 @@ import (
 )
 
 func configureCommandProcess(cmd *exec.Cmd) {
-	// Start each command in its own process group so context cancellation also
-	// terminates framework wrappers and their descendants.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	configureCommandProcessGroup(cmd)
 	cmd.Cancel = func() error {
 		return signalCommand(cmd, os.Kill)
 	}
+}
+
+func configureCommandProcessGroup(cmd *exec.Cmd) {
+	// Start each command in its own process group so cancellation signals can
+	// terminate framework wrappers and their ordinary descendants together.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
 func signalCommand(cmd *exec.Cmd, signal os.Signal) error {

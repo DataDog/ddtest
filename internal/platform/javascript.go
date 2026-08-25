@@ -83,7 +83,7 @@ func addNodeImport(platformEnv map[string]string, module string) map[string]stri
 	return platformEnv
 }
 
-func (j *JavaScript) CreateTagsMap() (map[string]string, error) {
+func (j *JavaScript) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 	tags := make(map[string]string)
 	tags["language"] = j.Name()
 
@@ -97,7 +97,7 @@ func (j *JavaScript) CreateTagsMap() (map[string]string, error) {
 	defer func() { _ = os.Remove(tempFile) }()
 
 	// Execute the embedded JavaScript script to get runtime tags
-	if err := j.executor.Run(context.Background(), "node", []string{"-e", javascriptEnvScript, tempFile}, nil); err != nil {
+	if _, err := j.executor.CombinedOutput(ctx, "node", []string{"-e", javascriptEnvScript, tempFile}, nil); err != nil {
 		return nil, fmt.Errorf("failed to execute JavaScript script: %w", err)
 	}
 
@@ -150,8 +150,8 @@ func (j *JavaScript) DetectFramework() (framework.Framework, error) {
 
 // Confirm that Node.js is installed by running 'node --version'
 // and confirm that the dd-trace package is resolvable
-func (j *JavaScript) SanityCheck() error {
-	if output, err := j.executor.CombinedOutput(context.Background(), "node", []string{"--version"}, nil); err != nil {
+func (j *JavaScript) SanityCheck(ctx context.Context) error {
+	if output, err := j.executor.CombinedOutput(ctx, "node", []string{"--version"}, nil); err != nil {
 		message := strings.TrimSpace(string(output))
 		if message == "" {
 			return fmt.Errorf("node --version command failed: %w", err)
@@ -159,7 +159,7 @@ func (j *JavaScript) SanityCheck() error {
 		return fmt.Errorf("node --version command failed: %s", message)
 	}
 
-	output, err := j.executor.CombinedOutput(context.Background(), "node", []string{"-e", fmt.Sprintf("require.resolve(%q)", ddTraceCIInitModule)}, nil)
+	output, err := j.executor.CombinedOutput(ctx, "node", []string{"-e", fmt.Sprintf("require.resolve(%q)", ddTraceCIInitModule)}, nil)
 	if err != nil {
 		message := strings.TrimSpace(string(output))
 		if message == "" {

@@ -99,7 +99,7 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 	slog.Info("Worker environment variables", "workerEnvKeys", workerEnvKeys(workerEnvMap))
 
 	// Detect platform and framework
-	detectedPlatform, err := tr.platformDetector.DetectPlatform()
+	detectedPlatform, err := tr.platformDetector.DetectPlatform(ctx)
 	if err != nil {
 		return errcode.WithCode(errcode.RunPlatformDetectionFailed, fmt.Errorf("failed to detect platform: %w", err))
 	}

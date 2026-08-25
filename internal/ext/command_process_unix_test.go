@@ -16,6 +16,185 @@ import (
 	"time"
 )
 
+type manualSignalNotifier struct {
+	registered chan chan<- os.Signal
+}
+
+func (n *manualSignalNotifier) Notify(c chan<- os.Signal, _ ...os.Signal) {
+	n.registered <- c
+}
+
+func (n *manualSignalNotifier) Stop(chan<- os.Signal) {}
+
+type testSignalCancellation struct {
+	signal os.Signal
+}
+
+func (c testSignalCancellation) Error() string {
+	return "test signal cancellation"
+}
+
+func (c testSignalCancellation) Signal() os.Signal {
+	return c.signal
+}
+
+func TestDefaultCommandExecutor_Run_ContextAndSignalCancellationShareGracePeriod(t *testing.T) {
+	readyFile := filepath.Join(t.TempDir(), "ready")
+	handledFile := filepath.Join(t.TempDir(), "handled")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	notifier := &manualSignalNotifier{registered: make(chan chan<- os.Signal, 1)}
+	executor := &DefaultCommandExecutor{
+		signalNotifier:         notifier,
+		terminationGracePeriod: 2 * time.Second,
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- executor.Run(ctx, "sh", []string{
+			"-c",
+			`trap 'echo handled > "$DDTEST_HANDLED_FILE"' TERM; echo ready > "$DDTEST_READY_FILE"; while :; do sleep 0.05; done`,
+		}, map[string]string{
+			"DDTEST_READY_FILE":   readyFile,
+			"DDTEST_HANDLED_FILE": handledFile,
+		})
+	}()
+
+	signalChannel := <-notifier.registered
+	waitForFile(t, readyFile)
+	cancel(testSignalCancellation{signal: syscall.SIGTERM})
+	// The executor also receives the OS signal that caused root cancellation.
+	// It is the same first cancellation request, not a force-kill request.
+	signalChannel <- syscall.SIGTERM
+	waitForFile(t, handledFile)
+	select {
+	case err := <-result:
+		t.Fatalf("duplicate first-signal delivery skipped the grace period: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	signalChannel <- syscall.SIGTERM
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("expected context cancellation error")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second signal did not force termination")
+	}
+}
+
+func TestDefaultCommandExecutor_Run_AllowsGracefulSignalHandling(t *testing.T) {
+	readyFile := filepath.Join(t.TempDir(), "ready")
+	handledFile := filepath.Join(t.TempDir(), "handled")
+	notifier := &manualSignalNotifier{registered: make(chan chan<- os.Signal, 1)}
+	executor := &DefaultCommandExecutor{
+		signalNotifier:         notifier,
+		terminationGracePeriod: 2 * time.Second,
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- executor.Run(context.Background(), "sh", []string{
+			"-c",
+			`trap 'echo handled > "$DDTEST_HANDLED_FILE"; exit 0' TERM; echo ready > "$DDTEST_READY_FILE"; while :; do sleep 0.05; done`,
+		}, map[string]string{
+			"DDTEST_READY_FILE":   readyFile,
+			"DDTEST_HANDLED_FILE": handledFile,
+		})
+	}()
+
+	signalChannel := <-notifier.registered
+	waitForFile(t, readyFile)
+	signalChannel <- syscall.SIGTERM
+
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("gracefully handled command returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("command did not exit after gracefully handling SIGTERM")
+	}
+	waitForFile(t, handledFile)
+}
+
+func TestDefaultCommandExecutor_Run_SecondSignalForcesTermination(t *testing.T) {
+	readyFile := filepath.Join(t.TempDir(), "ready")
+	handledFile := filepath.Join(t.TempDir(), "handled")
+	notifier := &manualSignalNotifier{registered: make(chan chan<- os.Signal, 1)}
+	executor := &DefaultCommandExecutor{
+		signalNotifier:         notifier,
+		terminationGracePeriod: 5 * time.Second,
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- executor.Run(context.Background(), "sh", []string{
+			"-c",
+			`trap 'echo handled > "$DDTEST_HANDLED_FILE"' TERM; echo ready > "$DDTEST_READY_FILE"; while :; do sleep 0.05; done`,
+		}, map[string]string{
+			"DDTEST_READY_FILE":   readyFile,
+			"DDTEST_HANDLED_FILE": handledFile,
+		})
+	}()
+
+	signalChannel := <-notifier.registered
+	waitForFile(t, readyFile)
+	signalChannel <- syscall.SIGTERM
+	waitForFile(t, handledFile)
+	forcedAt := time.Now()
+	signalChannel <- syscall.SIGTERM
+
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("expected forced termination error")
+		}
+		if elapsed := time.Since(forcedAt); elapsed >= time.Second {
+			t.Fatalf("second signal took %v to force termination", elapsed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second signal did not force termination")
+	}
+}
+
+func TestDefaultCommandExecutor_Run_GracePeriodForcesTermination(t *testing.T) {
+	readyFile := filepath.Join(t.TempDir(), "ready")
+	childPIDFile := filepath.Join(t.TempDir(), "child.pid")
+	notifier := &manualSignalNotifier{registered: make(chan chan<- os.Signal, 1)}
+	gracePeriod := 150 * time.Millisecond
+	executor := &DefaultCommandExecutor{
+		signalNotifier:         notifier,
+		terminationGracePeriod: gracePeriod,
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- executor.Run(context.Background(), "sh", []string{
+			"-c",
+			`trap '' TERM; sh -c 'trap "" TERM; echo "$$" > "$DDTEST_CHILD_PID_FILE"; while :; do sleep 0.05; done' & echo ready > "$DDTEST_READY_FILE"; wait`,
+		}, map[string]string{
+			"DDTEST_READY_FILE":     readyFile,
+			"DDTEST_CHILD_PID_FILE": childPIDFile,
+		})
+	}()
+
+	signalChannel := <-notifier.registered
+	waitForFile(t, readyFile)
+	childPID := waitForChildPID(t, childPIDFile)
+	signalledAt := time.Now()
+	signalChannel <- syscall.SIGTERM
+
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("expected forced termination error")
+		}
+		if elapsed := time.Since(signalledAt); elapsed < gracePeriod/2 {
+			t.Fatalf("command was killed before its grace period: %v", elapsed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("command was not killed after its grace period")
+	}
+	waitForProcessExit(t, childPID)
+}
+
 func TestDefaultCommandExecutor_CombinedOutput_CancellationTerminatesDescendants(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -51,6 +230,8 @@ func TestDefaultCommandExecutor_CombinedOutput_CancellationTerminatesDescendants
 }
 
 func TestDefaultCommandExecutor_CombinedOutput_CancellationIsBoundedForDetachedDescendant(t *testing.T) {
+	// A descendant that creates a new session is intentionally outside DDTest's
+	// process-tree cancellation contract. WaitDelay must still bound our exit.
 	setsidPath, err := exec.LookPath("setsid")
 	if err != nil {
 		t.Skip("setsid is required to test a detached descendant")
@@ -143,6 +324,20 @@ func waitForChildPID(t *testing.T, pidFile string) int {
 	}
 	t.Fatal("child process did not start")
 	return 0
+}
+
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("file %s was not created", path)
 }
 
 func waitForProcessExit(t *testing.T, pid int) {

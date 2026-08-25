@@ -109,7 +109,7 @@ func TestMinitest_getMinitestCommand(t *testing.T) {
 	}
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	command, args, isRails := minitest.getMinitestCommand()
+	command, args, isRails := minitest.getMinitestCommand(context.Background())
 
 	// Verify command structure: bundle exec rake test (non-Rails)
 	if command != "bundle" {
@@ -134,7 +134,7 @@ func TestMinitest_getMinitestCommand(t *testing.T) {
 func TestMinitest_getMinitestCommand_WithOverride(t *testing.T) {
 	mockExecutor := &mockRailsCommandExecutor{isRails: false}
 	minitest := newTestMinitestWithExecutorAndOverride(mockExecutor, []string{"./custom-minitest", "--flag"})
-	command, args, isRails := minitest.getMinitestCommand()
+	command, args, isRails := minitest.getMinitestCommand(context.Background())
 
 	if command != "./custom-minitest" {
 		t.Errorf("expected command to be './custom-minitest', got %q", command)
@@ -478,7 +478,7 @@ func TestMinitest_isRailsApplication_RailsDetected(t *testing.T) {
 	}
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	isRails := minitest.isRailsApplication()
+	isRails := minitest.isRailsApplication(context.Background())
 
 	if !isRails {
 		t.Error("expected Rails to be detected")
@@ -491,7 +491,7 @@ func TestMinitest_isRailsApplication_NoRails(t *testing.T) {
 	}
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	isRails := minitest.isRailsApplication()
+	isRails := minitest.isRailsApplication(context.Background())
 
 	if isRails {
 		t.Error("expected Rails not to be detected")
@@ -555,7 +555,7 @@ func TestMinitest_getMinitestCommand_RailsApplication(t *testing.T) {
 	}
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	command, args, isRails := minitest.getMinitestCommand()
+	command, args, isRails := minitest.getMinitestCommand(context.Background())
 
 	// Verify command structure: bundle exec rails test (Rails)
 	if command != "bundle" {
@@ -1290,7 +1290,7 @@ func TestMinitest_getMinitestCommand_WithBinRails(t *testing.T) {
 	}
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	command, args, isRails := minitest.getMinitestCommand()
+	command, args, isRails := minitest.getMinitestCommand(context.Background())
 
 	if !isRails {
 		t.Error("expected Rails to be detected")
@@ -1328,7 +1328,7 @@ func TestMinitest_getMinitestCommand_WithNonExecutableBinRails(t *testing.T) {
 	}
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	command, args, isRails := minitest.getMinitestCommand()
+	command, args, isRails := minitest.getMinitestCommand(context.Background())
 
 	if !isRails {
 		t.Error("expected Rails to be detected")
@@ -1356,7 +1356,7 @@ func TestMinitest_getMinitestCommand_WithoutBinRails(t *testing.T) {
 	}
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	command, args, isRails := minitest.getMinitestCommand()
+	command, args, isRails := minitest.getMinitestCommand(context.Background())
 
 	if !isRails {
 		t.Error("expected Rails to be detected")
@@ -1452,7 +1452,7 @@ func TestMinitest_getMinitestCommand_RailsApplication_WithBinRails(t *testing.T)
 	}
 
 	minitest := newTestMinitestWithExecutor(mockExecutor)
-	command, args, isRails := minitest.getMinitestCommand()
+	command, args, isRails := minitest.getMinitestCommand(context.Background())
 
 	// Verify command structure: bin/rails test (Rails with bin/rails)
 	if command != "bin/rails" {

@@ -63,7 +63,7 @@ func (r *Ruby) GetPlatformEnv() map[string]string {
 	return envMap
 }
 
-func (r *Ruby) CreateTagsMap() (map[string]string, error) {
+func (r *Ruby) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 	tags := make(map[string]string)
 	tags["language"] = r.Name()
 
@@ -78,7 +78,7 @@ func (r *Ruby) CreateTagsMap() (map[string]string, error) {
 
 	// Execute the embedded Ruby script to get runtime tags
 	args := []string{"exec", "ruby", "-e", rubyEnvScript, tempFile}
-	if err := r.executor.Run(context.Background(), "bundle", args, nil); err != nil {
+	if _, err := r.executor.CombinedOutput(ctx, "bundle", args, nil); err != nil {
 		return nil, fmt.Errorf("failed to execute Ruby script: %w", err)
 	}
 
@@ -118,9 +118,9 @@ func (r *Ruby) DetectFramework() (framework.Framework, error) {
 	return fw, nil
 }
 
-func (r *Ruby) SanityCheck() error {
+func (r *Ruby) SanityCheck(ctx context.Context) error {
 	args := []string{"info", requiredGemName}
-	output, err := r.executor.CombinedOutput(context.Background(), "bundle", args, nil)
+	output, err := r.executor.CombinedOutput(ctx, "bundle", args, nil)
 	if err != nil {
 		message := strings.TrimSpace(string(output))
 		if message == "" {

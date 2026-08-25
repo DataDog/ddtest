@@ -17,11 +17,13 @@ type mockCommandExecutor struct {
 	runErr            error
 	combinedOutput    []byte
 	combinedOutputErr error
+	combinedOutputCtx []context.Context
 	onRun             func(name string, args []string, envMap map[string]string)
 	onCombinedOutput  func(name string, args []string, envMap map[string]string)
 }
 
 func (m *mockCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
+	m.combinedOutputCtx = append(m.combinedOutputCtx, ctx)
 	if m.onCombinedOutput != nil {
 		m.onCombinedOutput(name, args, envMap)
 	}
@@ -83,7 +85,7 @@ func TestRuby_SanityCheck_Passes(t *testing.T) {
 
 	ruby := newTestRuby()
 	ruby.executor = mockExecutor
-	if err := ruby.SanityCheck(); err != nil {
+	if err := ruby.SanityCheck(context.Background()); err != nil {
 		t.Fatalf("SanityCheck() unexpected error: %v", err)
 	}
 }
@@ -96,7 +98,7 @@ func TestRuby_SanityCheck_FailsWhenBundleInfoFails(t *testing.T) {
 
 	ruby := newTestRuby()
 	ruby.executor = mockExecutor
-	err := ruby.SanityCheck()
+	err := ruby.SanityCheck(context.Background())
 	if err == nil {
 		t.Fatal("SanityCheck() expected error when bundle info fails")
 	}
@@ -113,7 +115,7 @@ func TestRuby_SanityCheck_FailsWhenVersionTooLow(t *testing.T) {
 
 	ruby := newTestRuby()
 	ruby.executor = mockExecutor
-	err := ruby.SanityCheck()
+	err := ruby.SanityCheck(context.Background())
 	if err == nil {
 		t.Fatal("SanityCheck() expected error for outdated datadog-ci version")
 	}
@@ -133,7 +135,7 @@ func TestRuby_SanityCheck_FailsWhenVersionNotFound(t *testing.T) {
 
 	ruby := newTestRuby()
 	ruby.executor = mockExecutor
-	err := ruby.SanityCheck()
+	err := ruby.SanityCheck(context.Background())
 	if err == nil {
 		t.Fatal("SanityCheck() expected error when version is not found")
 	}
@@ -158,7 +160,7 @@ func TestRuby_SanityCheck_SucceedsWithDebugLogs(t *testing.T) {
 
 	ruby := newTestRuby()
 	ruby.executor = mockExecutor
-	if err := ruby.SanityCheck(); err != nil {
+	if err := ruby.SanityCheck(context.Background()); err != nil {
 		t.Fatalf("SanityCheck() unexpected error: %v", err)
 	}
 }
@@ -260,7 +262,7 @@ func TestRuby_CreateTagsMap_Success(t *testing.T) {
 	}
 
 	mockExecutor := &mockCommandExecutor{
-		onRun: func(name string, args []string, envMap map[string]string) {
+		onCombinedOutput: func(name string, args []string, envMap map[string]string) {
 			// Verify the command is correct
 			if name != "bundle" {
 				t.Errorf("expected command to be 'bundle', got %q", name)
@@ -302,7 +304,7 @@ func TestRuby_CreateTagsMap_Success(t *testing.T) {
 		executor: mockExecutor,
 	}
 
-	tags, err := ruby.CreateTagsMap()
+	tags, err := ruby.CreateTagsMap(context.Background())
 	if err != nil {
 		t.Fatalf("CreateTagsMap failed: %v", err)
 	}
@@ -328,8 +330,8 @@ func TestRuby_CreateTagsMap_CommandFailure(t *testing.T) {
 	}()
 
 	mockExecutor := &mockCommandExecutor{
-		runErr: &exec.ExitError{},
-		onRun: func(name string, args []string, envMap map[string]string) {
+		combinedOutputErr: &exec.ExitError{},
+		onCombinedOutput: func(name string, args []string, envMap map[string]string) {
 			// Command fails, don't create any file
 		},
 	}
@@ -338,7 +340,7 @@ func TestRuby_CreateTagsMap_CommandFailure(t *testing.T) {
 		executor: mockExecutor,
 	}
 
-	tags, err := ruby.CreateTagsMap()
+	tags, err := ruby.CreateTagsMap(context.Background())
 	if err == nil {
 		t.Error("expected error when ruby command fails")
 	}
@@ -361,7 +363,7 @@ func TestRuby_CreateTagsMap_InvalidJSON(t *testing.T) {
 
 	invalidJSON := `{invalid json}`
 	mockExecutor := &mockCommandExecutor{
-		onRun: func(name string, args []string, envMap map[string]string) {
+		onCombinedOutput: func(name string, args []string, envMap map[string]string) {
 			// Get the temp file path from the last argument
 			if len(args) < 5 {
 				t.Errorf("expected at least 5 args, got %d", len(args))
@@ -380,7 +382,7 @@ func TestRuby_CreateTagsMap_InvalidJSON(t *testing.T) {
 		executor: mockExecutor,
 	}
 
-	tags, err := ruby.CreateTagsMap()
+	tags, err := ruby.CreateTagsMap(context.Background())
 	if err == nil {
 		t.Error("expected error when JSON is invalid")
 	}
@@ -421,7 +423,7 @@ func TestDetectPlatform_Ruby(t *testing.T) {
 	viper.Reset()
 	viper.Set("platform", "ruby")
 
-	platform, err := DetectPlatform()
+	platform, err := DetectPlatform(context.Background())
 	if err == nil {
 		t.Errorf("expected error for SanityCheck failure, but got platform: %v", platform)
 	} else if platform != nil {
@@ -443,7 +445,7 @@ func TestDetectPlatform_Unsupported(t *testing.T) {
 		settings.Init()
 	}()
 
-	platform, err := DetectPlatform()
+	platform, err := DetectPlatform(context.Background())
 	if err == nil {
 		t.Errorf("expected error for unsupported platform, but got platform: %v", platform)
 		return

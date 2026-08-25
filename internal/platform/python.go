@@ -72,7 +72,7 @@ func (p *Python) GetPlatformEnv() map[string]string {
 	return envMap
 }
 
-func (p *Python) CreateTagsMap() (map[string]string, error) {
+func (p *Python) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 	tags := make(map[string]string)
 	tags["language"] = p.Name()
 
@@ -87,7 +87,7 @@ func (p *Python) CreateTagsMap() (map[string]string, error) {
 
 	// Execute the embedded Python script to get runtime tags
 	args := []string{"-c", pythonEnvScript, tempFile}
-	if err := p.executor.Run(context.Background(), "python", args, nil); err != nil {
+	if _, err := p.executor.CombinedOutput(ctx, "python", args, nil); err != nil {
 		return nil, fmt.Errorf("failed to execute Python script: %w", err)
 	}
 
@@ -125,7 +125,7 @@ func (p *Python) DetectFramework() (framework.Framework, error) {
 	return fw, nil
 }
 
-func (p *Python) SanityCheck() error {
+func (p *Python) SanityCheck(ctx context.Context) error {
 	// Use importlib.metadata to query the installed version — works with any
 	// package manager (pip, uv, poetry, conda), unlike `pip show`.
 	args := []string{
@@ -133,7 +133,7 @@ func (p *Python) SanityCheck() error {
 		"import importlib.metadata, sys; print(importlib.metadata.version(sys.argv[1]))",
 		requiredPackageName,
 	}
-	output, err := p.executor.CombinedOutput(context.Background(), "python", args, nil)
+	output, err := p.executor.CombinedOutput(ctx, "python", args, nil)
 	if err != nil {
 		return fmt.Errorf("%s is not installed: %w", requiredPackageName, err)
 	}

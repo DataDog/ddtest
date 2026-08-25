@@ -145,6 +145,34 @@ func TestTestRunner_Run_UsesExistingArtifactsWithoutPlanning(t *testing.T) {
 	}
 }
 
+func TestTestRunner_Run_PropagatesContextForGracefulTestCancellation(t *testing.T) {
+	withRunnerTestSettings(t)
+	chdirTemp(t)
+	writeRunnerTestFile(t, constants.ParallelRunnersOutputPath, "1")
+	writeRunnerTestFile(t, constants.TestFilesOutputPath, "spec/existing_spec.rb\n")
+
+	type contextKey struct{}
+	ctx := context.WithValue(context.Background(), contextKey{}, "test-run")
+	framework := &MockFramework{FrameworkName: "rspec"}
+	platform := &MockPlatform{PlatformName: "ruby", Framework: framework}
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: platform}, &fakePlanner{})
+
+	if err := runner.Run(ctx); err != nil {
+		t.Fatalf("Run() returned error: %v", err)
+	}
+
+	calls := framework.GetRunTestsCalls()
+	if len(calls) != 1 {
+		t.Fatalf("RunTests() calls = %d, want 1", len(calls))
+	}
+	if got := calls[0].Context.Value(contextKey{}); got != "test-run" {
+		t.Fatalf("test context value = %v, want test-run", got)
+	}
+	if calls[0].Context != ctx {
+		t.Fatal("test command did not receive the runner context")
+	}
+}
+
 func TestTestRunner_Run_ReturnsErrorWhenPlanUnavailable(t *testing.T) {
 	withRunnerTestSettings(t)
 	chdirTemp(t)

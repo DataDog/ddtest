@@ -82,7 +82,7 @@ func (c *plannerTelemetryClient) has(name string, tags ...string) bool {
 	return ok
 }
 
-func (m *MockPlatformDetector) DetectPlatform() (platform.Platform, error) {
+func (m *MockPlatformDetector) DetectPlatform(context.Context) (platform.Platform, error) {
 	return m.Platform, m.Err
 }
 
@@ -101,7 +101,7 @@ func (m *MockPlatform) Name() string {
 	return m.PlatformName
 }
 
-func (m *MockPlatform) CreateTagsMap() (map[string]string, error) {
+func (m *MockPlatform) CreateTagsMap(context.Context) (map[string]string, error) {
 	return m.Tags, m.TagsErr
 }
 
@@ -109,7 +109,7 @@ func (m *MockPlatform) DetectFramework() (framework.Framework, error) {
 	return m.Framework, m.FrameworkErr
 }
 
-func (m *MockPlatform) SanityCheck() error {
+func (m *MockPlatform) SanityCheck(context.Context) error {
 	return m.SanityErr
 }
 
