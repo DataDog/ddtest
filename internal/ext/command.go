@@ -7,7 +7,10 @@ import (
 	"os/exec"
 	"os/signal"
 	"syscall"
+	"time"
 )
+
+const commandWaitDelay = time.Second
 
 type CommandExecutor interface {
 	CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error)
@@ -51,10 +54,18 @@ func applyEnvMap(cmd *exec.Cmd, envMap map[string]string) {
 	}
 }
 
+func prepareCommand(cmd *exec.Cmd) {
+	configureCommandProcess(cmd)
+	// Bound the time spent waiting for inherited output pipes after cancellation.
+	// A detached descendant can otherwise keep CombinedOutput blocked indefinitely.
+	cmd.WaitDelay = commandWaitDelay
+}
+
 func (e *DefaultCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
 	// no-dd-sa:go-security/command-injection
 	cmd := exec.CommandContext(ctx, name, args...)
 	applyEnvMap(cmd, envMap)
+	prepareCommand(cmd)
 
 	return cmd.CombinedOutput()
 }
@@ -63,6 +74,7 @@ func (e *DefaultCommandExecutor) Output(ctx context.Context, name string, args [
 	// no-dd-sa:go-security/command-injection
 	cmd := exec.CommandContext(ctx, name, args...)
 	applyEnvMap(cmd, envMap)
+	prepareCommand(cmd)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
