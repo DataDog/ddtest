@@ -97,8 +97,8 @@ func (j *JavaScript) CreateTagsMap(ctx context.Context) (map[string]string, erro
 	defer func() { _ = os.Remove(tempFile) }()
 
 	// Execute the embedded JavaScript script to get runtime tags
-	if _, err := j.executor.CombinedOutput(ctx, "node", []string{"-e", javascriptEnvScript, tempFile}, nil); err != nil {
-		return nil, fmt.Errorf("failed to execute JavaScript script: %w", err)
+	if output, err := j.executor.CombinedOutput(ctx, "node", []string{"-e", javascriptEnvScript, tempFile}, nil); err != nil {
+		return nil, runtimeTagProbeError("failed to execute JavaScript script", output, err)
 	}
 
 	// Read the JSON output from the temp file

@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -22,6 +23,13 @@ type PlatformDetector interface {
 }
 
 type DatadogPlatformDetector struct{}
+
+func runtimeTagProbeError(message string, output []byte, err error) error {
+	if diagnostic := strings.TrimSpace(string(output)); diagnostic != "" {
+		return fmt.Errorf("%s: %s: %w", message, diagnostic, err)
+	}
+	return fmt.Errorf("%s: %w", message, err)
+}
 
 func (d *DatadogPlatformDetector) DetectPlatform(ctx context.Context) (Platform, error) {
 	return DetectPlatform(ctx)

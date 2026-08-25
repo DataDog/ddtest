@@ -87,8 +87,8 @@ func (p *Python) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 
 	// Execute the embedded Python script to get runtime tags
 	args := []string{"-c", pythonEnvScript, tempFile}
-	if _, err := p.executor.CombinedOutput(ctx, "python", args, nil); err != nil {
-		return nil, fmt.Errorf("failed to execute Python script: %w", err)
+	if output, err := p.executor.CombinedOutput(ctx, "python", args, nil); err != nil {
+		return nil, runtimeTagProbeError("failed to execute Python script", output, err)
 	}
 
 	// Read the JSON output from the temp file

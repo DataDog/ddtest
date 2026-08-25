@@ -78,8 +78,8 @@ func (r *Ruby) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 
 	// Execute the embedded Ruby script to get runtime tags
 	args := []string{"exec", "ruby", "-e", rubyEnvScript, tempFile}
-	if _, err := r.executor.CombinedOutput(ctx, "bundle", args, nil); err != nil {
-		return nil, fmt.Errorf("failed to execute Ruby script: %w", err)
+	if output, err := r.executor.CombinedOutput(ctx, "bundle", args, nil); err != nil {
+		return nil, runtimeTagProbeError("failed to execute Ruby script", output, err)
 	}
 
 	// Read the JSON output from the temp file

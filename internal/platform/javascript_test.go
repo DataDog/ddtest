@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -158,8 +159,12 @@ func TestJavaScript_CreateTagsMap_CommandFailure(t *testing.T) {
 		_ = os.RemoveAll(constants.PlanDirectory)
 	}()
 
+	probeErr := errors.New("probe failed")
 	javascript := &JavaScript{
-		executor: &mockCommandExecutor{combinedOutputErr: &exec.ExitError{}},
+		executor: &mockCommandExecutor{
+			combinedOutput:    []byte(" Invalid NODE_OPTIONS\n"),
+			combinedOutputErr: probeErr,
+		},
 	}
 
 	tags, err := javascript.CreateTagsMap(context.Background())
@@ -171,6 +176,12 @@ func TestJavaScript_CreateTagsMap_CommandFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "failed to execute JavaScript script") {
 		t.Errorf("expected JavaScript execution error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "Invalid NODE_OPTIONS") {
+		t.Errorf("expected error to include probe output, got %q", err.Error())
+	}
+	if !errors.Is(err, probeErr) {
+		t.Errorf("expected error to wrap probe failure, got %v", err)
 	}
 }
 

@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -232,8 +233,10 @@ func TestPython_CreateTagsMap_Success(t *testing.T) {
 func TestPython_CreateTagsMap_CommandFailure(t *testing.T) {
 	defer func() { _ = os.RemoveAll(constants.PlanDirectory) }()
 
+	probeErr := errors.New("probe failed")
 	mockExecutor := &mockCommandExecutor{
-		combinedOutputErr: &exec.ExitError{},
+		combinedOutput:    []byte(" Python startup hook failed\n"),
+		combinedOutputErr: probeErr,
 	}
 
 	python := &Python{executor: mockExecutor}
@@ -249,6 +252,12 @@ func TestPython_CreateTagsMap_CommandFailure(t *testing.T) {
 	expectedPrefix := "failed to execute Python script"
 	if !strings.HasPrefix(err.Error(), expectedPrefix) {
 		t.Errorf("expected error to start with %q, got %q", expectedPrefix, err.Error())
+	}
+	if !strings.Contains(err.Error(), "Python startup hook failed") {
+		t.Errorf("expected error to include probe output, got %q", err.Error())
+	}
+	if !errors.Is(err, probeErr) {
+		t.Errorf("expected error to wrap probe failure, got %v", err)
 	}
 }
 

@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -329,8 +330,10 @@ func TestRuby_CreateTagsMap_CommandFailure(t *testing.T) {
 		_ = os.RemoveAll(constants.PlanDirectory)
 	}()
 
+	probeErr := errors.New("probe failed")
 	mockExecutor := &mockCommandExecutor{
-		combinedOutputErr: &exec.ExitError{},
+		combinedOutput:    []byte(" Bundler setup failed\n"),
+		combinedOutputErr: probeErr,
 		onCombinedOutput: func(name string, args []string, envMap map[string]string) {
 			// Command fails, don't create any file
 		},
@@ -352,6 +355,12 @@ func TestRuby_CreateTagsMap_CommandFailure(t *testing.T) {
 	expectedErrorMsg := "failed to execute Ruby script"
 	if err == nil || len(err.Error()) < len(expectedErrorMsg) || err.Error()[:len(expectedErrorMsg)] != expectedErrorMsg {
 		t.Errorf("expected error to start with %q, got %q", expectedErrorMsg, err.Error())
+	}
+	if !strings.Contains(err.Error(), "Bundler setup failed") {
+		t.Errorf("expected error to include probe output, got %q", err.Error())
+	}
+	if !errors.Is(err, probeErr) {
+		t.Errorf("expected error to wrap probe failure, got %v", err)
 	}
 }
 
