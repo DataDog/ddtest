@@ -8,16 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
-)
-
-const (
-	detachedHelperModeEnv = "DDTEST_DETACHED_HELPER_MODE"
-	detachedHelperPIDEnv  = "DDTEST_DETACHED_HELPER_PID_FILE"
 )
 
 func TestDefaultCommandExecutor_CombinedOutput_CancellationTerminatesDescendants(t *testing.T) {
@@ -55,17 +51,23 @@ func TestDefaultCommandExecutor_CombinedOutput_CancellationTerminatesDescendants
 }
 
 func TestDefaultCommandExecutor_CombinedOutput_CancellationIsBoundedForDetachedDescendant(t *testing.T) {
+	setsidPath, err := exec.LookPath("setsid")
+	if err != nil {
+		t.Skip("setsid is required to test a detached descendant")
+	}
+
 	pidFile := filepath.Join(t.TempDir(), "detached-child.pid")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	result := make(chan error, 1)
 	go func() {
-		_, err := (&DefaultCommandExecutor{}).CombinedOutput(ctx, os.Args[0], []string{
-			"-test.run=^TestCommandExecutorDetachedDescendantHelper$",
+		_, err := (&DefaultCommandExecutor{}).CombinedOutput(ctx, "sh", []string{
+			"-c",
+			`"$DDTEST_SETSID" sh -c 'echo "$$" > "$DDTEST_CHILD_PID_FILE"; exec sleep 30' & wait`,
 		}, map[string]string{
-			detachedHelperModeEnv: "wait",
-			detachedHelperPIDEnv:  pidFile,
+			"DDTEST_SETSID":         setsidPath,
+			"DDTEST_CHILD_PID_FILE": pidFile,
 		})
 		result <- err
 	}()
@@ -88,15 +90,15 @@ func TestDefaultCommandExecutor_CombinedOutput_CancellationIsBoundedForDetachedD
 	assertProcessRunning(t, childPID)
 }
 
-func TestDefaultCommandExecutor_CombinedOutput_ExitIsBoundedForDetachedDescendant(t *testing.T) {
-	pidFile := filepath.Join(t.TempDir(), "detached-child.pid")
+func TestDefaultCommandExecutor_CombinedOutput_ExitIsBoundedWhenDescendantKeepsPipesOpen(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
 	started := time.Now()
-	_, err := (&DefaultCommandExecutor{}).CombinedOutput(context.Background(), os.Args[0], []string{
-		"-test.run=^TestCommandExecutorDetachedDescendantHelper$",
-	}, map[string]string{
-		detachedHelperModeEnv: "exit",
-		detachedHelperPIDEnv:  pidFile,
-	})
+	_, err := (&DefaultCommandExecutor{}).CombinedOutput(
+		context.Background(),
+		"sh",
+		[]string{"-c", `sleep 30 & echo "$!" > "$DDTEST_CHILD_PID_FILE"`},
+		map[string]string{"DDTEST_CHILD_PID_FILE": pidFile},
+	)
 	if !errors.Is(err, exec.ErrWaitDelay) {
 		t.Fatalf("expected ErrWaitDelay, got %v", err)
 	}
@@ -107,36 +109,10 @@ func TestDefaultCommandExecutor_CombinedOutput_ExitIsBoundedForDetachedDescendan
 	assertProcessRunning(t, childPID)
 }
 
-func TestCommandExecutorDetachedDescendantHelper(t *testing.T) {
-	mode := os.Getenv(detachedHelperModeEnv)
-	if mode == "" {
-		return
-	}
-	if mode == "child" {
-		time.Sleep(30 * time.Second)
-		return
-	}
-
-	child := exec.Command(os.Args[0], "-test.run=^TestCommandExecutorDetachedDescendantHelper$")
-	child.Env = append(os.Environ(), detachedHelperModeEnv+"=child")
-	child.Stdout = os.Stdout
-	child.Stderr = os.Stderr
-	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := child.Start(); err != nil {
-		t.Fatalf("start detached child: %v", err)
-	}
-	if err := os.WriteFile(os.Getenv(detachedHelperPIDEnv), []byte(strconv.Itoa(child.Process.Pid)), 0o644); err != nil {
-		t.Fatalf("write detached child PID: %v", err)
-	}
-	if mode == "wait" {
-		_ = child.Wait()
-	}
-}
-
 func assertBoundedPipeWait(t *testing.T, elapsed time.Duration) {
 	t.Helper()
 	if elapsed < commandWaitDelay/2 {
-		t.Fatalf("command returned after %v; detached descendant did not exercise WaitDelay", elapsed)
+		t.Fatalf("command returned after %v; descendant did not exercise WaitDelay", elapsed)
 	}
 	if elapsed >= 3*commandWaitDelay {
 		t.Fatalf("command returned after %v; WaitDelay did not bound the inherited pipe wait", elapsed)
@@ -149,7 +125,12 @@ func waitForChildPID(t *testing.T, pidFile string) int {
 	for time.Now().Before(deadline) {
 		contents, err := os.ReadFile(pidFile)
 		if err == nil {
-			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(contents)))
+			pidText := strings.TrimSpace(string(contents))
+			if pidText == "" {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			pid, parseErr := strconv.Atoi(pidText)
 			if parseErr != nil {
 				t.Fatalf("parse child PID: %v", parseErr)
 			}
@@ -168,12 +149,12 @@ func waitForProcessExit(t *testing.T, pid int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		err := syscall.Kill(pid, 0)
-		if errors.Is(err, syscall.ESRCH) {
-			return
-		}
+		running, err := processIsRunning(pid)
 		if err != nil {
 			t.Fatalf("check child process %d: %v", pid, err)
+		}
+		if !running {
+			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -182,9 +163,39 @@ func waitForProcessExit(t *testing.T, pid int) {
 
 func assertProcessRunning(t *testing.T, pid int) {
 	t.Helper()
-	if err := syscall.Kill(pid, 0); err != nil {
+	running, err := processIsRunning(pid)
+	if err != nil {
 		t.Fatalf("detached child process %d was not running: %v", pid, err)
 	}
+	if !running {
+		t.Fatalf("detached child process %d was not running", pid)
+	}
+}
+
+func processIsRunning(pid int) (bool, error) {
+	err := syscall.Kill(pid, 0)
+	if errors.Is(err, syscall.ESRCH) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if runtime.GOOS != "linux" {
+		return true, nil
+	}
+
+	stat, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	closingParenthesis := strings.LastIndex(string(stat), ") ")
+	if closingParenthesis == -1 || closingParenthesis+2 >= len(stat) {
+		return false, errors.New("unexpected process stat format")
+	}
+	return stat[closingParenthesis+2] != 'Z', nil
 }
 
 func killProcess(t *testing.T, pid int) {
