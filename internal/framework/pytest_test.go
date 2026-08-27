@@ -204,6 +204,78 @@ func TestPyTest_SupportsFullTestDiscovery(t *testing.T) {
 	}
 }
 
+func TestPyTest_RunTests_WithCommandOverride(t *testing.T) {
+	testFiles := []string{"tests/test_user.py"}
+
+	var capturedName string
+	var capturedArgs []string
+	mockExecutor := &mockCommandExecutor{
+		capturedEnvMap: map[string]string{},
+		onExecution: func(name string, args []string) {
+			capturedName = name
+			capturedArgs = args
+		},
+	}
+
+	pytest := &PyTest{
+		executor: mockExecutor,
+		platformEnv: map[string]string{},
+		commandOverride: []string{"pytest"},
+	}
+	if err := pytest.RunTests(context.Background(), testFiles, nil); err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	if capturedName != "pytest" {
+		t.Fatalf("expected command 'pytest' (from commandOverride), got %q", capturedName)
+	}
+	expectedArgs := []string{"tests/test_user.py"}
+	if !slices.Equal(capturedArgs, expectedArgs) {
+		t.Fatalf("expected args %v (no -m pytest), got %v", expectedArgs, capturedArgs)
+	}
+}
+
+func TestPyTest_DiscoverTests_WithCommandOverride(t *testing.T) {
+	if err := os.MkdirAll(filepath.Dir(discovery.TestsFilePath), 0755); err != nil {
+		t.Fatalf("failed to create discovery dir: %v", err)
+	}
+	defer cleanupDiscoveryDir()
+
+	explicitFiles := []string{"tests/test_foo.py"}
+	var capturedName string
+	var capturedArgs []string
+	mockExecutor := &mockCommandExecutor{
+		onExecution: func(name string, args []string) {
+			capturedName = name
+			capturedArgs = args
+			f, _ := os.Create(discovery.TestsFilePath)
+			_ = f.Close()
+		},
+	}
+
+	pytest := &PyTest{
+		executor: mockExecutor,
+		platformEnv: map[string]string{},
+		commandOverride: []string{"pytest"},
+	}
+	testFiles := discovery.TestFileSet{ExplicitFiles: explicitFiles}
+	_, _ = pytest.DiscoverTests(context.Background(), testFiles)
+
+	if capturedName != "pytest" {
+		t.Fatalf("expected command 'pytest' (from commandOverride), got %q", capturedName)
+	}
+	for _, expected := range explicitFiles {
+		if !slices.Contains(capturedArgs, expected) {
+			t.Errorf("expected file %q in pytest args, got %v", expected, capturedArgs)
+		}
+	}
+	for _, unexpected := range []string{"-m", "pytest"} {
+		if slices.Contains(capturedArgs, unexpected) {
+			t.Errorf("unexpected arg %q in pytest args (commandOverride should not add -m pytest)", unexpected)
+		}
+	}
+}
+
 func TestPyTest_RunTests(t *testing.T) {
 	testFiles := []string{"tests/test_user.py", "tests/test_auth.py"}
 	envMap := map[string]string{
