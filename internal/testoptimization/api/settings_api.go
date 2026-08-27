@@ -111,8 +111,6 @@ func (c *transport) GetSettings() (*SettingsResponseData, error) {
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		telemetry.GitRequestsSettingsErrors(c.telemetryClient, response.StatusCode)
-		c.settingsRawResponse = nil
-		return nil, fmt.Errorf("unmarshalling settings response: cannot unmarshal response with status code %d", response.StatusCode)
 	}
 
 	slog.Debug("testoptimization.settings", "responseBody", string(response.Body))
