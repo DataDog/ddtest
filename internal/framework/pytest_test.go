@@ -218,8 +218,8 @@ func TestPyTest_RunTests_WithCommandOverride(t *testing.T) {
 	}
 
 	pytest := &PyTest{
-		executor: mockExecutor,
-		platformEnv: map[string]string{},
+		executor:        mockExecutor,
+		platformEnv:     map[string]string{},
 		commandOverride: []string{"pytest"},
 	}
 	if err := pytest.RunTests(context.Background(), testFiles, nil); err != nil {
@@ -254,8 +254,8 @@ func TestPyTest_DiscoverTests_WithCommandOverride(t *testing.T) {
 	}
 
 	pytest := &PyTest{
-		executor: mockExecutor,
-		platformEnv: map[string]string{},
+		executor:        mockExecutor,
+		platformEnv:     map[string]string{},
 		commandOverride: []string{"pytest"},
 	}
 	testFiles := discovery.TestFileSet{ExplicitFiles: explicitFiles}
