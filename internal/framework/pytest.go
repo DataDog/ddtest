@@ -75,6 +75,11 @@ func (p *PyTest) DiscoverTests(ctx context.Context, testFiles discovery.TestFile
 	}
 
 	args := []string{"-m", "pytest"}
+	command := "python"
+	if len(p.commandOverride) > 0 {
+		command = p.commandOverride[0]
+		args = p.commandOverride[1:]
+	}
 
 	if testFiles.UseExplicitFiles() {
 		args = append(args, testFiles.ExplicitFiles...)
@@ -91,7 +96,7 @@ func (p *PyTest) DiscoverTests(ctx context.Context, testFiles discovery.TestFile
 		args = append(args, files...)
 	}
 
-	return discovery.DiscoverTests(ctx, p.executor, "python", args, p.platformEnv)
+	return discovery.DiscoverTests(ctx, p.executor, command, args, p.platformEnv)
 }
 
 func (p *PyTest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
@@ -128,6 +133,10 @@ func (p *PyTest) HasUnskippableMarker(testFile string) bool {
 func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command := "python"
 	args := []string{"-m", "pytest"}
+	if len(p.commandOverride) > 0 {
+		command = p.commandOverride[0]
+		args = p.commandOverride[1:]
+	}
 	slog.Info("Running tests with command", "command", command, "args", args)
 	args = append(args, testFiles...)
 
