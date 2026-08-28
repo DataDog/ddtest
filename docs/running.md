@@ -154,9 +154,10 @@ starting each worker.
 ## Custom Commands
 
 Use `--command` to override the framework's default base test command where
-supported. DDTest currently applies this override to RSpec run and full
-discovery, Minitest run and full discovery, and Cucumber, Cypress, Jest, Mocha,
-Playwright, and Vitest run and file discovery:
+supported. DDTest applies this override to RSpec run and full
+discovery, Minitest run and full discovery, Cucumber, Cypress, Jest, Mocha,
+Playwright, and Vitest run and file discovery, and pytest run and discovery
+(since 1.7.0):
 
 ```bash
 ddtest run --platform ruby --framework rspec --command "bundle exec rspec --profile"
@@ -228,8 +229,11 @@ ddtest run --command "bundle exec my-wrapper --"
 If your command contains `--`, DDTest will emit a warning and automatically
 remove the `--` separator and anything after it.
 
-For pytest, use `PYTEST_ADDOPTS` for pytest flags. DDTest currently runs
-`python -m pytest` and appends the selected test files. DDTest appends
+For pytest, DDTest runs `python -m pytest <files>` by default. Since 1.7.0,
+set `--command` to override the base command. For example, `--command pytest`
+runs the `pytest` console script instead of `python -m pytest`. DDTest runs
+`<command> <files>` and does not add `-m pytest`. To pass extra pytest flags
+without changing the base command, use `PYTEST_ADDOPTS`. DDTest appends
 `--ddtrace` to `PYTEST_ADDOPTS` so the `ddtrace` pytest plugin loads
 automatically.
 
@@ -243,7 +247,9 @@ For Python/pytest, DDTest discovers test files using this priority:
 3. The built-in pattern `**/{test_*,*_test}.py`.
 
 Pytest does not have an equivalent to RSpec's pattern flag, so DDTest resolves
-the pattern to explicit file paths before invoking `python -m pytest`.
+the pattern to explicit file paths before invoking the configured pytest
+command. The default is `python -m pytest`. Since 1.7.0, `--command` overrides
+it.
 
 ## Jest Discovery And Instrumentation
 

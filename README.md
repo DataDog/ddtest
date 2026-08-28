@@ -199,7 +199,7 @@ parallelism details, see [Running DDTest](docs/running.md).
 | --- | --- |
 | `--platform` | Language/platform. Currently supported: `ruby`, `python`, `javascript`. |
 | `--framework` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cucumber`, `cypress`, `jest`, `mocha`, `playwright`, `vitest`. |
-| `--command` | Override the default base command for supported framework modes. Currently used by RSpec and Minitest run/discovery, and Cucumber, Cypress, Jest, Mocha, Playwright, and Vitest run/discovery. For pytest, use `PYTEST_ADDOPTS` for pytest flags. |
+| `--command` | Override the default base command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, Playwright, and Vitest run/discovery, and pytest run/discovery (since 1.7.0). For ddtest versions prior to 1.7.0 with pytest, the command cannot be changed. Pass extra flags with `PYTEST_ADDOPTS`. |
 | `--min-parallelism` | Minimum CI node or worker count DDTest considers when planning. |
 | `--max-parallelism` | Maximum CI node or worker count DDTest considers when planning. |
 | `--target-time` | Target wall time DDTest tries to satisfy when selecting parallelism. |
