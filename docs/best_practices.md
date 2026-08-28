@@ -144,10 +144,14 @@ changes in sibling projects do not invalidate its discovery cache.
 
 ## Pytest Support
 
-DDTest runs pytest as `python -m pytest` and appends the selected test files.
-It also appends `--ddtrace` to `PYTEST_ADDOPTS`, preserving any existing
-`PYTEST_ADDOPTS` value, so the `ddtrace` pytest plugin loads without changing
-your pytest config.
+DDTest runs pytest as `python -m pytest` by default and appends the selected
+test files. Since 1.7.0, set `--command` to override the base command. For
+example, `--command pytest` runs the `pytest` console script instead of
+`python -m pytest`. DDTest runs `<command> <files>` and does not add
+`-m pytest`. DDTest also appends `--ddtrace` to `PYTEST_ADDOPTS`, preserving
+any existing `PYTEST_ADDOPTS` value, so the `ddtrace` pytest plugin loads
+without changing your pytest config. To pass extra pytest flags without
+changing the base command, use `PYTEST_ADDOPTS`.
 
 For discovery, DDTest reads `testpaths` and `python_files` from `pytest.ini`,
 `pyproject.toml`, `tox.ini`, or `setup.cfg`. If no pytest config defines those
