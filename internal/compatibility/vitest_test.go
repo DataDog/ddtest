@@ -13,12 +13,13 @@ import (
 
 func TestVitestAdapterIntegration(t *testing.T) {
 	nodeModules := requireEnv(t, "DDTEST_VITEST_NODE_MODULES")
+	resetSettingsAfterTest(t)
 
 	root := t.TempDir()
 	if err := os.Symlink(nodeModules, filepath.Join(root, "node_modules")); err != nil {
 		t.Fatal(err)
 	}
-	writeFixture(t, root, "vitest.config.mjs", `export default {
+	writeFixture(t, root, "vitest.unit.mjs", `export default {
   test: {
     include: ['checks/**/*.check.js'],
     setupFiles: ['./setup.js'],
@@ -40,6 +41,7 @@ test('must not run', () => {
 })
 `)
 	t.Chdir(root)
+	configureFramework(shellCommand(filepath.Join(root, "node_modules", ".bin", "vitest"), "--config", "vitest.unit.mjs"), "")
 
 	vitest := framework.NewVitest()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
