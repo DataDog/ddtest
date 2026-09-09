@@ -27,7 +27,7 @@ func TestPlatformSanityChecksPropagateContext(t *testing.T) {
 		output []byte
 	}{
 		{name: "ruby", output: []byte("  * datadog-ci (1.31.0)\n")},
-		{name: "python", output: []byte("4.10.3\n")},
+		{name: "python", output: []byte("4.11.0\n")},
 		{name: "javascript", output: []byte("v24.0.0\n")},
 	}
 
@@ -78,7 +78,7 @@ func TestDetectPlatformPythonWithFakeInterpreter(t *testing.T) {
 
 	binDir := t.TempDir()
 	pythonPath := filepath.Join(binDir, "python")
-	if err := os.WriteFile(pythonPath, []byte("#!/bin/sh\nprintf '4.10.3\\n'\n"), 0755); err != nil {
+	if err := os.WriteFile(pythonPath, []byte("#!/bin/sh\nprintf '4.11.0\\n'\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))

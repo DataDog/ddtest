@@ -259,16 +259,16 @@ func vitestArgsForSubcommand(baseArgs []string, subcommand string) []string {
 
 func vitestCLIArgs(command string, baseArgs []string) []string {
 	if isVitestExecutable(command) {
-		return slices.Clone(baseArgs)
+		return append([]string{}, baseArgs...)
 	}
 
 	for i, arg := range baseArgs {
 		if isVitestExecutable(arg) {
-			return slices.Clone(baseArgs[i+1:])
+			return append([]string{}, baseArgs[i+1:]...)
 		}
 	}
 
-	return nil
+	return []string{}
 }
 
 func isVitestExecutable(value string) bool {

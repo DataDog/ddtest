@@ -513,6 +513,9 @@ func TestVitestCLIArgs(t *testing.T) {
 			}
 		})
 	}
+	if got := vitestCLIArgs("node_modules/.bin/vitest", nil); got == nil {
+		t.Fatal("direct binary CLI args must encode as an empty JSON array, not null")
+	}
 }
 
 func TestStripNodeOptionsImport(t *testing.T) {

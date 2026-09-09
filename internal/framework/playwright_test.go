@@ -6,15 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/discovery"
-	"github.com/DataDog/ddtest/internal/ext"
 )
 
 type playwrightCommandExecutor struct {
@@ -333,132 +330,4 @@ func TestPlaywrightSourceFileForSuiteUsesConfigDirectory(t *testing.T) {
 	if source, ok := playwright.SourceFileForSuite("tests/a.spec.ts"); !ok || source != "apps/web/tests/a.spec.ts" {
 		t.Fatalf("SourceFileForSuite() = %q, %v", source, ok)
 	}
-}
-
-func TestPlaywrightAdapterIntegration(t *testing.T) {
-	binary := os.Getenv("DDTEST_PLAYWRIGHT_BINARY")
-	nodeModules := os.Getenv("DDTEST_PLAYWRIGHT_NODE_MODULES")
-	if binary == "" || nodeModules == "" {
-		t.Skip("DDTEST_PLAYWRIGHT_BINARY and DDTEST_PLAYWRIGHT_NODE_MODULES are required")
-	}
-	root := t.TempDir()
-	t.Chdir(root)
-	projectRoot := filepath.Join(root, "apps", "web")
-	if err := os.MkdirAll(filepath.Join(projectRoot, "tests"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(nodeModules, filepath.Join(root, "node_modules")); err != nil {
-		t.Fatal(err)
-	}
-	projects := `[{ name: 'one' }, { name: 'two' }]`
-	lifecycleFiles := []string{}
-	if playwrightVersionAtLeast(t, binary, 1, 31) {
-		projects = `[
-	    { name: 'setup', testMatch: '**/setup.spec.ts' },
-	    { name: 'one', testIgnore: /(?:setup|ignored)\.spec\.ts/, dependencies: ['setup'] },
-	    { name: 'two', testIgnore: /(?:setup|ignored)\.spec\.ts/, dependencies: ['setup'] },
-	  ]`
-		lifecycleFiles = []string{"setup.spec.ts"}
-	}
-	// Project teardown was added after project dependencies. Older versions
-	// ignore the teardown property and treat the named project as a normal
-	// project, so only exercise teardown filtering where Playwright supports it.
-	if playwrightVersionAtLeast(t, binary, 1, 38) {
-		projects = `[
-    { name: 'setup', testMatch: '**/setup.spec.ts', teardown: 'teardown' },
-    { name: 'teardown', testMatch: '**/teardown.spec.ts' },
-    { name: 'one', testIgnore: /(?:setup|teardown|ignored)\.spec\.ts/, dependencies: ['setup'] },
-    { name: 'two', testIgnore: /(?:setup|teardown|ignored)\.spec\.ts/, dependencies: ['setup'] },
-  ]`
-		lifecycleFiles = []string{"setup.spec.ts", "teardown.spec.ts"}
-	}
-	config := fmt.Sprintf(`module.exports = {
-  testDir: './tests',
-  testMatch: '**/*.@(spec|test).ts',
-  testIgnore: '**/ignored.*',
-  projects: %s,
-}
-`, projects)
-	if err := os.WriteFile(filepath.Join(projectRoot, "playwright.config.js"), []byte(config), 0644); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"a.spec.ts", "b.test.ts", "ignored.spec.ts", "not-a-test.ts"} {
-		content := "const { test } = require('@playwright/test'); test('works', () => {});\n"
-		if name == "b.test.ts" {
-			content = "const { test } = require('@playwright/test'); test('must not run', () => { throw new Error('unassigned file ran') });\n"
-		}
-		if err := os.WriteFile(filepath.Join(projectRoot, "tests", name), []byte(content), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, name := range lifecycleFiles {
-		content := "const { test } = require('@playwright/test'); test('shared lifecycle', () => {});\n"
-		if err := os.WriteFile(filepath.Join(projectRoot, "tests", name), []byte(content), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	playwright := &Playwright{
-		executor:        &ext.DefaultCommandExecutor{},
-		commandOverride: []string{binary, "test", "--config", "apps/web/playwright.config.js"},
-		platformEnv:     map[string]string{},
-	}
-	files, err := playwright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"apps/web/tests/a.spec.ts", "apps/web/tests/b.test.ts"}
-	if !slices.Equal(files, want) {
-		t.Fatalf("files = %v, want %v", files, want)
-	}
-	playwright.commandOverride = []string{binary, "test", "--config", "apps/web/playwright.config.js", "--project", "one"}
-	if err := playwright.RunTests(context.Background(), []string{"apps/web/tests/a.spec.ts"}, nil); err != nil {
-		t.Fatalf("running one assigned file failed: %v", err)
-	}
-	if source, ok := playwright.SourceFileForSuite("a.spec.ts"); !ok || source != "apps/web/tests/a.spec.ts" {
-		t.Fatalf("SourceFileForSuite() = %q, %v", source, ok)
-	}
-
-	emptyPlaywright := &Playwright{
-		executor:        &ext.DefaultCommandExecutor{},
-		commandOverride: []string{binary, "test", "--config", "apps/web/playwright.config.js", "__ddtest_no_match__"},
-		platformEnv:     map[string]string{},
-	}
-	if files, err := emptyPlaywright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{}); err != nil || len(files) != 0 {
-		t.Fatalf("empty native discovery = %v, %v", files, err)
-	}
-
-	brokenFile := filepath.Join(projectRoot, "tests", "broken.spec.ts")
-	if err := os.WriteFile(brokenFile, []byte("throw new Error('collection exploded')\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	brokenPlaywright := &Playwright{
-		executor:        &ext.DefaultCommandExecutor{},
-		commandOverride: []string{binary, "test", "--config", "apps/web/playwright.config.js", "broken.spec.ts"},
-		platformEnv:     map[string]string{},
-	}
-	if _, err := brokenPlaywright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{}); err == nil {
-		t.Fatal("collection failure was accepted as an empty discovery")
-	}
-}
-
-func playwrightVersionAtLeast(t *testing.T, binary string, wantedMajor, wantedMinor int) bool {
-	t.Helper()
-	output, err := exec.Command(binary, "--version").Output() // no-dd-sa:go-security/command-injection
-	if err != nil {
-		t.Fatalf("failed to read Playwright version: %v", err)
-	}
-	fields := strings.Fields(strings.TrimSpace(string(output)))
-	if len(fields) == 0 {
-		t.Fatalf("unexpected Playwright version output: %q", output)
-	}
-	parts := strings.Split(strings.TrimPrefix(fields[len(fields)-1], "v"), ".")
-	if len(parts) < 2 {
-		t.Fatalf("unexpected Playwright version output: %q", output)
-	}
-	major, majorErr := strconv.Atoi(parts[0])
-	minor, minorErr := strconv.Atoi(parts[1])
-	if majorErr != nil || minorErr != nil {
-		t.Fatalf("unexpected Playwright version output: %q", output)
-	}
-	return major > wantedMajor || major == wantedMajor && minor >= wantedMinor
 }

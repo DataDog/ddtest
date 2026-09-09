@@ -33,12 +33,20 @@ function runAdapter(request, mochaEntrypoint) {
     throw new Error(`ddtest requires Mocha 8 or newer; found ${mochaVersion}`)
   }
 
-  const optionsPath = path.join(mochaRoot, "lib/cli/options.js")
+  // Mocha 12 converted these private CLI modules from .js to .cjs. Resolve
+  // both layouts so the adapter keeps working across every supported major.
+  const optionsPath = firstExistingPath(mochaRoot, [
+    "lib/cli/options.js",
+    "lib/cli/options.cjs",
+  ])
   const optionsModule = require(optionsPath)
   const options = optionsModule.loadOptions(request.cliArgs || [])
 
   if (request.mode === "discover") {
-    const collectFiles = require(path.join(mochaRoot, "lib/cli/collect-files.js"))
+    const collectFiles = require(firstExistingPath(mochaRoot, [
+      "lib/cli/collect-files.js",
+      "lib/cli/collect-files.cjs",
+    ]))
     const collection = collectFiles({
       ignore: options.ignore || [],
       extension: options.extension || [],
@@ -70,4 +78,14 @@ function runAdapter(request, mochaEntrypoint) {
   } else {
     throw new Error(`unknown ddtest Mocha adapter mode: ${request.mode}`)
   }
+}
+
+function firstExistingPath(root, candidates) {
+  for (const candidate of candidates) {
+    const resolved = path.join(root, candidate)
+    if (fs.existsSync(resolved)) {
+      return resolved
+    }
+  }
+  throw new Error(`Unable to locate Mocha CLI module: ${candidates.join(" or ")}`)
 }
