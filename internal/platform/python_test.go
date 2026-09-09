@@ -58,7 +58,7 @@ func TestPython_SanityCheck_SuccessWithPreRelease(t *testing.T) {
 
 func TestPython_SanityCheck_Success(t *testing.T) {
 	mockExecutor := &mockCommandExecutor{
-		combinedOutput: []byte("4.10.3\n"),
+		combinedOutput: []byte("4.11.0\n"),
 		onCombinedOutput: func(name string, args []string, envMap map[string]string) {
 			if name != "python" {
 				t.Fatalf("expected command 'python', got %q", name)
@@ -99,7 +99,7 @@ func TestPython_SanityCheck_NotInstalled(t *testing.T) {
 
 func TestPython_SanityCheck_VersionTooOld(t *testing.T) {
 	mockExecutor := &mockCommandExecutor{
-		combinedOutput: []byte("4.9.0\n"),
+		combinedOutput: []byte("4.10.3\n"),
 	}
 
 	python := NewPython()
@@ -109,7 +109,7 @@ func TestPython_SanityCheck_VersionTooOld(t *testing.T) {
 		t.Fatal("SanityCheck() expected error for outdated ddtrace version")
 	}
 
-	if !strings.Contains(err.Error(), "4.9.0") {
+	if !strings.Contains(err.Error(), "4.10.3") {
 		t.Errorf("expected error to mention detected version, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), requiredPackageVersion) {

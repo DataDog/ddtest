@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
@@ -232,7 +233,9 @@ func TestMochaAdapterIntegration(t *testing.T) {
 	t.Chdir(root)
 
 	mocha := &Mocha{executor: &ext.DefaultCommandExecutor{}, platformEnv: make(map[string]string)}
-	files, err := mocha.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: mocha.TestPattern()})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	files, err := mocha.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: mocha.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,14 +243,14 @@ func TestMochaAdapterIntegration(t *testing.T) {
 	if !slices.Equal(files, want) {
 		t.Fatalf("discovered files = %v, want %v", files, want)
 	}
-	if err := mocha.RunTests(context.Background(), []string{"test/selected.spec.js"}, nil); err != nil {
+	if err := mocha.RunTests(ctx, []string{"test/selected.spec.js"}, nil); err != nil {
 		t.Fatalf("selected-file run failed: %v", err)
 	}
 
 	if err := os.Remove(filepath.Join(root, ".mocharc.json")); err != nil {
 		t.Fatal(err)
 	}
-	files, err = mocha.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: mocha.TestPattern()})
+	files, err = mocha.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: mocha.TestPattern()})
 	if err != nil {
 		t.Fatalf("default discovery failed: %v", err)
 	}
@@ -279,14 +282,16 @@ func TestMochaAdapterCustomLocationAndCommandIntegration(t *testing.T) {
 		commandOverride: []string{wrapper, mochaCommand},
 		platformEnv:     make(map[string]string),
 	}
-	files, err := mocha.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: mocha.TestPattern()})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	files, err := mocha.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: mocha.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(files, []string{"spec/custom.spec.js"}) {
 		t.Fatalf("discovered files = %v", files)
 	}
-	if err := mocha.RunTests(context.Background(), files, nil); err != nil {
+	if err := mocha.RunTests(ctx, files, nil); err != nil {
 		t.Fatalf("custom-command run failed: %v", err)
 	}
 }

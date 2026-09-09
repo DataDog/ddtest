@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
@@ -402,7 +403,9 @@ func TestPlaywrightAdapterIntegration(t *testing.T) {
 		commandOverride: []string{binary, "test", "--config", "apps/web/playwright.config.js"},
 		platformEnv:     map[string]string{},
 	}
-	files, err := playwright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	files, err := playwright.DiscoverTestFiles(ctx, discovery.TestFileSet{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +414,7 @@ func TestPlaywrightAdapterIntegration(t *testing.T) {
 		t.Fatalf("files = %v, want %v", files, want)
 	}
 	playwright.commandOverride = []string{binary, "test", "--config", "apps/web/playwright.config.js", "--project", "one"}
-	if err := playwright.RunTests(context.Background(), []string{"apps/web/tests/a.spec.ts"}, nil); err != nil {
+	if err := playwright.RunTests(ctx, []string{"apps/web/tests/a.spec.ts"}, nil); err != nil {
 		t.Fatalf("running one assigned file failed: %v", err)
 	}
 	if source, ok := playwright.SourceFileForSuite("a.spec.ts"); !ok || source != "apps/web/tests/a.spec.ts" {
@@ -423,7 +426,7 @@ func TestPlaywrightAdapterIntegration(t *testing.T) {
 		commandOverride: []string{binary, "test", "--config", "apps/web/playwright.config.js", "__ddtest_no_match__"},
 		platformEnv:     map[string]string{},
 	}
-	if files, err := emptyPlaywright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{}); err != nil || len(files) != 0 {
+	if files, err := emptyPlaywright.DiscoverTestFiles(ctx, discovery.TestFileSet{}); err != nil || len(files) != 0 {
 		t.Fatalf("empty native discovery = %v, %v", files, err)
 	}
 
@@ -436,7 +439,7 @@ func TestPlaywrightAdapterIntegration(t *testing.T) {
 		commandOverride: []string{binary, "test", "--config", "apps/web/playwright.config.js", "broken.spec.ts"},
 		platformEnv:     map[string]string{},
 	}
-	if _, err := brokenPlaywright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{}); err == nil {
+	if _, err := brokenPlaywright.DiscoverTestFiles(ctx, discovery.TestFileSet{}); err == nil {
 		t.Fatal("collection failure was accepted as an empty discovery")
 	}
 }

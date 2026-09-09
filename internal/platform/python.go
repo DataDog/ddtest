@@ -33,7 +33,7 @@ var pythonEnvScript string
 
 const (
 	requiredPackageName    = "ddtrace"
-	requiredPackageVersion = "4.10.3"
+	requiredPackageVersion = "4.11.0"
 	pytestAddOptsEnvVar    = "PYTEST_ADDOPTS"
 	pytestDefaultAddOpts   = "--ddtrace"
 )

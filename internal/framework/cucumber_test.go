@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
@@ -397,7 +398,6 @@ func TestCucumberAdapterIntegration(t *testing.T) {
 	}
 	cucumberConfig := `module.exports = {
   default: {
-    paths: ['features/**/*.feature'],
     tags: 'not @excluded',
     require: ['features/support/**/*.js']
   }
@@ -407,7 +407,7 @@ func TestCucumberAdapterIntegration(t *testing.T) {
 		// Cucumber 7 profiles are CLI argument strings. Object-based profiles were
 		// introduced later and are silently treated as empty by Cucumber 7.
 		cucumberConfig = `module.exports = {
-  default: "--require 'features/support/**/*.js' --tags 'not @excluded' 'features/**/*.feature'"
+  default: "--require 'features/support/**/*.js' --tags 'not @excluded'"
 }
 `
 	}
@@ -417,6 +417,10 @@ func TestCucumberAdapterIntegration(t *testing.T) {
   Scenario: selected by the default profile
     Given a passing step
 `,
+		"features/unassigned.feature": `Feature: unassigned
+  Scenario: must not run
+    Given a failing step
+`,
 		"features/excluded.feature": `@excluded
 Feature: excluded
   Scenario: filtered by the default profile
@@ -424,6 +428,7 @@ Feature: excluded
 `,
 		"features/support/steps.js": `const { Given } = require('@cucumber/cucumber')
 Given('a passing step', function () {})
+Given('a failing step', function () { throw new Error('unassigned file ran') })
 `,
 	}
 	for filename, content := range files {
@@ -440,11 +445,17 @@ Given('a passing step', function () {})
 		commandOverride: []string{cucumberBinary},
 		platformEnv:     map[string]string{},
 	}
-	discovered, err := cucumber.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: cucumber.TestPattern()})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	discovered, err := cucumber.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: cucumber.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(discovered, []string{"features/included.feature"}) {
+	wantFiles := []string{"features/included.feature", "features/unassigned.feature"}
+	if !slices.Equal(discovered, wantFiles) {
 		t.Fatalf("discovered = %v", discovered)
+	}
+	if err := cucumber.RunTests(ctx, []string{"features/included.feature"}, nil); err != nil {
+		t.Fatalf("selected-file run failed: %v", err)
 	}
 }
