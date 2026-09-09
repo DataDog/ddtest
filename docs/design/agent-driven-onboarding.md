@@ -4,7 +4,7 @@ Status: proposed
 
 Working product name for the report viewer: **Testdog**
 
-Last updated: 2026-09-08
+Last updated: 2026-09-09
 
 ## Executive summary
 
@@ -17,6 +17,8 @@ The proposed experience has three product commands:
 - `ddtest testdrive` runs an approved test plan, captures real Test Optimization events locally, validates the setup, analyzes the suite, and reports likely value.
 
 DDTest ships a versioned runbook inside the binary. The customer's agent follows that runbook, but deterministic DDTest code—not the agent—owns framework detection, command construction, test selection, local intake behavior, result semantics, and redaction. This borrows the strongest property of the `dd-trace-js` validation runbook while fixing its discoverability problem.
+
+DDTest also owns tracer bootstrap. A tracer installed only by CI auto-instrumentation is a valid and common setup; it must not force the customer to add the tracer to the application just to run a local testdrive. `onboard` identifies the CI tracer source and selects one exact, supported version. After approval, `testdrive` installs that version into an isolated DDTest-managed runtime and injects it by absolute path. It never substitutes an unrelated latest version or modifies the project's dependency manifest merely to validate CI injection.
 
 `testdrive` always uses an embedded loopback collector. A tracer/version adapter can address it through agentless intake with a dummy API key or through the Datadog Agent's Test Optimization EVP interface; this is an implementation compatibility choice, not a user-visible mode. In local mode the collector returns mock control-plane responses and no Datadog credentials are needed. In Datadog mode it records the same local evidence and forwards an allowlisted set of requests to the real backend. The test subprocess always talks to loopback, so switching destinations does not require reinstrumentation or a new test command.
 
@@ -58,14 +60,15 @@ There is no public evidence here that attributes Lapdog conversion to any single
 
 1. Let an agent take a supported repository from no DDTest configuration to a locally validated setup.
 2. Require no Datadog account, API key, separately installed Agent, or Datadog network connection for the local value loop.
-3. Prove whether a real project test works cleanly and with Test Optimization instrumentation.
-4. Trace and analyze the real suite immediately after the smoke check, subject to an explicit execution approval.
-5. Show actionable suite insights even when TIA savings cannot be estimated.
-6. Estimate TIA and parallelization value locally without presenting an estimate as a backend decision.
-7. Make adoption incremental: commit the validated changes, push them, set `DD_API_KEY`, and rerun the same workflow against Datadog.
-8. Detect likely differences between the local runtime and the CI runtime, and select a CI runtime profile only when its provenance and confidence are clear.
-9. Give agents stable JSON, stable exit semantics, explicit capabilities, and exact next actions rather than prose they must scrape.
-10. Produce a visual, shareable result without uploading source paths, test names, failures, or repository identity by default.
+3. Support CI-only auto-instrumentation without requiring a local project dependency, while proving which exact tracer was tested.
+4. Prove whether a real project test works cleanly and with Test Optimization instrumentation.
+5. Trace and analyze the real suite immediately after the smoke check, subject to an explicit execution approval.
+6. Show actionable suite insights even when TIA savings cannot be estimated.
+7. Estimate TIA and, in a later milestone, parallelization value locally without presenting an estimate as a backend decision.
+8. Make adoption incremental: commit the validated changes, push them, set `DD_API_KEY`, and rerun the same workflow against Datadog.
+9. Detect likely differences between the local runtime and the CI runtime, and select a CI runtime profile only when its provenance and confidence are clear.
+10. Give agents stable JSON, stable exit semantics, explicit capabilities, and exact next actions rather than prose they must scrape.
+11. Produce a visual, shareable result without uploading source paths, test names, failures, or repository identity by default.
 
 ## Non-goals
 
@@ -115,16 +118,18 @@ Agent:
   ddtest help
   ddtest onboard --format=json
 
-Agent explains detected framework, CI job, proposed files, and limitations.
+Agent explains detected framework, CI job, CI tracer source/version, proposed files, and limitations.
 Customer approves the edits.
-Agent edits dependency and CI files.
+Agent edits only the required project or CI files. A CI-only tracer does not become a project dependency.
 
 Agent:
   ddtest doctor --format=json
   ddtest testdrive --print-plan --backend=auto
 
-Agent presents the exact test command, scope, timeout, listener capability,
-mutable paths, cleanup, and selected destination. Customer approves once.
+Agent presents the exact tracer package/version and provenance, isolated install
+path, registry host if a download is needed, test command, scope, timeout,
+listener capability, mutable paths, cleanup, and selected destination.
+Customer approves once.
 
 Agent:
   ddtest testdrive --run-approved-plan ... --sha256 ...
@@ -190,7 +195,8 @@ Repository files, package scripts, CI configuration, test output, and generated 
 It detects:
 
 - language and framework candidates, including multiple workspaces;
-- installed tracer package and version from repository-contained manifests/locks;
+- project-installed tracer packages and versions from repository-contained manifests/locks;
+- CI auto-instrumentation installers, version selectors, tracer paths, and literal pins;
 - direct framework runner and an existing representative test plus bounded fallbacks;
 - the effective DDTest command and framework options;
 - relevant CI files/jobs and visible Test Optimization wiring;
@@ -203,6 +209,35 @@ It does not install dependencies, import project modules, load dynamic configura
 The default invocation creates a versioned, ephemeral manifest under `.testoptimization/onboarding/` and prints a summary. It also proposes a durable, checked-in `ddtest.yaml` containing only the selected platform/framework IDs, supported runner options, CI target, and runtime-profile references. The manifest is evidence for one onboarding attempt; it is not required in a fresh checkout. `--format=json` writes only the result document to stdout; progress goes to stderr. `--print-plan` creates the checksum-bound execution plan.
 
 The manifest has a CLI-owned `observed` section and a constrained `agent_selection` section. The latter may reference only discovered candidate IDs and contain bounded inert evidence. This allows an agent to resolve a dynamic-looking CI job without allowing it to smuggle a command into the executor.
+
+#### Tracer provenance and acquisition
+
+Tracer availability and Test Optimization configuration are separate checks. `onboard` classifies each selected workspace into one of these states:
+
+| Observed state | `onboard` result | `testdrive` behavior |
+| --- | --- | --- |
+| Project tracer and CI use the same exact supported version | `PROJECT_EXACT` | Reuse the project installation after verifying its resolved physical path and version. |
+| CI pins a supported tracer but it is absent locally | `CI_INJECTED_EXACT` | Provision that exact version into the DDTest runtime and inject it by absolute path. |
+| CI uses a floating selector such as `latest` or an unbounded major | `CI_INJECTED_FLOATING` | Propose an exact certified pin. Test only that pin and do not claim CI parity until the CI patch uses it. |
+| No tracer is configured yet | `NOT_CONFIGURED` | Select an exact version from DDTest's embedded compatibility matrix and use the same pin in the proposed CI setup and testdrive. |
+| Project and CI versions conflict, or the CI version is dynamic/unsupported | `CONFLICT` or `INCOMPLETE` | Do not silently choose one. Give the agent one concrete pin/upgrade action and require a fresh plan. |
+
+`onboard` remains static and never installs anything. Version choice therefore comes only from repository evidence or the exact, release-tested defaults embedded in DDTest; it does not perform a registry lookup and call the result reproducible. The observed version selector, selected exact version, evidence location, intended runtime, and confidence are part of the manifest.
+
+When the selected tracer is not locally available, `testdrive --print-plan` adds a `provision_tracer` step. The approved step is constrained by a language-specific adapter and binds the package identity, exact version, registry origin, target directory, expected project-file mutations (normally none), lifecycle-script policy, and cache behavior. Credentials used by a package registry are redacted and are never inherited by the test process. A missing network, private-registry authentication failure, checksum/integrity failure, or unavailable runtime produces `TRACER_PROVISIONING_BLOCKED`; there is no fallback to `latest`.
+
+The provisioned tracer lives in an isolated, content-addressed DDTest runtime, not in the customer's dependency tree. DDTest verifies the resolved version and initialization entrypoint after installation and records them in the result. The approved test command receives an absolute preload/plugin path, so language resolution does not depend on the tracer appearing in the project's lockfile. The cache can be reused only for the same tracer artifact, runtime family, OS, and architecture; each testdrive still gets an isolated mutable run directory.
+
+The first JavaScript adapter follows the existing Test Optimization auto-installation shape: install `dd-trace@<exact-version>` under an isolated prefix, then preload `<prefix>/lib/node_modules/dd-trace/ci/init` by absolute path. Vitest additionally receives the certified absolute ESM registration path. This mirrors CI-only installation without changing `package.json`, `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml`. Other languages get explicit adapters rather than a generic package-manager command language; adapters that cannot isolate safely are not advertised until they can.
+
+The final setup verdict deliberately remains split:
+
+- `LOCAL_TRACER_COMPATIBILITY` proves that the selected exact tracer can instrument a real project test locally.
+- `CI_WIRING` proves only what bounded static CI evidence supports.
+- `CI_TRACER_PARITY` is `PASS` only when CI and testdrive use the same exact tracer and compatible runtime profile.
+- `DATADOG_DELIVERY` is not observed until an approved Datadog-mode run or the instrumented CI job reports backend evidence.
+
+This avoids claiming that a local run proved an injected CI environment that was never executed.
 
 ### `ddtest doctor`
 
@@ -264,6 +299,8 @@ Key options are:
 
 `auto` selects `datadog` when `DD_API_KEY` is present and the destination resolves through a Datadog-owned site allowlist; otherwise it selects `local`. The plan prints the selected mode, site, identity, and upload categories before approval. Approving that exact plan is explicit upload consent; merely running `onboard`, `doctor`, or `testdrive --print-plan` never uploads. The API key value is never printed, stored in the manifest, or passed unchanged to the test subprocess.
 
+Before running project code, the executor verifies or provisions the manifest-selected tracer. Provisioning may use the network and execute package installation logic, so it occurs only in the approved execution path and is displayed independently from the customer test command. It runs outside the customer project dependency tree and must leave the project manifest and lockfiles byte-for-byte unchanged.
+
 The executor takes a complete environment mutation with explicit set and unset operations; appending key/value pairs to `os.Environ` is insufficient. Command construction is independent of instrumentation. The clean baseline removes only known Datadog tokens from `RUBYOPT`, `PYTEST_ADDOPTS`, and `NODE_OPTIONS`, scrubs inherited Datadog destinations/credentials, and preserves unrelated project options. If a pre-existing wrapper cannot be separated safely, the baseline is `INCOMPLETE` instead of pretending to be clean.
 
 The default suite plan contains a cheap uninstrumented representative test target—initially often a test file—the same target with instrumentation, one observe-only instrumented suite run, and an isolated TIA behavior probe. It does not run the full suite twice. `smoke` omits the customer's full suite but still runs a requested isolated probe; it is useful for expensive or prerequisite-heavy projects. `--exercise=none` records `NOT_REQUESTED`, which does not affect success. A requested probe that cannot conclude is `NOT_EXERCISED` and makes the selected workflow incomplete (`2`).
@@ -289,8 +326,9 @@ flowchart LR
     A -->|approved edits| P[Project files]
     A --> D[doctor]
     A --> T[testdrive controller]
+    T --> V[Tracer provenance + isolated provisioner]
     T --> C[Destination + feature-scenario policy]
-    T --> X[Existing test runner + Datadog tracer]
+    V --> X[Existing test runner + selected Datadog tracer]
     X --> L[Embedded loopback intake / Agent proxy]
     C --> L
     L -->|observe-only or local probe| M[Mock settings and responses]
@@ -309,6 +347,7 @@ Proposed internal components:
 | `internal/onboarding` | bounded scanners, manifest schema, evidence selection, plan/approval generation |
 | `internal/doctor` | composable checks, blocker taxonomy, remediation results |
 | `internal/testdrive` | state machine, child process lifecycle, clean/instrumented comparison, mode selection |
+| `internal/testdrive/provision` | tracer provenance, exact-version selection, isolated language installers, verified absolute initialization paths |
 | `internal/testdrive/intake` | loopback HTTP server, mock responses, allowlisted forwarding, draining |
 | `internal/testdrive/protocol` | lossless JSON/MessagePack/multipart/gzip decoding and normalized event types |
 | `internal/testdrive/analysis` | suite statistics, coverage graph, TIA simulation, historical replay, parallelism scenarios |
@@ -417,6 +456,10 @@ Mockdog is a QA tool; the product path needs additional controls:
 ## Testdrive execution and analysis
 
 Backend destination and feature scenario are orthogonal. Compatibility and suite-observation stages always receive an observe-only control-plane response so the full suite runs once without TIA, retries, quarantine, or disablement changing its behavior. In Datadog mode, approved customer event/coverage intake may still be forwarded and the parent separately fetches real settings and plan data, but those settings do not alter the observation pass. Validator-owned synthetic events never leave loopback. Exercising real backend behavior is a distinct stage with its own approval entry.
+
+### Stage 0: tracer preparation
+
+Resolve the approved tracer from either the verified project installation or DDTest's isolated runtime. If provisioning is required, install only the exact manifest-selected artifact through its language adapter, verify the package version and initialization entrypoint, and assert that project dependency files did not change. Record the source as `project` or `ddtest_managed`, together with the CI evidence it is intended to match. Stop with a typed blocker before running tests if provenance, compatibility, installation, or integrity cannot be established.
 
 ### Stage 1: preflight
 
@@ -666,8 +709,9 @@ The current implementation has useful seams, but it assumes setup is already com
 7. **Per-session destination:** telemetry clients are currently created before command work, while planner/API clients derive routing from global settings. Resolve local/Datadog mode first and inject one per-session transport into DDTest telemetry, planner, and Test Optimization clients.
 8. **Discovery reuse:** credential-free full discovery already uses tracer-owned discovery mode, a dummy API key, and a filesystem output. Reuse it for identities, but do not confuse discovery with executing/timing/tracing the suite.
 9. **Framework execution:** replace append-only environment handling with explicit set/unset/full-environment semantics, separate base command construction from instrumentation overlays, keep process-group cancellation, return structured execution metadata, and capture bounded output separately from JSON stdout.
-10. **Distribution:** add an official Homebrew formula/tap and release automation so the advertised install command is real.
-11. **Documentation:** invert the current prerequisite language. Local exploration no longer requires Test Optimization to be preconfigured; Datadog mode does.
+10. **Tracer provisioning:** replace JavaScript's unconditional project-local `require.resolve` assumption with a selected initialization path. Add exact-version provenance and isolated installers modeled on the Test Optimization install script, while guaranteeing that testdrive does not mutate customer dependency files.
+11. **Distribution:** add an official Homebrew formula/tap and release automation so the advertised install command is real.
+12. **Documentation:** invert the current prerequisite language. Local exploration no longer requires Test Optimization to be preconfigured; Datadog mode does.
 
 ## Delivery plan
 
@@ -678,29 +722,32 @@ The current implementation has useful seams, but it assumes setup is already com
 - Refactor config loading and Cobra handlers to return errors/results.
 - Add per-session artifact paths and cache isolation.
 - Centralize the support/version matrix.
+- Add the tracer provenance schema and a fixture-only isolated provisioner with project-mutation and version-integrity checks.
 - Add explicit environment set/unset semantics and injected per-session transports.
 - Build direct-agentless and Agent/EVP golden protocol fixtures, including an outbound-network tripwire.
 
 Exit criterion: a hidden development command can run a fixture tracer against the embedded collector with no external Datadog request and produce a final JSON result.
 
-### Phase 1: one end-to-end product slice
+### Phase 1: one end-to-end setup proof
 
-- Start with Ruby/RSpec, where DDTest's current framework path is deepest, rather than building three horizontal scanners before any user sees value.
+- Start with one language/framework pair and its CI-only installation adapter rather than building three horizontal scanners before any user sees value. JavaScript/Jest is the preferred first slice because an isolated Node prefix and absolute `dd-trace/ci/init` preload directly exercise the missing CI-only bootstrap path; Ruby/RSpec remains the fallback if implementation discovery invalidates that assumption.
 - Embed and expose the runbook.
-- Add the bounded Ruby/RSpec/tracer/conventional-GitHub-Actions scanner and durable `ddtest.yaml`.
+- Add the bounded framework/tracer/conventional-GitHub-Actions scanner and durable `ddtest.yaml`.
+- Detect project-installed, exactly pinned CI-injected, floating CI-injected, and absent tracer states.
+- Implement the exact-version isolated tracer adapter and produce the same pin in the proposed CI auto-instrumentation patch.
 - Add immutable observed manifest plus constrained agent selections.
-- Implement checksum-bound plans, static doctor, clean/instrumented preflight, observe-only suite capture, local analysis, historical replay, and the isolated TIA behavior probe.
+- Implement checksum-bound plans, static doctor, clean/instrumented preflight, and one observe-only suite capture.
 - Export terminal, JSON, Markdown, and local HTML reports.
 - Add Homebrew distribution.
 
-Exit criterion: without credentials, an agent can onboard a conventional RSpec repository and produce real suite insights, an observed TIA skip-application verdict, and an honest current-change plus historical value estimate.
+Exit criterion: without credentials or a project-local tracer dependency, an agent can configure one conventional repository for CI auto-instrumentation and produce a report proving the exact tracer loaded, real test events and coverage arrived locally, the test outcome remained correct, the proposed CI wiring is statically coherent, and project dependency files were not changed. Parallelization, savings estimates, historical replay, and synthetic TIA behavior are explicitly outside this milestone.
 
 ### Phase 2: generalize the supported matrix
 
 - Certify and add Python/pytest and supported JavaScript framework transport/discovery adapters.
 - Expand conventional CI adapters based on bounded fixture evidence; report dynamic cases as incomplete.
 - Normalize cross-language event hierarchy, duration, status, telemetry, coverage, and feature verdicts.
-- Add parallelism scenarios from current planner analytics and harden historical replay.
+- Add local TIA simulation and harden historical replay. Add parallelism scenarios only after setup and TIA evidence are trustworthy.
 
 Exit criterion: each advertised tracer/framework combination passes the no-Datadog-egress contract and produces either a complete local report or an explicit stable blocker.
 
@@ -774,6 +821,9 @@ Because local mode intentionally does not phone home, installation counts, stati
 | Real backend accepts but data is not visible | separate transport-accepted from query-visible; add optional read/correlation path |
 | API key alone cannot activate TIA | backend enrollment/account-policy decision or exact activation deep link |
 | Agent executes an unsafe inferred command | CLI-owned command construction, forbidden manifest keys, checksum-bound approval |
+| CI-only tracer cannot be loaded locally | classify tracer provenance, select one exact CI pin, provision it in an isolated runtime, and inject an absolute initialization path |
+| Floating CI installer drifts from the tested tracer | never claim parity for a floating selector; propose the certified exact pin used by testdrive |
+| Tracer provisioning mutates the project or leaks registry credentials | isolated prefix, byte-for-byte dependency-file guard, declared registry origin, redacted credentials, and no credential inheritance by tests |
 | Runbook implementation grows too large | phase scope; reuse existing abstractions; ship basic reporting/suite insights before synthetic advanced checks |
 
 ## Alternatives considered
@@ -784,7 +834,7 @@ Rejected as the source of truth. It is useful as a future adapter over these com
 
 ### A runbook in every tracing library
 
-The version-locking is good, but discoverability and cross-language consistency are poor. DDTest should ship the central runbook and invoke library-specific adapters. Tracers may still ship focused validators.
+The version-locking is good, but discoverability and cross-language consistency are poor. It also assumes the tracer package is already available in the repository, which is false for CI-only auto-instrumentation. DDTest should ship the central runbook, resolve tracer provenance before package loading, and invoke library-specific acquisition/validation adapters. Tracers may still ship focused validators.
 
 ### Use only the existing `ddtest plan` report
 
@@ -819,4 +869,5 @@ Rejected for the product UX. It proves the protocol and remains an excellent QA 
 - The APM test agent is an existing general precedent for a [loopback-compatible local Datadog intake](https://github.com/DataDog/dd-apm-test-agent/tree/7609015d84d15daa6f33579d5b3436a0b057d110).
 - Product semantics and the file-coverage model come from the [Datadog Test Impact Analysis documentation](https://docs.datadoghq.com/tests/test_impact_analysis/) and [Test Optimization overview](https://docs.datadoghq.com/tests/).
 - The concrete local Test Optimization intake precedent was inspected in the local `ddoghq/shepherd` checkout at `tools/mockdog`, especially its server, handlers, payload, model, report, scenario, target, and Crook lifecycle code. Shepherd is more directly relevant than the generic APM test agent because it already exercises Test Optimization endpoints and Ruby/Python/JavaScript tracers.
+- The local `test-visibility-install-script` checkout demonstrates the CI-only acquisition pattern this design needs to productize. Its JavaScript path installs `dd-trace` under an artifacts-folder npm prefix and exports an absolute `dd-trace/ci/init` preload instead of adding the package to the customer project. DDTest should implement that behavior as a constrained, approved adapter with exact-version and project-mutation checks, not execute an unpinned downloaded shell script.
 - The transport-adapter decision is grounded in the minimum supported tracer implementations: [Ruby EVP negotiation](https://github.com/DataDog/datadog-ci-rb/blob/v1.31.0/lib/datadog/ci/transport/api/builder.rb#L46), [JavaScript Agent-proxy discovery](https://github.com/DataDog/dd-trace-js/blob/v5.111.0/packages/dd-trace/src/ci-visibility/exporters/agent-proxy/index.js#L10), [Python EVP selection](https://github.com/DataDog/dd-trace-py/blob/v4.11.0/ddtrace/internal/ci_visibility/recorder.py#L445), and the [Python agentless Git URL behavior](https://github.com/DataDog/dd-trace-py/blob/v4.11.0/ddtrace/internal/ci_visibility/git_client.py#L147-L158). These justify a tested per-version adapter rather than assuming either dummy-key agentless or EVP is universal.
