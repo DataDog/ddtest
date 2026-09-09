@@ -7,10 +7,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
-	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
@@ -320,50 +318,5 @@ func TestPyTest_RunTests(t *testing.T) {
 	}
 	if mockExecutor.capturedEnvMap["SHARED_VAR"] != "override" {
 		t.Errorf("expected run env to override platform env, got %q", mockExecutor.capturedEnvMap["SHARED_VAR"])
-	}
-}
-
-func TestPyTestAdapterIntegration(t *testing.T) {
-	python := requireCompatibilityEnv(t, "DDTEST_PYTHON_BINARY")
-
-	root := t.TempDir()
-	writeCompatibilityFixture(t, root, "pytest.ini", `[pytest]
-testpaths = checks
-python_files = check_*.py
-`)
-	writeCompatibilityFixture(t, root, "checks/check_selected.py", `import os
-
-def test_preserves_worker_environment():
-    assert os.environ["DDTEST_PYTEST_WORKER"] == "selected"
-`)
-	writeCompatibilityFixture(t, root, "checks/check_unselected.py", `def test_must_not_run():
-    raise AssertionError("unselected file ran")
-`)
-	t.Chdir(root)
-
-	pytest := &PyTest{
-		executor:        &ext.DefaultCommandExecutor{},
-		commandOverride: []string{python, "-m", "pytest"},
-		platformEnv:     map[string]string{"PYTEST_ADDOPTS": "--ddtrace"},
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	testFiles := discovery.TestFileSet{Pattern: pytest.TestPattern()}
-	files, err := pytest.DiscoverTestFiles(ctx, testFiles)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantFiles := []string{"checks/check_selected.py", "checks/check_unselected.py"}
-	requireCompatibilityFiles(t, files, wantFiles)
-
-	tests, err := pytest.DiscoverTests(ctx, testFiles)
-	if err != nil {
-		t.Fatalf("full discovery failed: %v", err)
-	}
-	requireCompatibilityTestSources(t, tests, wantFiles)
-
-	if err := pytest.RunTests(ctx, []string{"checks/check_selected.py"}, map[string]string{"DDTEST_PYTEST_WORKER": "selected"}); err != nil {
-		t.Fatalf("selected-file run failed: %v", err)
 	}
 }

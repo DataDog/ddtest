@@ -3,13 +3,11 @@ package framework
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
@@ -1426,56 +1424,5 @@ func TestRSpec_HasUnskippableMarker(t *testing.T) {
 	}
 	if !rspec.HasUnskippableMarker(filepath.Join(tempDir, "missing_spec.rb")) {
 		t.Fatal("expected missing file to be treated as guarded")
-	}
-}
-
-func TestRSpecAdapterIntegration(t *testing.T) {
-	rspecVersion := requireCompatibilityEnv(t, "DDTEST_RSPEC_VERSION")
-	datadogVersion := requireCompatibilityEnv(t, "DDTEST_DATADOG_CI_VERSION")
-
-	root := t.TempDir()
-	writeCompatibilityFixture(t, root, "Gemfile", fmt.Sprintf(`source "https://rubygems.org"
-gem "datadog-ci", %q
-gem "rspec", %q
-`, datadogVersion, rspecVersion))
-	writeCompatibilityFixture(t, root, ".rspec", "--require spec_helper\n")
-	writeCompatibilityFixture(t, root, "spec/spec_helper.rb", "DDTEST_RSPEC_SETUP = true\n")
-	writeCompatibilityFixture(t, root, "spec/selected_spec.rb", `RSpec.describe "selected" do
-  it "preserves configuration while running an assigned file" do
-    expect(DDTEST_RSPEC_SETUP).to eq(true)
-  end
-end
-`)
-	writeCompatibilityFixture(t, root, "spec/unselected_spec.rb", `RSpec.describe "unselected" do
-  it "must not run" do
-    raise "unselected file ran"
-  end
-end
-`)
-	t.Chdir(root)
-
-	rspec := &RSpec{
-		executor:    &ext.DefaultCommandExecutor{},
-		platformEnv: map[string]string{"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument"},
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	testFiles := discovery.TestFileSet{Pattern: rspec.TestPattern()}
-	files, err := rspec.DiscoverTestFiles(ctx, testFiles)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantFiles := []string{"spec/selected_spec.rb", "spec/unselected_spec.rb"}
-	requireCompatibilityFiles(t, files, wantFiles)
-
-	tests, err := rspec.DiscoverTests(ctx, testFiles)
-	if err != nil {
-		t.Fatalf("full discovery failed: %v", err)
-	}
-	requireCompatibilityTestSources(t, tests, wantFiles)
-
-	if err := rspec.RunTests(ctx, []string{"spec/selected_spec.rb"}, nil); err != nil {
-		t.Fatalf("selected-file run failed: %v", err)
 	}
 }

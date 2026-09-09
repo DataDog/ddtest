@@ -9,10 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
-	"github.com/DataDog/ddtest/internal/ext"
 )
 
 type mochaCommandExecutor struct {
@@ -213,86 +211,6 @@ func TestMochaUnskippableMarker(t *testing.T) {
 	}
 	if !NewMocha().HasUnskippableMarker(file) {
 		t.Fatal("expected marker")
-	}
-}
-
-func TestMochaAdapterIntegration(t *testing.T) {
-	nodeModules := os.Getenv("DDTEST_MOCHA_NODE_MODULES")
-	if nodeModules == "" {
-		t.Skip("DDTEST_MOCHA_NODE_MODULES is not set")
-	}
-
-	root := t.TempDir()
-	if err := os.Symlink(nodeModules, filepath.Join(root, "node_modules")); err != nil {
-		t.Fatal(err)
-	}
-	writeMochaFixture(t, root, ".mocharc.json", `{"spec":["test/**/*.spec.js"],"file":["setup.js"]}`)
-	writeMochaFixture(t, root, "setup.js", "global.ddtestSetup = true\n")
-	writeMochaFixture(t, root, "test/selected.spec.js", `const assert = require("assert"); describe("selected", () => { it("uses setup", () => assert.equal(global.ddtestSetup, true)) })`)
-	writeMochaFixture(t, root, "test/unselected.spec.js", `describe("unselected", () => { it("must not run", () => { throw new Error("unselected file ran") }) })`)
-	t.Chdir(root)
-
-	mocha := &Mocha{executor: &ext.DefaultCommandExecutor{}, platformEnv: make(map[string]string)}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	files, err := mocha.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: mocha.TestPattern()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"test/selected.spec.js", "test/unselected.spec.js"}
-	if !slices.Equal(files, want) {
-		t.Fatalf("discovered files = %v, want %v", files, want)
-	}
-	if err := mocha.RunTests(ctx, []string{"test/selected.spec.js"}, nil); err != nil {
-		t.Fatalf("selected-file run failed: %v", err)
-	}
-
-	if err := os.Remove(filepath.Join(root, ".mocharc.json")); err != nil {
-		t.Fatal(err)
-	}
-	files, err = mocha.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: mocha.TestPattern()})
-	if err != nil {
-		t.Fatalf("default discovery failed: %v", err)
-	}
-	if !slices.Equal(files, want) {
-		t.Fatalf("default discovered files = %v, want %v", files, want)
-	}
-}
-
-func TestMochaAdapterCustomLocationAndCommandIntegration(t *testing.T) {
-	nodeModules := os.Getenv("DDTEST_MOCHA_NODE_MODULES")
-	if nodeModules == "" {
-		t.Skip("DDTEST_MOCHA_NODE_MODULES is not set")
-	}
-
-	root := t.TempDir()
-	mochaCommand := filepath.Join(nodeModules, ".bin", "mocha")
-	wrapper := filepath.Join(root, "mocha-wrapper.sh")
-	writeMochaFixture(t, root, "mocha-wrapper.sh", "#!/bin/sh\nexport DDTEST_MOCHA_WRAPPER=preserved\nexec \"$@\"\n")
-	if err := os.Chmod(wrapper, 0755); err != nil {
-		t.Fatal(err)
-	}
-	writeMochaFixture(t, root, ".mocharc.json", `{"spec":["test/**/*.spec.js"]}`)
-	writeMochaFixture(t, root, "spec/custom.spec.js", `const assert = require("assert"); describe("custom", () => { it("uses wrapper", () => assert.equal(process.env.DDTEST_MOCHA_WRAPPER, "preserved")) })`)
-	t.Chdir(root)
-	setTestsLocation(t, "spec/**/*.js")
-
-	mocha := &Mocha{
-		executor:        &ext.DefaultCommandExecutor{},
-		commandOverride: []string{wrapper, mochaCommand},
-		platformEnv:     make(map[string]string),
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	files, err := mocha.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: mocha.TestPattern()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(files, []string{"spec/custom.spec.js"}) {
-		t.Fatalf("discovered files = %v", files)
-	}
-	if err := mocha.RunTests(ctx, files, nil); err != nil {
-		t.Fatalf("custom-command run failed: %v", err)
 	}
 }
 

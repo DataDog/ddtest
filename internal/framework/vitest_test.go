@@ -9,10 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
-	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
 )
 
@@ -525,52 +523,5 @@ func TestStripNodeOptionsImport(t *testing.T) {
 	want := "--import=other/register.js --max-old-space-size=4096"
 	if got := stripNodeOptionsImport(input, ddTraceRegisterPath); got != want {
 		t.Fatalf("got %q, want %q", got, want)
-	}
-}
-
-func TestVitestAdapterIntegration(t *testing.T) {
-	nodeModules := requireCompatibilityEnv(t, "DDTEST_VITEST_NODE_MODULES")
-
-	root := t.TempDir()
-	if err := os.Symlink(nodeModules, filepath.Join(root, "node_modules")); err != nil {
-		t.Fatal(err)
-	}
-	writeCompatibilityFixture(t, root, "vitest.config.mjs", `export default {
-  test: {
-    include: ['checks/**/*.check.js'],
-    setupFiles: ['./setup.js'],
-  },
-}
-`)
-	writeCompatibilityFixture(t, root, "setup.js", "globalThis.ddtestVitestSetup = true\n")
-	writeCompatibilityFixture(t, root, "checks/selected.check.js", `import { expect, test } from 'vitest'
-
-test('preserves config while running an assigned file', () => {
-  expect(globalThis.ddtestVitestSetup).toBe(true)
-  expect(process.env.DDTEST_VITEST_WORKER).toBe('selected')
-})
-`)
-	writeCompatibilityFixture(t, root, "checks/unselected.check.js", `import { test } from 'vitest'
-
-test('must not run', () => {
-  throw new Error('unselected file ran')
-})
-`)
-	t.Chdir(root)
-
-	vitest := &Vitest{executor: &ext.DefaultCommandExecutor{}, platformEnv: map[string]string{}}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	testFiles := discovery.TestFileSet{Pattern: vitest.TestPattern()}
-	files, err := vitest.DiscoverTestFiles(ctx, testFiles)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantFiles := []string{"checks/selected.check.js", "checks/unselected.check.js"}
-	requireCompatibilityFiles(t, files, wantFiles)
-
-	if err := vitest.RunTests(ctx, []string{"checks/selected.check.js"}, map[string]string{"DDTEST_VITEST_WORKER": "selected"}); err != nil {
-		t.Fatalf("selected-file run failed: %v", err)
 	}
 }

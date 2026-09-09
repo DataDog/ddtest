@@ -9,10 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
-	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/viper"
 )
@@ -374,88 +372,5 @@ func TestParseCucumberMessagesRejectsMalformedLine(t *testing.T) {
 	}
 	if _, err := parseCucumberMessages(filename); err == nil || !strings.Contains(err.Error(), "failed to parse Cucumber discovery output") {
 		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestCucumberAdapterIntegration(t *testing.T) {
-	cucumberBinary := os.Getenv("DDTEST_CUCUMBER_BINARY")
-	if cucumberBinary == "" {
-		t.Skip("DDTEST_CUCUMBER_BINARY is not set")
-	}
-	nodeModules := os.Getenv("DDTEST_CUCUMBER_NODE_MODULES")
-	if nodeModules == "" {
-		t.Fatal("DDTEST_CUCUMBER_NODE_MODULES is not set")
-	}
-	cucumberVersion := os.Getenv("DDTEST_CUCUMBER_VERSION")
-	if cucumberVersion == "" {
-		t.Fatal("DDTEST_CUCUMBER_VERSION is not set")
-	}
-
-	root := t.TempDir()
-	t.Chdir(root)
-	if err := os.Symlink(nodeModules, "node_modules"); err != nil {
-		t.Fatal(err)
-	}
-	cucumberConfig := `module.exports = {
-  default: {
-    tags: 'not @excluded',
-    require: ['features/support/**/*.js']
-  }
-}
-`
-	if strings.HasPrefix(cucumberVersion, "7.") {
-		// Cucumber 7 profiles are CLI argument strings. Object-based profiles were
-		// introduced later and are silently treated as empty by Cucumber 7.
-		cucumberConfig = `module.exports = {
-  default: "--require 'features/support/**/*.js' --tags 'not @excluded'"
-}
-`
-	}
-	files := map[string]string{
-		"cucumber.js": cucumberConfig,
-		"features/included.feature": `Feature: included
-  Scenario: selected by the default profile
-    Given a passing step
-`,
-		"features/unassigned.feature": `Feature: unassigned
-  Scenario: must not run
-    Given a failing step
-`,
-		"features/excluded.feature": `@excluded
-Feature: excluded
-  Scenario: filtered by the default profile
-    Given a passing step
-`,
-		"features/support/steps.js": `const { Given } = require('@cucumber/cucumber')
-Given('a passing step', function () {})
-Given('a failing step', function () { throw new Error('unassigned file ran') })
-`,
-	}
-	for filename, content := range files {
-		if err := os.MkdirAll(filepath.Dir(filename), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	cucumber := &Cucumber{
-		executor:        &ext.DefaultCommandExecutor{},
-		commandOverride: []string{cucumberBinary},
-		platformEnv:     map[string]string{},
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	discovered, err := cucumber.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: cucumber.TestPattern()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantFiles := []string{"features/included.feature", "features/unassigned.feature"}
-	if !slices.Equal(discovered, wantFiles) {
-		t.Fatalf("discovered = %v", discovered)
-	}
-	if err := cucumber.RunTests(ctx, []string{"features/included.feature"}, nil); err != nil {
-		t.Fatalf("selected-file run failed: %v", err)
 	}
 }

@@ -108,9 +108,9 @@ jobs:
           gem install rspec --version "${{ matrix.rspec }}" --no-document
           DDTEST_RSPEC_VERSION="${{ matrix.rspec }}" \
             DDTEST_DATADOG_CI_VERSION="${{ matrix.datadog_ci }}" \
-            go test -v ./internal/framework -run '^TestRSpecAdapterIntegration$'
+            go test -v ./internal/compatibility -run '^TestRSpecAdapterIntegration$'
           DDTEST_RUBY_PLATFORM_VERSION="${{ matrix.datadog_ci }}" \
-            go test -v ./internal/platform -run '^TestRubyPlatformIntegration$'
+            go test -v ./internal/compatibility -run '^TestRubyPlatformIntegration$'
 
   minitest-compatibility:
     runs-on: ubuntu-latest
@@ -143,7 +143,7 @@ jobs:
           gem install rake --version "13.2.1" --no-document
           DDTEST_MINITEST_VERSION="${{ matrix.minitest }}" \
             DDTEST_DATADOG_CI_VERSION="${{ matrix.datadog_ci }}" \
-            go test -v ./internal/framework -run '^TestMinitestAdapterIntegration$'
+            go test -v ./internal/compatibility -run '^TestMinitestAdapterIntegration$'
 
   pytest-compatibility:
     runs-on: ubuntu-latest
@@ -173,9 +173,9 @@ jobs:
         run: |
           python -m pip install "ddtrace==${{ matrix.ddtrace }}" "pytest==${{ matrix.pytest }}"
           DDTEST_PYTHON_BINARY="$(command -v python)" \
-            go test -v ./internal/framework -run '^TestPyTestAdapterIntegration$'
+            go test -v ./internal/compatibility -run '^TestPyTestAdapterIntegration$'
           DDTEST_PYTHON_PLATFORM_INTEGRATION=1 \
-            go test -v ./internal/platform -run '^TestPythonPlatformIntegration$'
+            go test -v ./internal/compatibility -run '^TestPythonPlatformIntegration$'
 
   javascript-platform-compatibility:
     runs-on: ubuntu-latest
@@ -202,7 +202,7 @@ jobs:
           dd_trace_dir="${RUNNER_TEMP}/dd-trace-${{ matrix.dd_trace }}"
           npm install --prefix "${dd_trace_dir}" "dd-trace@${{ matrix.dd_trace }}"
           DDTEST_DD_TRACE_NODE_MODULES="${dd_trace_dir}/node_modules" \
-            go test -v ./internal/platform -run '^TestJavaScriptPlatformIntegration$'
+            go test -v ./internal/compatibility -run '^TestJavaScriptPlatformIntegration$'
 
   jest-compatibility:
     runs-on: ubuntu-latest
@@ -229,7 +229,7 @@ jobs:
           jest_dir="${RUNNER_TEMP}/jest-${{ matrix.jest }}"
           npm install --prefix "${jest_dir}" "jest@${{ matrix.jest }}"
           DDTEST_JEST_NODE_MODULES="${jest_dir}/node_modules" \
-            go test -v ./internal/framework -run '^TestJestAdapterIntegration$'
+            go test -v ./internal/compatibility -run '^TestJestAdapterIntegration$'
 
   vitest-compatibility:
     runs-on: ubuntu-latest
@@ -261,7 +261,7 @@ jobs:
           fi
           npm install --prefix "${vitest_dir}" "${npm_install_args[@]}" "vitest@${{ matrix.vitest }}"
           DDTEST_VITEST_NODE_MODULES="${vitest_dir}/node_modules" \
-            go test -v ./internal/framework -run '^TestVitestAdapterIntegration$'
+            go test -v ./internal/compatibility -run '^TestVitestAdapterIntegration$'
 
   mocha-compatibility:
     runs-on: ubuntu-latest
@@ -288,7 +288,7 @@ jobs:
           mocha_dir="${RUNNER_TEMP}/mocha-${{ matrix.mocha }}"
           npm install --prefix "${mocha_dir}" "mocha@${{ matrix.mocha }}"
           DDTEST_MOCHA_NODE_MODULES="${mocha_dir}/node_modules" \
-            go test -v ./internal/framework -run '^TestMochaAdapter.*Integration$'
+            go test -v ./internal/compatibility -run '^TestMochaAdapter.*Integration$'
 
   cypress-compatibility:
     runs-on: ubuntu-latest
@@ -317,7 +317,7 @@ jobs:
           DDTEST_CYPRESS_BINARY="${cypress_dir}/node_modules/.bin/cypress" \
             DDTEST_CYPRESS_NODE_MODULES="${cypress_dir}/node_modules" \
             DDTEST_CYPRESS_XVFB="$(command -v xvfb-run)" \
-            go test -v ./internal/framework -run '^TestCypressAdapter.*Integration$'
+            go test -v ./internal/compatibility -run '^TestCypressAdapter.*Integration$'
 
   playwright-compatibility:
     runs-on: ubuntu-latest
@@ -347,7 +347,7 @@ jobs:
           npm install --prefix "${playwright_dir}" "@playwright/test@${{ matrix.playwright }}"
           DDTEST_PLAYWRIGHT_BINARY="${playwright_dir}/node_modules/.bin/playwright" \
             DDTEST_PLAYWRIGHT_NODE_MODULES="${playwright_dir}/node_modules" \
-            go test -v ./internal/framework -run TestPlaywrightAdapterIntegration
+            go test -v ./internal/compatibility -run '^TestPlaywrightAdapterIntegration$'
 
   cucumber-compatibility:
     runs-on: ubuntu-latest
@@ -376,7 +376,7 @@ jobs:
           DDTEST_CUCUMBER_BINARY="${cucumber_dir}/node_modules/.bin/cucumber-js" \
             DDTEST_CUCUMBER_NODE_MODULES="${cucumber_dir}/node_modules" \
             DDTEST_CUCUMBER_VERSION="${{ matrix.cucumber }}" \
-            go test -v ./internal/framework -run '^TestCucumberAdapterIntegration$'
+            go test -v ./internal/compatibility -run '^TestCucumberAdapterIntegration$'
 
   lint:
     runs-on: ubuntu-latest

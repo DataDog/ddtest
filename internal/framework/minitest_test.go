@@ -3,16 +3,13 @@ package framework
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
-	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
@@ -1746,71 +1743,5 @@ func TestMinitest_HasUnskippableMarker(t *testing.T) {
 	}
 	if !minitest.HasUnskippableMarker(filepath.Join(tempDir, "missing_test.rb")) {
 		t.Fatal("expected missing file to be treated as guarded")
-	}
-}
-
-func TestMinitestAdapterIntegration(t *testing.T) {
-	minitestVersion := requireCompatibilityEnv(t, "DDTEST_MINITEST_VERSION")
-	datadogVersion := requireCompatibilityEnv(t, "DDTEST_DATADOG_CI_VERSION")
-
-	root := t.TempDir()
-	writeCompatibilityFixture(t, root, "Gemfile", fmt.Sprintf(`source "https://rubygems.org"
-gem "datadog-ci", %q
-gem "minitest", %q
-gem "rake", "13.2.1"
-`, datadogVersion, minitestVersion))
-	writeCompatibilityFixture(t, root, "Rakefile", `require "rake/testtask"
-
-Rake::TestTask.new(:test) do |test|
-  test.test_files = ENV["TEST_FILES"] ? ENV["TEST_FILES"].split : FileList["test/**/*_test.rb"]
-end
-
-task default: :test
-`)
-	writeCompatibilityFixture(t, root, "test/test_helper.rb", `gem "minitest", ENV.fetch("DDTEST_MINITEST_VERSION")
-require "minitest/autorun"
-DDTEST_MINITEST_SETUP = true
-`)
-	writeCompatibilityFixture(t, root, "test/selected_test.rb", `require_relative "test_helper"
-
-class SelectedTest < Minitest::Test
-  def test_preserves_setup_while_running_an_assigned_file
-    assert DDTEST_MINITEST_SETUP
-  end
-end
-`)
-	writeCompatibilityFixture(t, root, "test/unselected_test.rb", `require_relative "test_helper"
-
-class UnselectedTest < Minitest::Test
-  def test_must_not_run
-    flunk "unselected file ran"
-  end
-end
-`)
-	t.Chdir(root)
-
-	minitest := &Minitest{
-		executor:    &ext.DefaultCommandExecutor{},
-		platformEnv: map[string]string{"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument"},
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	testFiles := discovery.TestFileSet{Pattern: minitest.TestPattern()}
-	files, err := minitest.DiscoverTestFiles(ctx, testFiles)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantFiles := []string{"test/selected_test.rb", "test/unselected_test.rb"}
-	requireCompatibilityFiles(t, files, wantFiles)
-
-	tests, err := minitest.DiscoverTests(ctx, testFiles)
-	if err != nil {
-		t.Fatalf("full discovery failed: %v", err)
-	}
-	requireCompatibilityTestSources(t, tests, wantFiles)
-
-	if err := minitest.RunTests(ctx, []string{"test/selected_test.rb"}, nil); err != nil {
-		t.Fatalf("selected-file run failed: %v", err)
 	}
 }
