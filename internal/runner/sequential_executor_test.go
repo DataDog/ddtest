@@ -47,3 +47,34 @@ func TestRunSequential_Success(t *testing.T) {
 		t.Errorf("Expected test files %v, got %v", expectedFiles, call.TestFiles)
 	}
 }
+
+func TestRunSequential_ReportsTIASkippedSuitesWithoutRunnableTests(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.MkdirAll(filepath.Dir(constants.TestFilesOutputPath), 0755)
+	_ = os.WriteFile(constants.TestFilesOutputPath, nil, 0644)
+	_ = os.MkdirAll(constants.TIASkippedTestSuitesDir, 0755)
+	artifactPath := filepath.Join(constants.TIASkippedTestSuitesDir, "runner-0.json")
+	_ = os.WriteFile(artifactPath, []byte("{\"version\":1,\"test_suites\":[\"src/skipped.test.js\"]}\n"), 0644)
+
+	mockFramework := &MockFramework{FrameworkName: "jest"}
+	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}, roundRobinTestPlanner{}).runSequential()
+	if result.err != nil {
+		t.Fatalf("runSequential() returned error: %v", result.err)
+	}
+
+	calls := mockFramework.GetRunTestsCalls()
+	if len(calls) != 1 {
+		t.Fatalf("RunTests calls = %d, want 1", len(calls))
+	}
+	if len(calls[0].TestFiles) != 0 {
+		t.Fatalf("RunTests test files = %v, want none", calls[0].TestFiles)
+	}
+	wantArtifactPath, _ := filepath.Abs(artifactPath)
+	if got := calls[0].EnvMap[constants.TestOptimizationTIASkippedTestSuitesFileEnvVar]; got != wantArtifactPath {
+		t.Errorf("skipped suites artifact env = %q, want %q", got, wantArtifactPath)
+	}
+}

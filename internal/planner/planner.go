@@ -253,6 +253,9 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 	if err := tp.CreateTestSplits(tp.testFileWeights, parallelRunners, constants.TestFilesOutputPath); err != nil {
 		return errcode.WithCode(errcode.PlanTestSplitsWriteFailed, fmt.Errorf("failed to create test splits: %w", err))
 	}
+	if err := tp.writeTIASkippedTestSuiteSplits(parallelRunners); err != nil {
+		return errcode.WithCode(errcode.PlanTestSplitsWriteFailed, fmt.Errorf("failed to create TIA-skipped test suite splits: %w", err))
+	}
 
 	if settings.GetReportEnabled() {
 		printPlanReport(tp.reportWriter, tp, parallelRunnerSelection)

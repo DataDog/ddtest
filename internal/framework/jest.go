@@ -123,6 +123,9 @@ func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[stri
 	command, baseArgs := j.getJestCommand()
 	args := slices.Clone(baseArgs)
 	args = append(args, "--runTestsByPath")
+	if len(testFiles) == 0 {
+		args = append(args, "--passWithNoTests")
+	}
 	args = append(args, testFiles...)
 
 	slog.Info("Running tests with command", "command", command, "args", args)

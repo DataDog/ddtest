@@ -261,6 +261,36 @@ func TestRunCINode_EmptyFile(t *testing.T) {
 	}
 }
 
+func TestRunCINode_MultipleWorkersAssignsSkippedSuitesArtifactOnce(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	_ = os.Chdir(tempDir)
+
+	_ = os.MkdirAll(constants.TestsSplitDir, 0755)
+	_ = os.WriteFile(filepath.Join(constants.TestsSplitDir, "runner-1"), []byte("test/a.test.js\ntest/b.test.js\n"), 0644)
+	_ = os.MkdirAll(constants.TIASkippedTestSuitesDir, 0755)
+	artifactPath := filepath.Join(constants.TIASkippedTestSuitesDir, "runner-1.json")
+	_ = os.WriteFile(artifactPath, []byte("{\"version\":1,\"test_suites\":[\"test/skipped.test.js\"]}\n"), 0644)
+
+	mockFramework := &MockFramework{FrameworkName: "jest"}
+	result := newTestExecutor(context.Background(), mockFramework, map[string]string{}, roundRobinTestPlanner{}).
+		runCINode(1, 2)
+	if result.err != nil {
+		t.Fatalf("runCINode() returned error: %v", result.err)
+	}
+
+	artifactAssignments := 0
+	for _, call := range mockFramework.GetRunTestsCalls() {
+		if call.EnvMap[constants.TestOptimizationTIASkippedTestSuitesFileEnvVar] != "" {
+			artifactAssignments++
+		}
+	}
+	if artifactAssignments != 1 {
+		t.Errorf("artifact assigned to %d workers, want 1", artifactAssignments)
+	}
+}
+
 func TestSubsplitTestsBetweenWorkers(t *testing.T) {
 	executor := testExecutor{planner: roundRobinTestPlanner{}}
 

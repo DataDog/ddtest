@@ -58,18 +58,19 @@ func loadCINodeTestFiles(ciNode int) ([]string, error) {
 
 func (e testExecutor) runCINodeSingleWorker(ciNode int, testFiles []string) error {
 	slog.Info("Running tests for CI node in single-worker mode", "ciNode", ciNode, "nodeIndex", ciNode, "workerIndex", 0)
-	if len(testFiles) == 0 {
+	skippedTestSuitesFile := tiaSkippedTestSuitesFileForRunner(ciNode)
+	if len(testFiles) == 0 && skippedTestSuitesFile == "" {
 		slog.Info("No tests to run", "nodeIndex", ciNode, "workerIndex", 0)
 		return nil
 	}
-	if err := e.runBatch(testFiles, ciNode, 0); err != nil {
+	if err := e.runBatchWithTIASkippedTestSuites(testFiles, ciNode, 0, skippedTestSuitesFile); err != nil {
 		return errcode.WithCode(errcode.RunCINodeTestsFailed, fmt.Errorf("failed to run tests for ci-node %d: %w", ciNode, err))
 	}
 	return nil
 }
 
 func (e testExecutor) runCINodeWorkers(ciNode int, ciNodeWorkers int, testFiles []string) error {
-	if len(testFiles) == 0 {
+	if len(testFiles) == 0 && tiaSkippedTestSuitesFileForRunner(ciNode) == "" {
 		slog.Info("No tests to run for CI node", "ciNode", ciNode)
 		return nil
 	}
@@ -84,7 +85,11 @@ func (e testExecutor) runCINodeWorkers(ciNode int, ciNodeWorkers int, testFiles 
 func (e testExecutor) runCINodeWorkerGroups(ciNode int, groups [][]string) error {
 	var g errgroup.Group
 	for workerIndex, groupFiles := range groups {
-		if len(groupFiles) == 0 {
+		skippedTestSuitesFile := ""
+		if workerIndex == 0 {
+			skippedTestSuitesFile = tiaSkippedTestSuitesFileForRunner(ciNode)
+		}
+		if len(groupFiles) == 0 && skippedTestSuitesFile == "" {
 			continue
 		}
 
@@ -94,7 +99,7 @@ func (e testExecutor) runCINodeWorkerGroups(ciNode int, groups [][]string) error
 			"testFiles", groupFiles)
 
 		g.Go(func() error {
-			return e.runBatch(groupFiles, ciNode, workerIndex)
+			return e.runBatchWithTIASkippedTestSuites(groupFiles, ciNode, workerIndex, skippedTestSuitesFile)
 		})
 	}
 

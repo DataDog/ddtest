@@ -21,7 +21,10 @@ var TestFilesOutputPath = filepath.Join(RunnerDirectory, "test-files.txt")
 var SkippablePercentageOutputPath = filepath.Join(RunnerDirectory, "skippable-percentage.txt")
 var ParallelRunnersOutputPath = filepath.Join(RunnerDirectory, "parallel-runners.txt")
 var TestsSplitDir = filepath.Join(RunnerDirectory, "tests-split")
+var TIASkippedTestSuitesDir = filepath.Join(RunnerDirectory, "tia-skipped-test-suites")
 var RunnerCacheDir = filepath.Join(RunnerDirectory, "cache")
+
+const TestOptimizationTIASkippedTestSuitesFileEnvVar = "DD_TEST_OPTIMIZATION_TIA_SKIPPED_TEST_SUITES_FILE"
 
 const TestOptimizationPlanCacheFile = "test_suite_durations.json"
 

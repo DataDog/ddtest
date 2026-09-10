@@ -23,6 +23,10 @@ troubleshooting, but they are DDTest implementation details.
       runner-0
       runner-1
       ...
+    tia-skipped-test-suites/
+      runner-0.json
+      runner-1.json
+      ...
     cache/
       test_suite_durations.json
   github/
@@ -102,6 +106,21 @@ spec/services/checkout_spec.rb
 
 Use these files when your CI already fans out jobs and each CI node should run
 only its assigned files. `ddtest run --ci-node N` reads `runner-N`.
+
+### `.testoptimization/runner/tia-skipped-test-suites/runner-N.json`
+
+Optional, versioned list of Jest suites that TIA removed before execution for
+runner `N`:
+
+```json
+{"version":1,"test_suites":["src/cart.test.js","src/checkout.test.js"]}
+```
+
+`ddtest run` passes the assigned artifact path to the worker in
+`DD_TEST_OPTIMIZATION_TIA_SKIPPED_TEST_SUITES_FILE`. Compatible versions of
+`dd-trace-js` use it to report skipped suite events without giving those files
+to Jest. Other consumers can ignore this additive artifact. DDTest writes an
+empty `test_suites` array when a runner has no pre-skipped suites.
 
 ## GitHub Actions Matrix
 

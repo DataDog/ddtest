@@ -23,13 +23,14 @@ func (e testExecutor) runSequential() runExecutionResult {
 		return report.failure(errcode.WithCode(errcode.RunSequentialTestFilesReadFailed, fmt.Errorf("failed to read test files from %s: %w", constants.TestFilesOutputPath, err)))
 	}
 	report.TestFilesRun = len(testFiles)
+	skippedTestSuitesFile := tiaSkippedTestSuitesFileForRunner(0)
 
-	if len(testFiles) == 0 {
+	if len(testFiles) == 0 && skippedTestSuitesFile == "" {
 		slog.Info("No tests to run", "nodeIndex", 0, "workerIndex", 0)
 		return report.success()
 	}
 
-	if err := e.runBatch(testFiles, 0, 0); err != nil {
+	if err := e.runBatchWithTIASkippedTestSuites(testFiles, 0, 0, skippedTestSuitesFile); err != nil {
 		return report.failure(errcode.WithCode(errcode.RunSequentialTestsFailed, fmt.Errorf("failed to run tests: %w", err)))
 	}
 	return report.success()

@@ -39,12 +39,13 @@ func (e testExecutor) runParallel() runExecutionResult {
 			return report.failure(errcode.WithCode(errcode.RunParallelTestFilesReadFailed, fmt.Errorf("failed to read test files from %s: %w", splitFilePath, err)))
 		}
 		report.TestFilesRun += len(testFiles)
-		if len(testFiles) == 0 {
+		skippedTestSuitesFile := tiaSkippedTestSuitesFileForSplit(entry.Name())
+		if len(testFiles) == 0 && skippedTestSuitesFile == "" {
 			continue
 		}
 
 		g.Go(func() error {
-			return e.runBatch(testFiles, 0, workerIndex)
+			return e.runBatchWithTIASkippedTestSuites(testFiles, 0, workerIndex, skippedTestSuitesFile)
 		})
 	}
 

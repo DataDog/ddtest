@@ -973,6 +973,11 @@ func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery
 	assertFileContent(t, constants.TestFilesOutputPath, expectedTestFiles)
 	assertFileContent(t, constants.SkippablePercentageOutputPath, "50.00")
 	assertFileContent(t, filepath.Join(constants.TestsSplitDir, "runner-0"), expectedTestFiles)
+	assertFileContent(
+		t,
+		filepath.Join(constants.TIASkippedTestSuitesDir, "runner-0.json"),
+		"{\"version\":1,\"test_suites\":[\"src/a.test.js\"]}\n",
+	)
 	discoveryTags := []string{"discovery_mode:fast", "success:true", "platform:javascript", "framework:jest"}
 	if !telemetryClient.has("ddtest.test_discovery.duration_ms", discoveryTags...) {
 		t.Fatal("expected fast discovery duration telemetry")

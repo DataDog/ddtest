@@ -39,8 +39,7 @@ func TestNewJest(t *testing.T) {
 	jest := NewJest()
 	if jest == nil {
 		t.Fatal("NewJest() returned nil")
-	}
-	if jest.executor == nil {
+	} else if jest.executor == nil {
 		t.Error("NewJest() created Jest with nil executor")
 	}
 }
@@ -457,6 +456,32 @@ func TestJest_RunTests_UsesNpxFallback(t *testing.T) {
 	expectedArgs := []string{"jest", "--runTestsByPath", "src/a.test.js"}
 	if !slices.Equal(capturedArgs, expectedArgs) {
 		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
+	}
+}
+
+func TestJest_RunTests_EmptyBatchPassesWithoutTests(t *testing.T) {
+	tempDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldWd) }()
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+
+	var capturedArgs []string
+	mockExecutor := &mockCommandExecutor{
+		onExecution: func(_ string, args []string) {
+			capturedArgs = slices.Clone(args)
+		},
+	}
+	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
+
+	if err := jest.RunTests(context.Background(), nil, nil); err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
+
+	want := []string{"jest", "--runTestsByPath", "--passWithNoTests"}
+	if !slices.Equal(capturedArgs, want) {
+		t.Errorf("args = %v, want %v", capturedArgs, want)
 	}
 }
 
