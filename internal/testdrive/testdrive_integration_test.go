@@ -92,6 +92,10 @@ func TestInstrumentedJestFixture(t *testing.T) {
 	require.NotNil(t, testCycleRequest, "observed requests: %v", requestPaths(requests))
 	require.NotEmpty(t, testCycleRequest.Body)
 	t.Logf("captured raw %s request: content-type=%q bytes=%d", testCycleRequest.Path, testCycleRequest.Header.Get("Content-Type"), len(testCycleRequest.Body))
+
+	testEventCount, err := server.TestEventCount()
+	require.NoError(t, err)
+	require.Equal(t, 1, testEventCount)
 }
 
 func requestPaths(requests []intake.RawRequest) []string {
