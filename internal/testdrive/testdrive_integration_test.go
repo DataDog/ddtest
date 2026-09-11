@@ -8,6 +8,7 @@ package testdrive_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -133,7 +134,7 @@ func prepareInstrumentedJestFixture(ctx context.Context, repositoryRoot, session
 		return nil, commandError("install Jest", output, err)
 	}
 
-	server, err := intake.Start()
+	server, err := intake.Start(session.Directory())
 	if err != nil {
 		return nil, err
 	}
@@ -209,6 +210,21 @@ func assertFixtureResult(t *testing.T, fixture *instrumentedJestFixture) {
 	require.FileExists(t, fixture.ciInitPath)
 	require.FileExists(t, fixture.jestPath)
 	require.FileExists(t, fixture.outputPath)
+	intakeFiles, err := os.ReadDir(filepath.Join(fixture.session.Directory(), "intake"))
+	require.NoError(t, err)
+	require.NotEmpty(t, intakeFiles)
+	storedEvents := false
+	storedCoverage := false
+	for _, intakeFile := range intakeFiles {
+		require.Equal(t, ".json", filepath.Ext(intakeFile.Name()))
+		contents, readErr := os.ReadFile(filepath.Join(fixture.session.Directory(), "intake", intakeFile.Name()))
+		require.NoError(t, readErr)
+		require.True(t, json.Valid(contents))
+		storedEvents = storedEvents || strings.HasSuffix(intakeFile.Name(), "-citestcycle.json")
+		storedCoverage = storedCoverage || strings.HasSuffix(intakeFile.Name(), "-citestcov.json")
+	}
+	require.True(t, storedEvents)
+	require.True(t, storedCoverage)
 
 	for _, path := range []string{"/api/v2/citestcycle", "/api/v2/citestcov"} {
 		request := findRequest(fixture.requests, path)

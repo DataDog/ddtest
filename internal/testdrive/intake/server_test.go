@@ -7,17 +7,21 @@ package intake
 
 import (
 	"bytes"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tinylib/msgp/msgp"
 )
 
 func TestStart(t *testing.T) {
-	server, err := Start()
+	server, err := Start(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, server.Close())
@@ -40,7 +44,7 @@ func TestStart(t *testing.T) {
 }
 
 func TestCloseStopsServer(t *testing.T) {
-	server, err := Start()
+	server, err := Start(t.TempDir())
 	require.NoError(t, err)
 
 	require.NoError(t, server.Close())
@@ -54,13 +58,13 @@ func TestCloseStopsServer(t *testing.T) {
 }
 
 func TestStartSupportsSimultaneousServers(t *testing.T) {
-	first, err := Start()
+	first, err := Start(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, first.Close())
 	})
 
-	second, err := Start()
+	second, err := Start(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, second.Close())
@@ -76,7 +80,8 @@ func TestStartSupportsSimultaneousServers(t *testing.T) {
 }
 
 func TestServerCapturesRawRequests(t *testing.T) {
-	server, err := Start()
+	sessionDirectory := t.TempDir()
+	server, err := Start(sessionDirectory)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, server.Close())
@@ -98,6 +103,43 @@ func TestServerCapturesRawRequests(t *testing.T) {
 	require.Equal(t, "/observed", requests[0].Path)
 	require.Equal(t, "application/octet-stream", requests[0].Header.Get("Content-Type"))
 	require.Equal(t, []byte("raw body"), requests[0].Body)
+
+	storedBytes, err := os.ReadFile(filepath.Join(sessionDirectory, intakeDirectoryName, "001-request.json"))
+	require.NoError(t, err)
+	var stored storedRequest
+	require.NoError(t, json.Unmarshal(storedBytes, &stored))
+	require.Equal(t, http.MethodPost, stored.Method)
+	require.Equal(t, "/observed", stored.Path)
+	var storedBody string
+	require.NoError(t, json.Unmarshal(stored.Body, &storedBody))
+	require.Equal(t, "raw body", storedBody)
+}
+
+func TestServerStoresMessagePackAsJSON(t *testing.T) {
+	sessionDirectory := t.TempDir()
+	server, err := Start(sessionDirectory)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, server.Close())
+	})
+
+	payload := msgp.AppendMapHeader(nil, 1)
+	payload = msgp.AppendString(payload, "events")
+	payload = msgp.AppendArrayHeader(payload, 0)
+	response, err := testHTTPClient().Post(server.URL()+testCyclePath, "application/msgpack", bytes.NewReader(payload))
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.Equal(t, http.StatusOK, response.StatusCode)
+
+	intakeDirectory := filepath.Join(sessionDirectory, intakeDirectoryName)
+	files, err := os.ReadDir(intakeDirectory)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	require.Equal(t, "001-citestcycle.json", files[0].Name())
+	storedBytes, err := os.ReadFile(filepath.Join(intakeDirectory, files[0].Name()))
+	require.NoError(t, err)
+	require.True(t, json.Valid(storedBytes))
+	require.Contains(t, string(storedBytes), `"events": []`)
 }
 
 func testHTTPClient() *http.Client {
