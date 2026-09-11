@@ -58,6 +58,13 @@ type testManagementSettings struct {
 func newHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+settingsPath, handleSettings)
+	mux.HandleFunc("/", func(w http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, request)
+	})
 	return mux
 }
 
