@@ -141,6 +141,26 @@ The first implementation supports the setup it generates. It uses one pinned `dd
 - prints whether events and coverage arrived;
 - leaves a simple local report.
 
+Before doing any of that, `testdrive` completes its read-only detection and prints what it is about to do:
+
+- directories and files it will create;
+- the tracer and version it will install, if any;
+- the external commands it will execute;
+- confirmation that it will not change the project's package manifest or lockfile.
+
+It then uses one lightweight confirmation:
+
+- `ddtest testdrive --yes` always prints the preview and continues without prompting;
+- when standard input is a terminal, `ddtest testdrive` asks `Continue? [y/N]` and defaults to no;
+- when standard input is not a terminal, it never waits for input. It exits and tells the caller to review the preview and run `ddtest testdrive --yes`;
+- the interactive prompt also tells coding agents to rerun with `--yes` after reviewing the actions.
+
+Do not try to identify particular coding agents from environment variables. A process attached to a terminal is indistinguishable from a human terminal, so the useful distinction is whether it is safe to prompt. Piped input does not count as confirmation; unattended execution requires `--yes`.
+
+The `testdrive` command owns this interaction. The intake, tracer installer, and other lower-level components never prompt. Detection and command construction happen before confirmation; session creation, tracer installation, server startup, and test execution happen afterward.
+
+This is not a return to execution plans or approval files. There is no persisted plan, checksum, or separate execution command: the preview, confirmation, and run are one interaction.
+
 Do not run an uninstrumented baseline. If customer tests fail but test events arrive, say both things plainly: Test Optimization setup works, and some tests failed.
 
 ### 1.2 Try it on real repositories and fix what hurts
