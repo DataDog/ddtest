@@ -19,9 +19,9 @@ func TestTestEventCountRecognizesOneTest(t *testing.T) {
 	payload = msgp.AppendInt(payload, 1)
 	payload = msgp.AppendString(payload, "events")
 	payload = msgp.AppendArrayHeader(payload, 3)
-	payload = appendEvent(payload, "test_session_end")
-	payload = appendEvent(payload, "test")
-	payload = appendEvent(payload, "test_suite_end")
+	payload = appendEvent(payload, "test_session_end", 10, 20, 30)
+	payload = appendEvent(payload, "test", 10, 20, 30)
+	payload = appendEvent(payload, "test_suite_end", 10, 20, 30)
 
 	server := &Server{requests: []RawRequest{
 		{Method: http.MethodPost, Path: "/another-endpoint", Body: []byte("not msgpack")},
@@ -44,11 +44,17 @@ func TestTestEventCountReportsInvalidPayload(t *testing.T) {
 	require.ErrorContains(t, err, "recognize test events")
 }
 
-func appendEvent(payload []byte, eventType string) []byte {
+func appendEvent(payload []byte, eventType string, sessionID, suiteID, spanID uint64) []byte {
 	payload = msgp.AppendMapHeader(payload, 2)
 	payload = msgp.AppendString(payload, "type")
 	payload = msgp.AppendString(payload, eventType)
 	payload = msgp.AppendString(payload, "content")
-	payload = msgp.AppendMapHeader(payload, 0)
+	payload = msgp.AppendMapHeader(payload, 3)
+	payload = msgp.AppendString(payload, "test_session_id")
+	payload = msgp.AppendUint64(payload, sessionID)
+	payload = msgp.AppendString(payload, "test_suite_id")
+	payload = msgp.AppendUint64(payload, suiteID)
+	payload = msgp.AppendString(payload, "span_id")
+	payload = msgp.AppendUint64(payload, spanID)
 	return payload
 }
