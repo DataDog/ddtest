@@ -6,6 +6,7 @@
 package intake
 
 import (
+	"bytes"
 	"net"
 	"net/http"
 	"net/url"
@@ -72,6 +73,31 @@ func TestStartSupportsSimultaneousServers(t *testing.T) {
 		require.NoError(t, response.Body.Close())
 		require.Equal(t, http.StatusNotFound, response.StatusCode)
 	}
+}
+
+func TestServerCapturesRawRequests(t *testing.T) {
+	server, err := Start()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, server.Close())
+	})
+
+	request, err := http.NewRequest(http.MethodPost, server.URL()+"/observed", bytes.NewBufferString("raw body"))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/octet-stream")
+	response, err := testHTTPClient().Do(request)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, response.Body.Close())
+	})
+	require.Equal(t, http.StatusOK, response.StatusCode)
+
+	requests := server.Requests()
+	require.Len(t, requests, 1)
+	require.Equal(t, http.MethodPost, requests[0].Method)
+	require.Equal(t, "/observed", requests[0].Path)
+	require.Equal(t, "application/octet-stream", requests[0].Header.Get("Content-Type"))
+	require.Equal(t, []byte("raw body"), requests[0].Body)
 }
 
 func testHTTPClient() *http.Client {
