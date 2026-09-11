@@ -6,10 +6,13 @@
 package testdrive_test
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,20 +24,99 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const jestVersion = "30.5.1"
+const (
+	jestVersion    = "30.5.1"
+	fixtureTimeout = 5 * time.Minute
+)
+
+type instrumentedJestFixture struct {
+	session          *testdrive.Session
+	server           *intake.Server
+	ciInitPath       string
+	jestPath         string
+	fixtureDirectory string
+	fixturePath      string
+	outputPath       string
+	sessionName      string
+	requests         []intake.RawRequest
+	testEventCount   int
+	coveredTestCount int
+}
 
 func TestInstrumentedJestFixture(t *testing.T) {
+	requireNPMIntegration(t)
+
+	ctx, cancel := context.WithTimeout(t.Context(), fixtureTimeout)
+	defer cancel()
+
+	fixture, err := prepareInstrumentedJestFixture(ctx, t.TempDir(), "ddtest testdrive")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, fixture.server.Close())
+	})
+
+	require.NoError(t, fixture.run(ctx))
+	assertFixtureResult(t, fixture)
+}
+
+func TestInstrumentedJestFixturesAreIsolated(t *testing.T) {
+	requireNPMIntegration(t)
+
+	ctx, cancel := context.WithTimeout(t.Context(), fixtureTimeout)
+	defer cancel()
+	repositoryRoot := t.TempDir()
+
+	first, err := prepareInstrumentedJestFixture(ctx, repositoryRoot, "first testdrive")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, first.server.Close())
+	})
+	second, err := prepareInstrumentedJestFixture(ctx, repositoryRoot, "second testdrive")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, second.server.Close())
+	})
+
+	require.NotEqual(t, first.session.Directory(), second.session.Directory())
+	require.Equal(t, filepath.Dir(first.session.Directory()), filepath.Dir(second.session.Directory()))
+	require.NotEqual(t, first.server.URL(), second.server.URL())
+	require.NotEqual(t, first.ciInitPath, second.ciInitPath)
+	require.NotEqual(t, first.outputPath, second.outputPath)
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for _, fixture := range []*instrumentedJestFixture{first, second} {
+		go func() {
+			<-start
+			results <- fixture.run(ctx)
+		}()
+	}
+	close(start)
+
+	firstError := <-results
+	secondError := <-results
+	require.NoError(t, firstError)
+	require.NoError(t, secondError)
+	assertFixtureResult(t, first)
+	assertFixtureResult(t, second)
+}
+
+func requireNPMIntegration(t *testing.T) {
+	t.Helper()
 	if os.Getenv("DDTEST_RUN_NPM_INTEGRATION_TEST") == "" {
 		t.Skip("set DDTEST_RUN_NPM_INTEGRATION_TEST=1 to run Jest with the pinned tracer")
 	}
+}
 
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
-	defer cancel()
-
-	session, err := testdrive.NewSession(t.TempDir())
-	require.NoError(t, err)
+func prepareInstrumentedJestFixture(ctx context.Context, repositoryRoot, sessionName string) (*instrumentedJestFixture, error) {
+	session, err := testdrive.NewSession(repositoryRoot)
+	if err != nil {
+		return nil, err
+	}
 	ciInitPath, err := tracer.NewJavaScript().Install(ctx, session.Directory())
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 
 	jestDirectory := filepath.Join(session.Directory(), "jest")
 	executor := &ext.DefaultCommandExecutor{}
@@ -47,58 +129,107 @@ func TestInstrumentedJestFixture(t *testing.T) {
 		"--no-fund",
 		"jest@" + jestVersion,
 	}, nil)
-	require.NoError(t, err, string(output))
+	if err != nil {
+		return nil, commandError("install Jest", output, err)
+	}
 
 	server, err := intake.Start()
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, server.Close())
-	})
-
+	if err != nil {
+		return nil, err
+	}
 	fixtureDirectory, err := filepath.Abs(filepath.Join("testdata", "jest"))
-	require.NoError(t, err)
-	fixturePath := filepath.Join(fixtureDirectory, "one.test.js")
-	jestPath := filepath.Join(jestDirectory, "node_modules", "jest", "bin", "jest.js")
-	output, err = executor.CombinedOutput(ctx, "node", []string{
-		jestPath,
+	if err != nil {
+		_ = server.Close()
+		return nil, err
+	}
+
+	return &instrumentedJestFixture{
+		session:          session,
+		server:           server,
+		ciInitPath:       ciInitPath,
+		jestPath:         filepath.Join(jestDirectory, "node_modules", "jest", "bin", "jest.js"),
+		fixtureDirectory: fixtureDirectory,
+		fixturePath:      filepath.Join(fixtureDirectory, "one.test.js"),
+		outputPath:       filepath.Join(session.Directory(), "jest-output.txt"),
+		sessionName:      sessionName,
+	}, nil
+}
+
+func (f *instrumentedJestFixture) run(ctx context.Context) error {
+	executor := &ext.DefaultCommandExecutor{}
+	output, err := executor.CombinedOutput(ctx, "node", []string{
+		f.jestPath,
 		"--ci",
 		"--config", "{}",
 		"--runInBand",
-		"--rootDir", fixtureDirectory,
-		"--runTestsByPath", fixturePath,
+		"--rootDir", f.fixtureDirectory,
+		"--runTestsByPath", f.fixturePath,
 	}, map[string]string{
-		"NODE_OPTIONS":                                                "-r " + ciInitPath,
+		"NODE_OPTIONS":                                                "-r " + f.ciInitPath,
 		constants.APIKeyEnvironmentVariable:                           "testdrive",
 		constants.TestOptimizationEnabledEnvironmentVariable:          "true",
 		constants.TestOptimizationAgentlessEnabledEnvironmentVariable: "true",
-		constants.TestOptimizationAgentlessURLEnvironmentVariable:     server.URL(),
-		constants.TestOptimizationTestSessionNameEnvironmentVariable:  "ddtest testdrive",
+		constants.TestOptimizationAgentlessURLEnvironmentVariable:     f.server.URL(),
+		constants.TestOptimizationTestSessionNameEnvironmentVariable:  f.sessionName,
 		"DD_CIVISIBILITY_GIT_UPLOAD_ENABLED":                          "false",
 		"DD_INSTRUMENTATION_TELEMETRY_ENABLED":                        "false",
 		"DD_TRACE_STARTUP_LOGS":                                       "false",
 		"DD_SERVICE":                                                  "ddtest-testdrive-fixture",
 	})
-	require.NoError(t, err, string(output))
+	if writeErr := os.WriteFile(f.outputPath, output, 0644); writeErr != nil {
+		return fmt.Errorf("write Jest output: %w", writeErr)
+	}
+	if err != nil {
+		return commandError("run Jest", output, err)
+	}
 
-	requests := server.Requests()
-	require.NotEmpty(t, requests)
-	var testCycleRequest *intake.RawRequest
-	for i := range requests {
-		t.Logf("captured raw %s %s: content-type=%q bytes=%d", requests[i].Method, requests[i].Path, requests[i].Header.Get("Content-Type"), len(requests[i].Body))
-		if testCycleRequest == nil && requests[i].Method == http.MethodPost && requests[i].Path == "/api/v2/citestcycle" {
-			testCycleRequest = &requests[i]
+	testEventCount, err := f.server.TestEventCount()
+	if err != nil {
+		return err
+	}
+	coveredTestCount, err := f.server.CoveredTestCount()
+	if err != nil {
+		return err
+	}
+	f.requests = f.server.Requests()
+	f.testEventCount = testEventCount
+	f.coveredTestCount = coveredTestCount
+	return nil
+}
+
+func assertFixtureResult(t *testing.T, fixture *instrumentedJestFixture) {
+	t.Helper()
+
+	require.Equal(t, 1, fixture.testEventCount)
+	require.Equal(t, 1, fixture.coveredTestCount)
+	resolvedSessionDirectory, err := filepath.EvalSymlinks(fixture.session.Directory())
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(fixture.ciInitPath, resolvedSessionDirectory+string(filepath.Separator)))
+	require.True(t, strings.HasPrefix(fixture.outputPath, fixture.session.Directory()+string(filepath.Separator)))
+	require.FileExists(t, fixture.ciInitPath)
+	require.FileExists(t, fixture.jestPath)
+	require.FileExists(t, fixture.outputPath)
+
+	for _, path := range []string{"/api/v2/citestcycle", "/api/v2/citestcov"} {
+		request := findRequest(fixture.requests, path)
+		require.NotNil(t, request, "observed requests: %v", requestPaths(fixture.requests))
+		require.NotEmpty(t, request.Body)
+		if path == "/api/v2/citestcycle" {
+			require.True(t, bytes.Contains(request.Body, []byte(fixture.sessionName)))
 		}
 	}
-	require.NotNil(t, testCycleRequest, "observed requests: %v", requestPaths(requests))
-	require.NotEmpty(t, testCycleRequest.Body)
+	for _, request := range fixture.requests {
+		t.Logf("%s captured raw %s %s: content-type=%q bytes=%d", fixture.sessionName, request.Method, request.Path, request.Header.Get("Content-Type"), len(request.Body))
+	}
+}
 
-	testEventCount, err := server.TestEventCount()
-	require.NoError(t, err)
-	require.Equal(t, 1, testEventCount)
-
-	coveredTestCount, err := server.CoveredTestCount()
-	require.NoError(t, err)
-	require.Equal(t, 1, coveredTestCount)
+func findRequest(requests []intake.RawRequest, path string) *intake.RawRequest {
+	for i := range requests {
+		if requests[i].Method == http.MethodPost && requests[i].Path == path {
+			return &requests[i]
+		}
+	}
+	return nil
 }
 
 func requestPaths(requests []intake.RawRequest) []string {
@@ -107,4 +238,12 @@ func requestPaths(requests []intake.RawRequest) []string {
 		paths[i] = request.Method + " " + request.Path
 	}
 	return paths
+}
+
+func commandError(action string, output []byte, err error) error {
+	diagnostic := strings.TrimSpace(string(output))
+	if diagnostic == "" {
+		return fmt.Errorf("%s: %w", action, err)
+	}
+	return fmt.Errorf("%s: %s: %w", action, diagnostic, err)
 }
