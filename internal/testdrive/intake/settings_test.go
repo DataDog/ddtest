@@ -15,7 +15,7 @@ import (
 )
 
 func TestSettingsEnablesTestOptimizationCoverage(t *testing.T) {
-	server, err := Start()
+	server, err := Start(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, server.Close())
