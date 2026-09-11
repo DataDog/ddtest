@@ -14,89 +14,143 @@ import (
 
 const testCyclePath = "/api/v2/citestcycle"
 
+type testReference struct {
+	sessionID uint64
+	suiteID   uint64
+	spanID    uint64
+}
+
+type suiteReference struct {
+	sessionID uint64
+	suiteID   uint64
+}
+
 // TestEventCount returns the number of test events observed by the intake.
 func (s *Server) TestEventCount() (int, error) {
-	count := 0
+	tests, err := s.testReferences()
+	if err != nil {
+		return 0, err
+	}
+	return len(tests), nil
+}
+
+func (s *Server) testReferences() ([]testReference, error) {
+	var tests []testReference
 	for _, request := range s.Requests() {
 		if request.Method != http.MethodPost || request.Path != testCyclePath {
 			continue
 		}
 
-		requestCount, err := countTestEvents(request.Body)
+		requestTests, err := readTests(request.Body)
 		if err != nil {
-			return 0, fmt.Errorf("recognize test events in %s: %w", testCyclePath, err)
+			return nil, fmt.Errorf("recognize test events in %s: %w", testCyclePath, err)
 		}
-		count += requestCount
+		tests = append(tests, requestTests...)
 	}
-	return count, nil
+	return tests, nil
 }
 
-func countTestEvents(payload []byte) (int, error) {
+func readTests(payload []byte) ([]testReference, error) {
 	fieldCount, rest, err := msgp.ReadMapHeaderBytes(payload)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	count := 0
+	var tests []testReference
 	for range fieldCount {
 		var field string
 		field, rest, err = msgp.ReadStringBytes(rest)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 
 		if field != "events" {
 			rest, err = msgp.Skip(rest)
 			if err != nil {
-				return 0, err
+				return nil, err
 			}
 			continue
 		}
 
-		var eventCount int
-		eventCount, rest, err = countTestsInEventArray(rest)
+		var requestTests []testReference
+		requestTests, rest, err = readTestsInEventArray(rest)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
-		count += eventCount
+		tests = append(tests, requestTests...)
 	}
-	return count, nil
+	return tests, nil
 }
 
-func countTestsInEventArray(payload []byte) (int, []byte, error) {
+func readTestsInEventArray(payload []byte) ([]testReference, []byte, error) {
 	eventCount, rest, err := msgp.ReadArrayHeaderBytes(payload)
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 
-	count := 0
+	var tests []testReference
 	for range eventCount {
+		var eventType string
+		var reference testReference
 		fieldCount, remaining, readErr := msgp.ReadMapHeaderBytes(rest)
 		if readErr != nil {
-			return 0, nil, readErr
+			return nil, nil, readErr
 		}
 		rest = remaining
 
-		eventType := ""
 		for range fieldCount {
 			var field string
 			field, rest, readErr = msgp.ReadStringBytes(rest)
 			if readErr != nil {
-				return 0, nil, readErr
+				return nil, nil, readErr
 			}
 
-			if field == "type" {
+			switch field {
+			case "type":
 				eventType, rest, readErr = msgp.ReadStringBytes(rest)
-			} else {
+			case "content":
+				reference, rest, readErr = readTestReference(rest)
+			default:
 				rest, readErr = msgp.Skip(rest)
 			}
 			if readErr != nil {
-				return 0, nil, readErr
+				return nil, nil, readErr
 			}
 		}
 		if eventType == "test" {
-			count++
+			tests = append(tests, reference)
 		}
 	}
-	return count, rest, nil
+	return tests, rest, nil
+}
+
+func readTestReference(payload []byte) (testReference, []byte, error) {
+	fieldCount, rest, err := msgp.ReadMapHeaderBytes(payload)
+	if err != nil {
+		return testReference{}, nil, err
+	}
+
+	var reference testReference
+	for range fieldCount {
+		var field string
+		field, rest, err = msgp.ReadStringBytes(rest)
+		if err != nil {
+			return testReference{}, nil, err
+		}
+
+		switch field {
+		case "test_session_id":
+			reference.sessionID, rest, err = msgp.ReadUint64Bytes(rest)
+		case "test_suite_id":
+			reference.suiteID, rest, err = msgp.ReadUint64Bytes(rest)
+		case "span_id":
+			reference.spanID, rest, err = msgp.ReadUint64Bytes(rest)
+		default:
+			rest, err = msgp.Skip(rest)
+		}
+		if err != nil {
+			return testReference{}, nil, err
+		}
+	}
+	return reference, rest, nil
 }

@@ -84,18 +84,21 @@ func TestInstrumentedJestFixture(t *testing.T) {
 	require.NotEmpty(t, requests)
 	var testCycleRequest *intake.RawRequest
 	for i := range requests {
-		if requests[i].Method == http.MethodPost && requests[i].Path == "/api/v2/citestcycle" {
+		t.Logf("captured raw %s %s: content-type=%q bytes=%d", requests[i].Method, requests[i].Path, requests[i].Header.Get("Content-Type"), len(requests[i].Body))
+		if testCycleRequest == nil && requests[i].Method == http.MethodPost && requests[i].Path == "/api/v2/citestcycle" {
 			testCycleRequest = &requests[i]
-			break
 		}
 	}
 	require.NotNil(t, testCycleRequest, "observed requests: %v", requestPaths(requests))
 	require.NotEmpty(t, testCycleRequest.Body)
-	t.Logf("captured raw %s request: content-type=%q bytes=%d", testCycleRequest.Path, testCycleRequest.Header.Get("Content-Type"), len(testCycleRequest.Body))
 
 	testEventCount, err := server.TestEventCount()
 	require.NoError(t, err)
 	require.Equal(t, 1, testEventCount)
+
+	coveredTestCount, err := server.CoveredTestCount()
+	require.NoError(t, err)
+	require.Equal(t, 1, coveredTestCount)
 }
 
 func requestPaths(requests []intake.RawRequest) []string {
