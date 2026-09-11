@@ -35,7 +35,7 @@ func Start() (*Server, error) {
 	}
 
 	httpServer := &http.Server{
-		Handler:           http.NotFoundHandler(),
+		Handler:           newHandler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	server := &Server{
