@@ -11,9 +11,13 @@ import (
 )
 
 const (
-	settingsPath         = "/api/v2/libraries/tests/services/setting"
-	settingsResponseID   = "test-settings"
-	settingsResponseType = "ci_app_test_service_libraries_settings"
+	settingsPath           = "/api/v2/libraries/tests/services/setting"
+	knownTestsPath         = "/api/v2/ci/libraries/tests"
+	skippableTestsPath     = "/api/v2/ci/tests/skippable"
+	testManagementPath     = "/api/v2/test/libraries/test-management/tests"
+	settingsResponseID     = "test-settings"
+	settingsResponseType   = "ci_app_test_service_libraries_settings"
+	testdriveCorrelationID = "ddtest-testdrive"
 )
 
 type settingsRequest struct {
@@ -58,6 +62,9 @@ type testManagementSettings struct {
 func newHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+settingsPath, handleSettings)
+	mux.HandleFunc("POST "+knownTestsPath, handleKnownTests)
+	mux.HandleFunc("POST "+skippableTestsPath, handleSkippableTests)
+	mux.HandleFunc("POST "+testManagementPath, handleTestManagement)
 	mux.HandleFunc("/", func(w http.ResponseWriter, request *http.Request) {
 		if request.Method == http.MethodPost {
 			w.WriteHeader(http.StatusOK)
@@ -84,15 +91,59 @@ func handleSettings(w http.ResponseWriter, request *http.Request) {
 	response.Data.ID = responseID
 	response.Data.Type = settingsResponseType
 	response.Data.Attributes = settingsAttributes{
-		CodeCoverage: true,
-		ITREnabled:   true,
+		CodeCoverage:                true,
+		CoverageReportUploadEnabled: true,
+		TestsSkipping:               true,
+		ITREnabled:                  true,
+		ImpactedTestsEnabled:        true,
+		FlakyTestRetriesEnabled:     true,
+		DIEnabled:                   true,
+		KnownTestsEnabled:           true,
 		EarlyFlakeDetection: earlyFlakeDetectionSettings{
-			SlowTestRetries:        map[string]int{"5s": 10, "10s": 5, "30s": 3, "5m": 2},
-			FaultySessionThreshold: 30,
+			Enabled:                true,
+			SlowTestRetries:        map[string]int{"5s": 1, "10s": 1, "30s": 1, "5m": 1},
+			FaultySessionThreshold: 100,
+		},
+		TestManagement: testManagementSettings{
+			Enabled:             true,
+			AttemptToFixRetries: 1,
 		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func handleKnownTests(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, map[string]any{
+		"data": map[string]any{
+			"attributes": map[string]any{
+				"tests": map[string]any{"jest": map[string]any{}},
+			},
+		},
+	})
+}
+
+func handleSkippableTests(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, map[string]any{
+		"data": []any{},
+		"meta": map[string]any{
+			"correlation_id": testdriveCorrelationID,
+			"coverage":       map[string]any{},
+		},
+	})
+}
+
+func handleTestManagement(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, map[string]any{
+		"data": map[string]any{
+			"attributes": map[string]any{"modules": map[string]any{}},
+		},
+	})
+}
+
+func writeJSON(w http.ResponseWriter, response any) {
+	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
 }

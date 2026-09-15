@@ -8,6 +8,9 @@ package intake
 import (
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/tinylib/msgp/msgp"
 )
@@ -18,6 +21,11 @@ type testReference struct {
 	sessionID uint64
 	suiteID   uint64
 	spanID    uint64
+	name      string
+	suite     string
+	status    string
+	duration  time.Duration
+	isRetry   bool
 }
 
 type suiteReference struct {
@@ -136,32 +144,71 @@ func readTestsInEventArray(payload []byte) ([]testReference, []byte, error) {
 }
 
 func readTestReference(payload []byte) (testReference, []byte, error) {
-	fieldCount, rest, err := msgp.ReadMapHeaderBytes(payload)
+	content, rest, err := msgp.ReadMapStrIntfBytes(payload, nil)
 	if err != nil {
 		return testReference{}, nil, err
 	}
 
-	var reference testReference
-	for range fieldCount {
-		var field string
-		field, rest, err = msgp.ReadStringBytes(rest)
-		if err != nil {
-			return testReference{}, nil, err
+	reference := testReference{
+		sessionID: unsigned(content["test_session_id"]),
+		suiteID:   unsigned(content["test_suite_id"]),
+		spanID:    unsigned(content["span_id"]),
+		duration:  time.Duration(integer(content["duration"])),
+	}
+	if metadata, ok := content["meta"].(map[string]any); ok {
+		reference.name = text(metadata["test.name"])
+		reference.suite = text(metadata["test.suite"])
+		reference.status = strings.ToLower(text(metadata["test.final_status"]))
+		if reference.status == "" {
+			reference.status = strings.ToLower(text(metadata["test.status"]))
 		}
-
-		switch field {
-		case "test_session_id":
-			reference.sessionID, rest, err = msgp.ReadUint64Bytes(rest)
-		case "test_suite_id":
-			reference.suiteID, rest, err = msgp.ReadUint64Bytes(rest)
-		case "span_id":
-			reference.spanID, rest, err = msgp.ReadUint64Bytes(rest)
-		default:
-			rest, err = msgp.Skip(rest)
-		}
-		if err != nil {
-			return testReference{}, nil, err
-		}
+		reference.isRetry = truthy(metadata["test.is_retry"])
+	}
+	if metrics, ok := content["metrics"].(map[string]any); ok {
+		reference.isRetry = reference.isRetry || truthy(metrics["test.is_retry"])
 	}
 	return reference, rest, nil
+}
+
+func unsigned(value any) uint64 {
+	switch value := value.(type) {
+	case uint64:
+		return value
+	case int64:
+		if value > 0 {
+			return uint64(value)
+		}
+	}
+	return 0
+}
+
+func integer(value any) int64 {
+	switch value := value.(type) {
+	case int64:
+		return value
+	case uint64:
+		return int64(value)
+	case float64:
+		return int64(value)
+	case float32:
+		return int64(value)
+	}
+	return 0
+}
+
+func text(value any) string {
+	valueText, _ := value.(string)
+	return valueText
+}
+
+func truthy(value any) bool {
+	switch value := value.(type) {
+	case bool:
+		return value
+	case string:
+		parsed, err := strconv.ParseBool(value)
+		return err == nil && parsed
+	default:
+		return integer(value) != 0
+	}
 }

@@ -273,6 +273,12 @@ func requestFileLabel(requestPath string) string {
 		return "citestcycle"
 	case testCoveragePath:
 		return "citestcov"
+	case knownTestsPath:
+		return "known-tests"
+	case skippableTestsPath:
+		return "skippable-tests"
+	case testManagementPath:
+		return "test-management"
 	default:
 		return "request"
 	}

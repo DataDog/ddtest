@@ -201,8 +201,10 @@ func (f *instrumentedJestFixture) run(ctx context.Context) error {
 func assertFixtureResult(t *testing.T, fixture *instrumentedJestFixture) {
 	t.Helper()
 
-	require.Equal(t, 1, fixture.testEventCount)
-	require.Equal(t, 1, fixture.coveredTestCount)
+	// The local settings turn on Early Flake Detection with one retry, so the
+	// single locally-new fixture test is deliberately observed twice.
+	require.Equal(t, 2, fixture.testEventCount)
+	require.Equal(t, 2, fixture.coveredTestCount)
 	resolvedSessionDirectory, err := filepath.EvalSymlinks(fixture.session.Directory())
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(fixture.ciInitPath, resolvedSessionDirectory+string(filepath.Separator)))
@@ -226,7 +228,14 @@ func assertFixtureResult(t *testing.T, fixture *instrumentedJestFixture) {
 	require.True(t, storedEvents)
 	require.True(t, storedCoverage)
 
-	for _, path := range []string{"/api/v2/citestcycle", "/api/v2/citestcov"} {
+	for _, path := range []string{
+		"/api/v2/libraries/tests/services/setting",
+		"/api/v2/ci/libraries/tests",
+		"/api/v2/ci/tests/skippable",
+		"/api/v2/test/libraries/test-management/tests",
+		"/api/v2/citestcycle",
+		"/api/v2/citestcov",
+	} {
 		request := findRequest(fixture.requests, path)
 		require.NotNil(t, request, "observed requests: %v", requestPaths(fixture.requests))
 		require.NotEmpty(t, request.Body)
