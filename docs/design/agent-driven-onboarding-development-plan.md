@@ -242,6 +242,8 @@ Every PR must run `make test` and `make lint`. The real-tracer integration test 
 
 The walking skeleton keeps a small Markdown copy of the JavaScript/Jest/GitHub Actions instructions in DDTest, derived from the Test Optimization onboarding MCP instructions in `dd-source`. After Milestone 1, investigate making both products embed the same versioned Markdown fragments at build time so fixes do not have to be copied between repositories. A shared build artifact looks like the simplest direction because DDTest must still work offline; do not hold up the first shippable flow to design it now.
 
+We also need a large `ddeval` suite that asks coding agents to follow these instructions across many real repository and CI shapes. The evals should catch incorrect workflow edits, unrelated changes, bad setup detection, and failures to leave credential creation to the human. Build that coverage from the cases we discover while dogfooding instead of trying to enumerate every case upfront.
+
 ## Deliberately later
 
 These may be good ideas, but they are not milestones 0 or 1:
