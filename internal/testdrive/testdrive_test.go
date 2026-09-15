@@ -95,6 +95,9 @@ func TestPrepareRejectsUnsupportedRepository(t *testing.T) {
 func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 	repositoryRoot := t.TempDir()
 	writeJestManifest(t, repositoryRoot)
+	if err := os.WriteFile(filepath.Join(repositoryRoot, "one.test.js"), []byte("test('slow test', () => expect(true).toBe(true));\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	testdrive, err := Prepare(repositoryRoot)
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +112,13 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 			TestEventCount:   2,
 			CoveredTestCount: 2,
 			SlowTests: []intake.TestFinding{
-				{Name: "slow test", Suite: "one.test.js", Duration: 2 * time.Second},
+				{
+					Name: "slow test", Suite: "one.test.js", SourceFile: "one.test.js", Duration: 2 * time.Second,
+					Attempts: []intake.TestAttempt{
+						{Status: "pass", Duration: 1500 * time.Millisecond},
+						{Status: "pass", Duration: 2 * time.Second, Retry: true, RetryReason: "early_flake_detection"},
+					},
+				},
 			},
 		},
 	}
@@ -144,7 +153,7 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 	for _, expected := range []string{
 		"Test Optimization working: yes",
 		"Tests failed: no",
-		"Tests passed on retry: no",
+		"Flaky tests: no",
 		"Tests slower than others: yes (1)",
 		"Tests covering unusually many files: no",
 		"\x1b]8;;file://",
@@ -168,9 +177,27 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"Test Optimization is working", "Any tests failed?", "slow test", "2s"} {
+	for _, expected := range []string{
+		"Test Optimization is working",
+		"Any tests slower than the others?",
+		"slow test",
+		"Run 2 · Retry · early flake detection",
+		"test(&#39;slow test&#39;",
+		"What testdrive proved",
+		"2 received",
+		"2 of 2 tests",
+		"dd-trace@",
+		`href="intake/"`,
+		`href="jest-output.txt"`,
+		`<details class="card">`,
+	} {
 		if !strings.Contains(string(report), expected) {
 			t.Errorf("report does not contain %q", expected)
+		}
+	}
+	for _, hiddenCard := range []string{"Any tests failed?", "Any flaky tests?", "Any unusually broad test coverage?"} {
+		if strings.Contains(string(report), hiddenCard) {
+			t.Errorf("report contains no-problem card %q", hiddenCard)
 		}
 	}
 	for _, environmentVariable := range []string{

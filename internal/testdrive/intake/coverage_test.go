@@ -59,6 +59,7 @@ func TestCoverageReferencesCountFiles(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, coverages, 1)
 	require.Equal(t, 2, coverages[0].fileCount)
+	require.Equal(t, []string{"one.js", "two.js"}, coverages[0].files)
 }
 
 func serverWithCoverage(t *testing.T, events, coverageEntry []byte) *Server {

@@ -18,14 +18,19 @@ import (
 const testCyclePath = "/api/v2/citestcycle"
 
 type testReference struct {
-	sessionID uint64
-	suiteID   uint64
-	spanID    uint64
-	name      string
-	suite     string
-	status    string
-	duration  time.Duration
-	isRetry   bool
+	sessionID    uint64
+	suiteID      uint64
+	spanID       uint64
+	name         string
+	suite        string
+	sourceFile   string
+	status       string
+	duration     time.Duration
+	isRetry      bool
+	retryReason  string
+	errorType    string
+	errorMessage string
+	errorStack   string
 }
 
 type suiteReference struct {
@@ -158,11 +163,16 @@ func readTestReference(payload []byte) (testReference, []byte, error) {
 	if metadata, ok := content["meta"].(map[string]any); ok {
 		reference.name = text(metadata["test.name"])
 		reference.suite = text(metadata["test.suite"])
+		reference.sourceFile = text(metadata["test.source.file"])
 		reference.status = strings.ToLower(text(metadata["test.final_status"]))
 		if reference.status == "" {
 			reference.status = strings.ToLower(text(metadata["test.status"]))
 		}
 		reference.isRetry = truthy(metadata["test.is_retry"])
+		reference.retryReason = text(metadata["test.retry_reason"])
+		reference.errorType = text(metadata["error.type"])
+		reference.errorMessage = text(metadata["error.message"])
+		reference.errorStack = text(metadata["error.stack"])
 	}
 	if metrics, ok := content["metrics"].(map[string]any); ok {
 		reference.isRetry = reference.isRetry || truthy(metrics["test.is_retry"])

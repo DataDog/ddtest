@@ -21,6 +21,7 @@ const testCoveragePath = "/api/v2/citestcov"
 type coverageReference struct {
 	testReference
 	fileCount int
+	files     []string
 }
 
 // CoveredTestCount returns the number of observed tests with matching coverage.
@@ -157,13 +158,21 @@ func readCoverageReference(payload []byte) (coverageReference, []byte, error) {
 		return coverageReference{}, nil, err
 	}
 
-	files, _ := content["files"].([]any)
+	encodedFiles, _ := content["files"].([]any)
+	files := make([]string, 0, len(encodedFiles))
+	for _, encodedFile := range encodedFiles {
+		file, _ := encodedFile.(map[string]any)
+		if filename := text(file["filename"]); filename != "" {
+			files = append(files, filename)
+		}
+	}
 	return coverageReference{
 		testReference: testReference{
 			sessionID: unsigned(content["test_session_id"]),
 			suiteID:   unsigned(content["test_suite_id"]),
 			spanID:    unsigned(content["span_id"]),
 		},
-		fileCount: len(files),
+		fileCount: len(encodedFiles),
+		files:     files,
 	}, rest, nil
 }

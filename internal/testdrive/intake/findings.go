@@ -18,16 +18,31 @@ const (
 
 // TestFinding describes one test worth calling out in the testdrive report.
 type TestFinding struct {
-	Name     string
-	Suite    string
-	Duration time.Duration
+	Name       string
+	Suite      string
+	SourceFile string
+	Duration   time.Duration
+	Attempts   []TestAttempt
+}
+
+// TestAttempt describes one observed run of a test.
+type TestAttempt struct {
+	Status       string
+	Duration     time.Duration
+	Retry        bool
+	RetryReason  string
+	ErrorType    string
+	ErrorMessage string
+	ErrorStack   string
 }
 
 // CoverageFinding describes one test or suite with unusually broad coverage.
 type CoverageFinding struct {
-	Name      string
-	Level     string
-	FileCount int
+	Name       string
+	Level      string
+	SourceFile string
+	FileCount  int
+	Files      []string
 }
 
 // Findings contains the facts shown in the testdrive report.
@@ -78,11 +93,18 @@ func analyzeTests(tests []testReference) ([]TestFinding, []TestFinding, []TestFi
 	for _, key := range order {
 		attempts := testsByName[key]
 		last := attempts[len(attempts)-1]
-		finding := testFinding(last)
+		finding := testFinding(attempts[0])
+		finding.Attempts = make([]TestAttempt, 0, len(attempts))
 		for _, attempt := range attempts {
-			if attempt.duration > finding.Duration {
-				finding.Duration = attempt.duration
-			}
+			finding.Attempts = append(finding.Attempts, TestAttempt{
+				Status:       attempt.status,
+				Duration:     attempt.duration,
+				Retry:        attempt.isRetry,
+				RetryReason:  attempt.retryReason,
+				ErrorType:    attempt.errorType,
+				ErrorMessage: attempt.errorMessage,
+				ErrorStack:   attempt.errorStack,
+			})
 		}
 		durations = append(durations, finding)
 
@@ -144,14 +166,17 @@ func analyzeCoverage(tests []testReference, coverages []coverageReference) []Cov
 
 	findingsByName := make(map[string]CoverageFinding, len(coverages))
 	for _, coverage := range coverages {
-		finding := CoverageFinding{FileCount: coverage.fileCount}
+		finding := CoverageFinding{FileCount: coverage.fileCount, Files: coverage.files}
 		if coverage.spanID != 0 {
 			finding.Level = "test"
-			finding.Name = testFinding(testsBySpan[coverage.spanID]).label()
+			test := testFinding(testsBySpan[coverage.spanID])
+			finding.Name = test.label()
+			finding.SourceFile = test.SourceFile
 		} else {
 			finding.Level = "suite"
 			test := testsBySuite[suiteReference{sessionID: coverage.sessionID, suiteID: coverage.suiteID}]
 			finding.Name = test.suite
+			finding.SourceFile = test.sourceFile
 			if finding.Name == "" {
 				finding.Name = fmt.Sprintf("suite %d", coverage.suiteID)
 			}
@@ -224,7 +249,7 @@ func testFinding(test testReference) TestFinding {
 	if name == "" {
 		name = fmt.Sprintf("test %d", test.spanID)
 	}
-	return TestFinding{Name: name, Suite: test.suite, Duration: test.duration}
+	return TestFinding{Name: name, Suite: test.suite, SourceFile: test.sourceFile, Duration: test.duration}
 }
 
 func (f TestFinding) label() string {

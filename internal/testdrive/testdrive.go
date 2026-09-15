@@ -127,7 +127,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	if err != nil {
 		return err
 	}
-	reportPath, err := writeReport(session.Directory(), findings, testErr != nil)
+	reportPath, err := writeReport(t.repositoryRoot, session.Directory(), findings, testErr != nil)
 	if err != nil {
 		return err
 	}
@@ -143,7 +143,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		_, _ = fmt.Fprintln(output, "  Test Optimization working: no test events received")
 	}
 	_, _ = fmt.Fprintf(output, "  Tests failed: %s\n", failedFact(len(findings.FailedTests), testErr != nil))
-	_, _ = fmt.Fprintf(output, "  Tests passed on retry: %s\n", yesWithCount(len(findings.PassedOnRetry)))
+	_, _ = fmt.Fprintf(output, "  Flaky tests: %s\n", yesWithCount(len(findings.PassedOnRetry)))
 	_, _ = fmt.Fprintf(output, "  Tests slower than others: %s\n", yesWithCount(len(findings.SlowTests)))
 	_, _ = fmt.Fprintf(output, "  Tests covering unusually many files: %s\n", yesWithCount(len(findings.BroadCoverage)))
 	_, _ = fmt.Fprintf(output, "\nOpen report: %s\n", terminalLink(reportURL))
