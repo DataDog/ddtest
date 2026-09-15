@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tinylib/msgp/msgp"
@@ -60,6 +61,25 @@ func TestCoverageReferencesCountFiles(t *testing.T) {
 	require.Len(t, coverages, 1)
 	require.Equal(t, 2, coverages[0].fileCount)
 	require.Equal(t, []string{"one.js", "two.js"}, coverages[0].files)
+}
+
+func TestFindingsListsEveryTestWithSuiteCoverage(t *testing.T) {
+	const sessionID = 10
+	events := msgp.AppendMapHeader(nil, 1)
+	events = msgp.AppendString(events, "events")
+	events = msgp.AppendArrayHeader(events, 2)
+	events = appendDetailedTest(events, sessionID, 20, 100, "one", "one.test.js", "pass", time.Millisecond, false, "")
+	events = appendDetailedTest(events, sessionID, 20, 200, "two", "one.test.js", "pass", 2*time.Millisecond, false, "")
+	server := serverWithCoverage(t, events, appendCoverage(nil, sessionID, 20, 0, "src/one.js", "src/two.js"))
+
+	findings, err := server.Findings()
+	require.NoError(t, err)
+	require.Equal(t, 2, findings.TestCount)
+	require.Len(t, findings.Tests, 2)
+	for _, test := range findings.Tests {
+		require.Equal(t, "suite", test.CoverageLevel)
+		require.Equal(t, []string{"src/one.js", "src/two.js"}, test.CoveredFiles)
+	}
 }
 
 func serverWithCoverage(t *testing.T, events, coverageEntry []byte) *Server {

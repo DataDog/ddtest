@@ -111,9 +111,13 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 			TestCount:        2,
 			TestEventCount:   2,
 			CoveredTestCount: 2,
+			Tests: []intake.TestFinding{
+				{Name: "fast test", Suite: "one.test.js", SourceFile: "one.test.js", SourceStart: 1, Status: "pass", Duration: time.Millisecond, Attempts: []intake.TestAttempt{{Status: "pass", Duration: time.Millisecond}}},
+				{Name: "slow test", Suite: "one.test.js", SourceFile: "one.test.js", SourceStart: 1, Status: "pass", Duration: 2 * time.Second, Attempts: []intake.TestAttempt{{Status: "pass", Duration: 2 * time.Second}}},
+			},
 			SlowTests: []intake.TestFinding{
 				{
-					Name: "slow test", Suite: "one.test.js", SourceFile: "one.test.js", Duration: 2 * time.Second,
+					Name: "slow test", Suite: "one.test.js", SourceFile: "one.test.js", SourceStart: 1, Duration: 2 * time.Second,
 					Attempts: []intake.TestAttempt{
 						{Status: "pass", Duration: 1500 * time.Millisecond},
 						{Status: "pass", Duration: 2 * time.Second, Retry: true, RetryReason: "early_flake_detection"},
@@ -182,14 +186,16 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 		"Any tests slower than the others?",
 		"slow test",
 		"Run 2 · Retry · early flake detection",
-		"test(&#39;slow test&#39;",
-		"What testdrive proved",
-		"2 received",
-		"2 of 2 tests",
+		"Source · lines 1–1",
+		"Run details",
+		"Tests with coverage",
+		"2 / 2",
 		"dd-trace@",
 		`href="intake/"`,
 		`href="jest-output.txt"`,
-		`<details class="card">`,
+		`data-tab="suites"`,
+		`data-tab="tests"`,
+		`<article class="problem-card">`,
 	} {
 		if !strings.Contains(string(report), expected) {
 			t.Errorf("report does not contain %q", expected)

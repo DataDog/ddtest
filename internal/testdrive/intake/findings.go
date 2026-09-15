@@ -7,6 +7,7 @@ package intake
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 )
@@ -16,13 +17,18 @@ const (
 	minimumBroadCoverageFiles = 5
 )
 
-// TestFinding describes one test worth calling out in the testdrive report.
+// TestFinding describes one observed test and its attempts.
 type TestFinding struct {
-	Name       string
-	Suite      string
-	SourceFile string
-	Duration   time.Duration
-	Attempts   []TestAttempt
+	Name          string
+	Suite         string
+	SourceFile    string
+	SourceStart   int
+	SourceEnd     int
+	Status        string
+	Duration      time.Duration
+	Attempts      []TestAttempt
+	CoverageLevel string
+	CoveredFiles  []string
 }
 
 // TestAttempt describes one observed run of a test.
@@ -38,11 +44,13 @@ type TestAttempt struct {
 
 // CoverageFinding describes one test or suite with unusually broad coverage.
 type CoverageFinding struct {
-	Name       string
-	Level      string
-	SourceFile string
-	FileCount  int
-	Files      []string
+	Name        string
+	Level       string
+	SourceFile  string
+	SourceStart int
+	SourceEnd   int
+	FileCount   int
+	Files       []string
 }
 
 // Findings contains the facts shown in the testdrive report.
@@ -50,6 +58,7 @@ type Findings struct {
 	TestCount        int
 	TestEventCount   int
 	CoveredTestCount int
+	Tests            []TestFinding
 	FailedTests      []TestFinding
 	PassedOnRetry    []TestFinding
 	SlowTests        []TestFinding
@@ -67,16 +76,16 @@ func (s *Server) Findings() (Findings, error) {
 		return Findings{}, err
 	}
 
-	findings := Findings{
-		TestEventCount:   len(tests),
-		CoveredTestCount: uniqueCoveredTestCount(tests, coverages),
-	}
-	findings.FailedTests, findings.PassedOnRetry, findings.SlowTests, findings.TestCount = analyzeTests(tests)
+	findings := Findings{TestEventCount: len(tests)}
+	findings.Tests, findings.FailedTests, findings.PassedOnRetry, findings.SlowTests = analyzeTests(tests)
+	addCoverageToTests(findings.Tests, tests, coverages)
+	findings.TestCount = len(findings.Tests)
+	findings.CoveredTestCount = uniqueCoveredTestCount(tests, coverages)
 	findings.BroadCoverage = analyzeCoverage(tests, coverages)
 	return findings, nil
 }
 
-func analyzeTests(tests []testReference) ([]TestFinding, []TestFinding, []TestFinding, int) {
+func analyzeTests(tests []testReference) ([]TestFinding, []TestFinding, []TestFinding, []TestFinding) {
 	testsByName := make(map[string][]testReference)
 	order := make([]string, 0)
 	for _, test := range tests {
@@ -89,11 +98,12 @@ func analyzeTests(tests []testReference) ([]TestFinding, []TestFinding, []TestFi
 
 	failed := make([]TestFinding, 0)
 	passedOnRetry := make([]TestFinding, 0)
-	durations := make([]TestFinding, 0, len(order))
+	all := make([]TestFinding, 0, len(order))
 	for _, key := range order {
 		attempts := testsByName[key]
 		last := attempts[len(attempts)-1]
 		finding := testFinding(attempts[0])
+		finding.Status = last.status
 		finding.Attempts = make([]TestAttempt, 0, len(attempts))
 		for _, attempt := range attempts {
 			finding.Attempts = append(finding.Attempts, TestAttempt{
@@ -106,7 +116,7 @@ func analyzeTests(tests []testReference) ([]TestFinding, []TestFinding, []TestFi
 				ErrorStack:   attempt.errorStack,
 			})
 		}
-		durations = append(durations, finding)
+		all = append(all, finding)
 
 		if last.status == "fail" {
 			failed = append(failed, finding)
@@ -125,10 +135,73 @@ func analyzeTests(tests []testReference) ([]TestFinding, []TestFinding, []TestFi
 		}
 	}
 
-	slow := slowTests(durations)
+	slow := slowTests(all)
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].Suite != all[j].Suite {
+			return all[i].Suite < all[j].Suite
+		}
+		if all[i].SourceStart != all[j].SourceStart {
+			return all[i].SourceStart < all[j].SourceStart
+		}
+		return all[i].Name < all[j].Name
+	})
 	sortTestFindings(failed)
 	sortTestFindings(passedOnRetry)
-	return failed, passedOnRetry, slow, len(order)
+	return all, failed, passedOnRetry, slow
+}
+
+func addCoverageToTests(findings []TestFinding, tests []testReference, coverages []coverageReference) {
+	testsBySpan := make(map[uint64]string, len(tests))
+	for _, test := range tests {
+		testsBySpan[test.spanID] = testIdentity(test)
+	}
+	testFiles := make(map[string][]string)
+	suiteFiles := make(map[suiteReference][]string)
+	testCovered := make(map[string]bool)
+	suiteCovered := make(map[suiteReference]bool)
+	for _, coverage := range coverages {
+		if coverage.spanID != 0 {
+			if identity := testsBySpan[coverage.spanID]; identity != "" {
+				testCovered[identity] = true
+				testFiles[identity] = appendUnique(testFiles[identity], coverage.files...)
+			}
+			continue
+		}
+		key := suiteReference{sessionID: coverage.sessionID, suiteID: coverage.suiteID}
+		suiteCovered[key] = true
+		suiteFiles[key] = appendUnique(suiteFiles[key], coverage.files...)
+	}
+
+	for findingIndex := range findings {
+		finding := &findings[findingIndex]
+		identity := finding.Suite + "\x00" + finding.Name
+		finding.CoveredFiles = appendUnique(finding.CoveredFiles, testFiles[identity]...)
+		if testCovered[identity] {
+			finding.CoverageLevel = "test"
+			continue
+		}
+		for _, test := range tests {
+			if testIdentity(test) != identity {
+				continue
+			}
+			key := suiteReference{sessionID: test.sessionID, suiteID: test.suiteID}
+			finding.CoveredFiles = appendUnique(finding.CoveredFiles, suiteFiles[key]...)
+			if suiteCovered[key] {
+				finding.CoverageLevel = "suite"
+			}
+		}
+	}
+}
+
+func appendUnique(values []string, additions ...string) []string {
+	for _, addition := range additions {
+		if slices.Contains(values, addition) {
+			continue
+		}
+		values = append(values, addition)
+	}
+	slices.Sort(values)
+	return values
 }
 
 func slowTests(tests []TestFinding) []TestFinding {
@@ -172,6 +245,8 @@ func analyzeCoverage(tests []testReference, coverages []coverageReference) []Cov
 			test := testFinding(testsBySpan[coverage.spanID])
 			finding.Name = test.label()
 			finding.SourceFile = test.SourceFile
+			finding.SourceStart = test.SourceStart
+			finding.SourceEnd = test.SourceEnd
 		} else {
 			finding.Level = "suite"
 			test := testsBySuite[suiteReference{sessionID: coverage.sessionID, suiteID: coverage.suiteID}]
@@ -249,7 +324,10 @@ func testFinding(test testReference) TestFinding {
 	if name == "" {
 		name = fmt.Sprintf("test %d", test.spanID)
 	}
-	return TestFinding{Name: name, Suite: test.suite, SourceFile: test.sourceFile, Duration: test.duration}
+	return TestFinding{
+		Name: name, Suite: test.suite, SourceFile: test.sourceFile,
+		SourceStart: test.sourceStart, SourceEnd: test.sourceEnd, Duration: test.duration,
+	}
 }
 
 func (f TestFinding) label() string {

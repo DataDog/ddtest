@@ -24,6 +24,8 @@ type testReference struct {
 	name         string
 	suite        string
 	sourceFile   string
+	sourceStart  int
+	sourceEnd    int
 	status       string
 	duration     time.Duration
 	isRetry      bool
@@ -176,6 +178,8 @@ func readTestReference(payload []byte) (testReference, []byte, error) {
 	}
 	if metrics, ok := content["metrics"].(map[string]any); ok {
 		reference.isRetry = reference.isRetry || truthy(metrics["test.is_retry"])
+		reference.sourceStart = int(integer(metrics["test.source.start"]))
+		reference.sourceEnd = int(integer(metrics["test.source.end"]))
 	}
 	return reference, rest, nil
 }
