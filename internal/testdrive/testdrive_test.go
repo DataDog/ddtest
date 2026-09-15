@@ -182,7 +182,7 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
-		"Test Optimization is working",
+		"Test Optimization is ready",
 		"Any tests slower than the others?",
 		"slow test",
 		"Run 2 · Retry · early flake detection",
