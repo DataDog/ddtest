@@ -501,3 +501,17 @@ func TestJest_RunTests_WithOverride(t *testing.T) {
 		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
 	}
 }
+
+func TestJest_TestCommandRunsFullSuiteWithoutFileSelection(t *testing.T) {
+	jest := &Jest{commandOverride: []string{"npm", "test", "--", "--runInBand"}}
+
+	command, args := jest.TestCommand(nil)
+
+	if command != "npm" {
+		t.Errorf("expected command %q, got %q", "npm", command)
+	}
+	expectedArgs := []string{"test", "--", "--runInBand"}
+	if !slices.Equal(args, expectedArgs) {
+		t.Errorf("expected args %v, got %v", expectedArgs, args)
+	}
+}

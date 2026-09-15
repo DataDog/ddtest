@@ -3,6 +3,8 @@ package platform
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/framework"
@@ -11,10 +13,28 @@ import (
 
 type Platform interface {
 	Name() string
+	Detect(repositoryRoot string) (bool, error)
 	CreateTagsMap(ctx context.Context) (map[string]string, error)
 	DetectFramework() (framework.Framework, error)
 	SanityCheck(ctx context.Context) error
 	TestSkippingLevel() settings.TestSkippingLevel
+}
+
+func detectAnyFile(repositoryRoot string, filenames ...string) (bool, error) {
+	for _, filename := range filenames {
+		path := filepath.Join(repositoryRoot, filename)
+		info, err := os.Stat(path)
+		if err == nil {
+			if !info.IsDir() {
+				return true, nil
+			}
+			continue
+		}
+		if !os.IsNotExist(err) {
+			return false, fmt.Errorf("inspect %s: %w", path, err)
+		}
+	}
+	return false, nil
 }
 
 // PlatformDetector defines interface for detecting platforms - needed to allow mocking in tests

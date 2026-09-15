@@ -41,6 +41,10 @@ func (j *JavaScript) Name() string {
 	return "javascript"
 }
 
+func (j *JavaScript) Detect(repositoryRoot string) (bool, error) {
+	return detectAnyFile(repositoryRoot, "package.json")
+}
+
 func (j *JavaScript) TestSkippingLevel() settings.TestSkippingLevel {
 	return settings.TestSkippingLevelSuite
 }
