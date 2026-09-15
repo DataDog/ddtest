@@ -133,7 +133,7 @@ func writeReport(repositoryRoot, sessionDirectory string, findings intake.Findin
 
 func buildReport(repositoryRoot string, findings intake.Findings, commandFailed bool) reportModel {
 	model := reportModel{
-		Headline: "Test Optimization is working.",
+		Headline: "Test Optimization is ready.",
 		Summary:  "No findings.",
 		Facts: []reportFact{
 			{Label: "Test events", Value: fmt.Sprintf("%d", findings.TestEventCount), Tone: factTone(findings.TestEventCount > 0)},
