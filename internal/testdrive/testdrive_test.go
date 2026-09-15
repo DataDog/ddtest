@@ -13,6 +13,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/DataDog/ddtest/internal/testdrive/intake"
 )
 
 type fakeTracer struct {
@@ -41,16 +44,14 @@ func (f *fakeTestdriveExecutor) CombinedOutput(_ context.Context, command string
 }
 
 type fakeIntake struct {
-	url          string
-	tests        int
-	coveredTests int
-	closed       bool
+	url      string
+	findings intake.Findings
+	closed   bool
 }
 
-func (f *fakeIntake) URL() string                    { return f.url }
-func (f *fakeIntake) TestEventCount() (int, error)   { return f.tests, nil }
-func (f *fakeIntake) CoveredTestCount() (int, error) { return f.coveredTests, nil }
-func (f *fakeIntake) Close() error                   { f.closed = true; return nil }
+func (f *fakeIntake) URL() string                        { return f.url }
+func (f *fakeIntake) Findings() (intake.Findings, error) { return f.findings, nil }
+func (f *fakeIntake) Close() error                       { f.closed = true; return nil }
 
 func writeJestManifest(t *testing.T, repositoryRoot string) {
 	t.Helper()
@@ -101,7 +102,17 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 
 	installer := &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
 	executor := &fakeTestdriveExecutor{output: []byte("PASS one.test.js\n")}
-	server := &fakeIntake{url: "http://127.0.0.1:1234", tests: 2, coveredTests: 2}
+	server := &fakeIntake{
+		url: "http://127.0.0.1:1234",
+		findings: intake.Findings{
+			TestCount:        2,
+			TestEventCount:   2,
+			CoveredTestCount: 2,
+			SlowTests: []intake.TestFinding{
+				{Name: "slow test", Suite: "one.test.js", Duration: 2 * time.Second},
+			},
+		},
+	}
 	testdrive.tracer = installer
 	testdrive.executor = executor
 	testdrive.startIntake = func(sessionDirectory string) (localIntake, error) {
@@ -131,10 +142,13 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 		t.Fatalf("NODE_OPTIONS = %q", executor.env["NODE_OPTIONS"])
 	}
 	for _, expected := range []string{
-		"PASS one.test.js",
-		"received 2 test event(s)",
-		"2 of 2 reported test(s) have coverage",
-		filepath.Join(installer.sessionDirectory, "intake"),
+		"Test Optimization working: yes",
+		"Tests failed: no",
+		"Tests passed on retry: no",
+		"Tests slower than others: yes (1)",
+		"Tests covering unusually many files: no",
+		"\x1b]8;;file://",
+		"report.html",
 	} {
 		if !strings.Contains(output.String(), expected) {
 			t.Errorf("Run() output does not contain %q:\n%s", expected, output.String())
@@ -146,6 +160,31 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 	}
 	if string(contents) != "PASS one.test.js\n" {
 		t.Fatalf("saved output = %q", contents)
+	}
+	if strings.Contains(output.String(), "PASS one.test.js") {
+		t.Fatalf("Run() leaked detailed Jest output:\n%s", output.String())
+	}
+	report, err := os.ReadFile(filepath.Join(installer.sessionDirectory, reportFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"Test Optimization is working", "Any tests failed?", "slow test", "2s"} {
+		if !strings.Contains(string(report), expected) {
+			t.Errorf("report does not contain %q", expected)
+		}
+	}
+	for _, environmentVariable := range []string{
+		"DD_CIVISIBILITY_ITR_ENABLED",
+		"DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED",
+		"DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED",
+		"DD_CIVISIBILITY_FLAKY_RETRY_ENABLED",
+		"DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED",
+		"DD_TEST_FAILED_TEST_REPLAY_ENABLED",
+		"DD_TEST_MANAGEMENT_ENABLED",
+	} {
+		if executor.env[environmentVariable] != "true" {
+			t.Errorf("%s = %q, want true", environmentVariable, executor.env[environmentVariable])
+		}
 	}
 }
 
@@ -160,7 +199,14 @@ func TestRunStillReportsEventsWhenJestFails(t *testing.T) {
 	testdrive.tracer = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
 	testdrive.executor = &fakeTestdriveExecutor{output: []byte("FAIL one.test.js\n"), err: errors.New("exit status 1")}
 	testdrive.startIntake = func(string) (localIntake, error) {
-		return &fakeIntake{url: "http://127.0.0.1:1234", tests: 1}, nil
+		return &fakeIntake{
+			url: "http://127.0.0.1:1234",
+			findings: intake.Findings{
+				TestCount:      1,
+				TestEventCount: 1,
+				FailedTests:    []intake.TestFinding{{Name: "fails", Suite: "one.test.js"}},
+			},
+		}, nil
 	}
 
 	var output bytes.Buffer
@@ -168,7 +214,10 @@ func TestRunStillReportsEventsWhenJestFails(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "jest failed after sending 1 test event") {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(output.String(), "Test Optimization is working") {
+	if !strings.Contains(output.String(), "Test Optimization working: yes") {
 		t.Fatalf("Run() did not report working instrumentation:\n%s", output.String())
+	}
+	if !strings.Contains(output.String(), "Tests failed: yes (1)") || !strings.Contains(output.String(), "file://") {
+		t.Fatalf("Run() did not report the failure and report link:\n%s", output.String())
 	}
 }

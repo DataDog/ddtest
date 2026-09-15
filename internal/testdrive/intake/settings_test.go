@@ -36,6 +36,46 @@ func TestSettingsEnablesTestOptimizationCoverage(t *testing.T) {
 	require.Equal(t, settingsResponseType, settings.Data.Type)
 	require.True(t, settings.Data.Attributes.ITREnabled)
 	require.True(t, settings.Data.Attributes.CodeCoverage)
-	require.False(t, settings.Data.Attributes.TestsSkipping)
+	require.True(t, settings.Data.Attributes.TestsSkipping)
 	require.False(t, settings.Data.Attributes.RequireGit)
+	require.True(t, settings.Data.Attributes.CoverageReportUploadEnabled)
+	require.True(t, settings.Data.Attributes.ImpactedTestsEnabled)
+	require.True(t, settings.Data.Attributes.FlakyTestRetriesEnabled)
+	require.True(t, settings.Data.Attributes.DIEnabled)
+	require.True(t, settings.Data.Attributes.KnownTestsEnabled)
+	require.True(t, settings.Data.Attributes.EarlyFlakeDetection.Enabled)
+	require.Equal(t, 1, settings.Data.Attributes.EarlyFlakeDetection.SlowTestRetries["5s"])
+	require.True(t, settings.Data.Attributes.TestManagement.Enabled)
+}
+
+func TestAdvancedFeatureEndpointsReturnSafeEmptyDatasets(t *testing.T) {
+	server, err := Start(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, server.Close())
+	})
+
+	tests := []struct {
+		path     string
+		contains string
+	}{
+		{path: knownTestsPath, contains: `"tests":{"jest":{}}`},
+		{path: skippableTestsPath, contains: `"data":[]`},
+		{path: testManagementPath, contains: `"modules":{}`},
+	}
+	for _, test := range tests {
+		t.Run(test.path, func(t *testing.T) {
+			response, err := testHTTPClient().Post(server.URL()+test.path, "application/json", bytes.NewBufferString(`{"data":{}}`))
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				require.NoError(t, response.Body.Close())
+			})
+			require.Equal(t, http.StatusOK, response.StatusCode)
+
+			var body bytes.Buffer
+			_, err = body.ReadFrom(response.Body)
+			require.NoError(t, err)
+			require.Contains(t, body.String(), test.contains)
+		})
+	}
 }

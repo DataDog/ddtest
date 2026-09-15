@@ -47,13 +47,12 @@ $ ddtest testdrive
 🐕 Running your Jest suite with Test Optimization...
 
 Setup works.
-  428 tests reported
-  426 tests produced coverage
-  2 tests failed
-  18.4s total test time
+  Tests failed: yes (2)
+  Tests passed on retry: yes (1)
+  Tests slower than others: yes (3)
+  Tests covering unusually many files: no
 
-Open the report:
-  .testoptimization/testdrive/2026-09-10-abc123/report.html
+Open report: file:///project/.testoptimization/testdrive/2026-09-10-abc123/report.html
 ```
 
 There is no separate plan, approval file, checksum, or second execution command. Running `ddtest testdrive` is the user's decision to run the test suite.
@@ -188,12 +187,12 @@ Fix the repeated problems directly. Only introduce shared types or categories wh
 Polish the terminal output and generate a small self-contained HTML report showing:
 
 - whether Test Optimization instrumentation loaded;
-- tracer version and whether it came from the project or testdrive;
-- tests passed, failed, skipped, and reported;
-- suites and durations;
-- tests with and without coverage;
-- obvious instrumentation problems;
-- one useful next action.
+- whether any tests failed;
+- whether any tests failed and then passed on retry;
+- whether any tests are clear duration outliers;
+- whether any tests or suites cover an unusual number of files.
+
+Keep protocol details and the full test runner output out of the terminal summary. Save them in the session for debugging. Print the report as a clickable absolute `file://` link.
 
 The report does not calculate TIA savings or parallelization. This milestone is a satisfying setup proof, not a performance calculator.
 

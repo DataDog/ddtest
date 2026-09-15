@@ -97,18 +97,12 @@ $ ddtest testdrive
 🐕 Running your Jest suite with Test Optimization...
 
 Setup works.
-  428 tests reported
-  421 passed, 2 failed, 5 skipped
-  426 tests produced coverage
-  18.4s total test time
+  Tests failed: yes (2)
+  Tests passed on retry: yes (1)
+  Tests slower than others: yes (3)
+  Tests covering unusually many files: no
 
-Slowest suites
-  checkout.test.js       4.2s
-  recommendations.test.js  2.8s
-  search.test.js         2.1s
-
-Open the report:
-  .testoptimization/testdrive/2026-09-10-abc123/report.html
+Open report: file:///project/.testoptimization/testdrive/2026-09-10-abc123/report.html
 ```
 
 If the tests fail but events arrive, DDTest should still say that instrumentation works and report the test failures separately. Setup validation does not require a green suite.
@@ -162,15 +156,14 @@ This is a small foundation worth keeping from the start.
 
 ## What we show in the first report
 
-The first report answers setup questions:
+The first report confirms that instrumentation loaded and then answers four useful questions:
 
-- Did the tracer load?
-- Did Test Optimization test events arrive?
-- How many tests, suites, passes, failures, and skips were reported?
-- Did per-test coverage arrive?
-- Which tests or suites were slow?
-- Were there obvious missing events or coverage?
-- What should the developer do next?
+- Did any tests fail?
+- Did any tests pass on retry?
+- Are any tests clearly slower than the rest?
+- Do any tests or suites cover an unusual number of files?
+
+The command saves the full runner output and decoded intake requests for debugging, but does not spill those details into the terminal or report. The terminal prints the report as a clickable absolute `file://` link.
 
 It does not claim what the real Datadog TIA backend would skip. It does not estimate savings or recommend parallelization.
 

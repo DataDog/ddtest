@@ -18,6 +18,11 @@ import (
 
 const testCoveragePath = "/api/v2/citestcov"
 
+type coverageReference struct {
+	testReference
+	fileCount int
+}
+
 // CoveredTestCount returns the number of observed tests with matching coverage.
 func (s *Server) CoveredTestCount() (int, error) {
 	tests, err := s.testReferences()
@@ -50,8 +55,8 @@ func (s *Server) CoveredTestCount() (int, error) {
 	return count, nil
 }
 
-func (s *Server) coverageReferences() ([]testReference, error) {
-	var coverages []testReference
+func (s *Server) coverageReferences() ([]coverageReference, error) {
+	var coverages []coverageReference
 	for _, request := range s.Requests() {
 		if request.Method != http.MethodPost || request.Path != testCoveragePath {
 			continue
@@ -66,7 +71,7 @@ func (s *Server) coverageReferences() ([]testReference, error) {
 	return coverages, nil
 }
 
-func readMultipartCoverage(request RawRequest) ([]testReference, error) {
+func readMultipartCoverage(request RawRequest) ([]coverageReference, error) {
 	mediaType, params, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	if err != nil {
 		return nil, err
@@ -80,7 +85,7 @@ func readMultipartCoverage(request RawRequest) ([]testReference, error) {
 		return nil, err
 	}
 	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
-	var coverages []testReference
+	var coverages []coverageReference
 	for {
 		part, partErr := reader.NextPart()
 		if partErr == io.EOF {
@@ -108,13 +113,13 @@ func readMultipartCoverage(request RawRequest) ([]testReference, error) {
 	}
 }
 
-func readCoverageEntries(payload []byte) ([]testReference, error) {
+func readCoverageEntries(payload []byte) ([]coverageReference, error) {
 	fieldCount, rest, err := msgp.ReadMapHeaderBytes(payload)
 	if err != nil {
 		return nil, err
 	}
 
-	var coverages []testReference
+	var coverages []coverageReference
 	for range fieldCount {
 		var field string
 		field, rest, err = msgp.ReadStringBytes(rest)
@@ -135,8 +140,8 @@ func readCoverageEntries(payload []byte) ([]testReference, error) {
 			return nil, err
 		}
 		for range entryCount {
-			var coverage testReference
-			coverage, rest, err = readTestReference(rest)
+			var coverage coverageReference
+			coverage, rest, err = readCoverageReference(rest)
 			if err != nil {
 				return nil, err
 			}
@@ -144,4 +149,21 @@ func readCoverageEntries(payload []byte) ([]testReference, error) {
 		}
 	}
 	return coverages, nil
+}
+
+func readCoverageReference(payload []byte) (coverageReference, []byte, error) {
+	content, rest, err := msgp.ReadMapStrIntfBytes(payload, nil)
+	if err != nil {
+		return coverageReference{}, nil, err
+	}
+
+	files, _ := content["files"].([]any)
+	return coverageReference{
+		testReference: testReference{
+			sessionID: unsigned(content["test_session_id"]),
+			suiteID:   unsigned(content["test_suite_id"]),
+			spanID:    unsigned(content["span_id"]),
+		},
+		fileCount: len(files),
+	}, rest, nil
 }
