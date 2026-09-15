@@ -155,16 +155,25 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 		t.Fatalf("NODE_OPTIONS = %q", executor.env["NODE_OPTIONS"])
 	}
 	for _, expected := range []string{
-		"Test Optimization working: yes",
-		"Tests failed: no",
-		"Flaky tests: no",
-		"Tests slower than others: yes (1)",
-		"Tests covering unusually many files: no",
+		"Test Optimization is ready.",
+		"1 finding.",
+		"Tests slower than the others (1):",
+		"one.test.js › slow test · Pass · 3.5s",
+		"Run details:",
+		"Test events: 2",
+		"Tests with coverage: 2 / 2",
+		"Jest: Passed",
+		"Tracer: dd-trace@6.15.0 · isolated",
 		"\x1b]8;;file://",
 		"report.html",
 	} {
 		if !strings.Contains(output.String(), expected) {
 			t.Errorf("Run() output does not contain %q:\n%s", expected, output.String())
+		}
+	}
+	for _, absent := range []string{"Failed tests", "Flaky tests", "Unusually broad coverage"} {
+		if strings.Contains(output.String(), absent) {
+			t.Errorf("Run() output contains absent finding %q:\n%s", absent, output.String())
 		}
 	}
 	contents, err := os.ReadFile(filepath.Join(installer.sessionDirectory, testOutputFilename))
@@ -237,7 +246,10 @@ func TestRunStillReportsEventsWhenJestFails(t *testing.T) {
 			findings: intake.Findings{
 				TestCount:      1,
 				TestEventCount: 1,
-				FailedTests:    []intake.TestFinding{{Name: "fails", Suite: "one.test.js"}},
+				FailedTests: []intake.TestFinding{{
+					Name: "fails", Suite: "one.test.js", Status: "fail",
+					Attempts: []intake.TestAttempt{{Status: "fail", Duration: time.Millisecond}},
+				}},
 			},
 		}, nil
 	}
@@ -247,10 +259,43 @@ func TestRunStillReportsEventsWhenJestFails(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "jest failed after sending 1 test event") {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(output.String(), "Test Optimization working: yes") {
+	if !strings.Contains(output.String(), "Test Optimization is ready.") {
 		t.Fatalf("Run() did not report working instrumentation:\n%s", output.String())
 	}
-	if !strings.Contains(output.String(), "Tests failed: yes (1)") || !strings.Contains(output.String(), "file://") {
+	if !strings.Contains(output.String(), "Failed tests (1):") || !strings.Contains(output.String(), "one.test.js › fails · Fail · 1ms") || !strings.Contains(output.String(), "Jest: Failed") || !strings.Contains(output.String(), "file://") {
 		t.Fatalf("Run() did not report the failure and report link:\n%s", output.String())
+	}
+}
+
+func TestWriteFindingsIncludesOnlyPresentCategories(t *testing.T) {
+	var output bytes.Buffer
+	writeFindings(&output, intake.Findings{
+		PassedOnRetry: []intake.TestFinding{{
+			Name: "sometimes works", Suite: "flaky.test.js",
+			Attempts: []intake.TestAttempt{
+				{Status: "fail", Duration: 5 * time.Millisecond},
+				{Status: "pass", Duration: 7 * time.Millisecond, Retry: true},
+			},
+		}},
+		BroadCoverage: []intake.CoverageFinding{{
+			Name: "broad.test.js", Level: "suite", FileCount: 12,
+		}},
+	})
+
+	for _, expected := range []string{
+		"2 findings.",
+		"Flaky tests (1):",
+		"flaky.test.js › sometimes works · Flaky · 12ms",
+		"Unusually broad coverage (1):",
+		"broad.test.js · 12 files · suite level",
+	} {
+		if !strings.Contains(output.String(), expected) {
+			t.Errorf("writeFindings() output does not contain %q:\n%s", expected, output.String())
+		}
+	}
+	for _, absent := range []string{"Failed tests", "Tests slower than the others"} {
+		if strings.Contains(output.String(), absent) {
+			t.Errorf("writeFindings() output contains absent finding %q:\n%s", absent, output.String())
+		}
 	}
 }

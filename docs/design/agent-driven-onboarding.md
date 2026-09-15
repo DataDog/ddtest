@@ -96,11 +96,26 @@ $ ddtest testdrive
 🐕 Preparing dd-trace for this testdrive...
 🐕 Running your Jest suite with Test Optimization...
 
-Setup works.
-  Tests failed: yes (2)
-  Flaky tests: yes (1)
-  Tests slower than others: yes (3)
-  Tests covering unusually many files: no
+Test Optimization is ready.
+3 findings.
+
+Failed tests (2):
+  - checkout.test.js › rejects an expired card · Fail · 84ms
+  - cart.test.js › removes an item · Fail · 31ms
+
+Flaky tests (1):
+  - login.test.js › refreshes a session · Flaky · 146ms
+
+Tests slower than the others (3):
+  - search.test.js › ranks results · Pass · 2.4s
+  - checkout.test.js › submits an order · Pass · 1.8s
+  - reports.test.js › builds a summary · Pass · 1.3s
+
+Run details:
+  Test events: 43
+  Tests with coverage: 41 / 41
+  Jest: Failed
+  Tracer: dd-trace@6.15.0 · isolated
 
 Open report: file:///project/.testoptimization/testdrive/2026-09-10-abc123/report.html
 ```
