@@ -23,9 +23,21 @@ func TestAnalyzeTestsFindsFailuresRetriesAndSlowTests(t *testing.T) {
 
 	failed, passedOnRetry, slow, testCount := analyzeTests(tests)
 	require.Equal(t, 4, testCount)
-	require.Equal(t, []TestFinding{{Name: "broken", Suite: "two.test.js", Duration: 15 * time.Millisecond}}, failed)
-	require.Equal(t, []TestFinding{{Name: "flaky", Suite: "one.test.js", Duration: 30 * time.Millisecond}}, passedOnRetry)
-	require.Equal(t, []TestFinding{{Name: "slow", Suite: "two.test.js", Duration: 400 * time.Millisecond}}, slow)
+	require.Equal(t, []TestFinding{{
+		Name: "broken", Suite: "two.test.js", Duration: 15 * time.Millisecond,
+		Attempts: []TestAttempt{{Status: "fail", Duration: 15 * time.Millisecond}},
+	}}, failed)
+	require.Equal(t, []TestFinding{{
+		Name: "flaky", Suite: "one.test.js", Duration: 20 * time.Millisecond,
+		Attempts: []TestAttempt{
+			{Status: "fail", Duration: 20 * time.Millisecond},
+			{Status: "pass", Duration: 30 * time.Millisecond, Retry: true},
+		},
+	}}, passedOnRetry)
+	require.Equal(t, []TestFinding{{
+		Name: "slow", Suite: "two.test.js", Duration: 400 * time.Millisecond,
+		Attempts: []TestAttempt{{Status: "pass", Duration: 400 * time.Millisecond}},
+	}}, slow)
 }
 
 func TestAnalyzeCoverageSupportsTestAndSuiteLevelOutliers(t *testing.T) {

@@ -7,6 +7,7 @@ package intake
 
 import (
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -38,21 +39,38 @@ func TestTestReferencesReadReportFields(t *testing.T) {
 	payload := msgp.AppendMapHeader(nil, 1)
 	payload = msgp.AppendString(payload, "events")
 	payload = msgp.AppendArrayHeader(payload, 1)
-	payload = appendDetailedTest(payload, 10, 20, 30, "works", "one.test.js", "pass", 250*time.Millisecond, true)
+	payload = appendDetailedTest(payload, 10, 20, 30, "works", "one.test.js", "pass", 250*time.Millisecond, true, "")
 
 	server := &Server{requests: []RawRequest{{Method: http.MethodPost, Path: testCyclePath, Body: payload}}}
 	tests, err := server.testReferences()
 	require.NoError(t, err)
 	require.Equal(t, []testReference{{
-		sessionID: 10,
-		suiteID:   20,
-		spanID:    30,
-		name:      "works",
-		suite:     "one.test.js",
-		status:    "pass",
-		duration:  250 * time.Millisecond,
-		isRetry:   true,
+		sessionID:   10,
+		suiteID:     20,
+		spanID:      30,
+		name:        "works",
+		suite:       "one.test.js",
+		sourceFile:  "one.test.js",
+		status:      "pass",
+		duration:    250 * time.Millisecond,
+		isRetry:     true,
+		retryReason: "early_flake_detection",
 	}}, tests)
+}
+
+func TestTestReferencesReadErrors(t *testing.T) {
+	payload := msgp.AppendMapHeader(nil, 1)
+	payload = msgp.AppendString(payload, "events")
+	payload = msgp.AppendArrayHeader(payload, 1)
+	payload = appendDetailedTest(payload, 10, 20, 30, "breaks", "one.test.js", "fail", time.Millisecond, false, "expected true")
+
+	server := &Server{requests: []RawRequest{{Method: http.MethodPost, Path: testCyclePath, Body: payload}}}
+	tests, err := server.testReferences()
+	require.NoError(t, err)
+	require.Len(t, tests, 1)
+	require.Equal(t, "AssertionError", tests[0].errorType)
+	require.Equal(t, "expected true", tests[0].errorMessage)
+	require.Equal(t, "stack trace", tests[0].errorStack)
 }
 
 func TestTestEventCountReportsInvalidPayload(t *testing.T) {
@@ -87,12 +105,20 @@ func appendDetailedTest(
 	name, suite, status string,
 	duration time.Duration,
 	isRetry bool,
+	errorMessage string,
 ) []byte {
 	payload = msgp.AppendMapHeader(payload, 2)
 	payload = msgp.AppendString(payload, "type")
 	payload = msgp.AppendString(payload, "test")
 	payload = msgp.AppendString(payload, "content")
 	payload = msgp.AppendMapHeader(payload, 6)
+	metadataFields := uint32(5)
+	if isRetry {
+		metadataFields++
+	}
+	if errorMessage != "" {
+		metadataFields += 3
+	}
 	payload = msgp.AppendString(payload, "test_session_id")
 	payload = msgp.AppendUint64(payload, sessionID)
 	payload = msgp.AppendString(payload, "test_suite_id")
@@ -102,15 +128,29 @@ func appendDetailedTest(
 	payload = msgp.AppendString(payload, "duration")
 	payload = msgp.AppendInt64(payload, int64(duration))
 	payload = msgp.AppendString(payload, "meta")
-	payload = msgp.AppendMapHeader(payload, 4)
+	payload = msgp.AppendMapHeader(payload, metadataFields)
 	payload = msgp.AppendString(payload, "test.name")
 	payload = msgp.AppendString(payload, name)
 	payload = msgp.AppendString(payload, "test.suite")
 	payload = msgp.AppendString(payload, suite)
 	payload = msgp.AppendString(payload, "test.status")
 	payload = msgp.AppendString(payload, status)
+	payload = msgp.AppendString(payload, "test.source.file")
+	payload = msgp.AppendString(payload, suite)
 	payload = msgp.AppendString(payload, "test.is_retry")
-	payload = msgp.AppendString(payload, "false")
+	payload = msgp.AppendString(payload, strconv.FormatBool(isRetry))
+	if isRetry {
+		payload = msgp.AppendString(payload, "test.retry_reason")
+		payload = msgp.AppendString(payload, "early_flake_detection")
+	}
+	if errorMessage != "" {
+		payload = msgp.AppendString(payload, "error.type")
+		payload = msgp.AppendString(payload, "AssertionError")
+		payload = msgp.AppendString(payload, "error.message")
+		payload = msgp.AppendString(payload, errorMessage)
+		payload = msgp.AppendString(payload, "error.stack")
+		payload = msgp.AppendString(payload, "stack trace")
+	}
 	payload = msgp.AppendString(payload, "metrics")
 	payload = msgp.AppendMapHeader(payload, 1)
 	payload = msgp.AppendString(payload, "test.is_retry")

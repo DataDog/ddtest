@@ -98,7 +98,7 @@ $ ddtest testdrive
 
 Setup works.
   Tests failed: yes (2)
-  Tests passed on retry: yes (1)
+  Flaky tests: yes (1)
   Tests slower than others: yes (3)
   Tests covering unusually many files: no
 
@@ -159,11 +159,11 @@ This is a small foundation worth keeping from the start.
 The first report confirms that instrumentation loaded and then answers four useful questions:
 
 - Did any tests fail?
-- Did any tests pass on retry?
+- Are any tests flaky because they passed on retry?
 - Are any tests clearly slower than the rest?
 - Do any tests or suites cover an unusual number of files?
 
-The command saves the full runner output and decoded intake requests for debugging, but does not spill those details into the terminal or report. The terminal prints the report as a clickable absolute `file://` link.
+The report omits every problem card whose answer is “No.” Clicking a problem card reveals the affected tests, all attempts and timings, retry reasons, errors and stacks, and the source code reported for each test. A setup section below the cards shows the event count, coverage count, Jest result, and isolated tracer version, followed by attractive links to the saved JSON traffic and complete test output. The terminal prints the report as a clickable absolute `file://` link.
 
 It does not claim what the real Datadog TIA backend would skip. It does not estimate savings or recommend parallelization.
 
