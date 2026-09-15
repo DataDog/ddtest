@@ -136,16 +136,18 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		return fmt.Errorf("create report link: %w", err)
 	}
 
-	_, _ = fmt.Fprintln(output, "\nWhat you need to know:")
+	_, _ = fmt.Fprintln(output)
 	if findings.TestEventCount > 0 {
-		_, _ = fmt.Fprintln(output, "  Test Optimization working: yes")
+		_, _ = fmt.Fprintln(output, "Test Optimization is ready.")
 	} else {
-		_, _ = fmt.Fprintln(output, "  Test Optimization working: no test events received")
+		_, _ = fmt.Fprintln(output, "No test events received.")
 	}
-	_, _ = fmt.Fprintf(output, "  Tests failed: %s\n", failedFact(len(findings.FailedTests), testErr != nil))
-	_, _ = fmt.Fprintf(output, "  Flaky tests: %s\n", yesWithCount(len(findings.PassedOnRetry)))
-	_, _ = fmt.Fprintf(output, "  Tests slower than others: %s\n", yesWithCount(len(findings.SlowTests)))
-	_, _ = fmt.Fprintf(output, "  Tests covering unusually many files: %s\n", yesWithCount(len(findings.BroadCoverage)))
+	writeFindings(output, findings)
+	_, _ = fmt.Fprintln(output, "\nRun details:")
+	_, _ = fmt.Fprintf(output, "  Test events: %d\n", findings.TestEventCount)
+	_, _ = fmt.Fprintf(output, "  Tests with coverage: %d / %d\n", findings.CoveredTestCount, findings.TestCount)
+	_, _ = fmt.Fprintf(output, "  Jest: %s\n", passedFailed(testErr == nil))
+	_, _ = fmt.Fprintf(output, "  Tracer: dd-trace@%s · isolated\n", tracer.JavaScriptVersion)
 	_, _ = fmt.Fprintf(output, "\nOpen report: %s\n", terminalLink(reportURL))
 
 	if testErr != nil {
@@ -155,6 +157,56 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		return fmt.Errorf("jest passed, but Test Optimization sent no test events")
 	}
 	return nil
+}
+
+func writeFindings(output io.Writer, findings intake.Findings) {
+	count := 0
+	for _, size := range []int{
+		len(findings.FailedTests), len(findings.PassedOnRetry), len(findings.SlowTests), len(findings.BroadCoverage),
+	} {
+		if size > 0 {
+			count++
+		}
+	}
+	if count == 0 {
+		_, _ = fmt.Fprintln(output, "No findings.")
+		return
+	}
+
+	_, _ = fmt.Fprintf(output, "%d %s.\n", count, plural(count, "finding", "findings"))
+	writeTestFindings(output, "Failed tests", findings.FailedTests)
+	writeTestFindings(output, "Flaky tests", findings.PassedOnRetry)
+	writeTestFindings(output, "Tests slower than the others", findings.SlowTests)
+	if len(findings.BroadCoverage) > 0 {
+		_, _ = fmt.Fprintf(output, "\nUnusually broad coverage (%d):\n", len(findings.BroadCoverage))
+		for _, finding := range findings.BroadCoverage {
+			_, _ = fmt.Fprintf(
+				output, "  - %s · %d %s · %s level\n",
+				finding.Name, finding.FileCount, plural(finding.FileCount, "file", "files"), finding.Level,
+			)
+		}
+	}
+}
+
+func writeTestFindings(output io.Writer, title string, findings []intake.TestFinding) {
+	if len(findings) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(output, "\n%s (%d):\n", title, len(findings))
+	for _, finding := range findings {
+		status, _ := testDisplayStatus(finding)
+		_, _ = fmt.Fprintf(
+			output, "  - %s · %s · %s\n",
+			testFindingLabel(finding), status, formatDuration(totalAttemptDuration(finding)),
+		)
+	}
+}
+
+func testFindingLabel(finding intake.TestFinding) string {
+	if finding.Suite == "" {
+		return finding.Name
+	}
+	return finding.Suite + " › " + finding.Name
 }
 
 func testEnvironment(ciInitPath, intakeURL, sessionID string) map[string]string {
@@ -184,21 +236,4 @@ func testEnvironment(ciInitPath, intakeURL, sessionID string) map[string]string 
 		"DD_INSTRUMENTATION_TELEMETRY_ENABLED":                        "false",
 		"DD_TRACE_STARTUP_LOGS":                                       "false",
 	}
-}
-
-func yesWithCount(count int) string {
-	if count > 0 {
-		return fmt.Sprintf("yes (%d)", count)
-	}
-	return "no"
-}
-
-func failedFact(count int, commandFailed bool) string {
-	if count > 0 {
-		return yesWithCount(count)
-	}
-	if commandFailed {
-		return "unknown (test command failed)"
-	}
-	return "no"
 }
