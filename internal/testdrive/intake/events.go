@@ -36,14 +36,25 @@ func (s *Server) TestEventCount() (int, error) {
 
 func (s *Server) testReferences() ([]testReference, error) {
 	var tests []testReference
-	for _, request := range s.Requests() {
+	for requestIndex, request := range s.Requests() {
 		if request.Method != http.MethodPost || request.Path != testCyclePath {
 			continue
 		}
 
-		requestTests, err := readTests(request.Body)
+		body, err := uncompressRequestBody(request)
 		if err != nil {
-			return nil, fmt.Errorf("recognize test events in %s: %w", testCyclePath, err)
+			return nil, fmt.Errorf("uncompress request %d to %s: %w", requestIndex+1, testCyclePath, err)
+		}
+		requestTests, err := readTests(body)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"recognize test events in request %d to %s (content type %q, content encoding %q): %w",
+				requestIndex+1,
+				testCyclePath,
+				request.Header.Get("Content-Type"),
+				request.Header.Get("Content-Encoding"),
+				err,
+			)
 		}
 		tests = append(tests, requestTests...)
 	}

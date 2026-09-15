@@ -8,6 +8,7 @@ package intake
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -155,7 +157,11 @@ func (s *Server) recordRequests(next http.Handler) http.Handler {
 }
 
 func (s *Server) persistRequest(number int, request RawRequest) error {
-	decodedBody, err := decodeRequestBody(request.Body, request.Header.Get("Content-Type"))
+	body, err := uncompressRequestBody(request)
+	if err != nil {
+		return err
+	}
+	decodedBody, err := decodeRequestBody(body, request.Header.Get("Content-Type"))
 	if err != nil {
 		return fmt.Errorf("decode request body: %w", err)
 	}
@@ -175,6 +181,27 @@ func (s *Server) persistRequest(number int, request RawRequest) error {
 		return fmt.Errorf("write request: %w", err)
 	}
 	return nil
+}
+
+func uncompressRequestBody(request RawRequest) ([]byte, error) {
+	contentEncoding := strings.TrimSpace(request.Header.Get("Content-Encoding"))
+	if contentEncoding == "" || strings.EqualFold(contentEncoding, "identity") {
+		return request.Body, nil
+	}
+	if !strings.EqualFold(contentEncoding, "gzip") {
+		return nil, fmt.Errorf("unsupported content encoding %q", contentEncoding)
+	}
+
+	reader, err := gzip.NewReader(bytes.NewReader(request.Body))
+	if err != nil {
+		return nil, fmt.Errorf("open gzip request body: %w", err)
+	}
+	body, readErr := io.ReadAll(reader)
+	closeErr := reader.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
+		return nil, fmt.Errorf("read gzip request body: %w", err)
+	}
+	return body, nil
 }
 
 func decodeRequestBody(body []byte, contentType string) (json.RawMessage, error) {
