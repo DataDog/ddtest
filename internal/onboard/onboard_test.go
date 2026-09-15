@@ -34,10 +34,15 @@ jobs:
 		"api_key: ${{ secrets.DD_API_KEY }}",
 		"NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }}",
 		"ddtest testdrive",
+		"Ask a human to connect Datadog",
+		"without sharing the key itself",
 	} {
 		if !strings.Contains(output.String(), expected) {
 			t.Errorf("Run() output does not contain %q:\n%s", expected, output.String())
 		}
+	}
+	if strings.Index(output.String(), "ddtest testdrive") > strings.Index(output.String(), "Ask a human to connect Datadog") {
+		t.Fatalf("API key setup must come after the local testdrive:\n%s", output.String())
 	}
 }
 
