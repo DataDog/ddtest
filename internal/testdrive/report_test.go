@@ -17,21 +17,23 @@ import (
 
 func TestReportShowsEveryFlakyAttemptErrorAndSource(t *testing.T) {
 	repositoryRoot := t.TempDir()
-	source := "test('sometimes works', () => expect(true).toBe(true));\n"
+	source := "test('sometimes works', () => {\n  expect(true).toBe(true);\n});\n"
 	if err := os.WriteFile(filepath.Join(repositoryRoot, "flaky.test.js"), []byte(source), 0644); err != nil {
 		t.Fatal(err)
+	}
+	flaky := intake.TestFinding{
+		Name: "sometimes works", Suite: "flaky.test.js", SourceFile: "flaky.test.js", SourceStart: 1, Duration: 2 * time.Second,
+		Attempts: []intake.TestAttempt{
+			{Status: "fail", Duration: 20 * time.Millisecond, ErrorType: "AssertionError", ErrorMessage: "expected true", ErrorStack: "full stack"},
+			{Status: "pass", Duration: 2 * time.Second, Retry: true, RetryReason: "automatic_test_retry"},
+		},
 	}
 	findings := intake.Findings{
 		TestCount:        1,
 		TestEventCount:   2,
 		CoveredTestCount: 1,
-		PassedOnRetry: []intake.TestFinding{{
-			Name: "sometimes works", Suite: "flaky.test.js", SourceFile: "flaky.test.js", Duration: 2 * time.Second,
-			Attempts: []intake.TestAttempt{
-				{Status: "fail", Duration: 20 * time.Millisecond, ErrorType: "AssertionError", ErrorMessage: "expected true", ErrorStack: "full stack"},
-				{Status: "pass", Duration: 2 * time.Second, Retry: true, RetryReason: "automatic_test_retry"},
-			},
-		}},
+		Tests:            []intake.TestFinding{flaky},
+		PassedOnRetry:    []intake.TestFinding{flaky},
 	}
 
 	report := renderTestReport(t, repositoryRoot, findings)
@@ -44,7 +46,11 @@ func TestReportShowsEveryFlakyAttemptErrorAndSource(t *testing.T) {
 		"AssertionError: expected true",
 		"full stack",
 		"flaky.test.js",
-		"test(&#39;sometimes works&#39;",
+		"Source · lines 1–3",
+		`class="token-string">&#39;sometimes works&#39;`,
+		`data-tab="suites"`,
+		`data-tab="tests"`,
+		`data-paginated`,
 	} {
 		if !strings.Contains(report, expected) {
 			t.Errorf("report does not contain %q", expected)
@@ -62,7 +68,7 @@ func TestReportShowsBroadCoverageFilesAndSource(t *testing.T) {
 		TestEventCount:   2,
 		CoveredTestCount: 2,
 		BroadCoverage: []intake.CoverageFinding{{
-			Name: "broad.test.js", Level: "suite", SourceFile: "broad.test.js", FileCount: 12,
+			Name: "broad.test.js › broad", Level: "test", SourceFile: "broad.test.js", SourceStart: 1, FileCount: 12,
 			Files: []string{"src/one.js", "src/two.js"},
 		}},
 	}
@@ -70,14 +76,43 @@ func TestReportShowsBroadCoverageFilesAndSource(t *testing.T) {
 	report := renderTestReport(t, repositoryRoot, findings)
 	for _, expected := range []string{
 		"Any unusually broad test coverage?",
-		"12 covered files · suite-level coverage · broad.test.js",
+		"12 files · test level",
 		"src/one.js",
 		"src/two.js",
-		"test(&#39;broad&#39;",
+		`class="token-string">&#39;broad&#39;`,
 	} {
 		if !strings.Contains(report, expected) {
 			t.Errorf("report does not contain %q", expected)
 		}
+	}
+}
+
+func TestSourceUsesReportedRangeAndHighlightsJavaScript(t *testing.T) {
+	repositoryRoot := t.TempDir()
+	source := "const outside = true;\ntest(\"one\", () => {\n  expect(1).toBe(1);\n});\ntest(\"two\", () => {});\n"
+	if err := os.WriteFile(filepath.Join(repositoryRoot, "range.test.js"), []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	excerpt := readSource(repositoryRoot, "range.test.js", 2, 4)
+	if excerpt.Start != 2 || excerpt.End != 4 || len(excerpt.Lines) != 3 {
+		t.Fatalf("source excerpt = lines %d-%d (%d lines), want 2-4", excerpt.Start, excerpt.End, len(excerpt.Lines))
+	}
+	if !strings.Contains(string(excerpt.Lines[0].Code), `class="token-string">&#34;one&#34;`) {
+		t.Fatalf("source is not highlighted: %s", excerpt.Lines[0].Code)
+	}
+}
+
+func TestSourceInfersJestTestEnd(t *testing.T) {
+	repositoryRoot := t.TempDir()
+	source := "test(\"one\", () => {\n  expect(true).toBe(true);\n});\n\ntest(\"two\", () => {});\n"
+	if err := os.WriteFile(filepath.Join(repositoryRoot, "inferred.test.js"), []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	excerpt := readSource(repositoryRoot, "inferred.test.js", 1, 0)
+	if excerpt.End != 3 {
+		t.Fatalf("inferred source end = %d, want 3", excerpt.End)
 	}
 }
 

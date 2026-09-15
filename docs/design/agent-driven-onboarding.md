@@ -163,7 +163,7 @@ The first report confirms that instrumentation loaded and then answers four usef
 - Are any tests clearly slower than the rest?
 - Do any tests or suites cover an unusual number of files?
 
-The report omits every problem card whose answer is “No.” Clicking a problem card reveals the affected tests, all attempts and timings, retry reasons, errors and stacks, and the source code reported for each test. A setup section below the cards shows the event count, coverage count, Jest result, and isolated tracer version, followed by attractive links to the saved JSON traffic and complete test output. The terminal prints the report as a clickable absolute `file://` link.
+The report omits every problem card whose answer is “No.” A problem card always lists the affected tests; each test expands to show all attempts and timings, retry reasons, errors and stacks, coverage, and a syntax-highlighted excerpt using the tracer's source lines. A short run-details row below the cards shows the event count, coverage count, Jest result, and isolated tracer version, followed by links to the saved JSON traffic and complete test output. Separate paginated tabs list every observed suite and test. The terminal prints the report as a clickable absolute `file://` link.
 
 It does not claim what the real Datadog TIA backend would skip. It does not estimate savings or recommend parallelization.
 

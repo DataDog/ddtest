@@ -192,7 +192,7 @@ Polish the terminal output and generate a small self-contained HTML report showi
 - whether any tests are clear duration outliers;
 - whether any tests or suites cover an unusual number of files.
 
-Only render cards for problems that were actually found. Each problem card expands to show the affected tests, every observed run and duration, retry reasons, errors and stacks, the reported source file, and its source code. Under the problem cards, show a compact setup proof with the number of test events, tests with coverage, the Jest result, and the pinned tracer's isolated installation. Present the saved JSON traffic and complete Jest output as attractive links instead of spilling either into the report. Print the report itself as a clickable absolute `file://` terminal link.
+Only render cards for problems that were actually found. Each card always lists the affected tests, and each test expands to show every observed run and duration, retry reasons, errors and stacks, coverage, and a syntax-highlighted source excerpt bounded by the tracer's source lines. Under the problem cards, show a short run-details row with the number of test events, tests with coverage, the Jest result, and the pinned tracer's isolated installation. Link to the saved JSON traffic and complete Jest output instead of spilling either into the report. Add separate paginated tabs for all observed suites and tests. Print the report itself as a clickable absolute `file://` terminal link.
 
 The report does not calculate TIA savings or parallelization. This milestone is a satisfying setup proof, not a performance calculator.
 

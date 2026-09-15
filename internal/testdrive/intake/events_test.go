@@ -51,6 +51,8 @@ func TestTestReferencesReadReportFields(t *testing.T) {
 		name:        "works",
 		suite:       "one.test.js",
 		sourceFile:  "one.test.js",
+		sourceStart: 12,
+		sourceEnd:   14,
 		status:      "pass",
 		duration:    250 * time.Millisecond,
 		isRetry:     true,
@@ -152,12 +154,16 @@ func appendDetailedTest(
 		payload = msgp.AppendString(payload, "stack trace")
 	}
 	payload = msgp.AppendString(payload, "metrics")
-	payload = msgp.AppendMapHeader(payload, 1)
+	payload = msgp.AppendMapHeader(payload, 3)
 	payload = msgp.AppendString(payload, "test.is_retry")
 	if isRetry {
 		payload = msgp.AppendFloat64(payload, 1)
 	} else {
 		payload = msgp.AppendFloat64(payload, 0)
 	}
+	payload = msgp.AppendString(payload, "test.source.start")
+	payload = msgp.AppendFloat64(payload, 12)
+	payload = msgp.AppendString(payload, "test.source.end")
+	payload = msgp.AppendFloat64(payload, 14)
 	return payload
 }
