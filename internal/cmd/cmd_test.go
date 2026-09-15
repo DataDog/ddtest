@@ -271,7 +271,7 @@ func TestRootCommandFlags(t *testing.T) {
 }
 
 func TestCommandHierarchy(t *testing.T) {
-	// Verify that planCmd and runCmd are added to rootCmd
+	// Verify that planCmd, runCmd, and testdriveCmd are added to rootCmd
 	commands := rootCmd.Commands()
 	var foundPlan, foundRun bool
 	for _, cmd := range commands {
@@ -760,8 +760,8 @@ func TestCommandUsage(t *testing.T) {
 	}
 
 	// Expected commands (cobra adds completion and help automatically)
-	expectedCommands := []string{"plan", "run"}
-	requiredCommands := []string{"completion", "help [command]", "plan", "run"}
+	expectedCommands := []string{"plan", "run", "testdrive"}
+	requiredCommands := []string{"completion", "help [command]", "plan", "run", "testdrive"}
 
 	// Verify minimum expected commands exist
 	for _, expected := range expectedCommands {

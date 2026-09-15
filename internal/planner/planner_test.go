@@ -101,6 +101,10 @@ func (m *MockPlatform) Name() string {
 	return m.PlatformName
 }
 
+func (m *MockPlatform) Detect(string) (bool, error) {
+	return true, nil
+}
+
 func (m *MockPlatform) CreateTagsMap(context.Context) (map[string]string, error) {
 	return m.Tags, m.TagsErr
 }
@@ -209,6 +213,10 @@ func setPlannerStrictDiscovery(t *testing.T, enabled bool) {
 
 func (m *MockFramework) Name() string {
 	return m.FrameworkName
+}
+
+func (m *MockFramework) Detect(string) (bool, error) {
+	return true, nil
 }
 
 func (m *MockFramework) TestPattern() string {
