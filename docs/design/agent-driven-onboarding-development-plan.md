@@ -2,7 +2,7 @@
 
 Status: proposed
 
-Last updated: 2026-09-10
+Last updated: 2026-09-15
 
 Related design: [Agent-driven onboarding for DDTest](agent-driven-onboarding.md)
 
@@ -237,6 +237,10 @@ Keep the PR sequence short and vertical:
 5. **Delight and release:** terminal polish, local HTML, packaged-binary test, and Homebrew preview.
 
 Every PR must run `make test` and `make lint`. The real-tracer integration test should use a pinned dependency so it is reproducible, but normal unit tests should not require a Datadog account.
+
+## Post-Milestone 1: share the onboarding instructions
+
+The walking skeleton keeps a small Markdown copy of the JavaScript/Jest/GitHub Actions instructions in DDTest, derived from the Test Optimization onboarding MCP instructions in `dd-source`. After Milestone 1, investigate making both products embed the same versioned Markdown fragments at build time so fixes do not have to be copied between repositories. A shared build artifact looks like the simplest direction because DDTest must still work offline; do not hold up the first shippable flow to design it now.
 
 ## Deliberately later
 
