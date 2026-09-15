@@ -75,7 +75,11 @@ func readMultipartCoverage(request RawRequest) ([]testReference, error) {
 		return nil, fmt.Errorf("unexpected content type %q", mediaType)
 	}
 
-	reader := multipart.NewReader(bytes.NewReader(request.Body), params["boundary"])
+	body, err := uncompressRequestBody(request)
+	if err != nil {
+		return nil, err
+	}
+	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
 	var coverages []testReference
 	for {
 		part, partErr := reader.NextPart()

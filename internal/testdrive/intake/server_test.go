@@ -7,6 +7,7 @@ package intake
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -140,6 +141,43 @@ func TestServerStoresMessagePackAsJSON(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, json.Valid(storedBytes))
 	require.Contains(t, string(storedBytes), `"events": []`)
+}
+
+func TestServerStoresAndRecognizesGzippedMessagePack(t *testing.T) {
+	sessionDirectory := t.TempDir()
+	server, err := Start(sessionDirectory)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, server.Close())
+	})
+
+	payload := msgp.AppendMapHeader(nil, 1)
+	payload = msgp.AppendString(payload, "events")
+	payload = msgp.AppendArrayHeader(payload, 1)
+	payload = appendEvent(payload, "test", 10, 20, 30)
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	_, err = writer.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	request, err := http.NewRequest(http.MethodPost, server.URL()+testCyclePath, bytes.NewReader(compressed.Bytes()))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/msgpack")
+	request.Header.Set("Content-Encoding", "gzip")
+	response, err := testHTTPClient().Do(request)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.Equal(t, http.StatusOK, response.StatusCode)
+
+	testCount, err := server.TestEventCount()
+	require.NoError(t, err)
+	require.Equal(t, 1, testCount)
+
+	storedBytes, err := os.ReadFile(filepath.Join(sessionDirectory, intakeDirectoryName, "001-citestcycle.json"))
+	require.NoError(t, err)
+	require.True(t, json.Valid(storedBytes))
+	require.Contains(t, string(storedBytes), `"type": "test"`)
 }
 
 func testHTTPClient() *http.Client {
