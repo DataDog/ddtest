@@ -4,7 +4,7 @@ Status: proposed
 
 Working name for the experience: **Testdog**
 
-Last updated: 2026-09-10
+Last updated: 2026-09-15
 
 ## The idea
 
@@ -17,7 +17,6 @@ A developer should be able to say:
 Then their coding agent can do this:
 
 ```text
-brew install ddtest
 ddtest onboard
 # make the small suggested CI edit
 ddtest testdrive
@@ -202,9 +201,12 @@ The output can be ugly and the code can be specific. The purpose is to learn.
 - Run the real suite once and produce a useful terminal summary.
 - Add a pleasant local HTML report.
 - Dogfood it on real repositories and fix the repeated rough edges.
-- Publish a Homebrew preview.
 
 The detailed implementation sequence lives in [the milestone development plan](agent-driven-onboarding-development-plan.md).
+
+## Post-Milestone 1
+
+- publish a Homebrew installation path after the first preview is already useful;
 
 ## Later, if users pull us there
 

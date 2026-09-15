@@ -206,10 +206,9 @@ ddtest testdrive
 
 Add an option only after dogfooding shows that users actually need it. Agent-readable JSON can be added when the real agent loop demonstrates which data is useful; we should not freeze that format upfront.
 
-### 1.4 Package and release the preview
+### 1.4 Package the preview
 
 - make the normal release produce macOS and Linux binaries;
-- publish a Homebrew preview installation path;
 - run the packaged binary against the Jest fixture;
 - document the one supported path and its limitations honestly.
 
@@ -218,7 +217,6 @@ Add an option only after dogfooding shows that users actually need it. Agent-rea
 A human or agent can start in a conventional Jest repository and complete this flow without a Datadog account:
 
 ```text
-brew install ...ddtest preview formula...
 ddtest onboard
 # apply the small suggested CI edit
 ddtest testdrive
@@ -234,11 +232,13 @@ Keep the PR sequence short and vertical:
 2. **Real fixture testdrive:** pinned `dd-trace`, Jest fixture, unique session directories, and concurrent-run test.
 3. **Public walking skeleton:** rough `onboard` and `testdrive` working on one real repository shape.
 4. **Dogfood fixes:** only changes justified by trying the walking skeleton on real repositories.
-5. **Delight and release:** terminal polish, local HTML, packaged-binary test, and Homebrew preview.
+5. **Delight and release:** terminal polish, local HTML, packaged-binary test, and preview release.
 
 Every PR must run `make test` and `make lint`. The real-tracer integration test should use a pinned dependency so it is reproducible, but normal unit tests should not require a Datadog account.
 
-## Post-Milestone 1: share the onboarding instructions
+## Post-Milestone 1
+
+Publish a Homebrew installation path after the first milestone. Homebrew packaging should not delay dogfooding the commands or shipping the initial preview binaries.
 
 The walking skeleton keeps a small Markdown copy of the JavaScript/Jest/GitHub Actions instructions in DDTest, derived from the Test Optimization onboarding MCP instructions in `dd-source`. After Milestone 1, investigate making both products embed the same versioned Markdown fragments at build time so fixes do not have to be copied between repositories. A shared build artifact looks like the simplest direction because DDTest must still work offline; do not hold up the first shippable flow to design it now.
 
