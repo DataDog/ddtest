@@ -243,6 +243,8 @@ The walking skeleton keeps a small Markdown copy of the JavaScript/Jest/GitHub A
 
 We also need a large `ddeval` suite that asks coding agents to follow these instructions across many real repository and CI shapes. The evals should catch incorrect workflow edits, unrelated changes, bad setup detection, and failures to leave credential creation to the human. Build that coverage from the cases we discover while dogfooding instead of trying to enumerate every case upfront.
 
+Explore fully local TIA. DDTest can keep the coverage reported by each test or suite in a small SQLite database and use it on later testdrives to make the skip/no-skip decision locally. The changed-file input should include both the committed history normally provided through Git upload and the developer's current staged, unstaged, and untracked files, so TIA is useful while code is still being written rather than only after a commit. Start with the conservative rule: run when coverage is missing or intersects a changed file; otherwise skip. This is a post-Milestone 1 experiment, not a dependency of the first onboarding experience.
+
 ## Deliberately later
 
 These may be good ideas, but they are not milestones 0 or 1:
@@ -252,7 +254,7 @@ These may be good ideas, but they are not milestones 0 or 1:
 - generalized language, framework, and CI abstractions;
 - multiple tracer-version support policy;
 - Datadog backend forwarding;
-- local TIA simulation and savings estimates;
+- fully local TIA and savings estimates;
 - historical replay;
 - test splitting and parallelization;
 - hosted Testdog sharing;

@@ -208,6 +208,7 @@ The detailed implementation sequence lives in [the milestone development plan](a
 - a stable JSON contract for agents and integrations;
 - real Datadog forwarding when `DD_API_KEY` is present;
 - real TIA settings and skippables;
+- fully local TIA backed by a SQLite coverage database, using committed changes plus staged, unstaged, and untracked working-tree files to decide skip/no-skip;
 - local savings estimates and historical analysis;
 - test splitting and parallelization;
 - a Testdog share link.
