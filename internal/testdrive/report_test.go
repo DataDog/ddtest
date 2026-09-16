@@ -33,7 +33,7 @@ func TestReportShowsEveryFlakyAttemptErrorAndSource(t *testing.T) {
 		TestEventCount:   2,
 		CoveredTestCount: 1,
 		Tests:            []intake.TestFinding{flaky},
-		PassedOnRetry:    []intake.TestFinding{flaky},
+		FlakyTests:       []intake.TestFinding{flaky},
 	}
 
 	report := renderTestReport(t, repositoryRoot, findings)
@@ -64,9 +64,11 @@ func TestReportShowsBroadCoverageFilesAndSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	findings := intake.Findings{
-		TestCount:        2,
-		TestEventCount:   2,
-		CoveredTestCount: 2,
+		TestCount:          2,
+		TestEventCount:     2,
+		CoveredTestCount:   2,
+		CoverageLevel:      "test",
+		CoveredFilesMedian: 2,
 		BroadCoverage: []intake.CoverageFinding{{
 			Name: "broad.test.js › broad", Level: "test", SourceFile: "broad.test.js", SourceStart: 1, FileCount: 12,
 			Files: []string{"src/one.js", "src/two.js"},
@@ -77,13 +79,40 @@ func TestReportShowsBroadCoverageFilesAndSource(t *testing.T) {
 	for _, expected := range []string{
 		"Any unusually broad test coverage?",
 		"12 files · test level",
+		"Median covered files · 2",
 		"src/one.js",
 		"src/two.js",
+		`data-page-size="50"`,
+		`class="page-item">src/one.js`,
 		`class="token-string">&#39;broad&#39;`,
 	} {
 		if !strings.Contains(report, expected) {
 			t.Errorf("report does not contain %q", expected)
 		}
+	}
+}
+
+func TestReportShowsCoverageOnlyAtActiveSkippingLevel(t *testing.T) {
+	test := intake.TestFinding{
+		Name: "works", Suite: "one.test.js", Status: "pass",
+		CoverageLevel: "suite", CoveredFiles: []string{"src/suite.js"},
+	}
+	suiteModel := buildReport(t.TempDir(), intake.Findings{CoverageLevel: "suite", Tests: []intake.TestFinding{test}}, false)
+	requireReportCoverage(t, suiteModel, 0, 1)
+
+	test.CoverageLevel = "test"
+	test.CoveredFiles = []string{"src/test.js"}
+	testModel := buildReport(t.TempDir(), intake.Findings{CoverageLevel: "test", Tests: []intake.TestFinding{test}}, false)
+	requireReportCoverage(t, testModel, 1, 0)
+}
+
+func requireReportCoverage(t *testing.T, model reportModel, testFiles, suiteFiles int) {
+	t.Helper()
+	if len(model.Tests) != 1 || len(model.Tests[0].CoveredFiles) != testFiles {
+		t.Fatalf("test covered files = %v, want %d", model.Tests, testFiles)
+	}
+	if len(model.Suites) != 1 || len(model.Suites[0].CoveredFiles) != suiteFiles {
+		t.Fatalf("suite covered files = %v, want %d", model.Suites, suiteFiles)
 	}
 }
 

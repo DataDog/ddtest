@@ -26,6 +26,7 @@ const reportFilename = "report.html"
 type reportCard struct {
 	Title     string
 	Count     int
+	Context   string
 	Tests     []reportTest
 	Coverages []reportCoverage
 }
@@ -83,6 +84,7 @@ type reportSuite struct {
 	Duration     string
 	TestCount    int
 	CoveredCount int
+	ShowCoverage bool
 	CoveredFiles []string
 	Tests        []reportSuiteTest
 }
@@ -132,6 +134,8 @@ func writeReport(repositoryRoot, sessionDirectory string, findings intake.Findin
 }
 
 func buildReport(repositoryRoot string, findings intake.Findings, commandFailed bool) reportModel {
+	showTestCoverage := findings.CoverageLevel == "test"
+	showSuiteCoverage := findings.CoverageLevel == "suite"
 	model := reportModel{
 		Headline: "Test Optimization is ready.",
 		Summary:  "No findings.",
@@ -145,9 +149,9 @@ func buildReport(repositoryRoot string, findings intake.Findings, commandFailed 
 			{Title: "JSON traffic", Href: "intake/"},
 			{Title: "Test output", Href: testOutputFilename},
 		},
-		Tests: reportTests(repositoryRoot, findings.Tests),
+		Tests: reportTests(repositoryRoot, findings.Tests, showTestCoverage),
 	}
-	model.Suites = reportSuites(findings.Tests)
+	model.Suites = reportSuites(findings.Tests, showSuiteCoverage)
 
 	if findings.TestEventCount == 0 {
 		model.Headline = "No test events received."
@@ -157,24 +161,26 @@ func buildReport(repositoryRoot string, findings intake.Findings, commandFailed 
 	if len(findings.FailedTests) > 0 {
 		model.Cards = append(model.Cards, reportCard{
 			Title: "Any tests failed?", Count: len(findings.FailedTests),
-			Tests: reportTests(repositoryRoot, findings.FailedTests),
+			Tests: reportTests(repositoryRoot, findings.FailedTests, showTestCoverage),
 		})
 	}
-	if len(findings.PassedOnRetry) > 0 {
+	if len(findings.FlakyTests) > 0 {
 		model.Cards = append(model.Cards, reportCard{
-			Title: "Any flaky tests?", Count: len(findings.PassedOnRetry),
-			Tests: reportTests(repositoryRoot, findings.PassedOnRetry),
+			Title: "Any flaky tests?", Count: len(findings.FlakyTests),
+			Tests: reportTests(repositoryRoot, findings.FlakyTests, showTestCoverage),
 		})
 	}
 	if len(findings.SlowTests) > 0 {
 		model.Cards = append(model.Cards, reportCard{
 			Title: "Any tests slower than the others?", Count: len(findings.SlowTests),
-			Tests: reportTests(repositoryRoot, findings.SlowTests),
+			Context: "Median test time · " + formatDuration(findings.TestDurationMedian),
+			Tests:   reportTests(repositoryRoot, findings.SlowTests, showTestCoverage),
 		})
 	}
 	if len(findings.BroadCoverage) > 0 {
 		model.Cards = append(model.Cards, reportCard{
 			Title: "Any unusually broad test coverage?", Count: len(findings.BroadCoverage),
+			Context:   fmt.Sprintf("Median covered files · %d", findings.CoveredFilesMedian),
 			Coverages: reportCoverages(repositoryRoot, findings.BroadCoverage),
 		})
 	}
@@ -184,7 +190,7 @@ func buildReport(repositoryRoot string, findings intake.Findings, commandFailed 
 	return model
 }
 
-func reportTests(repositoryRoot string, findings []intake.TestFinding) []reportTest {
+func reportTests(repositoryRoot string, findings []intake.TestFinding, showCoverage bool) []reportTest {
 	tests := make([]reportTest, 0, len(findings))
 	for _, finding := range findings {
 		label := finding.Name
@@ -195,10 +201,13 @@ func reportTests(repositoryRoot string, findings []intake.TestFinding) []reportT
 		test := reportTest{
 			Label: label, Name: finding.Name, Suite: finding.Suite,
 			SourceFile: finding.SourceFile, Status: status, Tone: tone,
-			Duration:      formatDuration(totalAttemptDuration(finding)),
-			Attempts:      make([]reportAttempt, 0, len(finding.Attempts)),
-			CoverageLevel: finding.CoverageLevel, CoveredFiles: finding.CoveredFiles,
-			Source: readSource(repositoryRoot, finding.SourceFile, finding.SourceStart, finding.SourceEnd),
+			Duration: formatDuration(findingDuration(finding)),
+			Attempts: make([]reportAttempt, 0, len(finding.Attempts)),
+			Source:   readSource(repositoryRoot, finding.SourceFile, finding.SourceStart, finding.SourceEnd),
+		}
+		if showCoverage && finding.CoverageLevel == "test" {
+			test.CoverageLevel = finding.CoverageLevel
+			test.CoveredFiles = finding.CoveredFiles
 		}
 		for attemptIndex, attempt := range finding.Attempts {
 			kind := "Initial run"
@@ -222,9 +231,11 @@ func reportTests(repositoryRoot string, findings []intake.TestFinding) []reportT
 func reportCoverages(repositoryRoot string, findings []intake.CoverageFinding) []reportCoverage {
 	coverages := make([]reportCoverage, 0, len(findings))
 	for _, finding := range findings {
+		files := slices.Clone(finding.Files)
+		slices.Sort(files)
 		coverage := reportCoverage{
 			Name: finding.Name, Level: finding.Level, FileCount: finding.FileCount,
-			Files: finding.Files, SourceFile: finding.SourceFile,
+			Files: files, SourceFile: finding.SourceFile,
 		}
 		if finding.Level == "test" {
 			coverage.Source = readSource(repositoryRoot, finding.SourceFile, finding.SourceStart, finding.SourceEnd)
@@ -234,7 +245,7 @@ func reportCoverages(repositoryRoot string, findings []intake.CoverageFinding) [
 	return coverages
 }
 
-func reportSuites(tests []intake.TestFinding) []reportSuite {
+func reportSuites(tests []intake.TestFinding, showCoverage bool) []reportSuite {
 	byName := make(map[string]*reportSuite)
 	durations := make(map[string]time.Duration)
 	for _, test := range tests {
@@ -244,7 +255,7 @@ func reportSuites(tests []intake.TestFinding) []reportSuite {
 		}
 		suite, found := byName[name]
 		if !found {
-			suite = &reportSuite{Name: name, Status: "Passed", Tone: "good"}
+			suite = &reportSuite{Name: name, Status: "Passed", Tone: "good", ShowCoverage: showCoverage}
 			byName[name] = suite
 		}
 		status, tone := testDisplayStatus(test)
@@ -256,14 +267,14 @@ func reportSuites(tests []intake.TestFinding) []reportSuite {
 			suite.Tone = "attention"
 		}
 		suite.TestCount++
-		durations[name] += totalAttemptDuration(test)
-		if test.CoverageLevel != "" {
+		durations[name] += findingDuration(test)
+		if showCoverage && test.CoverageLevel == "suite" {
 			suite.CoveredCount++
+			suite.CoveredFiles = appendUniqueStrings(suite.CoveredFiles, test.CoveredFiles...)
 		}
-		suite.CoveredFiles = appendUniqueStrings(suite.CoveredFiles, test.CoveredFiles...)
 		suite.Tests = append(suite.Tests, reportSuiteTest{
 			Name: test.Name, Status: status, Tone: tone,
-			Duration: formatDuration(totalAttemptDuration(test)),
+			Duration: formatDuration(findingDuration(test)),
 		})
 	}
 
@@ -278,28 +289,26 @@ func reportSuites(tests []intake.TestFinding) []reportSuite {
 
 func testDisplayStatus(test intake.TestFinding) (string, string) {
 	status := test.Status
-	if len(test.Attempts) > 0 {
-		status = test.Attempts[len(test.Attempts)-1].Status
+	sawPass := status == "pass"
+	sawFailure := status == "fail"
+	for _, attempt := range test.Attempts {
+		sawPass = sawPass || attempt.Status == "pass"
+		sawFailure = sawFailure || attempt.Status == "fail"
 	}
-	if status == "pass" {
-		for _, attempt := range test.Attempts[:max(0, len(test.Attempts)-1)] {
-			if attempt.Status == "fail" {
-				return "Flaky", "attention"
-			}
-		}
+	if sawPass && sawFailure {
+		return "Flaky", "attention"
+	}
+	if status == "" && len(test.Attempts) > 0 {
+		status = test.Attempts[len(test.Attempts)-1].Status
 	}
 	return displayStatus(status), attemptTone(status)
 }
 
-func totalAttemptDuration(test intake.TestFinding) time.Duration {
-	var duration time.Duration
-	for _, attempt := range test.Attempts {
-		duration += attempt.Duration
-	}
-	if len(test.Attempts) == 0 {
+func findingDuration(test intake.TestFinding) time.Duration {
+	if test.Duration != 0 || len(test.Attempts) == 0 {
 		return test.Duration
 	}
-	return duration
+	return test.Attempts[0].Duration
 }
 
 func appendUniqueStrings(values []string, additions ...string) []string {
@@ -608,11 +617,17 @@ var testdriveReport = template.Must(template.New("testdrive-report").Funcs(templ
     <pre class="source"><code>{{range .Lines}}<span class="source-line"><span class="line-number">{{.Number}}</span><span class="line-code">{{.Code}}</span></span>{{end}}</code></pre>
   </div>{{else if .Error}}<p class="source-error">{{.Error}}</p>{{end}}
 {{end}}
+{{define "covered-files"}}
+  {{if .}}<div class="covered-files-wrap">
+    <ul class="covered-files" data-paginated data-page-size="50">{{range .}}<li class="page-item">{{.}}</li>{{end}}</ul>
+    <div class="pager"><button type="button" data-prev>Previous</button><span data-page></span><button type="button" data-next>Next</button></div>
+  </div>{{end}}
+{{end}}
 {{define "test-detail"}}
   <div class="expanded">
     {{if .SourceFile}}<p class="source-path">{{.SourceFile}}</p>{{end}}
     {{template "attempts" .}}
-    {{if .CoverageLevel}}<div class="coverage"><strong>Coverage · {{.CoverageLevel}} level · {{len .CoveredFiles}} {{plural (len .CoveredFiles) "file" "files"}}</strong>{{if .CoveredFiles}}<ul>{{range .CoveredFiles}}<li>{{.}}</li>{{end}}</ul>{{end}}</div>{{end}}
+    {{if .CoverageLevel}}<div class="coverage"><strong>Coverage · {{.CoverageLevel}} level · {{len .CoveredFiles}} {{plural (len .CoveredFiles) "file" "files"}}</strong>{{template "covered-files" .CoveredFiles}}</div>{{end}}
     {{template "source" .Source}}
   </div>
 {{end}}
@@ -641,6 +656,8 @@ var testdriveReport = template.Must(template.New("testdrive-report").Funcs(templ
     .problem-card, .run, .result-row { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
     .problem-header { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; padding: 16px 18px; border-bottom: 1px solid var(--line); }
     .problem-header h2 { margin: 0; font-size: 1rem; }
+    .problem-summary { display: flex; gap: 14px; align-items: baseline; }
+    .problem-context { color: var(--muted); font-size: .82rem; }
     .problem-count { color: var(--failure); font-weight: 700; }
     details.result { border-top: 1px solid #ecebef; }
     details.result:first-child { border-top: 0; }
@@ -662,8 +679,10 @@ var testdriveReport = template.Must(template.New("testdrive-report").Funcs(templ
     .stack summary { color: var(--muted); cursor: pointer; font-size: .8rem; }
     pre { overflow: auto; margin: 8px 0 0; padding: 14px; border-radius: 7px; background: #f2f2f3; color: #2d2a32; font: .78rem/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
     .coverage { margin-top: 14px; font-size: .82rem; }
-    .coverage ul, .covered-files { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
-    .coverage li, .covered-files li { padding: 4px 7px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); font: .74rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .covered-files { margin: 8px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 7px; list-style: none; }
+    .covered-files li { padding: 6px 9px; border-top: 1px solid var(--line); color: var(--muted); font: .74rem ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .covered-files li:first-child { border-top: 0; }
+    .covered-files-wrap > .pager { margin-top: 8px; }
     .source-block { margin-top: 16px; }
     .source-heading { color: var(--muted); font-size: .8rem; font-weight: 650; }
     pre.source { padding: 10px 0; }
@@ -714,7 +733,7 @@ var testdriveReport = template.Must(template.New("testdrive-report").Funcs(templ
     <section id="overview" class="panel">
       {{if .Cards}}<div class="problems">
         {{range .Cards}}<article class="problem-card">
-          <header class="problem-header"><h2>{{.Title}}</h2><span class="problem-count">{{.Count}}</span></header>
+          <header class="problem-header"><h2>{{.Title}}</h2><div class="problem-summary">{{if .Context}}<span class="problem-context">{{.Context}}</span>{{end}}<span class="problem-count">{{.Count}}</span></div></header>
           <div class="problem-list">
             {{range .Tests}}<details class="result">
               <summary><span class="result-name">{{.Label}}</span><span class="result-meta">{{.Status}} · {{.Duration}}</span></summary>
@@ -724,7 +743,7 @@ var testdriveReport = template.Must(template.New("testdrive-report").Funcs(templ
               <summary><span class="result-name">{{.Name}}</span><span class="result-meta">{{.FileCount}} {{plural .FileCount "file" "files"}} · {{.Level}} level</span></summary>
               <div class="expanded">
                 {{if .SourceFile}}<p class="source-path">{{.SourceFile}}</p>{{end}}
-                <ul class="covered-files">{{range .Files}}<li>{{.}}</li>{{end}}</ul>
+                {{template "covered-files" .Files}}
                 {{template "source" .Source}}
               </div>
             </details>{{end}}
@@ -745,12 +764,12 @@ var testdriveReport = template.Must(template.New("testdrive-report").Funcs(templ
         {{range .Suites}}<details class="result-row page-item">
           <summary>
             <span class="result-name">{{.Name}}</span>
-            <span class="result-meta secondary">{{.TestCount}} {{plural .TestCount "test" "tests"}} · {{.CoveredCount}} with coverage</span>
+            <span class="result-meta secondary">{{.TestCount}} {{plural .TestCount "test" "tests"}}{{if .ShowCoverage}} · {{.CoveredCount}} with coverage{{end}}</span>
             <span class="result-meta status {{.Tone}}">{{.Status}}</span>
             <span class="result-meta">{{.Duration}}</span>
           </summary>
           <div class="suite-detail">
-            {{if .CoveredFiles}}<div class="coverage"><strong>Covered {{plural (len .CoveredFiles) "file" "files"}} · {{len .CoveredFiles}}</strong><ul>{{range .CoveredFiles}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+            {{if .CoveredFiles}}<div class="coverage"><strong>Covered {{plural (len .CoveredFiles) "file" "files"}} · {{len .CoveredFiles}}</strong>{{template "covered-files" .CoveredFiles}}</div>{{end}}
             <table class="suite-tests"><thead><tr><th>Test</th><th>Status</th><th>Time</th></tr></thead><tbody>
               {{range .Tests}}<tr><td>{{.Name}}</td><td class="status {{.Tone}}">{{.Status}}</td><td>{{.Duration}}</td></tr>{{end}}
             </tbody></table>
@@ -784,7 +803,7 @@ var testdriveReport = template.Must(template.New("testdrive-report").Funcs(templ
       });
     });
     document.querySelectorAll('[data-paginated]').forEach(function (list) {
-      var items = Array.from(list.querySelectorAll('.page-item'));
+      var items = Array.from(list.children).filter(function (item) { return item.classList.contains('page-item'); });
       var pageSize = Number(list.dataset.pageSize) || 20;
       var pageCount = Math.max(1, Math.ceil(items.length / pageSize));
       var page = 0;

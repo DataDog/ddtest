@@ -75,6 +75,20 @@ func TestTestReferencesReadErrors(t *testing.T) {
 	require.Equal(t, "stack trace", tests[0].errorStack)
 }
 
+func TestTestReferencesKeepAttemptAndFinalStatus(t *testing.T) {
+	payload := msgp.AppendMapHeader(nil, 1)
+	payload = msgp.AppendString(payload, "events")
+	payload = msgp.AppendArrayHeader(payload, 1)
+	payload = appendDetailedTestWithFinalStatus(payload, 10, 20, 30, "flaky", "one.test.js", "fail", "pass", time.Millisecond, true, "")
+
+	server := &Server{requests: []RawRequest{{Method: http.MethodPost, Path: testCyclePath, Body: payload}}}
+	tests, err := server.testReferences()
+	require.NoError(t, err)
+	require.Len(t, tests, 1)
+	require.Equal(t, "fail", tests[0].status)
+	require.Equal(t, "pass", tests[0].finalStatus)
+}
+
 func TestTestEventCountReportsInvalidPayload(t *testing.T) {
 	server := &Server{requests: []RawRequest{{
 		Method: http.MethodPost,
@@ -109,6 +123,17 @@ func appendDetailedTest(
 	isRetry bool,
 	errorMessage string,
 ) []byte {
+	return appendDetailedTestWithFinalStatus(payload, sessionID, suiteID, spanID, name, suite, status, "", duration, isRetry, errorMessage)
+}
+
+func appendDetailedTestWithFinalStatus(
+	payload []byte,
+	sessionID, suiteID, spanID uint64,
+	name, suite, status, finalStatus string,
+	duration time.Duration,
+	isRetry bool,
+	errorMessage string,
+) []byte {
 	payload = msgp.AppendMapHeader(payload, 2)
 	payload = msgp.AppendString(payload, "type")
 	payload = msgp.AppendString(payload, "test")
@@ -120,6 +145,9 @@ func appendDetailedTest(
 	}
 	if errorMessage != "" {
 		metadataFields += 3
+	}
+	if finalStatus != "" {
+		metadataFields++
 	}
 	payload = msgp.AppendString(payload, "test_session_id")
 	payload = msgp.AppendUint64(payload, sessionID)
@@ -137,6 +165,10 @@ func appendDetailedTest(
 	payload = msgp.AppendString(payload, suite)
 	payload = msgp.AppendString(payload, "test.status")
 	payload = msgp.AppendString(payload, status)
+	if finalStatus != "" {
+		payload = msgp.AppendString(payload, "test.final_status")
+		payload = msgp.AppendString(payload, finalStatus)
+	}
 	payload = msgp.AppendString(payload, "test.source.file")
 	payload = msgp.AppendString(payload, suite)
 	payload = msgp.AppendString(payload, "test.is_retry")
