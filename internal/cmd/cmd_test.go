@@ -438,8 +438,15 @@ func TestExecute(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "ddtest") {
-		t.Error("help output should contain command name 'ddtest'")
+	for _, expected := range []string{
+		"Start here:",
+		"cd <repository>",
+		"ddtest onboard",
+		"onboard     Start here: onboard this repository to Test Optimization",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Errorf("help output should contain %q:\n%s", expected, output)
+		}
 	}
 }
 

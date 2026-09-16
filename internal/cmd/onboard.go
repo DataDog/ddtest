@@ -19,7 +19,7 @@ var onboardCmd = newOnboardCommand(onboard.Run)
 func newOnboardCommand(run func(string, io.Writer) error) *cobra.Command {
 	return &cobra.Command{
 		Use:   "onboard",
-		Short: "Show how to enable Datadog Test Optimization",
+		Short: "Start here: onboard this repository to Test Optimization",
 		Long:  "Detects the supported test setup and prints the smallest Datadog Test Optimization onboarding instructions. It does not edit files.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
