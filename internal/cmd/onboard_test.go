@@ -22,6 +22,9 @@ func TestOnboardCommandRunsDetection(t *testing.T) {
 		_, _ = io.WriteString(output, "onboarding instructions\n")
 		return nil
 	})
+	if command.Short != "Start here: onboard this repository to Test Optimization" {
+		t.Fatalf("Short = %q", command.Short)
+	}
 	var output bytes.Buffer
 	command.SetOut(&output)
 

@@ -29,9 +29,17 @@ import (
 var defaultParallelism = settings.DefaultParallelism()
 
 var rootCmd = &cobra.Command{
-	Use:               "ddtest",
-	Short:             "A test runner from Datadog",
-	Long:              "Command line tool for running tests with Datadog Test Optimization.",
+	Use:   "ddtest",
+	Short: "A test runner from Datadog",
+	Long: `Command line tool for running tests with Datadog Test Optimization.
+
+Start here:
+
+  cd <repository>
+  ddtest onboard
+
+The onboard command detects the test and CI setup, explains the required
+changes, points to local verification, and tells you when human action is needed.`,
 	Version:           buildinfo.CurrentVersion(),
 	PersistentPreRunE: runPersistentPreRun,
 }
