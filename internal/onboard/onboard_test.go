@@ -34,6 +34,7 @@ jobs:
 		"api_key: ${{ secrets.DD_API_KEY }}",
 		"NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }}",
 		"ddtest testdrive",
+		"post every `Open report:` link",
 		"Ask a human to connect Datadog",
 		"without sharing the key itself",
 	} {
@@ -66,6 +67,9 @@ jobs:
 	}
 	if !strings.Contains(output.String(), "ddtest testdrive") {
 		t.Fatalf("Run() did not print the next step:\n%s", output.String())
+	}
+	if !strings.Contains(output.String(), "post every `Open report:` link") {
+		t.Fatalf("Run() did not tell the agent to share the report:\n%s", output.String())
 	}
 }
 

@@ -61,6 +61,7 @@ func Run(repositoryRoot string, output io.Writer) error {
 		_, _ = fmt.Fprintln(output)
 		_, _ = fmt.Fprintln(output, "Datadog Test Optimization already appears in every detected test workflow.")
 		_, _ = fmt.Fprintln(output, "Run `ddtest testdrive` to check the setup locally.")
+		_, _ = fmt.Fprintln(output, "After it finishes, post every `Open report:` link to the user so they can open the local Test Optimization report.")
 		return nil
 	}
 
