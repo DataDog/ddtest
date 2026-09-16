@@ -108,9 +108,10 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 	server := &fakeIntake{
 		url: "http://127.0.0.1:1234",
 		findings: intake.Findings{
-			TestCount:        2,
-			TestEventCount:   2,
-			CoveredTestCount: 2,
+			TestCount:          2,
+			TestEventCount:     2,
+			CoveredTestCount:   2,
+			TestDurationMedian: time.Second,
 			Tests: []intake.TestFinding{
 				{Name: "fast test", Suite: "one.test.js", SourceFile: "one.test.js", SourceStart: 1, Status: "pass", Duration: time.Millisecond, Attempts: []intake.TestAttempt{{Status: "pass", Duration: time.Millisecond}}},
 				{Name: "slow test", Suite: "one.test.js", SourceFile: "one.test.js", SourceStart: 1, Status: "pass", Duration: 2 * time.Second, Attempts: []intake.TestAttempt{{Status: "pass", Duration: 2 * time.Second}}},
@@ -158,7 +159,8 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 		"Test Optimization is ready.",
 		"1 finding.",
 		"Tests slower than the others (1):",
-		"one.test.js › slow test · Pass · 3.5s",
+		"Median test time: 1s",
+		"one.test.js › slow test · Pass · 2s",
 		"Run details:",
 		"Test events: 2",
 		"Tests with coverage: 2 / 2",
@@ -193,6 +195,7 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 	for _, expected := range []string{
 		"Test Optimization is ready",
 		"Any tests slower than the others?",
+		"Median test time · 1s",
 		"slow test",
 		"Run 2 · Retry · early flake detection",
 		"Source · lines 1–1",
@@ -270,8 +273,8 @@ func TestRunStillReportsEventsWhenJestFails(t *testing.T) {
 func TestWriteFindingsIncludesOnlyPresentCategories(t *testing.T) {
 	var output bytes.Buffer
 	writeFindings(&output, intake.Findings{
-		PassedOnRetry: []intake.TestFinding{{
-			Name: "sometimes works", Suite: "flaky.test.js",
+		FlakyTests: []intake.TestFinding{{
+			Name: "sometimes works", Suite: "flaky.test.js", Duration: 5 * time.Millisecond,
 			Attempts: []intake.TestAttempt{
 				{Status: "fail", Duration: 5 * time.Millisecond},
 				{Status: "pass", Duration: 7 * time.Millisecond, Retry: true},
@@ -280,13 +283,15 @@ func TestWriteFindingsIncludesOnlyPresentCategories(t *testing.T) {
 		BroadCoverage: []intake.CoverageFinding{{
 			Name: "broad.test.js", Level: "suite", FileCount: 12,
 		}},
+		CoveredFilesMedian: 3,
 	})
 
 	for _, expected := range []string{
 		"2 findings.",
 		"Flaky tests (1):",
-		"flaky.test.js › sometimes works · Flaky · 12ms",
+		"flaky.test.js › sometimes works · Flaky · 5ms",
 		"Unusually broad coverage (1):",
+		"Median covered files: 3",
 		"broad.test.js · 12 files · suite level",
 	} {
 		if !strings.Contains(output.String(), expected) {

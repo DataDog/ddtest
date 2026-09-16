@@ -27,6 +27,7 @@ type testReference struct {
 	sourceStart  int
 	sourceEnd    int
 	status       string
+	finalStatus  string
 	duration     time.Duration
 	isRetry      bool
 	retryReason  string
@@ -166,9 +167,10 @@ func readTestReference(payload []byte) (testReference, []byte, error) {
 		reference.name = text(metadata["test.name"])
 		reference.suite = text(metadata["test.suite"])
 		reference.sourceFile = text(metadata["test.source.file"])
-		reference.status = strings.ToLower(text(metadata["test.final_status"]))
+		reference.status = strings.ToLower(text(metadata["test.status"]))
+		reference.finalStatus = strings.ToLower(text(metadata["test.final_status"]))
 		if reference.status == "" {
-			reference.status = strings.ToLower(text(metadata["test.status"]))
+			reference.status = reference.finalStatus
 		}
 		reference.isRetry = truthy(metadata["test.is_retry"])
 		reference.retryReason = text(metadata["test.retry_reason"])

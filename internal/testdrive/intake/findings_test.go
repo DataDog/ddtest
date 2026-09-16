@@ -21,7 +21,7 @@ func TestAnalyzeTestsFindsFailuresRetriesAndSlowTests(t *testing.T) {
 		{name: "broken", suite: "two.test.js", status: "fail", duration: 15 * time.Millisecond},
 	}
 
-	all, failed, passedOnRetry, slow := analyzeTests(tests)
+	all, failed, flaky, slow, median := analyzeTests(tests)
 	require.Len(t, all, 4)
 	require.Equal(t, []string{"fast", "flaky", "broken", "slow"}, []string{all[0].Name, all[1].Name, all[2].Name, all[3].Name})
 	require.Equal(t, []TestFinding{{
@@ -34,31 +34,57 @@ func TestAnalyzeTestsFindsFailuresRetriesAndSlowTests(t *testing.T) {
 			{Status: "fail", Duration: 20 * time.Millisecond},
 			{Status: "pass", Duration: 30 * time.Millisecond, Retry: true},
 		},
-	}}, passedOnRetry)
+	}}, flaky)
 	require.Equal(t, []TestFinding{{
 		Name: "slow", Suite: "two.test.js", Status: "pass", Duration: 400 * time.Millisecond,
 		Attempts: []TestAttempt{{Status: "pass", Duration: 400 * time.Millisecond}},
 	}}, slow)
+	require.Equal(t, 17500*time.Microsecond, median)
 }
 
-func TestAddCoverageToTestsSupportsTestAndSuiteCoverage(t *testing.T) {
+func TestAnalyzeTestsUsesFinalStatusAndMarksMixedOutcomesFlaky(t *testing.T) {
+	tests := []testReference{
+		{name: "flaky", suite: "one.test.js", status: "pass", finalStatus: "pass", duration: 10 * time.Millisecond},
+		{name: "flaky", suite: "one.test.js", status: "fail", duration: 12 * time.Millisecond, isRetry: true},
+	}
+
+	all, failed, flaky, _, _ := analyzeTests(tests)
+	require.Empty(t, failed)
+	require.Len(t, flaky, 1)
+	require.Equal(t, "pass", flaky[0].Status)
+	require.Equal(t, 10*time.Millisecond, flaky[0].Duration)
+	require.Equal(t, "pass", all[0].Status)
+}
+
+func TestAddCoverageToTestsUsesActiveCoverageLevel(t *testing.T) {
 	tests := []testReference{
 		{sessionID: 1, suiteID: 10, spanID: 100, name: "one", suite: "one.test.js"},
 		{sessionID: 1, suiteID: 10, spanID: 101, name: "two", suite: "one.test.js"},
 	}
-	findings, _, _, _ := analyzeTests(tests)
-	addCoverageToTests(findings, tests, []coverageReference{
+	coverages := []coverageReference{
 		{testReference: testReference{spanID: 100}, files: []string{"specific.js"}},
 		{testReference: testReference{sessionID: 1, suiteID: 10}, files: []string{"shared.js"}},
+	}
+
+	t.Run("test", func(t *testing.T) {
+		findings, _, _, _, _ := analyzeTests(tests)
+		addCoverageToTests(findings, tests, coverages, "test")
+		require.Equal(t, "test", findings[0].CoverageLevel)
+		require.Equal(t, []string{"specific.js"}, findings[0].CoveredFiles)
+		require.Empty(t, findings[1].CoverageLevel)
 	})
 
-	require.Equal(t, "test", findings[0].CoverageLevel)
-	require.Equal(t, []string{"specific.js"}, findings[0].CoveredFiles)
-	require.Equal(t, "suite", findings[1].CoverageLevel)
-	require.Equal(t, []string{"shared.js"}, findings[1].CoveredFiles)
+	t.Run("suite", func(t *testing.T) {
+		findings, _, _, _, _ := analyzeTests(tests)
+		addCoverageToTests(findings, tests, coverages, "suite")
+		for _, finding := range findings {
+			require.Equal(t, "suite", finding.CoverageLevel)
+			require.Equal(t, []string{"shared.js"}, finding.CoveredFiles)
+		}
+	})
 }
 
-func TestAnalyzeCoverageSupportsTestAndSuiteLevelOutliers(t *testing.T) {
+func TestAnalyzeCoverageUsesActiveCoverageLevel(t *testing.T) {
 	tests := []testReference{
 		{sessionID: 1, suiteID: 10, spanID: 100, name: "narrow", suite: "one.test.js"},
 		{sessionID: 1, suiteID: 11, spanID: 110, name: "also narrow", suite: "one.test.js"},
@@ -69,13 +95,24 @@ func TestAnalyzeCoverageSupportsTestAndSuiteLevelOutliers(t *testing.T) {
 		{testReference: testReference{spanID: 100}, fileCount: 1},
 		{testReference: testReference{spanID: 110}, fileCount: 2},
 		{testReference: testReference{spanID: 200}, fileCount: 12},
+		{testReference: testReference{spanID: 999}, fileCount: 100},
+		{testReference: testReference{sessionID: 1, suiteID: 10}, fileCount: 1},
+		{testReference: testReference{sessionID: 1, suiteID: 20}, fileCount: 2},
 		{testReference: testReference{sessionID: 1, suiteID: 30}, fileCount: 14},
+		{fileCount: 100},
 	}
 
+	testFindings, testMedian := analyzeCoverage(tests, coverages, "test")
+	require.Equal(t, []CoverageFinding{
+		{Name: "two.test.js › broad", Level: "test", FileCount: 12},
+	}, testFindings)
+	require.Equal(t, 2, testMedian)
+
+	suiteFindings, suiteMedian := analyzeCoverage(tests, coverages, "suite")
 	require.Equal(t, []CoverageFinding{
 		{Name: "three.test.js", Level: "suite", FileCount: 14},
-		{Name: "two.test.js › broad", Level: "test", FileCount: 12},
-	}, analyzeCoverage(tests, coverages))
+	}, suiteFindings)
+	require.Equal(t, 2, suiteMedian)
 }
 
 func TestUniqueCoveredTestCountDoesNotCountRetriesTwice(t *testing.T) {

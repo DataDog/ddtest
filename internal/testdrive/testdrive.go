@@ -162,7 +162,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 func writeFindings(output io.Writer, findings intake.Findings) {
 	count := 0
 	for _, size := range []int{
-		len(findings.FailedTests), len(findings.PassedOnRetry), len(findings.SlowTests), len(findings.BroadCoverage),
+		len(findings.FailedTests), len(findings.FlakyTests), len(findings.SlowTests), len(findings.BroadCoverage),
 	} {
 		if size > 0 {
 			count++
@@ -175,10 +175,15 @@ func writeFindings(output io.Writer, findings intake.Findings) {
 
 	_, _ = fmt.Fprintf(output, "%d %s.\n", count, plural(count, "finding", "findings"))
 	writeTestFindings(output, "Failed tests", findings.FailedTests)
-	writeTestFindings(output, "Flaky tests", findings.PassedOnRetry)
-	writeTestFindings(output, "Tests slower than the others", findings.SlowTests)
+	writeTestFindings(output, "Flaky tests", findings.FlakyTests)
+	if len(findings.SlowTests) > 0 {
+		_, _ = fmt.Fprintf(output, "\nTests slower than the others (%d):\n", len(findings.SlowTests))
+		_, _ = fmt.Fprintf(output, "  Median test time: %s\n", formatDuration(findings.TestDurationMedian))
+		writeTestFindingRows(output, findings.SlowTests)
+	}
 	if len(findings.BroadCoverage) > 0 {
 		_, _ = fmt.Fprintf(output, "\nUnusually broad coverage (%d):\n", len(findings.BroadCoverage))
+		_, _ = fmt.Fprintf(output, "  Median covered files: %d\n", findings.CoveredFilesMedian)
 		for _, finding := range findings.BroadCoverage {
 			_, _ = fmt.Fprintf(
 				output, "  - %s · %d %s · %s level\n",
@@ -193,11 +198,15 @@ func writeTestFindings(output io.Writer, title string, findings []intake.TestFin
 		return
 	}
 	_, _ = fmt.Fprintf(output, "\n%s (%d):\n", title, len(findings))
+	writeTestFindingRows(output, findings)
+}
+
+func writeTestFindingRows(output io.Writer, findings []intake.TestFinding) {
 	for _, finding := range findings {
 		status, _ := testDisplayStatus(finding)
 		_, _ = fmt.Fprintf(
 			output, "  - %s · %s · %s\n",
-			testFindingLabel(finding), status, formatDuration(totalAttemptDuration(finding)),
+			testFindingLabel(finding), status, formatDuration(findingDuration(finding)),
 		)
 	}
 }
