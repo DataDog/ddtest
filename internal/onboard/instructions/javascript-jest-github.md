@@ -34,6 +34,8 @@ Run the local, credential-free setup check:
 ddtest testdrive
 ```
 
+After it finishes, post every `Open report:` link printed by `ddtest testdrive` to the user so they can open the local Test Optimization report. Do not only summarize the result.
+
 ## 3. Ask a human to connect Datadog
 
 The API key must be created and added to GitHub by a human. Ask the human to:
