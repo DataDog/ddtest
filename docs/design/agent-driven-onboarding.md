@@ -1,6 +1,6 @@
 # Agent-driven onboarding for DDTest
 
-Status: working preview implemented; multi-framework expansion proposed
+Status: working preview implemented; multi-framework and parallelization onboarding proposed
 
 Working name for the experience: **Testdog**
 
@@ -222,6 +222,16 @@ The detailed implementation sequence lives in [the milestone development plan](a
 
 The handover and shippable definition are in [the milestone development plan](agent-driven-onboarding-development-plan.md).
 
+### Milestone 3: guide people into Test Parallelization
+
+- Add `ddtest onboard parallelization` as the discoverable next step after Test Optimization works.
+- Detect the existing GitHub Actions test job and print a repository-specific edit that uses the current `ddtest plan` and `ddtest run` flow.
+- Keep the first version simple: one worker per CI node, an explicit node range, and no new planner or workflow-rewriting engine.
+- Use the first real CI run as the test drive. Report a clickable workflow link, whether every node passed, the number of nodes selected, the expected wall time and overhead, imbalance, and any dedicated slow-suite runners.
+- Support the same platform/framework pairs as Milestone 2 and stop clearly when a workflow already has incompatible parallelization.
+
+The command assumes Test Optimization is already configured. If it is not, it points the agent back to `ddtest onboard` instead of attempting both changes at once. The full walking skeleton and done condition are in [the milestone development plan](agent-driven-onboarding-development-plan.md).
+
 ## Future distribution
 
 - publish a Homebrew installation path after the first preview is already useful;
@@ -235,7 +245,6 @@ The handover and shippable definition are in [the milestone development plan](ag
 - real TIA settings and skippables;
 - fully local TIA backed by a SQLite coverage database, using committed changes plus staged, unstaged, and untracked working-tree files to decide skip/no-skip;
 - local savings estimates and historical analysis;
-- test splitting and parallelization;
 - a Testdog share link.
 
 Those are directions, not requirements for the first useful release.
