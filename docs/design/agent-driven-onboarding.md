@@ -1,6 +1,6 @@
 # Agent-driven onboarding for DDTest
 
-Status: working preview implemented; multi-framework and parallelization onboarding proposed
+Status: working preview implemented; multi-framework, parallelization, and runbook-parity milestones proposed
 
 Working name for the experience: **Testdog**
 
@@ -231,6 +231,17 @@ The handover and shippable definition are in [the milestone development plan](ag
 - Support the same platform/framework pairs as Milestone 2 and stop clearly when a workflow already has incompatible parallelization.
 
 The command assumes Test Optimization is already configured. If it is not, it points the agent back to `ddtest onboard` instead of attempting both changes at once. The full walking skeleton and done condition are in [the milestone development plan](agent-driven-onboarding-development-plan.md).
+
+### Milestone 4: reach `dd-trace-js` runbook parity
+
+- Keep the same `ddtest onboard` and `ddtest testdrive` commands; do not copy the runbook's manifest, execution-plan, checksum, or approval-file machinery.
+- Report the five runbook conclusions independently: Basic Reporting, CI configuration, Early Flake Detection, Auto Test Retries, and Test Management.
+- Prove Basic Reporting with the customer's real tests and prove advanced features with small DDTest-owned tests driven by the local intake.
+- When Basic Reporting is inconclusive, compare one representative test without and with instrumentation so the report can distinguish a project failure from an integration problem.
+- Audit the selected GitHub Actions job statically, report initialization and transport separately, and suggest the smallest setup edit without executing CI commands.
+- Reach full parity for Jest, then dogfood and extend the same outcomes to Mocha, Cypress, Playwright, Cucumber, and Vitest.
+
+Parity is measured by the questions DDTest answers for the user, not by matching the runbook's internal architecture. Python and Ruby retain Milestone 2's Basic Reporting experience until their own tracer behavior justifies equivalent advanced checks. The detailed sequence is in [the milestone development plan](agent-driven-onboarding-development-plan.md).
 
 ## Future distribution
 
