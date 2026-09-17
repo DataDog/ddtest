@@ -90,6 +90,32 @@ func TestJavaScriptInstallReportsNPMError(t *testing.T) {
 	require.ErrorContains(t, err, "registry unavailable")
 }
 
+func TestJavaScriptInstallReportsResolveErrorWithoutOutput(t *testing.T) {
+	executor := &fakeCommandExecutor{
+		responses: []commandResponse{
+			{},
+			{err: errors.New("exit status 1")},
+		},
+	}
+	javascript := &JavaScript{executor: executor}
+
+	_, err := javascript.Install(context.Background(), t.TempDir())
+	require.ErrorContains(t, err, "resolve dd-trace/ci/init: exit status 1")
+}
+
+func TestJavaScriptInstallRejectsRelativePreloadPath(t *testing.T) {
+	executor := &fakeCommandExecutor{
+		responses: []commandResponse{
+			{},
+			{output: []byte("node_modules/dd-trace/ci/init.js\n")},
+		},
+	}
+	javascript := &JavaScript{executor: executor}
+
+	_, err := javascript.Install(context.Background(), t.TempDir())
+	require.ErrorContains(t, err, `node returned non-absolute path "node_modules/dd-trace/ci/init.js"`)
+}
+
 func TestJavaScriptInstallEndToEnd(t *testing.T) {
 	if os.Getenv("DDTEST_RUN_NPM_INTEGRATION_TEST") == "" {
 		t.Skip("set DDTEST_RUN_NPM_INTEGRATION_TEST=1 to install the pinned tracer from npm")

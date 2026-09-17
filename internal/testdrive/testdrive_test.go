@@ -21,11 +21,12 @@ import (
 type fakeTracer struct {
 	preloadPath      string
 	sessionDirectory string
+	err              error
 }
 
 func (f *fakeTracer) Install(_ context.Context, sessionDirectory string) (string, error) {
 	f.sessionDirectory = sessionDirectory
-	return f.preloadPath, nil
+	return f.preloadPath, f.err
 }
 
 type fakeTestdriveExecutor struct {
@@ -44,14 +45,16 @@ func (f *fakeTestdriveExecutor) CombinedOutput(_ context.Context, command string
 }
 
 type fakeIntake struct {
-	url      string
-	findings intake.Findings
-	closed   bool
+	url         string
+	findings    intake.Findings
+	findingsErr error
+	closeErr    error
+	closed      bool
 }
 
 func (f *fakeIntake) URL() string                        { return f.url }
-func (f *fakeIntake) Findings() (intake.Findings, error) { return f.findings, nil }
-func (f *fakeIntake) Close() error                       { f.closed = true; return nil }
+func (f *fakeIntake) Findings() (intake.Findings, error) { return f.findings, f.findingsErr }
+func (f *fakeIntake) Close() error                       { f.closed = true; return f.closeErr }
 
 func writeJestManifest(t *testing.T, repositoryRoot string) {
 	t.Helper()
@@ -89,6 +92,26 @@ func TestPrepareRejectsUnsupportedRepository(t *testing.T) {
 	_, err := Prepare(t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "package.json") {
 		t.Fatalf("Prepare() error = %v, want package.json diagnostic", err)
+	}
+}
+
+func TestPrepareRejectsJavaScriptWithoutJest(t *testing.T) {
+	repositoryRoot := t.TempDir()
+	requireWriteFile(t, filepath.Join(repositoryRoot, "package.json"), `{"scripts":{"test":"mocha"}}`)
+
+	_, err := Prepare(repositoryRoot)
+	if err == nil || !strings.Contains(err.Error(), "could not find a Jest test script") {
+		t.Fatalf("Prepare() error = %v, want Jest diagnostic", err)
+	}
+}
+
+func TestPrepareReportsMalformedManifest(t *testing.T) {
+	repositoryRoot := t.TempDir()
+	requireWriteFile(t, filepath.Join(repositoryRoot, "package.json"), "{")
+
+	_, err := Prepare(repositoryRoot)
+	if err == nil || !strings.Contains(err.Error(), "package.json") {
+		t.Fatalf("Prepare() error = %v, want package.json parse error", err)
 	}
 }
 
@@ -302,5 +325,121 @@ func TestWriteFindingsIncludesOnlyPresentCategories(t *testing.T) {
 		if strings.Contains(output.String(), absent) {
 			t.Errorf("writeFindings() output contains absent finding %q:\n%s", absent, output.String())
 		}
+	}
+}
+
+func TestRunReportsSetupAndCollectionErrors(t *testing.T) {
+	t.Run("tracer install", func(t *testing.T) {
+		testdrive := preparedTestdrive(t)
+		testdrive.tracer = &fakeTracer{err: errors.New("npm unavailable")}
+
+		err := testdrive.Run(t.Context(), &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "npm unavailable") {
+			t.Fatalf("Run() error = %v", err)
+		}
+	})
+
+	t.Run("intake start", func(t *testing.T) {
+		testdrive := preparedTestdrive(t)
+		testdrive.tracer = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
+		testdrive.startIntake = func(string) (localIntake, error) {
+			return nil, errors.New("listener unavailable")
+		}
+
+		err := testdrive.Run(t.Context(), &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "listener unavailable") {
+			t.Fatalf("Run() error = %v", err)
+		}
+	})
+
+	t.Run("findings", func(t *testing.T) {
+		testdrive := preparedTestdrive(t)
+		server := &fakeIntake{url: "http://127.0.0.1:1234", findingsErr: errors.New("invalid event payload")}
+		testdrive.tracer = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
+		testdrive.executor = &fakeTestdriveExecutor{}
+		testdrive.startIntake = func(string) (localIntake, error) { return server, nil }
+
+		err := testdrive.Run(t.Context(), &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "invalid event payload") || !server.closed {
+			t.Fatalf("Run() error = %v, intake closed = %v", err, server.closed)
+		}
+	})
+
+	t.Run("close", func(t *testing.T) {
+		testdrive := preparedTestdrive(t)
+		server := &fakeIntake{
+			url:      "http://127.0.0.1:1234",
+			findings: intake.Findings{TestCount: 1, TestEventCount: 1},
+			closeErr: errors.New("shutdown failed"),
+		}
+		testdrive.tracer = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
+		testdrive.executor = &fakeTestdriveExecutor{}
+		testdrive.startIntake = func(string) (localIntake, error) { return server, nil }
+
+		err := testdrive.Run(t.Context(), &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "shutdown failed") || !server.closed {
+			t.Fatalf("Run() error = %v, intake closed = %v", err, server.closed)
+		}
+	})
+}
+
+func TestRunReportsPassingSuiteWithoutEvents(t *testing.T) {
+	testdrive := preparedTestdrive(t)
+	testdrive.tracer = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
+	testdrive.executor = &fakeTestdriveExecutor{}
+	testdrive.startIntake = func(string) (localIntake, error) {
+		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
+	}
+
+	var output bytes.Buffer
+	err := testdrive.Run(t.Context(), &output)
+	if err == nil || !strings.Contains(err.Error(), "sent no test events") {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(output.String(), "No test events received.") || !strings.Contains(output.String(), "No findings.") {
+		t.Fatalf("Run() output = %s", output.String())
+	}
+}
+
+func TestRunReportsTestOutputWriteFailure(t *testing.T) {
+	testdrive := preparedTestdrive(t)
+	testdrive.tracer = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
+	testdrive.executor = &fakeTestdriveExecutor{output: []byte("PASS\n")}
+	testdrive.startIntake = func(sessionDirectory string) (localIntake, error) {
+		if err := os.RemoveAll(sessionDirectory); err != nil {
+			t.Fatal(err)
+		}
+		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
+	}
+
+	err := testdrive.Run(t.Context(), &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "save Jest output") {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+func TestTestEnvironmentPreservesExistingNodeOptions(t *testing.T) {
+	t.Setenv("NODE_OPTIONS", "--max-old-space-size=4096")
+	environment := testEnvironment("/tmp/dd-trace/ci/init.js", "http://127.0.0.1:1234", "session")
+	if environment["NODE_OPTIONS"] != "-r /tmp/dd-trace/ci/init.js --max-old-space-size=4096" {
+		t.Fatalf("NODE_OPTIONS = %q", environment["NODE_OPTIONS"])
+	}
+}
+
+func preparedTestdrive(t *testing.T) *Testdrive {
+	t.Helper()
+	repositoryRoot := t.TempDir()
+	writeJestManifest(t, repositoryRoot)
+	testdrive, err := Prepare(repositoryRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return testdrive
+}
+
+func requireWriteFile(t *testing.T, path, contents string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
+		t.Fatal(err)
 	}
 }

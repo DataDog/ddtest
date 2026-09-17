@@ -73,3 +73,11 @@ func TestNewSessionSupportsConcurrentRuns(t *testing.T) {
 	}
 	require.Len(t, seen, runCount)
 }
+
+func TestNewSessionRejectsPlanPathThatIsAFile(t *testing.T) {
+	repositoryRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repositoryRoot, constants.PlanDirectory), []byte("not a directory"), 0644))
+
+	_, err := NewSession(repositoryRoot)
+	require.ErrorContains(t, err, "create testdrive sessions directory")
+}

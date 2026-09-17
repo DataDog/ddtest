@@ -145,6 +145,97 @@ func TestSourceInfersJestTestEnd(t *testing.T) {
 	}
 }
 
+func TestSourceReportsUsefulErrors(t *testing.T) {
+	repositoryRoot := t.TempDir()
+
+	requireSourceError(t, readSource(repositoryRoot, "", 1, 1), "Source file not reported")
+	requireSourceError(t, readSource(repositoryRoot, "missing.test.js", 0, 1), "Source line not reported")
+	requireSourceError(t, readSource(repositoryRoot, "missing.test.js", 1, 1), "Source could not be read")
+
+	sourcePath := filepath.Join(repositoryRoot, "short.test.js")
+	if err := os.WriteFile(sourcePath, []byte("test('one', () => {});\r\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	requireSourceError(t, readSource(repositoryRoot, "short.test.js", 3, 3), "outside short.test.js")
+
+	excerpt := readSource(repositoryRoot, sourcePath, 1, 99)
+	if excerpt.Start != 1 || excerpt.End != 2 || len(excerpt.Lines) != 2 {
+		t.Fatalf("absolute source excerpt = lines %d-%d (%d lines), want 1-2", excerpt.Start, excerpt.End, len(excerpt.Lines))
+	}
+}
+
+func requireSourceError(t *testing.T, source reportSource, expected string) {
+	t.Helper()
+	if !strings.Contains(source.Error, expected) {
+		t.Fatalf("source error = %q, want %q", source.Error, expected)
+	}
+}
+
+func TestInferJavaScriptTestEndIgnoresCommentsAndQuotedParentheses(t *testing.T) {
+	lines := []string{
+		`test(")", () => {`,
+		`  /* ) */`,
+		`  const value = "escaped \")";`,
+		`  // )`,
+		`}); // done`,
+	}
+	if end := inferJavaScriptTestEnd(lines, 1); end != 5 {
+		t.Fatalf("inferJavaScriptTestEnd() = %d, want 5", end)
+	}
+
+	fallbackLines := make([]string, 30)
+	for index := range fallbackLines {
+		fallbackLines[index] = "const value = 1;"
+	}
+	if end := inferJavaScriptTestEnd(fallbackLines, 3); end != 22 {
+		t.Fatalf("fallback end = %d, want 22", end)
+	}
+}
+
+func TestHighlightJavaScriptLineHandlesCommentsTokensAndEscapes(t *testing.T) {
+	inBlockComment := false
+	first := string(highlightJavaScriptLine("/* open <tag>", &inBlockComment))
+	if !inBlockComment || !strings.Contains(first, `token-comment`) || !strings.Contains(first, `&lt;tag&gt;`) {
+		t.Fatalf("opening block comment = %q, inBlockComment = %v", first, inBlockComment)
+	}
+
+	second := string(highlightJavaScriptLine("continued */ const answer_2 = 42; // tail", &inBlockComment))
+	for _, expected := range []string{`token-comment`, `token-keyword`, `token-number`, `answer_2`, `tail`} {
+		if !strings.Contains(second, expected) {
+			t.Fatalf("continued line does not contain %q: %s", expected, second)
+		}
+	}
+	if inBlockComment {
+		t.Fatal("block comment did not close")
+	}
+
+	third := string(highlightJavaScriptLine(`let value = "<tag>\""; const ok = true;`, &inBlockComment))
+	for _, expected := range []string{`token-string`, `&lt;tag&gt;`, `token-literal`, `token-keyword`} {
+		if !strings.Contains(third, expected) {
+			t.Fatalf("highlighted line does not contain %q: %s", expected, third)
+		}
+	}
+
+	unclosed := string(highlightJavaScriptLine("const value = `unfinished", &inBlockComment))
+	if !strings.Contains(unclosed, `token-string`) || !strings.Contains(unclosed, "unfinished") {
+		t.Fatalf("unclosed string was not highlighted: %s", unclosed)
+	}
+}
+
+func TestBuildReportShowsNoEventsAndRollsUpUnknownSuite(t *testing.T) {
+	tests := []intake.TestFinding{
+		{Name: "flaky", Status: "pass", Duration: time.Millisecond, Attempts: []intake.TestAttempt{{Status: "fail"}, {Status: "pass"}}},
+		{Name: "failed", Status: "fail", Duration: 2 * time.Millisecond},
+	}
+	model := buildReport(t.TempDir(), intake.Findings{Tests: tests}, true)
+	if model.Headline != "No test events received." || model.Summary != "Check the instrumentation setup." {
+		t.Fatalf("headline = %q, summary = %q", model.Headline, model.Summary)
+	}
+	if len(model.Suites) != 1 || model.Suites[0].Name != "Unknown suite" || model.Suites[0].Status != "Failed" {
+		t.Fatalf("suite rollup = %#v", model.Suites)
+	}
+}
+
 func renderTestReport(t *testing.T, repositoryRoot string, findings intake.Findings) string {
 	t.Helper()
 	sessionDirectory := t.TempDir()

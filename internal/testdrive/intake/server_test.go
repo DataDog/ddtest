@@ -9,8 +9,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"mime/multipart"
 	"net"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -178,6 +180,108 @@ func TestServerStoresAndRecognizesGzippedMessagePack(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, json.Valid(storedBytes))
 	require.Contains(t, string(storedBytes), `"type": "test"`)
+}
+
+func TestStartRejectsInvalidSessionDirectory(t *testing.T) {
+	sessionPath := filepath.Join(t.TempDir(), "session-file")
+	require.NoError(t, os.WriteFile(sessionPath, []byte("not a directory"), 0644))
+
+	_, err := Start(sessionPath)
+	require.ErrorContains(t, err, "create local testdrive intake directory")
+}
+
+func TestDecodeMultipartStoresEveryPartAsJSON(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	jsonHeader := textproto.MIMEHeader{}
+	jsonHeader.Set("Content-Disposition", `form-data; name="metadata"`)
+	jsonHeader.Set("Content-Type", "application/json")
+	jsonPart, err := writer.CreatePart(jsonHeader)
+	require.NoError(t, err)
+	_, err = jsonPart.Write([]byte(`{"framework":"jest"}`))
+	require.NoError(t, err)
+
+	msgpackHeader := textproto.MIMEHeader{}
+	msgpackHeader.Set("Content-Disposition", `form-data; name="events"; filename="events.msgpack"`)
+	msgpackHeader.Set("Content-Type", "application/msgpack")
+	msgpackPart, err := writer.CreatePart(msgpackHeader)
+	require.NoError(t, err)
+	payload := msgp.AppendMapHeader(nil, 1)
+	payload = msgp.AppendString(payload, "count")
+	payload = msgp.AppendInt(payload, 2)
+	_, err = msgpackPart.Write(payload)
+	require.NoError(t, err)
+
+	plainPart, err := writer.CreateFormField("note")
+	require.NoError(t, err)
+	_, err = plainPart.Write([]byte("hello"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	decoded, err := decodeRequestBody(body.Bytes(), writer.FormDataContentType())
+	require.NoError(t, err)
+	var stored struct {
+		Parts []storedMultipartPart `json:"parts"`
+	}
+	require.NoError(t, json.Unmarshal(decoded, &stored))
+	require.Len(t, stored.Parts, 3)
+	require.Equal(t, "metadata", stored.Parts[0].Name)
+	require.JSONEq(t, `{"framework":"jest"}`, string(stored.Parts[0].Body))
+	require.Equal(t, "events.msgpack", stored.Parts[1].Filename)
+	require.JSONEq(t, `{"count":2}`, string(stored.Parts[1].Body))
+	require.JSONEq(t, `"hello"`, string(stored.Parts[2].Body))
+}
+
+func TestRequestDecodingRejectsMalformedPayloads(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        []byte
+		contentType string
+		errorText   string
+	}{
+		{name: "JSON", body: []byte("{"), contentType: "application/json", errorText: "invalid JSON"},
+		{name: "MessagePack", body: []byte{0xc1}, contentType: "application/msgpack", errorText: "msgp"},
+		{name: "trailing MessagePack", body: append(msgp.AppendInt(nil, 1), 0), contentType: "application/x-msgpack", errorText: "trailing"},
+		{name: "multipart", body: []byte("--unfinished"), contentType: "multipart/form-data; boundary=boundary", errorText: "EOF"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := decodeRequestBody(test.body, test.contentType)
+			require.ErrorContains(t, err, test.errorText)
+		})
+	}
+}
+
+func TestUncompressRequestBodyHandlesIdentityAndErrors(t *testing.T) {
+	body := []byte("plain")
+	for _, encoding := range []string{"", " identity "} {
+		decoded, err := uncompressRequestBody(RawRequest{Header: http.Header{"Content-Encoding": {encoding}}, Body: body})
+		require.NoError(t, err)
+		require.Equal(t, body, decoded)
+	}
+
+	_, err := uncompressRequestBody(RawRequest{Header: http.Header{"Content-Encoding": {"br"}}, Body: body})
+	require.ErrorContains(t, err, "unsupported content encoding")
+
+	_, err = uncompressRequestBody(RawRequest{Header: http.Header{"Content-Encoding": {"gzip"}}, Body: body})
+	require.ErrorContains(t, err, "open gzip request body")
+}
+
+func TestRequestFileLabel(t *testing.T) {
+	tests := map[string]string{
+		settingsPath:       "settings",
+		testCyclePath:      "citestcycle",
+		testCoveragePath:   "citestcov",
+		knownTestsPath:     "known-tests",
+		skippableTestsPath: "skippable-tests",
+		testManagementPath: "test-management",
+		"/other":           "request",
+	}
+	for path, expected := range tests {
+		require.Equal(t, expected, requestFileLabel(path))
+	}
 }
 
 func testHTTPClient() *http.Client {

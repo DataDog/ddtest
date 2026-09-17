@@ -129,3 +129,50 @@ func TestUniqueCoveredTestCountDoesNotCountRetriesTwice(t *testing.T) {
 
 	require.Equal(t, 2, uniqueCoveredTestCount(tests, coverages))
 }
+
+func TestAnalyzeCoverageUsesLargestDuplicateAndReportsSingleMedian(t *testing.T) {
+	tests := []testReference{{spanID: 100, name: "one", suite: "one.test.js"}}
+	coverages := []coverageReference{
+		{testReference: testReference{spanID: 100}, fileCount: 2},
+		{testReference: testReference{spanID: 100}, fileCount: 7},
+	}
+
+	broad, median := analyzeCoverage(tests, coverages, "test")
+	require.Empty(t, broad)
+	require.Equal(t, 7, median)
+}
+
+func TestAnalyzeTestsHandlesMissingNamesAndStableOrdering(t *testing.T) {
+	tests := []testReference{
+		{suiteID: 2, spanID: 20, status: "fail", duration: time.Second},
+		{suiteID: 1, spanID: 10, status: "fail", duration: time.Second},
+		{name: "named", status: "pass", duration: time.Millisecond},
+	}
+
+	all, failed, _, _, _ := analyzeTests(tests)
+	require.Equal(t, []string{"named", "test 10", "test 20"}, []string{all[0].Name, all[1].Name, all[2].Name})
+	require.Equal(t, []string{"test 10", "test 20"}, []string{failed[0].Name, failed[1].Name})
+	require.Equal(t, "named", all[0].label())
+}
+
+func TestMedianHelpers(t *testing.T) {
+	require.Equal(t, 0, medianInts(nil))
+	require.Equal(t, 4, medianInts([]int{4}))
+	require.Equal(t, 4, medianInts([]int{2, 6}))
+	require.Equal(t, 6, medianInts([]int{2, 6, 9}))
+	require.Equal(t, 0, medianCoveredFiles(nil))
+	require.Equal(t, 5, medianCoveredFiles(map[string]CoverageFinding{
+		"one": {FileCount: 3},
+		"two": {FileCount: 7},
+	}))
+}
+
+func TestCoverageLevelAndAppendUnique(t *testing.T) {
+	require.Empty(t, coverageLevel(nil))
+	require.Equal(t, "suite", coverageLevel([]coverageReference{{testReference: testReference{suiteID: 1}}}))
+	require.Equal(t, "test", coverageLevel([]coverageReference{
+		{testReference: testReference{suiteID: 1}},
+		{testReference: testReference{spanID: 2}},
+	}))
+	require.Equal(t, []string{"a.js", "b.js"}, appendUnique([]string{"b.js"}, "a.js", "b.js"))
+}
