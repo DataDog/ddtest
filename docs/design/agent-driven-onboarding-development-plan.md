@@ -1,6 +1,6 @@
 # Agent-driven onboarding: development plan and handover
 
-Status: Milestone 0 complete; Milestone 1 preview implemented; Milestones 2 and 3 proposed
+Status: Milestone 0 complete; Milestone 1 preview implemented; Milestones 2, 3, and 4 proposed
 
 Last updated: 2026-09-17
 
@@ -236,7 +236,7 @@ The `testdrive` command owns this interaction. The intake, tracer installer, and
 
 This is not a return to execution plans or approval files. There is no persisted plan, checksum, or separate execution command: the preview, confirmation, and run are one interaction.
 
-Do not run an uninstrumented baseline. If customer tests fail but test events arrive, say both things plainly: Test Optimization setup works, and some tests failed.
+Milestone 1 does not run an uninstrumented baseline. If customer tests fail but test events arrive, say both things plainly: Test Optimization setup works, and some tests failed. Milestone 4 adds a focused clean-versus-instrumented diagnostic only when Basic Reporting is inconclusive.
 
 ### 1.2 Try it on real repositories and fix what hurts
 
@@ -459,6 +459,59 @@ Do not add a local parallel execution simulator, savings website, automatic cost
 
 For each supported pair, an agent starting only with “Onboard test parallelization using ddtest” can discover the command, make a reviewable GitHub Actions edit, run the existing DDTest planner and runner in CI, and give the user a clickable run link plus the important plan facts. The original test setup remains intact apart from the deliberate plan/matrix transformation, and `make test` and `make lint` pass.
 
+## Milestone 4: validation parity with the `dd-trace-js` runbook
+
+Milestone 4 answers the same customer questions as the validation runbook shipped in `dd-trace-js`, through DDTest's existing experience. Parity means the same useful conclusions, not a port of the runbook's implementation. DDTest keeps one detection path, one preview and confirmation, concurrent session directories, and the two commands people already learned:
+
+```text
+ddtest onboard
+ddtest testdrive
+```
+
+There is no manifest to edit, saved execution plan, checksum-bound command, or separate validator CLI.
+
+### 4.1 Report the five runbook conclusions
+
+The terminal and local report show these conclusions independently:
+
+- **Basic Reporting:** can the tracer report a real test from this project?
+- **CI configuration:** does the selected GitHub Actions test job visibly initialize Test Optimization and configure a reporting transport?
+- **Early Flake Detection:** is a new passing test retried and tagged with the expected retry reason?
+- **Auto Test Retries:** does a fail-once test pass on retry and emit the expected retry reason?
+- **Test Management:** is a configured managed test matched and tagged as quarantined?
+
+The existing test-suite findings remain useful and stay in the report: failures, flaky tests, duration outliers, unusual coverage, all suites, and all tests. The five validation conclusions sit above those findings and each has one of three plain outcomes: works, needs attention, or could not be checked. When a check cannot run, name the exact missing prerequisite. Also show whether temporary files were cleaned up. Do not design a public result schema or exhaustive blocker taxonomy before dogfooding the output.
+
+Always show the first concrete next action and links to the HTML report, saved JSON traffic, and test output. Keep code coverage separate from the validation scope; the `dd-trace-js` runbook does not use “coverage” to mean how many checks concluded.
+
+### 4.2 Add advanced checks to the local testdrive
+
+Keep the current happy path: run the customer's real suite once against the local intake. Receiving a complete session, module, suite, and test hierarchy proves Basic Reporting.
+
+After Basic Reporting works, run tiny DDTest-owned checks for Early Flake Detection, Auto Test Retries, and Test Management. The local intake returns the settings and known-test or managed-test data needed by each scenario. Each check must prove the feature from the emitted events and retry attempts, not merely from a successful process exit.
+
+Temporary tests are shown in the existing `testdrive` preview, written only after confirmation, and removed after the run. Their output and decoded JSON events remain in the session directory. No check contacts Datadog or needs a real API key.
+
+If the instrumented suite cannot prove Basic Reporting, switch to diagnosis instead of running the advanced checks. Select one existing representative test, run it without the tracer, then run the same test with the tracer and debug logging. This distinguishes a normal project-test failure from an initialization or framework-integration problem without doubling the cost of every successful testdrive.
+
+### 4.3 Make `onboard` audit the real CI job
+
+Extend the repository-specific `onboard` output to inspect the selected GitHub Actions job and report initialization and transport separately. `testdrive` repeats this read-only audit so the local report contains the CI conclusion too. It should recognize the conventional setup DDTest generates, direct framework commands, and simple local package-script chains. Dynamic wrappers, remote reusable workflows, or values DDTest cannot resolve produce “could not be checked,” not a confident diagnosis.
+
+The audit never executes the CI command. When configuration is missing, `onboard` shows the smallest concrete edit. The API key remains a human-managed CI secret; the agent must never request its value. After making the edit and pushing it, the agent posts the GitHub Actions run link and the local testdrive report link for the user.
+
+### 4.4 Reach parity for every JavaScript adapter
+
+Ship the complete five-conclusion flow first for Jest, dogfood it, and then add Mocha, Cypress, Playwright, Cucumber, and Vitest using the detection and tracer installation from Milestone 2. Browser- or application-backed tests may be “could not be checked” with the missing prerequisite named plainly; DDTest does not start the customer's application or install browsers implicitly.
+
+Python and Ruby keep the Basic Reporting and suite-analysis experience delivered by Milestone 2. Their advanced-feature parity should follow from their own tracer behavior and real dogfood cases rather than pretending the JavaScript fixtures are portable.
+
+Do not copy the `dd-trace-js` manifest machinery, approval files, checksum handling, persisted locks, internal blocker classes, or four-code exit protocol. Add shared structures only when the Jest walking skeleton and a second adapter prove they are needed.
+
+### Milestone 4 is done when
+
+For each of the six supported JavaScript frameworks, a human or coding agent can use `ddtest onboard` and `ddtest testdrive` to see independent conclusions for Basic Reporting, CI configuration, Early Flake Detection, Auto Test Retries, and Test Management. The flow works without Datadog credentials, leaves the project dependency files unchanged, cleans up temporary tests, preserves concurrent-session isolation, and gives the user clickable local and CI report links. `make test` and `make lint` pass.
+
 ## Suggested pull requests
 
 Keep the PR sequence short and vertical:
@@ -484,11 +537,19 @@ For Milestone 3:
 3. **Supported matrix:** add instruction coverage for the remaining pairs without changing the planner or runner.
 4. **Parallelization polish:** dogfood one- and multi-node selections plus service-container and existing-parallelism cases, then ship the guide.
 
+For Milestone 4:
+
+1. **Jest parity walking skeleton:** add the three advanced checks and five-conclusion report to the simplest supported Jest repository.
+2. **First dogfood fixes:** try the complete flow on real Jest repositories and fix the confusing or incorrect behavior before extracting more abstractions.
+3. **CI audit and diagnosis:** inspect the selected job and add the clean-versus-instrumented fallback for inconclusive Basic Reporting runs.
+4. **Remaining JavaScript adapters:** add Mocha, Cypress, Playwright, Cucumber, and Vitest one at a time, keeping each addition shippable.
+5. **Parity release:** dogfood browser-backed and setup-dependent repositories, polish the next actions and links, and ship the milestone.
+
 Every PR must run `make test` and `make lint`. The real-tracer integration test should use a pinned dependency so it is reproducible, but normal unit tests should not require a Datadog account.
 
-## Future ideas kept out of Milestones 2 and 3
+## Future ideas kept out of Milestones 2, 3, and 4
 
-These ideas remain valuable, but none should delay the nine-pair onboarding/testdrive milestone or guided Test Parallelization onboarding.
+These ideas remain valuable, but none should delay the nine-pair onboarding/testdrive milestone, guided Test Parallelization onboarding, or JavaScript runbook parity.
 
 ### Distribution
 
@@ -522,4 +583,4 @@ Explore fully local TIA. DDTest can keep the coverage reported by each test or s
 - historical replay;
 - a small hosted Testdog page that can visualize an encoded or uploaded report without requiring a Datadog account.
 
-We will choose the next slice from what people struggle with or ask for after using Milestone 3.
+We will choose the next slice from what people struggle with or ask for after using Milestone 4.
