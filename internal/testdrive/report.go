@@ -259,7 +259,7 @@ func reportSuites(tests []intake.TestFinding, showCoverage bool) []reportSuite {
 			byName[name] = suite
 		}
 		status, tone := testDisplayStatus(test)
-		if status == "Failed" {
+		if status == "Fail" {
 			suite.Status = "Failed"
 			suite.Tone = "attention"
 		} else if status == "Flaky" && suite.Status != "Failed" {
