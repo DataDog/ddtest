@@ -1,6 +1,6 @@
 # Agent-driven onboarding: development plan and handover
 
-Status: Milestone 0 complete; Milestone 1 preview implemented; Milestone 2 proposed
+Status: Milestone 0 complete; Milestone 1 preview implemented; Milestones 2 and 3 proposed
 
 Last updated: 2026-09-17
 
@@ -379,6 +379,86 @@ ddtest testdrive
 
 The flow requires no Datadog credentials locally, does not change project dependency files, receives real test events, produces the local report, and tells the agent to post its link to the user. All pair fixtures, `make test`, and `make lint` pass.
 
+## Milestone 3: guided onboarding for Test Parallelization
+
+Milestone 3 guides a coding agent from a working Test Optimization setup to DDTest's existing Test Parallelization product. It does not change the planner, splitting algorithm, or runner. It makes the current `plan` and `run` product understandable and safe to add to CI.
+
+The intended starting prompt is:
+
+> Onboard test parallelization using ddtest.
+
+The agent should be able to discover and follow this flow:
+
+```text
+ddtest help
+ddtest onboard parallelization
+# apply the suggested GitHub Actions edit
+# commit and push after the human-owned Datadog secret is ready
+# inspect the first plan and matrix run
+```
+
+### 3.1 Add one discoverable guided entry point
+
+`ddtest help` should make `ddtest onboard parallelization` an obvious next command. The command reuses Milestone 2 detection to identify the platform, framework, and GitHub Actions test job.
+
+Before suggesting parallelization, it checks that the workflow already configures Test Optimization. If not, it stops and points the agent to `ddtest onboard`; it does not mix both workflow migrations into one large edit.
+
+When the prerequisite exists, it prints a short repository-specific runbook that explains:
+
+- what DDTest found;
+- the existing test job and command it will replace;
+- the plan job, plan artifact, dynamic matrix, and run jobs that will be added;
+- the initial parallelism bounds and CI-job overhead setting;
+- which existing setup, environment, services, caches, and artifacts must be preserved;
+- how the first CI run will prove the setup.
+
+DDTest prints instructions; the coding agent edits the workflow. Do not build a general YAML rewriting engine.
+
+### 3.2 Generate the smallest plan-and-run workflow
+
+The guided edit uses the existing DDTest contract:
+
+1. A plan job checks out the same commit, installs the same project dependencies, configures Test Optimization, and runs `ddtest plan`.
+2. The plan step exposes DDTest's generated GitHub Actions matrix.
+3. The plan job uploads `.testoptimization/` as an artifact.
+4. A matrix test job downloads that artifact and runs `ddtest run --ci-node ${{ matrix.ci_node_index }}`.
+
+The first version uses one worker per CI node, `fail-fast: false`, explicit minimum and maximum parallelism, and the existing modeled CI-job overhead. It does not introduce nested local workers, custom worker environments, target-time tuning, or third-party runners unless the repository already requires them.
+
+The instructions must keep the customer's current runtime setup, dependency installation, environment, service containers, caches, permissions, timeouts, and test artifacts. The old test command should not remain as a second full-suite run.
+
+### 3.3 Let the first CI run explain the result
+
+The real GitHub Actions run is the parallelization test drive. The agent waits for it and reports:
+
+- a clickable link to the workflow run;
+- whether the plan job and every test node passed;
+- how many CI nodes DDTest selected;
+- the estimated full-suite time, selected wall time, modeled CI overhead, and imbalance from the plan report;
+- which suites received dedicated runners, when present;
+- any concrete setup error and the smallest corrective edit.
+
+If DDTest selects one runner, onboarding still succeeds. The agent should explain that the current data and cost model do not justify additional CI nodes instead of forcing parallelism or calling the setup broken.
+
+The agent never asks the human to paste a Datadog API key. It relies on the human-managed CI secret established during Test Optimization onboarding.
+
+### 3.4 Cover the supported matrix and dogfood cost-sensitive cases
+
+Support the same nine platform/framework pairs as Milestone 2 and keep GitHub Actions as the only CI provider. Add instruction-output tests for every pair and workflow-shape tests for the shared plan/artifact/matrix structure.
+
+Dogfood at least one repository per platform, including:
+
+- a suite where DDTest selects more than one CI node;
+- a suite where it correctly selects one node;
+- a workflow with service containers or substantial test environment;
+- a workflow that already has a static matrix or another parallel runner and must stop with a clear unsupported message instead of stacking two systems.
+
+Do not add a local parallel execution simulator, savings website, automatic cost policy, or a second planner in this milestone. Use the existing plan report and the first real CI run as evidence.
+
+### Milestone 3 is done when
+
+For each supported pair, an agent starting only with “Onboard test parallelization using ddtest” can discover the command, make a reviewable GitHub Actions edit, run the existing DDTest planner and runner in CI, and give the user a clickable run link plus the important plan facts. The original test setup remains intact apart from the deliberate plan/matrix transformation, and `make test` and `make lint` pass.
+
 ## Suggested pull requests
 
 Keep the PR sequence short and vertical:
@@ -397,11 +477,18 @@ For Milestone 2, keep the sequence vertical and independently demonstrable:
 4. **Ruby/RSpec and Minitest:** isolated Ruby tracer, onboarding instructions, fixtures, and one real-repository dogfood.
 5. **Matrix polish:** run every pair, fix only observed rough edges, and package the shippable preview.
 
+For Milestone 3:
+
+1. **Guided entry point:** discover the existing Test Optimization job and print one concrete plan-and-run transformation for the first supported pair.
+2. **First real CI proof:** dogfood the generated instructions, report the plan facts and workflow link, and fix the observed workflow-preservation problems.
+3. **Supported matrix:** add instruction coverage for the remaining pairs without changing the planner or runner.
+4. **Parallelization polish:** dogfood one- and multi-node selections plus service-container and existing-parallelism cases, then ship the guide.
+
 Every PR must run `make test` and `make lint`. The real-tracer integration test should use a pinned dependency so it is reproducible, but normal unit tests should not require a Datadog account.
 
-## Future ideas kept out of Milestone 2
+## Future ideas kept out of Milestones 2 and 3
 
-These ideas remain valuable, but none should delay the nine-pair onboarding and testdrive milestone.
+These ideas remain valuable, but none should delay the nine-pair onboarding/testdrive milestone or guided Test Parallelization onboarding.
 
 ### Distribution
 
@@ -433,7 +520,6 @@ Explore fully local TIA. DDTest can keep the coverage reported by each test or s
 - multiple tracer-version support policy;
 - local savings estimates;
 - historical replay;
-- test splitting and parallelization;
 - a small hosted Testdog page that can visualize an encoded or uploaded report without requiring a Datadog account.
 
-We will choose the next slice from what people struggle with or ask for after using Milestone 2.
+We will choose the next slice from what people struggle with or ask for after using Milestone 3.
