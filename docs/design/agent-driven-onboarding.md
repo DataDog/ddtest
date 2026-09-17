@@ -1,10 +1,10 @@
 # Agent-driven onboarding for DDTest
 
-Status: proposed
+Status: working preview implemented; multi-framework expansion proposed
 
 Working name for the experience: **Testdog**
 
-Last updated: 2026-09-15
+Last updated: 2026-09-17
 
 ## The idea
 
@@ -212,14 +212,24 @@ The output can be ugly and the code can be specific. The purpose is to learn.
 
 The detailed implementation sequence lives in [the milestone development plan](agent-driven-onboarding-development-plan.md).
 
-## Post-Milestone 1
+### Milestone 2: support every existing DDTest pair
+
+- Extend the same `onboard` and credential-free `testdrive` flow to JavaScript/Jest, Mocha, Cypress, Playwright, Cucumber, and Vitest; Python/pytest; and Ruby/RSpec and Minitest.
+- Reuse the platform and framework detection and test commands already used by `plan` and `run`.
+- Add one isolated pinned tracer bootstrap per platform without changing project dependency files.
+- Keep GitHub Actions as the only CI provider in this milestone.
+- Prove every pair with a real tracer fixture and dogfood one real repository per platform.
+
+The handover and shippable definition are in [the milestone development plan](agent-driven-onboarding-development-plan.md).
+
+## Future distribution
 
 - publish a Homebrew installation path after the first preview is already useful;
 
 ## Later, if users pull us there
 
 - `ddtest doctor` as a separate reusable diagnostic command;
-- Python, Ruby, more JavaScript frameworks, and more CI providers;
+- more CI providers and monorepo orchestration;
 - a stable JSON contract for agents and integrations;
 - real Datadog forwarding when `DD_API_KEY` is present;
 - real TIA settings and skippables;
