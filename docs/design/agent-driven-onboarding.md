@@ -1,276 +1,231 @@
-# Agent-driven onboarding for DDTest
+# Agent-driven onboarding
 
-Status: working preview implemented; multi-framework, parallelization, and runbook-parity milestones proposed
-
-Working name for the experience: **Testdog**
+Status: Milestone 0 complete; Milestone 1 preview implemented; Milestones 2, 3, and 4 proposed
 
 Last updated: 2026-09-17
 
-## The idea
+## Goal
 
-DDTest should make Datadog Test Optimization fun to try.
+A user should be able to give a coding agent one prompt:
 
-A developer should be able to say:
+> Onboard test optimization using ddtest.
 
-> Make my tests go brr with the Datadog thing.
+The agent discovers the flow through `ddtest help`, makes the small CI edit suggested by `ddtest onboard`, runs `ddtest testdrive`, and gives the user a clickable report showing their own tests.
 
-Then their coding agent can do this:
+The local testdrive requires no Datadog account, API key, or Agent. Credentials come last, are configured by a human in CI, and are never shown to the coding agent.
 
-```text
-ddtest onboard
-# make the small suggested CI edit
-ddtest testdrive
-```
+## Product rules
 
-Within a few minutes the developer sees their own tests in a useful local report. They do not need a Datadog account, API key, or local Datadog Agent.
+- Use the customer's real test suite, not a demo.
+- Keep the main flow to `ddtest onboard` and `ddtest testdrive`.
+- Detect the repository instead of asking setup questions.
+- Show commands and filesystem changes before running them.
+- Keep tracer installation isolated from project manifests and lockfiles.
+- Explain what worked, what did not, and the next useful action.
+- Give the user clickable local and CI links.
+- Dogfood a thin end-to-end slice before adding abstractions.
 
-This is the Lapdog idea applied to Test Optimization: install something small, point it at a real workload, and see personal value immediately.
+For now, do not build a generic onboarding framework, YAML editor, public result schema, compatibility matrix, or exhaustive error taxonomy.
 
-## What makes it delightful
+## What exists today
 
-- It uses the customer's real test suite, not a demo project.
-- The first useful command needs no flags.
-- It explains what it found in normal language.
-- It fixes the awkward case where the Datadog tracer exists only in CI.
-- It shows a clean visual result, not protocol logs.
-- A human can use it directly and an agent can follow the same commands.
-- Problems are described with one useful next step.
+The working preview is in draft PR #128 on `anmarchenko/agentic-onboarding-runbook`.
 
-The product should feel like a test tool with a little personality, not a setup questionnaire.
+### User flow
 
-## The first experience
+- `ddtest help` points to `ddtest onboard`.
+- `ddtest onboard` detects a root JavaScript/Jest repository and its GitHub Actions test jobs.
+- It prints repository-owned Markdown instructions containing the concrete workflow edit, asks the agent to run `ddtest testdrive`, and tells the agent to post every report link to the user.
+- The local testdrive comes before the human API-key and GitHub-secret steps.
+- `ddtest testdrive` previews its commands and file changes. Interactive terminals ask once for confirmation. Non-interactive callers must review the preview and rerun with `--yes`.
+- `make install` builds and installs DDTest into the current user's Go bin directory on macOS and Linux.
 
-### `ddtest onboard`
+### Local testdrive
 
-`onboard` looks at the repository and CI configuration and answers:
+- Each run has a unique directory and kernel-assigned loopback port, so sessions can run concurrently.
+- A pinned `dd-trace@6.15.0` is installed inside the session and preloaded by absolute path. The project dependencies are untouched.
+- The local intake supports the endpoints exercised by that tracer and enables Test Optimization, coverage, Intelligent Test Runner, Early Flake Detection, Auto Test Retries, Impacted Tests, failed-test replay, and Test Management.
+- Test events and test- or suite-level coverage are decoded. Raw multipart or msgpack payloads are not retained; saved traffic is JSON only.
+- Complete test output is saved separately.
 
-- What test framework is this?
-- Where does CI run the tests?
-- Is Test Optimization already configured?
-- What small edit should be made next?
-
-For the first release, it only needs to understand a conventional JavaScript/Jest repository using GitHub Actions.
-
-Example:
-
-```text
-$ ddtest onboard
-
-🐕 Found Jest
-   Test command: node_modules/.bin/jest
-   CI job: .github/workflows/test.yml → test
-
-Test Optimization is not configured yet.
-
-Add this small setup before the test step:
-  ...concrete GitHub Actions snippet...
-
-I will use dd-trace <pinned-version> for both CI and the local testdrive.
-
-Next:
-  ddtest testdrive
-```
-
-The command does not need to understand every possible CI expression. If it cannot recognize the repository, it should say what narrow shape is supported today.
-
-The coding agent makes the edit. We do not need a generic YAML editing engine in DDTest.
-
-### `ddtest testdrive`
-
-`testdrive` proves the setup using the customer's tests.
-
-It:
-
-1. creates a unique session directory;
-2. makes the selected Datadog tracer available locally;
-3. starts a small Datadog-shaped intake on loopback;
-4. points the tracer to it with a dummy API key;
-5. runs the Jest suite once;
-6. turns the received test events and coverage into a terminal summary and local HTML report.
-
-Example:
-
-```text
-$ ddtest testdrive
-
-🐕 Preparing dd-trace for this testdrive...
-🐕 Running your Jest suite with Test Optimization...
-
-Test Optimization is ready.
-3 findings.
-
-Failed tests (2):
-  - checkout.test.js › rejects an expired card · Fail · 84ms
-  - cart.test.js › removes an item · Fail · 31ms
-
-Flaky tests (1):
-  - login.test.js › refreshes a session · Flaky · 146ms
-
-Tests slower than the others (3):
-  - search.test.js › ranks results · Pass · 2.4s
-  - checkout.test.js › submits an order · Pass · 1.8s
-  - reports.test.js › builds a summary · Pass · 1.3s
-
-Run details:
-  Test events: 43
-  Tests with coverage: 41 / 41
-  Jest: Failed
-  Tracer: dd-trace@6.15.0 · isolated
-
-Open report: file:///project/.testoptimization/testdrive/2026-09-10-abc123/report.html
-```
-
-If the tests fail but events arrive, DDTest should still say that instrumentation works and report the test failures separately. Setup validation does not require a green suite.
-
-Running `ddtest testdrive` is enough. There is no generated execution plan, approval file, checksum, or follow-up command.
-
-## Solving CI-only tracer installation
-
-Many auto-instrumented users do not have `dd-trace` in `package.json`. The tracer is installed only inside CI. The `dd-trace-js` runbook cannot bootstrap that repository locally because the runbook itself expects the package to be present.
-
-DDTest closes that gap:
-
-- The first release uses one known-good, pinned `dd-trace` version.
-- `onboard` puts that version into the suggested CI setup.
-- `testdrive` installs the same version into its own session directory when the project does not already provide it.
-- The test process preloads the absolute `dd-trace/ci/init` path from that directory.
-- The project's `package.json` and lockfile are not changed.
-
-This is the same basic shape used by the Test Optimization installation script: install the JavaScript tracer into a separate prefix and preload it by absolute path.
-
-We do not need a generalized compatibility database yet. When we add a second runtime or need to support multiple tracer lines, we can introduce the smallest mechanism that the real cases require.
-
-## Local Test Optimization intake
-
-Shepherd already has a useful local implementation in `tools/mockdog`. DDTest should bring over the smallest subset needed for the first JavaScript tracer:
-
-- settings response;
-- test events;
-- per-test coverage;
-- any Git or telemetry endpoint the real tracer actually calls;
-- a short summary of what arrived.
-
-The server listens on a kernel-assigned loopback port. The local tracer uses agentless mode pointed at that address with a dummy API key. Nothing needs to emulate a full Datadog Agent unless a real tracer limitation forces us there.
-
-We should learn the required protocol by running the real pinned tracer, not by implementing every endpoint in advance.
-
-## Concurrent sessions
-
-Every testdrive gets its own directory and listener:
-
-```text
-.testoptimization/testdrive/<session-id>/
-  report.html
-  result.json
-  test-output.log
-```
-
-The session ID is only for uniqueness. Two humans, agents, or terminals can run testdrive at the same time without sharing ports, events, or cleanup.
-
-This is a small foundation worth keeping from the start.
-
-## What we show in the first report
-
-The first report confirms that instrumentation loaded and then answers four useful questions:
+The terminal and self-contained HTML report answer:
 
 - Did any tests fail?
 - Are any tests flaky because they passed on retry?
-- Are any tests clearly slower than the rest?
-- Do any tests or suites cover an unusual number of files?
+- Are any tests unusually slow compared with the median?
+- Do any tests or suites cover unusually many files compared with the median?
 
-The report omits every problem card whose answer is “No.” A problem card always lists the affected tests; each test expands to show all attempts and timings, retry reasons, errors and stacks, coverage, and a syntax-highlighted excerpt using the tracer's source lines. A short run-details row below the cards shows the event count, coverage count, Jest result, and isolated tracer version, followed by links to the saved JSON traffic and complete test output. Separate paginated tabs list every observed suite and test. The terminal prints the report as a clickable absolute `file://` link.
+Problem cards appear only when the answer is yes. Affected tests are always visible and expand to show attempts, timings, errors, retry information, source excerpts, and coverage. Flaky tests use `test.final_status` and are not also reported as failed. Covered files appear one per line and are paginated 50 at a time. Separate paginated tabs list all suites and tests.
 
-It does not claim what the real Datadog TIA backend would skip. It does not estimate savings or recommend parallelization.
+The report also shows event and coverage counts, framework result, tracer version, isolated installation, saved JSON traffic, and test output. `testdrive` prints it as an absolute clickable `file://` link.
 
-The first terminal and HTML formats can evolve freely while we dogfood them. We should add a stable agent JSON contract only after using the feature with real coding agents and learning which fields matter.
+### Code map
 
-## Human and agent use the same product
+- `internal/onboard/`: repository detection and embedded Markdown instructions.
+- `internal/testdrive/`: session lifecycle, preview, execution, terminal output, and HTML report.
+- `internal/testdrive/tracer/`: isolated tracer installation behind the `Tracer` interface.
+- `internal/testdrive/intake/`: local intake, JSON capture, event and coverage decoding, and findings.
+- `internal/platform/` and `internal/framework/`: existing detection and test commands that future milestones should reuse.
 
-We do not need MCP to make this agent-friendly. The CLI owns detection and the local run; the agent reads the output, edits the CI file, and explains the result.
+### Evidence and limits
 
-The DDTest binary can include a short runbook so an agent starting from `ddtest help` knows the intended sequence. It should be a page of practical instructions, not a second specification.
+- Integration tests run a real pinned tracer against a Jest fixture and receive events and coverage.
+- A concurrent integration test proves port, traffic, and file isolation.
+- Unit tests cover decoding, final status, flaky tests, both coverage granularities, medians, source excerpts, HTML rendering, and confirmation behavior.
+- Dogfooding on React Native Paper recognized 1,363 events and coverage for all 680 logical tests, including Early Flake Detection retries.
 
-## Milestones
+Current public support is JavaScript/Jest/GitHub Actions only. The intake is not a complete Datadog backend. There is no upload service, Datadog forwarding, stable JSON contract, or savings calculation. Onboarding instructions are copied from the onboarding MCP source rather than shared with it.
 
-### Milestone 0: prove it works
+Every change must pass:
 
-- Bring the minimum Shepherd intake into DDTest.
-- Run one real pinned `dd-trace` against a tiny Jest fixture.
-- Receive test events and coverage with no Datadog credentials.
-- Give every run a unique directory and listener.
-- Prove two sessions can run concurrently.
+```shell
+make test
+make lint
+```
 
-The output can be ugly and the code can be specific. The purpose is to learn.
+## Milestone 0: prove the local loop — complete
 
-### Milestone 1: let people play with it
+Milestone 0 proved the risky path before designing the product around it:
 
-- Ship `ddtest onboard` for conventional JavaScript/Jest/GitHub Actions.
-- Ship `ddtest testdrive` with isolated tracer installation.
-- Run the real suite once and produce a useful terminal summary.
-- Add a pleasant local HTML report.
-- Dogfood it on real repositories and fix the repeated rough edges.
+- start a minimal local Test Optimization intake on port `0`;
+- install and run a real pinned JavaScript tracer;
+- receive a real Jest test event and coverage;
+- save each run in its own session directory;
+- run two sessions concurrently without collisions;
+- require no Datadog credentials or Agent.
 
-The detailed implementation sequence lives in [the milestone development plan](agent-driven-onboarding-development-plan.md).
+## Milestone 1: delightful Jest preview — implemented
 
-### Milestone 2: support every existing DDTest pair
+Milestone 1 turned the spike into the current `onboard` and `testdrive` flow described above.
 
-- Extend the same `onboard` and credential-free `testdrive` flow to JavaScript/Jest, Mocha, Cypress, Playwright, Cucumber, and Vitest; Python/pytest; and Ruby/RSpec and Minitest.
-- Reuse the platform and framework detection and test commands already used by `plan` and `run`.
-- Add one isolated pinned tracer bootstrap per platform without changing project dependency files.
-- Keep GitHub Actions as the only CI provider in this milestone.
-- Prove every pair with a real tracer fixture and dogfood one real repository per platform.
+Its important interaction contract is:
 
-The handover and shippable definition are in [the milestone development plan](agent-driven-onboarding-development-plan.md).
+- detection and preview happen before any write or external command;
+- `ddtest testdrive --yes` is the explicit non-interactive path;
+- running the command is one decision—there is no persisted plan, checksum, approval file, or second execution command;
+- instrumentation success is independent of whether customer tests pass;
+- the project manifest and lockfile are never changed;
+- the agent posts the report link to the user.
 
-### Milestone 3: guide people into Test Parallelization
+Keep dogfooding Jest while later milestones are built. Fix repeated real problems directly; extract shared types only when another working implementation needs them.
 
-- Add `ddtest onboard parallelization` as the discoverable next step after Test Optimization works.
-- Detect the existing GitHub Actions test job and print a repository-specific edit that uses the current `ddtest plan` and `ddtest run` flow.
-- Keep the first version simple: one worker per CI node, an explicit node range, and no new planner or workflow-rewriting engine.
-- Use the first real CI run as the test drive. Report a clickable workflow link, whether every node passed, the number of nodes selected, the expected wall time and overhead, imbalance, and any dedicated slow-suite runners.
-- Support the same platform/framework pairs as Milestone 2 and stop clearly when a workflow already has incompatible parallelization.
+## Milestone 2: every supported platform/framework pair
 
-The command assumes Test Optimization is already configured. If it is not, it points the agent back to `ddtest onboard` instead of attempting both changes at once. The full walking skeleton and done condition are in [the milestone development plan](agent-driven-onboarding-development-plan.md).
+Extend the same basic onboarding and testdrive to the pairs already supported by DDTest:
 
-### Milestone 4: reach `dd-trace-js` runbook parity
+| Platform | Frameworks |
+| --- | --- |
+| JavaScript | Jest, Mocha, Cypress, Playwright, Cucumber, Vitest |
+| Python | pytest |
+| Ruby | RSpec, Minitest |
 
-- Keep the same `ddtest onboard` and `ddtest testdrive` commands; do not copy the runbook's manifest, execution-plan, checksum, or approval-file machinery.
-- Report the five runbook conclusions independently: Basic Reporting, CI configuration, Early Flake Detection, Auto Test Retries, and Test Management.
-- Prove Basic Reporting with the customer's real tests and prove advanced features with small DDTest-owned tests driven by the local intake.
-- When Basic Reporting is inconclusive, compare one representative test without and with instrumentation so the report can distinguish a project failure from an integration problem.
-- Audit the selected GitHub Actions job statically, report initialization and transport separately, and suggest the smallest setup edit without executing CI commands.
-- Reach full parity for Jest, then dogfood and extend the same outcomes to Mocha, Cypress, Playwright, Cucumber, and Vitest.
+Build this in vertical slices:
 
-Parity is measured by the questions DDTest answers for the user, not by matching the runbook's internal architecture. Python and Ruby retain Milestone 2's Basic Reporting experience until their own tracer behavior justifies equivalent advanced checks. The detailed sequence is in [the milestone development plan](agent-driven-onboarding-development-plan.md).
+1. Reuse each platform and framework's `Detect` method and test command. Remove Jest-specific names from the shared report.
+2. Add the remaining JavaScript frameworks using the existing isolated `dd-trace` installation.
+3. Add one pinned isolated `ddtrace` installation for pytest.
+4. Add one pinned isolated Ruby tracer installation shared by RSpec and Minitest.
+5. Add a tiny real-tracer fixture for every pair and dogfood at least one real repository per platform.
 
-## Future distribution
+For every pair, `onboard` finds the relevant GitHub Actions job and prints one small setup. `testdrive` previews and runs the repository's real test entry point, treats received events as proof even when tests fail, reports missing coverage honestly, and preserves the same terminal and HTML experience where the tracer supplies the data.
 
-- publish a Homebrew installation path after the first preview is already useful;
+Do not solve monorepos, new CI providers, or cross-platform tracer abstractions here. One known-good tracer version per platform is enough.
 
-## Later, if users pull us there
+Milestone 2 ships when all nine pairs complete the credential-free flow, save JSON traffic, render a local report, and leave dependency files unchanged.
 
-- `ddtest doctor` as a separate reusable diagnostic command;
-- more CI providers and monorepo orchestration;
-- a stable JSON contract for agents and integrations;
-- real Datadog forwarding when `DD_API_KEY` is present;
-- real TIA settings and skippables;
-- fully local TIA backed by a SQLite coverage database, using committed changes plus staged, unstaged, and untracked working-tree files to decide skip/no-skip;
-- local savings estimates and historical analysis;
-- a Testdog share link.
+## Milestone 3: guided Test Parallelization onboarding
 
-Those are directions, not requirements for the first useful release.
+Starting prompt:
 
-## How we know milestone 1 worked
+> Onboard test parallelization using ddtest.
 
-A new user can install DDTest, run two memorable commands, and see their own test suite represented locally without creating a Datadog account. If their tracer only exists in CI, the local experience still works without changing the project dependencies.
+Add `ddtest onboard parallelization` as the obvious next step after Test Optimization works. If Test Optimization is not configured, point back to `ddtest onboard`; do not combine both migrations.
 
-The useful question after the first dogfood sessions is not “did we finish the architecture?” It is:
+The command detects the platform, framework, and GitHub Actions test job, then tells the coding agent how to make one concrete transformation using the existing product:
 
-> Did someone show the report to a teammate because it was cool?
+1. A plan job installs the project as CI already does and runs `ddtest plan`.
+2. The plan job exposes DDTest's generated matrix and uploads `.testoptimization/`.
+3. A matrix job downloads the artifact and runs `ddtest run --ci-node ${{ matrix.ci_node_index }}`.
+4. The old command is removed so CI does not run the full suite twice.
 
-## Source notes
+Start with one worker per CI node, `fail-fast: false`, explicit minimum and maximum parallelism, and the existing CI-job overhead model. Preserve runtime setup, environment, services, caches, permissions, timeouts, and artifacts. DDTest prints instructions; the agent edits the workflow. Do not build a YAML rewriting engine or another planner.
 
-- The `dd-trace-js` repository ships its Test Optimization validation runbook with the tracer, which is a useful precedent for agent instructions but assumes the tracer is already installed.
-- `~/p/test-visibility-install-script` demonstrates installing `dd-trace` under a separate npm prefix and preloading its absolute `ci/init` path.
-- `~/p/shepherd/tools/mockdog` demonstrates receiving and interpreting Test Optimization traffic locally.
-- Lapdog demonstrates the broader product loop: show a developer their own data before asking for a Datadog account.
+The first real GitHub Actions run is the test drive. The agent gives the user its link and reports:
+
+- whether the plan job and every node passed;
+- selected node count;
+- estimated full-suite and parallel wall time;
+- modeled CI overhead and imbalance;
+- dedicated slow-suite runners, if any;
+- the smallest corrective edit for a concrete setup failure.
+
+Selecting one node is a valid success when extra nodes would not help enough. Support the same nine pairs as Milestone 2. Stop clearly when an existing matrix or parallel runner cannot be combined safely.
+
+Milestone 3 ships when an agent can discover the flow from the starting prompt, make a reviewable GitHub Actions edit, run the existing planner and runner, and return a clickable CI link with the important plan facts.
+
+## Milestone 4: `dd-trace-js` runbook parity
+
+Match the useful conclusions of the validation runbook, not its internal architecture. Keep `ddtest onboard` and `ddtest testdrive`; do not copy its manifest, execution-plan, checksum, approval-file, persisted-lock, or exit-code machinery.
+
+The terminal and local report show five independent conclusions:
+
+- **Basic Reporting:** the tracer reports a real project test.
+- **CI configuration:** the selected job visibly initializes Test Optimization and configures transport.
+- **Early Flake Detection:** a new passing test is retried with the expected reason.
+- **Auto Test Retries:** a fail-once test passes on retry with the expected reason.
+- **Test Management:** a configured test is matched and tagged as quarantined.
+
+Each conclusion is simply works, needs attention, or could not be checked. Name the exact missing prerequisite, first useful action, and cleanup status. Keep this validation scope separate from code-coverage counts.
+
+Implementation order:
+
+1. Add all five conclusions to the simplest Jest repository and dogfood the complete flow before generalizing it.
+2. Keep the normal happy path: the customer's instrumented suite proves Basic Reporting.
+3. After Basic Reporting succeeds, run small DDTest-owned tests for the three advanced features. The local intake supplies settings, known tests, and managed tests; emitted attempts and events must prove behavior.
+4. If Basic Reporting is inconclusive, compare one representative test without and with instrumentation and debug logging. Do not double every successful testdrive.
+5. Audit the selected GitHub Actions job without executing it. Resolve the setup DDTest generates, direct commands, and simple local package scripts; report dynamic or remote wrappers as inconclusive.
+6. Extend the proven Jest slice to Mocha, Cypress, Playwright, Cucumber, and Vitest.
+
+Temporary tests appear in the preview, are created only after confirmation, and are removed after the run. Their decoded JSON events and output remain in the session. Browser- or application-backed checks may be inconclusive with the missing prerequisite named; DDTest does not start applications or install browsers implicitly.
+
+Python and Ruby retain Milestone 2's Basic Reporting and suite analysis until their tracer behavior and real dogfood cases justify equivalent advanced checks.
+
+Milestone 4 ships when all six JavaScript frameworks report the five conclusions without Datadog credentials, preserve project dependencies and concurrent-session isolation, clean up temporary tests, and provide clickable local and CI links.
+
+## Next work
+
+Start Milestone 2 with the shared detection and framework-neutral report, keeping the Jest path green. Then add the remaining JavaScript frameworks one at a time before starting Python or Ruby.
+
+For each slice:
+
+1. add one real-tracer fixture;
+2. run it in a real repository;
+3. record what the human or agent had to guess;
+4. fix observed friction;
+5. run `make test`, `make lint`, and the installed binary.
+
+## Later ideas
+
+These should not delay Milestones 2–4:
+
+- Homebrew distribution.
+- One offline source for the Markdown instructions currently duplicated with the onboarding MCP implementation in `dd-source`.
+- A broad `ddeval` suite built from real repository and CI shapes.
+- Fully local TIA backed by SQLite coverage history, considering committed, staged, unstaged, and untracked changes.
+- Real Datadog mode when `DD_API_KEY` is present.
+- Local reproduction of CI operating-system and runtime tags.
+- Historical test analysis through the Datadog API.
+- `ddtest doctor` as a reusable diagnostic command if the integrated flow proves it is needed.
+- More CI providers and monorepo orchestration.
+- Multiple tracer-version support.
+- Local savings estimates and historical replay.
+- A hosted Testdog page for sharing a report without a Datadog account.
+
+Choose the next slice from what users struggle with after Milestone 4, not from a speculative architecture.
+
+## References
+
+- `~/p/shepherd/tools/mockdog`: local Test Optimization intake precedent.
+- `~/p/dd-trace-js/ci/runbook.md`: validation conclusions and JavaScript adapter behavior.
+- `~/p/test-visibility-install-script`: isolated JavaScript tracer installation precedent.
+- The onboarding MCP instructions in `~/dd/dd-source`: current source material for CI setup instructions.
