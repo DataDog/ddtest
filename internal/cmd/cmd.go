@@ -6,8 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +19,7 @@ import (
 	"github.com/DataDog/ddtest/internal/runner"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/telemetry"
+	"github.com/DataDog/ddtest/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -46,70 +45,43 @@ var (
 )
 
 var planCmd = &cobra.Command{
-	Use:   "plan [path ...]",
+	Use:   "plan [test-pattern ...]",
 	Short: "Prepare test optimization data",
 	Long: fmt.Sprintf(
-		"Discovers test files and calculates the percentage of tests that can be skipped using Datadog's Test Impact Analysis. Outputs results to %s and %s. Optional file or directory paths are combined into the test discovery pattern.",
+		"Discovers test files and calculates the percentage of tests that can be skipped using Datadog's Test Impact Analysis. Outputs results to %s and %s. Optional glob patterns use the same syntax as --tests-location; quote them to prevent shell expansion.",
 		constants.TestFilesOutputPath,
 		constants.SkippablePercentageOutputPath,
 	),
-	Args: usePositionalTestPaths,
+	Args: usePositionalTestPatterns,
 	Run:  runPlanCommand,
 }
 
 var runCmd = &cobra.Command{
-	Use:   "run [path ...]",
+	Use:   "run [test-pattern ...]",
 	Short: "Run tests using test optimization",
-	Long:  "Runs tests using Datadog Test Optimization to execute only necessary test files based on code changes. Optional file or directory paths are combined into the test discovery pattern and require that no saved plan exists.",
-	Args:  usePositionalTestPaths,
+	Long:  "Runs tests using Datadog Test Optimization to execute only necessary test files based on code changes. Optional glob patterns use the same syntax as --tests-location and require that no saved plan exists; quote them to prevent shell expansion.",
+	Args:  usePositionalTestPatterns,
 	Run:   runTestCommand,
 }
 
-func usePositionalTestPaths(cmd *cobra.Command, args []string) error {
+func usePositionalTestPatterns(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return nil
 	}
 	if cmd.Flags().Changed("tests-location") {
-		return fmt.Errorf("use either positional test paths or --tests-location, not both")
+		return fmt.Errorf("use either positional test patterns or --tests-location, not both")
 	}
 	if cmd.Name() == "run" {
 		if _, err := os.Stat(constants.ParallelRunnersOutputPath); err == nil {
-			return fmt.Errorf("a saved plan already exists; run ddtest plan with these paths to replace it, then ddtest run without paths")
+			return fmt.Errorf("a saved plan already exists; run ddtest plan with these patterns to replace it, then ddtest run without patterns")
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("cannot check saved plan: %w", err)
 		}
 	}
 
-	cwd, err := os.Getwd()
+	pattern, err := utils.ParseGlobPatterns(args)
 	if err != nil {
 		return err
-	}
-	escapeGlob := strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`, "]", `\]`, "{", `\{`, "}", `\}`, ",", `\,`)
-	patterns := make([]string, 0, len(args))
-	for _, arg := range args {
-		info, err := os.Stat(arg)
-		if err != nil {
-			return fmt.Errorf("invalid test path %q: %w; provide an existing file or directory", arg, err)
-		}
-		if !info.Mode().IsRegular() && !info.IsDir() {
-			return fmt.Errorf("invalid test path %q: expected a regular file or directory", arg)
-		}
-		path := filepath.Clean(arg)
-		if filepath.IsAbs(path) {
-			path, err = filepath.Rel(cwd, path)
-			if err != nil {
-				return fmt.Errorf("invalid test path %q: %w", arg, err)
-			}
-		}
-		pattern := escapeGlob.Replace(filepath.ToSlash(path))
-		if info.IsDir() {
-			pattern += "/**/*"
-		}
-		patterns = append(patterns, pattern)
-	}
-	pattern := patterns[0]
-	if len(patterns) > 1 {
-		pattern = "{" + strings.Join(patterns, ",") + "}"
 	}
 	settings.Get().TestsLocation = pattern
 	return nil

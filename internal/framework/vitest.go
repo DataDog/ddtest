@@ -84,7 +84,7 @@ func (v *Vitest) TestPattern() string {
 	if custom := settings.GetTestsLocation(); custom != "" {
 		return custom
 	}
-	return filepath.ToSlash(filepath.Join("**", "*.{test,spec}.{"+strings.Join(vitestTestFileExtensions, ",")+"}"))
+	return filepath.ToSlash(filepath.Join("**", "*.{test,spec}."+utils.JoinGlobPatterns(vitestTestFileExtensions)))
 }
 
 func (v *Vitest) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {

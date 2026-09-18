@@ -63,6 +63,55 @@ func TestNormalizePattern(t *testing.T) {
 	}
 }
 
+func TestParseGlobPatterns(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		patterns []string
+		want     string
+		matches  []string
+		excludes []string
+	}{
+		{name: "none"},
+		{name: "exact file", patterns: []string{"spec/a_spec.rb"}, want: "spec/a_spec.rb", matches: []string{"spec/a_spec.rb"}, excludes: []string{"spec/b_spec.rb"}},
+		{name: "normalize", patterns: []string{" ./spec/**/*_spec.rb ", " ./tests/**/test_*.py "}, want: "{spec/**/*_spec.rb,tests/**/test_*.py}", matches: []string{"spec/a_spec.rb", "spec/models/a_spec.rb", "tests/test_a.py"}, excludes: []string{"spec/spec_helper.rb", "tests/conftest.py"}},
+		{name: "nested alternatives", patterns: []string{"{spec,other}/**/*_spec.rb", "tests/**/{test_*,*_test}.py"}, want: "{{spec,other}/**/*_spec.rb,tests/**/{test_*,*_test}.py}", matches: []string{"other/a_spec.rb", "tests/a_test.py"}, excludes: []string{"spec/fixtures/a.json"}},
+		{name: "character class", patterns: []string{"spec/[ab]?_spec.rb"}, want: "spec/[ab]?_spec.rb", matches: []string{"spec/a1_spec.rb"}, excludes: []string{"spec/c1_spec.rb"}},
+		{name: "literal bracket", patterns: []string{"spec/a[[]1]_spec.rb"}, want: "spec/a[[]1]_spec.rb", matches: []string{"spec/a[1]_spec.rb"}, excludes: []string{"spec/a1_spec.rb"}},
+		{name: "directory unchanged", patterns: []string{"spec/"}, want: "spec/", excludes: []string{"spec/a_spec.rb"}},
+		{name: "absolute unchanged", patterns: []string{"/project/spec/*.rb"}, want: "/project/spec/*.rb", matches: []string{"/project/spec/a.rb"}},
+		{name: "parent unchanged", patterns: []string{"../spec/*.rb"}, want: "../spec/*.rb", matches: []string{"../spec/a.rb"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseGlobPatterns(tt.patterns)
+			if err != nil || got != tt.want {
+				t.Fatalf("ParseGlobPatterns() = %q, %v; want %q", got, err, tt.want)
+			}
+			matcher, err := NewPathMatcher(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range tt.matches {
+				if !matcher.Match(path) {
+					t.Errorf("pattern %q does not match %q", got, path)
+				}
+			}
+			for _, path := range tt.excludes {
+				if matcher.Match(path) {
+					t.Errorf("pattern %q unexpectedly matches %q", got, path)
+				}
+			}
+		})
+	}
+}
+
+func TestParseGlobPatternsRejectsInvalidInput(t *testing.T) {
+	for _, patterns := range [][]string{{""}, {"   "}, {"./"}, {"spec/["}, {"{spec", "other}"}, {"spec/*.rb", "["}} {
+		if _, err := ParseGlobPatterns(patterns); err == nil {
+			t.Errorf("ParseGlobPatterns(%q) accepted invalid input", patterns)
+		}
+	}
+}
+
 func TestPathMatcher(t *testing.T) {
 	matcher, err := NewPathMatcher(" ./spec/**/*_spec.rb ")
 	if err != nil {

@@ -21,7 +21,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-func TestCommandsWithPositionalTestPaths(t *testing.T) {
+func TestCommandsWithPositionalTestPatterns(t *testing.T) {
 	for _, command := range []*cobra.Command{planCmd, runCmd} {
 		for _, tt := range []struct {
 			name       string
@@ -30,19 +30,23 @@ func TestCommandsWithPositionalTestPaths(t *testing.T) {
 			wantFiles  []string
 			wantErr    string
 		}{
-			{name: "no paths"},
-			{name: "reuse plan without paths", planExists: true},
+			{name: "no patterns"},
+			{name: "reuse plan without patterns", planExists: true},
 			{name: "single file", args: []string{"spec/a_spec.rb"}, wantFiles: []string{"spec/a_spec.rb"}},
 			{name: "multiple files", args: []string{"spec/a_spec.rb", "other/c_spec.rb"}, wantFiles: []string{"other/c_spec.rb", "spec/a_spec.rb"}},
-			{name: "directory", args: []string{"spec/"}, wantFiles: []string{"spec/a_spec.rb", "spec/nested/b_spec.rb"}},
-			{name: "file and directory", args: []string{"other/c_spec.rb", "spec/"}, wantFiles: []string{"other/c_spec.rb", "spec/a_spec.rb", "spec/nested/b_spec.rb"}},
-			{name: "overlapping paths", args: []string{"spec/", "./spec/a_spec.rb"}, wantFiles: []string{"spec/a_spec.rb", "spec/nested/b_spec.rb"}},
-			{name: "absolute path", args: []string{"ABSOLUTE"}, wantFiles: []string{"spec/a_spec.rb"}},
-			{name: "separator", args: []string{"--", "spec/a_spec.rb"}, wantFiles: []string{"spec/a_spec.rb"}},
-			{name: "existing plan", args: []string{"spec/a_spec.rb"}, planExists: true, wantFiles: []string{"spec/a_spec.rb"}},
-			{name: "missing file", args: []string{"missing.rb"}, wantErr: `invalid test path "missing.rb"`},
-			{name: "test selector", args: []string{"spec/a_spec.rb:42"}, wantErr: "invalid test path"},
-			{name: "command", args: []string{"--", "pytest", "-k", "one"}, wantErr: `invalid test path "pytest"`},
+			{name: "recursive glob", args: []string{"spec/**/*_spec.rb"}, wantFiles: []string{"spec/a_spec.rb", "spec/nested/b_spec.rb"}},
+			{name: "multiple globs", args: []string{"spec/**/*_spec.rb", "tests/**/test_*.py"}, wantFiles: []string{"spec/a_spec.rb", "spec/nested/b_spec.rb", "tests/test_user.py"}},
+			{name: "brace glob", args: []string{"{spec,other}/**/*_spec.rb"}, wantFiles: []string{"other/c_spec.rb", "spec/a_spec.rb", "spec/nested/b_spec.rb"}},
+			{name: "overlapping patterns", args: []string{"spec/**/*_spec.rb", "./spec/a_spec.rb"}, wantFiles: []string{"spec/a_spec.rb", "spec/nested/b_spec.rb"}},
+			{name: "explicit broad glob", args: []string{"spec/**/*"}, wantFiles: []string{"spec/a_spec.rb", "spec/fixtures/users.json", "spec/nested/b_spec.rb", "spec/spec_helper.rb"}},
+			{name: "bare directory is not expanded", args: []string{"spec/"}},
+			{name: "unmatched glob", args: []string{"missing/**/*_spec.rb"}},
+			{name: "missing file", args: []string{"missing.rb"}},
+			{name: "separator", args: []string{"--", "spec/**/*_spec.rb"}, wantFiles: []string{"spec/a_spec.rb", "spec/nested/b_spec.rb"}},
+			{name: "existing plan", args: []string{"spec/**/*_spec.rb"}, planExists: true, wantFiles: []string{"spec/a_spec.rb", "spec/nested/b_spec.rb"}},
+			{name: "invalid glob", args: []string{"spec/["}, wantErr: "invalid path pattern"},
+			{name: "invalid individual patterns", args: []string{"{spec", "other}"}, wantErr: "invalid path pattern"},
+			{name: "empty pattern", args: []string{""}, wantErr: "path pattern must not be empty"},
 			{name: "conflicting flag", args: []string{"--tests-location", "spec/**/*.rb", "spec/a_spec.rb"}, wantErr: "not both"},
 		} {
 			t.Run(command.Name()+"/"+tt.name, func(t *testing.T) {
@@ -50,7 +54,7 @@ func TestCommandsWithPositionalTestPaths(t *testing.T) {
 				viper.Reset()
 				t.Cleanup(viper.Reset)
 				t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", "unchanged")
-				for _, file := range []string{"spec/a_spec.rb", "spec/nested/b_spec.rb", "other/c_spec.rb"} {
+				for _, file := range []string{"spec/a_spec.rb", "spec/nested/b_spec.rb", "other/c_spec.rb", "spec/spec_helper.rb", "spec/fixtures/users.json", "tests/conftest.py", "tests/test_user.py"} {
 					if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
 						t.Fatal(err)
 					}
@@ -68,13 +72,6 @@ func TestCommandsWithPositionalTestPaths(t *testing.T) {
 					if command.Name() == "run" && len(tt.args) > 0 {
 						tt.wantErr = "saved plan already exists"
 					}
-				}
-				if tt.name == "absolute path" {
-					path, err := filepath.Abs("spec/a_spec.rb")
-					if err != nil {
-						t.Fatal(err)
-					}
-					tt.args = []string{path}
 				}
 
 				preRunCalled, runCalled := false, false

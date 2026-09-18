@@ -39,19 +39,24 @@ DDTest ships as a CLI tool `ddtest` with two primary sub-commands: `plan` and `r
 Use `plan` to create a reusable `.testoptimization/` plan without running tests.
 Use `run` to execute that plan locally or in CI. If a plan is missing, `run` will generate it on the fly.
 
-Both commands accept existing file or directory paths, combined into a single
-`tests-location` pattern. Directories include their contents recursively.
-Positional paths override the environment's test location; they cannot be
-combined with `--tests-location`. Use that flag for glob patterns.
+Both commands accept positional glob patterns with the same syntax as
+`--tests-location`. Multiple patterns are combined as alternatives; exact file
+names are valid patterns too. Quote globs to prevent shell expansion.
+Positional patterns override the environment's test location and cannot be
+combined with `--tests-location`.
 
 ```bash
-ddtest plan spec/models/ spec/requests/login_spec.rb
+ddtest plan 'spec/models/**/*_spec.rb' 'spec/requests/**/*_spec.rb'
 ddtest run
 ```
 
-`plan` accepts paths even when a saved plan exists. `run` accepts paths only when
-there is no saved plan; otherwise, first run `ddtest plan` with the desired paths,
-then `ddtest run` without paths.
+Patterns are validated for glob syntax, not file existence. Bare directories
+are not expanded: use `spec/**/*_spec.rb` to select specs recursively. An explicit
+`spec/**/*` also selects helpers and fixtures, just as with `--tests-location`.
+
+`plan` accepts patterns even when a saved plan exists. `run` accepts patterns only
+when there is no saved plan; otherwise, first run `ddtest plan` with the desired
+patterns, then `ddtest run` without patterns.
 
 DDTest is meant to run in CI. Local runs are possible when you want to reuse
 CI's skippable tests on your machine; see

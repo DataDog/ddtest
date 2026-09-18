@@ -119,6 +119,35 @@ func NormalizePattern(pattern string) string {
 	return trimLeadingCurrentDir(normalized)
 }
 
+// JoinGlobPatterns combines patterns as alternatives without changing their syntax.
+func JoinGlobPatterns(patterns []string) string {
+	switch len(patterns) {
+	case 0:
+		return ""
+	case 1:
+		return patterns[0]
+	default:
+		return "{" + strings.Join(patterns, ",") + "}"
+	}
+}
+
+// ParseGlobPatterns normalizes and validates each pattern before combining them.
+// Like --tests-location, patterns are not expanded or checked for existing files.
+func ParseGlobPatterns(patterns []string) (string, error) {
+	normalized := make([]string, 0, len(patterns))
+	for _, pattern := range patterns {
+		matcher, err := NewPathMatcher(pattern)
+		if err != nil {
+			return "", err
+		}
+		if matcher.Empty() {
+			return "", fmt.Errorf("path pattern must not be empty")
+		}
+		normalized = append(normalized, matcher.pattern)
+	}
+	return JoinGlobPatterns(normalized), nil
+}
+
 type PathMatcher struct {
 	pattern string
 }
