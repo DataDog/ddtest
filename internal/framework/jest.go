@@ -79,10 +79,10 @@ func (j *Jest) TestPattern() string {
 	if custom := settings.GetTestsLocation(); custom != "" {
 		return custom
 	}
-	return "{" +
-		filepath.ToSlash(filepath.Join("**", "__tests__", "**", "*."+jestTestFileExtensionPattern())) + "," +
-		filepath.ToSlash(filepath.Join("**", "*.{spec,test}."+jestTestFileExtensionPattern())) +
-		"}"
+	return utils.JoinGlobPatterns([]string{
+		filepath.ToSlash(filepath.Join("**", "__tests__", "**", "*."+jestTestFileExtensionPattern())),
+		filepath.ToSlash(filepath.Join("**", "*.{spec,test}."+jestTestFileExtensionPattern())),
+	})
 }
 
 func (j *Jest) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
@@ -166,7 +166,7 @@ func (j *Jest) getJestCommand() (string, []string) {
 }
 
 func jestTestFileExtensionPattern() string {
-	return "{" + strings.Join(jestTestFileExtensions, ",") + "}"
+	return utils.JoinGlobPatterns(jestTestFileExtensions)
 }
 
 func filterJestTestFiles(testFiles []string, selectedTestFiles discovery.TestFileSet) ([]string, error) {

@@ -39,6 +39,30 @@ DDTest ships as a CLI tool `ddtest` with two primary sub-commands: `plan` and `r
 Use `plan` to create a reusable `.testoptimization/` plan without running tests.
 Use `run` to execute that plan locally or in CI. If a plan is missing, `run` will generate it on the fly.
 
+Both commands accept files, directories, and glob patterns to narrow framework
+discovery. Multiple arguments select tests matching any argument. Directories
+include descendants, while framework naming rules still apply: `spec` selects
+RSpec specs, not helpers or fixtures. Quote globs to prevent shell expansion.
+
+```bash
+ddtest plan spec/models spec/requests
+ddtest run
+```
+
+Files and directories must exist; globs are validated for syntax and may match
+no tests. Positional arguments filter results after discovery, so they do not
+reduce discovery work or extend its configured roots. They can be combined with
+`--tests-location`, which still defines discovery (and overrides framework
+defaults); positional arguments only narrow its results. For example:
+
+```bash
+ddtest plan --tests-location 'custom_specs/**/*_spec.rb' custom_specs/models
+```
+
+`plan` accepts patterns even when a saved plan exists. `run` accepts patterns only
+when there is no saved plan; otherwise, first run `ddtest plan` with the desired
+patterns, then `ddtest run` without patterns.
+
 DDTest is meant to run in CI. Local runs are possible when you want to reuse
 CI's skippable tests on your machine; see
 [Running locally with CI skippable tests](docs/local-ci-skippable-tests.md).

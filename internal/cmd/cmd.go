@@ -19,6 +19,7 @@ import (
 	"github.com/DataDog/ddtest/internal/runner"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/telemetry"
+	"github.com/DataDog/ddtest/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -44,21 +45,43 @@ var (
 )
 
 var planCmd = &cobra.Command{
-	Use:   "plan",
+	Use:   "plan [test-pattern ...]",
 	Short: "Prepare test optimization data",
 	Long: fmt.Sprintf(
-		"Discovers test files and calculates the percentage of tests that can be skipped using Datadog's Test Impact Analysis. Outputs results to %s and %s.",
+		"Discovers test files and calculates the percentage of tests that can be skipped using Datadog's Test Impact Analysis. Outputs results to %s and %s. Optional files, directories, or glob patterns narrow framework discovery; quote globs to prevent shell expansion.",
 		constants.TestFilesOutputPath,
 		constants.SkippablePercentageOutputPath,
 	),
-	Run: runPlanCommand,
+	Args: usePositionalTestPatterns,
+	Run:  runPlanCommand,
 }
 
 var runCmd = &cobra.Command{
-	Use:   "run",
+	Use:   "run [test-pattern ...]",
 	Short: "Run tests using test optimization",
-	Long:  "Runs tests using Datadog Test Optimization to execute only necessary test files based on code changes.",
+	Long:  "Runs tests using Datadog Test Optimization to execute only necessary test files based on code changes. Optional files, directories, or glob patterns narrow framework discovery and require that no saved plan exists; quote globs to prevent shell expansion.",
+	Args:  usePositionalTestPatterns,
 	Run:   runTestCommand,
+}
+
+func usePositionalTestPatterns(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	if cmd.Name() == "run" {
+		if _, err := os.Stat(constants.ParallelRunnersOutputPath); err == nil {
+			return fmt.Errorf("a saved plan already exists; run ddtest plan with these patterns to replace it, then ddtest run without patterns")
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("cannot check saved plan: %w", err)
+		}
+	}
+
+	pattern, err := utils.ParseTestSelection(args)
+	if err != nil {
+		return err
+	}
+	settings.Get().TestsSelectionPattern = pattern
+	return nil
 }
 
 type persistentFlagBinding struct {

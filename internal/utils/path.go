@@ -119,6 +119,78 @@ func NormalizePattern(pattern string) string {
 	return trimLeadingCurrentDir(normalized)
 }
 
+// JoinGlobPatterns combines patterns as alternatives without changing their syntax.
+func JoinGlobPatterns(patterns []string) string {
+	switch len(patterns) {
+	case 0:
+		return ""
+	case 1:
+		return patterns[0]
+	default:
+		return "{" + strings.Join(patterns, ",") + "}"
+	}
+}
+
+// ParseGlobPatterns normalizes and validates each pattern before combining them.
+// Like --tests-location, patterns are not expanded or checked for existing files.
+func ParseGlobPatterns(patterns []string) (string, error) {
+	normalized := make([]string, 0, len(patterns))
+	for _, pattern := range patterns {
+		matcher, err := NewPathMatcher(pattern)
+		if err != nil {
+			return "", err
+		}
+		if matcher.Empty() {
+			return "", fmt.Errorf("path pattern must not be empty")
+		}
+		normalized = append(normalized, matcher.pattern)
+	}
+	return JoinGlobPatterns(normalized), nil
+}
+
+// ParseTestSelection builds a scope for already-discovered tests. Existing files
+// match literally, directories include descendants, and globs need not exist.
+func ParseTestSelection(args []string) (string, error) {
+	patterns := make([]string, 0, len(args))
+	escape := strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`, "]", `\]`, "{", `\{`, "}", `\}`, ",", `\,`)
+	for _, arg := range args {
+		path := strings.TrimSpace(arg)
+		if path == "" {
+			return "", fmt.Errorf("path pattern must not be empty")
+		}
+		info, err := os.Stat(path)
+		if err != nil && (!os.IsNotExist(err) || !strings.ContainsAny(path, "*?[{\\")) {
+			return "", fmt.Errorf("invalid test path %q: %w", arg, err)
+		}
+		if err != nil {
+			if _, err := NewPathMatcher(path); err != nil {
+				return "", err
+			}
+		}
+		if filepath.IsAbs(path) {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			path, err = filepath.Rel(cwd, path)
+			if err != nil {
+				return "", err
+			}
+		}
+		if info != nil {
+			if !info.IsDir() && !info.Mode().IsRegular() {
+				return "", fmt.Errorf("test path %q must be a regular file or directory", arg)
+			}
+			path = escape.Replace(filepath.ToSlash(filepath.Clean(path)))
+			if info.IsDir() {
+				path += "/**/*"
+			}
+		}
+		patterns = append(patterns, path)
+	}
+	return ParseGlobPatterns(patterns)
+}
+
 type PathMatcher struct {
 	pattern string
 }
