@@ -48,7 +48,7 @@ var planCmd = &cobra.Command{
 	Use:   "plan [test-pattern ...]",
 	Short: "Prepare test optimization data",
 	Long: fmt.Sprintf(
-		"Discovers test files and calculates the percentage of tests that can be skipped using Datadog's Test Impact Analysis. Outputs results to %s and %s. Optional glob patterns use the same syntax as --tests-location; quote them to prevent shell expansion.",
+		"Discovers test files and calculates the percentage of tests that can be skipped using Datadog's Test Impact Analysis. Outputs results to %s and %s. Optional files, directories, or glob patterns narrow framework discovery; quote globs to prevent shell expansion.",
 		constants.TestFilesOutputPath,
 		constants.SkippablePercentageOutputPath,
 	),
@@ -59,7 +59,7 @@ var planCmd = &cobra.Command{
 var runCmd = &cobra.Command{
 	Use:   "run [test-pattern ...]",
 	Short: "Run tests using test optimization",
-	Long:  "Runs tests using Datadog Test Optimization to execute only necessary test files based on code changes. Optional glob patterns use the same syntax as --tests-location and require that no saved plan exists; quote them to prevent shell expansion.",
+	Long:  "Runs tests using Datadog Test Optimization to execute only necessary test files based on code changes. Optional files, directories, or glob patterns narrow framework discovery and require that no saved plan exists; quote globs to prevent shell expansion.",
 	Args:  usePositionalTestPatterns,
 	Run:   runTestCommand,
 }
@@ -67,9 +67,6 @@ var runCmd = &cobra.Command{
 func usePositionalTestPatterns(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return nil
-	}
-	if cmd.Flags().Changed("tests-location") {
-		return fmt.Errorf("use either positional test patterns or --tests-location, not both")
 	}
 	if cmd.Name() == "run" {
 		if _, err := os.Stat(constants.ParallelRunnersOutputPath); err == nil {
@@ -79,11 +76,11 @@ func usePositionalTestPatterns(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	pattern, err := utils.ParseGlobPatterns(args)
+	pattern, err := utils.ParseTestSelection(args)
 	if err != nil {
 		return err
 	}
-	settings.Get().TestsLocation = pattern
+	settings.Get().TestsSelectionPattern = pattern
 	return nil
 }
 

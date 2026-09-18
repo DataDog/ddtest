@@ -81,6 +81,9 @@ func printChangedDDTestSettings(w io.Writer, config *settings.Config) bool {
 }
 
 func formatDDTestSettingName(field reflect.StructField) string {
+	if field.Name == "TestsSelectionPattern" {
+		return "Positional selection"
+	}
 	key := configFieldKey(field)
 	if key == "" {
 		return field.Name

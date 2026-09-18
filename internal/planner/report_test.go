@@ -571,6 +571,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 	config.CiNodeWorkers = 2
 	config.WorkerEnv = "TOKEN=secret"
 	config.TestsLocation = "tests/**/*_test.py"
+	config.TestsSelectionPattern = "tests/unit/**/*"
 	config.TestsExcludePattern = "tests/system/**/*_test.py"
 	config.TestDiscoveryCache = ".ddtest-cache/tests.json"
 	config.TestSkippingLevel = settings.TestSkippingLevelSuite
@@ -608,6 +609,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 		"CI node workers",
 		"Command",
 		"Tests location",
+		"Positional selection",
 		"Tests exclude pattern",
 		"Test discovery cache",
 		"Test skipping mode",

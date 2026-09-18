@@ -39,15 +39,15 @@ func TestCommandsWithPositionalTestPatterns(t *testing.T) {
 			{name: "brace glob", args: []string{"{spec,other}/**/*_spec.rb"}, wantFiles: []string{"other/c_spec.rb", "spec/a_spec.rb", "spec/nested/b_spec.rb"}},
 			{name: "overlapping patterns", args: []string{"spec/**/*_spec.rb", "./spec/a_spec.rb"}, wantFiles: []string{"spec/a_spec.rb", "spec/nested/b_spec.rb"}},
 			{name: "explicit broad glob", args: []string{"spec/**/*"}, wantFiles: []string{"spec/a_spec.rb", "spec/fixtures/users.json", "spec/nested/b_spec.rb", "spec/spec_helper.rb"}},
-			{name: "bare directory is not expanded", args: []string{"spec/"}},
+			{name: "directory scope", args: []string{"spec/"}, wantFiles: []string{"spec/a_spec.rb", "spec/fixtures/users.json", "spec/nested/b_spec.rb", "spec/spec_helper.rb"}},
 			{name: "unmatched glob", args: []string{"missing/**/*_spec.rb"}},
-			{name: "missing file", args: []string{"missing.rb"}},
+			{name: "missing file", args: []string{"missing.rb"}, wantErr: "invalid test path"},
 			{name: "separator", args: []string{"--", "spec/**/*_spec.rb"}, wantFiles: []string{"spec/a_spec.rb", "spec/nested/b_spec.rb"}},
 			{name: "existing plan", args: []string{"spec/**/*_spec.rb"}, planExists: true, wantFiles: []string{"spec/a_spec.rb", "spec/nested/b_spec.rb"}},
 			{name: "invalid glob", args: []string{"spec/["}, wantErr: "invalid path pattern"},
 			{name: "invalid individual patterns", args: []string{"{spec", "other}"}, wantErr: "invalid path pattern"},
 			{name: "empty pattern", args: []string{""}, wantErr: "path pattern must not be empty"},
-			{name: "conflicting flag", args: []string{"--tests-location", "spec/**/*.rb", "spec/a_spec.rb"}, wantErr: "not both"},
+			{name: "scope with discovery flag", args: []string{"--tests-location", "spec/**/*.rb", "spec/a_spec.rb"}, wantFiles: []string{"spec/a_spec.rb"}},
 		} {
 			t.Run(command.Name()+"/"+tt.name, func(t *testing.T) {
 				t.Chdir(t.TempDir())
@@ -78,6 +78,9 @@ func TestCommandsWithPositionalTestPatterns(t *testing.T) {
 				root := &cobra.Command{Use: "ddtest", PersistentPreRun: func(*cobra.Command, []string) { preRunCalled = true }}
 				child := &cobra.Command{Use: command.Use, Args: command.Args, Run: func(*cobra.Command, []string) { runCalled = true }}
 				child.Flags().String("tests-location", "", "Test discovery pattern")
+				if err := viper.BindPFlag("tests_location", child.Flags().Lookup("tests-location")); err != nil {
+					t.Fatal(err)
+				}
 				root.AddCommand(child)
 				root.SetArgs(append([]string{command.Name()}, tt.args...))
 				var output bytes.Buffer
@@ -96,13 +99,20 @@ func TestCommandsWithPositionalTestPatterns(t *testing.T) {
 				if err != nil || !preRunCalled || !runCalled {
 					t.Fatalf("valid invocation failed: error=%v preRun=%v run=%v", err, preRunCalled, runCalled)
 				}
+				wantLocation := "unchanged"
+				if child.Flags().Changed("tests-location") {
+					wantLocation, _ = child.Flags().GetString("tests-location")
+				}
+				if got := settings.GetTestsLocation(); got != wantLocation {
+					t.Fatalf("tests-location = %q, want %q", got, wantLocation)
+				}
 				if len(tt.args) == 0 {
-					if got := settings.GetTestsLocation(); got != "unchanged" {
-						t.Fatalf("tests-location = %q, want unchanged", got)
+					if settings.Get().TestsSelectionPattern != "" {
+						t.Fatal("expected no positional scope")
 					}
 					return
 				}
-				files, err := discovery.DiscoverTestFiles(settings.GetTestsLocation(), "")
+				files, err := discovery.DiscoverTestFiles(settings.Get().TestsSelectionPattern, "")
 				if err != nil || !slices.Equal(files, tt.wantFiles) {
 					t.Fatalf("discovered files = %v, error = %v, want %v", files, err, tt.wantFiles)
 				}
