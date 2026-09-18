@@ -254,12 +254,9 @@ jobs:
       - name: Test Vitest adapter
         run: |
           vitest_dir="${RUNNER_TEMP}/vitest-${{ matrix.vitest }}"
-          npm_install_args=()
-          if [[ "${{ matrix.vitest }}" == "4.1.11" ]]; then
-            # npm 10.9.8 crashes while resolving Vitest 4's duplicated Vite dependency/peer.
-            npm_install_args+=(--legacy-peer-deps)
-          fi
-          npm install --prefix "${vitest_dir}" "${npm_install_args[@]}" "vitest@${{ matrix.vitest }}"
+          # npm 10.9.8 crashes while resolving Vitest's peer dependencies.
+          # Keep peer resolution enabled: Vitest 5 requires Vite as a peer.
+          npx --yes npm@11.11.1 install --prefix "${vitest_dir}" "vitest@${{ matrix.vitest }}"
           DDTEST_VITEST_NODE_MODULES="${vitest_dir}/node_modules" \
             go test -v ./internal/compatibility -run '^TestVitestAdapterIntegration$'
 
