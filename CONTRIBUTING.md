@@ -71,6 +71,40 @@ We also recommend that you share in your description:
 - Benchmarks if the feature is anticipated to have performance implications
 - Any limitations, constraints or risks that are important to consider
 
+## Releasing
+
+Repository maintainers (effective GitHub Maintain or Admin permissions, including
+custom roles such as `dd-repo-owner`) can create a release without
+creating or pushing a tag locally:
+
+1. Open [Actions → Release](https://github.com/DataDog/ddtest/actions/workflows/release.yml).
+2. Select **Run workflow**, leave the branch set to `main`, and enter an unused
+   version such as `v1.8.0` (`vMAJOR.MINOR.PATCH`, without leading zeroes).
+3. Run the workflow. It checks the initiator's permissions, checks out the latest
+   `main`, builds all six binaries, creates the tag at that exact checkout commit,
+   and creates a draft release with generated notes and the binaries attached.
+4. Follow the link in the workflow summary, review the notes and assets, and
+   publish the draft.
+
+The workflow and its dd-octo-sts policy must be merged to `main` before first use.
+GitHub allows users with Write access to click **Run workflow**, but the release
+job rejects anyone without Maintain or Admin access. Re-runs check both the
+original initiator and the person requesting the re-run. Runs from other branches
+or forks are skipped. Release runs are serialized, and existing tags are never
+moved or overwritten. If `main` advances during a build, the tag still identifies
+the commit that was built. Pushing a version tag no longer starts a release.
+
+If a run fails after creating the tag, inspect its logs and any draft release.
+The workflow deliberately refuses to reuse that version; recover the draft and
+assets manually or choose a new version. Never move a published release tag.
+
+This follows the manual version-input approach in
+[datadog-sync-cli](https://github.com/DataDog/datadog-sync-cli/blob/main/.github/workflows/prepare_release.yml)
+and the draft-release review step in
+[datadog-ci](https://github.com/DataDog/datadog-ci/blob/master/.github/workflows/publish-release.yml).
+Unlike those tools, ddtest does not need a version-bump PR: its binary version is
+injected by `make release VERSION=...`.
+
 ## Final word
 
 Many thanks to all of our contributors, and looking forward to seeing you on Github! :tada:

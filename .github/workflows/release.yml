@@ -1,27 +1,46 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (vMAJOR.MINOR.PATCH, for example v1.8.0)'
+        required: true
+        type: string
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
+    if: github.repository == 'DataDog/ddtest' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_REPO: ${{ github.repository }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
 
       - name: Get GitHub token
         uses: DataDog/dd-octo-sts-action@c85802a58e202b7e764b5441e4378c76043c8108 # v1.0.5
         id: octo-sts
         with:
           scope: DataDog/ddtest
-          policy: self.github.release.tags
+          policy: self.github.release.main
+
+      - name: Validate release request
+        env:
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+        run: bash .github/scripts/release.sh validate
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -29,27 +48,9 @@ jobs:
           go-version: '1.26.5'
 
       - name: Build binaries
-        run: |
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          make release VERSION="$TAG_NAME"
+        run: make release VERSION="$VERSION"
 
       - name: Create Release and Upload Assets
         env:
           GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
-        run: |
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          gh release create "$TAG_NAME" \
-            --title "$TAG_NAME" \
-            --draft \
-            --generate-notes \
-            dist/*
-
-      - name: Print Release Summary
-        env:
-          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
-        run: |
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          RELEASE_URL=$(gh release view "$TAG_NAME" --json url --jq .url)
-          echo "## Release Created! 🎉" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Please review and publish the release! Here is the link: $RELEASE_URL" >> $GITHUB_STEP_SUMMARY
+        run: bash .github/scripts/release.sh create
