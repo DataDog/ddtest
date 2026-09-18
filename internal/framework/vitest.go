@@ -62,6 +62,10 @@ func (v *Vitest) Name() string {
 	return "vitest"
 }
 
+func (v *Vitest) Detect(repositoryRoot string) (bool, error) {
+	return detectJavaScriptFramework(repositoryRoot, "vitest")
+}
+
 // Vitest is planned and skipped at suite (test file) level. Native full test
 // discovery is unnecessary for that mode.
 func (v *Vitest) SupportsFullTestDiscovery() bool {

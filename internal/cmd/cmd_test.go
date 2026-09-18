@@ -158,23 +158,17 @@ func TestRootCommandFlags(t *testing.T) {
 }
 
 func TestCommandHierarchy(t *testing.T) {
-	// Verify that planCmd and runCmd are added to rootCmd
+	// Verify that the public commands are added to rootCmd.
 	commands := rootCmd.Commands()
-	var foundPlan, foundRun bool
+	found := make(map[string]bool)
 	for _, cmd := range commands {
-		if cmd.Use == "plan" {
-			foundPlan = true
-		}
-		if cmd.Use == "run" {
-			foundRun = true
-		}
+		found[cmd.Use] = true
 	}
 
-	if !foundPlan {
-		t.Error("plan command should be added to root command")
-	}
-	if !foundRun {
-		t.Error("run command should be added to root command")
+	for _, name := range []string{"onboard", "plan", "run", "testdrive"} {
+		if !found[name] {
+			t.Errorf("%s command should be added to root command", name)
+		}
 	}
 }
 
@@ -444,8 +438,15 @@ func TestExecute(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "ddtest") {
-		t.Error("help output should contain command name 'ddtest'")
+	for _, expected := range []string{
+		"Start here:",
+		"cd <repository>",
+		"ddtest onboard",
+		"onboard     Start here: onboard this repository to Test Optimization",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Errorf("help output should contain %q:\n%s", expected, output)
+		}
 	}
 }
 
@@ -647,8 +648,8 @@ func TestCommandUsage(t *testing.T) {
 	}
 
 	// Expected commands (cobra adds completion and help automatically)
-	expectedCommands := []string{"plan", "run"}
-	requiredCommands := []string{"completion", "help [command]", "plan", "run"}
+	expectedCommands := []string{"onboard", "plan", "run", "testdrive"}
+	requiredCommands := []string{"completion", "help [command]", "onboard", "plan", "run", "testdrive"}
 
 	// Verify minimum expected commands exist
 	for _, expected := range expectedCommands {
