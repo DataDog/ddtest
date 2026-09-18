@@ -5,10 +5,13 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/git"
 	runnerpkg "github.com/DataDog/ddtest/internal/runner"
@@ -17,6 +20,99 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+func TestCommandsWithPositionalTestPaths(t *testing.T) {
+	for _, command := range []*cobra.Command{planCmd, runCmd} {
+		for _, tt := range []struct {
+			name       string
+			args       []string
+			planExists bool
+			wantFiles  []string
+			wantErr    string
+		}{
+			{name: "no paths"},
+			{name: "reuse plan without paths", planExists: true},
+			{name: "single file", args: []string{"spec/a_spec.rb"}, wantFiles: []string{"spec/a_spec.rb"}},
+			{name: "multiple files", args: []string{"spec/a_spec.rb", "other/c_spec.rb"}, wantFiles: []string{"other/c_spec.rb", "spec/a_spec.rb"}},
+			{name: "directory", args: []string{"spec/"}, wantFiles: []string{"spec/a_spec.rb", "spec/nested/b_spec.rb"}},
+			{name: "file and directory", args: []string{"other/c_spec.rb", "spec/"}, wantFiles: []string{"other/c_spec.rb", "spec/a_spec.rb", "spec/nested/b_spec.rb"}},
+			{name: "overlapping paths", args: []string{"spec/", "./spec/a_spec.rb"}, wantFiles: []string{"spec/a_spec.rb", "spec/nested/b_spec.rb"}},
+			{name: "absolute path", args: []string{"ABSOLUTE"}, wantFiles: []string{"spec/a_spec.rb"}},
+			{name: "separator", args: []string{"--", "spec/a_spec.rb"}, wantFiles: []string{"spec/a_spec.rb"}},
+			{name: "existing plan", args: []string{"spec/a_spec.rb"}, planExists: true, wantFiles: []string{"spec/a_spec.rb"}},
+			{name: "missing file", args: []string{"missing.rb"}, wantErr: `invalid test path "missing.rb"`},
+			{name: "test selector", args: []string{"spec/a_spec.rb:42"}, wantErr: "invalid test path"},
+			{name: "command", args: []string{"--", "pytest", "-k", "one"}, wantErr: `invalid test path "pytest"`},
+			{name: "conflicting flag", args: []string{"--tests-location", "spec/**/*.rb", "spec/a_spec.rb"}, wantErr: "not both"},
+		} {
+			t.Run(command.Name()+"/"+tt.name, func(t *testing.T) {
+				t.Chdir(t.TempDir())
+				viper.Reset()
+				t.Cleanup(viper.Reset)
+				t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION", "unchanged")
+				for _, file := range []string{"spec/a_spec.rb", "spec/nested/b_spec.rb", "other/c_spec.rb"} {
+					if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(file, nil, 0644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if tt.planExists {
+					if err := os.MkdirAll(constants.RunnerDirectory, 0755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(constants.ParallelRunnersOutputPath, []byte("1"), 0644); err != nil {
+						t.Fatal(err)
+					}
+					if command.Name() == "run" && len(tt.args) > 0 {
+						tt.wantErr = "saved plan already exists"
+					}
+				}
+				if tt.name == "absolute path" {
+					path, err := filepath.Abs("spec/a_spec.rb")
+					if err != nil {
+						t.Fatal(err)
+					}
+					tt.args = []string{path}
+				}
+
+				preRunCalled, runCalled := false, false
+				root := &cobra.Command{Use: "ddtest", PersistentPreRun: func(*cobra.Command, []string) { preRunCalled = true }}
+				child := &cobra.Command{Use: command.Use, Args: command.Args, Run: func(*cobra.Command, []string) { runCalled = true }}
+				child.Flags().String("tests-location", "", "Test discovery pattern")
+				root.AddCommand(child)
+				root.SetArgs(append([]string{command.Name()}, tt.args...))
+				var output bytes.Buffer
+				root.SetOut(&output)
+				root.SetErr(&output)
+				err := root.Execute()
+				if tt.wantErr != "" {
+					if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+						t.Fatalf("error = %v, want %q", err, tt.wantErr)
+					}
+					if preRunCalled || runCalled {
+						t.Fatal("invalid arguments reached command hooks")
+					}
+					return
+				}
+				if err != nil || !preRunCalled || !runCalled {
+					t.Fatalf("valid invocation failed: error=%v preRun=%v run=%v", err, preRunCalled, runCalled)
+				}
+				if len(tt.args) == 0 {
+					if got := settings.GetTestsLocation(); got != "unchanged" {
+						t.Fatalf("tests-location = %q, want unchanged", got)
+					}
+					return
+				}
+				files, err := discovery.DiscoverTestFiles(settings.GetTestsLocation(), "")
+				if err != nil || !slices.Equal(files, tt.wantFiles) {
+					t.Fatalf("discovered files = %v, error = %v, want %v", files, err, tt.wantFiles)
+				}
+			})
+		}
+	}
+}
 
 func TestRootCommandFlags(t *testing.T) {
 	// Reset viper to ensure clean state
@@ -162,10 +258,10 @@ func TestCommandHierarchy(t *testing.T) {
 	commands := rootCmd.Commands()
 	var foundPlan, foundRun bool
 	for _, cmd := range commands {
-		if cmd.Use == "plan" {
+		if cmd.Name() == "plan" {
 			foundPlan = true
 		}
-		if cmd.Use == "run" {
+		if cmd.Name() == "run" {
 			foundRun = true
 		}
 	}
@@ -654,7 +750,7 @@ func TestCommandUsage(t *testing.T) {
 	for _, expected := range expectedCommands {
 		found := false
 		for _, cmd := range subCommands {
-			if cmd.Use == expected {
+			if cmd.Name() == expected {
 				found = true
 				break
 			}
