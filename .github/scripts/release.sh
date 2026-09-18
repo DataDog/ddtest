@@ -13,11 +13,13 @@ fi
 
 # A re-run must be authorized by both the original actor and the re-running actor.
 for actor in "$GITHUB_ACTOR" "$GITHUB_TRIGGERING_ACTOR"; do
-  role=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$actor/permission" --jq .role_name)
-  case "$role" in
-    maintain|admin) ;;
-    *) echo "Release requires Maintain or Admin access: $actor has role $role." >&2; exit 1 ;;
-  esac
+  # Custom roles (such as dd-repo-owner) can inherit Maintain permissions.
+  allowed=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$actor/permission" \
+    --jq '.user.permissions | .maintain == true or .admin == true')
+  if [[ "$allowed" != true ]]; then
+    echo "Release requires Maintain or Admin access: $actor is not authorized." >&2
+    exit 1
+  fi
 done
 
 # Propagate API errors instead of treating them as an absent tag.

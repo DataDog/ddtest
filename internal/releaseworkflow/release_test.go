@@ -17,6 +17,7 @@ func TestRelease(t *testing.T) {
 	}{
 		{name: "maintainer", mode: "validate"},
 		{name: "admin", mode: "validate", env: map[string]string{"MOCK_ROLE": "admin"}},
+		{name: "custom maintainer role", mode: "validate", env: map[string]string{"MOCK_ROLE": "dd-repo-owner"}},
 		{name: "writer denied", env: map[string]string{"MOCK_ROLE": "write"}, want: "Maintain or Admin"},
 		{name: "reader denied", env: map[string]string{"MOCK_ROLE": "read"}, want: "Maintain or Admin"},
 		{name: "rerun denied", env: map[string]string{"MOCK_RERUN_ROLE": "write"}, want: "Maintain or Admin"},
@@ -46,11 +47,17 @@ func TestRelease(t *testing.T) {
 			write("gh", `#!/usr/bin/env bash
 set -eu
 printf '%s\n' "$*" >> "$MOCK_LOG"
+permission() {
+  case "$1" in
+    maintain|admin|dd-repo-owner) echo true ;;
+    *) echo false ;;
+  esac
+}
 case "$*" in
   *collaborators/original/permission*)
     if [[ "$MOCK_PERMISSION_FAILURE" == 1 ]]; then echo 'permission lookup failed' >&2; exit 1; fi
-    echo "$MOCK_ROLE" ;;
-  *collaborators/rerunner/permission*) echo "$MOCK_RERUN_ROLE" ;;
+    permission "$MOCK_ROLE" ;;
+  *collaborators/rerunner/permission*) permission "$MOCK_RERUN_ROLE" ;;
   *matching-refs*)
     if [[ "$MOCK_TAG_FAILURE" == 1 ]]; then echo 'tag lookup failed' >&2; exit 1; fi
     echo "$MOCK_REFS" ;;

@@ -73,7 +73,8 @@ We also recommend that you share in your description:
 
 ## Releasing
 
-Repository maintainers (GitHub Maintain or Admin role) can create a release without
+Repository maintainers (effective GitHub Maintain or Admin permissions, including
+custom roles such as `dd-repo-owner`) can create a release without
 creating or pushing a tag locally:
 
 1. Open [Actions → Release](https://github.com/DataDog/ddtest/actions/workflows/release.yml).
