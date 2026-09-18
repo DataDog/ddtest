@@ -20,6 +20,8 @@ type mockRailsCommandExecutor struct {
 	onTestExecution func(name string, args []string)
 	railsGemPath    string            // Optional: custom path for rails gem, defaults to temp dir
 	capturedEnvMap  map[string]string // Captured environment map from Run calls
+	showOutput      []byte
+	versionOutput   []byte
 }
 
 func (m *mockRailsCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
@@ -30,6 +32,9 @@ func (m *mockRailsCommandExecutor) CombinedOutput(ctx context.Context, name stri
 	if name == "bundle" && len(args) >= 2 && slices.Contains(args, "show") && slices.Contains(args, "rails") {
 		// bundle show rails
 		if m.isRails {
+			if m.showOutput != nil {
+				return m.showOutput, nil
+			}
 			// Return a valid file path that exists
 			railsPath := m.railsGemPath
 			if railsPath == "" {
@@ -45,6 +50,9 @@ func (m *mockRailsCommandExecutor) CombinedOutput(ctx context.Context, name stri
 	if name == "bundle" && len(args) >= 3 && slices.Contains(args, "rails") && slices.Contains(args, "version") {
 		// bundle exec rails version
 		if m.isRails {
+			if m.versionOutput != nil {
+				return m.versionOutput, nil
+			}
 			return []byte("Rails 7.0.0"), nil
 		}
 		return []byte("Rails is not currently installed"), &exec.ExitError{}
@@ -482,6 +490,51 @@ func TestMinitest_isRailsApplication_RailsDetected(t *testing.T) {
 
 	if !isRails {
 		t.Error("expected Rails to be detected")
+	}
+}
+
+func TestMinitest_RailsDetectionWithDebugOutput(t *testing.T) {
+	t.Setenv("DD_TRACE_DEBUG", "true")
+	t.Chdir(t.TempDir())
+	railsPath := t.TempDir()
+	debugLine := "D, [2026-09-18T12:00:00.000000 #123] DEBUG -- ddtrace: tracer diagnostics\n"
+	for _, tt := range []struct {
+		name          string
+		showOutput    string
+		versionOutput string
+		wantRails     bool
+	}{
+		{"debug around gem path", debugLine + railsPath + "\n" + debugLine, "Rails 7.0.0\n", true},
+		{"debug around version", railsPath + "\n", debugLine + "Rails 7.0.0\n" + debugLine, true},
+		{"debug around both", debugLine + railsPath + "\n" + debugLine, debugLine + "Rails 7.0.0\n" + debugLine, true},
+		{"missing gem path", debugLine, "Rails 7.0.0\n", false},
+		{"nonexistent gem path", debugLine + filepath.Join(railsPath, "missing") + "\n", "Rails 7.0.0\n", false},
+		{"missing version", railsPath + "\n", debugLine, false},
+		{"version only mentioned in log", railsPath + "\n", debugLine + "DEBUG -- detected Rails 7.0.0\n", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			executor := &mockRailsCommandExecutor{
+				isRails:       true,
+				showOutput:    []byte(tt.showOutput),
+				versionOutput: []byte(tt.versionOutput),
+				onTestExecution: func(name string, args []string) {
+					wantArgs := []string{"exec", "rake", "test"}
+					if tt.wantRails {
+						wantArgs = []string{"exec", "rails", "test", "test/models/user_test.rb"}
+					}
+					if name != "bundle" || !slices.Equal(args, wantArgs) {
+						t.Errorf("got command %s %v, want bundle %v", name, args, wantArgs)
+					}
+				},
+			}
+			minitest := newTestMinitestWithExecutor(executor)
+			if err := minitest.RunTests(t.Context(), []string{"test/models/user_test.rb"}, nil); err != nil {
+				t.Fatal(err)
+			}
+			if got := os.Getenv("DD_TRACE_DEBUG"); got != "true" {
+				t.Errorf("DD_TRACE_DEBUG changed to %q", got)
+			}
+		})
 	}
 }
 

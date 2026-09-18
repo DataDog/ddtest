@@ -122,14 +122,18 @@ func (m *Minitest) isRailsApplication(ctx context.Context) bool {
 		return false
 	}
 
-	// Verify the output is a valid filepath that exists
-	railsPath := strings.TrimSpace(string(output))
-	if railsPath == "" {
-		slog.Debug("Not a Rails application: bundle show rails returned empty output")
-		return false
+	// Bundler can emit tracer debug logs alongside the gem path (DD_TRACE_DEBUG).
+	// Find the path on its own line rather than treating all output as a path.
+	var railsPath string
+	for line := range strings.SplitSeq(string(output), "\n") {
+		candidate := strings.TrimSpace(line)
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			railsPath = candidate
+			break
+		}
 	}
-	if _, err := os.Stat(railsPath); err != nil {
-		slog.Debug("Not a Rails application: rails gem path does not exist", "path", railsPath, "error", err)
+	if railsPath == "" {
+		slog.Debug("Not a Rails application: bundle show rails returned no existing gem directory", "output", string(output))
 		return false
 	}
 
@@ -140,15 +144,17 @@ func (m *Minitest) isRailsApplication(ctx context.Context) bool {
 		return false
 	}
 
-	// Verify the output starts with "Rails <version>"
-	versionOutput := strings.TrimSpace(string(output))
-	if !strings.HasPrefix(versionOutput, "Rails ") {
-		slog.Debug("Not a Rails application: rails version output does not start with 'Rails '", "output", versionOutput)
-		return false
+	// Rails version output can also be surrounded by tracer debug logs.
+	for line := range strings.SplitSeq(string(output), "\n") {
+		versionOutput := strings.TrimSpace(line)
+		if strings.HasPrefix(versionOutput, "Rails ") {
+			slog.Debug("Detected Rails application", "version_output", versionOutput)
+			return true
+		}
 	}
 
-	slog.Debug("Detected Rails application", "version_output", versionOutput)
-	return true
+	slog.Debug("Not a Rails application: rails version output has no line starting with 'Rails '", "output", string(output))
+	return false
 }
 
 // getMinitestCommand determines whether to use rails test or rake test
