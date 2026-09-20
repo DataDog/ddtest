@@ -127,8 +127,44 @@ func JoinGlobPatterns(patterns []string) string {
 	case 1:
 		return patterns[0]
 	default:
-		return "{" + strings.Join(patterns, ",") + "}"
+		escaped := make([]string, len(patterns))
+		for i, pattern := range patterns {
+			escaped[i] = escapeTopLevelGlobCommas(pattern)
+		}
+		return "{" + strings.Join(escaped, ",") + "}"
 	}
+}
+
+func escapeTopLevelGlobCommas(pattern string) string {
+	var result strings.Builder
+	braceDepth := 0
+	classDepth := 0
+	escaped := false
+	for _, char := range pattern {
+		if escaped {
+			result.WriteRune(char)
+			escaped = false
+			continue
+		}
+		switch char {
+		case '\\':
+			escaped = true
+		case '{':
+			braceDepth++
+		case '}':
+			braceDepth--
+		case '[':
+			classDepth++
+		case ']':
+			classDepth--
+		case ',':
+			if braceDepth == 0 && classDepth == 0 {
+				result.WriteRune('\\')
+			}
+		}
+		result.WriteRune(char)
+	}
+	return result.String()
 }
 
 // ParseGlobPatterns normalizes and validates each pattern before combining them.
@@ -167,14 +203,37 @@ func ParseTestSelection(args []string) (string, error) {
 				return "", err
 			}
 		}
-		if filepath.IsAbs(path) {
+		if filepath.IsAbs(path) || info != nil {
 			cwd, err := os.Getwd()
 			if err != nil {
 				return "", err
 			}
-			path, err = filepath.Rel(cwd, path)
+			absolutePath, err := filepath.Abs(path)
 			if err != nil {
 				return "", err
+			}
+			if info != nil {
+				absolutePath, err = filepath.EvalSymlinks(absolutePath)
+				if err != nil {
+					return "", fmt.Errorf("resolve test path %q: %w", arg, err)
+				}
+				cwd, err = filepath.EvalSymlinks(cwd)
+				if err != nil {
+					return "", err
+				}
+			}
+			path, err = filepath.Rel(cwd, absolutePath)
+			if err != nil {
+				return "", err
+			}
+			if info != nil && info.IsDir() {
+				cwdFromSelection, err := filepath.Rel(absolutePath, cwd)
+				if err != nil {
+					return "", err
+				}
+				if !isParentPath(cwdFromSelection) {
+					path = "."
+				}
 			}
 		}
 		if info != nil {
@@ -189,6 +248,10 @@ func ParseTestSelection(args []string) (string, error) {
 		patterns = append(patterns, path)
 	}
 	return ParseGlobPatterns(patterns)
+}
+
+func isParentPath(path string) bool {
+	return path == ".." || strings.HasPrefix(path, ".."+string(filepath.Separator))
 }
 
 type PathMatcher struct {
