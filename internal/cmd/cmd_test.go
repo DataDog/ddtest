@@ -224,11 +224,9 @@ func TestRunPlanCommand(t *testing.T) {
 	attributes := detectedCLICommandAttributes()
 	originalPlanCommand := planCommand
 	originalNewTelemetryClient := newTelemetryClient
-	originalExitProcess := exitProcess
 	t.Cleanup(func() {
 		planCommand = originalPlanCommand
 		newTelemetryClient = originalNewTelemetryClient
-		exitProcess = originalExitProcess
 	})
 
 	telemetryClient := &fakeTelemetryClient{}
@@ -246,11 +244,10 @@ func TestRunPlanCommand(t *testing.T) {
 		telemetry.RecordCLICommandAttributes(got, attributes)
 		return nil
 	}
-	exitProcess = func(code int) {
-		t.Fatalf("exitProcess(%d) should not be called", code)
-	}
 
-	runPlanCommand(command, nil)
+	if err := runPlanCommand(command, nil); err != nil {
+		t.Fatal(err)
+	}
 
 	if calls != 1 {
 		t.Fatalf("expected plan command to be called once, got %d", calls)
@@ -266,14 +263,12 @@ func TestRunPlanCommand(t *testing.T) {
 	telemetryClient.assertSamples(t, "distribution", "ddtest.cli.command_ms", tags, 1)
 }
 
-func TestRunPlanCommandExitsOnError(t *testing.T) {
+func TestRunPlanCommandReturnsError(t *testing.T) {
 	originalPlanCommand := planCommand
 	originalNewTelemetryClient := newTelemetryClient
-	originalExitProcess := exitProcess
 	t.Cleanup(func() {
 		planCommand = originalPlanCommand
 		newTelemetryClient = originalNewTelemetryClient
-		exitProcess = originalExitProcess
 	})
 
 	telemetryClient := &fakeTelemetryClient{}
@@ -282,15 +277,8 @@ func TestRunPlanCommandExitsOnError(t *testing.T) {
 	planCommand = func(ctx context.Context, got telemetry.Client) error {
 		return planErr
 	}
-	var exitCodes []int
-	exitProcess = func(code int) {
-		exitCodes = append(exitCodes, code)
-	}
-
-	runPlanCommand(&cobra.Command{}, nil)
-
-	if len(exitCodes) != 1 || exitCodes[0] != 1 {
-		t.Fatalf("expected exit code 1, got %v", exitCodes)
+	if err := runPlanCommand(&cobra.Command{}, nil); !errors.Is(err, planErr) {
+		t.Fatalf("returned error = %v, want %v", err, planErr)
 	}
 	if telemetryClient.flushCalls != 1 {
 		t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
@@ -307,11 +295,9 @@ func TestRunTestCommand(t *testing.T) {
 	attributes := detectedCLICommandAttributes()
 	originalNewRunner := newRunner
 	originalNewTelemetryClient := newTelemetryClient
-	originalExitProcess := exitProcess
 	t.Cleanup(func() {
 		newRunner = originalNewRunner
 		newTelemetryClient = originalNewTelemetryClient
-		exitProcess = originalExitProcess
 	})
 
 	telemetryClient := &fakeTelemetryClient{}
@@ -325,11 +311,10 @@ func TestRunTestCommand(t *testing.T) {
 		telemetry.RecordCLICommandAttributes(got, attributes)
 		return fake
 	}
-	exitProcess = func(code int) {
-		t.Fatalf("exitProcess(%d) should not be called", code)
-	}
 
-	runTestCommand(command, nil)
+	if err := runTestCommand(command, nil); err != nil {
+		t.Fatal(err)
+	}
 
 	if fake.calls != 1 {
 		t.Fatalf("expected runner to be called once, got %d", fake.calls)
@@ -348,15 +333,13 @@ func TestRunTestCommand(t *testing.T) {
 	telemetryClient.assertSamples(t, "distribution", "ddtest.cli.command_ms", tags, 1)
 }
 
-func TestRunTestCommandExitsOnError(t *testing.T) {
+func TestRunTestCommandReturnsError(t *testing.T) {
 	attributes := detectedCLICommandAttributes()
 	originalNewRunner := newRunner
 	originalNewTelemetryClient := newTelemetryClient
-	originalExitProcess := exitProcess
 	t.Cleanup(func() {
 		newRunner = originalNewRunner
 		newTelemetryClient = originalNewTelemetryClient
-		exitProcess = originalExitProcess
 	})
 
 	telemetryClient := &fakeTelemetryClient{}
@@ -366,15 +349,8 @@ func TestRunTestCommandExitsOnError(t *testing.T) {
 		telemetry.RecordCLICommandAttributes(got, attributes)
 		return fake
 	}
-	var exitCodes []int
-	exitProcess = func(code int) {
-		exitCodes = append(exitCodes, code)
-	}
-
-	runTestCommand(&cobra.Command{}, nil)
-
-	if len(exitCodes) != 1 || exitCodes[0] != 1 {
-		t.Fatalf("expected exit code 1, got %v", exitCodes)
+	if err := runTestCommand(&cobra.Command{}, nil); !errors.Is(err, fake.err) {
+		t.Fatalf("returned error = %v, want %v", err, fake.err)
 	}
 	if telemetryClient.flushCalls != 1 {
 		t.Fatalf("telemetry flush calls = %d, want 1", telemetryClient.flushCalls)
@@ -797,4 +773,33 @@ func (m *fakeTelemetryMetric) Submit(value float64) {
 		tags:  m.tags,
 		value: value,
 	})
+}
+
+func TestExecutionErrorPrintedOnce(t *testing.T) {
+	originalPlanCommand, originalNewRunner := planCommand, newRunner
+	originalNewTelemetryClient := newTelemetryClient
+	t.Cleanup(func() {
+		planCommand, newRunner = originalPlanCommand, originalNewRunner
+		newTelemetryClient = originalNewTelemetryClient
+	})
+	newTelemetryClient = func() (telemetry.Client, error) { return telemetry.NoopClient(), nil }
+	failure := errcode.New(errcode.PlanPlatformDetectionFailed, "unable to detect platform")
+	planCommand = func(context.Context, telemetry.Client) error { return failure }
+	newRunner = func(telemetry.Client) runnerpkg.Runner { return &fakeCommandRunner{err: failure} }
+	for _, command := range []*cobra.Command{planCmd, runCmd} {
+		t.Run(command.Name(), func(t *testing.T) {
+			root := &cobra.Command{Use: "ddtest", SilenceUsage: rootCmd.SilenceUsage}
+			root.AddCommand(&cobra.Command{Use: command.Use, RunE: command.RunE})
+			root.SetArgs([]string{command.Name()})
+			var output bytes.Buffer
+			root.SetOut(&output)
+			root.SetErr(&output)
+			if err := root.Execute(); !errors.Is(err, failure) {
+				t.Fatalf("error = %v, want %v", err, failure)
+			}
+			if got, want := output.String(), "Error: "+failure.Error()+"\n"; got != want {
+				t.Fatalf("output = %q, want %q", got, want)
+			}
+		})
+	}
 }
