@@ -33,7 +33,7 @@ func run(execute func() error) int {
 	_ = os.Setenv("DD_TELEMETRY_DEPENDENCY_COLLECTION_ENABLED", "0")
 
 	if err := execute(); err != nil {
-		slog.Error("FAILURE", "error", err)
+		// Cobra has already printed the error.
 		return 1
 	}
 	return 0

@@ -32,6 +32,7 @@ var rootCmd = &cobra.Command{
 	Long:              "Command line tool for running tests with Datadog Test Optimization.",
 	Version:           buildinfo.CurrentVersion(),
 	PersistentPreRunE: runPersistentPreRun,
+	SilenceUsage:      true,
 }
 
 var (
@@ -40,7 +41,6 @@ var (
 	}
 	newRunner          = func(telemetryClient telemetry.Client) runner.Runner { return runner.NewWithTelemetry(telemetryClient) }
 	newTelemetryClient = createTelemetryClient
-	exitProcess        = os.Exit
 )
 
 var planCmd = &cobra.Command{
@@ -51,14 +51,14 @@ var planCmd = &cobra.Command{
 		constants.TestFilesOutputPath,
 		constants.SkippablePercentageOutputPath,
 	),
-	Run: runPlanCommand,
+	RunE: runPlanCommand,
 }
 
 var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run tests using test optimization",
 	Long:  "Runs tests using Datadog Test Optimization to execute only necessary test files based on code changes.",
-	Run:   runTestCommand,
+	RunE:  runTestCommand,
 }
 
 type persistentFlagBinding struct {
@@ -88,6 +88,9 @@ var rootPersistentFlagBindings = []persistentFlagBinding{
 
 func init() {
 	rootCmd.SetVersionTemplate("{{ .Version }}\n")
+	rootCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return fmt.Errorf("%w\nRun `%s --help` for usage", err, cmd.CommandPath())
+	})
 
 	rootCmd.PersistentFlags().String("platform", "ruby", "Platform that runs tests")
 	rootCmd.PersistentFlags().String("framework", "rspec", "Test framework to use")
@@ -154,28 +157,18 @@ func gitAvailabilityTelemetryContext(cmd *cobra.Command) (telemetry.CLICommandTy
 	}
 }
 
-func runPlanCommand(cmd *cobra.Command, args []string) {
+func runPlanCommand(cmd *cobra.Command, args []string) error {
 	ctx := commandContext(cmd)
-	err := runWithTelemetry(ctx, telemetry.CLICommandPlan, func(telemetryClient telemetry.Client) error {
+	return runWithTelemetry(ctx, telemetry.CLICommandPlan, func(telemetryClient telemetry.Client) error {
 		return planCommand(ctx, telemetryClient)
 	})
-	if err != nil {
-		slog.Error("Planner failed", "error", err)
-		exitProcess(1)
-		return
-	}
 }
 
-func runTestCommand(cmd *cobra.Command, args []string) {
+func runTestCommand(cmd *cobra.Command, args []string) error {
 	ctx := commandContext(cmd)
-	err := runWithTelemetry(ctx, telemetry.CLICommandRun, func(telemetryClient telemetry.Client) error {
+	return runWithTelemetry(ctx, telemetry.CLICommandRun, func(telemetryClient telemetry.Client) error {
 		return newRunner(telemetryClient).Run(ctx)
 	})
-	if err != nil {
-		slog.Error("Runner failed", "error", err)
-		exitProcess(1)
-		return
-	}
 }
 
 func commandContext(cmd *cobra.Command) context.Context {
