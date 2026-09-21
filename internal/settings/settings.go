@@ -343,6 +343,10 @@ func GetTestsLocation() string {
 	return Get().TestsLocation
 }
 
+func GetTestsSelectionPattern() string {
+	return Get().TestsSelectionPattern
+}
+
 func GetTestsExcludePattern() string {
 	return Get().TestsExcludePattern
 }

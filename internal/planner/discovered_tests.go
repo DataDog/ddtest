@@ -30,7 +30,7 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 	if err != nil {
 		return err
 	}
-	selection, err := utils.NewPathMatcher(settings.Get().TestsSelectionPattern)
+	selection, err := utils.NewPathMatcher(settings.GetTestsSelectionPattern())
 	if err != nil {
 		return err
 	}
@@ -184,7 +184,7 @@ func (tp *TestPlanner) recordFastDiscoveryFallbackFiles(discoveredTestFiles []st
 	if err != nil {
 		return err
 	}
-	selection, err := utils.NewPathMatcher(settings.Get().TestsSelectionPattern)
+	selection, err := utils.NewPathMatcher(settings.GetTestsSelectionPattern())
 	if err != nil {
 		return err
 	}
