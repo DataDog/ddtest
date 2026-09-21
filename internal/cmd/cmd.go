@@ -20,6 +20,7 @@ import (
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/telemetry"
 	"github.com/DataDog/ddtest/internal/utils"
+	"github.com/kballard/go-shellquote"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -70,7 +71,8 @@ func usePositionalTestPatterns(cmd *cobra.Command, args []string) error {
 	}
 	if cmd.Name() == "run" {
 		if _, err := os.Stat(constants.ParallelRunnersOutputPath); err == nil {
-			return fmt.Errorf("a saved plan already exists; run ddtest plan with these patterns to replace it, then ddtest run without patterns")
+			arguments := shellquote.Join(args...)
+			return fmt.Errorf("you called ddtest run %s, but a saved plan already exists; run ddtest plan %s to replace it, then ddtest run", arguments, arguments)
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("cannot check saved plan: %w", err)
 		}

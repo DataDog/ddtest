@@ -59,9 +59,10 @@ defaults); positional arguments only narrow its results. For example:
 ddtest plan --tests-location 'custom_specs/**/*_spec.rb' custom_specs/models
 ```
 
-`plan` accepts patterns even when a saved plan exists. `run` accepts patterns only
-when there is no saved plan; otherwise, first run `ddtest plan` with the desired
-patterns, then `ddtest run` without patterns.
+`plan` accepts positional arguments even when a saved plan exists. `run` accepts
+positional arguments only when there is no saved plan; otherwise, first run
+`ddtest plan` with the desired files, directories, or glob patterns, then
+`ddtest run` without positional arguments.
 
 DDTest is meant to run in CI. Local runs are possible when you want to reuse
 CI's skippable tests on your machine; see

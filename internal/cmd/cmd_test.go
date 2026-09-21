@@ -17,6 +17,7 @@ import (
 	runnerpkg "github.com/DataDog/ddtest/internal/runner"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/telemetry"
+	"github.com/kballard/go-shellquote"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -44,6 +45,7 @@ func TestCommandsWithPositionalTestPatterns(t *testing.T) {
 			{name: "missing file", args: []string{"missing.rb"}, wantErr: "invalid test path"},
 			{name: "separator", args: []string{"--", "spec/**/*_spec.rb"}, wantFiles: []string{"spec/a_spec.rb", "spec/nested/b_spec.rb"}},
 			{name: "existing plan", args: []string{"spec/**/*_spec.rb"}, planExists: true, wantFiles: []string{"spec/a_spec.rb", "spec/nested/b_spec.rb"}},
+			{name: "existing plan with multiple arguments and spaces", args: []string{"spec/my tests/**/*_spec.rb", "other/*"}, planExists: true, wantFiles: []string{"other/c_spec.rb"}},
 			{name: "invalid glob", args: []string{"spec/["}, wantErr: "invalid path pattern"},
 			{name: "invalid individual patterns", args: []string{"{spec", "other}"}, wantErr: "invalid path pattern"},
 			{name: "empty pattern", args: []string{""}, wantErr: "path pattern must not be empty"},
@@ -90,6 +92,14 @@ func TestCommandsWithPositionalTestPatterns(t *testing.T) {
 				if tt.wantErr != "" {
 					if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 						t.Fatalf("error = %v, want %q", err, tt.wantErr)
+					}
+					if tt.planExists && command.Name() == "run" {
+						_, suggestion, _ := strings.Cut(err.Error(), "run ddtest plan ")
+						quotedArgs, _, _ := strings.Cut(suggestion, " to replace it")
+						gotArgs, quoteErr := shellquote.Split(quotedArgs)
+						if quoteErr != nil || !slices.Equal(gotArgs, tt.args) {
+							t.Errorf("suggested command does not preserve arguments %q: %v", tt.args, err)
+						}
 					}
 					if preRunCalled || runCalled {
 						t.Fatal("invalid arguments reached command hooks")
