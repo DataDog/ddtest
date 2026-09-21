@@ -1,6 +1,7 @@
 package framework
 
 import (
+	"os"
 	"reflect"
 	"testing"
 )
@@ -167,39 +168,26 @@ func TestPyTest_testPattern_ExplicitTestsLocationOverridesConfig(t *testing.T) {
 	}
 }
 
-func TestBraceExpand_SingleItem(t *testing.T) {
-	if got := braceExpand([]string{"test_*.py"}); got != "test_*.py" {
-		t.Errorf("expected single item returned as-is, got %q", got)
-	}
-}
-
-func TestBraceExpand_MultipleItems(t *testing.T) {
-	if got := braceExpand([]string{"test_*.py", "*_test.py"}); got != "{test_*.py,*_test.py}" {
-		t.Errorf("expected brace-wrapped result, got %q", got)
-	}
-}
-
 func TestPyTest_testPattern_MultipleTestpaths(t *testing.T) {
-	// Simulate a pytest.ini with multiple testpaths and no python_files
-	// by constructing a PyTest that will read from loadPytestConfig.
-	// We test braceExpand integration directly via testPattern() output.
-	pytest := &PyTest{platformEnv: map[string]string{}}
-
-	// Use braceExpand directly to verify the combined pattern shape.
-	testpaths := []string{"tests", "src"}
-	filePart := "{test_*,*_test}.py"
-	expected := "{tests,src}/**/" + filePart
-	got := braceExpand(testpaths) + "/**/" + filePart
-	if got != expected {
-		t.Errorf("expected %q, got %q", expected, got)
+	t.Chdir(t.TempDir())
+	setTestsLocation(t, "")
+	if err := os.WriteFile("pytest.ini", []byte("[pytest]\ntestpaths = tests src\n"), 0644); err != nil {
+		t.Fatal(err)
 	}
-	_ = pytest // kept to show this is framework-package logic
+	pytest := &PyTest{platformEnv: map[string]string{}}
+	if got, want := pytest.TestPattern(), "{tests,src}/**/{test_*,*_test}.py"; got != want {
+		t.Errorf("TestPattern() = %q, want %q", got, want)
+	}
 }
 
 func TestPyTest_testPattern_MultipleFilePatterns(t *testing.T) {
-	filePatterns := []string{"test_*.py", "*_test.py", "check_*.py"}
-	expected := "{test_*.py,*_test.py,check_*.py}"
-	if got := braceExpand(filePatterns); got != expected {
-		t.Errorf("expected %q, got %q", expected, got)
+	t.Chdir(t.TempDir())
+	setTestsLocation(t, "")
+	if err := os.WriteFile("pytest.ini", []byte("[pytest]\npython_files = test_*.py *_test.py check_*.py\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pytest := &PyTest{platformEnv: map[string]string{}}
+	if got, want := pytest.TestPattern(), "**/{test_*.py,*_test.py,check_*.py}"; got != want {
+		t.Errorf("TestPattern() = %q, want %q", got, want)
 	}
 }

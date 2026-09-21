@@ -39,6 +39,15 @@ DDTest ships as a CLI tool `ddtest` with two primary sub-commands: `plan` and `r
 Use `plan` to create a reusable `.testoptimization/` plan without running tests.
 Use `run` to execute that plan locally or in CI. If a plan is missing, `run` will generate it on the fly.
 
+Both commands accept files, directories, or quoted globs to narrow the configured
+test discovery. When a saved plan exists, use `plan` to change the selection;
+`run` rejects positional arguments.
+
+```bash
+ddtest plan spec/models spec/requests
+ddtest run
+```
+
 DDTest is meant to run in CI. Local runs are possible when you want to reuse
 CI's skippable tests on your machine; see
 [Running locally with CI skippable tests](docs/local-ci-skippable-tests.md).

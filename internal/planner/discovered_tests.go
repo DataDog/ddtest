@@ -30,6 +30,10 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 	if err != nil {
 		return err
 	}
+	selection, err := utils.NewPathMatcher(settings.GetTestsSelectionPattern())
+	if err != nil {
+		return err
+	}
 
 	discoveredTestsCount := len(discoveredTests)
 	if discoveredTestsCount == 0 {
@@ -59,7 +63,8 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 		// Full discovery receives the resolved test selection, but frameworks can still
 		// report extra tests loaded by process startup. Keep this planner-side guard so
 		// out-of-selection paths cannot enter the runnable file set or suite aggregates.
-		if normalizedSourceFile != "" && !testFileMatcher.MatchNormalizedPath(normalizedSourceFile) {
+		if (!selection.Empty() && !selection.MatchNormalizedPath(normalizedSourceFile)) ||
+			(normalizedSourceFile != "" && !testFileMatcher.MatchNormalizedPath(normalizedSourceFile)) {
 			excludedTestsCount++
 			continue
 		}
@@ -179,10 +184,15 @@ func (tp *TestPlanner) recordFastDiscoveryFallbackFiles(discoveredTestFiles []st
 	if err != nil {
 		return err
 	}
+	selection, err := utils.NewPathMatcher(settings.GetTestsSelectionPattern())
+	if err != nil {
+		return err
+	}
 
 	for _, testFile := range discoveredTestFiles {
 		normalizedTestFile := utils.NormalizePath(testFile)
-		if normalizedTestFile != "" && testFileMatcher.MatchNormalizedPath(normalizedTestFile) {
+		if normalizedTestFile != "" && testFileMatcher.MatchNormalizedPath(normalizedTestFile) &&
+			(selection.Empty() || selection.MatchNormalizedPath(normalizedTestFile)) {
 			tp.testFiles[normalizedTestFile] = struct{}{}
 		}
 	}

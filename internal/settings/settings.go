@@ -125,6 +125,7 @@ type Config struct {
 	CiNodeWorkers          int               `mapstructure:"ci_node_workers"`
 	Command                string            `mapstructure:"command"`
 	TestsLocation          string            `mapstructure:"tests_location"`
+	TestsSelectionPattern  string            `mapstructure:"-"` // CLI positional scope, applied after discovery.
 	TestsExcludePattern    string            `mapstructure:"tests_exclude_pattern"`
 	TestDiscoveryCache     string            `mapstructure:"test_discovery_cache"`
 	TestSkippingLevel      TestSkippingLevel `mapstructure:"test_skipping_mode"`
@@ -340,6 +341,10 @@ func GetCommand() string {
 
 func GetTestsLocation() string {
 	return Get().TestsLocation
+}
+
+func GetTestsSelectionPattern() string {
+	return Get().TestsSelectionPattern
 }
 
 func GetTestsExcludePattern() string {

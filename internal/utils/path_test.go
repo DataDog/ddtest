@@ -63,6 +63,56 @@ func TestNormalizePattern(t *testing.T) {
 	}
 }
 
+func TestParseGlobPatterns(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		patterns []string
+		want     string
+		matches  []string
+		excludes []string
+	}{
+		{name: "none"},
+		{name: "exact file", patterns: []string{"spec/a_spec.rb"}, want: "spec/a_spec.rb", matches: []string{"spec/a_spec.rb"}, excludes: []string{"spec/b_spec.rb"}},
+		{name: "normalize", patterns: []string{" ./spec/**/*_spec.rb ", " ./tests/**/test_*.py "}, want: "{spec/**/*_spec.rb,tests/**/test_*.py}", matches: []string{"spec/a_spec.rb", "spec/models/a_spec.rb", "tests/test_a.py"}, excludes: []string{"spec/spec_helper.rb", "tests/conftest.py"}},
+		{name: "nested alternatives", patterns: []string{"{spec,other}/**/*_spec.rb", "tests/**/{test_*,*_test}.py"}, want: "{{spec,other}/**/*_spec.rb,tests/**/{test_*,*_test}.py}", matches: []string{"other/a_spec.rb", "tests/a_test.py"}, excludes: []string{"spec/fixtures/a.json"}},
+		{name: "literal comma", patterns: []string{"spec/foo,*_spec.rb", "other/x_spec.rb"}, want: `{spec/foo\,*_spec.rb,other/x_spec.rb}`, matches: []string{"spec/foo,bar_spec.rb", "other/x_spec.rb"}, excludes: []string{"spec/foo", "root_spec.rb"}},
+		{name: "character class", patterns: []string{"spec/[ab]?_spec.rb"}, want: "spec/[ab]?_spec.rb", matches: []string{"spec/a1_spec.rb"}, excludes: []string{"spec/c1_spec.rb"}},
+		{name: "literal bracket", patterns: []string{"spec/a[[]1]_spec.rb"}, want: "spec/a[[]1]_spec.rb", matches: []string{"spec/a[1]_spec.rb"}, excludes: []string{"spec/a1_spec.rb"}},
+		{name: "directory unchanged", patterns: []string{"spec/"}, want: "spec/", excludes: []string{"spec/a_spec.rb"}},
+		{name: "absolute unchanged", patterns: []string{"/project/spec/*.rb"}, want: "/project/spec/*.rb", matches: []string{"/project/spec/a.rb"}},
+		{name: "parent unchanged", patterns: []string{"../spec/*.rb"}, want: "../spec/*.rb", matches: []string{"../spec/a.rb"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseGlobPatterns(tt.patterns)
+			if err != nil || got != tt.want {
+				t.Fatalf("ParseGlobPatterns() = %q, %v; want %q", got, err, tt.want)
+			}
+			matcher, err := NewPathMatcher(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range tt.matches {
+				if !matcher.Match(path) {
+					t.Errorf("pattern %q does not match %q", got, path)
+				}
+			}
+			for _, path := range tt.excludes {
+				if matcher.Match(path) {
+					t.Errorf("pattern %q unexpectedly matches %q", got, path)
+				}
+			}
+		})
+	}
+}
+
+func TestParseGlobPatternsRejectsInvalidInput(t *testing.T) {
+	for _, patterns := range [][]string{{""}, {"   "}, {"./"}, {"spec/["}, {"{spec", "other}"}, {"spec/*.rb", "["}} {
+		if _, err := ParseGlobPatterns(patterns); err == nil {
+			t.Errorf("ParseGlobPatterns(%q) accepted invalid input", patterns)
+		}
+	}
+}
+
 func TestPathMatcher(t *testing.T) {
 	matcher, err := NewPathMatcher(" ./spec/**/*_spec.rb ")
 	if err != nil {
@@ -294,4 +344,76 @@ func gitTestEnv() []string {
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_TERMINAL_PROMPT=0",
 	)
+}
+
+func TestParseTestSelection(t *testing.T) {
+	root := t.TempDir()
+	workingDir := filepath.Join(root, "project")
+	if err := os.Mkdir(workingDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workingDir)
+	for _, file := range []string{"spec/a_spec.rb", "spec/nested/b_spec.rb", "spec/a[1],x_spec.rb", "spec/[models]/c_spec.rb", "other/d_spec.rb"} {
+		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	absolute, err := filepath.Abs("spec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("spec", "linked_specs"); err != nil {
+		t.Fatal(err)
+	}
+	siblingDir := filepath.Join(root, "sibling")
+	if err := os.Mkdir(siblingDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name     string
+		args     []string
+		matches  []string
+		excludes []string
+	}{
+		{name: "directory", args: []string{"./spec/"}, matches: []string{"spec/a_spec.rb", "spec/nested/b_spec.rb"}, excludes: []string{"specs/a_spec.rb", "other/d_spec.rb"}},
+		{name: "current directory", args: []string{"."}, matches: []string{"spec/a_spec.rb", "other/d_spec.rb"}},
+		{name: "absolute directory", args: []string{absolute}, matches: []string{"spec/a_spec.rb"}, excludes: []string{"other/d_spec.rb"}},
+		{name: "absolute ancestor directory", args: []string{root}, matches: []string{"spec/a_spec.rb", "other/d_spec.rb"}},
+		{name: "absolute sibling directory", args: []string{siblingDir}, excludes: []string{"spec/a_spec.rb", "other/d_spec.rb"}},
+		{name: "symlinked directory", args: []string{"linked_specs"}, matches: []string{"spec/a_spec.rb", "spec/nested/b_spec.rb"}, excludes: []string{"other/d_spec.rb"}},
+		{name: "absolute glob", args: []string{absolute + "/**/*_spec.rb"}, matches: []string{"spec/nested/b_spec.rb"}},
+		{name: "glob with literal comma", args: []string{"spec/a*,x_spec.rb", "other/d_spec.rb"}, matches: []string{"spec/a[1],x_spec.rb", "other/d_spec.rb"}, excludes: []string{"x_spec.rb"}},
+		{name: "literal metacharacters", args: []string{"spec/a[1],x_spec.rb", "other/d_spec.rb"}, matches: []string{"spec/a[1],x_spec.rb", "other/d_spec.rb"}, excludes: []string{"spec/a1,x_spec.rb", "x_spec.rb"}},
+		{name: "directory metacharacters", args: []string{"spec/[models]"}, matches: []string{"spec/[models]/c_spec.rb"}, excludes: []string{"spec/m/c_spec.rb"}},
+		{name: "unmatched glob", args: []string{"missing/**/*_spec.rb"}, excludes: []string{"spec/a_spec.rb"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			pattern, err := ParseTestSelection(tt.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			matcher, err := NewPathMatcher(pattern)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, file := range tt.matches {
+				if !matcher.Match(file) {
+					t.Errorf("%q should match %q", pattern, file)
+				}
+			}
+			for _, file := range tt.excludes {
+				if matcher.Match(file) {
+					t.Errorf("%q should not match %q", pattern, file)
+				}
+			}
+		})
+	}
+	for _, arg := range []string{"", " ", "missing.rb", "missing_dir/", "spec/["} {
+		if _, err := ParseTestSelection([]string{arg}); err == nil {
+			t.Errorf("accepted invalid argument %q", arg)
+		}
+	}
 }

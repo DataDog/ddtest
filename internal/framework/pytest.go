@@ -4,12 +4,12 @@ import (
 	"context"
 	"log/slog"
 	"maps"
-	"strings"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/DataDog/ddtest/internal/utils"
 )
 
 const (
@@ -59,12 +59,12 @@ func (p *PyTest) TestPattern() string {
 	if len(filePatterns) == 0 {
 		filePatterns = []string{"{test_*,*_test}.py"}
 	}
-	filePart := braceExpand(filePatterns)
+	filePart := utils.JoinGlobPatterns(filePatterns)
 
 	if len(cfg.Testpaths) == 0 {
 		return "**/" + filePart
 	}
-	return braceExpand(cfg.Testpaths) + "/**/" + filePart
+	return utils.JoinGlobPatterns(cfg.Testpaths) + "/**/" + filePart
 }
 
 func (p *PyTest) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
@@ -107,15 +107,6 @@ func (p *PyTest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 		return testFiles.ExplicitFiles, nil
 	}
 	return discovery.DiscoverTestFiles(testFiles.Pattern, settings.GetTestsExcludePattern())
-}
-
-// braceExpand collapses a list into a single glob token.
-// A single item is returned as-is; multiple items are wrapped: {a,b,c}.
-func braceExpand(items []string) string {
-	if len(items) == 1 {
-		return items[0]
-	}
-	return "{" + strings.Join(items, ",") + "}"
 }
 
 func (p *PyTest) SupportsFullTestDiscovery() bool {
