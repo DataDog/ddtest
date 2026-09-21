@@ -72,7 +72,7 @@ func usePositionalTestPatterns(cmd *cobra.Command, args []string) error {
 	if cmd.Name() == "run" {
 		if _, err := os.Stat(constants.ParallelRunnersOutputPath); err == nil {
 			arguments := shellquote.Join(args...)
-			return fmt.Errorf("you called ddtest run %s, but a saved plan already exists; run ddtest plan %s to replace it, then ddtest run", arguments, arguments)
+			return fmt.Errorf("you called `ddtest run %s`, but a saved plan already exists; run `ddtest plan %s` to replace it, then `ddtest run`", arguments, arguments)
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("cannot check saved plan: %w", err)
 		}

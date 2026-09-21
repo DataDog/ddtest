@@ -94,8 +94,8 @@ func TestCommandsWithPositionalTestPatterns(t *testing.T) {
 						t.Fatalf("error = %v, want %q", err, tt.wantErr)
 					}
 					if tt.planExists && command.Name() == "run" {
-						_, suggestion, _ := strings.Cut(err.Error(), "run ddtest plan ")
-						quotedArgs, _, _ := strings.Cut(suggestion, " to replace it")
+						_, suggestion, _ := strings.Cut(err.Error(), "run `ddtest plan ")
+						quotedArgs, _, _ := strings.Cut(suggestion, "` to replace it")
 						gotArgs, quoteErr := shellquote.Split(quotedArgs)
 						if quoteErr != nil || !slices.Equal(gotArgs, tt.args) {
 							t.Errorf("suggested command does not preserve arguments %q: %v", tt.args, err)
