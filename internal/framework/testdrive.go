@@ -7,7 +7,9 @@ package framework
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/settings"
@@ -53,7 +55,14 @@ func TestdriveCommand(root string, runner Framework) (string, []string, error) {
 			interpreter = "python3"
 		}
 		return interpreter, []string{"-m", "pytest"}, nil
-
+	case *RSpec:
+		command, args := f.getRSpecCommand()
+		return command, args, nil
+	case *Minitest:
+		if _, err := os.Stat(filepath.Join(root, "bin", "rails")); err == nil {
+			return "bin/rails", []string{"test"}, nil
+		}
+		return "bundle", []string{"exec", "rake", "test"}, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported testdrive framework: %s", runner.Name())
 	}

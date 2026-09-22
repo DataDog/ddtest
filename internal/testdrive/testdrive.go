@@ -49,7 +49,7 @@ type Testdrive struct {
 	args           []string
 	tracerLabel    string
 	platform       platform.Platform
-	tracerVersion  string
+ tracerVersion string
 	executor       commandExecutor
 	startIntake    func(string) (localIntake, error)
 	nodeVersion    func() string
@@ -76,16 +76,11 @@ func Prepare(version string) (*Testdrive, error) {
 		return nil, err
 	}
 	language := detectedPlatform.Name()
-	switch runner.Name() {
-	case "jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest":
-	default:
-		return nil, fmt.Errorf("testdrive does not yet support %s", runner.Name())
-	}
 	command, args, err := framework.TestdriveCommand(repositoryRoot, runner)
 	if err != nil {
 		return nil, err
 	}
-	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
+ label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 
 	return &Testdrive{repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) },
@@ -112,6 +107,9 @@ func (t *Testdrive) Preview(output io.Writer) {
 		_, _ = fmt.Fprintln(output, "  - resolve the selected dd-trace preload with node")
 	case "python":
 		_, _ = fmt.Fprintf(output, "  - reuse the project tracer; if absent, install %s with the test command’s Python interpreter inside <session>/python-packages\n", t.tracerLabel)
+
+	case "ruby":
+		_, _ = fmt.Fprintf(output, "  - reuse the project tracer; if absent, install %s with Bundler in <session>/gems, using an isolated Gemfile and lockfile\n", t.tracerLabel)
 
 	}
 	if t.framework.Name() == "cypress" {
@@ -156,7 +154,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	command, args := t.command, t.args
 	_, _ = fmt.Fprintf(output, "Running %s...\n", shellquote.Join(append([]string{command}, args...)...))
 	env := t.environment(installation.Path, server.URL(), session.ID())
-	maps.Copy(env, installation.Env)
+ maps.Copy(env, installation.Env)
 	if t.framework.Name() == "cypress" {
 		if command == "npm" && !slices.Contains(args, "--") {
 			args = append(slices.Clone(args), "--")
@@ -374,7 +372,9 @@ func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]st
 			}
 		}
 		env["PYTEST_ADDOPTS"] = strings.TrimSpace(os.Getenv("PYTEST_ADDOPTS") + " --ddtrace")
-
+	case "ruby":
+		delete(env, "NODE_OPTIONS")
+		env["RUBYOPT"] = strings.TrimSpace(os.Getenv("RUBYOPT") + " -rbundler/setup -rdatadog/ci/auto_instrument")
 	}
 	return env
 }
