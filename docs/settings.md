@@ -2,11 +2,14 @@
 
 Every DDTest setting can be passed as a CLI flag or as an environment variable.
 CLI flags take precedence over environment variables.
+When neither supplies a platform or framework, DDTest detects it from the current
+directory. An explicit framework also selects its platform. Multiple matching
+platforms or frameworks require explicit selection.
 
 | CLI flag | Environment variable | Env alias | Default | What it does |
 | --- | --- | --- | ---: | --- |
-| `--platform` | `DD_TEST_OPTIMIZATION_RUNNER_PLATFORM` | | `ruby` | Language/platform. Currently supported: `ruby`, `python`, `javascript`. |
-| `--framework` | `DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK` | | `rspec` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cucumber`, `cypress`, `jest`, `mocha`, `playwright`, `vitest`. |
+| `--platform` | `DD_TEST_OPTIMIZATION_RUNNER_PLATFORM` | | auto-detected | Language/platform. Currently supported: `ruby`, `python`, `javascript`. |
+| `--framework` | `DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK` | | auto-detected | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cucumber`, `cypress`, `jest`, `mocha`, `playwright`, `vitest`. |
 | `--command` | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND` | | `""` | Override the default base test command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, Playwright, and Vitest run/discovery, and pytest run/discovery (since 1.7.0). DDTest appends selected tests and framework-specific flags. For ddtest versions prior to 1.7.0 with pytest, the command cannot be changed. Pass extra flags with `PYTEST_ADDOPTS`. |
 | `--min-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM` | | physical CPU count | Minimum count DDTest considers when planning. Interpret it as CI nodes in CI-node mode, or workers in a single-node run. |
 | `--max-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM` | | physical CPU count | Maximum count DDTest considers when planning. Interpret it as CI nodes in CI-node mode, or workers in a single-node run. |
