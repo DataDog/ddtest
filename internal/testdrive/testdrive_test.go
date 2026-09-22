@@ -209,6 +209,8 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 		"Tests with coverage: 2 / 2",
 		"Jest: Passed",
 		"Tracer: dd-trace@latest · isolated",
+		"\x1b]8;;file://",
+		"report.html",
 	} {
 		if !strings.Contains(output.String(), expected) {
 			t.Errorf("Run() output does not contain %q:\n%s", expected, output.String())
@@ -229,7 +231,32 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 	if strings.Contains(output.String(), "PASS one.test.js") {
 		t.Fatalf("Run() leaked detailed Jest output:\n%s", output.String())
 	}
-
+	report, err := os.ReadFile(filepath.Join(installer.sessionDirectory, reportFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"Test events received",
+		"Any tests slower than the others?",
+		"Median test time · 1s",
+		"slow test",
+		"Run details",
+		"Tests with coverage",
+		"2 / 2",
+		"dd-trace@",
+		`href="intake/"`,
+		`href="test-output.txt"`,
+		`<article class="problem-card">`,
+	} {
+		if !strings.Contains(string(report), expected) {
+			t.Errorf("report does not contain %q", expected)
+		}
+	}
+	for _, hiddenCard := range []string{"Any tests failed?", "Any flaky tests?", "Any unusually broad test coverage?"} {
+		if strings.Contains(string(report), hiddenCard) {
+			t.Errorf("report contains no-problem card %q", hiddenCard)
+		}
+	}
 	for _, environmentVariable := range []string{
 		"DD_CIVISIBILITY_ITR_ENABLED",
 		"DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED",
@@ -278,7 +305,7 @@ func TestRunStillReportsEventsWhenJestFails(t *testing.T) {
 	if !strings.Contains(output.String(), "Test events received.") {
 		t.Fatalf("Run() did not report working instrumentation:\n%s", output.String())
 	}
-	if !strings.Contains(output.String(), "Failed tests (1):") || !strings.Contains(output.String(), "one.test.js › fails · Fail · 1ms") || !strings.Contains(output.String(), "Jest: Failed") {
+	if !strings.Contains(output.String(), "Failed tests (1):") || !strings.Contains(output.String(), "one.test.js › fails · Fail · 1ms") || !strings.Contains(output.String(), "Jest: Failed") || !strings.Contains(output.String(), "file://") {
 		t.Fatalf("Run() did not report the failure and report link:\n%s", output.String())
 	}
 }
