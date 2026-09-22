@@ -49,7 +49,7 @@ func (p *PyTest) Detect(repositoryRoot string) (bool, error) {
 	if err != nil || detected {
 		return detected, err
 	}
-	for _, filename := range []string{"pyproject.toml", "requirements.txt", "setup.py"} {
+	for _, filename := range []string{"pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "tox.ini"} {
 		detected, err = detectFileContaining(repositoryRoot, filename, "pytest")
 		if err != nil || detected {
 			return detected, err

@@ -28,7 +28,7 @@ jobs:
 	}
 
 	for _, expected := range []string{
-		"DDTest found JavaScript, Jest, and GitHub Actions.",
+		"DDTest found javascript, jest, and GitHub Actions.",
 		".github/workflows/test.yml",
 		"datadog/test-visibility-github-action@v3",
 		"api_key: ${{ secrets.DD_API_KEY }}",
@@ -77,7 +77,7 @@ func TestRunRequiresGitHubJestWorkflow(t *testing.T) {
 	repositoryRoot := newJestRepository(t, "name: lint\njobs:\n  lint:\n    steps:\n      - run: npm run lint\n")
 
 	err := Run(repositoryRoot, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "could not find a GitHub Actions workflow that runs Jest") {
+	if err == nil || !strings.Contains(err.Error(), "could not find a GitHub Actions workflow that runs jest") {
 		t.Fatalf("Run() error = %v", err)
 	}
 }

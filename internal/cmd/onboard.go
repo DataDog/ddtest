@@ -14,7 +14,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var onboardCmd = newOnboardCommand(onboard.Run)
+var onboardCmd = newOnboardCommand(func(root string, output io.Writer) error {
+	return onboard.RunWithFramework(root, onboardingFramework(), output)
+})
+
+func onboardingFramework() string {
+	if rootCmd.PersistentFlags().Changed("framework") {
+		name, _ := rootCmd.PersistentFlags().GetString("framework")
+		return name
+	}
+	return ""
+}
 
 func newOnboardCommand(run func(string, io.Writer) error) *cobra.Command {
 	return &cobra.Command{

@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
-	"github.com/DataDog/ddtest/internal/testdrive/tracer"
 )
 
 const reportFilename = "report.html"
@@ -117,14 +116,16 @@ type reportModel struct {
 	Tests     []reportTest
 }
 
-func writeReport(repositoryRoot, sessionDirectory string, findings intake.Findings, commandFailed bool) (string, error) {
+type reportRuntime struct{ Framework, Tracer string }
+
+func writeReport(repositoryRoot, sessionDirectory string, findings intake.Findings, commandFailed bool, runtime ...reportRuntime) (string, error) {
 	path := filepath.Join(sessionDirectory, reportFilename)
 	file, err := os.Create(path)
 	if err != nil {
 		return "", fmt.Errorf("create testdrive report: %w", err)
 	}
 
-	model := buildReport(repositoryRoot, findings, commandFailed)
+	model := buildReport(repositoryRoot, findings, commandFailed, runtime...)
 	executeErr := testdriveReport.Execute(file, model)
 	closeErr := file.Close()
 	if err := errors.Join(executeErr, closeErr); err != nil {
@@ -133,7 +134,11 @@ func writeReport(repositoryRoot, sessionDirectory string, findings intake.Findin
 	return path, nil
 }
 
-func buildReport(repositoryRoot string, findings intake.Findings, commandFailed bool) reportModel {
+func buildReport(repositoryRoot string, findings intake.Findings, commandFailed bool, runtime ...reportRuntime) reportModel {
+	info := reportRuntime{Framework: "Test command", Tracer: "Isolated installation"}
+	if len(runtime) > 0 {
+		info = runtime[0]
+	}
 	showTestCoverage := findings.CoverageLevel == "test"
 	showSuiteCoverage := findings.CoverageLevel == "suite"
 	model := reportModel{
@@ -142,8 +147,8 @@ func buildReport(repositoryRoot string, findings intake.Findings, commandFailed 
 		Facts: []reportFact{
 			{Label: "Test events", Value: fmt.Sprintf("%d", findings.TestEventCount), Tone: factTone(findings.TestEventCount > 0)},
 			{Label: "Tests with coverage", Value: fmt.Sprintf("%d / %d", findings.CoveredTestCount, findings.TestCount), Tone: factTone(findings.TestCount > 0 && findings.CoveredTestCount == findings.TestCount)},
-			{Label: "Jest", Value: passedFailed(!commandFailed), Tone: factTone(!commandFailed)},
-			{Label: "Tracer", Value: "dd-trace@" + tracer.JavaScriptVersion + " · isolated", Tone: "good"},
+			{Label: info.Framework, Value: passedFailed(!commandFailed), Tone: factTone(!commandFailed)},
+			{Label: "Tracer", Value: info.Tracer + " · isolated", Tone: "good"},
 		},
 		Artifacts: []reportArtifact{
 			{Title: "JSON traffic", Href: "intake/"},
@@ -152,6 +157,9 @@ func buildReport(repositoryRoot string, findings intake.Findings, commandFailed 
 		Tests: reportTests(repositoryRoot, findings.Tests, showTestCoverage),
 	}
 	model.Suites = reportSuites(findings.Tests, showSuiteCoverage)
+	if findings.CoveredTestCount == 0 {
+		model.Facts[1].Value = "Not reported"
+	}
 
 	if findings.TestEventCount == 0 {
 		model.Headline = "No test events received."
@@ -342,15 +350,23 @@ func readSource(repositoryRoot, sourceFile string, sourceStart, sourceEnd int) r
 		return reportSource{Error: fmt.Sprintf("Source line %d is outside %s.", sourceStart, sourceFile)}
 	}
 	if sourceEnd < sourceStart {
-		sourceEnd = inferJavaScriptTestEnd(lines, sourceStart)
+		if filepath.Ext(path) == ".py" || filepath.Ext(path) == ".rb" {
+			sourceEnd = min(sourceStart+11, len(lines))
+		} else {
+			sourceEnd = inferJavaScriptTestEnd(lines, sourceStart)
+		}
 	}
 	sourceEnd = min(sourceEnd, len(lines))
 	source := reportSource{Start: sourceStart, End: sourceEnd}
 	inBlockComment := false
 	for lineIndex := sourceStart - 1; lineIndex < sourceEnd; lineIndex++ {
+		code := highlightJavaScriptLine(lines[lineIndex], &inBlockComment)
+		if filepath.Ext(path) == ".py" || filepath.Ext(path) == ".rb" {
+			code = template.HTML(template.HTMLEscapeString(lines[lineIndex]))
+		}
 		source.Lines = append(source.Lines, reportSourceLine{
 			Number: lineIndex + 1,
-			Code:   highlightJavaScriptLine(lines[lineIndex], &inBlockComment),
+			Code:   code,
 		})
 	}
 	return source

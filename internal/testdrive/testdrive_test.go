@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -95,12 +96,12 @@ func TestPrepareRejectsUnsupportedRepository(t *testing.T) {
 	}
 }
 
-func TestPrepareRejectsJavaScriptWithoutJest(t *testing.T) {
+func TestPrepareRejectsJavaScriptWithoutSupportedRunner(t *testing.T) {
 	repositoryRoot := t.TempDir()
-	requireWriteFile(t, filepath.Join(repositoryRoot, "package.json"), `{"scripts":{"test":"mocha"}}`)
+	requireWriteFile(t, filepath.Join(repositoryRoot, "package.json"), `{"scripts":{"test":"node test.js"}}`)
 
 	_, err := Prepare(repositoryRoot)
-	if err == nil || !strings.Contains(err.Error(), "could not find a Jest test script") {
+	if err == nil || !strings.Contains(err.Error(), "could not detect a supported test framework") {
 		t.Fatalf("Prepare() error = %v, want Jest diagnostic", err)
 	}
 }
@@ -175,7 +176,7 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 	if executor.env["DD_CIVISIBILITY_AGENTLESS_URL"] != server.url {
 		t.Fatalf("agentless URL = %q", executor.env["DD_CIVISIBILITY_AGENTLESS_URL"])
 	}
-	if !strings.HasPrefix(executor.env["NODE_OPTIONS"], "-r "+installer.preloadPath) {
+	if !strings.HasPrefix(executor.env["NODE_OPTIONS"], "-r "+strconv.Quote(installer.preloadPath)) {
 		t.Fatalf("NODE_OPTIONS = %q", executor.env["NODE_OPTIONS"])
 	}
 	for _, expected := range []string{
@@ -227,7 +228,7 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 		"2 / 2",
 		"dd-trace@",
 		`href="intake/"`,
-		`href="jest-output.txt"`,
+		`href="test-output.txt"`,
 		`data-tab="suites"`,
 		`data-tab="tests"`,
 		`<article class="problem-card">`,
@@ -413,7 +414,7 @@ func TestRunReportsTestOutputWriteFailure(t *testing.T) {
 	}
 
 	err := testdrive.Run(t.Context(), &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "save Jest output") {
+	if err == nil || !strings.Contains(err.Error(), "save test output") {
 		t.Fatalf("Run() error = %v", err)
 	}
 }
@@ -421,7 +422,7 @@ func TestRunReportsTestOutputWriteFailure(t *testing.T) {
 func TestTestEnvironmentPreservesExistingNodeOptions(t *testing.T) {
 	t.Setenv("NODE_OPTIONS", "--max-old-space-size=4096")
 	environment := testEnvironment("/tmp/dd-trace/ci/init.js", "http://127.0.0.1:1234", "session")
-	if environment["NODE_OPTIONS"] != "-r /tmp/dd-trace/ci/init.js --max-old-space-size=4096" {
+	if environment["NODE_OPTIONS"] != `-r "/tmp/dd-trace/ci/init.js" --max-old-space-size=4096` {
 		t.Fatalf("NODE_OPTIONS = %q", environment["NODE_OPTIONS"])
 	}
 }

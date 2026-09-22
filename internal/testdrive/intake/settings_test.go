@@ -59,7 +59,7 @@ func TestAdvancedFeatureEndpointsReturnSafeEmptyDatasets(t *testing.T) {
 		path     string
 		contains string
 	}{
-		{path: knownTestsPath, contains: `"tests":{"jest":{}}`},
+		{path: knownTestsPath, contains: `"jest":{}`},
 		{path: skippableTestsPath, contains: `"data":[]`},
 		{path: testManagementPath, contains: `"modules":{}`},
 	}

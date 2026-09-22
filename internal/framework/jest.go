@@ -69,7 +69,7 @@ func (j *Jest) Detect(repositoryRoot string) (bool, error) {
 		return true, nil
 	}
 	if strings.TrimSpace(manifest.Scripts["test"]) == "" {
-		return false, nil
+		return true, nil
 	}
 
 	// Use the project's test script so testdrive exercises the same entry point

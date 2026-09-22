@@ -116,10 +116,16 @@ func handleSettings(w http.ResponseWriter, request *http.Request) {
 }
 
 func handleKnownTests(w http.ResponseWriter, _ *http.Request) {
+	// JavaScript tracers validate the module entry before enabling EFD. Return
+	// an empty dataset for every supported runner, preserving Jest's retry loop.
+	tests := make(map[string]any)
+	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest", "rspec", "minitest"} {
+		tests[name] = map[string]any{}
+	}
 	writeJSON(w, map[string]any{
 		"data": map[string]any{
 			"attributes": map[string]any{
-				"tests": map[string]any{"jest": map[string]any{}},
+				"tests": tests,
 			},
 		},
 	})

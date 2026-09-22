@@ -1,8 +1,8 @@
 # Agent-driven onboarding
 
-Status: Milestone 0 complete; Milestone 1 preview implemented; Milestones 2, 3, and 4 proposed
+Status: Milestones 0, 1, and 2 implemented; Milestones 3 and 4 proposed
 
-Last updated: 2026-09-17
+Last updated: 2026-09-22
 
 ## Goal
 
@@ -34,7 +34,7 @@ The working preview is in draft PR #128 on `anmarchenko/agentic-onboarding-runbo
 ### User flow
 
 - `ddtest help` points to `ddtest onboard`.
-- `ddtest onboard` detects a root JavaScript/Jest repository and its GitHub Actions test jobs.
+- `ddtest onboard` detects all nine supported platform/framework pairs and candidate GitHub Actions test workflows; the coding agent inspects the actual jobs. Repositories with several frameworks use `--framework`.
 - It prints repository-owned Markdown instructions containing the concrete workflow edit, asks the agent to run `ddtest testdrive`, and tells the agent to post every report link to the user.
 - The local testdrive comes before the human API-key and GitHub-secret steps.
 - `ddtest testdrive` previews its commands and file changes. Interactive terminals ask once for confirmation. Non-interactive callers must review the preview and rerun with `--yes`.
@@ -43,7 +43,7 @@ The working preview is in draft PR #128 on `anmarchenko/agentic-onboarding-runbo
 ### Local testdrive
 
 - Each run has a unique directory and kernel-assigned loopback port, so sessions can run concurrently.
-- A pinned `dd-trace@6.15.0` is installed inside the session and preloaded by absolute path. The project dependencies are untouched.
+- Pinned tracers (`dd-trace@6.15.0`, `ddtrace==4.15.1`, and `datadog-ci@1.39.0`) are installed inside each session. Python keeps the active interpreter; Ruby uses an overlay bundle and a copy of the project lockfile. Project dependency files are untouched.
 - The local intake supports the endpoints exercised by that tracer and enables Test Optimization, coverage, Intelligent Test Runner, Early Flake Detection, Auto Test Retries, Impacted Tests, failed-test replay, and Test Management.
 - Test events and test- or suite-level coverage are decoded. Raw multipart or msgpack payloads are not retained; saved traffic is JSON only.
 - Complete test output is saved separately.
@@ -69,12 +69,12 @@ The report also shows event and coverage counts, framework result, tracer versio
 
 ### Evidence and limits
 
-- Integration tests run a real pinned tracer against a Jest fixture and receive events and coverage.
+- Integration tests run the public CLI with real pinned tracers against fixtures for all nine frameworks. Coverage is reported only when supplied by the tracer.
 - A concurrent integration test proves port, traffic, and file isolation.
 - Unit tests cover decoding, final status, flaky tests, both coverage granularities, medians, source excerpts, HTML rendering, and confirmation behavior.
 - Dogfooding on React Native Paper recognized 1,363 events and coverage for all 680 logical tests, including Early Flake Detection retries.
 
-Current public support is JavaScript/Jest/GitHub Actions only. The intake is not a complete Datadog backend. There is no upload service, Datadog forwarding, stable JSON contract, or savings calculation. Onboarding instructions are copied from the onboarding MCP source rather than shared with it.
+Public support covers all nine pairs in Milestone 2, with GitHub Actions onboarding. The intake is not a complete Datadog backend. There is no upload service, Datadog forwarding, stable JSON contract, or savings calculation. Onboarding instructions are copied from the onboarding MCP source rather than shared with it.
 
 Every change must pass:
 
@@ -109,7 +109,7 @@ Its important interaction contract is:
 
 Keep dogfooding Jest while later milestones are built. Fix repeated real problems directly; extract shared types only when another working implementation needs them.
 
-## Milestone 2: every supported platform/framework pair
+## Milestone 2: every supported platform/framework pair — implemented
 
 Extend the same basic onboarding and testdrive to the pairs already supported by DDTest:
 
@@ -119,7 +119,7 @@ Extend the same basic onboarding and testdrive to the pairs already supported by
 | Python | pytest |
 | Ruby | RSpec, Minitest |
 
-Build this in vertical slices:
+Implemented in vertical slices:
 
 1. Reuse each platform and framework's `Detect` method and test command. Remove Jest-specific names from the shared report.
 2. Add the remaining JavaScript frameworks using the existing isolated `dd-trace` installation.
@@ -131,7 +131,7 @@ For every pair, `onboard` finds the relevant GitHub Actions job and prints one s
 
 Do not solve monorepos, new CI providers, or cross-platform tracer abstractions here. One known-good tracer version per platform is enough.
 
-Milestone 2 ships when all nine pairs complete the credential-free flow, save JSON traffic, render a local report, and leave dependency files unchanged.
+All nine pairs have completed the credential-free flow with JSON traffic and local reports. Manifests and lockfiles are checked for preservation. The validation record distinguishes full-suite runs from representative browser/RSpec subsets and records the pinned Cucumber tracer workaround.
 
 ## Milestone 3: guided Test Parallelization onboarding
 
@@ -194,7 +194,7 @@ Milestone 4 ships when all six JavaScript frameworks report the five conclusions
 
 ## Next work
 
-Start Milestone 2 with the shared detection and framework-neutral report, keeping the Jest path green. Then add the remaining JavaScript frameworks one at a time before starting Python or Ruby.
+Milestone 2 now has public-CLI real-tracer fixtures for every pair and independent open-source dogfood runs. See [the validation record](../testing/onboarding-milestone-2.md). The next planned feature is Milestone 3; keep the existing nine-pair flow green.
 
 For each slice:
 

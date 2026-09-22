@@ -15,6 +15,24 @@ import (
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 )
 
+func TestReportKeepsPythonAndRubySourceEscaped(t *testing.T) {
+	for _, extension := range []string{".py", ".rb"} {
+		t.Run(extension, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "test"+extension), []byte("value = '<script>alert(1)</script>'\nassert value\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			source := readSource(root, "test"+extension, 1, 0)
+			if source.Error != "" || len(source.Lines) < 2 {
+				t.Fatalf("source not rendered: %+v", source)
+			}
+			if !strings.Contains(string(source.Lines[0].Code), "&lt;script&gt;") || strings.Contains(string(source.Lines[0].Code), "<script>") {
+				t.Fatalf("unescaped source: %s", source.Lines[0].Code)
+			}
+		})
+	}
+}
+
 func TestReportShowsEveryFlakyAttemptErrorAndSource(t *testing.T) {
 	repositoryRoot := t.TempDir()
 	source := "test('sometimes works', () => {\n  expect(true).toBe(true);\n});\n"

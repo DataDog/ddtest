@@ -25,7 +25,7 @@ type testdriveExecution interface {
 type prepareTestdrive func(string) (testdriveExecution, error)
 
 var testdriveCmd = newTestdriveCommand(func(repositoryRoot string) (testdriveExecution, error) {
-	return testdrive.Prepare(repositoryRoot)
+	return testdrive.PrepareWithFramework(repositoryRoot, onboardingFramework())
 })
 
 func newTestdriveCommand(prepare prepareTestdrive) *cobra.Command {
