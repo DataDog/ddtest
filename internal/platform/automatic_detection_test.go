@@ -1,11 +1,11 @@
 package platform
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/stretchr/testify/require"
 )
@@ -87,17 +87,25 @@ func TestJavaScriptDetectionDoesNotOverrideCommand(t *testing.T) {
 			root := t.TempDir()
 			t.Chdir(root)
 			require.NoError(t, os.WriteFile("package.json", []byte(`{"devDependencies":{"jest":"29"},"scripts":{"test":"`+script+`"}}`), 0644))
+			// Capture the actual invocation without installing or running Jest.
+			bin := t.TempDir()
+			t.Setenv("PATH", bin)
+			for _, name := range []string{"npx", "custom-jest"} {
+				require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf '%s\\n' '"+name+"' \"$@\" > \"$DDTEST_COMMAND_CAPTURE\"\n"), 0755))
+			}
+			capture := filepath.Join(root, "command.txt")
+			t.Setenv("DDTEST_COMMAND_CAPTURE", capture)
 			for _, custom := range []string{"", "custom-jest --config explicit.js"} {
 				settings.Get().Command = custom
 				fw, err := NewJavaScript().DetectFramework(root, "jest")
 				require.NoError(t, err)
-				command, args := fw.(*framework.Jest).TestCommand(nil)
+				require.NoError(t, fw.RunTests(context.Background(), nil, nil))
+				invocation, err := os.ReadFile(capture)
+				require.NoError(t, err)
 				if custom == "" {
-					require.Equal(t, "npx", command)
-					require.Equal(t, []string{"jest"}, args)
+					require.Equal(t, "npx\njest\n", string(invocation))
 				} else {
-					require.Equal(t, "custom-jest", command)
-					require.Equal(t, []string{"--config", "explicit.js"}, args)
+					require.Equal(t, "custom-jest\n--config\nexplicit.js\n", string(invocation))
 				}
 			}
 		})

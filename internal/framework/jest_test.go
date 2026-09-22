@@ -502,10 +502,19 @@ func TestJest_RunTests_WithOverride(t *testing.T) {
 	}
 }
 
-func TestJest_TestCommandRunsFullSuiteWithoutFileSelection(t *testing.T) {
-	jest := &Jest{commandOverride: []string{"npm", "test", "--", "--runInBand"}}
-
-	command, args := jest.TestCommand(nil)
+func TestJest_RunTests_FullSuiteWithoutFileSelection(t *testing.T) {
+	var command string
+	var args []string
+	jest := &Jest{
+		commandOverride: []string{"npm", "test", "--", "--runInBand"},
+		executor: &mockCommandExecutor{onExecution: func(name string, arguments []string) {
+			command = name
+			args = slices.Clone(arguments)
+		}},
+	}
+	if err := jest.RunTests(context.Background(), nil, nil); err != nil {
+		t.Fatalf("RunTests failed: %v", err)
+	}
 
 	if command != "npm" {
 		t.Errorf("expected command %q, got %q", "npm", command)

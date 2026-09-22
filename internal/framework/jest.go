@@ -120,7 +120,12 @@ func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFi
 }
 
 func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
-	command, args := j.TestCommand(testFiles)
+	command, baseArgs := j.getJestCommand()
+	args := slices.Clone(baseArgs)
+	if len(testFiles) > 0 {
+		args = append(args, "--runTestsByPath")
+		args = append(args, testFiles...)
+	}
 
 	slog.Info("Running tests with command", "command", command, "args", args)
 
@@ -128,18 +133,6 @@ func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[stri
 	maps.Copy(mergedEnv, j.platformEnv)
 	maps.Copy(mergedEnv, envMap)
 	return j.executor.Run(ctx, command, args, mergedEnv)
-}
-
-// TestCommand returns the command used to run the selected tests. An empty
-// selection runs the framework's full suite.
-func (j *Jest) TestCommand(testFiles []string) (string, []string) {
-	command, baseArgs := j.getJestCommand()
-	args := slices.Clone(baseArgs)
-	if len(testFiles) > 0 {
-		args = append(args, "--runTestsByPath")
-		args = append(args, testFiles...)
-	}
-	return command, args
 }
 
 func (j *Jest) discoveryEnv() map[string]string {
