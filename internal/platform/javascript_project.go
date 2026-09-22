@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/kballard/go-shellquote"
 	"os"
 	"path/filepath"
@@ -73,7 +74,13 @@ func isDirectJavaScriptCommand(script string, names ...string) bool {
 	return false
 }
 
-func (j *JavaScript) detectFramework(root, hint string) (framework.Framework, error) {
+func (j *JavaScript) DetectFramework(root, hint string) (framework.Framework, error) {
+	if root == "" {
+		root = "."
+	}
+	if hint == "" {
+		hint = settings.GetFramework()
+	}
 	candidates := []framework.Framework{framework.NewJest(), framework.NewMocha(), framework.NewCypress(), framework.NewPlaywright(), framework.NewCucumber(), framework.NewVitest()}
 	if hint == "" {
 		manifest, found, err := readPackageManifest(root)

@@ -25,7 +25,7 @@ func TestPythonRealProjectConfigurations(t *testing.T) {
 			info, err := inspectPythonProject(root)
 			require.NoError(t, err)
 			require.Equal(t, pythonProject{python: true, pytest: tc.pytest}, info)
-			fw, err := NewPython().detectFramework(root, "")
+			fw, err := NewPython().DetectFramework(root, "")
 			if tc.pytest {
 				require.NoError(t, err)
 				require.Equal(t, "pytest", fw.Name())
@@ -92,6 +92,6 @@ func TestPythonMalformedConfiguration(t *testing.T) {
 	_, err := inspectPythonProject(root)
 	require.ErrorContains(t, err, "parse pyproject.toml")
 	// Explicit configuration does not require understanding the manifest.
-	_, err = NewPython().detectFramework(root, "pytest")
+	_, err = NewPython().DetectFramework(root, "pytest")
 	require.NoError(t, err)
 }

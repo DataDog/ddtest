@@ -264,9 +264,12 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 }
 
 func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
-	detectedPlatform, err := tp.platformDetector.DetectPlatform(ctx)
+	detectedPlatform, err := tp.platformDetector.DetectPlatform("", "")
 	if err != nil {
 		return errcode.WithCode(errcode.PlanPlatformDetectionFailed, fmt.Errorf("failed to detect platform: %w", err))
+	}
+	if err := detectedPlatform.SanityCheck(ctx); err != nil {
+		return errcode.WithCode(errcode.PlanPlatformDetectionFailed, fmt.Errorf("sanity check failed for platform %s: %w", detectedPlatform.Name(), err))
 	}
 
 	// Get platform-detected tags first
@@ -290,7 +293,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	}
 
 	// Detect framework once to avoid duplicate work
-	testFramework, err := detectedPlatform.DetectFramework()
+	testFramework, err := detectedPlatform.DetectFramework("", "")
 	if err != nil {
 		return errcode.WithCode(errcode.PlanFrameworkDetectionFailed, fmt.Errorf("failed to detect framework: %w", err))
 	}

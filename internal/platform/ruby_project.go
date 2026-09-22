@@ -6,9 +6,16 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/settings"
 )
 
-func (r *Ruby) detectFramework(root, hint string) (framework.Framework, error) {
+func (r *Ruby) DetectFramework(root, hint string) (framework.Framework, error) {
+	if root == "" {
+		root = "."
+	}
+	if hint == "" {
+		hint = settings.GetFramework()
+	}
 	candidates := []framework.Framework{framework.NewRSpec(), framework.NewMinitest()}
 	if hint == "" {
 		candidates = nil

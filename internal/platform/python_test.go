@@ -310,7 +310,7 @@ func TestPython_DetectFramework_Pytest(t *testing.T) {
 	}
 
 	python := NewPython()
-	fw, err := python.DetectFramework()
+	fw, err := python.DetectFramework("", "")
 
 	if err != nil {
 		t.Fatalf("DetectFramework failed: %v", err)
@@ -339,7 +339,7 @@ func TestPython_DetectFramework_Unsupported(t *testing.T) {
 	}()
 
 	python := NewPython()
-	fw, err := python.DetectFramework()
+	fw, err := python.DetectFramework("", "")
 
 	if err == nil {
 		t.Errorf("expected error for unsupported framework, but got framework: %v", fw)
@@ -376,13 +376,7 @@ func TestPython_EmbeddedScript(t *testing.T) {
 }
 
 func TestDetectPlatform_Python(t *testing.T) {
-	if _, err := exec.LookPath("python"); err != nil {
-		t.Skip("python not in PATH — skipping integration test")
-	}
-	checkCmd := exec.Command("python", "-c", "import importlib.metadata; importlib.metadata.version('ddtrace')")
-	if err := checkCmd.Run(); err != nil {
-		t.Skip("ddtrace not installed — skipping integration test")
-	}
+	t.Setenv("PATH", t.TempDir())
 
 	viper.Reset()
 	viper.Set("platform", "python")
@@ -392,7 +386,7 @@ func TestDetectPlatform_Python(t *testing.T) {
 		settings.Init()
 	}()
 
-	platform, err := DetectPlatform(context.Background())
+	platform, err := DetectPlatform("", "")
 	if err != nil {
 		t.Fatalf("DetectPlatform() unexpected error: %v", err)
 	}

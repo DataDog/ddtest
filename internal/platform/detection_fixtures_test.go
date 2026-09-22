@@ -19,7 +19,7 @@ type detectionFixture struct {
 	Error     string            `json:"error"`
 }
 
-func TestDetectTestProjectOSSFixtures(t *testing.T) {
+func TestPlatformDetectionOSSFixtures(t *testing.T) {
 	for _, fixture := range []struct {
 		name, language, framework string
 		hints                     []string
@@ -53,7 +53,7 @@ func TestDetectTestProjectOSSFixtures(t *testing.T) {
 	}
 }
 
-func TestDetectTestProjectHardFixtures(t *testing.T) {
+func TestPlatformDetectionHardFixtures(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("testdata", "detection", "edge-cases.json"))
 	require.NoError(t, err)
 	var fixtures []detectionFixture
@@ -77,7 +77,7 @@ func checkDetectionFixture(t *testing.T, fixture detectionFixture) {
 	// Detection cannot depend on npm, Python, Ruby, or an installed test runner.
 	t.Setenv("PATH", t.TempDir())
 	for range 2 {
-		language, runner, err := DetectTestProject(root, fixture.Hint)
+		language, runner, err := detectFixture(root, fixture.Hint)
 		if fixture.Error != "" {
 			require.ErrorContains(t, err, fixture.Error)
 			require.Nil(t, runner)

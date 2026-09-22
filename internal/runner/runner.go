@@ -99,13 +99,17 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 	slog.Info("Worker environment variables", "workerEnvKeys", workerEnvKeys(workerEnvMap))
 
 	// Detect platform and framework
-	detectedPlatform, err := tr.platformDetector.DetectPlatform(ctx)
+	detectedPlatform, err := tr.platformDetector.DetectPlatform("", "")
 	if err != nil {
 		return errcode.WithCode(errcode.RunPlatformDetectionFailed, fmt.Errorf("failed to detect platform: %w", err))
 	}
+	if err := detectedPlatform.SanityCheck(ctx); err != nil {
+		return errcode.WithCode(errcode.RunPlatformDetectionFailed, fmt.Errorf("sanity check failed for platform %s: %w", detectedPlatform.Name(), err))
+	}
+
 	slog.Info("Platform detected", "platform", detectedPlatform.Name())
 
-	framework, err := detectedPlatform.DetectFramework()
+	framework, err := detectedPlatform.DetectFramework("", "")
 	if err != nil {
 		return errcode.WithCode(errcode.RunFrameworkDetectionFailed, fmt.Errorf("failed to detect framework: %w", err))
 	}

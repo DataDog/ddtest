@@ -12,7 +12,6 @@ import (
 
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/ext"
-	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/settings"
 )
 
@@ -123,14 +122,6 @@ func (j *JavaScript) CreateTagsMap(ctx context.Context) (map[string]string, erro
 	maps.Copy(tags, javascriptTags)
 
 	return tags, nil
-}
-
-func (j *JavaScript) DetectFramework() (framework.Framework, error) {
-	root, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("find repository root: %w", err)
-	}
-	return j.detectFramework(root, settings.GetFramework())
 }
 
 // Confirm that Node.js is installed by running 'node --version'

@@ -8,12 +8,19 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/pelletier/go-toml/v2"
 )
 
 type pythonProject struct{ python, pytest bool }
 
-func (p *Python) detectFramework(root, hint string) (framework.Framework, error) {
+func (p *Python) DetectFramework(root, hint string) (framework.Framework, error) {
+	if root == "" {
+		root = "."
+	}
+	if hint == "" {
+		hint = settings.GetFramework()
+	}
 	candidates := []framework.Framework{framework.NewPytest()}
 	if hint == "" {
 		info, err := inspectPythonProject(root)

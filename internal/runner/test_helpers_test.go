@@ -33,18 +33,19 @@ type MockPlatformDetector struct {
 	Err      error
 }
 
-func (m *MockPlatformDetector) DetectPlatform(context.Context) (platform.Platform, error) {
+func (m *MockPlatformDetector) DetectPlatform(string, string) (platform.Platform, error) {
 	return m.Platform, m.Err
 }
 
 type MockPlatform struct {
-	PlatformName string
-	Tags         map[string]string
-	TagsErr      error
-	Framework    framework.Framework
-	FrameworkErr error
-	SanityErr    error
-	TestLevel    settings.TestSkippingLevel
+	PlatformName  string
+	Tags          map[string]string
+	TagsErr       error
+	Framework     framework.Framework
+	FrameworkErr  error
+	SanityErr     error
+	SanityContext context.Context
+	TestLevel     settings.TestSkippingLevel
 }
 
 func (m *MockPlatform) Name() string {
@@ -59,11 +60,12 @@ func (m *MockPlatform) CreateTagsMap(context.Context) (map[string]string, error)
 	return m.Tags, m.TagsErr
 }
 
-func (m *MockPlatform) DetectFramework() (framework.Framework, error) {
+func (m *MockPlatform) DetectFramework(string, string) (framework.Framework, error) {
 	return m.Framework, m.FrameworkErr
 }
 
-func (m *MockPlatform) SanityCheck(context.Context) error {
+func (m *MockPlatform) SanityCheck(ctx context.Context) error {
+	m.SanityContext = ctx
 	return m.SanityErr
 }
 

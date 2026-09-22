@@ -13,7 +13,6 @@ import (
 
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/ext"
-	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/version"
 )
@@ -102,14 +101,6 @@ func (r *Ruby) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 	maps.Copy(tags, rubyTags)
 
 	return tags, nil
-}
-
-func (r *Ruby) DetectFramework() (framework.Framework, error) {
-	root, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("find repository root: %w", err)
-	}
-	return r.detectFramework(root, settings.GetFramework())
 }
 
 func (r *Ruby) SanityCheck(ctx context.Context) error {

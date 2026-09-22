@@ -82,19 +82,20 @@ func (c *plannerTelemetryClient) has(name string, tags ...string) bool {
 	return ok
 }
 
-func (m *MockPlatformDetector) DetectPlatform(context.Context) (platform.Platform, error) {
+func (m *MockPlatformDetector) DetectPlatform(string, string) (platform.Platform, error) {
 	return m.Platform, m.Err
 }
 
 // MockPlatform mocks a platform
 type MockPlatform struct {
-	PlatformName string
-	Tags         map[string]string
-	TagsErr      error
-	Framework    framework.Framework
-	FrameworkErr error
-	SanityErr    error
-	TestLevel    settings.TestSkippingLevel
+	PlatformName  string
+	Tags          map[string]string
+	TagsErr       error
+	Framework     framework.Framework
+	FrameworkErr  error
+	SanityErr     error
+	SanityContext context.Context
+	TestLevel     settings.TestSkippingLevel
 }
 
 func (m *MockPlatform) Name() string {
@@ -109,11 +110,12 @@ func (m *MockPlatform) CreateTagsMap(context.Context) (map[string]string, error)
 	return m.Tags, m.TagsErr
 }
 
-func (m *MockPlatform) DetectFramework() (framework.Framework, error) {
+func (m *MockPlatform) DetectFramework(string, string) (framework.Framework, error) {
 	return m.Framework, m.FrameworkErr
 }
 
-func (m *MockPlatform) SanityCheck(context.Context) error {
+func (m *MockPlatform) SanityCheck(ctx context.Context) error {
+	m.SanityContext = ctx
 	return m.SanityErr
 }
 
@@ -4908,4 +4910,20 @@ func assertPlannerErrorCode(t *testing.T, err error, want errcode.Code) {
 	if got := errcode.CodeOf(err); got != want {
 		t.Fatalf("error code = %q, want %q; error: %v", got, want, err)
 	}
+}
+
+func TestPreparePlanningDataChecksRuntimePrerequisites(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	sanityErr := errors.New("tracer not installed")
+	p := &MockPlatform{PlatformName: "javascript", SanityErr: sanityErr}
+	planner := NewWithDependencies(&MockPlatformDetector{Platform: p}, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+	err := planner.PreparePlanningData(ctx)
+	if !errors.Is(err, sanityErr) {
+		t.Fatalf("expected prerequisite failure before discovery, got %v", err)
+	}
+	if p.SanityContext != ctx {
+		t.Fatal("SanityCheck did not receive the operation context")
+	}
+	assertPlannerErrorCode(t, err, errcode.PlanPlatformDetectionFailed)
 }

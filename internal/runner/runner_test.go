@@ -607,3 +607,22 @@ func assertRunnerErrorCode(t *testing.T, err error, want errcode.Code) {
 		t.Fatalf("error code = %q, want %q; error: %v", got, want, err)
 	}
 }
+
+func TestRunChecksRuntimePrerequisitesWithSavedPlan(t *testing.T) {
+	withRunnerTestSettings(t)
+	chdirTemp(t)
+	writeRunnerTestFile(t, constants.ParallelRunnersOutputPath, "1")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	sanityErr := errors.New("tracer not installed")
+	p := &MockPlatform{PlatformName: "javascript", SanityErr: sanityErr}
+	runner := NewWithDependencies(&MockPlatformDetector{Platform: p}, &fakePlanner{})
+	err := runner.Run(ctx)
+	if !errors.Is(err, sanityErr) {
+		t.Fatalf("expected prerequisite failure before execution, got %v", err)
+	}
+	if p.SanityContext != ctx {
+		t.Fatal("SanityCheck did not receive the operation context")
+	}
+	assertRunnerErrorCode(t, err, errcode.RunPlatformDetectionFailed)
+}

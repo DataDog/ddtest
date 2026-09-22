@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -107,39 +106,6 @@ func TestPlatformSanityChecksPropagateContext(t *testing.T) {
 	}
 }
 
-func TestDetectPlatformPythonWithFakeInterpreter(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("uses a POSIX shell script as the fake python executable")
-	}
-
-	viper.Reset()
-	t.Cleanup(func() {
-		viper.Reset()
-		settings.Init()
-	})
-
-	binDir := t.TempDir()
-	pythonPath := filepath.Join(binDir, "python")
-	if err := os.WriteFile(pythonPath, []byte("#!/bin/sh\nprintf '4.11.0\\n'\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	viper.Set("platform", "python")
-	settings.Init()
-
-	detectedPlatform, err := DetectPlatform(context.Background())
-	if err != nil {
-		t.Fatalf("DetectPlatform() unexpected error: %v", err)
-	}
-	if detectedPlatform == nil {
-		t.Fatal("expected platform to be detected")
-	}
-	if detectedPlatform.Name() != "python" {
-		t.Fatalf("expected python platform, got %q", detectedPlatform.Name())
-	}
-}
-
 func TestDetectPlatformUnsupported(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(func() {
@@ -149,13 +115,13 @@ func TestDetectPlatformUnsupported(t *testing.T) {
 	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM", "node")
 	settings.Init()
 
-	_, err := DetectPlatform(context.Background())
+	_, err := DetectPlatform("", "")
 	if err == nil || !strings.Contains(err.Error(), "unsupported platform: node") {
 		t.Fatalf("DetectPlatform() error = %v, want unsupported platform", err)
 	}
 
 	detector := &DatadogPlatformDetector{}
-	_, err = detector.DetectPlatform(context.Background())
+	_, err = detector.DetectPlatform("", "")
 	if err == nil || !strings.Contains(err.Error(), "unsupported platform: node") {
 		t.Fatalf("DatadogPlatformDetector.DetectPlatform() error = %v, want unsupported platform", err)
 	}
