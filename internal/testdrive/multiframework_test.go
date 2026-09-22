@@ -17,7 +17,7 @@ import (
 )
 
 func TestPrepareAllSupportedFrameworks(t *testing.T) {
-	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress"} {
+	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			switch name {
@@ -102,6 +102,16 @@ func TestPrepareRequiresSelectionForMultipleFrameworks(t *testing.T) {
 	settings.Get().Framework = "unsupported"
 	_, err = Prepare("latest")
 	require.ErrorContains(t, err, "unsupported framework")
+}
+
+func TestLanguageEnvironmentsPreserveCustomerOptions(t *testing.T) {
+	t.Setenv("PYTHONPATH", "/customer/modules")
+	t.Setenv("PYTEST_ADDOPTS", "-q")
+	t.Setenv("RUBYOPT", "-W0")
+	python := (&Testdrive{language: "python"}).environment("/session/python", "http://127.0.0.1:1234", "session")
+	require.Equal(t, "/session/python"+string(os.PathListSeparator)+"/customer/modules", python["PYTHONPATH"])
+	require.Equal(t, "-q --ddtrace", python["PYTEST_ADDOPTS"])
+
 }
 
 func TestCypressWrapperUsesExplicitConfigWithoutEditingIt(t *testing.T) {

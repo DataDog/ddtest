@@ -7,6 +7,7 @@ package framework
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/settings"
@@ -46,6 +47,12 @@ func TestdriveCommand(root string, runner Framework) (string, []string, error) {
 	case *Cypress:
 		command, args := f.getCypressCommand()
 		return command, cypressRunArgs(command, args, nil), nil
+	case *PyTest:
+		interpreter := "python"
+		if _, err := exec.LookPath(interpreter); err != nil {
+			interpreter = "python3"
+		}
+		return interpreter, []string{"-m", "pytest"}, nil
 
 	default:
 		return "", nil, fmt.Errorf("unsupported testdrive framework: %s", runner.Name())
