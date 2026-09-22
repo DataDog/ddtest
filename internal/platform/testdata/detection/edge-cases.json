@@ -1,0 +1,275 @@
+[
+  {
+    "name": "mixed-jest-vitest",
+    "files": {
+      "package.json": "{\"devDependencies\": {\"jest\": \"^29\", \"vitest\": \"^3\"}, \"scripts\": {\"test\": \"vitest run\"}}"
+    },
+    "framework": "",
+    "language": "",
+    "hint": "",
+    "error": "multiple test frameworks"
+  },
+  {
+    "name": "select-jest-over-default-vitest",
+    "files": {
+      "package.json": "{\"devDependencies\": {\"jest\": \"^29\", \"vitest\": \"^3\"}, \"scripts\": {\"test\": \"vitest run\"}}"
+    },
+    "framework": "jest",
+    "language": "javascript",
+    "hint": "jest",
+    "error": ""
+  },
+  {
+    "name": "select-vitest-over-default-jest",
+    "files": {
+      "package.json": "{\"devDependencies\": {\"jest\": \"^29\", \"vitest\": \"^3\"}, \"scripts\": {\"test\": \"jest\"}}"
+    },
+    "framework": "vitest",
+    "language": "javascript",
+    "hint": "vitest",
+    "error": ""
+  },
+  {
+    "name": "explicit-framework-overrides-inspection",
+    "files": {
+      "package.json": "{\"devDependencies\": {\"jest\": \"^29\"}, \"scripts\": {\"test\": \"jest\"}}"
+    },
+    "framework": "pytest",
+    "language": "python",
+    "hint": "pytest",
+    "error": ""
+  },
+  {
+    "name": "runner-mentioned-only-in-lint-path",
+    "files": {
+      "package.json": "{\"scripts\": {\"lint\": \"eslint jest.config.js mocha.config.js playwright.config.ts\"}}"
+    },
+    "framework": "",
+    "language": "",
+    "hint": "",
+    "error": "could not detect"
+  },
+  {
+    "name": "runner-mentioned-only-in-message",
+    "files": {
+      "package.json": "{\"scripts\": {\"test\": \"echo 'install jest or vitest'\"}}"
+    },
+    "framework": "",
+    "language": "",
+    "hint": "",
+    "error": "could not detect"
+  },
+  {
+    "name": "runner-plugin-is-not-runner",
+    "files": {
+      "package.json": "{\"devDependencies\": {\"eslint-plugin-jest\": \"1\", \"@types/mocha\": \"1\", \"ts-jest\": \"1\", \"@vitest/coverage-v8\": \"1\"}}"
+    },
+    "framework": "",
+    "language": "",
+    "hint": "",
+    "error": "could not detect"
+  },
+  {
+    "name": "script-name-is-not-a-command",
+    "files": {
+      "package.json": "{\"scripts\": {\"jest\": \"node test.js\", \"test\": \"jest-runner-custom\"}}"
+    },
+    "framework": "",
+    "language": "",
+    "hint": "",
+    "error": "could not detect"
+  },
+  {
+    "name": "local-jest-script-only",
+    "files": {
+      "package.json": "{\"scripts\": {\"test\": \"./node_modules/.bin/jest --config \\\"config with spaces.js\\\"\"}}"
+    },
+    "framework": "jest",
+    "language": "javascript",
+    "hint": "",
+    "error": ""
+  },
+  {
+    "name": "named-jest-script-only",
+    "files": {
+      "package.json": "{\"scripts\": {\"test:unit\": \"jest --runInBand\"}}"
+    },
+    "framework": "jest",
+    "language": "javascript",
+    "hint": "",
+    "error": ""
+  },
+  {
+    "name": "cucumber-bin-alias-without-dependencies",
+    "files": {
+      "package.json": "{\"scripts\": {\"conformance\": \"cucumber-js features\"}}"
+    },
+    "framework": "cucumber",
+    "language": "javascript",
+    "hint": "",
+    "error": ""
+  },
+  {
+    "name": "wrapped-jest-from-dependency",
+    "files": {
+      "package.json": "{\"dependencies\": {\"jest\": \"^29\"}, \"scripts\": {\"test\": \"cross-env NODE_ENV=test jest\"}}"
+    },
+    "framework": "jest",
+    "language": "javascript",
+    "hint": "",
+    "error": ""
+  },
+  {
+    "name": "composite-jest-from-dependency",
+    "files": {
+      "package.json": "{\"devDependencies\": {\"jest\": \"^29\"}, \"scripts\": {\"test\": \"jest && eslint .\"}}"
+    },
+    "framework": "jest",
+    "language": "javascript",
+    "hint": "",
+    "error": ""
+  },
+  {
+    "name": "dependency-not-a-substring",
+    "files": {
+      "package.json": "{\"dependencies\": {\"my-jest-wrapper\": \"1\", \"mocha-reporter\": \"1\"}}"
+    },
+    "framework": "",
+    "language": "",
+    "hint": "",
+    "error": "could not detect"
+  },
+  {
+    "name": "malformed-package-json",
+    "files": {
+      "package.json": "{"
+    },
+    "framework": "",
+    "language": "",
+    "hint": "",
+    "error": "parse"
+  },
+  {
+    "name": "wrong-script-value-type",
+    "files": {
+      "package.json": "{\"scripts\":{\"test\":[\"jest\"]}}"
+    },
+    "framework": "",
+    "language": "",
+    "hint": "",
+    "error": "parse"
+  },
+  {
+    "name": "tox-only",
+    "files": {
+      "tox.ini": "[tox]\nenvlist = py311\n[testenv]\ndeps = pytest\ncommands = pytest {posargs}\n"
+    },
+    "framework": "pytest",
+    "language": "python",
+    "hint": "",
+    "error": ""
+  },
+  {
+    "name": "tox-pytest-section",
+    "files": {
+      "tox.ini": "[pytest]\naddopts=-ra\n"
+    },
+    "framework": "pytest",
+    "language": "python",
+    "hint": "",
+    "error": ""
+  },
+  {
+    "name": "conftest-only",
+    "files": {
+      "conftest.py": "raise RuntimeError(\"detection must never import this file\")\n"
+    },
+    "framework": "pytest",
+    "language": "python",
+    "hint": "",
+    "error": ""
+  },
+  {
+    "name": "pytest-ini-only",
+    "files": {
+      "pytest.ini": "[pytest]\naddopts = -ra\ntestpaths = tests\n"
+    },
+    "framework": "pytest",
+    "language": "python",
+    "hint": "",
+    "error": ""
+  },
+  {
+    "name": "setup-cfg-only",
+    "files": {
+      "setup.cfg": "[tool:pytest]\naddopts = -ra\n"
+    },
+    "framework": "pytest",
+    "language": "python",
+    "hint": "",
+    "error": ""
+  },
+  {
+    "name": "tox-without-pytest",
+    "files": {
+      "tox.ini": "[testenv]\ndeps = ruff\ncommands = ruff check .\n"
+    },
+    "framework": "pytest",
+    "language": "python",
+    "hint": "",
+    "error": ""
+  },
+  {
+    "name": "python-without-runner",
+    "files": {
+      "pyproject.toml": "[project]\nname = \"library\"\n"
+    },
+    "framework": "pytest",
+    "language": "python",
+    "hint": "",
+    "error": ""
+  },
+  {
+    "name": "rspec-marker",
+    "files": {
+      "Gemfile": "source \"https://rubygems.org\"\ngemspec\n",
+      ".rspec": "--require spec_helper\n"
+    },
+    "framework": "rspec",
+    "language": "ruby",
+    "hint": "",
+    "error": ""
+  },
+  {
+    "name": "polyglot-needs-hint",
+    "files": {
+      "package.json": "{\"devDependencies\":{\"jest\":\"29\"}}",
+      "Gemfile": "gem 'minitest'\n",
+      "tox.ini": "[testenv]\ncommands=pytest\n"
+    },
+    "framework": "",
+    "language": "",
+    "hint": "",
+    "error": "multiple platforms"
+  },
+  {
+    "name": "polyglot-select-python",
+    "files": {
+      "package.json": "{\"devDependencies\":{\"jest\":\"29\"}}",
+      "Gemfile": "gem 'minitest'\n",
+      "tox.ini": "[testenv]\ncommands=pytest\n"
+    },
+    "framework": "pytest",
+    "language": "python",
+    "hint": "pytest",
+    "error": ""
+  },
+  {
+    "name": "empty-root",
+    "files": {},
+    "framework": "",
+    "language": "",
+    "hint": "",
+    "error": "could not detect"
+  }
+]

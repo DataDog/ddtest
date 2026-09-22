@@ -11,7 +11,6 @@ import (
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
-	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
@@ -28,22 +27,11 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
-type MockPlatformDetector struct {
-	Platform platform.Platform
-	Err      error
-}
-
-func (m *MockPlatformDetector) DetectPlatform(context.Context) (platform.Platform, error) {
-	return m.Platform, m.Err
-}
-
 type MockPlatform struct {
 	PlatformName string
 	Tags         map[string]string
 	TagsErr      error
 	Framework    framework.Framework
-	FrameworkErr error
-	SanityErr    error
 	TestLevel    settings.TestSkippingLevel
 }
 
@@ -51,16 +39,20 @@ func (m *MockPlatform) Name() string {
 	return m.PlatformName
 }
 
+func (m *MockPlatform) Detect(string) (bool, error) {
+	return true, nil
+}
+
 func (m *MockPlatform) CreateTagsMap(context.Context) (map[string]string, error) {
 	return m.Tags, m.TagsErr
 }
 
 func (m *MockPlatform) DetectFramework() (framework.Framework, error) {
-	return m.Framework, m.FrameworkErr
+	panic("framework must be selected before planning or execution")
 }
 
-func (m *MockPlatform) SanityCheck(context.Context) error {
-	return m.SanityErr
+func (m *MockPlatform) SanityCheck(ctx context.Context) error {
+	panic("prerequisites must be checked at command startup")
 }
 
 func (m *MockPlatform) TestSkippingLevel() settings.TestSkippingLevel {
@@ -91,6 +83,10 @@ type RunTestsCall struct {
 
 func (m *MockFramework) Name() string {
 	return m.FrameworkName
+}
+
+func (m *MockFramework) Detect(string) (bool, error) {
+	return true, nil
 }
 
 func (m *MockFramework) TestPattern() string {

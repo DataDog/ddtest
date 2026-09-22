@@ -13,8 +13,10 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/errcode"
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/planner"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/runner"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -38,9 +40,20 @@ var rootCmd = &cobra.Command{
 
 var (
 	planCommand = func(ctx context.Context, telemetryClient telemetry.Client) error {
-		return planner.NewWithTelemetry(telemetryClient).Plan(ctx)
+		p, fw, err := resolveTestEnvironment(ctx, errcode.PlanPlatformDetectionFailed, errcode.PlanFrameworkDetectionFailed)
+		if err != nil {
+			return err
+		}
+		return planner.NewWithTelemetry(p, fw, telemetryClient).Plan(ctx)
 	}
-	newRunner          = func(telemetryClient telemetry.Client) runner.Runner { return runner.NewWithTelemetry(telemetryClient) }
+	newRunner = func(ctx context.Context, telemetryClient telemetry.Client) (runner.Runner, error) {
+		p, fw, err := resolveTestEnvironment(ctx, errcode.RunPlatformDetectionFailed, errcode.RunFrameworkDetectionFailed)
+		if err != nil {
+			return nil, err
+		}
+		return runner.NewWithTelemetry(p, fw, telemetryClient), nil
+	}
+	detectPlatform     = platform.DetectPlatform
 	newTelemetryClient = createTelemetryClient
 	exitProcess        = os.Exit
 )
@@ -114,8 +127,8 @@ var rootPersistentFlagBindings = []persistentFlagBinding{
 func init() {
 	rootCmd.SetVersionTemplate("{{ .Version }}\n")
 
-	rootCmd.PersistentFlags().String("platform", "ruby", "Platform that runs tests")
-	rootCmd.PersistentFlags().String("framework", "rspec", "Test framework to use")
+	rootCmd.PersistentFlags().String("platform", "", "Platform that runs tests (auto-detected when omitted)")
+	rootCmd.PersistentFlags().String("framework", "", "Test framework to use (auto-detected when omitted)")
 	rootCmd.PersistentFlags().Int("min-parallelism", defaultParallelism, "Minimum number of parallel test processes (default: number of physical CPUs)")
 	rootCmd.PersistentFlags().Int("max-parallelism", defaultParallelism, "Maximum number of parallel test processes (default: number of physical CPUs)")
 	rootCmd.PersistentFlags().String("ci-job-overhead", settings.DefaultParallelRunnerOverhead().String(), "Modeled overhead for adding one more CI job / parallel runner (for example, 25s, 1m, 1500ms, or 0s to disable the bias). Increase it to use fewer CI jobs; decrease it to prefer faster wall time")
@@ -194,7 +207,11 @@ func runPlanCommand(cmd *cobra.Command, args []string) {
 func runTestCommand(cmd *cobra.Command, args []string) {
 	ctx := commandContext(cmd)
 	err := runWithTelemetry(ctx, telemetry.CLICommandRun, func(telemetryClient telemetry.Client) error {
-		return newRunner(telemetryClient).Run(ctx)
+		testRunner, err := newRunner(ctx, telemetryClient)
+		if err != nil {
+			return err
+		}
+		return testRunner.Run(ctx)
 	})
 	if err != nil {
 		slog.Error("Runner failed", "error", err)
@@ -290,4 +307,22 @@ func Execute() error {
 	ctx, stop := commandSignalContext(context.Background())
 	defer stop()
 	return rootCmd.ExecuteContext(ctx)
+}
+
+// Resolve selection and prerequisites once, before creating a planner or runner.
+func resolveTestEnvironment(ctx context.Context, platformCode, frameworkCode errcode.Code) (platform.Platform, framework.Framework, error) {
+	p, err := detectPlatform()
+	if err != nil {
+		return nil, nil, errcode.WithCode(platformCode, fmt.Errorf("failed to detect platform: %w", err))
+	}
+	fw, err := p.DetectFramework()
+	if err != nil {
+		return nil, nil, errcode.WithCode(frameworkCode, fmt.Errorf("failed to detect framework: %w", err))
+	}
+	if err := p.SanityCheck(ctx); err != nil {
+		return nil, nil, errcode.WithCode(platformCode, fmt.Errorf("sanity check failed for platform %s: %w", p.Name(), err))
+	}
+	slog.Info("Platform selected", "platform", p.Name())
+	slog.Info("Framework selected", "framework", fw.Name())
+	return p, fw, nil
 }

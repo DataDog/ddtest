@@ -54,6 +54,14 @@ CI's skippable tests on your machine; see
 For planning-step performance tips and framework-specific setup notes, see
 [Best practices](docs/best_practices.md).
 
+Platform and framework are detected from the current directory when `--platform`
+and `--framework` are omitted, including for `plan` and `run`. Projects with
+multiple platforms or test frameworks must select one explicitly. Flags and
+`DD_TEST_OPTIMIZATION_RUNNER_PLATFORM` / `DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK`
+override detection; an explicit framework also identifies its platform. Detection
+does not execute project scripts or change the test command. Use `--command`
+when your project requires a custom invocation.
+
 ### Available commands
 
 #### ddtest plan

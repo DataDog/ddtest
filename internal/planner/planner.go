@@ -83,7 +83,8 @@ type TestPlanner struct {
 	planLoaded              bool
 	runInfo                 runmetadata.RunInfo
 	planMetadata            PlanMetadata
-	platformDetector        platform.PlatformDetector
+	platform                platform.Platform
+	framework               framework.Framework
 	optimizationClient      testOptimizationClient
 	newOptimizationClient   func(testSkippingLevel settings.TestSkippingLevel) testOptimizationClient
 	ciProviderDetector      environment.CIProviderDetector
@@ -149,13 +150,10 @@ func selectTags(tags map[string]string, keys ...string) map[string]string {
 	return selected
 }
 
-func Plan(ctx context.Context) error {
-	return New().Plan(ctx)
-}
-
-func New() *TestPlanner {
+func New(p platform.Platform, fw framework.Framework) *TestPlanner {
 	planner := newTestPlannerWithDefaults()
-	planner.platformDetector = platform.NewPlatformDetector()
+	planner.platform = p
+	planner.framework = fw
 	planner.newOptimizationClient = func(testSkippingLevel settings.TestSkippingLevel) testOptimizationClient {
 		return testoptimization.NewTestOptimizationClientWithTestSkippingLevel(testSkippingLevel)
 	}
@@ -165,8 +163,8 @@ func New() *TestPlanner {
 
 // NewWithTelemetry creates a planner that reports internal metrics through the
 // provided telemetry client.
-func NewWithTelemetry(telemetryClient telemetry.Client) *TestPlanner {
-	planner := New()
+func NewWithTelemetry(p platform.Platform, fw framework.Framework, telemetryClient telemetry.Client) *TestPlanner {
+	planner := New(p, fw)
 	planner.telemetryClient = telemetryClient
 	planner.newOptimizationClient = func(testSkippingLevel settings.TestSkippingLevel) testOptimizationClient {
 		return testoptimization.NewTestOptimizationClientWithTelemetry(testSkippingLevel, telemetryClient)
@@ -175,12 +173,14 @@ func NewWithTelemetry(telemetryClient telemetry.Client) *TestPlanner {
 }
 
 func NewWithDependencies(
-	platformDetector platform.PlatformDetector,
+	p platform.Platform,
+	fw framework.Framework,
 	optimizationClient testOptimizationClient,
 	ciProviderDetector environment.CIProviderDetector,
 ) *TestPlanner {
 	planner := newTestPlannerWithDefaults()
-	planner.platformDetector = platformDetector
+	planner.platform = p
+	planner.framework = fw
 	planner.optimizationClient = optimizationClient
 	planner.ciProviderDetector = ciProviderDetector
 	return planner
@@ -264,10 +264,7 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 }
 
 func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
-	detectedPlatform, err := tp.platformDetector.DetectPlatform(ctx)
-	if err != nil {
-		return errcode.WithCode(errcode.PlanPlatformDetectionFailed, fmt.Errorf("failed to detect platform: %w", err))
-	}
+	detectedPlatform, testFramework := tp.platform, tp.framework
 
 	// Get platform-detected tags first
 	tags, err := detectedPlatform.CreateTagsMap(ctx)
@@ -289,12 +286,6 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		slog.Info("Preparing test optimization data", "runtimeTags", tags, "platform", detectedPlatform.Name())
 	}
 
-	// Detect framework once to avoid duplicate work
-	testFramework, err := detectedPlatform.DetectFramework()
-	if err != nil {
-		return errcode.WithCode(errcode.PlanFrameworkDetectionFailed, fmt.Errorf("failed to detect framework: %w", err))
-	}
-	slog.Info("Framework detected", "framework", testFramework.Name())
 	testSkippingLevel := detectedPlatform.TestSkippingLevel()
 	telemetry.RecordCLICommandAttributes(tp.telemetryClient, telemetry.CLICommandAttributes{
 		Platform:         detectedPlatform.Name(),

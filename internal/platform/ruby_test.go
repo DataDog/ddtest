@@ -169,7 +169,8 @@ func TestRuby_SanityCheck_SucceedsWithDebugLogs(t *testing.T) {
 func TestRuby_DetectFramework_RSpec(t *testing.T) {
 	viper.Reset()
 	viper.Set("framework", "rspec")
-	defer viper.Reset()
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
 
 	ruby := newTestRuby()
 	fw, err := ruby.DetectFramework()
@@ -431,18 +432,18 @@ func TestDetectPlatform_Ruby(t *testing.T) {
 	// Save original settings
 	viper.Reset()
 	viper.Set("platform", "ruby")
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
 
-	platform, err := DetectPlatform(context.Background())
-	if err == nil {
-		t.Errorf("expected error for SanityCheck failure, but got platform: %v", platform)
-	} else if platform != nil {
-		t.Errorf("expected nil platform for SanityCheck failure, but got platform: %v", platform)
+	t.Setenv("PATH", t.TempDir())
+	platform, err := DetectPlatform()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if platform.Name() != "ruby" {
+		t.Fatalf("expected ruby, got %q", platform.Name())
 	}
 
-	expectedErrorPrefix := "sanity check failed for platform ruby: bundle info datadog-ci command failed"
-	if !strings.Contains(err.Error(), expectedErrorPrefix) {
-		t.Errorf("expected error to contain %q, got %q", expectedErrorPrefix, err.Error())
-	}
 }
 
 func TestDetectPlatform_Unsupported(t *testing.T) {
@@ -454,7 +455,7 @@ func TestDetectPlatform_Unsupported(t *testing.T) {
 		settings.Init()
 	}()
 
-	platform, err := DetectPlatform(context.Background())
+	platform, err := DetectPlatform()
 	if err == nil {
 		t.Errorf("expected error for unsupported platform, but got platform: %v", platform)
 		return
@@ -519,7 +520,8 @@ func TestRuby_DetectFramework_SetsPlatformEnv(t *testing.T) {
 
 	viper.Reset()
 	viper.Set("framework", "rspec")
-	defer viper.Reset()
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
 
 	ruby := newTestRuby()
 	fw, err := ruby.DetectFramework()

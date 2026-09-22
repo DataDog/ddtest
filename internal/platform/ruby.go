@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -42,6 +43,43 @@ func NewRuby(testSkippingLevel settings.TestSkippingLevel) *Ruby {
 
 func (r *Ruby) Name() string {
 	return "ruby"
+}
+
+func (r *Ruby) Detect(repositoryRoot string) (bool, error) {
+	return detectAnyFile(repositoryRoot, "Gemfile")
+}
+
+func (r *Ruby) DetectFramework() (framework.Framework, error) {
+	root := "."
+	hint := settings.GetFramework()
+	candidates := []framework.Framework{framework.NewRSpec(), framework.NewMinitest()}
+	if hint == "" {
+		candidates = nil
+		gemfile, err := os.ReadFile(filepath.Join(root, "Gemfile"))
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		rspec, err := detectAnyFile(root, ".rspec")
+		if err != nil {
+			return nil, err
+		}
+		if rspec || strings.Contains(string(gemfile), "rspec") {
+			candidates = append(candidates, framework.NewRSpec())
+		}
+		tests, err := os.Stat(filepath.Join(root, "test"))
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		if err == nil && tests.IsDir() || strings.Contains(string(gemfile), "minitest") {
+			candidates = append(candidates, framework.NewMinitest())
+		}
+	}
+	fw, err := selectFramework(r.Name(), hint, candidates)
+	if err != nil {
+		return nil, err
+	}
+	fw.SetPlatformEnv(r.GetPlatformEnv())
+	return fw, nil
 }
 
 func (r *Ruby) TestSkippingLevel() settings.TestSkippingLevel {
@@ -98,24 +136,6 @@ func (r *Ruby) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 	maps.Copy(tags, rubyTags)
 
 	return tags, nil
-}
-
-func (r *Ruby) DetectFramework() (framework.Framework, error) {
-	frameworkName := settings.GetFramework()
-	platformEnv := r.GetPlatformEnv()
-
-	var fw framework.Framework
-	switch frameworkName {
-	case "rspec":
-		fw = framework.NewRSpec()
-	case "minitest":
-		fw = framework.NewMinitest()
-	default:
-		return nil, fmt.Errorf("framework '%s' is not supported by platform 'ruby'", frameworkName)
-	}
-
-	fw.SetPlatformEnv(platformEnv)
-	return fw, nil
 }
 
 func (r *Ruby) SanityCheck(ctx context.Context) error {

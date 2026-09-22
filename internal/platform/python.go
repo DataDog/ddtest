@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -50,6 +52,41 @@ func NewPython() *Python {
 
 func (p *Python) Name() string {
 	return "python"
+}
+
+// Detect recognizes Python project markers without parsing dependencies or running Python.
+func (p *Python) Detect(root string) (bool, error) {
+	found, err := detectAnyFile(root, "pyproject.toml", "setup.py", "requirements.txt", "tox.ini", "pytest.ini", ".pytest.ini", "conftest.py")
+	if err != nil || found {
+		return found, err
+	}
+	// setup.cfg is a generic name: require a Python-specific section.
+	data, err := os.ReadFile(filepath.Join(root, "setup.cfg"))
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read setup.cfg: %w", err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.ToLower(strings.TrimSpace(line))
+		section, _, ok := strings.Cut(line, "]")
+		if ok && slices.Contains([]string{"[options", "[options.packages.find", "[options.extras_require", "[tool:pytest", "[flake8", "[isort", "[mypy", "[coverage:run", "[coverage:report"}, section) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Pytest is the only supported Python framework and is the platform default.
+func (p *Python) DetectFramework() (framework.Framework, error) {
+	hint := settings.GetFramework()
+	fw, err := selectFramework(p.Name(), hint, []framework.Framework{framework.NewPytest()})
+	if err != nil {
+		return nil, err
+	}
+	fw.SetPlatformEnv(p.GetPlatformEnv())
+	return fw, nil
 }
 
 func (p *Python) TestSkippingLevel() settings.TestSkippingLevel {
@@ -107,22 +144,6 @@ func (p *Python) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 	maps.Copy(tags, pythonTags)
 
 	return tags, nil
-}
-
-func (p *Python) DetectFramework() (framework.Framework, error) {
-	frameworkName := settings.GetFramework()
-	platformEnv := p.GetPlatformEnv()
-
-	var fw framework.Framework
-	switch frameworkName {
-	case "pytest":
-		fw = framework.NewPytest()
-	default:
-		return nil, fmt.Errorf("framework '%s' is not supported by platform 'python'", frameworkName)
-	}
-
-	fw.SetPlatformEnv(platformEnv)
-	return fw, nil
 }
 
 func (p *Python) SanityCheck(ctx context.Context) error {
