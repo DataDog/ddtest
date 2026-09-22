@@ -18,7 +18,7 @@ import (
 )
 
 func TestPrepareAllSupportedFrameworks(t *testing.T) {
-	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest"} {
+	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest", "rspec", "minitest"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			switch name {
@@ -139,6 +139,9 @@ func TestLanguageEnvironmentsPreserveCustomerOptions(t *testing.T) {
 	require.Equal(t, "/session/python"+string(os.PathListSeparator)+"/customer/modules", python["PYTHONPATH"])
 	require.Equal(t, "--ddtrace -q --disable-plugin-autoload", python["PYTEST_ADDOPTS"])
 	require.NotContains(t, python, "PYTEST_DISABLE_PLUGIN_AUTOLOAD")
+	ruby := (&Testdrive{language: "ruby"}).environment("/session/Gemfile", "http://127.0.0.1:1234", "session")
+	require.True(t, strings.HasPrefix(ruby["RUBYOPT"], "-W0 "))
+	require.Equal(t, "/session/gems", ruby["BUNDLE_PATH"])
 }
 
 func TestCypressTestdrivePreservesCommand(t *testing.T) {
