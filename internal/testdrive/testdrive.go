@@ -110,6 +110,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	}
 
 	_, _ = fmt.Fprintf(output, "  - run: %s\n", shellquote.Join(append([]string{command}, args...)...))
+	_, _ = fmt.Fprintln(output, "  - save a clickable report as <session>/report.html")
 	_, _ = fmt.Fprintln(output, "  - save decoded traffic as <session>/intake/*.json and test output as <session>/test-output.txt")
 	_, _ = fmt.Fprintln(output)
 	_, _ = fmt.Fprintln(output, "It will not change package.json, Gemfile, Python dependency files, or a lockfile in your project.")
@@ -165,6 +166,14 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	if err != nil {
 		return err
 	}
+	reportPath, err := writeReport(t.repositoryRoot, session.Directory(), findings, testErr != nil, reportRuntime{Framework: displayName(t.framework.Name()), Tracer: t.tracerLabel})
+	if err != nil {
+		return err
+	}
+	reportURL, err := fileURL(reportPath)
+	if err != nil {
+		return fmt.Errorf("create report link: %w", err)
+	}
 
 	_, _ = fmt.Fprintln(output)
 	if findings.TestEventCount > 0 {
@@ -185,7 +194,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	}
 	_, _ = fmt.Fprintf(output, "  %s: %s\n", displayName(t.framework.Name()), passedFailed(testErr == nil))
 	_, _ = fmt.Fprintf(output, "  Tracer: %s\n", tracerLabel)
-	_, _ = fmt.Fprintf(output, "\nRun artifacts: %s\n", session.Directory())
+	_, _ = fmt.Fprintf(output, "\nOpen report: %s\n", terminalLink(reportURL))
 
 	if testErr != nil {
 		return fmt.Errorf("%s failed after sending %d test event(s): %w", t.framework.Name(), findings.TestEventCount, testErr)

@@ -1,0 +1,41 @@
+package testdrive
+
+import (
+	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"os"
+	"strings"
+	"testing"
+)
+
+func TestStaticReportEscapesFindingsAndDescribesMissingCoverage(t *testing.T) {
+	path, err := writeReport(t.TempDir(), t.TempDir(), intake.Findings{TestEventCount: 1, TestCount: 1, FailedTests: []intake.TestFinding{{Name: "<script>alert(1)</script>"}}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"&lt;script&gt;", "Not reported", "Failed", "intake/", "test-output.txt"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if strings.Contains(string(data), "<script>alert") {
+		t.Fatal("unescaped test name")
+	}
+	model := buildReport(t.TempDir(), intake.Findings{}, false)
+	if model.Headline != "No test events received." {
+		t.Fatal(model.Headline)
+	}
+}
+
+func TestReportSurfacesConfigurationErrorsDespiteReceivedTests(t *testing.T) {
+	model := buildReport(t.TempDir(), intake.Findings{TestEventCount: 1, FailedTests: []intake.TestFinding{{Name: "fails"}}, ConfigurationErrors: []string{"skippable_tests"}}, false)
+	if model.Headline != "Test events received." {
+		t.Fatalf("headline overstates verification: %s", model.Headline)
+	}
+	if !strings.Contains(model.Summary, "Tracer configuration errors: skippable_tests.") {
+		t.Fatalf("missing configuration error: %s", model.Summary)
+	}
+}
