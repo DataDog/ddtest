@@ -12,10 +12,12 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/textproto"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -297,4 +299,42 @@ func appendEvent(payload []byte, eventType string, sessionID, suiteID, spanID ui
 	payload = msgp.AppendString(payload, "span_id")
 	payload = msgp.AppendUint64(payload, spanID)
 	return payload
+}
+
+func TestGzippedSettingsRequest(t *testing.T) {
+	payload := []byte(`{"data":{"id":"compressed-settings"}}`)
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	_, err := writer.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	server := &Server{directory: t.TempDir()}
+	request := httptest.NewRequest(http.MethodPost, settingsPath, bytes.NewReader(compressed.Bytes()))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Content-Encoding", "gzip")
+	request.Header.Set("Content-Length", strconv.Itoa(compressed.Len()))
+	response := httptest.NewRecorder()
+	server.recordRequests(newHandler()).ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
+	var settings settingsResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &settings))
+	require.Equal(t, "compressed-settings", settings.Data.ID)
+	require.True(t, settings.Data.Attributes.ITREnabled)
+	require.True(t, settings.Data.Attributes.CodeCoverage)
+	require.Empty(t, request.Header.Get("Content-Encoding"))
+	require.Equal(t, int64(len(payload)), request.ContentLength)
+	require.Equal(t, strconv.Itoa(len(payload)), request.Header.Get("Content-Length"))
+
+	raw := server.Requests()
+	require.Len(t, raw, 1)
+	require.Equal(t, compressed.Bytes(), raw[0].Body)
+	require.Equal(t, "gzip", raw[0].Header.Get("Content-Encoding"))
+	require.Equal(t, strconv.Itoa(compressed.Len()), raw[0].Header.Get("Content-Length"))
+	storedBytes, err := os.ReadFile(filepath.Join(server.directory, "001-settings.json"))
+	require.NoError(t, err)
+	var stored storedRequest
+	require.NoError(t, json.Unmarshal(storedBytes, &stored))
+	require.JSONEq(t, string(payload), string(stored.Body))
 }

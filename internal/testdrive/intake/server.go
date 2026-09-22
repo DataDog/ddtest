@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -134,7 +135,6 @@ func (s *Server) recordRequests(next http.Handler) http.Handler {
 			return
 		}
 		_ = request.Body.Close()
-		request.Body = io.NopCloser(bytes.NewReader(body))
 
 		rawRequest := RawRequest{
 			Method: request.Method,
@@ -142,9 +142,12 @@ func (s *Server) recordRequests(next http.Handler) http.Handler {
 			Header: request.Header.Clone(),
 			Body:   slices.Clone(body),
 		}
+		body, persistErr := uncompressRequestBody(rawRequest)
 		s.requestsMu.Lock()
 		requestNumber := len(s.requests) + 1
-		persistErr := s.persistRequest(requestNumber, rawRequest)
+		if persistErr == nil {
+			persistErr = s.persistRequest(requestNumber, rawRequest, body)
+		}
 		s.requests = append(s.requests, rawRequest)
 		s.requestsMu.Unlock()
 		if persistErr != nil {
@@ -152,15 +155,15 @@ func (s *Server) recordRequests(next http.Handler) http.Handler {
 			return
 		}
 
+		request.Body = io.NopCloser(bytes.NewReader(body))
+		request.ContentLength = int64(len(body))
+		request.Header.Del("Content-Encoding")
+		request.Header.Set("Content-Length", strconv.Itoa(len(body)))
 		next.ServeHTTP(w, request)
 	})
 }
 
-func (s *Server) persistRequest(number int, request RawRequest) error {
-	body, err := uncompressRequestBody(request)
-	if err != nil {
-		return err
-	}
+func (s *Server) persistRequest(number int, request RawRequest, body []byte) error {
 	decodedBody, err := decodeRequestBody(body, request.Header.Get("Content-Type"))
 	if err != nil {
 		return fmt.Errorf("decode request body: %w", err)
