@@ -181,6 +181,10 @@ func TestServerStoresAndRecognizesGzippedMessagePack(t *testing.T) {
 	require.NoError(t, response.Body.Close())
 	require.Equal(t, http.StatusOK, response.StatusCode)
 
+	testCount, err := server.TestEventCount()
+	require.NoError(t, err)
+	require.Equal(t, 1, testCount)
+
 	storedBytes, err := os.ReadFile(filepath.Join(sessionDirectory, intakeDirectoryName, "001-citestcycle.json"))
 	require.NoError(t, err)
 	require.True(t, json.Valid(storedBytes))
@@ -292,22 +296,6 @@ func TestRequestFileLabel(t *testing.T) {
 func testHTTPClient() *http.Client {
 	return &http.Client{Timeout: time.Second}
 }
-
-func appendEvent(payload []byte, eventType string, sessionID, suiteID, spanID uint64) []byte {
-	payload = msgp.AppendMapHeader(payload, 2)
-	payload = msgp.AppendString(payload, "type")
-	payload = msgp.AppendString(payload, eventType)
-	payload = msgp.AppendString(payload, "content")
-	payload = msgp.AppendMapHeader(payload, 3)
-	payload = msgp.AppendString(payload, "test_session_id")
-	payload = msgp.AppendUint64(payload, sessionID)
-	payload = msgp.AppendString(payload, "test_suite_id")
-	payload = msgp.AppendUint64(payload, suiteID)
-	payload = msgp.AppendString(payload, "span_id")
-	payload = msgp.AppendUint64(payload, spanID)
-	return payload
-}
-
 func TestGzippedSettingsRequest(t *testing.T) {
 	payload := []byte(`{"data":{"id":"compressed-settings"}}`)
 	var compressed bytes.Buffer
