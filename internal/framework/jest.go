@@ -122,10 +122,8 @@ func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFi
 func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, baseArgs := j.getJestCommand()
 	args := slices.Clone(baseArgs)
-	if len(testFiles) > 0 {
-		args = append(args, "--runTestsByPath")
-		args = append(args, testFiles...)
-	}
+	args = append(args, "--runTestsByPath")
+	args = append(args, testFiles...)
 
 	slog.Info("Running tests with command", "command", command, "args", args)
 

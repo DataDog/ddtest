@@ -610,13 +610,13 @@ func TestJavaScriptDetectionDoesNotOverrideCommand(t *testing.T) {
 				settings.Get().Framework = "jest"
 				fw, err := NewJavaScript().DetectFramework()
 				require.NoError(t, err)
-				require.NoError(t, fw.RunTests(context.Background(), nil, nil))
+				require.NoError(t, fw.RunTests(context.Background(), []string{"example.test.js"}, nil))
 				invocation, err := os.ReadFile(capture)
 				require.NoError(t, err)
 				if custom == "" {
-					require.Equal(t, "npx\njest\n", string(invocation))
+					require.Equal(t, "npx\njest\n--runTestsByPath\nexample.test.js\n", string(invocation))
 				} else {
-					require.Equal(t, "custom-jest\n--config\nexplicit.js\n", string(invocation))
+					require.Equal(t, "custom-jest\n--config\nexplicit.js\n--runTestsByPath\nexample.test.js\n", string(invocation))
 				}
 			}
 		})

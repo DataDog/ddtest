@@ -2,6 +2,7 @@ package framework
 
 import (
 	"context"
+
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
