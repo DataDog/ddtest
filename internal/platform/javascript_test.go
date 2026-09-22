@@ -6,12 +6,14 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/viper"
+	"github.com/stretchr/testify/require"
 )
 
 // sequentialMockExecutor returns pre-configured responses in order for CombinedOutput calls.
@@ -586,4 +588,36 @@ func TestDetectPlatform_JavaScript(t *testing.T) {
 		t.Fatalf("expected javascript, got %q", platform.Name())
 	}
 
+}
+
+func TestJavaScriptDetectionDoesNotOverrideCommand(t *testing.T) {
+	for _, script := range []string{"jest --config custom.js", "vitest run", "jest && eslint .", "cross-env NODE_ENV=test jest"} {
+		t.Run(script, func(t *testing.T) {
+			resetDetectionSettings(t)
+			root := t.TempDir()
+			t.Chdir(root)
+			require.NoError(t, os.WriteFile("package.json", []byte(`{"devDependencies":{"jest":"29"},"scripts":{"test":"`+script+`"}}`), 0644))
+			// Capture the actual invocation without installing or running Jest.
+			bin := t.TempDir()
+			t.Setenv("PATH", bin)
+			for _, name := range []string{"npx", "custom-jest"} {
+				require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf '%s\\n' '"+name+"' \"$@\" > \"$DDTEST_COMMAND_CAPTURE\"\n"), 0755))
+			}
+			capture := filepath.Join(root, "command.txt")
+			t.Setenv("DDTEST_COMMAND_CAPTURE", capture)
+			for _, custom := range []string{"", "custom-jest --config explicit.js"} {
+				settings.Get().Command = custom
+				fw, err := NewJavaScript().DetectFramework(root, "jest")
+				require.NoError(t, err)
+				require.NoError(t, fw.RunTests(context.Background(), nil, nil))
+				invocation, err := os.ReadFile(capture)
+				require.NoError(t, err)
+				if custom == "" {
+					require.Equal(t, "npx\njest\n", string(invocation))
+				} else {
+					require.Equal(t, "custom-jest\n--config\nexplicit.js\n", string(invocation))
+				}
+			}
+		})
+	}
 }
