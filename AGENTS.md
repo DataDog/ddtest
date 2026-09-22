@@ -58,7 +58,16 @@ When opening a pull request for this repository, use exactly these sections:
 
 1. `What`: Briefly describe the user-visible behavior change.
 2. `Why`: Explain the customer problem and motivation. Link to relevant external docs when they are part of the rationale.
-3. `E2E testing`: Provide a concrete manual end-to-end test scenario for the change.
+3. `E2E testing`: Write the test plan that manual QA must perform to validate this PR. Include prerequisites and setup, ordered actions or commands, and the expected observable result for each scenario. Cover the main journey and relevant failure/edge cases; explain cleanup when needed.
+
+The `E2E testing` section is an executable plan for a person, not a report of
+checks already run. Automated unit/integration test commands, CI status, lint
+results, and statements such as "tests passed" do not substitute for manual QA
+steps. Keep automated validation results in the PR checks or a separate comment.
+Use commands and features available at this PR's own branch. For component-only
+changes without a public entry point, supply a minimal runnable manual harness
+and explain what QA should inspect; do not depend on a later PR's CLI. For
+documentation-only changes, describe the manual documentation/usage review.
 
 ## Architecture
 

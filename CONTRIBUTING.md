@@ -55,6 +55,15 @@ We welcome code contributions to the library, which you can [submit as a pull re
 4. **Update any documentation** such as `Readme.md`, especially for new features.
 5. **Submit the pull request** from your fork back to the latest revision of the `main` branch on <https://github.com/DataDog/ddtest>.
 
+Use exactly these PR description sections: `What`, `Why`, and `E2E testing`.
+The `E2E testing` section is the manual QA test plan: state prerequisites, list
+steps a person can perform on this PR's branch, and describe the expected result
+of each scenario. Include relevant failure cases and cleanup. For internal
+components, provide a runnable manual harness if there is no public entry point;
+for documentation changes, describe the documentation/usage review. Automated
+test commands, CI status, and "tests passed" are not a manual QA plan; keep those
+results in PR checks or a separate comment.
+
 The pull request will be run through our CI pipeline, and a project member will review the changes with you. At a minimum, to be accepted and merged, pull requests must:
 
 - Have a stated goal and detailed description of the changes made

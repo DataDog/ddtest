@@ -1,20 +1,24 @@
-**What does this PR do?**
+## What
 
-<!-- A brief description of the change being made with this pull request. -->
+<!-- Briefly describe the user-visible behavior change. -->
 
-**Motivation**
+## Why
 
-<!-- What inspired you to submit this pull request? -->
+<!-- Explain the customer problem and motivation. Link relevant rationale. -->
 
-**Additional Notes**
-
-<!-- Anything else we should know when reviewing? -->
-
-**How to test the change?**
+## E2E testing
 
 <!--
-Describe here how the change can be validated.
-You are strongly encouraged to provide automated tests for this PR (unit or integration).
-If this change cannot be feasibly tested, please explain why,
-unless the change does not modify code (e.g. only modifies docs, comments).
+Write the test plan manual QA must perform to validate this PR:
+- Prerequisites: environment, dependencies, credentials (if needed), and sample data/repository.
+- Ordered manual actions or commands, with expected observable results.
+- Relevant failure/edge cases and cleanup.
+
+Use features available on this PR's branch. If the change has no public entry
+point, provide a minimal runnable manual harness and inspection instructions.
+For documentation-only changes, describe the documentation/usage review.
+
+This section is a plan, not a record of automated checks. Do not replace manual
+steps with go test/make test/make lint commands, CI status, or "tests passed".
+Keep automated validation results in PR checks or a separate comment.
 -->
