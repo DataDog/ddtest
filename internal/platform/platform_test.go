@@ -18,6 +18,44 @@ func TestNewPlatformDetector(t *testing.T) {
 	}
 }
 
+func TestPlatformsDetectTheirProjectFiles(t *testing.T) {
+	tests := []struct {
+		name     string
+		platform Platform
+		filename string
+	}{
+		{name: "ruby", platform: NewRuby(settings.TestSkippingLevelSuite), filename: "Gemfile"},
+		{name: "javascript", platform: NewJavaScript(), filename: "package.json"},
+		{name: "python pyproject", platform: NewPython(), filename: "pyproject.toml"},
+		{name: "python setup", platform: NewPython(), filename: "setup.py"},
+		{name: "python requirements", platform: NewPython(), filename: "requirements.txt"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repositoryRoot := t.TempDir()
+			detected, err := test.platform.Detect(repositoryRoot)
+			if err != nil {
+				t.Fatalf("Detect() unexpected error: %v", err)
+			}
+			if detected {
+				t.Fatal("Detect() = true for an empty repository")
+			}
+
+			if err := os.WriteFile(filepath.Join(repositoryRoot, test.filename), []byte("{}"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			detected, err = test.platform.Detect(repositoryRoot)
+			if err != nil {
+				t.Fatalf("Detect() unexpected error: %v", err)
+			}
+			if !detected {
+				t.Fatal("Detect() = false for a matching repository")
+			}
+		})
+	}
+}
+
 func TestPlatformSanityChecksPropagateContext(t *testing.T) {
 	type contextKey struct{}
 	ctx := context.WithValue(context.Background(), contextKey{}, "sanity-check")

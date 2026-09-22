@@ -57,6 +57,27 @@ func (j *Jest) Name() string {
 	return "jest"
 }
 
+func (j *Jest) Detect(repositoryRoot string) (bool, error) {
+	manifest, found, err := readPackageManifest(repositoryRoot)
+	if err != nil || !found {
+		return false, err
+	}
+	if !manifest.usesAny("jest") {
+		return false, nil
+	}
+	if len(j.commandOverride) > 0 {
+		return true, nil
+	}
+	if strings.TrimSpace(manifest.Scripts["test"]) == "" {
+		return true, nil
+	}
+
+	// Use the project's test script so testdrive exercises the same entry point
+	// that developers and CI normally use.
+	j.commandOverride = []string{"npm", "test", "--", "--runInBand"}
+	return true, nil
+}
+
 // We will not be discovering tests, but test suites.
 // We'll be working outside of the Node.js process
 func (j *Jest) SupportsFullTestDiscovery() bool {
@@ -120,10 +141,7 @@ func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFi
 }
 
 func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
-	command, baseArgs := j.getJestCommand()
-	args := slices.Clone(baseArgs)
-	args = append(args, "--runTestsByPath")
-	args = append(args, testFiles...)
+	command, args := j.TestCommand(testFiles)
 
 	slog.Info("Running tests with command", "command", command, "args", args)
 
@@ -131,6 +149,18 @@ func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[stri
 	maps.Copy(mergedEnv, j.platformEnv)
 	maps.Copy(mergedEnv, envMap)
 	return j.executor.Run(ctx, command, args, mergedEnv)
+}
+
+// TestCommand returns the command used to run the selected tests. An empty
+// selection runs the framework's full suite.
+func (j *Jest) TestCommand(testFiles []string) (string, []string) {
+	command, baseArgs := j.getJestCommand()
+	args := slices.Clone(baseArgs)
+	if len(testFiles) > 0 {
+		args = append(args, "--runTestsByPath")
+		args = append(args, testFiles...)
+	}
+	return command, args
 }
 
 func (j *Jest) discoveryEnv() map[string]string {

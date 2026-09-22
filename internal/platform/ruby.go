@@ -44,6 +44,10 @@ func (r *Ruby) Name() string {
 	return "ruby"
 }
 
+func (r *Ruby) Detect(repositoryRoot string) (bool, error) {
+	return detectAnyFile(repositoryRoot, "Gemfile")
+}
+
 func (r *Ruby) TestSkippingLevel() settings.TestSkippingLevel {
 	return r.testSkippingLevel
 }

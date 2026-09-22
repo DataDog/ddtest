@@ -52,6 +52,10 @@ func (p *Python) Name() string {
 	return "python"
 }
 
+func (p *Python) Detect(repositoryRoot string) (bool, error) {
+	return detectAnyFile(repositoryRoot, "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "pytest.ini")
+}
+
 func (p *Python) TestSkippingLevel() settings.TestSkippingLevel {
 	return settings.TestSkippingLevelTest
 }

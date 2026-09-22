@@ -86,7 +86,10 @@ func NewCucumber() *Cucumber {
 func (c *Cucumber) SetPlatformEnv(platformEnv map[string]string) { c.platformEnv = platformEnv }
 func (c *Cucumber) GetPlatformEnv() map[string]string            { return c.platformEnv }
 func (c *Cucumber) Name() string                                 { return "cucumber" }
-func (c *Cucumber) SupportsFullTestDiscovery() bool              { return false }
+func (c *Cucumber) Detect(repositoryRoot string) (bool, error) {
+	return detectJavaScriptFramework(repositoryRoot, "@cucumber/cucumber", "cucumber")
+}
+func (c *Cucumber) SupportsFullTestDiscovery() bool { return false }
 
 func (c *Cucumber) SourceFileForSuite(suite string) (string, bool) {
 	suite = utils.NormalizePath(strings.TrimSpace(suite))

@@ -44,6 +44,20 @@ func (p *PyTest) Name() string {
 	return "pytest"
 }
 
+func (p *PyTest) Detect(repositoryRoot string) (bool, error) {
+	detected, err := detectAnyPath(repositoryRoot, "pytest.ini", "conftest.py")
+	if err != nil || detected {
+		return detected, err
+	}
+	for _, filename := range []string{"pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "tox.ini"} {
+		detected, err = detectFileContaining(repositoryRoot, filename, "pytest")
+		if err != nil || detected {
+			return detected, err
+		}
+	}
+	return false, nil
+}
+
 // TestPattern returns the glob pattern used to discover pytest test files.
 // Priority: explicit --tests-location flag > pytest config file > built-in default.
 // Multiple testpaths or python_files from config are collapsed into brace-expansion
