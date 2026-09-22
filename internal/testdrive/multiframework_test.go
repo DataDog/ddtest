@@ -17,7 +17,7 @@ import (
 )
 
 func TestPrepareAllSupportedFrameworks(t *testing.T) {
-	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber"} {
+	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			switch name {
@@ -102,4 +102,22 @@ func TestPrepareRequiresSelectionForMultipleFrameworks(t *testing.T) {
 	settings.Get().Framework = "unsupported"
 	_, err = Prepare("latest")
 	require.ErrorContains(t, err, "unsupported framework")
+}
+
+func TestCypressWrapperUsesExplicitConfigWithoutEditingIt(t *testing.T) {
+	root := t.TempDir()
+	session := t.TempDir()
+	config := `module.exports={e2e:{supportFile:false}}`
+	requireWriteFile(t, filepath.Join(root, "custom.cjs"), config)
+	args, err := prepareCypress(root, session, "/tracer/ci/init.js", []string{"run", "--config-file=custom.cjs", "--browser", "chrome"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"run", "--browser", "chrome", "--config-file", filepath.Join(session, "cypress.config.cjs")}, args)
+	contents, err := os.ReadFile(filepath.Join(root, "custom.cjs"))
+	require.NoError(t, err)
+	require.Equal(t, config, string(contents))
+	wrapper, err := os.ReadFile(filepath.Join(session, "cypress.config.cjs"))
+	require.NoError(t, err)
+	require.Contains(t, string(wrapper), filepath.Join(root, "custom.cjs"))
+	_, err = prepareCypress(root, session, "/tracer/ci/init.js", []string{"--config-file"})
+	require.ErrorContains(t, err, "requires a path")
 }
