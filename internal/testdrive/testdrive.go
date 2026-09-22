@@ -7,12 +7,13 @@
 package testdrive
 
 import (
+"maps"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -47,9 +48,10 @@ type Testdrive struct {
 	args           []string
 	tracerLabel    string
 	platform       platform.Platform
-	tracerVersion  string
+ tracerVersion string
 	executor       commandExecutor
 	startIntake    func(string) (localIntake, error)
+	nodeVersion    func() string
 }
 
 // Prepare detects the repository without running commands or writing files.
@@ -74,7 +76,7 @@ func Prepare(version string) (*Testdrive, error) {
 	}
 	language := detectedPlatform.Name()
 	switch runner.Name() {
-	case "jest":
+	case "jest", "mocha", "vitest", "playwright", "cucumber":
 	default:
 		return nil, fmt.Errorf("testdrive does not yet support %s", runner.Name())
 	}
@@ -82,10 +84,11 @@ func Prepare(version string) (*Testdrive, error) {
 	if err != nil {
 		return nil, err
 	}
-	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
+ label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 
 	return &Testdrive{repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
-		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) }}, nil
+		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) },
+		nodeVersion: currentNodeVersion}, nil
 }
 
 func displayName(name string) string {
@@ -147,7 +150,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	command, args := t.command, t.args
 	_, _ = fmt.Fprintf(output, "Running %s...\n", shellquote.Join(append([]string{command}, args...)...))
 	env := t.environment(installation.Path, server.URL(), session.ID())
-	maps.Copy(env, installation.Env)
+ maps.Copy(env, installation.Env)
 
 	testOutput, testErr := t.executor.CombinedOutput(ctx, command, args, env)
 
@@ -330,5 +333,46 @@ func isDatadogNodePreload(value string) bool {
 }
 
 func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]string {
-	return testEnvironment(path, intakeURL, sessionID)
+	env := testEnvironment(path, intakeURL, sessionID)
+	switch t.language {
+	case "javascript":
+		// ESM instrumentation is needed by Vitest and by ESM test/config files.
+		version := ""
+		if t.nodeVersion != nil {
+			version = t.nodeVersion()
+		}
+		if supportsNodeImport(version) {
+			register := absoluteFileURL(filepath.Join(filepath.Dir(filepath.Dir(path)), "register.js"))
+			env["NODE_OPTIONS"] += " --import " + strconv.Quote(register)
+		}
+		// dd-trace 6.15.0 impacted-test detection dereferences scenario.id on
+		// Background/Rule nodes. Basic Cucumber reporting works with it off.
+		if t.framework.Name() == "cucumber" {
+			env["DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED"] = "false"
+		}
+
+	}
+	return env
+}
+
+func currentNodeVersion() string {
+	output, err := exec.Command("node", "--version").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+func supportsNodeImport(version string) bool {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 {
+		return false
+	}
+	major, majorErr := strconv.Atoi(parts[0])
+	minor, minorErr := strconv.Atoi(parts[1])
+	if majorErr != nil || minorErr != nil {
+		return false
+	}
+	return major > 18 || major == 18 && minor >= 18
 }
