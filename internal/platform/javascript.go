@@ -48,13 +48,9 @@ func (j *JavaScript) Detect(repositoryRoot string) (bool, error) {
 	return detectAnyFile(repositoryRoot, "package.json")
 }
 
-func (j *JavaScript) DetectFramework(root, hint string) (framework.Framework, error) {
-	if root == "" {
-		root = "."
-	}
-	if hint == "" {
-		hint = settings.GetFramework()
-	}
+func (j *JavaScript) DetectFramework() (framework.Framework, error) {
+	root := "."
+	hint := settings.GetFramework()
 	candidates := []framework.Framework{framework.NewJest(), framework.NewMocha(), framework.NewCypress(), framework.NewPlaywright(), framework.NewCucumber(), framework.NewVitest()}
 	if hint == "" {
 		manifest, found, err := readPackageManifest(root)

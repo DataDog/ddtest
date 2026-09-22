@@ -925,7 +925,7 @@ type selectionPlatform struct {
 }
 
 func (p *selectionPlatform) Name() string { return "javascript" }
-func (p *selectionPlatform) DetectFramework(string, string) (framework.Framework, error) {
+func (p *selectionPlatform) DetectFramework() (framework.Framework, error) {
 	p.frameworkCalls++
 	return p.framework, p.frameworkErr
 }
@@ -940,10 +940,8 @@ func TestResolveTestEnvironment(t *testing.T) {
 	t.Cleanup(func() { detectPlatform = original })
 	p := &selectionPlatform{framework: framework.NewJest()}
 	calls := 0
-	detectPlatform = func(root, hint string) (platform.Platform, error) {
+	detectPlatform = func() (platform.Platform, error) {
 		calls++
-		require.Equal(t, ".", root)
-		require.Equal(t, settings.GetFramework(), hint)
 		return p, nil
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -966,7 +964,7 @@ func TestCommandsRejectSelectionErrorsBeforePlanningOrExecution(t *testing.T) {
 				t.Cleanup(func() { detectPlatform = original })
 				failure := errors.New("selection failed")
 				p := &selectionPlatform{framework: framework.NewJest()}
-				detectPlatform = func(string, string) (platform.Platform, error) {
+				detectPlatform = func() (platform.Platform, error) {
 					if stage == "platform" {
 						return nil, failure
 					}

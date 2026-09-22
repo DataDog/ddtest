@@ -311,11 +311,11 @@ func Execute() error {
 
 // Resolve selection and prerequisites once, before creating a planner or runner.
 func resolveTestEnvironment(ctx context.Context, platformCode, frameworkCode errcode.Code) (platform.Platform, framework.Framework, error) {
-	p, err := detectPlatform(".", settings.GetFramework())
+	p, err := detectPlatform()
 	if err != nil {
 		return nil, nil, errcode.WithCode(platformCode, fmt.Errorf("failed to detect platform: %w", err))
 	}
-	fw, err := p.DetectFramework(".", settings.GetFramework())
+	fw, err := p.DetectFramework()
 	if err != nil {
 		return nil, nil, errcode.WithCode(frameworkCode, fmt.Errorf("failed to detect framework: %w", err))
 	}

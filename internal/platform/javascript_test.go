@@ -223,7 +223,7 @@ func TestJavaScript_DetectFramework_Jest(t *testing.T) {
 	}()
 
 	javascript := NewJavaScript()
-	fw, err := javascript.DetectFramework("", "")
+	fw, err := javascript.DetectFramework()
 	if err != nil {
 		t.Fatalf("DetectFramework failed: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestJavaScript_DetectFramework_Mocha(t *testing.T) {
 		settings.Init()
 	}()
 
-	fw, err := NewJavaScript().DetectFramework("", "")
+	fw, err := NewJavaScript().DetectFramework()
 	if err != nil {
 		t.Fatalf("DetectFramework failed: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestJavaScript_DetectFramework_Cypress(t *testing.T) {
 		settings.Init()
 	}()
 
-	fw, err := NewJavaScript().DetectFramework("", "")
+	fw, err := NewJavaScript().DetectFramework()
 	if err != nil {
 		t.Fatalf("DetectFramework failed: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestJavaScript_DetectFramework_Playwright(t *testing.T) {
 		settings.Init()
 	}()
 
-	fw, err := NewJavaScript().DetectFramework("", "")
+	fw, err := NewJavaScript().DetectFramework()
 	if err != nil {
 		t.Fatalf("DetectFramework failed: %v", err)
 	}
@@ -308,7 +308,7 @@ func TestJavaScript_DetectFramework_Cucumber(t *testing.T) {
 		settings.Init()
 	}()
 
-	fw, err := NewJavaScript().DetectFramework("", "")
+	fw, err := NewJavaScript().DetectFramework()
 	if err != nil {
 		t.Fatalf("DetectFramework failed: %v", err)
 	}
@@ -330,7 +330,7 @@ func TestJavaScript_DetectFramework_Vitest(t *testing.T) {
 		settings.Init()
 	}()
 
-	fw, err := NewJavaScript().DetectFramework("", "")
+	fw, err := NewJavaScript().DetectFramework()
 	if err != nil {
 		t.Fatalf("DetectFramework failed: %v", err)
 	}
@@ -353,7 +353,7 @@ func TestJavaScript_DetectFramework_VitestPreservesExistingOptions(t *testing.T)
 		settings.Init()
 	}()
 
-	fw, err := NewJavaScript().DetectFramework("", "")
+	fw, err := NewJavaScript().DetectFramework()
 	if err != nil {
 		t.Fatalf("DetectFramework failed: %v", err)
 	}
@@ -374,7 +374,7 @@ func TestJavaScript_DetectFramework_VitestDoesNotDuplicateRegister(t *testing.T)
 		settings.Init()
 	}()
 
-	fw, err := NewJavaScript().DetectFramework("", "")
+	fw, err := NewJavaScript().DetectFramework()
 	if err != nil {
 		t.Fatalf("DetectFramework failed: %v", err)
 	}
@@ -395,7 +395,7 @@ func TestJavaScript_DetectFramework_Unsupported(t *testing.T) {
 	}()
 
 	javascript := NewJavaScript()
-	fw, err := javascript.DetectFramework("", "")
+	fw, err := javascript.DetectFramework()
 	if err == nil {
 		t.Fatalf("expected unsupported framework error, got framework %v", fw)
 	}
@@ -503,7 +503,7 @@ func TestJavaScript_DetectFramework_SetsPlatformEnv(t *testing.T) {
 	}()
 
 	javascript := NewJavaScript()
-	fw, err := javascript.DetectFramework("", "")
+	fw, err := javascript.DetectFramework()
 	if err != nil {
 		t.Fatalf("DetectFramework failed: %v", err)
 	}
@@ -580,7 +580,7 @@ func TestDetectPlatform_JavaScript(t *testing.T) {
 	}()
 
 	t.Setenv("PATH", t.TempDir())
-	platform, err := DetectPlatform("", "")
+	platform, err := DetectPlatform()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -607,7 +607,8 @@ func TestJavaScriptDetectionDoesNotOverrideCommand(t *testing.T) {
 			t.Setenv("DDTEST_COMMAND_CAPTURE", capture)
 			for _, custom := range []string{"", "custom-jest --config explicit.js"} {
 				settings.Get().Command = custom
-				fw, err := NewJavaScript().DetectFramework(root, "jest")
+				settings.Get().Framework = "jest"
+				fw, err := NewJavaScript().DetectFramework()
 				require.NoError(t, err)
 				require.NoError(t, fw.RunTests(context.Background(), nil, nil))
 				invocation, err := os.ReadFile(capture)

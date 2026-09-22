@@ -173,7 +173,7 @@ func TestRuby_DetectFramework_RSpec(t *testing.T) {
 	t.Cleanup(func() { viper.Reset(); settings.Init() })
 
 	ruby := newTestRuby()
-	fw, err := ruby.DetectFramework("", "")
+	fw, err := ruby.DetectFramework()
 
 	if err != nil {
 		t.Fatalf("DetectFramework failed: %v", err)
@@ -202,7 +202,7 @@ func TestRuby_DetectFramework_Minitest(t *testing.T) {
 	}()
 
 	ruby := newTestRuby()
-	fw, err := ruby.DetectFramework("", "")
+	fw, err := ruby.DetectFramework()
 
 	if err != nil {
 		t.Fatalf("DetectFramework failed: %v", err)
@@ -227,7 +227,7 @@ func TestRuby_DetectFramework_Unsupported(t *testing.T) {
 	}()
 
 	ruby := newTestRuby()
-	fw, err := ruby.DetectFramework("", "")
+	fw, err := ruby.DetectFramework()
 
 	if err == nil {
 		t.Errorf("expected error for unsupported framework, but got framework: %v", fw)
@@ -436,7 +436,7 @@ func TestDetectPlatform_Ruby(t *testing.T) {
 	t.Cleanup(func() { viper.Reset(); settings.Init() })
 
 	t.Setenv("PATH", t.TempDir())
-	platform, err := DetectPlatform("", "")
+	platform, err := DetectPlatform()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +455,7 @@ func TestDetectPlatform_Unsupported(t *testing.T) {
 		settings.Init()
 	}()
 
-	platform, err := DetectPlatform("", "")
+	platform, err := DetectPlatform()
 	if err == nil {
 		t.Errorf("expected error for unsupported platform, but got platform: %v", platform)
 		return
@@ -524,7 +524,7 @@ func TestRuby_DetectFramework_SetsPlatformEnv(t *testing.T) {
 	t.Cleanup(func() { viper.Reset(); settings.Init() })
 
 	ruby := newTestRuby()
-	fw, err := ruby.DetectFramework("", "")
+	fw, err := ruby.DetectFramework()
 
 	if err != nil {
 		t.Fatalf("DetectFramework failed: %v", err)

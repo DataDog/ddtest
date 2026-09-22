@@ -47,7 +47,7 @@ func (m *MockPlatform) CreateTagsMap(context.Context) (map[string]string, error)
 	return m.Tags, m.TagsErr
 }
 
-func (m *MockPlatform) DetectFramework(string, string) (framework.Framework, error) {
+func (m *MockPlatform) DetectFramework() (framework.Framework, error) {
 	panic("framework must be selected before planning or execution")
 }
 

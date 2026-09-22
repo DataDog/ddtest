@@ -312,7 +312,7 @@ func TestPython_DetectFramework_Pytest(t *testing.T) {
 	}
 
 	python := NewPython()
-	fw, err := python.DetectFramework("", "")
+	fw, err := python.DetectFramework()
 
 	if err != nil {
 		t.Fatalf("DetectFramework failed: %v", err)
@@ -341,7 +341,7 @@ func TestPython_DetectFramework_Unsupported(t *testing.T) {
 	}()
 
 	python := NewPython()
-	fw, err := python.DetectFramework("", "")
+	fw, err := python.DetectFramework()
 
 	if err == nil {
 		t.Errorf("expected error for unsupported framework, but got framework: %v", fw)
@@ -388,7 +388,7 @@ func TestDetectPlatform_Python(t *testing.T) {
 		settings.Init()
 	}()
 
-	platform, err := DetectPlatform("", "")
+	platform, err := DetectPlatform()
 	if err != nil {
 		t.Fatalf("DetectPlatform() unexpected error: %v", err)
 	}
@@ -405,6 +405,7 @@ func TestPythonRealProjectConfigurations(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			files := detectionFiles(t, filepath.Join("testdata", "detection", name))
 			root := t.TempDir()
+			t.Chdir(root)
 			t.Setenv("PATH", t.TempDir())
 			for name, data := range files {
 				require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(data), 0644))
@@ -412,7 +413,7 @@ func TestPythonRealProjectConfigurations(t *testing.T) {
 			found, err := NewPython().Detect(root)
 			require.NoError(t, err)
 			require.True(t, found)
-			fw, err := NewPython().DetectFramework(root, "")
+			fw, err := NewPython().DetectFramework()
 			require.NoError(t, err)
 			require.Equal(t, "pytest", fw.Name())
 			for name, data := range files {
@@ -460,11 +461,12 @@ func TestPythonConfigurationEvidence(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
+			t.Chdir(root)
 			require.NoError(t, os.WriteFile(filepath.Join(root, tc.file), []byte(tc.contents), 0644))
 			found, err := NewPython().Detect(root)
 			require.NoError(t, err)
 			require.Equal(t, tc.python, found)
-			_, err = NewPython().DetectFramework(root, "pytest")
+			_, err = NewPython().DetectFramework()
 			require.NoError(t, err)
 		})
 	}
@@ -473,11 +475,12 @@ func TestPythonConfigurationEvidence(t *testing.T) {
 func TestPythonDefaultFrameworkDoesNotInspectConfiguration(t *testing.T) {
 	resetDetectionSettings(t)
 	root := t.TempDir()
+	t.Chdir(root)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "pyproject.toml"), []byte("[project"), 0644))
 	found, err := NewPython().Detect(root)
 	require.NoError(t, err)
 	require.True(t, found)
-	fw, err := NewPython().DetectFramework(root, "")
+	fw, err := NewPython().DetectFramework()
 	require.NoError(t, err)
 	require.Equal(t, "pytest", fw.Name())
 }

@@ -15,7 +15,7 @@ type Platform interface {
 	Name() string
 	Detect(repositoryRoot string) (bool, error)
 	CreateTagsMap(ctx context.Context) (map[string]string, error)
-	DetectFramework(root, hint string) (framework.Framework, error)
+	DetectFramework() (framework.Framework, error)
 	SanityCheck(ctx context.Context) error
 	TestSkippingLevel() settings.TestSkippingLevel
 }
@@ -45,14 +45,10 @@ func runtimeTagProbeError(message string, output []byte, err error) error {
 }
 
 // DetectPlatform selects a platform without running commands or checking installed
-// runtimes/tracers. Empty root and frameworkHint use the current directory and settings.
-func DetectPlatform(root, frameworkHint string) (Platform, error) {
-	if root == "" {
-		root = "."
-	}
-	if frameworkHint == "" {
-		frameworkHint = settings.GetFramework()
-	}
+// runtimes/tracers. Selection uses the current directory and settings.
+func DetectPlatform() (Platform, error) {
+	root := "."
+	frameworkHint := settings.GetFramework()
 	platformHint := settings.GetPlatform()
 	platforms := []Platform{NewJavaScript(), NewPython(), NewRuby(settings.GetTestSkippingLevel())}
 	if platformHint != "" {
@@ -68,7 +64,7 @@ func DetectPlatform(root, frameworkHint string) (Platform, error) {
 		if frameworkHint != "" {
 			// An explicit framework also identifies its platform, including projects
 			// whose custom configuration is not understood by automatic inspection.
-			if _, err := p.DetectFramework(root, frameworkHint); err == nil {
+			if _, err := p.DetectFramework(); err == nil {
 				candidates = append(candidates, p)
 			}
 			continue

@@ -113,7 +113,7 @@ func TestDetectPlatformUnsupported(t *testing.T) {
 	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM", "node")
 	settings.Init()
 
-	_, err := DetectPlatform("", "")
+	_, err := DetectPlatform()
 	if err == nil || !strings.Contains(err.Error(), "unsupported platform: node") {
 		t.Fatalf("DetectPlatform() error = %v, want unsupported platform", err)
 	}
@@ -142,14 +142,14 @@ func TestAutomaticPlatformAndFrameworkSelection(t *testing.T) {
 			t.Chdir(root)
 			require.NoError(t, os.WriteFile(tc.file, []byte(tc.contents), 0644))
 			t.Setenv("PATH", t.TempDir()) // Selection must work without any runtime or tracer.
-			p, err := DetectPlatform("", "")
+			p, err := DetectPlatform()
 			require.NoError(t, err)
 			require.Equal(t, tc.name, p.Name())
-			fw, err := p.DetectFramework("", "")
+			fw, err := p.DetectFramework()
 			require.NoError(t, err)
 			require.Equal(t, tc.runner, fw.Name())
 			require.Contains(t, fw.GetPlatformEnv(), tc.env)
-			lang, readOnly, err := detectFixture(root, "")
+			lang, readOnly, err := detectFixture(t, root, "")
 			require.NoError(t, err)
 			require.Equal(t, p.Name(), lang)
 			require.Equal(t, fw.Name(), readOnly.Name())
@@ -162,15 +162,15 @@ func TestExplicitSelectionOverridesProjectEvidence(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte("{"), 0644))
 	settings.Get().Framework = "pytest"
-	lang, fw, err := detectFixture(root, "")
+	lang, fw, err := detectFixture(t, root, "")
 	require.NoError(t, err)
 	require.Equal(t, "python", lang)
 	require.Equal(t, "pytest", fw.Name())
 	settings.Get().Platform = "javascript"
-	_, _, err = detectFixture(root, "")
+	_, _, err = detectFixture(t, root, "")
 	require.ErrorContains(t, err, "not supported by platform")
 	settings.Get().Framework = "jest"
-	lang, fw, err = detectFixture(root, "")
+	lang, fw, err = detectFixture(t, root, "")
 	require.NoError(t, err)
 	require.Equal(t, "javascript", lang)
 	require.Equal(t, "jest", fw.Name())
@@ -181,10 +181,10 @@ func TestPlatformHintResolvesPolyglotProject(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"devDependencies":{"jest":"29"}}`), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "pytest.ini"), []byte("[pytest]\n"), 0644))
-	_, _, err := detectFixture(root, "")
+	_, _, err := detectFixture(t, root, "")
 	require.ErrorContains(t, err, "multiple platforms")
 	settings.Get().Platform = "python"
-	lang, fw, err := detectFixture(root, "")
+	lang, fw, err := detectFixture(t, root, "")
 	require.NoError(t, err)
 	require.Equal(t, "python", lang)
 	require.Equal(t, "pytest", fw.Name())
@@ -204,7 +204,7 @@ func TestPlatformDetectionSelectsFrameworkWithoutWritingFiles(t *testing.T) {
 			}
 			path := filepath.Join(root, filename)
 			require.NoError(t, os.WriteFile(path, []byte(contents), 0644))
-			detected, runner, err := detectFixture(root, "")
+			detected, runner, err := detectFixture(t, root, "")
 			require.NoError(t, err)
 			require.Equal(t, language, detected)
 			require.Equal(t, name, runner.Name())
@@ -221,29 +221,37 @@ func TestPlatformDetectionSelectsFrameworkWithoutWritingFiles(t *testing.T) {
 func TestPlatformDetectionRequiresUnambiguousSelection(t *testing.T) {
 	resetDetectionSettings(t)
 	root := t.TempDir()
-	_, _, err := detectFixture(root, "")
+	_, _, err := detectFixture(t, root, "")
 	require.ErrorContains(t, err, "could not detect")
 	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"test":"vitest run","e2e":"playwright test"}}`), 0644))
-	_, _, err = detectFixture(root, "")
+	_, _, err = detectFixture(t, root, "")
 	require.ErrorContains(t, err, "--framework")
-	language, runner, err := detectFixture(root, "vitest")
+	language, runner, err := detectFixture(t, root, "vitest")
 	require.NoError(t, err)
 	require.Equal(t, "javascript", language)
 	require.Equal(t, "vitest", runner.Name())
-	_, _, err = detectFixture(root, "unsupported")
+	_, _, err = detectFixture(t, root, "unsupported")
 	require.ErrorContains(t, err, "unsupported framework")
 	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte("{"), 0644))
-	_, _, err = detectFixture(root, "")
+	_, _, err = detectFixture(t, root, "")
 	require.ErrorContains(t, err, "parse")
 }
 
 // Exercise the same public selection sequence used by every command.
-func detectFixture(root, hint string) (string, framework.Framework, error) {
-	p, err := DetectPlatform(root, hint)
+func detectFixture(t *testing.T, root, hint string) (string, framework.Framework, error) {
+	t.Helper()
+	t.Chdir(root)
+	previous := settings.Get().Framework
+	if hint != "" {
+		settings.Get().Framework = hint
+	}
+	defer func() { settings.Get().Framework = previous }()
+
+	p, err := DetectPlatform()
 	if err != nil {
 		return "", nil, err
 	}
-	fw, err := p.DetectFramework(root, hint)
+	fw, err := p.DetectFramework()
 	if err != nil {
 		return "", nil, err
 	}
@@ -317,7 +325,7 @@ func checkDetectionFixture(t *testing.T, fixture detectionFixture) {
 	// Detection cannot depend on npm, Python, Ruby, or an installed test runner.
 	t.Setenv("PATH", t.TempDir())
 	for range 2 {
-		language, runner, err := detectFixture(root, fixture.Hint)
+		language, runner, err := detectFixture(t, root, fixture.Hint)
 		if fixture.Error != "" {
 			require.ErrorContains(t, err, fixture.Error)
 			require.Nil(t, runner)

@@ -79,10 +79,8 @@ func (p *Python) Detect(root string) (bool, error) {
 }
 
 // Pytest is the only supported Python framework and is the platform default.
-func (p *Python) DetectFramework(_ string, hint string) (framework.Framework, error) {
-	if hint == "" {
-		hint = settings.GetFramework()
-	}
+func (p *Python) DetectFramework() (framework.Framework, error) {
+	hint := settings.GetFramework()
 	fw, err := selectFramework(p.Name(), hint, []framework.Framework{framework.NewPytest()})
 	if err != nil {
 		return nil, err
