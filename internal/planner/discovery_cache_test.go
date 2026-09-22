@@ -181,7 +181,7 @@ func TestDiscoveryCacheHitUsesCachedTests(t *testing.T) {
 		}),
 	}
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -230,7 +230,7 @@ func TestDiscoveryCacheMissRunsFullDiscoveryAndStoresMetadata(t *testing.T) {
 		}),
 	}
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -283,7 +283,7 @@ func TestDiscoveryCacheImportsExternalCacheBeforeValidation(t *testing.T) {
 		}),
 	}
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)

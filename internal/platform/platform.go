@@ -37,22 +37,11 @@ func detectAnyFile(repositoryRoot string, filenames ...string) (bool, error) {
 	return false, nil
 }
 
-// PlatformDetector defines interface for detecting platforms - needed to allow mocking in tests
-type PlatformDetector interface {
-	DetectPlatform(root, frameworkHint string) (Platform, error)
-}
-
-type DatadogPlatformDetector struct{}
-
 func runtimeTagProbeError(message string, output []byte, err error) error {
 	if diagnostic := strings.TrimSpace(string(output)); diagnostic != "" {
 		return fmt.Errorf("%s: %s: %w", message, diagnostic, err)
 	}
 	return fmt.Errorf("%s: %w", message, err)
-}
-
-func (d *DatadogPlatformDetector) DetectPlatform(root, frameworkHint string) (Platform, error) {
-	return DetectPlatform(root, frameworkHint)
 }
 
 // DetectPlatform selects a platform without running commands or checking installed
@@ -128,8 +117,4 @@ func selectFramework(platform, hint string, candidates []framework.Framework) (f
 		return nil, fmt.Errorf("found multiple test frameworks (%s); select one with --framework", strings.Join(names, ", "))
 	}
 	return candidates[0], nil
-}
-
-func NewPlatformDetector() PlatformDetector {
-	return &DatadogPlatformDetector{}
 }

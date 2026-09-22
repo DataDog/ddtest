@@ -53,14 +53,18 @@ func (f *fakePlanner) DistributeTestFiles(testFiles []string, parallelRunners in
 }
 
 func TestNew(t *testing.T) {
-	if runner := New(); runner == nil {
+	if runner := New(&MockPlatform{}, &MockFramework{}); runner == nil {
 		t.Fatal("New() returned nil")
 	}
 }
 
 func TestNewWithTelemetry(t *testing.T) {
 	telemetryClient := telemetry.NoopClient()
-	runner := NewWithTelemetry(telemetryClient)
+	p, fw := &MockPlatform{}, &MockFramework{}
+	runner := NewWithTelemetry(p, fw, telemetryClient)
+	if runner.platform != p || runner.framework != fw {
+		t.Fatal("constructor did not retain the selected platform and framework")
+	}
 
 	if runner.telemetryClient != telemetryClient {
 		t.Fatal("NewWithTelemetry() did not retain the injected client")
@@ -84,7 +88,7 @@ func TestTestRunner_Run_PlansThroughPublicClientWhenArtifactsMissing(t *testing.
 			Framework: "rspec",
 		},
 	}
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: platform}, testPlanner)
+	runner := NewWithDependencies(platform, platform.Framework, testPlanner)
 
 	if err := runner.Run(context.Background()); err != nil {
 		t.Fatalf("Run() returned error: %v", err)
@@ -114,7 +118,7 @@ func TestTestRunner_Run_UsesExistingArtifactsWithoutPlanning(t *testing.T) {
 	framework := &MockFramework{FrameworkName: "rspec"}
 	platform := &MockPlatform{PlatformName: "ruby", Framework: framework}
 	testPlanner := &fakePlanner{}
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: platform}, testPlanner)
+	runner := NewWithDependencies(platform, platform.Framework, testPlanner)
 	commandAttributeTracker := telemetry.NewCLICommandAttributeTracker(telemetry.NoopClient())
 	runner.telemetryClient = commandAttributeTracker
 
@@ -155,7 +159,7 @@ func TestTestRunner_Run_PropagatesContextForGracefulTestCancellation(t *testing.
 	ctx := context.WithValue(context.Background(), contextKey{}, "test-run")
 	framework := &MockFramework{FrameworkName: "rspec"}
 	platform := &MockPlatform{PlatformName: "ruby", Framework: framework}
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: platform}, &fakePlanner{})
+	runner := NewWithDependencies(platform, platform.Framework, &fakePlanner{})
 
 	if err := runner.Run(ctx); err != nil {
 		t.Fatalf("Run() returned error: %v", err)
@@ -184,7 +188,7 @@ func TestTestRunner_Run_ReturnsErrorWhenPlanUnavailable(t *testing.T) {
 	platform := &MockPlatform{PlatformName: "ruby", Framework: framework}
 	loadErr := errors.New("plan cache missing")
 	testPlanner := &fakePlanner{loadErr: loadErr}
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: platform}, testPlanner)
+	runner := NewWithDependencies(platform, platform.Framework, testPlanner)
 
 	err := runner.Run(context.Background())
 	if !errors.Is(err, loadErr) {
@@ -213,7 +217,7 @@ func TestTestRunner_Run_ReturnsPlanErrorWhenArtifactsAreMissing(t *testing.T) {
 			return planErr
 		},
 	}
-	runner := NewWithDependencies(&MockPlatformDetector{}, testPlanner)
+	runner := NewWithDependencies(nil, nil, testPlanner)
 
 	err := runner.Run(context.Background())
 	if !errors.Is(err, planErr) {
@@ -236,7 +240,7 @@ func TestTestRunner_Run_ReturnsStatErrorForBrokenRunnerArtifactsPath(t *testing.
 		t.Fatalf("failed to create broken plan path: %v", err)
 	}
 	testPlanner := &fakePlanner{}
-	runner := NewWithDependencies(&MockPlatformDetector{}, testPlanner)
+	runner := NewWithDependencies(nil, nil, testPlanner)
 
 	err := runner.Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "failed to check parallel runners count") {
@@ -254,56 +258,13 @@ func TestTestRunner_Run_ReturnsErrorForInvalidParallelRunnerCount(t *testing.T) 
 	writeRunnerTestFile(t, constants.ParallelRunnersOutputPath, "many")
 
 	testPlanner := &fakePlanner{}
-	runner := NewWithDependencies(&MockPlatformDetector{}, testPlanner)
+	runner := NewWithDependencies(nil, nil, testPlanner)
 
 	err := runner.Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "failed to parse parallel runners count") {
 		t.Fatalf("Run() error = %v, want parse failure", err)
 	}
 	assertRunnerErrorCode(t, err, errcode.RunParallelRunnersParseFailed)
-}
-
-func TestTestRunner_Run_ReturnsPlatformDetectionError(t *testing.T) {
-	withRunnerTestSettings(t)
-	chdirTemp(t)
-	writeRunnerTestFile(t, constants.ParallelRunnersOutputPath, "1")
-
-	detectErr := errors.New("no platform")
-	testPlanner := &fakePlanner{}
-	runner := NewWithDependencies(&MockPlatformDetector{Err: detectErr}, testPlanner)
-
-	err := runner.Run(context.Background())
-	if !errors.Is(err, detectErr) {
-		t.Fatalf("expected Run() to return platform detection error, got %v", err)
-	}
-	assertRunnerErrorCode(t, err, errcode.RunPlatformDetectionFailed)
-}
-
-func TestTestRunner_Run_ReturnsFrameworkDetectionError(t *testing.T) {
-	withRunnerTestSettings(t)
-	chdirTemp(t)
-	writeRunnerTestFile(t, constants.ParallelRunnersOutputPath, "1")
-
-	frameworkErr := errors.New("no framework")
-	platform := &MockPlatform{PlatformName: "ruby", FrameworkErr: frameworkErr}
-	testPlanner := &fakePlanner{}
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: platform}, testPlanner)
-	commandAttributeTracker := telemetry.NewCLICommandAttributeTracker(telemetry.NoopClient())
-	runner.telemetryClient = commandAttributeTracker
-
-	err := runner.Run(context.Background())
-	if !errors.Is(err, frameworkErr) {
-		t.Fatalf("expected Run() to return framework detection error, got %v", err)
-	}
-	assertRunnerErrorCode(t, err, errcode.RunFrameworkDetectionFailed)
-	wantCommandAttributes := telemetry.CLICommandAttributes{
-		Platform:         "unknown",
-		Framework:        "unknown",
-		TestSkippingMode: "unknown",
-	}
-	if got := commandAttributeTracker.Attributes(); got != wantCommandAttributes {
-		t.Fatalf("CLI command attributes = %#v, want %#v", got, wantCommandAttributes)
-	}
 }
 
 func TestTestRunner_Run_WritesReportWhenEnabled(t *testing.T) {
@@ -328,7 +289,7 @@ func TestTestRunner_Run_WritesReportWhenEnabled(t *testing.T) {
 			Framework: "rspec",
 		},
 	}
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: platform}, testPlanner)
+	runner := NewWithDependencies(platform, platform.Framework, testPlanner)
 	var report strings.Builder
 	runner.reportWriter = &report
 
@@ -511,7 +472,7 @@ func TestTestRunner_Run_CINodeWorkersRunWithoutLoadedWeights(t *testing.T) {
 	framework := &MockFramework{FrameworkName: "rspec"}
 	platform := &MockPlatform{PlatformName: "ruby", Framework: framework}
 	testPlanner := &fakePlanner{}
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: platform}, testPlanner)
+	runner := NewWithDependencies(platform, platform.Framework, testPlanner)
 
 	if err := runner.Run(context.Background()); err != nil {
 		t.Fatalf("Run() returned error: %v", err)
@@ -606,23 +567,4 @@ func assertRunnerErrorCode(t *testing.T, err error, want errcode.Code) {
 	if got := errcode.CodeOf(err); got != want {
 		t.Fatalf("error code = %q, want %q; error: %v", got, want, err)
 	}
-}
-
-func TestRunChecksRuntimePrerequisitesWithSavedPlan(t *testing.T) {
-	withRunnerTestSettings(t)
-	chdirTemp(t)
-	writeRunnerTestFile(t, constants.ParallelRunnersOutputPath, "1")
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	sanityErr := errors.New("tracer not installed")
-	p := &MockPlatform{PlatformName: "javascript", SanityErr: sanityErr}
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: p}, &fakePlanner{})
-	err := runner.Run(ctx)
-	if !errors.Is(err, sanityErr) {
-		t.Fatalf("expected prerequisite failure before execution, got %v", err)
-	}
-	if p.SanityContext != ctx {
-		t.Fatal("SanityCheck did not receive the operation context")
-	}
-	assertRunnerErrorCode(t, err, errcode.RunPlatformDetectionFailed)
 }

@@ -88,4 +88,4 @@ documentation-only changes, describe the manual documentation/usage review.
 - `Runner`: Main entrypoint for this tool
 - `Platform`: Handles platform-specific test discovery and tagging
 - `TestOptimizationClient`: Manages Datadog API communication for skippable tests
-- `PlatformDetector`: Abstracts platform detection for testing
+- Commands resolve the platform/framework and check prerequisites before constructing a planner or runner; both receive the selected instances.

@@ -42,7 +42,7 @@ func TestTestPlanner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
 		Framework:    mockFramework,
 	}
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		&MockTestOptimizationClient{Skippables: testSkippables(map[string]bool{})},
 		newDefaultMockCIProviderDetector(),
 	)
@@ -64,7 +64,7 @@ func TestTestPlanner_Plan_StoresTestOptimizationPlanCache(t *testing.T) {
 	}
 
 	restored := NewWithDependencies(
-		&MockPlatformDetector{},
+		nil, nil,
 		&MockTestOptimizationClient{},
 		newDefaultMockCIProviderDetector(),
 	)
@@ -93,7 +93,7 @@ func TestTestPlanner_StoreAndRestoreTestOptimizationPlanCache_RoundTripDurations
 	_ = os.Chdir(tempDir)
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{},
+		nil, nil,
 		&MockTestOptimizationClient{},
 		newDefaultMockCIProviderDetector(),
 	)
@@ -129,7 +129,7 @@ func TestTestPlanner_StoreAndRestoreTestOptimizationPlanCache_RoundTripDurations
 
 	logs := captureLogs(t)
 	restored := NewWithDependencies(
-		&MockPlatformDetector{},
+		nil, nil,
 		&MockTestOptimizationClient{},
 		newDefaultMockCIProviderDetector(),
 	)
@@ -205,7 +205,7 @@ func TestTestPlanner_RestoreTestOptimizationPlanCache_ComputesMissingWeights(t *
 	}
 
 	restored := NewWithDependencies(
-		&MockPlatformDetector{},
+		nil, nil,
 		&MockTestOptimizationClient{},
 		newDefaultMockCIProviderDetector(),
 	)
@@ -262,7 +262,7 @@ func TestTestSuiteKey_JSONMapKeyRoundTrip(t *testing.T) {
 
 	key := testSuiteKey{Module: `rspec/module:one`, Suite: `Suite "one", with punctuation`}
 	runner := NewWithDependencies(
-		&MockPlatformDetector{},
+		nil, nil,
 		&MockTestOptimizationClient{},
 		newDefaultMockCIProviderDetector(),
 	)
@@ -283,7 +283,7 @@ func TestTestSuiteKey_JSONMapKeyRoundTrip(t *testing.T) {
 	}
 
 	restored := NewWithDependencies(
-		&MockPlatformDetector{},
+		nil, nil,
 		&MockTestOptimizationClient{},
 		newDefaultMockCIProviderDetector(),
 	)

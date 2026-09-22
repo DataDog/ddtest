@@ -80,7 +80,7 @@ func TestTestPlanner_Plan_HighSkippableIntegrationSelectsExpectedRunnerCountAndR
 		Framework: mockFramework,
 	}
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		&MockTestOptimizationClient{
 			Settings:   testOptimizationSettings(true, true, false),
 			Skippables: testSkippables(fixture.skippableTestSet()),

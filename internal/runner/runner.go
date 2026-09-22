@@ -12,6 +12,7 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	ciUtils "github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/errcode"
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/planner"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/runmetadata"
@@ -30,40 +31,42 @@ type Planner interface {
 }
 
 type TestRunner struct {
-	platformDetector platform.PlatformDetector
-	planner          Planner
-	telemetryClient  telemetry.Client
-	reportWriter     io.Writer
+	platform        platform.Platform
+	framework       framework.Framework
+	planner         Planner
+	telemetryClient telemetry.Client
+	reportWriter    io.Writer
 }
 
-func New() *TestRunner {
-	return NewWithTelemetry(telemetry.NoopClient())
+func New(p platform.Platform, fw framework.Framework) *TestRunner {
+	return NewWithTelemetry(p, fw, telemetry.NoopClient())
 }
 
 // NewWithTelemetry creates a runner and planner that share one telemetry
 // client for the lifetime of the command.
-func NewWithTelemetry(telemetryClient telemetry.Client) *TestRunner {
+func NewWithTelemetry(p platform.Platform, fw framework.Framework, telemetryClient telemetry.Client) *TestRunner {
 	runner := NewWithDependencies(
-		platform.NewPlatformDetector(),
-		planner.NewWithTelemetry(telemetryClient),
+		p, fw,
+		planner.NewWithTelemetry(p, fw, telemetryClient),
 	)
 	runner.telemetryClient = telemetryClient
 	return runner
 }
 
 func NewWithDependencies(
-	platformDetector platform.PlatformDetector,
+	p platform.Platform,
+	fw framework.Framework,
 	testPlanner Planner,
 ) *TestRunner {
 	runner := newTestRunnerWithDefaults()
-	runner.platformDetector = platformDetector
+	runner.platform = p
+	runner.framework = fw
 	runner.planner = testPlanner
 	return runner
 }
 
 func newTestRunnerWithDefaults() *TestRunner {
 	return &TestRunner{
-		planner:         planner.New(),
 		telemetryClient: telemetry.NoopClient(),
 		reportWriter:    os.Stderr,
 	}
@@ -98,22 +101,7 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 	workerEnvMap := settings.GetWorkerEnvMap()
 	slog.Info("Worker environment variables", "workerEnvKeys", workerEnvKeys(workerEnvMap))
 
-	// Detect platform and framework
-	detectedPlatform, err := tr.platformDetector.DetectPlatform("", "")
-	if err != nil {
-		return errcode.WithCode(errcode.RunPlatformDetectionFailed, fmt.Errorf("failed to detect platform: %w", err))
-	}
-	if err := detectedPlatform.SanityCheck(ctx); err != nil {
-		return errcode.WithCode(errcode.RunPlatformDetectionFailed, fmt.Errorf("sanity check failed for platform %s: %w", detectedPlatform.Name(), err))
-	}
-
-	slog.Info("Platform detected", "platform", detectedPlatform.Name())
-
-	framework, err := detectedPlatform.DetectFramework("", "")
-	if err != nil {
-		return errcode.WithCode(errcode.RunFrameworkDetectionFailed, fmt.Errorf("failed to detect framework: %w", err))
-	}
-	slog.Info("Framework detected", "framework", framework.Name())
+	detectedPlatform, framework := tr.platform, tr.framework
 	telemetry.RecordCLICommandAttributes(tr.telemetryClient, telemetry.CLICommandAttributes{
 		Platform:         detectedPlatform.Name(),
 		Framework:        framework.Name(),

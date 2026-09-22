@@ -11,12 +11,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-func TestNewPlatformDetector(t *testing.T) {
-	if _, ok := NewPlatformDetector().(*DatadogPlatformDetector); !ok {
-		t.Fatal("expected NewPlatformDetector to return DatadogPlatformDetector")
-	}
-}
-
 func TestPlatformsDetectTheirProjectFiles(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -120,9 +114,4 @@ func TestDetectPlatformUnsupported(t *testing.T) {
 		t.Fatalf("DetectPlatform() error = %v, want unsupported platform", err)
 	}
 
-	detector := &DatadogPlatformDetector{}
-	_, err = detector.DetectPlatform("", "")
-	if err == nil || !strings.Contains(err.Error(), "unsupported platform: node") {
-		t.Fatalf("DatadogPlatformDetector.DetectPlatform() error = %v, want unsupported platform", err)
-	}
 }

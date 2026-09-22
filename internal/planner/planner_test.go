@@ -23,7 +23,6 @@ import (
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/framework"
-	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/telemetry"
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -32,12 +31,6 @@ import (
 )
 
 // Mock implementations for testing
-
-// MockPlatformDetector mocks platform detection
-type MockPlatformDetector struct {
-	Platform platform.Platform
-	Err      error
-}
 
 type plannerTelemetryClient struct {
 	mu      sync.Mutex
@@ -82,20 +75,13 @@ func (c *plannerTelemetryClient) has(name string, tags ...string) bool {
 	return ok
 }
 
-func (m *MockPlatformDetector) DetectPlatform(string, string) (platform.Platform, error) {
-	return m.Platform, m.Err
-}
-
 // MockPlatform mocks a platform
 type MockPlatform struct {
-	PlatformName  string
-	Tags          map[string]string
-	TagsErr       error
-	Framework     framework.Framework
-	FrameworkErr  error
-	SanityErr     error
-	SanityContext context.Context
-	TestLevel     settings.TestSkippingLevel
+	PlatformName string
+	Tags         map[string]string
+	TagsErr      error
+	Framework    framework.Framework
+	TestLevel    settings.TestSkippingLevel
 }
 
 func (m *MockPlatform) Name() string {
@@ -111,12 +97,11 @@ func (m *MockPlatform) CreateTagsMap(context.Context) (map[string]string, error)
 }
 
 func (m *MockPlatform) DetectFramework(string, string) (framework.Framework, error) {
-	return m.Framework, m.FrameworkErr
+	panic("framework must be selected before planning or execution")
 }
 
 func (m *MockPlatform) SanityCheck(ctx context.Context) error {
-	m.SanityContext = ctx
-	return m.SanityErr
+	panic("prerequisites must be checked at command startup")
 }
 
 func (m *MockPlatform) TestSkippingLevel() settings.TestSkippingLevel {
@@ -629,7 +614,7 @@ func testOptimizationClientRequiringFullDiscovery() *MockTestOptimizationClient 
 }
 
 func TestNew(t *testing.T) {
-	runner := New()
+	runner := New(&MockPlatform{}, &MockFramework{})
 
 	if runner == nil {
 		t.Error("New() should return non-nil TestPlanner")
@@ -652,8 +637,8 @@ func TestNew(t *testing.T) {
 		t.Errorf("New() should initialize skippablePercentage to 0.0, got %f", runner.skippablePercentage)
 	}
 
-	if runner.platformDetector == nil {
-		t.Error("New() should initialize platformDetector")
+	if runner.platform == nil || runner.framework == nil {
+		t.Error("New() should retain platform and framework")
 	}
 
 	if runner.newOptimizationClient == nil {
@@ -663,7 +648,11 @@ func TestNew(t *testing.T) {
 
 func TestNewWithTelemetry(t *testing.T) {
 	telemetryClient := telemetry.NoopClient()
-	planner := NewWithTelemetry(telemetryClient)
+	p, fw := &MockPlatform{}, &MockFramework{}
+	planner := NewWithTelemetry(p, fw, telemetryClient)
+	if planner.platform != p || planner.framework != fw {
+		t.Fatal("constructor did not retain the selected platform and framework")
+	}
 
 	if planner.telemetryClient != telemetryClient {
 		t.Fatal("NewWithTelemetry() did not retain the injected client")
@@ -671,19 +660,19 @@ func TestNewWithTelemetry(t *testing.T) {
 }
 
 func TestNewWithDependencies(t *testing.T) {
-	mockPlatformDetector := &MockPlatformDetector{}
+	mockPlatform := &MockPlatform{Framework: &MockFramework{}}
 	mockOptimizationClient := &MockTestOptimizationClient{}
 	mockCIProviderDetector := newDefaultMockCIProviderDetector()
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockCIProviderDetector)
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, mockCIProviderDetector)
 
 	if runner == nil {
 		t.Error("NewWithDependencies() should return non-nil TestPlanner")
 		return
 	}
 
-	if runner.platformDetector != mockPlatformDetector {
-		t.Error("NewWithDependencies() should use injected platformDetector")
+	if runner.platform != mockPlatform || runner.framework != mockPlatform.Framework {
+		t.Error("NewWithDependencies() should retain injected platform and framework")
 	}
 
 	if runner.optimizationClient != mockOptimizationClient {
@@ -722,7 +711,7 @@ func TestTestPlanner_PreparePlanningData_CreatesOptimizationClientWithDetectedTe
 	}
 	var capturedLevel settings.TestSkippingLevel
 	runner := newTestPlannerWithDefaults()
-	runner.platformDetector = &MockPlatformDetector{Platform: &MockPlatform{
+	mockPlatform := &MockPlatform{
 		PlatformName: "javascript",
 		Tags:         map[string]string{},
 		Framework: &MockFramework{
@@ -734,7 +723,9 @@ func TestTestPlanner_PreparePlanningData_CreatesOptimizationClientWithDetectedTe
 			},
 		},
 		TestLevel: settings.TestSkippingLevelSuite,
-	}}
+	}
+	runner.platform = mockPlatform
+	runner.framework = mockPlatform.Framework
 	runner.newOptimizationClient = func(testSkippingLevel settings.TestSkippingLevel) testOptimizationClient {
 		capturedLevel = testSkippingLevel
 		return mockOptimizationClient
@@ -789,8 +780,6 @@ func TestTestPlanner_Setup_WithParallelRunners(t *testing.T) {
 		Tags:         map[string]string{"platform": "ruby"},
 		Framework:    mockFramework,
 	}
-
-	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
 		Skippables: testSkippables(map[string]bool{
@@ -799,7 +788,7 @@ func TestTestPlanner_Setup_WithParallelRunners(t *testing.T) {
 		}),
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 	var reportOutput bytes.Buffer
 	runner.reportWriter = &reportOutput
 
@@ -869,7 +858,7 @@ func TestTestPlanner_Plan_WritesManifestAndRunnerLayout(t *testing.T) {
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		&MockTestOptimizationClient{Skippables: testSkippables(map[string]bool{})},
 		newDefaultMockCIProviderDetector(),
 	)
@@ -931,7 +920,7 @@ func TestTestPlanner_Plan_JestSuiteSkippingFetchesSkippablesWithoutFullDiscovery
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -1179,7 +1168,7 @@ func TestTestPlanner_PreparePlanningData_RubySuiteModeSkipsFullDiscoveryAndSkips
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -1247,7 +1236,7 @@ func TestTestPlanner_PreparePlanningData_RubySuiteModeForceFullDiscovery(t *test
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -1331,7 +1320,7 @@ func TestTestPlanner_PreparePlanningData_ForceFullDiscoveryKeepsRunningWithNoTIA
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		&MockTestOptimizationClient{
 			Settings:   testOptimizationSettings(true, true, false),
 			Skippables: api.NewSkippables(),
@@ -1399,7 +1388,7 @@ func TestTestPlanner_Plan_ForceFullDiscoveryFiltersPlanArtifactsToTestsLocation(
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -1479,7 +1468,7 @@ func TestTestPlanner_PreparePlanningData_ForceFullDiscoveryUnsupportedFrameworkU
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -1540,7 +1529,7 @@ func TestTestPlanner_PreparePlanningData_TestLevelFullDiscoveryKeepsUnskippableM
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -1717,7 +1706,7 @@ func TestTestPlanner_Plan_DoesNotPrintReportWhenDisabled(t *testing.T) {
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		&MockTestOptimizationClient{Skippables: testSkippables(map[string]bool{})},
 		newDefaultMockCIProviderDetector(),
 	)
@@ -1778,7 +1767,7 @@ func TestTestPlanner_Plan_ChoosesParallelismFromFanoutAdjustedSplit(t *testing.T
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		&MockTestOptimizationClient{
 			Settings:   testOptimizationSettings(true, true, false),
 			Skippables: testSkippables(skippableTests),
@@ -1828,8 +1817,6 @@ func TestTestPlanner_Setup_WithCIProvider(t *testing.T) {
 		Tags:         map[string]string{"platform": "ruby"},
 		Framework:    mockFramework,
 	}
-
-	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
 		Skippables: testSkippables(map[string]bool{
@@ -1845,7 +1832,7 @@ func TestTestPlanner_Setup_WithCIProvider(t *testing.T) {
 		CIProvider: mockCIProvider,
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockCIProviderDetector)
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, mockCIProviderDetector)
 
 	// Run Setup
 	err := runner.Plan(context.Background())
@@ -1890,8 +1877,6 @@ func TestTestPlanner_Setup_CIProviderDetectionFailure(t *testing.T) {
 		Tags:         map[string]string{"platform": "ruby"},
 		Framework:    mockFramework,
 	}
-
-	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{Skippables: testSkippables(map[string]bool{})}
 
 	// Mock CI provider detector that fails
@@ -1899,7 +1884,7 @@ func TestTestPlanner_Setup_CIProviderDetectionFailure(t *testing.T) {
 		Err: errors.New("no CI provider detected"),
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockCIProviderDetector)
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, mockCIProviderDetector)
 
 	// Run Setup - should succeed even if CI provider detection fails
 	err := runner.Plan(context.Background())
@@ -1931,8 +1916,6 @@ func TestTestPlanner_Setup_CIProviderConfigureFailure(t *testing.T) {
 		Tags:         map[string]string{"platform": "ruby"},
 		Framework:    mockFramework,
 	}
-
-	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{Skippables: testSkippables(map[string]bool{})}
 
 	// Mock CI provider that fails during configuration
@@ -1944,7 +1927,7 @@ func TestTestPlanner_Setup_CIProviderConfigureFailure(t *testing.T) {
 		CIProvider: mockCIProvider,
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, mockCIProviderDetector)
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, mockCIProviderDetector)
 
 	// Run Setup - should succeed even if CI provider configuration fails
 	err := runner.Plan(context.Background())
@@ -1996,12 +1979,11 @@ func TestTestPlanner_Setup_WithTestSplit(t *testing.T) {
 			Framework:    mockFramework,
 		}
 
-		mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 		mockOptimizationClient := &MockTestOptimizationClient{
 			Skippables: testSkippables(map[string]bool{}), // No tests skipped
 		}
 
-		runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+		runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 		// Run Setup
 		err := runner.Plan(context.Background())
@@ -2073,7 +2055,6 @@ func TestTestPlanner_Setup_WithTestSplit(t *testing.T) {
 			Framework:    mockFramework,
 		}
 
-		mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 		mockOptimizationClient := &MockTestOptimizationClient{
 			Skippables: testSkippables(map[string]bool{}), // No tests skipped
 		}
@@ -2091,7 +2072,7 @@ func TestTestPlanner_Setup_WithTestSplit(t *testing.T) {
 		// Reinitialize settings to pick up environment variables
 		settings.Init()
 
-		runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+		runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 		// Run Setup
 		err := runner.Plan(context.Background())
@@ -2205,11 +2186,9 @@ func TestTestPlanner_Plan_SubdirRootRelativeDiscovery_WritesNormalizedPaths(t *t
 		Tags:         map[string]string{"platform": "ruby"},
 		Framework:    mockFramework,
 	}
-
-	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := testOptimizationClientRequiringFullDiscovery()
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.Plan(context.Background())
 	if err != nil {
@@ -2286,10 +2265,6 @@ func TestTestPlanner_PreparePlanningData_Success(t *testing.T) {
 		Framework: mockFramework,
 	}
 
-	mockPlatformDetector := &MockPlatformDetector{
-		Platform: mockPlatform,
-	}
-
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
 		Skippables: testSkippables(map[string]bool{
@@ -2306,7 +2281,7 @@ func TestTestPlanner_PreparePlanningData_Success(t *testing.T) {
 		},
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 
@@ -2447,7 +2422,7 @@ func TestTestPlanner_PreparePlanningData_DisabledTestManagementTestsAreSkipped(t
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -2527,7 +2502,7 @@ func TestTestPlanner_PreparePlanningData_TIASkipsRequireParametersMatch(t *testi
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -2582,7 +2557,7 @@ func TestTestPlanner_PreparePlanningData_ModuleQualifiedSkipsDoNotCrossModules(t
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -2653,7 +2628,7 @@ func TestTestPlanner_PreparePlanningData_TestManagementDoesNotKeepFullDiscoveryW
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -2705,7 +2680,7 @@ func TestTestPlanner_PreparePlanningData_CancelsFullDiscoveryWhenNoTIASkippableT
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -2745,7 +2720,7 @@ func TestTestPlanner_PreparePlanningData_ReturnsParentContextCancellation(t *tes
 		Framework:    mockFramework,
 	}
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		testOptimizationClientRequiringFullDiscovery(),
 		newDefaultMockCIProviderDetector(),
 	)
@@ -2795,7 +2770,7 @@ func TestTestPlanner_PreparePlanningData_RunsFullDiscoveryInParallelWithBackend(
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -2839,7 +2814,7 @@ func TestTestPlanner_PreparePlanningData_UsesCompletedFullDiscoveryWhenNoTIASkip
 	}
 
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -2877,10 +2852,9 @@ func TestTestPlanner_PreparePlanningData_EmptyDurationsContinues(t *testing.T) {
 		},
 		Framework: mockFramework,
 	}
-	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -2923,7 +2897,6 @@ func TestTestPlanner_PreparePlanningData_NonEmptyDurationsUsesP50ForMatchingSuit
 		},
 		Framework: mockFramework,
 	}
-	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Durations: map[string]map[string]api.TestSuiteDurationInfo{
 			"rspec": {
@@ -2939,7 +2912,7 @@ func TestTestPlanner_PreparePlanningData_NonEmptyDurationsUsesP50ForMatchingSuit
 		},
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -3011,7 +2984,7 @@ func TestTestPlanner_PreparePlanningData_SkippablePercentageUsesDurations(t *tes
 		},
 	}
 
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -3025,7 +2998,7 @@ func TestTestPlanner_PreparePlanningData_SkippablePercentageUsesDurations(t *tes
 }
 
 func TestTestPlanner_TestFileWeight_CountFallbackForMissingSuiteDuration(t *testing.T) {
-	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(nil, nil, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
 	runner.testFiles = map[string]struct{}{
 		"spec/file1_test.rb":   {},
 		"spec/file2_test.rb":   {},
@@ -3084,7 +3057,7 @@ func TestTestPlanner_TestFileWeight_CountFallbackForMissingSuiteDuration(t *test
 }
 
 func TestTestPlanner_TestFileWeight_InvalidP50FallsBackForFullDiscoveryAggregate(t *testing.T) {
-	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(nil, nil, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
 	runner.testFiles = map[string]struct{}{
 		"spec/file1_test.rb": {},
 	}
@@ -3123,7 +3096,7 @@ func TestTestPlanner_TestFileWeight_InvalidP50FallsBackForFullDiscoveryAggregate
 }
 
 func TestTestPlanner_TestFileWeight_ZeroP50FallsBackForFullDiscoveryAggregate(t *testing.T) {
-	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(nil, nil, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
 	runner.testFiles = map[string]struct{}{
 		"spec/file1_test.rb": {},
 	}
@@ -3162,7 +3135,7 @@ func TestTestPlanner_TestFileWeight_ZeroP50FallsBackForFullDiscoveryAggregate(t 
 }
 
 func TestTestPlanner_TestFileWeight_SubMillisecondP50MinimumWeight(t *testing.T) {
-	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(nil, nil, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
 	runner.testFiles = map[string]struct{}{
 		"spec/fast_test.rb": {},
 	}
@@ -3193,7 +3166,7 @@ func TestTestPlanner_TestFileWeight_SubMillisecondP50MinimumWeight(t *testing.T)
 }
 
 func TestTestPlanner_TestFileWeight_SkipsFullySkippedSuites(t *testing.T) {
-	runner := NewWithDependencies(&MockPlatformDetector{}, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(nil, nil, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
 	runner.testFiles = map[string]struct{}{
 		"spec/skipped_test.rb": {},
 	}
@@ -3298,7 +3271,7 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesBackendDurations(t *te
 		},
 	}
 
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -3328,7 +3301,7 @@ func TestTestPlanner_PreparePlanningData_StrictDiscoveryFailsWhenFullDiscoveryFa
 		Framework:    mockFramework,
 	}
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		&MockTestOptimizationClient{},
 		newDefaultMockCIProviderDetector(),
 	)
@@ -3377,7 +3350,7 @@ func TestTestPlanner_PreparePlanningData_StrictDiscoveryDoesNotFailWhenFullDisco
 		Skippables: testSkippables(map[string]bool{}),
 	}
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -3423,7 +3396,7 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesOneBackendDurationPerS
 		},
 	}
 
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -3467,7 +3440,7 @@ func TestTestPlanner_PreparePlanningData_IgnoresZeroBackendDurationForFastDiscov
 		},
 	}
 
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -3523,7 +3496,7 @@ func TestTestPlanner_PreparePlanningData_BackendDurationSubdirMatchesFastDiscove
 	}
 	environment.AddCITagsMap(map[string]string{constants.GitRepositoryURL: repoRoot})
 
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -3571,7 +3544,7 @@ func TestTestPlanner_PreparePlanningData_IgnoresBackendDurationsForUndiscoveredF
 		},
 	}
 
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -3613,7 +3586,7 @@ func TestTestPlanner_PreparePlanningData_FullDiscoveryIgnoresFastOnlyFiles(t *te
 		Framework: mockFramework,
 	}
 
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, testOptimizationClientRequiringFullDiscovery(), newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, testOptimizationClientRequiringFullDiscovery(), newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -3670,7 +3643,7 @@ func TestTestPlanner_PreparePlanningData_FullDiscoveryDoesNotReintroduceFastOnly
 		},
 	}
 
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -3728,7 +3701,7 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryDoesNotRunStaleBackendFile
 		},
 	}
 
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -3787,7 +3760,7 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotReintroduceFullySkippedSu
 		},
 	}
 
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -3841,7 +3814,7 @@ func TestTestPlanner_PreparePlanningData_BackendDoesNotDuplicateDiscoveredSource
 		},
 	}
 
-	runner := NewWithDependencies(&MockPlatformDetector{Platform: mockPlatform}, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -3982,7 +3955,7 @@ func TestTestPlanner_PreparePlanningData_ResolvesFilteredTestFilesOnce(t *testin
 		}),
 	}
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		mockOptimizationClient,
 		newDefaultMockCIProviderDetector(),
 	)
@@ -4057,7 +4030,7 @@ func TestTestPlanner_PreparePlanningData_PostFiltersFullDiscoveryWhenExplicitFil
 		Framework:    mockFramework,
 	}
 	runner := NewWithDependencies(
-		&MockPlatformDetector{Platform: mockPlatform},
+		mockPlatform, mockPlatform.Framework,
 		testOptimizationClientRequiringFullDiscovery(),
 		newDefaultMockCIProviderDetector(),
 	)
@@ -4129,30 +4102,6 @@ func TestRecordRunnableAndSkippedTest_CountsTestsPerSuite(t *testing.T) {
 	}
 }
 
-func TestTestPlanner_PreparePlanningData_PlatformDetectionError(t *testing.T) {
-	ctx := context.Background()
-
-	mockPlatformDetector := &MockPlatformDetector{
-		Err: errors.New("platform detection failed"),
-	}
-
-	mockOptimizationClient := &MockTestOptimizationClient{}
-
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
-
-	err := runner.PreparePlanningData(ctx)
-
-	if err == nil {
-		t.Error("PreparePlanningData() should return error when platform detection fails")
-	}
-
-	expectedMsg := "failed to detect platform"
-	if !strings.Contains(err.Error(), expectedMsg) {
-		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
-	}
-	assertPlannerErrorCode(t, err, errcode.PlanPlatformDetectionFailed)
-}
-
 func TestTestPlanner_PreparePlanningData_TagsCreationError(t *testing.T) {
 	ctx := context.Background()
 
@@ -4160,13 +4109,9 @@ func TestTestPlanner_PreparePlanningData_TagsCreationError(t *testing.T) {
 		TagsErr: errors.New("tags creation failed"),
 	}
 
-	mockPlatformDetector := &MockPlatformDetector{
-		Platform: mockPlatform,
-	}
-
 	mockOptimizationClient := &MockTestOptimizationClient{}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 
@@ -4195,15 +4140,11 @@ func TestTestPlanner_PreparePlanningData_OptimizationClientInitError(t *testing.
 		Framework: mockFramework,
 	}
 
-	mockPlatformDetector := &MockPlatformDetector{
-		Platform: mockPlatform,
-	}
-
 	mockOptimizationClient := &MockTestOptimizationClient{
 		InitializeErr: errors.New("client initialization failed"),
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 
@@ -4216,35 +4157,6 @@ func TestTestPlanner_PreparePlanningData_OptimizationClientInitError(t *testing.
 		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
 	}
 	assertPlannerErrorCode(t, err, errcode.PlanOptimizationClientInitializationFailed)
-}
-
-func TestTestPlanner_PreparePlanningData_FrameworkDetectionError(t *testing.T) {
-	ctx := context.Background()
-
-	mockPlatform := &MockPlatform{
-		Tags:         map[string]string{"platform": "ruby"},
-		FrameworkErr: errors.New("framework detection failed"),
-	}
-
-	mockPlatformDetector := &MockPlatformDetector{
-		Platform: mockPlatform,
-	}
-
-	mockOptimizationClient := &MockTestOptimizationClient{}
-
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
-
-	err := runner.PreparePlanningData(ctx)
-
-	if err == nil {
-		t.Error("PreparePlanningData() should return error when framework detection fails")
-	}
-
-	expectedMsg := "failed to detect framework"
-	if !strings.Contains(err.Error(), expectedMsg) {
-		t.Errorf("PreparePlanningData() error should contain '%s', got: %v", expectedMsg, err)
-	}
-	assertPlannerErrorCode(t, err, errcode.PlanFrameworkDetectionFailed)
 }
 
 func TestTestPlanner_PreparePlanningData_TestDiscoveryError(t *testing.T) {
@@ -4261,13 +4173,9 @@ func TestTestPlanner_PreparePlanningData_TestDiscoveryError(t *testing.T) {
 		Framework:    mockFramework,
 	}
 
-	mockPlatformDetector := &MockPlatformDetector{
-		Platform: mockPlatform,
-	}
-
 	mockOptimizationClient := &MockTestOptimizationClient{}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 	telemetryClient := newPlannerTelemetryClient()
 	runner.telemetryClient = telemetryClient
 
@@ -4302,8 +4210,6 @@ func TestTestPlanner_PreparePlanningData_EmptyTests(t *testing.T) {
 		Tags:      map[string]string{"platform": "ruby"},
 		Framework: mockFramework,
 	}
-
-	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
 		Skippables: testSkippables(map[string]bool{
@@ -4311,7 +4217,7 @@ func TestTestPlanner_PreparePlanningData_EmptyTests(t *testing.T) {
 		}),
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 
@@ -4353,8 +4259,6 @@ func TestTestPlanner_PreparePlanningData_AllTestsSkipped(t *testing.T) {
 		Tags:      map[string]string{"platform": "ruby"},
 		Framework: mockFramework,
 	}
-
-	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, true, false),
 		Skippables: testSkippables(map[string]bool{
@@ -4363,7 +4267,7 @@ func TestTestPlanner_PreparePlanningData_AllTestsSkipped(t *testing.T) {
 		}),
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 
@@ -4410,15 +4314,11 @@ func TestTestPlanner_PreparePlanningData_RuntimeTagsOverride(t *testing.T) {
 		Framework: mockFramework,
 	}
 
-	mockPlatformDetector := &MockPlatformDetector{
-		Platform: mockPlatform,
-	}
-
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Skippables: testSkippables(map[string]bool{}),
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 
@@ -4471,13 +4371,9 @@ func TestTestPlanner_PreparePlanningData_RuntimeTagsOverrideInvalidJSON(t *testi
 		Framework:    mockFramework,
 	}
 
-	mockPlatformDetector := &MockPlatformDetector{
-		Platform: mockPlatform,
-	}
-
 	mockOptimizationClient := &MockTestOptimizationClient{}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 
@@ -4521,15 +4417,11 @@ func TestTestPlanner_PreparePlanningData_NoRuntimeTagsOverride(t *testing.T) {
 		Framework: mockFramework,
 	}
 
-	mockPlatformDetector := &MockPlatformDetector{
-		Platform: mockPlatform,
-	}
-
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Skippables: testSkippables(map[string]bool{}),
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 
@@ -4611,11 +4503,9 @@ func TestPreparePlanningData_ITRFullDiscovery_SubdirRootRelativePath_NormalizesT
 		Tags:         map[string]string{"platform": "ruby"},
 		Framework:    mockFramework,
 	}
-
-	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := testOptimizationClientRequiringFullDiscovery()
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -4675,11 +4565,9 @@ func TestPreparePlanningData_RepoRootRun_LeavesRepoRelativePathsUnchanged(t *tes
 		Tags:         map[string]string{"platform": "ruby"},
 		Framework:    mockFramework,
 	}
-
-	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := testOptimizationClientRequiringFullDiscovery()
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -4710,13 +4598,11 @@ func TestPreparePlanningData_FastDiscovery_PathsRemainUnchanged(t *testing.T) {
 		Tags:         map[string]string{"platform": "ruby"},
 		Framework:    mockFramework,
 	}
-
-	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := &MockTestOptimizationClient{
 		Settings: testOptimizationSettings(true, false, false),
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -4777,11 +4663,9 @@ func TestPreparePlanningData_ITRPathNormalization_PrefixMismatchUnchanged(t *tes
 		Tags:         map[string]string{"platform": "ruby"},
 		Framework:    mockFramework,
 	}
-
-	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
 	mockOptimizationClient := testOptimizationClientRequiringFullDiscovery()
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -4848,8 +4732,6 @@ func TestPreparePlanningData_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd(t 
 		Framework:    mockFramework,
 	}
 
-	mockPlatformDetector := &MockPlatformDetector{Platform: mockPlatform}
-
 	// API returns skippable tests with the same CWD-relative Suite names
 	roleTest1 := testoptimization.Test{
 		Suite: "Spree::Role at ./spec/models/role_spec.rb", Name: "should be valid", Parameters: "",
@@ -4865,7 +4747,7 @@ func TestPreparePlanningData_ITRSubdir_SkipMatching_WithSuitePathsMatchingCwd(t 
 		}),
 	}
 
-	runner := NewWithDependencies(mockPlatformDetector, mockOptimizationClient, newDefaultMockCIProviderDetector())
+	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, newDefaultMockCIProviderDetector())
 
 	err := runner.PreparePlanningData(ctx)
 	if err != nil {
@@ -4910,20 +4792,4 @@ func assertPlannerErrorCode(t *testing.T, err error, want errcode.Code) {
 	if got := errcode.CodeOf(err); got != want {
 		t.Fatalf("error code = %q, want %q; error: %v", got, want, err)
 	}
-}
-
-func TestPreparePlanningDataChecksRuntimePrerequisites(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	sanityErr := errors.New("tracer not installed")
-	p := &MockPlatform{PlatformName: "javascript", SanityErr: sanityErr}
-	planner := NewWithDependencies(&MockPlatformDetector{Platform: p}, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
-	err := planner.PreparePlanningData(ctx)
-	if !errors.Is(err, sanityErr) {
-		t.Fatalf("expected prerequisite failure before discovery, got %v", err)
-	}
-	if p.SanityContext != ctx {
-		t.Fatal("SanityCheck did not receive the operation context")
-	}
-	assertPlannerErrorCode(t, err, errcode.PlanPlatformDetectionFailed)
 }

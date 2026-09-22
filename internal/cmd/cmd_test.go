@@ -434,9 +434,9 @@ func TestRunTestCommand(t *testing.T) {
 	command := &cobra.Command{}
 	command.SetContext(commandContext)
 	fake := &fakeCommandRunner{}
-	newRunner = func(got telemetry.Client) runnerpkg.Runner {
+	newRunner = func(_ context.Context, got telemetry.Client) (runnerpkg.Runner, error) {
 		telemetry.RecordCLICommandAttributes(got, attributes)
-		return fake
+		return fake, nil
 	}
 	exitProcess = func(code int) {
 		t.Fatalf("exitProcess(%d) should not be called", code)
@@ -475,9 +475,9 @@ func TestRunTestCommandExitsOnError(t *testing.T) {
 	telemetryClient := &fakeTelemetryClient{}
 	newTelemetryClient = func() (telemetry.Client, error) { return telemetryClient, nil }
 	fake := &fakeCommandRunner{err: errcode.New(errcode.RunParallelTestsFailed, "runner failed")}
-	newRunner = func(got telemetry.Client) runnerpkg.Runner {
+	newRunner = func(_ context.Context, got telemetry.Client) (runnerpkg.Runner, error) {
 		telemetry.RecordCLICommandAttributes(got, attributes)
-		return fake
+		return fake, nil
 	}
 	var exitCodes []int
 	exitProcess = func(code int) {
