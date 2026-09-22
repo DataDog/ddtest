@@ -68,12 +68,12 @@ func (j *Jest) Detect(repositoryRoot string) (bool, error) {
 	if len(j.commandOverride) > 0 {
 		return true, nil
 	}
-	if strings.TrimSpace(manifest.Scripts["test"]) == "" {
+	if !isDirectJavaScriptCommand(manifest.Scripts["test"], "jest") {
 		return true, nil
 	}
 
-	// Use the project's test script so testdrive exercises the same entry point
-	// that developers and CI normally use.
+	// Reuse only a direct Jest script: discovery appends --listTests, which a
+	// composite script could forward to another command while running all tests.
 	j.commandOverride = []string{"npm", "test", "--", "--runInBand"}
 	return true, nil
 }

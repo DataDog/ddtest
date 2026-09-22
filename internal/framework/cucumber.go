@@ -87,7 +87,7 @@ func (c *Cucumber) SetPlatformEnv(platformEnv map[string]string) { c.platformEnv
 func (c *Cucumber) GetPlatformEnv() map[string]string            { return c.platformEnv }
 func (c *Cucumber) Name() string                                 { return "cucumber" }
 func (c *Cucumber) Detect(repositoryRoot string) (bool, error) {
-	return detectJavaScriptFramework(repositoryRoot, "@cucumber/cucumber", "cucumber")
+	return detectJavaScriptFramework(repositoryRoot, "@cucumber/cucumber", "cucumber", "cucumber-js")
 }
 func (c *Cucumber) SupportsFullTestDiscovery() bool { return false }
 

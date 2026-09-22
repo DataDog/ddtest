@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/kballard/go-shellquote"
 )
 
 type Framework interface {
@@ -60,11 +62,29 @@ func (m packageManifest) usesAny(names ...string) bool {
 	}
 
 	for _, script := range m.Scripts {
-		script = strings.ToLower(script)
-		for _, name := range names {
-			if strings.Contains(script, strings.ToLower(name)) {
-				return true
-			}
+		if isDirectJavaScriptCommand(script, names...) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDirectJavaScriptCommand deliberately accepts only a single direct runner
+// invocation. Shell expressions and wrappers cannot safely receive appended
+// runner flags. For those scripts, detection relies on declared dependencies.
+func isDirectJavaScriptCommand(script string, names ...string) bool {
+	if strings.ContainsAny(script, "\r\n;&|<>`$()#") {
+		return false
+	}
+	args, err := shellquote.Split(script)
+	if err != nil || len(args) == 0 || slices.Contains(args, "--") {
+		return false
+	}
+	command := strings.TrimPrefix(args[0], "./")
+	command = strings.TrimPrefix(command, "node_modules/.bin/")
+	for _, name := range names {
+		if command == name {
+			return true
 		}
 	}
 	return false
