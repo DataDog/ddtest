@@ -10,6 +10,7 @@ import (
 	"github.com/DataDog/ddtest/internal/settings"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
@@ -17,7 +18,7 @@ import (
 )
 
 func TestPrepareAllSupportedFrameworks(t *testing.T) {
-	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest"} {
+	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest", "rspec", "minitest"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			switch name {
@@ -112,7 +113,9 @@ func TestLanguageEnvironmentsPreserveCustomerOptions(t *testing.T) {
 	python := (&Testdrive{language: "python"}).environment("/session/python", "http://127.0.0.1:1234", "session")
 	require.Equal(t, "/session/python"+string(os.PathListSeparator)+"/customer/modules", python["PYTHONPATH"])
 	require.Equal(t, "-q --ddtrace", python["PYTEST_ADDOPTS"])
-
+	ruby := (&Testdrive{language: "ruby"}).environment("/session/Gemfile", "http://127.0.0.1:1234", "session")
+	require.True(t, strings.HasPrefix(ruby["RUBYOPT"], "-W0 "))
+	require.Equal(t, "/session/gems", ruby["BUNDLE_PATH"])
 }
 
 func TestCypressWrapperUsesExplicitConfigWithoutEditingIt(t *testing.T) {
