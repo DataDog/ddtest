@@ -30,14 +30,14 @@
     "error": ""
   },
   {
-    "name": "explicit-framework-is-not-present",
+    "name": "explicit-framework-overrides-inspection",
     "files": {
       "package.json": "{\"devDependencies\": {\"jest\": \"^29\"}, \"scripts\": {\"test\": \"jest\"}}"
     },
-    "framework": "",
-    "language": "",
+    "framework": "pytest",
+    "language": "python",
     "hint": "pytest",
-    "error": "could not detect"
+    "error": ""
   },
   {
     "name": "runner-mentioned-only-in-lint-path",
@@ -240,7 +240,7 @@
     "framework": "",
     "language": "",
     "hint": "",
-    "error": "multiple test frameworks"
+    "error": "multiple platforms"
   },
   {
     "name": "polyglot-select-python",

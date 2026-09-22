@@ -52,8 +52,9 @@ func (p *Python) Name() string {
 	return "python"
 }
 
-func (p *Python) Detect(repositoryRoot string) (bool, error) {
-	return detectAnyFile(repositoryRoot, "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "pytest.ini", "tox.ini", "conftest.py")
+func (p *Python) Detect(root string) (bool, error) {
+	info, err := inspectPythonProject(root)
+	return info.python, err
 }
 
 func (p *Python) TestSkippingLevel() settings.TestSkippingLevel {
@@ -114,19 +115,11 @@ func (p *Python) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 }
 
 func (p *Python) DetectFramework() (framework.Framework, error) {
-	frameworkName := settings.GetFramework()
-	platformEnv := p.GetPlatformEnv()
-
-	var fw framework.Framework
-	switch frameworkName {
-	case "pytest":
-		fw = framework.NewPytest()
-	default:
-		return nil, fmt.Errorf("framework '%s' is not supported by platform 'python'", frameworkName)
+	root, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("find repository root: %w", err)
 	}
-
-	fw.SetPlatformEnv(platformEnv)
-	return fw, nil
+	return p.detectFramework(root, settings.GetFramework())
 }
 
 func (p *Python) SanityCheck(ctx context.Context) error {

@@ -28,3 +28,19 @@ Gemfile that reads local source files and environment variables (concurrent-ruby
 It covers explicit framework selection, shell composition, misleading names,
 script-only detection, malformed manifests, standalone pytest markers and
 polyglot roots. All are materialized into temporary directories with spaces.
+
+Additional Python snapshots (copied unchanged):
+
+| Fixture | Source files | Commit |
+| --- | --- | --- |
+| requests-legacy | [setup.cfg](https://github.com/psf/requests/blob/147c8511ddbfa5e8f71bbf5c18ede0c4ceb3bba4/setup.cfg), [tox.ini](https://github.com/psf/requests/blob/147c8511ddbfa5e8f71bbf5c18ede0c4ceb3bba4/tox.ini) | `147c8511ddbfa5e8f71bbf5c18ede0c4ceb3bba4` |
+| django | [setup.cfg](https://github.com/django/django/blob/879e5d587b84e6fc961829611999431778eb9f6a/setup.cfg), [tox.ini](https://github.com/django/django/blob/879e5d587b84e6fc961829611999431778eb9f6a/tox.ini) | `879e5d587b84e6fc961829611999431778eb9f6a` |
+| flask-legacy | [setup.cfg](https://github.com/pallets/flask/blob/47af817c8fe01045c641b97f8fb784c7ad864eee/setup.cfg) | `47af817c8fe01045c641b97f8fb784c7ad864eee` |
+| requests | [pyproject.toml](https://github.com/psf/requests/blob/611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60/pyproject.toml) | `611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60` |
+| virtualenv | [pyproject.toml](https://github.com/pypa/virtualenv/blob/4f09d426aba3e07981d5003fe6daee77c1160ff8/pyproject.toml) | `4f09d426aba3e07981d5003fe6daee77c1160ff8` |
+
+Django uses its own test runner: its packaging and tox configuration prove
+Python, but must not imply pytest. Requests’ legacy setup.cfg configures flake8;
+pytest evidence comes from tox commands. Flask provides `[tool:pytest]`, while
+modern Requests and virtualenv exercise dependency groups and both pytest TOML
+configuration forms. Tests also inspect each snapshot in isolation.

@@ -218,8 +218,8 @@ func Init() {
 }
 
 func setDefaults() {
-	viper.SetDefault("platform", "ruby")
-	viper.SetDefault("framework", "rspec")
+	viper.SetDefault("platform", "")
+	viper.SetDefault("framework", "")
 	viper.SetDefault("min_parallelism", DefaultParallelism())
 	viper.SetDefault("max_parallelism", DefaultParallelism())
 	viper.SetDefault("parallel_runner_overhead", defaultParallelRunnerOverhead.String())

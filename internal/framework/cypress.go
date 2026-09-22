@@ -62,10 +62,7 @@ func NewCypress() *Cypress {
 func (c *Cypress) SetPlatformEnv(platformEnv map[string]string) { c.platformEnv = platformEnv }
 func (c *Cypress) GetPlatformEnv() map[string]string            { return c.platformEnv }
 func (c *Cypress) Name() string                                 { return "cypress" }
-func (c *Cypress) Detect(repositoryRoot string) (bool, error) {
-	return detectJavaScriptFramework(repositoryRoot, "cypress")
-}
-func (c *Cypress) SupportsFullTestDiscovery() bool { return false }
+func (c *Cypress) SupportsFullTestDiscovery() bool              { return false }
 
 func (c *Cypress) SourceFileForSuite(suite string) (string, bool) {
 	suite = strings.TrimSpace(suite)

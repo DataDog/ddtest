@@ -49,14 +49,6 @@ func (r *RSpec) Name() string {
 	return "rspec"
 }
 
-func (r *RSpec) Detect(repositoryRoot string) (bool, error) {
-	detected, err := detectAnyPath(repositoryRoot, ".rspec")
-	if err != nil || detected {
-		return detected, err
-	}
-	return detectFileContaining(repositoryRoot, "Gemfile", "rspec")
-}
-
 func (r *RSpec) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
 	discovery.Cleanup()
 

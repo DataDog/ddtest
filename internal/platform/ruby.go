@@ -105,21 +105,11 @@ func (r *Ruby) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 }
 
 func (r *Ruby) DetectFramework() (framework.Framework, error) {
-	frameworkName := settings.GetFramework()
-	platformEnv := r.GetPlatformEnv()
-
-	var fw framework.Framework
-	switch frameworkName {
-	case "rspec":
-		fw = framework.NewRSpec()
-	case "minitest":
-		fw = framework.NewMinitest()
-	default:
-		return nil, fmt.Errorf("framework '%s' is not supported by platform 'ruby'", frameworkName)
+	root, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("find repository root: %w", err)
 	}
-
-	fw.SetPlatformEnv(platformEnv)
-	return fw, nil
+	return r.detectFramework(root, settings.GetFramework())
 }
 
 func (r *Ruby) SanityCheck(ctx context.Context) error {

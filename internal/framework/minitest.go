@@ -47,14 +47,6 @@ func (m *Minitest) Name() string {
 	return "minitest"
 }
 
-func (m *Minitest) Detect(repositoryRoot string) (bool, error) {
-	detected, err := detectAnyPath(repositoryRoot, minitestRootDir)
-	if err != nil || detected {
-		return detected, err
-	}
-	return detectFileContaining(repositoryRoot, "Gemfile", "minitest")
-}
-
 func (m *Minitest) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
 	discovery.Cleanup()
 

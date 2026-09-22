@@ -65,6 +65,7 @@ func TestDetectTestProjectHardFixtures(t *testing.T) {
 
 func checkDetectionFixture(t *testing.T, fixture detectionFixture) {
 	t.Helper()
+	resetDetectionSettings(t)
 	root := filepath.Join(t.TempDir(), "project with spaces")
 	require.NoError(t, os.MkdirAll(root, 0755))
 	for name, contents := range fixture.Files {

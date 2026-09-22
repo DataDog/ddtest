@@ -169,7 +169,8 @@ func TestRuby_SanityCheck_SucceedsWithDebugLogs(t *testing.T) {
 func TestRuby_DetectFramework_RSpec(t *testing.T) {
 	viper.Reset()
 	viper.Set("framework", "rspec")
-	defer viper.Reset()
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
 
 	ruby := newTestRuby()
 	fw, err := ruby.DetectFramework()
@@ -431,6 +432,8 @@ func TestDetectPlatform_Ruby(t *testing.T) {
 	// Save original settings
 	viper.Reset()
 	viper.Set("platform", "ruby")
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
 
 	platform, err := DetectPlatform(context.Background())
 	if err == nil {
@@ -519,7 +522,8 @@ func TestRuby_DetectFramework_SetsPlatformEnv(t *testing.T) {
 
 	viper.Reset()
 	viper.Set("framework", "rspec")
-	defer viper.Reset()
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
 
 	ruby := newTestRuby()
 	fw, err := ruby.DetectFramework()

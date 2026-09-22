@@ -46,10 +46,7 @@ func NewMocha() *Mocha {
 func (m *Mocha) SetPlatformEnv(platformEnv map[string]string) { m.platformEnv = platformEnv }
 func (m *Mocha) GetPlatformEnv() map[string]string            { return m.platformEnv }
 func (m *Mocha) Name() string                                 { return "mocha" }
-func (m *Mocha) Detect(repositoryRoot string) (bool, error) {
-	return detectJavaScriptFramework(repositoryRoot, "mocha")
-}
-func (m *Mocha) SupportsFullTestDiscovery() bool { return false }
+func (m *Mocha) SupportsFullTestDiscovery() bool              { return false }
 
 func (m *Mocha) SourceFileForSuite(suite string) (string, bool) {
 	suite = strings.TrimSpace(suite)

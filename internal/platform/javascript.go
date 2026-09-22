@@ -126,30 +126,11 @@ func (j *JavaScript) CreateTagsMap(ctx context.Context) (map[string]string, erro
 }
 
 func (j *JavaScript) DetectFramework() (framework.Framework, error) {
-	frameworkName := settings.GetFramework()
-	platformEnv := j.GetPlatformEnv()
-
-	var fw framework.Framework
-	switch frameworkName {
-	case "jest":
-		fw = framework.NewJest()
-	case "mocha":
-		fw = framework.NewMocha()
-	case "cypress":
-		fw = framework.NewCypress()
-	case "playwright":
-		fw = framework.NewPlaywright()
-	case "cucumber":
-		fw = framework.NewCucumber()
-	case "vitest":
-		platformEnv = addNodeImport(platformEnv, ddTraceRegisterModule)
-		fw = framework.NewVitest()
-	default:
-		return nil, fmt.Errorf("framework '%s' is not supported by platform 'javascript'", frameworkName)
+	root, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("find repository root: %w", err)
 	}
-
-	fw.SetPlatformEnv(platformEnv)
-	return fw, nil
+	return j.detectFramework(root, settings.GetFramework())
 }
 
 // Confirm that Node.js is installed by running 'node --version'

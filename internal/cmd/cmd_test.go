@@ -215,12 +215,12 @@ func TestRootCommandFlags(t *testing.T) {
 	}
 
 	// Check default values
-	if platformFlag.DefValue != "ruby" {
-		t.Errorf("expected platform default to be 'ruby', got %q", platformFlag.DefValue)
+	if platformFlag.DefValue != "" {
+		t.Errorf("expected platform default to be empty (automatic detection), got %q", platformFlag.DefValue)
 	}
 
-	if frameworkFlag.DefValue != "rspec" {
-		t.Errorf("expected framework default to be 'rspec', got %q", frameworkFlag.DefValue)
+	if frameworkFlag.DefValue != "" {
+		t.Errorf("expected framework default to be empty (automatic detection), got %q", frameworkFlag.DefValue)
 	}
 
 	if commandFlag.DefValue != "" {

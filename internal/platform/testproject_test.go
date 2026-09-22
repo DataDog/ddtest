@@ -9,6 +9,7 @@ import (
 )
 
 func TestDetectTestProjectSelectsFrameworkWithoutWritingFiles(t *testing.T) {
+	resetDetectionSettings(t)
 	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest", "rspec", "minitest"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -36,6 +37,7 @@ func TestDetectTestProjectSelectsFrameworkWithoutWritingFiles(t *testing.T) {
 }
 
 func TestDetectTestProjectRequiresUnambiguousSelection(t *testing.T) {
+	resetDetectionSettings(t)
 	root := t.TempDir()
 	_, _, err := DetectTestProject(root, "")
 	require.ErrorContains(t, err, "could not detect")
@@ -46,8 +48,8 @@ func TestDetectTestProjectRequiresUnambiguousSelection(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "javascript", language)
 	require.Equal(t, "vitest", runner.Name())
-	_, _, err = DetectTestProject(root, "pytest")
-	require.ErrorContains(t, err, "could not detect")
+	_, _, err = DetectTestProject(root, "unsupported")
+	require.ErrorContains(t, err, "unsupported framework")
 	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte("{"), 0644))
 	_, _, err = DetectTestProject(root, "")
 	require.ErrorContains(t, err, "parse")

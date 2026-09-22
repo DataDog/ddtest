@@ -59,10 +59,7 @@ func NewPlaywright() *Playwright {
 func (p *Playwright) SetPlatformEnv(platformEnv map[string]string) { p.platformEnv = platformEnv }
 func (p *Playwright) GetPlatformEnv() map[string]string            { return p.platformEnv }
 func (p *Playwright) Name() string                                 { return "playwright" }
-func (p *Playwright) Detect(repositoryRoot string) (bool, error) {
-	return detectJavaScriptFramework(repositoryRoot, "@playwright/test", "playwright")
-}
-func (p *Playwright) SupportsFullTestDiscovery() bool { return false }
+func (p *Playwright) SupportsFullTestDiscovery() bool              { return false }
 
 func (p *Playwright) SourceFileForSuite(suite string) (string, bool) {
 	suite = strings.TrimSpace(suite)

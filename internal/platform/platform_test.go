@@ -42,7 +42,11 @@ func TestPlatformsDetectTheirProjectFiles(t *testing.T) {
 				t.Fatal("Detect() = true for an empty repository")
 			}
 
-			if err := os.WriteFile(filepath.Join(repositoryRoot, test.filename), []byte("{}"), 0644); err != nil {
+			contents := "{}"
+			if test.filename == "pyproject.toml" {
+				contents = "[project]\nname = \"example\"\n"
+			}
+			if err := os.WriteFile(filepath.Join(repositoryRoot, test.filename), []byte(contents), 0644); err != nil {
 				t.Fatal(err)
 			}
 			detected, err = test.platform.Detect(repositoryRoot)

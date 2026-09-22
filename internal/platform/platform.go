@@ -56,18 +56,13 @@ func (d *DatadogPlatformDetector) DetectPlatform(ctx context.Context) (Platform,
 }
 
 func DetectPlatform(ctx context.Context) (Platform, error) {
-	platformName := settings.GetPlatform()
-
-	var platform Platform
-	switch platformName {
-	case "ruby":
-		platform = NewRuby(settings.GetTestSkippingLevel())
-	case "javascript":
-		platform = NewJavaScript()
-	case "python":
-		platform = NewPython()
-	default:
-		return nil, fmt.Errorf("unsupported platform: %s", platformName)
+	root, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("find repository root: %w", err)
+	}
+	platform, err := inspectPlatform(root, settings.GetPlatform(), settings.GetFramework())
+	if err != nil {
+		return nil, err
 	}
 
 	if err := platform.SanityCheck(ctx); err != nil {

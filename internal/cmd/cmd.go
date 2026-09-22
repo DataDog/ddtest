@@ -114,8 +114,8 @@ var rootPersistentFlagBindings = []persistentFlagBinding{
 func init() {
 	rootCmd.SetVersionTemplate("{{ .Version }}\n")
 
-	rootCmd.PersistentFlags().String("platform", "ruby", "Platform that runs tests")
-	rootCmd.PersistentFlags().String("framework", "rspec", "Test framework to use")
+	rootCmd.PersistentFlags().String("platform", "", "Platform that runs tests (auto-detected when omitted)")
+	rootCmd.PersistentFlags().String("framework", "", "Test framework to use (auto-detected when omitted)")
 	rootCmd.PersistentFlags().Int("min-parallelism", defaultParallelism, "Minimum number of parallel test processes (default: number of physical CPUs)")
 	rootCmd.PersistentFlags().Int("max-parallelism", defaultParallelism, "Maximum number of parallel test processes (default: number of physical CPUs)")
 	rootCmd.PersistentFlags().String("ci-job-overhead", settings.DefaultParallelRunnerOverhead().String(), "Modeled overhead for adding one more CI job / parallel runner (for example, 25s, 1m, 1500ms, or 0s to disable the bias). Increase it to use fewer CI jobs; decrease it to prefer faster wall time")

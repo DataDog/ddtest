@@ -123,11 +123,11 @@ func TestInit(t *testing.T) {
 	}
 
 	// Test defaults are set correctly
-	if config.Platform != "ruby" {
-		t.Errorf("expected default platform to be 'ruby', got %q", config.Platform)
+	if config.Platform != "" {
+		t.Errorf("expected default platform to be empty (automatic detection), got %q", config.Platform)
 	}
-	if config.Framework != "rspec" {
-		t.Errorf("expected default framework to be 'rspec', got %q", config.Framework)
+	if config.Framework != "" {
+		t.Errorf("expected default framework to be empty (automatic detection), got %q", config.Framework)
 	}
 	expectedParallelism := PhysicalCPUCount()
 	if config.MinParallelism != expectedParallelism {
@@ -185,11 +185,11 @@ func TestSetDefaults(t *testing.T) {
 
 	setDefaults()
 
-	if viper.GetString("platform") != "ruby" {
-		t.Errorf("expected default platform to be 'ruby', got %q", viper.GetString("platform"))
+	if viper.GetString("platform") != "" {
+		t.Errorf("expected default platform to be empty (automatic detection), got %q", viper.GetString("platform"))
 	}
-	if viper.GetString("framework") != "rspec" {
-		t.Errorf("expected default framework to be 'rspec', got %q", viper.GetString("framework"))
+	if viper.GetString("framework") != "" {
+		t.Errorf("expected default framework to be empty (automatic detection), got %q", viper.GetString("framework"))
 	}
 	expectedParallelism := PhysicalCPUCount()
 	if viper.GetInt("min_parallelism") != expectedParallelism {
@@ -266,8 +266,8 @@ func TestGetPlatform(t *testing.T) {
 	viper.Reset()
 
 	platform := GetPlatform()
-	if platform != "ruby" {
-		t.Errorf("expected platform to be 'ruby', got %q", platform)
+	if platform != "" {
+		t.Errorf("expected platform to be empty (automatic detection), got %q", platform)
 	}
 
 	// Test with custom value
@@ -284,8 +284,8 @@ func TestGetFramework(t *testing.T) {
 	viper.Reset()
 
 	framework := GetFramework()
-	if framework != "rspec" {
-		t.Errorf("expected framework to be 'rspec', got %q", framework)
+	if framework != "" {
+		t.Errorf("expected framework to be empty (automatic detection), got %q", framework)
 	}
 
 	// Test with custom value

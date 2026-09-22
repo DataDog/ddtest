@@ -57,27 +57,6 @@ func (j *Jest) Name() string {
 	return "jest"
 }
 
-func (j *Jest) Detect(repositoryRoot string) (bool, error) {
-	manifest, found, err := readPackageManifest(repositoryRoot)
-	if err != nil || !found {
-		return false, err
-	}
-	if !manifest.usesAny("jest") {
-		return false, nil
-	}
-	if len(j.commandOverride) > 0 {
-		return true, nil
-	}
-	if !isDirectJavaScriptCommand(manifest.Scripts["test"], "jest") {
-		return true, nil
-	}
-
-	// Reuse only a direct Jest script: discovery appends --listTests, which a
-	// composite script could forward to another command while running all tests.
-	j.commandOverride = []string{"npm", "test", "--", "--runInBand"}
-	return true, nil
-}
-
 // We will not be discovering tests, but test suites.
 // We'll be working outside of the Node.js process
 func (j *Jest) SupportsFullTestDiscovery() bool {
