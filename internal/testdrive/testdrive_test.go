@@ -238,12 +238,16 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 		"Any tests slower than the others?",
 		"Median test time · 1s",
 		"slow test",
+		"Run 2 · Retry · early flake detection",
+		"Source · lines 1–1",
 		"Run details",
 		"Tests with coverage",
 		"2 / 2",
 		"dd-trace@",
 		`href="intake/"`,
 		`href="test-output.txt"`,
+		`data-tab="suites"`,
+		`data-tab="tests"`,
 		`<article class="problem-card">`,
 	} {
 		if !strings.Contains(string(report), expected) {
