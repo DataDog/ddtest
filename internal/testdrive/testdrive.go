@@ -7,14 +7,15 @@
 package testdrive
 
 import (
+"maps"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -48,7 +49,7 @@ type Testdrive struct {
 	args           []string
 	tracerLabel    string
 	platform       platform.Platform
-	tracerVersion  string
+ tracerVersion string
 	executor       commandExecutor
 	startIntake    func(string) (localIntake, error)
 	nodeVersion    func() string
@@ -76,7 +77,7 @@ func Prepare(version string) (*Testdrive, error) {
 	}
 	language := detectedPlatform.Name()
 	switch runner.Name() {
-	case "jest", "mocha", "vitest", "playwright", "cucumber":
+	case "jest", "mocha", "vitest", "playwright", "cucumber", "cypress":
 	default:
 		return nil, fmt.Errorf("testdrive does not yet support %s", runner.Name())
 	}
@@ -84,7 +85,7 @@ func Prepare(version string) (*Testdrive, error) {
 	if err != nil {
 		return nil, err
 	}
-	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
+ label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 
 	return &Testdrive{repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) },
@@ -110,6 +111,9 @@ func (t *Testdrive) Preview(output io.Writer) {
 		_, _ = fmt.Fprintf(output, "  - reuse the project tracer; if absent, install %s with npm inside <session> (local install, without saving dependencies or a lockfile)\n", t.tracerLabel)
 		_, _ = fmt.Fprintln(output, "  - resolve the selected dd-trace preload with node")
 
+	}
+	if t.framework.Name() == "cypress" {
+		_, _ = fmt.Fprintln(output, "  - create Cypress config/support wrappers inside <session>; run with --config-file <session>/cypress.config.cjs and preserve existing hooks")
 	}
 
 	_, _ = fmt.Fprintf(output, "  - run: %s\n", shellquote.Join(append([]string{command}, args...)...))
@@ -150,7 +154,16 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	command, args := t.command, t.args
 	_, _ = fmt.Fprintf(output, "Running %s...\n", shellquote.Join(append([]string{command}, args...)...))
 	env := t.environment(installation.Path, server.URL(), session.ID())
-	maps.Copy(env, installation.Env)
+ maps.Copy(env, installation.Env)
+	if t.framework.Name() == "cypress" {
+		if command == "npm" && !slices.Contains(args, "--") {
+			args = append(slices.Clone(args), "--")
+		}
+		args, err = prepareCypress(t.repositoryRoot, session.Directory(), installation.Path, command, args)
+		if err != nil {
+			return err
+		}
+	}
 
 	testOutput, testErr := t.executor.CombinedOutput(ctx, command, args, env)
 

@@ -43,6 +43,9 @@ func TestdriveCommand(root string, runner Framework) (string, []string, error) {
 	case *Playwright:
 		command, args := f.getPlaywrightCommand()
 		return command, playwrightRunArgs(command, args, nil), nil
+	case *Cypress:
+		command, args := f.getCypressCommand()
+		return command, cypressRunArgs(command, args, nil), nil
 
 	default:
 		return "", nil, fmt.Errorf("unsupported testdrive framework: %s", runner.Name())
