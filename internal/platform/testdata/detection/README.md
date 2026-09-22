@@ -39,8 +39,8 @@ Additional Python snapshots (copied unchanged):
 | requests | [pyproject.toml](https://github.com/psf/requests/blob/611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60/pyproject.toml) | `611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60` |
 | virtualenv | [pyproject.toml](https://github.com/pypa/virtualenv/blob/4f09d426aba3e07981d5003fe6daee77c1160ff8/pyproject.toml) | `4f09d426aba3e07981d5003fe6daee77c1160ff8` |
 
-Django uses its own test runner: its packaging and tox configuration prove
-Python, but must not imply pytest. Requests’ legacy setup.cfg configures flake8;
-pytest evidence comes from tox commands. Flask provides `[tool:pytest]`, while
-modern Requests and virtualenv exercise dependency groups and both pytest TOML
-configuration forms. Tests also inspect each snapshot in isolation.
+These snapshots exercise Python platform detection, including setup.cfg files
+that need a Python-specific section rather than filename-only matching. Python
+always defaults to pytest, including Django, which uses its own test runner.
+Selecting pytest is a supported default, not evidence that the project uses it.
+Tests also inspect each snapshot in isolation.

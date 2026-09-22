@@ -170,6 +170,16 @@
     "error": ""
   },
   {
+    "name": "tox-pytest-section",
+    "files": {
+      "tox.ini": "[pytest]\naddopts=-ra\n"
+    },
+    "framework": "pytest",
+    "language": "python",
+    "hint": "",
+    "error": ""
+  },
+  {
     "name": "conftest-only",
     "files": {
       "conftest.py": "raise RuntimeError(\"detection must never import this file\")\n"
@@ -204,20 +214,20 @@
     "files": {
       "tox.ini": "[testenv]\ndeps = ruff\ncommands = ruff check .\n"
     },
-    "framework": "",
-    "language": "",
+    "framework": "pytest",
+    "language": "python",
     "hint": "",
-    "error": "could not detect"
+    "error": ""
   },
   {
     "name": "python-without-runner",
     "files": {
       "pyproject.toml": "[project]\nname = \"library\"\n"
     },
-    "framework": "",
-    "language": "",
+    "framework": "pytest",
+    "language": "python",
     "hint": "",
-    "error": "could not detect"
+    "error": ""
   },
   {
     "name": "rspec-marker",
