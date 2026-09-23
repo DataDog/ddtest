@@ -25,7 +25,7 @@ func TestAnalyzeTestsFindsFailuresRetriesAndSlowTests(t *testing.T) {
 		{name: "broken", suite: "two.test.js", status: "fail", duration: 15 * time.Millisecond},
 	}
 
-	all, failed, flaky, slow, median := analyzeTests(tests)
+	all, failed, flaky, slow, median := analyzeTests(tests, nil, "")
 	require.Len(t, all, 4)
 	require.Equal(t, []string{"fast", "flaky", "broken", "slow"}, []string{all[0].Name, all[1].Name, all[2].Name, all[3].Name})
 	require.Equal(t, []TestFinding{{
@@ -52,7 +52,7 @@ func TestAnalyzeTestsUsesFinalStatusAndMarksMixedOutcomesFlaky(t *testing.T) {
 		{name: "flaky", suite: "one.test.js", status: "fail", duration: 12 * time.Millisecond, isRetry: true},
 	}
 
-	all, failed, flaky, _, _ := analyzeTests(tests)
+	all, failed, flaky, _, _ := analyzeTests(tests, nil, "")
 	require.Empty(t, failed)
 	require.Len(t, flaky, 1)
 	require.Equal(t, "pass", flaky[0].Status)
@@ -71,16 +71,14 @@ func TestAddCoverageToTestsUsesActiveCoverageLevel(t *testing.T) {
 	}
 
 	t.Run("test", func(t *testing.T) {
-		findings, _, _, _, _ := analyzeTests(tests)
-		addCoverageToTests(findings, tests, coverages, "test")
+		findings, _, _, _, _ := analyzeTests(tests, coverages, "test")
 		require.Equal(t, "test", findings[0].CoverageLevel)
 		require.Equal(t, []string{"specific.js"}, findings[0].CoveredFiles)
 		require.Empty(t, findings[1].CoverageLevel)
 	})
 
 	t.Run("suite", func(t *testing.T) {
-		findings, _, _, _, _ := analyzeTests(tests)
-		addCoverageToTests(findings, tests, coverages, "suite")
+		findings, _, _, _, _ := analyzeTests(tests, coverages, "suite")
 		for _, finding := range findings {
 			require.Equal(t, "suite", finding.CoverageLevel)
 			require.Equal(t, []string{"shared.js"}, finding.CoveredFiles)
@@ -153,7 +151,7 @@ func TestAnalyzeTestsHandlesMissingNamesAndStableOrdering(t *testing.T) {
 		{name: "named", status: "pass", duration: time.Millisecond},
 	}
 
-	all, failed, _, _, _ := analyzeTests(tests)
+	all, failed, _, _, _ := analyzeTests(tests, nil, "")
 	require.Equal(t, []string{"named", "test 10", "test 20"}, []string{all[0].Name, all[1].Name, all[2].Name})
 	require.Equal(t, []string{"test 10", "test 20"}, []string{failed[0].Name, failed[1].Name})
 	require.Equal(t, "named", all[0].label())
@@ -197,4 +195,116 @@ func TestFindingsIncludeConfigurationErrorsAcrossEventLevels(t *testing.T) {
 	require.Equal(t, 1, findings.TestCount)
 	require.Empty(t, findings.FailedTests)
 	require.Equal(t, []string{"settings", "skippable_tests"}, findings.ConfigurationErrors)
+}
+
+func TestFindingsSeparatesTestIdentitiesAndTheirCoverage(t *testing.T) {
+	for _, field := range []string{"test.module", "test.parameters"} {
+		t.Run(field, func(t *testing.T) {
+			var events []any
+			for i := range 3 {
+				meta := map[string]any{"test.name": "same", "test.suite": "suite", "test.status": "pass"}
+				variant := "first"
+				if i > 0 {
+					variant = "second"
+					meta["test.status"] = "fail"
+				}
+				meta[field] = variant
+				events = append(events, map[string]any{"type": "test", "content": map[string]any{
+					"span_id": i + 1, "meta": meta,
+				}})
+			}
+			payload, err := msgp.AppendIntf(nil, map[string]any{"events": events})
+			require.NoError(t, err)
+			server := serverWithCoverage(t, payload,
+				appendCoverage(nil, 0, 0, 1, "one.js"),
+				appendCoverage(nil, 0, 0, 2, "two.js", "three.js", "four.js"),
+				appendCoverage(nil, 0, 0, 3, "two.js", "three.js", "four.js"))
+			findings, err := server.Findings()
+			require.NoError(t, err)
+			require.Equal(t, 2, findings.TestCount)
+			require.Equal(t, 3, findings.TestEventCount)
+			require.Equal(t, 2, findings.CoveredTestCount)
+			require.Equal(t, 2, findings.CoveredFilesMedian)
+			require.Empty(t, findings.FlakyTests)
+			require.Len(t, findings.FailedTests, 1)
+			require.Len(t, findings.FailedTests[0].Attempts, 2)
+			require.Equal(t, []string{"four.js", "three.js", "two.js"}, findings.FailedTests[0].CoveredFiles)
+			for _, finding := range findings.Tests {
+				if finding.Status == "pass" {
+					require.Equal(t, []string{"one.js"}, finding.CoveredFiles)
+				}
+			}
+		})
+	}
+}
+
+func TestFindingsPreservesCoverageInEveryCategory(t *testing.T) {
+	for _, level := range []string{"test", "suite"} {
+		t.Run(level, func(t *testing.T) {
+			var events []any
+			var coverage [][]byte
+			for i, name := range []string{"failed", "flaky", "flaky", "fast", ""} {
+				status := "pass"
+				if i < 2 {
+					status = "fail"
+				}
+				duration := time.Millisecond
+				if name == "" {
+					duration = time.Second
+				}
+				events = append(events, map[string]any{"type": "test", "content": map[string]any{
+					"test_session_id": 1, "test_suite_id": 2, "span_id": i + 1, "duration": int64(duration),
+					"meta": map[string]any{"test.name": name, "test.status": status},
+				}})
+				if level == "test" {
+					coverage = append(coverage, appendCoverage(nil, 1, 2, uint64(i+1), "covered.js"))
+				}
+			}
+			if level == "suite" {
+				coverage = append(coverage, appendCoverage(nil, 1, 2, 0, "covered.js"))
+			}
+			payload, err := msgp.AppendIntf(nil, map[string]any{"events": events})
+			require.NoError(t, err)
+			findings, err := serverWithCoverage(t, payload, coverage...).Findings()
+			require.NoError(t, err)
+			require.Equal(t, 4, findings.CoveredTestCount)
+			require.Len(t, findings.FailedTests, 1)
+			require.Len(t, findings.FlakyTests, 1)
+			require.Len(t, findings.SlowTests, 1)
+			for _, category := range [][]TestFinding{findings.Tests, findings.FailedTests, findings.FlakyTests, findings.SlowTests} {
+				for _, finding := range category {
+					require.Equal(t, level, finding.CoverageLevel)
+					require.Equal(t, []string{"covered.js"}, finding.CoveredFiles)
+					require.Contains(t, findings.Tests, finding)
+				}
+			}
+		})
+	}
+}
+
+func TestAnalyzeCoverageSingleRecord(t *testing.T) {
+	for _, level := range []string{"test", "suite"} {
+		t.Run(level, func(t *testing.T) {
+			test := testReference{sessionID: 1, suiteID: 2, spanID: 3, name: "one"}
+			coverage := coverageReference{testReference: test, fileCount: 7}
+			if level == "suite" {
+				coverage.spanID = 0
+			}
+			broad, median := analyzeCoverage([]testReference{test}, []coverageReference{coverage}, level)
+			require.Empty(t, broad)
+			require.Equal(t, 7, median)
+		})
+	}
+}
+
+func TestAnalyzeTestsDoesNotUseSourceLocationAsIdentity(t *testing.T) {
+	tests := []testReference{
+		{module: "module", suite: "suite", name: "test", parameters: `{"arguments":{"x":1}}`, status: "fail", sourceFile: "test.js", sourceStart: 10},
+		{module: "module", suite: "suite", name: "test", parameters: `{"arguments":{"x":1}}`, status: "pass", isRetry: true},
+	}
+	all, failed, flaky, _, _ := analyzeTests(tests, nil, "")
+	require.Len(t, all, 1)
+	require.Len(t, flaky, 1)
+	require.Len(t, flaky[0].Attempts, 2)
+	require.Empty(t, failed)
 }

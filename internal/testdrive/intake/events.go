@@ -21,6 +21,8 @@ type testReference struct {
 	sessionID    uint64
 	suiteID      uint64
 	spanID       uint64
+	module       string
+	parameters   string
 	name         string
 	suite        string
 	sourceFile   string
@@ -167,6 +169,8 @@ func readTestReference(payload []byte) (testReference, []byte, error) {
 		duration:  time.Duration(integer(content["duration"])),
 	}
 	if metadata, ok := content["meta"].(map[string]any); ok {
+		reference.module = text(metadata["test.module"])
+		reference.parameters = text(metadata["test.parameters"])
 		reference.name = text(metadata["test.name"])
 		reference.suite = text(metadata["test.suite"])
 		reference.sourceFile = text(metadata["test.source.file"])

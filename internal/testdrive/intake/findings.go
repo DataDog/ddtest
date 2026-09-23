@@ -25,6 +25,8 @@ const (
 
 // TestFinding describes one observed test and its attempts.
 type TestFinding struct {
+	Module        string
+	Parameters    string
 	Name          string
 	Suite         string
 	SourceFile    string
@@ -88,8 +90,7 @@ func (s *Server) Findings() (Findings, error) {
 	}
 
 	findings := Findings{TestEventCount: len(tests), CoverageLevel: coverageLevel(coverages), EmptyCoverageEntryCount: emptyEntries}
-	findings.Tests, findings.FailedTests, findings.FlakyTests, findings.SlowTests, findings.TestDurationMedian = analyzeTests(tests)
-	addCoverageToTests(findings.Tests, tests, coverages, findings.CoverageLevel)
+	findings.Tests, findings.FailedTests, findings.FlakyTests, findings.SlowTests, findings.TestDurationMedian = analyzeTests(tests, coverages, findings.CoverageLevel)
 	findings.TestCount = len(findings.Tests)
 	findings.CoveredTestCount = uniqueCoveredTestCount(tests, coverages)
 	findings.BroadCoverage, findings.CoveredFilesMedian = analyzeCoverage(tests, coverages, findings.CoverageLevel)
@@ -97,7 +98,8 @@ func (s *Server) Findings() (Findings, error) {
 	return findings, err
 }
 
-func analyzeTests(tests []testReference) ([]TestFinding, []TestFinding, []TestFinding, []TestFinding, time.Duration) {
+func analyzeTests(tests []testReference, coverages []coverageReference, level string) ([]TestFinding, []TestFinding, []TestFinding, []TestFinding, time.Duration) {
+	filesByTest := coverageFilesByTest(tests, coverages, level)
 	testsByName := make(map[string][]testReference)
 	order := make([]string, 0)
 	for _, test := range tests {
@@ -114,6 +116,10 @@ func analyzeTests(tests []testReference) ([]TestFinding, []TestFinding, []TestFi
 	for _, key := range order {
 		attempts := testsByName[key]
 		finding := testFinding(attempts[0])
+		if files, covered := filesByTest[key]; covered {
+			finding.CoverageLevel = level
+			finding.CoveredFiles = files
+		}
 		finding.Attempts = make([]TestAttempt, 0, len(attempts))
 		sawPass := false
 		sawFailure := false
@@ -161,19 +167,16 @@ func analyzeTests(tests []testReference) ([]TestFinding, []TestFinding, []TestFi
 	return all, failed, flaky, slow, median
 }
 
-func addCoverageToTests(findings []TestFinding, tests []testReference, coverages []coverageReference, level string) {
+func coverageFilesByTest(tests []testReference, coverages []coverageReference, level string) map[string][]string {
 	testsBySpan := make(map[uint64]string, len(tests))
 	for _, test := range tests {
 		testsBySpan[test.spanID] = testIdentity(test)
 	}
 	testFiles := make(map[string][]string)
 	suiteFiles := make(map[suiteReference][]string)
-	testCovered := make(map[string]bool)
-	suiteCovered := make(map[suiteReference]bool)
 	for _, coverage := range coverages {
 		if level == "test" && coverage.spanID != 0 {
 			if identity := testsBySpan[coverage.spanID]; identity != "" {
-				testCovered[identity] = true
 				testFiles[identity] = appendUnique(testFiles[identity], coverage.files...)
 			}
 		}
@@ -181,32 +184,19 @@ func addCoverageToTests(findings []TestFinding, tests []testReference, coverages
 			continue
 		}
 		key := suiteReference{sessionID: coverage.sessionID, suiteID: coverage.suiteID}
-		suiteCovered[key] = true
 		suiteFiles[key] = appendUnique(suiteFiles[key], coverage.files...)
 	}
 
-	for findingIndex := range findings {
-		finding := &findings[findingIndex]
-		identity := finding.Suite + "\x00" + finding.Name
-		if level == "test" && testCovered[identity] {
-			finding.CoveredFiles = appendUnique(finding.CoveredFiles, testFiles[identity]...)
-			finding.CoverageLevel = "test"
-			continue
-		}
-		if level != "suite" {
-			continue
-		}
+	if level == "suite" {
 		for _, test := range tests {
-			if testIdentity(test) != identity {
-				continue
-			}
 			key := suiteReference{sessionID: test.sessionID, suiteID: test.suiteID}
-			finding.CoveredFiles = appendUnique(finding.CoveredFiles, suiteFiles[key]...)
-			if suiteCovered[key] {
-				finding.CoverageLevel = "suite"
+			if files, covered := suiteFiles[key]; covered {
+				identity := testIdentity(test)
+				testFiles[identity] = appendUnique(testFiles[identity], files...)
 			}
 		}
 	}
+	return testFiles
 }
 
 func appendUnique(values []string, additions ...string) []string {
@@ -265,7 +255,7 @@ func coverageLevel(coverages []coverageReference) string {
 }
 
 func analyzeCoverage(tests []testReference, coverages []coverageReference, level string) ([]CoverageFinding, int) {
-	if len(coverages) < 2 || level == "" {
+	if level == "" {
 		return nil, 0
 	}
 	testsBySpan := make(map[uint64]testReference, len(tests))
@@ -280,12 +270,14 @@ func analyzeCoverage(tests []testReference, coverages []coverageReference, level
 		if (level == "test" && coverage.spanID == 0) || (level == "suite" && coverage.spanID != 0) {
 			continue
 		}
+		var key string
 		finding := CoverageFinding{FileCount: coverage.fileCount, Files: coverage.files}
 		if coverage.spanID != 0 {
 			testReference, found := testsBySpan[coverage.spanID]
 			if !found {
 				continue
 			}
+			key = testIdentity(testReference)
 			finding.Level = "test"
 			test := testFinding(testReference)
 			finding.Name = test.label()
@@ -297,11 +289,11 @@ func analyzeCoverage(tests []testReference, coverages []coverageReference, level
 			if !found {
 				continue
 			}
+			key = fmt.Sprintf("%d/%d", coverage.sessionID, coverage.suiteID)
 			finding.Level = "suite"
 			finding.Name = test.suite
 			finding.SourceFile = test.sourceFile
 		}
-		key := finding.Level + "\x00" + finding.Name
 		if current, found := findingsByName[key]; !found || finding.FileCount > current.FileCount {
 			findingsByName[key] = finding
 		}
@@ -379,9 +371,10 @@ func uniqueCoveredTestCount(tests []testReference, coverages []coverageReference
 
 func testIdentity(test testReference) string {
 	if test.name != "" || test.suite != "" {
-		return test.suite + "\x00" + test.name
+		// Match tracer identity: source locations describe a test, but do not identify it.
+		return fmt.Sprintf("%q/%q/%q/%q", test.module, test.suite, test.name, test.parameters)
 	}
-	return fmt.Sprintf("%d/%d", test.suiteID, test.spanID)
+	return fmt.Sprintf("%d/%d/%d", test.sessionID, test.suiteID, test.spanID)
 }
 
 func testFinding(test testReference) TestFinding {
@@ -390,7 +383,7 @@ func testFinding(test testReference) TestFinding {
 		name = fmt.Sprintf("test %d", test.spanID)
 	}
 	return TestFinding{
-		Name: name, Suite: test.suite, SourceFile: test.sourceFile,
+		Name: name, Suite: test.suite, Module: test.module, Parameters: test.parameters, SourceFile: test.sourceFile,
 		SourceStart: test.sourceStart, SourceEnd: test.sourceEnd, Duration: test.duration,
 	}
 }
