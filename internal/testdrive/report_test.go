@@ -39,3 +39,22 @@ func TestReportSurfacesConfigurationErrorsDespiteReceivedTests(t *testing.T) {
 		t.Fatalf("missing configuration error: %s", model.Summary)
 	}
 }
+
+func TestReportSurfacesEmptyCoverageAsTracerError(t *testing.T) {
+	path, err := writeReport(t.TempDir(), t.TempDir(), intake.Findings{TestEventCount: 1, TestCount: 1, EmptyCoverageEntryCount: 2}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"Tracer error: empty coverage entries", "2 coverage entries had an empty files list", "Affected payloads were excluded", "Inspect the captured traffic"} {
+		if !strings.Contains(string(data), expected) {
+			t.Errorf("missing %q in report", expected)
+		}
+	}
+	if strings.Contains(string(data), "No findings.") {
+		t.Fatal("report hides tracer error as no findings")
+	}
+}

@@ -58,6 +58,12 @@ func buildReport(_ string, findings intake.Findings, commandFailed bool, runtime
 		model.Headline = "No test events received."
 		model.Summary = "Check the instrumentation setup."
 	}
+	if findings.EmptyCoverageEntryCount > 0 {
+		model.Cards = append(model.Cards, reportCard{
+			Title:   "Tracer error: empty coverage entries",
+			Context: fmt.Sprintf("%d coverage entries had an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.", findings.EmptyCoverageEntryCount),
+		})
+	}
 	if len(findings.FailedTests) > 0 {
 		model.Cards = append(model.Cards, reportCard{Title: "Any tests failed?", Tests: findings.FailedTests})
 	}
