@@ -10,13 +10,14 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
 const (
 	skippableRequestType string = "test_params"
-	skippableURLPath     string = "api/v2/ci/tests/skippable"
+	skippableURLPath     string = constants.SkippableTestsURLPath
 )
 
 type (

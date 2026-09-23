@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	searchCommitsURLPath string = "api/v2/git/repository/search_commits"
+	searchCommitsURLPath string = constants.SearchCommitsURLPath
 )
 
 type (

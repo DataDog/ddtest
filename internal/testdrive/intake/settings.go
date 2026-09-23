@@ -9,13 +9,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 const (
-	settingsPath           = "/api/v2/libraries/tests/services/setting"
-	knownTestsPath         = "/api/v2/ci/libraries/tests"
-	skippableTestsPath     = "/api/v2/ci/tests/skippable"
-	testManagementPath     = "/api/v2/test/libraries/test-management/tests"
+	settingsPath           = "/" + constants.SettingsURLPath
+	knownTestsPath         = "/" + constants.KnownTestsURLPath
+	skippableTestsPath     = "/" + constants.SkippableTestsURLPath
+	testManagementPath     = "/" + constants.TestManagementTestsURLPath
 	settingsResponseID     = "test-settings"
 	settingsResponseType   = "ci_app_tracers_test_service_settings"
 	testdriveCorrelationID = "ddtest-testdrive"
@@ -66,10 +68,10 @@ func newHandler() http.Handler {
 	mux.HandleFunc("POST "+knownTestsPath, handleKnownTests)
 	mux.HandleFunc("POST "+skippableTestsPath, handleSkippableTests)
 	mux.HandleFunc("POST "+testManagementPath, handleTestManagement)
-	mux.HandleFunc("POST /api/v2/git/repository/search_commits", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("POST /"+constants.SearchCommitsURLPath, func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"data": []any{}})
 	})
-	mux.HandleFunc("POST /api/v2/git/repository/packfile", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("POST /"+constants.SendPackFilesURLPath, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, request *http.Request) {

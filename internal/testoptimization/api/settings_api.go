@@ -10,13 +10,14 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
 const (
 	settingsRequestType string = "ci_app_test_service_libraries_settings"
-	settingsURLPath     string = "api/v2/libraries/tests/services/setting"
+	settingsURLPath     string = constants.SettingsURLPath
 )
 
 type (

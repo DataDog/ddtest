@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	sendPackFilesURLPath string = "api/v2/git/repository/packfile"
+	sendPackFilesURLPath string = constants.SendPackFilesURLPath
 )
 
 type (

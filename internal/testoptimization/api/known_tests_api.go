@@ -10,12 +10,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
 const (
 	knownTestsRequestType string = "ci_app_libraries_tests_request"
-	knownTestsURLPath     string = "api/v2/ci/libraries/tests"
+	knownTestsURLPath     string = constants.KnownTestsURLPath
 )
 
 type (
