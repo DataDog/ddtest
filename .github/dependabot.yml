@@ -3,10 +3,26 @@ updates:
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:
-      interval: 'monthly'
+      interval: 'daily'
     groups:
       gh-actions-packages:
         patterns:
           - '*'
+    cooldown:
+      default-days: 2
+  - package-ecosystem: 'gomod'
+    directory: '/'
+    schedule:
+      interval: 'daily'
+    allow:
+      - dependency-type: 'all'
+    open-pull-requests-limit: 10
+    groups:
+      go-modules:
+        patterns:
+          - '*'
+        update-types:
+          - 'minor'
+          - 'patch'
     cooldown:
       default-days: 2

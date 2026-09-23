@@ -14,7 +14,6 @@ func UnixSocketClient(socketPath string, timeout time.Duration) *http.Client {
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
-		DualStack: true,
 	}
 	return &http.Client{
 		Transport: &http.Transport{

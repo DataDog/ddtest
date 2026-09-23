@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.26.5 or later
+- Go at the version specified in `go.mod` or later
 
 ## Building
 
@@ -38,3 +38,9 @@ make vet
 ```bash
 make run
 ```
+
+## Automated dependency updates
+
+Dependabot checks Go modules and GitHub Actions daily. The **Update Go toolchain**
+workflow checks Go and golangci-lint daily and supports manual runs from Actions.
+All updates open PRs for review and merge.
