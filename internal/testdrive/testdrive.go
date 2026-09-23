@@ -34,7 +34,7 @@ type commandExecutor interface {
 
 type localIntake interface {
 	URL() string
-	Findings() (intake.Findings, error)
+	Facts() (intake.Facts, error)
 	Close() error
 }
 
@@ -155,7 +155,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	if closeErr != nil {
 		return closeErr
 	}
-	findings, err := server.Findings()
+	findings, err := server.Facts()
 	if err != nil {
 		return err
 	}
@@ -190,7 +190,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	return nil
 }
 
-func writeFindings(output io.Writer, findings intake.Findings) {
+func writeFindings(output io.Writer, findings intake.Facts) {
 	if len(findings.ConfigurationErrors) > 0 {
 		_, _ = fmt.Fprintf(output, "Tracer configuration errors: %s. Inspect the captured traffic and test output.\n", strings.Join(findings.ConfigurationErrors, ", "))
 	}
@@ -231,7 +231,7 @@ func writeFindings(output io.Writer, findings intake.Findings) {
 	}
 }
 
-func writeTestFindings(output io.Writer, title string, findings []intake.TestFinding) {
+func writeTestFindings(output io.Writer, title string, findings []intake.Test) {
 	if len(findings) == 0 {
 		return
 	}
@@ -239,7 +239,7 @@ func writeTestFindings(output io.Writer, title string, findings []intake.TestFin
 	writeTestFindingRows(output, findings)
 }
 
-func writeTestFindingRows(output io.Writer, findings []intake.TestFinding) {
+func writeTestFindingRows(output io.Writer, findings []intake.Test) {
 	for _, finding := range findings {
 		status, _ := testDisplayStatus(finding)
 		_, _ = fmt.Fprintf(
@@ -249,7 +249,7 @@ func writeTestFindingRows(output io.Writer, findings []intake.TestFinding) {
 	}
 }
 
-func testFindingLabel(finding intake.TestFinding) string {
+func testFindingLabel(finding intake.Test) string {
 	if finding.Suite == "" {
 		return finding.Name
 	}

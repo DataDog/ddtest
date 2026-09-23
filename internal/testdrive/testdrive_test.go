@@ -47,16 +47,16 @@ func (f *fakeTestdriveExecutor) CombinedOutput(_ context.Context, command string
 
 type fakeIntake struct {
 	url         string
-	findings    intake.Findings
+	findings    intake.Facts
 	findingsErr error
 	closeErr    error
 	closed      bool
 }
 
 func (f *fakeIntake) URL() string { return f.url }
-func (f *fakeIntake) Findings() (intake.Findings, error) {
+func (f *fakeIntake) Facts() (intake.Facts, error) {
 	if !f.closed {
-		return intake.Findings{}, errors.New("findings read before intake was drained")
+		return intake.Facts{}, errors.New("findings read before intake was drained")
 	}
 	return f.findings, f.findingsErr
 }
@@ -141,19 +141,19 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 	executor := &fakeTestdriveExecutor{output: []byte("PASS one.test.js\n")}
 	server := &fakeIntake{
 		url: "http://127.0.0.1:1234",
-		findings: intake.Findings{
+		findings: intake.Facts{
 			TestCount:          2,
 			TestEventCount:     2,
 			CoveredTestCount:   2,
 			TestDurationMedian: time.Second,
-			Tests: []intake.TestFinding{
-				{Name: "fast test", Suite: "one.test.js", SourceFile: "one.test.js", SourceStart: 1, Status: "pass", Duration: time.Millisecond, Attempts: []intake.TestAttempt{{Status: "pass", Duration: time.Millisecond}}},
-				{Name: "slow test", Suite: "one.test.js", SourceFile: "one.test.js", SourceStart: 1, Status: "pass", Duration: 2 * time.Second, Attempts: []intake.TestAttempt{{Status: "pass", Duration: 2 * time.Second}}},
+			Tests: []intake.Test{
+				{Name: "fast test", Suite: "one.test.js", SourceFile: "one.test.js", SourceStart: 1, Status: "pass", Duration: time.Millisecond, Attempts: []intake.TestRun{{Status: "pass", Duration: time.Millisecond}}},
+				{Name: "slow test", Suite: "one.test.js", SourceFile: "one.test.js", SourceStart: 1, Status: "pass", Duration: 2 * time.Second, Attempts: []intake.TestRun{{Status: "pass", Duration: 2 * time.Second}}},
 			},
-			SlowTests: []intake.TestFinding{
+			SlowTests: []intake.Test{
 				{
 					Name: "slow test", Suite: "one.test.js", SourceFile: "one.test.js", SourceStart: 1, Duration: 2 * time.Second,
-					Attempts: []intake.TestAttempt{
+					Attempts: []intake.TestRun{
 						{Status: "pass", Duration: 1500 * time.Millisecond},
 						{Status: "pass", Duration: 2 * time.Second, Retry: true, RetryReason: "early_flake_detection"},
 					},
@@ -250,12 +250,12 @@ func TestRunStillReportsEventsWhenJestFails(t *testing.T) {
 	testdrive.startIntake = func(string) (localIntake, error) {
 		return &fakeIntake{
 			url: "http://127.0.0.1:1234",
-			findings: intake.Findings{
+			findings: intake.Facts{
 				TestCount:      1,
 				TestEventCount: 1,
-				FailedTests: []intake.TestFinding{{
+				FailedTests: []intake.Test{{
 					Name: "fails", Suite: "one.test.js", Status: "fail",
-					Attempts: []intake.TestAttempt{{Status: "fail", Duration: time.Millisecond}},
+					Attempts: []intake.TestRun{{Status: "fail", Duration: time.Millisecond}},
 				}},
 			},
 		}, nil
@@ -276,16 +276,16 @@ func TestRunStillReportsEventsWhenJestFails(t *testing.T) {
 
 func TestWriteFindingsIncludesOnlyPresentCategories(t *testing.T) {
 	var output bytes.Buffer
-	writeFindings(&output, intake.Findings{
+	writeFindings(&output, intake.Facts{
 		ConfigurationErrors: []string{"skippable_tests"},
-		FlakyTests: []intake.TestFinding{{
+		FlakyTests: []intake.Test{{
 			Name: "sometimes works", Suite: "flaky.test.js", Duration: 5 * time.Millisecond,
-			Attempts: []intake.TestAttempt{
+			Attempts: []intake.TestRun{
 				{Status: "fail", Duration: 5 * time.Millisecond},
 				{Status: "pass", Duration: 7 * time.Millisecond, Retry: true},
 			},
 		}},
-		BroadCoverage: []intake.CoverageFinding{{
+		BroadCoverage: []intake.CoverageFact{{
 			Name: "broad.test.js", Level: "suite", FileCount: 12,
 		}},
 		CoveredFilesMedian: 3,
@@ -352,7 +352,7 @@ func TestRunReportsSetupAndCollectionErrors(t *testing.T) {
 		testdrive := preparedTestdrive(t)
 		server := &fakeIntake{
 			url:      "http://127.0.0.1:1234",
-			findings: intake.Findings{TestCount: 1, TestEventCount: 1},
+			findings: intake.Facts{TestCount: 1, TestEventCount: 1},
 			closeErr: errors.New("shutdown failed"),
 		}
 		testdrive.tracer = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
@@ -430,7 +430,7 @@ func requireWriteFile(t *testing.T, path, contents string) {
 
 func TestWriteFindingsReportsEmptyCoverageAsTracerError(t *testing.T) {
 	var output bytes.Buffer
-	writeFindings(&output, intake.Findings{EmptyCoverageEntryCount: 2})
+	writeFindings(&output, intake.Facts{EmptyCoverageEntryCount: 2})
 	for _, expected := range []string{"Tracer error:", "2 coverage entries with an empty files list", "Affected payloads were excluded", "Inspect the captured traffic"} {
 		if !strings.Contains(output.String(), expected) {
 			t.Errorf("missing %q in output: %s", expected, output.String())
