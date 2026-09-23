@@ -169,7 +169,7 @@ func TestFindingsListsEveryTestWithSuiteCoverage(t *testing.T) {
 	events = appendDetailedTest(events, sessionID, 20, 200, "two", "one.test.js", "pass", 2*time.Millisecond, false, "")
 	server := serverWithCoverage(t, events, appendCoverage(nil, sessionID, 20, 0, "src/one.js", "src/two.js"))
 
-	findings, err := server.Findings()
+	findings, err := server.Facts()
 	require.NoError(t, err)
 	require.Equal(t, 2, findings.TestCount)
 	require.Len(t, findings.Tests, 2)
@@ -252,7 +252,7 @@ func TestFindingsTracksEmptyCoverageEntries(t *testing.T) {
 	events = appendDetailedTest(events, 10, 20, 200, "two", "one.test.js", "pass", time.Millisecond, false, "")
 	server := serverWithCoverage(t, events, appendCoverage(nil, 10, 20, 100), appendCoverage(nil, 10, 20, 0))
 
-	findings, err := server.Findings()
+	findings, err := server.Facts()
 	require.NoError(t, err)
 	require.Equal(t, 2, findings.TestCount)
 	require.Equal(t, 2, findings.TestEventCount)

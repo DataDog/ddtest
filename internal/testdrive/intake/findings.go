@@ -23,8 +23,8 @@ const (
 	minimumBroadCoverageFiles = 5
 )
 
-// TestFinding describes one observed test and its attempts.
-type TestFinding struct {
+// Test describes one observed test and its attempts.
+type Test struct {
 	Module        string
 	Parameters    string
 	Name          string
@@ -34,13 +34,13 @@ type TestFinding struct {
 	SourceEnd     int
 	Status        string
 	Duration      time.Duration
-	Attempts      []TestAttempt
+	Attempts      []TestRun
 	CoverageLevel string
 	CoveredFiles  []string
 }
 
-// TestAttempt describes one observed run of a test.
-type TestAttempt struct {
+// TestRun describes one observed run of a test.
+type TestRun struct {
 	Status       string
 	Duration     time.Duration
 	Retry        bool
@@ -50,8 +50,8 @@ type TestAttempt struct {
 	ErrorStack   string
 }
 
-// CoverageFinding describes one test or suite with unusually broad coverage.
-type CoverageFinding struct {
+// CoverageFact describes one test or suite with unusually broad coverage.
+type CoverageFact struct {
 	Name        string
 	Level       string
 	SourceFile  string
@@ -61,8 +61,8 @@ type CoverageFinding struct {
 	Files       []string
 }
 
-// Findings contains the facts shown in the testdrive report.
-type Findings struct {
+// Facts contains the facts shown in the testdrive report.
+type Facts struct {
 	ConfigurationErrors     []string
 	EmptyCoverageEntryCount int
 	TestCount               int
@@ -71,25 +71,25 @@ type Findings struct {
 	TestDurationMedian      time.Duration
 	CoveredFilesMedian      int
 	CoverageLevel           string
-	Tests                   []TestFinding
-	FailedTests             []TestFinding
-	FlakyTests              []TestFinding
-	SlowTests               []TestFinding
-	BroadCoverage           []CoverageFinding
+	Tests                   []Test
+	FailedTests             []Test
+	FlakyTests              []Test
+	SlowTests               []Test
+	BroadCoverage           []CoverageFact
 }
 
-// Findings analyzes the test and coverage events captured by the intake.
-func (s *Server) Findings() (Findings, error) {
+// Facts analyzes the test and coverage events captured by the intake.
+func (s *Server) Facts() (Facts, error) {
 	tests, err := s.testReferences()
 	if err != nil {
-		return Findings{}, err
+		return Facts{}, err
 	}
 	coverages, emptyEntries, err := s.coverageReferences()
 	if err != nil {
-		return Findings{}, err
+		return Facts{}, err
 	}
 
-	findings := Findings{TestEventCount: len(tests), CoverageLevel: coverageLevel(coverages), EmptyCoverageEntryCount: emptyEntries}
+	findings := Facts{TestEventCount: len(tests), CoverageLevel: coverageLevel(coverages), EmptyCoverageEntryCount: emptyEntries}
 	findings.Tests, findings.FailedTests, findings.FlakyTests, findings.SlowTests, findings.TestDurationMedian = analyzeTests(tests, coverages, findings.CoverageLevel)
 	findings.TestCount = len(findings.Tests)
 	findings.CoveredTestCount = uniqueCoveredTestCount(tests, coverages)
@@ -98,7 +98,7 @@ func (s *Server) Findings() (Findings, error) {
 	return findings, err
 }
 
-func analyzeTests(tests []testReference, coverages []coverageReference, level string) ([]TestFinding, []TestFinding, []TestFinding, []TestFinding, time.Duration) {
+func analyzeTests(tests []testReference, coverages []coverageReference, level string) ([]Test, []Test, []Test, []Test, time.Duration) {
 	filesByTest := coverageFilesByTest(tests, coverages, level)
 	testsByName := make(map[string][]testReference)
 	order := make([]string, 0)
@@ -110,17 +110,17 @@ func analyzeTests(tests []testReference, coverages []coverageReference, level st
 		testsByName[key] = append(testsByName[key], test)
 	}
 
-	failed := make([]TestFinding, 0)
-	flaky := make([]TestFinding, 0)
-	all := make([]TestFinding, 0, len(order))
+	failed := make([]Test, 0)
+	flaky := make([]Test, 0)
+	all := make([]Test, 0, len(order))
 	for _, key := range order {
 		attempts := testsByName[key]
-		finding := testFinding(attempts[0])
+		finding := testFromReference(attempts[0])
 		if files, covered := filesByTest[key]; covered {
 			finding.CoverageLevel = level
 			finding.CoveredFiles = files
 		}
-		finding.Attempts = make([]TestAttempt, 0, len(attempts))
+		finding.Attempts = make([]TestRun, 0, len(attempts))
 		sawPass := false
 		sawFailure := false
 		for _, attempt := range attempts {
@@ -130,7 +130,7 @@ func analyzeTests(tests []testReference, coverages []coverageReference, level st
 			}
 			sawPass = sawPass || attempt.status == "pass" || attempt.finalStatus == "pass"
 			sawFailure = sawFailure || attempt.status == "fail" || attempt.finalStatus == "fail"
-			finding.Attempts = append(finding.Attempts, TestAttempt{
+			finding.Attempts = append(finding.Attempts, TestRun{
 				Status:       attempt.status,
 				Duration:     attempt.duration,
 				Retry:        attempt.isRetry,
@@ -162,8 +162,8 @@ func analyzeTests(tests []testReference, coverages []coverageReference, level st
 		}
 		return all[i].Name < all[j].Name
 	})
-	sortTestFindings(failed)
-	sortTestFindings(flaky)
+	sortTests(failed)
+	sortTests(flaky)
 	return all, failed, flaky, slow, median
 }
 
@@ -210,24 +210,24 @@ func appendUnique(values []string, additions ...string) []string {
 	return values
 }
 
-func slowTests(tests []TestFinding) ([]TestFinding, time.Duration) {
+func slowTests(tests []Test) ([]Test, time.Duration) {
 	if len(tests) < 2 {
 		return nil, medianTestDuration(tests)
 	}
 	median := medianTestDuration(tests)
 	threshold := max(minimumSlowDuration, median*2)
 
-	slow := make([]TestFinding, 0)
+	slow := make([]Test, 0)
 	for _, test := range tests {
 		if test.Duration >= threshold && test.Duration > median {
 			slow = append(slow, test)
 		}
 	}
-	sortTestFindings(slow)
+	sortTests(slow)
 	return slow, median
 }
 
-func medianTestDuration(tests []TestFinding) time.Duration {
+func medianTestDuration(tests []Test) time.Duration {
 	if len(tests) == 0 {
 		return 0
 	}
@@ -254,7 +254,7 @@ func coverageLevel(coverages []coverageReference) string {
 	return level
 }
 
-func analyzeCoverage(tests []testReference, coverages []coverageReference, level string) ([]CoverageFinding, int) {
+func analyzeCoverage(tests []testReference, coverages []coverageReference, level string) ([]CoverageFact, int) {
 	if level == "" {
 		return nil, 0
 	}
@@ -265,13 +265,13 @@ func analyzeCoverage(tests []testReference, coverages []coverageReference, level
 		testsBySuite[suiteReference{sessionID: test.sessionID, suiteID: test.suiteID}] = test
 	}
 
-	findingsByName := make(map[string]CoverageFinding, len(coverages))
+	findingsByName := make(map[string]CoverageFact, len(coverages))
 	for _, coverage := range coverages {
 		if (level == "test" && coverage.spanID == 0) || (level == "suite" && coverage.spanID != 0) {
 			continue
 		}
 		var key string
-		finding := CoverageFinding{FileCount: coverage.fileCount, Files: coverage.files}
+		finding := CoverageFact{FileCount: coverage.fileCount, Files: coverage.files}
 		if coverage.spanID != 0 {
 			testReference, found := testsBySpan[coverage.spanID]
 			if !found {
@@ -279,7 +279,7 @@ func analyzeCoverage(tests []testReference, coverages []coverageReference, level
 			}
 			key = testIdentity(testReference)
 			finding.Level = "test"
-			test := testFinding(testReference)
+			test := testFromReference(testReference)
 			finding.Name = test.label()
 			finding.SourceFile = test.SourceFile
 			finding.SourceStart = test.SourceStart
@@ -302,7 +302,7 @@ func analyzeCoverage(tests []testReference, coverages []coverageReference, level
 		return nil, medianCoveredFiles(findingsByName)
 	}
 
-	findings := make([]CoverageFinding, 0, len(findingsByName))
+	findings := make([]CoverageFact, 0, len(findingsByName))
 	fileCounts := make([]int, 0, len(findingsByName))
 	for _, finding := range findingsByName {
 		findings = append(findings, finding)
@@ -312,7 +312,7 @@ func analyzeCoverage(tests []testReference, coverages []coverageReference, level
 	sort.Ints(fileCounts)
 	median := medianInts(fileCounts)
 	threshold := max(minimumBroadCoverageFiles, median*2)
-	broad := make([]CoverageFinding, 0)
+	broad := make([]CoverageFact, 0)
 	for _, finding := range findings {
 		if finding.FileCount >= threshold && finding.FileCount > median {
 			broad = append(broad, finding)
@@ -327,7 +327,7 @@ func analyzeCoverage(tests []testReference, coverages []coverageReference, level
 	return broad, median
 }
 
-func medianCoveredFiles(findings map[string]CoverageFinding) int {
+func medianCoveredFiles(findings map[string]CoverageFact) int {
 	fileCounts := make([]int, 0, len(findings))
 	for _, finding := range findings {
 		fileCounts = append(fileCounts, finding.FileCount)
@@ -377,25 +377,25 @@ func testIdentity(test testReference) string {
 	return fmt.Sprintf("%d/%d/%d", test.sessionID, test.suiteID, test.spanID)
 }
 
-func testFinding(test testReference) TestFinding {
+func testFromReference(test testReference) Test {
 	name := test.name
 	if name == "" {
 		name = fmt.Sprintf("test %d", test.spanID)
 	}
-	return TestFinding{
+	return Test{
 		Name: name, Suite: test.suite, Module: test.module, Parameters: test.parameters, SourceFile: test.sourceFile,
 		SourceStart: test.sourceStart, SourceEnd: test.sourceEnd, Duration: test.duration,
 	}
 }
 
-func (f TestFinding) label() string {
+func (f Test) label() string {
 	if f.Suite == "" {
 		return f.Name
 	}
 	return f.Suite + " › " + f.Name
 }
 
-func sortTestFindings(findings []TestFinding) {
+func sortTests(findings []Test) {
 	sort.Slice(findings, func(i, j int) bool {
 		if findings[i].Duration == findings[j].Duration {
 			return findings[i].label() < findings[j].label()

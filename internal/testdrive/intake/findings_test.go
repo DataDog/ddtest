@@ -28,20 +28,20 @@ func TestAnalyzeTestsFindsFailuresRetriesAndSlowTests(t *testing.T) {
 	all, failed, flaky, slow, median := analyzeTests(tests, nil, "")
 	require.Len(t, all, 4)
 	require.Equal(t, []string{"fast", "flaky", "broken", "slow"}, []string{all[0].Name, all[1].Name, all[2].Name, all[3].Name})
-	require.Equal(t, []TestFinding{{
+	require.Equal(t, []Test{{
 		Name: "broken", Suite: "two.test.js", Status: "fail", Duration: 15 * time.Millisecond,
-		Attempts: []TestAttempt{{Status: "fail", Duration: 15 * time.Millisecond}},
+		Attempts: []TestRun{{Status: "fail", Duration: 15 * time.Millisecond}},
 	}}, failed)
-	require.Equal(t, []TestFinding{{
+	require.Equal(t, []Test{{
 		Name: "flaky", Suite: "one.test.js", Status: "pass", Duration: 20 * time.Millisecond,
-		Attempts: []TestAttempt{
+		Attempts: []TestRun{
 			{Status: "fail", Duration: 20 * time.Millisecond},
 			{Status: "pass", Duration: 30 * time.Millisecond, Retry: true},
 		},
 	}}, flaky)
-	require.Equal(t, []TestFinding{{
+	require.Equal(t, []Test{{
 		Name: "slow", Suite: "two.test.js", Status: "pass", Duration: 400 * time.Millisecond,
-		Attempts: []TestAttempt{{Status: "pass", Duration: 400 * time.Millisecond}},
+		Attempts: []TestRun{{Status: "pass", Duration: 400 * time.Millisecond}},
 	}}, slow)
 	require.Equal(t, 17500*time.Microsecond, median)
 }
@@ -105,13 +105,13 @@ func TestAnalyzeCoverageUsesActiveCoverageLevel(t *testing.T) {
 	}
 
 	testFindings, testMedian := analyzeCoverage(tests, coverages, "test")
-	require.Equal(t, []CoverageFinding{
+	require.Equal(t, []CoverageFact{
 		{Name: "two.test.js › broad", Level: "test", FileCount: 12},
 	}, testFindings)
 	require.Equal(t, 2, testMedian)
 
 	suiteFindings, suiteMedian := analyzeCoverage(tests, coverages, "suite")
-	require.Equal(t, []CoverageFinding{
+	require.Equal(t, []CoverageFact{
 		{Name: "three.test.js", Level: "suite", FileCount: 14},
 	}, suiteFindings)
 	require.Equal(t, 2, suiteMedian)
@@ -163,7 +163,7 @@ func TestMedianHelpers(t *testing.T) {
 	require.Equal(t, 4, medianInts([]int{2, 6}))
 	require.Equal(t, 6, medianInts([]int{2, 6, 9}))
 	require.Equal(t, 0, medianCoveredFiles(nil))
-	require.Equal(t, 5, medianCoveredFiles(map[string]CoverageFinding{
+	require.Equal(t, 5, medianCoveredFiles(map[string]CoverageFact{
 		"one": {FileCount: 3},
 		"two": {FileCount: 7},
 	}))
@@ -190,7 +190,7 @@ func TestFindingsIncludeConfigurationErrorsAcrossEventLevels(t *testing.T) {
 	})
 	require.NoError(t, err)
 	server := &Server{requests: []RawRequest{{Method: http.MethodPost, Path: constants.TestCycleURLPath, Body: payload}}}
-	findings, err := server.Findings()
+	findings, err := server.Facts()
 	require.NoError(t, err)
 	require.Equal(t, 1, findings.TestCount)
 	require.Empty(t, findings.FailedTests)
@@ -219,7 +219,7 @@ func TestFindingsSeparatesTestIdentitiesAndTheirCoverage(t *testing.T) {
 				appendCoverage(nil, 0, 0, 1, "one.js"),
 				appendCoverage(nil, 0, 0, 2, "two.js", "three.js", "four.js"),
 				appendCoverage(nil, 0, 0, 3, "two.js", "three.js", "four.js"))
-			findings, err := server.Findings()
+			findings, err := server.Facts()
 			require.NoError(t, err)
 			require.Equal(t, 2, findings.TestCount)
 			require.Equal(t, 3, findings.TestEventCount)
@@ -265,13 +265,13 @@ func TestFindingsPreservesCoverageInEveryCategory(t *testing.T) {
 			}
 			payload, err := msgp.AppendIntf(nil, map[string]any{"events": events})
 			require.NoError(t, err)
-			findings, err := serverWithCoverage(t, payload, coverage...).Findings()
+			findings, err := serverWithCoverage(t, payload, coverage...).Facts()
 			require.NoError(t, err)
 			require.Equal(t, 4, findings.CoveredTestCount)
 			require.Len(t, findings.FailedTests, 1)
 			require.Len(t, findings.FlakyTests, 1)
 			require.Len(t, findings.SlowTests, 1)
-			for _, category := range [][]TestFinding{findings.Tests, findings.FailedTests, findings.FlakyTests, findings.SlowTests} {
+			for _, category := range [][]Test{findings.Tests, findings.FailedTests, findings.FlakyTests, findings.SlowTests} {
 				for _, finding := range category {
 					require.Equal(t, level, finding.CoverageLevel)
 					require.Equal(t, []string{"covered.js"}, finding.CoveredFiles)
