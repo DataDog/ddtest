@@ -4,7 +4,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/DataDog/ddtest/internal/buildinfo.Version=$(VERSION)
 GOBIN ?= $(shell go env GOBIN)
 ifeq ($(strip $(GOBIN)),)
-GOBIN := $(shell go env GOPATH)/bin
+GOBIN := $(firstword $(subst :, ,$(shell go env GOPATH)))/bin
 endif
 clean:
 	go clean -i -x
