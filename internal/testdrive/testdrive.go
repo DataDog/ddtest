@@ -171,7 +171,11 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	_, _ = fmt.Fprintf(output, "  Test events: %d\n", findings.TestEventCount)
 	_, _ = fmt.Fprintf(output, "  Tests with coverage: %d / %d\n", findings.CoveredTestCount, findings.TestCount)
 	if findings.CoveredTestCount == 0 {
-		_, _ = fmt.Fprintln(output, "  Coverage was not reported by this run.")
+		if findings.EmptyCoverageEntryCount > 0 {
+			_, _ = fmt.Fprintln(output, "  No valid coverage was reported by this run.")
+		} else {
+			_, _ = fmt.Fprintln(output, "  Coverage was not reported by this run.")
+		}
 	}
 	_, _ = fmt.Fprintf(output, "  %s: %s\n", displayName(t.framework.Name()), passedFailed(testErr == nil))
 	_, _ = fmt.Fprintf(output, "  Tracer: %s · isolated\n", t.tracerLabel)
@@ -191,6 +195,10 @@ func writeFindings(output io.Writer, findings intake.Findings) {
 		_, _ = fmt.Fprintf(output, "Tracer configuration errors: %s. Inspect the captured traffic and test output.\n", strings.Join(findings.ConfigurationErrors, ", "))
 	}
 	count := 0
+	if findings.EmptyCoverageEntryCount > 0 {
+		count++
+		_, _ = fmt.Fprintf(output, "Tracer error: received %d coverage entries with an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.\n", findings.EmptyCoverageEntryCount)
+	}
 	for _, size := range []int{
 		len(findings.FailedTests), len(findings.FlakyTests), len(findings.SlowTests), len(findings.BroadCoverage),
 	} {

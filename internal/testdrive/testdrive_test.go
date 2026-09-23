@@ -427,3 +427,16 @@ func requireWriteFile(t *testing.T, path, contents string) {
 		t.Fatal(err)
 	}
 }
+
+func TestWriteFindingsReportsEmptyCoverageAsTracerError(t *testing.T) {
+	var output bytes.Buffer
+	writeFindings(&output, intake.Findings{EmptyCoverageEntryCount: 2})
+	for _, expected := range []string{"Tracer error:", "2 coverage entries with an empty files list", "Affected payloads were excluded", "Inspect the captured traffic"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Errorf("missing %q in output: %s", expected, output.String())
+		}
+	}
+	if strings.Contains(output.String(), "No findings.") {
+		t.Fatalf("empty coverage was hidden as no findings: %s", output.String())
+	}
+}
