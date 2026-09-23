@@ -1,0 +1,69 @@
+name: Update Go toolchain
+
+on:
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: update-go-toolchain
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.repository == 'DataDog/ddtest' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Check stable Go and golangci-lint releases
+        id: versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/update_toolchain.py
+
+      - name: Get GitHub token
+        if: steps.versions.outputs.changed == 'true'
+        uses: DataDog/dd-octo-sts-action@c85802a58e202b7e764b5441e4378c76043c8108 # v1.0.5
+        id: octo-sts
+        with:
+          scope: DataDog/ddtest
+          policy: self.github.create-pull-requests.toolchain
+
+      - name: Open or update toolchain PR
+        if: steps.versions.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.octo-sts.outputs.token }}
+          base: main
+          branch: automation/go-toolchain
+          add-paths: |
+            go.mod
+            .golangci-lint-version
+          commit-message: 'build(deps): update Go and golangci-lint'
+          title: 'build(deps): update Go and golangci-lint'
+          body: |
+            ## What
+
+            Update Go and/or golangci-lint to their latest stable releases.
+            CI and release builds read these pins from go.mod and .golangci-lint-version.
+
+            ## Why
+
+            Pick up toolchain security fixes and keep the linter current.
+            Release sources: https://go.dev/dl/ and https://github.com/golangci/golangci-lint/releases.
+
+            ## E2E testing
+
+            The branch push triggers the full CI suite. Review its results before merging,
+            including linter compatibility with the new Go version.
+            Manual scenario: build with `make build`, verify the toolchain with
+            `go version -m ./ddtest`, then run `ddtest plan` in a configured test project
+            and confirm successful plan generation and Datadog requests.
