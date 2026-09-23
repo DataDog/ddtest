@@ -102,7 +102,7 @@ func readMultipartCoverage(request RawRequest) ([]coverageReference, error) {
 			return nil, readErr
 		}
 		partMediaType, _, parseErr := mime.ParseMediaType(part.Header.Get("Content-Type"))
-		if parseErr != nil || partMediaType != "application/msgpack" {
+		if parseErr != nil || (partMediaType != "application/msgpack" && partMediaType != "application/x-msgpack") {
 			continue
 		}
 
@@ -148,6 +148,9 @@ func readCoverageEntries(payload []byte) ([]coverageReference, error) {
 			}
 			coverages = append(coverages, coverage)
 		}
+	}
+	if len(rest) != 0 {
+		return nil, fmt.Errorf("unexpected trailing MessagePack bytes")
 	}
 	return coverages, nil
 }

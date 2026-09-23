@@ -106,6 +106,9 @@ func readTests(payload []byte) ([]testReference, error) {
 		}
 		tests = append(tests, requestTests...)
 	}
+	if len(rest) != 0 {
+		return nil, fmt.Errorf("unexpected trailing MessagePack bytes")
+	}
 	return tests, nil
 }
 

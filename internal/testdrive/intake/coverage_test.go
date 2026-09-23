@@ -64,6 +64,37 @@ func TestCoverageReferencesCountFiles(t *testing.T) {
 	require.Equal(t, []string{"one.js", "two.js"}, coverages[0].files)
 }
 
+func TestCoveredTestCountAcceptsMessagePackMediaTypes(t *testing.T) {
+	for _, contentType := range []string{"application/msgpack", "application/x-msgpack", "application/x-msgpack; charset=binary"} {
+		t.Run(contentType, func(t *testing.T) {
+			events := msgp.AppendMapHeader(nil, 1)
+			events = msgp.AppendString(events, "events")
+			events = msgp.AppendArrayHeader(events, 1)
+			events = appendEvent(events, "test", 10, 20, 100)
+			server := serverWithCoverage(t, events, appendCoverage(nil, 10, 20, 100, "one.js"))
+			server.requests[1].Body = bytes.Replace(server.requests[1].Body, []byte("application/msgpack"), []byte(contentType), 1)
+
+			count, err := server.CoveredTestCount()
+			require.NoError(t, err)
+			require.Equal(t, 1, count)
+		})
+	}
+}
+
+func TestCoveredTestCountRejectsTrailingBytes(t *testing.T) {
+	events := msgp.AppendMapHeader(nil, 1)
+	events = msgp.AppendString(events, "events")
+	events = msgp.AppendArrayHeader(events, 1)
+	events = appendEvent(events, "test", 10, 20, 100)
+	coverage := appendCoverage(nil, 10, 20, 100, "one.js")
+	server := serverWithCoverage(t, events, msgp.AppendNil(coverage))
+
+	count, err := server.CoveredTestCount()
+	require.ErrorContains(t, err, "unexpected trailing MessagePack bytes")
+	require.ErrorContains(t, err, "recognize coverage in "+constants.TestCoverageURLPath)
+	require.Zero(t, count)
+}
+
 func serverWithCoverage(t *testing.T, events, coverageEntry []byte) *Server {
 	t.Helper()
 

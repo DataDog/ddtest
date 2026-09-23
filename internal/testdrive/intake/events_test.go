@@ -102,6 +102,24 @@ func TestTestEventCountReportsInvalidPayload(t *testing.T) {
 	require.ErrorContains(t, err, "recognize test events")
 }
 
+func TestTestEventCountRejectsTrailingBytes(t *testing.T) {
+	payload := msgp.AppendMapHeader(nil, 1)
+	payload = msgp.AppendString(payload, "events")
+	payload = msgp.AppendArrayHeader(payload, 1)
+	payload = appendEvent(payload, "test", 10, 20, 30)
+	payload = msgp.AppendNil(payload)
+	server := &Server{requests: []RawRequest{{
+		Method: http.MethodPost,
+		Path:   constants.TestCycleURLPath,
+		Body:   payload,
+	}}}
+
+	count, err := server.TestEventCount()
+	require.ErrorContains(t, err, "unexpected trailing MessagePack bytes")
+	require.ErrorContains(t, err, "request 1 to "+constants.TestCycleURLPath)
+	require.Zero(t, count)
+}
+
 func appendEvent(payload []byte, eventType string, sessionID, suiteID, spanID uint64) []byte {
 	payload = msgp.AppendMapHeader(payload, 2)
 	payload = msgp.AppendString(payload, "type")
