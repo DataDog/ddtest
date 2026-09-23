@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,7 +24,12 @@ func TestSettingsEnablesTestOptimizationCoverage(t *testing.T) {
 		require.NoError(t, server.Close())
 	})
 
-	requestBody := bytes.NewBufferString(`{"data":{"id":"request-123"}}`)
+	requestJSON, err := json.Marshal(api.SettingsRequest{Data: api.SettingsRequestHeader{
+		ID: "request-123", Type: constants.SettingsRequestType,
+		Attributes: api.SettingsRequestData{Service: "intake-qa", RepositoryURL: "https://github.com/DataDog/ddtest"},
+	}})
+	require.NoError(t, err)
+	requestBody := bytes.NewReader(requestJSON)
 	response, err := testHTTPClient().Post(server.URL()+constants.SettingsURLPath, constants.ContentTypeJSON, requestBody)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -32,11 +38,11 @@ func TestSettingsEnablesTestOptimizationCoverage(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	require.Equal(t, constants.ContentTypeJSON, response.Header.Get("Content-Type"))
 
-	var settings settingsResponse
+	var settings api.SettingsResponse
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&settings))
 	require.Equal(t, "request-123", settings.Data.ID)
 	require.Equal(t, constants.SettingsResponseType, settings.Data.Type)
-	require.True(t, settings.Data.Attributes.ITREnabled)
+	require.True(t, settings.Data.Attributes.ItrEnabled)
 	require.True(t, settings.Data.Attributes.CodeCoverage)
 	require.True(t, settings.Data.Attributes.TestsSkipping)
 	require.False(t, settings.Data.Attributes.RequireGit)
@@ -46,7 +52,7 @@ func TestSettingsEnablesTestOptimizationCoverage(t *testing.T) {
 	require.True(t, settings.Data.Attributes.DIEnabled)
 	require.True(t, settings.Data.Attributes.KnownTestsEnabled)
 	require.True(t, settings.Data.Attributes.EarlyFlakeDetection.Enabled)
-	require.Equal(t, 1, settings.Data.Attributes.EarlyFlakeDetection.SlowTestRetries["5s"])
+	require.Equal(t, 1, settings.Data.Attributes.EarlyFlakeDetection.SlowTestRetries.FiveS)
 	require.True(t, settings.Data.Attributes.TestManagement.Enabled)
 }
 

@@ -14,6 +14,7 @@ const (
 
 // Test Optimization API endpoint paths.
 const (
+	TestSuiteDurationsURLPath  = "/api/v2/ci/ddtest/test_suite_durations"
 	TestCycleURLPath           = "/api/v2/citestcycle"
 	TestCoverageURLPath        = "/api/v2/citestcov"
 	SettingsURLPath            = "/api/v2/libraries/tests/services/setting"

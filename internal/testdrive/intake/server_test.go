@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	"github.com/stretchr/testify/require"
 	"github.com/tinylib/msgp/msgp"
 )
@@ -324,10 +325,10 @@ func TestGzippedSettingsRequest(t *testing.T) {
 	server.recordRequests(newHandler()).ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	var settings settingsResponse
+	var settings api.SettingsResponse
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &settings))
 	require.Equal(t, "compressed-settings", settings.Data.ID)
-	require.True(t, settings.Data.Attributes.ITREnabled)
+	require.True(t, settings.Data.Attributes.ItrEnabled)
 	require.True(t, settings.Data.Attributes.CodeCoverage)
 	require.Empty(t, request.Header.Get("Content-Encoding"))
 	require.Equal(t, int64(len(payload)), request.ContentLength)

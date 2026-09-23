@@ -19,10 +19,13 @@ func TestTransportGetSettingsRequiresRepositoryAndCommit(t *testing.T) {
 }
 
 func TestTransportGetSettingsRequestAndResponse(t *testing.T) {
-	var captured settingsRequest
-	expectedResponse := settingsResponse{}
+	var captured SettingsRequest
+	expectedResponse := SettingsResponse{}
 	expectedResponse.Data.Type = constants.SettingsResponseType
 	expectedResponse.Data.Attributes.CodeCoverage = true
+	expectedResponse.Data.Attributes.CoverageReportUploadEnabled = true
+	expectedResponse.Data.Attributes.ImpactedTestsEnabled = true
+	expectedResponse.Data.Attributes.DIEnabled = true
 	expectedResponse.Data.Attributes.EarlyFlakeDetection.Enabled = true
 	expectedResponse.Data.Attributes.EarlyFlakeDetection.FaultySessionThreshold = 30
 	expectedResponse.Data.Attributes.EarlyFlakeDetection.SlowTestRetries.FiveS = 25
@@ -94,7 +97,7 @@ func TestTransportGetSettingsRequestAndResponse(t *testing.T) {
 }
 
 func TestTransportGetSettingsRequestUsesConfiguredTestLevel(t *testing.T) {
-	var captured settingsRequest
+	var captured SettingsRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
 			t.Fatalf("decode request: %v", err)

@@ -119,7 +119,7 @@ func TestTransportRecordsBackendTelemetry(t *testing.T) {
 			body = skippableBody
 		case constants.TestManagementTestsURLPath:
 			body = testManagementBody
-		case durationsURLPath:
+		case constants.TestSuiteDurationsURLPath:
 			body = durationsBodies[durationsRequests]
 			durationsRequests++
 		case constants.SearchCommitsURLPath:
@@ -248,7 +248,7 @@ func TestTransportRecordsCompressedResponseWireBytes(t *testing.T) {
 		constants.KnownTestsURLPath:          `{"data":{"attributes":{"tests":{"module-a":{"suite-a":["test-a"]}}}}}`,
 		constants.SkippableTestsURLPath:      `{"meta":{"correlation_id":"cid"},"data":[{"type":"test","attributes":{"suite":"suite-a","name":"test-a","configurations":{"test.bundle":"module-a"}}}]}`,
 		constants.TestManagementTestsURLPath: `{"data":{"attributes":{"modules":{"module-a":{"suites":{"suite-a":{"tests":{"test-a":{"properties":{}}}}}}}}}}`,
-		durationsURLPath:                     `{"data":{"attributes":{"test_suites":{"module-a":{"suite-a":{"source_file":"a_test.go","duration":{"p50":"100","p90":"200"}}}}}}}`,
+		constants.TestSuiteDurationsURLPath:  `{"data":{"attributes":{"test_suites":{"module-a":{"suite-a":{"source_file":"a_test.go","duration":{"p50":"100","p90":"200"}}}}}}}`,
 	}
 	compressedBodies := make(map[string][]byte, len(responseBodies))
 	for path, body := range responseBodies {
@@ -292,7 +292,7 @@ func TestTransportRecordsCompressedResponseWireBytes(t *testing.T) {
 	recorder.assertValue(t, "distribution", "known_tests.response_bytes", tags, float64(len(compressedBodies[constants.KnownTestsURLPath])))
 	recorder.assertValue(t, "distribution", "itr_skippable_tests.response_bytes", tags, float64(len(compressedBodies[constants.SkippableTestsURLPath])))
 	recorder.assertValue(t, "distribution", "test_management_tests.response_bytes", tags, float64(len(compressedBodies[constants.TestManagementTestsURLPath])))
-	recorder.assertValue(t, "distribution", "test_suite_durations.response_bytes", tags, float64(len(compressedBodies[durationsURLPath])))
+	recorder.assertValue(t, "distribution", "test_suite_durations.response_bytes", tags, float64(len(compressedBodies[constants.TestSuiteDurationsURLPath])))
 }
 
 func TestTransportRecordsTerminalRetryStatusAndFailedSearchCommitsLatency(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/testoptimization/api"
 )
 
 const (
@@ -18,45 +19,6 @@ const (
 
 	testdriveCorrelationID = "ddtest-testdrive"
 )
-
-type settingsRequest struct {
-	Data struct {
-		ID string `json:"id"`
-	} `json:"data"`
-}
-
-type settingsResponse struct {
-	Data struct {
-		ID         string             `json:"id"`
-		Type       string             `json:"type"`
-		Attributes settingsAttributes `json:"attributes"`
-	} `json:"data"`
-}
-
-type settingsAttributes struct {
-	CodeCoverage                bool                        `json:"code_coverage"`
-	CoverageReportUploadEnabled bool                        `json:"coverage_report_upload_enabled"`
-	TestsSkipping               bool                        `json:"tests_skipping"`
-	RequireGit                  bool                        `json:"require_git"`
-	ITREnabled                  bool                        `json:"itr_enabled"`
-	ImpactedTestsEnabled        bool                        `json:"impacted_tests_enabled"`
-	FlakyTestRetriesEnabled     bool                        `json:"flaky_test_retries_enabled"`
-	DIEnabled                   bool                        `json:"di_enabled"`
-	KnownTestsEnabled           bool                        `json:"known_tests_enabled"`
-	EarlyFlakeDetection         earlyFlakeDetectionSettings `json:"early_flake_detection"`
-	TestManagement              testManagementSettings      `json:"test_management"`
-}
-
-type earlyFlakeDetectionSettings struct {
-	Enabled                bool           `json:"enabled"`
-	SlowTestRetries        map[string]int `json:"slow_test_retries"`
-	FaultySessionThreshold int            `json:"faulty_session_threshold"`
-}
-
-type testManagementSettings struct {
-	Enabled             bool `json:"enabled"`
-	AttemptToFixRetries int  `json:"attempt_to_fix_retries"`
-}
 
 func newHandler() http.Handler {
 	mux := http.NewServeMux()
@@ -88,7 +50,7 @@ func newHandler() http.Handler {
 }
 
 func handleSettings(w http.ResponseWriter, request *http.Request) {
-	var settingsRequest settingsRequest
+	var settingsRequest api.SettingsRequest
 	if err := json.NewDecoder(request.Body).Decode(&settingsRequest); err != nil {
 		http.Error(w, "invalid settings request", http.StatusBadRequest)
 		return
@@ -99,24 +61,24 @@ func handleSettings(w http.ResponseWriter, request *http.Request) {
 		responseID = settingsResponseID
 	}
 
-	response := settingsResponse{}
+	response := api.SettingsResponse{}
 	response.Data.ID = responseID
 	response.Data.Type = constants.SettingsResponseType
-	response.Data.Attributes = settingsAttributes{
+	response.Data.Attributes = api.SettingsResponseData{
 		CodeCoverage:                true,
 		CoverageReportUploadEnabled: true,
 		TestsSkipping:               true,
-		ITREnabled:                  true,
+		ItrEnabled:                  true,
 		ImpactedTestsEnabled:        true,
 		FlakyTestRetriesEnabled:     true,
 		DIEnabled:                   true,
 		KnownTestsEnabled:           true,
-		EarlyFlakeDetection: earlyFlakeDetectionSettings{
+		EarlyFlakeDetection: api.EarlyFlakeDetectionSettings{
 			Enabled:                true,
-			SlowTestRetries:        map[string]int{"5s": 1, "10s": 1, "30s": 1, "5m": 1},
+			SlowTestRetries:        api.SlowTestRetries{FiveS: 1, TenS: 1, ThirtyS: 1, FiveM: 1},
 			FaultySessionThreshold: 100,
 		},
-		TestManagement: testManagementSettings{
+		TestManagement: api.TestManagementSettings{
 			Enabled:             true,
 			AttemptToFixRetries: 1,
 		},
