@@ -10,12 +10,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/telemetry"
-)
-
-const (
-	knownTestsRequestType string = "ci_app_libraries_tests_request"
-	knownTestsURLPath     string = "api/v2/ci/libraries/tests"
 )
 
 type (
@@ -87,7 +83,7 @@ func (c *transport) GetKnownTests() (*KnownTestsResponseData, error) {
 		body := knownTestsRequest{
 			Data: knownTestsRequestHeader{
 				ID:   c.id,
-				Type: knownTestsRequestType,
+				Type: constants.LibrariesTestsRequestType,
 				Attributes: KnownTestsRequestData{
 					Service:        c.serviceName,
 					Env:            c.environment,
@@ -100,7 +96,7 @@ func (c *transport) GetKnownTests() (*KnownTestsResponseData, error) {
 			body.Data.Attributes.PageInfo = &knownTestsRequestPageInfo{PageState: cursor}
 		}
 
-		request := c.getPostRequestConfig(knownTestsURLPath, body)
+		request := c.getPostRequestConfig(constants.KnownTestsURLPath, body)
 		telemetry.KnownTestsRequest(c.telemetryClient, request.Compressed)
 		requestStartTime := time.Now()
 		response, err := c.handler.SendRequest(*request)

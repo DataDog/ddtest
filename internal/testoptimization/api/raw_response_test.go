@@ -46,7 +46,7 @@ func newRawResponseTestServer(t *testing.T, responses map[string]string) *httpte
 			t.Fatalf("expected POST request, got %s", r.Method)
 		}
 
-		path := strings.TrimPrefix(r.URL.Path, "/")
+		path := r.URL.Path
 		responseBody, ok := responses[path]
 		if !ok {
 			t.Fatalf("unexpected request path %s", path)
@@ -64,10 +64,10 @@ func TestClientStoresRawBackendResponses(t *testing.T) {
 	testManagementResponse := `{"data":{"id":"test-management-id","type":"ci_app_libraries_tests_request","attributes":{"modules":{"module-a":{"suites":{"suite-a":{"tests":{"test-a":{"properties":{"quarantined":true,"disabled":false,"attempt_to_fix":true}}}}}}}}}}`
 
 	server := newRawResponseTestServer(t, map[string]string{
-		settingsURLPath:            settingsResponse,
-		knownTestsURLPath:          knownTestsResponse,
-		skippableURLPath:           skippableTestsResponse,
-		testManagementTestsURLPath: testManagementResponse,
+		constants.SettingsURLPath:            settingsResponse,
+		constants.KnownTestsURLPath:          knownTestsResponse,
+		constants.SkippableTestsURLPath:      skippableTestsResponse,
+		constants.TestManagementTestsURLPath: testManagementResponse,
 	})
 	defer server.Close()
 
@@ -137,7 +137,7 @@ func TestClientBuildsSkippableKeyFromTestBundle(t *testing.T) {
 	skippableTestsResponse := `{"meta":{"correlation_id":"correlation-id"},"data":[{"id":"skippable-id","type":"test","attributes":{"suite":"suite-a","name":"test-a","parameters":"params","configurations":{"test.bundle":"rspec","runtime.name":"ruby"}}}]}`
 
 	server := newRawResponseTestServer(t, map[string]string{
-		skippableURLPath: skippableTestsResponse,
+		constants.SkippableTestsURLPath: skippableTestsResponse,
 	})
 	defer server.Close()
 
@@ -157,7 +157,7 @@ func TestClientWarnsWhenSkippableResponseIsMissingTestBundle(t *testing.T) {
 	skippableTestsResponse := `{"meta":{"correlation_id":"correlation-id"},"data":[{"id":"skippable-id","type":"test","attributes":{"suite":"suite-a","name":"test-a","parameters":"params"}}]}`
 
 	server := newRawResponseTestServer(t, map[string]string{
-		skippableURLPath: skippableTestsResponse,
+		constants.SkippableTestsURLPath: skippableTestsResponse,
 	})
 	defer server.Close()
 
@@ -202,7 +202,7 @@ func captureRawResponseTestLogs(t *testing.T) *bytes.Buffer {
 
 func TestClientRawResponseIsCloned(t *testing.T) {
 	settingsResponse := `{"data":{"id":"settings-id","type":"ci_app_test_service_libraries_settings","attributes":{"itr_enabled":true}}}`
-	server := newRawResponseTestServer(t, map[string]string{settingsURLPath: settingsResponse})
+	server := newRawResponseTestServer(t, map[string]string{constants.SettingsURLPath: settingsResponse})
 	defer server.Close()
 
 	client := newRawResponseTestClient(server)
@@ -225,8 +225,8 @@ func TestClientSettingsRawResponseUsesLatestResponse(t *testing.T) {
 	requestCount := 0
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/")
-		if path != settingsURLPath {
+		path := r.URL.Path
+		if path != constants.SettingsURLPath {
 			t.Fatalf("unexpected request path %s", path)
 		}
 		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)

@@ -10,13 +10,9 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/telemetry"
-)
-
-const (
-	skippableRequestType string = "test_params"
-	skippableURLPath     string = "api/v2/ci/tests/skippable"
 )
 
 type (
@@ -107,7 +103,7 @@ func (c *transport) GetSkippableTests() (correlationID string, skippables Skippa
 
 	body := skippableRequest{
 		Data: skippableRequestHeader{
-			Type: skippableRequestType,
+			Type: constants.SkippableTestsRequestType,
 			Attributes: skippableRequestData{
 				TestLevel:      c.getTestSkippingLevel(),
 				Configurations: c.testConfigurations,
@@ -119,7 +115,7 @@ func (c *transport) GetSkippableTests() (correlationID string, skippables Skippa
 		},
 	}
 
-	request := c.getPostRequestConfig(skippableURLPath, body)
+	request := c.getPostRequestConfig(constants.SkippableTestsURLPath, body)
 	telemetry.ITRSkippableTestsRequest(c.telemetryClient, request.Compressed)
 	requestStartTime := time.Now()
 	response, err := c.handler.SendRequest(*request)

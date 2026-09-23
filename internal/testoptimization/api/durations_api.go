@@ -5,12 +5,12 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
 const (
 	durationsRequestType string = "ci_app_ddtest_test_suite_durations_request"
-	durationsURLPath     string = "api/v2/ci/ddtest/test_suite_durations"
 
 	defaultDurationsPageSize int = 500
 )
@@ -186,7 +186,7 @@ func (c *transport) fetchTestSuiteDurationsPage(repositoryURL, service, cursor s
 		},
 	}
 
-	request := c.getPostRequestConfig(durationsURLPath, body)
+	request := c.getPostRequestConfig(constants.TestSuiteDurationsURLPath, body)
 	telemetry.TestSuiteDurationsRequest(c.telemetryClient, request.Compressed)
 	requestStartTime := time.Now()
 	response, err := c.handler.SendRequest(*request)

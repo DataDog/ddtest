@@ -450,7 +450,7 @@ func TestParseTagString(t *testing.T) {
 
 func TestTransportGetURLPathForEVPProxy(t *testing.T) {
 	transport := &transport{baseURL: "http://localhost:8126"}
-	if got, want := transport.getURLPath("api/v2/test"), "http://localhost:8126/evp_proxy/v2/api/v2/test"; got != want {
+	if got, want := transport.getURLPath("/api/v2/test"), "http://localhost:8126/evp_proxy/v2/api/v2/test"; got != want {
 		t.Fatalf("getURLPath() = %q, want %q", got, want)
 	}
 }

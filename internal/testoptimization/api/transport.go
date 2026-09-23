@@ -307,10 +307,10 @@ func (c *transport) BackendRequestTimings() BackendRequestTimings {
 // getURLPath returns the full URL path for the given URL path.
 func (c *transport) getURLPath(urlPath string) string {
 	if c.agentless {
-		return fmt.Sprintf("%s/%s", c.baseURL, urlPath)
+		return c.baseURL + urlPath
 	}
 
-	return fmt.Sprintf("%s/%s/%s", c.baseURL, "evp_proxy/v2", urlPath)
+	return c.baseURL + "/evp_proxy/v2" + urlPath
 }
 
 // getPostRequestConfig	returns a new RequestConfig for a POST request.

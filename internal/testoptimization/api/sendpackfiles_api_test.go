@@ -19,7 +19,7 @@ func TestTransportSendPackFilesRequestAndResponse(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
-		if r.URL.Path != "/"+sendPackFilesURLPath {
+		if r.URL.Path != constants.SendPackFilesURLPath {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		reader, err := r.MultipartReader()

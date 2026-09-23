@@ -7,8 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddtest/internal/constants"
 	ddsettings "github.com/DataDog/ddtest/internal/settings"
+
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 func TestTransportGetSettingsRequiresRepositoryAndCommit(t *testing.T) {
@@ -18,10 +19,13 @@ func TestTransportGetSettingsRequiresRepositoryAndCommit(t *testing.T) {
 }
 
 func TestTransportGetSettingsRequestAndResponse(t *testing.T) {
-	var captured settingsRequest
-	expectedResponse := settingsResponse{}
-	expectedResponse.Data.Type = settingsRequestType
+	var captured SettingsRequest
+	expectedResponse := SettingsResponse{}
+	expectedResponse.Data.Type = constants.SettingsResponseType
 	expectedResponse.Data.Attributes.CodeCoverage = true
+	expectedResponse.Data.Attributes.CoverageReportUploadEnabled = true
+	expectedResponse.Data.Attributes.ImpactedTestsEnabled = true
+	expectedResponse.Data.Attributes.DIEnabled = true
 	expectedResponse.Data.Attributes.EarlyFlakeDetection.Enabled = true
 	expectedResponse.Data.Attributes.EarlyFlakeDetection.FaultySessionThreshold = 30
 	expectedResponse.Data.Attributes.EarlyFlakeDetection.SlowTestRetries.FiveS = 25
@@ -40,7 +44,7 @@ func TestTransportGetSettingsRequestAndResponse(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("expected POST request, got %s", r.Method)
 		}
-		if r.URL.Path != "/"+settingsURLPath {
+		if r.URL.Path != constants.SettingsURLPath {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
@@ -62,8 +66,8 @@ func TestTransportGetSettingsRequestAndResponse(t *testing.T) {
 	if captured.Data.ID != client.id {
 		t.Fatalf("request id = %q, want %q", captured.Data.ID, client.id)
 	}
-	if captured.Data.Type != settingsRequestType {
-		t.Fatalf("request type = %q, want %q", captured.Data.Type, settingsRequestType)
+	if captured.Data.Type != constants.SettingsRequestType {
+		t.Fatalf("request type = %q, want %q", captured.Data.Type, constants.SettingsRequestType)
 	}
 	attributes := captured.Data.Attributes
 	if attributes.TestLevel != ddsettings.TestSkippingLevelTest {
@@ -93,7 +97,7 @@ func TestTransportGetSettingsRequestAndResponse(t *testing.T) {
 }
 
 func TestTransportGetSettingsRequestUsesConfiguredTestLevel(t *testing.T) {
-	var captured settingsRequest
+	var captured SettingsRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
 			t.Fatalf("decode request: %v", err)
