@@ -243,3 +243,23 @@ func multipartCoverageRequest(t *testing.T, coverage []byte) RawRequest {
 		Body:   body.Bytes(),
 	}
 }
+
+func TestFindingsTracksEmptyCoverageEntries(t *testing.T) {
+	events := msgp.AppendMapHeader(nil, 1)
+	events = msgp.AppendString(events, "events")
+	events = msgp.AppendArrayHeader(events, 2)
+	events = appendDetailedTest(events, 10, 20, 100, "one", "one.test.js", "pass", time.Millisecond, false, "")
+	events = appendDetailedTest(events, 10, 20, 200, "two", "one.test.js", "pass", time.Millisecond, false, "")
+	server := serverWithCoverage(t, events, appendCoverage(nil, 10, 20, 100), appendCoverage(nil, 10, 20, 0))
+
+	findings, err := server.Findings()
+	require.NoError(t, err)
+	require.Equal(t, 2, findings.TestCount)
+	require.Equal(t, 2, findings.TestEventCount)
+	require.Equal(t, 2, findings.EmptyCoverageEntryCount)
+	require.Zero(t, findings.CoveredTestCount)
+	for _, test := range findings.Tests {
+		require.Empty(t, test.CoverageLevel)
+		require.Empty(t, test.CoveredFiles)
+	}
+}

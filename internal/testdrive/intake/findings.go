@@ -61,18 +61,19 @@ type CoverageFinding struct {
 
 // Findings contains the facts shown in the testdrive report.
 type Findings struct {
-	ConfigurationErrors []string
-	TestCount           int
-	TestEventCount      int
-	CoveredTestCount    int
-	TestDurationMedian  time.Duration
-	CoveredFilesMedian  int
-	CoverageLevel       string
-	Tests               []TestFinding
-	FailedTests         []TestFinding
-	FlakyTests          []TestFinding
-	SlowTests           []TestFinding
-	BroadCoverage       []CoverageFinding
+	ConfigurationErrors     []string
+	EmptyCoverageEntryCount int
+	TestCount               int
+	TestEventCount          int
+	CoveredTestCount        int
+	TestDurationMedian      time.Duration
+	CoveredFilesMedian      int
+	CoverageLevel           string
+	Tests                   []TestFinding
+	FailedTests             []TestFinding
+	FlakyTests              []TestFinding
+	SlowTests               []TestFinding
+	BroadCoverage           []CoverageFinding
 }
 
 // Findings analyzes the test and coverage events captured by the intake.
@@ -81,12 +82,12 @@ func (s *Server) Findings() (Findings, error) {
 	if err != nil {
 		return Findings{}, err
 	}
-	coverages, err := s.coverageReferences()
+	coverages, emptyEntries, err := s.coverageReferences()
 	if err != nil {
 		return Findings{}, err
 	}
 
-	findings := Findings{TestEventCount: len(tests), CoverageLevel: coverageLevel(coverages)}
+	findings := Findings{TestEventCount: len(tests), CoverageLevel: coverageLevel(coverages), EmptyCoverageEntryCount: emptyEntries}
 	findings.Tests, findings.FailedTests, findings.FlakyTests, findings.SlowTests, findings.TestDurationMedian = analyzeTests(tests)
 	addCoverageToTests(findings.Tests, tests, coverages, findings.CoverageLevel)
 	findings.TestCount = len(findings.Tests)
