@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func testDisplayStatus(test intake.TestFinding) (string, string) {
+func testDisplayStatus(test intake.Test) (string, string) {
 	status := test.Status
 	sawPass := status == "pass"
 	sawFailure := status == "fail"
@@ -30,7 +30,7 @@ func attemptTone(status string) string {
 	return "attention"
 }
 
-func findingDuration(test intake.TestFinding) time.Duration {
+func findingDuration(test intake.Test) time.Duration {
 	if test.Duration != 0 || len(test.Attempts) == 0 {
 		return test.Duration
 	}
