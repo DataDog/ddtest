@@ -8,7 +8,7 @@ import (
 )
 
 func TestStaticReportEscapesFindingsAndDescribesMissingCoverage(t *testing.T) {
-	path, err := writeReport(t.TempDir(), t.TempDir(), intake.Findings{TestEventCount: 1, TestCount: 1, FailedTests: []intake.TestFinding{{Name: "<script>alert(1)</script>"}}}, true)
+	path, err := writeReport(t.TempDir(), t.TempDir(), intake.Facts{TestEventCount: 1, TestCount: 1, FailedTests: []intake.Test{{Name: "<script>alert(1)</script>"}}}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,14 +24,14 @@ func TestStaticReportEscapesFindingsAndDescribesMissingCoverage(t *testing.T) {
 	if strings.Contains(string(data), "<script>alert") {
 		t.Fatal("unescaped test name")
 	}
-	model := buildReport(t.TempDir(), intake.Findings{}, false)
+	model := buildReport(t.TempDir(), intake.Facts{}, false)
 	if model.Headline != "No test events received." {
 		t.Fatal(model.Headline)
 	}
 }
 
 func TestReportSurfacesConfigurationErrorsDespiteReceivedTests(t *testing.T) {
-	model := buildReport(t.TempDir(), intake.Findings{TestEventCount: 1, FailedTests: []intake.TestFinding{{Name: "fails"}}, ConfigurationErrors: []string{"skippable_tests"}}, false)
+	model := buildReport(t.TempDir(), intake.Facts{TestEventCount: 1, FailedTests: []intake.Test{{Name: "fails"}}, ConfigurationErrors: []string{"skippable_tests"}}, false)
 	if model.Headline != "Test events received." {
 		t.Fatalf("headline overstates verification: %s", model.Headline)
 	}
@@ -41,7 +41,7 @@ func TestReportSurfacesConfigurationErrorsDespiteReceivedTests(t *testing.T) {
 }
 
 func TestReportSurfacesEmptyCoverageAsTracerError(t *testing.T) {
-	path, err := writeReport(t.TempDir(), t.TempDir(), intake.Findings{TestEventCount: 1, TestCount: 1, EmptyCoverageEntryCount: 2}, false)
+	path, err := writeReport(t.TempDir(), t.TempDir(), intake.Facts{TestEventCount: 1, TestCount: 1, EmptyCoverageEntryCount: 2}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
