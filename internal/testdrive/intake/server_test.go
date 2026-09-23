@@ -6,6 +6,7 @@
 package intake
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -22,7 +23,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -405,42 +405,30 @@ func TestStorageFailureReturnsInternalError(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, response.Code)
 }
 
-type signaledBody struct {
-	io.ReadCloser
-	once    sync.Once
-	reading chan struct{}
-}
-
-func (b *signaledBody) Read(p []byte) (int, error) {
-	b.once.Do(func() { close(b.reading) })
-	return b.ReadCloser.Read(p)
-}
-
 func TestCloseFinishesPartialRequest(t *testing.T) {
 	server, err := Start(t.TempDir())
 	require.NoError(t, err)
-	reading := make(chan struct{})
-	handler := server.server.Handler
-	server.server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = &signaledBody{ReadCloser: r.Body, reading: reading}
-		handler.ServeHTTP(w, r)
-	})
 	conn, err := net.Dial("tcp", strings.TrimPrefix(server.URL(), "http://"))
 	require.NoError(t, err)
 	defer func() { _ = conn.Close() }()
-	_, err = fmt.Fprint(conn, "POST /observed HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{")
+	_, err = fmt.Fprint(conn, "POST /observed HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 2\r\nExpect: 100-continue\r\n\r\n{")
 	require.NoError(t, err)
-	select {
-	case <-reading:
-	case <-time.After(time.Second):
-		t.Fatal("request did not start")
-	}
+	// The server sends 100 Continue when the handler starts reading the body.
+	// Wait for that protocol signal without changing a running HTTP server.
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
+	reader := bufio.NewReader(conn)
+	interim, err := http.ReadResponse(reader, &http.Request{Method: http.MethodPost})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusContinue, interim.StatusCode)
+	require.NoError(t, interim.Body.Close())
+	require.NoError(t, conn.SetReadDeadline(time.Time{}))
+
 	require.ErrorIs(t, server.Close(), context.DeadlineExceeded)
 	before, err := os.ReadDir(server.directory)
 	require.NoError(t, err)
 	require.NoError(t, conn.SetDeadline(time.Now().Add(time.Second)))
 	_, _ = fmt.Fprint(conn, "}")
-	response, err := io.ReadAll(conn)
+	response, err := io.ReadAll(reader)
 	require.NotContains(t, string(response), "200 OK")
 	if netErr, ok := err.(net.Error); ok {
 		require.False(t, netErr.Timeout(), "connection remained open")
