@@ -3,16 +3,91 @@ package compatibility
 import (
 	"context"
 	"encoding/json"
+	"github.com/DataDog/ddtest/internal/discovery"
+	"github.com/DataDog/ddtest/internal/framework"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/DataDog/ddtest/internal/discovery"
-	"github.com/DataDog/ddtest/internal/framework"
 )
 
+// A custom layout is supplied as a DDTest glob; executable Cypress config is
+// only interpreted by Cypress during execution.
+func TestCypressFastAdapterIntegration(t *testing.T) {
+	resetSettingsAfterTest(t)
+	t.Chdir(t.TempDir())
+	root, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, root, "cypress.config.ts", "throw new Error('configuration must not execute during discovery')")
+	for _, name := range []string{"apps/web/custom/a.spec.cy.ts", "apps/web/custom/b.test.cy.ts", "apps/web/custom/helper.ts"} {
+		writeFixture(t, root, name, "")
+	}
+	configureFramework("npx cypress run --project apps/web", "apps/web/custom/*.{spec,test}.cy.ts")
+	files, err := framework.NewCypress().DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireFiles(t, files, []string{"apps/web/custom/a.spec.cy.ts", "apps/web/custom/b.test.cy.ts"})
+}
+
+func TestCypressAdapterExecutionIntegration(t *testing.T) {
+	binary := requireEnv(t, "DDTEST_CYPRESS_BINARY")
+	nodeModules := requireEnv(t, "DDTEST_CYPRESS_NODE_MODULES")
+	resetSettingsAfterTest(t)
+
+	root := t.TempDir()
+	if err := os.Symlink(nodeModules, filepath.Join(root, "node_modules")); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, root, "cypress.config.js", `module.exports = {
+  video: false,
+  viewportWidth: 777,
+  e2e: {
+    supportFile: false,
+    specPattern: 'cypress/e2e/**/*.cy.js',
+  },
+}
+`)
+	writeFixture(t, root, "cypress/e2e/selected.cy.js", `describe('selected', () => {
+  it('runs an assigned file', () => {
+    expect(true).to.equal(true)
+    expect(Cypress.config('viewportWidth')).to.equal(777)
+  })
+})
+`)
+	writeFixture(t, root, "cypress/e2e/unselected.cy.js", `describe('unselected', () => {
+  it('must not run', () => {
+    throw new Error('unselected file ran')
+  })
+})
+`)
+	t.Chdir(root)
+
+	command := []string{binary, "run"}
+	if xvfb := os.Getenv("DDTEST_CYPRESS_XVFB"); xvfb != "" {
+		command = []string{xvfb, "-a", binary, "run"}
+	}
+	configureFramework(shellCommand(command...), "")
+	cypress := framework.NewCypress()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	files, err := cypress.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: cypress.TestPattern()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFiles := []string{"cypress/e2e/selected.cy.js", "cypress/e2e/unselected.cy.js"}
+	requireFiles(t, files, wantFiles)
+
+	if err := cypress.RunTests(ctx, []string{"cypress/e2e/selected.cy.js"}, nil); err != nil {
+		t.Fatalf("selected-file run failed: %v", err)
+	}
+}
+
 func TestCypressAdapterIntegration(t *testing.T) {
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_FORCE_FULL_TEST_DISCOVERY", "true")
 	binary := requireEnv(t, "DDTEST_CYPRESS_BINARY")
 	nodeModules := requireEnv(t, "DDTEST_CYPRESS_NODE_MODULES")
 	resetSettingsAfterTest(t)
@@ -118,59 +193,5 @@ func TestCypressAdapterIntegration(t *testing.T) {
 			}
 			requireFiles(t, files, test.want)
 		})
-	}
-}
-
-func TestCypressAdapterExecutionIntegration(t *testing.T) {
-	binary := requireEnv(t, "DDTEST_CYPRESS_BINARY")
-	nodeModules := requireEnv(t, "DDTEST_CYPRESS_NODE_MODULES")
-	resetSettingsAfterTest(t)
-
-	root := t.TempDir()
-	if err := os.Symlink(nodeModules, filepath.Join(root, "node_modules")); err != nil {
-		t.Fatal(err)
-	}
-	writeFixture(t, root, "cypress.config.js", `module.exports = {
-  video: false,
-  viewportWidth: 777,
-  e2e: {
-    supportFile: false,
-    specPattern: 'cypress/e2e/**/*.cy.js',
-  },
-}
-`)
-	writeFixture(t, root, "cypress/e2e/selected.cy.js", `describe('selected', () => {
-  it('runs an assigned file', () => {
-    expect(true).to.equal(true)
-    expect(Cypress.config('viewportWidth')).to.equal(777)
-  })
-})
-`)
-	writeFixture(t, root, "cypress/e2e/unselected.cy.js", `describe('unselected', () => {
-  it('must not run', () => {
-    throw new Error('unselected file ran')
-  })
-})
-`)
-	t.Chdir(root)
-
-	command := []string{binary, "run"}
-	if xvfb := os.Getenv("DDTEST_CYPRESS_XVFB"); xvfb != "" {
-		command = []string{xvfb, "-a", binary, "run"}
-	}
-	configureFramework(shellCommand(command...), "")
-	cypress := framework.NewCypress()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	files, err := cypress.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: cypress.TestPattern()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantFiles := []string{"cypress/e2e/selected.cy.js", "cypress/e2e/unselected.cy.js"}
-	requireFiles(t, files, wantFiles)
-
-	if err := cypress.RunTests(ctx, []string{"cypress/e2e/selected.cy.js"}, nil); err != nil {
-		t.Fatalf("selected-file run failed: %v", err)
 	}
 }

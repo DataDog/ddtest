@@ -32,6 +32,10 @@ Minimum supported library and runtime requirements:
 
 For instructions on setting up Test Optimization, see the [Datadog Test Optimization documentation](https://docs.datadoghq.com/tests/setup/).
 
+Jest can discover files by statically analyzing configuration without starting Node.
+All JS frameworks retain native discovery through `--force-full-test-discovery`.
+See the [migration guide](docs/javascript-discovery-migration.md) for fast-path coverage and parity checks.
+
 ## Usage
 
 DDTest ships as a CLI tool `ddtest` with two primary sub-commands: `plan` and `run`.
@@ -216,7 +220,7 @@ parallelism details, see [Running DDTest](docs/running.md).
 | --- | --- |
 | `--platform` | Language/platform. Currently supported: `ruby`, `python`, `javascript`. |
 | `--framework` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cucumber`, `cypress`, `jest`, `mocha`, `playwright`, `vitest`. |
-| `--command` | Override the default base command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, Playwright, and Vitest run/discovery, and pytest run/discovery (since 1.7.0). For ddtest versions prior to 1.7.0 with pytest, the command cannot be changed. Pass extra flags with `PYTEST_ADDOPTS`. |
+| `--command` | Override the default base command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, Playwright, and Vitest execution/native discovery, and pytest run/discovery (since 1.7.0). For ddtest versions prior to 1.7.0 with pytest, the command cannot be changed. Pass extra flags with `PYTEST_ADDOPTS`. |
 | `--min-parallelism` | Minimum CI node or worker count DDTest considers when planning. |
 | `--max-parallelism` | Maximum CI node or worker count DDTest considers when planning. |
 | `--target-time` | Target wall time DDTest tries to satisfy when selecting parallelism. |
@@ -269,5 +273,6 @@ The list of available precompiled artifacts is on [release page](https://github.
 - [GitHub Actions example](docs/examples/github-actions.md)
 - [CircleCI example](docs/examples/circleci.md)
 - [Best practices](docs/best_practices.md)
+- [JavaScript discovery migration guide](docs/javascript-discovery-migration.md)
 - [Running locally with CI skippable tests and runtime tags](docs/local-ci-skippable-tests.md)
 - [DDTest 1.0 upgrade guide](docs/upgrade-1.0.md)

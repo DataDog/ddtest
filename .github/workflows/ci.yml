@@ -229,7 +229,54 @@ jobs:
           jest_dir="${RUNNER_TEMP}/jest-${{ matrix.jest }}"
           npm install --prefix "${jest_dir}" "jest@${{ matrix.jest }}"
           DDTEST_JEST_NODE_MODULES="${jest_dir}/node_modules" \
-            go test -v ./internal/compatibility -run '^TestJestAdapterIntegration$'
+            go test -v ./internal/compatibility -run '^TestJest(Adapter|ConfigurationParity|GeneratedDiscoveryParity)Integration$'
+
+  jest-open-source:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: dayjs
+            repository: iamkun/dayjs
+            revision: 93c8fd0f807b8a8252f4cd65083bb1d6a49b90e7 # v1.11.13
+          - project: immer
+            repository: immerjs/immer
+            revision: e2d222bd4fb26abded04075c936290715e9ee335 # v10.1.1
+          - project: redux
+            repository: reduxjs/redux
+            revision: f4b3ab9ac5370c5520d08383c5fc88e1e1c64587 # v4.2.1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.revision }}
+          path: .integration/jest-project
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+      - name: Install locked upstream dependencies
+        working-directory: .integration/jest-project
+        env:
+          PROJECT: ${{ matrix.project }}
+        run: |
+          if [ "$PROJECT" = immer ]; then
+            npx --yes yarn@1.22.22 install --frozen-lockfile --ignore-scripts --non-interactive
+          else
+            npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund
+          fi
+          if [ "$PROJECT" = redux ]; then
+            npm run build
+          fi
+      - name: Verify original suites and DDTest file skipping
+        env:
+          DDTEST_JEST_PROJECT: ${{ matrix.project }}
+          DDTEST_JEST_PROJECT_ROOT: ${{ github.workspace }}/.integration/jest-project
+        run: go test -v ./internal/planner -run '^TestJestOpenSourceProjectIntegration$' -count=1
 
   vitest-compatibility:
     runs-on: ubuntu-latest
@@ -258,7 +305,7 @@ jobs:
           # Keep peer resolution enabled: Vitest 5 requires Vite as a peer.
           npx --yes npm@11.11.1 install --prefix "${vitest_dir}" "vitest@${{ matrix.vitest }}"
           DDTEST_VITEST_NODE_MODULES="${vitest_dir}/node_modules" \
-            go test -v ./internal/compatibility -run '^TestVitestAdapterIntegration$'
+            go test -v ./internal/compatibility -run '^TestVitest(Fast)?AdapterIntegration$'
 
   mocha-compatibility:
     runs-on: ubuntu-latest
@@ -310,11 +357,11 @@ jobs:
       - name: Test Cypress adapter
         run: |
           cypress_dir="${RUNNER_TEMP}/cypress-${{ matrix.cypress }}"
-          npm install --prefix "${cypress_dir}" "cypress@${{ matrix.cypress }}"
+          npm install --prefix "${cypress_dir}" "cypress@${{ matrix.cypress }}" typescript@5.9.3
           DDTEST_CYPRESS_BINARY="${cypress_dir}/node_modules/.bin/cypress" \
             DDTEST_CYPRESS_NODE_MODULES="${cypress_dir}/node_modules" \
             DDTEST_CYPRESS_XVFB="$(command -v xvfb-run)" \
-            go test -v ./internal/compatibility -run '^TestCypressAdapter.*Integration$'
+            go test -v ./internal/compatibility -run '^TestCypress(Fast)?Adapter.*Integration$'
 
   playwright-compatibility:
     runs-on: ubuntu-latest
@@ -344,7 +391,7 @@ jobs:
           npm install --prefix "${playwright_dir}" "@playwright/test@${{ matrix.playwright }}"
           DDTEST_PLAYWRIGHT_BINARY="${playwright_dir}/node_modules/.bin/playwright" \
             DDTEST_PLAYWRIGHT_NODE_MODULES="${playwright_dir}/node_modules" \
-            go test -v ./internal/compatibility -run '^TestPlaywrightAdapterIntegration$'
+            go test -v ./internal/compatibility -run '^TestPlaywright(Fast)?AdapterIntegration$'
 
   cucumber-compatibility:
     runs-on: ubuntu-latest
@@ -373,7 +420,7 @@ jobs:
           DDTEST_CUCUMBER_BINARY="${cucumber_dir}/node_modules/.bin/cucumber-js" \
             DDTEST_CUCUMBER_NODE_MODULES="${cucumber_dir}/node_modules" \
             DDTEST_CUCUMBER_VERSION="${{ matrix.cucumber }}" \
-            go test -v ./internal/compatibility -run '^TestCucumberAdapterIntegration$'
+            go test -v ./internal/compatibility -run '^TestCucumber(Fast)?AdapterIntegration$'
 
   lint:
     runs-on: ubuntu-latest

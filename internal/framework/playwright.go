@@ -25,7 +25,7 @@ const (
 	binPlaywrightPath          = "node_modules/.bin/playwright"
 	playwrightDiscoveryMarker  = "__DDTEST_PLAYWRIGHT_FILES__"
 	playwrightErrorMarker      = "__DDTEST_PLAYWRIGHT_ERROR__"
-	playwrightDefaultPattern   = "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+	playwrightDefaultPattern   = "**/*.{spec,test}.{js,jsx,ts,tsx,mjs,mjsx,mts,mtsx,cjs,cjsx,cts,ctsx}"
 	playwrightReporterFileMode = 0600
 )
 
@@ -33,10 +33,12 @@ const (
 var playwrightDiscoveryReporterScript string
 
 type Playwright struct {
-	executor        ext.CommandExecutor
-	commandOverride []string
-	platformEnv     map[string]string
-	discoveryRoot   string
+	javaScriptDiscoveryState
+	executor         ext.CommandExecutor
+	commandOverride  []string
+	platformEnv      map[string]string
+	discoveryRoot    string
+	suiteSourceFiles map[string]string
 }
 
 type playwrightDiscoveryResult struct {
@@ -66,17 +68,29 @@ func (p *Playwright) SourceFileForSuite(suite string) (string, bool) {
 	if suite == "" {
 		return "", false
 	}
+	if p.discoveryRoot != "" {
+		cwd, _ := os.Getwd()
+		if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+			cwd = resolved
+		}
+		if relative, err := filepath.Rel(cwd, filepath.Join(p.discoveryRoot, suite)); err == nil {
+			return utils.NormalizePath(relative), true
+		}
+	}
+	// Suite names can be relative to testDir. Resolve unique discovered paths
+	// without loading configuration; ambiguous suffixes must not cause skips.
+	normalized := utils.NormalizePath(suite)
+	if source, found := p.suiteSourceFiles[normalized]; found {
+		return source, source != ""
+	}
 	command, baseArgs := p.getPlaywrightCommand()
 	cliArgs, err := playwrightCLIArgs(command, baseArgs)
 	if err != nil {
 		return utils.NormalizePath(suite), true
 	}
-	rootDir := p.discoveryRoot
-	if rootDir == "" {
-		rootDir, err = playwrightConfigRoot(cliArgs)
-		if err != nil {
-			return utils.NormalizePath(suite), true
-		}
+	rootDir, err := playwrightConfigRoot(cliArgs)
+	if err != nil {
+		return utils.NormalizePath(suite), true
 	}
 	cwd, err := os.Getwd()
 	if err != nil || sameFilePath(rootDir, cwd) {
@@ -107,7 +121,8 @@ func (p *Playwright) DiscoverTests(context.Context, discovery.TestFileSet) ([]te
 	return nil, ErrFullTestDiscoveryUnsupported
 }
 
-func (p *Playwright) DiscoverTestFiles(ctx context.Context, selectedFiles discovery.TestFileSet) ([]string, error) {
+func (p *Playwright) DiscoverTestFilesNative(ctx context.Context, selectedFiles discovery.TestFileSet) ([]string, error) {
+	p.nativeDiscoveryUsed = true
 	command, baseArgs := p.getPlaywrightCommand()
 	if _, err := playwrightCLIArgs(command, baseArgs); err != nil {
 		return nil, err
@@ -476,4 +491,30 @@ func playwrightOptionValue(args []string, options ...string) string {
 		}
 	}
 	return value
+}
+
+func indexPlaywrightSuiteFiles(files []string) map[string]string {
+	index := make(map[string]string, len(files))
+	for _, file := range files {
+		for suffix := file; suffix != ""; {
+			if previous, found := index[suffix]; found && previous != file {
+				index[suffix] = ""
+			} else {
+				index[suffix] = file
+			}
+			_, suffix, _ = strings.Cut(suffix, "/")
+		}
+	}
+	for _, file := range files {
+		index[file] = file
+	}
+	return index
+}
+
+func (p *Playwright) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+	p.nativeDiscoveryUsed = false
+	p.discoveryRoot = ""
+	files, err := discoverJavaScriptFiles(ctx, testFiles, p.TestPattern(), p.DiscoverTestFilesNative)
+	p.suiteSourceFiles = indexPlaywrightSuiteFiles(files)
+	return files, err
 }

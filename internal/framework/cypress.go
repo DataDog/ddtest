@@ -40,6 +40,7 @@ var cypressConfigFilenames = []string{
 var cypressDiscoveryConfigScript string
 
 type Cypress struct {
+	javaScriptDiscoveryState
 	executor        ext.CommandExecutor
 	commandOverride []string
 	platformEnv     map[string]string
@@ -107,7 +108,8 @@ func (c *Cypress) DiscoverTests(context.Context, discovery.TestFileSet) ([]testo
 	return nil, ErrFullTestDiscoveryUnsupported
 }
 
-func (c *Cypress) DiscoverTestFiles(ctx context.Context, selectedFiles discovery.TestFileSet) ([]string, error) {
+func (c *Cypress) DiscoverTestFilesNative(ctx context.Context, selectedFiles discovery.TestFileSet) ([]string, error) {
+	c.nativeDiscoveryUsed = true
 	command, baseArgs := c.getCypressCommand()
 	cliArgs, err := cypressCLIArgs(command, baseArgs)
 	if err != nil {
@@ -529,4 +531,9 @@ func sameFilePath(left, right string) bool {
 		right = rightResolved
 	}
 	return filepath.Clean(left) == filepath.Clean(right)
+}
+
+func (c *Cypress) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+	c.nativeDiscoveryUsed = false
+	return discoverJavaScriptFiles(ctx, testFiles, c.TestPattern(), c.DiscoverTestFilesNative)
 }

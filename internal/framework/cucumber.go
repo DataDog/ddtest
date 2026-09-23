@@ -60,6 +60,7 @@ var cucumberValueOptions = map[string]bool{
 }
 
 type Cucumber struct {
+	javaScriptDiscoveryState
 	executor        ext.CommandExecutor
 	commandOverride []string
 	platformEnv     map[string]string
@@ -115,7 +116,8 @@ func (c *Cucumber) DiscoverTests(context.Context, discovery.TestFileSet) ([]test
 // Messages stream to a temporary file. TestCase envelopes identify the pickles
 // that survived profile, tag, name and path filtering; their Pickle envelopes
 // carry the feature file URI.
-func (c *Cucumber) DiscoverTestFiles(ctx context.Context, selectedFiles discovery.TestFileSet) ([]string, error) {
+func (c *Cucumber) DiscoverTestFilesNative(ctx context.Context, selectedFiles discovery.TestFileSet) ([]string, error) {
+	c.nativeDiscoveryUsed = true
 	command, baseArgs := c.getCucumberCommand()
 	if _, err := cucumberCLIArgs(command, baseArgs); err != nil {
 		return nil, err
@@ -284,4 +286,9 @@ func parseCucumberMessages(filename string) ([]string, error) {
 		files = append(files, pickleURIs[pickleID])
 	}
 	return normalizeJavaScriptTestFiles(files), nil
+}
+
+func (c *Cucumber) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+	c.nativeDiscoveryUsed = false
+	return discoverJavaScriptFiles(ctx, testFiles, c.TestPattern(), c.DiscoverTestFilesNative)
 }

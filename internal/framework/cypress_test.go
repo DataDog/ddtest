@@ -199,7 +199,7 @@ func TestCypressDiscoverTestFilesLoadsConfigAndFilters(t *testing.T) {
 		platformEnv: map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init --max-old-space-size=2048", "CUSTOM": "value"},
 	}
 
-	files, err := cypress.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
+	files, err := cypress.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -156,39 +156,42 @@ starting each worker.
 Use `--command` to override the framework's default base test command where
 supported. DDTest applies this override to RSpec run and full
 discovery, Minitest run and full discovery, Cucumber, Cypress, Jest, Mocha,
-Playwright, and Vitest run and file discovery, and pytest run and discovery
+Playwright, and Vitest execution, and pytest run and discovery
 (since 1.7.0):
 
 ```bash
 ddtest run --platform ruby --framework rspec --command "bundle exec rspec --profile"
 ```
 
-For JavaScript/Jest, DDTest automatically appends `--listTests` during planning
-and `--runTestsByPath <files>` during execution:
+For JavaScript/Jest, DDTest appends `--runTestsByPath` and the worker's assigned
+files during execution. An explicit `--tests-location` selects filesystem
+discovery without invoking the configured command, unless native discovery is
+forced. Without that glob, Jest config analysis can fall back to native discovery:
 
 ```bash
-ddtest run --platform javascript --framework jest --command "pnpm jest --runInBand"
+ddtest plan --platform javascript --framework jest --tests-location 'tests/**/*.test.js'
+ddtest run --command 'npx jest --runInBand'
 ```
 
 For JavaScript/Mocha, the command must invoke Mocha directly. DDTest loads its
-effective configuration, discovers files without loading test modules, and
-replaces configured `spec` entries with each worker's assigned files:
+effective configuration during execution and replaces configured `spec` entries with each worker's assigned files:
 
 ```bash
 ddtest run --platform javascript --framework mocha --command "pnpm exec mocha --parallel"
 ```
 
-For JavaScript/Vitest, the command must invoke Vitest directly. During planning,
-DDTest uses `list --filesOnly --json` on Vitest 2.0 and newer and the config-aware
-discovery API on Vitest 1.6. It appends selected files during execution:
+For JavaScript/Vitest, the command must invoke Vitest directly. DDTest selects
+its `run` subcommand and appends the assigned files during execution. Use
+`--tests-location` to select custom paths during planning:
 
 ```bash
-ddtest run --platform javascript --framework vitest --command "pnpm exec vitest run --project unit*"
+ddtest plan --framework vitest --tests-location 'checks/**/*.check.ts'
+ddtest run --command 'npx vitest --config vitest.unit.ts'
 ```
 
 For JavaScript/Cypress, the command must invoke Cypress directly. DDTest keeps
 configuration options such as `--project`, `--config-file`, `--config`,
-`--component`, and `--e2e` during discovery and execution, and replaces any
+`--component`, and `--e2e` during execution, and replaces any
 configured `--spec` value with each worker's assigned specs:
 
 ```bash
@@ -196,16 +199,15 @@ ddtest run --platform javascript --framework cypress --command "pnpm exec cypres
 ```
 
 For JavaScript/Playwright, the command must invoke `playwright test` directly.
-DDTest keeps configuration and selection options during native discovery and
-replaces positional file filters with each worker's assigned files:
+DDTest preserves configuration options during execution and replaces positional file filters with each worker's assigned files:
 
 ```bash
 ddtest run --platform javascript --framework playwright --command "pnpm exec playwright test --config apps/web/playwright.config.ts --project chromium"
 ```
 
 For JavaScript/Cucumber, the command must invoke `cucumber-js` directly. DDTest
-uses its profiles, configuration, paths, tags, and name filters for discovery,
-then replaces positional feature paths with each worker's assigned files:
+preserves profiles, configuration, tags, and name filters during execution,
+and replaces positional feature paths with each worker's assigned files:
 
 ```bash
 ddtest run --platform javascript --framework cucumber --command "pnpm exec cucumber-js features/v1/*.feature --profile ci"
@@ -251,155 +253,74 @@ the pattern to explicit file paths before invoking the configured pytest
 command. The default is `python -m pytest`. Since 1.7.0, `--command` overrides
 it.
 
-## Jest Discovery And Instrumentation
+## JavaScript File Discovery
 
-For JavaScript/Jest, DDTest discovers test files with Jest's own `--listTests`
-command. It uses this priority:
+For the customer rollout steps and behavior comparison, see the
+[JavaScript discovery migration guide](javascript-discovery-migration.md).
 
-1. `--command` when set, with `--listTests` appended.
-2. The local executable `node_modules/.bin/jest` when present.
-3. `npx jest`.
+JavaScript skipping operates on test files. Jest first analyzes supported config
+in Go, preserving its native selection rules without starting Node. Unsupported
+config analysis logs a reason and uses native Jest discovery. The other JS
+frameworks currently use filesystem globs by default. An explicit
+`--tests-location` selects filesystem discovery for any JS framework.
 
-Jest uses its own configuration and default test matching for `--listTests`.
-When `--tests-location` or `--tests-exclude-pattern` is set, DDTest filters the
-file list returned by Jest after discovery; it does not pass `--tests-location`
-as Jest's `--testMatch`.
+Use `--force-full-test-discovery` to select the original native discovery adapter
+for any of the six JS frameworks. It takes precedence over fast discovery;
+include/exclude options then filter the native result. Native discovery can
+start Node, load test modules, and run framework discovery hooks.
 
-DDTest prepends `-r dd-trace/ci/init` to `NODE_OPTIONS` for worker processes
-unless `NODE_OPTIONS` already loads `dd-trace/ci/init`.
+Filesystem discovery prunes dependency and VCS directories and does not follow
+directory symlinks. Generate tests before planning. Jest's automatic mode follows
+its installed version's defaults; the table below describes filesystem patterns.
 
-## Cucumber Discovery And Instrumentation
+The default include globs are:
 
-DDTest is tested with `@cucumber/cucumber` 7 through 13. It discovers feature files
-using Cucumber's own dry-run planner and stable Messages formatter. This honors
-`cucumber.js`, `cucumber.cjs`, `cucumber.mjs`, JSON/YAML configuration on
-versions that support it, selected profiles, positional paths and rerun files,
-Gherkin dialects, `.feature.md`, and tag/name filters. DDTest selects only the
-feature URIs referenced by planned test cases, so a file whose scenarios are
-all filtered out is not added to the execution plan.
+| Framework | Default files |
+| --- | --- |
+| Jest | `**/__tests__/**/*.{js,jsx,ts,tsx,mjs,mts,cjs,cts}` and `**/*.{spec,test}.{js,jsx,ts,tsx,mjs,mts,cjs,cts}` |
+| Vitest | `**/*.{test,spec}.{js,jsx,ts,tsx,mjs,mts,cjs,cts}` |
+| Mocha | `test/**/*.{js,cjs,mjs}` |
+| Cypress | `cypress/e2e/**/*.cy.{js,jsx,ts,tsx}` |
+| Playwright | `**/*.{spec,test}.{js,jsx,ts,tsx,mjs,mjsx,mts,mtsx,cjs,cjsx,cts,ctsx}` |
+| Cucumber | `features/**/*.{feature,feature.md}` |
 
-Discovery forces Cucumber's internal parallelism to zero, does not execute step
-bodies, disables report publishing through `CUCUMBER_PUBLISH_ENABLED`, and
-removes `-r dd-trace/ci/init` from `NODE_OPTIONS`. Cucumber still loads its
-configuration and support code as part of a normal dry run.
+For custom layouts, set `--tests-location` to the complete include glob and
+`--tests-exclude-pattern` to exclude helpers, generated copies, shared setup,
+or other suites that should not be partitioned. Paths are relative to the
+working directory, including when `--command` selects a nested project or
+configuration file. Use brace alternatives to combine patterns. These are
+DDTest filesystem globs, not JavaScript regular expressions or minimatch
+extglobs; translate `*.@(spec|test).ts` to `*.{spec,test}.ts`.
 
-DDTest uses this command priority:
+```bash
+ddtest plan --framework jest --tests-location 'packages/*/checks/**/*.check.ts' \
+  --tests-exclude-pattern '**/{fixtures,helpers}/**'
+ddtest plan --framework cypress --tests-location 'apps/web/src/**/*.cy.ts'
+ddtest plan --framework playwright --tests-location 'apps/web/tests/**/*.spec.ts' \
+  --tests-exclude-pattern '**/{setup,teardown}.spec.ts'
+```
 
-1. `--command` when set; it must invoke `cucumber-js` directly.
-2. The local executable `node_modules/.bin/cucumber-js` when present.
-3. `npx cucumber-js`.
+For Jest, retain your existing command/config for automatic analysis; custom
+configs do not generally need duplicate globs. For the other JS frameworks,
+mirror custom file selection in the glob options or use the force flag. In glob
+mode, Cucumber tag/name filters and Playwright grep/project filters still apply
+during execution; files filtered out by those options may remain in the plan.
+Exclude shared Mocha setup and Playwright dependency/teardown files from globs;
+native discovery retains their original treatment.
 
-During execution, DDTest removes positional feature paths, globs, line filters,
-and rerun files from the base command and appends the current worker's assigned
-feature files. Other supported Cucumber CLI options are preserved. Worker
-processes retain `-r dd-trace/ci/init` for Test Optimization instrumentation.
-Because DDTest plans at feature-file granularity, scenario line selectors and
-rerun files narrow discovery but are not retained as scenario-level selectors
-during worker execution. Use Cucumber tag or name filters when that scenario
-scope must remain active in every worker.
+During execution DDTest preserves the configured command and framework
+configuration. It assigns Jest files with `--runTestsByPath`, replaces Mocha's
+merged spec list using its adapter, passes Cypress files via `--spec`, and
+passes exact file-path regular expressions to Playwright. Cucumber receives
+assigned feature paths and Vitest receives assigned test files. Empty
+assignments never start a test process.
 
-## Mocha Discovery And Instrumentation
-
-DDTest supports Mocha 8 and newer. It uses Mocha's own option loader and file
-collector, so discovery honors `.mocharc.*`, the `mocha` property in
-`package.json`, `MOCHA_OPTIONS` on versions that support it, `spec`,
-`extension`, `recursive`, `ignore`, and `sort` without loading test modules or
-running hooks. Files configured with `--file` are treated as shared setup and
-are loaded by every worker rather than being partitioned.
-
-Mocha normally adds positional files to configured `spec` patterns. During a
-DDTest run, the adapter replaces that merged list with the worker's assigned
-files while preserving the rest of the effective Mocha configuration. This
-prevents every worker from running the entire configured suite.
-
-DDTest uses the local `node_modules/.bin/mocha` when present and otherwise
-expects Mocha to be resolvable from the current project. Discovery removes
-`-r dd-trace/ci/init` from `NODE_OPTIONS`; test runs retain it for Test
-Optimization instrumentation.
-
-## Vitest Discovery And Instrumentation
-
-For JavaScript/Vitest 2.0 or higher, DDTest discovers test files with Vitest's
-native `list --filesOnly --json` command. It uses this priority:
-
-1. `--command` when set, replacing its Vitest subcommand with `list` and
-   appending `--filesOnly --json`.
-2. The local executable `node_modules/.bin/vitest` when present.
-3. `npx vitest`.
-
-Vitest resolves its own Vite/Vitest configuration, projects, and default test
-matching. When `--tests-location` or `--tests-exclude-pattern` is set, DDTest
-filters the file list returned by Vitest after discovery.
-
-Vitest 1.6 does not support `list --filesOnly`. When DDTest detects that specific
-unsupported-option error, it uses the `vitest/node` discovery API instead. This
-loads the project's Vitest configuration and discovers files for its configured
-projects, include and exclude patterns, and CLI filters without executing tests.
-If that API is unavailable, DDTest falls back to its own filesystem glob using
-`--tests-location` or the default Vitest test-file pattern.
-
-DDTest prepends both `--import dd-trace/register.js` and
-`-r dd-trace/ci/init` to `NODE_OPTIONS` for Vitest worker processes unless they
-are already present. Discovery removes these options to avoid instrumenting the
-file-listing process.
-
-## Cypress Discovery And Instrumentation
-
-DDTest supports Cypress 12 and newer. During planning it runs Cypress with a
-temporary config wrapper and a guaranteed-missing `--spec` value. Cypress loads
-the project's real JavaScript, TypeScript, ESM, or CommonJS config, applies CLI
-and environment overrides, and runs `setupNodeEvents`; the wrapper reports the
-resolved `projectRoot`, testing type, `specPattern`, and `excludeSpecPattern`.
-DDTest then discovers matching files without opening a browser or executing a
-spec. For component testing it also excludes specs matched by the E2E pattern,
-matching Cypress's own behavior.
-
-DDTest uses this command priority:
-
-1. `--command` when set; it must invoke Cypress directly.
-2. The local executable `node_modules/.bin/cypress` when present.
-3. `npx cypress`.
-
-During execution DDTest invokes `cypress run --spec` with the files assigned to
-the worker. Cypress Test Optimization instrumentation must already be configured
-in the project's Cypress plugin and support files as documented by `dd-trace`.
-Discovery removes `-r dd-trace/ci/init` from `NODE_OPTIONS`; test runs retain the
-configured platform environment.
-
-## Playwright Discovery And Instrumentation
-
-DDTest supports Playwright 1.18 and newer. During planning it invokes
-`playwright test --list` with a temporary custom reporter. Playwright itself
-loads the effective configuration and collects tests, so discovery honors
-`testDir`, string and regular-expression `testMatch` and `testIgnore` values,
-projects, project dependencies, grep filters, `.only`, positional filters, and
-other supported selection options. The reporter returns source file paths;
-DDTest deduplicates files that occur in multiple projects and leaves dependency
-and teardown projects out of the partition because Playwright runs that shared
-lifecycle automatically with each selected primary project. Discovery never
-launches a browser or executes a test.
-
-DDTest uses this command priority:
-
-1. `--command` when set; it must invoke `playwright test` directly.
-2. The local executable `node_modules/.bin/playwright` when present.
-3. `npx playwright`.
-
-During execution DDTest passes exact file-path regular expressions for the
-files assigned to each worker. It removes original positional filters so they
-cannot add unassigned files. It also removes Playwright's `--shard` because
-DDTest owns the file partition, and removes interactive `--ui` options. Other
-options, including `--config`, `--project`, `--grep`, reporters, retries, and
-workers, are retained. When `--tests-location` or
-`--tests-exclude-pattern` is set, DDTest applies that additional filter to the
-native file list.
-
-Playwright Test Optimization instrumentation is provided by `dd-trace` through
-`NODE_OPTIONS`, as with other JavaScript frameworks. Discovery temporarily
-removes `-r dd-trace/ci/init` so listing is not reported as a test session; test
-runs retain it. Check the `dd-trace` compatibility range for the Playwright
-version in the project; current `dd-trace` 6 releases require Playwright 1.38
-or newer.
+DDTest prepends `-r dd-trace/ci/init` to `NODE_OPTIONS` for JavaScript worker
+processes unless already present. Vitest also loads
+`--import dd-trace/register.js`. Cypress instrumentation must be configured in
+the project's plugin and support files. The fast path starts no JavaScript process. Native discovery strips
+Datadog discovery preloads as before. Platform prerequisite checks and
+runtime tag collection are separate from file discovery and may invoke Node.
 
 ## Parallelism Selection
 

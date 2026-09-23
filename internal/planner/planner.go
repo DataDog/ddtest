@@ -219,6 +219,9 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 	if err := writeTestFilesArtifact(tp.testFileWeights); err != nil {
 		return errcode.WithCode(errcode.PlanTestFilesWriteFailed, err)
 	}
+	if err := writeDiscoveredTestFilesArtifact(tp.testFiles); err != nil {
+		return errcode.WithCode(errcode.PlanTestFilesWriteFailed, err)
+	}
 
 	percentageContent := fmt.Sprintf("%.2f", tp.skippablePercentage)
 	if err := writePlanFile(constants.SkippablePercentageOutputPath, []byte(percentageContent)); err != nil {
@@ -307,7 +310,13 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		tp.optimizationClient = tp.newOptimizationClient(testSkippingLevel)
 	}
 
-	resolvedTestFiles, err := discovery.ResolveTestFiles(testFramework.TestPattern(), settings.GetTestsExcludePattern())
+	// JS configuration may select files outside its default glob. Apply DDTest
+	// exclusions after config/native discovery instead of narrowing candidates first.
+	resolvedTestFiles := discovery.TestFileSet{Pattern: testFramework.TestPattern()}
+	_, nativeFilesSupported := testFramework.(framework.NativeTestFileDiscoverer)
+	if !nativeFilesSupported {
+		resolvedTestFiles, err = discovery.ResolveTestFiles(testFramework.TestPattern(), settings.GetTestsExcludePattern())
+	}
 	if err != nil {
 		return errcode.WithCode(errcode.PlanTestFilesResolutionFailed, err)
 	}
@@ -386,11 +395,15 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	g.Go(func() error {
 		fullDiscoveryStartTime := time.Now()
 		if !fullDiscoveryNeeded {
+			if forceFullTestDiscovery && nativeFilesSupported {
+				slog.Info("Framework-native test file discovery requested", "framework", testFramework.Name())
+				return nil
+			}
 			if isSuiteLevelSkipping && !forceFullTestDiscovery {
 				slog.Info("Suite-level skipping does not require full test discovery; using fast test file discovery fallback", "framework", testFramework.Name())
 				return nil
 			}
-			if forceFullTestDiscovery && !fullTestDiscoverySupported {
+			if forceFullTestDiscovery && !fullTestDiscoverySupported && !nativeFilesSupported {
 				slog.Warn("Full test discovery was forced but is not supported by framework; using fast test file discovery fallback", "framework", testFramework.Name())
 				return nil
 			}
@@ -425,17 +438,17 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	// Goroutine 3: Test files discovery (fast, must always complete)
 	g.Go(func() error {
 		startTime := time.Now()
-		slog.Info("Discovering test files (fast)...", "framework", testFramework.Name())
+		slog.Info("Discovering test files...", "framework", testFramework.Name())
 		var res []string
 		res, discErr := testFramework.DiscoverTestFiles(ctx, resolvedTestFiles)
 		discoveredTestFiles = res
 		fastDiscoveryDuration = time.Since(startTime)
 		if discErr != nil {
 			fastDiscoveryErr = discErr
-			slog.Warn("Fast test discovery failed", "error", discErr)
+			slog.Warn("Test file discovery failed", "error", discErr)
 			return nil // Don't fail the entire process if full discovery succeeded
 		}
-		slog.Info("Discovered test files (fast)", "duration", fastDiscoveryDuration, "count", len(discoveredTestFiles))
+		slog.Info("Discovered test files", "duration", fastDiscoveryDuration, "count", len(discoveredTestFiles))
 
 		return nil
 	})
@@ -465,26 +478,30 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		slog.Info("Full test discovery succeeded; using full discovery results and ignoring fast-discovered-only files",
 			"fastDiscoveredTestFilesCount", len(discoveredTestFiles))
 	} else {
+		fileDiscoveryMode := telemetry.TestDiscoveryModeFast
+		if native, ok := testFramework.(framework.NativeTestFileDiscoverer); ok && native.NativeTestFileDiscoveryUsed() {
+			fileDiscoveryMode = telemetry.TestDiscoveryModeFull
+		}
 		if strictDiscovery && fullDiscoveryErr != nil {
 			recordDiscoveryTelemetry(telemetry.TestDiscoveryModeFull, false, fullDiscoveryDuration, len(discoveredTests))
 			return errcode.WithCode(errcode.PlanFullTestDiscoveryFailed, fmt.Errorf("full test discovery failed: %w", fullDiscoveryErr))
 		}
 		if fastDiscoveryErr != nil {
-			recordDiscoveryTelemetry(telemetry.TestDiscoveryModeFast, false, fastDiscoveryDuration, len(discoveredTestFiles))
+			recordDiscoveryTelemetry(fileDiscoveryMode, false, fastDiscoveryDuration, len(discoveredTestFiles))
 			return errcode.WithCode(errcode.PlanFastTestDiscoveryFailed, fmt.Errorf("test discovery failed: %w", fastDiscoveryErr))
 		}
-		recordDiscoveryTelemetry(telemetry.TestDiscoveryModeFast, true, fastDiscoveryDuration, len(discoveredTestFiles))
+		recordDiscoveryTelemetry(fileDiscoveryMode, true, fastDiscoveryDuration, len(discoveredTestFiles))
 		if err := tp.recordFastDiscoveryFallbackFiles(discoveredTestFiles); err != nil {
 			return errcode.WithCode(errcode.PlanFastDiscoveryResultsProcessingFailed, err)
 		}
-		selectedDiscoveryMode = discoveryModeFast
+		selectedDiscoveryMode = discoveryMode(fileDiscoveryMode)
 		selectedDiscoveryDuration = fastDiscoveryDuration
 		tp.addDurationDataForFastDiscoveryFallback()
 		if isSuiteLevelSkipping && tiaSkippingEnabled {
 			tp.recordSuiteLevelSkippables(skipMatcher, testFramework)
 		}
 
-		slog.Info("Full test discovery did not run or failed; using fast test file discovery fallback",
+		slog.Info("Using test file discovery results", "mode", fileDiscoveryMode,
 			"fastDiscoveredTestFilesCount", len(discoveredTestFiles))
 	}
 

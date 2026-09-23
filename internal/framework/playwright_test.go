@@ -195,7 +195,7 @@ func TestPlaywrightDiscoverTestFilesUsesNativeListAndNormalizes(t *testing.T) {
 		},
 		platformEnv: map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init --max-old-space-size=2048", "CUSTOM": "value"},
 	}
-	discovered, err := playwright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
+	discovered, err := playwright.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestPlaywrightDiscoveryAcceptsOnlyTheNoTestsExit(t *testing.T) {
 		err: playwrightCommandExitError{code: 1},
 	}
 	playwright := &Playwright{executor: executor, commandOverride: []string{"playwright", "test"}, platformEnv: map[string]string{}}
-	files, err := playwright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
+	files, err := playwright.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{})
 	if err != nil || len(files) != 0 {
 		t.Fatalf("empty discovery = %v, %v", files, err)
 	}
@@ -277,7 +277,7 @@ func TestPlaywrightDiscoveryAcceptsOnlyTheNoTestsExit(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			executor.output = []byte(test.output)
 			executor.err = test.err
-			if _, err := playwright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{}); err == nil {
+			if _, err := playwright.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{}); err == nil {
 				t.Fatal("expected failed Playwright listing to return its command error")
 			}
 		})
@@ -288,7 +288,7 @@ func TestPlaywrightDiscoveryAcceptsOnlyTheNoTestsExit(t *testing.T) {
 	// identify the expected empty-suite result.
 	executor.output = []byte(playwrightErrorMarker + `{"message":"=================\n no tests found.\n================="}`)
 	executor.err = playwrightCommandExitError{code: 1}
-	files, err = playwright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
+	files, err = playwright.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{})
 	if err != nil || len(files) != 0 {
 		t.Fatalf("legacy empty discovery = %v, %v", files, err)
 	}

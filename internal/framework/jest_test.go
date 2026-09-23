@@ -145,7 +145,7 @@ func TestJest_DiscoverTestFiles_UsesLocalJestListTests(t *testing.T) {
 		executor:    mockExecutor,
 		platformEnv: map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init --max-old-space-size=4096", "CUSTOM_ENV": "value"},
 	}
-	files, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
+	files, err := jest.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestJest_DiscoverTestFiles_UsesLocalJestListTests(t *testing.T) {
 	if capturedName != binJestPath {
 		t.Errorf("expected command %q, got %q", binJestPath, capturedName)
 	}
-	expectedArgs := []string{"--listTests"}
+	expectedArgs := []string{"--listTests", "--json"}
 	if !slices.Equal(capturedArgs, expectedArgs) {
 		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
 	}
@@ -191,7 +191,7 @@ func TestJest_DiscoverTestFiles_StripsInheritedNodeOptions(t *testing.T) {
 	}
 	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
 
-	files, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
+	files, err := jest.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestJest_DiscoverTestFiles_WithTestsLocationFiltersListTestsOutput(t *testi
 		},
 	}
 	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
-	files, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
+	files, err := jest.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestJest_DiscoverTestFiles_WithTestsLocationFiltersListTestsOutput(t *testi
 	if capturedName != "npx" {
 		t.Errorf("expected command %q, got %q", "npx", capturedName)
 	}
-	expectedArgs := []string{"jest", "--listTests"}
+	expectedArgs := []string{"jest", "--listTests", "--json"}
 	if !slices.Equal(capturedArgs, expectedArgs) {
 		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
 	}
@@ -267,7 +267,7 @@ func TestJest_DiscoverTestFiles_WithTestsLocationReturnsInvalidPatternError(t *t
 	}
 	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
 
-	_, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
+	_, err := jest.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -304,12 +304,12 @@ func TestJest_DiscoverTestFiles_WithTestsExcludePatternFiltersListTestsOutput(t 
 		},
 	}
 	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
-	files, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
+	files, err := jest.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
 	}
 
-	expectedArgs := []string{"jest", "--listTests"}
+	expectedArgs := []string{"jest", "--listTests", "--json"}
 	if !slices.Equal(capturedArgs, expectedArgs) {
 		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
 	}
@@ -349,14 +349,14 @@ func TestJest_DiscoverTestFiles_WithOverride(t *testing.T) {
 		platformEnv:     make(map[string]string),
 	}
 
-	if _, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()}); err != nil {
+	if _, err := jest.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()}); err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
 	}
 
 	if capturedName != "pnpm" {
 		t.Errorf("expected command %q, got %q", "pnpm", capturedName)
 	}
-	expectedArgs := []string{"jest", "--runInBand", "--listTests"}
+	expectedArgs := []string{"jest", "--runInBand", "--listTests", "--json"}
 	if !slices.Equal(capturedArgs, expectedArgs) {
 		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
 	}
@@ -369,7 +369,7 @@ func TestJest_DiscoverTestFiles_CommandError(t *testing.T) {
 	}
 	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
 
-	_, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
+	_, err := jest.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
 	if err == nil {
 		t.Fatal("expected error")
 	}

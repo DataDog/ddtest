@@ -1,6 +1,7 @@
 package framework
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -73,4 +74,38 @@ func filterJavaScriptTestFiles(testFiles []string, selectedFiles discovery.TestF
 
 	slices.Sort(filtered)
 	return slices.Compact(filtered), nil
+}
+
+func discoverJavaScriptTestFiles(ctx context.Context, files discovery.TestFileSet, defaultPattern string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if files.UseExplicitFiles() {
+		return slices.Clone(files.ExplicitFiles), nil
+	}
+	pattern := files.Pattern
+	if pattern == "" {
+		pattern = defaultPattern
+	}
+	return discovery.DiscoverTestFilesContext(ctx, pattern, settings.GetTestsExcludePattern())
+}
+
+// NativeTestFileDiscoverer retains framework-native file enumeration for
+// executable configurations and the force-full-test-discovery escape hatch.
+// It does not imply support for discovering individual test cases.
+type NativeTestFileDiscoverer interface {
+	DiscoverTestFilesNative(context.Context, discovery.TestFileSet) ([]string, error)
+	NativeTestFileDiscoveryUsed() bool
+}
+
+type javaScriptDiscoveryState struct{ nativeDiscoveryUsed bool }
+
+func (s *javaScriptDiscoveryState) NativeTestFileDiscoveryUsed() bool { return s.nativeDiscoveryUsed }
+
+func discoverJavaScriptFiles(ctx context.Context, files discovery.TestFileSet, pattern string, native func(context.Context, discovery.TestFileSet) ([]string, error)) ([]string, error) {
+	if settings.GetForceFullTestDiscovery() {
+		files.ExplicitFiles = nil
+		return native(ctx, files)
+	}
+	return discoverJavaScriptTestFiles(ctx, files, pattern)
 }

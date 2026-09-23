@@ -30,6 +30,7 @@ const (
 var mochaAdapterScript string
 
 type Mocha struct {
+	javaScriptDiscoveryState
 	executor        ext.CommandExecutor
 	commandOverride []string
 	platformEnv     map[string]string
@@ -71,7 +72,8 @@ func (m *Mocha) DiscoverTests(context.Context, discovery.TestFileSet) ([]testopt
 	return nil, ErrFullTestDiscoveryUnsupported
 }
 
-func (m *Mocha) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+func (m *Mocha) DiscoverTestFilesNative(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+	m.nativeDiscoveryUsed = true
 	if settings.GetTestsExcludePattern() == "" {
 		if testFiles.Empty() {
 			return []string{}, nil
@@ -121,6 +123,9 @@ func (m *Mocha) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestF
 }
 
 func (m *Mocha) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
+	if len(testFiles) == 0 {
+		return nil
+	}
 	command, baseArgs := m.getMochaCommand()
 	cliArgs, err := mochaCLIArgs(command, baseArgs)
 	if err != nil {
@@ -227,4 +232,9 @@ func parseMochaDiscoveryOutput(output []byte) ([]string, error) {
 		return nil, fmt.Errorf("failed to parse Mocha test file list: %w", err)
 	}
 	return normalizeJavaScriptTestFiles(paths), nil
+}
+
+func (m *Mocha) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+	m.nativeDiscoveryUsed = false
+	return discoverJavaScriptFiles(ctx, testFiles, m.TestPattern(), m.DiscoverTestFilesNative)
 }

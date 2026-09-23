@@ -37,6 +37,7 @@ type vitestExecutor interface {
 }
 
 type Vitest struct {
+	javaScriptDiscoveryState
 	executor        vitestExecutor
 	commandOverride []string
 	platformEnv     map[string]string
@@ -91,9 +92,8 @@ func (v *Vitest) DiscoverTests(ctx context.Context, testFiles discovery.TestFile
 	return nil, ErrFullTestDiscoveryUnsupported
 }
 
-// DiscoverTestFiles uses Vitest's config-aware file listing when available,
-// then falls back to the Vitest 1.6 API and finally DDTest's filesystem glob.
-func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+func (v *Vitest) DiscoverTestFilesNative(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+	v.nativeDiscoveryUsed = true
 	// With an exclude pattern, ExplicitFiles contains candidates from DDTest's generic
 	// glob. Vitest discovery must remain authoritative before applying the exclude.
 	if settings.GetTestsExcludePattern() == "" {
@@ -187,10 +187,16 @@ func (v *Vitest) discoverVitestV1TestFiles(ctx context.Context, command string, 
 	}
 
 	slog.Warn("Vitest 1.6 config-aware discovery failed; using ddtest glob discovery", "error", err)
+	if settings.GetForceFullTestDiscovery() {
+		return nil, fmt.Errorf("forced native Vitest discovery failed: %w", err)
+	}
 	return discovery.DiscoverTestFiles(testFiles.Pattern, settings.GetTestsExcludePattern())
 }
 
 func (v *Vitest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
+	if len(testFiles) == 0 {
+		return nil
+	}
 	command, baseArgs := v.getVitestCommand()
 	args := vitestArgsForSubcommand(baseArgs, "run")
 	args = append(args, testFiles...)
@@ -331,4 +337,9 @@ func stripNodeOptionsImport(nodeOptions string, module string) string {
 		stripped = append(stripped, field)
 	}
 	return strings.Join(stripped, " ")
+}
+
+func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+	v.nativeDiscoveryUsed = false
+	return discoverJavaScriptFiles(ctx, testFiles, v.TestPattern(), v.DiscoverTestFilesNative)
 }

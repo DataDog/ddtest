@@ -18,6 +18,7 @@ const DDTestOptimizationManifestFileEnvVar = "DD_TEST_OPTIMIZATION_MANIFEST_FILE
 // Runner layout paths.
 var RunnerDirectory = filepath.Join(PlanDirectory, "runner")
 var TestFilesOutputPath = filepath.Join(RunnerDirectory, "test-files.txt")
+var DiscoveredTestFilesOutputPath = filepath.Join(RunnerDirectory, "discovered-test-files.txt")
 var SkippablePercentageOutputPath = filepath.Join(RunnerDirectory, "skippable-percentage.txt")
 var ParallelRunnersOutputPath = filepath.Join(RunnerDirectory, "parallel-runners.txt")
 var TestsSplitDir = filepath.Join(RunnerDirectory, "tests-split")

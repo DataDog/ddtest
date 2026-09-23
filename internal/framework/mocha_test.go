@@ -111,7 +111,7 @@ func TestMochaDiscoverTestFiles(t *testing.T) {
 		commandOverride: []string{"pnpm", "exec", "mocha", "--parallel"},
 		platformEnv:     map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init --max-old-space-size=4096", "CUSTOM": "value"},
 	}
-	files, err := mocha.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: mocha.TestPattern()})
+	files, err := mocha.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: mocha.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestMochaDiscoverTestFilesPassesCustomLocation(t *testing.T) {
 		platformEnv:     make(map[string]string),
 	}
 
-	files, err := mocha.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: mocha.TestPattern()})
+	files, err := mocha.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: mocha.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestMochaDiscoveryFailureIncludesOutput(t *testing.T) {
 		commandOverride: []string{"mocha"},
 		platformEnv:     make(map[string]string),
 	}
-	_, err := mocha.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: mocha.TestPattern()})
+	_, err := mocha.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: mocha.TestPattern()})
 	if err == nil || !strings.Contains(err.Error(), "bad config") {
 		t.Fatalf("error = %v", err)
 	}

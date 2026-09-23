@@ -4,12 +4,14 @@ go 1.27.1
 
 require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0
+	github.com/evanw/esbuild v0.25.12
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
 	github.com/klauspost/cpuid/v2 v2.3.0
 	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
+	github.com/tdewolff/parse/v2 v2.8.3
 	github.com/tinylib/msgp v1.6.4
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.45.0

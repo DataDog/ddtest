@@ -17,6 +17,7 @@ troubleshooting, but they are DDTest implementation details.
   manifest.txt
   runner/
     test-files.txt
+    discovered-test-files.txt
     parallel-runners.txt
     skippable-percentage.txt
     tests-split/
@@ -69,6 +70,13 @@ spec/services/checkout_spec.rb
 
 This is the main file to feed into another runner when you do not want DDTest to
 execute tests itself.
+
+### `.testoptimization/runner/discovered-test-files.txt`
+
+Sorted newline-delimited paths selected by discovery and DDTest's file filters,
+before Datadog skipping removes runnable files. This list includes skippable
+suites and is intended for comparing old and new discovery behavior. It does not
+contain per-test names. See the [JavaScript migration guide](javascript-discovery-migration.md).
 
 ### `.testoptimization/runner/parallel-runners.txt`
 

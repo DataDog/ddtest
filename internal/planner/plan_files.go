@@ -2,6 +2,7 @@ package planner
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,6 +10,17 @@ import (
 
 	"github.com/DataDog/ddtest/internal/constants"
 )
+
+// Preserve the complete selected file set before TIA removes skippable suites,
+// so customers can compare discovery independently of backend skip decisions.
+func writeDiscoveredTestFilesArtifact(files map[string]struct{}) error {
+	names := slices.Sorted(maps.Keys(files))
+	content := strings.Join(names, "\n")
+	if len(names) > 0 {
+		content += "\n"
+	}
+	return writePlanFile(constants.DiscoveredTestFilesOutputPath, []byte(content))
+}
 
 func writeTestFilesArtifact(testFileWeights map[string]int) error {
 	testFileNames := make([]string, 0, len(testFileWeights))

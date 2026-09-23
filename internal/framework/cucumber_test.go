@@ -232,7 +232,7 @@ func TestCucumberDiscoverTestFilesUsesSelectedTestCases(t *testing.T) {
 		},
 	}
 
-	files, err := cucumber.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: cucumber.TestPattern()})
+	files, err := cucumber.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: cucumber.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestCucumberDiscoverTestFilesFiltersLocationAndExclude(t *testing.T) {
 		cucumberPickleEnvelope("outside", "other/outside.feature"), cucumberTestCaseEnvelope("outside"),
 	}}
 	cucumber := &Cucumber{executor: executor, commandOverride: []string{"cucumber-js"}, platformEnv: map[string]string{}}
-	files, err := cucumber.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: cucumber.TestPattern()})
+	files, err := cucumber.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: cucumber.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestCucumberDiscoverTestFilesEmptyGlobCandidatesStillUsesCucumber(t *testin
 		cucumberPickleEnvelope("configured", "custom/from-config.feature"), cucumberTestCaseEnvelope("configured"),
 	}}
 	cucumber := &Cucumber{executor: executor, commandOverride: []string{"cucumber-js"}, platformEnv: map[string]string{}}
-	files, err := cucumber.DiscoverTestFiles(context.Background(), discovery.TestFileSet{
+	files, err := cucumber.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{
 		Pattern:       cucumber.TestPattern(),
 		ExplicitFiles: []string{},
 	})
@@ -331,7 +331,7 @@ func TestCucumberDiscoverTestFilesEmptyGlobCandidatesStillUsesCucumber(t *testin
 func TestCucumberDiscoverTestFilesReportsCommandError(t *testing.T) {
 	executor := &cucumberCommandExecutor{output: []byte("invalid profile"), combinedErr: errors.New("exit status 1")}
 	cucumber := &Cucumber{executor: executor, commandOverride: []string{"cucumber-js"}, platformEnv: map[string]string{}}
-	_, err := cucumber.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: cucumber.TestPattern()})
+	_, err := cucumber.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: cucumber.TestPattern()})
 	if err == nil || !strings.Contains(err.Error(), "invalid profile") {
 		t.Fatalf("error = %v", err)
 	}

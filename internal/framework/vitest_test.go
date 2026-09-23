@@ -163,7 +163,7 @@ func TestVitest_DiscoverTestFiles_WithCustomCommand(t *testing.T) {
 		},
 	}
 
-	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
+	files, err := vitest.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles() failed: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestVitest_DiscoverTestFiles_ExplicitFiles(t *testing.T) {
 	executor := &vitestCommandExecutor{err: errors.New("should not execute")}
 	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
 	want := []string{"src/a.test.ts"}
-	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{ExplicitFiles: want})
+	files, err := vitest.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{ExplicitFiles: want})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestVitest_DiscoverTestFiles_ExcludeStillUsesVitestDiscovery(t *testing.T) 
 		t.Fatalf("expected generic glob candidates without custom Vitest file, got %v", resolvedTestFiles.ExplicitFiles)
 	}
 
-	files, err := vitest.DiscoverTestFiles(context.Background(), resolvedTestFiles)
+	files, err := vitest.DiscoverTestFilesNative(context.Background(), resolvedTestFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestVitest_DiscoverTestFiles_ExcludeWithEmptyCandidatesStillUsesVitestDisco
 		t.Fatalf("expected empty generic glob candidates, got %v", resolvedTestFiles.ExplicitFiles)
 	}
 
-	files, err := vitest.DiscoverTestFiles(context.Background(), resolvedTestFiles)
+	files, err := vitest.DiscoverTestFilesNative(context.Background(), resolvedTestFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +284,7 @@ func TestVitest_DiscoverTestFiles_ExcludeWithEmptyCandidatesStillUsesVitestDisco
 func TestVitest_DiscoverTestFiles_ErrorIncludesOutput(t *testing.T) {
 	executor := &vitestCommandExecutor{output: []byte("invalid Vitest config"), err: errors.New("exit status 1")}
 	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
-	_, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
+	_, err := vitest.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err == nil || !strings.Contains(err.Error(), "invalid Vitest config") {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestVitest_DiscoverTestFiles_ErrorIncludesOutput(t *testing.T) {
 func TestVitest_DiscoverTestFiles_InvalidJSON(t *testing.T) {
 	executor := &vitestCommandExecutor{output: []byte("not JSON")}
 	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
-	_, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
+	_, err := vitest.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err == nil || !strings.Contains(err.Error(), "failed to parse Vitest test file list") {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestVitest_DiscoverTestFiles_IgnoresStdoutAndStderrNoise(t *testing.T) {
 		stderr: []byte("Vite deprecation warning\n"),
 	}
 	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
-	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
+	files, err := vitest.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func TestVitest_DiscoverTestFiles_Vitest16UsesConfigAwareFallback(t *testing.T) 
 		platformEnv:     make(map[string]string),
 	}
 
-	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
+	files, err := vitest.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +396,7 @@ func TestVitest_DiscoverTestFiles_Vitest16FallsBackToDDTestGlob(t *testing.T) {
 		errors:  []error{errors.New("exit status 1"), errors.New("exit status 1")},
 	}
 	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
-	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
+	files, err := vitest.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,7 +427,7 @@ func TestVitest_DiscoverTestFiles_FiltersCustomLocation(t *testing.T) {
 		vitestListOutputEntry{File: "custom/a.check.ts", ProjectName: "unit"},
 	)}
 	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
-	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
+	files, err := vitest.DiscoverTestFilesNative(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
 	}

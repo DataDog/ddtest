@@ -2,6 +2,7 @@ package framework
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/jsconfig"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 	"github.com/DataDog/ddtest/internal/utils"
@@ -29,9 +31,10 @@ const (
 
 var ErrFullTestDiscoveryUnsupported = errors.New("full test discovery is not supported")
 
-var jestTestFileExtensions = []string{"js", "jsx", "ts", "tsx", "mjs", "cjs"}
+var jestTestFileExtensions = []string{"js", "jsx", "ts", "tsx", "mjs", "mts", "cjs", "cts"}
 
 type Jest struct {
+	javaScriptDiscoveryState
 	executor        ext.CommandExecutor
 	commandOverride []string
 	platformEnv     map[string]string
@@ -89,17 +92,21 @@ func (j *Jest) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSe
 	return nil, ErrFullTestDiscoveryUnsupported
 }
 
-func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+func (j *Jest) DiscoverTestFilesNative(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+	j.nativeDiscoveryUsed = true
 	if testFiles.Empty() {
 		return []string{}, nil
 	}
 	if testFiles.UseExplicitFiles() {
 		return slices.Clone(testFiles.ExplicitFiles), nil
 	}
+	if _, err := filterJestTestFiles(nil, testFiles); err != nil {
+		return nil, err
+	}
 
 	command, baseArgs := j.getJestCommand()
 	args := slices.Clone(baseArgs)
-	args = append(args, "--listTests")
+	args = append(args, "--listTests", "--json")
 
 	slog.Info("Discovering Jest test files with command", "command", command, "args", args)
 	output, err := j.executor.CombinedOutput(ctx, command, args, j.discoveryEnv())
@@ -112,6 +119,9 @@ func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFi
 	}
 
 	discoveredFiles := parseJestListTestsOutput(output)
+	if _, valid := parseJestJSONList(output); !valid && len(discoveredFiles) == 0 && strings.TrimSpace(string(output)) != "" {
+		return nil, fmt.Errorf("native Jest discovery did not return a test file list: %s", strings.TrimSpace(string(output)))
+	}
 	if settings.GetTestsLocation() == "" && settings.GetTestsExcludePattern() == "" {
 		return discoveredFiles, nil
 	}
@@ -119,7 +129,37 @@ func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFi
 	return filterJestTestFiles(discoveredFiles, testFiles)
 }
 
+// DiscoverTestFilesFast is also used by differential tests: an unsupported
+// configuration is an error here, so a fallback cannot disguise a mismatch.
+func (j *Jest) DiscoverTestFilesFast(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if settings.GetTestsLocation() != "" || testFiles.UseExplicitFiles() || testFiles.Pattern != "" && testFiles.Pattern != j.TestPattern() {
+		return discoverJavaScriptTestFiles(ctx, testFiles, j.TestPattern())
+	}
+	command, args := j.getJestCommand()
+	base := filepath.Base(command)
+	if base == "npx" && len(args) > 0 && args[0] == "jest" {
+		args = args[1:]
+	} else if base != "jest" && base != "jest.js" && base != "jest.cmd" {
+		return nil, fmt.Errorf("custom Jest launcher %q needs native discovery", command)
+	}
+	plan, err := jsconfig.CompileJest(ctx, jsconfig.JestOptions{Args: args, Env: j.platformEnv})
+	if err != nil {
+		return nil, err
+	}
+	files, err := plan.Discover(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return filterJavaScriptTestFiles(files, discovery.TestFileSet{})
+}
+
 func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
+	if len(testFiles) == 0 {
+		return nil
+	}
 	command, baseArgs := j.getJestCommand()
 	args := slices.Clone(baseArgs)
 	args = append(args, "--runTestsByPath")
@@ -222,6 +262,9 @@ func stripNodeOptionsRequire(nodeOptions string, module string) string {
 }
 
 func parseJestListTestsOutput(output []byte) []string {
+	if listed, ok := parseJestJSONList(output); ok {
+		return normalizeJavaScriptTestFiles(listed)
+	}
 	cwd, _ := os.Getwd()
 	if resolvedCwd, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = resolvedCwd
@@ -257,4 +300,44 @@ func parseJestListTestsOutput(output []byte) []string {
 
 	slices.Sort(testFiles)
 	return slices.Compact(testFiles)
+}
+
+// Configs can write diagnostics around Jest's JSON list. Accept one complete
+// array line (possibly prefixed by a log), and reject ambiguous output.
+func parseJestJSONList(output []byte) ([]string, bool) {
+	var result []string
+	found := false
+	for _, line := range strings.Split(string(output), "\n") {
+		for start := strings.IndexByte(line, '['); start >= 0; start = strings.IndexByte(line, '[') {
+			line = line[start:]
+			var listed []string
+			if json.Unmarshal([]byte(line), &listed) == nil {
+				if found {
+					return nil, false
+				}
+				result, found = listed, true
+				break
+			}
+			line = line[1:]
+		}
+	}
+	return result, found
+}
+
+func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
+	j.nativeDiscoveryUsed = false
+	if settings.GetForceFullTestDiscovery() {
+		testFiles.ExplicitFiles = nil
+		return j.DiscoverTestFilesNative(ctx, testFiles)
+	}
+	if settings.GetTestsLocation() != "" || testFiles.UseExplicitFiles() || testFiles.Pattern != "" && testFiles.Pattern != j.TestPattern() {
+		return j.DiscoverTestFilesFast(ctx, testFiles)
+	}
+	files, err := j.DiscoverTestFilesFast(ctx, testFiles)
+	if err == nil || ctx.Err() != nil {
+		return files, err
+	}
+	slog.Warn("Jest config could not be resolved statically; using native discovery", "reason", err)
+	testFiles.ExplicitFiles = nil
+	return j.DiscoverTestFilesNative(ctx, testFiles)
 }

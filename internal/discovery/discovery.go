@@ -30,7 +30,7 @@ const (
 	discoveryCommandLogTruncSuffix = "..."
 )
 
-var excludedDirs = []string{"node_modules"}
+var excludedDirs = []string{"node_modules", ".git"}
 
 type TestFileSetMatcher struct {
 	includeMatcher utils.PathMatcher
@@ -153,14 +153,26 @@ func (m TestFileSetMatcher) excludesNormalizedPath(normalizedPath string) bool {
 }
 
 func DiscoverTestFiles(includePattern, excludePattern string) ([]string, error) {
+	return DiscoverTestFilesContext(context.Background(), includePattern, excludePattern)
+}
+
+// DiscoverTestFilesContext walks test paths without launching a test framework.
+func DiscoverTestFilesContext(ctx context.Context, includePattern, excludePattern string) ([]string, error) {
 	testFileMatcher, err := NewTestFileSetMatcher(TestFileSet{}, excludePattern)
 	if err != nil {
 		return nil, err
 	}
-	return discoverTestFiles(includePattern, testFileMatcher)
+	return discoverTestFilesContext(ctx, includePattern, testFileMatcher)
 }
 
 func discoverTestFiles(includePattern string, testFileMatcher TestFileSetMatcher) ([]string, error) {
+	return discoverTestFilesContext(context.Background(), includePattern, testFileMatcher)
+}
+
+func discoverTestFilesContext(ctx context.Context, includePattern string, testFileMatcher TestFileSetMatcher) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	normalizedIncludePattern := normalizeDiscoveryPattern(includePattern)
 	if normalizedIncludePattern == "" {
 		return []string{}, nil
@@ -180,6 +192,9 @@ func discoverTestFiles(includePattern string, testFileMatcher TestFileSetMatcher
 
 	testFiles := make([]string, 0)
 	err = filepath.WalkDir(walkRoot, func(filePath string, entry fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			slog.Debug("Skipping path during test file discovery", "path", filePath, "error", walkErr)
 			return nil

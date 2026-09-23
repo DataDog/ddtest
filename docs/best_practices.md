@@ -4,9 +4,13 @@
 
 When using ddtest, you need to add a planning step that performs test discovery
 before execution. For Ruby and Python, this can involve full framework
-discovery such as RSpec dry-run or pytest collection. For Jest, DDTest uses
-Jest's `--listTests` command to discover test files. This planning stage adds
-overhead: you can optimize it with the practices below.
+discovery such as RSpec dry-run or pytest collection. Jest analyzes supported config and walks files without launching Node;
+unsupported analysis uses native discovery. Other JavaScript frameworks use
+filesystem globs by default. `--force-full-test-discovery` selects the original
+native adapter for any JS framework.
+See the [JavaScript discovery migration guide](javascript-discovery-migration.md)
+for custom layouts. The practices below help with framework startup and full
+discovery in Ruby and Python.
 
 ### Preinstall System Dependencies Via Docker
 
@@ -177,11 +181,11 @@ Vitest projects:
 ddtest run --platform javascript --framework vitest --command "pnpm exec vitest run --project unit*"
 ```
 
-The command must invoke Vitest directly. During planning, DDTest changes the
-`run` subcommand to `list --filesOnly --json` on Vitest 2.0 and newer. On Vitest 1.6,
-DDTest passes the Vitest arguments to its config-aware discovery API. DDTest
-appends the selected test files during execution. Do not include test files or a
-`--` separator in the command.
+The command must invoke Vitest directly. Planning defaults to filesystem globs; set
+`--tests-location` and `--tests-exclude-pattern` to reproduce the selected
+project scope, or use `--force-full-test-discovery` for native configuration
+resolution. DDTest appends assigned files during execution. Do not include
+test files or a `--` separator in the command.
 
 ## Mocha Support
 
@@ -191,9 +195,11 @@ Use a command that invokes Mocha directly when passing framework flags:
 ddtest run --platform javascript --framework mocha --command "pnpm exec mocha --parallel"
 ```
 
-Do not include test files or a `--` separator. DDTest reads Mocha's effective
-configuration for discovery and replaces configured `spec` inputs with the
-files assigned to each worker during execution.
+Do not include test files or a `--` separator. Discovery defaults to filesystem
+globs; use `--force-full-test-discovery` to load native configuration.
+DDTest reads Mocha's effective configuration during execution and replaces its
+configured `spec` inputs with each worker's assigned files. Exclude shared setup
+files from the discovery glob.
 
 ## Cypress Support
 
