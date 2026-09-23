@@ -18,8 +18,8 @@ type reportRuntime struct{ Framework, Tracer string }
 type reportFact struct{ Label, Value string }
 type reportCard struct {
 	Title, Context string
-	Tests          []intake.TestFinding
-	Coverages      []intake.CoverageFinding
+	Tests          []intake.Test
+	Coverages      []intake.CoverageFact
 }
 type reportModel struct {
 	Headline, Summary string
@@ -27,7 +27,7 @@ type reportModel struct {
 	Cards             []reportCard
 }
 
-func writeReport(repositoryRoot, sessionDirectory string, findings intake.Findings, commandFailed bool, runtime ...reportRuntime) (string, error) {
+func writeReport(repositoryRoot, sessionDirectory string, findings intake.Facts, commandFailed bool, runtime ...reportRuntime) (string, error) {
 	path := filepath.Join(sessionDirectory, reportFilename)
 	file, err := os.Create(path)
 	if err != nil {
@@ -39,7 +39,7 @@ func writeReport(repositoryRoot, sessionDirectory string, findings intake.Findin
 	}
 	return path, nil
 }
-func buildReport(_ string, findings intake.Findings, commandFailed bool, runtime ...reportRuntime) reportModel {
+func buildReport(_ string, findings intake.Facts, commandFailed bool, runtime ...reportRuntime) reportModel {
 	info := reportRuntime{Framework: "Test command", Tracer: "Isolated installation"}
 	if len(runtime) > 0 {
 		info = runtime[0]
@@ -93,7 +93,7 @@ var testdriveReport = template.Must(template.New("testdrive-report").Parse(`<!do
 <section><h2>Run details</h2><dl>{{range .Facts}}<dt>{{.Label}}</dt><dd>{{.Value}}</dd>{{end}}</dl></section>
 <section><h2>Artifacts</h2><ul><li><a href="intake/">JSON traffic</a></li><li><a href="test-output.txt">Test output</a></li></ul></section></body></html>`))
 
-func testDisplayStatus(test intake.TestFinding) (string, string) {
+func testDisplayStatus(test intake.Test) (string, string) {
 	status := test.Status
 	sawPass := status == "pass"
 	sawFailure := status == "fail"
@@ -117,7 +117,7 @@ func attemptTone(status string) string {
 	return "attention"
 }
 
-func findingDuration(test intake.TestFinding) time.Duration {
+func findingDuration(test intake.Test) time.Duration {
 	if test.Duration != 0 || len(test.Attempts) == 0 {
 		return test.Duration
 	}
