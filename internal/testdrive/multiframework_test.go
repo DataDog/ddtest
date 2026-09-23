@@ -43,7 +43,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			executor := &fakeTestdriveExecutor{}
 			run.executor = executor
 			run.startIntake = func(string) (localIntake, error) {
-				return &fakeIntake{url: "http://127.0.0.1:1234", findings: intake.Findings{TestEventCount: 1, TestCount: 1}}, nil
+				return &fakeIntake{url: "http://127.0.0.1:1234", findings: intake.Facts{TestEventCount: 1, TestCount: 1}}, nil
 			}
 			var output bytes.Buffer
 			require.NoError(t, run.Run(t.Context(), &output))
