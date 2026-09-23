@@ -109,22 +109,22 @@ func TestTransportRecordsBackendTelemetry(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(HeaderContentType, constants.ContentTypeJSON)
 		var body string
-		switch strings.TrimPrefix(r.URL.Path, "/") {
-		case settingsURLPath:
+		switch r.URL.Path {
+		case constants.SettingsURLPath:
 			body = settingsBody
-		case knownTestsURLPath:
+		case constants.KnownTestsURLPath:
 			body = knownBodies[knownRequests]
 			knownRequests++
-		case skippableURLPath:
+		case constants.SkippableTestsURLPath:
 			body = skippableBody
-		case testManagementTestsURLPath:
+		case constants.TestManagementTestsURLPath:
 			body = testManagementBody
 		case durationsURLPath:
 			body = durationsBodies[durationsRequests]
 			durationsRequests++
-		case searchCommitsURLPath:
+		case constants.SearchCommitsURLPath:
 			body = searchCommitsBody
-		case sendPackFilesURLPath:
+		case constants.SendPackFilesURLPath:
 			body = `{}`
 		default:
 			t.Fatalf("unexpected request path %s", r.URL.Path)
@@ -245,10 +245,10 @@ func TestTransportRecordsEmptySkippableResponse(t *testing.T) {
 
 func TestTransportRecordsCompressedResponseWireBytes(t *testing.T) {
 	responseBodies := map[string]string{
-		knownTestsURLPath:          `{"data":{"attributes":{"tests":{"module-a":{"suite-a":["test-a"]}}}}}`,
-		skippableURLPath:           `{"meta":{"correlation_id":"cid"},"data":[{"type":"test","attributes":{"suite":"suite-a","name":"test-a","configurations":{"test.bundle":"module-a"}}}]}`,
-		testManagementTestsURLPath: `{"data":{"attributes":{"modules":{"module-a":{"suites":{"suite-a":{"tests":{"test-a":{"properties":{}}}}}}}}}}`,
-		durationsURLPath:           `{"data":{"attributes":{"test_suites":{"module-a":{"suite-a":{"source_file":"a_test.go","duration":{"p50":"100","p90":"200"}}}}}}}`,
+		constants.KnownTestsURLPath:          `{"data":{"attributes":{"tests":{"module-a":{"suite-a":["test-a"]}}}}}`,
+		constants.SkippableTestsURLPath:      `{"meta":{"correlation_id":"cid"},"data":[{"type":"test","attributes":{"suite":"suite-a","name":"test-a","configurations":{"test.bundle":"module-a"}}}]}`,
+		constants.TestManagementTestsURLPath: `{"data":{"attributes":{"modules":{"module-a":{"suites":{"suite-a":{"tests":{"test-a":{"properties":{}}}}}}}}}}`,
+		durationsURLPath:                     `{"data":{"attributes":{"test_suites":{"module-a":{"suite-a":{"source_file":"a_test.go","duration":{"p50":"100","p90":"200"}}}}}}}`,
 	}
 	compressedBodies := make(map[string][]byte, len(responseBodies))
 	for path, body := range responseBodies {
@@ -260,7 +260,7 @@ func TestTransportRecordsCompressedResponseWireBytes(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/")
+		path := r.URL.Path
 		body, ok := compressedBodies[path]
 		if !ok {
 			t.Fatalf("unexpected request path %s", r.URL.Path)
@@ -289,9 +289,9 @@ func TestTransportRecordsCompressedResponseWireBytes(t *testing.T) {
 	}
 
 	tags := []string{"rs_compressed:true"}
-	recorder.assertValue(t, "distribution", "known_tests.response_bytes", tags, float64(len(compressedBodies[knownTestsURLPath])))
-	recorder.assertValue(t, "distribution", "itr_skippable_tests.response_bytes", tags, float64(len(compressedBodies[skippableURLPath])))
-	recorder.assertValue(t, "distribution", "test_management_tests.response_bytes", tags, float64(len(compressedBodies[testManagementTestsURLPath])))
+	recorder.assertValue(t, "distribution", "known_tests.response_bytes", tags, float64(len(compressedBodies[constants.KnownTestsURLPath])))
+	recorder.assertValue(t, "distribution", "itr_skippable_tests.response_bytes", tags, float64(len(compressedBodies[constants.SkippableTestsURLPath])))
+	recorder.assertValue(t, "distribution", "test_management_tests.response_bytes", tags, float64(len(compressedBodies[constants.TestManagementTestsURLPath])))
 	recorder.assertValue(t, "distribution", "test_suite_durations.response_bytes", tags, float64(len(compressedBodies[durationsURLPath])))
 }
 

@@ -48,7 +48,7 @@ func TestTransportGetTestManagementTestsRequestAndResponse(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("expected POST request, got %s", r.Method)
 		}
-		if r.URL.Path != "/"+testManagementTestsURLPath {
+		if r.URL.Path != constants.TestManagementTestsURLPath {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {

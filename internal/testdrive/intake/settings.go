@@ -14,10 +14,6 @@ import (
 )
 
 const (
-	settingsPath           = "/" + constants.SettingsURLPath
-	knownTestsPath         = "/" + constants.KnownTestsURLPath
-	skippableTestsPath     = "/" + constants.SkippableTestsURLPath
-	testManagementPath     = "/" + constants.TestManagementTestsURLPath
 	settingsResponseID     = "test-settings"
 	settingsResponseType   = "ci_app_tracers_test_service_settings"
 	testdriveCorrelationID = "ddtest-testdrive"
@@ -64,14 +60,14 @@ type testManagementSettings struct {
 
 func newHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST "+settingsPath, handleSettings)
-	mux.HandleFunc("POST "+knownTestsPath, handleKnownTests)
-	mux.HandleFunc("POST "+skippableTestsPath, handleSkippableTests)
-	mux.HandleFunc("POST "+testManagementPath, handleTestManagement)
-	mux.HandleFunc("POST /"+constants.SearchCommitsURLPath, func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("POST "+constants.SettingsURLPath, handleSettings)
+	mux.HandleFunc("POST "+constants.KnownTestsURLPath, handleKnownTests)
+	mux.HandleFunc("POST "+constants.SkippableTestsURLPath, handleSkippableTests)
+	mux.HandleFunc("POST "+constants.TestManagementTestsURLPath, handleTestManagement)
+	mux.HandleFunc("POST "+constants.SearchCommitsURLPath, func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"data": []any{}})
 	})
-	mux.HandleFunc("POST /"+constants.SendPackFilesURLPath, func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("POST "+constants.SendPackFilesURLPath, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, request *http.Request) {

@@ -38,7 +38,7 @@ func newDurationsTestServer(t *testing.T, responses []string, records *[]duratio
 		if r.Method != http.MethodPost {
 			t.Fatalf("expected POST request, got %s", r.Method)
 		}
-		if strings.TrimPrefix(r.URL.Path, "/") != durationsURLPath {
+		if r.URL.Path != durationsURLPath {
 			t.Fatalf("unexpected request path %s", r.URL.Path)
 		}
 		if requestCount >= len(responses) {

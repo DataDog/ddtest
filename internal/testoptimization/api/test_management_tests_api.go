@@ -15,7 +15,6 @@ import (
 
 const (
 	testManagementTestsRequestType string = "ci_app_libraries_tests_request"
-	testManagementTestsURLPath     string = constants.TestManagementTestsURLPath
 )
 
 type (
@@ -104,7 +103,7 @@ func (c *transport) GetTestManagementTests() (*TestManagementTestsResponseDataMo
 		},
 	}
 
-	request := c.getPostRequestConfig(testManagementTestsURLPath, body)
+	request := c.getPostRequestConfig(constants.TestManagementTestsURLPath, body)
 	telemetry.TestManagementTestsRequest(c.telemetryClient, request.Compressed)
 	requestStartTime := time.Now()
 	response, err := c.handler.SendRequest(*request)

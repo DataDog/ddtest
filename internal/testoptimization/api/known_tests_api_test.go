@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -21,7 +20,7 @@ func TestClientGetKnownTestsPaginatesWithAttributesPageInfo(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("expected POST request, got %s", r.Method)
 		}
-		if strings.TrimPrefix(r.URL.Path, "/") != knownTestsURLPath {
+		if r.URL.Path != constants.KnownTestsURLPath {
 			t.Fatalf("unexpected request path %s", r.URL.Path)
 		}
 		if len(requests) >= len(responses) {

@@ -10,7 +10,7 @@ import (
 
 const (
 	durationsRequestType string = "ci_app_ddtest_test_suite_durations_request"
-	durationsURLPath     string = "api/v2/ci/ddtest/test_suite_durations"
+	durationsURLPath     string = "/api/v2/ci/ddtest/test_suite_durations"
 
 	defaultDurationsPageSize int = 500
 )

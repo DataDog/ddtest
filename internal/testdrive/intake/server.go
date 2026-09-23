@@ -27,6 +27,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/tinylib/msgp/msgp"
 )
 
@@ -300,17 +301,17 @@ func decodeMultipart(body []byte, boundary string) (json.RawMessage, error) {
 
 func requestFileLabel(requestPath string) string {
 	switch requestPath {
-	case settingsPath:
+	case constants.SettingsURLPath:
 		return "settings"
 	case testCyclePath:
 		return "citestcycle"
 	case testCoveragePath:
 		return "citestcov"
-	case knownTestsPath:
+	case constants.KnownTestsURLPath:
 		return "known-tests"
-	case skippableTestsPath:
+	case constants.SkippableTestsURLPath:
 		return "skippable-tests"
-	case testManagementPath:
+	case constants.TestManagementTestsURLPath:
 		return "test-management"
 	default:
 		return "request"

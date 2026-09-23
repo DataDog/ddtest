@@ -7,8 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DataDog/ddtest/internal/constants"
 	ddsettings "github.com/DataDog/ddtest/internal/settings"
+
+	"github.com/DataDog/ddtest/internal/constants"
 )
 
 func TestTransportGetSettingsRequiresRepositoryAndCommit(t *testing.T) {
@@ -40,7 +41,7 @@ func TestTransportGetSettingsRequestAndResponse(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("expected POST request, got %s", r.Method)
 		}
-		if r.URL.Path != "/"+settingsURLPath {
+		if r.URL.Path != constants.SettingsURLPath {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {

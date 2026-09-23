@@ -13,10 +13,6 @@ import (
 	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
-const (
-	searchCommitsURLPath string = constants.SearchCommitsURLPath
-)
-
 type (
 	searchCommits struct {
 		Data []searchCommitsData `json:"data"`
@@ -50,7 +46,7 @@ func (c *transport) GetCommits(localCommits []string) ([]string, error) {
 		})
 	}
 
-	request := c.getPostRequestConfig(searchCommitsURLPath, body)
+	request := c.getPostRequestConfig(constants.SearchCommitsURLPath, body)
 	telemetry.GitRequestsSearchCommits(c.telemetryClient, request.Compressed)
 	startTime := time.Now()
 	response, err := c.handler.SendRequest(*request)

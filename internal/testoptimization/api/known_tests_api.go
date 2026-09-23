@@ -16,7 +16,6 @@ import (
 
 const (
 	knownTestsRequestType string = "ci_app_libraries_tests_request"
-	knownTestsURLPath     string = constants.KnownTestsURLPath
 )
 
 type (
@@ -101,7 +100,7 @@ func (c *transport) GetKnownTests() (*KnownTestsResponseData, error) {
 			body.Data.Attributes.PageInfo = &knownTestsRequestPageInfo{PageState: cursor}
 		}
 
-		request := c.getPostRequestConfig(knownTestsURLPath, body)
+		request := c.getPostRequestConfig(constants.KnownTestsURLPath, body)
 		telemetry.KnownTestsRequest(c.telemetryClient, request.Compressed)
 		requestStartTime := time.Now()
 		response, err := c.handler.SendRequest(*request)

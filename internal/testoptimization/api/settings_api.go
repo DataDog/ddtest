@@ -17,7 +17,6 @@ import (
 
 const (
 	settingsRequestType string = "ci_app_test_service_libraries_settings"
-	settingsURLPath     string = constants.SettingsURLPath
 )
 
 type (
@@ -100,7 +99,7 @@ func (c *transport) GetSettings() (*SettingsResponseData, error) {
 		},
 	}
 
-	request := c.getPostRequestConfig(settingsURLPath, body)
+	request := c.getPostRequestConfig(constants.SettingsURLPath, body)
 	telemetry.GitRequestsSettings(c.telemetryClient, request.Compressed)
 
 	requestStartTime := time.Now()

@@ -40,7 +40,7 @@ func TestTransportGetSkippableTestsRequestAndResponse(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("expected POST request, got %s", r.Method)
 		}
-		if r.URL.Path != "/"+skippableURLPath {
+		if r.URL.Path != constants.SkippableTestsURLPath {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		if !strings.Contains(r.Header.Get(HeaderContentType), constants.ContentTypeJSON) {
@@ -161,7 +161,7 @@ func TestTransportGetSkippableTestsFiltersConfigurations(t *testing.T) {
 		{"type":"test","attributes":{"suite":"suite-a","name":"wrong-runtime-arch","parameters":"","configurations":{"test.bundle":"rspec","runtime.architecture":"arm64"}}},
 		{"type":"test","attributes":{"suite":"suite-a","name":"wrong-runtime-version","parameters":"","configurations":{"test.bundle":"rspec","runtime.version":"3.2.0"}}}
 	]}`
-	server := newRawResponseTestServer(t, map[string]string{skippableURLPath: response})
+	server := newRawResponseTestServer(t, map[string]string{constants.SkippableTestsURLPath: response})
 	defer server.Close()
 
 	client := newRawResponseTestClient(server)
@@ -194,7 +194,7 @@ func TestTransportGetSkippableTestsParsesMixedResponse(t *testing.T) {
 		{"type":"test","attributes":{"suite":"suite-a","name":"test-a","parameters":"","configurations":{"test.bundle":"rspec"}}},
 		{"type":"suite","attributes":{"suite":"suite-b","configurations":{"test.bundle":"rspec"}}}
 	]}`
-	server := newRawResponseTestServer(t, map[string]string{skippableURLPath: response})
+	server := newRawResponseTestServer(t, map[string]string{constants.SkippableTestsURLPath: response})
 	defer server.Close()
 
 	_, skippable, err := newRawResponseTestClient(server).GetSkippableTests()

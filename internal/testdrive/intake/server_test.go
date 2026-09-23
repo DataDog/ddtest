@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/stretchr/testify/require"
 	"github.com/tinylib/msgp/msgp"
 )
@@ -274,13 +275,13 @@ func TestUncompressRequestBodyHandlesIdentityAndErrors(t *testing.T) {
 
 func TestRequestFileLabel(t *testing.T) {
 	tests := map[string]string{
-		settingsPath:       "settings",
-		testCyclePath:      "citestcycle",
-		testCoveragePath:   "citestcov",
-		knownTestsPath:     "known-tests",
-		skippableTestsPath: "skippable-tests",
-		testManagementPath: "test-management",
-		"/other":           "request",
+		constants.SettingsURLPath:            "settings",
+		testCyclePath:                        "citestcycle",
+		testCoveragePath:                     "citestcov",
+		constants.KnownTestsURLPath:          "known-tests",
+		constants.SkippableTestsURLPath:      "skippable-tests",
+		constants.TestManagementTestsURLPath: "test-management",
+		"/other":                             "request",
 	}
 	for path, expected := range tests {
 		require.Equal(t, expected, requestFileLabel(path))
@@ -315,7 +316,7 @@ func TestGzippedSettingsRequest(t *testing.T) {
 	require.NoError(t, writer.Close())
 
 	server := &Server{directory: t.TempDir()}
-	request := httptest.NewRequest(http.MethodPost, settingsPath, bytes.NewReader(compressed.Bytes()))
+	request := httptest.NewRequest(http.MethodPost, constants.SettingsURLPath, bytes.NewReader(compressed.Bytes()))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Content-Encoding", "gzip")
 	request.Header.Set("Content-Length", strconv.Itoa(compressed.Len()))

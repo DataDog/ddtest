@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,7 +24,7 @@ func TestSettingsEnablesTestOptimizationCoverage(t *testing.T) {
 	})
 
 	requestBody := bytes.NewBufferString(`{"data":{"id":"request-123"}}`)
-	response, err := testHTTPClient().Post(server.URL()+settingsPath, "application/json", requestBody)
+	response, err := testHTTPClient().Post(server.URL()+constants.SettingsURLPath, "application/json", requestBody)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, response.Body.Close())
@@ -60,9 +61,9 @@ func TestAdvancedFeatureEndpointsReturnSafeEmptyDatasets(t *testing.T) {
 		path     string
 		contains string
 	}{
-		{path: knownTestsPath, contains: `"jest":{}`},
-		{path: skippableTestsPath, contains: `"data":[]`},
-		{path: testManagementPath, contains: `"modules":{}`},
+		{path: constants.KnownTestsURLPath, contains: `"jest":{}`},
+		{path: constants.SkippableTestsURLPath, contains: `"data":[]`},
+		{path: constants.TestManagementTestsURLPath, contains: `"modules":{}`},
 	}
 	for _, test := range tests {
 		t.Run(test.path, func(t *testing.T) {

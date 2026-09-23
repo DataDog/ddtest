@@ -14,10 +14,6 @@ import (
 	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
-const (
-	sendPackFilesURLPath string = constants.SendPackFilesURLPath
-)
-
 type (
 	pushedShaBody struct {
 		Data pushedShaData `json:"data"`
@@ -69,7 +65,7 @@ func (c *transport) SendPackFiles(commitSha string, packFiles []string) (bytes i
 
 		request := RequestConfig{
 			Method:  "POST",
-			URL:     c.getURLPath(sendPackFilesURLPath),
+			URL:     c.getURLPath(constants.SendPackFilesURLPath),
 			Headers: c.headers,
 			Files: []FormFile{
 				pushedShaFormFile,

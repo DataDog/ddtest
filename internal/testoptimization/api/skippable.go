@@ -17,7 +17,6 @@ import (
 
 const (
 	skippableRequestType string = "test_params"
-	skippableURLPath     string = constants.SkippableTestsURLPath
 )
 
 type (
@@ -120,7 +119,7 @@ func (c *transport) GetSkippableTests() (correlationID string, skippables Skippa
 		},
 	}
 
-	request := c.getPostRequestConfig(skippableURLPath, body)
+	request := c.getPostRequestConfig(constants.SkippableTestsURLPath, body)
 	telemetry.ITRSkippableTestsRequest(c.telemetryClient, request.Compressed)
 	requestStartTime := time.Now()
 	response, err := c.handler.SendRequest(*request)
