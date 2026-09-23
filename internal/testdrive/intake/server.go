@@ -232,7 +232,7 @@ func uncompressRequestBody(request RawRequest) ([]byte, error) {
 func decodeRequestBody(body []byte, contentType string) (json.RawMessage, error) {
 	mediaType, params, _ := mime.ParseMediaType(contentType)
 	switch mediaType {
-	case "application/json":
+	case constants.ContentTypeJSON:
 		if !json.Valid(body) {
 			return nil, fmt.Errorf("invalid JSON")
 		}
@@ -303,9 +303,9 @@ func requestFileLabel(requestPath string) string {
 	switch requestPath {
 	case constants.SettingsURLPath:
 		return "settings"
-	case testCyclePath:
+	case constants.TestCycleURLPath:
 		return "citestcycle"
-	case testCoveragePath:
+	case constants.TestCoverageURLPath:
 		return "citestcov"
 	case constants.KnownTestsURLPath:
 		return "known-tests"

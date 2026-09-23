@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	settingsResponseID     = "test-settings"
-	settingsResponseType   = "ci_app_tracers_test_service_settings"
+	settingsResponseID = "test-settings"
+
 	testdriveCorrelationID = "ddtest-testdrive"
 )
 
@@ -101,7 +101,7 @@ func handleSettings(w http.ResponseWriter, request *http.Request) {
 
 	response := settingsResponse{}
 	response.Data.ID = responseID
-	response.Data.Type = settingsResponseType
+	response.Data.Type = constants.SettingsResponseType
 	response.Data.Attributes = settingsAttributes{
 		CodeCoverage:                true,
 		CoverageReportUploadEnabled: true,
@@ -122,7 +122,7 @@ func handleSettings(w http.ResponseWriter, request *http.Request) {
 		},
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(response)
 }
@@ -162,6 +162,6 @@ func handleTestManagement(w http.ResponseWriter, _ *http.Request) {
 }
 
 func writeJSON(w http.ResponseWriter, response any) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", constants.ContentTypeJSON)
 	_ = json.NewEncoder(w).Encode(response)
 }

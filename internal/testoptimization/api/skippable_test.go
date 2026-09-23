@@ -61,8 +61,8 @@ func TestTransportGetSkippableTestsRequestAndResponse(t *testing.T) {
 		t.Fatalf("GetSkippableTests() returned error: %v", err)
 	}
 
-	if captured.Data.Type != skippableRequestType {
-		t.Fatalf("request type = %q, want %q", captured.Data.Type, skippableRequestType)
+	if captured.Data.Type != constants.SkippableTestsRequestType {
+		t.Fatalf("request type = %q, want %q", captured.Data.Type, constants.SkippableTestsRequestType)
 	}
 	attributes := captured.Data.Attributes
 	if attributes.TestLevel != settings.TestSkippingLevelTest {

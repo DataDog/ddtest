@@ -15,10 +15,6 @@ import (
 	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
-const (
-	settingsRequestType string = "ci_app_test_service_libraries_settings"
-)
-
 type (
 	settingsRequest struct {
 		Data settingsRequestHeader `json:"data"`
@@ -86,7 +82,7 @@ func (c *transport) GetSettings() (*SettingsResponseData, error) {
 	body := settingsRequest{
 		Data: settingsRequestHeader{
 			ID:   c.id,
-			Type: settingsRequestType,
+			Type: constants.SettingsRequestType,
 			Attributes: SettingsRequestData{
 				Service:        c.serviceName,
 				Env:            c.environment,

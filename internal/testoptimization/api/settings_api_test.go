@@ -21,7 +21,7 @@ func TestTransportGetSettingsRequiresRepositoryAndCommit(t *testing.T) {
 func TestTransportGetSettingsRequestAndResponse(t *testing.T) {
 	var captured settingsRequest
 	expectedResponse := settingsResponse{}
-	expectedResponse.Data.Type = settingsRequestType
+	expectedResponse.Data.Type = constants.SettingsResponseType
 	expectedResponse.Data.Attributes.CodeCoverage = true
 	expectedResponse.Data.Attributes.EarlyFlakeDetection.Enabled = true
 	expectedResponse.Data.Attributes.EarlyFlakeDetection.FaultySessionThreshold = 30
@@ -63,8 +63,8 @@ func TestTransportGetSettingsRequestAndResponse(t *testing.T) {
 	if captured.Data.ID != client.id {
 		t.Fatalf("request id = %q, want %q", captured.Data.ID, client.id)
 	}
-	if captured.Data.Type != settingsRequestType {
-		t.Fatalf("request type = %q, want %q", captured.Data.Type, settingsRequestType)
+	if captured.Data.Type != constants.SettingsRequestType {
+		t.Fatalf("request type = %q, want %q", captured.Data.Type, constants.SettingsRequestType)
 	}
 	attributes := captured.Data.Attributes
 	if attributes.TestLevel != ddsettings.TestSkippingLevelTest {

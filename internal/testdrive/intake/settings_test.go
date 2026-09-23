@@ -24,18 +24,18 @@ func TestSettingsEnablesTestOptimizationCoverage(t *testing.T) {
 	})
 
 	requestBody := bytes.NewBufferString(`{"data":{"id":"request-123"}}`)
-	response, err := testHTTPClient().Post(server.URL()+constants.SettingsURLPath, "application/json", requestBody)
+	response, err := testHTTPClient().Post(server.URL()+constants.SettingsURLPath, constants.ContentTypeJSON, requestBody)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, response.Body.Close())
 	})
 	require.Equal(t, http.StatusOK, response.StatusCode)
-	require.Equal(t, "application/json", response.Header.Get("Content-Type"))
+	require.Equal(t, constants.ContentTypeJSON, response.Header.Get("Content-Type"))
 
 	var settings settingsResponse
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&settings))
 	require.Equal(t, "request-123", settings.Data.ID)
-	require.Equal(t, settingsResponseType, settings.Data.Type)
+	require.Equal(t, constants.SettingsResponseType, settings.Data.Type)
 	require.True(t, settings.Data.Attributes.ITREnabled)
 	require.True(t, settings.Data.Attributes.CodeCoverage)
 	require.True(t, settings.Data.Attributes.TestsSkipping)
@@ -67,7 +67,7 @@ func TestAdvancedFeatureEndpointsReturnSafeEmptyDatasets(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.path, func(t *testing.T) {
-			response, err := testHTTPClient().Post(server.URL()+test.path, "application/json", bytes.NewBufferString(`{"data":{}}`))
+			response, err := testHTTPClient().Post(server.URL()+test.path, constants.ContentTypeJSON, bytes.NewBufferString(`{"data":{}}`))
 			require.NoError(t, err)
 			t.Cleanup(func() {
 				require.NoError(t, response.Body.Close())

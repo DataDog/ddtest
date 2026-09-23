@@ -13,10 +13,6 @@ import (
 	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
-const (
-	testManagementTestsRequestType string = "ci_app_libraries_tests_request"
-)
-
 type (
 	testManagementTestsRequest struct {
 		Data testManagementTestsRequestHeader `json:"data"`
@@ -93,7 +89,7 @@ func (c *transport) GetTestManagementTests() (*TestManagementTestsResponseDataMo
 	body := testManagementTestsRequest{
 		Data: testManagementTestsRequestHeader{
 			ID:   c.id,
-			Type: testManagementTestsRequestType,
+			Type: constants.LibrariesTestsRequestType,
 			Attributes: testManagementTestsRequestData{
 				RepositoryURL: c.repositoryURL,
 				CommitSha:     commitSha,

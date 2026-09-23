@@ -19,7 +19,7 @@ func TestTransportGetTestManagementTestsRequiresRepository(t *testing.T) {
 func TestTransportGetTestManagementTestsRequestAndResponse(t *testing.T) {
 	var captured testManagementTestsRequest
 	expectedResponse := testManagementTestsResponse{}
-	expectedResponse.Data.Type = testManagementTestsRequestType
+	expectedResponse.Data.Type = constants.LibrariesTestsRequestType
 	expectedResponse.Data.Attributes.Modules = map[string]TestManagementTestsResponseDataSuites{
 		"module-a": {
 			Suites: map[string]TestManagementTestsResponseDataTests{
@@ -73,8 +73,8 @@ func TestTransportGetTestManagementTestsRequestAndResponse(t *testing.T) {
 	if captured.Data.ID != client.id {
 		t.Fatalf("request id = %q, want %q", captured.Data.ID, client.id)
 	}
-	if captured.Data.Type != testManagementTestsRequestType {
-		t.Fatalf("request type = %q, want %q", captured.Data.Type, testManagementTestsRequestType)
+	if captured.Data.Type != constants.LibrariesTestsRequestType {
+		t.Fatalf("request type = %q, want %q", captured.Data.Type, constants.LibrariesTestsRequestType)
 	}
 	attributes := captured.Data.Attributes
 	if attributes.RepositoryURL != client.repositoryURL || attributes.Branch != client.branchName {

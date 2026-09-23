@@ -100,7 +100,7 @@ func TestServerCapturesRawRequests(t *testing.T) {
 
 	request, err := http.NewRequest(http.MethodPost, server.URL()+"/observed", bytes.NewBufferString("raw body"))
 	require.NoError(t, err)
-	request.Header.Set("Content-Type", "application/octet-stream")
+	request.Header.Set("Content-Type", constants.ContentTypeOctetStream)
 	response, err := testHTTPClient().Do(request)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -112,7 +112,7 @@ func TestServerCapturesRawRequests(t *testing.T) {
 	require.Len(t, requests, 1)
 	require.Equal(t, http.MethodPost, requests[0].Method)
 	require.Equal(t, "/observed", requests[0].Path)
-	require.Equal(t, "application/octet-stream", requests[0].Header.Get("Content-Type"))
+	require.Equal(t, constants.ContentTypeOctetStream, requests[0].Header.Get("Content-Type"))
 	require.Equal(t, []byte("raw body"), requests[0].Body)
 
 	storedBytes, err := os.ReadFile(filepath.Join(sessionDirectory, intakeDirectoryName, "001-request.json"))
@@ -137,7 +137,7 @@ func TestServerStoresMessagePackAsJSON(t *testing.T) {
 	payload := msgp.AppendMapHeader(nil, 1)
 	payload = msgp.AppendString(payload, "events")
 	payload = msgp.AppendArrayHeader(payload, 0)
-	response, err := testHTTPClient().Post(server.URL()+testCyclePath, "application/msgpack", bytes.NewReader(payload))
+	response, err := testHTTPClient().Post(server.URL()+constants.TestCycleURLPath, "application/msgpack", bytes.NewReader(payload))
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 	require.Equal(t, http.StatusOK, response.StatusCode)
@@ -171,7 +171,7 @@ func TestServerStoresAndRecognizesGzippedMessagePack(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 
-	request, err := http.NewRequest(http.MethodPost, server.URL()+testCyclePath, bytes.NewReader(compressed.Bytes()))
+	request, err := http.NewRequest(http.MethodPost, server.URL()+constants.TestCycleURLPath, bytes.NewReader(compressed.Bytes()))
 	require.NoError(t, err)
 	request.Header.Set("Content-Type", "application/msgpack")
 	request.Header.Set("Content-Encoding", "gzip")
@@ -200,7 +200,7 @@ func TestDecodeMultipartStoresEveryPartAsJSON(t *testing.T) {
 
 	jsonHeader := textproto.MIMEHeader{}
 	jsonHeader.Set("Content-Disposition", `form-data; name="metadata"`)
-	jsonHeader.Set("Content-Type", "application/json")
+	jsonHeader.Set("Content-Type", constants.ContentTypeJSON)
 	jsonPart, err := writer.CreatePart(jsonHeader)
 	require.NoError(t, err)
 	_, err = jsonPart.Write([]byte(`{"framework":"jest"}`))
@@ -244,7 +244,7 @@ func TestRequestDecodingRejectsMalformedPayloads(t *testing.T) {
 		contentType string
 		errorText   string
 	}{
-		{name: "JSON", body: []byte("{"), contentType: "application/json", errorText: "invalid JSON"},
+		{name: "JSON", body: []byte("{"), contentType: constants.ContentTypeJSON, errorText: "invalid JSON"},
 		{name: "MessagePack", body: []byte{0xc1}, contentType: "application/msgpack", errorText: "msgp"},
 		{name: "trailing MessagePack", body: append(msgp.AppendInt(nil, 1), 0), contentType: "application/x-msgpack", errorText: "trailing"},
 		{name: "multipart", body: []byte("--unfinished"), contentType: "multipart/form-data; boundary=boundary", errorText: "EOF"},
@@ -276,8 +276,8 @@ func TestUncompressRequestBodyHandlesIdentityAndErrors(t *testing.T) {
 func TestRequestFileLabel(t *testing.T) {
 	tests := map[string]string{
 		constants.SettingsURLPath:            "settings",
-		testCyclePath:                        "citestcycle",
-		testCoveragePath:                     "citestcov",
+		constants.TestCycleURLPath:           "citestcycle",
+		constants.TestCoverageURLPath:        "citestcov",
 		constants.KnownTestsURLPath:          "known-tests",
 		constants.SkippableTestsURLPath:      "skippable-tests",
 		constants.TestManagementTestsURLPath: "test-management",
@@ -317,7 +317,7 @@ func TestGzippedSettingsRequest(t *testing.T) {
 
 	server := &Server{directory: t.TempDir()}
 	request := httptest.NewRequest(http.MethodPost, constants.SettingsURLPath, bytes.NewReader(compressed.Bytes()))
-	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Content-Type", constants.ContentTypeJSON)
 	request.Header.Set("Content-Encoding", "gzip")
 	request.Header.Set("Content-Length", strconv.Itoa(compressed.Len()))
 	response := httptest.NewRecorder()
@@ -352,10 +352,10 @@ func TestFailedAndBinaryRequestsRemainOnDisk(t *testing.T) {
 		status                      int
 		decodeError                 string
 	}{
-		{"json", "application/json", "", []byte("{"), 400, "invalid JSON"},
-		{"gzip", "application/json", "gzip", []byte("broken gzip"), 400, "gzip"},
+		{"json", constants.ContentTypeJSON, "", []byte("{"), 400, "invalid JSON"},
+		{"gzip", constants.ContentTypeJSON, "gzip", []byte("broken gzip"), 400, "gzip"},
 		{"msgpack", "application/msgpack", "", []byte{0xc1}, 400, "MessagePack"},
-		{"binary", "application/octet-stream", "", []byte{0, 255, 128}, 200, ""},
+		{"binary", constants.ContentTypeOctetStream, "", []byte{0, 255, 128}, 200, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server, err := Start(t.TempDir())
@@ -398,7 +398,7 @@ func TestFailedAndBinaryRequestsRemainOnDisk(t *testing.T) {
 func TestStorageFailureReturnsInternalError(t *testing.T) {
 	server := &Server{directory: filepath.Join(t.TempDir(), "missing")}
 	request := httptest.NewRequest(http.MethodPost, "/observed", strings.NewReader("{"))
-	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Content-Type", constants.ContentTypeJSON)
 	response := httptest.NewRecorder()
 	server.recordRequests(newHandler()).ServeHTTP(response, request)
 	require.Equal(t, http.StatusInternalServerError, response.Code)

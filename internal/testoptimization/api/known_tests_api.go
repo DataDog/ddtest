@@ -14,10 +14,6 @@ import (
 	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
-const (
-	knownTestsRequestType string = "ci_app_libraries_tests_request"
-)
-
 type (
 	knownTestsRequest struct {
 		Data knownTestsRequestHeader `json:"data"`
@@ -87,7 +83,7 @@ func (c *transport) GetKnownTests() (*KnownTestsResponseData, error) {
 		body := knownTestsRequest{
 			Data: knownTestsRequestHeader{
 				ID:   c.id,
-				Type: knownTestsRequestType,
+				Type: constants.LibrariesTestsRequestType,
 				Attributes: KnownTestsRequestData{
 					Service:        c.serviceName,
 					Env:            c.environment,

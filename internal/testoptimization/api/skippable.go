@@ -15,10 +15,6 @@ import (
 	"github.com/DataDog/ddtest/internal/telemetry"
 )
 
-const (
-	skippableRequestType string = "test_params"
-)
-
 type (
 	skippableRequest struct {
 		Data skippableRequestHeader `json:"data"`
@@ -107,7 +103,7 @@ func (c *transport) GetSkippableTests() (correlationID string, skippables Skippa
 
 	body := skippableRequest{
 		Data: skippableRequestHeader{
-			Type: skippableRequestType,
+			Type: constants.SkippableTestsRequestType,
 			Attributes: skippableRequestData{
 				TestLevel:      c.getTestSkippingLevel(),
 				Configurations: c.testConfigurations,
