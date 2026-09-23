@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,7 @@ func TestSettingsEnablesTestOptimizationCoverage(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, response.Body.Close())
 	})
-	require.Equal(t, http.StatusAccepted, response.StatusCode)
+	require.Equal(t, http.StatusOK, response.StatusCode)
 	require.Equal(t, "application/json", response.Header.Get("Content-Type"))
 
 	var settings settingsResponse
@@ -78,4 +79,19 @@ func TestAdvancedFeatureEndpointsReturnSafeEmptyDatasets(t *testing.T) {
 			require.Contains(t, body.String(), test.contains)
 		})
 	}
+}
+
+func TestGitNegotiation(t *testing.T) {
+	handler := newHandler()
+	search := httptest.NewRecorder()
+	handler.ServeHTTP(search, httptest.NewRequest(http.MethodPost, "/api/v2/git/repository/search_commits", bytes.NewBufferString(`{"data":[]}`)))
+	require.Equal(t, http.StatusOK, search.Code)
+	require.JSONEq(t, `{"data":[]}`, search.Body.String())
+	pack := httptest.NewRecorder()
+	handler.ServeHTTP(pack, httptest.NewRequest(http.MethodPost, "/api/v2/git/repository/packfile", bytes.NewBufferString("pack")))
+	require.Equal(t, http.StatusNoContent, pack.Code)
+	unknown := httptest.NewRecorder()
+	handler.ServeHTTP(unknown, httptest.NewRequest(http.MethodPost, "/api/v2/git/repository/unknown", nil))
+	require.Equal(t, http.StatusNotFound, unknown.Code)
+	require.Contains(t, unknown.Body.String(), "unsupported")
 }

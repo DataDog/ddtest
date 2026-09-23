@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tinylib/msgp/msgp"
 )
@@ -43,10 +44,14 @@ type RawRequest struct {
 }
 
 type storedRequest struct {
-	Method      string          `json:"method"`
-	Path        string          `json:"path"`
-	ContentType string          `json:"content_type,omitempty"`
-	Body        json.RawMessage `json:"body"`
+	Timestamp       time.Time       `json:"timestamp"`
+	ContentEncoding string          `json:"content_encoding,omitempty"`
+	DecodeError     string          `json:"decode_error,omitempty"`
+	RawBody         []byte          `json:"raw_body,omitempty"`
+	Method          string          `json:"method"`
+	Path            string          `json:"path"`
+	ContentType     string          `json:"content_type,omitempty"`
+	Body            json.RawMessage `json:"body"`
 }
 
 type storedMultipartPart struct {
@@ -64,6 +69,10 @@ type Server struct {
 	closeOnce sync.Once
 	closeErr  error
 	directory string
+
+	handlersMu sync.Mutex
+	handlers   sync.WaitGroup
+	closing    bool
 
 	requestsMu sync.Mutex
 	requests   []RawRequest
@@ -129,29 +138,51 @@ func (s *Server) Requests() []RawRequest {
 
 func (s *Server) recordRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		body, err := io.ReadAll(request.Body)
-		if err != nil {
-			http.Error(w, "read request body", http.StatusBadRequest)
+		// Register under the same lock used to stop accepting work during Close.
+		s.handlersMu.Lock()
+		if s.closing {
+			s.handlersMu.Unlock()
+			http.Error(w, "intake is closing", http.StatusServiceUnavailable)
 			return
 		}
-		_ = request.Body.Close()
+		s.handlers.Add(1)
+		s.handlersMu.Unlock()
+		defer s.handlers.Done()
 
+		body, decodeErr := io.ReadAll(request.Body)
+		_ = request.Body.Close()
 		rawRequest := RawRequest{
-			Method: request.Method,
-			Path:   request.URL.Path,
-			Header: request.Header.Clone(),
-			Body:   slices.Clone(body),
+			Method: request.Method, Path: request.URL.Path,
+			Header: request.Header.Clone(), Body: slices.Clone(body),
 		}
-		body, persistErr := uncompressRequestBody(rawRequest)
+		if decodeErr == nil {
+			body, decodeErr = uncompressRequestBody(rawRequest)
+		}
+		var decodedBody json.RawMessage
+		if decodeErr == nil {
+			decodedBody, decodeErr = decodeRequestBody(body, rawRequest.Header.Get("Content-Type"))
+		}
+		stored := storedRequest{
+			Timestamp: time.Now().UTC(), Method: rawRequest.Method, Path: rawRequest.Path,
+			ContentType:     rawRequest.Header.Get("Content-Type"),
+			ContentEncoding: rawRequest.Header.Get("Content-Encoding"), Body: decodedBody,
+		}
+		if decodeErr != nil {
+			stored.DecodeError = decodeErr.Error()
+			stored.RawBody = rawRequest.Body
+		} else if !utf8.Valid(body) {
+			stored.RawBody = rawRequest.Body
+		}
 		s.requestsMu.Lock()
-		requestNumber := len(s.requests) + 1
-		if persistErr == nil {
-			persistErr = s.persistRequest(requestNumber, rawRequest, body)
-		}
+		persistErr := s.persistRequest(len(s.requests)+1, stored)
 		s.requests = append(s.requests, rawRequest)
 		s.requestsMu.Unlock()
 		if persistErr != nil {
 			http.Error(w, "save request", http.StatusInternalServerError)
+			return
+		}
+		if decodeErr != nil {
+			http.Error(w, "invalid request body: "+decodeErr.Error(), http.StatusBadRequest)
 			return
 		}
 
@@ -163,23 +194,13 @@ func (s *Server) recordRequests(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) persistRequest(number int, request RawRequest, body []byte) error {
-	decodedBody, err := decodeRequestBody(body, request.Header.Get("Content-Type"))
-	if err != nil {
-		return fmt.Errorf("decode request body: %w", err)
-	}
-	stored := storedRequest{
-		Method:      request.Method,
-		Path:        request.Path,
-		ContentType: request.Header.Get("Content-Type"),
-		Body:        decodedBody,
-	}
+func (s *Server) persistRequest(number int, stored storedRequest) error {
 	encoded, err := json.MarshalIndent(stored, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode request: %w", err)
 	}
 	encoded = append(encoded, '\n')
-	filename := fmt.Sprintf("%03d-%s.json", number, requestFileLabel(request.Path))
+	filename := fmt.Sprintf("%03d-%s.json", number, requestFileLabel(stored.Path))
 	if err := os.WriteFile(filepath.Join(s.directory, filename), encoded, 0644); err != nil {
 		return fmt.Errorf("write request: %w", err)
 	}
@@ -216,10 +237,19 @@ func decodeRequestBody(body []byte, contentType string) (json.RawMessage, error)
 		}
 		return slices.Clone(body), nil
 	case "application/msgpack", "application/x-msgpack":
-		return decodeMessagePack(body)
+		decoded, err := decodeMessagePack(body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid MessagePack: %w", err)
+		}
+		return decoded, nil
 	case "multipart/form-data":
 		return decodeMultipart(body, params["boundary"])
 	default:
+		if !utf8.Valid(body) {
+			return json.Marshal(struct {
+				Base64 []byte `json:"base64"`
+			}{Base64: body})
+		}
 		return json.Marshal(string(body))
 	}
 }
@@ -293,9 +323,17 @@ func (s *Server) Close() error {
 		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 
+		s.handlersMu.Lock()
+		s.closing = true
+		s.handlersMu.Unlock()
 		shutdownErr := s.server.Shutdown(ctx)
+		var closeErr error
+		if shutdownErr != nil {
+			closeErr = s.server.Close()
+		}
+		s.handlers.Wait()
 		serveErr := <-s.done
-		s.closeErr = errors.Join(shutdownErr, serveErr)
+		s.closeErr = errors.Join(shutdownErr, closeErr, serveErr)
 	})
 	return s.closeErr
 }

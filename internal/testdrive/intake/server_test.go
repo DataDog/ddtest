@@ -8,7 +8,10 @@ package intake
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -18,6 +21,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -317,7 +322,7 @@ func TestGzippedSettingsRequest(t *testing.T) {
 	response := httptest.NewRecorder()
 	server.recordRequests(newHandler()).ServeHTTP(response, request)
 
-	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	var settings settingsResponse
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &settings))
 	require.Equal(t, "compressed-settings", settings.Data.ID)
@@ -337,4 +342,109 @@ func TestGzippedSettingsRequest(t *testing.T) {
 	var stored storedRequest
 	require.NoError(t, json.Unmarshal(storedBytes, &stored))
 	require.JSONEq(t, string(payload), string(stored.Body))
+}
+
+func TestFailedAndBinaryRequestsRemainOnDisk(t *testing.T) {
+	for _, tc := range []struct {
+		name, contentType, encoding string
+		body                        []byte
+		status                      int
+		decodeError                 string
+	}{
+		{"json", "application/json", "", []byte("{"), 400, "invalid JSON"},
+		{"gzip", "application/json", "gzip", []byte("broken gzip"), 400, "gzip"},
+		{"msgpack", "application/msgpack", "", []byte{0xc1}, 400, "MessagePack"},
+		{"binary", "application/octet-stream", "", []byte{0, 255, 128}, 200, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, err := Start(t.TempDir())
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, server.Close()) })
+			request, err := http.NewRequest(http.MethodPost, server.URL()+"/observed", bytes.NewReader(tc.body))
+			require.NoError(t, err)
+			request.Header.Set("Content-Type", tc.contentType)
+			request.Header.Set("Content-Encoding", tc.encoding)
+			request.Header.Set("DD-API-KEY", "secret-api-key")
+			request.Header.Set("Authorization", "secret-authorization")
+			response, err := testHTTPClient().Do(request)
+			require.NoError(t, err)
+			require.NoError(t, response.Body.Close())
+			require.Equal(t, tc.status, response.StatusCode)
+			require.NoError(t, server.Close())
+			data, err := os.ReadFile(filepath.Join(server.directory, "001-request.json"))
+			require.NoError(t, err)
+			var stored struct {
+				Path            string `json:"path"`
+				RawBody         []byte `json:"raw_body"`
+				DecodeError     string `json:"decode_error"`
+				ContentEncoding string `json:"content_encoding"`
+			}
+			require.NoError(t, json.Unmarshal(data, &stored))
+			require.Equal(t, "/observed", stored.Path)
+			require.Equal(t, tc.body, stored.RawBody)
+			require.Equal(t, tc.encoding, stored.ContentEncoding)
+			if tc.decodeError != "" {
+				require.Contains(t, stored.DecodeError, tc.decodeError)
+			} else {
+				require.Empty(t, stored.DecodeError)
+			}
+			require.NotContains(t, string(data), "secret-api-key")
+			require.NotContains(t, string(data), "secret-authorization")
+		})
+	}
+}
+
+func TestStorageFailureReturnsInternalError(t *testing.T) {
+	server := &Server{directory: filepath.Join(t.TempDir(), "missing")}
+	request := httptest.NewRequest(http.MethodPost, "/observed", strings.NewReader("{"))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.recordRequests(newHandler()).ServeHTTP(response, request)
+	require.Equal(t, http.StatusInternalServerError, response.Code)
+}
+
+type signaledBody struct {
+	io.ReadCloser
+	once    sync.Once
+	reading chan struct{}
+}
+
+func (b *signaledBody) Read(p []byte) (int, error) {
+	b.once.Do(func() { close(b.reading) })
+	return b.ReadCloser.Read(p)
+}
+
+func TestCloseFinishesPartialRequest(t *testing.T) {
+	server, err := Start(t.TempDir())
+	require.NoError(t, err)
+	reading := make(chan struct{})
+	handler := server.server.Handler
+	server.server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = &signaledBody{ReadCloser: r.Body, reading: reading}
+		handler.ServeHTTP(w, r)
+	})
+	conn, err := net.Dial("tcp", strings.TrimPrefix(server.URL(), "http://"))
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	_, err = fmt.Fprint(conn, "POST /observed HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{")
+	require.NoError(t, err)
+	select {
+	case <-reading:
+	case <-time.After(time.Second):
+		t.Fatal("request did not start")
+	}
+	require.ErrorIs(t, server.Close(), context.DeadlineExceeded)
+	before, err := os.ReadDir(server.directory)
+	require.NoError(t, err)
+	require.NoError(t, conn.SetDeadline(time.Now().Add(time.Second)))
+	_, _ = fmt.Fprint(conn, "}")
+	response, err := io.ReadAll(conn)
+	require.NotContains(t, string(response), "200 OK")
+	if netErr, ok := err.(net.Error); ok {
+		require.False(t, netErr.Timeout(), "connection remained open")
+	}
+	require.ErrorIs(t, server.Close(), context.DeadlineExceeded)
+	after, err := os.ReadDir(server.directory)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
 }

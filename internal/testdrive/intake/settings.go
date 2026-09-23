@@ -8,6 +8,7 @@ package intake
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 const (
@@ -16,7 +17,7 @@ const (
 	skippableTestsPath     = "/api/v2/ci/tests/skippable"
 	testManagementPath     = "/api/v2/test/libraries/test-management/tests"
 	settingsResponseID     = "test-settings"
-	settingsResponseType   = "ci_app_test_service_libraries_settings"
+	settingsResponseType   = "ci_app_tracers_test_service_settings"
 	testdriveCorrelationID = "ddtest-testdrive"
 )
 
@@ -65,7 +66,20 @@ func newHandler() http.Handler {
 	mux.HandleFunc("POST "+knownTestsPath, handleKnownTests)
 	mux.HandleFunc("POST "+skippableTestsPath, handleSkippableTests)
 	mux.HandleFunc("POST "+testManagementPath, handleTestManagement)
+	mux.HandleFunc("POST /api/v2/git/repository/search_commits", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]any{"data": []any{}})
+	})
+	mux.HandleFunc("POST /api/v2/git/repository/packfile", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, request *http.Request) {
+		// Unknown control APIs must not look like successfully collected events.
+		for _, prefix := range []string{"/api/v2/git/", "/api/v2/libraries/", "/api/v2/ci/libraries/", "/api/v2/ci/tests/", "/api/v2/test/libraries/"} {
+			if strings.HasPrefix(request.URL.Path, prefix) {
+				http.Error(w, "unsupported local intake endpoint", http.StatusNotFound)
+				return
+			}
+		}
 		if request.Method == http.MethodPost {
 			w.WriteHeader(http.StatusOK)
 			return
@@ -111,7 +125,7 @@ func handleSettings(w http.ResponseWriter, request *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(response)
 }
 
