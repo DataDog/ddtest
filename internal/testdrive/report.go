@@ -168,6 +168,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	if findings.EmptyCoverageEntryCount > 0 {
 		model.Cards = append(model.Cards, reportCard{
 			Title:   "Tracer error: empty coverage entries",
+			Count:   findings.EmptyCoverageEntryCount,
 			Context: fmt.Sprintf("%d coverage entries had an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.", findings.EmptyCoverageEntryCount),
 		})
 	}
