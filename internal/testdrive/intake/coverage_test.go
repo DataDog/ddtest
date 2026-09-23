@@ -27,7 +27,7 @@ func TestCoveredTestCountAssociatesSuiteCoverageWithEveryTestInTheSuite(t *testi
 	events = appendEvent(events, "test", sessionID, 20, 100)
 	events = appendEvent(events, "test", sessionID, 20, 200)
 
-	server := serverWithCoverage(t, events, appendCoverage(nil, sessionID, 20, 0))
+	server := serverWithCoverage(t, events, appendCoverage(nil, sessionID, 20, 0, "sum.js"))
 
 	count, err := server.CoveredTestCount()
 	require.NoError(t, err)
@@ -43,7 +43,7 @@ func TestCoveredTestCountAssociatesTestCoverageBySpan(t *testing.T) {
 	events = appendEvent(events, "test", sessionID, 20, 100)
 	events = appendEvent(events, "test", sessionID, 20, 200)
 
-	server := serverWithCoverage(t, events, appendCoverage(nil, sessionID, 20, 200))
+	server := serverWithCoverage(t, events, appendCoverage(nil, sessionID, 20, 200, "sum.js"))
 
 	count, err := server.CoveredTestCount()
 	require.NoError(t, err)
@@ -57,9 +57,10 @@ func TestCoverageReferencesCountFiles(t *testing.T) {
 	events = appendEvent(events, "test", 10, 20, 100)
 	server := serverWithCoverage(t, events, appendCoverage(nil, 10, 20, 100, "one.js", "two.js"))
 
-	coverages, err := server.coverageReferences()
+	coverages, emptyEntries, err := server.coverageReferences()
 	require.NoError(t, err)
 	require.Len(t, coverages, 1)
+	require.Zero(t, emptyEntries)
 	require.Equal(t, 2, coverages[0].fileCount)
 	require.Equal(t, []string{"one.js", "two.js"}, coverages[0].files)
 }
@@ -95,15 +96,80 @@ func TestCoveredTestCountRejectsTrailingBytes(t *testing.T) {
 	require.Zero(t, count)
 }
 
-func serverWithCoverage(t *testing.T, events, coverageEntry []byte) *Server {
+func TestCoveredTestCountTracksAndExcludesEmptyCoverage(t *testing.T) {
+	for _, scope := range []struct {
+		name   string
+		spanID uint64
+	}{
+		{name: "test", spanID: 30},
+		{name: "suite", spanID: 0},
+	} {
+		t.Run(scope.name, func(t *testing.T) {
+			events := msgp.AppendMapHeader(nil, 1)
+			events = msgp.AppendString(events, "events")
+			events = msgp.AppendArrayHeader(events, 2)
+			events = appendEvent(events, "test", 10, 20, 30)
+			events = appendEvent(events, "test", 10, 20, 40)
+			empty := appendCoverage(nil, 10, 20, scope.spanID)
+			valid := appendCoverage(nil, 10, 20, scope.spanID, "sum.js")
+			for _, scenario := range []struct {
+				name         string
+				entries      [][]byte
+				emptyEntries int
+			}{
+				{name: "empty only", entries: [][]byte{empty}, emptyEntries: 1},
+				{name: "valid then empty", entries: [][]byte{valid, empty}, emptyEntries: 1},
+				{name: "empty then valid", entries: [][]byte{empty, valid}, emptyEntries: 1},
+				{name: "multiple empty", entries: [][]byte{empty, valid, empty}, emptyEntries: 2},
+			} {
+				t.Run(scenario.name, func(t *testing.T) {
+					server := serverWithCoverage(t, events, scenario.entries...)
+					count, err := server.TestEventCount()
+					require.NoError(t, err)
+					require.Equal(t, 2, count)
+
+					covered, err := server.CoveredTestCount()
+					require.NoError(t, err)
+					require.Zero(t, covered)
+
+					emptyCount, err := server.EmptyCoverageEntryCount()
+					require.NoError(t, err)
+					require.Equal(t, scenario.emptyEntries, emptyCount)
+				})
+			}
+		})
+	}
+}
+
+func TestCoverageTrackingKeepsValidPayloads(t *testing.T) {
+	events := msgp.AppendMapHeader(nil, 1)
+	events = msgp.AppendString(events, "events")
+	events = msgp.AppendArrayHeader(events, 2)
+	events = appendEvent(events, "test", 10, 20, 30)
+	events = appendEvent(events, "test", 10, 20, 40)
+	server := serverWithCoverage(t, events, appendCoverage(nil, 10, 20, 30))
+	valid := serverWithCoverage(t, events, appendCoverage(nil, 10, 20, 40, "sum.js"))
+	server.requests = append(server.requests, server.requests[1], valid.requests[1])
+
+	covered, err := server.CoveredTestCount()
+	require.NoError(t, err)
+	require.Equal(t, 1, covered)
+	emptyEntries, err := server.EmptyCoverageEntryCount()
+	require.NoError(t, err)
+	require.Equal(t, 2, emptyEntries)
+}
+
+func serverWithCoverage(t *testing.T, events []byte, coverageEntries ...[]byte) *Server {
 	t.Helper()
 
 	coverage := msgp.AppendMapHeader(nil, 2)
 	coverage = msgp.AppendString(coverage, "version")
 	coverage = msgp.AppendInt(coverage, 2)
 	coverage = msgp.AppendString(coverage, "coverages")
-	coverage = msgp.AppendArrayHeader(coverage, 1)
-	coverage = append(coverage, coverageEntry...)
+	coverage = msgp.AppendArrayHeader(coverage, uint32(len(coverageEntries)))
+	for _, entry := range coverageEntries {
+		coverage = append(coverage, entry...)
+	}
 
 	return &Server{requests: []RawRequest{
 		{Method: http.MethodPost, Path: constants.TestCycleURLPath, Body: events},

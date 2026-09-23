@@ -25,13 +25,15 @@ type coverageReference struct {
 }
 
 // CoveredTestCount returns the number of observed tests with matching coverage.
+// Payloads containing empty coverage entries are excluded; EmptyCoverageEntryCount
+// reports these tracer errors separately.
 func (s *Server) CoveredTestCount() (int, error) {
 	tests, err := s.testReferences()
 	if err != nil {
 		return 0, err
 	}
 
-	coverages, err := s.coverageReferences()
+	coverages, _, err := s.coverageReferences()
 	if err != nil {
 		return 0, err
 	}
@@ -56,50 +58,61 @@ func (s *Server) CoveredTestCount() (int, error) {
 	return count, nil
 }
 
-func (s *Server) coverageReferences() ([]coverageReference, error) {
+// EmptyCoverageEntryCount returns the number of entries with an empty files list.
+// These indicate a tracer error. Their entire MessagePack payload is excluded
+// from coverage counts, while the captured request remains available for diagnosis.
+func (s *Server) EmptyCoverageEntryCount() (int, error) {
+	_, emptyEntries, err := s.coverageReferences()
+	return emptyEntries, err
+}
+
+func (s *Server) coverageReferences() ([]coverageReference, int, error) {
 	var coverages []coverageReference
+	emptyEntries := 0
 	for _, request := range s.Requests() {
 		if request.Method != http.MethodPost || request.Path != constants.TestCoverageURLPath {
 			continue
 		}
 
-		requestCoverages, err := readMultipartCoverage(request)
+		requestCoverages, requestEmptyEntries, err := readMultipartCoverage(request)
 		if err != nil {
-			return nil, fmt.Errorf("recognize coverage in %s: %w", constants.TestCoverageURLPath, err)
+			return nil, 0, fmt.Errorf("recognize coverage in %s: %w", constants.TestCoverageURLPath, err)
 		}
 		coverages = append(coverages, requestCoverages...)
+		emptyEntries += requestEmptyEntries
 	}
-	return coverages, nil
+	return coverages, emptyEntries, nil
 }
 
-func readMultipartCoverage(request RawRequest) ([]coverageReference, error) {
+func readMultipartCoverage(request RawRequest) ([]coverageReference, int, error) {
 	mediaType, params, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if mediaType != "multipart/form-data" {
-		return nil, fmt.Errorf("unexpected content type %q", mediaType)
+		return nil, 0, fmt.Errorf("unexpected content type %q", mediaType)
 	}
 
 	body, err := uncompressRequestBody(request)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
 	var coverages []coverageReference
+	emptyEntries := 0
 	for {
 		part, partErr := reader.NextPart()
 		if partErr == io.EOF {
-			return coverages, nil
+			return coverages, emptyEntries, nil
 		}
 		if partErr != nil {
-			return nil, partErr
+			return nil, 0, partErr
 		}
 
 		partBody, readErr := io.ReadAll(part)
 		_ = part.Close()
 		if readErr != nil {
-			return nil, readErr
+			return nil, 0, readErr
 		}
 		partMediaType, _, parseErr := mime.ParseMediaType(part.Header.Get("Content-Type"))
 		if parseErr != nil || (partMediaType != "application/msgpack" && partMediaType != "application/x-msgpack") {
@@ -108,9 +121,19 @@ func readMultipartCoverage(request RawRequest) ([]coverageReference, error) {
 
 		partCoverages, decodeErr := readCoverageEntries(partBody)
 		if decodeErr != nil {
-			return nil, decodeErr
+			return nil, 0, decodeErr
 		}
-		coverages = append(coverages, partCoverages...)
+		partEmptyEntries := 0
+		for _, coverage := range partCoverages {
+			if coverage.fileCount == 0 {
+				partEmptyEntries++
+			}
+		}
+		// One empty entry invalidates this payload, but remains a tracked tracer error.
+		emptyEntries += partEmptyEntries
+		if partEmptyEntries == 0 {
+			coverages = append(coverages, partCoverages...)
+		}
 	}
 }
 
