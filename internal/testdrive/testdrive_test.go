@@ -17,17 +17,19 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/tracer"
 )
 
 type fakeTracer struct {
 	preloadPath      string
+	project          bool
 	sessionDirectory string
 	err              error
 }
 
-func (f *fakeTracer) Install(_ context.Context, sessionDirectory string) (string, error) {
+func (f *fakeTracer) Install(_ context.Context, sessionDirectory string) (tracer.Installation, error) {
 	f.sessionDirectory = sessionDirectory
-	return f.preloadPath, f.err
+	return tracer.Installation{Path: f.preloadPath, Project: f.project}, f.err
 }
 
 type fakeTestdriveExecutor struct {
@@ -466,5 +468,32 @@ func TestPreparePreviewsSelectedTracer(t *testing.T) {
 	}
 	if _, err := Prepare("git:"); err == nil {
 		t.Fatal("accepted empty Git ref")
+	}
+}
+
+func TestRunReportsProjectTracer(t *testing.T) {
+	root := t.TempDir()
+	writeJestManifest(t, root)
+	t.Chdir(root)
+	drive, err := Prepare("git:ignored-for-existing-tracer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	installer := &fakeTracer{preloadPath: "/project/node_modules/dd-trace/ci/init.js", project: true}
+	drive.tracer = installer
+	executor := &fakeTestdriveExecutor{}
+	drive.executor = executor
+	drive.startIntake = func(string) (localIntake, error) {
+		return &fakeIntake{url: "http://127.0.0.1:1234", findings: intake.Facts{TestEventCount: 1}}, nil
+	}
+	var output bytes.Buffer
+	if err := drive.Run(t.Context(), &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "Tracer: project tracer · reused") {
+		t.Fatal(output.String())
+	}
+	if !strings.Contains(executor.env["NODE_OPTIONS"], installer.preloadPath) {
+		t.Fatal(executor.env)
 	}
 }
