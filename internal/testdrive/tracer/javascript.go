@@ -14,33 +14,39 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 )
 
-const (
-	// JavaScriptVersion is the dd-trace version used by testdrive and the setup
-	// that onboard will recommend.
-	JavaScriptVersion       = "6.15.0"
-	resolveJavaScriptModule = "process.stdout.write(require.resolve(process.argv[1]))"
-)
+const resolveJavaScriptModule = "process.stdout.write(require.resolve(process.argv[1]))"
 
 type commandExecutor interface {
 	Output(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, []byte, error)
 	CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error)
 }
 
-// JavaScript installs dd-trace for a JavaScript testdrive.
-type JavaScript struct {
+// JSTracer installs dd-trace for a JavaScript testdrive.
+type JSTracer struct {
+	version  string
 	executor commandExecutor
 }
 
-var _ Tracer = (*JavaScript)(nil)
+var _ Tracer = (*JSTracer)(nil)
 
-// NewJavaScript creates a JavaScript tracer installer.
-func NewJavaScript() *JavaScript {
-	return &JavaScript{executor: &ext.DefaultCommandExecutor{}}
+// NewJSTracer creates a JavaScript tracer installer.
+func NewJSTracer(version string) *JSTracer {
+	return &JSTracer{version: version, executor: &ext.DefaultCommandExecutor{}}
 }
 
-// Install installs the pinned dd-trace package and returns its absolute ci/init path.
-func (j *JavaScript) Install(ctx context.Context, sessionDirectory string) (string, error) {
-	packageName := "dd-trace@" + JavaScriptVersion
+// Install installs dd-trace (latest, a release, or git:<ref>) and returns its absolute ci/init path.
+func (j *JSTracer) Install(ctx context.Context, sessionDirectory string) (string, error) {
+	version := j.version
+	if version == "" {
+		version = "latest"
+	}
+	if ref, ok := strings.CutPrefix(version, "git:"); ok {
+		if ref == "" {
+			return "", fmt.Errorf("tracer git ref must not be empty")
+		}
+		version = "git+https://github.com/DataDog/dd-trace-js.git#" + ref
+	}
+	packageName := "dd-trace@" + version
 	installArgs := []string{
 		"install",
 		"--prefix", sessionDirectory,
@@ -51,7 +57,7 @@ func (j *JavaScript) Install(ctx context.Context, sessionDirectory string) (stri
 		"--no-fund",
 		packageName,
 	}
-	cleanEnvironment := map[string]string{"NODE_OPTIONS": ""}
+	cleanEnvironment := map[string]string{"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}
 	if output, err := j.executor.CombinedOutput(ctx, "npm", installArgs, cleanEnvironment); err != nil {
 		return "", commandError("install "+packageName, output, err)
 	}

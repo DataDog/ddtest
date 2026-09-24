@@ -46,7 +46,7 @@ func (e *fakeCommandExecutor) Output(ctx context.Context, name string, args []st
 	return response.output, response.stderr, err
 }
 
-func TestJavaScriptInstall(t *testing.T) {
+func TestJSTracerInstall(t *testing.T) {
 	sessionDirectory := t.TempDir()
 	resolvedPath := filepath.Join(sessionDirectory, "node_modules", "dd-trace", "ci", "init.js")
 	executor := &fakeCommandExecutor{
@@ -55,7 +55,7 @@ func TestJavaScriptInstall(t *testing.T) {
 			{output: []byte(resolvedPath), stderr: []byte("MODULE 123: looking for dd-trace\n")},
 		},
 	}
-	javascript := &JavaScript{executor: executor}
+	javascript := &JSTracer{executor: executor}
 
 	ciInitPath, err := javascript.Install(context.Background(), sessionDirectory)
 	require.NoError(t, err)
@@ -72,7 +72,7 @@ func TestJavaScriptInstall(t *testing.T) {
 				"--package-lock=false",
 				"--no-audit",
 				"--no-fund",
-				"dd-trace@" + JavaScriptVersion,
+				"dd-trace@latest",
 			},
 		},
 		{
@@ -84,43 +84,43 @@ func TestJavaScriptInstall(t *testing.T) {
 			},
 		},
 	}, executor.commands)
-	require.Equal(t, []map[string]string{{"NODE_OPTIONS": ""}, {"NODE_OPTIONS": ""}}, executor.envs)
+	require.Equal(t, []map[string]string{{"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}, {"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}}, executor.envs)
 }
 
-func TestJavaScriptInstallReportsNPMError(t *testing.T) {
+func TestJSTracerInstallReportsNPMError(t *testing.T) {
 	executor := &fakeCommandExecutor{
 		responses: []commandResponse{{
 			output: []byte("registry unavailable"),
 			err:    errors.New("exit status 1"),
 		}},
 	}
-	javascript := &JavaScript{executor: executor}
+	javascript := &JSTracer{executor: executor}
 
 	_, err := javascript.Install(context.Background(), t.TempDir())
-	require.ErrorContains(t, err, "install dd-trace@"+JavaScriptVersion)
+	require.ErrorContains(t, err, "install dd-trace@latest")
 	require.ErrorContains(t, err, "registry unavailable")
 }
 
-func TestJavaScriptInstallReportsResolveErrorWithoutOutput(t *testing.T) {
+func TestJSTracerInstallReportsResolveErrorWithoutOutput(t *testing.T) {
 	executor := &fakeCommandExecutor{
 		responses: []commandResponse{
 			{},
 			{err: errors.New("exit status 1")},
 		},
 	}
-	javascript := &JavaScript{executor: executor}
+	javascript := &JSTracer{executor: executor}
 
 	_, err := javascript.Install(context.Background(), t.TempDir())
 	require.ErrorContains(t, err, "resolve dd-trace/ci/init: exit status 1")
 }
 
-func TestJavaScriptInstallReportsResolveStderr(t *testing.T) {
+func TestJSTracerInstallReportsResolveStderr(t *testing.T) {
 	exitErr := errors.New("exit status 1")
 	executor := &fakeCommandExecutor{responses: []commandResponse{
 		{},
 		{stderr: []byte("Cannot find module dd-trace/ci/init"), err: exitErr},
 	}}
-	javascript := &JavaScript{executor: executor}
+	javascript := &JSTracer{executor: executor}
 
 	path, err := javascript.Install(context.Background(), t.TempDir())
 	require.Empty(t, path)
@@ -128,22 +128,22 @@ func TestJavaScriptInstallReportsResolveStderr(t *testing.T) {
 	require.ErrorIs(t, err, exitErr)
 }
 
-func TestJavaScriptInstallRejectsRelativePreloadPath(t *testing.T) {
+func TestJSTracerInstallRejectsRelativePreloadPath(t *testing.T) {
 	executor := &fakeCommandExecutor{
 		responses: []commandResponse{
 			{},
 			{output: []byte("node_modules/dd-trace/ci/init.js\n")},
 		},
 	}
-	javascript := &JavaScript{executor: executor}
+	javascript := &JSTracer{executor: executor}
 
 	_, err := javascript.Install(context.Background(), t.TempDir())
 	require.ErrorContains(t, err, `node returned non-absolute path "node_modules/dd-trace/ci/init.js"`)
 }
 
-func TestJavaScriptInstallEndToEnd(t *testing.T) {
+func TestJSTracerInstallEndToEnd(t *testing.T) {
 	if os.Getenv("DDTEST_RUN_NPM_INTEGRATION_TEST") == "" {
-		t.Skip("set DDTEST_RUN_NPM_INTEGRATION_TEST=1 to install the pinned tracer from npm")
+		t.Skip("set DDTEST_RUN_NPM_INTEGRATION_TEST=1 to install the selected tracer from npm")
 	}
 
 	t.Setenv("NODE_DEBUG", "module")
@@ -154,10 +154,37 @@ func TestJavaScriptInstallEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 
-	ciInitPath, err := NewJavaScript().Install(ctx, sessionDirectory)
+	ciInitPath, err := NewJSTracer("latest").Install(ctx, sessionDirectory)
 	require.NoError(t, err)
 	require.FileExists(t, ciInitPath)
 	resolvedSessionDirectory, err := filepath.EvalSymlinks(sessionDirectory)
 	require.NoError(t, err)
 	require.Equal(t, resolvedSessionDirectory, filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(ciInitPath)))))
+}
+
+func TestJSTracerVersions(t *testing.T) {
+	for _, tt := range []struct{ version, spec string }{
+		{"", "dd-trace@latest"},
+		{"latest", "dd-trace@latest"},
+		{"6.15.0", "dd-trace@6.15.0"},
+		{"6.16.0-pre.1", "dd-trace@6.16.0-pre.1"},
+		{"git:abc1234", "dd-trace@git+https://github.com/DataDog/dd-trace-js.git#abc1234"},
+		{"git:master", "dd-trace@git+https://github.com/DataDog/dd-trace-js.git#master"},
+	} {
+		t.Run(tt.version, func(t *testing.T) {
+			directory := t.TempDir()
+			executor := &fakeCommandExecutor{responses: []commandResponse{{}, {output: []byte(filepath.Join(directory, "init.js"))}}}
+			installer := NewJSTracer(tt.version)
+			installer.executor = executor
+			_, err := installer.Install(t.Context(), directory)
+			require.NoError(t, err)
+			require.Equal(t, tt.spec, executor.commands[0].args[len(executor.commands[0].args)-1])
+		})
+	}
+	executor := &fakeCommandExecutor{}
+	installer := NewJSTracer("git:")
+	installer.executor = executor
+	_, err := installer.Install(t.Context(), t.TempDir())
+	require.ErrorContains(t, err, "git ref must not be empty")
+	require.Empty(t, executor.commands)
 }
