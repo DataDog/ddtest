@@ -17,28 +17,27 @@ import (
 	"github.com/kballard/go-shellquote"
 )
 
-const PythonVersion = "4.15.1"
-
 // Python installs into a private target, keeping the active interpreter and
 // the customer's dependencies available when pytest runs.
 type Python struct {
 	Interpreter string
+	version     string
 	command     string
 	prefixArgs  []string
 	executor    commandExecutor
 }
 
-func NewPython(interpreter string) *Python {
-	return &Python{Interpreter: interpreter, command: interpreter, executor: &ext.DefaultCommandExecutor{}}
+func NewPython(interpreter, version string) *Python {
+	return &Python{version: version, Interpreter: interpreter, command: interpreter, executor: &ext.DefaultCommandExecutor{}}
 }
 
-func NewPythonForCommand(command string, args []string, fallback string) *Python {
+func NewPythonForCommand(command string, args []string, fallback, version string) *Python {
 	base := strings.ToLower(filepath.Base(strings.ReplaceAll(command, `\`, "/")))
 	if isPythonExecutable(base) {
-		return NewPython(command)
+		return NewPython(command, version)
 	}
 	if (base == "uv" || base == "poetry") && len(args) > 0 && args[0] == "run" {
-		python := NewPython(command)
+		python := NewPython(command, version)
 		python.prefixArgs = []string{"run", "python"}
 		python.Interpreter = shellquote.Join(command, "run", "python")
 		return python
@@ -48,9 +47,9 @@ func NewPythonForCommand(command string, args []string, fallback string) *Python
 		if strings.HasSuffix(base, ".exe") {
 			interpreter += ".exe"
 		}
-		return NewPython(interpreter)
+		return NewPython(interpreter, version)
 	}
-	return NewPython(fallback)
+	return NewPython(fallback, version)
 }
 
 func isPythonExecutable(base string) bool {
@@ -67,9 +66,18 @@ func isPythonExecutable(base string) bool {
 }
 
 func (p *Python) Install(ctx context.Context, directory string) (string, error) {
+	packageName := "ddtrace"
+	if ref, ok := strings.CutPrefix(p.version, "git:"); ok {
+		if ref == "" {
+			return "", fmt.Errorf("tracer git ref must not be empty")
+		}
+		packageName += " @ git+https://github.com/DataDog/dd-trace-py.git@" + ref
+	} else if p.version != "" && p.version != "latest" {
+		packageName += "==" + p.version
+	}
 	target := filepath.Join(directory, "python-packages")
-	args := append(append([]string{}, p.prefixArgs...), "-m", "pip", "install", "--disable-pip-version-check", "--target", target, "ddtrace=="+PythonVersion)
-	if output, err := p.executor.CombinedOutput(ctx, p.command, args, nil); err != nil {
+	args := append(append([]string{}, p.prefixArgs...), "-m", "pip", "install", "--disable-pip-version-check", "--target", target, packageName)
+	if output, err := p.executor.CombinedOutput(ctx, p.command, args, map[string]string{"DD_FAST_BUILD": "1"}); err != nil {
 		return "", commandError("install ddtrace", output, err)
 	}
 	bootstrap := filepath.Join(directory, "python")
@@ -77,7 +85,7 @@ func (p *Python) Install(ctx context.Context, directory string) (string, error) 
 		return "", fmt.Errorf("create Python tracer bootstrap: %w", err)
 	}
 	encodedTarget, _ := json.Marshal(target)
-	contents := "import sys\nsys.path.append(" + string(encodedTarget) + ")\n"
+	contents := "import sys\nsys.path.insert(0, " + string(encodedTarget) + ")\n"
 	if err := os.WriteFile(filepath.Join(bootstrap, "sitecustomize.py"), []byte(contents), 0600); err != nil {
 		return "", fmt.Errorf("write Python tracer bootstrap: %w", err)
 	}
