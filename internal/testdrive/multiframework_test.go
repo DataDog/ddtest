@@ -177,3 +177,16 @@ func TestPythonProjectTracerPreservesImportEnvironment(t *testing.T) {
 		t.Fatal(env)
 	}
 }
+
+func TestRubyProjectTracerPreservesBundleEnvironment(t *testing.T) {
+	drive := &Testdrive{language: "ruby"}
+	env := drive.environment("", "http://127.0.0.1:1234", "session")
+	for _, key := range []string{"BUNDLE_GEMFILE", "BUNDLE_PATH", "BUNDLE_APP_CONFIG", "BUNDLE_FROZEN", "BUNDLE_WITHOUT"} {
+		if _, changed := env[key]; changed {
+			t.Fatal("project Bundler setting overridden", key)
+		}
+	}
+	if !strings.Contains(env["RUBYOPT"], "-rdatadog/ci/auto_instrument") {
+		t.Fatal(env)
+	}
+}
