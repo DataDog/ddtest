@@ -63,9 +63,8 @@ The report also shows event and coverage counts, framework result, project-trace
 
 - `internal/onboard/`: repository detection and embedded Markdown instructions.
 - `internal/testdrive/`: session lifecycle, preview, execution, terminal output, and HTML report.
-- `internal/testdrive/tracer/`: project-tracer reuse and fallback installation behind the `Tracer` interface.
 - `internal/testdrive/intake/`: local intake, JSON capture, event and coverage decoding, and findings.
-- `internal/platform/` and `internal/framework/`: shared tracer probes, platform/framework detection, and test commands.
+- `internal/platform/` and `internal/framework/`: platform-owned tracer detection and installation, platform/framework detection, and test commands.
 
 ### Evidence and limits
 
