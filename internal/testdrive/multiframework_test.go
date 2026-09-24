@@ -109,15 +109,44 @@ func TestCypressWrapperUsesExplicitConfigWithoutEditingIt(t *testing.T) {
 	session := t.TempDir()
 	config := `module.exports={e2e:{supportFile:false}}`
 	requireWriteFile(t, filepath.Join(root, "custom.cjs"), config)
-	args, err := prepareCypress(root, session, "/tracer/ci/init.js", []string{"run", "--config-file=custom.cjs", "--browser", "chrome"})
+	args, err := prepareCypress(root, session, "/tracer/ci/init.js", "cypress", []string{"run", "--config-file=custom.cjs", "--browser", "chrome"})
 	require.NoError(t, err)
-	require.Equal(t, []string{"run", "--browser", "chrome", "--config-file", filepath.Join(session, "cypress.config.cjs")}, args)
+	require.Equal(t, []string{"run", "--browser", "chrome", "--config-file", filepath.Join(session, "cypress.config.ts")}, args)
 	contents, err := os.ReadFile(filepath.Join(root, "custom.cjs"))
 	require.NoError(t, err)
 	require.Equal(t, config, string(contents))
-	wrapper, err := os.ReadFile(filepath.Join(session, "cypress.config.cjs"))
+	wrapper, err := os.ReadFile(filepath.Join(session, "cypress.config.ts"))
 	require.NoError(t, err)
 	require.Contains(t, string(wrapper), filepath.Join(root, "custom.cjs"))
-	_, err = prepareCypress(root, session, "/tracer/ci/init.js", []string{"--config-file"})
+	_, err = prepareCypress(root, session, "/tracer/ci/init.js", "cypress", []string{"--config-file"})
 	require.ErrorContains(t, err, "requires a path")
+}
+
+func TestCypressWrapperReadsPackageScriptProjectAndConfig(t *testing.T) {
+	root := t.TempDir()
+	session := t.TempDir()
+	project := filepath.Join(root, "apps", "web")
+	require.NoError(t, os.MkdirAll(project, 0755))
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"cypress run --project apps/web -C custom.ts"}}`)
+	requireWriteFile(t, filepath.Join(project, "custom.ts"), `export default {}`)
+
+	args, err := prepareCypress(root, session, "/tracer/ci/init.js", "npm", []string{"test", "--"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"test", "--", "--config-file", filepath.Join(session, "cypress.config.ts")}, args)
+	wrapper, err := os.ReadFile(filepath.Join(session, "cypress.config.ts"))
+	require.NoError(t, err)
+	require.Contains(t, string(wrapper), filepath.Join(project, "custom.ts"))
+	require.Contains(t, string(wrapper), `"root":"`+project+`"`)
+}
+
+func TestCypressWrapperSupportsConfigFileFalseAndDefaultE2E(t *testing.T) {
+	root := t.TempDir()
+	session := t.TempDir()
+	args, err := prepareCypress(root, session, "/tracer/ci/init.js", "cypress", []string{"run", "-C", "false"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"run", "--config-file", filepath.Join(session, "cypress.config.ts")}, args)
+	wrapper, err := os.ReadFile(filepath.Join(session, "cypress.config.ts"))
+	require.NoError(t, err)
+	require.Contains(t, string(wrapper), `types.add(options.testingType)`)
+	require.Contains(t, string(wrapper), `const originalImport = {}`)
 }

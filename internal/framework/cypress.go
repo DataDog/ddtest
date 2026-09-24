@@ -233,7 +233,10 @@ func cypressRunArgs(command string, baseArgs, testFiles []string) []string {
 	prefix, cliArgs := splitCypressCommand(command, baseArgs)
 	args := append(prefix, "run")
 	args = append(args, removeCypressOption(cliArgs, "--spec", "-s")...)
-	return append(args, "--spec", strings.Join(testFiles, ","))
+	if len(testFiles) > 0 {
+		args = append(args, "--spec", strings.Join(testFiles, ","))
+	}
+	return args
 }
 
 func cypressTestFilesRelativeToProject(cliArgs, testFiles []string) ([]string, error) {
