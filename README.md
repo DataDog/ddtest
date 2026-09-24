@@ -46,10 +46,10 @@ The local intake supports agentless traffic; Agent/EVP routing is not supported.
 Receiving events does not verify test skipping, EFD, or Test Management behavior.
 Keep this directory out of source control. Each run has its own files and loopback port.
 
-Testdrive always uses the project's tracer when one is present, for every language.
-Only when no tracer is present does it install the latest release inside the session.
+Testdrive reuses the project's tracer when the platform's tracer check succeeds.
+If the check fails, it attempts to install the latest release inside the session.
 `--tracer-version` selects a release or Git revision for that fallback installation;
-it never replaces an existing project tracer:
+project dependency files remain unchanged:
 
 ```sh
 ddtest testdrive --tracer-version 6.15.0 --yes # JavaScript example
