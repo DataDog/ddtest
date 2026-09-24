@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -601,15 +602,37 @@ func TestRubyLockfileRelocatesOnlyLocalPathSources(t *testing.T) {
 	require.Equal(t, lock, string(original))
 }
 
-func TestRubyReportsUnsupportedNativeBuildPathBeforeInstalling(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "project space")
-	installer := NewRuby(settings.TestSkippingLevelTest)
-	installer.executor = &fakeCommandExecutor{responses: []commandResponse{{}}}
-	_, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: path, Version: "latest"})
-	require.ErrorContains(t, err, "checkout without spaces")
-	_, err = os.Stat(path)
-	require.True(t, os.IsNotExist(err))
-
+func TestRubyInstallInPathWithSpacesReportsBuildResult(t *testing.T) {
+	for _, fails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("build fails=%t", fails), func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "project space")
+			require.NoError(t, os.MkdirAll(root, 0755))
+			t.Chdir(root)
+			require.NoError(t, os.WriteFile("Gemfile", []byte("source 'https://rubygems.org'\n"), 0600))
+			directory := filepath.Join(root, "session space")
+			require.NoError(t, os.MkdirAll(directory, 0755))
+			build := commandResponse{}
+			if fails {
+				build = commandResponse{output: []byte("compiling crashtracker.c\nclang: error: missing header"), err: errors.New("exit status 5")}
+			}
+			executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("tracer unavailable")}, build}}
+			installer := &Ruby{executor: executor}
+			result, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: directory})
+			if fails {
+				require.ErrorContains(t, err, "compiling crashtracker.c\nclang: error: missing header")
+				require.ErrorIs(t, err, build.err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, filepath.Join(directory, "Gemfile"), result.Path)
+			}
+			require.Len(t, executor.commands, 2)
+			require.Equal(t, command{name: "bundle", args: []string{"install"}}, executor.commands[1])
+			require.Equal(t, filepath.Join(directory, "Gemfile"), executor.envs[1]["BUNDLE_GEMFILE"])
+			contents, err := os.ReadFile(filepath.Join(directory, "Gemfile"))
+			require.NoError(t, err)
+			require.Contains(t, string(contents), "eval_gemfile '"+filepath.Join(root, "Gemfile")+"'")
+		})
+	}
 }
 
 func TestRubyTracerVersions(t *testing.T) {

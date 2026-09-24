@@ -217,9 +217,6 @@ func (r *Ruby) InstallTracer(ctx context.Context, options TracerOptions) (Tracer
 	if err == nil && project != "" {
 		return TracerInstallation{Project: true}, nil
 	}
-	if strings.Contains(directory, " ") {
-		return TracerInstallation{}, fmt.Errorf("the Ruby tracer's native extensions cannot build in paths containing spaces; run testdrive from a checkout without spaces")
-	}
 	gemfile := filepath.Join(directory, "Gemfile")
 	path := strings.ReplaceAll(strings.ReplaceAll(filepath.Join(root, "Gemfile"), `\`, `\\`), "'", `\'`)
 	contents := "source 'https://rubygems.org'\neval_gemfile '" + path + "'\n" +
