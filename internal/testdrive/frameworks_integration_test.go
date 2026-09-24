@@ -43,7 +43,7 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 			name := "project space"
 			if fixture.name == "rspec" || fixture.name == "minitest" {
 				name = "project"
-			} // Ruby native extension builds do not support spaces.
+			} // Keep the recorded Ruby fixture path; build failures retain Bundler diagnostics.
 			root := filepath.Join(t.TempDir(), name)
 			require.NoError(t, os.MkdirAll(root, 0755))
 			integrationCommand(t, ctx, root, nil, "git", "init", "-q")
@@ -87,11 +87,19 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, traffic)
 			for name, contents := range before {
+				if (fixture.name == "rspec" || fixture.name == "minitest") && (name == "Gemfile" || name == "Gemfile.lock") {
+					continue // bundle add updates Ruby dependency files.
+				}
 				after, err := os.ReadFile(filepath.Join(root, name))
 				require.NoError(t, err)
 				require.Equal(t, contents, string(after), name)
 			}
-			if _, existed := before["Gemfile.lock"]; !existed {
+			if fixture.name == "rspec" || fixture.name == "minitest" {
+				gemfile, err := os.ReadFile(filepath.Join(root, "Gemfile"))
+				require.NoError(t, err)
+				require.Contains(t, string(gemfile), "datadog-ci")
+				require.FileExists(t, filepath.Join(root, "Gemfile.lock"))
+			} else if _, existed := before["Gemfile.lock"]; !existed {
 				_, err := os.Stat(filepath.Join(root, "Gemfile.lock"))
 				require.True(t, os.IsNotExist(err), "project lockfile must not be created")
 			}
