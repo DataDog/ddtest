@@ -170,9 +170,20 @@ gem build tools must already be installed.
   restores the project working directory before loading the original config, so
   relative file access and existing after-run hooks keep their original behavior.
   The fixture asserts both a customer task and an after-run file write.
-- Ruby's native tracer extension failed to compile under a path containing spaces.
-  Testdrive now reports this prerequisite directly. Use a checkout without spaces
-  for Ruby; JavaScript and Python fixtures cover paths containing spaces.
+- One Ruby fixture failed in a temporary directory named `project space`, not
+  in the DDTest checkout. The captured run used Ruby 3.4.7, Bundler 4.0.16,
+  `datadog-ci` 1.39.0, `datadog` 2.42.0, and `libdatadog` 40.0.0.2.0 on arm64 macOS.
+  The failing extension was `datadog-2.42.0/ext/libdatadog_api`. After
+  `ruby extconf.rb`, RubyGems ran
+  `make DESTDIR= sitearchdir=./.gem.20260922-66018-82y98z sitelibdir=./.gem.20260922-66018-82y98z`.
+  While compiling `crashtracker.c`, Clang reported `no such file or directory`
+  for an include path beginning `space/.testoptimization/testdrive/` and ending
+  `lib/pkgconfig/../../include`; make exited with `crashtracker.o Error 1`.
+  This suggests an incorrectly escaped build path. The log does not contain the
+  full compiler invocation, so the responsible escaping step was not established.
+  It does not establish a general Ruby path limitation or explain failures in
+  checkouts without spaces. Testdrive now attempts the build and preserves
+  Bundler's actual error instead of rejecting paths in advance.
 - Ruby uses a copied lockfile with relocated local PATH sources, preserving the
   customer's resolved versions where compatible while adding the pinned tracer
   only to the session-owned bundle.
