@@ -22,10 +22,11 @@ func TestPythonInstallUsesSelectedInterpreterAndIsolatedTarget(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(directory, "python"), path)
 	require.Equal(t, "/customer/venv/bin/python", executor.commands[0].name)
-	require.Equal(t, []string{"-m", "pip", "install", "--disable-pip-version-check", "--target", filepath.Join(directory, "python-packages"), "ddtrace==" + PythonVersion}, executor.commands[0].args)
+	require.Equal(t, []string{"-m", "pip", "install", "--disable-pip-version-check", "--target", filepath.Join(directory, "python-packages"), "ddtrace"}, executor.commands[0].args)
 	contents, err := os.ReadFile(filepath.Join(path, "sitecustomize.py"))
 	require.NoError(t, err)
 	require.Contains(t, string(contents), filepath.Join(directory, "python-packages"))
+	require.Contains(t, string(contents), "sys.path.insert(0, ")
 	executor = &fakeCommandExecutor{responses: []commandResponse{{output: []byte("pip unavailable"), err: errors.New("exit 1")}}}
 	installer.executor = executor
 	_, err = installer.Install(t.Context(), directory)
@@ -43,8 +44,29 @@ func TestNewPythonForCommandUsesRunnerInterpreter(t *testing.T) {
 		{command: "uv", args: []string{"run", "pytest"}, wantCommand: "uv", wantPrefix: []string{"run", "python"}},
 		{command: "poetry", args: []string{"run", "pytest"}, wantCommand: "poetry", wantPrefix: []string{"run", "python"}},
 	} {
-		installer := NewPythonForCommand(test.command, test.args, "python")
+		installer := NewPythonForCommand(test.command, test.args, "python", "latest")
 		require.Equal(t, test.wantCommand, installer.command)
 		require.Equal(t, test.wantPrefix, installer.prefixArgs)
 	}
+}
+
+func TestPythonTracerVersions(t *testing.T) {
+	for _, tt := range []struct{ version, spec string }{
+		{"", "ddtrace"}, {"latest", "ddtrace"}, {"4.15.1", "ddtrace==4.15.1"},
+		{"4.16.0rc1", "ddtrace==4.16.0rc1"},
+		{"git:abc1234", "ddtrace @ git+https://github.com/DataDog/dd-trace-py.git@abc1234"},
+	} {
+		t.Run(tt.version, func(t *testing.T) {
+			executor := &fakeCommandExecutor{responses: []commandResponse{{}}}
+			installer := NewPythonForCommand("uv", []string{"run", "pytest"}, "python", tt.version)
+			installer.executor = executor
+			_, err := installer.Install(t.Context(), t.TempDir())
+			require.NoError(t, err)
+			require.Equal(t, "uv", executor.commands[0].name)
+			require.Equal(t, []string{"run", "python", "-m", "pip"}, executor.commands[0].args[:4])
+			require.Equal(t, tt.spec, executor.commands[0].args[len(executor.commands[0].args)-1])
+		})
+	}
+	_, err := NewPython("python", "git:").Install(t.Context(), t.TempDir())
+	require.ErrorContains(t, err, "git ref must not be empty")
 }
