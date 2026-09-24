@@ -47,10 +47,10 @@ func TestTestdrivePreservesExplicitCommandArguments(t *testing.T) {
 
 func TestTestdriveMinitestRequiresExecutableRailsBinstub(t *testing.T) {
 	root := t.TempDir()
+	t.Chdir(root)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "bin"), 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "bin", "rails"), []byte("#!/bin/sh\n"), 0644))
-	command, args, err := TestdriveCommand(root, NewMinitest())
-	require.NoError(t, err)
+	command, args := framework.NewMinitest().Command()
 	require.Equal(t, "bundle", command)
 	require.Equal(t, []string{"exec", "rake", "test"}, args)
 }

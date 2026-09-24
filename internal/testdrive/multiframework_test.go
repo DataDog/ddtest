@@ -44,6 +44,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			installer := &fakeTracer{preloadPath: filepath.Join(root, "isolated")}
 			run.platform = installer
 			run.projectTracer = ""
+			run.projectTracer = ""
 			executor := &fakeTestdriveExecutor{}
 			run.executor = executor
 			run.startIntake = func(string) (localIntake, error) {
@@ -66,7 +67,8 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 				require.NotContains(t, executor.env, "NODE_OPTIONS")
 			case "ruby":
 				require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
-				require.Contains(t, preview.String(), "Bundler updates the project Gemfile and lockfile")
+				require.Contains(t, preview.String(), "Bundler updates Gemfile and Gemfile.lock.")
+				require.NotContains(t, preview.String(), "It will not change")
 				require.Contains(t, output.String(), "datadog-ci · installed in project")
 				require.Contains(t, executor.env["RUBYOPT"], "datadog/ci/auto_instrument")
 				require.NotContains(t, executor.env, "NODE_OPTIONS")
@@ -128,7 +130,7 @@ func TestLanguageEnvironmentsPreserveCustomerOptions(t *testing.T) {
 	require.Equal(t, "-q --ddtrace", python["PYTEST_ADDOPTS"])
 	ruby := (&Testdrive{language: "ruby"}).environment("/session/Gemfile", "http://127.0.0.1:1234", "session")
 	require.True(t, strings.HasPrefix(ruby["RUBYOPT"], "-W0 "))
-	require.NotContains(t, ruby, "BUNDLE_PATH") // Supplied by the platform installation result.
+	require.NotContains(t, ruby, "BUNDLE_PATH") // Inherit project Bundler configuration.
 }
 
 func TestCypressWrapperUsesExplicitConfigWithoutEditingIt(t *testing.T) {
