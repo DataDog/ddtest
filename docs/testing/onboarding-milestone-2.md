@@ -24,7 +24,9 @@ fallback. The pinned versions below describe the recorded runs.
   lockfiles, a Cucumber Background, and preserved Cypress task/after-run hooks.
 - Existing instrumented Jest and concurrent-session isolation checks pass.
 - Root manifests and lockfiles were hashed immediately before and after each
-  open-source run, including presence/absence. All nine snapshots were unchanged.
+  open-source run, including presence/absence. All nine snapshots were unchanged in those recorded runs. Ruby now uses
+  `bundle add` for fallback installation, which intentionally updates its Gemfile
+  and lockfile; the earlier Ruby isolation result no longer describes this behavior.
   Dependency installation and application builds happened before those snapshots.
 - No Datadog credentials or Agent were used. This validates local instrumentation
   and generated onboarding guidance, not a connection to a live Datadog account.
@@ -69,8 +71,9 @@ Repository preparation used:
   `eddc279339609ed92d128bcd2b0d5c558a7ce396`.
 - itsdangerous: create/activate a Python 3.11 venv and run
   `python -m pip install -e . pytest freezegun`.
-- concurrent-ruby and i18n: their original Gemfiles were evaluated by the isolated
-  bundle; no project bundle or manifest changes were needed.
+- concurrent-ruby and i18n: those recorded runs used the former isolated bundle.
+  Current Ruby testdrives use the project bundle and add a missing tracer with
+  `bundle add datadog-ci`.
 
 Run `ddtest onboard --framework FRAMEWORK` in each repository, followed by the
 commands below. Package scripts used in the recorded runs are selected explicitly
@@ -184,10 +187,9 @@ gem build tools must already be installed.
   It does not establish a general Ruby path limitation or explain failures in
   checkouts without spaces. Testdrive now attempts the build and preserves
   Bundler's actual error instead of rejecting paths in advance.
-- Ruby's fallback Gemfile evaluates the project's Gemfile and adds the selected
-  tracer. Bundler resolves a fresh session lockfile; DDTest does not read or copy
-  the project's lockfile. Project Gemfile constraints still apply, but versions
-  pinned only in the project lockfile can differ in the testdrive bundle.
+- Ruby fallback now invokes `bundle add datadog-ci` using the project's Bundler
+  settings. Bundler owns Gemfile/lockfile changes, dependency resolution and gem
+  installation; DDTest does not construct or copy a separate bundle.
 
 ## Deliberate limits
 
