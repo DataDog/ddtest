@@ -147,7 +147,7 @@ func prepareInstrumentedJestFixture(ctx context.Context, repositoryRoot, session
 	return &instrumentedJestFixture{
 		session:          session,
 		server:           server,
-		ciInitPath:       ciInitPath,
+		ciInitPath:       ciInitPath.Path,
 		jestPath:         filepath.Join(jestDirectory, "node_modules", "jest", "bin", "jest.js"),
 		fixtureDirectory: fixtureDirectory,
 		fixturePath:      filepath.Join(fixtureDirectory, "one.test.js"),

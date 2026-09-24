@@ -36,7 +36,7 @@ func newTestdriveCommand(prepare prepareTestdrive) *cobra.Command {
 		Args:  cobra.NoArgs,
 	}
 	var version string
-	command.Flags().StringVar(&version, "tracer-version", "latest", "Tracer release version or git:<commit-or-ref>")
+	command.Flags().StringVar(&version, "tracer-version", "latest", "Fallback tracer release or git:<commit-or-ref>, used only when the project has no tracer")
 	command.Flags().Bool("yes", false, "Run after printing the changes and commands")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
 		execution, err := prepare(version)

@@ -109,8 +109,8 @@ func (t *Testdrive) Preview(output io.Writer) {
 	_, _ = fmt.Fprintf(output, "  - create a new <session> under %s\n", sessionsDirectory)
 	switch t.language {
 	case "javascript":
-		_, _ = fmt.Fprintf(output, "  - install %s with npm inside <session> (local install, without saving dependencies or a lockfile)\n", t.tracerLabel)
-		_, _ = fmt.Fprintln(output, "  - run node once to resolve the installed dd-trace preload")
+		_, _ = fmt.Fprintf(output, "  - reuse the project tracer; if absent, install %s with npm inside <session> (local install, without saving dependencies or a lockfile)\n", t.tracerLabel)
+		_, _ = fmt.Fprintln(output, "  - resolve the selected dd-trace preload with node")
 
 	}
 
@@ -127,12 +127,16 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(output, "\nPreparing %s in %s...\n", t.tracerLabel, session.Directory())
-	ciInitPath, err := t.tracer.Install(ctx, session.Directory())
+	_, _ = fmt.Fprintf(output, "\nPreparing tracer (project first, %s fallback) in %s...\n", t.tracerLabel, session.Directory())
+	installation, err := t.tracer.Install(ctx, session.Directory())
 	if err != nil {
 		return err
 	}
 
+	tracerLabel := t.tracerLabel + " · isolated"
+	if installation.Project {
+		tracerLabel = "project tracer · reused"
+	}
 	server, err := t.startIntake(session.Directory())
 	if err != nil {
 		return err
@@ -146,7 +150,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 
 	command, args := t.command, t.args
 	_, _ = fmt.Fprintf(output, "Running %s...\n", shellquote.Join(append([]string{command}, args...)...))
-	env := t.environment(ciInitPath, server.URL(), session.ID())
+	env := t.environment(installation.Path, server.URL(), session.ID())
 
 	testOutput, testErr := t.executor.CombinedOutput(ctx, command, args, env)
 
@@ -184,7 +188,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		}
 	}
 	_, _ = fmt.Fprintf(output, "  %s: %s\n", displayName(t.framework.Name()), passedFailed(testErr == nil))
-	_, _ = fmt.Fprintf(output, "  Tracer: %s · isolated\n", t.tracerLabel)
+	_, _ = fmt.Fprintf(output, "  Tracer: %s\n", tracerLabel)
 	_, _ = fmt.Fprintf(output, "\nRun artifacts: %s\n", session.Directory())
 
 	if testErr != nil {
