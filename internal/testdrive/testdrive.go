@@ -103,7 +103,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	_, _ = fmt.Fprintf(output, "  - create a new <session> under %s\n", sessionsDirectory)
 	switch t.language {
 	case "javascript":
-		_, _ = fmt.Fprintf(output, "  - run: npm install --prefix <session> --no-save --package-lock=false --no-audit --no-fund dd-trace@%s\n", tracer.JavaScriptVersion)
+		_, _ = fmt.Fprintf(output, "  - run: npm install --prefix <session> --global=false --no-save --package-lock=false --no-audit --no-fund dd-trace@%s\n", tracer.JavaScriptVersion)
 		_, _ = fmt.Fprintln(output, "  - run node once to resolve the installed dd-trace preload")
 
 	}
