@@ -69,7 +69,7 @@ Local testdrive prerequisites:
   environment is unchanged.
 - Ruby: Ruby/Bundler. If `datadog-ci` is absent, a session-owned bundle adds it,
   preserving the original Gemfile and lockfile. This fallback needs native gem
-  build tools and a checkout path without spaces. An existing tracer uses the
+  build tools. Bundler reports any native extension build failure. An existing tracer uses the
   project's original bundle.
 - Browser suites: install the project's browsers and start any required services
   first, or use its existing test command that manages them. Testdrive does not
