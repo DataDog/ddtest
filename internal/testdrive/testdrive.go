@@ -109,7 +109,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 		_, _ = fmt.Fprintf(output, "  - reuse the project tracer; if absent, install %s with the test command’s Python interpreter inside <session>/python-packages\n", t.tracerLabel)
 
 	case "ruby":
-		_, _ = fmt.Fprintf(output, "  - reuse the project tracer; if absent, install %s with Bundler in <session>/gems, using an isolated Gemfile and lockfile\n", t.tracerLabel)
+		_, _ = fmt.Fprintf(output, "  - reuse the project tracer; if unavailable, run bundle add datadog-ci for %s in the project bundle\n", t.tracerLabel)
 
 	}
 	if t.framework.Name() == "cypress" {
@@ -120,7 +120,11 @@ func (t *Testdrive) Preview(output io.Writer) {
 	_, _ = fmt.Fprintln(output, "  - save a clickable report as <session>/report.html")
 	_, _ = fmt.Fprintln(output, "  - save decoded traffic as <session>/intake/*.json and test output as <session>/test-output.txt")
 	_, _ = fmt.Fprintln(output)
-	_, _ = fmt.Fprintln(output, "It will not change package.json, Gemfile, Python dependency files, or a lockfile in your project.")
+	if t.language == "ruby" {
+		_, _ = fmt.Fprintln(output, "If tracer installation is needed, Bundler updates the project Gemfile and lockfile.")
+	} else {
+		_, _ = fmt.Fprintln(output, "It will not change package.json, Gemfile, Python dependency files, or a lockfile in your project.")
+	}
 }
 
 // Run prepares the tracer and executes the detected test suite.
@@ -138,8 +142,8 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 
 	tracerLabel := t.tracerLabel + " · isolated"
 	if t.language == "ruby" {
-		// The project Gemfile may already pin the tracer selected by Bundler.
-		tracerLabel = "datadog-ci · isolated bundle"
+		// Bundler owns the project dependency selection.
+		tracerLabel = "datadog-ci · installed in project"
 	}
 	if installation.Project {
 		tracerLabel = "project tracer · reused"

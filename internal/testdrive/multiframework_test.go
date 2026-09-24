@@ -114,7 +114,7 @@ func TestLanguageEnvironmentsPreserveCustomerOptions(t *testing.T) {
 	require.Equal(t, "-q --ddtrace", python["PYTEST_ADDOPTS"])
 	ruby := (&Testdrive{language: "ruby"}).environment("/session/Gemfile", "http://127.0.0.1:1234", "session")
 	require.True(t, strings.HasPrefix(ruby["RUBYOPT"], "-W0 "))
-	require.NotContains(t, ruby, "BUNDLE_PATH") // Supplied by the platform installation result.
+	require.NotContains(t, ruby, "BUNDLE_PATH") // Inherit project Bundler configuration.
 }
 
 func TestCypressWrapperUsesExplicitConfigWithoutEditingIt(t *testing.T) {
