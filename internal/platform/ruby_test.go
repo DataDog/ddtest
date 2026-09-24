@@ -6,12 +6,14 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/viper"
+	"github.com/stretchr/testify/require"
 )
 
 type mockCommandExecutor struct {
@@ -548,4 +550,124 @@ func (m *mockCommandExecutor) Output(ctx context.Context, name string, args []st
 		return nil, output, err
 	}
 	return output, nil, nil
+}
+
+func TestRubyInstallDoesNotEditCustomerBundle(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	directory := t.TempDir()
+	original := "source 'https://rubygems.org'\ngemspec\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "Gemfile"), []byte(original), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "Gemfile.lock"), []byte("customer lock"), 0644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".bundle"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".bundle", "config"), []byte("BUNDLE_MIRROR__HTTPS://RUBYGEMS__ORG/: https://mirror.example\n"), 0600))
+	executor := &fakeCommandExecutor{responses: []commandResponse{{}, {}}}
+	installer := &Ruby{executor: executor}
+	path, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: directory, Version: "latest"})
+	require.NoError(t, err)
+	contents, err := os.ReadFile(path.Path)
+	require.NoError(t, err)
+	require.Contains(t, string(contents), "eval_gemfile")
+	require.Contains(t, string(contents), filepath.Join(root, "Gemfile"))
+	require.Contains(t, string(contents), "gem 'datadog-ci'\n")
+	require.Equal(t, path.Path, executor.envs[1]["BUNDLE_GEMFILE"])
+	require.Equal(t, filepath.Join(directory, "gems"), executor.envs[1]["BUNDLE_PATH"])
+	require.Empty(t, executor.envs[1]["BUNDLE_WITHOUT"])
+	require.Empty(t, executor.envs[1]["BUNDLE_ONLY"])
+	copiedConfig, err := os.ReadFile(filepath.Join(directory, "bundle-config", "config"))
+	require.NoError(t, err)
+	require.Contains(t, string(copiedConfig), "mirror.example")
+	contents, err = os.ReadFile(filepath.Join(root, "Gemfile"))
+	require.NoError(t, err)
+	require.Equal(t, original, string(contents))
+	contents, err = os.ReadFile(filepath.Join(root, "Gemfile.lock"))
+	require.NoError(t, err)
+	require.Equal(t, "customer lock", string(contents))
+}
+
+func TestRubyLockfileRelocatesOnlyLocalPathSources(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	session := t.TempDir()
+	lock := "PATH\n  remote: .\n  specs:\n    local (1.0.0)\n\nGIT\n  remote: https://example.com/gem.git\n\nGEM\n  remote: https://rubygems.org/\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "Gemfile.lock"), []byte(lock), 0644))
+	require.NoError(t, copyRubyLockfile(root, session))
+	contents, err := os.ReadFile(filepath.Join(session, "Gemfile.lock"))
+	require.NoError(t, err)
+	require.Contains(t, string(contents), "PATH\n  remote: "+root+"\n")
+	require.Contains(t, string(contents), "GIT\n  remote: https://example.com/gem.git")
+	original, err := os.ReadFile(filepath.Join(root, "Gemfile.lock"))
+	require.NoError(t, err)
+	require.Equal(t, lock, string(original))
+}
+
+func TestRubyReportsUnsupportedNativeBuildPathBeforeInstalling(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "project space")
+	installer := NewRuby(settings.TestSkippingLevelTest)
+	installer.executor = &fakeCommandExecutor{responses: []commandResponse{{}}}
+	_, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: path, Version: "latest"})
+	require.ErrorContains(t, err, "checkout without spaces")
+	_, err = os.Stat(path)
+	require.True(t, os.IsNotExist(err))
+
+}
+
+func TestRubyTracerVersions(t *testing.T) {
+	for _, tt := range []struct{ version, declaration string }{
+		{"", "gem 'datadog-ci'\n"}, {"latest", "gem 'datadog-ci'\n"},
+		{"1.39.0", "gem 'datadog-ci', '1.39.0'\n"},
+		{"1.40.0.pre.1", "gem 'datadog-ci', '1.40.0.pre.1'\n"},
+		{"git:abc1234", "gem 'datadog-ci', git: 'https://github.com/DataDog/datadog-ci-rb.git', ref: 'abc1234'\n"},
+	} {
+		t.Run(tt.version, func(t *testing.T) {
+			root, directory := t.TempDir(), t.TempDir()
+			t.Chdir(root)
+			require.NoError(t, os.WriteFile(filepath.Join(root, "Gemfile"), []byte("source 'https://rubygems.org'\n"), 0600))
+			lock := "GEM\n  specs:\n    rake (13.2.1)\n"
+			require.NoError(t, os.WriteFile(filepath.Join(root, "Gemfile.lock"), []byte(lock), 0600))
+			executor := &fakeCommandExecutor{responses: []commandResponse{{}, {}}}
+			installer := NewRuby(settings.TestSkippingLevelTest)
+			installer.executor = executor
+			path, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: directory, Version: tt.version})
+			require.NoError(t, err)
+			contents, err := os.ReadFile(path.Path)
+			require.NoError(t, err)
+			require.Contains(t, string(contents), tt.declaration)
+			require.Equal(t, []string{"install"}, executor.commands[1].args)
+			unchanged, err := os.ReadFile(filepath.Join(root, "Gemfile.lock"))
+			require.NoError(t, err)
+			require.Equal(t, lock, string(unchanged))
+		})
+	}
+	_, err := NewRuby(settings.TestSkippingLevelTest).InstallTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Version: "git:"})
+	require.ErrorContains(t, err, "git ref must not be empty")
+}
+
+func TestRubyReusesProjectTracer(t *testing.T) {
+	t.Setenv("BUNDLE_GEMFILE", "/project/custom.gemfile")
+	for _, version := range []string{"latest", "1.39.0", "git:abc1234"} {
+		t.Run(version, func(t *testing.T) {
+			executor := &fakeCommandExecutor{responses: []commandResponse{{output: []byte("  * datadog-ci (1.31.0)\n")}}}
+			installer := NewRuby(settings.TestSkippingLevelTest)
+			installer.executor = executor
+			directory := filepath.Join(t.TempDir(), "session with spaces")
+			result, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: directory, Version: version})
+			require.NoError(t, err)
+			require.Equal(t, TracerInstallation{Project: true}, result)
+			require.Len(t, executor.commands, 1)
+			require.Equal(t, "ruby", executor.commands[0].name)
+			require.NotContains(t, executor.envs[0], "BUNDLE_GEMFILE") // Inherit the selected project Gemfile.
+			require.NoDirExists(t, directory)
+			require.Empty(t, result.Env)
+		})
+	}
+}
+
+func TestRubyProbeFailureDoesNotInstall(t *testing.T) {
+	executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("broken project Gemfile")}}}
+	installer := NewRuby(settings.TestSkippingLevelTest)
+	installer.executor = executor
+	_, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Version: "latest"})
+	require.ErrorContains(t, err, "broken project Gemfile")
+	require.Len(t, executor.commands, 1)
 }

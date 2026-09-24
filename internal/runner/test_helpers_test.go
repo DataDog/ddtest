@@ -11,6 +11,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
@@ -28,6 +29,7 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 }
 
 type MockPlatform struct {
+	platform.Platform
 	PlatformName string
 	Tags         map[string]string
 	TagsErr      error

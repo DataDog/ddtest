@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -147,7 +148,7 @@ func (p *Python) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 }
 
 func (p *Python) SanityCheck(ctx context.Context) error {
-	output, err := DetectPythonTracer(ctx, p.executor, "python", nil)
+	output, err := p.DetectTracer(ctx, TracerOptions{Command: "python"})
 	if err != nil {
 		return fmt.Errorf("detect ddtrace: %w", err)
 	}
@@ -171,4 +172,84 @@ func (p *Python) SanityCheck(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// DetectTracer returns the installed version using the test runner's interpreter.
+// Only PackageNotFoundError means absence; interpreter failures remain errors.
+func (p *Python) DetectTracer(ctx context.Context, options TracerOptions) (string, error) {
+	command, prefix := pythonInterpreter(options.Command, options.Args)
+	args := append(append([]string{}, prefix...), "-c", `import importlib.metadata, sys
+try: print(importlib.metadata.version(sys.argv[1]))
+except importlib.metadata.PackageNotFoundError: pass
+`, "ddtrace")
+	return tracerProbe(ctx, p.executor, command, args, nil)
+}
+
+func pythonInterpreter(command string, args []string) (string, []string) {
+	base := strings.ToLower(filepath.Base(strings.ReplaceAll(command, `\`, "/")))
+	if isPythonExecutable(base) {
+		return command, nil
+	}
+	if (base == "uv" || base == "poetry") && len(args) > 0 && args[0] == "run" {
+		return command, []string{"run", "python"}
+	}
+	if strings.HasPrefix(base, "pytest") && filepath.Dir(command) != "." {
+		interpreter := filepath.Join(filepath.Dir(command), "python")
+		if strings.HasSuffix(base, ".exe") {
+			interpreter += ".exe"
+		}
+		return interpreter, nil
+	}
+	if _, err := exec.LookPath("python"); err == nil {
+		return "python", nil
+	}
+	return "python3", nil
+}
+func isPythonExecutable(base string) bool {
+	base = strings.TrimSuffix(base, ".exe")
+	if !strings.HasPrefix(base, "python") {
+		return false
+	}
+	for _, character := range strings.TrimPrefix(base, "python") {
+		if (character < '0' || character > '9') && character != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *Python) InstallTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
+	directory := options.Directory
+	command, prefixArgs := pythonInterpreter(options.Command, options.Args)
+	packageName := "ddtrace"
+	if ref, ok := strings.CutPrefix(options.Version, "git:"); ok {
+		if ref == "" {
+			return TracerInstallation{}, fmt.Errorf("tracer git ref must not be empty")
+		}
+		packageName += " @ git+https://github.com/DataDog/dd-trace-py.git@" + ref
+	} else if options.Version != "" && options.Version != "latest" {
+		packageName += "==" + options.Version
+	}
+	version, err := p.DetectTracer(ctx, options)
+	if err != nil {
+		return TracerInstallation{}, err
+	}
+	if version != "" {
+		return TracerInstallation{Project: true}, nil
+	}
+	target := filepath.Join(directory, "python-packages")
+	args := append(append([]string{}, prefixArgs...), "-m", "pip", "install", "--disable-pip-version-check", "--target", target, packageName)
+	if output, err := p.executor.CombinedOutput(ctx, command, args, map[string]string{"DD_FAST_BUILD": "1"}); err != nil {
+		return TracerInstallation{}, runtimeTagProbeError("install ddtrace", output, err)
+	}
+	bootstrap := filepath.Join(directory, "python")
+	if err := os.MkdirAll(bootstrap, 0755); err != nil {
+		return TracerInstallation{}, fmt.Errorf("create Python tracer bootstrap: %w", err)
+	}
+	encodedTarget, _ := json.Marshal(target)
+	contents := "import sys\nsys.path.append(" + string(encodedTarget) + ")\n"
+	if err := os.WriteFile(filepath.Join(bootstrap, "sitecustomize.py"), []byte(contents), 0600); err != nil {
+		return TracerInstallation{}, fmt.Errorf("write Python tracer bootstrap: %w", err)
+	}
+	return TracerInstallation{Path: bootstrap}, nil
 }

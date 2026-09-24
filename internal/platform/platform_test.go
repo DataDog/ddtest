@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -360,4 +361,28 @@ func detectionFiles(t *testing.T, root string) map[string]string {
 		return nil
 	}))
 	return files
+}
+
+func TestTracerDetectionDistinguishesAbsenceFromProbeFailure(t *testing.T) {
+	for _, language := range []string{"javascript", "python", "ruby"} {
+		t.Run(language, func(t *testing.T) {
+			executor := &mockCommandExecutor{}
+			var selected Platform
+			switch language {
+			case "javascript":
+				selected = &JavaScript{executor: executor}
+			case "python":
+				selected = &Python{executor: executor}
+			case "ruby":
+				selected = &Ruby{executor: executor}
+			}
+			detect := func() (string, error) { return selected.DetectTracer(t.Context(), TracerOptions{}) }
+			result, err := detect()
+			require.NoError(t, err)
+			require.Empty(t, result)
+			executor.combinedOutputErr = errors.New("runtime unavailable")
+			_, err = detect()
+			require.ErrorContains(t, err, "runtime unavailable")
+		})
+	}
 }
