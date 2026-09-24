@@ -49,7 +49,8 @@ Keep this directory out of source control. Each run has its own files and loopba
 Testdrive reuses the project's tracer when the platform's tracer check succeeds.
 If the check fails, it attempts to install the latest release inside the session.
 `--tracer-version` selects a release or Git revision for that fallback installation;
-project dependency files remain unchanged:
+JavaScript and Python installations leave project dependency files unchanged;
+Ruby uses `bundle add datadog-ci`, which updates the project Gemfile and lockfile:
 
 ```sh
 ddtest testdrive --tracer-version 6.15.0 --yes # JavaScript example
@@ -67,12 +68,10 @@ Local testdrive prerequisites:
 - Python: an activated project environment with pytest, and pip if `ddtrace` is
   absent. Fallback installation uses a session-owned directory; the active
   environment is unchanged.
-- Ruby: Ruby/Bundler. If `datadog-ci` is absent, a session-owned bundle adds it,
-  preserving the original Gemfile and lockfile. Bundler resolves a fresh session
-  lockfile from the Gemfile; versions pinned only in the project lockfile may differ.
-  This fallback needs native gem
-  build tools. Bundler reports any native extension build failure. An existing tracer uses the
-  project's original bundle.
+- Ruby: Ruby/Bundler. If `datadog-ci` is unavailable, testdrive runs
+  `bundle add datadog-ci` in the project, honoring `BUNDLE_GEMFILE` and the
+  existing bundle settings. Bundler updates the project Gemfile and lockfile;
+  tests use that same bundle. Native gem builds need build tools.
 - Browser suites: install the project's browsers and start any required services
   first, or use its existing test command that manages them. Testdrive does not
   install browsers or start applications on its own.
