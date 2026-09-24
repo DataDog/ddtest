@@ -673,7 +673,7 @@ func TestJavaScriptInstall(t *testing.T) {
 	}
 	javascript := &JavaScript{executor: executor}
 
-	ciInitPath, err := javascript.InstallTracer(context.Background(), TracerOptions{Directory: sessionDirectory})
+	ciInitPath, err := javascript.InstallTestdriveTracer(context.Background(), TracerOptions{Directory: sessionDirectory})
 	require.NoError(t, err)
 	require.Equal(t, resolvedPath, ciInitPath.Path)
 	require.False(t, ciInitPath.Project)
@@ -716,7 +716,7 @@ func TestJavaScriptInstallReportsNPMError(t *testing.T) {
 	}
 	javascript := &JavaScript{executor: executor}
 
-	_, err := javascript.InstallTracer(context.Background(), TracerOptions{Directory: t.TempDir()})
+	_, err := javascript.InstallTestdriveTracer(context.Background(), TracerOptions{Directory: t.TempDir()})
 	require.ErrorContains(t, err, "install dd-trace@latest")
 	require.ErrorContains(t, err, "registry unavailable")
 }
@@ -730,7 +730,7 @@ func TestJavaScriptInstallReportsResolveErrorWithoutOutput(t *testing.T) {
 	}
 	javascript := &JavaScript{executor: executor}
 
-	_, err := javascript.InstallTracer(context.Background(), TracerOptions{Directory: t.TempDir()})
+	_, err := javascript.InstallTestdriveTracer(context.Background(), TracerOptions{Directory: t.TempDir()})
 	require.ErrorContains(t, err, "resolve dd-trace/ci/init: exit status 1")
 }
 
@@ -742,7 +742,7 @@ func TestJavaScriptInstallReportsResolveStderr(t *testing.T) {
 	}}
 	javascript := &JavaScript{executor: executor}
 
-	path, err := javascript.InstallTracer(context.Background(), TracerOptions{Directory: t.TempDir()})
+	path, err := javascript.InstallTestdriveTracer(context.Background(), TracerOptions{Directory: t.TempDir()})
 	require.Empty(t, path)
 	require.ErrorContains(t, err, "resolve dd-trace/ci/init: Cannot find module dd-trace/ci/init")
 	require.ErrorIs(t, err, exitErr)
@@ -757,7 +757,7 @@ func TestJavaScriptInstallRejectsRelativePreloadPath(t *testing.T) {
 	}
 	javascript := &JavaScript{executor: executor}
 
-	_, err := javascript.InstallTracer(context.Background(), TracerOptions{Directory: t.TempDir()})
+	_, err := javascript.InstallTestdriveTracer(context.Background(), TracerOptions{Directory: t.TempDir()})
 	require.ErrorContains(t, err, `node returned non-absolute path "node_modules/dd-trace/ci/init.js"`)
 }
 
@@ -774,7 +774,7 @@ func TestJavaScriptInstallEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 
-	ciInitPath, err := NewJavaScript().InstallTracer(ctx, TracerOptions{Directory: sessionDirectory, Version: "latest"})
+	ciInitPath, err := NewJavaScript().InstallTestdriveTracer(ctx, TracerOptions{Directory: sessionDirectory, Version: "latest"})
 	require.NoError(t, err)
 	require.FileExists(t, ciInitPath.Path)
 	resolvedSessionDirectory, err := filepath.EvalSymlinks(sessionDirectory)
@@ -796,7 +796,7 @@ func TestJavaScriptVersions(t *testing.T) {
 			executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {}, {output: []byte(filepath.Join(directory, "init.js"))}}}
 			installer := NewJavaScript()
 			installer.executor = executor
-			_, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: directory, Version: tt.version})
+			_, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: directory, Version: tt.version})
 			require.NoError(t, err)
 			require.Equal(t, tt.spec, executor.commands[1].args[len(executor.commands[1].args)-1])
 		})
@@ -804,7 +804,7 @@ func TestJavaScriptVersions(t *testing.T) {
 	executor := &fakeCommandExecutor{}
 	installer := NewJavaScript()
 	installer.executor = executor
-	_, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Version: "git:"})
+	_, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Version: "git:"})
 	require.ErrorContains(t, err, "git ref must not be empty")
 	require.Empty(t, executor.commands)
 }
@@ -816,7 +816,7 @@ func TestJavaScriptReusesProjectRegardlessOfRequestedVersion(t *testing.T) {
 			executor := &fakeCommandExecutor{responses: []commandResponse{{output: []byte(path)}}}
 			installer := NewJavaScript()
 			installer.executor = executor
-			result, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Version: version})
+			result, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Version: version})
 			require.NoError(t, err)
 			require.Equal(t, TracerInstallation{Path: path, Project: true}, result)
 			require.Len(t, executor.commands, 1)
@@ -829,7 +829,7 @@ func TestJavaScriptProbeFailureAttemptsInstall(t *testing.T) {
 	executor := &fakeCommandExecutor{responses: []commandResponse{{stderr: []byte("broken project tracer"), err: errors.New("exit 1")}, {output: []byte("npm unavailable"), err: errors.New("exit 1")}}}
 	installer := NewJavaScript()
 	installer.executor = executor
-	_, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: t.TempDir()})
+	_, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: t.TempDir()})
 	require.ErrorContains(t, err, "npm unavailable")
 	require.Len(t, executor.commands, 2)
 	require.Equal(t, "npm", executor.commands[1].name)

@@ -214,7 +214,7 @@ func isPythonExecutable(base string) bool {
 	return true
 }
 
-func (p *Python) InstallTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
+func (p *Python) InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
 	directory := options.Directory
 	command, prefixArgs := pythonInterpreter(options.Command, options.Args)
 	packageName := "ddtrace"

@@ -197,7 +197,7 @@ func (r *Ruby) DetectTracer(ctx context.Context, _ TracerOptions) (string, error
 	return tracerProbe(ctx, r.executor, "bundle", []string{"info", requiredGemName}, nil)
 }
 
-func (r *Ruby) InstallTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
+func (r *Ruby) InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
 	directory := options.Directory
 	root, err := os.Getwd()
 	if err != nil {

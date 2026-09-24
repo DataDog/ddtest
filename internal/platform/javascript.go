@@ -258,8 +258,8 @@ func (j *JavaScript) DetectTracer(ctx context.Context, _ TracerOptions) (string,
 
 const resolveJavaScriptModule = "process.stdout.write(require.resolve(process.argv[1]))"
 
-// InstallTracer reuses the project preload or installs an isolated fallback.
-func (j *JavaScript) InstallTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
+// InstallTestdriveTracer reuses the project preload or installs an isolated fallback.
+func (j *JavaScript) InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
 	sessionDirectory := options.Directory
 	version := options.Version
 	if version == "" {

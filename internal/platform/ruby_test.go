@@ -564,7 +564,7 @@ func TestRubyInstallDoesNotEditCustomerBundle(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".bundle", "config"), []byte("BUNDLE_MIRROR__HTTPS://RUBYGEMS__ORG/: https://mirror.example\n"), 0600))
 	executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {}}}
 	installer := &Ruby{executor: executor}
-	path, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: directory, Version: "latest"})
+	path, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: directory, Version: "latest"})
 	require.NoError(t, err)
 	contents, err := os.ReadFile(path.Path)
 	require.NoError(t, err)
@@ -602,7 +602,7 @@ func TestRubyInstallInPathWithSpacesReportsBuildResult(t *testing.T) {
 			}
 			executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("tracer unavailable")}, build}}
 			installer := &Ruby{executor: executor}
-			result, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: directory})
+			result, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: directory})
 			if fails {
 				require.ErrorContains(t, err, "compiling crashtracker.c\nclang: error: missing header")
 				require.ErrorIs(t, err, build.err)
@@ -636,7 +636,7 @@ func TestRubyTracerVersions(t *testing.T) {
 			executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {}}}
 			installer := NewRuby(settings.TestSkippingLevelTest)
 			installer.executor = executor
-			path, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: directory, Version: tt.version})
+			path, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: directory, Version: tt.version})
 			require.NoError(t, err)
 			contents, err := os.ReadFile(path.Path)
 			require.NoError(t, err)
@@ -647,7 +647,7 @@ func TestRubyTracerVersions(t *testing.T) {
 			require.Equal(t, lock, string(unchanged))
 		})
 	}
-	_, err := NewRuby(settings.TestSkippingLevelTest).InstallTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Version: "git:"})
+	_, err := NewRuby(settings.TestSkippingLevelTest).InstallTestdriveTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Version: "git:"})
 	require.ErrorContains(t, err, "git ref must not be empty")
 }
 
@@ -659,7 +659,7 @@ func TestRubyReusesProjectTracer(t *testing.T) {
 			installer := NewRuby(settings.TestSkippingLevelTest)
 			installer.executor = executor
 			directory := filepath.Join(t.TempDir(), "session with spaces")
-			result, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: directory, Version: version})
+			result, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: directory, Version: version})
 			require.NoError(t, err)
 			require.Equal(t, TracerInstallation{Project: true}, result)
 			require.Len(t, executor.commands, 1)
@@ -676,7 +676,7 @@ func TestRubyProbeFailureAttemptsInstall(t *testing.T) {
 	executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("broken project Gemfile")}, {err: errors.New("bundle install failed")}}}
 	installer := NewRuby(settings.TestSkippingLevelTest)
 	installer.executor = executor
-	_, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Version: "latest"})
+	_, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Version: "latest"})
 	require.ErrorContains(t, err, "bundle install failed")
 	require.Len(t, executor.commands, 2)
 	require.Equal(t, "bundle", executor.commands[1].name)

@@ -500,7 +500,7 @@ func TestPythonInstallUsesSelectedInterpreterAndIsolatedTarget(t *testing.T) {
 	directory := t.TempDir()
 	executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {}}}
 	installer := &Python{executor: executor}
-	path, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: directory, Command: "/customer/venv/bin/python"})
+	path, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: directory, Command: "/customer/venv/bin/python"})
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(directory, "python"), path.Path)
 	require.Equal(t, "/customer/venv/bin/python", executor.commands[1].name)
@@ -511,7 +511,7 @@ func TestPythonInstallUsesSelectedInterpreterAndIsolatedTarget(t *testing.T) {
 	require.Contains(t, string(contents), "sys.path.append(")
 	executor = &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {output: []byte("pip unavailable"), err: errors.New("exit 1")}}}
 	installer.executor = executor
-	_, err = installer.InstallTracer(t.Context(), TracerOptions{Directory: directory, Command: "/customer/venv/bin/python"})
+	_, err = installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: directory, Command: "/customer/venv/bin/python"})
 	require.ErrorContains(t, err, "pip unavailable")
 }
 func TestPythonInterpreterUsesRunnerCommand(t *testing.T) {
@@ -542,14 +542,14 @@ func TestPythonTracerVersions(t *testing.T) {
 			executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {}}}
 			installer := NewPython()
 			installer.executor = executor
-			_, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Command: "uv", Args: []string{"run", "pytest"}, Version: tt.version})
+			_, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Command: "uv", Args: []string{"run", "pytest"}, Version: tt.version})
 			require.NoError(t, err)
 			require.Equal(t, "uv", executor.commands[1].name)
 			require.Equal(t, []string{"run", "python", "-m", "pip"}, executor.commands[1].args[:4])
 			require.Equal(t, tt.spec, executor.commands[1].args[len(executor.commands[1].args)-1])
 		})
 	}
-	_, err := NewPython().InstallTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Command: "python", Version: "git:"})
+	_, err := NewPython().InstallTestdriveTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Command: "python", Version: "git:"})
 	require.ErrorContains(t, err, "git ref must not be empty")
 }
 
@@ -560,7 +560,7 @@ func TestPythonReusesProjectTracer(t *testing.T) {
 			installer := NewPython()
 			installer.executor = executor
 			directory := t.TempDir()
-			result, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: directory, Command: "uv", Args: []string{"run", "pytest"}, Version: version})
+			result, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: directory, Command: "uv", Args: []string{"run", "pytest"}, Version: version})
 			require.NoError(t, err)
 			require.Equal(t, TracerInstallation{Project: true}, result)
 			require.Len(t, executor.commands, 1)
@@ -577,7 +577,7 @@ func TestPythonProbeFailureAttemptsInstall(t *testing.T) {
 	executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("interpreter unavailable")}, {err: errors.New("pip unavailable")}}}
 	installer := NewPython()
 	installer.executor = executor
-	_, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Command: "python"})
+	_, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Command: "python"})
 	require.ErrorContains(t, err, "pip unavailable")
 	require.Len(t, executor.commands, 2)
 	require.Equal(t, []string{"-m", "pip", "install"}, executor.commands[1].args[:3])
