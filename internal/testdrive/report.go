@@ -271,17 +271,13 @@ func reportSuites(tests []intake.Test, showCoverage bool) []reportSuite {
 			name = "Unknown suite"
 		}
 		suite, found := byName[name]
-		if !found {
-			suite = &reportSuite{Name: name, Status: "Passed", Tone: "good", ShowCoverage: showCoverage}
-			byName[name] = suite
-		}
 		status, tone := testDisplayStatus(test)
-		if status == "Fail" {
-			suite.Status = "Failed"
-			suite.Tone = "attention"
-		} else if status == "Flaky" && suite.Status != "Failed" {
-			suite.Status = "Flaky"
-			suite.Tone = "attention"
+		if !found {
+			suite = &reportSuite{Name: name, Status: suiteStatus(status), Tone: tone, ShowCoverage: showCoverage}
+			byName[name] = suite
+		} else if suiteStatusRank(status) > suiteStatusRank(suite.Status) {
+			suite.Status = suiteStatus(status)
+			suite.Tone = tone
 		}
 		suite.TestCount++
 		durations[name] += findingDuration(test)
@@ -302,6 +298,31 @@ func reportSuites(tests []intake.Test, showCoverage bool) []reportSuite {
 	}
 	sort.Slice(suites, func(i, j int) bool { return suites[i].Name < suites[j].Name })
 	return suites
+}
+
+func suiteStatus(status string) string {
+	switch status {
+	case "Fail":
+		return "Failed"
+	case "Pass":
+		return "Passed"
+	}
+	return status
+}
+
+func suiteStatusRank(status string) int {
+	switch suiteStatus(status) {
+	case "Failed":
+		return 4
+	case "Flaky":
+		return 3
+	case "Passed", "Pass":
+		return 2
+	case "Skip":
+		return 1
+	default:
+		return 0
+	}
 }
 
 func testDisplayStatus(test intake.Test) (string, string) {
@@ -422,6 +443,10 @@ func inferJavaScriptTestEnd(lines []string, sourceStart int) int {
 					characterIndex++
 					continue
 				}
+				if canStartJavaScriptRegex(line[:characterIndex]) {
+					characterIndex = skipJavaScriptRegex(line, characterIndex)
+					continue
+				}
 			}
 			if character == '\'' || character == '"' || character == '`' {
 				quote = character
@@ -440,6 +465,46 @@ func inferJavaScriptTestEnd(lines []string, sourceStart int) int {
 		}
 	}
 	return min(sourceStart+19, len(lines))
+}
+
+func canStartJavaScriptRegex(prefix string) bool {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return true
+	}
+	last := prefix[len(prefix)-1]
+	if strings.ContainsRune("([{=,:;!&|?+-*%^~<>", rune(last)) {
+		return true
+	}
+	for _, keyword := range []string{"return", "case", "throw", "delete", "typeof", "void", "yield", "await"} {
+		if prefix == keyword || strings.HasSuffix(prefix, " "+keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func skipJavaScriptRegex(line string, start int) int {
+	escaped := false
+	inCharacterClass := false
+	for index := start + 1; index < len(line); index++ {
+		switch character := line[index]; {
+		case escaped:
+			escaped = false
+		case character == '\\':
+			escaped = true
+		case character == '[':
+			inCharacterClass = true
+		case character == ']':
+			inCharacterClass = false
+		case character == '/' && !inCharacterClass:
+			for index+1 < len(line) && strings.ContainsRune("dgimsuvy", rune(line[index+1])) {
+				index++
+			}
+			return index
+		}
+	}
+	return start
 }
 
 func onlyStatementEnd(value string) bool {

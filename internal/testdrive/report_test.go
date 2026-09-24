@@ -210,6 +210,24 @@ func TestInferJavaScriptTestEndIgnoresCommentsAndQuotedParentheses(t *testing.T)
 	}
 }
 
+func TestInferJavaScriptTestEndIgnoresRegularExpressionParentheses(t *testing.T) {
+	lines := []string{
+		`test("regex", () => {`,
+		`  expect(")").toMatch(/\)/);`,
+		`  expect("value").toMatch(/[)]/);`,
+		`});`,
+	}
+	if end := inferJavaScriptTestEnd(lines, 1); end != 4 {
+		t.Fatalf("inferJavaScriptTestEnd() = %d, want 4", end)
+	}
+}
+
+func TestReportSuitesPreservesAllSkippedStatus(t *testing.T) {
+	suites := reportSuites([]intake.Test{{Name: "one", Suite: "suite", Status: "skip"}, {Name: "two", Suite: "suite", Status: "skip"}}, false)
+	if len(suites) != 1 || suites[0].Status != "Skip" {
+		t.Fatalf("reportSuites() = %+v, want one skipped suite", suites)
+	}
+}
 func TestHighlightJavaScriptLineHandlesCommentsTokensAndEscapes(t *testing.T) {
 	inBlockComment := false
 	first := string(highlightJavaScriptLine("/* open <tag>", &inBlockComment))
