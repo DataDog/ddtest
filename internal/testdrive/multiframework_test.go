@@ -29,7 +29,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 				requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"`+name+`"}}`)
 			}
 			t.Chdir(root)
-			run, err := Prepare()
+			run, err := Prepare("latest")
 			require.NoError(t, err)
 			var preview bytes.Buffer
 			run.Preview(&preview)
@@ -90,13 +90,13 @@ func TestPrepareRequiresSelectionForMultipleFrameworks(t *testing.T) {
 	root := t.TempDir()
 	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"vitest run","e2e":"playwright test"}}`)
 	t.Chdir(root)
-	_, err := Prepare()
+	_, err := Prepare("latest")
 	require.ErrorContains(t, err, "--framework")
 	settings.Get().Framework = "vitest"
-	run, err := Prepare()
+	run, err := Prepare("latest")
 	require.NoError(t, err)
 	require.Equal(t, "vitest", run.framework.Name())
 	settings.Get().Framework = "unsupported"
-	_, err = Prepare()
+	_, err = Prepare("latest")
 	require.ErrorContains(t, err, "unsupported framework")
 }
