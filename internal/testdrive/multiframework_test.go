@@ -40,7 +40,11 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 				return
 			} // Browser wrapper has its own real-run test.
 			run.nodeVersion = func() string { return "v20.0.0" }
-			run.tracer = &fakeTracer{preloadPath: filepath.Join(root, "isolated")}
+			installer := &fakeTracer{preloadPath: filepath.Join(root, "isolated")}
+			if run.language == "ruby" {
+				installer.env = map[string]string{"BUNDLE_GEMFILE": filepath.Join(root, "isolated", "Gemfile")}
+			}
+			run.platform = installer
 			executor := &fakeTestdriveExecutor{}
 			run.executor = executor
 			run.startIntake = func(string) (localIntake, error) {
