@@ -10,6 +10,10 @@ compatibility study. Browser and RSpec checks used representative subsets as
 identified below. These results do not imply every version or configuration of
 each framework is compatible.
 
+This historical record predates project-tracer reuse. Current testdrive always uses
+a project tracer when present and installs latest (or `--tracer-version`) only as a
+fallback. The pinned versions below describe the recorded runs.
+
 ## Environment and checks
 
 - macOS arm64; Go 1.26.5; Node.js 24.14.0; Python 3.11; Ruby 3.4.7.
