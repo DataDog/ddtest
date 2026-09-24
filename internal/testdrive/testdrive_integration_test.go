@@ -105,7 +105,7 @@ func TestInstrumentedJestFixturesAreIsolated(t *testing.T) {
 func requireNPMIntegration(t *testing.T) {
 	t.Helper()
 	if os.Getenv("DDTEST_RUN_NPM_INTEGRATION_TEST") == "" {
-		t.Skip("set DDTEST_RUN_NPM_INTEGRATION_TEST=1 to run Jest with the pinned tracer")
+		t.Skip("set DDTEST_RUN_NPM_INTEGRATION_TEST=1 to run Jest with the selected tracer")
 	}
 }
 
@@ -114,7 +114,7 @@ func prepareInstrumentedJestFixture(ctx context.Context, repositoryRoot, session
 	if err != nil {
 		return nil, err
 	}
-	ciInitPath, err := tracer.NewJavaScript().Install(ctx, session.Directory())
+	ciInitPath, err := tracer.NewJSTracer("latest").Install(ctx, session.Directory())
 	if err != nil {
 		return nil, err
 	}

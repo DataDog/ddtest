@@ -22,10 +22,10 @@ type testdriveExecution interface {
 	Run(context.Context, io.Writer) error
 }
 
-type prepareTestdrive func() (testdriveExecution, error)
+type prepareTestdrive func(string) (testdriveExecution, error)
 
-var testdriveCmd = newTestdriveCommand(func() (testdriveExecution, error) {
-	return testdrive.Prepare()
+var testdriveCmd = newTestdriveCommand(func(version string) (testdriveExecution, error) {
+	return testdrive.Prepare(version)
 })
 
 func newTestdriveCommand(prepare prepareTestdrive) *cobra.Command {
@@ -35,9 +35,11 @@ func newTestdriveCommand(prepare prepareTestdrive) *cobra.Command {
 		Long:  "Runs the detected test suite once with Datadog Test Optimization and a local intake. No Datadog API key is required.",
 		Args:  cobra.NoArgs,
 	}
+	var version string
+	command.Flags().StringVar(&version, "tracer-version", "latest", "Tracer release version or git:<commit-or-ref>")
 	command.Flags().Bool("yes", false, "Run after printing the changes and commands")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
-		execution, err := prepare()
+		execution, err := prepare(version)
 		if err != nil {
 			return err
 		}

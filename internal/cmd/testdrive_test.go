@@ -86,7 +86,7 @@ func TestTestdriveCommandHasYesFlag(t *testing.T) {
 
 func TestTestdriveCommandYesPreviewsAndRuns(t *testing.T) {
 	execution := &fakeTestdriveExecution{}
-	command := newTestdriveCommand(func() (testdriveExecution, error) {
+	command := newTestdriveCommand(func(string) (testdriveExecution, error) {
 		return execution, nil
 	})
 	var output bytes.Buffer
@@ -103,7 +103,7 @@ func TestTestdriveCommandYesPreviewsAndRuns(t *testing.T) {
 
 func TestTestdriveCommandNonInteractivePreviewsWithoutRunning(t *testing.T) {
 	execution := &fakeTestdriveExecution{}
-	command := newTestdriveCommand(func() (testdriveExecution, error) {
+	command := newTestdriveCommand(func(string) (testdriveExecution, error) {
 		return execution, nil
 	})
 	var output bytes.Buffer
@@ -116,5 +116,29 @@ func TestTestdriveCommandNonInteractivePreviewsWithoutRunning(t *testing.T) {
 	}
 	if !execution.previewed || execution.run {
 		t.Fatalf("previewed = %v, run = %v", execution.previewed, execution.run)
+	}
+}
+
+func TestTestdriveTracerVersion(t *testing.T) {
+	for _, version := range []string{"latest", "6.15.0", "git:abc1234"} {
+		t.Run(version, func(t *testing.T) {
+			var selected string
+			command := newTestdriveCommand(func(value string) (testdriveExecution, error) {
+				selected = value
+				return &fakeTestdriveExecution{}, nil
+			})
+			command.SetOut(io.Discard)
+			args := []string{"--yes"}
+			if version != "latest" {
+				args = append(args, "--tracer-version", version)
+			}
+			command.SetArgs(args)
+			if err := command.ExecuteContext(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if selected != version {
+				t.Fatalf("selected %q, want %q", selected, version)
+			}
+		})
 	}
 }

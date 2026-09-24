@@ -52,7 +52,13 @@ type Testdrive struct {
 }
 
 // Prepare detects the repository without running commands or writing files.
-func Prepare() (*Testdrive, error) {
+func Prepare(version string) (*Testdrive, error) {
+	if version == "" {
+		version = "latest"
+	}
+	if version == "git:" {
+		return nil, fmt.Errorf("tracer git ref must not be empty")
+	}
 	repositoryRoot, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("find repository root: %w", err)
@@ -79,8 +85,8 @@ func Prepare() (*Testdrive, error) {
 	var label string
 	switch language {
 	case "javascript":
-		installer = tracer.NewJavaScript()
-		label = "dd-trace@" + tracer.JavaScriptVersion
+		installer = tracer.NewJSTracer(version)
+		label = "dd-trace@" + version
 
 	}
 	return &Testdrive{repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, tracer: installer, tracerLabel: label,
@@ -103,7 +109,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	_, _ = fmt.Fprintf(output, "  - create a new <session> under %s\n", sessionsDirectory)
 	switch t.language {
 	case "javascript":
-		_, _ = fmt.Fprintf(output, "  - run: npm install --prefix <session> --global=false --no-save --package-lock=false --no-audit --no-fund dd-trace@%s\n", tracer.JavaScriptVersion)
+		_, _ = fmt.Fprintf(output, "  - install %s with npm inside <session> (local install, without saving dependencies or a lockfile)\n", t.tracerLabel)
 		_, _ = fmt.Fprintln(output, "  - run node once to resolve the installed dd-trace preload")
 
 	}
