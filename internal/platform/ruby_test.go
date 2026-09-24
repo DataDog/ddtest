@@ -584,22 +584,7 @@ func TestRubyInstallDoesNotEditCustomerBundle(t *testing.T) {
 	contents, err = os.ReadFile(filepath.Join(root, "Gemfile.lock"))
 	require.NoError(t, err)
 	require.Equal(t, "customer lock", string(contents))
-}
-
-func TestRubyLockfileRelocatesOnlyLocalPathSources(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-	session := t.TempDir()
-	lock := "PATH\n  remote: .\n  specs:\n    local (1.0.0)\n\nGIT\n  remote: https://example.com/gem.git\n\nGEM\n  remote: https://rubygems.org/\n"
-	require.NoError(t, os.WriteFile(filepath.Join(root, "Gemfile.lock"), []byte(lock), 0644))
-	require.NoError(t, copyRubyLockfile(root, session))
-	contents, err := os.ReadFile(filepath.Join(session, "Gemfile.lock"))
-	require.NoError(t, err)
-	require.Contains(t, string(contents), "PATH\n  remote: "+root+"\n")
-	require.Contains(t, string(contents), "GIT\n  remote: https://example.com/gem.git")
-	original, err := os.ReadFile(filepath.Join(root, "Gemfile.lock"))
-	require.NoError(t, err)
-	require.Equal(t, lock, string(original))
+	require.NoFileExists(t, filepath.Join(directory, "Gemfile.lock")) // Bundler creates its own lockfile.
 }
 
 func TestRubyInstallInPathWithSpacesReportsBuildResult(t *testing.T) {

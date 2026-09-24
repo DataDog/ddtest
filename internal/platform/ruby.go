@@ -224,9 +224,6 @@ func (r *Ruby) InstallTracer(ctx context.Context, options TracerOptions) (Tracer
 	if err := os.WriteFile(gemfile, []byte(contents), 0600); err != nil {
 		return TracerInstallation{}, fmt.Errorf("write isolated Gemfile: %w", err)
 	}
-	if err := copyRubyLockfile(root, directory); err != nil {
-		return TracerInstallation{}, err
-	}
 	if err := copyRubyBundleConfig(root, directory); err != nil {
 		return TracerInstallation{}, err
 	}
@@ -251,36 +248,6 @@ func copyRubyBundleConfig(root, directory string) error {
 	}
 	if err := os.WriteFile(filepath.Join(configDirectory, "config"), contents, 0600); err != nil {
 		return fmt.Errorf("copy project Bundler config: %w", err)
-	}
-	return nil
-}
-
-// Preserve the customer's resolved versions while adding the tracer. PATH
-// sources in a lockfile are relative to its Gemfile, so relocate those sources
-// when copying it into the session. The original remains untouched.
-func copyRubyLockfile(root, directory string) error {
-	contents, err := os.ReadFile(filepath.Join(root, "Gemfile.lock"))
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read project lockfile: %w", err)
-	}
-	lines := strings.Split(string(contents), "\n")
-	inPath := false
-	for i, line := range lines {
-		if line != "" && !strings.HasPrefix(line, " ") {
-			inPath = line == "PATH"
-		}
-		if inPath && strings.HasPrefix(line, "  remote: ") {
-			path := strings.TrimPrefix(line, "  remote: ")
-			if !filepath.IsAbs(path) {
-				lines[i] = "  remote: " + filepath.Join(root, path)
-			}
-		}
-	}
-	if err := os.WriteFile(filepath.Join(directory, "Gemfile.lock"), []byte(strings.Join(lines, "\n")), 0600); err != nil {
-		return fmt.Errorf("copy project lockfile: %w", err)
 	}
 	return nil
 }
