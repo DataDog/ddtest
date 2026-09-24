@@ -75,7 +75,7 @@ func TestPrepareAndPreviewJest(t *testing.T) {
 	writeJestManifest(t, repositoryRoot)
 
 	t.Chdir(repositoryRoot)
-	testdrive, err := Prepare()
+	testdrive, err := Prepare("latest")
 	if err != nil {
 		t.Fatalf("Prepare() unexpected error: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestPrepareAndPreviewJest(t *testing.T) {
 
 func TestPrepareRejectsUnsupportedRepository(t *testing.T) {
 	t.Chdir(t.TempDir())
-	_, err := Prepare()
+	_, err := Prepare("latest")
 	if err == nil || !strings.Contains(err.Error(), "package.json") {
 		t.Fatalf("Prepare() error = %v, want package.json diagnostic", err)
 	}
@@ -108,7 +108,7 @@ func TestPrepareRejectsJavaScriptWithoutSupportedRunner(t *testing.T) {
 	requireWriteFile(t, filepath.Join(repositoryRoot, "package.json"), `{"scripts":{"test":"node test.js"}}`)
 
 	t.Chdir(repositoryRoot)
-	_, err := Prepare()
+	_, err := Prepare("latest")
 	if err == nil || !strings.Contains(err.Error(), "could not detect a supported javascript test framework") {
 		t.Fatalf("Prepare() error = %v, want framework diagnostic", err)
 	}
@@ -119,7 +119,7 @@ func TestPrepareReportsMalformedManifest(t *testing.T) {
 	requireWriteFile(t, filepath.Join(repositoryRoot, "package.json"), "{")
 
 	t.Chdir(repositoryRoot)
-	_, err := Prepare()
+	_, err := Prepare("latest")
 	if err == nil || !strings.Contains(err.Error(), "package.json") {
 		t.Fatalf("Prepare() error = %v, want package.json parse error", err)
 	}
@@ -132,7 +132,7 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(repositoryRoot)
-	testdrive, err := Prepare()
+	testdrive, err := Prepare("latest")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 		"Test events: 2",
 		"Tests with coverage: 2 / 2",
 		"Jest: Passed",
-		"Tracer: dd-trace@6.15.0 · isolated",
+		"Tracer: dd-trace@latest · isolated",
 	} {
 		if !strings.Contains(output.String(), expected) {
 			t.Errorf("Run() output does not contain %q:\n%s", expected, output.String())
@@ -240,7 +240,7 @@ func TestRunStillReportsEventsWhenJestFails(t *testing.T) {
 	repositoryRoot := t.TempDir()
 	writeJestManifest(t, repositoryRoot)
 	t.Chdir(repositoryRoot)
-	testdrive, err := Prepare()
+	testdrive, err := Prepare("latest")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +422,7 @@ func preparedTestdrive(t *testing.T) *Testdrive {
 	repositoryRoot := t.TempDir()
 	writeJestManifest(t, repositoryRoot)
 	t.Chdir(repositoryRoot)
-	testdrive, err := Prepare()
+	testdrive, err := Prepare("latest")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,5 +446,25 @@ func TestWriteFindingsReportsEmptyCoverageAsTracerError(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "No findings.") {
 		t.Fatalf("empty coverage was hidden as no findings: %s", output.String())
+	}
+}
+
+func TestPreparePreviewsSelectedTracer(t *testing.T) {
+	root := t.TempDir()
+	writeJestManifest(t, root)
+	t.Chdir(root)
+	for _, version := range []string{"6.15.0", "git:abc1234"} {
+		drive, err := Prepare(version)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var output bytes.Buffer
+		drive.Preview(&output)
+		if !strings.Contains(output.String(), "dd-trace@"+version) {
+			t.Fatal(output.String())
+		}
+	}
+	if _, err := Prepare("git:"); err == nil {
+		t.Fatal("accepted empty Git ref")
 	}
 }
