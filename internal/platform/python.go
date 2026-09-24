@@ -187,7 +187,7 @@ func pythonInterpreter(command string, args []string) (string, []string) {
 		return command, nil
 	}
 	if (base == "uv" || base == "poetry") && len(args) > 0 && args[0] == "run" {
-		return command, pythonRunPrefix(args)
+		return command, []string{"run", "python"}
 	}
 	if strings.HasPrefix(base, "pytest") && filepath.Dir(command) != "." {
 		interpreter := filepath.Join(filepath.Dir(command), "python")
@@ -200,40 +200,6 @@ func pythonInterpreter(command string, args []string) (string, []string) {
 		return "python", nil
 	}
 	return "python3", nil
-}
-
-// Keep launcher options that select the environment, replacing only the test command.
-func pythonRunPrefix(args []string) []string {
-	valueOptions := strings.Fields(`--extra --no-extra --group --no-group --only-group
-		--env-file --with --with-editable --with-requirements --package
-		--index --default-index -i --index-url --extra-index-url -f --find-links
-		--index-strategy --keyring-provider -P --upgrade-package --resolution
-		--prerelease --fork-strategy --exclude-newer --reinstall-package --link-mode
-		-C --config-setting --no-build-isolation-package --no-build-package
-		--no-binary-package --cache-dir --refresh-package -p --python --color
-		--allow-insecure-host --directory --project --config-file`)
-	prefix := []string{"run"}
-	for i := 1; i < len(args); i++ {
-		arg := args[i]
-		if arg == "-m" || arg == "--module" {
-			break
-		}
-		if !strings.HasPrefix(arg, "-") {
-			if isPythonExecutable(filepath.Base(arg)) {
-				return append(prefix, arg)
-			}
-			break
-		}
-		prefix = append(prefix, arg)
-		if arg == "--" {
-			break
-		}
-		if slices.Contains(valueOptions, arg) && i+1 < len(args) {
-			i++
-			prefix = append(prefix, args[i])
-		}
-	}
-	return append(prefix, "python")
 }
 
 func isPythonExecutable(base string) bool {

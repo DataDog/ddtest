@@ -582,27 +582,3 @@ func TestPythonProbeFailureAttemptsInstall(t *testing.T) {
 	require.Len(t, executor.commands, 2)
 	require.Equal(t, []string{"-m", "pip", "install"}, executor.commands[1].args[:3])
 }
-
-func TestPythonUVOptionsApplyToProbeAndInstall(t *testing.T) {
-	for _, tc := range []struct {
-		args, prefix []string
-	}{
-		{[]string{"run", "--isolated", "--no-dev", "--python", "3.12", "pytest", "-q"}, []string{"run", "--isolated", "--no-dev", "--python", "3.12", "python"}},
-		{[]string{"run", "--package", "pytest", "--group", "tests", "pytest"}, []string{"run", "--package", "pytest", "--group", "tests", "python"}},
-		{[]string{"run", "--python=3.12", "--", "pytest"}, []string{"run", "--python=3.12", "--", "python"}},
-		{[]string{"run", "--isolated", "-m", "pytest"}, []string{"run", "--isolated", "python"}},
-		{[]string{"run", "--no-dev", "python3.12", "-m", "pytest"}, []string{"run", "--no-dev", "python3.12"}},
-	} {
-		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
-			executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("no ddtrace")}, {}}}
-			p := &Python{executor: executor}
-			directory := t.TempDir()
-			_, err := p.InstallTestdriveTracer(t.Context(), TracerOptions{Command: "/tools/uv", Args: tc.args, Directory: directory})
-			require.NoError(t, err)
-			require.Equal(t, tc.prefix, executor.commands[0].args[:len(tc.prefix)])
-			installPrefix := append([]string{"run", "--with", "pip"}, tc.prefix[1:]...)
-			require.Equal(t, installPrefix, executor.commands[1].args[:len(installPrefix)])
-			require.Contains(t, executor.commands[1].args, filepath.Join(directory, "python-packages"))
-		})
-	}
-}
