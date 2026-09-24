@@ -59,7 +59,7 @@ func TestdriveCommand(root string, runner Framework) (string, []string, error) {
 		command, args := f.getRSpecCommand()
 		return command, args, nil
 	case *Minitest:
-		if _, err := os.Stat(filepath.Join(root, "bin", "rails")); err == nil {
+		if info, err := os.Stat(filepath.Join(root, "bin", "rails")); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
 			return "bin/rails", []string{"test"}, nil
 		}
 		return "bundle", []string{"exec", "rake", "test"}, nil
