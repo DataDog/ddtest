@@ -41,9 +41,6 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			} // Browser wrapper has its own real-run test.
 			run.nodeVersion = func() string { return "v20.0.0" }
 			installer := &fakeTracer{preloadPath: filepath.Join(root, "isolated")}
-			if run.language == "ruby" {
-				installer.env = map[string]string{"BUNDLE_GEMFILE": filepath.Join(root, "isolated", "Gemfile")}
-			}
 			run.platform = installer
 			executor := &fakeTestdriveExecutor{}
 			run.executor = executor
@@ -66,7 +63,9 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 				require.Contains(t, executor.env["PYTEST_ADDOPTS"], "--ddtrace")
 				require.NotContains(t, executor.env, "NODE_OPTIONS")
 			case "ruby":
-				require.NotEmpty(t, executor.env["BUNDLE_GEMFILE"])
+				require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
+				require.Contains(t, preview.String(), "Bundler updates the project Gemfile and lockfile")
+				require.Contains(t, output.String(), "datadog-ci · installed in project")
 				require.Contains(t, executor.env["RUBYOPT"], "datadog/ci/auto_instrument")
 				require.NotContains(t, executor.env, "NODE_OPTIONS")
 			}
