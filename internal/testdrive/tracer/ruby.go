@@ -13,10 +13,10 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/platform"
 )
 
-// Ruby resolves an overlay bundle inside the session. Bundler sees the project's
-// original Gemfile (including relative gemspecs), but never writes its lockfile.
+// Ruby reuses the project tracer, adding an isolated overlay bundle only when absent.
 type Ruby struct {
 	root     string
 	version  string
@@ -27,48 +27,49 @@ func NewRuby(root, version string) *Ruby {
 	return &Ruby{root: root, version: version, executor: &ext.DefaultCommandExecutor{}}
 }
 
-func (r *Ruby) Install(ctx context.Context, directory string) (string, error) {
-	if strings.Contains(directory, " ") {
-		return "", fmt.Errorf("the Ruby tracer's native extensions cannot build in paths containing spaces; run testdrive from a checkout without spaces")
-	}
+func (r *Ruby) Install(ctx context.Context, directory string) (Installation, error) {
 	selection := ""
 	version := strings.NewReplacer(`\`, `\\`, "'", `\'`).Replace(r.version)
 	if ref, ok := strings.CutPrefix(version, "git:"); ok {
 		if ref == "" {
-			return "", fmt.Errorf("tracer git ref must not be empty")
+			return Installation{}, fmt.Errorf("tracer git ref must not be empty")
 		}
 		selection = ", git: 'https://github.com/DataDog/datadog-ci-rb.git', ref: '" + ref + "'"
 	} else if version != "" && version != "latest" {
 		selection = ", '" + version + "'"
 	}
+	projectGemfile := os.Getenv("BUNDLE_GEMFILE")
+	if projectGemfile == "" {
+		projectGemfile = filepath.Join(r.root, "Gemfile")
+	}
+	project, err := platform.DetectRubyTracer(ctx, r.executor, map[string]string{"BUNDLE_GEMFILE": projectGemfile, "RUBYOPT": ""})
+	if err != nil {
+		return Installation{}, err
+	}
+	if project != "" {
+		return Installation{Project: true}, nil
+	}
+	if strings.Contains(directory, " ") {
+		return Installation{}, fmt.Errorf("the Ruby tracer's native extensions cannot build in paths containing spaces; run testdrive from a checkout without spaces")
+	}
 	gemfile := filepath.Join(directory, "Gemfile")
 	path := strings.ReplaceAll(strings.ReplaceAll(filepath.Join(r.root, "Gemfile"), `\`, `\\`), "'", `\'`)
 	contents := "source 'https://rubygems.org'\neval_gemfile '" + path + "'\n" +
-		"dependencies.reject! { |dependency| dependency.name == 'datadog-ci' }\n" +
 		"gem 'datadog-ci'" + selection + "\n"
 	if err := os.WriteFile(gemfile, []byte(contents), 0600); err != nil {
-		return "", fmt.Errorf("write isolated Gemfile: %w", err)
+		return Installation{}, fmt.Errorf("write isolated Gemfile: %w", err)
 	}
 	if err := copyRubyLockfile(r.root, directory); err != nil {
-		return "", err
+		return Installation{}, err
 	}
 	if err := copyRubyBundleConfig(r.root, directory); err != nil {
-		return "", err
-	}
-	args := []string{"install"}
-	lock, err := os.ReadFile(filepath.Join(directory, "Gemfile.lock"))
-	if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("read isolated lockfile: %w", err)
-	}
-	// Refresh a copied tracer pin while preserving other locked dependencies.
-	if strings.Contains(string(lock), "\n    datadog-ci (") {
-		args = []string{"update", "datadog-ci", "--conservative"}
+		return Installation{}, err
 	}
 	env := RubyEnvironment(gemfile)
-	if output, err := r.executor.CombinedOutput(ctx, "bundle", args, env); err != nil {
-		return "", commandError("install isolated Ruby bundle", output, err)
+	if output, err := r.executor.CombinedOutput(ctx, "bundle", []string{"install"}, env); err != nil {
+		return Installation{}, commandError("install isolated Ruby bundle", output, err)
 	}
-	return gemfile, nil
+	return Installation{Path: gemfile}, nil
 }
 
 func copyRubyBundleConfig(root, directory string) error {
@@ -120,6 +121,9 @@ func copyRubyLockfile(root, directory string) error {
 }
 
 func RubyEnvironment(gemfile string) map[string]string {
+	if gemfile == "" {
+		return nil
+	}
 	return map[string]string{
 		"BUNDLE_GEMFILE":    gemfile,
 		"BUNDLE_PATH":       filepath.Join(filepath.Dir(gemfile), "gems"),
