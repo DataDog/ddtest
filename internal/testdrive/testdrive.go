@@ -115,7 +115,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	_, _ = fmt.Fprintln(output, "It will not change package.json, Gemfile, Python dependency files, or a lockfile in your project.")
 }
 
-// Run installs an isolated tracer and executes the detected test suite.
+// Run prepares the tracer and executes the detected test suite.
 func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	session, err := NewSession(t.repositoryRoot)
 	if err != nil {
