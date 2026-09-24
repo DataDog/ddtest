@@ -3,9 +3,10 @@ package platform
 import (
 	"context"
 	"fmt"
-	"github.com/DataDog/ddtest/internal/ext"
 	"path/filepath"
 	"strings"
+
+	"github.com/DataDog/ddtest/internal/ext"
 )
 
 // TracerExecutor keeps diagnostic stderr out of tracer paths and versions.
@@ -49,16 +50,16 @@ except importlib.metadata.PackageNotFoundError: pass
 	return tracerProbe(ctx, executor, command, args, nil)
 }
 
-// DetectRubyTracer reads Bundler's declarations and lockfile without resolving or
-// installing dependencies. A declared but unlocked tracer is still a project tracer.
+// DetectRubyTracer checks Bundler's declarations and installed specs without
+// installing dependencies. A declared but unavailable tracer is an error, not absence.
 func DetectRubyTracer(ctx context.Context, executor TracerExecutor, env map[string]string) (string, error) {
 	return tracerProbe(ctx, executor, "ruby", []string{"-rbundler", "-e", `
 definition = Bundler.definition
 spec = definition.locked_gems&.specs&.find { |gem| gem.name == 'datadog-ci' }
-if spec
+if spec || definition.dependencies.any? { |gem| gem.name == 'datadog-ci' }
+  spec = definition.specs.find { |gem| gem.name == 'datadog-ci' }
+  raise 'project datadog-ci is unavailable in the active bundle' unless spec
   puts "  * datadog-ci (#{spec.version})"
-elsif definition.dependencies.any? { |gem| gem.name == 'datadog-ci' }
-  puts '  * datadog-ci'
 end
 `}, env)
 }
