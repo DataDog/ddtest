@@ -31,7 +31,7 @@ const (
 )
 
 type JavaScript struct {
-	executor ext.CommandExecutor
+	executor commandExecutor
 }
 
 func NewJavaScript() *JavaScript {
@@ -175,15 +175,13 @@ func (j *JavaScript) SanityCheck(ctx context.Context) error {
 		return fmt.Errorf("node --version command failed: %s", message)
 	}
 
-	output, err := j.executor.CombinedOutput(ctx, "node", []string{"-e", fmt.Sprintf("require.resolve(%q)", ddTraceCIInitModule)}, nil)
+	path, err := DetectJavaScriptTracer(ctx, j.executor)
 	if err != nil {
-		message := strings.TrimSpace(string(output))
-		if message == "" {
-			return fmt.Errorf("failed to resolve %s: %w", ddTraceCIInitModule, err)
-		}
-		return fmt.Errorf("failed to resolve %s: %s", ddTraceCIInitModule, message)
+		return err
 	}
-
+	if path == "" {
+		return fmt.Errorf("dd-trace is not installed")
+	}
 	return nil
 }
 

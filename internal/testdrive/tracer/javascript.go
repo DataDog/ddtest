@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/platform"
 )
 
 const resolveJavaScriptModule = "process.stdout.write(require.resolve(process.argv[1]))"
@@ -21,7 +22,7 @@ type commandExecutor interface {
 	CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error)
 }
 
-// JSTracer installs dd-trace for a JavaScript testdrive.
+// JSTracer reuses project dd-trace or installs it for a JavaScript testdrive.
 type JSTracer struct {
 	version  string
 	executor commandExecutor
@@ -34,17 +35,25 @@ func NewJSTracer(version string) *JSTracer {
 	return &JSTracer{version: version, executor: &ext.DefaultCommandExecutor{}}
 }
 
-// Install installs dd-trace (latest, a release, or git:<ref>) and returns its absolute ci/init path.
-func (j *JSTracer) Install(ctx context.Context, sessionDirectory string) (string, error) {
+// Install returns the project preload, installing the selected version only when absent.
+func (j *JSTracer) Install(ctx context.Context, sessionDirectory string) (Installation, error) {
 	version := j.version
 	if version == "" {
 		version = "latest"
 	}
 	if ref, ok := strings.CutPrefix(version, "git:"); ok {
 		if ref == "" {
-			return "", fmt.Errorf("tracer git ref must not be empty")
+			return Installation{}, fmt.Errorf("tracer git ref must not be empty")
 		}
 		version = "git+https://github.com/DataDog/dd-trace-js.git#" + ref
+	}
+	cleanEnvironment := map[string]string{"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}
+	path, err := platform.DetectJavaScriptTracer(ctx, j.executor)
+	if err != nil {
+		return Installation{}, err
+	}
+	if path != "" {
+		return Installation{Path: path, Project: true}, nil
 	}
 	packageName := "dd-trace@" + version
 	installArgs := []string{
@@ -57,22 +66,21 @@ func (j *JSTracer) Install(ctx context.Context, sessionDirectory string) (string
 		"--no-fund",
 		packageName,
 	}
-	cleanEnvironment := map[string]string{"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}
 	if output, err := j.executor.CombinedOutput(ctx, "npm", installArgs, cleanEnvironment); err != nil {
-		return "", commandError("install "+packageName, output, err)
+		return Installation{}, commandError("install "+packageName, output, err)
 	}
 
 	ciInitModule := filepath.Join(sessionDirectory, "node_modules", "dd-trace", "ci", "init")
 	output, stderr, err := j.executor.Output(ctx, "node", []string{"-e", resolveJavaScriptModule, ciInitModule}, cleanEnvironment)
 	if err != nil {
-		return "", commandError("resolve dd-trace/ci/init", stderr, err)
+		return Installation{}, commandError("resolve dd-trace/ci/init", stderr, err)
 	}
 
 	ciInitPath := strings.TrimSpace(string(output))
 	if !filepath.IsAbs(ciInitPath) {
-		return "", fmt.Errorf("resolve dd-trace/ci/init: node returned non-absolute path %q", ciInitPath)
+		return Installation{}, fmt.Errorf("resolve dd-trace/ci/init: node returned non-absolute path %q", ciInitPath)
 	}
-	return ciInitPath, nil
+	return Installation{Path: ciInitPath}, nil
 }
 
 func commandError(action string, output []byte, err error) error {

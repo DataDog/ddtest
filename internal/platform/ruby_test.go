@@ -75,10 +75,10 @@ func TestRuby_SanityCheck_Passes(t *testing.T) {
 	mockExecutor := &mockCommandExecutor{
 		combinedOutput: []byte("  * datadog-ci (1.31.0 9d54a15)\n"),
 		onCombinedOutput: func(name string, args []string, envMap map[string]string) {
-			if name != "bundle" {
+			if name != "ruby" {
 				t.Fatalf("expected command 'bundle', got %q", name)
 			}
-			if len(args) != 2 || args[0] != "info" || args[1] != "datadog-ci" {
+			if len(args) != 3 || args[0] != "-rbundler" || !strings.Contains(args[2], "datadog-ci") {
 				t.Fatalf("unexpected args: %v", args)
 			}
 		},
@@ -540,4 +540,12 @@ func TestRuby_DetectFramework_SetsPlatformEnv(t *testing.T) {
 	if frameworkPlatformEnv["RUBYOPT"] != expectedRubyOpt {
 		t.Errorf("expected framework platformEnv RUBYOPT=%q, got %q", expectedRubyOpt, frameworkPlatformEnv["RUBYOPT"])
 	}
+}
+
+func (m *mockCommandExecutor) Output(ctx context.Context, name string, args []string, env map[string]string) ([]byte, []byte, error) {
+	output, err := m.CombinedOutput(ctx, name, args, env)
+	if err != nil {
+		return nil, output, err
+	}
+	return output, nil, nil
 }

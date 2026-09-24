@@ -41,7 +41,7 @@ const (
 )
 
 type Python struct {
-	executor ext.CommandExecutor
+	executor commandExecutor
 }
 
 func NewPython() *Python {
@@ -147,19 +147,15 @@ func (p *Python) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 }
 
 func (p *Python) SanityCheck(ctx context.Context) error {
-	// Use importlib.metadata to query the installed version — works with any
-	// package manager (pip, uv, poetry, conda), unlike `pip show`.
-	args := []string{
-		"-c",
-		"import importlib.metadata, sys; print(importlib.metadata.version(sys.argv[1]))",
-		requiredPackageName,
-	}
-	output, err := p.executor.CombinedOutput(ctx, "python", args, nil)
+	output, err := DetectPythonTracer(ctx, p.executor, "python", nil)
 	if err != nil {
-		return fmt.Errorf("%s is not installed: %w", requiredPackageName, err)
+		return fmt.Errorf("detect ddtrace: %w", err)
+	}
+	if output == "" {
+		return fmt.Errorf("ddtrace is not installed")
 	}
 
-	versionStr := normalizePyVersion(strings.TrimSpace(string(output)))
+	versionStr := normalizePyVersion(output)
 	pkgVersion, err := version.Parse(versionStr)
 	if err != nil {
 		return fmt.Errorf("failed to parse %s version %q: %w", requiredPackageName, versionStr, err)

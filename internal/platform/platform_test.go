@@ -67,7 +67,7 @@ func TestPlatformSanityChecksPropagateContext(t *testing.T) {
 	}{
 		{name: "ruby", output: []byte("  * datadog-ci (1.31.0)\n")},
 		{name: "python", output: []byte("4.11.0\n")},
-		{name: "javascript", output: []byte("v24.0.0\n")},
+		{name: "javascript", output: []byte("/project/node_modules/dd-trace/ci/init.js\n")},
 	}
 
 	for i := range tests {

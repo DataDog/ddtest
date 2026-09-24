@@ -3,12 +3,18 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2026 Datadog, Inc.
 
-// Package tracer installs language tracers for local testdrive runs.
+// Package tracer reuses project tracers or installs them for local testdrive runs.
 package tracer
 
 import "context"
 
-// Tracer makes a Test Optimization tracer available inside a testdrive session.
+// Installation identifies the tracer to use for a testdrive.
+type Installation struct {
+	Path    string
+	Project bool
+}
+
+// Tracer reuses the project tracer, installing one only when absent.
 type Tracer interface {
-	Install(ctx context.Context, sessionDirectory string) (preloadPath string, err error)
+	Install(ctx context.Context, sessionDirectory string) (Installation, error)
 }

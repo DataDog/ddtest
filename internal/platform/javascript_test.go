@@ -411,7 +411,7 @@ func TestJavaScript_DetectFramework_Unsupported(t *testing.T) {
 func TestJavaScript_SanityCheck_Passes(t *testing.T) {
 	calls := 0
 	mockExecutor := &mockCommandExecutor{
-		combinedOutput: []byte("v22.16.0\n"),
+		combinedOutput: []byte("/project/node_modules/dd-trace/ci/init.js\n"),
 		onCombinedOutput: func(name string, args []string, envMap map[string]string) {
 			calls++
 			if name != "node" {
@@ -420,7 +420,7 @@ func TestJavaScript_SanityCheck_Passes(t *testing.T) {
 			if calls == 1 && (len(args) != 1 || args[0] != "--version") {
 				t.Fatalf("expected node --version, got %v", args)
 			}
-			if calls == 2 && (len(args) != 2 || args[0] != "-e" || !strings.Contains(args[1], ddTraceCIInitModule)) {
+			if calls == 2 && (len(args) != 2 || args[0] != "-e" || !strings.Contains(args[1], "dd-trace/package.json")) {
 				t.Fatalf("expected node require.resolve command, got %v", args)
 			}
 		},
@@ -621,4 +621,12 @@ func TestJavaScriptDetectionDoesNotOverrideCommand(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (m *sequentialMockExecutor) Output(ctx context.Context, name string, args []string, env map[string]string) ([]byte, []byte, error) {
+	output, err := m.CombinedOutput(ctx, name, args, env)
+	if err != nil {
+		return nil, output, err
+	}
+	return output, nil, nil
 }

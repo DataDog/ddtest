@@ -30,7 +30,7 @@ const (
 )
 
 type Ruby struct {
-	executor          ext.CommandExecutor
+	executor          commandExecutor
 	testSkippingLevel settings.TestSkippingLevel
 }
 
@@ -139,14 +139,12 @@ func (r *Ruby) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 }
 
 func (r *Ruby) SanityCheck(ctx context.Context) error {
-	args := []string{"info", requiredGemName}
-	output, err := r.executor.CombinedOutput(ctx, "bundle", args, nil)
+	output, err := DetectRubyTracer(ctx, r.executor, nil)
 	if err != nil {
-		message := strings.TrimSpace(string(output))
-		if message == "" {
-			return fmt.Errorf("bundle info datadog-ci command failed: %w", err)
-		}
-		return fmt.Errorf("bundle info datadog-ci command failed: %s", message)
+		return err
+	}
+	if output == "" {
+		return fmt.Errorf("datadog-ci is not installed")
 	}
 
 	requiredVersion, err := version.Parse(requiredGemMinVersion)
@@ -154,7 +152,7 @@ func (r *Ruby) SanityCheck(ctx context.Context) error {
 		return err
 	}
 
-	gemVersion, err := parseBundlerInfoVersion(string(output), requiredGemName)
+	gemVersion, err := parseBundlerInfoVersion(output, requiredGemName)
 	if err != nil {
 		return err
 	}
