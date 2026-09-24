@@ -43,7 +43,7 @@ The working preview is in draft PR #128 on `anmarchenko/agentic-onboarding-runbo
 ### Local testdrive
 
 - Each run has a unique directory and kernel-assigned loopback port, so sessions can run concurrently.
-- Pinned tracers (`dd-trace@6.15.0`, `ddtrace==4.15.1`, and `datadog-ci@1.39.0`) are installed inside each session. Python keeps the active interpreter; Ruby uses an overlay bundle and a copy of the project lockfile. Project dependency files are untouched.
+- Every language reuses the project tracer when present. Shared platform probes distinguish absence from detection failures. Only absent tracers are installed inside the session: latest by default, or a release/Git revision selected with `--tracer-version`. Python keeps the selected interpreter; Ruby creates an overlay bundle only for fallback installation. Project dependency files are untouched.
 - The local intake supports the endpoints exercised by that tracer and enables Test Optimization, coverage, Intelligent Test Runner, Early Flake Detection, Auto Test Retries, Impacted Tests, failed-test replay, and Test Management.
 - Test events and test- or suite-level coverage are decoded. Raw multipart or msgpack payloads are not retained; saved traffic is JSON only.
 - Complete test output is saved separately.
@@ -57,19 +57,19 @@ The terminal and self-contained HTML report answer:
 
 Problem cards appear only when the answer is yes. Affected tests are always visible and expand to show attempts, timings, errors, retry information, source excerpts, and coverage. Flaky tests use `test.final_status` and are not also reported as failed. Covered files appear one per line and are paginated 50 at a time. Separate paginated tabs list all suites and tests.
 
-The report also shows event and coverage counts, framework result, tracer version, isolated installation, saved JSON traffic, and test output. `testdrive` prints it as an absolute clickable `file://` link.
+The report also shows event and coverage counts, framework result, project-tracer reuse or the fallback tracer selection, saved JSON traffic, and test output. `testdrive` prints it as an absolute clickable `file://` link.
 
 ### Code map
 
 - `internal/onboard/`: repository detection and embedded Markdown instructions.
 - `internal/testdrive/`: session lifecycle, preview, execution, terminal output, and HTML report.
-- `internal/testdrive/tracer/`: isolated tracer installation behind the `Tracer` interface.
+- `internal/testdrive/tracer/`: project-tracer reuse and fallback installation behind the `Tracer` interface.
 - `internal/testdrive/intake/`: local intake, JSON capture, event and coverage decoding, and findings.
-- `internal/platform/` and `internal/framework/`: existing detection and test commands that future milestones should reuse.
+- `internal/platform/` and `internal/framework/`: shared tracer probes, platform/framework detection, and test commands.
 
 ### Evidence and limits
 
-- Integration tests run the public CLI with real pinned tracers against fixtures for all nine frameworks. Coverage is reported only when supplied by the tracer.
+- Existing integration tests run the public CLI with real tracers against fixtures for all nine frameworks. Coverage is reported only when supplied by the tracer.
 - A concurrent integration test proves port, traffic, and file isolation.
 - Unit tests cover decoding, final status, flaky tests, both coverage granularities, medians, source excerpts, HTML rendering, and confirmation behavior.
 - Dogfooding on React Native Paper recognized 1,363 events and coverage for all 680 logical tests, including Early Flake Detection retries.
