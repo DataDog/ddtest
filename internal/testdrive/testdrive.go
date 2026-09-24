@@ -7,11 +7,11 @@
 package testdrive
 
 import (
-"maps"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,7 +48,7 @@ type Testdrive struct {
 	args           []string
 	tracerLabel    string
 	platform       platform.Platform
- tracerVersion string
+	tracerVersion  string
 	executor       commandExecutor
 	startIntake    func(string) (localIntake, error)
 	nodeVersion    func() string
@@ -84,7 +84,7 @@ func Prepare(version string) (*Testdrive, error) {
 	if err != nil {
 		return nil, err
 	}
- label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
+	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 
 	return &Testdrive{repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) },
@@ -150,7 +150,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	command, args := t.command, t.args
 	_, _ = fmt.Fprintf(output, "Running %s...\n", shellquote.Join(append([]string{command}, args...)...))
 	env := t.environment(installation.Path, server.URL(), session.ID())
- maps.Copy(env, installation.Env)
+	maps.Copy(env, installation.Env)
 
 	testOutput, testErr := t.executor.CombinedOutput(ctx, command, args, env)
 
