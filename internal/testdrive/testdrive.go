@@ -123,7 +123,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	}
 
 	_, _ = fmt.Fprintf(output, "\nPreparing tracer (project first, %s fallback) in %s...\n", t.tracerLabel, session.Directory())
-	installation, err := t.platform.InstallTracer(ctx, platform.TracerOptions{Directory: session.Directory(), Version: t.tracerVersion, Command: t.command, Args: t.args})
+	installation, err := t.platform.InstallTestdriveTracer(ctx, platform.TracerOptions{Directory: session.Directory(), Version: t.tracerVersion, Command: t.command, Args: t.args})
 	if err != nil {
 		return err
 	}
