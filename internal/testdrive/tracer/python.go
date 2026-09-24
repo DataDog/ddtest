@@ -14,11 +14,11 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/kballard/go-shellquote"
 )
 
-// Python installs into a private target, keeping the active interpreter and
-// the customer's dependencies available when pytest runs.
+// Python reuses the active interpreter's tracer, installing into a private target only when absent.
 type Python struct {
 	Interpreter string
 	version     string
@@ -65,29 +65,36 @@ func isPythonExecutable(base string) bool {
 	return true
 }
 
-func (p *Python) Install(ctx context.Context, directory string) (string, error) {
+func (p *Python) Install(ctx context.Context, directory string) (Installation, error) {
 	packageName := "ddtrace"
 	if ref, ok := strings.CutPrefix(p.version, "git:"); ok {
 		if ref == "" {
-			return "", fmt.Errorf("tracer git ref must not be empty")
+			return Installation{}, fmt.Errorf("tracer git ref must not be empty")
 		}
 		packageName += " @ git+https://github.com/DataDog/dd-trace-py.git@" + ref
 	} else if p.version != "" && p.version != "latest" {
 		packageName += "==" + p.version
 	}
+	version, err := platform.DetectPythonTracer(ctx, p.executor, p.command, p.prefixArgs)
+	if err != nil {
+		return Installation{}, err
+	}
+	if version != "" {
+		return Installation{Project: true}, nil
+	}
 	target := filepath.Join(directory, "python-packages")
 	args := append(append([]string{}, p.prefixArgs...), "-m", "pip", "install", "--disable-pip-version-check", "--target", target, packageName)
 	if output, err := p.executor.CombinedOutput(ctx, p.command, args, map[string]string{"DD_FAST_BUILD": "1"}); err != nil {
-		return "", commandError("install ddtrace", output, err)
+		return Installation{}, commandError("install ddtrace", output, err)
 	}
 	bootstrap := filepath.Join(directory, "python")
 	if err := os.MkdirAll(bootstrap, 0755); err != nil {
-		return "", fmt.Errorf("create Python tracer bootstrap: %w", err)
+		return Installation{}, fmt.Errorf("create Python tracer bootstrap: %w", err)
 	}
 	encodedTarget, _ := json.Marshal(target)
-	contents := "import sys\nsys.path.insert(0, " + string(encodedTarget) + ")\n"
+	contents := "import sys\nsys.path.append(" + string(encodedTarget) + ")\n"
 	if err := os.WriteFile(filepath.Join(bootstrap, "sitecustomize.py"), []byte(contents), 0600); err != nil {
-		return "", fmt.Errorf("write Python tracer bootstrap: %w", err)
+		return Installation{}, fmt.Errorf("write Python tracer bootstrap: %w", err)
 	}
-	return bootstrap, nil
+	return Installation{Path: bootstrap}, nil
 }
