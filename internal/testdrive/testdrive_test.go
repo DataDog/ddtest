@@ -30,7 +30,7 @@ type fakeTracer struct {
 	err              error
 }
 
-func (f *fakeTracer) InstallTracer(_ context.Context, options platform.TracerOptions) (platform.TracerInstallation, error) {
+func (f *fakeTracer) InstallTestdriveTracer(_ context.Context, options platform.TracerOptions) (platform.TracerInstallation, error) {
 	sessionDirectory := options.Directory
 	f.sessionDirectory = sessionDirectory
 	f.options = options

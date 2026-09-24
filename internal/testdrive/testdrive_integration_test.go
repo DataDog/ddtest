@@ -114,7 +114,7 @@ func prepareInstrumentedJestFixture(ctx context.Context, repositoryRoot, session
 	if err != nil {
 		return nil, err
 	}
-	ciInitPath, err := platform.NewJavaScript().InstallTracer(ctx, platform.TracerOptions{Directory: session.Directory(), Version: "latest"})
+	ciInitPath, err := platform.NewJavaScript().InstallTestdriveTracer(ctx, platform.TracerOptions{Directory: session.Directory(), Version: "latest"})
 	if err != nil {
 		return nil, err
 	}
