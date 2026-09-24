@@ -20,7 +20,7 @@ The local testdrive requires no Datadog account, API key, or Agent. Credentials 
 - Keep the main flow to `ddtest onboard` and `ddtest testdrive`.
 - Detect the repository instead of asking setup questions.
 - Show commands and filesystem changes before running them.
-- Keep tracer installation isolated from project manifests and lockfiles.
+- Keep JavaScript and Python tracer installations isolated; disclose that Ruby fallback uses bundle add and updates project dependency files.
 - Explain what worked, what did not, and the next useful action.
 - Give the user clickable local and CI links.
 - Dogfood a thin end-to-end slice before adding abstractions.
@@ -43,7 +43,7 @@ The working preview is in draft PR #128 on `anmarchenko/agentic-onboarding-runbo
 ### Local testdrive
 
 - Each run has a unique directory and kernel-assigned loopback port, so sessions can run concurrently.
-- Every language reuses the project tracer when its standard platform check succeeds. If the check fails, testdrive attempts an isolated installation inside the session: latest by default, or a release/Git revision selected with `--tracer-version`. Python keeps the selected interpreter; Ruby creates an overlay bundle only for fallback installation. Project dependency files are untouched.
+- Every language reuses the project tracer when its standard platform check succeeds. If it fails, install latest or a release/Git revision selected with `--tracer-version`. JavaScript and Python install inside the session; Python keeps the selected interpreter. Ruby runs `bundle add datadog-ci` and tests against the project bundle, updating its Gemfile and lockfile.
 - The local intake supports the endpoints exercised by that tracer and enables Test Optimization, coverage, Intelligent Test Runner, Early Flake Detection, Auto Test Retries, Impacted Tests, failed-test replay, and Test Management.
 - Test events and test- or suite-level coverage are decoded. Raw multipart or msgpack payloads are not retained; saved traffic is JSON only.
 - Complete test output is saved separately.
@@ -123,7 +123,7 @@ Implemented in vertical slices:
 1. Reuse each platform and framework's `Detect` method and test command. Remove Jest-specific names from the shared report.
 2. Add the remaining JavaScript frameworks using the existing isolated `dd-trace` installation.
 3. Add one pinned isolated `ddtrace` installation for pytest.
-4. Add one pinned isolated Ruby tracer installation shared by RSpec and Minitest.
+4. Use bundle add for Ruby tracer installation shared by RSpec and Minitest.
 5. Add a tiny real-tracer fixture for every pair and dogfood at least one real repository per platform.
 
 For every pair, `onboard` finds the relevant GitHub Actions job and prints one small setup. `testdrive` previews and runs the detected framework's normal command (or the explicit `--command` entry point), treats received events as proof even when tests fail, reports missing coverage honestly, and preserves the same terminal and HTML experience where the tracer supplies the data.
