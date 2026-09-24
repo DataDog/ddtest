@@ -160,3 +160,16 @@ func TestCypressWrapperSupportsConfigFileFalseAndDefaultE2E(t *testing.T) {
 	require.Contains(t, string(wrapper), `types.add(options.testingType)`)
 	require.Contains(t, string(wrapper), `const originalImport = {}`)
 }
+
+func TestPythonProjectTracerPreservesImportEnvironment(t *testing.T) {
+	t.Setenv("PYTHONPATH", "/project/helpers")
+	t.Setenv("PYTEST_ADDOPTS", "-v")
+	drive := &Testdrive{language: "python"}
+	env := drive.environment("", "http://127.0.0.1:1234", "session")
+	if _, changed := env["PYTHONPATH"]; changed {
+		t.Fatal("project PYTHONPATH overridden", env)
+	}
+	if env["PYTEST_ADDOPTS"] != "-v --ddtrace" {
+		t.Fatal(env)
+	}
+}
