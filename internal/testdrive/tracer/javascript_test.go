@@ -23,6 +23,7 @@ type command struct {
 
 type commandResponse struct {
 	output []byte
+	stderr []byte
 	err    error
 }
 
@@ -36,7 +37,13 @@ func (e *fakeCommandExecutor) CombinedOutput(_ context.Context, name string, arg
 	e.commands = append(e.commands, command{name: name, args: args})
 	e.envs = append(e.envs, env)
 	response := e.responses[len(e.commands)-1]
-	return response.output, response.err
+	return append(append([]byte(nil), response.output...), response.stderr...), response.err
+}
+
+func (e *fakeCommandExecutor) Output(ctx context.Context, name string, args []string, env map[string]string) ([]byte, []byte, error) {
+	_, err := e.CombinedOutput(ctx, name, args, env)
+	response := e.responses[len(e.commands)-1]
+	return response.output, response.stderr, err
 }
 
 func TestJavaScriptInstall(t *testing.T) {
@@ -45,7 +52,7 @@ func TestJavaScriptInstall(t *testing.T) {
 	executor := &fakeCommandExecutor{
 		responses: []commandResponse{
 			{},
-			{output: []byte(resolvedPath)},
+			{output: []byte(resolvedPath), stderr: []byte("MODULE 123: looking for dd-trace\n")},
 		},
 	}
 	javascript := &JavaScript{executor: executor}
@@ -107,6 +114,20 @@ func TestJavaScriptInstallReportsResolveErrorWithoutOutput(t *testing.T) {
 	require.ErrorContains(t, err, "resolve dd-trace/ci/init: exit status 1")
 }
 
+func TestJavaScriptInstallReportsResolveStderr(t *testing.T) {
+	exitErr := errors.New("exit status 1")
+	executor := &fakeCommandExecutor{responses: []commandResponse{
+		{},
+		{stderr: []byte("Cannot find module dd-trace/ci/init"), err: exitErr},
+	}}
+	javascript := &JavaScript{executor: executor}
+
+	path, err := javascript.Install(context.Background(), t.TempDir())
+	require.Empty(t, path)
+	require.ErrorContains(t, err, "resolve dd-trace/ci/init: Cannot find module dd-trace/ci/init")
+	require.ErrorIs(t, err, exitErr)
+}
+
 func TestJavaScriptInstallRejectsRelativePreloadPath(t *testing.T) {
 	executor := &fakeCommandExecutor{
 		responses: []commandResponse{
@@ -125,7 +146,11 @@ func TestJavaScriptInstallEndToEnd(t *testing.T) {
 		t.Skip("set DDTEST_RUN_NPM_INTEGRATION_TEST=1 to install the pinned tracer from npm")
 	}
 
-	sessionDirectory := t.TempDir()
+	t.Setenv("NODE_DEBUG", "module")
+	t.Setenv("NODE_OPTIONS", "-r dd-trace/ci/init")
+	t.Setenv("NPM_CONFIG_GLOBAL", "true")
+	sessionDirectory := filepath.Join(t.TempDir(), "session with spaces")
+	require.NoError(t, os.MkdirAll(sessionDirectory, 0o755))
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 

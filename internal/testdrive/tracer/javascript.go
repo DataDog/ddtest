@@ -22,6 +22,7 @@ const (
 )
 
 type commandExecutor interface {
+	Output(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, []byte, error)
 	CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error)
 }
 
@@ -56,9 +57,9 @@ func (j *JavaScript) Install(ctx context.Context, sessionDirectory string) (stri
 	}
 
 	ciInitModule := filepath.Join(sessionDirectory, "node_modules", "dd-trace", "ci", "init")
-	output, err := j.executor.CombinedOutput(ctx, "node", []string{"-e", resolveJavaScriptModule, ciInitModule}, cleanEnvironment)
+	output, stderr, err := j.executor.Output(ctx, "node", []string{"-e", resolveJavaScriptModule, ciInitModule}, cleanEnvironment)
 	if err != nil {
-		return "", commandError("resolve dd-trace/ci/init", output, err)
+		return "", commandError("resolve dd-trace/ci/init", stderr, err)
 	}
 
 	ciInitPath := strings.TrimSpace(string(output))
