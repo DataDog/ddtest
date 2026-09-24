@@ -19,9 +19,9 @@ import (
 
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
-	"github.com/DataDog/ddtest/internal/testdrive/tracer"
 	"github.com/stretchr/testify/require"
 )
 
@@ -114,7 +114,7 @@ func prepareInstrumentedJestFixture(ctx context.Context, repositoryRoot, session
 	if err != nil {
 		return nil, err
 	}
-	ciInitPath, err := tracer.NewJSTracer("latest").Install(ctx, session.Directory())
+	ciInitPath, err := platform.NewJavaScript().InstallTracer(ctx, platform.TracerOptions{Directory: session.Directory(), Version: "latest"})
 	if err != nil {
 		return nil, err
 	}

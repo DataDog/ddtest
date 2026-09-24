@@ -16,20 +16,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
-	"github.com/DataDog/ddtest/internal/testdrive/tracer"
 )
 
 type fakeTracer struct {
+	platform.Platform
 	preloadPath      string
 	project          bool
+	env              map[string]string
+	options          platform.TracerOptions
 	sessionDirectory string
 	err              error
 }
 
-func (f *fakeTracer) Install(_ context.Context, sessionDirectory string) (tracer.Installation, error) {
+func (f *fakeTracer) InstallTracer(_ context.Context, options platform.TracerOptions) (platform.TracerInstallation, error) {
+	sessionDirectory := options.Directory
 	f.sessionDirectory = sessionDirectory
-	return tracer.Installation{Path: f.preloadPath, Project: f.project}, f.err
+	f.options = options
+	return platform.TracerInstallation{Path: f.preloadPath, Project: f.project, Env: f.env}, f.err
 }
 
 type fakeTestdriveExecutor struct {
@@ -163,7 +168,7 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 			},
 		},
 	}
-	testdrive.tracer = installer
+	testdrive.platform = installer
 	testdrive.executor = executor
 	testdrive.startIntake = func(sessionDirectory string) (localIntake, error) {
 		if sessionDirectory != installer.sessionDirectory {
@@ -247,7 +252,7 @@ func TestRunStillReportsEventsWhenJestFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	testdrive.tracer = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
+	testdrive.platform = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
 	testdrive.executor = &fakeTestdriveExecutor{output: []byte("FAIL one.test.js\n"), err: errors.New("exit status 1")}
 	testdrive.startIntake = func(string) (localIntake, error) {
 		return &fakeIntake{
@@ -324,7 +329,7 @@ func TestWriteFindingsCountsIndividualFindings(t *testing.T) {
 func TestRunReportsSetupAndCollectionErrors(t *testing.T) {
 	t.Run("tracer install", func(t *testing.T) {
 		testdrive := preparedTestdrive(t)
-		testdrive.tracer = &fakeTracer{err: errors.New("npm unavailable")}
+		testdrive.platform = &fakeTracer{err: errors.New("npm unavailable")}
 
 		err := testdrive.Run(t.Context(), &bytes.Buffer{})
 		if err == nil || !strings.Contains(err.Error(), "npm unavailable") {
@@ -334,7 +339,7 @@ func TestRunReportsSetupAndCollectionErrors(t *testing.T) {
 
 	t.Run("intake start", func(t *testing.T) {
 		testdrive := preparedTestdrive(t)
-		testdrive.tracer = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
+		testdrive.platform = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
 		testdrive.startIntake = func(string) (localIntake, error) {
 			return nil, errors.New("listener unavailable")
 		}
@@ -348,7 +353,7 @@ func TestRunReportsSetupAndCollectionErrors(t *testing.T) {
 	t.Run("findings", func(t *testing.T) {
 		testdrive := preparedTestdrive(t)
 		server := &fakeIntake{url: "http://127.0.0.1:1234", findingsErr: errors.New("invalid event payload")}
-		testdrive.tracer = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
+		testdrive.platform = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
 		testdrive.executor = &fakeTestdriveExecutor{}
 		testdrive.startIntake = func(string) (localIntake, error) { return server, nil }
 
@@ -365,7 +370,7 @@ func TestRunReportsSetupAndCollectionErrors(t *testing.T) {
 			findings: intake.Facts{TestCount: 1, TestEventCount: 1},
 			closeErr: errors.New("shutdown failed"),
 		}
-		testdrive.tracer = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
+		testdrive.platform = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
 		testdrive.executor = &fakeTestdriveExecutor{}
 		testdrive.startIntake = func(string) (localIntake, error) { return server, nil }
 
@@ -378,7 +383,7 @@ func TestRunReportsSetupAndCollectionErrors(t *testing.T) {
 
 func TestRunReportsPassingSuiteWithoutEvents(t *testing.T) {
 	testdrive := preparedTestdrive(t)
-	testdrive.tracer = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
+	testdrive.platform = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
 	testdrive.executor = &fakeTestdriveExecutor{}
 	testdrive.startIntake = func(string) (localIntake, error) {
 		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
@@ -396,7 +401,7 @@ func TestRunReportsPassingSuiteWithoutEvents(t *testing.T) {
 
 func TestRunReportsTestOutputWriteFailure(t *testing.T) {
 	testdrive := preparedTestdrive(t)
-	testdrive.tracer = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
+	testdrive.platform = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
 	testdrive.executor = &fakeTestdriveExecutor{output: []byte("PASS\n")}
 	testdrive.startIntake = func(sessionDirectory string) (localIntake, error) {
 		if err := os.RemoveAll(sessionDirectory); err != nil {
@@ -480,7 +485,7 @@ func TestRunReportsProjectTracer(t *testing.T) {
 		t.Fatal(err)
 	}
 	installer := &fakeTracer{preloadPath: "/project/node_modules/dd-trace/ci/init.js", project: true}
-	drive.tracer = installer
+	drive.platform = installer
 	executor := &fakeTestdriveExecutor{}
 	drive.executor = executor
 	drive.startIntake = func(string) (localIntake, error) {
@@ -489,6 +494,9 @@ func TestRunReportsProjectTracer(t *testing.T) {
 	var output bytes.Buffer
 	if err := drive.Run(t.Context(), &output); err != nil {
 		t.Fatal(err)
+	}
+	if installer.options.Version != "git:ignored-for-existing-tracer" || installer.options.Command != drive.command {
+		t.Fatal(installer.options)
 	}
 	if !strings.Contains(output.String(), "Tracer: project tracer · reused") {
 		t.Fatal(output.String())

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,7 +24,6 @@ import (
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
-	"github.com/DataDog/ddtest/internal/testdrive/tracer"
 )
 
 const testOutputFilename = "test-output.txt"
@@ -46,7 +46,8 @@ type Testdrive struct {
 	command        string
 	args           []string
 	tracerLabel    string
-	tracer         tracer.Tracer
+	platform       platform.Platform
+	tracerVersion  string
 	executor       commandExecutor
 	startIntake    func(string) (localIntake, error)
 }
@@ -81,15 +82,9 @@ func Prepare(version string) (*Testdrive, error) {
 	if err != nil {
 		return nil, err
 	}
-	var installer tracer.Tracer
-	var label string
-	switch language {
-	case "javascript":
-		installer = tracer.NewJSTracer(version)
-		label = "dd-trace@" + version
+	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 
-	}
-	return &Testdrive{repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, tracer: installer, tracerLabel: label,
+	return &Testdrive{repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) }}, nil
 }
 
@@ -128,7 +123,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	}
 
 	_, _ = fmt.Fprintf(output, "\nPreparing tracer (project first, %s fallback) in %s...\n", t.tracerLabel, session.Directory())
-	installation, err := t.tracer.Install(ctx, session.Directory())
+	installation, err := t.platform.InstallTracer(ctx, platform.TracerOptions{Directory: session.Directory(), Version: t.tracerVersion, Command: t.command, Args: t.args})
 	if err != nil {
 		return err
 	}
@@ -151,6 +146,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	command, args := t.command, t.args
 	_, _ = fmt.Fprintf(output, "Running %s...\n", shellquote.Join(append([]string{command}, args...)...))
 	env := t.environment(installation.Path, server.URL(), session.ID())
+	maps.Copy(env, installation.Env)
 
 	testOutput, testErr := t.executor.CombinedOutput(ctx, command, args, env)
 
