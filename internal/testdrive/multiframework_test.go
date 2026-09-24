@@ -39,6 +39,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			if name == "cypress" {
 				return
 			} // Browser wrapper has its own real-run test.
+			run.nodeVersion = func() string { return "v20.0.0" }
 			run.tracer = &fakeTracer{preloadPath: filepath.Join(root, "isolated")}
 			executor := &fakeTestdriveExecutor{}
 			run.executor = executor
@@ -66,6 +67,19 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 				require.NotContains(t, executor.env, "NODE_OPTIONS")
 			}
 		})
+	}
+}
+
+func TestSupportsNodeImport(t *testing.T) {
+	for version, want := range map[string]bool{
+		"v18.17.1": false,
+		"v18.18.0": true,
+		"v20.0.0":  true,
+		"invalid":  false,
+	} {
+		if got := supportsNodeImport(version); got != want {
+			t.Errorf("supportsNodeImport(%q) = %v, want %v", version, got, want)
+		}
 	}
 }
 
