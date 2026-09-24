@@ -137,6 +137,10 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	}
 
 	tracerLabel := t.tracerLabel + " · isolated"
+	if t.language == "ruby" {
+		// The project Gemfile may already pin the tracer selected by Bundler.
+		tracerLabel = "datadog-ci · isolated bundle"
+	}
 	if installation.Project {
 		tracerLabel = "project tracer · reused"
 	}
