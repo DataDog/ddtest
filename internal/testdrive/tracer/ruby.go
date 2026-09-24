@@ -41,11 +41,32 @@ func (r *Ruby) Install(ctx context.Context, directory string) (string, error) {
 	if err := copyRubyLockfile(r.root, directory); err != nil {
 		return "", err
 	}
+	if err := copyRubyBundleConfig(r.root, directory); err != nil {
+		return "", err
+	}
 	env := RubyEnvironment(gemfile)
 	if output, err := r.executor.CombinedOutput(ctx, "bundle", []string{"install"}, env); err != nil {
 		return "", commandError("install isolated Ruby bundle", output, err)
 	}
 	return gemfile, nil
+}
+
+func copyRubyBundleConfig(root, directory string) error {
+	contents, err := os.ReadFile(filepath.Join(root, ".bundle", "config"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read project Bundler config: %w", err)
+	}
+	configDirectory := filepath.Join(directory, "bundle-config")
+	if err := os.MkdirAll(configDirectory, 0700); err != nil {
+		return fmt.Errorf("create isolated Bundler config: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDirectory, "config"), contents, 0600); err != nil {
+		return fmt.Errorf("copy project Bundler config: %w", err)
+	}
+	return nil
 }
 
 // Preserve the customer's resolved versions while adding the tracer. PATH
@@ -84,5 +105,6 @@ func RubyEnvironment(gemfile string) map[string]string {
 		"BUNDLE_PATH":       filepath.Join(filepath.Dir(gemfile), "gems"),
 		"BUNDLE_APP_CONFIG": filepath.Join(filepath.Dir(gemfile), "bundle-config"),
 		"BUNDLE_FROZEN":     "false", "BUNDLE_DEPLOYMENT": "false",
+		"BUNDLE_WITH": "", "BUNDLE_WITHOUT": "", "BUNDLE_ONLY": "",
 	}
 }
