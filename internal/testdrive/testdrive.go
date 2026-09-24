@@ -79,11 +79,6 @@ func Prepare(version string) (*Testdrive, error) {
 		return nil, err
 	}
 	language := detectedPlatform.Name()
-	switch runner.Name() {
-	case "jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest":
-	default:
-		return nil, fmt.Errorf("testdrive does not yet support %s", runner.Name())
-	}
 	command, args := runner.Command()
 	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 
@@ -135,7 +130,11 @@ func (t *Testdrive) Preview(output io.Writer) {
 	_, _ = fmt.Fprintf(output, "  - save a clickable report in %s\n", filepath.Join(directory, reportFilename))
 	_, _ = fmt.Fprintf(output, "  - save captured traffic in %s and test output in %s\n", filepath.Join(directory, "intake"), filepath.Join(directory, testOutputFilename))
 	_, _ = fmt.Fprintln(output)
-	_, _ = fmt.Fprintln(output, "It will not change package.json, Gemfile, Python dependency files, or a lockfile in your project.")
+	if t.language == "ruby" && t.projectTracer == "" {
+		_, _ = fmt.Fprintln(output, "Bundler updates the project Gemfile and lockfile.")
+	} else {
+		_, _ = fmt.Fprintln(output, "It will not change package.json, Gemfile, Python dependency files, or a lockfile in your project.")
+	}
 }
 
 // Run prepares the tracer and executes the detected test suite.
@@ -162,8 +161,8 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 
 	tracerLabel := t.tracerLabel + " · isolated"
 	if t.language == "ruby" {
-		// The project Gemfile may already pin the tracer selected by Bundler.
-		tracerLabel = "datadog-ci · isolated bundle"
+		// Bundler owns the project dependency selection.
+		tracerLabel = "datadog-ci · installed in project"
 	}
 	if installation.Project {
 		tracerLabel = t.installedTracerLabel(t.projectTracer) + " · reused"
@@ -344,6 +343,8 @@ func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]st
 		maps.Copy(env, t.javascriptEnvironment(path))
 	case "python":
 		maps.Copy(env, pythonEnvironment(path))
+	case "ruby":
+		maps.Copy(env, rubyEnvironment(path))
 	}
 	return env
 }
