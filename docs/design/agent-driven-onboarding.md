@@ -43,7 +43,7 @@ The working preview is in draft PR #128 on `anmarchenko/agentic-onboarding-runbo
 ### Local testdrive
 
 - Each run has a unique directory and kernel-assigned loopback port, so sessions can run concurrently.
-- Every language reuses the project tracer when present. Shared platform probes distinguish absence from detection failures. Only absent tracers are installed inside the session: latest by default, or a release/Git revision selected with `--tracer-version`. Python keeps the selected interpreter; Ruby creates an overlay bundle only for fallback installation. Project dependency files are untouched.
+- Every language reuses the project tracer when its standard platform check succeeds. If the check fails, testdrive attempts an isolated installation inside the session: latest by default, or a release/Git revision selected with `--tracer-version`. Python keeps the selected interpreter; Ruby creates an overlay bundle only for fallback installation. Project dependency files are untouched.
 - The local intake supports the endpoints exercised by that tracer and enables Test Optimization, coverage, Intelligent Test Runner, Early Flake Detection, Auto Test Retries, Impacted Tests, failed-test replay, and Test Management.
 - Test events and test- or suite-level coverage are decoded. Raw multipart or msgpack payloads are not retained; saved traffic is JSON only.
 - Complete test output is saved separately.
