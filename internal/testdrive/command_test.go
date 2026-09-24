@@ -2,6 +2,7 @@ package testdrive
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/framework"
@@ -42,4 +43,14 @@ func TestTestdrivePreservesExplicitCommandArguments(t *testing.T) {
 	command, args := framework.NewMocha().Command()
 	require.Equal(t, "npm", command)
 	require.Equal(t, []string{"run", "smoke", "--", "--config", "config with spaces.js"}, args)
+}
+
+func TestTestdriveMinitestRequiresExecutableRailsBinstub(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "bin"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "bin", "rails"), []byte("#!/bin/sh\n"), 0644))
+	command, args, err := TestdriveCommand(root, NewMinitest())
+	require.NoError(t, err)
+	require.Equal(t, "bundle", command)
+	require.Equal(t, []string{"exec", "rake", "test"}, args)
 }
