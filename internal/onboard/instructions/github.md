@@ -36,7 +36,7 @@ After it finishes, post every `Open report:` link printed by `ddtest testdrive` 
 
 The API key must be created and added to GitHub by a human. Ask the human to:
 
-1. Create a [Datadog API key](https://app.datadoghq.com/organization-settings/api-keys).
+1. Follow the site-neutral [Datadog API key instructions](https://docs.datadoghq.com/account_management/api-app-keys/#add-an-api-key-or-client-token) and create the key in the selected Datadog site.
 2. Add it to the GitHub repository as a secret named `DD_API_KEY`.
 3. Tell you when the secret is ready without sharing the key itself.
 
