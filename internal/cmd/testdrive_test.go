@@ -19,7 +19,11 @@ func TestIsTerminalRejectsDevNull(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	t.Cleanup(func() {
+		if err := file.Close(); err != nil {
+			t.Errorf("close os.DevNull: %v", err)
+		}
+	})
 	if isTerminal(file) {
 		t.Fatal("os.DevNull must not be treated as an interactive terminal")
 	}
