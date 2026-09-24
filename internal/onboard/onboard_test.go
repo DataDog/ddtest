@@ -75,6 +75,47 @@ jobs:
 	}
 }
 
+func TestRunRequiresActionInEveryTestJob(t *testing.T) {
+	repositoryRoot := newJestRepository(t, `
+name: tests
+jobs:
+  unit:
+    steps:
+      - uses: datadog/test-visibility-github-action@v3
+      - run: npm test
+  integration:
+    steps:
+      - run: npm test
+`)
+	var output bytes.Buffer
+	t.Chdir(repositoryRoot)
+	if err := Run(&output); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "already appears in every detected test workflow") {
+		t.Fatalf("Run() treated a partially configured workflow as complete:\n%s", output.String())
+	}
+}
+
+func TestRunTreatsRepositoryRootAsLiteralPath(t *testing.T) {
+	parent := t.TempDir()
+	repositoryRoot := filepath.Join(parent, "project[old]")
+	if err := os.Mkdir(repositoryRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	fixture := newJestRepository(t, "name: tests\njobs:\n  test:\n    steps:\n      - run: npm test\n")
+	if err := os.Rename(filepath.Join(fixture, "package.json"), filepath.Join(repositoryRoot, "package.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(fixture, ".github"), filepath.Join(repositoryRoot, ".github")); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repositoryRoot)
+	if err := Run(&bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() failed for literal repository path: %v", err)
+	}
+}
+
 func TestRunRequiresGitHubJestWorkflow(t *testing.T) {
 	repositoryRoot := newJestRepository(t, "name: lint\njobs:\n  lint:\n    steps:\n      - run: npm run lint\n")
 
