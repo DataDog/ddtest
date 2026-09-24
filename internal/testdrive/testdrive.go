@@ -80,7 +80,7 @@ func Prepare(version string) (*Testdrive, error) {
 	}
 	language := detectedPlatform.Name()
 	switch runner.Name() {
-	case "jest", "mocha", "vitest", "playwright", "cucumber", "cypress":
+	case "jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest":
 	default:
 		return nil, fmt.Errorf("testdrive does not yet support %s", runner.Name())
 	}
@@ -424,6 +424,8 @@ func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]st
 	switch t.language {
 	case "javascript":
 		maps.Copy(env, t.javascriptEnvironment(path))
+	case "python":
+		maps.Copy(env, pythonEnvironment(path))
 	}
 	return env
 }
