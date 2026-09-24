@@ -184,9 +184,10 @@ gem build tools must already be installed.
   It does not establish a general Ruby path limitation or explain failures in
   checkouts without spaces. Testdrive now attempts the build and preserves
   Bundler's actual error instead of rejecting paths in advance.
-- Ruby uses a copied lockfile with relocated local PATH sources, preserving the
-  customer's resolved versions where compatible while adding the pinned tracer
-  only to the session-owned bundle.
+- Ruby's fallback Gemfile evaluates the project's Gemfile and adds the selected
+  tracer. Bundler resolves a fresh session lockfile; DDTest does not read or copy
+  the project's lockfile. Project Gemfile constraints still apply, but versions
+  pinned only in the project lockfile can differ in the testdrive bundle.
 
 ## Deliberate limits
 

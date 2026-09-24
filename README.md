@@ -68,7 +68,9 @@ Local testdrive prerequisites:
   absent. Fallback installation uses a session-owned directory; the active
   environment is unchanged.
 - Ruby: Ruby/Bundler. If `datadog-ci` is absent, a session-owned bundle adds it,
-  preserving the original Gemfile and lockfile. This fallback needs native gem
+  preserving the original Gemfile and lockfile. Bundler resolves a fresh session
+  lockfile from the Gemfile; versions pinned only in the project lockfile may differ.
+  This fallback needs native gem
   build tools. Bundler reports any native extension build failure. An existing tracer uses the
   project's original bundle.
 - Browser suites: install the project's browsers and start any required services
