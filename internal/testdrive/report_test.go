@@ -1,10 +1,11 @@
 package testdrive
 
 import (
-	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/DataDog/ddtest/internal/testdrive/intake"
 )
 
 func TestStaticReportEscapesFindingsAndDescribesMissingCoverage(t *testing.T) {
@@ -56,5 +57,17 @@ func TestReportSurfacesEmptyCoverageAsTracerError(t *testing.T) {
 	}
 	if strings.Contains(string(data), "No findings.") {
 		t.Fatal("report hides tracer error as no findings")
+	}
+}
+
+func TestAbsoluteFileURLHandlesWindowsPaths(t *testing.T) {
+	for path, want := range map[string]string{
+		`C:\repo\report.html`:          "file:///C:/repo/report.html",
+		`C:\project space\report.html`: "file:///C:/project%20space/report.html",
+		`\\server\share\report.html`:   "file://server/share/report.html",
+	} {
+		if got := absoluteFileURL(path); got != want {
+			t.Errorf("absoluteFileURL(%q) = %q, want %q", path, got, want)
+		}
 	}
 }
