@@ -16,7 +16,6 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/platform"
-	"github.com/DataDog/ddtest/internal/testdrive/tracer"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -184,25 +183,24 @@ func looksLikeTestWorkflow(workflow, language, name string) bool {
 
 func instructions(language, name string) string {
 	actionLanguage := language
-	var bootstrap, tracerSetting string
+	var bootstrap string
 	switch language {
 	case "javascript":
 		actionLanguage = "js"
-		tracerSetting = "js-tracer-version: " + tracer.JavaScriptVersion
 		bootstrap = javascriptBootstrap
 		if name == "cypress" {
 			bootstrap += "\n\n" + cypressBootstrap
 		}
 		if name == "cucumber" {
-			bootstrap += "\n\nFor the pinned tracer, also set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false on the test step. This avoids a tracer crash on Cucumber Background/Rule nodes; basic reporting is unaffected."
+			bootstrap += "\n\nFor Cucumber, also set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false on the test step. This avoids a tracer crash on Cucumber Background/Rule nodes; basic reporting is unaffected."
 		}
 	case "python":
 		bootstrap = pythonBootstrap
-		tracerSetting = "python-tracer-version: " + tracer.PythonVersion
 	case "ruby":
 		bootstrap = rubyBootstrap
-		tracerSetting = "ruby-tracer-version: " + tracer.RubyVersion
 	}
+	// Empty inputs override the action's pinned defaults and request the latest release.
+	tracerSetting := actionLanguage + "-tracer-version: '' # Latest release"
 	text := strings.NewReplacer("__FRAMEWORK__", name, "__LANGUAGE__", actionLanguage, "__BOOTSTRAP__", bootstrap, "__TRACER_SETTING__", tracerSetting).Replace(gitHubInstructions)
 	return strings.ReplaceAll(text, "ddtest testdrive", "ddtest testdrive --framework "+name)
 }

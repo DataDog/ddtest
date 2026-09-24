@@ -40,6 +40,7 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			t.Chdir(root)
 			require.NoError(t, Run(&output))
 			require.Contains(t, output.String(), "languages: "+language)
+			require.Contains(t, output.String(), language+"-tracer-version: '' # Latest release")
 			require.Contains(t, output.String(), "ddtest testdrive --framework "+name)
 			require.Contains(t, output.String(), "Ask a human to connect Datadog")
 			if language != "js" {
