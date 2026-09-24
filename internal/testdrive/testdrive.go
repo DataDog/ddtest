@@ -166,7 +166,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	if err != nil {
 		return err
 	}
-	reportPath, err := writeReport(t.repositoryRoot, session.Directory(), findings, testErr != nil, reportRuntime{Framework: displayName(t.framework.Name()), Tracer: t.tracerLabel})
+	reportPath, err := writeReport(t.repositoryRoot, session.Directory(), findings, testErr != nil, reportRuntime{Framework: displayName(t.framework.Name()), Tracer: tracerLabel})
 	if err != nil {
 		return err
 	}
