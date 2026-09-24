@@ -196,15 +196,13 @@ func writeFindings(output io.Writer, findings intake.Facts) {
 	}
 	count := 0
 	if findings.EmptyCoverageEntryCount > 0 {
-		count++
+		count += findings.EmptyCoverageEntryCount
 		_, _ = fmt.Fprintf(output, "Tracer error: received %d coverage entries with an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.\n", findings.EmptyCoverageEntryCount)
 	}
 	for _, size := range []int{
 		len(findings.FailedTests), len(findings.FlakyTests), len(findings.SlowTests), len(findings.BroadCoverage),
 	} {
-		if size > 0 {
-			count++
-		}
+		count += size
 	}
 	if count == 0 {
 		_, _ = fmt.Fprintln(output, "No findings.")
@@ -258,7 +256,7 @@ func testFindingLabel(finding intake.Test) string {
 
 func testEnvironment(ciInitPath, intakeURL, sessionID string) map[string]string {
 	nodeOptions := "-r " + strconv.Quote(ciInitPath)
-	if current := strings.TrimSpace(os.Getenv("NODE_OPTIONS")); current != "" {
+	if current := stripDatadogNodeOptions(os.Getenv("NODE_OPTIONS")); current != "" {
 		nodeOptions += " " + current
 	}
 
@@ -283,6 +281,37 @@ func testEnvironment(ciInitPath, intakeURL, sessionID string) map[string]string 
 		"DD_INSTRUMENTATION_TELEMETRY_ENABLED":                        "false",
 		"DD_TRACE_STARTUP_LOGS":                                       "false",
 	}
+}
+
+func stripDatadogNodeOptions(value string) string {
+	fields := strings.Fields(value)
+	kept := make([]string, 0, len(fields))
+	for index := 0; index < len(fields); index++ {
+		field := fields[index]
+		if field == "-r" || field == "--require" || field == "--import" {
+			if index+1 < len(fields) && isDatadogNodePreload(fields[index+1]) {
+				index++
+				continue
+			}
+		}
+		if strings.HasPrefix(field, "--require=") && isDatadogNodePreload(strings.TrimPrefix(field, "--require=")) {
+			continue
+		}
+		if strings.HasPrefix(field, "--import=") && isDatadogNodePreload(strings.TrimPrefix(field, "--import=")) {
+			continue
+		}
+		if strings.HasPrefix(field, "-r") && isDatadogNodePreload(strings.TrimPrefix(field, "-r")) {
+			continue
+		}
+		kept = append(kept, field)
+	}
+	return strings.Join(kept, " ")
+}
+
+func isDatadogNodePreload(value string) bool {
+	value = strings.Trim(value, `"'`)
+	return value == "dd-trace/ci/init" || strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/ci/init.js") ||
+		strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/register.js")
 }
 
 func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]string {
