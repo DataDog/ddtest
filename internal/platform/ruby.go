@@ -198,78 +198,20 @@ func (r *Ruby) DetectTracer(ctx context.Context, _ TracerOptions) (string, error
 }
 
 func (r *Ruby) InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
-	directory := options.Directory
-	root, err := os.Getwd()
-	if err != nil {
-		return TracerInstallation{}, fmt.Errorf("find project root: %w", err)
-	}
-	selection := ""
-	version := strings.NewReplacer(`\`, `\\`, "'", `\'`).Replace(options.Version)
-	if ref, ok := strings.CutPrefix(version, "git:"); ok {
+	args := []string{"add", requiredGemName}
+	if ref, ok := strings.CutPrefix(options.Version, "git:"); ok {
 		if ref == "" {
 			return TracerInstallation{}, fmt.Errorf("tracer git ref must not be empty")
 		}
-		selection = ", git: 'https://github.com/DataDog/datadog-ci-rb.git', ref: '" + ref + "'"
-	} else if version != "" && version != "latest" {
-		selection = ", '" + version + "'"
+		args = append(args, "--git", "https://github.com/DataDog/datadog-ci-rb.git", "--ref", ref)
+	} else if options.Version != "" && options.Version != "latest" {
+		args = append(args, "--version", options.Version)
 	}
-	project, err := r.DetectTracer(ctx, options)
-	if err == nil && project != "" {
+	if project, err := r.DetectTracer(ctx, options); err == nil && project != "" {
 		return TracerInstallation{Project: true}, nil
 	}
-	gemfile := filepath.Join(directory, "Gemfile")
-	sourceGemfile := os.Getenv("BUNDLE_GEMFILE")
-	if sourceGemfile == "" {
-		sourceGemfile = "Gemfile"
+	if output, err := r.executor.CombinedOutput(ctx, "bundle", args, map[string]string{"RUBYOPT": ""}); err != nil {
+		return TracerInstallation{}, runtimeTagProbeError("bundle add datadog-ci", output, err)
 	}
-	if !filepath.IsAbs(sourceGemfile) {
-		sourceGemfile = filepath.Join(root, sourceGemfile)
-	}
-	path := strings.ReplaceAll(strings.ReplaceAll(sourceGemfile, `\`, `\\`), "'", `\'`)
-	contents := "source 'https://rubygems.org'\neval_gemfile '" + path + "'\n" +
-		"gem 'datadog-ci'" + selection + " unless dependencies.any? { |dependency| dependency.name == 'datadog-ci' }\n"
-	if err := os.WriteFile(gemfile, []byte(contents), 0600); err != nil {
-		return TracerInstallation{}, fmt.Errorf("write isolated Gemfile: %w", err)
-	}
-	if err := copyRubyBundleConfig(root, directory); err != nil {
-		return TracerInstallation{}, err
-	}
-	env := rubyTracerEnvironment(gemfile)
-	installEnv := maps.Clone(env)
-	installEnv["RUBYOPT"] = ""
-	if output, err := r.executor.CombinedOutput(ctx, "bundle", []string{"install"}, installEnv); err != nil {
-		return TracerInstallation{}, runtimeTagProbeError("install isolated Ruby bundle", output, err)
-	}
-	return TracerInstallation{Path: gemfile, Env: env}, nil
-}
-
-func copyRubyBundleConfig(root, directory string) error {
-	contents, err := os.ReadFile(filepath.Join(root, ".bundle", "config"))
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read project Bundler config: %w", err)
-	}
-	configDirectory := filepath.Join(directory, "bundle-config")
-	if err := os.MkdirAll(configDirectory, 0700); err != nil {
-		return fmt.Errorf("create isolated Bundler config: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(configDirectory, "config"), contents, 0600); err != nil {
-		return fmt.Errorf("copy project Bundler config: %w", err)
-	}
-	return nil
-}
-
-func rubyTracerEnvironment(gemfile string) map[string]string {
-	if gemfile == "" {
-		return nil
-	}
-	return map[string]string{
-		"BUNDLE_GEMFILE":    gemfile,
-		"BUNDLE_PATH":       filepath.Join(filepath.Dir(gemfile), "gems"),
-		"BUNDLE_APP_CONFIG": filepath.Join(filepath.Dir(gemfile), "bundle-config"),
-		"BUNDLE_FROZEN":     "false", "BUNDLE_DEPLOYMENT": "false",
-		"BUNDLE_WITH": "", "BUNDLE_WITHOUT": "", "BUNDLE_ONLY": "",
-	}
+	return TracerInstallation{}, nil
 }
