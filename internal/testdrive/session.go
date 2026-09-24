@@ -10,8 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	"github.com/DataDog/ddtest/internal/constants"
 )
 
 const sessionTimeFormat = "2006-01-02-150405"
@@ -22,23 +20,23 @@ type Session struct {
 	directory string
 }
 
-// NewSession creates an independent directory for one testdrive run.
-func NewSession(repositoryRoot string) (*Session, error) {
-	sessionsDirectory := filepath.Join(repositoryRoot, constants.PlanDirectory, "testdrive")
-	if err := os.MkdirAll(sessionsDirectory, 0755); err != nil {
-		return nil, fmt.Errorf("create testdrive sessions directory: %w", err)
-	}
-
-	prefix := time.Now().UTC().Format(sessionTimeFormat) + "-"
-	directory, err := os.MkdirTemp(sessionsDirectory, prefix)
+// NewSession creates private scratch storage outside the customer repository.
+// Call Close on every exit path, including setup failures and cancellation.
+func NewSession() (*Session, error) {
+	prefix := "ddtest-testdrive-" + time.Now().UTC().Format(sessionTimeFormat) + "-"
+	directory, err := os.MkdirTemp("", prefix)
 	if err != nil {
-		return nil, fmt.Errorf("create testdrive session directory: %w", err)
+		return nil, fmt.Errorf("create temporary testdrive session: %w", err)
 	}
+	return &Session{id: filepath.Base(directory), directory: directory}, nil
+}
 
-	return &Session{
-		id:        filepath.Base(directory),
-		directory: directory,
-	}, nil
+// Close removes only the scratch directory owned by this session.
+func (s *Session) Close() error {
+	if err := os.RemoveAll(s.directory); err != nil {
+		return fmt.Errorf("clean up testdrive session %s: %w", s.directory, err)
+	}
+	return nil
 }
 
 // ID returns the unique name of the session.

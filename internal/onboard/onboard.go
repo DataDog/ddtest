@@ -59,8 +59,8 @@ func Run(output io.Writer) error {
 	if len(configured) == len(workflows) {
 		_, _ = fmt.Fprintln(output)
 		_, _ = fmt.Fprintln(output, "Datadog Test Optimization already appears in every detected test workflow.")
-		_, _ = fmt.Fprintf(output, "Run `ddtest testdrive --framework %s` to check the setup locally.\n", name)
-		_, _ = fmt.Fprintln(output, "After it finishes, post every `Open report:` link to the user so they can open the local Test Optimization report.")
+		_, _ = fmt.Fprintf(output, "This is configuration detection, not completed onboarding. Run `ddtest testdrive --framework %s` to validate locally. Jest also checks CI runtime compatibility; other frameworks remain unvalidated.\n", name)
+		_, _ = fmt.Fprintln(output, "After it finishes, share the validation verdict, CI runtime compatibility, feature results, and the Results JSON path with the user.")
 		return nil
 	}
 
@@ -199,13 +199,11 @@ func instructions(language, name string) string {
 	case "ruby":
 		bootstrap = rubyBootstrap
 	}
-	// Empty inputs override the action's pinned defaults and request the latest release.
-	tracerSetting := actionLanguage + "-tracer-version: '' # Latest release"
-	text := strings.NewReplacer("__FRAMEWORK__", name, "__LANGUAGE__", actionLanguage, "__BOOTSTRAP__", bootstrap, "__TRACER_SETTING__", tracerSetting).Replace(gitHubInstructions)
+	text := strings.NewReplacer("__FRAMEWORK__", name, "__LANGUAGE__", actionLanguage, "__BOOTSTRAP__", bootstrap).Replace(gitHubInstructions)
 	return strings.ReplaceAll(text, "ddtest testdrive", "ddtest testdrive --framework "+name)
 }
 
-const javascriptBootstrap = "Use Node.js 22 or newer. GitHub Actions cannot set NODE_OPTIONS for later steps, so merge this into the existing test step, preserving any current Node options:\n\n```yaml\nenv:\n  NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}\n```\n\nThe --import loader is required for Vitest and other ESM tests."
+const javascriptBootstrap = "For every instrumented CI matrix entry, use a Node.js version supported by the tracer selected by the action. The Jest testdrive checks the action's actual tracer metadata; do not infer CI compatibility from the local Node version. GitHub Actions cannot set NODE_OPTIONS for later steps, so merge this into the existing test step, preserving any current Node options:\n\n```yaml\nenv:\n  NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}\n```\n\nThe --import loader is required for Vitest and other ESM tests."
 
 const pythonBootstrap = "The action exports PYTHONPATH and PYTEST_ADDOPTS=--ddtrace for pytest. Preserve these variables on the existing test step; do not replace its current arguments. Activate the same Python environment used for the tests before the action. If CI uses tox or nox, pass DD_*, PYTHONPATH, and PYTEST_ADDOPTS into the test environment."
 

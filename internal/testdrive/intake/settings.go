@@ -20,12 +20,22 @@ const (
 	testdriveCorrelationID = "ddtest-testdrive"
 )
 
-func newHandler() http.Handler {
+// Scenario configures exactly one local feature experiment. The zero value is reporting-only.
+type Scenario struct {
+	Feature string
+	Module  string
+	Suite   string
+	Test    string
+}
+
+func newHandler() http.Handler { return scenarioHandler(Scenario{}) }
+
+func scenarioHandler(scenario Scenario) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST "+constants.SettingsURLPath, handleSettings)
+	mux.HandleFunc("POST "+constants.SettingsURLPath, func(w http.ResponseWriter, r *http.Request) { handleScenarioSettings(w, r, scenario) })
 	mux.HandleFunc("POST "+constants.KnownTestsURLPath, handleKnownTests)
-	mux.HandleFunc("POST "+constants.SkippableTestsURLPath, handleSkippableTests)
-	mux.HandleFunc("POST "+constants.TestManagementTestsURLPath, handleTestManagement)
+	mux.HandleFunc("POST "+constants.SkippableTestsURLPath, func(w http.ResponseWriter, r *http.Request) { handleSkippableTests(w, r, scenario) })
+	mux.HandleFunc("POST "+constants.TestManagementTestsURLPath, func(w http.ResponseWriter, r *http.Request) { handleTestManagement(w, r, scenario) })
 	mux.HandleFunc("POST "+constants.SearchCommitsURLPath, func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"data": []any{}})
 	})
@@ -49,7 +59,7 @@ func newHandler() http.Handler {
 	return mux
 }
 
-func handleSettings(w http.ResponseWriter, request *http.Request) {
+func handleScenarioSettings(w http.ResponseWriter, request *http.Request, scenario Scenario) {
 	var settingsRequest api.SettingsRequest
 	if err := json.NewDecoder(request.Body).Decode(&settingsRequest); err != nil {
 		http.Error(w, "invalid settings request", http.StatusBadRequest)
@@ -65,22 +75,19 @@ func handleSettings(w http.ResponseWriter, request *http.Request) {
 	response.Data.ID = responseID
 	response.Data.Type = constants.SettingsResponseType
 	response.Data.Attributes = api.SettingsResponseData{
-		CodeCoverage:                true,
-		CoverageReportUploadEnabled: true,
-		TestsSkipping:               true,
-		ItrEnabled:                  true,
-		ImpactedTestsEnabled:        true,
-		FlakyTestRetriesEnabled:     true,
-		DIEnabled:                   true,
-		KnownTestsEnabled:           true,
+		CodeCoverage:            true,
+		ItrEnabled:              true,
+		TestsSkipping:           scenario.Feature == "skipping",
+		FlakyTestRetriesEnabled: scenario.Feature == "auto-retries",
+		KnownTestsEnabled:       scenario.Feature == "early-flake-detection",
 		EarlyFlakeDetection: api.EarlyFlakeDetectionSettings{
-			Enabled:                true,
-			SlowTestRetries:        api.SlowTestRetries{FiveS: 1, TenS: 1, ThirtyS: 1, FiveM: 1},
+			Enabled:                scenario.Feature == "early-flake-detection",
+			SlowTestRetries:        api.SlowTestRetries{FiveS: 2, TenS: 2, ThirtyS: 2, FiveM: 2},
 			FaultySessionThreshold: 100,
 		},
 		TestManagement: api.TestManagementSettings{
-			Enabled:             true,
-			AttemptToFixRetries: 1,
+			Enabled:             scenario.Feature == "quarantine" || scenario.Feature == "disabled" || scenario.Feature == "attempt-to-fix",
+			AttemptToFixRetries: 2,
 		},
 	}
 
@@ -105,9 +112,13 @@ func handleKnownTests(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func handleSkippableTests(w http.ResponseWriter, _ *http.Request) {
+func handleSkippableTests(w http.ResponseWriter, _ *http.Request, scenario Scenario) {
+	data := []any{}
+	if scenario.Feature == "skipping" {
+		data = append(data, map[string]any{"type": "suite", "attributes": map[string]any{"suite": scenario.Suite}})
+	}
 	writeJSON(w, map[string]any{
-		"data": []any{},
+		"data": data,
 		"meta": map[string]any{
 			"correlation_id": testdriveCorrelationID,
 			"coverage":       map[string]any{},
@@ -115,12 +126,17 @@ func handleSkippableTests(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func handleTestManagement(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, map[string]any{
-		"data": map[string]any{
-			"attributes": map[string]any{"modules": map[string]any{}},
-		},
-	})
+func handleTestManagement(w http.ResponseWriter, _ *http.Request, scenario Scenario) {
+	modules := map[string]any{}
+	property := map[string]string{"quarantine": "quarantined", "disabled": "disabled", "attempt-to-fix": "attempt_to_fix"}[scenario.Feature]
+	if property != "" {
+		modules[scenario.Module] = map[string]any{"suites": map[string]any{
+			scenario.Suite: map[string]any{"tests": map[string]any{
+				scenario.Test: map[string]any{"properties": map[string]any{property: true}},
+			}},
+		}}
+	}
+	writeJSON(w, map[string]any{"data": map[string]any{"attributes": map[string]any{"modules": modules}}})
 }
 
 func writeJSON(w http.ResponseWriter, response any) {

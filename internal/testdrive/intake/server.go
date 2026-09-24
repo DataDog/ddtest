@@ -82,6 +82,11 @@ type Server struct {
 // Start starts an HTTP intake on a kernel-assigned loopback port and stores
 // every request under the testdrive session directory.
 func Start(sessionDirectory string) (*Server, error) {
+	return StartScenario(sessionDirectory, Scenario{})
+}
+
+// StartScenario starts an isolated intake with fixed responses for one experiment.
+func StartScenario(sessionDirectory string, scenario Scenario) (*Server, error) {
 	intakeDirectory := filepath.Join(sessionDirectory, intakeDirectoryName)
 	if err := os.MkdirAll(intakeDirectory, 0755); err != nil {
 		return nil, fmt.Errorf("create local testdrive intake directory: %w", err)
@@ -98,7 +103,7 @@ func Start(sessionDirectory string) (*Server, error) {
 		directory: intakeDirectory,
 	}
 	httpServer := &http.Server{
-		Handler:           server.recordRequests(newHandler()),
+		Handler:           server.recordRequests(scenarioHandler(scenario)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	server.server = httpServer

@@ -235,3 +235,41 @@ func truthy(value any) bool {
 		return integer(value) != 0
 	}
 }
+
+// Event retains the identity and feature tags needed to verify a scenario,
+// including suite events when the tracer skips an entire Jest file.
+type Event struct {
+	Type string            `json:"type"`
+	Tags map[string]string `json:"tags"`
+}
+
+func (s *Server) events() ([]Event, error) {
+	var events []Event
+	for _, request := range s.Requests() {
+		if request.Method != http.MethodPost || request.Path != constants.TestCycleURLPath {
+			continue
+		}
+		body, err := uncompressRequestBody(request)
+		if err != nil {
+			return nil, err
+		}
+		payload, _, err := msgp.ReadMapStrIntfBytes(body, nil)
+		if err != nil {
+			return nil, err
+		}
+		values, _ := payload["events"].([]any)
+		for _, value := range values {
+			event, _ := value.(map[string]any)
+			content, _ := event["content"].(map[string]any)
+			metadata, _ := content["meta"].(map[string]any)
+			tags := make(map[string]string)
+			for key, value := range metadata {
+				if v, ok := value.(string); ok {
+					tags[key] = v
+				}
+			}
+			events = append(events, Event{Type: text(event["type"]), Tags: tags})
+		}
+	}
+	return events, nil
+}

@@ -63,6 +63,7 @@ type CoverageFact struct {
 
 // Facts contains the facts shown in the testdrive report.
 type Facts struct {
+	Events                  []Event
 	ConfigurationErrors     []string
 	EmptyCoverageEntryCount int
 	TestCount               int
@@ -95,6 +96,10 @@ func (s *Server) Facts() (Facts, error) {
 	findings.CoveredTestCount = uniqueCoveredTestCount(tests, coverages)
 	findings.BroadCoverage, findings.CoveredFilesMedian = analyzeCoverage(tests, coverages, findings.CoverageLevel)
 	findings.ConfigurationErrors, err = s.configurationErrors()
+	if err != nil {
+		return findings, err
+	}
+	findings.Events, err = s.events()
 	return findings, err
 }
 

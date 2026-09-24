@@ -11,7 +11,6 @@ Add this step after checkout and dependency installation, immediately before the
   uses: datadog/test-visibility-github-action@v3
   with:
     languages: __LANGUAGE__
-    __TRACER_SETTING__
     api_key: ${{ secrets.DD_API_KEY }}
     site: datadoghq.com
 ```
@@ -24,13 +23,23 @@ Keep the existing test command and unrelated workflow content unchanged. Add the
 
 ## 2. Try it locally
 
-Run the local, credential-free setup check:
+Identify the actual test command from the package scripts and CI, including custom config paths and required setup. Preserve that command in CI. For local validation, pass the Jest invocation and its config arguments through `--command`; do not silently drop a non-default config or necessary setup.
+
+For Jest, start with `ddtest testdrive --check-only --yes` (and `--command` when needed). This executes Jest's `--showConfig`, but does not install a tracer or run tests. Review the detected Jest version, runner, Node version, and tracer selection. Fix known incompatibilities before the full run: older Jest may need a supported tracer major and a matching `jest-circus` runner. Avoid upgrading the framework or dropping CI coverage merely to use the newest tracer.
+
+`--tracer-version <release-or-tag>` selects the fallback tracer. An existing project tracer takes precedence, which the report states explicitly. Otherwise ddtest resolves the selector once and installs that exact version in a temporary directory. Use the resolved version in the action's `js-tracer-version` input to validate the same tracer locally and in CI. There is no universal tracer version to copy into every repository.
+
+Run the full local, credential-free validation with the same command and tracer selection. Run it sequentially: wait for testdrive to finish before starting lint, build, or another test run, because feature validation briefly creates a probe test in the repository:
 
 ```shell
 ddtest testdrive
 ```
 
-After it finishes, post every `Open report:` link printed by `ddtest testdrive` to the user so they can open the local Test Optimization report. Do not only summarize the result.
+Testdrive reuses an existing project tracer. JavaScript and Python fallback installations are temporary and cleaned up afterward; do not add them to the project dependencies for local validation. Ruby fallback uses `bundle add datadog-ci` and retains its Gemfile and lockfile changes. It retains only `.testoptimization/testdrive.json`, replacing the previous report on each run. The compact report records overall success, verdicts, test commands, modes, exit codes, and aggregate counts; it does not retain raw output or events. Exclude `.testoptimization/` from source control and published packages; for npm projects, check `files`/`.npmignore` as well as `.gitignore`. Jest validation compares uninstrumented and reporting-only results, then checks features with temporary probe tests. Existing test failures are not automatically validation failures. Other frameworks are explicitly unvalidated.
+
+For Jest, testdrive also checks GitHub Actions Node versions against the tracer selected by each Datadog action, using its explicit version or the default from that action ref. It reads public GitHub and npm metadata; it does not run CI. Fix known runtime incompatibilities. An inconclusive result caused by unsupported CI syntax, a dynamic matrix, or unavailable metadata is a tool limitation: preserve the workflow, explain the missing evidence, and leave that check unverified. Do not rewrite valid conditions merely to satisfy the checker, or inspect the binary to discover accepted syntax. Human/agent review may be reported separately; it does not turn an unverified programmatic check into a pass. After a CI-only edit, use `--check-only` to recheck configuration without repeating the suite; this replaces the report and explicitly marks test execution as not exercised. Run full validation again for a final combined report. Preserve existing test coverage: unsupported runtime entries can remain uninstrumented, or the user can choose a compatible runtime/tracer. Do not assume the action will resolve runtime incompatibilities.
+
+After it finishes, share local compatibility, each feature result, static CI runtime compatibility, local/CI tracer agreement, and the Results JSON path separately. Actual CI execution and backend processing remain not exercised by testdrive. Preserve inconclusive results; do not describe receiving telemetry as proof of compatibility.
 
 ## 3. Ask a human to connect Datadog
 

@@ -24,6 +24,7 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 )
@@ -50,13 +51,15 @@ type Testdrive struct {
 	tracerLabel    string
 	platform       platform.Platform
 	tracerVersion  string
+	checkOnly      bool
+	preflight      func(context.Context, io.Writer, *validationResult) error
 	executor       commandExecutor
-	startIntake    func(string) (localIntake, error)
+	startIntake    func(string, intake.Scenario) (localIntake, error)
 	nodeVersion    func() string
 }
 
 // Prepare detects the repository without running commands or writing files.
-func Prepare(version string) (*Testdrive, error) {
+func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	if version == "" {
 		version = "latest"
 	}
@@ -81,10 +84,14 @@ func Prepare(version string) (*Testdrive, error) {
 		return nil, err
 	}
 	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
-
-	return &Testdrive{repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
-		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) },
-		nodeVersion: currentNodeVersion}, nil
+	drive := &Testdrive{repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerLabel: label, tracerVersion: version,
+		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string, scenario intake.Scenario) (localIntake, error) {
+			return intake.StartScenario(directory, scenario)
+		},
+		nodeVersion: currentNodeVersion}
+	drive.checkOnly = len(checkOnly) > 0 && checkOnly[0]
+	drive.preflight = drive.checkJestPreflight
+	return drive, nil
 }
 
 func displayName(name string) string {
@@ -94,17 +101,21 @@ func displayName(name string) string {
 
 // Preview describes the filesystem and process changes that Run will make.
 func (t *Testdrive) Preview(output io.Writer) {
+	if t.checkOnly {
+		_, _ = fmt.Fprintln(output, "Check configuration only: resolve the tracer, inspect Jest --showConfig, and review static CI runtimes. No tracer installation or tests; replace .testoptimization/testdrive.json.")
+		return
+	}
 	command, args := t.command, t.args
-	sessionsDirectory := filepath.Join(t.repositoryRoot, constants.PlanDirectory, "testdrive")
+	reportPath := validationPath(t.repositoryRoot)
 
 	_, _ = fmt.Fprintf(output, "DDTest found %s and %s.\n", displayName(t.language), displayName(t.framework.Name()))
 	_, _ = fmt.Fprintln(output)
 	_, _ = fmt.Fprintln(output, "It will:")
-	_, _ = fmt.Fprintf(output, "  - create a new <session> under %s\n", sessionsDirectory)
+	_, _ = fmt.Fprintln(output, "  - create a private temporary <session> outside the repository")
 	switch t.language {
 	case "javascript":
-		_, _ = fmt.Fprintf(output, "  - reuse the project tracer; if absent, install %s with npm inside <session> (local install, without saving dependencies or a lockfile)\n", t.tracerLabel)
-		_, _ = fmt.Fprintln(output, "  - resolve the selected dd-trace preload with node")
+		_, _ = fmt.Fprintln(output, "  - reuse the project tracer; otherwise install the resolved fallback dd-trace@"+t.tracerVersion+" in <session>")
+		_, _ = fmt.Fprintln(output, "  - inspect the selected Jest configuration and tracer compatibility before running tests")
 	case "python":
 		_, _ = fmt.Fprintf(output, "  - reuse the project tracer; if absent, install %s with the test command’s Python interpreter inside <session>/python-packages\n", t.tracerLabel)
 
@@ -117,8 +128,16 @@ func (t *Testdrive) Preview(output io.Writer) {
 	}
 
 	_, _ = fmt.Fprintf(output, "  - run: %s\n", shellquote.Join(append([]string{command}, args...)...))
-	_, _ = fmt.Fprintln(output, "  - save a clickable report as <session>/report.html")
-	_, _ = fmt.Fprintln(output, "  - save decoded traffic as <session>/intake/*.json and test output as <session>/test-output.txt")
+	if t.framework.Name() == "jest" {
+		_, _ = fmt.Fprintln(output, "  - check GitHub Actions Node runtimes against the workflow-selected tracer using public action and npm metadata")
+		_, _ = fmt.Fprintln(output, "  - compare Jest JSON results without instrumentation and with reporting-only instrumentation")
+		_, _ = fmt.Fprintln(output, "  - repeat the pair if outcomes differ; timing and console order are ignored")
+		_, _ = fmt.Fprintln(output, "  - create and remove a temporary probe test beside an existing test; check retries, EFD, skipping, quarantine, disabled tests, and attempt-to-fix separately; wait for completion before running other repository checks")
+	} else {
+		_, _ = fmt.Fprintln(output, "  - collect reporting-only telemetry; compatibility and features remain unvalidated for this framework")
+	}
+	_, _ = fmt.Fprintf(output, "  - replace the single report at %s\n", reportPath)
+	_, _ = fmt.Fprintln(output, "  - include verdicts, commands, exit codes, and aggregate counts in the report; remove the temporary tracer, traffic, and run files when finished")
 	_, _ = fmt.Fprintln(output)
 	if t.language == "ruby" {
 		_, _ = fmt.Fprintln(output, "If tracer installation is needed, Bundler updates the project Gemfile and lockfile.")
@@ -129,26 +148,68 @@ func (t *Testdrive) Preview(output io.Writer) {
 
 // Run prepares the tracer and executes the detected test suite.
 func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
-	session, err := NewSession(t.repositoryRoot)
+	session, err := NewSession()
 	if err != nil {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(output, "\nPreparing tracer (project first, %s fallback) in %s...\n", t.tracerLabel, session.Directory())
-	installation, err := t.platform.InstallTestdriveTracer(ctx, platform.TracerOptions{Directory: session.Directory(), Version: t.tracerVersion, Command: t.command, Args: t.args})
+	result := validationResult{CheckOnly: t.checkOnly, Session: session.ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel,
+		Compatibility: verdict{Status: "inconclusive", Reason: "Validation did not complete."}}
+	defer func() {
+		runErr = errors.Join(runErr, session.Close())
+		if runErr != nil {
+			result.Error = runErr.Error()
+		}
+		runErr = errors.Join(runErr, finishValidation(output, t.repositoryRoot, result))
+	}()
+
+	if t.framework.Name() == "jest" {
+		check := onboard.CheckCIRuntimes(ctx, t.repositoryRoot)
+		result.CIRuntime = &check
+		if t.preflight != nil {
+			if err := t.preflight(ctx, output, &result); err != nil {
+				return err
+			}
+		}
+		if t.checkOnly {
+			result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration checks only; run testdrive without --check-only for paired execution."}
+			result.Features = []featureResult{{Name: "all", Status: "not exercised", Reason: "Configuration checks only."}}
+			return nil
+		}
+	} else if t.checkOnly {
+		return fmt.Errorf("configuration preflight currently supports Jest only")
+	}
+
+	_, _ = fmt.Fprintf(output, "\nPreparing %s in %s...\n", t.tracerLabel, session.Directory())
+	version := t.tracerVersion
+	if result.Selection != nil && result.Selection.Version != "" {
+		version = result.Selection.Version
+	}
+	installation, err := t.platform.InstallTestdriveTracer(ctx, platform.TracerOptions{Directory: session.Directory(), Version: version, Command: t.command, Args: t.args})
 	if err != nil {
 		return err
 	}
 
-	tracerLabel := t.tracerLabel + " · isolated"
+	result.TracerSource = "temporary installation"
 	if t.language == "ruby" {
-		// Bundler owns the project dependency selection.
-		tracerLabel = "datadog-ci · installed in project"
+		result.TracerSource = "project bundle installation"
 	}
 	if installation.Project {
-		tracerLabel = "project tracer · reused"
+		result.TracerSource = "project installation (reused; fallback selector ignored)"
 	}
-	server, err := t.startIntake(session.Directory())
+	if t.framework.Name() == "jest" {
+		if result.Selection != nil {
+			if err := verifyInstalledSelection(installation.Path, &result); err != nil {
+				return err
+			}
+			result.Preflight.Verdict = checkJestSupport(*result.Preflight, *result.Selection)
+			if result.Preflight.Verdict.Status != "compatible" {
+				return fmt.Errorf("jest preflight: %s", result.Preflight.Verdict.Reason)
+			}
+		}
+		return t.runJestValidation(ctx, output, session, installation.Path, &result)
+	}
+	server, err := t.startIntake(session.Directory(), intake.Scenario{})
 	if err != nil {
 		return err
 	}
@@ -172,8 +233,9 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 			return err
 		}
 	}
-
 	testOutput, testErr := t.executor.CombinedOutput(ctx, command, args, env)
+	result.Runs = []runSummary{(validationRun{Name: "reporting-only", Command: shellquote.Join(append([]string{command}, args...)...),
+		Instrumented: true, ExitCode: commandExitCode(testErr)}).summary()}
 
 	testOutputPath := filepath.Join(session.Directory(), testOutputFilename)
 	if err := os.WriteFile(testOutputPath, testOutput, 0644); err != nil {
@@ -189,14 +251,6 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	findings, err := server.Facts()
 	if err != nil {
 		return err
-	}
-	reportPath, err := writeReport(t.repositoryRoot, session.Directory(), findings, testErr != nil, reportRuntime{Framework: displayName(t.framework.Name()), Tracer: tracerLabel})
-	if err != nil {
-		return err
-	}
-	reportURL, err := fileURL(reportPath)
-	if err != nil {
-		return fmt.Errorf("create report link: %w", err)
 	}
 
 	_, _ = fmt.Fprintln(output)
@@ -217,26 +271,21 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		}
 	}
 	_, _ = fmt.Fprintf(output, "  %s: %s\n", displayName(t.framework.Name()), passedFailed(testErr == nil))
-	_, _ = fmt.Fprintf(output, "  Tracer: %s\n", tracerLabel)
-	_, _ = fmt.Fprintf(output, "\nOpen report: %s\n", terminalLink(reportURL))
-
-	if testErr != nil {
-		return fmt.Errorf("%s failed after sending %d test event(s): %w", t.framework.Name(), findings.TestEventCount, testErr)
-	}
-	if findings.TestEventCount == 0 {
-		return fmt.Errorf("%s passed, but Test Optimization sent no test events", t.framework.Name())
-	}
+	_, _ = fmt.Fprintf(output, "  Tracer: %s · %s\n", result.Tracer, result.TracerSource)
+	result.Compatibility = verdict{Status: "inconclusive", Reason: "This framework has no compatibility adapter yet; telemetry alone does not validate behavior."}
+	result.Features = []featureResult{{Name: "all", Status: "unvalidated", Reason: "Feature scenarios currently support Jest only."}}
+	result.Runs[0].TestEventCount = findings.TestEventCount
 	return nil
 }
 
 func writeFindings(output io.Writer, findings intake.Facts) {
 	if len(findings.ConfigurationErrors) > 0 {
-		_, _ = fmt.Fprintf(output, "Tracer configuration errors: %s. Inspect the captured traffic and test output.\n", strings.Join(findings.ConfigurationErrors, ", "))
+		_, _ = fmt.Fprintf(output, "Tracer configuration errors: %s.\n", strings.Join(findings.ConfigurationErrors, ", "))
 	}
 	count := 0
 	if findings.EmptyCoverageEntryCount > 0 {
 		count += findings.EmptyCoverageEntryCount
-		_, _ = fmt.Fprintf(output, "Tracer error: received %d coverage entries with an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.\n", findings.EmptyCoverageEntryCount)
+		_, _ = fmt.Fprintf(output, "Tracer error: received %d coverage entries with an empty files list. Affected payloads were excluded from coverage counts.\n", findings.EmptyCoverageEntryCount)
 	}
 	for _, size := range []int{
 		len(findings.FailedTests), len(findings.FlakyTests), len(findings.SlowTests), len(findings.BroadCoverage),
@@ -278,7 +327,7 @@ func writeTestFindings(output io.Writer, title string, findings []intake.Test) {
 
 func writeTestFindingRows(output io.Writer, findings []intake.Test) {
 	for _, finding := range findings {
-		status, _ := testDisplayStatus(finding)
+		status := testDisplayStatus(finding)
 		_, _ = fmt.Fprintf(
 			output, "  - %s · %s · %s\n",
 			testFindingLabel(finding), status, formatDuration(findingDuration(finding)),
@@ -308,22 +357,32 @@ func testEnvironment(ciInitPath, intakeURL, sessionID string) map[string]string 
 		constants.TestOptimizationTestSessionNameEnvironmentVariable:  "ddtest testdrive " + sessionID,
 		"DD_CIVISIBILITY_GIT_UPLOAD_ENABLED":                          "false",
 		"DD_CIVISIBILITY_ITR_ENABLED":                                 "true",
-		"DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED":         "true",
-		"DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED":               "true",
+		"DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED":         "false",
+		"DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED":               "false",
 		"DD_TEST_EARLY_FLAKE_DETECTION_RETRY_COUNT":                   "1",
-		"DD_CIVISIBILITY_FLAKY_RETRY_ENABLED":                         "true",
-		"DD_CIVISIBILITY_FLAKY_RETRY_COUNT":                           "5",
-		"DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED":            "true",
-		"DD_TEST_FAILED_TEST_REPLAY_ENABLED":                          "true",
-		"DD_TEST_MANAGEMENT_ENABLED":                                  "true",
+		"DD_CIVISIBILITY_FLAKY_RETRY_ENABLED":                         "false",
+		"DD_CIVISIBILITY_FLAKY_RETRY_COUNT":                           "2",
+		"DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED":            "false",
+		"DD_TEST_FAILED_TEST_REPLAY_ENABLED":                          "false",
+		"DD_TEST_MANAGEMENT_ENABLED":                                  "false",
 		"DD_TEST_MANAGEMENT_ATTEMPT_TO_FIX_RETRIES":                   "1",
 		"DD_INSTRUMENTATION_TELEMETRY_ENABLED":                        "false",
 		"DD_TRACE_STARTUP_LOGS":                                       "false",
+		"DD_TRACE_ENABLED":                                            "true",
+		"DD_REMOTE_CONFIG_ENABLED":                                    "false",
+		"DD_PROFILING_ENABLED":                                        "false",
+		"DD_APPSEC_ENABLED":                                           "false",
+		"DD_DYNAMIC_INSTRUMENTATION_ENABLED":                          "false",
+		"DD_TRACE_AGENT_URL":                                          intakeURL,
+		"DD_CIVISIBILITY_CODE_COVERAGE_ENABLED":                       "true",
 	}
 }
 
 func stripDatadogNodeOptions(value string) string {
-	fields := strings.Fields(value)
+	fields, err := shellquote.Split(value)
+	if err != nil {
+		return value
+	}
 	kept := make([]string, 0, len(fields))
 	for index := 0; index < len(fields); index++ {
 		field := fields[index]
@@ -342,6 +401,9 @@ func stripDatadogNodeOptions(value string) string {
 		if strings.HasPrefix(field, "-r") && isDatadogNodePreload(strings.TrimPrefix(field, "-r")) {
 			continue
 		}
+		if strings.ContainsAny(field, " \t\r\n\"") {
+			field = strconv.Quote(field)
+		}
 		kept = append(kept, field)
 	}
 	return strings.Join(kept, " ")
@@ -349,7 +411,7 @@ func stripDatadogNodeOptions(value string) string {
 
 func isDatadogNodePreload(value string) bool {
 	value = strings.Trim(value, `"'`)
-	return value == "dd-trace/ci/init" || strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/ci/init.js") ||
+	return value == "dd-trace/ci/init" || value == "dd-trace/register.js" || strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/ci/init.js") ||
 		strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/register.js")
 }
 
@@ -365,11 +427,6 @@ func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]st
 		if supportsNodeImport(version) {
 			register := absoluteFileURL(filepath.Join(filepath.Dir(filepath.Dir(path)), "register.js"))
 			env["NODE_OPTIONS"] += " --import " + strconv.Quote(register)
-		}
-		// dd-trace 6.15.0 impacted-test detection dereferences scenario.id on
-		// Background/Rule nodes. Basic Cucumber reporting works with it off.
-		if t.framework.Name() == "cucumber" {
-			env["DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED"] = "false"
 		}
 	case "python":
 		delete(env, "NODE_OPTIONS")
