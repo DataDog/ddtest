@@ -175,13 +175,9 @@ func (p *Python) SanityCheck(ctx context.Context) error {
 }
 
 // DetectTracer returns the installed version using the test runner's interpreter.
-// Only PackageNotFoundError means absence; interpreter failures remain errors.
 func (p *Python) DetectTracer(ctx context.Context, options TracerOptions) (string, error) {
 	command, prefix := pythonInterpreter(options.Command, options.Args)
-	args := append(append([]string{}, prefix...), "-c", `import importlib.metadata, sys
-try: print(importlib.metadata.version(sys.argv[1]))
-except importlib.metadata.PackageNotFoundError: pass
-`, "ddtrace")
+	args := append(append([]string{}, prefix...), "-c", "import importlib.metadata, sys; print(importlib.metadata.version(sys.argv[1]))", requiredPackageName)
 	return tracerProbe(ctx, p.executor, command, args, nil)
 }
 
@@ -231,10 +227,7 @@ func (p *Python) InstallTracer(ctx context.Context, options TracerOptions) (Trac
 		packageName += "==" + options.Version
 	}
 	version, err := p.DetectTracer(ctx, options)
-	if err != nil {
-		return TracerInstallation{}, err
-	}
-	if version != "" {
+	if err == nil && version != "" {
 		return TracerInstallation{Project: true}, nil
 	}
 	target := filepath.Join(directory, "python-packages")

@@ -489,7 +489,7 @@ func TestPythonTracerDetectionUsesSelectedEnvironment(t *testing.T) {
 	executor := &mockCommandExecutor{combinedOutput: []byte("3.0.0\n"), onCombinedOutput: func(name string, args []string, env map[string]string) {
 		require.Equal(t, "uv", name)
 		require.Equal(t, []string{"run", "python", "-c"}, args[:3])
-		require.Contains(t, args[3], "PackageNotFoundError")
+		require.Equal(t, "import importlib.metadata, sys; print(importlib.metadata.version(sys.argv[1]))", args[3])
 	}}
 	version, err := (&Python{executor: executor}).DetectTracer(context.Background(), TracerOptions{Command: "uv", Args: []string{"run", "python"}})
 	require.NoError(t, err)
@@ -498,7 +498,7 @@ func TestPythonTracerDetectionUsesSelectedEnvironment(t *testing.T) {
 
 func TestPythonInstallUsesSelectedInterpreterAndIsolatedTarget(t *testing.T) {
 	directory := t.TempDir()
-	executor := &fakeCommandExecutor{responses: []commandResponse{{}, {}}}
+	executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {}}}
 	installer := &Python{executor: executor}
 	path, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: directory, Command: "/customer/venv/bin/python"})
 	require.NoError(t, err)
@@ -509,7 +509,7 @@ func TestPythonInstallUsesSelectedInterpreterAndIsolatedTarget(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(contents), filepath.Join(directory, "python-packages"))
 	require.Contains(t, string(contents), "sys.path.append(")
-	executor = &fakeCommandExecutor{responses: []commandResponse{{}, {output: []byte("pip unavailable"), err: errors.New("exit 1")}}}
+	executor = &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {output: []byte("pip unavailable"), err: errors.New("exit 1")}}}
 	installer.executor = executor
 	_, err = installer.InstallTracer(t.Context(), TracerOptions{Directory: directory, Command: "/customer/venv/bin/python"})
 	require.ErrorContains(t, err, "pip unavailable")
@@ -539,7 +539,7 @@ func TestPythonTracerVersions(t *testing.T) {
 		{"git:abc1234", "ddtrace @ git+https://github.com/DataDog/dd-trace-py.git@abc1234"},
 	} {
 		t.Run(tt.version, func(t *testing.T) {
-			executor := &fakeCommandExecutor{responses: []commandResponse{{}, {}}}
+			executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {}}}
 			installer := NewPython()
 			installer.executor = executor
 			_, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Command: "uv", Args: []string{"run", "pytest"}, Version: tt.version})
@@ -573,11 +573,12 @@ func TestPythonReusesProjectTracer(t *testing.T) {
 	}
 }
 
-func TestPythonProbeFailureDoesNotInstall(t *testing.T) {
-	executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("interpreter unavailable")}}}
+func TestPythonProbeFailureAttemptsInstall(t *testing.T) {
+	executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("interpreter unavailable")}, {err: errors.New("pip unavailable")}}}
 	installer := NewPython()
 	installer.executor = executor
 	_, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Command: "python"})
-	require.ErrorContains(t, err, "interpreter unavailable")
-	require.Len(t, executor.commands, 1)
+	require.ErrorContains(t, err, "pip unavailable")
+	require.Len(t, executor.commands, 2)
+	require.Equal(t, []string{"-m", "pip", "install"}, executor.commands[1].args[:3])
 }

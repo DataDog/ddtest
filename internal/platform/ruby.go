@@ -192,18 +192,9 @@ func parseBundlerInfoVersion(output, gemName string) (version.Version, error) {
 	return version.Version{}, fmt.Errorf("unable to find datadog-ci gem version in bundle info output")
 }
 
-// DetectTracer checks Bundler's declarations and installed specs without
-// installing dependencies. A declared but unavailable tracer is an error, not absence.
+// DetectTracer reads the project tracer's bundle information.
 func (r *Ruby) DetectTracer(ctx context.Context, _ TracerOptions) (string, error) {
-	return tracerProbe(ctx, r.executor, "ruby", []string{"-rbundler", "-e", `
-definition = Bundler.definition
-spec = definition.locked_gems&.specs&.find { |gem| gem.name == 'datadog-ci' }
-if spec || definition.dependencies.any? { |gem| gem.name == 'datadog-ci' }
-  spec = definition.specs.find { |gem| gem.name == 'datadog-ci' }
-  raise 'project datadog-ci is unavailable in the active bundle' unless spec
-  puts "  * datadog-ci (#{spec.version})"
-end
-`}, map[string]string{"RUBYOPT": ""})
+	return tracerProbe(ctx, r.executor, "bundle", []string{"info", requiredGemName}, nil)
 }
 
 func (r *Ruby) InstallTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
@@ -223,10 +214,7 @@ func (r *Ruby) InstallTracer(ctx context.Context, options TracerOptions) (Tracer
 		selection = ", '" + version + "'"
 	}
 	project, err := r.DetectTracer(ctx, options)
-	if err != nil {
-		return TracerInstallation{}, err
-	}
-	if project != "" {
+	if err == nil && project != "" {
 		return TracerInstallation{Project: true}, nil
 	}
 	if strings.Contains(directory, " ") {

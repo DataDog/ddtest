@@ -77,10 +77,10 @@ func TestRuby_SanityCheck_Passes(t *testing.T) {
 	mockExecutor := &mockCommandExecutor{
 		combinedOutput: []byte("  * datadog-ci (1.31.0 9d54a15)\n"),
 		onCombinedOutput: func(name string, args []string, envMap map[string]string) {
-			if name != "ruby" {
+			if name != "bundle" {
 				t.Fatalf("expected command 'bundle', got %q", name)
 			}
-			if len(args) != 3 || args[0] != "-rbundler" || !strings.Contains(args[2], "datadog-ci") {
+			if len(args) != 2 || args[0] != "info" || args[1] != requiredGemName {
 				t.Fatalf("unexpected args: %v", args)
 			}
 		},
@@ -561,7 +561,7 @@ func TestRubyInstallDoesNotEditCustomerBundle(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "Gemfile.lock"), []byte("customer lock"), 0644))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".bundle"), 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".bundle", "config"), []byte("BUNDLE_MIRROR__HTTPS://RUBYGEMS__ORG/: https://mirror.example\n"), 0600))
-	executor := &fakeCommandExecutor{responses: []commandResponse{{}, {}}}
+	executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {}}}
 	installer := &Ruby{executor: executor}
 	path, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: directory, Version: "latest"})
 	require.NoError(t, err)
@@ -625,7 +625,7 @@ func TestRubyTracerVersions(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(root, "Gemfile"), []byte("source 'https://rubygems.org'\n"), 0600))
 			lock := "GEM\n  specs:\n    rake (13.2.1)\n"
 			require.NoError(t, os.WriteFile(filepath.Join(root, "Gemfile.lock"), []byte(lock), 0600))
-			executor := &fakeCommandExecutor{responses: []commandResponse{{}, {}}}
+			executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {}}}
 			installer := NewRuby(settings.TestSkippingLevelTest)
 			installer.executor = executor
 			path, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: directory, Version: tt.version})
@@ -655,7 +655,8 @@ func TestRubyReusesProjectTracer(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, TracerInstallation{Project: true}, result)
 			require.Len(t, executor.commands, 1)
-			require.Equal(t, "ruby", executor.commands[0].name)
+			require.Equal(t, "bundle", executor.commands[0].name)
+			require.Equal(t, []string{"info", "datadog-ci"}, executor.commands[0].args)
 			require.NotContains(t, executor.envs[0], "BUNDLE_GEMFILE") // Inherit the selected project Gemfile.
 			require.NoDirExists(t, directory)
 			require.Empty(t, result.Env)
@@ -663,11 +664,13 @@ func TestRubyReusesProjectTracer(t *testing.T) {
 	}
 }
 
-func TestRubyProbeFailureDoesNotInstall(t *testing.T) {
-	executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("broken project Gemfile")}}}
+func TestRubyProbeFailureAttemptsInstall(t *testing.T) {
+	executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("broken project Gemfile")}, {err: errors.New("bundle install failed")}}}
 	installer := NewRuby(settings.TestSkippingLevelTest)
 	installer.executor = executor
 	_, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Version: "latest"})
-	require.ErrorContains(t, err, "broken project Gemfile")
-	require.Len(t, executor.commands, 1)
+	require.ErrorContains(t, err, "bundle install failed")
+	require.Len(t, executor.commands, 2)
+	require.Equal(t, "bundle", executor.commands[1].name)
+	require.Equal(t, []string{"install"}, executor.commands[1].args)
 }

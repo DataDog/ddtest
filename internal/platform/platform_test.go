@@ -363,7 +363,7 @@ func detectionFiles(t *testing.T, root string) map[string]string {
 	return files
 }
 
-func TestTracerDetectionDistinguishesAbsenceFromProbeFailure(t *testing.T) {
+func TestTracerDetectionReportsProbeFailure(t *testing.T) {
 	for _, language := range []string{"javascript", "python", "ruby"} {
 		t.Run(language, func(t *testing.T) {
 			executor := &mockCommandExecutor{}
@@ -377,11 +377,8 @@ func TestTracerDetectionDistinguishesAbsenceFromProbeFailure(t *testing.T) {
 				selected = &Ruby{executor: executor}
 			}
 			detect := func() (string, error) { return selected.DetectTracer(t.Context(), TracerOptions{}) }
-			result, err := detect()
-			require.NoError(t, err)
-			require.Empty(t, result)
 			executor.combinedOutputErr = errors.New("runtime unavailable")
-			_, err = detect()
+			_, err := detect()
 			require.ErrorContains(t, err, "runtime unavailable")
 		})
 	}

@@ -247,30 +247,18 @@ func isDirectJavaScriptCommand(script string, names ...string) bool {
 	return false
 }
 
-// Resolve the package first so a present but incompatible tracer fails instead
-// of silently installing another version. Resolve from the test project's cwd.
-const resolveProjectJavaScriptTracer = `
-let tracer;
-try { tracer = require.resolve('dd-trace/package.json', { paths: [process.cwd()] }); }
-catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; }
-if (tracer) process.stdout.write(require.resolve(require('path').join(require('path').dirname(tracer), 'ci/init')));
-`
-
-// DetectTracer returns the project preload, or empty when dd-trace is absent.
+// DetectTracer resolves the project's CI preload using Node's module resolution.
 func (j *JavaScript) DetectTracer(ctx context.Context, _ TracerOptions) (string, error) {
-	path, err := tracerProbe(ctx, j.executor, "node", []string{"-e", resolveProjectJavaScriptTracer}, map[string]string{"NODE_OPTIONS": ""})
+	path, err := tracerProbe(ctx, j.executor, "node", []string{"-e", resolveJavaScriptModule, ddTraceCIInitModule}, map[string]string{"NODE_OPTIONS": ""})
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve dd-trace/ci/init: %w", err)
-	}
-	if path != "" && !filepath.IsAbs(path) {
-		return "", fmt.Errorf("resolve project dd-trace: node returned non-absolute path %q", path)
+		return "", fmt.Errorf("failed to resolve %s: %w", ddTraceCIInitModule, err)
 	}
 	return path, nil
 }
 
 const resolveJavaScriptModule = "process.stdout.write(require.resolve(process.argv[1]))"
 
-// Install returns the project preload, installing the selected version only when absent.
+// InstallTracer reuses the project preload or installs an isolated fallback.
 func (j *JavaScript) InstallTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
 	sessionDirectory := options.Directory
 	version := options.Version
@@ -285,10 +273,7 @@ func (j *JavaScript) InstallTracer(ctx context.Context, options TracerOptions) (
 	}
 	cleanEnvironment := map[string]string{"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}
 	path, err := j.DetectTracer(ctx, options)
-	if err != nil {
-		return TracerInstallation{}, err
-	}
-	if path != "" {
+	if err == nil && path != "" {
 		return TracerInstallation{Path: path, Project: true}, nil
 	}
 	packageName := "dd-trace@" + version

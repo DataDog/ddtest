@@ -118,8 +118,8 @@ func selectFramework(platform, hint string, candidates []framework.Framework) (f
 	return candidates[0], nil
 }
 
-// TracerOptions selects the test runtime and, only when no project tracer exists,
-// the version and session directory for installation. Empty Version means latest.
+// TracerOptions selects the test runtime and the version and session directory
+// for fallback installation when the project tracer check fails. Empty Version means latest.
 type TracerOptions struct {
 	Directory string
 	Version   string

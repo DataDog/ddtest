@@ -421,7 +421,7 @@ func TestJavaScript_SanityCheck_Passes(t *testing.T) {
 			if calls == 1 && (len(args) != 1 || args[0] != "--version") {
 				t.Fatalf("expected node --version, got %v", args)
 			}
-			if calls == 2 && (len(args) != 2 || args[0] != "-e" || !strings.Contains(args[1], "dd-trace/package.json")) {
+			if calls == 2 && (len(args) != 3 || args[0] != "-e" || args[2] != ddTraceCIInitModule) {
 				t.Fatalf("expected node require.resolve command, got %v", args)
 			}
 		},
@@ -666,7 +666,7 @@ func TestJavaScriptInstall(t *testing.T) {
 	sessionDirectory := t.TempDir()
 	resolvedPath := filepath.Join(sessionDirectory, "node_modules", "dd-trace", "ci", "init.js")
 	executor := &fakeCommandExecutor{
-		responses: []commandResponse{{},
+		responses: []commandResponse{{err: errors.New("project tracer unavailable")},
 			{},
 			{output: []byte(resolvedPath), stderr: []byte("MODULE 123: looking for dd-trace\n")},
 		},
@@ -679,7 +679,7 @@ func TestJavaScriptInstall(t *testing.T) {
 	require.False(t, ciInitPath.Project)
 	require.True(t, filepath.IsAbs(ciInitPath.Path))
 	require.Equal(t, "node", executor.commands[0].name)
-	require.Contains(t, executor.commands[0].args[1], "dd-trace/package.json")
+	require.Equal(t, []string{"-e", resolveJavaScriptModule, ddTraceCIInitModule}, executor.commands[0].args)
 	require.Equal(t, []command{
 		executor.commands[0],
 		{
@@ -709,7 +709,7 @@ func TestJavaScriptInstall(t *testing.T) {
 
 func TestJavaScriptInstallReportsNPMError(t *testing.T) {
 	executor := &fakeCommandExecutor{
-		responses: []commandResponse{{}, {
+		responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {
 			output: []byte("registry unavailable"),
 			err:    errors.New("exit status 1"),
 		}},
@@ -723,7 +723,7 @@ func TestJavaScriptInstallReportsNPMError(t *testing.T) {
 
 func TestJavaScriptInstallReportsResolveErrorWithoutOutput(t *testing.T) {
 	executor := &fakeCommandExecutor{
-		responses: []commandResponse{{},
+		responses: []commandResponse{{err: errors.New("project tracer unavailable")},
 			{},
 			{err: errors.New("exit status 1")},
 		},
@@ -736,7 +736,7 @@ func TestJavaScriptInstallReportsResolveErrorWithoutOutput(t *testing.T) {
 
 func TestJavaScriptInstallReportsResolveStderr(t *testing.T) {
 	exitErr := errors.New("exit status 1")
-	executor := &fakeCommandExecutor{responses: []commandResponse{{},
+	executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")},
 		{},
 		{stderr: []byte("Cannot find module dd-trace/ci/init"), err: exitErr},
 	}}
@@ -750,7 +750,7 @@ func TestJavaScriptInstallReportsResolveStderr(t *testing.T) {
 
 func TestJavaScriptInstallRejectsRelativePreloadPath(t *testing.T) {
 	executor := &fakeCommandExecutor{
-		responses: []commandResponse{{},
+		responses: []commandResponse{{err: errors.New("project tracer unavailable")},
 			{},
 			{output: []byte("node_modules/dd-trace/ci/init.js\n")},
 		},
@@ -793,7 +793,7 @@ func TestJavaScriptVersions(t *testing.T) {
 	} {
 		t.Run(tt.version, func(t *testing.T) {
 			directory := t.TempDir()
-			executor := &fakeCommandExecutor{responses: []commandResponse{{}, {}, {output: []byte(filepath.Join(directory, "init.js"))}}}
+			executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {}, {output: []byte(filepath.Join(directory, "init.js"))}}}
 			installer := NewJavaScript()
 			installer.executor = executor
 			_, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: directory, Version: tt.version})
@@ -825,13 +825,14 @@ func TestJavaScriptReusesProjectRegardlessOfRequestedVersion(t *testing.T) {
 	}
 }
 
-func TestJavaScriptDoesNotInstallOnProjectProbeFailure(t *testing.T) {
-	executor := &fakeCommandExecutor{responses: []commandResponse{{stderr: []byte("broken project tracer"), err: errors.New("exit 1")}}}
+func TestJavaScriptProbeFailureAttemptsInstall(t *testing.T) {
+	executor := &fakeCommandExecutor{responses: []commandResponse{{stderr: []byte("broken project tracer"), err: errors.New("exit 1")}, {output: []byte("npm unavailable"), err: errors.New("exit 1")}}}
 	installer := NewJavaScript()
 	installer.executor = executor
 	_, err := installer.InstallTracer(t.Context(), TracerOptions{Directory: t.TempDir()})
-	require.ErrorContains(t, err, "broken project tracer")
-	require.Len(t, executor.commands, 1)
+	require.ErrorContains(t, err, "npm unavailable")
+	require.Len(t, executor.commands, 2)
+	require.Equal(t, "npm", executor.commands[1].name)
 }
 
 func (e *fakeCommandExecutor) Run(ctx context.Context, name string, args []string, env map[string]string) error {
