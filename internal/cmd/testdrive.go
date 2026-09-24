@@ -22,24 +22,26 @@ type testdriveExecution interface {
 	Run(context.Context, io.Writer) error
 }
 
-type prepareTestdrive func(string) (testdriveExecution, error)
+type prepareTestdrive func(string, bool) (testdriveExecution, error)
 
-var testdriveCmd = newTestdriveCommand(func(version string) (testdriveExecution, error) {
-	return testdrive.Prepare(version)
+var testdriveCmd = newTestdriveCommand(func(version string, checkOnly bool) (testdriveExecution, error) {
+	return testdrive.Prepare(version, checkOnly)
 })
 
 func newTestdriveCommand(prepare prepareTestdrive) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "testdrive",
 		Short: "Try Test Optimization on the local test suite",
-		Long:  "Runs the detected test suite once with Datadog Test Optimization and a local intake. No Datadog API key is required.",
+		Long:  "Validates Jest compatibility with paired runs and controlled feature scenarios against a local intake. Other frameworks collect telemetry but remain unvalidated. No Datadog API key is required.",
 		Args:  cobra.NoArgs,
 	}
 	var version string
+	var checkOnly bool
+	command.Flags().BoolVar(&checkOnly, "check-only", false, "Check Jest and static CI configuration without installing a tracer or running tests")
 	command.Flags().StringVar(&version, "tracer-version", "latest", "Fallback tracer release or git:<commit-or-ref>, used only when the project has no tracer")
 	command.Flags().Bool("yes", false, "Run after printing the changes and commands")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
-		execution, err := prepare(version)
+		execution, err := prepare(version, checkOnly)
 		if err != nil {
 			return err
 		}
@@ -61,6 +63,7 @@ func newTestdriveCommand(prepare prepareTestdrive) *cobra.Command {
 			}
 		}
 
+		cmd.SilenceUsage = true // Runtime validation results are not command syntax errors.
 		return execution.Run(commandContext(cmd), output)
 	}
 	return command

@@ -80,18 +80,34 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 			}
 			onboard := integrationCommand(t, ctx, root, env, binary, "onboard")
 			require.Contains(t, onboard, "datadog/test-visibility-github-action@v3")
-			output := integrationCommand(t, ctx, root, env, binary, "testdrive", "--yes")
-			require.Contains(t, output, "Test events received.")
-			require.Contains(t, output, "Open report:")
-			reports, err := filepath.Glob(filepath.Join(root, ".testoptimization", "testdrive", "*", "report.html"))
+			args := []string{"testdrive", "--yes"}
+			if fixture.name == "jest" {
+				// The validation contract also requires instrumented CI configuration.
+				// Resolve once so local and CI metadata refer to the same release.
+				version := strings.TrimSpace(integrationCommand(t, ctx, root, env, "npm", "view", "dd-trace", "version"))
+				node := strings.TrimSpace(integrationCommand(t, ctx, root, env, "node", "--version"))
+				integrationFile(t, root, ".github/workflows/test.yml", "name: tests\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-node@v4\n        with:\n          node-version: '"+strings.TrimPrefix(node, "v")+"'\n      - uses: datadog/test-visibility-github-action@v3\n        with:\n          languages: js\n          js-tracer-version: '"+version+"'\n      - run: "+fixture.command+"\n")
+				args = append(args, "--tracer-version", version)
+			}
+			command := exec.CommandContext(ctx, binary, args...)
+			command.Dir = root
+			command.Env = append(os.Environ(), env...)
+			rawOutput, runErr := command.CombinedOutput()
+			output := string(rawOutput)
+			if fixture.name == "jest" {
+				require.NoError(t, runErr, output)
+			} else {
+				require.Error(t, runErr, output)
+				require.Contains(t, output, "unvalidated")
+			}
+			require.Contains(t, output, "Results JSON:")
+			reports, err := filepath.Glob(filepath.Join(root, ".testoptimization", "testdrive.json"))
 			require.NoError(t, err)
 			require.Len(t, reports, 1)
-			contents, err := os.ReadFile(reports[0])
+			html, err := filepath.Glob(filepath.Join(root, ".testoptimization", "*.html"))
 			require.NoError(t, err)
-			require.Contains(t, string(contents), "Test events received.")
-			traffic, err := filepath.Glob(filepath.Join(filepath.Dir(reports[0]), "intake", "*citestcycle.json"))
-			require.NoError(t, err)
-			require.NotEmpty(t, traffic)
+			require.Empty(t, html)
+
 			for name, contents := range before {
 				if (fixture.name == "rspec" || fixture.name == "minitest") && (name == "Gemfile" || name == "Gemfile.lock") {
 					continue // bundle add updates Ruby dependency files.

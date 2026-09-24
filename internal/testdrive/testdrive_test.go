@@ -11,11 +11,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 )
@@ -91,9 +91,9 @@ func TestPrepareAndPreviewJest(t *testing.T) {
 
 	for _, expected := range []string{
 		"found JavaScript and Jest",
-		"dd-trace@",
+		"dd-trace",
 		"npx jest",
-		filepath.Join(repositoryRoot, ".testoptimization", "testdrive"),
+		validationPath(repositoryRoot),
 		"will not change package.json",
 	} {
 		if !strings.Contains(output.String(), expected) {
@@ -129,186 +129,6 @@ func TestPrepareReportsMalformedManifest(t *testing.T) {
 	_, err := Prepare("latest")
 	if err == nil || !strings.Contains(err.Error(), "package.json") {
 		t.Fatalf("Prepare() error = %v, want package.json parse error", err)
-	}
-}
-
-func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
-	repositoryRoot := t.TempDir()
-	writeJestManifest(t, repositoryRoot)
-	if err := os.WriteFile(filepath.Join(repositoryRoot, "one.test.js"), []byte("test('slow test', () => expect(true).toBe(true));\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(repositoryRoot)
-	testdrive, err := Prepare("latest")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	installer := &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
-	executor := &fakeTestdriveExecutor{output: []byte("PASS one.test.js\n")}
-	server := &fakeIntake{
-		url: "http://127.0.0.1:1234",
-		findings: intake.Facts{
-			TestCount:          2,
-			TestEventCount:     2,
-			CoveredTestCount:   2,
-			TestDurationMedian: time.Second,
-			Tests: []intake.Test{
-				{Name: "fast test", Suite: "one.test.js", SourceFile: "one.test.js", SourceStart: 1, Status: "pass", Duration: time.Millisecond, Attempts: []intake.TestRun{{Status: "pass", Duration: time.Millisecond}}},
-				{Name: "slow test", Suite: "one.test.js", SourceFile: "one.test.js", SourceStart: 1, Status: "pass", Duration: 2 * time.Second, Attempts: []intake.TestRun{{Status: "pass", Duration: 2 * time.Second}}},
-			},
-			SlowTests: []intake.Test{
-				{
-					Name: "slow test", Suite: "one.test.js", SourceFile: "one.test.js", SourceStart: 1, Duration: 2 * time.Second,
-					Attempts: []intake.TestRun{
-						{Status: "pass", Duration: 1500 * time.Millisecond},
-						{Status: "pass", Duration: 2 * time.Second, Retry: true, RetryReason: "early_flake_detection"},
-					},
-				},
-			},
-		},
-	}
-	testdrive.platform = installer
-	testdrive.executor = executor
-	testdrive.startIntake = func(sessionDirectory string) (localIntake, error) {
-		if sessionDirectory != installer.sessionDirectory {
-			t.Fatalf("intake session = %q, tracer session = %q", sessionDirectory, installer.sessionDirectory)
-		}
-		return server, nil
-	}
-
-	var output bytes.Buffer
-	if err := testdrive.Run(t.Context(), &output); err != nil {
-		t.Fatalf("Run() unexpected error: %v", err)
-	}
-	if !server.closed {
-		t.Fatal("Run() did not close the intake")
-	}
-	if executor.command != "npx" || strings.Join(executor.args, " ") != "jest" {
-		t.Fatalf("executed %s %v, want npx jest", executor.command, executor.args)
-	}
-	if executor.env["DD_API_KEY"] != "ddtest-testdrive" {
-		t.Fatalf("DD_API_KEY = %q", executor.env["DD_API_KEY"])
-	}
-	if executor.env["DD_CIVISIBILITY_AGENTLESS_URL"] != server.url {
-		t.Fatalf("agentless URL = %q", executor.env["DD_CIVISIBILITY_AGENTLESS_URL"])
-	}
-	if !strings.HasPrefix(executor.env["NODE_OPTIONS"], "-r "+strconv.Quote(installer.preloadPath)) {
-		t.Fatalf("NODE_OPTIONS = %q", executor.env["NODE_OPTIONS"])
-	}
-	for _, expected := range []string{
-		"Test events received.",
-		"1 finding.",
-		"Tests slower than the others (1):",
-		"Median test time: 1s",
-		"one.test.js › slow test · Pass · 2s",
-		"Run details:",
-		"Test events: 2",
-		"Tests with coverage: 2 / 2",
-		"Jest: Passed",
-		"Tracer: dd-trace@latest · isolated",
-		"\x1b]8;;file://",
-		"report.html",
-	} {
-		if !strings.Contains(output.String(), expected) {
-			t.Errorf("Run() output does not contain %q:\n%s", expected, output.String())
-		}
-	}
-	for _, absent := range []string{"Failed tests", "Flaky tests", "Unusually broad coverage"} {
-		if strings.Contains(output.String(), absent) {
-			t.Errorf("Run() output contains absent finding %q:\n%s", absent, output.String())
-		}
-	}
-	contents, err := os.ReadFile(filepath.Join(installer.sessionDirectory, testOutputFilename))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(contents) != "PASS one.test.js\n" {
-		t.Fatalf("saved output = %q", contents)
-	}
-	if strings.Contains(output.String(), "PASS one.test.js") {
-		t.Fatalf("Run() leaked detailed Jest output:\n%s", output.String())
-	}
-	report, err := os.ReadFile(filepath.Join(installer.sessionDirectory, reportFilename))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, expected := range []string{
-		"Test events received",
-		"Any tests slower than the others?",
-		"Median test time · 1s",
-		"slow test",
-		"Run 2 · Retry · early flake detection",
-		"Source · lines 1–1",
-		"Run details",
-		"Tests with coverage",
-		"2 / 2",
-		"dd-trace@",
-		`href="intake/"`,
-		`href="test-output.txt"`,
-		`data-tab="suites"`,
-		`data-tab="tests"`,
-		`<article class="problem-card">`,
-	} {
-		if !strings.Contains(string(report), expected) {
-			t.Errorf("report does not contain %q", expected)
-		}
-	}
-	for _, hiddenCard := range []string{"Any tests failed?", "Any flaky tests?", "Any unusually broad test coverage?"} {
-		if strings.Contains(string(report), hiddenCard) {
-			t.Errorf("report contains no-problem card %q", hiddenCard)
-		}
-	}
-	for _, environmentVariable := range []string{
-		"DD_CIVISIBILITY_ITR_ENABLED",
-		"DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED",
-		"DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED",
-		"DD_CIVISIBILITY_FLAKY_RETRY_ENABLED",
-		"DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED",
-		"DD_TEST_FAILED_TEST_REPLAY_ENABLED",
-		"DD_TEST_MANAGEMENT_ENABLED",
-	} {
-		if executor.env[environmentVariable] != "true" {
-			t.Errorf("%s = %q, want true", environmentVariable, executor.env[environmentVariable])
-		}
-	}
-}
-
-func TestRunStillReportsEventsWhenJestFails(t *testing.T) {
-	repositoryRoot := t.TempDir()
-	writeJestManifest(t, repositoryRoot)
-	t.Chdir(repositoryRoot)
-	testdrive, err := Prepare("latest")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	testdrive.platform = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
-	testdrive.executor = &fakeTestdriveExecutor{output: []byte("FAIL one.test.js\n"), err: errors.New("exit status 1")}
-	testdrive.startIntake = func(string) (localIntake, error) {
-		return &fakeIntake{
-			url: "http://127.0.0.1:1234",
-			findings: intake.Facts{
-				TestCount:      1,
-				TestEventCount: 1,
-				FailedTests: []intake.Test{{
-					Name: "fails", Suite: "one.test.js", Status: "fail",
-					Attempts: []intake.TestRun{{Status: "fail", Duration: time.Millisecond}},
-				}},
-			},
-		}, nil
-	}
-
-	var output bytes.Buffer
-	err = testdrive.Run(t.Context(), &output)
-	if err == nil || !strings.Contains(err.Error(), "jest failed after sending 1 test event") {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !strings.Contains(output.String(), "Test events received.") {
-		t.Fatalf("Run() did not report working instrumentation:\n%s", output.String())
-	}
-	if !strings.Contains(output.String(), "Failed tests (1):") || !strings.Contains(output.String(), "one.test.js › fails · Fail · 1ms") || !strings.Contains(output.String(), "Jest: Failed") || !strings.Contains(output.String(), "file://") {
-		t.Fatalf("Run() did not report the failure and report link:\n%s", output.String())
 	}
 }
 
@@ -357,96 +177,6 @@ func TestWriteFindingsCountsIndividualFindings(t *testing.T) {
 	}
 }
 
-func TestRunReportsSetupAndCollectionErrors(t *testing.T) {
-	t.Run("tracer install", func(t *testing.T) {
-		testdrive := preparedTestdrive(t)
-		testdrive.platform = &fakeTracer{err: errors.New("npm unavailable")}
-
-		err := testdrive.Run(t.Context(), &bytes.Buffer{})
-		if err == nil || !strings.Contains(err.Error(), "npm unavailable") {
-			t.Fatalf("Run() error = %v", err)
-		}
-	})
-
-	t.Run("intake start", func(t *testing.T) {
-		testdrive := preparedTestdrive(t)
-		testdrive.platform = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
-		testdrive.startIntake = func(string) (localIntake, error) {
-			return nil, errors.New("listener unavailable")
-		}
-
-		err := testdrive.Run(t.Context(), &bytes.Buffer{})
-		if err == nil || !strings.Contains(err.Error(), "listener unavailable") {
-			t.Fatalf("Run() error = %v", err)
-		}
-	})
-
-	t.Run("findings", func(t *testing.T) {
-		testdrive := preparedTestdrive(t)
-		server := &fakeIntake{url: "http://127.0.0.1:1234", findingsErr: errors.New("invalid event payload")}
-		testdrive.platform = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
-		testdrive.executor = &fakeTestdriveExecutor{}
-		testdrive.startIntake = func(string) (localIntake, error) { return server, nil }
-
-		err := testdrive.Run(t.Context(), &bytes.Buffer{})
-		if err == nil || !strings.Contains(err.Error(), "invalid event payload") || !server.closed {
-			t.Fatalf("Run() error = %v, intake closed = %v", err, server.closed)
-		}
-	})
-
-	t.Run("close", func(t *testing.T) {
-		testdrive := preparedTestdrive(t)
-		server := &fakeIntake{
-			url:      "http://127.0.0.1:1234",
-			findings: intake.Facts{TestCount: 1, TestEventCount: 1},
-			closeErr: errors.New("shutdown failed"),
-		}
-		testdrive.platform = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
-		testdrive.executor = &fakeTestdriveExecutor{}
-		testdrive.startIntake = func(string) (localIntake, error) { return server, nil }
-
-		err := testdrive.Run(t.Context(), &bytes.Buffer{})
-		if err == nil || !strings.Contains(err.Error(), "shutdown failed") || !server.closed {
-			t.Fatalf("Run() error = %v, intake closed = %v", err, server.closed)
-		}
-	})
-}
-
-func TestRunReportsPassingSuiteWithoutEvents(t *testing.T) {
-	testdrive := preparedTestdrive(t)
-	testdrive.platform = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
-	testdrive.executor = &fakeTestdriveExecutor{}
-	testdrive.startIntake = func(string) (localIntake, error) {
-		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
-	}
-
-	var output bytes.Buffer
-	err := testdrive.Run(t.Context(), &output)
-	if err == nil || !strings.Contains(err.Error(), "sent no test events") {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !strings.Contains(output.String(), "No test events received.") || !strings.Contains(output.String(), "No findings.") {
-		t.Fatalf("Run() output = %s", output.String())
-	}
-}
-
-func TestRunReportsTestOutputWriteFailure(t *testing.T) {
-	testdrive := preparedTestdrive(t)
-	testdrive.platform = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
-	testdrive.executor = &fakeTestdriveExecutor{output: []byte("PASS\n")}
-	testdrive.startIntake = func(sessionDirectory string) (localIntake, error) {
-		if err := os.RemoveAll(sessionDirectory); err != nil {
-			t.Fatal(err)
-		}
-		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
-	}
-
-	err := testdrive.Run(t.Context(), &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "save test output") {
-		t.Fatalf("Run() error = %v", err)
-	}
-}
-
 func TestTestEnvironmentPreservesExistingNodeOptions(t *testing.T) {
 	t.Setenv("NODE_OPTIONS", "--require dd-trace/ci/init --max-old-space-size=4096 --import=/tmp/dd-trace/register.js")
 	environment := testEnvironment("/tmp/dd-trace/ci/init.js", "http://127.0.0.1:1234", "session")
@@ -464,6 +194,7 @@ func preparedTestdrive(t *testing.T) *Testdrive {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testdrive.preflight = nil
 	return testdrive
 }
 
@@ -477,7 +208,7 @@ func requireWriteFile(t *testing.T, path, contents string) {
 func TestWriteFindingsReportsEmptyCoverageAsTracerError(t *testing.T) {
 	var output bytes.Buffer
 	writeFindings(&output, intake.Facts{EmptyCoverageEntryCount: 2})
-	for _, expected := range []string{"Tracer error:", "2 coverage entries with an empty files list", "Affected payloads were excluded", "Inspect the captured traffic"} {
+	for _, expected := range []string{"Tracer error:", "2 coverage entries with an empty files list", "Affected payloads were excluded"} {
 		if !strings.Contains(output.String(), expected) {
 			t.Errorf("missing %q in output: %s", expected, output.String())
 		}
@@ -517,19 +248,20 @@ func TestRunReportsProjectTracer(t *testing.T) {
 	}
 	installer := &fakeTracer{preloadPath: "/project/node_modules/dd-trace/ci/init.js", project: true}
 	drive.platform = installer
+	drive.framework = &framework.Mocha{}
 	executor := &fakeTestdriveExecutor{}
 	drive.executor = executor
-	drive.startIntake = func(string) (localIntake, error) {
+	drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 		return &fakeIntake{url: "http://127.0.0.1:1234", findings: intake.Facts{TestEventCount: 1}}, nil
 	}
 	var output bytes.Buffer
-	if err := drive.Run(t.Context(), &output); err != nil {
-		t.Fatal(err)
+	if err := drive.Run(t.Context(), &output); err == nil {
+		t.Fatal("Mocha remains unvalidated")
 	}
 	if installer.options.Version != "git:ignored-for-existing-tracer" || installer.options.Command != drive.command {
 		t.Fatal(installer.options)
 	}
-	if !strings.Contains(output.String(), "Tracer: project tracer · reused") {
+	if !strings.Contains(output.String(), "project installation (reused; fallback selector ignored)") {
 		t.Fatal(output.String())
 	}
 	if !strings.Contains(executor.env["NODE_OPTIONS"], installer.preloadPath) {

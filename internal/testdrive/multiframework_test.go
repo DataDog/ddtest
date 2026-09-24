@@ -37,7 +37,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			require.Contains(t, preview.String(), displayName(name))
 			_, err = os.Stat(filepath.Join(root, ".testoptimization"))
 			require.True(t, os.IsNotExist(err), "preview must be read-only")
-			if name == "cypress" {
+			if name == "cypress" || name == "jest" {
 				return
 			} // Browser wrapper has its own real-run test.
 			run.nodeVersion = func() string { return "v20.0.0" }
@@ -45,11 +45,13 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			run.platform = installer
 			executor := &fakeTestdriveExecutor{}
 			run.executor = executor
-			run.startIntake = func(string) (localIntake, error) {
+			run.startIntake = func(string, intake.Scenario) (localIntake, error) {
 				return &fakeIntake{url: "http://127.0.0.1:1234", findings: intake.Facts{TestEventCount: 1, TestCount: 1}}, nil
 			}
 			var output bytes.Buffer
-			require.NoError(t, run.Run(t.Context(), &output))
+			require.ErrorContains(t, run.Run(t.Context(), &output), "validation is incomplete")
+			require.Contains(t, output.String(), "Compatibility: inconclusive")
+			require.Contains(t, output.String(), "unvalidated")
 			require.Contains(t, output.String(), displayName(name)+": Passed")
 			require.Contains(t, output.String(), "Tests with coverage: 0 / 1")
 			require.Equal(t, "ddtest-testdrive", executor.env["DD_API_KEY"])
@@ -66,7 +68,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			case "ruby":
 				require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
 				require.Contains(t, preview.String(), "Bundler updates the project Gemfile and lockfile")
-				require.Contains(t, output.String(), "datadog-ci · installed in project")
+				require.Contains(t, output.String(), "datadog-ci@latest · project bundle installation")
 				require.Contains(t, executor.env["RUBYOPT"], "datadog/ci/auto_instrument")
 				require.NotContains(t, executor.env, "NODE_OPTIONS")
 			}

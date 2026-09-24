@@ -2,7 +2,20 @@
 
 Status: Milestones 0, 1, and 2 implemented; Milestones 3 and 4 proposed
 
-Last updated: 2026-09-22
+Last updated: 2026-09-24
+
+## Validation prototype update
+
+The prototype based on PR #147 now uses the validation contract described in
+[the README](../../README.md): paired Jest compatibility runs, separate controlled
+feature probes, terminal output and one self-contained report at
+`.testoptimization/testdrive.json`, and project-tracer reuse or a resolved fallback installation.
+The compact report retains success, verdicts, validation commands, modes, exit codes, and aggregate counts; raw output and events are discarded. Each run removes its scratch files and replaces the previous report. Onboarding targets the v3 GitHub Action without tracer
+version pins in the universal template. The agent selects a compatible release for the repository and aligns the CI input with the locally checked version. Jest preflight checks the effective configuration before suite execution; `--check-only` reruns configuration checks without tests. Static matrices support includes/excludes and common boolean conditions. Unknown checker syntax remains unverified and must not cause workflow rewrites. Local compatibility, features, CI runtime compatibility, tracer agreement, and actual CI execution are reported separately. Other frameworks can collect telemetry but remain explicitly
+unvalidated. Receiving events alone is not proof of compatibility.
+
+The milestone narrative below describes the earlier implementation and its
+historical evidence, including the removed HTML report and pinned versions.
 
 ## Goal
 

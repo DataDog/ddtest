@@ -86,7 +86,7 @@ func TestTestdriveCommandHasYesFlag(t *testing.T) {
 
 func TestTestdriveCommandYesPreviewsAndRuns(t *testing.T) {
 	execution := &fakeTestdriveExecution{}
-	command := newTestdriveCommand(func(string) (testdriveExecution, error) {
+	command := newTestdriveCommand(func(string, bool) (testdriveExecution, error) {
 		return execution, nil
 	})
 	var output bytes.Buffer
@@ -103,7 +103,7 @@ func TestTestdriveCommandYesPreviewsAndRuns(t *testing.T) {
 
 func TestTestdriveCommandNonInteractivePreviewsWithoutRunning(t *testing.T) {
 	execution := &fakeTestdriveExecution{}
-	command := newTestdriveCommand(func(string) (testdriveExecution, error) {
+	command := newTestdriveCommand(func(string, bool) (testdriveExecution, error) {
 		return execution, nil
 	})
 	var output bytes.Buffer
@@ -123,7 +123,7 @@ func TestTestdriveTracerVersion(t *testing.T) {
 	for _, version := range []string{"latest", "6.15.0", "git:abc1234"} {
 		t.Run(version, func(t *testing.T) {
 			var selected string
-			command := newTestdriveCommand(func(value string) (testdriveExecution, error) {
+			command := newTestdriveCommand(func(value string, _ bool) (testdriveExecution, error) {
 				selected = value
 				return &fakeTestdriveExecution{}, nil
 			})
@@ -140,5 +140,21 @@ func TestTestdriveTracerVersion(t *testing.T) {
 				t.Fatalf("selected %q, want %q", selected, version)
 			}
 		})
+	}
+}
+
+func TestTestdriveCheckOnlyIsForwarded(t *testing.T) {
+	var checked bool
+	command := newTestdriveCommand(func(_ string, checkOnly bool) (testdriveExecution, error) {
+		checked = checkOnly
+		return &fakeTestdriveExecution{}, nil
+	})
+	command.SetOut(io.Discard)
+	command.SetArgs([]string{"--check-only", "--yes"})
+	if err := command.ExecuteContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !checked {
+		t.Fatal("check-only was not forwarded")
 	}
 }

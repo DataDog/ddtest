@@ -839,3 +839,22 @@ func (e *fakeCommandExecutor) Run(ctx context.Context, name string, args []strin
 	_, err := e.CombinedOutput(ctx, name, args, env)
 	return err
 }
+
+func TestJestSelectionResolvesTagOnceBeforeInstallation(t *testing.T) {
+	directory := t.TempDir()
+	preload := filepath.Join(directory, "node_modules/dd-trace/ci/init.js")
+	executor := &fakeCommandExecutor{responses: []commandResponse{
+		{err: errors.New("project tracer unavailable")}, {output: []byte(`{"version":"5.128.0","engines":{"node":">=18"}}`)}, {err: errors.New("project tracer unavailable")}, {}, {output: []byte(preload)},
+	}}
+	installer := &JavaScript{executor: executor}
+	selected, err := installer.ResolveTestdriveTracer(t.Context(), TracerOptions{Version: "latest-node18"})
+	require.NoError(t, err)
+	require.Len(t, executor.commands, 2)
+	require.Equal(t, "latest-node18", selected.Requested)
+	require.Equal(t, "5.128.0", selected.Version)
+	_, err = installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: directory, Version: selected.Version})
+	require.NoError(t, err)
+	require.Equal(t, "npm", executor.commands[3].name)
+	require.Contains(t, executor.commands[3].args, "dd-trace@5.128.0")
+	require.Len(t, executor.commands, 5)
+}
