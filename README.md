@@ -44,11 +44,12 @@ separate instrumentation success from failed tests, and explicitly indicate when
 coverage was not reported. Tracer configuration errors are shown separately.
 The local intake supports agentless traffic; Agent/EVP routing is not supported.
 Receiving events does not verify test skipping, EFD, or Test Management behavior.
-Keep this directory out of source control. Each run
-has its own installation, files, and loopback port.
+Keep this directory out of source control. Each run has its own files and loopback port.
 
-Testdrive installs the latest tracer by default. To choose a release or a Git
-revision from the language's Datadog tracer repository:
+Testdrive always uses the project's tracer when one is present, for every language.
+Only when no tracer is present does it install the latest release inside the session.
+`--tracer-version` selects a release or Git revision for that fallback installation;
+it never replaces an existing project tracer:
 
 ```sh
 ddtest testdrive --tracer-version 6.15.0 --yes # JavaScript example
@@ -60,14 +61,16 @@ branches and tags; they require Git and the tracer's source-build prerequisites.
 
 Local testdrive prerequisites:
 
-- JavaScript: Node.js 22+, npm for the isolated `dd-trace` installation,
+- JavaScript: Node.js 22+, npm if `dd-trace` needs to be installed,
   and the project's package manager and dependencies. Vitest/ESM loading and
   Cypress config/support wrappers are supplied automatically.
-- Python: an activated project environment with pytest and pip. `ddtrace`
-  is installed into a session-owned directory; the active environment is unchanged.
-- Ruby: Ruby/Bundler and native gem build tools. A session-owned bundle adds
-  `datadog-ci`, preserving the original Gemfile and lockfile. The
-  tracer's native extensions require a checkout path without spaces.
+- Python: an activated project environment with pytest, and pip if `ddtrace` is
+  absent. Fallback installation uses a session-owned directory; the active
+  environment is unchanged.
+- Ruby: Ruby/Bundler. If `datadog-ci` is absent, a session-owned bundle adds it,
+  preserving the original Gemfile and lockfile. This fallback needs native gem
+  build tools and a checkout path without spaces. An existing tracer uses the
+  project's original bundle.
 - Browser suites: install the project's browsers and start any required services
   first, or use its existing test command that manages them. Testdrive does not
   install browsers or start applications on its own.
