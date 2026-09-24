@@ -157,7 +157,20 @@ func fileURL(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return (&url.URL{Scheme: "file", Path: absolutePath}).String(), nil
+	return absoluteFileURL(absolutePath), nil
+}
+
+func absoluteFileURL(absolutePath string) string {
+	slashPath := strings.ReplaceAll(absolutePath, `\`, "/")
+	if strings.HasPrefix(slashPath, "//") {
+		hostAndPath := strings.TrimPrefix(slashPath, "//")
+		host, path, _ := strings.Cut(hostAndPath, "/")
+		return (&url.URL{Scheme: "file", Host: host, Path: "/" + path}).String()
+	}
+	if len(slashPath) >= 2 && slashPath[1] == ':' {
+		slashPath = "/" + slashPath
+	}
+	return (&url.URL{Scheme: "file", Path: slashPath}).String()
 }
 
 func terminalLink(target string) string {
