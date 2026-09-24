@@ -311,6 +311,14 @@ func TestWriteFindingsIncludesOnlyPresentCategories(t *testing.T) {
 	}
 }
 
+func TestWriteFindingsCountsIndividualFindings(t *testing.T) {
+	var output bytes.Buffer
+	writeFindings(&output, intake.Facts{FailedTests: []intake.Test{{Name: "one"}, {Name: "two"}, {Name: "three"}}})
+	if !strings.Contains(output.String(), "3 findings.") {
+		t.Fatalf("writeFindings() did not count individual findings:\n%s", output.String())
+	}
+}
+
 func TestRunReportsSetupAndCollectionErrors(t *testing.T) {
 	t.Run("tracer install", func(t *testing.T) {
 		testdrive := preparedTestdrive(t)
@@ -402,7 +410,7 @@ func TestRunReportsTestOutputWriteFailure(t *testing.T) {
 }
 
 func TestTestEnvironmentPreservesExistingNodeOptions(t *testing.T) {
-	t.Setenv("NODE_OPTIONS", "--max-old-space-size=4096")
+	t.Setenv("NODE_OPTIONS", "--require dd-trace/ci/init --max-old-space-size=4096 --import=/tmp/dd-trace/register.js")
 	environment := testEnvironment("/tmp/dd-trace/ci/init.js", "http://127.0.0.1:1234", "session")
 	if environment["NODE_OPTIONS"] != `-r "/tmp/dd-trace/ci/init.js" --max-old-space-size=4096` {
 		t.Fatalf("NODE_OPTIONS = %q", environment["NODE_OPTIONS"])

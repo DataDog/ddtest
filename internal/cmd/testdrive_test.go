@@ -9,9 +9,21 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"strings"
 	"testing"
 )
+
+func TestIsTerminalRejectsDevNull(t *testing.T) {
+	file, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if isTerminal(file) {
+		t.Fatal("os.DevNull must not be treated as an interactive terminal")
+	}
+}
 
 type fakeTestdriveExecution struct {
 	previewed bool
