@@ -194,7 +194,7 @@ func parseBundlerInfoVersion(output, gemName string) (version.Version, error) {
 
 // DetectTracer reads the project tracer's bundle information.
 func (r *Ruby) DetectTracer(ctx context.Context, _ TracerOptions) (string, error) {
-	return tracerProbe(ctx, r.executor, "bundle", []string{"info", requiredGemName}, nil)
+	return tracerProbe(ctx, r.executor, "bundle", []string{"info", requiredGemName}, map[string]string{"RUBYOPT": ""})
 }
 
 func (r *Ruby) InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
@@ -218,9 +218,16 @@ func (r *Ruby) InstallTestdriveTracer(ctx context.Context, options TracerOptions
 		return TracerInstallation{Project: true}, nil
 	}
 	gemfile := filepath.Join(directory, "Gemfile")
-	path := strings.ReplaceAll(strings.ReplaceAll(filepath.Join(root, "Gemfile"), `\`, `\\`), "'", `\'`)
+	sourceGemfile := os.Getenv("BUNDLE_GEMFILE")
+	if sourceGemfile == "" {
+		sourceGemfile = "Gemfile"
+	}
+	if !filepath.IsAbs(sourceGemfile) {
+		sourceGemfile = filepath.Join(root, sourceGemfile)
+	}
+	path := strings.ReplaceAll(strings.ReplaceAll(sourceGemfile, `\`, `\\`), "'", `\'`)
 	contents := "source 'https://rubygems.org'\neval_gemfile '" + path + "'\n" +
-		"gem 'datadog-ci'" + selection + "\n"
+		"gem 'datadog-ci'" + selection + " unless dependencies.any? { |dependency| dependency.name == 'datadog-ci' }\n"
 	if err := os.WriteFile(gemfile, []byte(contents), 0600); err != nil {
 		return TracerInstallation{}, fmt.Errorf("write isolated Gemfile: %w", err)
 	}
@@ -228,7 +235,9 @@ func (r *Ruby) InstallTestdriveTracer(ctx context.Context, options TracerOptions
 		return TracerInstallation{}, err
 	}
 	env := rubyTracerEnvironment(gemfile)
-	if output, err := r.executor.CombinedOutput(ctx, "bundle", []string{"install"}, env); err != nil {
+	installEnv := maps.Clone(env)
+	installEnv["RUBYOPT"] = ""
+	if output, err := r.executor.CombinedOutput(ctx, "bundle", []string{"install"}, installEnv); err != nil {
 		return TracerInstallation{}, runtimeTagProbeError("install isolated Ruby bundle", output, err)
 	}
 	return TracerInstallation{Path: gemfile, Env: env}, nil

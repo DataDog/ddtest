@@ -570,7 +570,7 @@ func TestRubyInstallDoesNotEditCustomerBundle(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(contents), "eval_gemfile")
 	require.Contains(t, string(contents), filepath.Join(root, "Gemfile"))
-	require.Contains(t, string(contents), "gem 'datadog-ci'\n")
+	require.Contains(t, string(contents), "gem 'datadog-ci' unless dependencies.any?")
 	require.Equal(t, path.Path, executor.envs[1]["BUNDLE_GEMFILE"])
 	require.Equal(t, filepath.Join(directory, "gems"), executor.envs[1]["BUNDLE_PATH"])
 	require.Empty(t, executor.envs[1]["BUNDLE_WITHOUT"])
@@ -640,7 +640,7 @@ func TestRubyTracerVersions(t *testing.T) {
 			require.NoError(t, err)
 			contents, err := os.ReadFile(path.Path)
 			require.NoError(t, err)
-			require.Contains(t, string(contents), tt.declaration)
+			require.Contains(t, string(contents), strings.TrimSuffix(tt.declaration, "\n")+" unless dependencies.any? { |dependency| dependency.name == 'datadog-ci' }")
 			require.Equal(t, []string{"install"}, executor.commands[1].args)
 			unchanged, err := os.ReadFile(filepath.Join(root, "Gemfile.lock"))
 			require.NoError(t, err)
@@ -681,4 +681,34 @@ func TestRubyProbeFailureAttemptsInstall(t *testing.T) {
 	require.Len(t, executor.commands, 2)
 	require.Equal(t, "bundle", executor.commands[1].name)
 	require.Equal(t, []string{"install"}, executor.commands[1].args)
+}
+
+func TestRubyFallbackHonorsSelectedGemfileAndClearsBootstrapPreload(t *testing.T) {
+	for _, absolute := range []bool{false, true} {
+		t.Run(fmt.Sprintf("absolute=%t", absolute), func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			selected := filepath.Join("config", "Gemfile.test")
+			require.NoError(t, os.MkdirAll("config", 0755))
+			require.NoError(t, os.WriteFile(selected, []byte("gem 'datadog-ci', '1.39.0'\n"), 0600))
+			if absolute {
+				selected = filepath.Join(root, selected)
+			}
+			t.Setenv("BUNDLE_GEMFILE", selected)
+			t.Setenv("RUBYOPT", "-rbundler/setup -rdatadog/ci/auto_instrument")
+			executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("tracer not installed")}, {}}}
+			result, err := (&Ruby{executor: executor}).InstallTestdriveTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Version: "git:does-not-exist"})
+			require.NoError(t, err)
+			contents, err := os.ReadFile(result.Path)
+			require.NoError(t, err)
+			require.Contains(t, string(contents), "eval_gemfile '"+filepath.Join(root, "config", "Gemfile.test")+"'")
+			require.Contains(t, string(contents), "unless dependencies.any? { |dependency| dependency.name == 'datadog-ci' }")
+			for _, env := range executor.envs {
+				require.Contains(t, env, "RUBYOPT")
+				require.Empty(t, env["RUBYOPT"])
+			}
+			require.NotContains(t, result.Env, "RUBYOPT") // Keep instrumentation for the test run.
+			require.Equal(t, "-rbundler/setup -rdatadog/ci/auto_instrument", os.Getenv("RUBYOPT"))
+		})
+	}
 }
