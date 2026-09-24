@@ -47,15 +47,26 @@ Receiving events does not verify test skipping, EFD, or Test Management behavior
 Keep this directory out of source control. Each run
 has its own installation, files, and loopback port.
 
+Testdrive installs the latest tracer by default. To choose a release or a Git
+revision from the language's Datadog tracer repository:
+
+```sh
+ddtest testdrive --tracer-version 6.15.0 --yes # JavaScript example
+ddtest testdrive --tracer-version 'git:<commit-sha>' --yes
+```
+
+The same option works for JavaScript, Python, and Ruby. Git selections also accept
+branches and tags; they require Git and the tracer's source-build prerequisites.
+
 Local testdrive prerequisites:
 
-- JavaScript: Node.js 22+, npm for the isolated `dd-trace@6.15.0` installation,
+- JavaScript: Node.js 22+, npm for the isolated `dd-trace` installation,
   and the project's package manager and dependencies. Vitest/ESM loading and
   Cypress config/support wrappers are supplied automatically.
-- Python: an activated project environment with pytest and pip. `ddtrace==4.15.1`
+- Python: an activated project environment with pytest and pip. `ddtrace`
   is installed into a session-owned directory; the active environment is unchanged.
 - Ruby: Ruby/Bundler and native gem build tools. A session-owned bundle adds
-  `datadog-ci@1.39.0`, preserving the original Gemfile and lockfile. The pinned
+  `datadog-ci`, preserving the original Gemfile and lockfile. The
   tracer's native extensions require a checkout path without spaces.
 - Browser suites: install the project's browsers and start any required services
   first, or use its existing test command that manages them. Testdrive does not
