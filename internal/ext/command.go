@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -71,7 +72,13 @@ func contextCancellationSignal(ctx context.Context) os.Signal {
 // applyEnvMap applies environment variables from envMap to the command
 func applyEnvMap(cmd *exec.Cmd, envMap map[string]string) {
 	if len(envMap) > 0 {
-		cmd.Env = os.Environ()
+		cmd.Env = make([]string, 0, len(os.Environ())+len(envMap))
+		for _, entry := range os.Environ() {
+			key, _, _ := strings.Cut(entry, "=")
+			if _, overridden := envMap[key]; !overridden {
+				cmd.Env = append(cmd.Env, entry)
+			}
+		}
 		for key, value := range envMap {
 			cmd.Env = append(cmd.Env, key+"="+value)
 		}

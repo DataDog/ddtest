@@ -43,18 +43,20 @@ func (j *JavaScript) Install(ctx context.Context, sessionDirectory string) (stri
 	installArgs := []string{
 		"install",
 		"--prefix", sessionDirectory,
+		"--global=false",
 		"--no-save",
 		"--package-lock=false",
 		"--no-audit",
 		"--no-fund",
 		packageName,
 	}
-	if output, err := j.executor.CombinedOutput(ctx, "npm", installArgs, nil); err != nil {
+	cleanEnvironment := map[string]string{"NODE_OPTIONS": ""}
+	if output, err := j.executor.CombinedOutput(ctx, "npm", installArgs, cleanEnvironment); err != nil {
 		return "", commandError("install "+packageName, output, err)
 	}
 
 	ciInitModule := filepath.Join(sessionDirectory, "node_modules", "dd-trace", "ci", "init")
-	output, err := j.executor.CombinedOutput(ctx, "node", []string{"-e", resolveJavaScriptModule, ciInitModule}, nil)
+	output, err := j.executor.CombinedOutput(ctx, "node", []string{"-e", resolveJavaScriptModule, ciInitModule}, cleanEnvironment)
 	if err != nil {
 		return "", commandError("resolve dd-trace/ci/init", output, err)
 	}

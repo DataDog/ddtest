@@ -28,11 +28,13 @@ type commandResponse struct {
 
 type fakeCommandExecutor struct {
 	commands  []command
+	envs      []map[string]string
 	responses []commandResponse
 }
 
-func (e *fakeCommandExecutor) CombinedOutput(_ context.Context, name string, args []string, _ map[string]string) ([]byte, error) {
+func (e *fakeCommandExecutor) CombinedOutput(_ context.Context, name string, args []string, env map[string]string) ([]byte, error) {
 	e.commands = append(e.commands, command{name: name, args: args})
+	e.envs = append(e.envs, env)
 	response := e.responses[len(e.commands)-1]
 	return response.output, response.err
 }
@@ -58,6 +60,7 @@ func TestJavaScriptInstall(t *testing.T) {
 			args: []string{
 				"install",
 				"--prefix", sessionDirectory,
+				"--global=false",
 				"--no-save",
 				"--package-lock=false",
 				"--no-audit",
@@ -74,6 +77,7 @@ func TestJavaScriptInstall(t *testing.T) {
 			},
 		},
 	}, executor.commands)
+	require.Equal(t, []map[string]string{{"NODE_OPTIONS": ""}, {"NODE_OPTIONS": ""}}, executor.envs)
 }
 
 func TestJavaScriptInstallReportsNPMError(t *testing.T) {
