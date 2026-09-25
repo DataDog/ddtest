@@ -44,7 +44,7 @@ func TestCIRuntimesCatchLuxonRegressionAndRespectExclusion(t *testing.T) {
 			workflow := fmt.Sprintf(runtimeWorkflow, tc.guard)
 			root := newJestRepository(t, workflow)
 			calls := 0
-			result := checkCIRuntimes(t.Context(), root, func(_ context.Context, action, version string) (tracerRequirement, error) {
+			result := checkCIRuntimes(t.Context(), root, nil, func(_ context.Context, action, version string) (tracerRequirement, error) {
 				calls++
 				require.Equal(t, githubAction+"@v3", action)
 				require.Empty(t, version)
@@ -80,19 +80,19 @@ func TestCIRuntimesNeverGuessUnknownConfigurations(t *testing.T) {
 		{"other language", "languages: js", "languages: python", "No Datadog JavaScript action"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			result := checkCIRuntimes(t.Context(), newJestRepository(t, strings.Replace(original, tc.old, tc.new, 1)), func(context.Context, string, string) (tracerRequirement, error) {
+			result := checkCIRuntimes(t.Context(), newJestRepository(t, strings.Replace(original, tc.old, tc.new, 1)), nil, func(context.Context, string, string) (tracerRequirement, error) {
 				return tracerRequirement{Version: "6.16.0", Node: ">=22"}, nil
 			})
 			require.Equal(t, "inconclusive", result.Status)
 			require.Contains(t, result.Jobs[0].Reason, tc.reason)
 		})
 	}
-	result := checkCIRuntimes(t.Context(), newJestRepository(t, original), func(context.Context, string, string) (tracerRequirement, error) {
+	result := checkCIRuntimes(t.Context(), newJestRepository(t, original), nil, func(context.Context, string, string) (tracerRequirement, error) {
 		return tracerRequirement{}, fmt.Errorf("metadata unavailable")
 	})
 	require.Equal(t, "inconclusive", result.Status)
 	require.Contains(t, result.Jobs[0].Reason, "metadata unavailable")
-	result = checkCIRuntimes(t.Context(), t.TempDir(), nil)
+	result = checkCIRuntimes(t.Context(), t.TempDir(), nil, nil)
 	require.Equal(t, "not applicable", result.Status)
 }
 
@@ -115,7 +115,7 @@ func TestCIRuntimesUseSelectedTracerAndEveryJob(t *testing.T) {
       - run: npm test
         env: {NODE_OPTIONS: "-r ${{ env.DD_TRACE_PACKAGE }}"}
 `
-	result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), func(_ context.Context, action, version string) (tracerRequirement, error) {
+	result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), nil, func(_ context.Context, action, version string) (tracerRequirement, error) {
 		if version == "5.99.0" {
 			return tracerRequirement{Version: version, Node: ">=18"}, nil
 		}
@@ -218,7 +218,7 @@ func TestRuntimeMetadataErrorsAreNotCompatibility(t *testing.T) {
 
 func TestExplicitEmptyTracerInputOverridesActionDefault(t *testing.T) {
 	workflow := strings.Replace(fmt.Sprintf(runtimeWorkflow, ""), "languages: js", "languages: js\n          js-tracer-version: ''", 1)
-	result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), func(_ context.Context, _ string, version string) (tracerRequirement, error) {
+	result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), nil, func(_ context.Context, _ string, version string) (tracerRequirement, error) {
 		require.Equal(t, "latest", version)
 		return tracerRequirement{Version: "6.16.0", Node: ">=22", Requested: version}, nil
 	})

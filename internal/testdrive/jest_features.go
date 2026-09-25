@@ -89,7 +89,7 @@ func (t *Testdrive) runJestFeatures(ctx context.Context, output io.Writer, sessi
 		return err
 	}
 	if !validProbeControl(passControl, "passed") || !validProbeControl(failControl, "failed") {
-		unavailableFeatures(result, "The temporary probe did not produce its expected passing and failing control results under this Jest configuration. See the recorded probe commands and exit codes.")
+		unavailableFeatures(result, "The temporary probe did not produce its expected passing and failing control results under this Jest configuration. See the recorded probe commands, exit codes, and bounded failure diagnostics.")
 		return nil
 	}
 	identity := passControl.Facts.Tests[0]

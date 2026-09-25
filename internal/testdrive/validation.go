@@ -39,16 +39,18 @@ type featureResult struct {
 
 // Detailed results are transient inputs to validation, never report contents.
 type validationRun struct {
-	root         string
-	Name         string
-	Command      string
-	Instrumented bool
-	ProbeMode    string
-	ExitCode     int
-	ResultError  string
-	Tests        []jestTest
-	SuiteErrors  []string
-	Facts        intake.Facts
+	root                            string
+	Name                            string
+	Command                         string
+	Instrumented                    bool
+	ProbeMode                       string
+	ProbeCoverageThresholdsDisabled bool
+	Diagnostic                      string
+	ExitCode                        int
+	ResultError                     string
+	Tests                           []jestTest
+	SuiteErrors                     []string
+	Facts                           intake.Facts
 }
 
 type testCounts struct {
@@ -59,20 +61,23 @@ type testCounts struct {
 }
 
 type runSummary struct {
-	Name            string     `json:"name"`
-	Command         string     `json:"command,omitempty"`
-	Instrumented    bool       `json:"instrumented"`
-	ProbeMode       string     `json:"probe_mode,omitempty"`
-	ExitCode        *int       `json:"exit_code"`
-	ResultError     string     `json:"result_error,omitempty"`
-	TestCounts      testCounts `json:"test_counts"`
-	SuiteErrorCount int        `json:"suite_error_count"`
-	TestEventCount  int        `json:"test_event_count"`
+	Name                            string     `json:"name"`
+	Command                         string     `json:"command,omitempty"`
+	Instrumented                    bool       `json:"instrumented"`
+	ProbeMode                       string     `json:"probe_mode,omitempty"`
+	ProbeCoverageThresholdsDisabled bool       `json:"probe_coverage_thresholds_disabled,omitempty"`
+	Diagnostic                      string     `json:"diagnostic,omitempty"`
+	ExitCode                        *int       `json:"exit_code"`
+	ResultError                     string     `json:"result_error,omitempty"`
+	TestCounts                      testCounts `json:"test_counts"`
+	SuiteErrorCount                 int        `json:"suite_error_count"`
+	TestEventCount                  int        `json:"test_event_count"`
 }
 
 func (r validationRun) summary() runSummary {
 	summary := runSummary{Name: r.Name, Command: r.Command, Instrumented: r.Instrumented,
 		ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError),
+		ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic),
 		SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
 	// A setup failure before execution must not look like a successful command.
 	if r.Command != "" {
@@ -155,10 +160,13 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		check := *result.CIRuntime
 		check.Reason = reportText(check.Reason)
 		check.Jobs = slices.Clone(check.Jobs)
-		for i := range check.Jobs {
-			job := &check.Jobs[i]
-			for _, field := range []*string{&job.Workflow, &job.Job, &job.Command, &job.Resolution, &job.Node, &job.Action, &job.Tracer, &job.TracerRequested, &job.Requirement, &job.Reason} {
-				*field = reportText(*field)
+		check.Review = slices.Clone(check.Review)
+		for _, findings := range [][]onboard.RuntimeFinding{check.Jobs, check.Review} {
+			for i := range findings {
+				job := &findings[i]
+				for _, field := range []*string{&job.Workflow, &job.Job, &job.Command, &job.Resolution, &job.Node, &job.Action, &job.Tracer, &job.TracerRequested, &job.Requirement, &job.Reason} {
+					*field = reportText(*field)
+				}
 			}
 		}
 		result.CIRuntime = &check
@@ -198,11 +206,17 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 			if job.Node != "" {
 				label += " / Node " + job.Node
 			}
+			if job.NodeResolution != nil {
+				label += " => " + job.NodeResolution.Version + " (setup-node manifest)"
+			}
 			_, _ = fmt.Fprintf(output, "  - %s: %s — %s", label, job.Status, job.Reason)
 			if job.Tracer != "" {
 				_, _ = fmt.Fprintf(output, " (%s; requires %s)", job.Tracer, job.Requirement)
 			}
 			_, _ = fmt.Fprintln(output)
+		}
+		for _, entry := range result.CIRuntime.Review {
+			_, _ = fmt.Fprintf(output, "  - Review separately: %s / %s / step %d (%s): %s\n", entry.Workflow, entry.Job, entry.Step, entry.Command, entry.Reason)
 		}
 	}
 	if result.CISelection != nil {
@@ -222,6 +236,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		_, _ = fmt.Fprintf(output, "Feature %s: %s — %s\n", feature.Name, feature.Status, feature.Reason)
 	}
 	_, _ = fmt.Fprintf(output, "Tracer: %s · %s\nResults JSON: %s\n", result.Tracer, result.TracerSource, path)
+	_, _ = fmt.Fprintln(output, "Keep this JSON report after cleanup, including when validation fails. Temporary probes, tracer installations, and raw traffic are cleaned up automatically.")
 	if result.CheckOnly && result.ChecksPassed {
 		return nil
 	}

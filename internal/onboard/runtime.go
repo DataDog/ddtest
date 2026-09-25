@@ -27,23 +27,25 @@ type RuntimeCheck struct {
 	Status string           `json:"status"`
 	Reason string           `json:"reason"`
 	Jobs   []RuntimeFinding `json:"jobs,omitempty"`
+	Review []RuntimeFinding `json:"review,omitempty"`
 }
 
 // RuntimeFinding records the metadata used to check one CI runtime.
 type RuntimeFinding struct {
-	Workflow        string `json:"workflow"`
-	Job             string `json:"job"`
-	Step            int    `json:"step,omitempty"`
-	Command         string `json:"command,omitempty"`
-	Resolution      string `json:"resolution,omitempty"`
-	Node            string `json:"node,omitempty"`
-	Action          string `json:"action,omitempty"`
-	Tracer          string `json:"tracer,omitempty"`
-	TracerRequested string `json:"tracer_requested,omitempty"`
-	TracerFloating  bool   `json:"tracer_floating"`
-	Requirement     string `json:"requirement,omitempty"`
-	Status          string `json:"status"`
-	Reason          string `json:"reason"`
+	Workflow        string          `json:"workflow"`
+	Job             string          `json:"job"`
+	Step            int             `json:"step,omitempty"`
+	Command         string          `json:"command,omitempty"`
+	Resolution      string          `json:"resolution,omitempty"`
+	Node            string          `json:"node,omitempty"`
+	NodeResolution  *NodeResolution `json:"node_resolution,omitempty"`
+	Action          string          `json:"action,omitempty"`
+	Tracer          string          `json:"tracer,omitempty"`
+	TracerRequested string          `json:"tracer_requested,omitempty"`
+	TracerFloating  bool            `json:"tracer_floating"`
+	Requirement     string          `json:"requirement,omitempty"`
+	Status          string          `json:"status"`
+	Reason          string          `json:"reason"`
 }
 
 type runtimeStep struct {
@@ -75,12 +77,12 @@ func CheckCIRuntimes(ctx context.Context, root string) RuntimeCheck {
 	client := &http.Client{Timeout: 10 * time.Second}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	return checkCIRuntimes(ctx, root, func(ctx context.Context, action, version string) (tracerRequirement, error) {
+	return checkCIRuntimes(ctx, root, ltsNodeResolver(client), func(ctx context.Context, action, version string) (tracerRequirement, error) {
 		return resolveRequirement(ctx, client, action, version)
 	})
 }
 
-func checkCIRuntimes(ctx context.Context, root string, resolve requirementResolver) RuntimeCheck {
+func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver, resolve requirementResolver) RuntimeCheck {
 	result := RuntimeCheck{Status: "not applicable", Reason: "No candidate GitHub Actions Jest test commands found; CI runtime compatibility was not checked."}
 	workflows, err := readWorkflows(root)
 	if err != nil {
@@ -106,6 +108,10 @@ func checkCIRuntimes(ctx context.Context, root string, resolve requirementResolv
 			candidate := false
 			for i, step := range job.Steps {
 				resolutions[i] = resolveTestStep(root, workflow, job, step, "javascript", "jest")
+				if resolutions[i].Review {
+					result.Review = append(result.Review, RuntimeFinding{Workflow: path, Job: name, Step: i + 1, Command: step.Run, Status: "not checked", Reason: resolutions[i].Reason})
+					resolutions[i] = commandResolution{}
+				}
 				candidate = candidate || resolutions[i].Matched || resolutions[i].Reason != ""
 			}
 			if !candidate {
@@ -121,7 +127,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolve requirementResolv
 				continue
 			}
 			for _, row := range rows {
-				result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, workflow, name, job, resolutions, row, cachedResolve)...)
+				result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, workflow, name, job, resolutions, row, resolveNode, cachedResolve)...)
 			}
 		}
 	}
@@ -129,7 +135,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolve requirementResolv
 		return result
 	}
 	result.Status = "compatible"
-	result.Reason = "Every checked instrumented CI runtime satisfies its selected tracer's Node requirement. This does not execute CI or verify the Datadog backend."
+	result.Reason = "Every identified instrumented Jest step satisfies its selected tracer's Node requirement. Other entry points listed for review are outside this check. This does not execute CI or verify the Datadog backend."
 	checked := false
 	for _, job := range result.Jobs {
 		checked = checked || job.Status == "compatible"
@@ -150,7 +156,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolve requirementResolv
 	return result
 }
 
-func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolve requirementResolver) []RuntimeFinding {
+func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolveNode nodeResolver, resolve requirementResolver) []RuntimeFinding {
 	finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "inconclusive"}
 	var findings []RuntimeFinding
 	fail := func(reason string) []RuntimeFinding {
@@ -239,7 +245,18 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 			}
 			finding.TracerFloating = finding.TracerRequested != "" && strings.TrimPrefix(finding.TracerRequested, "v") != requirement.Version
 			finding.Requirement = requirement.Node
-			finding.Status, finding.Reason = CompareNodeRequirement(node, requirement.Node)
+			resolvedNode := node
+			if strings.HasPrefix(node, "lts/") && resolveNode != nil {
+				resolution, err := resolveNode(ctx, node)
+				if err != nil {
+					finding.Reason = "Cannot resolve setup-node alias: " + err.Error()
+					findings = append(findings, finding)
+					continue
+				}
+				finding.NodeResolution = &resolution
+				resolvedNode = resolution.Version
+			}
+			finding.Status, finding.Reason = CompareNodeRequirement(resolvedNode, requirement.Node)
 			if finding.Status == "compatible" {
 				if reason := checkJestBootstrap(workflow, job, step); reason != "" {
 					finding.Status, finding.Reason = "inconclusive", reason

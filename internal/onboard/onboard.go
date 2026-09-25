@@ -58,6 +58,12 @@ func Run(output io.Writer) error {
 		_, _ = fmt.Fprintf(output, "  - %s\n", workflow)
 	}
 
+	if len(discovery.Review) > 0 {
+		_, _ = fmt.Fprintln(output, "\nOther CI entry points to review separately (not identified as Jest):")
+		for _, reason := range discovery.Review {
+			_, _ = fmt.Fprintf(output, "  - %s\n", reason)
+		}
+	}
 	if len(discovery.Unresolved) > 0 {
 		_, _ = fmt.Fprintln(output, "\nCI command discovery is inconclusive:")
 		for _, reason := range discovery.Unresolved {
@@ -71,6 +77,7 @@ func Run(output io.Writer) error {
 		_, _ = fmt.Fprintln(output, "Datadog Test Optimization already appears in every detected test workflow.")
 		_, _ = fmt.Fprintf(output, "This is configuration detection, not completed onboarding. Run `ddtest testdrive --framework %s` to validate locally. Jest also checks CI runtime compatibility; other frameworks remain unvalidated.\n", name)
 		_, _ = fmt.Fprintln(output, "After it finishes, share the validation verdict, CI runtime compatibility, feature results, and the Results JSON path with the user.")
+		_, _ = fmt.Fprintln(output, "Keep .testoptimization/testdrive.json after cleanup, even on failure. Do not declare validation complete while any required check is failed or inconclusive.")
 		return nil
 	}
 
@@ -80,7 +87,7 @@ func Run(output io.Writer) error {
 }
 
 type workflowDiscovery struct {
-	Workflows, Configured, Unresolved []string
+	Workflows, Configured, Unresolved, Review []string
 }
 
 type runDefaults struct {
@@ -143,6 +150,10 @@ func findWorkflows(root, language, name string) (workflowDiscovery, error) {
 				uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 				hasAction = hasAction || uses == githubAction
 				resolution := resolveTestStep(root, workflow, job, step, language, name)
+				if resolution.Review {
+					result.Review = append(result.Review, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, i+1, step.Run, resolution.Reason))
+					continue
+				}
 				if resolution.Matched || resolution.Reason != "" {
 					found = true
 					configured = configured && hasAction && resolution.Reason == ""

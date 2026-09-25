@@ -137,7 +137,8 @@ func (t *Testdrive) Preview(output io.Writer) {
 		_, _ = fmt.Fprintln(output, "  - collect reporting-only telemetry; compatibility and features remain unvalidated for this framework")
 	}
 	_, _ = fmt.Fprintf(output, "  - replace the single report at %s\n", reportPath)
-	_, _ = fmt.Fprintln(output, "  - include verdicts, commands, exit codes, and aggregate counts in the report; remove the temporary tracer, traffic, and run files when finished")
+	_, _ = fmt.Fprintln(output, "  - disable coverage thresholds only for isolated probes, preserving coverage collection and the original full-suite thresholds")
+	_, _ = fmt.Fprintln(output, "  - keep one JSON report with verdicts, commands, exit codes, counts, and bounded failure diagnostics; remove temporary probes, tracer, traffic, and run files")
 	_, _ = fmt.Fprintln(output)
 	if t.language == "ruby" {
 		_, _ = fmt.Fprintln(output, "If tracer installation is needed, Bundler updates the project Gemfile and lockfile.")

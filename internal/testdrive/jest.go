@@ -89,6 +89,22 @@ func appendJestArgs(command string, args []string, additions ...string) []string
 	return append(args, additions...)
 }
 
+func probeJestArgs(args []string) []string {
+	// Jest ignores duplicate JSON options instead of taking the last one.
+	var result []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--coverageThreshold" || args[i] == "--coverage-threshold" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(args[i], "--coverageThreshold=") || strings.HasPrefix(args[i], "--coverage-threshold=") {
+			continue
+		}
+		result = append(result, args[i])
+	}
+	return append(result, "--coverageThreshold={}")
+}
+
 func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Session, preload, name string, instrumented bool, scenario intake.Scenario, probePath, probeMode string) (run validationRun, runErr error) {
 	run.Name = name
 	run.Instrumented = instrumented
@@ -123,7 +139,10 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 	resultPath := filepath.Join(directory, "jest-results.json")
 	args := appendJestArgs(t.command, t.args, "--json", "--outputFile", resultPath)
 	if probePath != "" {
-		args = append(args, "--runTestsByPath", probePath, "--testNamePattern", "^"+probeName+"$")
+		// A single synthetic test cannot meet whole-project coverage thresholds.
+		// Keep coverage collection enabled, including for Test Impact Analysis.
+		args = append(probeJestArgs(args), "--runTestsByPath", probePath, "--testNamePattern", "^"+probeName+"$")
+		run.ProbeCoverageThresholdsDisabled = true
 		env["DDTEST_PROBE_MODE"] = probeMode
 	}
 	_, _ = fmt.Fprintf(output, "Running %s...\n", name)
@@ -146,7 +165,22 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 		return run, err
 	}
 	readJestResults(resultPath, &run)
+	if run.ExitCode != 0 || run.ResultError != "" || len(run.SuiteErrors) > 0 {
+		run.Diagnostic = commandDiagnostic(commandOutput)
+	}
 	return run, nil
+}
+
+// Preserve only the bounded tail where Jest normally prints its final errors,
+// including coverage failures which do not appear in its JSON test results.
+func commandDiagnostic(output []byte) string {
+	text := []rune(failureSignature(string(output)))
+	const limit = 1024
+	if len(text) > limit {
+		const prefix = "[truncated] …"
+		return prefix + string(text[len(text)-(limit-len([]rune(prefix))):])
+	}
+	return string(text)
 }
 
 func configureScenarioEnvironment(env map[string]string, feature string) {

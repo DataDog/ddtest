@@ -53,6 +53,7 @@ func TestStaticJestScriptResolution(t *testing.T) {
 		{"CI=true ./node_modules/.bin/jest", true, false, "jest"},
 		{"# jest\necho 'npm test' # npx jest", false, false, ""},
 		{"npm run lint", false, false, ""},
+		{"mkdir -p pages\ncp -R storybook-static/. pages/", false, false, ""},
 		{"npm run t", false, false, ""},
 		{"npm t", true, false, "jest"},
 		{"npm run hooked", false, true, ""},
@@ -64,8 +65,8 @@ func TestStaticJestScriptResolution(t *testing.T) {
 		{"npm run dynamic", false, true, ""},
 		{"npm run reset", false, true, ""},
 		{"npm --workspace app test", false, true, ""},
-		{"node wrapper.js && npx jest", false, true, ""},
-		{"cd app && npm test", false, true, ""},
+		{"node wrapper.js && npx jest", true, true, ""},
+		{"cd app && npm test", true, true, ""},
 		{"echo $(touch sentinel)", false, true, ""},
 		{"jest || true", false, true, ""},
 		{"jest | tee output", false, true, ""},
@@ -151,7 +152,7 @@ func TestJavaScriptAlgorithmsAliasesReachOnboardingAndRuntimeChecks(t *testing.T
 			var output bytes.Buffer
 			require.NoError(t, Run(&output))
 			require.Contains(t, output.String(), "ddtest testdrive")
-			result := checkCIRuntimes(t.Context(), root, func(_ context.Context, action, version string) (tracerRequirement, error) {
+			result := checkCIRuntimes(t.Context(), root, nil, func(_ context.Context, action, version string) (tracerRequirement, error) {
 				require.Equal(t, githubAction+"@v3", action)
 				require.Equal(t, "6.17.0", version)
 				return tracerRequirement{Version: version, Node: ">=22"}, nil
@@ -186,7 +187,7 @@ func TestUnresolvedCIStillPrintsInstructionsButCannotPass(t *testing.T) {
 	require.Contains(t, output.String(), "datadog/test-visibility-github-action@v3")
 	require.Contains(t, output.String(), "ddtest testdrive")
 	require.NotContains(t, output.String(), "already appears")
-	result := checkCIRuntimes(t.Context(), root, nil)
+	result := checkCIRuntimes(t.Context(), root, nil, nil)
 	require.Equal(t, "inconclusive", result.Status)
 	require.Contains(t, result.Jobs[0].Reason, "Could not resolve CI test command")
 }
@@ -202,7 +203,7 @@ jobs:
       - run: npm run lint
 `)
 	writeScripts(t, root, map[string]string{"test": "jest", "lint": "eslint ."})
-	result := checkCIRuntimes(t.Context(), root, nil)
+	result := checkCIRuntimes(t.Context(), root, nil, nil)
 	require.Equal(t, "not applicable", result.Status)
 	discovery, err := findWorkflows(root, "javascript", "jest")
 	require.NoError(t, err)
@@ -221,7 +222,7 @@ func TestAliasedTestsRequireActionBeforeTestAndEffectivePreload(t *testing.T) {
 			}
 			root := newJestRepository(t, workflow)
 			writeScripts(t, root, map[string]string{"test": "jest", "coverage": "npm test -- --coverage", "lint": "eslint ."})
-			result := checkCIRuntimes(t.Context(), root, func(context.Context, string, string) (tracerRequirement, error) {
+			result := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
 				return tracerRequirement{Version: "6.17.0", Node: ">=22"}, nil
 			})
 			require.Equal(t, "inconclusive", result.Status)
@@ -239,4 +240,79 @@ func TestScriptExpansionIsBounded(t *testing.T) {
 	scripts := map[string]string{"a": "npm run b && npm run b && npm run b && npm run b", "b": "npm run c && npm run c && npm run c && npm run c", "c": "npm run d && npm run d && npm run d && npm run d", "d": "npm run e && npm run e && npm run e && npm run e", "e": "jest"}
 	writeScripts(t, root, scripts)
 	require.Contains(t, resolveJestCommand(root, "npm run a", nil).Reason, "exceeds 256")
+}
+
+func TestCalendarCIOnlyChecksJestSteps(t *testing.T) {
+	workflow := `jobs:
+  test:
+    steps:
+      - uses: actions/setup-node@v6
+        with: {node-version: '24'}
+      - uses: datadog/test-visibility-github-action@v3
+        with: {languages: js}
+      - run: yarn test
+        env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }}'}
+      - run: yarn build
+      - run: npx semantic-release
+  storybook:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    steps:
+      - run: yarn build-storybook
+      - run: |
+          mkdir -p pages
+          cp -R storybook-static/. pages/
+`
+	root := newJestRepository(t, workflow)
+	writeScripts(t, root, map[string]string{"test": "yarn lint && NODE_ENV=test jest", "lint": "eslint .", "build": "zx .scripts/build.mjs", "build-storybook": "storybook build"})
+	result := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+		return tracerRequirement{Version: "6.16.0", Node: ">=22"}, nil
+	})
+	require.Equal(t, "compatible", result.Status)
+	require.Len(t, result.Jobs, 1)
+	require.Equal(t, "yarn test", result.Jobs[0].Command)
+	require.Len(t, result.Review, 3)
+	for _, entry := range result.Review {
+		require.Equal(t, "not checked", entry.Status)
+		require.Contains(t, entry.Reason, "review separately")
+	}
+	discovery, err := findWorkflows(root, "javascript", "jest")
+	require.NoError(t, err)
+	require.Empty(t, discovery.Unresolved)
+	require.Len(t, discovery.Review, 3)
+	require.Equal(t, discovery.Workflows, discovery.Configured)
+}
+
+func TestCIScopeNeverHidesIdentifiedOrInstrumentedTestCommands(t *testing.T) {
+	for _, tc := range []struct{ command, build, options string }{
+		{"yarn build", "jest", ""},
+		{"yarn build", "node wrapper.js && jest", ""},
+		{"yarn build", "jest && node wrapper.js", ""},
+		{"yarn build", "node custom-build.js", "-r dd-trace/ci/init"},
+		{"yarn test", "node custom-build.js", ""},
+		{"node scripts/run-ci.js", "node custom-build.js", ""},
+		{"yarn build && node tests.js", "node custom-build.js", ""},
+	} {
+		t.Run(tc.command+tc.build+tc.options, func(t *testing.T) {
+			root := t.TempDir()
+			writeScripts(t, root, map[string]string{"test": "node tests.js", "build": tc.build})
+			result := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: tc.command, Env: map[string]string{"NODE_OPTIONS": tc.options}}, "javascript", "jest")
+			require.False(t, result.Review, result)
+			require.True(t, result.Matched || result.Reason != "", result)
+		})
+	}
+}
+
+func TestBuildEntryPointWithUnresolvedSetupStillBlocks(t *testing.T) {
+	for _, scripts := range []map[string]string{
+		{"build": "jest", "prebuild": "node setup.js"},
+		{"build": "zx build.mjs && npm run missing"},
+		{"build": "npm run \"$TARGET\""},
+		{"build": "NODE_OPTIONS='' node build.js"},
+	} {
+		root := t.TempDir()
+		writeScripts(t, root, scripts)
+		result := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "npm run build"}, "javascript", "jest")
+		require.NotEmpty(t, result.Reason)
+		require.False(t, result.Review, result)
+	}
 }

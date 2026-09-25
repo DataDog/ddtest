@@ -152,3 +152,25 @@ func TestUnresolvedCIScriptKeepsLocalSuccessButPreventsOverallSuccess(t *testing
 	require.False(t, report.ChecksPassed)
 	require.Equal(t, "npm run coverage", report.CIRuntime.Jobs[0].Command)
 }
+
+func TestSeparateCIReviewDoesNotChangeJestTracerAgreement(t *testing.T) {
+	check := onboard.RuntimeCheck{
+		Status: "compatible",
+		Jobs:   []onboard.RuntimeFinding{{Status: "compatible", Tracer: "dd-trace@6.16.0"}},
+		Review: []onboard.RuntimeFinding{{Status: "not checked", Command: "yarn build", Reason: strings.Repeat("review ", 1000)}},
+	}
+	agreement := compareCISelection(check, "6.16.0")
+	require.Equal(t, "compatible", agreement.Status)
+	root := t.TempDir()
+	var output bytes.Buffer
+	result := validationResult{CIRuntime: &check, CISelection: agreement, Compatibility: verdict{Status: "compatible"}}
+	require.NoError(t, finishValidation(&output, root, result))
+	data, err := os.ReadFile(validationPath(root))
+	require.NoError(t, err)
+	var report validationResult
+	require.NoError(t, json.Unmarshal(data, &report))
+	require.Len(t, report.CIRuntime.Review, 1)
+	require.Less(t, len(report.CIRuntime.Review[0].Reason), 1100)
+	require.Contains(t, output.String(), "Review separately")
+	require.Contains(t, output.String(), "Keep this JSON report after cleanup")
+}

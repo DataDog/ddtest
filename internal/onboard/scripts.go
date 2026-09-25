@@ -19,9 +19,11 @@ import (
 // A resolution can be unrelated, matched, or unresolved. A matched command with
 // an unresolved component is still inconclusive; it must not hide custom wrappers.
 type commandResolution struct {
-	Matched  bool
-	Evidence string
-	Reason   string
+	Matched           bool
+	Evidence          string
+	Reason            string
+	Review            bool
+	UnknownExecutable bool
 }
 
 func unresolvedCommand(reason string) commandResolution {
@@ -51,7 +53,41 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if strings.ContainsAny(directory, "$`~") || (directory != "" && !filepath.IsLocal(directory)) {
 		return unresolvedCommand("Cannot statically resolve repository working-directory: " + directory)
 	}
-	return resolveJestCommand(filepath.Join(root, directory), step.Run, nil)
+	result := resolveJestCommand(filepath.Join(root, directory), step.Run, nil)
+	if result.UnknownExecutable && !result.Matched && separateCIEntryPoint(workflow, job, step) {
+		result.Review = true
+		result.Reason = "Build, publishing, or documentation entry point was not identified as Jest; review separately if it also runs tests. " + result.Reason
+	}
+	return result
+}
+
+// Scope by explicit commands, never job/step names or comments. These unresolved
+// entry points remain visible for review; this is not proof they cannot run tests.
+// Instrumented steps and unknown test wrappers must still block validation.
+func separateCIEntryPoint(workflow ciWorkflow, job runtimeJob, step runtimeStep) bool {
+	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		if env["NODE_OPTIONS"] != "" {
+			return false
+		}
+	}
+	commands, err := staticCommands(step.Run)
+	if err != nil || len(commands) != 1 {
+		return false
+	}
+	words := commands[0]
+	if len(words) == 2 && words[0] == "npx" && words[1] == "semantic-release" {
+		return true
+	}
+	if len(words) < 2 || !slices.Contains([]string{"npm", "yarn", "pnpm", "bun"}, words[0]) {
+		return false
+	}
+	args := words[1:]
+	if args[0] == "run" || args[0] == "run-script" {
+		args = args[1:]
+	} else if words[0] == "npm" {
+		return false
+	}
+	return len(args) == 1 && slices.Contains([]string{"build", "build-storybook", "storybook", "release"}, args[0])
 }
 
 // Resolve only ordinary static commands and package script aliases. Never run
@@ -77,7 +113,12 @@ func resolveJestSequence(directory, command string, stack []string, remaining *i
 		}
 		part := resolveJestWords(directory, words, stack, remaining)
 		if part.Reason != "" {
-			return part
+			if result.Reason == "" {
+				result.Reason = part.Reason
+				result.UnknownExecutable = part.UnknownExecutable
+			} else {
+				result.UnknownExecutable = result.UnknownExecutable && part.UnknownExecutable
+			}
 		}
 		result.Matched = result.Matched || part.Matched
 		if part.Evidence != "" {
@@ -121,7 +162,7 @@ func resolveJestWords(directory string, words, stack []string, remaining *int) c
 	switch words[0] {
 	case "jest", "./node_modules/.bin/jest", "node_modules/.bin/jest":
 		return commandResolution{Matched: true, Evidence: command}
-	case "echo", "printf", "true", "false", "eslint", "prettier", "tsc":
+	case "echo", "printf", "true", "false", "eslint", "prettier", "tsc", "mkdir", "cp":
 		return commandResolution{}
 	case "npm", "yarn", "pnpm", "bun":
 		if len(words) < 2 {
@@ -156,7 +197,7 @@ func resolveJestWords(directory string, words, stack []string, remaining *int) c
 		}
 		return resolvePackageScript(directory, name, forwarded, stack, command, remaining)
 	default:
-		return unresolvedCommand("Cannot statically resolve command: " + command)
+		return commandResolution{Reason: "Cannot statically resolve command: " + command, UnknownExecutable: true}
 	}
 }
 

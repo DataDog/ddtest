@@ -277,3 +277,51 @@ func TestJestRejectsMissingStructuredResults(t *testing.T) {
 	readJestResults(path, &run)
 	require.Empty(t, run.ResultError, "a skipped suite can legitimately produce an empty results array")
 }
+
+func TestProbeThresholdOverridePreservesFullSuiteAndRecordsAdjustment(t *testing.T) {
+	run := preparedTestdrive(t)
+	run.command, run.args = "npm", []string{"test", "--", "--coverage", `--coverageThreshold={"global":{"lines":90}}`}
+	session, err := NewSession()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, session.Close()) })
+	run.startIntake = func(string, intake.Scenario) (localIntake, error) {
+		return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
+	}
+	executor := &jsonExecutor{results: []string{`{"testResults":[]}`, `{"testResults":[]}`}, exits: []error{nil, errors.New("coverage failed")}}
+	run.executor = executor
+	full, err := run.runJest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", "baseline", false, intake.Scenario{}, "", "")
+	require.NoError(t, err)
+	words, err := shellquote.Split(full.Command)
+	require.NoError(t, err)
+	require.Contains(t, words, `--coverageThreshold={"global":{"lines":90}}`)
+	require.NotContains(t, full.Command, "--coverageThreshold={}")
+	require.False(t, full.summary().ProbeCoverageThresholdsDisabled)
+	require.Empty(t, full.summary().Diagnostic)
+	probe, err := run.runJest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", "probe", true, intake.Scenario{}, "probe.test.js", "pass")
+	require.NoError(t, err)
+	words, err = shellquote.Split(probe.Command)
+	require.NoError(t, err)
+	require.Contains(t, words, "--coverageThreshold={}")
+	require.NotContains(t, words, `--coverageThreshold={"global":{"lines":90}}`)
+	require.Contains(t, probe.Command, "--coverage")
+	require.True(t, probe.summary().ProbeCoverageThresholdsDisabled)
+	require.Equal(t, "detailed test output", probe.summary().Diagnostic)
+}
+
+func TestProbeJestArgsReplaceBothThresholdForms(t *testing.T) {
+	for _, flag := range []string{"--coverageThreshold", "--coverage-threshold"} {
+		for _, args := range [][]string{{"test", "--", flag, `{"global":{"lines":90}}`, "--coverage"}, {"test", "--", flag + `={"global":{"lines":90}}`, "--coverage"}} {
+			require.Equal(t, []string{"test", "--", "--coverage", "--coverageThreshold={}"}, probeJestArgs(args))
+		}
+	}
+}
+
+func TestCommandDiagnosticRetainsBoundedFailureTail(t *testing.T) {
+	failure := "Jest: Coverage for statements (0%) does not meet global threshold (62%)"
+	diagnostic := commandDiagnostic([]byte(strings.Repeat("test output\n", 10000) + "\x1b[31m" + failure + "\x1b[0m\n"))
+	require.LessOrEqual(t, len([]rune(diagnostic)), 1024)
+	require.True(t, strings.HasPrefix(diagnostic, "[truncated]"))
+	require.True(t, strings.HasSuffix(diagnostic, failure))
+	require.NotContains(t, diagnostic, "\x1b")
+	require.Equal(t, diagnostic, (validationRun{Diagnostic: diagnostic}).summary().Diagnostic)
+}

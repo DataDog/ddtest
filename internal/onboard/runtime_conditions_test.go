@@ -83,7 +83,7 @@ func TestTSyringeConditionsAndIncludePreserveCoverage(t *testing.T) {
       - run: yarn test
         env: {NODE_OPTIONS: "-r ${{ env.DD_TRACE_PACKAGE }}"}
 `, matrix)
-		result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), func(context.Context, string, string) (tracerRequirement, error) {
+		result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), nil, func(context.Context, string, string) (tracerRequirement, error) {
 			return tracerRequirement{Version: "5.128.0", Node: ">=18"}, nil
 		})
 		require.Equal(t, "compatible", result.Status)
@@ -109,7 +109,7 @@ func TestEmptyMatrixDoesNotMasqueradeAsNoCI(t *testing.T) {
       - run: yarn test
         env: {NODE_OPTIONS: "-r ${{ env.DD_TRACE_PACKAGE }}"}
 `
-	result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), nil)
+	result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), nil, nil)
 	require.Equal(t, "inconclusive", result.Status)
 	require.Contains(t, result.Jobs[0].Reason, "no entries")
 }
