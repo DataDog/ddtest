@@ -46,6 +46,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			run.projectTracer = ""
 			run.projectTracer = ""
 			run.projectTracer = ""
+			run.projectTracer = ""
 			executor := &fakeTestdriveExecutor{}
 			run.executor = executor
 			run.startIntake = func(string) (localIntake, error) {

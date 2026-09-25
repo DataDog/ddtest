@@ -1,7 +1,11 @@
 .DEFAULT_GOAL := build
-.PHONY: clean fmt vet lint build run release
+.PHONY: clean fmt vet lint test build install run release
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/DataDog/ddtest/internal/buildinfo.Version=$(VERSION)
+GOBIN ?= $(shell go env GOBIN)
+ifeq ($(strip $(GOBIN)),)
+GOBIN := $(firstword $(subst :, ,$(shell go env GOPATH)))/bin
+endif
 clean:
 	go clean -i -x
 fmt:
@@ -14,6 +18,9 @@ test:
 	go test ./...
 build: test lint
 	go build -ldflags="$(LDFLAGS)" -o ddtest main.go
+install:
+	GOBIN="$(GOBIN)" go install -ldflags="$(LDFLAGS)" .
+	@echo "Installed ddtest to $(GOBIN)/ddtest"
 run:
 	go run main.go
 release:
