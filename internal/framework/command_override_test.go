@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -316,5 +318,55 @@ func TestLoadCommandOverride_Integration(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestFrameworkCommand(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	viper.Reset()
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	for _, tc := range []struct {
+		framework Framework
+		command   string
+		args      []string
+	}{
+		{NewJest(), "npx", []string{"jest"}},
+		{NewMocha(), "npx", []string{"mocha"}},
+		{NewCucumber(), "npx", []string{"cucumber-js"}},
+		{NewVitest(), "npx", []string{"vitest", "run"}},
+		{NewPlaywright(), "npx", []string{"playwright", "test"}},
+		{NewCypress(), "npx", []string{"cypress", "run"}},
+		{NewPytest(), "python3", []string{"-m", "pytest"}},
+		{NewRSpec(), "bundle", []string{"exec", "rspec"}},
+		{NewMinitest(), "bundle", []string{"exec", "rake", "test"}},
+	} {
+		t.Run(tc.framework.Name(), func(t *testing.T) {
+			command, args := tc.framework.Command()
+			if command != tc.command || !slices.Equal(args, tc.args) {
+				t.Fatalf("Command() = %q %q, want %q %q", command, args, tc.command, tc.args)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		framework Framework
+		path      string
+		args      []string
+	}{
+		{NewJest(), binJestPath, nil},
+		{NewRSpec(), binRSpecPath, nil},
+		{NewMinitest(), binRailsPath, []string{"test"}},
+	} {
+		if err := os.MkdirAll(filepath.Dir(tc.path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(tc.path, []byte("#!/bin/sh\nexit 99\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		command, args := tc.framework.Command()
+		if command != tc.path || !slices.Equal(args, tc.args) {
+			t.Fatalf("local Command() = %q %q, want %q %q", command, args, tc.path, tc.args)
+		}
 	}
 }

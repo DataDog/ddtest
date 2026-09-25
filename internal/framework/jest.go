@@ -258,3 +258,7 @@ func parseJestListTestsOutput(output []byte) []string {
 	slices.Sort(testFiles)
 	return slices.Compact(testFiles)
 }
+
+func (j *Jest) Command() (string, []string) {
+	return j.getJestCommand()
+}

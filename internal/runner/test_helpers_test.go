@@ -177,3 +177,5 @@ func (roundRobinTestPlanner) DistributeTestFiles(testFiles []string, parallelRun
 	}
 	return groups
 }
+
+func (m *MockFramework) Command() (string, []string) { return "test", nil }

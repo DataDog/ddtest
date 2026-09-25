@@ -228,3 +228,7 @@ func parseMochaDiscoveryOutput(output []byte) ([]string, error) {
 	}
 	return normalizeJavaScriptTestFiles(paths), nil
 }
+
+func (m *Mocha) Command() (string, []string) {
+	return m.getMochaCommand()
+}

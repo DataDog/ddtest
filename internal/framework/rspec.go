@@ -143,3 +143,7 @@ func trailingRubySuiteSourceFile(suite string) (string, bool) {
 	}
 	return sourceFile, true
 }
+
+func (r *RSpec) Command() (string, []string) {
+	return r.getRSpecCommand()
+}

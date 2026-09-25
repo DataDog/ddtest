@@ -285,3 +285,7 @@ func parseCucumberMessages(filename string) ([]string, error) {
 	}
 	return normalizeJavaScriptTestFiles(files), nil
 }
+
+func (c *Cucumber) Command() (string, []string) {
+	return c.getCucumberCommand()
+}

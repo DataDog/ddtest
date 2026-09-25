@@ -192,3 +192,13 @@ func (m *Minitest) SourceFileForSuite(suite string) (string, bool) {
 func (m *Minitest) HasUnskippableMarker(testFile string) bool {
 	return utils.FileContainsAll(testFile, "datadog_itr_unskippable")
 }
+
+func (m *Minitest) Command() (string, []string) {
+	if len(m.commandOverride) > 0 {
+		return m.commandOverride[0], m.commandOverride[1:]
+	}
+	if info, err := os.Stat(binRailsPath); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
+		return binRailsPath, []string{"test"}
+	}
+	return "bundle", []string{"exec", "rake", "test"}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"maps"
+	"os/exec"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
@@ -135,4 +136,15 @@ func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[st
 	maps.Copy(mergedEnv, p.platformEnv)
 	maps.Copy(mergedEnv, envMap)
 	return p.executor.Run(ctx, command, args, mergedEnv)
+}
+
+func (p *PyTest) Command() (string, []string) {
+	if len(p.commandOverride) > 0 {
+		return p.commandOverride[0], p.commandOverride[1:]
+	}
+	interpreter := "python"
+	if _, err := exec.LookPath(interpreter); err != nil {
+		interpreter = "python3"
+	}
+	return interpreter, []string{"-m", "pytest"}
 }

@@ -332,3 +332,8 @@ func stripNodeOptionsImport(nodeOptions string, module string) string {
 	}
 	return strings.Join(stripped, " ")
 }
+
+func (v *Vitest) Command() (string, []string) {
+	command, args := v.getVitestCommand()
+	return command, vitestArgsForSubcommand(args, "run")
+}

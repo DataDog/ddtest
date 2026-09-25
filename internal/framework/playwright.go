@@ -477,3 +477,8 @@ func playwrightOptionValue(args []string, options ...string) string {
 	}
 	return value
 }
+
+func (p *Playwright) Command() (string, []string) {
+	command, args := p.getPlaywrightCommand()
+	return command, playwrightRunArgs(command, args, nil)
+}

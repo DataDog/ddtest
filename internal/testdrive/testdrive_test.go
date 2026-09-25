@@ -11,13 +11,17 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/spf13/viper"
 )
 
 type fakeTracer struct {
@@ -503,5 +507,35 @@ func TestRunReportsProjectTracer(t *testing.T) {
 	}
 	if !strings.Contains(executor.env["NODE_OPTIONS"], installer.preloadPath) {
 		t.Fatal(executor.env)
+	}
+}
+
+type commandFramework struct{ framework.Framework }
+
+func (commandFramework) Command() (string, []string) { return "custom-runner", []string{"suite"} }
+
+func TestTestCommand(t *testing.T) {
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	for _, tc := range []struct {
+		name, override, command string
+		args                    []string
+		wantError               bool
+	}{
+		{name: "framework dispatch", command: "custom-runner", args: []string{"suite"}},
+		{name: "explicit override", override: "node 'path with spaces.js'", command: "node", args: []string{"path with spaces.js"}},
+		{name: "invalid quoting", override: "node '", wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			viper.Reset()
+			viper.Set("command", tc.override)
+			settings.Init()
+			command, args, err := testCommand(commandFramework{})
+			if (err != nil) != tc.wantError {
+				t.Fatalf("testCommand() error = %v", err)
+			}
+			if !tc.wantError && (command != tc.command || !slices.Equal(args, tc.args)) {
+				t.Fatalf("testCommand() = %q %q, want %q %q", command, args, tc.command, tc.args)
+			}
+		})
 	}
 }

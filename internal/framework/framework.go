@@ -8,6 +8,8 @@ import (
 )
 
 type Framework interface {
+	// Command returns the test-suite command without running subprocesses.
+	Command() (string, []string)
 	Name() string
 	TestPattern() string
 	DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error)
