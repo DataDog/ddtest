@@ -3,6 +3,7 @@ package testdrive
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -63,4 +64,46 @@ func javascriptTracerVersion(preload string) string {
 		return ""
 	}
 	return pkg.Version
+}
+
+func currentNodeVersion() string {
+	output, err := exec.Command("node", "--version").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+func supportsNodeImport(version string) bool {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 {
+		return false
+	}
+	major, majorErr := strconv.Atoi(parts[0])
+	minor, minorErr := strconv.Atoi(parts[1])
+	if majorErr != nil || minorErr != nil {
+		return false
+	}
+	return major > 18 || major == 18 && minor >= 18
+}
+
+func (t *Testdrive) javascriptEnvironment(path string) map[string]string {
+	env := javascriptEnvironment(path)
+	// ESM instrumentation is needed by Vitest and by ESM test/config files.
+	version := ""
+	if t.nodeVersion != nil {
+		version = t.nodeVersion()
+	}
+	if supportsNodeImport(version) {
+		register := absoluteFileURL(filepath.Join(filepath.Dir(filepath.Dir(path)), "register.js"))
+		env["NODE_OPTIONS"] += " --import " + strconv.Quote(register)
+	}
+	// dd-trace 6.15.0 impacted-test detection dereferences scenario.id on
+	// Background/Rule nodes. Basic Cucumber reporting works with it off.
+	if t.framework.Name() == "cucumber" {
+		env["DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED"] = "false"
+	}
+
+	return env
 }

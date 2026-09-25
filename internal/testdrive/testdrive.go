@@ -54,6 +54,7 @@ type Testdrive struct {
 	installArgs    []string
 	executor       commandExecutor
 	startIntake    func(string) (localIntake, error)
+	nodeVersion    func() string
 }
 
 // Prepare detects the repository and probes the project tracer without writing files.
@@ -78,7 +79,7 @@ func Prepare(version string) (*Testdrive, error) {
 	}
 	language := detectedPlatform.Name()
 	switch runner.Name() {
-	case "jest":
+	case "jest", "mocha", "vitest", "playwright", "cucumber":
 	default:
 		return nil, fmt.Errorf("testdrive does not yet support %s", runner.Name())
 	}
@@ -103,7 +104,7 @@ func Prepare(version string) (*Testdrive, error) {
 	}
 
 	return &Testdrive{projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
-		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) }}, nil
+		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) }, nodeVersion: currentNodeVersion}, nil
 }
 
 func displayName(name string) string {
@@ -321,8 +322,9 @@ func testEnvironment(intakeURL, sessionID string) map[string]string {
 
 func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]string {
 	env := testEnvironment(intakeURL, sessionID)
-	if t.language == "javascript" {
-		maps.Copy(env, javascriptEnvironment(path))
+	switch t.language {
+	case "javascript":
+		maps.Copy(env, t.javascriptEnvironment(path))
 	}
 	return env
 }
