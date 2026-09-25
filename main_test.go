@@ -2,7 +2,10 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
 	"testing"
 )
 
@@ -37,5 +40,33 @@ func TestRunFailure(t *testing.T) {
 
 	if exitCode != 1 {
 		t.Fatalf("run() exit code = %d, want 1", exitCode)
+	}
+}
+
+func TestRunPreservesProcessExitCode(t *testing.T) {
+	if os.Getenv("DDTEST_EXIT_CODE_HELPER") == "1" {
+		os.Exit(7)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(executable, "-test.run=^TestRunPreservesProcessExitCode$")
+	command.Env = append(os.Environ(), "DDTEST_EXIT_CODE_HELPER=1")
+	err = command.Run()
+	code := run(func() error { return fmt.Errorf("test command failed: %w", err) })
+	if code != 7 {
+		t.Fatalf("run() exit code = %d, want 7", code)
+	}
+}
+
+func TestRunPreservesProcessSignal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix signal exit status")
+	}
+	err := exec.Command("sh", "-c", "kill -TERM $$").Run()
+	code := run(func() error { return fmt.Errorf("test command failed: %w", err) })
+	if code != 143 {
+		t.Fatalf("run() exit code = %d, want 143", code)
 	}
 }

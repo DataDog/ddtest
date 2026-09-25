@@ -8,6 +8,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -32,6 +33,7 @@ func TestIsTerminalRejectsDevNull(t *testing.T) {
 type fakeTestdriveExecution struct {
 	previewed bool
 	run       bool
+	err       error
 }
 
 func (f *fakeTestdriveExecution) Preview(output io.Writer) {
@@ -41,7 +43,7 @@ func (f *fakeTestdriveExecution) Preview(output io.Writer) {
 
 func (f *fakeTestdriveExecution) Run(context.Context, io.Writer) error {
 	f.run = true
-	return nil
+	return f.err
 }
 
 func TestConfirmTestdriveInteractive(t *testing.T) {
@@ -81,6 +83,34 @@ func TestConfirmTestdriveNonInteractiveRequiresYes(t *testing.T) {
 func TestTestdriveCommandHasYesFlag(t *testing.T) {
 	if testdriveCmd.Flags().Lookup("yes") == nil {
 		t.Fatal("testdrive command does not define --yes")
+	}
+}
+
+func TestTestdriveCommandUsage(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		wantUsage bool
+	}{
+		{name: "runtime failure", args: []string{"--yes"}},
+		{name: "invalid argument", args: []string{"unexpected"}, wantUsage: true},
+		{name: "invalid flag", args: []string{"--unknown"}, wantUsage: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			command := newTestdriveCommand(func(string) (testdriveExecution, error) {
+				return &fakeTestdriveExecution{err: errors.New("test run failed")}, nil
+			})
+			var output bytes.Buffer
+			command.SetOut(&output)
+			command.SetErr(&output)
+			command.SetArgs(tc.args)
+			if err := command.ExecuteContext(t.Context()); err == nil {
+				t.Fatal("expected command failure")
+			}
+			if got := strings.Contains(output.String(), "Usage:"); got != tc.wantUsage {
+				t.Fatalf("usage printed = %v, want %v: %s", got, tc.wantUsage, output.String())
+			}
+		})
 	}
 }
 
