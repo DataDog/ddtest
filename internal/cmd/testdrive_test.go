@@ -7,10 +7,10 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"errors"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/cobra"
-	"io"
+	"github.com/spf13/viper"
 	"os"
 	"strings"
 	"testing"
@@ -29,22 +29,6 @@ func TestIsTerminalRejectsDevNull(t *testing.T) {
 	if isTerminal(file) {
 		t.Fatal("os.DevNull must not be treated as an interactive terminal")
 	}
-}
-
-type fakeTestdriveExecution struct {
-	previewed bool
-	run       bool
-	err       error
-}
-
-func (f *fakeTestdriveExecution) Preview(output io.Writer) {
-	f.previewed = true
-	_, _ = io.WriteString(output, "preview\n")
-}
-
-func (f *fakeTestdriveExecution) Run(context.Context, io.Writer) error {
-	f.run = true
-	return f.err
 }
 
 func TestConfirmTestdriveInteractive(t *testing.T) {
@@ -100,9 +84,8 @@ func TestTestdriveCommandUsage(t *testing.T) {
 		{name: "invalid flag", args: []string{"--unknown"}, wantUsage: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			command := newTestdriveCommand(func(string) (testdriveExecution, error) {
-				return &fakeTestdriveExecution{err: errors.New("test run failed")}, nil
-			})
+			t.Chdir(t.TempDir())
+			command := newTestdriveCommand()
 			var output bytes.Buffer
 			command.SetOut(&output)
 			command.SetErr(&output)
@@ -120,60 +103,32 @@ func TestTestdriveCommandUsage(t *testing.T) {
 	}
 }
 
-func TestTestdriveCommandYesPreviewsAndRuns(t *testing.T) {
-	execution := &fakeTestdriveExecution{}
-	command := newTestdriveCommand(func(string) (testdriveExecution, error) {
-		return execution, nil
-	})
-	var output bytes.Buffer
-	command.SetOut(&output)
-	command.SetArgs([]string{"--yes"})
-
-	if err := command.ExecuteContext(t.Context()); err != nil {
-		t.Fatalf("ExecuteContext() unexpected error: %v", err)
-	}
-	if !execution.previewed || !execution.run {
-		t.Fatalf("previewed = %v, run = %v", execution.previewed, execution.run)
-	}
-}
-
-func TestTestdriveCommandNonInteractivePreviewsWithoutRunning(t *testing.T) {
-	execution := &fakeTestdriveExecution{}
-	command := newTestdriveCommand(func(string) (testdriveExecution, error) {
-		return execution, nil
-	})
-	var output bytes.Buffer
-	command.SetIn(strings.NewReader("yes\n"))
-	command.SetOut(&output)
-
-	err := command.ExecuteContext(t.Context())
-	if err == nil || !strings.Contains(err.Error(), "--yes") {
-		t.Fatalf("ExecuteContext() error = %v", err)
-	}
-	if !execution.previewed || execution.run {
-		t.Fatalf("previewed = %v, run = %v", execution.previewed, execution.run)
-	}
-}
-
-func TestTestdriveTracerVersion(t *testing.T) {
+func TestTestdriveCommandPreview(t *testing.T) {
 	for _, version := range []string{"latest", "6.15.0", "git:abc1234"} {
 		t.Run(version, func(t *testing.T) {
-			var selected string
-			command := newTestdriveCommand(func(value string) (testdriveExecution, error) {
-				selected = value
-				return &fakeTestdriveExecution{}, nil
-			})
-			command.SetOut(io.Discard)
-			args := []string{"--yes"}
-			if version != "latest" {
-				args = append(args, "--tracer-version", version)
-			}
-			command.SetArgs(args)
-			if err := command.ExecuteContext(t.Context()); err != nil {
+			t.Chdir(t.TempDir())
+			t.Setenv("PATH", t.TempDir())
+			viper.Reset()
+			settings.Init()
+			t.Cleanup(func() { viper.Reset(); settings.Init() })
+			if err := os.WriteFile("package.json", []byte(`{"devDependencies":{"jest":"30.2.0"}}`), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if selected != version {
-				t.Fatalf("selected %q, want %q", selected, version)
+			command := newTestdriveCommand()
+			var output bytes.Buffer
+			command.SetIn(strings.NewReader("yes\n"))
+			command.SetOut(&output)
+			command.SetErr(&output)
+			command.SetArgs([]string{"--tracer-version", version})
+			err := command.ExecuteContext(t.Context())
+			if err == nil || !strings.Contains(err.Error(), "--yes") {
+				t.Fatalf("expected confirmation error, got %v", err)
+			}
+			if !strings.Contains(output.String(), "dd-trace@"+version) {
+				t.Fatal(output.String())
+			}
+			if _, err := os.Stat(".testoptimization"); !os.IsNotExist(err) {
+				t.Fatalf("preview wrote artifacts: %v", err)
 			}
 		})
 	}

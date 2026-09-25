@@ -7,7 +7,6 @@ package cmd
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -17,18 +16,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type testdriveExecution interface {
-	Preview(io.Writer)
-	Run(context.Context, io.Writer) error
-}
+var testdriveCmd = newTestdriveCommand()
 
-type prepareTestdrive func(string) (testdriveExecution, error)
-
-var testdriveCmd = newTestdriveCommand(func(version string) (testdriveExecution, error) {
-	return testdrive.Prepare(version)
-})
-
-func newTestdriveCommand(prepare prepareTestdrive) *cobra.Command {
+func newTestdriveCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "testdrive",
 		Short: "Try Test Optimization on the local test suite",
@@ -45,7 +35,7 @@ func newTestdriveCommand(prepare prepareTestdrive) *cobra.Command {
 	command.Flags().StringVar(&version, "tracer-version", "latest", "Fallback tracer release or git:<commit-or-ref>, used only when the project has no tracer")
 	command.Flags().Bool("yes", false, "Run after printing the changes and commands")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
-		execution, err := prepare(version)
+		execution, err := testdrive.Prepare(version)
 		if err != nil {
 			return err
 		}
