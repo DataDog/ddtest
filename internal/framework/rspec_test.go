@@ -176,7 +176,7 @@ func TestRSpec_getRSpecCommand_WithBinRSpec(t *testing.T) {
 	}
 
 	rspec := NewRSpec()
-	command, baseArgs := rspec.getRSpecCommand()
+	command, baseArgs := rspec.Command()
 
 	if command != "bin/rspec" {
 		t.Errorf("expected command to be 'bin/rspec', got %q", command)
@@ -201,7 +201,7 @@ func TestRSpec_getRSpecCommand_WithNonExecutableBinRSpec(t *testing.T) {
 	}
 
 	rspec := NewRSpec()
-	command, baseArgs := rspec.getRSpecCommand()
+	command, baseArgs := rspec.Command()
 
 	if command != "bundle" {
 		t.Errorf("expected command to be 'bundle', got %q", command)
@@ -222,7 +222,7 @@ func TestRSpec_getRSpecCommand_WithoutBinRSpec(t *testing.T) {
 	_ = os.RemoveAll("bin")
 
 	rspec := NewRSpec()
-	command, baseArgs := rspec.getRSpecCommand()
+	command, baseArgs := rspec.Command()
 
 	if command != "bundle" {
 		t.Errorf("expected command to be 'bundle', got %q", command)
@@ -241,7 +241,7 @@ func TestRSpec_getRSpecCommand_WithoutBinRSpec(t *testing.T) {
 func TestRSpec_getRSpecCommand_WithOverride(t *testing.T) {
 	rspec := newTestRSpecWithOverride([]string{"./custom-rspec", "--profile"})
 
-	command, baseArgs := rspec.getRSpecCommand()
+	command, baseArgs := rspec.Command()
 
 	if command != "./custom-rspec" {
 		t.Errorf("expected command to be './custom-rspec', got %q", command)

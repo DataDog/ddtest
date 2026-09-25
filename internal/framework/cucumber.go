@@ -116,7 +116,7 @@ func (c *Cucumber) DiscoverTests(context.Context, discovery.TestFileSet) ([]test
 // that survived profile, tag, name and path filtering; their Pickle envelopes
 // carry the feature file URI.
 func (c *Cucumber) DiscoverTestFiles(ctx context.Context, selectedFiles discovery.TestFileSet) ([]string, error) {
-	command, baseArgs := c.getCucumberCommand()
+	command, baseArgs := c.Command()
 	if _, err := cucumberCLIArgs(command, baseArgs); err != nil {
 		return nil, err
 	}
@@ -133,7 +133,7 @@ func (c *Cucumber) DiscoverTestFiles(ctx context.Context, selectedFiles discover
 	defer func() { _ = os.Remove(messagePath) }()
 
 	args := slices.Clone(baseArgs)
-	args = append(args,
+	args = withFrameworkOptions(command, args, "cucumber-js",
 		"--dry-run",
 		"--parallel", "0",
 		"--format", "message:"+filepath.Base(messagePath),
@@ -162,7 +162,7 @@ func (c *Cucumber) RunTests(ctx context.Context, testFiles []string, envMap map[
 	if len(testFiles) == 0 {
 		return nil
 	}
-	command, baseArgs := c.getCucumberCommand()
+	command, baseArgs := c.Command()
 	cliArgs, err := cucumberCLIArgs(command, baseArgs)
 	if err != nil {
 		return err
@@ -189,9 +189,9 @@ func (c *Cucumber) discoveryEnv() map[string]string {
 	return envMap
 }
 
-func (c *Cucumber) getCucumberCommand() (string, []string) {
-	if override := runnerCommandOverride(c.commandOverride); len(override) > 0 {
-		return override[0], override[1:]
+func (c *Cucumber) Command() (string, []string) {
+	if len(c.commandOverride) > 0 {
+		return c.commandOverride[0], c.commandOverride[1:]
 	}
 	if info, err := os.Stat(binCucumberPath); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
 		return binCucumberPath, nil
@@ -284,11 +284,4 @@ func parseCucumberMessages(filename string) ([]string, error) {
 		files = append(files, pickleURIs[pickleID])
 	}
 	return normalizeJavaScriptTestFiles(files), nil
-}
-
-func (c *Cucumber) Command() (string, []string) {
-	if len(c.commandOverride) > 0 {
-		return c.commandOverride[0], c.commandOverride[1:]
-	}
-	return c.getCucumberCommand()
 }

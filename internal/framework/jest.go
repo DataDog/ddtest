@@ -97,9 +97,9 @@ func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFi
 		return slices.Clone(testFiles.ExplicitFiles), nil
 	}
 
-	command, baseArgs := j.getJestCommand()
+	command, baseArgs := j.Command()
 	args := slices.Clone(baseArgs)
-	args = append(args, "--listTests")
+	args = withFrameworkOptions(command, args, "jest", "--listTests")
 
 	slog.Info("Discovering Jest test files with command", "command", command, "args", args)
 	output, err := j.executor.CombinedOutput(ctx, command, args, j.discoveryEnv())
@@ -120,10 +120,10 @@ func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFi
 }
 
 func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
-	command, baseArgs := j.getJestCommand()
+	command, baseArgs := j.Command()
 	args := slices.Clone(baseArgs)
-	args = append(args, "--runTestsByPath")
-	args = append(args, testFiles...)
+	args = withFrameworkOptions(command, args, "jest", "--runTestsByPath")
+	args = withFrameworkFiles(command, args, "jest", testFiles)
 
 	slog.Info("Running tests with command", "command", command, "args", args)
 
@@ -151,9 +151,9 @@ func (j *Jest) discoveryEnv() map[string]string {
 }
 
 // Decide between user custom command, local jest binary and npx jest
-func (j *Jest) getJestCommand() (string, []string) {
-	if override := runnerCommandOverride(j.commandOverride); len(override) > 0 {
-		return override[0], override[1:]
+func (j *Jest) Command() (string, []string) {
+	if len(j.commandOverride) > 0 {
+		return j.commandOverride[0], j.commandOverride[1:]
 	}
 
 	if info, err := os.Stat(binJestPath); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
@@ -257,11 +257,4 @@ func parseJestListTestsOutput(output []byte) []string {
 
 	slices.Sort(testFiles)
 	return slices.Compact(testFiles)
-}
-
-func (j *Jest) Command() (string, []string) {
-	if len(j.commandOverride) > 0 {
-		return j.commandOverride[0], j.commandOverride[1:]
-	}
-	return j.getJestCommand()
 }

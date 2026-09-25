@@ -95,111 +95,6 @@ func TestLoadCommandOverride(t *testing.T) {
 	}
 }
 
-func TestRunnerCommandOverride_WithSeparator(t *testing.T) {
-	tests := []struct {
-		name            string
-		command         string
-		expected        []string
-		expectWarning   bool
-		warningContains string
-	}{
-		{
-			name:            "command with -- separator only",
-			command:         "bundle exec rspec --",
-			expected:        []string{"bundle", "exec", "rspec"},
-			expectWarning:   true,
-			warningContains: "Command contains '--' separator",
-		},
-		{
-			name:            "command with -- and files",
-			command:         "bundle exec my-wrapper -- spec/file_spec.rb",
-			expected:        []string{"bundle", "exec", "my-wrapper"},
-			expectWarning:   true,
-			warningContains: "Command contains '--' separator",
-		},
-		{
-			name:            "command with -- and multiple files",
-			command:         "bundle exec rspec -- spec/file1_spec.rb spec/file2_spec.rb",
-			expected:        []string{"bundle", "exec", "rspec"},
-			expectWarning:   true,
-			warningContains: "Command contains '--' separator",
-		},
-		{
-			name:            "command with flags before --",
-			command:         "bundle exec rspec --profile -- spec/file_spec.rb",
-			expected:        []string{"bundle", "exec", "rspec", "--profile"},
-			expectWarning:   true,
-			warningContains: "Command contains '--' separator",
-		},
-		{
-			name:            "command without separator",
-			command:         "bundle exec rspec",
-			expected:        []string{"bundle", "exec", "rspec"},
-			expectWarning:   false,
-			warningContains: "",
-		},
-		{
-			name:            "command with double dash in flag name",
-			command:         "bundle exec rspec --no-profile",
-			expected:        []string{"bundle", "exec", "rspec", "--no-profile"},
-			expectWarning:   false,
-			warningContains: "",
-		},
-		{
-			name:            "-- at the beginning",
-			command:         "-- spec/file_spec.rb",
-			expected:        []string{},
-			expectWarning:   true,
-			warningContains: "Command contains '--' separator",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Reset viper and set the command
-			viper.Reset()
-			viper.Set("command", tt.command)
-			settings.Init()
-
-			// Capture log output
-			var logBuf bytes.Buffer
-			logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{
-				Level: slog.LevelWarn,
-			}))
-			slog.SetDefault(logger)
-
-			result := runnerCommandOverride(loadCommandOverride())
-
-			// Check result
-			if len(result) != len(tt.expected) {
-				t.Errorf("expected %d parts, got %d. Expected: %v, Got: %v", len(tt.expected), len(result), tt.expected, result)
-				return
-			}
-
-			for i, part := range result {
-				if part != tt.expected[i] {
-					t.Errorf("at index %d: expected %q, got %q", i, tt.expected[i], part)
-				}
-			}
-
-			// Check warning
-			logOutput := logBuf.String()
-			if tt.expectWarning {
-				if !strings.Contains(logOutput, tt.warningContains) {
-					t.Errorf("expected warning containing %q, but got: %q", tt.warningContains, logOutput)
-				}
-				if !strings.Contains(logOutput, tt.command) {
-					t.Errorf("expected warning to include original command %q, but got: %q", tt.command, logOutput)
-				}
-			} else {
-				if strings.Contains(logOutput, "separator") {
-					t.Errorf("did not expect warning about separator, but got: %q", logOutput)
-				}
-			}
-		})
-	}
-}
-
 func TestLoadCommandOverride_InvalidQuotingPreservesPreviousBehavior(t *testing.T) {
 	const command = `cucumber-js --publish-token "secret-token`
 	t.Cleanup(func() {
@@ -244,11 +139,7 @@ func TestLoadCommandOverride_Integration(t *testing.T) {
 			expectedArgs:    []string{"exec", "my-rspec-wrapper"},
 		},
 		{
-			name:            "rspec with custom command and -- separator",
-			command:         "bundle exec my-rspec-wrapper --",
-			frameworkType:   "rspec",
-			expectedCommand: "bundle",
-			expectedArgs:    []string{"exec", "my-rspec-wrapper"},
+			name: "rspec with separator", command: "bundle exec my-rspec-wrapper --", frameworkType: "rspec", expectedCommand: "bundle", expectedArgs: []string{"exec", "my-rspec-wrapper", "--"},
 		},
 		{
 			name:            "minitest with custom command",
@@ -282,7 +173,7 @@ func TestLoadCommandOverride_Integration(t *testing.T) {
 			switch tt.frameworkType {
 			case "rspec":
 				rspec := NewRSpec()
-				command, args := rspec.getRSpecCommand()
+				command, args := rspec.Command()
 
 				if command != tt.expectedCommand {
 					t.Errorf("expected command %q, got %q", tt.expectedCommand, command)
@@ -338,7 +229,7 @@ func TestFrameworkCommand(t *testing.T) {
 		{NewVitest(), "npx", []string{"vitest", "run"}},
 		{NewPlaywright(), "npx", []string{"playwright", "test"}},
 		{NewCypress(), "npx", []string{"cypress", "run"}},
-		{NewPytest(), "python3", []string{"-m", "pytest"}},
+		{NewPytest(), "python", []string{"-m", "pytest"}},
 		{NewRSpec(), "bundle", []string{"exec", "rspec"}},
 		{NewMinitest(), "bundle", []string{"exec", "rake", "test"}},
 	} {
@@ -356,7 +247,6 @@ func TestFrameworkCommand(t *testing.T) {
 	}{
 		{NewJest(), binJestPath, nil},
 		{NewRSpec(), binRSpecPath, nil},
-		{NewMinitest(), binRailsPath, []string{"test"}},
 	} {
 		if err := os.MkdirAll(filepath.Dir(tc.path), 0755); err != nil {
 			t.Fatal(err)
@@ -381,19 +271,5 @@ func TestFrameworkCommandPreservesOverride(t *testing.T) {
 		if command != "npm" || !slices.Equal(args, []string{"test", "--", "--runInBand", "path with spaces"}) {
 			t.Fatalf("%s: %s %q", f.Name(), command, args)
 		}
-	}
-	// Execution helpers still strip the separator without mutating the effective command.
-	jest := NewJest()
-	command, args := jest.getJestCommand()
-	if command != "npm" || !slices.Equal(args, []string{"test"}) {
-		t.Fatalf("optimized command: %s %q", command, args)
-	}
-	args = append(args, "selected.test.js")
-	if args[len(args)-1] != "selected.test.js" {
-		t.Fatal(args)
-	}
-	_, args = jest.Command()
-	if !slices.Equal(args, []string{"test", "--", "--runInBand", "path with spaces"}) {
-		t.Fatal(args)
 	}
 }

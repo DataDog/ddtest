@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"maps"
-	"os/exec"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
@@ -75,15 +74,10 @@ func (p *PyTest) DiscoverTests(ctx context.Context, testFiles discovery.TestFile
 		return []testoptimization.Test{}, nil
 	}
 
-	args := []string{"-m", "pytest"}
-	command := "python"
-	if override := runnerCommandOverride(p.commandOverride); len(override) > 0 {
-		command = override[0]
-		args = override[1:]
-	}
+	command, args := p.Command()
 
 	if testFiles.UseExplicitFiles() {
-		args = append(args, testFiles.ExplicitFiles...)
+		args = withFrameworkFiles(command, args, "pytest", testFiles.ExplicitFiles)
 	} else {
 		// pytest has no --pattern flag; resolve the glob pattern to explicit files
 		files, err := discovery.DiscoverTestFiles(testFiles.Pattern, "")
@@ -94,7 +88,7 @@ func (p *PyTest) DiscoverTests(ctx context.Context, testFiles discovery.TestFile
 			return []testoptimization.Test{}, nil
 		}
 		slog.Info("Constraining pytest test discovery", "pattern", testFiles.Pattern, "fileCount", len(files))
-		args = append(args, files...)
+		args = withFrameworkFiles(command, args, "pytest", files)
 	}
 
 	return discovery.DiscoverTests(ctx, p.executor, command, args, p.platformEnv)
@@ -123,14 +117,9 @@ func (p *PyTest) HasUnskippableMarker(testFile string) bool {
 }
 
 func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
-	command := "python"
-	args := []string{"-m", "pytest"}
-	if override := runnerCommandOverride(p.commandOverride); len(override) > 0 {
-		command = override[0]
-		args = override[1:]
-	}
+	command, args := p.Command()
 	slog.Info("Running tests with command", "command", command, "args", args)
-	args = append(args, testFiles...)
+	args = withFrameworkFiles(command, args, "pytest", testFiles)
 
 	mergedEnv := make(map[string]string)
 	maps.Copy(mergedEnv, p.platformEnv)
@@ -142,9 +131,5 @@ func (p *PyTest) Command() (string, []string) {
 	if len(p.commandOverride) > 0 {
 		return p.commandOverride[0], p.commandOverride[1:]
 	}
-	interpreter := "python"
-	if _, err := exec.LookPath(interpreter); err != nil {
-		interpreter = "python3"
-	}
-	return interpreter, []string{"-m", "pytest"}
+	return "python", []string{"-m", "pytest"}
 }

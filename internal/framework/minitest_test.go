@@ -3,6 +3,7 @@ package framework
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1796,5 +1797,19 @@ func TestMinitest_HasUnskippableMarker(t *testing.T) {
 	}
 	if !minitest.HasUnskippableMarker(filepath.Join(tempDir, "missing_test.rb")) {
 		t.Fatal("expected missing file to be treated as guarded")
+	}
+}
+
+func TestMinitestCommandSharesRailsResolution(t *testing.T) {
+	for _, rails := range []bool{false, true} {
+		t.Run(fmt.Sprint(rails), func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			m := &Minitest{executor: &mockRailsCommandExecutor{isRails: rails}}
+			command, args := m.Command()
+			runnerCommand, runnerArgs, isRails := m.getMinitestCommand(t.Context())
+			if command != runnerCommand || !slices.Equal(args, runnerArgs) || isRails != rails {
+				t.Fatalf("command %s %q, runner %s %q, Rails %v", command, args, runnerCommand, runnerArgs, isRails)
+			}
+		})
 	}
 }

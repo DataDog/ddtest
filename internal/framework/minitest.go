@@ -60,11 +60,12 @@ func (m *Minitest) DiscoverTests(ctx context.Context, testFiles discovery.TestFi
 	maps.Copy(envMap, m.platformEnv)
 	if isRails {
 		if testFiles.UseExplicitFiles() {
-			args = append(args, testFiles.ExplicitFiles...)
+			args = withFrameworkFiles(executable, args, "rails", testFiles.ExplicitFiles)
 		} else {
-			args = append(args, testFiles.Pattern)
+			args = withFrameworkFiles(executable, args, "rails", []string{testFiles.Pattern})
 		}
 	} else {
+		args = withFrameworkFiles(executable, args, "rake", nil)
 		// Non-Rails Minitest discovery uses Rake's TEST pattern input; planner post-filtering removes excluded files.
 		envMap["TEST"] = testFiles.Pattern
 	}
@@ -97,8 +98,9 @@ func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[
 	if len(testFiles) > 0 {
 		if isRails {
 			// Rails test accepts files as command-line arguments
-			args = append(args, testFiles...)
+			args = withFrameworkFiles(command, args, "rails", testFiles)
 		} else {
+			args = withFrameworkFiles(command, args, "rake", nil)
 			// Rake test requires TEST_FILES environment variable
 			if envMap == nil {
 				envMap = make(map[string]string)
@@ -161,8 +163,8 @@ func (m *Minitest) isRailsApplication(ctx context.Context) bool {
 // Returns: command, args, isRails
 func (m *Minitest) getMinitestCommand(ctx context.Context) (string, []string, bool) {
 	isRails := m.isRailsApplication(ctx)
-	if override := runnerCommandOverride(m.commandOverride); len(override) > 0 {
-		return override[0], override[1:], isRails
+	if len(m.commandOverride) > 0 {
+		return m.commandOverride[0], m.commandOverride[1:], isRails
 	}
 	if isRails {
 		// Check if bin/rails exists and is executable
@@ -194,11 +196,6 @@ func (m *Minitest) HasUnskippableMarker(testFile string) bool {
 }
 
 func (m *Minitest) Command() (string, []string) {
-	if len(m.commandOverride) > 0 {
-		return m.commandOverride[0], m.commandOverride[1:]
-	}
-	if info, err := os.Stat(binRailsPath); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
-		return binRailsPath, []string{"test"}
-	}
-	return "bundle", []string{"exec", "rake", "test"}
+	command, args, _ := m.getMinitestCommand(context.Background())
+	return command, args
 }

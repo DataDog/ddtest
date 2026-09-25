@@ -81,7 +81,7 @@ func (m *Mocha) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestF
 		}
 	}
 
-	command, baseArgs := m.getMochaCommand()
+	command, baseArgs := m.Command()
 	cliArgs, err := mochaCLIArgs(command, baseArgs)
 	if err != nil {
 		return nil, err
@@ -121,7 +121,7 @@ func (m *Mocha) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestF
 }
 
 func (m *Mocha) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
-	command, baseArgs := m.getMochaCommand()
+	command, baseArgs := m.Command()
 	cliArgs, err := mochaCLIArgs(command, baseArgs)
 	if err != nil {
 		return err
@@ -186,9 +186,9 @@ func (m *Mocha) discoveryEnv() map[string]string {
 	return envMap
 }
 
-func (m *Mocha) getMochaCommand() (string, []string) {
-	if override := runnerCommandOverride(m.commandOverride); len(override) > 0 {
-		return override[0], override[1:]
+func (m *Mocha) Command() (string, []string) {
+	if len(m.commandOverride) > 0 {
+		return m.commandOverride[0], m.commandOverride[1:]
 	}
 	if info, err := os.Stat(binMochaPath); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
 		return binMochaPath, nil
@@ -227,11 +227,4 @@ func parseMochaDiscoveryOutput(output []byte) ([]string, error) {
 		return nil, fmt.Errorf("failed to parse Mocha test file list: %w", err)
 	}
 	return normalizeJavaScriptTestFiles(paths), nil
-}
-
-func (m *Mocha) Command() (string, []string) {
-	if len(m.commandOverride) > 0 {
-		return m.commandOverride[0], m.commandOverride[1:]
-	}
-	return m.getMochaCommand()
 }

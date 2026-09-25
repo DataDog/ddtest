@@ -105,7 +105,7 @@ func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 		}
 	}
 
-	command, baseArgs := v.getVitestCommand()
+	command, baseArgs := v.Command()
 	outputDir, err := os.MkdirTemp("", "ddtest-vitest-list-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Vitest discovery output directory: %w", err)
@@ -114,7 +114,7 @@ func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 	outputFile := filepath.Join(outputDir, "files.json")
 
 	args := vitestArgsForSubcommand(baseArgs, "list")
-	args = append(args, "--filesOnly", "--json="+outputFile)
+	args = withFrameworkOptions(command, args, "vitest", "--filesOnly", "--json="+outputFile)
 
 	slog.Info("Discovering Vitest test files with command", "command", command, "args", args)
 	stdout, stderr, err := v.executor.Output(ctx, command, args, v.discoveryEnv())
@@ -191,9 +191,9 @@ func (v *Vitest) discoverVitestV1TestFiles(ctx context.Context, command string, 
 }
 
 func (v *Vitest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
-	command, baseArgs := v.getVitestCommand()
+	command, baseArgs := v.Command()
 	args := vitestArgsForSubcommand(baseArgs, "run")
-	args = append(args, testFiles...)
+	args = withFrameworkFiles(command, args, "vitest", testFiles)
 
 	slog.Info("Running tests with command", "command", command, "args", args)
 
@@ -222,18 +222,18 @@ func (v *Vitest) discoveryEnv() map[string]string {
 }
 
 // Decide between a user custom command, the local Vitest binary and npx.
-func (v *Vitest) getVitestCommand() (string, []string) {
-	if override := runnerCommandOverride(v.commandOverride); len(override) > 0 {
-		return override[0], override[1:]
+func (v *Vitest) Command() (string, []string) {
+	if len(v.commandOverride) > 0 {
+		return v.commandOverride[0], v.commandOverride[1:]
 	}
 
 	if info, err := os.Stat(binVitestPath); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
 		slog.Debug("Using local Vitest binary")
-		return binVitestPath, nil
+		return binVitestPath, []string{"run"}
 	}
 
 	slog.Debug("Using npx vitest for Vitest commands")
-	return "npx", []string{"vitest"}
+	return "npx", []string{"vitest", "run"}
 }
 
 func vitestArgsForSubcommand(baseArgs []string, subcommand string) []string {
@@ -331,12 +331,4 @@ func stripNodeOptionsImport(nodeOptions string, module string) string {
 		stripped = append(stripped, field)
 	}
 	return strings.Join(stripped, " ")
-}
-
-func (v *Vitest) Command() (string, []string) {
-	if len(v.commandOverride) > 0 {
-		return v.commandOverride[0], v.commandOverride[1:]
-	}
-	command, args := v.getVitestCommand()
-	return command, vitestArgsForSubcommand(args, "run")
 }
