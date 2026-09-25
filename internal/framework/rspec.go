@@ -56,13 +56,13 @@ func (r *RSpec) DiscoverTests(ctx context.Context, testFiles discovery.TestFileS
 		return []testoptimization.Test{}, nil
 	}
 
-	executable, baseArgs := r.getRSpecCommand()
+	executable, baseArgs := r.Command()
 	args := append([]string{}, baseArgs...)
-	args = append(args, "--dry-run")
+	args = withFrameworkOptions(executable, args, "rspec", "--dry-run")
 	if testFiles.UseExplicitFiles() {
-		args = append(args, testFiles.ExplicitFiles...)
+		args = withFrameworkFiles(executable, args, "rspec", testFiles.ExplicitFiles)
 	} else {
-		args = append(args, "--pattern", testFiles.Pattern)
+		args = withFrameworkOptions(executable, args, "rspec", "--pattern", testFiles.Pattern)
 	}
 
 	return discovery.DiscoverTests(ctx, r.executor, executable, args, r.platformEnv)
@@ -86,10 +86,10 @@ func (r *RSpec) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestF
 }
 
 func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
-	command, baseArgs := r.getRSpecCommand()
-	args := append(baseArgs, "--format", "progress")
+	command, baseArgs := r.Command()
+	args := withFrameworkOptions(command, baseArgs, "rspec", "--format", "progress")
 	slog.Info("Running tests with command", "command", command, "args", args)
-	args = append(args, testFiles...)
+	args = withFrameworkFiles(command, args, "rspec", testFiles)
 
 	mergedEnv := make(map[string]string)
 	maps.Copy(mergedEnv, r.GetPlatformEnv())
@@ -97,8 +97,8 @@ func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[str
 	return r.executor.Run(ctx, command, args, mergedEnv)
 }
 
-// getRSpecCommand determines whether to use bin/rspec or bundle exec rspec
-func (r *RSpec) getRSpecCommand() (string, []string) {
+// Command determines whether to use bin/rspec or bundle exec rspec
+func (r *RSpec) Command() (string, []string) {
 	if len(r.commandOverride) > 0 {
 		return r.commandOverride[0], r.commandOverride[1:]
 	}

@@ -261,34 +261,17 @@ const resolveJavaScriptModule = "process.stdout.write(require.resolve(process.ar
 // InstallTestdriveTracer reuses the project preload or installs an isolated fallback.
 func (j *JavaScript) InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
 	sessionDirectory := options.Directory
-	version := options.Version
-	if version == "" {
-		version = "latest"
-	}
-	if ref, ok := strings.CutPrefix(version, "git:"); ok {
-		if ref == "" {
-			return TracerInstallation{}, fmt.Errorf("tracer git ref must not be empty")
-		}
-		version = "git+https://github.com/DataDog/dd-trace-js.git#" + ref
+	command, installArgs, err := j.TracerInstallCommand(options)
+	if err != nil {
+		return TracerInstallation{}, err
 	}
 	cleanEnvironment := map[string]string{"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}
 	path, err := j.DetectTracer(ctx, options)
 	if err == nil && path != "" {
 		return TracerInstallation{Path: path, Project: true}, nil
 	}
-	packageName := "dd-trace@" + version
-	installArgs := []string{
-		"install",
-		"--prefix", sessionDirectory,
-		"--global=false",
-		"--no-save",
-		"--package-lock=false",
-		"--no-audit",
-		"--no-fund",
-		packageName,
-	}
-	if output, err := j.executor.CombinedOutput(ctx, "npm", installArgs, cleanEnvironment); err != nil {
-		return TracerInstallation{}, runtimeTagProbeError("install "+packageName, output, err)
+	if output, err := j.executor.CombinedOutput(ctx, command, installArgs, cleanEnvironment); err != nil {
+		return TracerInstallation{}, runtimeTagProbeError("install "+installArgs[len(installArgs)-1], output, err)
 	}
 
 	ciInitModule := filepath.Join(sessionDirectory, "node_modules", "dd-trace", "ci", "init")
@@ -302,4 +285,29 @@ func (j *JavaScript) InstallTestdriveTracer(ctx context.Context, options TracerO
 		return TracerInstallation{}, fmt.Errorf("resolve dd-trace/ci/init: node returned non-absolute path %q", ciInitPath)
 	}
 	return TracerInstallation{Path: ciInitPath}, nil
+}
+
+func (j *JavaScript) TracerInstallCommand(options TracerOptions) (string, []string, error) {
+	version := options.Version
+	if version == "" {
+		version = "latest"
+	}
+	if ref, ok := strings.CutPrefix(version, "git:"); ok {
+		if ref == "" {
+			return "", nil, fmt.Errorf("tracer git ref must not be empty")
+		}
+		version = "git+https://github.com/DataDog/dd-trace-js.git#" + ref
+	}
+	packageName := "dd-trace@" + version
+	installArgs := []string{
+		"install",
+		"--prefix", options.Directory,
+		"--global=false",
+		"--no-save",
+		"--package-lock=false",
+		"--no-audit",
+		"--no-fund",
+		packageName,
+	}
+	return "npm", installArgs, nil
 }

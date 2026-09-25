@@ -211,23 +211,21 @@ then replaces positional feature paths with each worker's assigned files:
 ddtest run --platform javascript --framework cucumber --command "pnpm exec cucumber-js features/v1/*.feature --profile ci"
 ```
 
-When using `--command`, do not include the `--` separator. Except for Cucumber,
-do not include test files in the command. DDTest automatically appends selected
-tests and framework-specific flags; the Cucumber adapter also recognizes and
-replaces positional feature paths and rerun files.
+Keep framework options in `--command`; DDTest supplies the selected test files
+and discovery flags. A wrapper's separator before the framework executable is
+preserved, for example `--command "npx -- jest --runInBand"`.
 
-Incorrect:
+A framework's own `--` ends its options. Discovery flags are inserted before
+that marker; during execution, DDTest replaces the positional file selection
+after it with the selected files. For example:
 
 ```bash
-# DDTest appends test files itself
-ddtest run --command "bundle exec rspec -- spec/models/"
-
-# The -- separator is not supported in --command
-ddtest run --command "bundle exec my-wrapper --"
+ddtest run --command "bundle exec rspec --tag smoke -- spec/models/"
 ```
 
-If your command contains `--`, DDTest will emit a warning and automatically
-remove the `--` separator and anything after it.
+The Cucumber adapter also replaces positional feature paths and rerun files
+without requiring a separator. This does not add support for arbitrary scripts
+or shell command chains.
 
 For pytest, DDTest runs `python -m pytest <files>` by default. Since 1.7.0,
 set `--command` to override the base command. For example, `--command pytest`

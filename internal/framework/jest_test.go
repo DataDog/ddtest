@@ -501,3 +501,37 @@ func TestJest_RunTests_WithOverride(t *testing.T) {
 		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
 	}
 }
+
+func TestJestSeparatorPreservesOptionsAndReplacesSelection(t *testing.T) {
+	for _, override := range [][]string{
+		{"jest", "--runInBand", "--", "old.test.js"},
+		{"npx", "--", "jest", "--runInBand", "--", "old.test.js"},
+	} {
+		var got []string
+		j := &Jest{commandOverride: override, executor: &jestCommandExecutor{onExecution: func(_ string, args []string) { got = slices.Clone(args) }}}
+		if err := j.RunTests(t.Context(), []string{"selected.test.js"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"--runInBand", "--runTestsByPath", "--", "selected.test.js"}
+		if override[0] == "npx" {
+			want = append([]string{"--", "jest"}, want...)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("run: %q, want %q", got, want)
+		}
+		if _, err := j.DiscoverTestFiles(t.Context(), discovery.TestFileSet{Pattern: "**/*.test.js"}); err != nil {
+			t.Fatal(err)
+		}
+		want = []string{"--runInBand", "--listTests", "--", "old.test.js"}
+		if override[0] == "npx" {
+			want = append([]string{"--", "jest"}, want...)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("discovery: %q, want %q", got, want)
+		}
+		_, args := j.Command()
+		if !slices.Equal(args, override[1:]) {
+			t.Fatal("command mutated", args)
+		}
+	}
+}

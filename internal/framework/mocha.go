@@ -81,7 +81,7 @@ func (m *Mocha) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestF
 		}
 	}
 
-	command, baseArgs := m.getMochaCommand()
+	command, baseArgs := m.Command()
 	cliArgs, err := mochaCLIArgs(command, baseArgs)
 	if err != nil {
 		return nil, err
@@ -121,7 +121,7 @@ func (m *Mocha) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestF
 }
 
 func (m *Mocha) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
-	command, baseArgs := m.getMochaCommand()
+	command, baseArgs := m.Command()
 	cliArgs, err := mochaCLIArgs(command, baseArgs)
 	if err != nil {
 		return err
@@ -186,7 +186,7 @@ func (m *Mocha) discoveryEnv() map[string]string {
 	return envMap
 }
 
-func (m *Mocha) getMochaCommand() (string, []string) {
+func (m *Mocha) Command() (string, []string) {
 	if len(m.commandOverride) > 0 {
 		return m.commandOverride[0], m.commandOverride[1:]
 	}

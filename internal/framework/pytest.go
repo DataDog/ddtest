@@ -74,15 +74,10 @@ func (p *PyTest) DiscoverTests(ctx context.Context, testFiles discovery.TestFile
 		return []testoptimization.Test{}, nil
 	}
 
-	args := []string{"-m", "pytest"}
-	command := "python"
-	if len(p.commandOverride) > 0 {
-		command = p.commandOverride[0]
-		args = p.commandOverride[1:]
-	}
+	command, args := p.Command()
 
 	if testFiles.UseExplicitFiles() {
-		args = append(args, testFiles.ExplicitFiles...)
+		args = withFrameworkFiles(command, args, "pytest", testFiles.ExplicitFiles)
 	} else {
 		// pytest has no --pattern flag; resolve the glob pattern to explicit files
 		files, err := discovery.DiscoverTestFiles(testFiles.Pattern, "")
@@ -93,7 +88,7 @@ func (p *PyTest) DiscoverTests(ctx context.Context, testFiles discovery.TestFile
 			return []testoptimization.Test{}, nil
 		}
 		slog.Info("Constraining pytest test discovery", "pattern", testFiles.Pattern, "fileCount", len(files))
-		args = append(args, files...)
+		args = withFrameworkFiles(command, args, "pytest", files)
 	}
 
 	return discovery.DiscoverTests(ctx, p.executor, command, args, p.platformEnv)
@@ -122,17 +117,19 @@ func (p *PyTest) HasUnskippableMarker(testFile string) bool {
 }
 
 func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
-	command := "python"
-	args := []string{"-m", "pytest"}
-	if len(p.commandOverride) > 0 {
-		command = p.commandOverride[0]
-		args = p.commandOverride[1:]
-	}
+	command, args := p.Command()
 	slog.Info("Running tests with command", "command", command, "args", args)
-	args = append(args, testFiles...)
+	args = withFrameworkFiles(command, args, "pytest", testFiles)
 
 	mergedEnv := make(map[string]string)
 	maps.Copy(mergedEnv, p.platformEnv)
 	maps.Copy(mergedEnv, envMap)
 	return p.executor.Run(ctx, command, args, mergedEnv)
+}
+
+func (p *PyTest) Command() (string, []string) {
+	if len(p.commandOverride) > 0 {
+		return p.commandOverride[0], p.commandOverride[1:]
+	}
+	return "python", []string{"-m", "pytest"}
 }

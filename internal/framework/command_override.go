@@ -23,13 +23,5 @@ func loadCommandOverride() []string {
 		return nil
 	}
 
-	// Check for -- separator and remove it along with everything after it
-	for i, part := range parts {
-		if part == "--" {
-			slog.Warn("Command contains '--' separator which causes ddtest-added flags to be misinterpreted. The '--' separator and anything after it will be removed. ddtest will automatically provide test files and flags.", "original_command", command)
-			return parts[:i]
-		}
-	}
-
 	return parts
 }

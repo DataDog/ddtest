@@ -19,6 +19,7 @@ type Platform interface {
 	DetectFramework() (framework.Framework, error)
 	SanityCheck(ctx context.Context) error
 	DetectTracer(ctx context.Context, options TracerOptions) (string, error)
+	TracerInstallCommand(options TracerOptions) (string, []string, error)
 	InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error)
 	TestSkippingLevel() settings.TestSkippingLevel
 }

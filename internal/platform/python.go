@@ -217,26 +217,15 @@ func isPythonExecutable(base string) bool {
 
 func (p *Python) InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
 	directory := options.Directory
-	command, prefixArgs := pythonInterpreter(options.Command, options.Args)
-	packageName := "ddtrace"
-	if ref, ok := strings.CutPrefix(options.Version, "git:"); ok {
-		if ref == "" {
-			return TracerInstallation{}, fmt.Errorf("tracer git ref must not be empty")
-		}
-		packageName += " @ git+https://github.com/DataDog/dd-trace-py.git@" + ref
-	} else if options.Version != "" && options.Version != "latest" {
-		packageName += "==" + options.Version
+	command, args, err := p.TracerInstallCommand(options)
+	if err != nil {
+		return TracerInstallation{}, err
 	}
 	version, err := p.DetectTracer(ctx, options)
 	if err == nil && version != "" {
 		return TracerInstallation{Project: true}, nil
 	}
-	// uv environments need not contain pip; provide it only for this setup command.
-	if filepath.Base(command) == "uv" && len(prefixArgs) > 0 {
-		prefixArgs = slices.Insert(prefixArgs, 1, "--with", "pip")
-	}
 	target := filepath.Join(directory, "python-packages")
-	args := append(append([]string{}, prefixArgs...), "-m", "pip", "install", "--disable-pip-version-check", "--target", target, packageName)
 	if output, err := p.executor.CombinedOutput(ctx, command, args, map[string]string{"DD_FAST_BUILD": "1"}); err != nil {
 		return TracerInstallation{}, runtimeTagProbeError("install ddtrace", output, err)
 	}
@@ -250,4 +239,24 @@ func (p *Python) InstallTestdriveTracer(ctx context.Context, options TracerOptio
 		return TracerInstallation{}, fmt.Errorf("write Python tracer bootstrap: %w", err)
 	}
 	return TracerInstallation{Path: bootstrap}, nil
+}
+
+func (p *Python) TracerInstallCommand(options TracerOptions) (string, []string, error) {
+	command, prefixArgs := pythonInterpreter(options.Command, options.Args)
+	packageName := "ddtrace"
+	if ref, ok := strings.CutPrefix(options.Version, "git:"); ok {
+		if ref == "" {
+			return "", nil, fmt.Errorf("tracer git ref must not be empty")
+		}
+		packageName += " @ git+https://github.com/DataDog/dd-trace-py.git@" + ref
+	} else if options.Version != "" && options.Version != "latest" {
+		packageName += "==" + options.Version
+	}
+	// uv environments need not contain pip; provide it only for this setup command.
+	if filepath.Base(command) == "uv" && len(prefixArgs) > 0 {
+		prefixArgs = slices.Insert(prefixArgs, 1, "--with", "pip")
+	}
+	target := filepath.Join(options.Directory, "python-packages")
+	args := append(append([]string{}, prefixArgs...), "-m", "pip", "install", "--disable-pip-version-check", "--target", target, packageName)
+	return command, args, nil
 }

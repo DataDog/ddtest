@@ -66,7 +66,7 @@ func (p *Playwright) SourceFileForSuite(suite string) (string, bool) {
 	if suite == "" {
 		return "", false
 	}
-	command, baseArgs := p.getPlaywrightCommand()
+	command, baseArgs := p.Command()
 	cliArgs, err := playwrightCLIArgs(command, baseArgs)
 	if err != nil {
 		return utils.NormalizePath(suite), true
@@ -108,7 +108,7 @@ func (p *Playwright) DiscoverTests(context.Context, discovery.TestFileSet) ([]te
 }
 
 func (p *Playwright) DiscoverTestFiles(ctx context.Context, selectedFiles discovery.TestFileSet) ([]string, error) {
-	command, baseArgs := p.getPlaywrightCommand()
+	command, baseArgs := p.Command()
 	if _, err := playwrightCLIArgs(command, baseArgs); err != nil {
 		return nil, err
 	}
@@ -153,7 +153,7 @@ func (p *Playwright) RunTests(ctx context.Context, testFiles []string, envMap ma
 	if len(testFiles) == 0 {
 		return nil
 	}
-	command, baseArgs := p.getPlaywrightCommand()
+	command, baseArgs := p.Command()
 	if _, err := playwrightCLIArgs(command, baseArgs); err != nil {
 		return err
 	}
@@ -180,14 +180,14 @@ func (p *Playwright) discoveryEnv() map[string]string {
 	return envMap
 }
 
-func (p *Playwright) getPlaywrightCommand() (string, []string) {
+func (p *Playwright) Command() (string, []string) {
 	if len(p.commandOverride) > 0 {
 		return p.commandOverride[0], p.commandOverride[1:]
 	}
 	if info, err := os.Stat(binPlaywrightPath); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
-		return binPlaywrightPath, nil
+		return binPlaywrightPath, []string{"test"}
 	}
-	return "npx", []string{"playwright"}
+	return "npx", []string{"playwright", "test"}
 }
 
 func isPlaywrightExecutable(value string) bool {
@@ -267,7 +267,7 @@ func playwrightDiscoveryArgs(command string, baseArgs []string, reporterPath str
 	prefix, cliArgs := splitPlaywrightCommand(command, baseArgs)
 	args := append(prefix, "test")
 	args = append(args, filterPlaywrightArgs(cliArgs, playwrightDiscoveryOverrides, false)...)
-	args = append(args, "--list", "--reporter="+reporterPath)
+	args = withFrameworkOptions(command, args, "playwright", "--list", "--reporter="+reporterPath)
 	return args
 }
 
@@ -287,6 +287,12 @@ func filterPlaywrightArgs(args, overridden []string, removeFiles bool) []string 
 	result := make([]string, 0, len(args))
 	for i := 0; i < len(args); {
 		arg := args[i]
+		if arg == "--" {
+			if !removeFiles {
+				result = append(result, args[i:]...)
+			}
+			break
+		}
 		name, _, _ := strings.Cut(arg, "=")
 		end := playwrightArgumentEnd(args, i)
 		if !slices.Contains(overridden, name) && (!removeFiles || strings.HasPrefix(arg, "-")) {

@@ -8,6 +8,8 @@ import (
 )
 
 type Framework interface {
+	// Command returns the effective test-suite command, preserving all override arguments.
+	Command() (string, []string)
 	Name() string
 	TestPattern() string
 	DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error)
