@@ -14,8 +14,8 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kballard/go-shellquote"
 
@@ -49,11 +49,15 @@ type Testdrive struct {
 	tracerLabel    string
 	platform       platform.Platform
 	tracerVersion  string
+	projectTracer  string
+	session        *Session
+	installCommand string
+	installArgs    []string
 	executor       commandExecutor
 	startIntake    func(string) (localIntake, error)
 }
 
-// Prepare detects the repository without running commands or writing files.
+// Prepare detects the repository and probes the project tracer without writing files.
 func Prepare(version string) (*Testdrive, error) {
 	if version == "" {
 		version = "latest"
@@ -85,7 +89,24 @@ func Prepare(version string) (*Testdrive, error) {
 	}
 	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 
-	return &Testdrive{repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
+	session := planSession(repositoryRoot)
+	options := platform.TracerOptions{Directory: session.Directory(), Version: version, Command: command, Args: args}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	projectTracer, probeErr := detectedPlatform.DetectTracer(ctx, options)
+	if probeErr != nil {
+		projectTracer = ""
+	}
+	var installCommand string
+	var installArgs []string
+	if projectTracer == "" {
+		installCommand, installArgs, err = detectedPlatform.TracerInstallCommand(options)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &Testdrive{projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) }}, nil
 }
 
@@ -97,36 +118,44 @@ func displayName(name string) string {
 // Preview describes the filesystem and process changes that Run will make.
 func (t *Testdrive) Preview(output io.Writer) {
 	command, args := t.command, t.args
-	sessionsDirectory := filepath.Join(t.repositoryRoot, constants.PlanDirectory, "testdrive")
+	directory := t.session.Directory()
 
 	_, _ = fmt.Fprintf(output, "DDTest found %s and %s.\n", displayName(t.language), displayName(t.framework.Name()))
 	_, _ = fmt.Fprintln(output)
 	_, _ = fmt.Fprintln(output, "It will:")
-	_, _ = fmt.Fprintf(output, "  - create a new <session> under %s\n", sessionsDirectory)
-	switch t.language {
-	case "javascript":
-		_, _ = fmt.Fprintf(output, "  - reuse the project tracer; if absent, install %s with npm inside <session> (local install, without saving dependencies or a lockfile)\n", t.tracerLabel)
-		_, _ = fmt.Fprintln(output, "  - resolve the selected dd-trace preload with node")
-
+	_, _ = fmt.Fprintf(output, "  - create an output folder: %s\n", directory)
+	if t.projectTracer != "" {
+		_, _ = fmt.Fprintln(output, "  - reuse the installed project tracer; no installation is needed")
+	} else {
+		_, _ = fmt.Fprintf(output, "  - install %s: %s\n", t.tracerLabel, shellquote.Join(append([]string{t.installCommand}, t.installArgs...)...))
 	}
 
 	_, _ = fmt.Fprintf(output, "  - run: %s\n", shellquote.Join(append([]string{command}, args...)...))
-	_, _ = fmt.Fprintln(output, "  - save decoded traffic as <session>/intake/*.json and test output as <session>/test-output.txt")
+	_, _ = fmt.Fprintf(output, "  - save captured traffic in %s and test output in %s\n", filepath.Join(directory, "intake"), filepath.Join(directory, testOutputFilename))
 	_, _ = fmt.Fprintln(output)
 	_, _ = fmt.Fprintln(output, "It will not change package.json, Gemfile, Python dependency files, or a lockfile in your project.")
 }
 
 // Run prepares the tracer and executes the detected test suite.
 func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
-	session, err := NewSession(t.repositoryRoot)
-	if err != nil {
+	session := t.session
+	if session == nil {
+		session = planSession(t.repositoryRoot)
+	}
+	if err := session.create(); err != nil {
 		return err
 	}
-
-	_, _ = fmt.Fprintf(output, "\nPreparing tracer (project first, %s fallback) in %s...\n", t.tracerLabel, session.Directory())
-	installation, err := t.platform.InstallTestdriveTracer(ctx, platform.TracerOptions{Directory: session.Directory(), Version: t.tracerVersion, Command: t.command, Args: t.args})
-	if err != nil {
-		return err
+	installation := platform.TracerInstallation{Project: t.projectTracer != ""}
+	if t.language == "javascript" {
+		installation.Path = t.projectTracer
+	}
+	if t.projectTracer == "" {
+		_, _ = fmt.Fprintf(output, "\nInstalling %s...\n", t.tracerLabel)
+		var err error
+		installation, err = t.platform.InstallTestdriveTracer(ctx, platform.TracerOptions{Directory: session.Directory(), Version: t.tracerVersion, Command: t.command, Args: t.args})
+		if err != nil {
+			return err
+		}
 	}
 
 	tracerLabel := t.tracerLabel + " · isolated"
@@ -261,14 +290,9 @@ func testFindingLabel(finding intake.Test) string {
 	return finding.Suite + " › " + finding.Name
 }
 
-func testEnvironment(ciInitPath, intakeURL, sessionID string) map[string]string {
-	nodeOptions := "-r " + strconv.Quote(ciInitPath)
-	if current := stripDatadogNodeOptions(os.Getenv("NODE_OPTIONS")); current != "" {
-		nodeOptions += " " + current
-	}
+func testEnvironment(intakeURL, sessionID string) map[string]string {
 
 	return map[string]string{
-		"NODE_OPTIONS":                                                nodeOptions,
 		constants.APIKeyEnvironmentVariable:                           "ddtest-testdrive",
 		constants.TestOptimizationEnabledEnvironmentVariable:          "true",
 		constants.TestOptimizationAgentlessEnabledEnvironmentVariable: "true",
@@ -290,39 +314,12 @@ func testEnvironment(ciInitPath, intakeURL, sessionID string) map[string]string 
 	}
 }
 
-func stripDatadogNodeOptions(value string) string {
-	fields := strings.Fields(value)
-	kept := make([]string, 0, len(fields))
-	for index := 0; index < len(fields); index++ {
-		field := fields[index]
-		if field == "-r" || field == "--require" || field == "--import" {
-			if index+1 < len(fields) && isDatadogNodePreload(fields[index+1]) {
-				index++
-				continue
-			}
-		}
-		if strings.HasPrefix(field, "--require=") && isDatadogNodePreload(strings.TrimPrefix(field, "--require=")) {
-			continue
-		}
-		if strings.HasPrefix(field, "--import=") && isDatadogNodePreload(strings.TrimPrefix(field, "--import=")) {
-			continue
-		}
-		if strings.HasPrefix(field, "-r") && isDatadogNodePreload(strings.TrimPrefix(field, "-r")) {
-			continue
-		}
-		kept = append(kept, field)
-	}
-	return strings.Join(kept, " ")
-}
-
-func isDatadogNodePreload(value string) bool {
-	value = strings.Trim(value, `"'`)
-	return value == "dd-trace/ci/init" || strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/ci/init.js") ||
-		strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/register.js")
-}
-
 func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]string {
-	return testEnvironment(path, intakeURL, sessionID)
+	env := testEnvironment(intakeURL, sessionID)
+	if t.language == "javascript" {
+		maps.Copy(env, javascriptEnvironment(path))
+	}
+	return env
 }
 
 func testCommand(runner framework.Framework) (string, []string, error) {

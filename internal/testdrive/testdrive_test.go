@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -422,7 +423,7 @@ func TestRunReportsTestOutputWriteFailure(t *testing.T) {
 
 func TestTestEnvironmentPreservesExistingNodeOptions(t *testing.T) {
 	t.Setenv("NODE_OPTIONS", "--require dd-trace/ci/init --max-old-space-size=4096 --import=/tmp/dd-trace/register.js")
-	environment := testEnvironment("/tmp/dd-trace/ci/init.js", "http://127.0.0.1:1234", "session")
+	environment := javascriptEnvironment("/tmp/dd-trace/ci/init.js")
 	if environment["NODE_OPTIONS"] != `-r "/tmp/dd-trace/ci/init.js" --max-old-space-size=4096` {
 		t.Fatalf("NODE_OPTIONS = %q", environment["NODE_OPTIONS"])
 	}
@@ -537,5 +538,69 @@ func TestTestCommand(t *testing.T) {
 				t.Fatalf("testCommand() = %q %q, want %q %q", command, args, tc.command, tc.args)
 			}
 		})
+	}
+}
+
+func TestPreviewChoosesTracerBeforeConfirmation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	for _, installed := range []bool{false, true} {
+		t.Run(strconv.FormatBool(installed), func(t *testing.T) {
+			root := t.TempDir()
+			writeJestManifest(t, root)
+			t.Chdir(root)
+			bin := t.TempDir()
+			script := "#!/bin/sh\nexit 1\n"
+			if installed {
+				script = "#!/bin/sh\nprintf /project/node_modules/dd-trace/ci/init.js\n"
+			}
+			requireWriteFile(t, filepath.Join(bin, "node"), script)
+			if err := os.Chmod(filepath.Join(bin, "node"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin)
+			drive, err := Prepare("6.15.0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			drive.Preview(&output)
+			preview := output.String()
+			if strings.Contains(preview, "<session>") || strings.Contains(preview, "if absent") {
+				t.Fatal(preview)
+			}
+			if _, err := os.Stat(drive.session.Directory()); !os.IsNotExist(err) {
+				t.Fatalf("preview created output folder: %v", err)
+			}
+			if installed {
+				if !strings.Contains(preview, "reuse the installed project tracer") || strings.Contains(preview, "npm install") {
+					t.Fatal(preview)
+				}
+				drive.platform = &fakeTracer{err: errors.New("must not install")}
+				drive.executor = &fakeTestdriveExecutor{}
+				drive.startIntake = func(string) (localIntake, error) { return &fakeIntake{findings: intake.Facts{TestEventCount: 1}}, nil }
+				if err := drive.Run(t.Context(), &output); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if !strings.Contains(preview, "npm install --prefix "+drive.session.Directory()+" --global=false --no-save --package-lock=false --no-audit --no-fund dd-trace@6.15.0") {
+					t.Fatal(preview)
+				}
+			}
+		})
+	}
+}
+
+func TestEnvironmentAppliesOnlySelectedPlatform(t *testing.T) {
+	for _, language := range []string{"javascript", "python", "ruby"} {
+		drive := &Testdrive{language: language, framework: framework.NewJest()}
+		env := drive.environment("/tracer/init.js", "http://127.0.0.1:1234", "run")
+		if (env["NODE_OPTIONS"] != "") != (language == "javascript") {
+			t.Fatalf("%s NODE_OPTIONS = %q", language, env["NODE_OPTIONS"])
+		}
+		if env["DD_CIVISIBILITY_AGENTLESS_URL"] != "http://127.0.0.1:1234" {
+			t.Fatal(env)
+		}
 	}
 }

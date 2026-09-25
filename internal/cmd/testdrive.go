@@ -33,13 +33,18 @@ func newTestdriveCommand(prepare prepareTestdrive) *cobra.Command {
 		Use:   "testdrive",
 		Short: "Try Test Optimization on the local test suite",
 		Long:  "Runs the detected test suite once with Datadog Test Optimization and a local intake. No Datadog API key is required.",
-		Args:  cobra.NoArgs,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.NoArgs(cmd, args); err != nil {
+				return err
+			}
+			cmd.SilenceUsage = true
+			return nil
+		},
 	}
 	var version string
 	command.Flags().StringVar(&version, "tracer-version", "latest", "Fallback tracer release or git:<commit-or-ref>, used only when the project has no tracer")
 	command.Flags().Bool("yes", false, "Run after printing the changes and commands")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
-		cmd.SilenceUsage = true
 		execution, err := prepare(version)
 		if err != nil {
 			return err

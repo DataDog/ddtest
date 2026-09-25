@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/spf13/cobra"
 	"io"
 	"os"
 	"strings"
@@ -88,11 +89,13 @@ func TestTestdriveCommandHasYesFlag(t *testing.T) {
 
 func TestTestdriveCommandUsage(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		args      []string
-		wantUsage bool
+		name          string
+		args          []string
+		wantUsage     bool
+		preRunFailure bool
 	}{
 		{name: "runtime failure", args: []string{"--yes"}},
+		{name: "prerequisite failure", args: []string{"--yes"}, preRunFailure: true},
 		{name: "invalid argument", args: []string{"unexpected"}, wantUsage: true},
 		{name: "invalid flag", args: []string{"--unknown"}, wantUsage: true},
 	} {
@@ -104,6 +107,9 @@ func TestTestdriveCommandUsage(t *testing.T) {
 			command.SetOut(&output)
 			command.SetErr(&output)
 			command.SetArgs(tc.args)
+			if tc.preRunFailure {
+				command.PersistentPreRunE = func(*cobra.Command, []string) error { return errors.New("prerequisite failed") }
+			}
 			if err := command.ExecuteContext(t.Context()); err == nil {
 				t.Fatal("expected command failure")
 			}
