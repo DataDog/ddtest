@@ -17,7 +17,7 @@ import (
 )
 
 func TestPrepareAllSupportedFrameworks(t *testing.T) {
-	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress"} {
+	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			switch name {
@@ -42,6 +42,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			run.nodeVersion = func() string { return "v20.0.0" }
 			installer := &fakeTracer{preloadPath: filepath.Join(root, "isolated")}
 			run.platform = installer
+			run.projectTracer = ""
 			executor := &fakeTestdriveExecutor{}
 			run.executor = executor
 			run.startIntake = func(string) (localIntake, error) {
@@ -104,6 +105,16 @@ func TestPrepareRequiresSelectionForMultipleFrameworks(t *testing.T) {
 	require.ErrorContains(t, err, "unsupported framework")
 }
 
+func TestLanguageEnvironmentsPreserveCustomerOptions(t *testing.T) {
+	t.Setenv("PYTHONPATH", "/customer/modules")
+	t.Setenv("PYTEST_ADDOPTS", "-q")
+	t.Setenv("RUBYOPT", "-W0")
+	python := (&Testdrive{language: "python"}).environment("/session/python", "http://127.0.0.1:1234", "session")
+	require.Equal(t, "/session/python"+string(os.PathListSeparator)+"/customer/modules", python["PYTHONPATH"])
+	require.Equal(t, "-q --ddtrace", python["PYTEST_ADDOPTS"])
+
+}
+
 func TestCypressWrapperUsesExplicitConfigWithoutEditingIt(t *testing.T) {
 	root := t.TempDir()
 	session := t.TempDir()
@@ -149,4 +160,17 @@ func TestCypressWrapperSupportsConfigFileFalseAndDefaultE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(wrapper), `types.add(options.testingType)`)
 	require.Contains(t, string(wrapper), `const originalImport = {}`)
+}
+
+func TestPythonProjectTracerPreservesImportEnvironment(t *testing.T) {
+	t.Setenv("PYTHONPATH", "/project/helpers")
+	t.Setenv("PYTEST_ADDOPTS", "-v")
+	drive := &Testdrive{language: "python"}
+	env := drive.environment("", "http://127.0.0.1:1234", "session")
+	if _, changed := env["PYTHONPATH"]; changed {
+		t.Fatal("project PYTHONPATH overridden", env)
+	}
+	if env["PYTEST_ADDOPTS"] != "-v --ddtrace" {
+		t.Fatal(env)
+	}
 }
