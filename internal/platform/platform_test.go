@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -67,7 +68,7 @@ func TestPlatformSanityChecksPropagateContext(t *testing.T) {
 	}{
 		{name: "ruby", output: []byte("  * datadog-ci (1.31.0)\n")},
 		{name: "python", output: []byte("4.11.0\n")},
-		{name: "javascript", output: []byte("v24.0.0\n")},
+		{name: "javascript", output: []byte("/project/node_modules/dd-trace/ci/init.js\n")},
 	}
 
 	for i := range tests {
@@ -360,4 +361,25 @@ func detectionFiles(t *testing.T, root string) map[string]string {
 		return nil
 	}))
 	return files
+}
+
+func TestTracerDetectionReportsProbeFailure(t *testing.T) {
+	for _, language := range []string{"javascript", "python", "ruby"} {
+		t.Run(language, func(t *testing.T) {
+			executor := &mockCommandExecutor{}
+			var selected Platform
+			switch language {
+			case "javascript":
+				selected = &JavaScript{executor: executor}
+			case "python":
+				selected = &Python{executor: executor}
+			case "ruby":
+				selected = &Ruby{executor: executor}
+			}
+			detect := func() (string, error) { return selected.DetectTracer(t.Context(), TracerOptions{}) }
+			executor.combinedOutputErr = errors.New("runtime unavailable")
+			_, err := detect()
+			require.ErrorContains(t, err, "runtime unavailable")
+		})
+	}
 }

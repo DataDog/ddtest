@@ -6,12 +6,14 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/viper"
+	"github.com/stretchr/testify/require"
 )
 
 type mockCommandExecutor struct {
@@ -78,7 +80,7 @@ func TestRuby_SanityCheck_Passes(t *testing.T) {
 			if name != "bundle" {
 				t.Fatalf("expected command 'bundle', got %q", name)
 			}
-			if len(args) != 2 || args[0] != "info" || args[1] != "datadog-ci" {
+			if len(args) != 2 || args[0] != "info" || args[1] != requiredGemName {
 				t.Fatalf("unexpected args: %v", args)
 			}
 		},
@@ -540,4 +542,76 @@ func TestRuby_DetectFramework_SetsPlatformEnv(t *testing.T) {
 	if frameworkPlatformEnv["RUBYOPT"] != expectedRubyOpt {
 		t.Errorf("expected framework platformEnv RUBYOPT=%q, got %q", expectedRubyOpt, frameworkPlatformEnv["RUBYOPT"])
 	}
+}
+
+func (m *mockCommandExecutor) Output(ctx context.Context, name string, args []string, env map[string]string) ([]byte, []byte, error) {
+	output, err := m.CombinedOutput(ctx, name, args, env)
+	if err != nil {
+		return nil, output, err
+	}
+	return output, nil, nil
+}
+
+func TestRubyTracerVersions(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		args    []string
+	}{
+		{"", []string{"add", "datadog-ci"}},
+		{"latest", []string{"add", "datadog-ci"}},
+		{"1.39.0", []string{"add", "datadog-ci", "--version", "1.39.0"}},
+		{"1.40.0.pre.1", []string{"add", "datadog-ci", "--version", "1.40.0.pre.1"}},
+		{"git:abc1234", []string{"add", "datadog-ci", "--git", "https://github.com/DataDog/datadog-ci-rb.git", "--ref", "abc1234"}},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			t.Setenv("BUNDLE_GEMFILE", "config/Gemfile.test")
+			t.Setenv("RUBYOPT", "-rbundler/setup -rdatadog/ci/auto_instrument")
+			executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("tracer unavailable")}, {}}}
+			directory := t.TempDir()
+			result, err := (&Ruby{executor: executor}).InstallTestdriveTracer(t.Context(), TracerOptions{Directory: directory, Version: tc.version})
+			require.NoError(t, err)
+			require.Equal(t, TracerInstallation{}, result)
+			require.Equal(t, command{name: "bundle", args: tc.args}, executor.commands[1])
+			for _, env := range executor.envs {
+				require.Equal(t, map[string]string{"RUBYOPT": ""}, env) // Inherit the project bundle settings.
+			}
+			entries, err := os.ReadDir(directory)
+			require.NoError(t, err)
+			require.Empty(t, entries)
+		})
+	}
+	_, err := NewRuby(settings.TestSkippingLevelTest).InstallTestdriveTracer(t.Context(), TracerOptions{Version: "git:"})
+	require.ErrorContains(t, err, "git ref must not be empty")
+}
+
+func TestRubyReusesProjectTracer(t *testing.T) {
+	t.Setenv("BUNDLE_GEMFILE", "/project/custom.gemfile")
+	for _, version := range []string{"latest", "1.39.0", "git:abc1234"} {
+		t.Run(version, func(t *testing.T) {
+			executor := &fakeCommandExecutor{responses: []commandResponse{{output: []byte("  * datadog-ci (1.31.0)\n")}}}
+			installer := NewRuby(settings.TestSkippingLevelTest)
+			installer.executor = executor
+			directory := filepath.Join(t.TempDir(), "session with spaces")
+			result, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: directory, Version: version})
+			require.NoError(t, err)
+			require.Equal(t, TracerInstallation{Project: true}, result)
+			require.Len(t, executor.commands, 1)
+			require.Equal(t, "bundle", executor.commands[0].name)
+			require.Equal(t, []string{"info", "datadog-ci"}, executor.commands[0].args)
+			require.NotContains(t, executor.envs[0], "BUNDLE_GEMFILE") // Inherit the selected project Gemfile.
+			require.NoDirExists(t, directory)
+			require.Empty(t, result.Env)
+		})
+	}
+}
+
+func TestRubyProbeFailureAttemptsInstall(t *testing.T) {
+	executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("broken project Gemfile")}, {err: errors.New("bundle install failed")}}}
+	installer := NewRuby(settings.TestSkippingLevelTest)
+	installer.executor = executor
+	_, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Version: "latest"})
+	require.ErrorContains(t, err, "bundle install failed")
+	require.Len(t, executor.commands, 2)
+	require.Equal(t, "bundle", executor.commands[1].name)
+	require.Equal(t, []string{"add", "datadog-ci"}, executor.commands[1].args)
 }

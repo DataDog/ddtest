@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/settings"
 )
@@ -17,6 +18,8 @@ type Platform interface {
 	CreateTagsMap(ctx context.Context) (map[string]string, error)
 	DetectFramework() (framework.Framework, error)
 	SanityCheck(ctx context.Context) error
+	DetectTracer(ctx context.Context, options TracerOptions) (string, error)
+	InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error)
 	TestSkippingLevel() settings.TestSkippingLevel
 }
 
@@ -113,4 +116,34 @@ func selectFramework(platform, hint string, candidates []framework.Framework) (f
 		return nil, fmt.Errorf("found multiple test frameworks (%s); select one with --framework", strings.Join(names, ", "))
 	}
 	return candidates[0], nil
+}
+
+// TracerOptions selects the test runtime and the version and session directory
+// for fallback installation when the project tracer check fails. Empty Version means latest.
+type TracerOptions struct {
+	Directory string
+	Version   string
+	Command   string
+	Args      []string
+}
+
+// TracerInstallation describes the tracer selected for a local run.
+// Env contains installation-specific overrides; project environments are preserved.
+type TracerInstallation struct {
+	Path    string
+	Project bool
+	Env     map[string]string
+}
+
+type commandExecutor interface {
+	ext.CommandExecutor
+	Output(context.Context, string, []string, map[string]string) ([]byte, []byte, error)
+}
+
+func tracerProbe(ctx context.Context, executor commandExecutor, command string, args []string, env map[string]string) (string, error) {
+	output, stderr, err := executor.Output(ctx, command, args, env)
+	if err != nil {
+		return "", runtimeTagProbeError("detect project tracer", stderr, err)
+	}
+	return strings.TrimSpace(string(output)), nil
 }

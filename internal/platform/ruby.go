@@ -30,7 +30,7 @@ const (
 )
 
 type Ruby struct {
-	executor          ext.CommandExecutor
+	executor          commandExecutor
 	testSkippingLevel settings.TestSkippingLevel
 }
 
@@ -139,14 +139,12 @@ func (r *Ruby) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 }
 
 func (r *Ruby) SanityCheck(ctx context.Context) error {
-	args := []string{"info", requiredGemName}
-	output, err := r.executor.CombinedOutput(ctx, "bundle", args, nil)
+	output, err := r.DetectTracer(ctx, TracerOptions{})
 	if err != nil {
-		message := strings.TrimSpace(string(output))
-		if message == "" {
-			return fmt.Errorf("bundle info datadog-ci command failed: %w", err)
-		}
-		return fmt.Errorf("bundle info datadog-ci command failed: %s", message)
+		return err
+	}
+	if output == "" {
+		return fmt.Errorf("datadog-ci is not installed")
 	}
 
 	requiredVersion, err := version.Parse(requiredGemMinVersion)
@@ -154,7 +152,7 @@ func (r *Ruby) SanityCheck(ctx context.Context) error {
 		return err
 	}
 
-	gemVersion, err := parseBundlerInfoVersion(string(output), requiredGemName)
+	gemVersion, err := parseBundlerInfoVersion(output, requiredGemName)
 	if err != nil {
 		return err
 	}
@@ -192,4 +190,28 @@ func parseBundlerInfoVersion(output, gemName string) (version.Version, error) {
 	}
 
 	return version.Version{}, fmt.Errorf("unable to find datadog-ci gem version in bundle info output")
+}
+
+// DetectTracer reads the project tracer's bundle information.
+func (r *Ruby) DetectTracer(ctx context.Context, _ TracerOptions) (string, error) {
+	return tracerProbe(ctx, r.executor, "bundle", []string{"info", requiredGemName}, map[string]string{"RUBYOPT": ""})
+}
+
+func (r *Ruby) InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
+	args := []string{"add", requiredGemName}
+	if ref, ok := strings.CutPrefix(options.Version, "git:"); ok {
+		if ref == "" {
+			return TracerInstallation{}, fmt.Errorf("tracer git ref must not be empty")
+		}
+		args = append(args, "--git", "https://github.com/DataDog/datadog-ci-rb.git", "--ref", ref)
+	} else if options.Version != "" && options.Version != "latest" {
+		args = append(args, "--version", options.Version)
+	}
+	if project, err := r.DetectTracer(ctx, options); err == nil && project != "" {
+		return TracerInstallation{Project: true}, nil
+	}
+	if output, err := r.executor.CombinedOutput(ctx, "bundle", args, map[string]string{"RUBYOPT": ""}); err != nil {
+		return TracerInstallation{}, runtimeTagProbeError("bundle add datadog-ci", output, err)
+	}
+	return TracerInstallation{}, nil
 }

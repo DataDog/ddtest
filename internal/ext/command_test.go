@@ -154,6 +154,7 @@ func TestDefaultCommandExecutor_CombinedOutput_EmptyCommand(t *testing.T) {
 
 func TestDefaultCommandExecutor_CombinedOutput_WithEnvMap(t *testing.T) {
 	executor := &DefaultCommandExecutor{}
+	t.Setenv("TEST_VAR", "inherited_value")
 
 	// Test with environment variable
 	envMap := map[string]string{

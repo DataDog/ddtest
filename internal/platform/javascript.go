@@ -31,7 +31,7 @@ const (
 )
 
 type JavaScript struct {
-	executor ext.CommandExecutor
+	executor commandExecutor
 }
 
 func NewJavaScript() *JavaScript {
@@ -175,15 +175,13 @@ func (j *JavaScript) SanityCheck(ctx context.Context) error {
 		return fmt.Errorf("node --version command failed: %s", message)
 	}
 
-	output, err := j.executor.CombinedOutput(ctx, "node", []string{"-e", fmt.Sprintf("require.resolve(%q)", ddTraceCIInitModule)}, nil)
+	path, err := j.DetectTracer(ctx, TracerOptions{})
 	if err != nil {
-		message := strings.TrimSpace(string(output))
-		if message == "" {
-			return fmt.Errorf("failed to resolve %s: %w", ddTraceCIInitModule, err)
-		}
-		return fmt.Errorf("failed to resolve %s: %s", ddTraceCIInitModule, message)
+		return err
 	}
-
+	if path == "" {
+		return fmt.Errorf("dd-trace is not installed")
+	}
 	return nil
 }
 
@@ -247,4 +245,61 @@ func isDirectJavaScriptCommand(script string, names ...string) bool {
 		}
 	}
 	return false
+}
+
+// DetectTracer resolves the project's CI preload using Node's module resolution.
+func (j *JavaScript) DetectTracer(ctx context.Context, _ TracerOptions) (string, error) {
+	path, err := tracerProbe(ctx, j.executor, "node", []string{"-e", resolveJavaScriptModule, ddTraceCIInitModule}, map[string]string{"NODE_OPTIONS": ""})
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve %s: %w", ddTraceCIInitModule, err)
+	}
+	return path, nil
+}
+
+const resolveJavaScriptModule = "process.stdout.write(require.resolve(process.argv[1]))"
+
+// InstallTestdriveTracer reuses the project preload or installs an isolated fallback.
+func (j *JavaScript) InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
+	sessionDirectory := options.Directory
+	version := options.Version
+	if version == "" {
+		version = "latest"
+	}
+	if ref, ok := strings.CutPrefix(version, "git:"); ok {
+		if ref == "" {
+			return TracerInstallation{}, fmt.Errorf("tracer git ref must not be empty")
+		}
+		version = "git+https://github.com/DataDog/dd-trace-js.git#" + ref
+	}
+	cleanEnvironment := map[string]string{"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}
+	path, err := j.DetectTracer(ctx, options)
+	if err == nil && path != "" {
+		return TracerInstallation{Path: path, Project: true}, nil
+	}
+	packageName := "dd-trace@" + version
+	installArgs := []string{
+		"install",
+		"--prefix", sessionDirectory,
+		"--global=false",
+		"--no-save",
+		"--package-lock=false",
+		"--no-audit",
+		"--no-fund",
+		packageName,
+	}
+	if output, err := j.executor.CombinedOutput(ctx, "npm", installArgs, cleanEnvironment); err != nil {
+		return TracerInstallation{}, runtimeTagProbeError("install "+packageName, output, err)
+	}
+
+	ciInitModule := filepath.Join(sessionDirectory, "node_modules", "dd-trace", "ci", "init")
+	output, stderr, err := j.executor.Output(ctx, "node", []string{"-e", resolveJavaScriptModule, ciInitModule}, cleanEnvironment)
+	if err != nil {
+		return TracerInstallation{}, runtimeTagProbeError("resolve dd-trace/ci/init", stderr, err)
+	}
+
+	ciInitPath := strings.TrimSpace(string(output))
+	if !filepath.IsAbs(ciInitPath) {
+		return TracerInstallation{}, fmt.Errorf("resolve dd-trace/ci/init: node returned non-absolute path %q", ciInitPath)
+	}
+	return TracerInstallation{Path: ciInitPath}, nil
 }

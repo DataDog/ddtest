@@ -23,6 +23,7 @@ import (
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/telemetry"
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -77,6 +78,7 @@ func (c *plannerTelemetryClient) has(name string, tags ...string) bool {
 
 // MockPlatform mocks a platform
 type MockPlatform struct {
+	platform.Platform
 	PlatformName string
 	Tags         map[string]string
 	TagsErr      error
