@@ -500,7 +500,7 @@ func TestRunReportsProjectTracer(t *testing.T) {
 	if installer.options.Version != "git:ignored-for-existing-tracer" || installer.options.Command != drive.command {
 		t.Fatal(installer.options)
 	}
-	if !strings.Contains(output.String(), "Tracer: project tracer · reused") {
+	if !strings.Contains(output.String(), "Tracer: dd-trace · reused") {
 		t.Fatal(output.String())
 	}
 	if !strings.Contains(executor.env["NODE_OPTIONS"], installer.preloadPath) {
@@ -541,7 +541,7 @@ func TestPreviewChoosesTracerBeforeConfirmation(t *testing.T) {
 				t.Fatalf("preview created output folder: %v", err)
 			}
 			if installed {
-				if !strings.Contains(preview, "reuse the installed project tracer") || strings.Contains(preview, "npm install") {
+				if !strings.Contains(preview, "reuse installed dd-trace") || strings.Contains(preview, "npm install") {
 					t.Fatal(preview)
 				}
 				drive.platform = &fakeTracer{err: errors.New("must not install")}
@@ -569,5 +569,33 @@ func TestEnvironmentAppliesOnlySelectedPlatform(t *testing.T) {
 		if env["DD_CIVISIBILITY_AGENTLESS_URL"] != "http://127.0.0.1:1234" {
 			t.Fatal(env)
 		}
+	}
+}
+
+func TestInstalledTracerLabel(t *testing.T) {
+	root := t.TempDir()
+	preload := filepath.Join(root, "ci", "init.js")
+	drive := &Testdrive{language: "javascript", tracerLabel: "dd-trace@git:not-installed"}
+	if got := drive.installedTracerLabel(preload); got != "dd-trace" {
+		t.Fatal(got)
+	}
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"version":"6.15.0"}`)
+	if got := drive.installedTracerLabel(preload); got != "dd-trace@6.15.0" {
+		t.Fatal(got)
+	}
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{invalid`)
+	if got := drive.installedTracerLabel(preload); got != "dd-trace" {
+		t.Fatal(got)
+	}
+	drive.language = "python"
+	if got := drive.installedTracerLabel("3.12.0"); got != "ddtrace@3.12.0" {
+		t.Fatal(got)
+	}
+	drive.language = "ruby"
+	if got := drive.installedTracerLabel("  * datadog-ci (1.24.0)\n\tPath: /bundle"); got != "datadog-ci@1.24.0" {
+		t.Fatal(got)
+	}
+	if got := drive.installedTracerLabel(""); got != "datadog-ci" {
+		t.Fatal(got)
 	}
 }

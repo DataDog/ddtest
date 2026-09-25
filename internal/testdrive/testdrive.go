@@ -121,7 +121,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	_, _ = fmt.Fprintln(output, "It will:")
 	_, _ = fmt.Fprintf(output, "  - create an output folder: %s\n", directory)
 	if t.projectTracer != "" {
-		_, _ = fmt.Fprintln(output, "  - reuse the installed project tracer; no installation is needed")
+		_, _ = fmt.Fprintf(output, "  - reuse installed %s; no installation is needed\n", t.installedTracerLabel(t.projectTracer))
 	} else {
 		_, _ = fmt.Fprintf(output, "  - install %s: %s\n", t.tracerLabel, shellquote.Join(append([]string{t.installCommand}, t.installArgs...)...))
 	}
@@ -156,7 +156,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 
 	tracerLabel := t.tracerLabel + " · isolated"
 	if installation.Project {
-		tracerLabel = "project tracer · reused"
+		tracerLabel = t.installedTracerLabel(t.projectTracer) + " · reused"
 	}
 	server, err := t.startIntake(session.Directory())
 	if err != nil {
@@ -316,4 +316,23 @@ func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]st
 		maps.Copy(env, javascriptEnvironment(path))
 	}
 	return env
+}
+
+func (t *Testdrive) installedTracerLabel(detected string) string {
+	name := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[t.language]
+	version := ""
+	switch t.language {
+	case "javascript":
+		version = javascriptTracerVersion(detected)
+	case "python":
+		version = detected
+	case "ruby":
+		if info, ok := strings.CutPrefix(strings.TrimSpace(detected), "* datadog-ci ("); ok {
+			version, _, _ = strings.Cut(info, ")")
+		}
+	}
+	if version != "" {
+		return name + "@" + version
+	}
+	return name
 }
