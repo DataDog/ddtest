@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -110,6 +111,7 @@ func TestCIRuntimeFailurePreventsOverallSuccess(t *testing.T) {
 			var report validationResult
 			require.NoError(t, json.Unmarshal(data, &report))
 			require.Equal(t, wantSuccess, report.Success)
+			require.True(t, report.LocalSuccess)
 			require.Equal(t, "compatible", report.Compatibility.Status)
 			require.Equal(t, status, report.CIRuntime.Status)
 			require.Contains(t, output.String(), "CI runtime compatibility: "+status)
@@ -127,4 +129,26 @@ func TestCIRuntimeReportBoundsDiagnostics(t *testing.T) {
 	require.Less(t, len(data), 7000)
 	require.Equal(t, text, check.Reason)
 	require.Equal(t, text, check.Jobs[0].Reason)
+}
+
+func TestUnresolvedCIScriptKeepsLocalSuccessButPreventsOverallSuccess(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"coverage":"node scripts/run-ci.js"}}`), 0644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".github/workflows/test.yml"), []byte("jobs:\n  tests:\n    steps:\n      - run: npm run coverage\n"), 0644))
+	check := onboard.CheckCIRuntimes(t.Context(), root)
+	require.Equal(t, "inconclusive", check.Status)
+	selection := compareCISelection(check, "6.17.0")
+	require.NotNil(t, selection)
+	require.Equal(t, "inconclusive", selection.Status)
+	result := validationResult{Compatibility: verdict{Status: "compatible"}, Features: []featureResult{{Name: "auto-retries", Status: "passed"}}, CIRuntime: &check, CISelection: selection}
+	require.Error(t, finishValidation(&bytes.Buffer{}, root, result))
+	data, err := os.ReadFile(validationPath(root))
+	require.NoError(t, err)
+	var report validationResult
+	require.NoError(t, json.Unmarshal(data, &report))
+	require.True(t, report.LocalSuccess)
+	require.False(t, report.Success)
+	require.False(t, report.ChecksPassed)
+	require.Equal(t, "npm run coverage", report.CIRuntime.Jobs[0].Command)
 }

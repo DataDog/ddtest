@@ -81,6 +81,7 @@ func TestTSyringeConditionsAndIncludePreserveCoverage(t *testing.T) {
         if: matrix.node-version == '18.x' || matrix.node-version == '20.x' || matrix.node-version == '22.x'
         with: {languages: js, js-tracer-version: '5.128.0'}
       - run: yarn test
+        env: {NODE_OPTIONS: "-r ${{ env.DD_TRACE_PACKAGE }}"}
 `, matrix)
 		result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), func(context.Context, string, string) (tracerRequirement, error) {
 			return tracerRequirement{Version: "5.128.0", Node: ">=18"}, nil
@@ -106,6 +107,7 @@ func TestEmptyMatrixDoesNotMasqueradeAsNoCI(t *testing.T) {
         exclude: [{node: 22}]
     steps:
       - run: yarn test
+        env: {NODE_OPTIONS: "-r ${{ env.DD_TRACE_PACKAGE }}"}
 `
 	result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), nil)
 	require.Equal(t, "inconclusive", result.Status)

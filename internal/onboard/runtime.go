@@ -13,12 +13,11 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/kballard/go-shellquote"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -34,6 +33,9 @@ type RuntimeCheck struct {
 type RuntimeFinding struct {
 	Workflow        string `json:"workflow"`
 	Job             string `json:"job"`
+	Step            int    `json:"step,omitempty"`
+	Command         string `json:"command,omitempty"`
+	Resolution      string `json:"resolution,omitempty"`
 	Node            string `json:"node,omitempty"`
 	Action          string `json:"action,omitempty"`
 	Tracer          string `json:"tracer,omitempty"`
@@ -45,14 +47,19 @@ type RuntimeFinding struct {
 }
 
 type runtimeStep struct {
-	Uses string            `yaml:"uses"`
-	Run  string            `yaml:"run"`
-	If   string            `yaml:"if"`
-	With map[string]string `yaml:"with"`
+	WorkingDirectory string            `yaml:"working-directory"`
+	Shell            string            `yaml:"shell"`
+	Env              map[string]string `yaml:"env"`
+	Uses             string            `yaml:"uses"`
+	Run              string            `yaml:"run"`
+	If               string            `yaml:"if"`
+	With             map[string]string `yaml:"with"`
 }
 
 type runtimeJob struct {
-	If       string `yaml:"if"`
+	Defaults ciDefaults        `yaml:"defaults"`
+	Env      map[string]string `yaml:"env"`
+	If       string            `yaml:"if"`
 	Strategy struct {
 		Matrix any `yaml:"matrix"`
 	} `yaml:"strategy"`
@@ -74,8 +81,8 @@ func CheckCIRuntimes(ctx context.Context, root string) RuntimeCheck {
 }
 
 func checkCIRuntimes(ctx context.Context, root string, resolve requirementResolver) RuntimeCheck {
-	result := RuntimeCheck{Status: "not applicable", Reason: "No GitHub Actions Jest test workflows found; CI runtime compatibility was not checked."}
-	workflows, _, err := findWorkflows(root, "javascript", "jest")
+	result := RuntimeCheck{Status: "not applicable", Reason: "No candidate GitHub Actions Jest test commands found; CI runtime compatibility was not checked."}
+	workflows, err := readWorkflows(root)
 	if err != nil {
 		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
 	}
@@ -91,24 +98,17 @@ func checkCIRuntimes(ctx context.Context, root string, resolve requirementResolv
 		}
 		return value, err
 	}
-	for _, path := range workflows {
-		data, err := os.ReadFile(filepath.Join(root, path))
-		if err != nil {
-			return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
-		}
-		var workflow struct {
-			Jobs map[string]runtimeJob `yaml:"jobs"`
-		}
-		if err := yaml.Unmarshal(data, &workflow); err != nil {
-			return RuntimeCheck{Status: "inconclusive", Reason: fmt.Sprintf("Parse %s: %s", path, err)}
-		}
+	for _, workflow := range workflows {
+		path := workflow.Path
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
-			var commands []string
-			for _, step := range job.Steps {
-				commands = append(commands, step.Run)
+			resolutions := make([]commandResolution, len(job.Steps))
+			candidate := false
+			for i, step := range job.Steps {
+				resolutions[i] = resolveTestStep(root, workflow, job, step, "javascript", "jest")
+				candidate = candidate || resolutions[i].Matched || resolutions[i].Reason != ""
 			}
-			if !looksLikeTestJob(strings.ToLower(strings.Join(commands, "\n")), "javascript", "jest") {
+			if !candidate {
 				continue
 			}
 			rows, err := runtimeMatrix(job.Strategy.Matrix)
@@ -121,7 +121,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolve requirementResolv
 				continue
 			}
 			for _, row := range rows {
-				result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, path, name, job, row, cachedResolve)...)
+				result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, workflow, name, job, resolutions, row, cachedResolve)...)
 			}
 		}
 	}
@@ -150,8 +150,8 @@ func checkCIRuntimes(ctx context.Context, root string, resolve requirementResolv
 	return result
 }
 
-func checkRuntimeJob(ctx context.Context, path, name string, job runtimeJob, row map[string]any, resolve requirementResolver) []RuntimeFinding {
-	finding := RuntimeFinding{Workflow: path, Job: name, Status: "inconclusive"}
+func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolve requirementResolver) []RuntimeFinding {
+	finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "inconclusive"}
 	var findings []RuntimeFinding
 	fail := func(reason string) []RuntimeFinding {
 		finding.Status = "inconclusive"
@@ -169,9 +169,10 @@ func checkRuntimeJob(ctx context.Context, path, name string, job runtimeJob, row
 	}
 	var node, action, version string
 	skippedAction := false
-	for _, step := range job.Steps {
+	for i, step := range job.Steps {
 		uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
-		test := looksLikeTestJob(strings.ToLower(step.Run), "javascript", "jest")
+		resolution := resolutions[i]
+		test := resolution.Matched || resolution.Reason != ""
 		if uses != "actions/setup-node" && uses != githubAction && !test {
 			continue
 		}
@@ -213,7 +214,12 @@ func checkRuntimeJob(ctx context.Context, path, name string, job runtimeJob, row
 		if !test {
 			continue
 		}
-		finding.Node = node
+		finding = RuntimeFinding{Workflow: workflow.Path, Job: name, Step: i + 1, Command: step.Run, Resolution: resolution.Evidence, Node: node, Status: "inconclusive"}
+		if resolution.Reason != "" {
+			finding.Reason = "Could not resolve CI test command: " + resolution.Reason
+			findings = append(findings, finding)
+			continue
+		}
 		if action == "" {
 			finding.Status = "inconclusive"
 			if skippedAction {
@@ -234,6 +240,11 @@ func checkRuntimeJob(ctx context.Context, path, name string, job runtimeJob, row
 			finding.TracerFloating = finding.TracerRequested != "" && strings.TrimPrefix(finding.TracerRequested, "v") != requirement.Version
 			finding.Requirement = requirement.Node
 			finding.Status, finding.Reason = CompareNodeRequirement(node, requirement.Node)
+			if finding.Status == "compatible" {
+				if reason := checkJestBootstrap(workflow, job, step); reason != "" {
+					finding.Status, finding.Reason = "inconclusive", reason
+				}
+			}
 		}
 		findings = append(findings, finding)
 	}
@@ -241,6 +252,32 @@ func checkRuntimeJob(ctx context.Context, path, name string, job runtimeJob, row
 		return fail("No active test step could be checked.")
 	}
 	return findings
+}
+
+// Only certify the action-provided preload when it reaches the test step through
+// the workflow environment. Inline/custom loaders need separate review.
+func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep) string {
+	var options string
+	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		if value, ok := env["NODE_OPTIONS"]; ok {
+			options = value
+		}
+	}
+	options = strings.NewReplacer(
+		"${{ env.DD_TRACE_PACKAGE }}", "__DD_ACTION_PRELOAD__",
+		"${{env.DD_TRACE_PACKAGE}}", "__DD_ACTION_PRELOAD__",
+		"${{ env.DD_TRACE_ESM_IMPORT }}", "__DD_ACTION_IMPORT__",
+		"${{env.DD_TRACE_ESM_IMPORT}}", "__DD_ACTION_IMPORT__",
+	).Replace(options)
+	words, err := shellquote.Split(options)
+	if err == nil && !strings.ContainsAny(options, "$`") {
+		for i, word := range words {
+			if word == "--require=__DD_ACTION_PRELOAD__" || ((word == "-r" || word == "--require") && i+1 < len(words) && words[i+1] == "__DD_ACTION_PRELOAD__") {
+				return ""
+			}
+		}
+	}
+	return "Cannot verify the action's JavaScript preload in this test step's effective NODE_OPTIONS. Preserve custom initialization and report it for review."
 }
 
 func resolveRequirement(ctx context.Context, client *http.Client, action, version string) (tracerRequirement, error) {

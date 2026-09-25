@@ -117,7 +117,7 @@ func TestRunTreatsRepositoryRootAsLiteralPath(t *testing.T) {
 }
 
 func TestRunRequiresGitHubJestWorkflow(t *testing.T) {
-	repositoryRoot := newJestRepository(t, "name: lint\njobs:\n  lint:\n    steps:\n      - run: npm run lint\n")
+	repositoryRoot := newJestRepository(t, "name: lint\njobs:\n  lint:\n    steps:\n      - run: npx eslint .\n")
 
 	t.Chdir(repositoryRoot)
 	err := Run(&bytes.Buffer{})

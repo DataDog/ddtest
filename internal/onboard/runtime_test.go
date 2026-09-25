@@ -32,6 +32,7 @@ const runtimeWorkflow = `jobs:
         with:
           languages: js
       - run: npm run test
+        env: {NODE_OPTIONS: "-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}"}
 `
 
 func TestCIRuntimesCatchLuxonRegressionAndRespectExclusion(t *testing.T) {
@@ -104,6 +105,7 @@ func TestCIRuntimesUseSelectedTracerAndEveryJob(t *testing.T) {
       - uses: datadog/test-visibility-github-action@v3
         with: {languages: js, js-tracer-version: 5.99.0}
       - run: npm test
+        env: {NODE_OPTIONS: "-r ${{ env.DD_TRACE_PACKAGE }}"}
   new:
     steps:
       - uses: actions/setup-node@v4
@@ -111,6 +113,7 @@ func TestCIRuntimesUseSelectedTracerAndEveryJob(t *testing.T) {
       - uses: datadog/test-visibility-github-action@v4
         with: {languages: js}
       - run: npm test
+        env: {NODE_OPTIONS: "-r ${{ env.DD_TRACE_PACKAGE }}"}
 `
 	result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), func(_ context.Context, action, version string) (tracerRequirement, error) {
 		if version == "5.99.0" {

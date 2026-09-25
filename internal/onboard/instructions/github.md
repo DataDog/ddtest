@@ -19,6 +19,8 @@ If the organization uses a Datadog site other than US1, replace `datadoghq.com` 
 
 __BOOTSTRAP__
 
+Jest CI discovery follows ordinary package.json script aliases, including nested scripts, using the workflow, job, or step working directory. Discovery only reads these files; it never executes scripts. Dynamic commands, custom wrappers, unsupported shells, and unresolved working directories remain inconclusive. Identify their actual test steps without rewriting valid commands just to satisfy discovery.
+
 Keep the existing test command and unrelated workflow content unchanged. Add the Datadog action once per test job, not once per test step.
 
 ## 2. Try it locally

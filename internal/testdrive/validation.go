@@ -157,7 +157,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		check.Jobs = slices.Clone(check.Jobs)
 		for i := range check.Jobs {
 			job := &check.Jobs[i]
-			for _, field := range []*string{&job.Workflow, &job.Job, &job.Node, &job.Action, &job.Tracer, &job.Requirement, &job.Reason} {
+			for _, field := range []*string{&job.Workflow, &job.Job, &job.Command, &job.Resolution, &job.Node, &job.Action, &job.Tracer, &job.TracerRequested, &job.Requirement, &job.Reason} {
 				*field = reportText(*field)
 			}
 		}
@@ -192,6 +192,9 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		_, _ = fmt.Fprintf(output, "\nCI runtime compatibility: %s\n%s\n", result.CIRuntime.Status, result.CIRuntime.Reason)
 		for _, job := range result.CIRuntime.Jobs {
 			label := job.Workflow + " / " + job.Job
+			if job.Step != 0 {
+				label += fmt.Sprintf(" / step %d", job.Step)
+			}
 			if job.Node != "" {
 				label += " / Node " + job.Node
 			}

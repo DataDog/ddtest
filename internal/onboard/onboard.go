@@ -10,9 +10,10 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/platform"
@@ -41,7 +42,8 @@ func Run(output io.Writer) error {
 	language := detectedPlatform.Name()
 	name := runner.Name()
 
-	workflows, configured, err := findWorkflows(repositoryRoot, language, name)
+	discovery, err := findWorkflows(repositoryRoot, language, name)
+	workflows, configured := discovery.Workflows, discovery.Configured
 	if err != nil {
 		return err
 	}
@@ -56,7 +58,15 @@ func Run(output io.Writer) error {
 		_, _ = fmt.Fprintf(output, "  - %s\n", workflow)
 	}
 
-	if len(configured) == len(workflows) {
+	if len(discovery.Unresolved) > 0 {
+		_, _ = fmt.Fprintln(output, "\nCI command discovery is inconclusive:")
+		for _, reason := range discovery.Unresolved {
+			_, _ = fmt.Fprintf(output, "  - %s\n", reason)
+		}
+		_, _ = fmt.Fprintln(output, "Identify the actual test steps before editing CI. Preserve valid commands; do not rewrite them merely to satisfy discovery. Manual review does not turn an unverified programmatic check into a pass.")
+	}
+
+	if len(discovery.Unresolved) == 0 && len(configured) == len(workflows) {
 		_, _ = fmt.Fprintln(output)
 		_, _ = fmt.Fprintln(output, "Datadog Test Optimization already appears in every detected test workflow.")
 		_, _ = fmt.Fprintf(output, "This is configuration detection, not completed onboarding. Run `ddtest testdrive --framework %s` to validate locally. Jest also checks CI runtime compatibility; other frameworks remain unvalidated.\n", name)
@@ -69,16 +79,35 @@ func Run(output io.Writer) error {
 	return nil
 }
 
-func findWorkflows(repositoryRoot, language, name string) ([]string, []string, error) {
-	var workflows []string
-	var configured []string
-	directory := filepath.Join(repositoryRoot, ".github", "workflows")
+type workflowDiscovery struct {
+	Workflows, Configured, Unresolved []string
+}
+
+type runDefaults struct {
+	WorkingDirectory string `yaml:"working-directory"`
+	Shell            string `yaml:"shell"`
+}
+
+type ciDefaults struct {
+	Run runDefaults `yaml:"run"`
+}
+
+type ciWorkflow struct {
+	Path     string
+	Defaults ciDefaults            `yaml:"defaults"`
+	Env      map[string]string     `yaml:"env"`
+	Jobs     map[string]runtimeJob `yaml:"jobs"`
+}
+
+func readWorkflows(root string) ([]ciWorkflow, error) {
+	var workflows []ciWorkflow
+	directory := filepath.Join(root, ".github", "workflows")
 	entries, err := os.ReadDir(directory)
 	if os.IsNotExist(err) {
-		return workflows, configured, nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("find GitHub Actions workflows: %w", err)
+		return nil, fmt.Errorf("find GitHub Actions workflows: %w", err)
 	}
 	for _, entry := range entries {
 		if entry.IsDir() || (filepath.Ext(entry.Name()) != ".yml" && filepath.Ext(entry.Name()) != ".yaml") {
@@ -87,62 +116,50 @@ func findWorkflows(repositoryRoot, language, name string) ([]string, []string, e
 		path := filepath.Join(directory, entry.Name())
 		contents, err := os.ReadFile(path)
 		if err != nil {
-			return nil, nil, fmt.Errorf("read %s: %w", path, err)
+			return nil, fmt.Errorf("read %s: %w", path, err)
 		}
-		text := strings.ToLower(string(contents))
-		if !looksLikeTestWorkflow(text, language, name) {
-			continue
+		var workflow ciWorkflow
+		if err := yaml.Unmarshal(contents, &workflow); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
-
-		relativePath, err := filepath.Rel(repositoryRoot, path)
-		if err != nil {
-			return nil, nil, fmt.Errorf("make workflow path relative: %w", err)
-		}
-		relativePath = filepath.ToSlash(relativePath)
-		workflows = append(workflows, relativePath)
-		isConfigured, err := allTestJobsConfigured(contents, language, name)
-		if err != nil {
-			return nil, nil, fmt.Errorf("parse %s: %w", path, err)
-		}
-		if isConfigured {
-			configured = append(configured, relativePath)
-		}
+		workflow.Path = ".github/workflows/" + entry.Name()
+		workflows = append(workflows, workflow)
 	}
-
-	sort.Strings(workflows)
-	sort.Strings(configured)
-	return workflows, configured, nil
+	return workflows, nil
 }
 
-func allTestJobsConfigured(contents []byte, language, name string) (bool, error) {
-	var workflow struct {
-		Jobs map[string]struct {
-			Steps []struct {
-				Run  string `yaml:"run"`
-				Uses string `yaml:"uses"`
-			} `yaml:"steps"`
-		} `yaml:"jobs"`
+func findWorkflows(root, language, name string) (workflowDiscovery, error) {
+	var result workflowDiscovery
+	workflows, err := readWorkflows(root)
+	if err != nil {
+		return result, err
 	}
-	if err := yaml.Unmarshal(contents, &workflow); err != nil {
-		return false, err
+	for _, workflow := range workflows {
+		found, configured := false, true
+		for _, jobName := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[jobName]
+			hasAction := false
+			for i, step := range job.Steps {
+				uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
+				hasAction = hasAction || uses == githubAction
+				resolution := resolveTestStep(root, workflow, job, step, language, name)
+				if resolution.Matched || resolution.Reason != "" {
+					found = true
+					configured = configured && hasAction && resolution.Reason == ""
+				}
+				if resolution.Reason != "" {
+					result.Unresolved = append(result.Unresolved, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, i+1, step.Run, resolution.Reason))
+				}
+			}
+		}
+		if found {
+			result.Workflows = append(result.Workflows, workflow.Path)
+			if configured {
+				result.Configured = append(result.Configured, workflow.Path)
+			}
+		}
 	}
-	foundTestJob := false
-	for _, job := range workflow.Jobs {
-		var commands []string
-		configured := false
-		for _, step := range job.Steps {
-			commands = append(commands, strings.ToLower(step.Run))
-			configured = configured || strings.Contains(strings.ToLower(step.Uses), githubAction)
-		}
-		if !looksLikeTestJob(strings.Join(commands, "\n"), language, name) {
-			continue
-		}
-		foundTestJob = true
-		if !configured {
-			return false, nil
-		}
-	}
-	return foundTestJob, nil
+	return result, nil
 }
 
 func looksLikeTestJob(commands, language, name string) bool {
@@ -157,24 +174,6 @@ func looksLikeTestJob(commands, language, name string) bool {
 	}
 	for _, marker := range markers {
 		if strings.Contains(commands, marker) {
-			return true
-		}
-	}
-	return false
-}
-
-func looksLikeTestWorkflow(workflow, language, name string) bool {
-	markers := []string{name, githubAction}
-	switch language {
-	case "javascript":
-		markers = append(markers, "npm test", "npm run test", "yarn test", "yarn run test", "pnpm test", "pnpm run test", "bun test", "bun run test")
-	case "ruby":
-		markers = append(markers, "bundle exec rake", "rake test", "rails test")
-	case "python":
-		markers = append(markers, "tox", "nox")
-	}
-	for _, marker := range markers {
-		if strings.Contains(workflow, marker) {
 			return true
 		}
 	}
