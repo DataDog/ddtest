@@ -78,6 +78,8 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 					before[name] = string(contents)
 				}
 			}
+			onboard := integrationCommand(t, ctx, root, env, binary, "onboard")
+			require.Contains(t, onboard, "datadog/test-visibility-github-action@v3")
 			output := integrationCommand(t, ctx, root, env, binary, "testdrive", "--yes")
 			require.Contains(t, output, "Test events received.")
 			require.Contains(t, output, "Open report:")
