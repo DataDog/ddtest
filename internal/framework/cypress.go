@@ -192,8 +192,8 @@ func (c *Cypress) discoveryEnv() map[string]string {
 }
 
 func (c *Cypress) getCypressCommand() (string, []string) {
-	if len(c.commandOverride) > 0 {
-		return c.commandOverride[0], c.commandOverride[1:]
+	if override := runnerCommandOverride(c.commandOverride); len(override) > 0 {
+		return override[0], override[1:]
 	}
 	if info, err := os.Stat(binCypressPath); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
 		return binCypressPath, nil
@@ -535,6 +535,9 @@ func sameFilePath(left, right string) bool {
 }
 
 func (c *Cypress) Command() (string, []string) {
+	if len(c.commandOverride) > 0 {
+		return c.commandOverride[0], c.commandOverride[1:]
+	}
 	command, args := c.getCypressCommand()
 	return command, cypressRunArgs(command, args, nil)
 }

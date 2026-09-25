@@ -152,8 +152,8 @@ func (j *Jest) discoveryEnv() map[string]string {
 
 // Decide between user custom command, local jest binary and npx jest
 func (j *Jest) getJestCommand() (string, []string) {
-	if len(j.commandOverride) > 0 {
-		return j.commandOverride[0], j.commandOverride[1:]
+	if override := runnerCommandOverride(j.commandOverride); len(override) > 0 {
+		return override[0], override[1:]
 	}
 
 	if info, err := os.Stat(binJestPath); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
@@ -260,5 +260,8 @@ func parseJestListTestsOutput(output []byte) []string {
 }
 
 func (j *Jest) Command() (string, []string) {
+	if len(j.commandOverride) > 0 {
+		return j.commandOverride[0], j.commandOverride[1:]
+	}
 	return j.getJestCommand()
 }

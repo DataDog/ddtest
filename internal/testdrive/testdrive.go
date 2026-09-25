@@ -23,7 +23,6 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
-	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 )
 
@@ -83,10 +82,7 @@ func Prepare(version string) (*Testdrive, error) {
 	default:
 		return nil, fmt.Errorf("testdrive does not yet support %s", runner.Name())
 	}
-	command, args, err := testCommand(runner)
-	if err != nil {
-		return nil, err
-	}
+	command, args := runner.Command()
 	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 
 	session := planSession(repositoryRoot)
@@ -320,19 +316,4 @@ func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]st
 		maps.Copy(env, javascriptEnvironment(path))
 	}
 	return env
-}
-
-func testCommand(runner framework.Framework) (string, []string, error) {
-	if command := strings.TrimSpace(settings.GetCommand()); command != "" {
-		parts, err := shellquote.Split(command)
-		if err != nil {
-			return "", nil, fmt.Errorf("parse testdrive --command: %w", err)
-		}
-		if len(parts) == 0 {
-			return "", nil, fmt.Errorf("testdrive --command is empty")
-		}
-		return parts[0], parts[1:], nil
-	}
-	command, args := runner.Command()
-	return command, args, nil
 }

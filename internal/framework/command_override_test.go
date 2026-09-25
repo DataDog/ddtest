@@ -95,7 +95,7 @@ func TestLoadCommandOverride(t *testing.T) {
 	}
 }
 
-func TestLoadCommandOverride_WithSeparator(t *testing.T) {
+func TestRunnerCommandOverride_WithSeparator(t *testing.T) {
 	tests := []struct {
 		name            string
 		command         string
@@ -168,7 +168,7 @@ func TestLoadCommandOverride_WithSeparator(t *testing.T) {
 			}))
 			slog.SetDefault(logger)
 
-			result := loadCommandOverride()
+			result := runnerCommandOverride(loadCommandOverride())
 
 			// Check result
 			if len(result) != len(tt.expected) {
@@ -368,5 +368,32 @@ func TestFrameworkCommand(t *testing.T) {
 		if command != tc.path || !slices.Equal(args, tc.args) {
 			t.Fatalf("local Command() = %q %q, want %q %q", command, args, tc.path, tc.args)
 		}
+	}
+}
+
+func TestFrameworkCommandPreservesOverride(t *testing.T) {
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	viper.Reset()
+	viper.Set("command", `npm test -- --runInBand "path with spaces"`)
+	settings.Init()
+	for _, f := range []Framework{NewJest(), NewMocha(), NewCucumber(), NewVitest(), NewPlaywright(), NewCypress(), NewPytest(), NewRSpec(), NewMinitest()} {
+		command, args := f.Command()
+		if command != "npm" || !slices.Equal(args, []string{"test", "--", "--runInBand", "path with spaces"}) {
+			t.Fatalf("%s: %s %q", f.Name(), command, args)
+		}
+	}
+	// Execution helpers still strip the separator without mutating the effective command.
+	jest := NewJest()
+	command, args := jest.getJestCommand()
+	if command != "npm" || !slices.Equal(args, []string{"test"}) {
+		t.Fatalf("optimized command: %s %q", command, args)
+	}
+	args = append(args, "selected.test.js")
+	if args[len(args)-1] != "selected.test.js" {
+		t.Fatal(args)
+	}
+	_, args = jest.Command()
+	if !slices.Equal(args, []string{"test", "--", "--runInBand", "path with spaces"}) {
+		t.Fatal(args)
 	}
 }

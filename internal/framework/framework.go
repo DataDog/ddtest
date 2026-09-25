@@ -8,7 +8,7 @@ import (
 )
 
 type Framework interface {
-	// Command returns the test-suite command without running subprocesses.
+	// Command returns the effective test-suite command, preserving all override arguments.
 	Command() (string, []string)
 	Name() string
 	TestPattern() string

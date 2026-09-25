@@ -181,8 +181,8 @@ func (p *Playwright) discoveryEnv() map[string]string {
 }
 
 func (p *Playwright) getPlaywrightCommand() (string, []string) {
-	if len(p.commandOverride) > 0 {
-		return p.commandOverride[0], p.commandOverride[1:]
+	if override := runnerCommandOverride(p.commandOverride); len(override) > 0 {
+		return override[0], override[1:]
 	}
 	if info, err := os.Stat(binPlaywrightPath); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
 		return binPlaywrightPath, nil
@@ -479,6 +479,9 @@ func playwrightOptionValue(args []string, options ...string) string {
 }
 
 func (p *Playwright) Command() (string, []string) {
+	if len(p.commandOverride) > 0 {
+		return p.commandOverride[0], p.commandOverride[1:]
+	}
 	command, args := p.getPlaywrightCommand()
 	return command, playwrightRunArgs(command, args, nil)
 }

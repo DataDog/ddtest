@@ -161,8 +161,8 @@ func (m *Minitest) isRailsApplication(ctx context.Context) bool {
 // Returns: command, args, isRails
 func (m *Minitest) getMinitestCommand(ctx context.Context) (string, []string, bool) {
 	isRails := m.isRailsApplication(ctx)
-	if len(m.commandOverride) > 0 {
-		return m.commandOverride[0], m.commandOverride[1:], isRails
+	if override := runnerCommandOverride(m.commandOverride); len(override) > 0 {
+		return override[0], override[1:], isRails
 	}
 	if isRails {
 		// Check if bin/rails exists and is executable

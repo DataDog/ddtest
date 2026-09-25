@@ -223,8 +223,8 @@ func (v *Vitest) discoveryEnv() map[string]string {
 
 // Decide between a user custom command, the local Vitest binary and npx.
 func (v *Vitest) getVitestCommand() (string, []string) {
-	if len(v.commandOverride) > 0 {
-		return v.commandOverride[0], v.commandOverride[1:]
+	if override := runnerCommandOverride(v.commandOverride); len(override) > 0 {
+		return override[0], override[1:]
 	}
 
 	if info, err := os.Stat(binVitestPath); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
@@ -334,6 +334,9 @@ func stripNodeOptionsImport(nodeOptions string, module string) string {
 }
 
 func (v *Vitest) Command() (string, []string) {
+	if len(v.commandOverride) > 0 {
+		return v.commandOverride[0], v.commandOverride[1:]
+	}
 	command, args := v.getVitestCommand()
 	return command, vitestArgsForSubcommand(args, "run")
 }

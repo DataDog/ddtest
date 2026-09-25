@@ -190,8 +190,8 @@ func (c *Cucumber) discoveryEnv() map[string]string {
 }
 
 func (c *Cucumber) getCucumberCommand() (string, []string) {
-	if len(c.commandOverride) > 0 {
-		return c.commandOverride[0], c.commandOverride[1:]
+	if override := runnerCommandOverride(c.commandOverride); len(override) > 0 {
+		return override[0], override[1:]
 	}
 	if info, err := os.Stat(binCucumberPath); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
 		return binCucumberPath, nil
@@ -287,5 +287,8 @@ func parseCucumberMessages(filename string) ([]string, error) {
 }
 
 func (c *Cucumber) Command() (string, []string) {
+	if len(c.commandOverride) > 0 {
+		return c.commandOverride[0], c.commandOverride[1:]
+	}
 	return c.getCucumberCommand()
 }

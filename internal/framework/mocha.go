@@ -187,8 +187,8 @@ func (m *Mocha) discoveryEnv() map[string]string {
 }
 
 func (m *Mocha) getMochaCommand() (string, []string) {
-	if len(m.commandOverride) > 0 {
-		return m.commandOverride[0], m.commandOverride[1:]
+	if override := runnerCommandOverride(m.commandOverride); len(override) > 0 {
+		return override[0], override[1:]
 	}
 	if info, err := os.Stat(binMochaPath); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
 		return binMochaPath, nil
@@ -230,5 +230,8 @@ func parseMochaDiscoveryOutput(output []byte) ([]string, error) {
 }
 
 func (m *Mocha) Command() (string, []string) {
+	if len(m.commandOverride) > 0 {
+		return m.commandOverride[0], m.commandOverride[1:]
+	}
 	return m.getMochaCommand()
 }

@@ -99,8 +99,8 @@ func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[str
 
 // getRSpecCommand determines whether to use bin/rspec or bundle exec rspec
 func (r *RSpec) getRSpecCommand() (string, []string) {
-	if len(r.commandOverride) > 0 {
-		return r.commandOverride[0], r.commandOverride[1:]
+	if override := runnerCommandOverride(r.commandOverride); len(override) > 0 {
+		return override[0], override[1:]
 	}
 
 	// Check if bin/rspec exists and is executable
@@ -145,5 +145,8 @@ func trailingRubySuiteSourceFile(suite string) (string, bool) {
 }
 
 func (r *RSpec) Command() (string, []string) {
+	if len(r.commandOverride) > 0 {
+		return r.commandOverride[0], r.commandOverride[1:]
+	}
 	return r.getRSpecCommand()
 }
