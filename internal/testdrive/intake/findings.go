@@ -63,6 +63,8 @@ type CoverageFact struct {
 
 // Facts contains the facts shown in the testdrive report.
 type Facts struct {
+	SettingsRequests        int
+	SkippableRequests       int
 	Events                  []Event
 	ConfigurationErrors     []string
 	EmptyCoverageEntryCount int
@@ -91,6 +93,19 @@ func (s *Server) Facts() (Facts, error) {
 	}
 
 	findings := Facts{TestEventCount: len(tests), CoverageLevel: coverageLevel(coverages), EmptyCoverageEntryCount: emptyEntries}
+	s.requestsMu.Lock()
+	for _, request := range s.requests {
+		if request.Method != http.MethodPost {
+			continue
+		}
+		switch request.Path {
+		case constants.SettingsURLPath:
+			findings.SettingsRequests++
+		case constants.SkippableTestsURLPath:
+			findings.SkippableRequests++
+		}
+	}
+	s.requestsMu.Unlock()
 	findings.Tests, findings.FailedTests, findings.FlakyTests, findings.SlowTests, findings.TestDurationMedian = analyzeTests(tests, coverages, findings.CoverageLevel)
 	findings.TestCount = len(findings.Tests)
 	findings.CoveredTestCount = uniqueCoveredTestCount(tests, coverages)

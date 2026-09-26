@@ -21,6 +21,10 @@ import (
 )
 
 type jestProject struct {
+	ID          string `json:"id,omitempty"`
+	DisplayName struct {
+		Name string `json:"name"`
+	} `json:"displayName"`
 	Runner      string `json:"testRunner"`
 	Environment string `json:"testEnvironment"`
 	Root        string `json:"rootDir"`

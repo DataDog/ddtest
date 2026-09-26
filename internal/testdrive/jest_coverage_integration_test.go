@@ -30,7 +30,7 @@ func TestJestCoverageProbeValidation(t *testing.T) {
 	integrationFile(t, root, "package.json", `{"scripts":{"test":"jest --runInBand"},"devDependencies":{"jest":"`+jestVersion+`"}}`)
 	integrationFile(t, root, "sum.js", `module.exports = (a, b) => a + b;`)
 	integrationFile(t, root, "sum.test.js", `test('adds', () => expect(require('./sum')(1, 2)).toBe(3));`)
-	config := `module.exports = {collectCoverage: true, collectCoverageFrom: ['sum.js'], coverageReporters: ['text'], coverageThreshold: {global: {lines: 100, statements: 100}}};`
+	config := `module.exports = {watchman: false, collectCoverage: true, collectCoverageFrom: ['sum.js'], coverageReporters: ['text'], coverageThreshold: {global: {lines: 100, statements: 100}}};`
 	integrationFile(t, root, "jest.config.js", config)
 	integrationCommand(t, ctx, root, nil, "npm", "install", "--no-audit", "--no-fund")
 	for _, threshold := range []string{"100", "101"} {

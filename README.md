@@ -75,6 +75,12 @@ Jest validation has two stages:
    inconclusive. These checks validate the probe under the selected configuration;
    they do not establish compatibility for every test environment in a monorepo.
 
+Jest skipping uses the control's `test.source.file` to identify the file to skip;
+test-management scenarios keep the reported suite and test names. Some tracer
+versions report a different suite name when a file is skipped. The report retains
+both names and notes the difference separately from whether skipping worked.
+A missing source path makes the skipping check inconclusive.
+
 `testdrive.json` separates compatibility (`compatible`, `suspected regression`,
 `inconclusive`) from each feature (`passed`, `failed`, `inconclusive`, `unvalidated`).
 For Jest repositories with detected GitHub Actions test jobs, `ci_runtime` records
@@ -145,9 +151,16 @@ the project's actual Jest arguments when it uses a custom config. Preflight load
 project JavaScript; detection and preview do not execute it.
 
 `ddtest testdrive --check-only --yes` performs those configuration checks and static
-CI checks without installing a tracer or running tests. It replaces the same JSON
+CI checks without installing a tracer or running tests. It updates the same JSON
 report, with `check_only: true`, `checks_passed`, and test execution marked not
 exercised. A successful configuration check does not set validation `success`.
+The latest paired Jest execution is preserved under `retained_execution.result`,
+including its timestamp, tracer, commands, counts, and feature verdicts. Later
+configuration checks, unsupported-framework runs, and setup failures retain this
+historical evidence; a new paired Jest execution supersedes it. There is no growing
+report history. Retained evidence never changes the current invocation's verdict:
+after changing the command, configuration, source, dependencies, runtime, or tracer,
+rerun full validation before claiming current compatibility or feature success.
 
 Full validation records `local_success` separately from the combined `success`.
 CI Node compatibility and exact local/CI tracer agreement are separate findings;

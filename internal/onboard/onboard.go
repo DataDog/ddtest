@@ -130,6 +130,10 @@ func readWorkflows(root string) ([]ciWorkflow, error) {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
 		workflow.Path = ".github/workflows/" + entry.Name()
+		for name, job := range workflow.Jobs {
+			job.Steps = expandCompositeSteps(root, workflow.Path, job.Steps)
+			workflow.Jobs[name] = job
+		}
 		workflows = append(workflows, workflow)
 	}
 	return workflows, nil
@@ -151,7 +155,7 @@ func findWorkflows(root, language, name string) (workflowDiscovery, error) {
 				hasAction = hasAction || uses == githubAction
 				resolution := resolveTestStep(root, workflow, job, step, language, name)
 				if resolution.Review {
-					result.Review = append(result.Review, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, i+1, step.Run, resolution.Reason))
+					result.Review = append(result.Review, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, stepNumber(step, i), step.Run, resolution.Reason))
 					continue
 				}
 				if resolution.Matched || resolution.Reason != "" {
@@ -159,7 +163,7 @@ func findWorkflows(root, language, name string) (workflowDiscovery, error) {
 					configured = configured && hasAction && resolution.Reason == ""
 				}
 				if resolution.Reason != "" {
-					result.Unresolved = append(result.Unresolved, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, i+1, step.Run, resolution.Reason))
+					result.Unresolved = append(result.Unresolved, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, stepNumber(step, i), step.Run, resolution.Reason))
 				}
 			}
 		}

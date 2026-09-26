@@ -24,6 +24,7 @@ type commandResolution struct {
 	Reason            string
 	Review            bool
 	UnknownExecutable bool
+	ReviewReason      string
 }
 
 func unresolvedCommand(reason string) commandResolution {
@@ -31,6 +32,9 @@ func unresolvedCommand(reason string) commandResolution {
 }
 
 func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, language, framework string) commandResolution {
+	if step.ResolutionError != "" {
+		return unresolvedCommand(step.ResolutionError)
+	}
 	if strings.TrimSpace(step.Run) == "" {
 		return commandResolution{}
 	}
@@ -54,6 +58,9 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return unresolvedCommand("Cannot statically resolve repository working-directory: " + directory)
 	}
 	result := resolveJestCommand(filepath.Join(root, directory), step.Run, nil)
+	if !result.Matched && result.Reason == "" && result.ReviewReason != "" {
+		result.Review, result.Reason = true, result.ReviewReason
+	}
 	if result.UnknownExecutable && !result.Matched && separateCIEntryPoint(workflow, job, step) {
 		result.Review = true
 		result.Reason = "Build, publishing, or documentation entry point was not identified as Jest; review separately if it also runs tests. " + result.Reason
@@ -87,7 +94,11 @@ func separateCIEntryPoint(workflow ciWorkflow, job runtimeJob, step runtimeStep)
 	} else if words[0] == "npm" {
 		return false
 	}
-	return len(args) == 1 && slices.Contains([]string{"build", "build-storybook", "storybook", "release"}, args[0])
+	if len(args) != 1 {
+		return false
+	}
+	name, _, _ := strings.Cut(args[0], ":")
+	return slices.Contains([]string{"build", "build-storybook", "storybook", "release", "api-extractor", "bundlewatch"}, name)
 }
 
 // Resolve only ordinary static commands and package script aliases. Never run
@@ -112,6 +123,9 @@ func resolveJestSequence(directory, command string, stack []string, remaining *i
 			return unresolvedCommand("Package script expansion exceeds 256 commands")
 		}
 		part := resolveJestWords(directory, words, stack, remaining)
+		if part.ReviewReason != "" {
+			result.ReviewReason = part.ReviewReason
+		}
 		if part.Reason != "" {
 			if result.Reason == "" {
 				result.Reason = part.Reason
@@ -164,6 +178,10 @@ func resolveJestWords(directory string, words, stack []string, remaining *int) c
 		return commandResolution{Matched: true, Evidence: command}
 	case "echo", "printf", "true", "false", "eslint", "prettier", "tsc", "mkdir", "cp":
 		return commandResolution{}
+	case "playwright", "vitest", "mocha", "cypress":
+		return commandResolution{ReviewReason: "Other test framework is outside Jest validation: " + command}
+	case "rollup", "webpack", "bundlewatch", "api-extractor":
+		return commandResolution{ReviewReason: "Build/tool command is outside Jest validation; review its configuration separately if it also runs tests: " + command}
 	case "npm", "yarn", "pnpm", "bun":
 		if len(words) < 2 {
 			return unresolvedCommand("Missing package-manager subcommand: " + command)

@@ -102,7 +102,7 @@ func displayName(name string) string {
 // Preview describes the filesystem and process changes that Run will make.
 func (t *Testdrive) Preview(output io.Writer) {
 	if t.checkOnly {
-		_, _ = fmt.Fprintln(output, "Check configuration only: resolve the tracer, inspect Jest --showConfig, and review static CI runtimes. No tracer installation or tests; replace .testoptimization/testdrive.json.")
+		_, _ = fmt.Fprintln(output, "Check configuration only: resolve the tracer, inspect Jest --showConfig, and review static CI runtimes. No tracer installation or tests; update .testoptimization/testdrive.json, retaining the latest paired Jest execution as historical evidence.")
 		return
 	}
 	command, args := t.command, t.args
@@ -132,11 +132,11 @@ func (t *Testdrive) Preview(output io.Writer) {
 		_, _ = fmt.Fprintln(output, "  - check GitHub Actions Node runtimes against the workflow-selected tracer using public action and npm metadata")
 		_, _ = fmt.Fprintln(output, "  - compare Jest JSON results without instrumentation and with reporting-only instrumentation")
 		_, _ = fmt.Fprintln(output, "  - repeat the pair if outcomes differ; timing and console order are ignored")
-		_, _ = fmt.Fprintln(output, "  - create and remove a temporary probe test beside an existing test; check retries, EFD, skipping, quarantine, disabled tests, and attempt-to-fix separately; wait for completion before running other repository checks")
+		_, _ = fmt.Fprintln(output, "  - discover and remove a temporary probe test in each selectable Jest project; check retries, EFD, skipping, quarantine, disabled tests, and attempt-to-fix per project; wait for completion before running other repository checks")
 	} else {
 		_, _ = fmt.Fprintln(output, "  - collect reporting-only telemetry; compatibility and features remain unvalidated for this framework")
 	}
-	_, _ = fmt.Fprintf(output, "  - replace the single report at %s\n", reportPath)
+	_, _ = fmt.Fprintf(output, "  - update the single report at %s; retain the latest paired Jest execution as historical evidence until another pair runs\n", reportPath)
 	_, _ = fmt.Fprintln(output, "  - disable coverage thresholds only for isolated probes, preserving coverage collection and the original full-suite thresholds")
 	_, _ = fmt.Fprintln(output, "  - keep one JSON report with verdicts, commands, exit codes, counts, and bounded failure diagnostics; remove temporary probes, tracer, traffic, and run files")
 	_, _ = fmt.Fprintln(output)

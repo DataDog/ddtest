@@ -165,6 +165,9 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 		return run, err
 	}
 	readJestResults(resultPath, &run)
+	if scenario.Feature == "skipping" {
+		run.Skipping = diagnoseSkipping(run, scenario)
+	}
 	if run.ExitCode != 0 || run.ResultError != "" || len(run.SuiteErrors) > 0 {
 		run.Diagnostic = commandDiagnostic(commandOutput)
 	}
@@ -323,7 +326,7 @@ func (t *Testdrive) runJestValidation(ctx context.Context, output io.Writer, ses
 			result.Compatibility = verdict{Status: "inconclusive", Reason: "Outcomes changed between repeated runs; flakiness or changing setup prevents attributing the difference to instrumentation."}
 		}
 	}
-	if err := t.runJestFeatures(ctx, output, session, preload, baseline, result); err != nil {
+	if err := t.runJestFeatures(ctx, output, session, preload, result); err != nil {
 		return err
 	}
 	return nil

@@ -147,15 +147,22 @@ func TestProbeRemovedWhenScenarioSetupFails(t *testing.T) {
 	run := preparedTestdrive(t)
 	source := filepath.Join(run.repositoryRoot, "existing.test.js")
 	requireWriteFile(t, source, "original test")
-	baseline := testRun("passed", 0)
-	baseline.Tests[0].File = source
+	run.executor = discoveryExecutor(func(args []string) ([]byte, error) {
+		path := source
+		for i, arg := range args {
+			if arg == "--runTestsByPath" {
+				path = args[i+1]
+			}
+		}
+		return json.Marshal([]string{path})
+	})
 	session, err := NewSession()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	run.startIntake = func(string, intake.Scenario) (localIntake, error) { return nil, errors.New("listener failed") }
-	result := validationResult{}
-	require.ErrorContains(t, run.runJestFeatures(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", baseline, &result), "listener failed")
-	probes, err := filepath.Glob(filepath.Join(run.repositoryRoot, "ddtest-*"))
+	result := validationResult{Preflight: &jestPreflight{Projects: []jestProject{{Root: run.repositoryRoot}}}}
+	require.ErrorContains(t, run.runJestFeatures(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", &result), "listener failed")
+	probes, err := filepath.Glob(filepath.Join(run.repositoryRoot, "ddtest*"))
 	require.NoError(t, err)
 	require.Empty(t, probes)
 	data, err := os.ReadFile(source)

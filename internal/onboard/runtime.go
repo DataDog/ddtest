@@ -38,6 +38,7 @@ type RuntimeFinding struct {
 	Command         string          `json:"command,omitempty"`
 	Resolution      string          `json:"resolution,omitempty"`
 	Node            string          `json:"node,omitempty"`
+	NodeSource      string          `json:"node_source,omitempty"`
 	NodeResolution  *NodeResolution `json:"node_resolution,omitempty"`
 	Action          string          `json:"action,omitempty"`
 	Tracer          string          `json:"tracer,omitempty"`
@@ -49,6 +50,10 @@ type RuntimeFinding struct {
 }
 
 type runtimeStep struct {
+	Number           int               `yaml:"-"`
+	Source           string            `yaml:"-"`
+	Parents          []string          `yaml:"-"`
+	ResolutionError  string            `yaml:"-"`
 	WorkingDirectory string            `yaml:"working-directory"`
 	Shell            string            `yaml:"shell"`
 	Env              map[string]string `yaml:"env"`
@@ -109,7 +114,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 			for i, step := range job.Steps {
 				resolutions[i] = resolveTestStep(root, workflow, job, step, "javascript", "jest")
 				if resolutions[i].Review {
-					result.Review = append(result.Review, RuntimeFinding{Workflow: path, Job: name, Step: i + 1, Command: step.Run, Status: "not checked", Reason: resolutions[i].Reason})
+					result.Review = append(result.Review, RuntimeFinding{Workflow: path, Job: name, Step: stepNumber(step, i), Command: step.Run, Status: "not checked", Reason: resolutions[i].Reason})
 					resolutions[i] = commandResolution{}
 				}
 				candidate = candidate || resolutions[i].Matched || resolutions[i].Reason != ""
@@ -173,7 +178,7 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 		finding.Reason = "Job is explicitly excluded."
 		return []RuntimeFinding{finding}
 	}
-	var node, action, version string
+	var node, nodeSource, action, version string
 	skippedAction := false
 	for i, step := range job.Steps {
 		uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
@@ -182,7 +187,7 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 		if uses != "actions/setup-node" && uses != githubAction && !test {
 			continue
 		}
-		active, err := runtimeCondition(step.If, row)
+		active, err := stepCondition(step, row)
 		if err != nil {
 			return fail(err.Error())
 		}
@@ -195,6 +200,7 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 		switch uses {
 		case "actions/setup-node":
 			node, err = runtimeValue(step.With["node-version"], row)
+			nodeSource = step.Source
 			if err != nil {
 				return fail(err.Error())
 			}
@@ -220,7 +226,7 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 		if !test {
 			continue
 		}
-		finding = RuntimeFinding{Workflow: workflow.Path, Job: name, Step: i + 1, Command: step.Run, Resolution: resolution.Evidence, Node: node, Status: "inconclusive"}
+		finding = RuntimeFinding{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: step.Run, Resolution: resolution.Evidence, Node: node, NodeSource: nodeSource, Status: "inconclusive"}
 		if resolution.Reason != "" {
 			finding.Reason = "Could not resolve CI test command: " + resolution.Reason
 			findings = append(findings, finding)

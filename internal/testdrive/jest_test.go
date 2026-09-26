@@ -107,7 +107,7 @@ func TestProbeUsesProjectTestLocationAndDoesNotOverwrite(t *testing.T) {
 }
 
 func TestFeatureAssertionsRequireBehaviorAndTelemetry(t *testing.T) {
-	identity := intake.Test{Module: "jest", Suite: "probe.test.js", Name: probeName}
+	identity := intake.Test{Module: "jest", Suite: "probe.test.js", SourceFile: "probe.test.js", Name: probeName}
 	event := func(status, reason string, extra map[string]string) intake.Event {
 		tags := map[string]string{"test.module": "jest", "test.suite": "probe.test.js", "test.name": probeName, "test.status": status}
 		if reason != "" {
@@ -125,7 +125,7 @@ func TestFeatureAssertionsRequireBehaviorAndTelemetry(t *testing.T) {
 		"quarantine":            {event("fail", "", map[string]string{"test.test_management.is_quarantined": "true"})},
 		"disabled":              {event("skip", "", map[string]string{"test.test_management.is_test_disabled": "true"})},
 		"attempt-to-fix":        {event("pass", "", map[string]string{"test.test_management.is_attempt_to_fix": "true"}), event("pass", "attempt_to_fix", nil)},
-		"skipping":              {{Type: "test_suite_end", Tags: map[string]string{"test.suite": "probe.test.js", "test.status": "skip", "test.skipped_by_itr": "true"}}},
+		"skipping":              {{Type: "test_suite_end", Tags: map[string]string{"test.module": "jest", "test.suite": "probe.test.js", "test.status": "skip", "test.skipped_by_itr": "true"}}},
 	}
 	for feature, events := range cases {
 		t.Run(feature, func(t *testing.T) {
@@ -147,6 +147,43 @@ func TestFeatureAssertionsRequireBehaviorAndTelemetry(t *testing.T) {
 	}
 	run := validationRun{ResultError: "missing JSON"}
 	require.Equal(t, "inconclusive", evaluateFeature("auto-retries", run, identity).Status)
+}
+
+func TestJestSkippingUsesSourceFileWithoutChangingOtherFeatureIdentities(t *testing.T) {
+	identity := intake.Test{Module: "jest", Suite: "../../src/probe.test.js", SourceFile: "src/probe.test.js", Name: probeName}
+	for _, suite := range []string{identity.SourceFile, identity.Suite} {
+		t.Run(suite, func(t *testing.T) {
+			tags := map[string]string{"test.module": "jest", "test.suite": suite, "test.status": "skip", "test.skipped_by_itr": "true"}
+			run := validationRun{Facts: intake.Facts{Events: []intake.Event{{Type: "test_suite_end", Tags: tags}}}}
+			require.Equal(t, "passed", evaluateFeature("skipping", run, identity).Status)
+			for _, entry := range []struct{ key, value string }{
+				{"test.suite", "src/unrelated.test.js"},
+				{"test.module", "other"},
+				{"test.status", "pass"},
+				{"test.skipped_by_itr", "false"},
+				{"test.source.file", "src/unrelated.test.js"},
+			} {
+				original := tags[entry.key]
+				tags[entry.key] = entry.value
+				require.Equal(t, "failed", evaluateFeature("skipping", run, identity).Status, entry.key)
+				tags[entry.key] = original
+			}
+			run.Facts.TestEventCount = 1
+			require.Equal(t, "failed", evaluateFeature("skipping", run, identity).Status)
+			run.Facts.TestEventCount = 0
+			run.Tests = []jestTest{{Name: probeName, Status: "passed"}}
+			require.Equal(t, "failed", evaluateFeature("skipping", run, identity).Status)
+		})
+	}
+	missing := identity
+	missing.SourceFile = ""
+	require.Equal(t, "inconclusive", evaluateFeature("skipping", validationRun{}, missing).Status)
+	tags := map[string]string{"test.module": "jest", "test.suite": identity.Suite, "test.name": probeName,
+		"test.status": "skip", "test.test_management.is_test_disabled": "true"}
+	run := validationRun{Tests: []jestTest{{Name: probeName, Status: "pending"}}, Facts: intake.Facts{Events: []intake.Event{{Type: "test", Tags: tags}}}}
+	require.Equal(t, "passed", evaluateFeature("disabled", run, identity).Status)
+	tags["test.suite"] = identity.SourceFile
+	require.Equal(t, "failed", evaluateFeature("disabled", run, identity).Status)
 }
 
 type jsonExecutor struct {

@@ -32,13 +32,16 @@ type verdict struct {
 }
 
 type featureResult struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	Reason string `json:"reason"`
+	Project string `json:"project,omitempty"`
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason"`
 }
 
 // Detailed results are transient inputs to validation, never report contents.
 type validationRun struct {
+	Project                         string
+	Skipping                        *skippingDiagnostic
 	root                            string
 	Name                            string
 	Command                         string
@@ -61,21 +64,23 @@ type testCounts struct {
 }
 
 type runSummary struct {
-	Name                            string     `json:"name"`
-	Command                         string     `json:"command,omitempty"`
-	Instrumented                    bool       `json:"instrumented"`
-	ProbeMode                       string     `json:"probe_mode,omitempty"`
-	ProbeCoverageThresholdsDisabled bool       `json:"probe_coverage_thresholds_disabled,omitempty"`
-	Diagnostic                      string     `json:"diagnostic,omitempty"`
-	ExitCode                        *int       `json:"exit_code"`
-	ResultError                     string     `json:"result_error,omitempty"`
-	TestCounts                      testCounts `json:"test_counts"`
-	SuiteErrorCount                 int        `json:"suite_error_count"`
-	TestEventCount                  int        `json:"test_event_count"`
+	Project                         string              `json:"project,omitempty"`
+	Skipping                        *skippingDiagnostic `json:"skipping,omitempty"`
+	Name                            string              `json:"name"`
+	Command                         string              `json:"command,omitempty"`
+	Instrumented                    bool                `json:"instrumented"`
+	ProbeMode                       string              `json:"probe_mode,omitempty"`
+	ProbeCoverageThresholdsDisabled bool                `json:"probe_coverage_thresholds_disabled,omitempty"`
+	Diagnostic                      string              `json:"diagnostic,omitempty"`
+	ExitCode                        *int                `json:"exit_code"`
+	ResultError                     string              `json:"result_error,omitempty"`
+	TestCounts                      testCounts          `json:"test_counts"`
+	SuiteErrorCount                 int                 `json:"suite_error_count"`
+	TestEventCount                  int                 `json:"test_event_count"`
 }
 
 func (r validationRun) summary() runSummary {
-	summary := runSummary{Name: r.Name, Command: r.Command, Instrumented: r.Instrumented,
+	summary := runSummary{Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
 		ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError),
 		ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic),
 		SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
@@ -106,6 +111,7 @@ type validationResult struct {
 	ChecksPassed     bool                  `json:"checks_passed"`
 	LocalSuccess     bool                  `json:"local_success"`
 	Preflight        *jestPreflight        `json:"preflight,omitempty"`
+	ProjectChecks    []projectProbeCheck   `json:"project_checks,omitempty"`
 	Selection        *platform.JSSelection `json:"tracer_selection,omitempty"`
 	TracerSource     string                `json:"tracer_source,omitempty"`
 	CISelection      *verdict              `json:"ci_tracer_selection,omitempty"`
@@ -119,6 +125,8 @@ type validationResult struct {
 	Compatibility    verdict               `json:"compatibility"`
 	Features         []featureResult       `json:"features"`
 	Runs             []runSummary          `json:"runs"`
+	Summary          validationSummary     `json:"summary"`
+	Retained         *retainedExecution    `json:"retained_execution,omitempty"`
 }
 
 const maxReportDifferences = 10
@@ -164,7 +172,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		for _, findings := range [][]onboard.RuntimeFinding{check.Jobs, check.Review} {
 			for i := range findings {
 				job := &findings[i]
-				for _, field := range []*string{&job.Workflow, &job.Job, &job.Command, &job.Resolution, &job.Node, &job.Action, &job.Tracer, &job.TracerRequested, &job.Requirement, &job.Reason} {
+				for _, field := range []*string{&job.Workflow, &job.Job, &job.Command, &job.Resolution, &job.Node, &job.NodeSource, &job.Action, &job.Tracer, &job.TracerRequested, &job.Requirement, &job.Reason} {
 					*field = reportText(*field)
 				}
 			}
@@ -186,6 +194,10 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	if result.CheckOnly {
 		result.Success = false
 		result.LocalSuccess = false
+	}
+	result.Summary = summarizeValidation(result)
+	if err := retainExecution(repositoryRoot, &result); err != nil {
+		return err
 	}
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
@@ -233,7 +245,24 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		_, _ = fmt.Fprintf(output, "Validation error: %s\n", result.Error)
 	}
 	for _, feature := range result.Features {
-		_, _ = fmt.Fprintf(output, "Feature %s: %s — %s\n", feature.Name, feature.Status, feature.Reason)
+		label := feature.Name
+		if feature.Project != "" {
+			label = feature.Project + "/" + label
+		}
+		_, _ = fmt.Fprintf(output, "Feature %s: %s — %s\n", label, feature.Status, feature.Reason)
+	}
+	_, _ = fmt.Fprintf(output, "\nValidation verdict: %s\nLocal validation: %s\n", result.Summary.Status, result.Summary.LocalValidation)
+	if len(result.Summary.BlockingChecks) > 0 {
+		_, _ = fmt.Fprintf(output, "Blocking checks: %s\n", strings.Join(result.Summary.BlockingChecks, "; "))
+	}
+	_, _ = fmt.Fprintf(output, "CI configuration: %s\nCI execution: not exercised\nReal Datadog credentials required for these local checks: no\nPreserve this verdict in the onboarding response. A failed local feature check is not explained by missing real Datadog credentials.\n", result.Summary.CIConfiguration)
+	if retained := result.Retained; retained != nil {
+		previous := retained.Result
+		_, _ = fmt.Fprintf(output, "\nRetained Jest execution: %s / %s\nEarlier validation verdict: %s\n%s\n", previous.Session, previous.CompletedAt.Format(time.RFC3339), previous.Summary.Status, retained.Reason)
+		if len(previous.Summary.BlockingChecks) > 0 {
+			_, _ = fmt.Fprintf(output, "Earlier blocking checks: %s\n", strings.Join(previous.Summary.BlockingChecks, "; "))
+		}
+		_, _ = fmt.Fprintln(output, "Keep the earlier commands and feature results in retained_execution.result when reporting onboarding progress.")
 	}
 	_, _ = fmt.Fprintf(output, "Tracer: %s · %s\nResults JSON: %s\n", result.Tracer, result.TracerSource, path)
 	_, _ = fmt.Fprintln(output, "Keep this JSON report after cleanup, including when validation fails. Temporary probes, tracer installations, and raw traffic are cleaned up automatically.")
