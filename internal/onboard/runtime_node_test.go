@@ -57,7 +57,7 @@ func TestCILTSResolutionPreservesAliasProvenanceAndUnknownPatch(t *testing.T) {
 				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(ltsManifestFixture))}, nil
 			})}
 			workflow := strings.Replace(fmt.Sprintf(runtimeWorkflow, ""), "node-version: ${{ matrix.node-version }}", "node-version: lts/*", 1)
-			result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), ltsNodeResolver(client), func(context.Context, string, string) (tracerRequirement, error) {
+			result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), setupNodeResolver(client), func(context.Context, string, string) (tracerRequirement, error) {
 				return tracerRequirement{Version: "6.16.0", Node: tc.requirement}, nil
 			})
 			require.Equal(t, tc.status, result.Status)
@@ -80,7 +80,7 @@ func TestUnavailableLTSMetadataStaysInconclusive(t *testing.T) {
 		return nil, fmt.Errorf("metadata unavailable")
 	})}
 	workflow := strings.Replace(fmt.Sprintf(runtimeWorkflow, ""), "node-version: ${{ matrix.node-version }}", "node-version: lts/*", 1)
-	result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), ltsNodeResolver(client), func(context.Context, string, string) (tracerRequirement, error) {
+	result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), setupNodeResolver(client), func(context.Context, string, string) (tracerRequirement, error) {
 		return tracerRequirement{Version: "6.16.0", Node: ">=22"}, nil
 	})
 	require.Equal(t, "inconclusive", result.Status)

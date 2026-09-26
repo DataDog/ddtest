@@ -20,6 +20,7 @@ import (
 // an unresolved component is still inconclusive; it must not hide custom wrappers.
 type commandResolution struct {
 	Matched           bool
+	SingleJest        bool
 	Evidence          string
 	Reason            string
 	Review            bool
@@ -41,12 +42,9 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if language != "javascript" || framework != "jest" {
 		return commandResolution{Matched: looksLikeTestJob(strings.ToLower(step.Run), language, framework)}
 	}
-	directory := workflow.Defaults.Run.WorkingDirectory
+	directory := stepDirectory(workflow, job, step)
 	shell := workflow.Defaults.Run.Shell
 	for _, defaults := range []runDefaults{job.Defaults.Run, {WorkingDirectory: step.WorkingDirectory, Shell: step.Shell}} {
-		if defaults.WorkingDirectory != "" {
-			directory = defaults.WorkingDirectory
-		}
 		if defaults.Shell != "" {
 			shell = defaults.Shell
 		}
@@ -56,6 +54,9 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	}
 	if strings.ContainsAny(directory, "$`~") || (directory != "" && !filepath.IsLocal(directory)) {
 		return unresolvedCommand("Cannot statically resolve repository working-directory: " + directory)
+	}
+	if jsonPackagingStep(step.Run) {
+		return commandResolution{Review: true, Reason: "JSON packaging transformation is outside Jest validation; review separately if its output is used by tests."}
 	}
 	result := resolveJestCommand(filepath.Join(root, directory), step.Run, nil)
 	if !result.Matched && result.Reason == "" && result.ReviewReason != "" {
@@ -123,6 +124,7 @@ func resolveJestSequence(directory, command string, stack []string, remaining *i
 			return unresolvedCommand("Package script expansion exceeds 256 commands")
 		}
 		part := resolveJestWords(directory, words, stack, remaining)
+		result.SingleJest = len(commands) == 1 && part.SingleJest
 		if part.ReviewReason != "" {
 			result.ReviewReason = part.ReviewReason
 		}
@@ -175,7 +177,7 @@ func resolveJestWords(directory string, words, stack []string, remaining *int) c
 	}
 	switch words[0] {
 	case "jest", "./node_modules/.bin/jest", "node_modules/.bin/jest":
-		return commandResolution{Matched: true, Evidence: command}
+		return commandResolution{Matched: true, SingleJest: true, Evidence: command}
 	case "echo", "printf", "true", "false", "eslint", "prettier", "tsc", "mkdir", "cp":
 		return commandResolution{}
 	case "playwright", "vitest", "mocha", "cypress":
@@ -185,6 +187,9 @@ func resolveJestWords(directory string, words, stack []string, remaining *int) c
 	case "npm", "yarn", "pnpm", "bun":
 		if len(words) < 2 {
 			return unresolvedCommand("Missing package-manager subcommand: " + command)
+		}
+		if words[0] == "npm" && words[1] == "publish" {
+			return resolveNpmPublish(directory, words)
 		}
 		// These are setup/metadata commands, not explicit test entry points.
 		if slices.Contains([]string{"ci", "install", "i", "--version", "--help"}, words[1]) {

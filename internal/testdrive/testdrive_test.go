@@ -92,7 +92,7 @@ func TestPrepareAndPreviewJest(t *testing.T) {
 	for _, expected := range []string{
 		"found JavaScript and Jest",
 		"dd-trace",
-		"npx jest",
+		"npm run test",
 		validationPath(repositoryRoot),
 		"will not change package.json",
 	} {

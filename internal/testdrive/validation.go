@@ -219,7 +219,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 				label += " / Node " + job.Node
 			}
 			if job.NodeResolution != nil {
-				label += " => " + job.NodeResolution.Version + " (setup-node manifest)"
+				label += " => " + job.NodeResolution.Version + " (" + job.NodeResolution.Source + ")"
 			}
 			_, _ = fmt.Fprintf(output, "  - %s: %s — %s", label, job.Status, job.Reason)
 			if job.Tracer != "" {

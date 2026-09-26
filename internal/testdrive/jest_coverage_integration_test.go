@@ -30,12 +30,29 @@ func TestJestCoverageProbeValidation(t *testing.T) {
 	integrationFile(t, root, "package.json", `{"scripts":{"test":"jest --runInBand"},"devDependencies":{"jest":"`+jestVersion+`"}}`)
 	integrationFile(t, root, "sum.js", `module.exports = (a, b) => a + b;`)
 	integrationFile(t, root, "sum.test.js", `test('adds', () => expect(require('./sum')(1, 2)).toBe(3));`)
-	config := `module.exports = {watchman: false, collectCoverage: true, collectCoverageFrom: ['sum.js'], coverageReporters: ['text'], coverageThreshold: {global: {lines: 100, statements: 100}}};`
+	config := `module.exports = {watchman: false, collectCoverage: true, collectCoverageFrom: ['sum.js'], coverageThreshold: {global: {lines: 100, statements: 100}}};`
 	integrationFile(t, root, "jest.config.js", config)
 	integrationCommand(t, ctx, root, nil, "npm", "install", "--no-audit", "--no-fund")
-	for _, threshold := range []string{"100", "101"} {
-		t.Run(threshold, func(t *testing.T) {
+	for _, mode := range []string{"default", "script", "cli"} {
+		t.Run(mode, func(t *testing.T) {
+			threshold := "100"
+			if mode == "script" {
+				threshold = "101"
+			}
+			script := "jest --runInBand"
+			if mode == "script" {
+				script += " --coverageDirectory script-coverage"
+			}
+			integrationFile(t, root, "package.json", `{"scripts":{"test":"`+script+`"},"devDependencies":{"jest":"`+jestVersion+`"}}`)
 			command := `npm test -- --coverageThreshold='{"global":{"lines":` + threshold + `}}'`
+			// Preserve customer coverage while redirecting options declared inside
+			// a package script or supplied explicitly on the command line.
+			if mode != "default" {
+				integrationFile(t, root, "coverage/customer.txt", "keep this coverage")
+			}
+			if mode == "cli" {
+				command += " --coverage-directory=explicit-coverage"
+			}
 			cmd := exec.CommandContext(ctx, binary, "testdrive", "--framework", "jest", "--yes", "--command", command)
 			cmd.Dir = root
 			cmd.Env = append(os.Environ(), "PWD="+root)
@@ -86,6 +103,21 @@ func TestJestCoverageProbeValidation(t *testing.T) {
 						require.Empty(t, run.Diagnostic)
 					}
 				}
+			}
+			for _, name := range []string{"script-coverage", "explicit-coverage"} {
+				_, err := os.Stat(filepath.Join(root, name))
+				require.True(t, os.IsNotExist(err), name)
+			}
+			if mode == "default" {
+				_, err := os.Stat(filepath.Join(root, "coverage"))
+				require.True(t, os.IsNotExist(err))
+			} else {
+				entries, err := os.ReadDir(filepath.Join(root, "coverage"))
+				require.NoError(t, err)
+				require.Len(t, entries, 1)
+				data, err := os.ReadFile(filepath.Join(root, "coverage/customer.txt"))
+				require.NoError(t, err)
+				require.Equal(t, "keep this coverage", string(data))
 			}
 			entries, err := os.ReadDir(filepath.Join(root, ".testoptimization"))
 			require.NoError(t, err)

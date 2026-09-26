@@ -275,7 +275,7 @@ func TestJestRunClosesIntakeOnWriteFailure(t *testing.T) {
 	}
 	run.executor = &fakeTestdriveExecutor{}
 	_, err = run.runJest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", "baseline", false, intake.Scenario{}, "", "")
-	require.ErrorContains(t, err, "save test output")
+	require.ErrorIs(t, err, os.ErrNotExist)
 	require.True(t, server.closed)
 }
 

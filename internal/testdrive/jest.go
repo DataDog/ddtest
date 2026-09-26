@@ -136,8 +136,14 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 		env["DD_CIVISIBILITY_ENABLED"] = "false"
 		env["DD_TRACE_ENABLED"] = "false"
 	}
+	// Package scripts can already set coverageDirectory. Jest treats duplicate
+	// string options as arrays, so normalize only our override before parsing.
+	coverageDirectory := filepath.Join(directory, "coverage")
+	if err := redirectJestCoverage(directory, coverageDirectory, env); err != nil {
+		return run, err
+	}
 	resultPath := filepath.Join(directory, "jest-results.json")
-	args := appendJestArgs(t.command, t.args, "--json", "--outputFile", resultPath)
+	args := appendJestArgs(t.command, t.args, "--json", "--outputFile", resultPath, "--coverageDirectory", coverageDirectory)
 	if probePath != "" {
 		// A single synthetic test cannot meet whole-project coverage thresholds.
 		// Keep coverage collection enabled, including for Test Impact Analysis.

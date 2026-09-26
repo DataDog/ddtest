@@ -57,6 +57,14 @@ func Run(output io.Writer) error {
 	for _, workflow := range workflows {
 		_, _ = fmt.Fprintf(output, "  - %s\n", workflow)
 	}
+	if name == "jest" {
+		command, err := JestValidationCommand(repositoryRoot)
+		if err != nil {
+			_, _ = fmt.Fprintf(output, "\nLocal Jest command needs review: %s\n", err)
+		} else if command != "" {
+			_, _ = fmt.Fprintf(output, "\nLocal validation command: %s\nTestdrive selects this command automatically; preserve its config, coverage, and execution options. --command overrides this selection.\n", command)
+		}
+	}
 
 	if len(discovery.Review) > 0 {
 		_, _ = fmt.Fprintln(output, "\nOther CI entry points to review separately (not identified as Jest):")

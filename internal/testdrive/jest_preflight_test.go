@@ -84,6 +84,7 @@ func preflightFixture(t *testing.T, version, runner string) *Testdrive {
 	requireWriteFile(t, filepath.Join(tracerRoot, "package.json"), `{"version":"6.16.0","engines":{"node":">=22"}}`)
 	run, err := Prepare("latest-node18")
 	require.NoError(t, err)
+	run.command = "npx"
 	run.args = []string{"jest", "--config", "test/jest.config.js"}
 	data, err := json.Marshal(map[string]any{"version": version, "configs": []map[string]string{{"testRunner": "/node_modules/" + runner, "testEnvironment": "/jest-environment-node/build/index.js", "rootDir": root}}})
 	require.NoError(t, err)

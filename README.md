@@ -171,8 +171,13 @@ not a workflow rewrite. Manual review does not override a programmatic verdict. 
 `datadog/test-visibility-github-action@v3` and leaves tracer-version inputs unset.
 
 Project dependency manifests and lockfiles are not edited by testdrive. Testdrive
-uses the framework’s normal command; pass `--command` to run a package script and
-its lifecycle hooks or other custom setup. Tracer downloads require network access. This release covers root projects and GitHub Actions onboarding;
+automatically selects a unique, statically resolved root-level Jest CI command,
+including its package script and options. Without a CI command, it tries `test:ci`
+and then `test`; otherwise it uses the runner default. Ambiguous commands, lifecycle
+hooks, and scripts that cannot forward Jest options safely require review and an
+explicit `--command`. An explicit command always takes precedence. Generated Jest
+coverage goes into temporary session storage and is removed afterward; existing
+customer coverage is preserved. Tracer downloads require network access. This release covers root projects and GitHub Actions onboarding;
 monorepo orchestration and other CI providers are outside this scope.
 
 See the [Milestone 2 validation record](docs/testing/onboarding-milestone-2.md)

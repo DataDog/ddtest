@@ -26,6 +26,7 @@ import (
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 )
 
@@ -82,6 +83,19 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	command, args, err := framework.TestdriveCommand(repositoryRoot, runner)
 	if err != nil {
 		return nil, err
+	}
+	if runner.Name() == "jest" && strings.TrimSpace(settings.GetCommand()) == "" {
+		selected, err := onboard.JestValidationCommand(repositoryRoot)
+		if err != nil {
+			return nil, err
+		}
+		if selected != "" {
+			words, err := shellquote.Split(selected)
+			if err != nil {
+				return nil, err
+			}
+			command, args = words[0], words[1:]
+		}
 	}
 	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 	drive := &Testdrive{repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerLabel: label, tracerVersion: version,

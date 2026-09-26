@@ -64,6 +64,7 @@ type runtimeStep struct {
 }
 
 type runtimeJob struct {
+	RunsOn   any               `yaml:"runs-on"`
 	Defaults ciDefaults        `yaml:"defaults"`
 	Env      map[string]string `yaml:"env"`
 	If       string            `yaml:"if"`
@@ -82,7 +83,7 @@ func CheckCIRuntimes(ctx context.Context, root string) RuntimeCheck {
 	client := &http.Client{Timeout: 10 * time.Second}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	return checkCIRuntimes(ctx, root, ltsNodeResolver(client), func(ctx context.Context, action, version string) (tracerRequirement, error) {
+	return checkCIRuntimes(ctx, root, setupNodeResolver(client), func(ctx context.Context, action, version string) (tracerRequirement, error) {
 		return resolveRequirement(ctx, client, action, version)
 	})
 }
@@ -178,7 +179,7 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 		finding.Reason = "Job is explicitly excluded."
 		return []RuntimeFinding{finding}
 	}
-	var node, nodeSource, action, version string
+	var node, nodeSource, nodePlatform, action, version string
 	skippedAction := false
 	for i, step := range job.Steps {
 		uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
@@ -200,6 +201,7 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 		switch uses {
 		case "actions/setup-node":
 			node, err = runtimeValue(step.With["node-version"], row)
+			nodePlatform = nodeDistributionPlatform(job.RunsOn, step.With["architecture"], row)
 			nodeSource = step.Source
 			if err != nil {
 				return fail(err.Error())
@@ -252,8 +254,8 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 			finding.TracerFloating = finding.TracerRequested != "" && strings.TrimPrefix(finding.TracerRequested, "v") != requirement.Version
 			finding.Requirement = requirement.Node
 			resolvedNode := node
-			if strings.HasPrefix(node, "lts/") && resolveNode != nil {
-				resolution, err := resolveNode(ctx, node)
+			if (strings.HasPrefix(node, "lts/") || latestNodeAlias(node)) && resolveNode != nil {
+				resolution, err := resolveNode(ctx, node, nodePlatform)
 				if err != nil {
 					finding.Reason = "Cannot resolve setup-node alias: " + err.Error()
 					findings = append(findings, finding)
