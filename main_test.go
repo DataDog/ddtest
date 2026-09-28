@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -68,5 +69,31 @@ func TestRunPreservesProcessSignal(t *testing.T) {
 	code := run(func() error { return fmt.Errorf("test command failed: %w", err) })
 	if code != 143 {
 		t.Fatalf("run() exit code = %d, want 143", code)
+	}
+}
+
+func TestCLIPrintsErrorsOnce(t *testing.T) {
+	if scenario := os.Getenv("DDTEST_ERROR_HELPER"); scenario != "" {
+		os.Args = []string{"ddtest", "testdrive", scenario}
+		os.Exit(run(executeCommand))
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range []string{"--unknown", "--yes"} {
+		t.Run(scenario, func(t *testing.T) {
+			command := exec.Command(executable, "-test.run=^TestCLIPrintsErrorsOnce$")
+			command.Dir = t.TempDir()
+			command.Env = append(os.Environ(), "DDTEST_ERROR_HELPER="+scenario)
+			output, err := command.CombinedOutput()
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+				t.Fatalf("error = %v, output = %s", err, output)
+			}
+			if strings.Count(string(output), "Error:") != 1 || strings.Contains(string(output), "FAILURE") {
+				t.Fatalf("expected one error, got:\n%s", output)
+			}
+		})
 	}
 }

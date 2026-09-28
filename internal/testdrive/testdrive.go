@@ -210,6 +210,26 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	if err := os.WriteFile(testOutputPath, testOutput, 0644); err != nil {
 		return fmt.Errorf("save test output: %w", err)
 	}
+	if testErr != nil {
+		_, _ = fmt.Fprintf(output, "\n%s command output:\n", displayName(t.framework.Name()))
+		captured := strings.TrimSpace(string(testOutput))
+		lines := strings.Split(captured, "\n")
+		switch {
+		case captured == "":
+			_, _ = fmt.Fprintln(output, "The command produced no output.")
+		case len(lines) > 80:
+			_, _ = fmt.Fprintln(output, strings.Join(lines[:40], "\n"))
+			_, _ = fmt.Fprintf(output, "\n... %d %s omitted; see the full test output below ...\n\n", len(lines)-80, plural(len(lines)-80, "line", "lines"))
+			_, _ = fmt.Fprintln(output, strings.Join(lines[len(lines)-40:], "\n"))
+		default:
+			_, _ = fmt.Fprintln(output, captured)
+		}
+		outputLabel, err := filepath.Rel(t.repositoryRoot, testOutputPath)
+		if err != nil {
+			outputLabel = testOutputPath
+		}
+		_, _ = fmt.Fprintf(output, "\nFull test output: %s\n", outputLabel)
+	}
 
 	// Drain the intake before taking the snapshot used by the report.
 	closeErr := server.Close()

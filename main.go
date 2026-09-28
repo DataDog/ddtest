@@ -36,7 +36,7 @@ func run(execute func() error) int {
 	_ = os.Setenv("DD_TELEMETRY_DEPENDENCY_COLLECTION_ENABLED", "0")
 
 	if err := execute(); err != nil {
-		slog.Error("FAILURE", "error", err)
+		// Cobra has already printed the error.
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {

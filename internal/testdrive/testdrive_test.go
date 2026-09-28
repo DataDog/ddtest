@@ -329,40 +329,76 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 }
 
 func TestRunStillReportsEventsWhenJestFails(t *testing.T) {
-	repositoryRoot := t.TempDir()
-	writeJestManifest(t, repositoryRoot)
-	t.Chdir(repositoryRoot)
-	testdrive, err := Prepare("latest")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	testdrive.platform = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
-	testdrive.executor = &fakeTestdriveExecutor{output: []byte("FAIL one.test.js\n"), err: errors.New("exit status 1")}
-	testdrive.startIntake = func(string) (localIntake, error) {
-		return &fakeIntake{
-			url: "http://127.0.0.1:1234",
-			findings: intake.Facts{
-				TestCount:      1,
-				TestEventCount: 1,
-				FailedTests: []intake.Test{{
-					Name: "fails", Suite: "one.test.js", Status: "fail",
-					Attempts: []intake.TestRun{{Status: "fail", Duration: time.Millisecond}},
-				}},
-			},
-		}, nil
-	}
-
-	var output bytes.Buffer
-	err = testdrive.Run(t.Context(), &output)
-	if err == nil || !strings.Contains(err.Error(), "jest failed after sending 1 test event") {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !strings.Contains(output.String(), "Test events received.") {
-		t.Fatalf("Run() did not report working instrumentation:\n%s", output.String())
-	}
-	if !strings.Contains(output.String(), "Failed tests (1):") || !strings.Contains(output.String(), "one.test.js › fails · Fail · 1ms") || !strings.Contains(output.String(), "Jest: Failed") || !strings.Contains(output.String(), "file://") {
-		t.Fatalf("Run() did not report the failure and report link:\n%s", output.String())
+	for _, tc := range []struct {
+		name   string
+		output string
+		events int
+		want   string
+	}{
+		{name: "assertion failure", output: "FAIL one.test.js\nExpected: true\nReceived: false\n    at one.test.js:4:18\n", events: 1, want: "Expected: true\nReceived: false\n    at one.test.js:4:18"},
+		{name: "suite setup failure without failed events", output: "Cannot find module './missing' from 'setup.js'\n", events: 1363, want: "Cannot find module './missing'"},
+		{name: "no events", output: "SyntaxError: unexpected token in jest.config.js\n", want: "SyntaxError: unexpected token"},
+		{name: "empty output", events: 1, want: "The command produced no output."},
+		{name: "80 lines", output: strings.Repeat("log line\n", 79) + "final failure", events: 1, want: "final failure"},
+		{name: "long output", output: "initial failure\n" + strings.Repeat("log line\n", 79) + "final failure\n", events: 1, want: "... 1 line omitted; see the full test output below ..."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repositoryRoot := filepath.Join(t.TempDir(), "project space")
+			if err := os.Mkdir(repositoryRoot, 0755); err != nil {
+				t.Fatal(err)
+			}
+			writeJestManifest(t, repositoryRoot)
+			t.Chdir(repositoryRoot)
+			testdrive, err := Prepare("latest")
+			if err != nil {
+				t.Fatal(err)
+			}
+			installer := &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
+			testdrive.platform = installer
+			failure := errors.New("exit status 1")
+			testdrive.executor = &fakeTestdriveExecutor{output: []byte(tc.output), err: failure}
+			findings := intake.Facts{TestCount: tc.events, TestEventCount: tc.events}
+			if tc.name == "assertion failure" {
+				findings.FailedTests = []intake.Test{{Name: "fails", Suite: "one.test.js", Status: "fail", Attempts: []intake.TestRun{{Status: "fail", Duration: time.Millisecond}}}}
+			}
+			testdrive.startIntake = func(string) (localIntake, error) {
+				return &fakeIntake{url: "http://127.0.0.1:1234", findings: findings}, nil
+			}
+			var output bytes.Buffer
+			err = testdrive.Run(t.Context(), &output)
+			if !errors.Is(err, failure) {
+				t.Fatalf("Run() error = %v", err)
+			}
+			label := filepath.Join(".testoptimization", "testdrive", filepath.Base(installer.sessionDirectory), testOutputFilename)
+			for _, expected := range []string{"Jest command output:", tc.want, "Full test output: " + label, "Open report:"} {
+				if !strings.Contains(output.String(), expected) {
+					t.Errorf("missing %q in output:\n%s", expected, output.String())
+				}
+			}
+			if tc.events > 0 && !strings.Contains(output.String(), "Test events received.") {
+				t.Fatal(output.String())
+			}
+			if tc.name == "assertion failure" && !strings.Contains(output.String(), "one.test.js › fails · Fail · 1ms") {
+				t.Fatal(output.String())
+			}
+			if tc.name == "long output" {
+				if !strings.Contains(output.String(), "initial failure") || !strings.Contains(output.String(), "final failure") || strings.Count(output.String(), "log line") != 78 {
+					t.Fatal(output.String())
+				}
+			} else if strings.Contains(output.String(), "lines omitted") {
+				t.Fatal(output.String())
+			}
+			contents, err := os.ReadFile(label)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(contents) != tc.output {
+				t.Fatalf("saved output changed: %q", contents)
+			}
+			if strings.Contains(output.String(), "Full test output: "+repositoryRoot) {
+				t.Fatal("output path is absolute")
+			}
+		})
 	}
 }
 
