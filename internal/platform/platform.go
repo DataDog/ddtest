@@ -142,9 +142,27 @@ type commandExecutor interface {
 }
 
 func tracerProbe(ctx context.Context, executor commandExecutor, command string, args []string, env map[string]string) (string, error) {
-	output, stderr, err := executor.Output(ctx, command, args, env)
+	// Pass a private result file as the final argument. Runtime preloads and
+	// shutdown hooks can log to either output stream before or after the probe.
+	result, err := os.CreateTemp("", "ddtest-tracer-probe-*")
 	if err != nil {
-		return "", runtimeTagProbeError("detect project tracer", stderr, err)
+		return "", fmt.Errorf("create tracer probe result: %w", err)
 	}
-	return strings.TrimSpace(string(output)), nil
+	defer func() { _ = os.Remove(result.Name()) }()
+	if err := result.Close(); err != nil {
+		return "", fmt.Errorf("close tracer probe result: %w", err)
+	}
+	probeArgs := append(append([]string{}, args...), result.Name())
+	stdout, stderr, err := executor.Output(ctx, command, probeArgs, env)
+	if err != nil {
+		return "", runtimeTagProbeError("detect project tracer", append(stdout, stderr...), err)
+	}
+	output, err := os.ReadFile(result.Name())
+	if err != nil {
+		return "", fmt.Errorf("read tracer probe result: %w", err)
+	}
+	if len(output) == 0 {
+		return "", fmt.Errorf("tracer probe returned no result")
+	}
+	return string(output), nil
 }

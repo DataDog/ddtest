@@ -254,10 +254,13 @@ func (j *JavaScript) DetectTracer(ctx context.Context, _ TracerOptions) (string,
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve %s: %w", ddTraceCIInitModule, err)
 	}
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("resolve %s: node returned non-absolute path %q", ddTraceCIInitModule, path)
+	}
 	return path, nil
 }
 
-const resolveJavaScriptModule = "process.stdout.write(require.resolve(process.argv[1]))"
+const resolveJavaScriptModule = "require('fs').writeFileSync(process.argv[2], require.resolve(process.argv[1]))"
 
 // InstallTestdriveTracer reuses the project preload or installs an isolated fallback.
 func (j *JavaScript) InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
@@ -276,12 +279,11 @@ func (j *JavaScript) InstallTestdriveTracer(ctx context.Context, options TracerO
 	}
 
 	ciInitModule := filepath.Join(sessionDirectory, "node_modules", "dd-trace", "ci", "init")
-	output, stderr, err := j.executor.Output(ctx, "node", []string{"-e", resolveJavaScriptModule, ciInitModule}, cleanEnvironment)
+	ciInitPath, err := tracerProbe(ctx, j.executor, "node", []string{"-e", resolveJavaScriptModule, ciInitModule}, cleanEnvironment)
 	if err != nil {
-		return TracerInstallation{}, runtimeTagProbeError("resolve dd-trace/ci/init", stderr, err)
+		return TracerInstallation{}, fmt.Errorf("resolve dd-trace/ci/init: %w", err)
 	}
 
-	ciInitPath := strings.TrimSpace(string(output))
 	if !filepath.IsAbs(ciInitPath) {
 		return TracerInstallation{}, fmt.Errorf("resolve dd-trace/ci/init: node returned non-absolute path %q", ciInitPath)
 	}

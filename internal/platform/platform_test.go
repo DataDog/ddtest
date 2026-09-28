@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -15,6 +16,53 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
+
+// Mock the probe scripts' result-file write while leaving stdout available for
+// diagnostics, just like the real runtime executors.
+func writeMockProbeResult(args []string, output []byte) error {
+	if slices.Contains(args, resolveJavaScriptModule) || slices.Contains(args, detectPythonTracer) {
+		return os.WriteFile(args[len(args)-1], []byte(strings.TrimSpace(string(output))), 0600)
+	}
+	return nil
+}
+
+func TestTracerProbeSeparatesResultFromLogs(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		result       string
+		processError error
+		wantError    string
+	}{
+		{name: "result", result: " /a path/with\na newline "},
+		{name: "logs without result", wantError: "returned no result"},
+		{name: "failure after result", result: "/valid-looking/path", processError: errors.New("process failed"), wantError: "process failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var resultPath string
+			executor := &mockCommandExecutor{
+				combinedOutput:    []byte("startup log\nshutdown log without newline"),
+				combinedOutputErr: tc.processError,
+				onCombinedOutput: func(_ string, args []string, _ map[string]string) {
+					resultPath = args[len(args)-1]
+					require.NoError(t, os.WriteFile(resultPath, []byte(tc.result), 0600))
+				},
+			}
+			result, err := tracerProbe(t.Context(), executor, "runtime", []string{"probe"}, nil)
+			if tc.wantError != "" {
+				require.ErrorContains(t, err, tc.wantError)
+				require.Empty(t, result)
+				if tc.processError != nil {
+					require.ErrorIs(t, err, tc.processError)
+					require.ErrorContains(t, err, "startup log")
+				}
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tc.result, result)
+			}
+			require.NoFileExists(t, resultPath)
+		})
+	}
+}
 
 func TestPlatformsDetectTheirProjectFiles(t *testing.T) {
 	tests := []struct {

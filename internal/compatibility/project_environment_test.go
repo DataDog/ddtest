@@ -49,11 +49,18 @@ func TestJavaScriptProjectEnvironment(t *testing.T) {
 	require.NoDirExists(t, filepath.Join(root, "node_modules"))
 	loader := filepath.Join(root, ".pnp.js") // Yarn Classic's PnP loader.
 	require.FileExists(t, loader)
+	writeFixture(t, root, "noisy-preload.cjs", `process.stdout.write('startup log without newline');
+console.error('startup stderr');
+process.on('exit', () => {
+  process.stdout.write('shutdown log without newline');
+  console.error('shutdown stderr');
+});
+`)
 	javascript := platform.NewJavaScript()
 	// Prove the fixture cannot pass through ordinary node_modules resolution.
 	_, err := javascript.DetectTracer(ctx, platform.TracerOptions{})
 	require.ErrorContains(t, err, "Cannot find module 'dd-trace/ci/init'")
-	t.Setenv("NODE_OPTIONS", "--require "+strconv.Quote(loader)+" --max-old-space-size=256")
+	t.Setenv("NODE_OPTIONS", "--require "+strconv.Quote(loader)+" --require "+strconv.Quote(filepath.Join(root, "noisy-preload.cjs"))+" --max-old-space-size=256")
 	require.NoError(t, javascript.SanityCheck(ctx))
 	path, err := javascript.DetectTracer(ctx, platform.TracerOptions{})
 	require.NoError(t, err)
@@ -63,6 +70,8 @@ func TestJavaScriptProjectEnvironment(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, installation.Project)
 	require.Equal(t, path, installation.Path)
+	// Use the detected result as an actual preload; log-contaminated paths fail.
+	runFixtureCommand(t, ctx, "node", "--require", path, "-e", "require('dd-trace/ci/init')")
 }
 
 func TestRubyProjectEnvironment(t *testing.T) {
@@ -78,7 +87,7 @@ func TestRubyProjectEnvironment(t *testing.T) {
   s.files = []
 end
 `)
-	writeFixture(t, root, "support/project_setup.rb", "PROJECT_TRACER_PATH = '../tracer'\n")
+	writeFixture(t, root, "support/project_setup.rb", "puts 'startup log'\nwarn 'startup stderr'\nat_exit { puts 'shutdown log'; warn 'shutdown stderr' }\nPROJECT_TRACER_PATH = '../tracer'\n")
 	writeFixture(t, root, "config/Gemfile.test", "gem 'datadog-ci', path: PROJECT_TRACER_PATH\n")
 	t.Chdir(root)
 	t.Setenv("BUNDLE_GEMFILE", filepath.Join(root, "config", "Gemfile.test"))
@@ -91,6 +100,9 @@ end
 	require.ErrorContains(t, err, "PROJECT_TRACER_PATH")
 	t.Setenv("RUBYOPT", "-I./support -rproject_setup")
 	require.NoError(t, ruby.SanityCheck(ctx))
+	version, err := ruby.DetectTracer(ctx, platform.TracerOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "  * datadog-ci (1.31.0)", version)
 	installation, err := ruby.InstallTestdriveTracer(ctx, platform.TracerOptions{Directory: t.TempDir(), Version: "git:must-not-install"})
 	require.NoError(t, err)
 	require.True(t, installation.Project)
@@ -105,6 +117,12 @@ func TestPythonProjectEnvironment(t *testing.T) {
 	// to preserve PYTHONPATH. Metadata alone suffices for the version probe.
 	runFixtureCommand(t, ctx, "python", "-m", "venv", "--without-pip", filepath.Join(root, "venv"))
 	writeFixture(t, root, "packages/ddtrace-4.11.0.dist-info/METADATA", "Metadata-Version: 2.1\nName: ddtrace\nVersion: 4.11.0\n")
+	writeFixture(t, root, "packages/sitecustomize.py", `import atexit, sys
+print('startup log', end='')
+print('startup stderr', file=sys.stderr)
+atexit.register(lambda: print('shutdown log', end=''))
+atexit.register(lambda: print('shutdown stderr', file=sys.stderr))
+`)
 	t.Chdir(root)
 	bin := "bin"
 	if runtime.GOOS == "windows" {

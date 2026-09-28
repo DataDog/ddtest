@@ -520,7 +520,7 @@ func TestPreviewChoosesTracerBeforeConfirmation(t *testing.T) {
 			bin := t.TempDir()
 			script := "#!/bin/sh\nexit 1\n"
 			if installed {
-				script = "#!/bin/sh\nprintf /project/node_modules/dd-trace/ci/init.js\n"
+				script = "#!/bin/sh\nprintf /project/node_modules/dd-trace/ci/init.js > \"$4\"\n"
 			}
 			requireWriteFile(t, filepath.Join(bin, "node"), script)
 			if err := os.Chmod(filepath.Join(bin, "node"), 0755); err != nil {

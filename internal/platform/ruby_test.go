@@ -549,7 +549,7 @@ func (m *mockCommandExecutor) Output(ctx context.Context, name string, args []st
 	if err != nil {
 		return nil, output, err
 	}
-	return output, nil, nil
+	return output, nil, writeMockProbeResult(args, output)
 }
 
 func TestRubyTracerVersions(t *testing.T) {

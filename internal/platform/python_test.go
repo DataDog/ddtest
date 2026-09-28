@@ -489,7 +489,7 @@ func TestPythonTracerDetectionUsesSelectedEnvironment(t *testing.T) {
 	executor := &mockCommandExecutor{combinedOutput: []byte("3.0.0\n"), onCombinedOutput: func(name string, args []string, env map[string]string) {
 		require.Equal(t, "uv", name)
 		require.Equal(t, []string{"run", "python", "-c"}, args[:3])
-		require.Equal(t, "import importlib.metadata, sys; print(importlib.metadata.version(sys.argv[1]))", args[3])
+		require.Equal(t, detectPythonTracer, args[3])
 	}}
 	version, err := (&Python{executor: executor}).DetectTracer(context.Background(), TracerOptions{Command: "uv", Args: []string{"run", "python"}})
 	require.NoError(t, err)
