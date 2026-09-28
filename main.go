@@ -1,9 +1,12 @@
 package main
 
 import (
+	"errors"
 	"log/slog"
 	"os"
+	"os/exec"
 	"strings"
+	"syscall"
 
 	"github.com/DataDog/ddtest/internal/cmd"
 )
@@ -34,6 +37,15 @@ func run(execute func() error) int {
 
 	if err := execute(); err != nil {
 		slog.Error("FAILURE", "error", err)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+				return 128 + int(status.Signal())
+			}
+			if code := exitErr.ExitCode(); code > 0 {
+				return code
+			}
+		}
 		return 1
 	}
 	return 0

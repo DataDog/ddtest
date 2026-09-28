@@ -198,20 +198,28 @@ func (r *Ruby) DetectTracer(ctx context.Context, _ TracerOptions) (string, error
 }
 
 func (r *Ruby) InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
+	command, args, err := r.TracerInstallCommand(options)
+	if err != nil {
+		return TracerInstallation{}, err
+	}
+	if project, err := r.DetectTracer(ctx, options); err == nil && project != "" {
+		return TracerInstallation{Project: true}, nil
+	}
+	if output, err := r.executor.CombinedOutput(ctx, command, args, map[string]string{"RUBYOPT": ""}); err != nil {
+		return TracerInstallation{}, runtimeTagProbeError("bundle add datadog-ci", output, err)
+	}
+	return TracerInstallation{}, nil
+}
+
+func (r *Ruby) TracerInstallCommand(options TracerOptions) (string, []string, error) {
 	args := []string{"add", requiredGemName}
 	if ref, ok := strings.CutPrefix(options.Version, "git:"); ok {
 		if ref == "" {
-			return TracerInstallation{}, fmt.Errorf("tracer git ref must not be empty")
+			return "", nil, fmt.Errorf("tracer git ref must not be empty")
 		}
 		args = append(args, "--git", "https://github.com/DataDog/datadog-ci-rb.git", "--ref", ref)
 	} else if options.Version != "" && options.Version != "latest" {
 		args = append(args, "--version", options.Version)
 	}
-	if project, err := r.DetectTracer(ctx, options); err == nil && project != "" {
-		return TracerInstallation{Project: true}, nil
-	}
-	if output, err := r.executor.CombinedOutput(ctx, "bundle", args, map[string]string{"RUBYOPT": ""}); err != nil {
-		return TracerInstallation{}, runtimeTagProbeError("bundle add datadog-ci", output, err)
-	}
-	return TracerInstallation{}, nil
+	return "bundle", args, nil
 }

@@ -374,3 +374,19 @@ func TestParseCucumberMessagesRejectsMalformedLine(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestCucumberRunPreservesWrapperSeparatorAndTags(t *testing.T) {
+	executor := &cucumberCommandExecutor{}
+	c := &Cucumber{executor: executor, commandOverride: []string{"npx", "--", "cucumber-js", "--tags", "@smoke", "--", "old.feature"}}
+	if err := c.RunTests(t.Context(), []string{"selected.feature"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--", "cucumber-js", "--tags", "@smoke", "selected.feature"}
+	if !slices.Equal(executor.capturedArgs, want) {
+		t.Fatalf("got %q, want %q", executor.capturedArgs, want)
+	}
+	_, args := c.Command()
+	if !slices.Equal(args, []string{"--", "cucumber-js", "--tags", "@smoke", "--", "old.feature"}) {
+		t.Fatal(args)
+	}
+}

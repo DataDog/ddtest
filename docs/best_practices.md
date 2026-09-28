@@ -165,7 +165,7 @@ Use `--command` when your project runs Jest through a package manager or wrapper
 ddtest run --platform javascript --framework jest --command "pnpm jest --runInBand"
 ```
 
-Do not include test files or a `--` separator in the command; DDTest appends the
+Keep framework options in the command; DDTest supplies the selected
 file list and Jest flags itself.
 
 ## Vitest Support
@@ -180,8 +180,7 @@ ddtest run --platform javascript --framework vitest --command "pnpm exec vitest 
 The command must invoke Vitest directly. During planning, DDTest changes the
 `run` subcommand to `list --filesOnly --json` on Vitest 2.0 and newer. On Vitest 1.6,
 DDTest passes the Vitest arguments to its config-aware discovery API. DDTest
-appends the selected test files during execution. Do not include test files or a
-`--` separator in the command.
+supplies the selected test files during execution.
 
 ## Mocha Support
 
@@ -191,7 +190,7 @@ Use a command that invokes Mocha directly when passing framework flags:
 ddtest run --platform javascript --framework mocha --command "pnpm exec mocha --parallel"
 ```
 
-Do not include test files or a `--` separator. DDTest reads Mocha's effective
+DDTest reads Mocha's effective
 configuration for discovery and replaces configured `spec` inputs with the
 files assigned to each worker during execution.
 
@@ -204,7 +203,7 @@ an alternate project root, or a custom config file:
 ddtest run --platform javascript --framework cypress --command "pnpm exec cypress run --project apps/web --component"
 ```
 
-Do not include test files or a `--` separator. DDTest asks Cypress to resolve
+DDTest asks Cypress to resolve
 its effective configuration during planning and replaces any command-level
 `--spec` value with the files assigned to each worker during execution.
 

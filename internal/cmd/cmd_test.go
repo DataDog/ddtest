@@ -763,8 +763,8 @@ func TestCommandUsage(t *testing.T) {
 	}
 
 	// Expected commands (cobra adds completion and help automatically)
-	expectedCommands := []string{"plan", "run"}
-	requiredCommands := []string{"completion", "help [command]", "plan", "run"}
+	expectedCommands := []string{"plan", "run", "testdrive"}
+	requiredCommands := []string{"completion", "help [command]", "plan", "run", "testdrive"}
 
 	// Verify minimum expected commands exist
 	for _, expected := range expectedCommands {

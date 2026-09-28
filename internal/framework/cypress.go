@@ -69,7 +69,7 @@ func (c *Cypress) SourceFileForSuite(suite string) (string, bool) {
 	if suite == "" {
 		return "", false
 	}
-	command, baseArgs := c.getCypressCommand()
+	command, baseArgs := c.Command()
 	cliArgs, err := cypressCLIArgs(command, baseArgs)
 	if err != nil {
 		return suite, true
@@ -108,7 +108,7 @@ func (c *Cypress) DiscoverTests(context.Context, discovery.TestFileSet) ([]testo
 }
 
 func (c *Cypress) DiscoverTestFiles(ctx context.Context, selectedFiles discovery.TestFileSet) ([]string, error) {
-	command, baseArgs := c.getCypressCommand()
+	command, baseArgs := c.Command()
 	cliArgs, err := cypressCLIArgs(command, baseArgs)
 	if err != nil {
 		return nil, err
@@ -158,7 +158,7 @@ func (c *Cypress) RunTests(ctx context.Context, testFiles []string, envMap map[s
 	if len(testFiles) == 0 {
 		return nil
 	}
-	command, baseArgs := c.getCypressCommand()
+	command, baseArgs := c.Command()
 	cliArgs, err := cypressCLIArgs(command, baseArgs)
 	if err != nil {
 		return err
@@ -191,14 +191,14 @@ func (c *Cypress) discoveryEnv() map[string]string {
 	return envMap
 }
 
-func (c *Cypress) getCypressCommand() (string, []string) {
+func (c *Cypress) Command() (string, []string) {
 	if len(c.commandOverride) > 0 {
 		return c.commandOverride[0], c.commandOverride[1:]
 	}
 	if info, err := os.Stat(binCypressPath); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
-		return binCypressPath, nil
+		return binCypressPath, []string{"run"}
 	}
-	return "npx", []string{"cypress"}
+	return "npx", []string{"cypress", "run"}
 }
 
 func cypressCLIArgs(command string, baseArgs []string) ([]string, error) {
@@ -233,7 +233,10 @@ func cypressRunArgs(command string, baseArgs, testFiles []string) []string {
 	prefix, cliArgs := splitCypressCommand(command, baseArgs)
 	args := append(prefix, "run")
 	args = append(args, removeCypressOption(cliArgs, "--spec", "-s")...)
-	return append(args, "--spec", strings.Join(testFiles, ","))
+	if len(testFiles) > 0 {
+		args = withFrameworkOptions(command, args, "cypress", "--spec", strings.Join(testFiles, ","))
+	}
+	return args
 }
 
 func cypressTestFilesRelativeToProject(cliArgs, testFiles []string) ([]string, error) {

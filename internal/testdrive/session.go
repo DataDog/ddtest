@@ -6,6 +6,7 @@
 package testdrive
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,21 +25,26 @@ type Session struct {
 
 // NewSession creates an independent directory for one testdrive run.
 func NewSession(repositoryRoot string) (*Session, error) {
-	sessionsDirectory := filepath.Join(repositoryRoot, constants.PlanDirectory, "testdrive")
-	if err := os.MkdirAll(sessionsDirectory, 0755); err != nil {
-		return nil, fmt.Errorf("create testdrive sessions directory: %w", err)
+	s := planSession(repositoryRoot)
+	if err := s.create(); err != nil {
+		return nil, err
 	}
+	return s, nil
+}
 
-	prefix := time.Now().UTC().Format(sessionTimeFormat) + "-"
-	directory, err := os.MkdirTemp(sessionsDirectory, prefix)
-	if err != nil {
-		return nil, fmt.Errorf("create testdrive session directory: %w", err)
+func planSession(repositoryRoot string) *Session {
+	id := time.Now().UTC().Format(sessionTimeFormat) + "-" + rand.Text()
+	return &Session{id: id, directory: filepath.Join(repositoryRoot, constants.PlanDirectory, "testdrive", id)}
+}
+
+func (s *Session) create() error {
+	if err := os.MkdirAll(filepath.Dir(s.directory), 0755); err != nil {
+		return fmt.Errorf("create testdrive sessions directory: %w", err)
 	}
-
-	return &Session{
-		id:        filepath.Base(directory),
-		directory: directory,
-	}, nil
+	if err := os.Mkdir(s.directory, 0755); err != nil {
+		return fmt.Errorf("create testdrive output folder: %w", err)
+	}
+	return nil
 }
 
 // ID returns the unique name of the session.

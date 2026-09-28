@@ -151,6 +151,7 @@ func init() {
 
 	rootCmd.AddCommand(planCmd)
 	rootCmd.AddCommand(runCmd)
+	rootCmd.AddCommand(testdriveCmd)
 
 	cobra.OnInitialize(settings.Init)
 }

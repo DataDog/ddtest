@@ -4795,3 +4795,5 @@ func assertPlannerErrorCode(t *testing.T, err error, want errcode.Code) {
 		t.Fatalf("error code = %q, want %q; error: %v", got, want, err)
 	}
 }
+
+func (m *MockFramework) Command() (string, []string) { return "test", nil }
