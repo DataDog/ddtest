@@ -272,7 +272,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		status = "No test results received"
 	}
 	_, _ = fmt.Fprintf(output, "  %s: %s\n", displayName(t.framework.Name()), status)
-	_, _ = fmt.Fprintf(output, "  Tracer: %s\n", tracerLabel)
+	_, _ = fmt.Fprintf(output, "  Datadog library: %s\n", tracerLabel)
 	reportLabel, err := filepath.Rel(t.repositoryRoot, reportPath)
 	if err != nil {
 		reportLabel = reportPath

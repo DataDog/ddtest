@@ -264,7 +264,7 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 		"Test events: 2",
 		"Tests with coverage: 2 / 2",
 		"Jest: Passed",
-		"Tracer: dd-trace@latest · isolated",
+		"Datadog library: dd-trace@latest · isolated",
 		"\x1b]8;;file://",
 		"\x1b\\" + filepath.Join(".testoptimization", "testdrive", filepath.Base(installer.sessionDirectory), "report.html") + "\x1b]8;;",
 	} {
@@ -619,7 +619,7 @@ func TestRunReportsProjectTracer(t *testing.T) {
 	if installer.options.Version != "git:ignored-for-existing-tracer" || installer.options.Command != drive.command {
 		t.Fatal(installer.options)
 	}
-	if !strings.Contains(output.String(), "Tracer: dd-trace · reused") {
+	if !strings.Contains(output.String(), "Datadog library: dd-trace · reused") {
 		t.Fatal(output.String())
 	}
 	if !strings.Contains(executor.env["NODE_OPTIONS"], installer.preloadPath) {

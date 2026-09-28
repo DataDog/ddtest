@@ -113,7 +113,7 @@ func TestReportRuntimeFacts(t *testing.T) {
 			for _, fact := range model.Facts {
 				facts[fact.Label] = fact.Value
 			}
-			if facts["Jest"] != tc.wantStatus || facts["Tracer"] != tc.tracer {
+			if facts["Jest"] != tc.wantStatus || facts["Datadog library"] != tc.tracer {
 				t.Fatalf("incorrect runtime facts: %v", facts)
 			}
 			if tc.events == 0 && (model.Headline != "No test events received." || strings.Contains(model.Summary, "No findings.")) {

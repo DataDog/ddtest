@@ -56,7 +56,7 @@ func buildReport(_ string, findings intake.Facts, commandFailed bool, runtime ..
 		{"Test events", fmt.Sprint(findings.TestEventCount)},
 		{"Tests with coverage", coverage},
 		{info.Framework, status},
-		{"Tracer", info.Tracer},
+		{"Datadog library", info.Tracer},
 	}}
 	if findings.TestEventCount == 0 {
 		model.Headline = "No test events received."
