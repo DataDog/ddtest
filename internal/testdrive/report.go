@@ -48,11 +48,15 @@ func buildReport(_ string, findings intake.Facts, commandFailed bool, runtime ..
 	if findings.CoveredTestCount > 0 {
 		coverage = fmt.Sprintf("%d / %d", findings.CoveredTestCount, findings.TestCount)
 	}
+	status := passedFailed(!commandFailed)
+	if findings.TestEventCount == 0 {
+		status = "No test results received"
+	}
 	model := reportModel{Headline: "Test events received.", Summary: "No findings.", Facts: []reportFact{
 		{"Test events", fmt.Sprint(findings.TestEventCount)},
 		{"Tests with coverage", coverage},
-		{info.Framework, passedFailed(!commandFailed)},
-		{"Tracer", info.Tracer + " · isolated"},
+		{info.Framework, status},
+		{"Tracer", info.Tracer},
 	}}
 	if findings.TestEventCount == 0 {
 		model.Headline = "No test events received."
@@ -161,8 +165,12 @@ func fileURL(path string) (string, error) {
 }
 
 func absoluteFileURL(absolutePath string) string {
-	slashPath := strings.ReplaceAll(absolutePath, `\`, "/")
-	if strings.HasPrefix(slashPath, "//") {
+	slashPath := absolutePath
+	// A backslash is a valid filename character in an absolute Unix path.
+	if !strings.HasPrefix(absolutePath, "/") {
+		slashPath = strings.ReplaceAll(absolutePath, `\`, "/")
+	}
+	if strings.HasPrefix(absolutePath, `\\`) {
 		hostAndPath := strings.TrimPrefix(slashPath, "//")
 		host, path, _ := strings.Cut(hostAndPath, "/")
 		return (&url.URL{Scheme: "file", Host: host, Path: "/" + path}).String()

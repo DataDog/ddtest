@@ -60,11 +60,43 @@ func TestReportSurfacesEmptyCoverageAsTracerError(t *testing.T) {
 	}
 }
 
-func TestAbsoluteFileURLHandlesWindowsPaths(t *testing.T) {
+func TestReportRuntimeFacts(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		events        int
+		commandFailed bool
+		tracer        string
+		wantStatus    string
+	}{
+		{"passing with reused tracer", 1, false, "dd-trace@6.15.0 · reused", "Passed"},
+		{"failing with isolated tracer", 1, true, "dd-trace@6.15.0 · isolated", "Failed"},
+		{"successful command without events", 0, false, "dd-trace@6.15.0 · reused", "No test results received"},
+		{"failed command without events", 0, true, "dd-trace@6.15.0 · isolated", "No test results received"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := buildReport(t.TempDir(), intake.Facts{TestEventCount: tc.events}, tc.commandFailed, reportRuntime{Framework: "Jest", Tracer: tc.tracer})
+			facts := make(map[string]string)
+			for _, fact := range model.Facts {
+				facts[fact.Label] = fact.Value
+			}
+			if facts["Jest"] != tc.wantStatus || facts["Tracer"] != tc.tracer {
+				t.Fatalf("incorrect runtime facts: %v", facts)
+			}
+			if tc.events == 0 && (model.Headline != "No test events received." || strings.Contains(model.Summary, "No findings.")) {
+				t.Fatalf("report implies successful instrumentation without events: %+v", model)
+			}
+		})
+	}
+}
+
+func TestAbsoluteFileURL(t *testing.T) {
 	for path, want := range map[string]string{
-		`C:\repo\report.html`:          "file:///C:/repo/report.html",
-		`C:\project space\report.html`: "file:///C:/project%20space/report.html",
-		`\\server\share\report.html`:   "file://server/share/report.html",
+		`C:\repo\report.html`:                "file:///C:/repo/report.html",
+		`C:\project space\report.html`:       "file:///C:/project%20space/report.html",
+		`\\server\share\report.html`:         "file://server/share/report.html",
+		`\\server\share space\report#1.html`: "file://server/share%20space/report%231.html",
+		`/repo space/report#1.html`:          "file:///repo%20space/report%231.html",
+		`/repo\name/report.html`:             "file:///repo%5Cname/report.html",
 	} {
 		if got := absoluteFileURL(path); got != want {
 			t.Errorf("absoluteFileURL(%q) = %q, want %q", path, got, want)
