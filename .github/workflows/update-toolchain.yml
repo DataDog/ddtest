@@ -39,31 +39,6 @@ jobs:
 
       - name: Open or update toolchain PR
         if: steps.versions.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
-        with:
-          token: ${{ steps.octo-sts.outputs.token }}
-          base: main
-          branch: automation/go-toolchain
-          add-paths: |
-            go.mod
-            .golangci-lint-version
-          commit-message: 'build(deps): update Go and golangci-lint'
-          title: 'build(deps): update Go and golangci-lint'
-          body: |
-            ## What
-
-            Update Go and/or golangci-lint to their latest stable releases.
-            CI and release builds read these pins from go.mod and .golangci-lint-version.
-
-            ## Why
-
-            Pick up toolchain security fixes and keep the linter current.
-            Release sources: https://go.dev/dl/ and https://github.com/golangci/golangci-lint/releases.
-
-            ## E2E testing
-
-            The branch push triggers the full CI suite. Review its results before merging,
-            including linter compatibility with the new Go version.
-            Manual scenario: build with `make build`, verify the toolchain with
-            `go version -m ./ddtest`, then run `ddtest plan` in a configured test project
-            and confirm successful plan generation and Datadog requests.
+        env:
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+        run: python3 .github/scripts/open_toolchain_pr.py

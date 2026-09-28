@@ -43,6 +43,9 @@ jobs:
       - name: Install Python test dependencies
         run: python -m pip install "ddtrace>=4.11.0" pytest
 
+      - name: Test toolchain automation
+        run: python -m unittest discover -s .github/scripts -p 'test_*.py'
+
       - name: Format check
         run: |
           if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
