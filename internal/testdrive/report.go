@@ -40,7 +40,7 @@ type reportTest struct {
 	Duration      string
 	Attempts      []reportAttempt
 	CoverageLevel string
-	CoveredFiles  []string
+	CoveredFiles  []reportCoveredFile
 	Source        reportSource
 }
 
@@ -59,9 +59,14 @@ type reportCoverage struct {
 	Name       string
 	Level      string
 	FileCount  int
-	Files      []string
+	Files      []reportCoveredFile
 	SourceFile string
 	Source     reportSource
+}
+
+type reportCoveredFile struct {
+	Name    string
+	Missing bool
 }
 
 type reportSource struct {
@@ -84,7 +89,7 @@ type reportSuite struct {
 	TestCount    int
 	CoveredCount int
 	ShowCoverage bool
-	CoveredFiles []string
+	CoveredFiles []reportCoveredFile
 	Tests        []reportSuiteTest
 }
 
@@ -160,7 +165,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		},
 		Tests: reportTests(repositoryRoot, findings.Tests, showTestCoverage),
 	}
-	model.Suites = reportSuites(findings.Tests, showSuiteCoverage)
+	model.Suites = reportSuites(repositoryRoot, findings.Tests, showSuiteCoverage)
 	if findings.CoveredTestCount == 0 {
 		model.Facts[1].Value = "Not reported"
 	}
@@ -221,8 +226,14 @@ func reportTests(repositoryRoot string, findings []intake.Test, showCoverage boo
 	tests := make([]reportTest, 0, len(findings))
 	for _, finding := range findings {
 		label := finding.Name
+		if finding.Parameters != "" {
+			label += " " + finding.Parameters
+		}
 		if finding.Suite != "" {
-			label = finding.Suite + " › " + finding.Name
+			label = finding.Suite + " › " + label
+		}
+		if finding.Module != "" {
+			label = finding.Module + " › " + label
 		}
 		status, tone := testDisplayStatus(finding)
 		test := reportTest{
@@ -234,7 +245,7 @@ func reportTests(repositoryRoot string, findings []intake.Test, showCoverage boo
 		}
 		if showCoverage && finding.CoverageLevel == "test" {
 			test.CoverageLevel = finding.CoverageLevel
-			test.CoveredFiles = finding.CoveredFiles
+			test.CoveredFiles = reportCoveredFiles(repositoryRoot, finding.CoveredFiles)
 		}
 		for attemptIndex, attempt := range finding.Attempts {
 			kind := "Initial run"
@@ -262,7 +273,7 @@ func reportCoverages(repositoryRoot string, findings []intake.CoverageFact) []re
 		slices.Sort(files)
 		coverage := reportCoverage{
 			Name: finding.Name, Level: finding.Level, FileCount: finding.FileCount,
-			Files: files, SourceFile: finding.SourceFile,
+			Files: reportCoveredFiles(repositoryRoot, files), SourceFile: finding.SourceFile,
 		}
 		if finding.Level == "test" {
 			coverage.Source = readSource(repositoryRoot, finding.SourceFile, finding.SourceStart, finding.SourceEnd)
@@ -272,42 +283,65 @@ func reportCoverages(repositoryRoot string, findings []intake.CoverageFact) []re
 	return coverages
 }
 
-func reportSuites(tests []intake.Test, showCoverage bool) []reportSuite {
+func reportSuites(repositoryRoot string, tests []intake.Test, showCoverage bool) []reportSuite {
 	byName := make(map[string]*reportSuite)
 	durations := make(map[string]time.Duration)
+	coveredFiles := make(map[string][]string)
 	for _, test := range tests {
 		name := test.Suite
 		if name == "" {
 			name = "Unknown suite"
 		}
-		suite, found := byName[name]
+		key := test.Module + "\x00" + name
+		suite, found := byName[key]
 		status, tone := testDisplayStatus(test)
 		if !found {
+			if test.Module != "" {
+				name = test.Module + " › " + name
+			}
 			suite = &reportSuite{Name: name, Status: suiteStatus(status), Tone: tone, ShowCoverage: showCoverage}
-			byName[name] = suite
+			byName[key] = suite
 		} else if suiteStatusRank(status) > suiteStatusRank(suite.Status) {
 			suite.Status = suiteStatus(status)
 			suite.Tone = tone
 		}
 		suite.TestCount++
-		durations[name] += findingDuration(test)
+		durations[key] += findingDuration(test)
 		if showCoverage && test.CoverageLevel == "suite" {
 			suite.CoveredCount++
-			suite.CoveredFiles = appendUniqueStrings(suite.CoveredFiles, test.CoveredFiles...)
+			coveredFiles[key] = appendUniqueStrings(coveredFiles[key], test.CoveredFiles...)
+		}
+		testName := test.Name
+		if test.Parameters != "" {
+			testName += " " + test.Parameters
 		}
 		suite.Tests = append(suite.Tests, reportSuiteTest{
-			Name: test.Name, Status: status, Tone: tone,
+			Name: testName, Status: status, Tone: tone,
 			Duration: formatDuration(findingDuration(test)),
 		})
 	}
 
 	suites := make([]reportSuite, 0, len(byName))
-	for _, suite := range byName {
-		suite.Duration = formatDuration(durations[suite.Name])
+	for key, suite := range byName {
+		suite.Duration = formatDuration(durations[key])
+		suite.CoveredFiles = reportCoveredFiles(repositoryRoot, coveredFiles[key])
 		suites = append(suites, *suite)
 	}
 	sort.Slice(suites, func(i, j int) bool { return suites[i].Name < suites[j].Name })
 	return suites
+}
+
+func reportCoveredFiles(repositoryRoot string, files []string) []reportCoveredFile {
+	covered := make([]reportCoveredFile, 0, len(files))
+	for _, name := range files {
+		path := name
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(repositoryRoot, filepath.FromSlash(path))
+		}
+		info, err := os.Stat(path)
+		covered = append(covered, reportCoveredFile{Name: name, Missing: err != nil || info.IsDir()})
+	}
+	return covered
 }
 
 func suiteStatus(status string) string {
@@ -385,16 +419,16 @@ func readSource(repositoryRoot, sourceFile string, sourceStart, sourceEnd int) r
 	if err != nil {
 		return reportSource{Error: "Source could not be read: " + err.Error()}
 	}
-	lines := strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n")
+	text := strings.TrimSuffix(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n")
+	lines := strings.Split(text, "\n")
+	if len(contents) == 0 {
+		lines = nil
+	}
 	if sourceStart > len(lines) {
 		return reportSource{Error: fmt.Sprintf("Source line %d is outside %s.", sourceStart, sourceFile)}
 	}
 	if sourceEnd < sourceStart {
-		if filepath.Ext(path) == ".py" || filepath.Ext(path) == ".rb" {
-			sourceEnd = min(sourceStart+11, len(lines))
-		} else {
-			sourceEnd = inferJavaScriptTestEnd(lines, sourceStart)
-		}
+		sourceEnd = sourceStart + 4
 	}
 	sourceEnd = min(sourceEnd, len(lines))
 	source := reportSource{Start: sourceStart, End: sourceEnd}
@@ -410,116 +444,6 @@ func readSource(repositoryRoot, sourceFile string, sourceStart, sourceEnd int) r
 		})
 	}
 	return source
-}
-
-func inferJavaScriptTestEnd(lines []string, sourceStart int) int {
-	parentheses := 0
-	sawParenthesis := false
-	inBlockComment := false
-	var quote byte
-	escaped := false
-	for lineIndex := sourceStart - 1; lineIndex < len(lines); lineIndex++ {
-		line := lines[lineIndex]
-		for characterIndex := 0; characterIndex < len(line); characterIndex++ {
-			character := line[characterIndex]
-			if inBlockComment {
-				if character == '*' && characterIndex+1 < len(line) && line[characterIndex+1] == '/' {
-					inBlockComment = false
-					characterIndex++
-				}
-				continue
-			}
-			if quote != 0 {
-				if escaped {
-					escaped = false
-					continue
-				}
-				if character == '\\' {
-					escaped = true
-					continue
-				}
-				if character == quote {
-					quote = 0
-				}
-				continue
-			}
-			if character == '/' && characterIndex+1 < len(line) {
-				switch line[characterIndex+1] {
-				case '/':
-					characterIndex = len(line)
-					continue
-				case '*':
-					inBlockComment = true
-					characterIndex++
-					continue
-				}
-				if canStartJavaScriptRegex(line[:characterIndex]) {
-					characterIndex = skipJavaScriptRegex(line, characterIndex)
-					continue
-				}
-			}
-			if character == '\'' || character == '"' || character == '`' {
-				quote = character
-				continue
-			}
-			switch character {
-			case '(':
-				parentheses++
-				sawParenthesis = true
-			case ')':
-				parentheses--
-				if sawParenthesis && parentheses == 0 && onlyStatementEnd(line[characterIndex+1:]) {
-					return lineIndex + 1
-				}
-			}
-		}
-	}
-	return min(sourceStart+19, len(lines))
-}
-
-func canStartJavaScriptRegex(prefix string) bool {
-	prefix = strings.TrimSpace(prefix)
-	if prefix == "" {
-		return true
-	}
-	last := prefix[len(prefix)-1]
-	if strings.ContainsRune("([{=,:;!&|?+-*%^~<>", rune(last)) {
-		return true
-	}
-	for _, keyword := range []string{"return", "case", "throw", "delete", "typeof", "void", "yield", "await"} {
-		if prefix == keyword || strings.HasSuffix(prefix, " "+keyword) {
-			return true
-		}
-	}
-	return false
-}
-
-func skipJavaScriptRegex(line string, start int) int {
-	escaped := false
-	inCharacterClass := false
-	for index := start + 1; index < len(line); index++ {
-		switch character := line[index]; {
-		case escaped:
-			escaped = false
-		case character == '\\':
-			escaped = true
-		case character == '[':
-			inCharacterClass = true
-		case character == ']':
-			inCharacterClass = false
-		case character == '/' && !inCharacterClass:
-			for index+1 < len(line) && strings.ContainsRune("dgimsuvy", rune(line[index+1])) {
-				index++
-			}
-			return index
-		}
-	}
-	return start
-}
-
-func onlyStatementEnd(value string) bool {
-	value = strings.TrimSpace(value)
-	return value == "" || value == ";" || strings.HasPrefix(value, "//")
 }
 
 func highlightJavaScriptLine(line string, inBlockComment *bool) template.HTML {
@@ -665,10 +589,14 @@ func displayStatus(status string) string {
 }
 
 func attemptTone(status string) string {
-	if status == "pass" {
+	switch status {
+	case "pass":
 		return "good"
+	case "fail":
+		return "attention"
+	default:
+		return ""
 	}
-	return "attention"
 }
 
 func formatDuration(duration time.Duration) string {
@@ -736,7 +664,7 @@ var testdriveReport = template.Must(template.New("testdrive-report").Funcs(templ
 {{end}}
 {{define "covered-files"}}
   {{if .}}<div class="covered-files-wrap">
-    <ul class="covered-files" data-paginated data-page-size="50">{{range .}}<li class="page-item">{{.}}</li>{{end}}</ul>
+    <ul class="covered-files" data-paginated data-page-size="50">{{range .}}<li class="page-item">{{.Name}}{{if .Missing}} · missing source{{end}}</li>{{end}}</ul>
     <div class="pager"><button type="button" data-prev>Previous</button><span data-page></span><button type="button" data-next>Next</button></div>
   </div>{{end}}
 {{end}}

@@ -135,7 +135,7 @@ func TestReportShowsBroadCoverageFilesAndSource(t *testing.T) {
 		"src/one.js",
 		"src/two.js",
 		`data-page-size="50"`,
-		`class="page-item">src/one.js`,
+		`class="page-item">src/one.js · missing source`,
 		`class="token-string">&#39;broad&#39;`,
 	} {
 		if !strings.Contains(report, expected) {
@@ -184,16 +184,28 @@ func TestSourceUsesReportedRangeAndHighlightsJavaScript(t *testing.T) {
 	}
 }
 
-func TestSourceInfersJestTestEnd(t *testing.T) {
+func TestSourceWithoutEndUsesFiveLines(t *testing.T) {
 	repositoryRoot := t.TempDir()
-	source := "test(\"one\", () => {\n  expect(true).toBe(true);\n});\n\ntest(\"two\", () => {});\n"
-	if err := os.WriteFile(filepath.Join(repositoryRoot, "inferred.test.js"), []byte(source), 0644); err != nil {
+	source := "test(\"one\", () => {\n  expect(\")\").toMatch(/\\)/);\n});\n\ntest(\"two\", () => {});\nconst outside = true;\n"
+	if err := os.WriteFile(filepath.Join(repositoryRoot, "fallback.test.js"), []byte(source), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	excerpt := readSource(repositoryRoot, "inferred.test.js", 1, 0)
-	if excerpt.End != 3 {
-		t.Fatalf("inferred source end = %d, want 3", excerpt.End)
+	for _, tc := range []struct {
+		name       string
+		start, end int
+		wantEnd    int
+	}{
+		{name: "five lines regardless of syntax", start: 1, wantEnd: 5},
+		{name: "truncated at EOF", start: 4, wantEnd: 6},
+		{name: "explicit end", start: 1, end: 3, wantEnd: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			excerpt := readSource(repositoryRoot, "fallback.test.js", tc.start, tc.end)
+			if excerpt.Start != tc.start || excerpt.End != tc.wantEnd || len(excerpt.Lines) != tc.wantEnd-tc.start+1 {
+				t.Fatalf("source excerpt = lines %d-%d (%d lines), want %d-%d", excerpt.Start, excerpt.End, len(excerpt.Lines), tc.start, tc.wantEnd)
+			}
+		})
 	}
 }
 
@@ -211,9 +223,10 @@ func TestSourceReportsUsefulErrors(t *testing.T) {
 	requireSourceError(t, readSource(repositoryRoot, "short.test.js", 3, 3), "outside short.test.js")
 
 	excerpt := readSource(repositoryRoot, sourcePath, 1, 99)
-	if excerpt.Start != 1 || excerpt.End != 2 || len(excerpt.Lines) != 2 {
-		t.Fatalf("absolute source excerpt = lines %d-%d (%d lines), want 1-2", excerpt.Start, excerpt.End, len(excerpt.Lines))
+	if excerpt.Start != 1 || excerpt.End != 1 || len(excerpt.Lines) != 1 {
+		t.Fatalf("absolute source excerpt = lines %d-%d (%d lines), want 1-1", excerpt.Start, excerpt.End, len(excerpt.Lines))
 	}
+	requireSourceError(t, readSource(repositoryRoot, sourcePath, 2, 0), "outside")
 }
 
 func requireSourceError(t *testing.T, source reportSource, expected string) {
@@ -223,45 +236,72 @@ func requireSourceError(t *testing.T, source reportSource, expected string) {
 	}
 }
 
-func TestInferJavaScriptTestEndIgnoresCommentsAndQuotedParentheses(t *testing.T) {
-	lines := []string{
-		`test(")", () => {`,
-		`  /* ) */`,
-		`  const value = "escaped \")";`,
-		`  // )`,
-		`}); // done`,
-	}
-	if end := inferJavaScriptTestEnd(lines, 1); end != 5 {
-		t.Fatalf("inferJavaScriptTestEnd() = %d, want 5", end)
-	}
-
-	fallbackLines := make([]string, 30)
-	for index := range fallbackLines {
-		fallbackLines[index] = "const value = 1;"
-	}
-	if end := inferJavaScriptTestEnd(fallbackLines, 3); end != 22 {
-		t.Fatalf("fallback end = %d, want 22", end)
-	}
-}
-
-func TestInferJavaScriptTestEndIgnoresRegularExpressionParentheses(t *testing.T) {
-	lines := []string{
-		`test("regex", () => {`,
-		`  expect(")").toMatch(/\)/);`,
-		`  expect("value").toMatch(/[)]/);`,
-		`});`,
-	}
-	if end := inferJavaScriptTestEnd(lines, 1); end != 4 {
-		t.Fatalf("inferJavaScriptTestEnd() = %d, want 4", end)
-	}
-}
-
 func TestReportSuitesPreservesAllSkippedStatus(t *testing.T) {
-	suites := reportSuites([]intake.Test{{Name: "one", Suite: "suite", Status: "skip"}, {Name: "two", Suite: "suite", Status: "skip"}}, false)
+	suites := reportSuites(t.TempDir(), []intake.Test{{Name: "one", Suite: "suite", Status: "skip"}, {Name: "two", Suite: "suite", Status: "skip"}}, false)
 	if len(suites) != 1 || suites[0].Status != "Skip" {
 		t.Fatalf("reportSuites() = %+v, want one skipped suite", suites)
 	}
 }
+
+func TestReportPreservesModuleAndParameters(t *testing.T) {
+	tests := []intake.Test{
+		{Module: "first", Suite: "shared", Name: "same", Parameters: `{"case":1}`, Status: "pass"},
+		{Module: "first", Suite: "shared", Name: "same", Parameters: `{"case":2}`, Status: "skip"},
+		{Module: "second", Suite: "shared", Name: "same", Parameters: `{"case":1}`, Status: "fail"},
+	}
+	model := buildReport(t.TempDir(), intake.Facts{Tests: tests}, false)
+	if len(model.Tests) != 3 || model.Tests[0].Label == model.Tests[1].Label || model.Tests[0].Label == model.Tests[2].Label {
+		t.Fatalf("test labels are indistinguishable: %+v", model.Tests)
+	}
+	if len(model.Suites) != 2 || model.Suites[0].Name != "first › shared" || model.Suites[0].TestCount != 2 || model.Suites[1].Name != "second › shared" || model.Suites[1].TestCount != 1 || model.Suites[1].Status != "Failed" {
+		t.Fatalf("suite identities merged: %+v", model.Suites)
+	}
+	if model.Suites[0].Tests[0].Name == model.Suites[0].Tests[1].Name {
+		t.Fatalf("parameterized tests are indistinguishable: %+v", model.Suites[0].Tests)
+	}
+}
+
+func TestReportSkippedOutcomesHaveNeutralTone(t *testing.T) {
+	test := intake.Test{Name: "skipped", Suite: "suite", Status: "skip", Attempts: []intake.TestRun{{Status: "skip"}}}
+	model := buildReport(t.TempDir(), intake.Facts{Tests: []intake.Test{test}}, false)
+	if model.Tests[0].Tone != "" || model.Tests[0].Attempts[0].Tone != "" || model.Suites[0].Tone != "" || model.Suites[0].Tests[0].Tone != "" {
+		t.Fatalf("skipped result uses failure tone: test=%+v suite=%+v", model.Tests[0], model.Suites[0])
+	}
+}
+
+func TestReportShowsMissingCoveredFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "present.js"), []byte("export const value = 1;"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	files := []string{"present.js", "deleted.js"}
+	for _, level := range []string{"test", "suite"} {
+		facts := intake.Facts{
+			CoverageLevel: level,
+			Tests:         []intake.Test{{Name: "covered", Suite: "suite", Status: "pass", CoverageLevel: level, CoveredFiles: files}},
+			BroadCoverage: []intake.CoverageFact{{Name: "broad", Level: level, Files: files}},
+		}
+		model := buildReport(root, facts, false)
+		var covered []reportCoveredFile
+		if level == "test" {
+			covered = model.Tests[0].CoveredFiles
+		} else {
+			covered = model.Suites[0].CoveredFiles
+		}
+		missing := make(map[string]bool)
+		for _, file := range covered {
+			missing[file.Name] = file.Missing
+		}
+		if len(covered) != 2 || missing["present.js"] || !missing["deleted.js"] || len(model.Cards[0].Coverages) != 1 || !model.Cards[0].Coverages[0].Files[0].Missing {
+			t.Fatalf("missing source is hidden at %s level: files=%+v card=%+v", level, covered, model.Cards[0])
+		}
+		report := renderTestReport(t, root, facts)
+		if !strings.Contains(report, "deleted.js · missing source") || !strings.Contains(report, "present.js</li>") || strings.Contains(report, "present.js · missing source") {
+			t.Fatalf("covered file status is incorrect in %s report", level)
+		}
+	}
+}
+
 func TestHighlightJavaScriptLineHandlesCommentsTokensAndEscapes(t *testing.T) {
 	inBlockComment := false
 	first := string(highlightJavaScriptLine("/* open <tag>", &inBlockComment))

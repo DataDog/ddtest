@@ -291,6 +291,9 @@ func analyzeCoverage(tests []testReference, coverages []coverageReference, level
 			key = fmt.Sprintf("%d/%d", coverage.sessionID, coverage.suiteID)
 			finding.Level = "suite"
 			finding.Name = test.suite
+			if test.module != "" {
+				finding.Name = test.module + " › " + test.suite
+			}
 			finding.SourceFile = test.sourceFile
 		}
 		if current, found := findingsByName[key]; !found || finding.FileCount > current.FileCount {
