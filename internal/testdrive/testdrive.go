@@ -135,7 +135,31 @@ func (t *Testdrive) Preview(output io.Writer) {
 
 	_, _ = fmt.Fprintf(output, "  - run: %s\n", shellquote.Join(append([]string{command}, args...)...))
 	_, _ = fmt.Fprintln(output)
-	_, _ = fmt.Fprintln(output, "It will not change package.json, Gemfile, Python dependency files, or a lockfile in your project.")
+	patterns := map[string][]string{
+		"javascript": {"package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb"},
+		"python":     {"pyproject.toml", "setup.py", "setup.cfg", "requirements*.txt", "requirements*.in", "Pipfile", "Pipfile.lock", "poetry.lock", "uv.lock", "pdm.lock", "pylock.toml"},
+		"ruby":       {"Gemfile", "Gemfile.lock", "gems.rb", "gems.locked"},
+	}[t.language]
+	entries, _ := os.ReadDir(t.repositoryRoot)
+	var files []string
+	for _, pattern := range patterns {
+		for _, entry := range entries {
+			matched, _ := filepath.Match(pattern, entry.Name())
+			if !matched {
+				continue
+			}
+			if info, err := os.Stat(filepath.Join(t.repositoryRoot, entry.Name())); err == nil && !info.IsDir() {
+				files = append(files, entry.Name())
+			}
+		}
+	}
+	if len(files) > 0 {
+		names := files[0]
+		if len(files) > 1 {
+			names = strings.Join(files[:len(files)-1], ", ") + " or " + files[len(files)-1]
+		}
+		_, _ = fmt.Fprintf(output, "It will not change %s.\n", names)
+	}
 }
 
 // Run prepares the tracer and executes the detected test suite.

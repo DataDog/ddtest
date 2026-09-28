@@ -113,6 +113,53 @@ func TestPrepareAndPreviewJest(t *testing.T) {
 	}
 }
 
+func TestPreviewNamesOnlyDiscoveredDependencyFiles(t *testing.T) {
+	for _, tc := range []struct {
+		name, language string
+		framework      framework.Framework
+		files          []string
+		want           string
+	}{
+		{"manifest only", "javascript", framework.NewJest(), []string{"package.json"}, "It will not change package.json."},
+		{"npm", "javascript", framework.NewJest(), []string{"package.json", "package-lock.json"}, "It will not change package.json or package-lock.json."},
+		{"pnpm with other languages", "javascript", framework.NewJest(), []string{"package.json", "pnpm-lock.yaml", "Gemfile", "pyproject.toml"}, "It will not change package.json or pnpm-lock.yaml."},
+		{"yarn", "javascript", framework.NewJest(), []string{"package.json", "yarn.lock"}, "It will not change package.json or yarn.lock."},
+		{"bun", "javascript", framework.NewJest(), []string{"package.json", "bun.lock"}, "It will not change package.json or bun.lock."},
+		{"uv", "python", framework.NewPytest(), []string{"pyproject.toml", "uv.lock", "package.json"}, "It will not change pyproject.toml or uv.lock."},
+		{"pip", "python", framework.NewPytest(), []string{"requirements.txt", "requirements-dev.txt"}, "It will not change requirements-dev.txt or requirements.txt."},
+		{"poetry", "python", framework.NewPytest(), []string{"pyproject.toml", "poetry.lock"}, "It will not change pyproject.toml or poetry.lock."},
+		{"ruby reused", "ruby", framework.NewRSpec(), []string{"Gemfile", "Gemfile.lock", "package.json"}, "It will not change Gemfile or Gemfile.lock."},
+		{"multiple locks", "javascript", framework.NewJest(), []string{"package.json", "package-lock.json", "yarn.lock"}, "It will not change package.json, package-lock.json or yarn.lock."},
+		{"no dependency files", "python", framework.NewPytest(), []string{"pytest.ini"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "project [space]")
+			if err := os.Mkdir(root, 0755); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range tc.files {
+				requireWriteFile(t, filepath.Join(root, name), "")
+			}
+			// A directory with a dependency filename is not a discovered file.
+			if err := os.Mkdir(filepath.Join(root, "bun.lockb"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			drive := &Testdrive{repositoryRoot: root, language: tc.language, framework: tc.framework, session: planSession(root), projectTracer: "installed"}
+			var output bytes.Buffer
+			drive.Preview(&output)
+			var notice string
+			for line := range strings.SplitSeq(output.String(), "\n") {
+				if strings.HasPrefix(line, "It will not change") {
+					notice = line
+				}
+			}
+			if notice != tc.want {
+				t.Fatalf("dependency notice = %q, want %q", notice, tc.want)
+			}
+		})
+	}
+}
+
 func TestPrepareRejectsUnsupportedRepository(t *testing.T) {
 	t.Chdir(t.TempDir())
 	_, err := Prepare("latest")
