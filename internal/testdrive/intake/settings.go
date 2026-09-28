@@ -67,12 +67,15 @@ func handleSettings(w http.ResponseWriter, request *http.Request) {
 	response.Data.Attributes = api.SettingsResponseData{
 		CodeCoverage:                true,
 		CoverageReportUploadEnabled: true,
-		TestsSkipping:               true,
-		ItrEnabled:                  true,
-		ImpactedTestsEnabled:        true,
-		FlakyTestRetriesEnabled:     true,
-		DIEnabled:                   true,
-		KnownTestsEnabled:           true,
+		// Testdrive runs the whole suite and disables git upload. Some tracers
+		// wait for that upload before fetching skippable tests, so advertising
+		// skipping here can prevent Jest from ever starting.
+		TestsSkipping:           false,
+		ItrEnabled:              true,
+		ImpactedTestsEnabled:    true,
+		FlakyTestRetriesEnabled: true,
+		DIEnabled:               true,
+		KnownTestsEnabled:       true,
 		EarlyFlakeDetection: api.EarlyFlakeDetectionSettings{
 			Enabled:                true,
 			SlowTestRetries:        api.SlowTestRetries{FiveS: 1, TenS: 1, ThirtyS: 1, FiveM: 1},

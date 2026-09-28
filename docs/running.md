@@ -263,8 +263,9 @@ When `--tests-location` or `--tests-exclude-pattern` is set, DDTest filters the
 file list returned by Jest after discovery; it does not pass `--tests-location`
 as Jest's `--testMatch`.
 
-DDTest prepends `-r dd-trace/ci/init` to `NODE_OPTIONS` for worker processes
-unless `NODE_OPTIONS` already loads `dd-trace/ci/init`.
+DDTest appends `-r dd-trace/ci/init` to `NODE_OPTIONS` for worker processes
+unless `NODE_OPTIONS` already loads `dd-trace/ci/init`. Existing project loaders,
+such as Yarn Plug'n'Play, run before the tracer.
 
 ## Cucumber Discovery And Instrumentation
 
@@ -336,10 +337,10 @@ projects, include and exclude patterns, and CLI filters without executing tests.
 If that API is unavailable, DDTest falls back to its own filesystem glob using
 `--tests-location` or the default Vitest test-file pattern.
 
-DDTest prepends both `--import dd-trace/register.js` and
-`-r dd-trace/ci/init` to `NODE_OPTIONS` for Vitest worker processes unless they
-are already present. Discovery removes these options to avoid instrumenting the
-file-listing process.
+DDTest adds `--import dd-trace/register.js` and `-r dd-trace/ci/init` to
+`NODE_OPTIONS` for Vitest worker processes unless they are already present.
+The tracer's `--require` option follows existing project loaders. Discovery
+removes these options to avoid instrumenting the file-listing process.
 
 ## Cypress Discovery And Instrumentation
 

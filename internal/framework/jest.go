@@ -1,7 +1,9 @@
 package framework
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -99,7 +101,7 @@ func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFi
 
 	command, baseArgs := j.Command()
 	args := slices.Clone(baseArgs)
-	args = withFrameworkOptions(command, args, "jest", "--listTests")
+	args = withFrameworkOptions(command, args, "jest", "--listTests", "--json")
 
 	slog.Info("Discovering Jest test files with command", "command", command, "args", args)
 	output, err := j.executor.CombinedOutput(ctx, command, args, j.discoveryEnv())
@@ -111,7 +113,10 @@ func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFi
 		return nil, fmt.Errorf("failed to discover Jest test files: %s: %w", message, err)
 	}
 
-	discoveredFiles := parseJestListTestsOutput(output)
+	discoveredFiles, err := parseJestListTestsOutput(output)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover Jest test files: %w", err)
+	}
 	if settings.GetTestsLocation() == "" && settings.GetTestsExcludePattern() == "" {
 		return discoveredFiles, nil
 	}
@@ -221,18 +226,44 @@ func stripNodeOptionsRequire(nodeOptions string, module string) string {
 	return strings.Join(stripped, " ")
 }
 
-func parseJestListTestsOutput(output []byte) []string {
+// Jest's --listTests --json writes an array of absolute paths. Preloads and
+// package managers may log before or after it, even without a newline. Accept
+// exactly one such array; missing or ambiguous output must not become an empty
+// successful plan.
+func parseJestListTestsOutput(output []byte) ([]string, error) {
+	var paths []string
+	found := false
+	for len(output) > 0 {
+		start := bytes.IndexByte(output, '[')
+		if start < 0 {
+			break
+		}
+		output = output[start:]
+		decoder := json.NewDecoder(bytes.NewReader(output))
+		var candidate []string
+		if err := decoder.Decode(&candidate); err != nil {
+			output = output[1:]
+			continue
+		}
+		output = output[decoder.InputOffset():]
+		if slices.ContainsFunc(candidate, func(path string) bool { return !filepath.IsAbs(path) }) {
+			continue
+		}
+		if found {
+			return nil, errors.New("ambiguous Jest JSON test list")
+		}
+		paths, found = candidate, true
+	}
+	if !found {
+		return nil, errors.New("missing Jest JSON test list")
+	}
+
 	cwd, _ := os.Getwd()
 	if resolvedCwd, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = resolvedCwd
 	}
 	testFiles := make([]string, 0)
-	for _, line := range strings.Split(string(output), "\n") {
-		testFile := strings.TrimSpace(line)
-		if testFile == "" {
-			continue
-		}
-
+	for _, testFile := range paths {
 		if filepath.IsAbs(testFile) && cwd != "" {
 			pathForRel := testFile
 			if resolvedPath, err := filepath.EvalSymlinks(testFile); err == nil {
@@ -250,11 +281,11 @@ func parseJestListTestsOutput(output []byte) []string {
 			continue
 		}
 		if _, err := os.Stat(normalizedTestFile); err != nil {
-			continue
+			return nil, fmt.Errorf("invalid Jest test file %q: %w", testFile, err)
 		}
 		testFiles = append(testFiles, normalizedTestFile)
 	}
 
 	slices.Sort(testFiles)
-	return slices.Compact(testFiles)
+	return slices.Compact(testFiles), nil
 }

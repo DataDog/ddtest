@@ -177,9 +177,11 @@ func (p *Python) SanityCheck(ctx context.Context) error {
 // DetectTracer returns the installed version using the test runner's interpreter.
 func (p *Python) DetectTracer(ctx context.Context, options TracerOptions) (string, error) {
 	command, prefix := pythonInterpreter(options.Command, options.Args)
-	args := append(append([]string{}, prefix...), "-c", "import importlib.metadata, sys; print(importlib.metadata.version(sys.argv[1]))", requiredPackageName)
+	args := append(append([]string{}, prefix...), "-c", detectPythonTracer, requiredPackageName)
 	return tracerProbe(ctx, p.executor, command, args, nil)
 }
+
+const detectPythonTracer = "import importlib.metadata, pathlib, sys; pathlib.Path(sys.argv[2]).write_text(importlib.metadata.version(sys.argv[1]))"
 
 func pythonInterpreter(command string, args []string) (string, []string) {
 	base := strings.ToLower(filepath.Base(strings.ReplaceAll(command, `\`, "/")))

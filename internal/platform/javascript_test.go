@@ -70,7 +70,7 @@ func TestJavaScript_GetPlatformEnv_PreservesExistingNODEOPTIONS(t *testing.T) {
 	javascript := NewJavaScript()
 	envMap := javascript.GetPlatformEnv()
 
-	expected := nodeOptionsDDTraceCIArg + " --max-old-space-size=4096"
+	expected := "--max-old-space-size=4096 " + nodeOptionsDDTraceCIArg
 	if envMap[nodeOptionsEnvVar] != expected {
 		t.Errorf("expected NODE_OPTIONS to be %q, got %q", expected, envMap[nodeOptionsEnvVar])
 	}
@@ -421,7 +421,7 @@ func TestJavaScript_SanityCheck_Passes(t *testing.T) {
 			if calls == 1 && (len(args) != 1 || args[0] != "--version") {
 				t.Fatalf("expected node --version, got %v", args)
 			}
-			if calls == 2 && (len(args) != 3 || args[0] != "-e" || args[2] != ddTraceCIInitModule) {
+			if calls == 2 && (len(args) != 4 || args[0] != "-e" || args[2] != ddTraceCIInitModule) {
 				t.Fatalf("expected node require.resolve command, got %v", args)
 			}
 		},
@@ -629,7 +629,7 @@ func (m *sequentialMockExecutor) Output(ctx context.Context, name string, args [
 	if err != nil {
 		return nil, output, err
 	}
-	return output, nil, nil
+	return output, nil, writeMockProbeResult(args, output)
 }
 
 type command struct {
@@ -659,6 +659,9 @@ func (e *fakeCommandExecutor) CombinedOutput(_ context.Context, name string, arg
 func (e *fakeCommandExecutor) Output(ctx context.Context, name string, args []string, env map[string]string) ([]byte, []byte, error) {
 	_, err := e.CombinedOutput(ctx, name, args, env)
 	response := e.responses[len(e.commands)-1]
+	if err == nil {
+		err = writeMockProbeResult(args, response.output)
+	}
 	return response.output, response.stderr, err
 }
 
@@ -679,7 +682,7 @@ func TestJavaScriptInstall(t *testing.T) {
 	require.False(t, ciInitPath.Project)
 	require.True(t, filepath.IsAbs(ciInitPath.Path))
 	require.Equal(t, "node", executor.commands[0].name)
-	require.Equal(t, []string{"-e", resolveJavaScriptModule, ddTraceCIInitModule}, executor.commands[0].args)
+	require.Equal(t, []string{"-e", resolveJavaScriptModule, ddTraceCIInitModule}, executor.commands[0].args[:3])
 	require.Equal(t, []command{
 		executor.commands[0],
 		{
@@ -701,10 +704,11 @@ func TestJavaScriptInstall(t *testing.T) {
 				"-e",
 				resolveJavaScriptModule,
 				filepath.Join(sessionDirectory, "node_modules", "dd-trace", "ci", "init"),
+				executor.commands[2].args[3],
 			},
 		},
 	}, executor.commands)
-	require.Equal(t, []map[string]string{{"NODE_OPTIONS": ""}, {"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}, {"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}}, executor.envs)
+	require.Equal(t, []map[string]string{nil, {"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}, {"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}}, executor.envs)
 }
 
 func TestJavaScriptInstallReportsNPMError(t *testing.T) {
@@ -731,7 +735,7 @@ func TestJavaScriptInstallReportsResolveErrorWithoutOutput(t *testing.T) {
 	javascript := &JavaScript{executor: executor}
 
 	_, err := javascript.InstallTestdriveTracer(context.Background(), TracerOptions{Directory: t.TempDir()})
-	require.ErrorContains(t, err, "resolve dd-trace/ci/init: exit status 1")
+	require.ErrorContains(t, err, "resolve dd-trace/ci/init: detect project tracer: exit status 1")
 }
 
 func TestJavaScriptInstallReportsResolveStderr(t *testing.T) {
@@ -744,7 +748,7 @@ func TestJavaScriptInstallReportsResolveStderr(t *testing.T) {
 
 	path, err := javascript.InstallTestdriveTracer(context.Background(), TracerOptions{Directory: t.TempDir()})
 	require.Empty(t, path)
-	require.ErrorContains(t, err, "resolve dd-trace/ci/init: Cannot find module dd-trace/ci/init")
+	require.ErrorContains(t, err, "resolve dd-trace/ci/init: detect project tracer: Cannot find module dd-trace/ci/init")
 	require.ErrorIs(t, err, exitErr)
 }
 

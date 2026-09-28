@@ -44,7 +44,7 @@ func TestSettingsEnablesTestOptimizationCoverage(t *testing.T) {
 	require.Equal(t, constants.SettingsResponseType, settings.Data.Type)
 	require.True(t, settings.Data.Attributes.ItrEnabled)
 	require.True(t, settings.Data.Attributes.CodeCoverage)
-	require.True(t, settings.Data.Attributes.TestsSkipping)
+	require.False(t, settings.Data.Attributes.TestsSkipping)
 	require.False(t, settings.Data.Attributes.RequireGit)
 	require.True(t, settings.Data.Attributes.CoverageReportUploadEnabled)
 	require.True(t, settings.Data.Attributes.ImpactedTestsEnabled)

@@ -97,10 +97,11 @@ func (j *JavaScript) GetPlatformEnv() map[string]string {
 		return map[string]string{}
 	}
 
-	// Keep user-provided options after the required Datadog preloads.
+	// Project loaders (for example Yarn PnP) must run before the tracer can
+	// resolve itself and its dependencies. Preserve their existing order.
 	nodeOptions := nodeOptionsDDTraceCIArg
 	if strings.TrimSpace(currentValue) != "" {
-		nodeOptions += " " + currentValue
+		nodeOptions = currentValue + " " + nodeOptions
 	}
 
 	slog.Debug("Setting NODE_OPTIONS to auto-instrument with dd-trace-js", "nodeOptions", nodeOptions)
@@ -249,14 +250,18 @@ func isDirectJavaScriptCommand(script string, names ...string) bool {
 
 // DetectTracer resolves the project's CI preload using Node's module resolution.
 func (j *JavaScript) DetectTracer(ctx context.Context, _ TracerOptions) (string, error) {
-	path, err := tracerProbe(ctx, j.executor, "node", []string{"-e", resolveJavaScriptModule, ddTraceCIInitModule}, map[string]string{"NODE_OPTIONS": ""})
+	// Project resolution may depend on NODE_OPTIONS (for example Yarn PnP).
+	path, err := tracerProbe(ctx, j.executor, "node", []string{"-e", resolveJavaScriptModule, ddTraceCIInitModule}, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve %s: %w", ddTraceCIInitModule, err)
+	}
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("resolve %s: node returned non-absolute path %q", ddTraceCIInitModule, path)
 	}
 	return path, nil
 }
 
-const resolveJavaScriptModule = "process.stdout.write(require.resolve(process.argv[1]))"
+const resolveJavaScriptModule = "require('fs').writeFileSync(process.argv[2], require.resolve(process.argv[1]))"
 
 // InstallTestdriveTracer reuses the project preload or installs an isolated fallback.
 func (j *JavaScript) InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
@@ -275,12 +280,11 @@ func (j *JavaScript) InstallTestdriveTracer(ctx context.Context, options TracerO
 	}
 
 	ciInitModule := filepath.Join(sessionDirectory, "node_modules", "dd-trace", "ci", "init")
-	output, stderr, err := j.executor.Output(ctx, "node", []string{"-e", resolveJavaScriptModule, ciInitModule}, cleanEnvironment)
+	ciInitPath, err := tracerProbe(ctx, j.executor, "node", []string{"-e", resolveJavaScriptModule, ciInitModule}, cleanEnvironment)
 	if err != nil {
-		return TracerInstallation{}, runtimeTagProbeError("resolve dd-trace/ci/init", stderr, err)
+		return TracerInstallation{}, fmt.Errorf("resolve dd-trace/ci/init: %w", err)
 	}
 
-	ciInitPath := strings.TrimSpace(string(output))
 	if !filepath.IsAbs(ciInitPath) {
 		return TracerInstallation{}, fmt.Errorf("resolve dd-trace/ci/init: node returned non-absolute path %q", ciInitPath)
 	}

@@ -194,7 +194,16 @@ func parseBundlerInfoVersion(output, gemName string) (version.Version, error) {
 
 // DetectTracer reads the project tracer's bundle information.
 func (r *Ruby) DetectTracer(ctx context.Context, _ TracerOptions) (string, error) {
-	return tracerProbe(ctx, r.executor, "bundle", []string{"info", requiredGemName}, map[string]string{"RUBYOPT": ""})
+	// Gemfiles may depend on load paths and project setup supplied by RUBYOPT.
+	stdout, stderr, err := r.executor.Output(ctx, "bundle", []string{"info", requiredGemName}, nil)
+	if err != nil {
+		return "", runtimeTagProbeError("detect project tracer", append(stdout, stderr...), err)
+	}
+	gemVersion, err := parseBundlerInfoVersion(string(stdout), requiredGemName)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("  * %s (%s)", requiredGemName, gemVersion.String()), nil
 }
 
 func (r *Ruby) InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
