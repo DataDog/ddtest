@@ -572,9 +572,8 @@ func TestRubyTracerVersions(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, TracerInstallation{}, result)
 			require.Equal(t, command{name: "bundle", args: tc.args}, executor.commands[1])
-			for _, env := range executor.envs {
-				require.Equal(t, map[string]string{"RUBYOPT": ""}, env) // Inherit the project bundle settings.
-			}
+			require.Nil(t, executor.envs[0])                                     // Detect with the complete project environment.
+			require.Equal(t, map[string]string{"RUBYOPT": ""}, executor.envs[1]) // Clean preloads only for installation.
 			entries, err := os.ReadDir(directory)
 			require.NoError(t, err)
 			require.Empty(t, entries)

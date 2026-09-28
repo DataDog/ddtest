@@ -249,7 +249,8 @@ func isDirectJavaScriptCommand(script string, names ...string) bool {
 
 // DetectTracer resolves the project's CI preload using Node's module resolution.
 func (j *JavaScript) DetectTracer(ctx context.Context, _ TracerOptions) (string, error) {
-	path, err := tracerProbe(ctx, j.executor, "node", []string{"-e", resolveJavaScriptModule, ddTraceCIInitModule}, map[string]string{"NODE_OPTIONS": ""})
+	// Project resolution may depend on NODE_OPTIONS (for example Yarn PnP).
+	path, err := tracerProbe(ctx, j.executor, "node", []string{"-e", resolveJavaScriptModule, ddTraceCIInitModule}, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve %s: %w", ddTraceCIInitModule, err)
 	}

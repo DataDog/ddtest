@@ -704,7 +704,7 @@ func TestJavaScriptInstall(t *testing.T) {
 			},
 		},
 	}, executor.commands)
-	require.Equal(t, []map[string]string{{"NODE_OPTIONS": ""}, {"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}, {"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}}, executor.envs)
+	require.Equal(t, []map[string]string{nil, {"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}, {"NODE_OPTIONS": "", "NPM_CONFIG_GLOBAL": "false", "npm_config_global": "false"}}, executor.envs)
 }
 
 func TestJavaScriptInstallReportsNPMError(t *testing.T) {
