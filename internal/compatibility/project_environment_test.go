@@ -1,6 +1,7 @@
 package compatibility
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -10,8 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/testdrive"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,9 +42,11 @@ func TestJavaScriptProjectEnvironment(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	root := filepath.Join(t.TempDir(), "project with spaces")
-	writeFixture(t, root, "package.json", `{"name":"pnp-regression","private":true,"dependencies":{"dd-trace":"file:./tracer"}}`)
-	writeFixture(t, root, "tracer/package.json", `{"name":"dd-trace","version":"1.0.0"}`)
-	writeFixture(t, root, "tracer/ci/init.js", "module.exports = {};\n")
+	writeFixture(t, root, "package.json", `{"name":"pnp-regression","private":true,"scripts":{"test":"jest"},"dependencies":{"dd-trace":"file:./tracer"}}`)
+	writeFixture(t, root, "tracer/package.json", `{"name":"dd-trace","version":"1.0.0","dependencies":{"pnp-tracer-helper":"file:../helper"}}`)
+	writeFixture(t, root, "helper/package.json", `{"name":"pnp-tracer-helper","version":"1.0.0","main":"index.js"}`)
+	writeFixture(t, root, "helper/index.js", "module.exports = 'loaded through PnP';\n")
+	writeFixture(t, root, "tracer/ci/init.js", "global.ddtestTracer = require('pnp-tracer-helper');\n")
 	t.Chdir(root)
 	t.Setenv("NODE_OPTIONS", "")
 	t.Setenv("NODE_PATH", "")
@@ -72,6 +77,43 @@ process.on('exit', () => {
 	require.Equal(t, path, installation.Path)
 	// Use the detected result as an actual preload; log-contaminated paths fail.
 	runFixtureCommand(t, ctx, "node", "--require", path, "-e", "require('dd-trace/ci/init')")
+
+	// Exercise the actual discovery/run adapters and testdrive worker startup.
+	// The tracer's dependency also needs PnP when the tracer path is absolute.
+	resetSettingsAfterTest(t)
+	writeFixture(t, root, "example.test.js", "// Worker-startup fixture.\n")
+	writeFixture(t, root, "worker.cjs", `const assert = require('assert');
+const fs = require('fs');
+if (process.argv.includes('--listTests')) {
+  assert.strictEqual(global.ddtestTracer, undefined);
+  console.log(require('path').resolve('example.test.js'));
+} else {
+  assert.strictEqual(global.ddtestTracer, 'loaded through PnP');
+  fs.writeFileSync('worker-ran', 'instrumented');
+}
+`)
+	configureFramework(shellCommand("node", filepath.Join(root, "worker.cjs")), "")
+	t.Setenv("NODE_OPTIONS", "--require "+strconv.Quote(loader)+" --max-old-space-size=256")
+	t.Run("discovery and execution", func(t *testing.T) {
+		fw, err := javascript.DetectFramework()
+		require.NoError(t, err)
+		files, err := fw.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: "**/*.test.js"})
+		require.NoError(t, err)
+		require.Len(t, files, 1)
+		require.NoError(t, fw.RunTests(ctx, files, nil))
+		require.FileExists(t, filepath.Join(root, "worker-ran"))
+		require.NoError(t, os.Remove(filepath.Join(root, "worker-ran")))
+	})
+	t.Run("testdrive", func(t *testing.T) {
+		drive, err := testdrive.Prepare("git:must-not-install")
+		require.NoError(t, err)
+		var output bytes.Buffer
+		err = drive.Run(ctx, &output)
+		// This fixture checks startup, not telemetry. A successful command with
+		// no events is distinguishable from a failed Node preload.
+		require.ErrorContains(t, err, "command exited successfully, but Test Optimization sent no test events", output.String())
+		require.FileExists(t, filepath.Join(root, "worker-ran"))
+	})
 }
 
 func TestRubyProjectEnvironment(t *testing.T) {

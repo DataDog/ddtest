@@ -70,7 +70,7 @@ func TestJavaScript_GetPlatformEnv_PreservesExistingNODEOPTIONS(t *testing.T) {
 	javascript := NewJavaScript()
 	envMap := javascript.GetPlatformEnv()
 
-	expected := nodeOptionsDDTraceCIArg + " --max-old-space-size=4096"
+	expected := "--max-old-space-size=4096 " + nodeOptionsDDTraceCIArg
 	if envMap[nodeOptionsEnvVar] != expected {
 		t.Errorf("expected NODE_OPTIONS to be %q, got %q", expected, envMap[nodeOptionsEnvVar])
 	}

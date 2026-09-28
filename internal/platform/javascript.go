@@ -97,10 +97,11 @@ func (j *JavaScript) GetPlatformEnv() map[string]string {
 		return map[string]string{}
 	}
 
-	// Keep user-provided options after the required Datadog preloads.
+	// Project loaders (for example Yarn PnP) must run before the tracer can
+	// resolve itself and its dependencies. Preserve their existing order.
 	nodeOptions := nodeOptionsDDTraceCIArg
 	if strings.TrimSpace(currentValue) != "" {
-		nodeOptions += " " + currentValue
+		nodeOptions = currentValue + " " + nodeOptions
 	}
 
 	slog.Debug("Setting NODE_OPTIONS to auto-instrument with dd-trace-js", "nodeOptions", nodeOptions)

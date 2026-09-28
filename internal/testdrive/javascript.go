@@ -11,7 +11,9 @@ import (
 func javascriptEnvironment(ciInitPath string) map[string]string {
 	nodeOptions := "-r " + strconv.Quote(ciInitPath)
 	if current := stripDatadogNodeOptions(os.Getenv("NODE_OPTIONS")); current != "" {
-		nodeOptions += " " + current
+		// Even an absolute tracer path can depend on the project's loader to
+		// resolve its dependencies.
+		nodeOptions = current + " " + nodeOptions
 	}
 
 	return map[string]string{"NODE_OPTIONS": nodeOptions}
