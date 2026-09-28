@@ -86,14 +86,14 @@ process.on('exit', () => {
 const fs = require('fs');
 if (process.argv.includes('--listTests')) {
   assert.strictEqual(global.ddtestTracer, undefined);
-  console.log(require('path').resolve('example.test.js'));
+  assert(process.argv.includes('--json'));
+  console.log(JSON.stringify([require('path').resolve('example.test.js')]));
 } else {
   assert.strictEqual(global.ddtestTracer, 'loaded through PnP');
   fs.writeFileSync('worker-ran', 'instrumented');
 }
 `)
 	configureFramework(shellCommand("node", filepath.Join(root, "worker.cjs")), "")
-	t.Setenv("NODE_OPTIONS", "--require "+strconv.Quote(loader)+" --max-old-space-size=256")
 	t.Run("discovery and execution", func(t *testing.T) {
 		fw, err := javascript.DetectFramework()
 		require.NoError(t, err)
