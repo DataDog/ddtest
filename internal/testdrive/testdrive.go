@@ -115,6 +115,9 @@ func displayName(name string) string {
 func (t *Testdrive) Preview(output io.Writer) {
 	command, args := t.command, t.args
 	directory := t.session.Directory()
+	if relative, err := filepath.Rel(t.repositoryRoot, directory); err == nil {
+		directory = relative
+	}
 
 	_, _ = fmt.Fprintf(output, "DDTest found %s and %s.\n", displayName(t.language), displayName(t.framework.Name()))
 	_, _ = fmt.Fprintln(output)
@@ -123,12 +126,14 @@ func (t *Testdrive) Preview(output io.Writer) {
 	if t.projectTracer != "" {
 		_, _ = fmt.Fprintf(output, "  - reuse installed %s; no installation is needed\n", t.installedTracerLabel(t.projectTracer))
 	} else {
-		_, _ = fmt.Fprintf(output, "  - install %s: %s\n", t.tracerLabel, shellquote.Join(append([]string{t.installCommand}, t.installArgs...)...))
+		install := append([]string{t.installCommand}, t.installArgs...)
+		for i, arg := range install {
+			install[i] = strings.ReplaceAll(arg, t.session.Directory(), directory)
+		}
+		_, _ = fmt.Fprintf(output, "  - install %s: %s\n", t.tracerLabel, shellquote.Join(install...))
 	}
 
 	_, _ = fmt.Fprintf(output, "  - run: %s\n", shellquote.Join(append([]string{command}, args...)...))
-	_, _ = fmt.Fprintf(output, "  - save a clickable report in %s\n", filepath.Join(directory, reportFilename))
-	_, _ = fmt.Fprintf(output, "  - save captured traffic in %s and test output in %s\n", filepath.Join(directory, "intake"), filepath.Join(directory, testOutputFilename))
 	_, _ = fmt.Fprintln(output)
 	_, _ = fmt.Fprintln(output, "It will not change package.json, Gemfile, Python dependency files, or a lockfile in your project.")
 }
@@ -224,7 +229,11 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	}
 	_, _ = fmt.Fprintf(output, "  %s: %s\n", displayName(t.framework.Name()), status)
 	_, _ = fmt.Fprintf(output, "  Tracer: %s\n", tracerLabel)
-	_, _ = fmt.Fprintf(output, "\nOpen report: %s\n", terminalLink(reportURL))
+	reportLabel, err := filepath.Rel(t.repositoryRoot, reportPath)
+	if err != nil {
+		reportLabel = reportPath
+	}
+	_, _ = fmt.Fprintf(output, "\nOpen report: %s\n", terminalLink(reportURL, reportLabel))
 
 	if testErr != nil {
 		return fmt.Errorf("%s failed after sending %d test event(s): %w", t.framework.Name(), findings.TestEventCount, testErr)

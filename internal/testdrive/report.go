@@ -187,6 +187,6 @@ func absoluteFileURL(absolutePath string) string {
 	return (&url.URL{Scheme: "file", Path: slashPath}).String()
 }
 
-func terminalLink(target string) string {
-	return "\x1b]8;;" + target + "\x1b\\" + target + "\x1b]8;;\x1b\\"
+func terminalLink(target, label string) string {
+	return "\x1b]8;;" + target + "\x1b\\" + label + "\x1b]8;;\x1b\\"
 }

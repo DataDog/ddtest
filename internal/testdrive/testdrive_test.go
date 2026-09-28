@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -80,7 +81,10 @@ func writeJestManifest(t *testing.T, repositoryRoot string) {
 }
 
 func TestPrepareAndPreviewJest(t *testing.T) {
-	repositoryRoot := t.TempDir()
+	repositoryRoot := filepath.Join(t.TempDir(), "project space")
+	if err := os.Mkdir(repositoryRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
 	writeJestManifest(t, repositoryRoot)
 
 	t.Chdir(repositoryRoot)
@@ -95,11 +99,16 @@ func TestPrepareAndPreviewJest(t *testing.T) {
 		"found JavaScript and Jest",
 		"dd-trace@",
 		"npx jest",
-		filepath.Join(repositoryRoot, ".testoptimization", "testdrive"),
+		filepath.Join(".testoptimization", "testdrive"),
 		"will not change package.json",
 	} {
 		if !strings.Contains(output.String(), expected) {
 			t.Errorf("Preview() output does not contain %q:\n%s", expected, output.String())
+		}
+	}
+	for _, unwanted := range []string{repositoryRoot, "save a clickable report", "save captured traffic"} {
+		if strings.Contains(output.String(), unwanted) {
+			t.Errorf("Preview() contains %q:\n%s", unwanted, output.String())
 		}
 	}
 }
@@ -210,7 +219,7 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 		"Jest: Passed",
 		"Tracer: dd-trace@latest · isolated",
 		"\x1b]8;;file://",
-		"report.html",
+		"\x1b\\" + filepath.Join(".testoptimization", "testdrive", filepath.Base(installer.sessionDirectory), "report.html") + "\x1b]8;;",
 	} {
 		if !strings.Contains(output.String(), expected) {
 			t.Errorf("Run() output does not contain %q:\n%s", expected, output.String())
@@ -578,8 +587,12 @@ func TestPreviewChoosesTracerBeforeConfirmation(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				if !strings.Contains(preview, "npm install --prefix "+drive.session.Directory()+" --global=false --no-save --package-lock=false --no-audit --no-fund dd-trace@6.15.0") {
+				directory := filepath.Join(".testoptimization", "testdrive", drive.session.ID())
+				if !strings.Contains(preview, "npm install --prefix "+directory+" --global=false --no-save --package-lock=false --no-audit --no-fund dd-trace@6.15.0") {
 					t.Fatal(preview)
+				}
+				if !slices.Contains(drive.installArgs, drive.session.Directory()) {
+					t.Fatalf("preview changed the actual installation path: %v", drive.installArgs)
 				}
 			}
 		})
