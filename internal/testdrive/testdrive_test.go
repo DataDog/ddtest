@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -80,7 +81,10 @@ func writeJestManifest(t *testing.T, repositoryRoot string) {
 }
 
 func TestPrepareAndPreviewJest(t *testing.T) {
-	repositoryRoot := t.TempDir()
+	repositoryRoot := filepath.Join(t.TempDir(), "project space")
+	if err := os.Mkdir(repositoryRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
 	writeJestManifest(t, repositoryRoot)
 
 	t.Chdir(repositoryRoot)
@@ -95,12 +99,64 @@ func TestPrepareAndPreviewJest(t *testing.T) {
 		"found JavaScript and Jest",
 		"dd-trace@",
 		"npx jest",
-		filepath.Join(repositoryRoot, ".testoptimization", "testdrive"),
+		filepath.Join(".testoptimization", "testdrive"),
 		"will not change package.json",
 	} {
 		if !strings.Contains(output.String(), expected) {
 			t.Errorf("Preview() output does not contain %q:\n%s", expected, output.String())
 		}
+	}
+	for _, unwanted := range []string{repositoryRoot, "save a clickable report", "save captured traffic"} {
+		if strings.Contains(output.String(), unwanted) {
+			t.Errorf("Preview() contains %q:\n%s", unwanted, output.String())
+		}
+	}
+}
+
+func TestPreviewNamesOnlyDiscoveredDependencyFiles(t *testing.T) {
+	for _, tc := range []struct {
+		name, language string
+		framework      framework.Framework
+		files          []string
+		want           string
+	}{
+		{"manifest only", "javascript", framework.NewJest(), []string{"package.json"}, "It will not change package.json."},
+		{"npm", "javascript", framework.NewJest(), []string{"package.json", "package-lock.json"}, "It will not change package.json or package-lock.json."},
+		{"pnpm with other languages", "javascript", framework.NewJest(), []string{"package.json", "pnpm-lock.yaml", "Gemfile", "pyproject.toml"}, "It will not change package.json or pnpm-lock.yaml."},
+		{"yarn", "javascript", framework.NewJest(), []string{"package.json", "yarn.lock"}, "It will not change package.json or yarn.lock."},
+		{"bun", "javascript", framework.NewJest(), []string{"package.json", "bun.lock"}, "It will not change package.json or bun.lock."},
+		{"uv", "python", framework.NewPytest(), []string{"pyproject.toml", "uv.lock", "package.json"}, "It will not change pyproject.toml or uv.lock."},
+		{"pip", "python", framework.NewPytest(), []string{"requirements.txt", "requirements-dev.txt"}, "It will not change requirements-dev.txt or requirements.txt."},
+		{"poetry", "python", framework.NewPytest(), []string{"pyproject.toml", "poetry.lock"}, "It will not change pyproject.toml or poetry.lock."},
+		{"ruby reused", "ruby", framework.NewRSpec(), []string{"Gemfile", "Gemfile.lock", "package.json"}, "It will not change Gemfile or Gemfile.lock."},
+		{"multiple locks", "javascript", framework.NewJest(), []string{"package.json", "package-lock.json", "yarn.lock"}, "It will not change package.json, package-lock.json or yarn.lock."},
+		{"no dependency files", "python", framework.NewPytest(), []string{"pytest.ini"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "project [space]")
+			if err := os.Mkdir(root, 0755); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range tc.files {
+				requireWriteFile(t, filepath.Join(root, name), "")
+			}
+			// A directory with a dependency filename is not a discovered file.
+			if err := os.Mkdir(filepath.Join(root, "bun.lockb"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			drive := &Testdrive{repositoryRoot: root, language: tc.language, framework: tc.framework, session: planSession(root), projectTracer: "installed"}
+			var output bytes.Buffer
+			drive.Preview(&output)
+			var notice string
+			for line := range strings.SplitSeq(output.String(), "\n") {
+				if strings.HasPrefix(line, "It will not change") {
+					notice = line
+				}
+			}
+			if notice != tc.want {
+				t.Fatalf("dependency notice = %q, want %q", notice, tc.want)
+			}
+		})
 	}
 }
 
@@ -208,7 +264,9 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 		"Test events: 2",
 		"Tests with coverage: 2 / 2",
 		"Jest: Passed",
-		"Tracer: dd-trace@latest · isolated",
+		"Datadog library: dd-trace@latest · isolated",
+		"\x1b]8;;file://",
+		"\x1b\\" + filepath.Join(".testoptimization", "testdrive", filepath.Base(installer.sessionDirectory), "report.html") + "\x1b]8;;",
 	} {
 		if !strings.Contains(output.String(), expected) {
 			t.Errorf("Run() output does not contain %q:\n%s", expected, output.String())
@@ -229,7 +287,32 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 	if strings.Contains(output.String(), "PASS one.test.js") {
 		t.Fatalf("Run() leaked detailed Jest output:\n%s", output.String())
 	}
-
+	report, err := os.ReadFile(filepath.Join(installer.sessionDirectory, reportFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"Test events received",
+		"Any tests slower than the others?",
+		"Median test time · 1s",
+		"slow test",
+		"Run details",
+		"Tests with coverage",
+		"2 / 2",
+		"dd-trace@",
+		`href="intake/"`,
+		`href="test-output.txt"`,
+		`<article class="problem-card">`,
+	} {
+		if !strings.Contains(string(report), expected) {
+			t.Errorf("report does not contain %q", expected)
+		}
+	}
+	for _, hiddenCard := range []string{"Any tests failed?", "Any flaky tests?", "Any unusually broad test coverage?"} {
+		if strings.Contains(string(report), hiddenCard) {
+			t.Errorf("report contains no-problem card %q", hiddenCard)
+		}
+	}
 	for _, environmentVariable := range []string{
 		"DD_CIVISIBILITY_ITR_ENABLED",
 		"DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED",
@@ -246,40 +329,76 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 }
 
 func TestRunStillReportsEventsWhenJestFails(t *testing.T) {
-	repositoryRoot := t.TempDir()
-	writeJestManifest(t, repositoryRoot)
-	t.Chdir(repositoryRoot)
-	testdrive, err := Prepare("latest")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	testdrive.platform = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
-	testdrive.executor = &fakeTestdriveExecutor{output: []byte("FAIL one.test.js\n"), err: errors.New("exit status 1")}
-	testdrive.startIntake = func(string) (localIntake, error) {
-		return &fakeIntake{
-			url: "http://127.0.0.1:1234",
-			findings: intake.Facts{
-				TestCount:      1,
-				TestEventCount: 1,
-				FailedTests: []intake.Test{{
-					Name: "fails", Suite: "one.test.js", Status: "fail",
-					Attempts: []intake.TestRun{{Status: "fail", Duration: time.Millisecond}},
-				}},
-			},
-		}, nil
-	}
-
-	var output bytes.Buffer
-	err = testdrive.Run(t.Context(), &output)
-	if err == nil || !strings.Contains(err.Error(), "jest failed after sending 1 test event") {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !strings.Contains(output.String(), "Test events received.") {
-		t.Fatalf("Run() did not report working instrumentation:\n%s", output.String())
-	}
-	if !strings.Contains(output.String(), "Failed tests (1):") || !strings.Contains(output.String(), "one.test.js › fails · Fail · 1ms") || !strings.Contains(output.String(), "Jest: Failed") {
-		t.Fatalf("Run() did not report the failure and report link:\n%s", output.String())
+	for _, tc := range []struct {
+		name   string
+		output string
+		events int
+		want   string
+	}{
+		{name: "assertion failure", output: "FAIL one.test.js\nExpected: true\nReceived: false\n    at one.test.js:4:18\n", events: 1, want: "Expected: true\nReceived: false\n    at one.test.js:4:18"},
+		{name: "suite setup failure without failed events", output: "Cannot find module './missing' from 'setup.js'\n", events: 1363, want: "Cannot find module './missing'"},
+		{name: "no events", output: "SyntaxError: unexpected token in jest.config.js\n", want: "SyntaxError: unexpected token"},
+		{name: "empty output", events: 1, want: "The command produced no output."},
+		{name: "80 lines", output: strings.Repeat("log line\n", 79) + "final failure", events: 1, want: "final failure"},
+		{name: "long output", output: "initial failure\n" + strings.Repeat("log line\n", 79) + "final failure\n", events: 1, want: "... 1 line omitted; see the full test output below ..."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repositoryRoot := filepath.Join(t.TempDir(), "project space")
+			if err := os.Mkdir(repositoryRoot, 0755); err != nil {
+				t.Fatal(err)
+			}
+			writeJestManifest(t, repositoryRoot)
+			t.Chdir(repositoryRoot)
+			testdrive, err := Prepare("latest")
+			if err != nil {
+				t.Fatal(err)
+			}
+			installer := &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
+			testdrive.platform = installer
+			failure := errors.New("exit status 1")
+			testdrive.executor = &fakeTestdriveExecutor{output: []byte(tc.output), err: failure}
+			findings := intake.Facts{TestCount: tc.events, TestEventCount: tc.events}
+			if tc.name == "assertion failure" {
+				findings.FailedTests = []intake.Test{{Name: "fails", Suite: "one.test.js", Status: "fail", Attempts: []intake.TestRun{{Status: "fail", Duration: time.Millisecond}}}}
+			}
+			testdrive.startIntake = func(string) (localIntake, error) {
+				return &fakeIntake{url: "http://127.0.0.1:1234", findings: findings}, nil
+			}
+			var output bytes.Buffer
+			err = testdrive.Run(t.Context(), &output)
+			if !errors.Is(err, failure) {
+				t.Fatalf("Run() error = %v", err)
+			}
+			label := filepath.Join(".testoptimization", "testdrive", filepath.Base(installer.sessionDirectory), testOutputFilename)
+			for _, expected := range []string{"Jest command output:", tc.want, "Full test output: " + label, "Open report:"} {
+				if !strings.Contains(output.String(), expected) {
+					t.Errorf("missing %q in output:\n%s", expected, output.String())
+				}
+			}
+			if tc.events > 0 && !strings.Contains(output.String(), "Test events received.") {
+				t.Fatal(output.String())
+			}
+			if tc.name == "assertion failure" && !strings.Contains(output.String(), "one.test.js › fails · Fail · 1ms") {
+				t.Fatal(output.String())
+			}
+			if tc.name == "long output" {
+				if !strings.Contains(output.String(), "initial failure") || !strings.Contains(output.String(), "final failure") || strings.Count(output.String(), "log line") != 78 {
+					t.Fatal(output.String())
+				}
+			} else if strings.Contains(output.String(), "lines omitted") {
+				t.Fatal(output.String())
+			}
+			contents, err := os.ReadFile(label)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(contents) != tc.output {
+				t.Fatalf("saved output changed: %q", contents)
+			}
+			if strings.Contains(output.String(), "Full test output: "+repositoryRoot) {
+				t.Fatal("output path is absolute")
+			}
+		})
 	}
 }
 
@@ -500,7 +619,7 @@ func TestRunReportsProjectTracer(t *testing.T) {
 	if installer.options.Version != "git:ignored-for-existing-tracer" || installer.options.Command != drive.command {
 		t.Fatal(installer.options)
 	}
-	if !strings.Contains(output.String(), "Tracer: dd-trace · reused") {
+	if !strings.Contains(output.String(), "Datadog library: dd-trace · reused") {
 		t.Fatal(output.String())
 	}
 	if !strings.Contains(executor.env["NODE_OPTIONS"], installer.preloadPath) {
@@ -551,8 +670,12 @@ func TestPreviewChoosesTracerBeforeConfirmation(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				if !strings.Contains(preview, "npm install --prefix "+drive.session.Directory()+" --global=false --no-save --package-lock=false --no-audit --no-fund dd-trace@6.15.0") {
+				directory := filepath.Join(".testoptimization", "testdrive", drive.session.ID())
+				if !strings.Contains(preview, "npm install --prefix "+directory+" --global=false --no-save --package-lock=false --no-audit --no-fund dd-trace@6.15.0") {
 					t.Fatal(preview)
+				}
+				if !slices.Contains(drive.installArgs, drive.session.Directory()) {
+					t.Fatalf("preview changed the actual installation path: %v", drive.installArgs)
 				}
 			}
 		})

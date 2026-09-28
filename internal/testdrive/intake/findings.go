@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	minimumSlowDuration       = 100 * time.Millisecond
+	minimumSlowDuration       = 5 * time.Second
 	minimumBroadCoverageFiles = 5
 )
 
@@ -215,11 +215,10 @@ func slowTests(tests []Test) ([]Test, time.Duration) {
 		return nil, medianTestDuration(tests)
 	}
 	median := medianTestDuration(tests)
-	threshold := max(minimumSlowDuration, median*2)
 
 	slow := make([]Test, 0)
 	for _, test := range tests {
-		if test.Duration >= threshold && test.Duration > median {
+		if test.Duration > minimumSlowDuration && test.Duration >= median*5 {
 			slow = append(slow, test)
 		}
 	}

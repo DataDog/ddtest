@@ -115,6 +115,9 @@ func displayName(name string) string {
 func (t *Testdrive) Preview(output io.Writer) {
 	command, args := t.command, t.args
 	directory := t.session.Directory()
+	if relative, err := filepath.Rel(t.repositoryRoot, directory); err == nil {
+		directory = relative
+	}
 
 	_, _ = fmt.Fprintf(output, "DDTest found %s and %s.\n", displayName(t.language), displayName(t.framework.Name()))
 	_, _ = fmt.Fprintln(output)
@@ -123,13 +126,40 @@ func (t *Testdrive) Preview(output io.Writer) {
 	if t.projectTracer != "" {
 		_, _ = fmt.Fprintf(output, "  - reuse installed %s; no installation is needed\n", t.installedTracerLabel(t.projectTracer))
 	} else {
-		_, _ = fmt.Fprintf(output, "  - install %s: %s\n", t.tracerLabel, shellquote.Join(append([]string{t.installCommand}, t.installArgs...)...))
+		install := append([]string{t.installCommand}, t.installArgs...)
+		for i, arg := range install {
+			install[i] = strings.ReplaceAll(arg, t.session.Directory(), directory)
+		}
+		_, _ = fmt.Fprintf(output, "  - install %s: %s\n", t.tracerLabel, shellquote.Join(install...))
 	}
 
 	_, _ = fmt.Fprintf(output, "  - run: %s\n", shellquote.Join(append([]string{command}, args...)...))
-	_, _ = fmt.Fprintf(output, "  - save captured traffic in %s and test output in %s\n", filepath.Join(directory, "intake"), filepath.Join(directory, testOutputFilename))
 	_, _ = fmt.Fprintln(output)
-	_, _ = fmt.Fprintln(output, "It will not change package.json, Gemfile, Python dependency files, or a lockfile in your project.")
+	patterns := map[string][]string{
+		"javascript": {"package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb"},
+		"python":     {"pyproject.toml", "setup.py", "setup.cfg", "requirements*.txt", "requirements*.in", "Pipfile", "Pipfile.lock", "poetry.lock", "uv.lock", "pdm.lock", "pylock.toml"},
+		"ruby":       {"Gemfile", "Gemfile.lock", "gems.rb", "gems.locked"},
+	}[t.language]
+	entries, _ := os.ReadDir(t.repositoryRoot)
+	var files []string
+	for _, pattern := range patterns {
+		for _, entry := range entries {
+			matched, _ := filepath.Match(pattern, entry.Name())
+			if !matched {
+				continue
+			}
+			if info, err := os.Stat(filepath.Join(t.repositoryRoot, entry.Name())); err == nil && !info.IsDir() {
+				files = append(files, entry.Name())
+			}
+		}
+	}
+	if len(files) > 0 {
+		names := files[0]
+		if len(files) > 1 {
+			names = strings.Join(files[:len(files)-1], ", ") + " or " + files[len(files)-1]
+		}
+		_, _ = fmt.Fprintf(output, "It will not change %s.\n", names)
+	}
 }
 
 // Run prepares the tracer and executes the detected test suite.
@@ -180,6 +210,26 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	if err := os.WriteFile(testOutputPath, testOutput, 0644); err != nil {
 		return fmt.Errorf("save test output: %w", err)
 	}
+	if testErr != nil {
+		_, _ = fmt.Fprintf(output, "\n%s command output:\n", displayName(t.framework.Name()))
+		captured := strings.TrimSpace(string(testOutput))
+		lines := strings.Split(captured, "\n")
+		switch {
+		case captured == "":
+			_, _ = fmt.Fprintln(output, "The command produced no output.")
+		case len(lines) > 80:
+			_, _ = fmt.Fprintln(output, strings.Join(lines[:40], "\n"))
+			_, _ = fmt.Fprintf(output, "\n... %d %s omitted; see the full test output below ...\n\n", len(lines)-80, plural(len(lines)-80, "line", "lines"))
+			_, _ = fmt.Fprintln(output, strings.Join(lines[len(lines)-40:], "\n"))
+		default:
+			_, _ = fmt.Fprintln(output, captured)
+		}
+		outputLabel, err := filepath.Rel(t.repositoryRoot, testOutputPath)
+		if err != nil {
+			outputLabel = testOutputPath
+		}
+		_, _ = fmt.Fprintf(output, "\nFull test output: %s\n", outputLabel)
+	}
 
 	// Drain the intake before taking the snapshot used by the report.
 	closeErr := server.Close()
@@ -190,6 +240,14 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	findings, err := server.Facts()
 	if err != nil {
 		return err
+	}
+	reportPath, err := writeReport(t.repositoryRoot, session.Directory(), findings, testErr != nil, reportRuntime{Framework: displayName(t.framework.Name()), Tracer: tracerLabel})
+	if err != nil {
+		return err
+	}
+	reportURL, err := fileURL(reportPath)
+	if err != nil {
+		return fmt.Errorf("create report link: %w", err)
 	}
 
 	_, _ = fmt.Fprintln(output)
@@ -214,8 +272,12 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		status = "No test results received"
 	}
 	_, _ = fmt.Fprintf(output, "  %s: %s\n", displayName(t.framework.Name()), status)
-	_, _ = fmt.Fprintf(output, "  Tracer: %s\n", tracerLabel)
-	_, _ = fmt.Fprintf(output, "\nRun artifacts: %s\n", session.Directory())
+	_, _ = fmt.Fprintf(output, "  Datadog library: %s\n", tracerLabel)
+	reportLabel, err := filepath.Rel(t.repositoryRoot, reportPath)
+	if err != nil {
+		reportLabel = reportPath
+	}
+	_, _ = fmt.Fprintf(output, "\nOpen report: %s\n", terminalLink(reportURL, reportLabel))
 
 	if testErr != nil {
 		return fmt.Errorf("%s failed after sending %d test event(s): %w", t.framework.Name(), findings.TestEventCount, testErr)
