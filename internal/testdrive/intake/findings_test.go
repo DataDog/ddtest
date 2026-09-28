@@ -21,7 +21,7 @@ func TestAnalyzeTestsFindsFailuresRetriesAndSlowTests(t *testing.T) {
 		{name: "fast", suite: "one.test.js", status: "pass", duration: 10 * time.Millisecond},
 		{name: "flaky", suite: "one.test.js", status: "fail", duration: 20 * time.Millisecond},
 		{name: "flaky", suite: "one.test.js", status: "pass", duration: 30 * time.Millisecond, isRetry: true},
-		{name: "slow", suite: "two.test.js", status: "pass", duration: 400 * time.Millisecond},
+		{name: "slow", suite: "two.test.js", status: "pass", duration: 6 * time.Second},
 		{name: "broken", suite: "two.test.js", status: "fail", duration: 15 * time.Millisecond},
 	}
 
@@ -40,10 +40,42 @@ func TestAnalyzeTestsFindsFailuresRetriesAndSlowTests(t *testing.T) {
 		},
 	}}, flaky)
 	require.Equal(t, []Test{{
-		Name: "slow", Suite: "two.test.js", Status: "pass", Duration: 400 * time.Millisecond,
-		Attempts: []TestRun{{Status: "pass", Duration: 400 * time.Millisecond}},
+		Name: "slow", Suite: "two.test.js", Status: "pass", Duration: 6 * time.Second,
+		Attempts: []TestRun{{Status: "pass", Duration: 6 * time.Second}},
 	}}, slow)
 	require.Equal(t, 17500*time.Microsecond, median)
+}
+
+func TestAnalyzeTestsSlowThresholds(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		median   time.Duration
+		duration time.Duration
+		wantSlow bool
+	}{
+		{name: "fast outlier", median: 10 * time.Millisecond, duration: 400 * time.Millisecond},
+		{name: "exactly five seconds", median: time.Second, duration: 5 * time.Second},
+		{name: "above five seconds", median: time.Second, duration: 5*time.Second + time.Nanosecond, wantSlow: true},
+		{name: "below five times median", median: 2 * time.Second, duration: 10*time.Second - time.Nanosecond},
+		{name: "exactly five times median", median: 2 * time.Second, duration: 10 * time.Second, wantSlow: true},
+		{name: "above five times median", median: 2 * time.Second, duration: 11 * time.Second, wantSlow: true},
+		{name: "uniformly slow tests", median: 6 * time.Second, duration: 6 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, slow, median := analyzeTests([]testReference{
+				{name: "baseline one", status: "pass", duration: tc.median},
+				{name: "baseline two", status: "pass", duration: tc.median},
+				{name: "candidate", status: "pass", duration: tc.duration},
+			}, nil, "")
+			require.Equal(t, tc.median, median)
+			if tc.wantSlow {
+				require.Len(t, slow, 1)
+				require.Equal(t, "candidate", slow[0].Name)
+			} else {
+				require.Empty(t, slow)
+			}
+		})
+	}
 }
 
 func TestAnalyzeTestsUsesFinalStatusAndMarksMixedOutcomesFlaky(t *testing.T) {
@@ -250,7 +282,7 @@ func TestFindingsPreservesCoverageInEveryCategory(t *testing.T) {
 				}
 				duration := time.Millisecond
 				if name == "" {
-					duration = time.Second
+					duration = 6 * time.Second
 				}
 				events = append(events, map[string]any{"type": "test", "content": map[string]any{
 					"test_session_id": 1, "test_suite_id": 2, "span_id": i + 1, "duration": int64(duration),
