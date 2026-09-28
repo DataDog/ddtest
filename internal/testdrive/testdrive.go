@@ -209,7 +209,11 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 			_, _ = fmt.Fprintln(output, "  Coverage was not reported by this run.")
 		}
 	}
-	_, _ = fmt.Fprintf(output, "  %s: %s\n", displayName(t.framework.Name()), passedFailed(testErr == nil))
+	status := passedFailed(testErr == nil)
+	if findings.TestEventCount == 0 {
+		status = "No test results received"
+	}
+	_, _ = fmt.Fprintf(output, "  %s: %s\n", displayName(t.framework.Name()), status)
 	_, _ = fmt.Fprintf(output, "  Tracer: %s\n", tracerLabel)
 	_, _ = fmt.Fprintf(output, "\nRun artifacts: %s\n", session.Directory())
 
@@ -217,7 +221,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		return fmt.Errorf("%s failed after sending %d test event(s): %w", t.framework.Name(), findings.TestEventCount, testErr)
 	}
 	if findings.TestEventCount == 0 {
-		return fmt.Errorf("%s passed, but Test Optimization sent no test events", t.framework.Name())
+		return fmt.Errorf("%s command exited successfully, but Test Optimization sent no test events", t.framework.Name())
 	}
 	return nil
 }
@@ -226,7 +230,7 @@ func writeFindings(output io.Writer, findings intake.Facts) {
 	if len(findings.ConfigurationErrors) > 0 {
 		_, _ = fmt.Fprintf(output, "Tracer configuration errors: %s. Inspect the captured traffic and test output.\n", strings.Join(findings.ConfigurationErrors, ", "))
 	}
-	count := 0
+	count := len(findings.ConfigurationErrors)
 	if findings.EmptyCoverageEntryCount > 0 {
 		count += findings.EmptyCoverageEntryCount
 		_, _ = fmt.Fprintf(output, "Tracer error: received %d coverage entries with an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.\n", findings.EmptyCoverageEntryCount)
@@ -237,6 +241,10 @@ func writeFindings(output io.Writer, findings intake.Facts) {
 		count += size
 	}
 	if count == 0 {
+		if findings.TestEventCount == 0 {
+			_, _ = fmt.Fprintln(output, "Test findings unavailable: no test events were received.")
+			return
+		}
 		_, _ = fmt.Fprintln(output, "No findings.")
 		return
 	}

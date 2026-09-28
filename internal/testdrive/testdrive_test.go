@@ -301,7 +301,7 @@ func TestWriteFindingsIncludesOnlyPresentCategories(t *testing.T) {
 	})
 
 	for _, expected := range []string{
-		"2 findings.",
+		"3 findings.",
 		"Flaky tests (1):",
 		"flaky.test.js › sometimes works · Flaky · 5ms",
 		"Unusually broad coverage (1):",
@@ -396,7 +396,7 @@ func TestRunReportsPassingSuiteWithoutEvents(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "sent no test events") {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(output.String(), "No test events received.") || !strings.Contains(output.String(), "No findings.") {
+	if !strings.Contains(output.String(), "No test events received.") || !strings.Contains(output.String(), "Jest: No test results received") || !strings.Contains(output.String(), "Test findings unavailable") || strings.Contains(output.String(), "No findings.") || strings.Contains(output.String(), "Jest: Passed") {
 		t.Fatalf("Run() output = %s", output.String())
 	}
 }
@@ -597,5 +597,18 @@ func TestInstalledTracerLabel(t *testing.T) {
 	}
 	if got := drive.installedTracerLabel(""); got != "datadog-ci" {
 		t.Fatal(got)
+	}
+}
+
+func TestWriteFindingsConfigurationErrorIsAFinding(t *testing.T) {
+	var output bytes.Buffer
+	writeFindings(&output, intake.Facts{TestEventCount: 1, ConfigurationErrors: []string{"skippable_tests"}})
+	for _, want := range []string{"Tracer configuration errors: skippable_tests", "1 finding."} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("missing %q: %s", want, output.String())
+		}
+	}
+	if strings.Contains(output.String(), "No findings.") {
+		t.Fatal(output.String())
 	}
 }
