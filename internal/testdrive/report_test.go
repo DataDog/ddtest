@@ -145,17 +145,27 @@ func TestReportShowsBroadCoverageFilesAndSource(t *testing.T) {
 }
 
 func TestReportShowsCoverageOnlyAtActiveSkippingLevel(t *testing.T) {
+	repositoryRoot := t.TempDir()
 	test := intake.Test{
 		Name: "works", Suite: "one.test.js", Status: "pass",
-		CoverageLevel: "suite", CoveredFiles: []string{"src/suite.js"},
 	}
-	suiteModel := buildReport(t.TempDir(), intake.Facts{CoverageLevel: "suite", Tests: []intake.Test{test}}, false)
+	suiteFacts := intake.Facts{CoverageLevel: "suite", Tests: []intake.Test{test}, SuiteCoverages: []intake.SuiteCoverage{{Suite: "one.test.js", Files: []string{"src/suite.js"}, CoveredTests: 1}}}
+	suiteModel := buildReport(repositoryRoot, suiteFacts, false)
 	requireReportCoverage(t, suiteModel, 0, 1)
+	suiteSection, testSection, found := strings.Cut(renderTestReport(t, repositoryRoot, suiteFacts), `<section id="tests"`)
+	if !found || !strings.Contains(suiteSection, "src/suite.js") || strings.Contains(testSection, "src/suite.js") {
+		t.Fatal("suite coverage must appear only in the Suites section")
+	}
 
 	test.CoverageLevel = "test"
 	test.CoveredFiles = []string{"src/test.js"}
-	testModel := buildReport(t.TempDir(), intake.Facts{CoverageLevel: "test", Tests: []intake.Test{test}}, false)
+	testFacts := intake.Facts{CoverageLevel: "test", Tests: []intake.Test{test}}
+	testModel := buildReport(repositoryRoot, testFacts, false)
 	requireReportCoverage(t, testModel, 1, 0)
+	suiteSection, testSection, found = strings.Cut(renderTestReport(t, repositoryRoot, testFacts), `<section id="tests"`)
+	if !found || strings.Contains(suiteSection, "src/test.js") || !strings.Contains(testSection, "src/test.js") {
+		t.Fatal("test coverage must appear only in the Tests section")
+	}
 }
 
 func requireReportCoverage(t *testing.T, model reportModel, testFiles, suiteFiles int) {
@@ -237,7 +247,7 @@ func requireSourceError(t *testing.T, source reportSource, expected string) {
 }
 
 func TestReportSuitesPreservesAllSkippedStatus(t *testing.T) {
-	suites := reportSuites(t.TempDir(), []intake.Test{{Name: "one", Suite: "suite", Status: "skip"}, {Name: "two", Suite: "suite", Status: "skip"}}, false)
+	suites := reportSuites(t.TempDir(), []intake.Test{{Name: "one", Suite: "suite", Status: "skip"}, {Name: "two", Suite: "suite", Status: "skip"}}, nil, false)
 	if len(suites) != 1 || suites[0].Status != "Skip" {
 		t.Fatalf("reportSuites() = %+v, want one skipped suite", suites)
 	}
@@ -249,12 +259,21 @@ func TestReportPreservesModuleAndParameters(t *testing.T) {
 		{Module: "first", Suite: "shared", Name: "same", Parameters: `{"case":2}`, Status: "skip"},
 		{Module: "second", Suite: "shared", Name: "same", Parameters: `{"case":1}`, Status: "fail"},
 	}
-	model := buildReport(t.TempDir(), intake.Facts{Tests: tests}, false)
+	model := buildReport(t.TempDir(), intake.Facts{
+		CoverageLevel: "suite", Tests: tests,
+		SuiteCoverages: []intake.SuiteCoverage{
+			{Module: "first", Suite: "shared", Files: []string{"first.js"}, CoveredTests: 1},
+			{Module: "second", Suite: "shared", Files: []string{"second.js"}, CoveredTests: 1},
+		},
+	}, false)
 	if len(model.Tests) != 3 || model.Tests[0].Label == model.Tests[1].Label || model.Tests[0].Label == model.Tests[2].Label {
 		t.Fatalf("test labels are indistinguishable: %+v", model.Tests)
 	}
-	if len(model.Suites) != 2 || model.Suites[0].Name != "first › shared" || model.Suites[0].TestCount != 2 || model.Suites[1].Name != "second › shared" || model.Suites[1].TestCount != 1 || model.Suites[1].Status != "Failed" {
+	if len(model.Suites) != 2 || model.Suites[0].Name != "first › shared" || model.Suites[0].TestCount != 2 || model.Suites[0].CoveredCount != 1 || model.Suites[1].Name != "second › shared" || model.Suites[1].TestCount != 1 || model.Suites[1].CoveredCount != 1 || model.Suites[1].Status != "Failed" {
 		t.Fatalf("suite identities merged: %+v", model.Suites)
+	}
+	if len(model.Suites[0].CoveredFiles) != 1 || model.Suites[0].CoveredFiles[0].Name != "first.js" || len(model.Suites[1].CoveredFiles) != 1 || model.Suites[1].CoveredFiles[0].Name != "second.js" {
+		t.Fatalf("suite coverage crossed module boundaries: %+v", model.Suites)
 	}
 	if model.Suites[0].Tests[0].Name == model.Suites[0].Tests[1].Name {
 		t.Fatalf("parameterized tests are indistinguishable: %+v", model.Suites[0].Tests)
@@ -278,8 +297,14 @@ func TestReportShowsMissingCoveredFiles(t *testing.T) {
 	for _, level := range []string{"test", "suite"} {
 		facts := intake.Facts{
 			CoverageLevel: level,
-			Tests:         []intake.Test{{Name: "covered", Suite: "suite", Status: "pass", CoverageLevel: level, CoveredFiles: files}},
+			Tests:         []intake.Test{{Name: "covered", Suite: "suite", Status: "pass"}},
 			BroadCoverage: []intake.CoverageFact{{Name: "broad", Level: level, Files: files}},
+		}
+		if level == "test" {
+			facts.Tests[0].CoverageLevel = "test"
+			facts.Tests[0].CoveredFiles = files
+		} else {
+			facts.SuiteCoverages = []intake.SuiteCoverage{{Suite: "suite", Files: files, CoveredTests: 1}}
 		}
 		model := buildReport(root, facts, false)
 		var covered []reportCoveredFile

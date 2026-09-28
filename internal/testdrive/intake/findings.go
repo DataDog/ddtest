@@ -61,6 +61,14 @@ type CoverageFact struct {
 	Files       []string
 }
 
+// SuiteCoverage holds files covered by a suite, separate from individual tests.
+type SuiteCoverage struct {
+	Module       string
+	Suite        string
+	Files        []string
+	CoveredTests int
+}
+
 // Facts contains the facts shown in the testdrive report.
 type Facts struct {
 	ConfigurationErrors     []string
@@ -71,6 +79,7 @@ type Facts struct {
 	TestDurationMedian      time.Duration
 	CoveredFilesMedian      int
 	CoverageLevel           string
+	SuiteCoverages          []SuiteCoverage
 	Tests                   []Test
 	FailedTests             []Test
 	FlakyTests              []Test
@@ -91,6 +100,9 @@ func (s *Server) Facts() (Facts, error) {
 
 	findings := Facts{TestEventCount: len(tests), CoverageLevel: coverageLevel(coverages), EmptyCoverageEntryCount: emptyEntries}
 	findings.Tests, findings.FailedTests, findings.FlakyTests, findings.SlowTests, findings.TestDurationMedian = analyzeTests(tests, coverages, findings.CoverageLevel)
+	if findings.CoverageLevel == "suite" {
+		findings.SuiteCoverages = suiteCoverages(tests, coverages)
+	}
 	findings.TestCount = len(findings.Tests)
 	findings.CoveredTestCount = uniqueCoveredTestCount(tests, coverages)
 	findings.BroadCoverage, findings.CoveredFilesMedian = analyzeCoverage(tests, coverages, findings.CoverageLevel)
@@ -99,7 +111,10 @@ func (s *Server) Facts() (Facts, error) {
 }
 
 func analyzeTests(tests []testReference, coverages []coverageReference, level string) ([]Test, []Test, []Test, []Test, time.Duration) {
-	filesByTest := coverageFilesByTest(tests, coverages, level)
+	var filesByTest map[string][]string
+	if level == "test" {
+		filesByTest = coverageFilesByTest(tests, coverages)
+	}
 	testsByName := make(map[string][]testReference)
 	order := make([]string, 0)
 	for _, test := range tests {
@@ -117,7 +132,7 @@ func analyzeTests(tests []testReference, coverages []coverageReference, level st
 		attempts := testsByName[key]
 		finding := testFromReference(attempts[0])
 		if files, covered := filesByTest[key]; covered {
-			finding.CoverageLevel = level
+			finding.CoverageLevel = "test"
 			finding.CoveredFiles = files
 		}
 		finding.Attempts = make([]TestRun, 0, len(attempts))
@@ -167,36 +182,65 @@ func analyzeTests(tests []testReference, coverages []coverageReference, level st
 	return all, failed, flaky, slow, median
 }
 
-func coverageFilesByTest(tests []testReference, coverages []coverageReference, level string) map[string][]string {
+func coverageFilesByTest(tests []testReference, coverages []coverageReference) map[string][]string {
 	testsBySpan := make(map[uint64]string, len(tests))
 	for _, test := range tests {
 		testsBySpan[test.spanID] = testIdentity(test)
 	}
 	testFiles := make(map[string][]string)
-	suiteFiles := make(map[suiteReference][]string)
 	for _, coverage := range coverages {
-		if level == "test" && coverage.spanID != 0 {
-			if identity := testsBySpan[coverage.spanID]; identity != "" {
-				testFiles[identity] = appendUnique(testFiles[identity], coverage.files...)
-			}
-		}
-		if level != "suite" || coverage.spanID != 0 {
+		if coverage.spanID == 0 {
 			continue
 		}
-		key := suiteReference{sessionID: coverage.sessionID, suiteID: coverage.suiteID}
-		suiteFiles[key] = appendUnique(suiteFiles[key], coverage.files...)
-	}
-
-	if level == "suite" {
-		for _, test := range tests {
-			key := suiteReference{sessionID: test.sessionID, suiteID: test.suiteID}
-			if files, covered := suiteFiles[key]; covered {
-				identity := testIdentity(test)
-				testFiles[identity] = appendUnique(testFiles[identity], files...)
-			}
+		if identity := testsBySpan[coverage.spanID]; identity != "" {
+			testFiles[identity] = appendUnique(testFiles[identity], coverage.files...)
 		}
 	}
 	return testFiles
+}
+
+func suiteCoverages(tests []testReference, coverages []coverageReference) []SuiteCoverage {
+	testsBySuite := make(map[suiteReference]testReference)
+	for _, test := range tests {
+		testsBySuite[suiteReference{sessionID: test.sessionID, suiteID: test.suiteID}] = test
+	}
+	byName := make(map[string]*SuiteCoverage)
+	coveredSuites := make(map[suiteReference]struct{})
+	for _, coverage := range coverages {
+		if coverage.spanID != 0 {
+			continue
+		}
+		suiteID := suiteReference{sessionID: coverage.sessionID, suiteID: coverage.suiteID}
+		test, found := testsBySuite[suiteID]
+		if !found {
+			continue
+		}
+		coveredSuites[suiteID] = struct{}{}
+		key := test.module + "\x00" + test.suite
+		finding, found := byName[key]
+		if !found {
+			finding = &SuiteCoverage{Module: test.module, Suite: test.suite}
+			byName[key] = finding
+		}
+		finding.Files = appendUnique(finding.Files, coverage.files...)
+	}
+	coveredTests := make(map[string]map[string]struct{})
+	for _, test := range tests {
+		if _, found := coveredSuites[suiteReference{sessionID: test.sessionID, suiteID: test.suiteID}]; !found {
+			continue
+		}
+		key := test.module + "\x00" + test.suite
+		if coveredTests[key] == nil {
+			coveredTests[key] = make(map[string]struct{})
+		}
+		coveredTests[key][testIdentity(test)] = struct{}{}
+	}
+	result := make([]SuiteCoverage, 0, len(byName))
+	for key, finding := range byName {
+		finding.CoveredTests = len(coveredTests[key])
+		result = append(result, *finding)
+	}
+	return result
 }
 
 func appendUnique(values []string, additions ...string) []string {

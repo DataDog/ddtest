@@ -112,10 +112,28 @@ func TestAddCoverageToTestsUsesActiveCoverageLevel(t *testing.T) {
 	t.Run("suite", func(t *testing.T) {
 		findings, _, _, _, _ := analyzeTests(tests, coverages, "suite")
 		for _, finding := range findings {
-			require.Equal(t, "suite", finding.CoverageLevel)
-			require.Equal(t, []string{"shared.js"}, finding.CoveredFiles)
+			require.Empty(t, finding.CoverageLevel)
+			require.Empty(t, finding.CoveredFiles)
 		}
+		require.Equal(t, []SuiteCoverage{{Suite: "one.test.js", Files: []string{"shared.js"}, CoveredTests: 2}}, suiteCoverages(tests, coverages))
 	})
+}
+
+func TestSuiteCoveragesKeepsModuleIdentityAndPartialCounts(t *testing.T) {
+	tests := []testReference{
+		{sessionID: 1, suiteID: 10, spanID: 1, module: "first", suite: "shared", name: "one"},
+		{sessionID: 1, suiteID: 10, spanID: 2, module: "first", suite: "shared", name: "two"},
+		{sessionID: 2, suiteID: 20, spanID: 3, module: "first", suite: "shared", name: "uncovered"},
+		{sessionID: 3, suiteID: 30, spanID: 4, module: "second", suite: "shared", name: "other"},
+	}
+	coverages := []coverageReference{
+		{testReference: testReference{sessionID: 1, suiteID: 10}, files: []string{"first.js"}},
+		{testReference: testReference{sessionID: 3, suiteID: 30}, files: []string{"second.js"}},
+	}
+	require.ElementsMatch(t, []SuiteCoverage{
+		{Module: "first", Suite: "shared", Files: []string{"first.js"}, CoveredTests: 2},
+		{Module: "second", Suite: "shared", Files: []string{"second.js"}, CoveredTests: 1},
+	}, suiteCoverages(tests, coverages))
 }
 
 func TestAnalyzeCoverageUsesActiveCoverageLevel(t *testing.T) {
@@ -305,10 +323,18 @@ func TestFindingsPreservesCoverageInEveryCategory(t *testing.T) {
 			require.Len(t, findings.SlowTests, 1)
 			for _, category := range [][]Test{findings.Tests, findings.FailedTests, findings.FlakyTests, findings.SlowTests} {
 				for _, finding := range category {
-					require.Equal(t, level, finding.CoverageLevel)
-					require.Equal(t, []string{"covered.js"}, finding.CoveredFiles)
+					if level == "test" {
+						require.Equal(t, "test", finding.CoverageLevel)
+						require.Equal(t, []string{"covered.js"}, finding.CoveredFiles)
+					} else {
+						require.Empty(t, finding.CoverageLevel)
+						require.Empty(t, finding.CoveredFiles)
+					}
 					require.Contains(t, findings.Tests, finding)
 				}
+			}
+			if level == "suite" {
+				require.Equal(t, []SuiteCoverage{{Files: []string{"covered.js"}, CoveredTests: 4}}, findings.SuiteCoverages)
 			}
 		})
 	}

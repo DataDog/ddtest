@@ -165,7 +165,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		},
 		Tests: reportTests(repositoryRoot, findings.Tests, showTestCoverage),
 	}
-	model.Suites = reportSuites(repositoryRoot, findings.Tests, showSuiteCoverage)
+	model.Suites = reportSuites(repositoryRoot, findings.Tests, findings.SuiteCoverages, showSuiteCoverage)
 	if findings.CoveredTestCount == 0 {
 		model.Facts[1].Value = "Not reported"
 	}
@@ -283,16 +283,15 @@ func reportCoverages(repositoryRoot string, findings []intake.CoverageFact) []re
 	return coverages
 }
 
-func reportSuites(repositoryRoot string, tests []intake.Test, showCoverage bool) []reportSuite {
+func reportSuites(repositoryRoot string, tests []intake.Test, coverages []intake.SuiteCoverage, showCoverage bool) []reportSuite {
 	byName := make(map[string]*reportSuite)
 	durations := make(map[string]time.Duration)
-	coveredFiles := make(map[string][]string)
 	for _, test := range tests {
+		key := test.Module + "\x00" + test.Suite
 		name := test.Suite
 		if name == "" {
 			name = "Unknown suite"
 		}
-		key := test.Module + "\x00" + name
 		suite, found := byName[key]
 		status, tone := testDisplayStatus(test)
 		if !found {
@@ -307,10 +306,6 @@ func reportSuites(repositoryRoot string, tests []intake.Test, showCoverage bool)
 		}
 		suite.TestCount++
 		durations[key] += findingDuration(test)
-		if showCoverage && test.CoverageLevel == "suite" {
-			suite.CoveredCount++
-			coveredFiles[key] = appendUniqueStrings(coveredFiles[key], test.CoveredFiles...)
-		}
 		testName := test.Name
 		if test.Parameters != "" {
 			testName += " " + test.Parameters
@@ -320,11 +315,21 @@ func reportSuites(repositoryRoot string, tests []intake.Test, showCoverage bool)
 			Duration: formatDuration(findingDuration(test)),
 		})
 	}
+	if showCoverage {
+		for _, coverage := range coverages {
+			key := coverage.Module + "\x00" + coverage.Suite
+			if suite, found := byName[key]; found {
+				files := slices.Clone(coverage.Files)
+				slices.Sort(files)
+				suite.CoveredCount = coverage.CoveredTests
+				suite.CoveredFiles = reportCoveredFiles(repositoryRoot, files)
+			}
+		}
+	}
 
 	suites := make([]reportSuite, 0, len(byName))
 	for key, suite := range byName {
 		suite.Duration = formatDuration(durations[key])
-		suite.CoveredFiles = reportCoveredFiles(repositoryRoot, coveredFiles[key])
 		suites = append(suites, *suite)
 	}
 	sort.Slice(suites, func(i, j int) bool { return suites[i].Name < suites[j].Name })
@@ -391,17 +396,6 @@ func findingDuration(test intake.Test) time.Duration {
 		return test.Duration
 	}
 	return test.Attempts[0].Duration
-}
-
-func appendUniqueStrings(values []string, additions ...string) []string {
-	for _, addition := range additions {
-		if slices.Contains(values, addition) {
-			continue
-		}
-		values = append(values, addition)
-	}
-	slices.Sort(values)
-	return values
 }
 
 func readSource(repositoryRoot, sourceFile string, sourceStart, sourceEnd int) reportSource {
