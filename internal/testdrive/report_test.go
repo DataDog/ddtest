@@ -1,12 +1,46 @@
 package testdrive
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 )
+
+func TestReportCountsIndividualFindings(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		facts intake.Facts
+		want  string
+	}{
+		{"single", intake.Facts{TestEventCount: 1, FailedTests: []intake.Test{{Name: "failed"}}}, "1 finding."},
+		{"multiple in one card", intake.Facts{TestEventCount: 2, FailedTests: []intake.Test{{Name: "one"}, {Name: "two"}}}, "2 findings."},
+		{"empty coverage without events", intake.Facts{EmptyCoverageEntryCount: 2}, "2 findings."},
+		{"configuration error without events", intake.Facts{ConfigurationErrors: []string{"skippable_tests"}}, "1 finding."},
+		{"combined", intake.Facts{
+			TestEventCount: 2, EmptyCoverageEntryCount: 2, ConfigurationErrors: []string{"skippable_tests"},
+			FailedTests: []intake.Test{{Name: "failed"}}, FlakyTests: []intake.Test{{Name: "flaky"}},
+			SlowTests: []intake.Test{{Name: "slow"}}, BroadCoverage: []intake.CoverageFact{{Name: "broad"}},
+		}, "7 findings."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := buildReport(t.TempDir(), tc.facts, false)
+			if !strings.HasPrefix(model.Summary, tc.want) {
+				t.Fatalf("summary = %q, want prefix %q", model.Summary, tc.want)
+			}
+			var console bytes.Buffer
+			writeFindings(&console, tc.facts)
+			if !strings.Contains(console.String(), tc.want+"\n") {
+				t.Fatalf("report and terminal counts differ: report %q, terminal %q", model.Summary, console.String())
+			}
+			if len(tc.facts.ConfigurationErrors) > 0 && !strings.Contains(model.Summary, "Tracer configuration errors: skippable_tests.") {
+				t.Fatalf("summary hides configuration errors: %q", model.Summary)
+			}
+		})
+	}
+}
 
 func TestStaticReportEscapesFindingsAndDescribesMissingCoverage(t *testing.T) {
 	path, err := writeReport(t.TempDir(), t.TempDir(), intake.Facts{TestEventCount: 1, TestCount: 1, FailedTests: []intake.Test{{Name: "<script>alert(1)</script>"}}}, true)

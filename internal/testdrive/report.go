@@ -80,11 +80,17 @@ func buildReport(_ string, findings intake.Facts, commandFailed bool, runtime ..
 	if len(findings.BroadCoverage) > 0 {
 		model.Cards = append(model.Cards, reportCard{Title: "Any unusually broad test coverage?", Context: fmt.Sprintf("Median covered files · %d", findings.CoveredFilesMedian), Coverages: findings.BroadCoverage})
 	}
-	if len(model.Cards) > 0 && findings.TestEventCount > 0 {
-		model.Summary = fmt.Sprintf("%d findings.", len(model.Cards))
+	count := len(findings.ConfigurationErrors) + findings.EmptyCoverageEntryCount
+	for _, size := range []int{
+		len(findings.FailedTests), len(findings.FlakyTests), len(findings.SlowTests), len(findings.BroadCoverage),
+	} {
+		count += size
+	}
+	if count > 0 {
+		model.Summary = fmt.Sprintf("%d %s.", count, plural(count, "finding", "findings"))
 	}
 	if len(findings.ConfigurationErrors) > 0 {
-		model.Summary = "Tracer configuration errors: " + strings.Join(findings.ConfigurationErrors, ", ") + ". Inspect the captured traffic and test output."
+		model.Summary += " Tracer configuration errors: " + strings.Join(findings.ConfigurationErrors, ", ") + ". Inspect the captured traffic and test output."
 	}
 	return model
 }
