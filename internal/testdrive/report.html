@@ -1361,7 +1361,9 @@ THE SOFTWARE.
                 <th scope="col">Suite</th>
                 <th class="attempt-column" scope="col">Tests</th>
                 <th class="duration-column" scope="col">Duration</th>
+                {{ if eq .CoverageLevel "suite" }}
                 <th class="coverage-column" scope="col">Suite coverage</th>
+                {{ end }}
                 <th class="expand-column" scope="col">
                   <span class="visually-hidden">Details</span>
                 </th>
@@ -1383,6 +1385,7 @@ THE SOFTWARE.
                   </td>
                   <td class="attempt-count">{{ .TestCount }}</td>
                   <td class="duration">{{ .Duration }}</td>
+                  {{ if eq $.CoverageLevel "suite" }}
                   <td class="duration">
                     {{ if .ShowCoverage }}
                       {{ len .CoveredFiles }} files
@@ -1390,6 +1393,7 @@ THE SOFTWARE.
                       <span class="muted">Not reported</span>
                     {{ end }}
                   </td>
+                  {{ end }}
                   <td class="expand-column">
                     <span class="chevron"
                       >{{ template "icon-chevron-down" }}</span
@@ -1397,7 +1401,7 @@ THE SOFTWARE.
                   </td>
                 </tr>
                 <tr id="suite-detail-{{ $i }}" class="detail-row" hidden>
-                  <td colspan="7" class="detail-cell">
+                  <td colspan="{{ if eq $.CoverageLevel "suite" }}7{{ else }}6{{ end }}" class="detail-cell">
                     <div class="expanded">
                       {{ if .ShowCoverage }}
                         <details class="coverage">
@@ -1463,7 +1467,9 @@ THE SOFTWARE.
                 <th class="file-column" scope="col">File / suite</th>
                 <th class="duration-column" scope="col">Duration</th>
                 <th class="attempt-column" scope="col">Attempts</th>
+                {{ if eq .CoverageLevel "test" }}
                 <th class="coverage-column" scope="col">Test coverage</th>
+                {{ end }}
                 <th class="expand-column" scope="col">
                   <span class="visually-hidden">Details</span>
                 </th>
@@ -1490,6 +1496,7 @@ THE SOFTWARE.
                   </td>
                   <td class="duration">{{ .Duration }}</td>
                   <td class="attempt-count">{{ len .Attempts }}</td>
+                  {{ if eq $.CoverageLevel "test" }}
                   <td class="duration">
                     {{ if .CoverageLevel }}
                       {{ len .CoveredFiles }} files
@@ -1497,6 +1504,7 @@ THE SOFTWARE.
                       <span class="muted">Not reported</span>
                     {{ end }}
                   </td>
+                  {{ end }}
                   <td class="expand-column">
                     <span class="chevron"
                       >{{ template "icon-chevron-down" }}</span
@@ -1504,7 +1512,7 @@ THE SOFTWARE.
                   </td>
                 </tr>
                 <tr id="test-detail-{{ $i }}" class="detail-row" hidden>
-                  <td colspan="8" class="detail-cell">
+                  <td colspan="{{ if eq $.CoverageLevel "test" }}8{{ else }}7{{ end }}" class="detail-cell">
                     {{ template "test-detail" . }}
                   </td>
                 </tr>

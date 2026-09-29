@@ -7,6 +7,7 @@ package testdrive
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -557,5 +558,42 @@ func TestReportRunDetailsAlwaysVisibleAfterFindings(t *testing.T) {
 		if start > strings.Index(report, `<nav class="tabs"`) {
 			t.Fatal("run details must precede results")
 		}
+	}
+}
+
+func TestReportCoverageColumnsMatchReportedLevel(t *testing.T) {
+	for _, level := range []string{"test", "suite", ""} {
+		t.Run("level_"+level, func(t *testing.T) {
+			report := renderTestReport(t, t.TempDir(), intake.Facts{
+				CoverageLevel: level,
+				Tests:         []intake.Test{{Name: "one", Suite: "suite", Status: "pass"}},
+			})
+			for _, view := range []struct {
+				id, level string
+				columns   int
+			}{{"tests", "test", 7}, {"suites", "suite", 6}} {
+				_, section, found := strings.Cut(report, `<section id="`+view.id+`"`)
+				if !found {
+					t.Fatalf("missing %s view", view.id)
+				}
+				section, _, _ = strings.Cut(section, "</section>")
+				showCoverage := level == view.level
+				if strings.Contains(section, `class="coverage-column"`) != showCoverage {
+					t.Fatalf("%s coverage column does not match level %q", view.id, level)
+				}
+				columns := view.columns
+				if showCoverage {
+					columns++
+				}
+				_, row, _ := strings.Cut(section, `<tr class="result-main">`)
+				row, _, _ = strings.Cut(row, "</tr>")
+				if strings.Count(row, "<td") != columns || !strings.Contains(section, fmt.Sprintf(`colspan="%d" class="detail-cell"`, columns)) {
+					t.Fatalf("%s cells and expanded detail span must match %d columns", view.id, columns)
+				}
+				if !showCoverage && strings.Contains(row, "Not reported") {
+					t.Fatalf("%s shows an inapplicable coverage warning", view.id)
+				}
+			}
+		})
 	}
 }

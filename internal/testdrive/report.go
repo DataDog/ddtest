@@ -110,15 +110,16 @@ type reportArtifact struct {
 }
 
 type reportModel struct {
-	Headline     string
-	HeadlineTone string
-	Runtime      reportRuntime
-	Summary      string
-	Cards        []reportCard
-	Facts        []reportFact
-	Artifacts    []reportArtifact
-	Suites       []reportSuite
-	Tests        []reportTest
+	Headline      string
+	HeadlineTone  string
+	CoverageLevel string
+	Runtime       reportRuntime
+	Summary       string
+	Cards         []reportCard
+	Facts         []reportFact
+	Artifacts     []reportArtifact
+	Suites        []reportSuite
+	Tests         []reportTest
 }
 
 type reportRuntime struct{ Framework, Tracer, Command, Output, Error string }
@@ -178,10 +179,11 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	showTestCoverage := findings.CoverageLevel == "test"
 	showSuiteCoverage := findings.CoverageLevel == "suite"
 	model := reportModel{
-		Headline:     fmt.Sprintf("%d test %s received.", findings.TestEventCount, plural(findings.TestEventCount, "event", "events")),
-		Summary:      "No findings.",
-		HeadlineTone: factTone(findings.TestEventCount > 0),
-		Runtime:      info,
+		Headline:      fmt.Sprintf("%d test %s received.", findings.TestEventCount, plural(findings.TestEventCount, "event", "events")),
+		Summary:       "No findings.",
+		HeadlineTone:  factTone(findings.TestEventCount > 0),
+		Runtime:       info,
+		CoverageLevel: findings.CoverageLevel,
 		Facts: []reportFact{
 			{Label: "Tests with coverage", Value: fmt.Sprintf("%d / %d", findings.CoveredTestCount, findings.TestCount), Tone: factTone(findings.TestCount > 0 && findings.CoveredTestCount == findings.TestCount)},
 			{Label: info.Framework, Value: status, Tone: factTone(!commandFailed && findings.TestEventCount > 0)},
