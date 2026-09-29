@@ -219,14 +219,25 @@ func TestMedianHelpers(t *testing.T) {
 	}))
 }
 
-func TestCoverageLevelAndAppendUnique(t *testing.T) {
+func TestCoverageLevel(t *testing.T) {
 	require.Empty(t, coverageLevel(nil))
 	require.Equal(t, "suite", coverageLevel([]coverageReference{{testReference: testReference{suiteID: 1}}}))
 	require.Equal(t, "test", coverageLevel([]coverageReference{
 		{testReference: testReference{suiteID: 1}},
 		{testReference: testReference{spanID: 2}},
 	}))
-	require.Equal(t, []string{"a.js", "b.js"}, appendUnique([]string{"b.js"}, "a.js", "b.js"))
+}
+
+func TestCoverageFilesMergeDuplicatesAndSortOnce(t *testing.T) {
+	tests := []testReference{{sessionID: 1, suiteID: 10, spanID: 100, name: "one", suite: "suite"}}
+	coverages := []coverageReference{
+		{testReference: testReference{spanID: 100}, files: []string{"b.js", "a.js", "b.js"}},
+		{testReference: testReference{spanID: 100}, files: []string{"c.js", "a.js"}},
+		{testReference: testReference{sessionID: 1, suiteID: 10}, files: []string{"y.js", "x.js", "y.js"}},
+		{testReference: testReference{sessionID: 1, suiteID: 10}, files: []string{"z.js", "x.js"}},
+	}
+	require.Equal(t, map[string][]string{testIdentity(tests[0]): {"a.js", "b.js", "c.js"}}, coverageFilesByTest(tests, coverages))
+	require.Equal(t, []SuiteCoverage{{Suite: "suite", Files: []string{"x.js", "y.js", "z.js"}, CoveredTests: 1}}, suiteCoverages(tests, coverages))
 }
 
 func TestFindingsIncludeConfigurationErrorsAcrossEventLevels(t *testing.T) {

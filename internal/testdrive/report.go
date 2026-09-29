@@ -123,6 +123,32 @@ type reportModel struct {
 
 type reportRuntime struct{ Framework, Tracer string }
 
+type reportSourceFile struct {
+	lines []string
+	err   error
+}
+
+type reportSourceKey struct {
+	file       string
+	start, end int
+}
+
+type reportBuilder struct {
+	repositoryRoot string
+	sourceFiles    map[string]reportSourceFile
+	sources        map[reportSourceKey]reportSource
+	missingFiles   map[string]bool
+}
+
+func newReportBuilder(repositoryRoot string) *reportBuilder {
+	return &reportBuilder{
+		repositoryRoot: repositoryRoot,
+		sourceFiles:    make(map[string]reportSourceFile),
+		sources:        make(map[reportSourceKey]reportSource),
+		missingFiles:   make(map[string]bool),
+	}
+}
+
 func writeReport(repositoryRoot, sessionDirectory string, findings intake.Facts, commandFailed bool, runtime ...reportRuntime) (string, error) {
 	path := filepath.Join(sessionDirectory, reportFilename)
 	file, err := os.Create(path)
@@ -140,6 +166,7 @@ func writeReport(repositoryRoot, sessionDirectory string, findings intake.Facts,
 }
 
 func buildReport(repositoryRoot string, findings intake.Facts, commandFailed bool, runtime ...reportRuntime) reportModel {
+	builder := newReportBuilder(repositoryRoot)
 	info := reportRuntime{Framework: "Test command", Tracer: "Isolated installation"}
 	if len(runtime) > 0 {
 		info = runtime[0]
@@ -163,9 +190,9 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 			{Title: "JSON traffic", Href: "intake/"},
 			{Title: "Test output", Href: testOutputFilename},
 		},
-		Tests: reportTests(repositoryRoot, findings.Tests, showTestCoverage),
+		Tests: builder.reportTests(findings.Tests, showTestCoverage),
 	}
-	model.Suites = reportSuites(repositoryRoot, findings.Tests, findings.SuiteCoverages, showSuiteCoverage)
+	model.Suites = builder.reportSuites(findings.Tests, findings.SuiteCoverages, showSuiteCoverage)
 	if findings.CoveredTestCount == 0 {
 		model.Facts[1].Value = "Not reported"
 	}
@@ -184,27 +211,27 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	if len(findings.FailedTests) > 0 {
 		model.Cards = append(model.Cards, reportCard{
 			Title: "Any tests failed?", Count: len(findings.FailedTests),
-			Tests: reportTests(repositoryRoot, findings.FailedTests, showTestCoverage),
+			Tests: builder.reportTests(findings.FailedTests, showTestCoverage),
 		})
 	}
 	if len(findings.FlakyTests) > 0 {
 		model.Cards = append(model.Cards, reportCard{
 			Title: "Any flaky tests?", Count: len(findings.FlakyTests),
-			Tests: reportTests(repositoryRoot, findings.FlakyTests, showTestCoverage),
+			Tests: builder.reportTests(findings.FlakyTests, showTestCoverage),
 		})
 	}
 	if len(findings.SlowTests) > 0 {
 		model.Cards = append(model.Cards, reportCard{
 			Title: "Any tests slower than the others?", Count: len(findings.SlowTests),
 			Context: "Median test time · " + formatDuration(findings.TestDurationMedian),
-			Tests:   reportTests(repositoryRoot, findings.SlowTests, showTestCoverage),
+			Tests:   builder.reportTests(findings.SlowTests, showTestCoverage),
 		})
 	}
 	if len(findings.BroadCoverage) > 0 {
 		model.Cards = append(model.Cards, reportCard{
 			Title: "Any unusually broad test coverage?", Count: len(findings.BroadCoverage),
 			Context:   fmt.Sprintf("Median covered files · %d", findings.CoveredFilesMedian),
-			Coverages: reportCoverages(repositoryRoot, findings.BroadCoverage),
+			Coverages: builder.reportCoverages(findings.BroadCoverage),
 		})
 	}
 	count := len(findings.ConfigurationErrors) + findings.EmptyCoverageEntryCount
@@ -222,7 +249,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	return model
 }
 
-func reportTests(repositoryRoot string, findings []intake.Test, showCoverage bool) []reportTest {
+func (builder *reportBuilder) reportTests(findings []intake.Test, showCoverage bool) []reportTest {
 	tests := make([]reportTest, 0, len(findings))
 	for _, finding := range findings {
 		label := finding.Name
@@ -241,11 +268,11 @@ func reportTests(repositoryRoot string, findings []intake.Test, showCoverage boo
 			SourceFile: finding.SourceFile, Status: status, Tone: tone,
 			Duration: formatDuration(findingDuration(finding)),
 			Attempts: make([]reportAttempt, 0, len(finding.Attempts)),
-			Source:   readSource(repositoryRoot, finding.SourceFile, finding.SourceStart, finding.SourceEnd),
+			Source:   builder.readSource(finding.SourceFile, finding.SourceStart, finding.SourceEnd),
 		}
 		if showCoverage && finding.CoverageLevel == "test" {
 			test.CoverageLevel = finding.CoverageLevel
-			test.CoveredFiles = reportCoveredFiles(repositoryRoot, finding.CoveredFiles)
+			test.CoveredFiles = builder.reportCoveredFiles(finding.CoveredFiles)
 		}
 		for attemptIndex, attempt := range finding.Attempts {
 			kind := "Initial run"
@@ -266,24 +293,24 @@ func reportTests(repositoryRoot string, findings []intake.Test, showCoverage boo
 	return tests
 }
 
-func reportCoverages(repositoryRoot string, findings []intake.CoverageFact) []reportCoverage {
+func (builder *reportBuilder) reportCoverages(findings []intake.CoverageFact) []reportCoverage {
 	coverages := make([]reportCoverage, 0, len(findings))
 	for _, finding := range findings {
 		files := slices.Clone(finding.Files)
 		slices.Sort(files)
 		coverage := reportCoverage{
 			Name: finding.Name, Level: finding.Level, FileCount: finding.FileCount,
-			Files: reportCoveredFiles(repositoryRoot, files), SourceFile: finding.SourceFile,
+			Files: builder.reportCoveredFiles(files), SourceFile: finding.SourceFile,
 		}
 		if finding.Level == "test" {
-			coverage.Source = readSource(repositoryRoot, finding.SourceFile, finding.SourceStart, finding.SourceEnd)
+			coverage.Source = builder.readSource(finding.SourceFile, finding.SourceStart, finding.SourceEnd)
 		}
 		coverages = append(coverages, coverage)
 	}
 	return coverages
 }
 
-func reportSuites(repositoryRoot string, tests []intake.Test, coverages []intake.SuiteCoverage, showCoverage bool) []reportSuite {
+func (builder *reportBuilder) reportSuites(tests []intake.Test, coverages []intake.SuiteCoverage, showCoverage bool) []reportSuite {
 	byName := make(map[string]*reportSuite)
 	durations := make(map[string]time.Duration)
 	for _, test := range tests {
@@ -322,7 +349,7 @@ func reportSuites(repositoryRoot string, tests []intake.Test, coverages []intake
 				files := slices.Clone(coverage.Files)
 				slices.Sort(files)
 				suite.CoveredCount = coverage.CoveredTests
-				suite.CoveredFiles = reportCoveredFiles(repositoryRoot, files)
+				suite.CoveredFiles = builder.reportCoveredFiles(files)
 			}
 		}
 	}
@@ -336,15 +363,20 @@ func reportSuites(repositoryRoot string, tests []intake.Test, coverages []intake
 	return suites
 }
 
-func reportCoveredFiles(repositoryRoot string, files []string) []reportCoveredFile {
+func (builder *reportBuilder) reportCoveredFiles(files []string) []reportCoveredFile {
 	covered := make([]reportCoveredFile, 0, len(files))
 	for _, name := range files {
 		path := name
 		if !filepath.IsAbs(path) {
-			path = filepath.Join(repositoryRoot, filepath.FromSlash(path))
+			path = filepath.Join(builder.repositoryRoot, filepath.FromSlash(path))
 		}
-		info, err := os.Stat(path)
-		covered = append(covered, reportCoveredFile{Name: name, Missing: err != nil || info.IsDir()})
+		missing, cached := builder.missingFiles[path]
+		if !cached {
+			info, err := os.Stat(path)
+			missing = err != nil || info.IsDir()
+			builder.missingFiles[path] = missing
+		}
+		covered = append(covered, reportCoveredFile{Name: name, Missing: missing})
 	}
 	return covered
 }
@@ -399,27 +431,44 @@ func findingDuration(test intake.Test) time.Duration {
 }
 
 func readSource(repositoryRoot, sourceFile string, sourceStart, sourceEnd int) reportSource {
+	return newReportBuilder(repositoryRoot).readSource(sourceFile, sourceStart, sourceEnd)
+}
+
+func (builder *reportBuilder) readSource(sourceFile string, sourceStart, sourceEnd int) reportSource {
 	if sourceFile == "" {
 		return reportSource{Error: "Source file not reported."}
 	}
 	if sourceStart < 1 {
 		return reportSource{Error: "Source line not reported."}
 	}
+	key := reportSourceKey{file: sourceFile, start: sourceStart, end: sourceEnd}
+	if source, cached := builder.sources[key]; cached {
+		return source
+	}
 	path := sourceFile
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(repositoryRoot, filepath.FromSlash(path))
+		path = filepath.Join(builder.repositoryRoot, filepath.FromSlash(path))
 	}
-	contents, err := os.ReadFile(path)
-	if err != nil {
-		return reportSource{Error: "Source could not be read: " + err.Error()}
+	file, cached := builder.sourceFiles[path]
+	if !cached {
+		contents, err := os.ReadFile(path)
+		file.err = err
+		if err == nil && len(contents) > 0 {
+			text := strings.TrimSuffix(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n")
+			file.lines = strings.Split(text, "\n")
+		}
+		builder.sourceFiles[path] = file
 	}
-	text := strings.TrimSuffix(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n")
-	lines := strings.Split(text, "\n")
-	if len(contents) == 0 {
-		lines = nil
+	if file.err != nil {
+		source := reportSource{Error: "Source could not be read: " + file.err.Error()}
+		builder.sources[key] = source
+		return source
 	}
+	lines := file.lines
 	if sourceStart > len(lines) {
-		return reportSource{Error: fmt.Sprintf("Source line %d is outside %s.", sourceStart, sourceFile)}
+		source := reportSource{Error: fmt.Sprintf("Source line %d is outside %s.", sourceStart, sourceFile)}
+		builder.sources[key] = source
+		return source
 	}
 	if sourceEnd < sourceStart {
 		sourceEnd = sourceStart + 4
@@ -437,6 +486,7 @@ func readSource(repositoryRoot, sourceFile string, sourceStart, sourceEnd int) r
 			Code:   code,
 		})
 	}
+	builder.sources[key] = source
 	return source
 }
 

@@ -187,14 +187,23 @@ func coverageFilesByTest(tests []testReference, coverages []coverageReference) m
 	for _, test := range tests {
 		testsBySpan[test.spanID] = testIdentity(test)
 	}
-	testFiles := make(map[string][]string)
+	filesByTest := make(map[string]map[string]struct{})
 	for _, coverage := range coverages {
 		if coverage.spanID == 0 {
 			continue
 		}
 		if identity := testsBySpan[coverage.spanID]; identity != "" {
-			testFiles[identity] = appendUnique(testFiles[identity], coverage.files...)
+			if filesByTest[identity] == nil {
+				filesByTest[identity] = make(map[string]struct{})
+			}
+			for _, file := range coverage.files {
+				filesByTest[identity][file] = struct{}{}
+			}
 		}
+	}
+	testFiles := make(map[string][]string, len(filesByTest))
+	for identity, files := range filesByTest {
+		testFiles[identity] = sortedCoverageFiles(files)
 	}
 	return testFiles
 }
@@ -205,6 +214,7 @@ func suiteCoverages(tests []testReference, coverages []coverageReference) []Suit
 		testsBySuite[suiteReference{sessionID: test.sessionID, suiteID: test.suiteID}] = test
 	}
 	byName := make(map[string]*SuiteCoverage)
+	filesByName := make(map[string]map[string]struct{})
 	coveredSuites := make(map[suiteReference]struct{})
 	for _, coverage := range coverages {
 		if coverage.spanID != 0 {
@@ -217,12 +227,13 @@ func suiteCoverages(tests []testReference, coverages []coverageReference) []Suit
 		}
 		coveredSuites[suiteID] = struct{}{}
 		key := test.module + "\x00" + test.suite
-		finding, found := byName[key]
-		if !found {
-			finding = &SuiteCoverage{Module: test.module, Suite: test.suite}
-			byName[key] = finding
+		if _, found := byName[key]; !found {
+			byName[key] = &SuiteCoverage{Module: test.module, Suite: test.suite}
+			filesByName[key] = make(map[string]struct{})
 		}
-		finding.Files = appendUnique(finding.Files, coverage.files...)
+		for _, file := range coverage.files {
+			filesByName[key][file] = struct{}{}
+		}
 	}
 	coveredTests := make(map[string]map[string]struct{})
 	for _, test := range tests {
@@ -237,21 +248,20 @@ func suiteCoverages(tests []testReference, coverages []coverageReference) []Suit
 	}
 	result := make([]SuiteCoverage, 0, len(byName))
 	for key, finding := range byName {
+		finding.Files = sortedCoverageFiles(filesByName[key])
 		finding.CoveredTests = len(coveredTests[key])
 		result = append(result, *finding)
 	}
 	return result
 }
 
-func appendUnique(values []string, additions ...string) []string {
-	for _, addition := range additions {
-		if slices.Contains(values, addition) {
-			continue
-		}
-		values = append(values, addition)
+func sortedCoverageFiles(files map[string]struct{}) []string {
+	result := make([]string, 0, len(files))
+	for file := range files {
+		result = append(result, file)
 	}
-	slices.Sort(values)
-	return values
+	slices.Sort(result)
+	return result
 }
 
 func slowTests(tests []Test) ([]Test, time.Duration) {

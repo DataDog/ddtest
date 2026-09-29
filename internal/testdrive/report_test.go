@@ -239,6 +239,29 @@ func TestSourceReportsUsefulErrors(t *testing.T) {
 	requireSourceError(t, readSource(repositoryRoot, sourcePath, 2, 0), "outside")
 }
 
+func TestReportBuilderReusesSourceAndFileChecksWithinOneReport(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "example.test.js")
+	if err := os.WriteFile(path, []byte("test('one', () => {});\ntest('two', () => {});\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	builder := newReportBuilder(root)
+	firstSource := builder.readSource("example.test.js", 1, 0)
+	firstFiles := builder.reportCoveredFiles([]string{"example.test.js"})
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	secondSource := builder.readSource("example.test.js", 2, 2)
+	repeatedSource := builder.readSource("example.test.js", 1, 0)
+	secondFiles := builder.reportCoveredFiles([]string{"example.test.js"})
+	if len(firstSource.Lines) != 2 || len(secondSource.Lines) != 1 || secondSource.Lines[0].Number != 2 || len(repeatedSource.Lines) != 2 || firstSource.Lines[0].Code != repeatedSource.Lines[0].Code || firstFiles[0].Missing || secondFiles[0].Missing {
+		t.Fatalf("report builder changed its source snapshot: first=%+v/%+v second=%+v/%+v repeated=%+v", firstSource, firstFiles, secondSource, secondFiles, repeatedSource)
+	}
+	if source := newReportBuilder(root).readSource("example.test.js", 1, 0); source.Error == "" {
+		t.Fatalf("a new report should observe the deleted source: %+v", source)
+	}
+}
+
 func requireSourceError(t *testing.T, source reportSource, expected string) {
 	t.Helper()
 	if !strings.Contains(source.Error, expected) {
@@ -247,7 +270,7 @@ func requireSourceError(t *testing.T, source reportSource, expected string) {
 }
 
 func TestReportSuitesPreservesAllSkippedStatus(t *testing.T) {
-	suites := reportSuites(t.TempDir(), []intake.Test{{Name: "one", Suite: "suite", Status: "skip"}, {Name: "two", Suite: "suite", Status: "skip"}}, nil, false)
+	suites := newReportBuilder(t.TempDir()).reportSuites([]intake.Test{{Name: "one", Suite: "suite", Status: "skip"}, {Name: "two", Suite: "suite", Status: "skip"}}, nil, false)
 	if len(suites) != 1 || suites[0].Status != "Skip" {
 		t.Fatalf("reportSuites() = %+v, want one skipped suite", suites)
 	}
