@@ -655,3 +655,29 @@ func TestSlowSuiteFindingShowsSuiteDetailsAndCounts(t *testing.T) {
 		}
 	}
 }
+
+func TestSuiteDetailsSeparateCoverageAndCollapsibleTests(t *testing.T) {
+	for _, count := range []int{1, 2} {
+		var tests []intake.Test
+		for i := 0; i < count; i++ {
+			tests = append(tests, intake.Test{Name: fmt.Sprintf("test %d", i), Suite: "suite"})
+		}
+		report := renderTestReport(t, t.TempDir(), intake.Facts{
+			CoverageLevel: "suite", Tests: tests,
+			SuiteCoverages: []intake.SuiteCoverage{{Suite: "suite", CoveredTests: count, Files: []string{"source.go"}}},
+		})
+		if strings.Contains(report, "tests with coverage") {
+			t.Fatal("suite coverage summary contains test coverage count")
+		}
+		_, list, found := strings.Cut(report, `<details class="suite-test-list">`)
+		if !found {
+			t.Fatal("suite test list is not initially collapsed")
+		}
+		list, _, _ = strings.Cut(list, "</details>")
+		_, footer, found := strings.Cut(list, "</table>")
+		want := fmt.Sprintf(`<p class="suite-test-count">%d %s</p>`, count, plural(count, "test", "tests"))
+		if !found || !strings.Contains(footer, want) {
+			t.Fatalf("missing count below test list: %s", want)
+		}
+	}
+}

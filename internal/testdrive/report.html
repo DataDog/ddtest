@@ -4,30 +4,33 @@
       <details class="coverage">
         <summary>
           Suite coverage · {{ len .CoveredFiles }}
-          {{ plural (len .CoveredFiles) "file" "files" }} ·
-          {{ .CoveredCount }} tests with coverage
+          {{ plural (len .CoveredFiles) "file" "files" }}
         </summary>
         {{ template "covered-files" .CoveredFiles }}
       </details>
     {{ end }}
-    <table class="suite-tests">
-      <thead>
-        <tr>
-          <th>Test</th>
-          <th>Status</th>
-          <th>Duration</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{ range .Tests }}
+    <details class="suite-test-list">
+      <summary>Tests</summary>
+      <table class="suite-tests">
+        <thead>
           <tr>
-            <td>{{ .Name }}</td>
-            <td>{{ template "status" .Status }}</td>
-            <td>{{ .Duration }}</td>
+            <th>Test</th>
+            <th>Status</th>
+            <th>Duration</th>
           </tr>
-        {{ end }}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {{ range .Tests }}
+            <tr>
+              <td>{{ .Name }}</td>
+              <td>{{ template "status" .Status }}</td>
+              <td>{{ .Duration }}</td>
+            </tr>
+          {{ end }}
+        </tbody>
+      </table>
+      <p class="suite-test-count">{{ len .Tests }} {{ plural (len .Tests) "test" "tests" }}</p>
+    </details>
   </div>
 {{ end }}
 <!-- Icons: Bootstrap Icons v1.13.1, MIT license (https://github.com/twbs/icons).
@@ -980,7 +983,8 @@ THE SOFTWARE.
         color: #9996aa;
         font-style: italic;
       }
-      .coverage {
+      .coverage,
+      .suite-test-list {
         margin-top: 18px;
         border-top: 1px solid var(--line);
         padding-top: 14px;
@@ -1030,6 +1034,11 @@ THE SOFTWARE.
       }
       .pager button {
         padding: 6px 10px;
+      }
+      .suite-test-count {
+        margin: 12px 0 0;
+        font-size: 12px;
+        color: var(--muted);
       }
       .suite-tests {
         width: 100%;
