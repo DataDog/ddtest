@@ -336,7 +336,7 @@ THE SOFTWARE.
     <div class="covered-files-wrap">
       <ul class="covered-files" data-paginated data-page-size="50">
         {{ range . }}
-          <li class="page-item">{{.Name}}{{if .Missing}} · missing source{{end}}</li>
+          <li class="page-item">{{.}}</li>
         {{ end }}
       </ul>
       <div class="pager">

@@ -42,7 +42,7 @@ type reportTest struct {
 	Duration      string
 	Attempts      []reportAttempt
 	CoverageLevel string
-	CoveredFiles  []reportCoveredFile
+	CoveredFiles  []string
 	Source        reportSource
 	DurationNanos int64
 }
@@ -61,14 +61,9 @@ type reportCoverage struct {
 	Name       string
 	Level      string
 	FileCount  int
-	Files      []reportCoveredFile
+	Files      []string
 	SourceFile string
 	Source     reportSource
-}
-
-type reportCoveredFile struct {
-	Name    string
-	Missing bool
 }
 
 type reportSource struct {
@@ -91,7 +86,7 @@ type reportSuite struct {
 	TestCount     int
 	CoveredCount  int
 	ShowCoverage  bool
-	CoveredFiles  []reportCoveredFile
+	CoveredFiles  []string
 	Tests         []reportSuiteTest
 	DurationNanos int64
 }
@@ -141,7 +136,6 @@ type reportBuilder struct {
 	repositoryRoot string
 	sourceFiles    map[string]reportSourceFile
 	sources        map[reportSourceKey]reportSource
-	missingFiles   map[string]bool
 }
 
 func newReportBuilder(repositoryRoot string) *reportBuilder {
@@ -149,7 +143,6 @@ func newReportBuilder(repositoryRoot string) *reportBuilder {
 		repositoryRoot: repositoryRoot,
 		sourceFiles:    make(map[string]reportSourceFile),
 		sources:        make(map[reportSourceKey]reportSource),
-		missingFiles:   make(map[string]bool),
 	}
 }
 
@@ -309,7 +302,7 @@ func (builder *reportBuilder) reportTests(findings []intake.Test, showCoverage b
 		}
 		if showCoverage && finding.CoverageLevel == "test" {
 			test.CoverageLevel = finding.CoverageLevel
-			test.CoveredFiles = builder.reportCoveredFiles(finding.CoveredFiles)
+			test.CoveredFiles = finding.CoveredFiles
 		}
 		for attemptIndex, attempt := range finding.Attempts {
 			kind := "Initial run"
@@ -337,7 +330,7 @@ func (builder *reportBuilder) reportCoverages(findings []intake.CoverageFact) []
 		slices.Sort(files)
 		coverage := reportCoverage{
 			Name: finding.Name, Level: finding.Level, FileCount: finding.FileCount,
-			Files: builder.reportCoveredFiles(files), SourceFile: finding.SourceFile,
+			Files: files, SourceFile: finding.SourceFile,
 		}
 		if finding.Level == "test" {
 			coverage.Source = builder.readSource(finding.SourceFile, finding.SourceStart, finding.SourceEnd)
@@ -385,7 +378,7 @@ func (builder *reportBuilder) reportSuites(tests []intake.Test, coverages []inta
 				files := slices.Clone(coverage.Files)
 				slices.Sort(files)
 				suite.CoveredCount = coverage.CoveredTests
-				suite.CoveredFiles = builder.reportCoveredFiles(files)
+				suite.CoveredFiles = files
 			}
 		}
 	}
@@ -398,24 +391,6 @@ func (builder *reportBuilder) reportSuites(tests []intake.Test, coverages []inta
 	}
 	sort.Slice(suites, func(i, j int) bool { return suites[i].Name < suites[j].Name })
 	return suites
-}
-
-func (builder *reportBuilder) reportCoveredFiles(files []string) []reportCoveredFile {
-	covered := make([]reportCoveredFile, 0, len(files))
-	for _, name := range files {
-		path := name
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(builder.repositoryRoot, filepath.FromSlash(path))
-		}
-		missing, cached := builder.missingFiles[path]
-		if !cached {
-			info, err := os.Stat(path)
-			missing = err != nil || info.IsDir()
-			builder.missingFiles[path] = missing
-		}
-		covered = append(covered, reportCoveredFile{Name: name, Missing: missing})
-	}
-	return covered
 }
 
 func suiteStatus(status string) string {

@@ -136,7 +136,7 @@ func TestReportShowsBroadCoverageFilesAndSource(t *testing.T) {
 		"src/one.js",
 		"src/two.js",
 		`data-page-size="50"`,
-		`class="page-item">src/one.js · missing source`,
+		`class="page-item">src/one.js</li>`,
 		`class="token-string">&#39;broad&#39;`,
 	} {
 		if !strings.Contains(report, expected) {
@@ -240,7 +240,7 @@ func TestSourceReportsUsefulErrors(t *testing.T) {
 	requireSourceError(t, readSource(repositoryRoot, sourcePath, 2, 0), "outside")
 }
 
-func TestReportBuilderReusesSourceAndFileChecksWithinOneReport(t *testing.T) {
+func TestReportBuilderReusesSourceWithinOneReport(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "example.test.js")
 	if err := os.WriteFile(path, []byte("test('one', () => {});\ntest('two', () => {});\n"), 0644); err != nil {
@@ -248,15 +248,13 @@ func TestReportBuilderReusesSourceAndFileChecksWithinOneReport(t *testing.T) {
 	}
 	builder := newReportBuilder(root)
 	firstSource := builder.readSource("example.test.js", 1, 0)
-	firstFiles := builder.reportCoveredFiles([]string{"example.test.js"})
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
 	secondSource := builder.readSource("example.test.js", 2, 2)
 	repeatedSource := builder.readSource("example.test.js", 1, 0)
-	secondFiles := builder.reportCoveredFiles([]string{"example.test.js"})
-	if len(firstSource.Lines) != 2 || len(secondSource.Lines) != 1 || secondSource.Lines[0].Number != 2 || len(repeatedSource.Lines) != 2 || firstSource.Lines[0].Code != repeatedSource.Lines[0].Code || firstFiles[0].Missing || secondFiles[0].Missing {
-		t.Fatalf("report builder changed its source snapshot: first=%+v/%+v second=%+v/%+v repeated=%+v", firstSource, firstFiles, secondSource, secondFiles, repeatedSource)
+	if len(firstSource.Lines) != 2 || len(secondSource.Lines) != 1 || secondSource.Lines[0].Number != 2 || len(repeatedSource.Lines) != 2 || firstSource.Lines[0].Code != repeatedSource.Lines[0].Code {
+		t.Fatalf("report builder changed its source snapshot: first=%+v second=%+v repeated=%+v", firstSource, secondSource, repeatedSource)
 	}
 	if source := newReportBuilder(root).readSource("example.test.js", 1, 0); source.Error == "" {
 		t.Fatalf("a new report should observe the deleted source: %+v", source)
@@ -296,7 +294,7 @@ func TestReportPreservesModuleAndParameters(t *testing.T) {
 	if len(model.Suites) != 2 || model.Suites[0].Name != "first › shared" || model.Suites[0].TestCount != 2 || model.Suites[0].CoveredCount != 1 || model.Suites[1].Name != "second › shared" || model.Suites[1].TestCount != 1 || model.Suites[1].CoveredCount != 1 || model.Suites[1].Status != "Failed" {
 		t.Fatalf("suite identities merged: %+v", model.Suites)
 	}
-	if len(model.Suites[0].CoveredFiles) != 1 || model.Suites[0].CoveredFiles[0].Name != "first.js" || len(model.Suites[1].CoveredFiles) != 1 || model.Suites[1].CoveredFiles[0].Name != "second.js" {
+	if len(model.Suites[0].CoveredFiles) != 1 || model.Suites[0].CoveredFiles[0] != "first.js" || len(model.Suites[1].CoveredFiles) != 1 || model.Suites[1].CoveredFiles[0] != "second.js" {
 		t.Fatalf("suite coverage crossed module boundaries: %+v", model.Suites)
 	}
 	if model.Suites[0].Tests[0].Name == model.Suites[0].Tests[1].Name {
@@ -314,7 +312,7 @@ func TestReportSkippedOutcomesStayDistinctFromFailures(t *testing.T) {
 	}
 }
 
-func TestReportShowsMissingCoveredFiles(t *testing.T) {
+func TestReportListsCoveredPathsWithoutCheckingTheirAvailability(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "present.js"), []byte("export const value = 1;"), 0644); err != nil {
 		t.Fatal(err)
@@ -332,23 +330,9 @@ func TestReportShowsMissingCoveredFiles(t *testing.T) {
 		} else {
 			facts.SuiteCoverages = []intake.SuiteCoverage{{Suite: "suite", Files: files, CoveredTests: 1}}
 		}
-		model := buildReport(root, facts, false)
-		var covered []reportCoveredFile
-		if level == "test" {
-			covered = model.Tests[0].CoveredFiles
-		} else {
-			covered = model.Suites[0].CoveredFiles
-		}
-		missing := make(map[string]bool)
-		for _, file := range covered {
-			missing[file.Name] = file.Missing
-		}
-		if len(covered) != 2 || missing["present.js"] || !missing["deleted.js"] || len(model.Cards[0].Coverages) != 1 || !model.Cards[0].Coverages[0].Files[0].Missing {
-			t.Fatalf("missing source is hidden at %s level: files=%+v card=%+v", level, covered, model.Cards[0])
-		}
 		report := renderTestReport(t, root, facts)
-		if !strings.Contains(report, "deleted.js · missing source") || !strings.Contains(report, "present.js</li>") || strings.Contains(report, "present.js · missing source") {
-			t.Fatalf("covered file status is incorrect in %s report", level)
+		if !strings.Contains(report, "deleted.js</li>") || !strings.Contains(report, "present.js</li>") || strings.Contains(report, "missing source") {
+			t.Fatalf("covered paths must be displayed without availability labels in %s report", level)
 		}
 	}
 }
