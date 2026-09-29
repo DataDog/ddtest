@@ -191,15 +191,19 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 			}
 		}
 	}
+	coverageValue := fmt.Sprintf("%d / %d", covered, total)
+	if covered == 0 {
+		coverageValue = "Not reported"
+	}
 	model := reportModel{
 		Summary:       "No findings.",
 		NoTestEvents:  findings.TestEventCount == 0,
 		Runtime:       info,
 		CoverageLevel: findings.CoverageLevel,
 		Facts: []reportFact{
-			{Label: coverageLabel, Value: fmt.Sprintf("%d / %d", covered, total), Tone: factTone(total > 0 && covered == total)},
 			{Label: info.Framework, Value: status, Tone: factTone(!commandFailed && findings.TestEventCount > 0)},
 			{Label: "Datadog library", Value: info.Tracer, Tone: "good"},
+			{Label: coverageLabel, Value: coverageValue, Tone: factTone(total > 0 && covered == total)},
 		},
 		Artifacts: []reportArtifact{
 			{Title: "JSON traffic", Href: "intake/"},
@@ -208,9 +212,6 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		Tests: builder.reportTests(findings.Tests, showTestCoverage),
 	}
 	model.Suites = suites
-	if covered == 0 {
-		model.Facts[0].Value = "Not reported"
-	}
 
 	if findings.TestEventCount == 0 {
 		model.Summary = "Check the instrumentation setup."

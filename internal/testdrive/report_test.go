@@ -620,8 +620,8 @@ func TestReportCoverageSummaryCountsTheReportedLevel(t *testing.T) {
 			facts := intake.Facts{CoverageLevel: tc.level, Tests: tests, TestCount: 3, CoveredTestCount: 2, SuiteCoverages: tc.coverages}
 			model := buildReport(t.TempDir(), facts, false)
 			want := reportFact{Label: tc.label, Value: tc.value, Tone: tc.tone}
-			if model.Facts[0] != want {
-				t.Fatalf("coverage summary = %+v, want %+v", model.Facts[0], want)
+			if model.Facts[len(model.Facts)-1] != want {
+				t.Fatalf("coverage summary = %+v, want %+v", model.Facts[len(model.Facts)-1], want)
 			}
 		})
 	}
