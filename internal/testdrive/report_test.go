@@ -626,3 +626,32 @@ func TestReportCoverageSummaryCountsTheReportedLevel(t *testing.T) {
 		})
 	}
 }
+
+func TestSlowSuiteFindingShowsSuiteDetailsAndCounts(t *testing.T) {
+	facts := intake.Facts{
+		TestEventCount: 2, CoverageLevel: "suite", SuiteDurationMedian: time.Second,
+		Tests:          []intake.Test{{Module: "module", Suite: "slow suite", Name: "first", Duration: 4 * time.Second}, {Module: "module", Suite: "slow suite", Name: "second", Duration: 2 * time.Second}},
+		SlowSuites:     []intake.SlowSuite{{Module: "module", Suite: "slow suite", Duration: 6 * time.Second}},
+		SuiteCoverages: []intake.SuiteCoverage{{Module: "module", Suite: "slow suite", Files: []string{"covered.go"}, CoveredTests: 2}},
+	}
+	report := renderTestReport(t, t.TempDir(), facts)
+	_, panel, _ := strings.Cut(report, `id="finding-0"`)
+	panel, _, _ = strings.Cut(panel, "</section>")
+	for _, want := range []string{"Slow suites", "module › slow suite", "6s", "first", "second", "Suite coverage", "covered.go"} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("suite finding missing %q", want)
+		}
+	}
+	for _, want := range []string{"1 finding.", "Median suite time · 1s"} {
+		if !strings.Contains(report, want) {
+			t.Errorf("report missing %q", want)
+		}
+	}
+	var console bytes.Buffer
+	writeFindings(&console, facts)
+	for _, want := range []string{"1 finding.", "Suites slower than the others (1)", "Median suite time: 1s", "module › slow suite · 6s"} {
+		if !strings.Contains(console.String(), want) {
+			t.Errorf("console missing %q", want)
+		}
+	}
+}

@@ -54,8 +54,8 @@ func TestAnalyzeTestsSlowThresholds(t *testing.T) {
 		wantSlow bool
 	}{
 		{name: "fast outlier", median: 10 * time.Millisecond, duration: 400 * time.Millisecond},
-		{name: "exactly five seconds", median: time.Second, duration: 5 * time.Second},
-		{name: "above five seconds", median: time.Second, duration: 5*time.Second + time.Nanosecond, wantSlow: true},
+		{name: "exactly one second", median: 100 * time.Millisecond, duration: time.Second},
+		{name: "above one second", median: 100 * time.Millisecond, duration: time.Second + time.Nanosecond, wantSlow: true},
 		{name: "below five times median", median: 2 * time.Second, duration: 10*time.Second - time.Nanosecond},
 		{name: "exactly five times median", median: 2 * time.Second, duration: 10 * time.Second, wantSlow: true},
 		{name: "above five times median", median: 2 * time.Second, duration: 11 * time.Second, wantSlow: true},
@@ -376,4 +376,63 @@ func TestAnalyzeTestsDoesNotUseSourceLocationAsIdentity(t *testing.T) {
 	require.Len(t, flaky, 1)
 	require.Len(t, flaky[0].Attempts, 2)
 	require.Empty(t, failed)
+}
+
+func TestSlowSuiteThresholds(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		median, duration time.Duration
+		want             bool
+	}{
+		{"below floor", time.Millisecond, 4 * time.Second, false},
+		{"at floor", time.Second, 5 * time.Second, false},
+		{"above floor", time.Second, 5*time.Second + time.Nanosecond, true},
+		{"below ratio", 2 * time.Second, 10*time.Second - time.Nanosecond, false},
+		{"at ratio", 2 * time.Second, 10 * time.Second, true},
+		{"uniform", 6 * time.Second, 6 * time.Second, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			slow, median := slowSuites([]Test{
+				{Suite: "one", Duration: tc.median}, {Suite: "two", Duration: tc.median},
+				{Suite: "candidate", Duration: tc.duration},
+			})
+			require.Equal(t, tc.median, median)
+			if tc.want {
+				require.Equal(t, []SlowSuite{{Suite: "candidate", Duration: tc.duration}}, slow)
+			} else {
+				require.Empty(t, slow)
+			}
+		})
+	}
+	for _, tests := range [][]Test{nil, {{Suite: "only", Duration: time.Minute}}} {
+		slow, _ := slowSuites(tests)
+		require.Empty(t, slow)
+	}
+}
+
+func TestFactsFindSlowSuitesWithoutCountingRetriesTwice(t *testing.T) {
+	var events []any
+	for i, tc := range []struct {
+		module, suite, name string
+		duration            time.Duration
+		retry               bool
+	}{
+		{"one", "shared", "baseline", time.Second, false},
+		{"two", "shared", "baseline", time.Second, false},
+		{"three", "shared", "first", 4 * time.Second, false},
+		{"three", "shared", "first", 20 * time.Second, true},
+		{"three", "shared", "second", 2 * time.Second, false},
+	} {
+		events = append(events, map[string]any{"type": "test", "content": map[string]any{
+			"span_id": i + 1, "duration": int64(tc.duration), "meta": map[string]any{
+				"test.module": tc.module, "test.suite": tc.suite, "test.name": tc.name, "test.status": "pass", "test.is_retry": tc.retry,
+			},
+		}})
+	}
+	payload, err := msgp.AppendIntf(nil, map[string]any{"events": events})
+	require.NoError(t, err)
+	facts, err := serverWithCoverage(t, payload).Facts()
+	require.NoError(t, err)
+	require.Equal(t, time.Second, facts.SuiteDurationMedian)
+	require.Equal(t, []SlowSuite{{Module: "three", Suite: "shared", Duration: 6 * time.Second}}, facts.SlowSuites)
 }

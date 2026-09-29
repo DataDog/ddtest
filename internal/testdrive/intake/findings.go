@@ -19,7 +19,8 @@ import (
 )
 
 const (
-	minimumSlowDuration       = 5 * time.Second
+	minimumSlowTestDuration   = time.Second
+	minimumSlowSuiteDuration  = 5 * time.Second
 	minimumBroadCoverageFiles = 5
 )
 
@@ -69,6 +70,13 @@ type SuiteCoverage struct {
 	CoveredTests int
 }
 
+// SlowSuite describes a suite whose combined test duration is unusually high.
+type SlowSuite struct {
+	Module   string
+	Suite    string
+	Duration time.Duration
+}
+
 // Facts contains the facts shown in the testdrive report.
 type Facts struct {
 	ConfigurationErrors     []string
@@ -77,6 +85,7 @@ type Facts struct {
 	TestEventCount          int
 	CoveredTestCount        int
 	TestDurationMedian      time.Duration
+	SuiteDurationMedian     time.Duration
 	CoveredFilesMedian      int
 	CoverageLevel           string
 	SuiteCoverages          []SuiteCoverage
@@ -84,6 +93,7 @@ type Facts struct {
 	FailedTests             []Test
 	FlakyTests              []Test
 	SlowTests               []Test
+	SlowSuites              []SlowSuite
 	BroadCoverage           []CoverageFact
 }
 
@@ -103,6 +113,7 @@ func (s *Server) Facts() (Facts, error) {
 	if findings.CoverageLevel == "suite" {
 		findings.SuiteCoverages = suiteCoverages(tests, coverages)
 	}
+	findings.SlowSuites, findings.SuiteDurationMedian = slowSuites(findings.Tests)
 	findings.TestCount = len(findings.Tests)
 	findings.CoveredTestCount = uniqueCoveredTestCount(tests, coverages)
 	findings.BroadCoverage, findings.CoveredFilesMedian = analyzeCoverage(tests, coverages, findings.CoverageLevel)
@@ -272,11 +283,46 @@ func slowTests(tests []Test) ([]Test, time.Duration) {
 
 	slow := make([]Test, 0)
 	for _, test := range tests {
-		if test.Duration > minimumSlowDuration && test.Duration >= median*5 {
+		if test.Duration > minimumSlowTestDuration && test.Duration >= median*5 {
 			slow = append(slow, test)
 		}
 	}
 	sortTests(slow)
+	return slow, median
+}
+
+func slowSuites(tests []Test) ([]SlowSuite, time.Duration) {
+	bySuite := make(map[string]SlowSuite)
+	for _, test := range tests {
+		key := test.Module + "\x00" + test.Suite
+		suite := bySuite[key]
+		suite.Module, suite.Suite = test.Module, test.Suite
+		suite.Duration += test.Duration
+		bySuite[key] = suite
+	}
+	durations := make([]time.Duration, 0, len(bySuite))
+	for _, suite := range bySuite {
+		durations = append(durations, suite.Duration)
+	}
+	median := medianDurations(durations)
+	var slow []SlowSuite
+	if len(bySuite) < 2 {
+		return slow, median
+	}
+	for _, suite := range bySuite {
+		if suite.Duration > minimumSlowSuiteDuration && suite.Duration >= median*5 {
+			slow = append(slow, suite)
+		}
+	}
+	sort.Slice(slow, func(i, j int) bool {
+		if slow[i].Duration != slow[j].Duration {
+			return slow[i].Duration > slow[j].Duration
+		}
+		if slow[i].Module != slow[j].Module {
+			return slow[i].Module < slow[j].Module
+		}
+		return slow[i].Suite < slow[j].Suite
+	})
 	return slow, median
 }
 
@@ -287,6 +333,13 @@ func medianTestDuration(tests []Test) time.Duration {
 	durations := make([]time.Duration, 0, len(tests))
 	for _, test := range tests {
 		durations = append(durations, test.Duration)
+	}
+	return medianDurations(durations)
+}
+
+func medianDurations(durations []time.Duration) time.Duration {
+	if len(durations) == 0 {
+		return 0
 	}
 	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
 	middle := len(durations) / 2

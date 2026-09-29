@@ -29,6 +29,7 @@ type reportCard struct {
 	Count     int
 	Context   string
 	Tests     []reportTest
+	Suites    []reportSuite
 	Coverages []reportCoverage
 }
 
@@ -82,6 +83,7 @@ type reportSourceLine struct {
 }
 
 type reportSuite struct {
+	Key          string
 	Name         string
 	Status       string
 	Duration     string
@@ -240,6 +242,19 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 			Tests:   builder.reportTests(findings.SlowTests, showTestCoverage),
 		})
 	}
+	if len(findings.SlowSuites) > 0 {
+		byKey := make(map[string]reportSuite, len(model.Suites))
+		for _, suite := range model.Suites {
+			byKey[suite.Key] = suite
+		}
+		card := reportCard{Kind: "slow", Title: "Slow suites", Count: len(findings.SlowSuites), Context: "Median suite time · " + formatDuration(findings.SuiteDurationMedian)}
+		for _, suite := range findings.SlowSuites {
+			if row, ok := byKey[suite.Module+"\x00"+suite.Suite]; ok {
+				card.Suites = append(card.Suites, row)
+			}
+		}
+		model.Cards = append(model.Cards, card)
+	}
 	if len(findings.BroadCoverage) > 0 {
 		model.Cards = append(model.Cards, reportCard{
 			Kind: "coverage", Title: "Broad coverage", Count: len(findings.BroadCoverage),
@@ -249,7 +264,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	}
 	count := len(findings.ConfigurationErrors) + findings.EmptyCoverageEntryCount
 	for _, size := range []int{
-		len(findings.FailedTests), len(findings.FlakyTests), len(findings.SlowTests), len(findings.BroadCoverage),
+		len(findings.FailedTests), len(findings.FlakyTests), len(findings.SlowTests), len(findings.SlowSuites), len(findings.BroadCoverage),
 	} {
 		count += size
 	}
@@ -343,7 +358,7 @@ func (builder *reportBuilder) reportSuites(tests []intake.Test, coverages []inta
 			if test.Module != "" {
 				name = test.Module + " › " + name
 			}
-			suite = &reportSuite{Name: name, Status: suiteStatus(status), ShowCoverage: showCoverage}
+			suite = &reportSuite{Key: key, Name: name, Status: suiteStatus(status), ShowCoverage: showCoverage}
 			byName[key] = suite
 		} else if suiteStatusRank(status) > suiteStatusRank(suite.Status) {
 			suite.Status = suiteStatus(status)

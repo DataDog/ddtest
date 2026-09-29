@@ -1,3 +1,35 @@
+{{ define "suite-detail" }}
+  <div class="expanded">
+    {{ if .ShowCoverage }}
+      <details class="coverage">
+        <summary>
+          Suite coverage · {{ len .CoveredFiles }}
+          {{ plural (len .CoveredFiles) "file" "files" }} ·
+          {{ .CoveredCount }} tests with coverage
+        </summary>
+        {{ template "covered-files" .CoveredFiles }}
+      </details>
+    {{ end }}
+    <table class="suite-tests">
+      <thead>
+        <tr>
+          <th>Test</th>
+          <th>Status</th>
+          <th>Duration</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .Tests }}
+          <tr>
+            <td>{{ .Name }}</td>
+            <td>{{ template "status" .Status }}</td>
+            <td>{{ .Duration }}</td>
+          </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+{{ end }}
 <!-- Icons: Bootstrap Icons v1.13.1, MIT license (https://github.com/twbs/icons).
 The MIT License (MIT)
 
@@ -1181,6 +1213,15 @@ THE SOFTWARE.
                 </summary>
                 {{ template "test-detail" . }}
               </details>
+            {{ end }}
+            {{ range .Suites }}
+              <details class="result">
+                <summary>
+                  <span>{{ .Name }}</span>
+                  <span class="result-meta">{{ template "status" .Status }} · {{ .Duration }}</span>
+                </summary>
+                {{ template "suite-detail" . }}
+              </details>
             {{ end }}{{ range .Coverages }}
               <details class="result">
                 <summary>
@@ -1386,36 +1427,7 @@ THE SOFTWARE.
                 </tr>
                 <tr id="suite-detail-{{ $i }}" class="detail-row" hidden>
                   <td colspan="{{ if eq $.CoverageLevel "suite" }}7{{ else }}6{{ end }}" class="detail-cell">
-                    <div class="expanded">
-                      {{ if .ShowCoverage }}
-                        <details class="coverage">
-                          <summary>
-                            Suite coverage · {{ len .CoveredFiles }}
-                            {{ plural (len .CoveredFiles) "file" "files" }} ·
-                            {{ .CoveredCount }} tests with coverage
-                          </summary>
-                          {{ template "covered-files" .CoveredFiles }}
-                        </details>
-                      {{ end }}
-                      <table class="suite-tests">
-                        <thead>
-                          <tr>
-                            <th>Test</th>
-                            <th>Status</th>
-                            <th>Duration</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {{ range .Tests }}
-                            <tr>
-                              <td>{{ .Name }}</td>
-                              <td>{{ template "status" .Status }}</td>
-                              <td>{{ .Duration }}</td>
-                            </tr>
-                          {{ end }}
-                        </tbody>
-                      </table>
-                    </div>
+                    {{ template "suite-detail" . }}
                   </td>
                 </tr>
               </tbody>
