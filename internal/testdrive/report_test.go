@@ -674,10 +674,10 @@ func TestSuiteDetailsSeparateCoverageAndCollapsibleTests(t *testing.T) {
 			t.Fatal("suite test list is not initially collapsed")
 		}
 		list, _, _ = strings.Cut(list, "</details>")
-		_, footer, found := strings.Cut(list, "</table>")
-		want := fmt.Sprintf(`<p class="suite-test-count">%d %s</p>`, count, plural(count, "test", "tests"))
-		if !found || !strings.Contains(footer, want) {
-			t.Fatalf("missing count below test list: %s", want)
+		summary, _, _ := strings.Cut(list, "</summary>")
+		want := fmt.Sprintf(`<summary>Tests · %d %s`, count, plural(count, "test", "tests"))
+		if !strings.Contains(summary, want) {
+			t.Fatalf("missing count in test list header: %s", want)
 		}
 	}
 }

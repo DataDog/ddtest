@@ -10,7 +10,7 @@
       </details>
     {{ end }}
     <details class="suite-test-list">
-      <summary>Tests</summary>
+      <summary>Tests · {{ len .Tests }} {{ plural (len .Tests) "test" "tests" }}</summary>
       <table class="suite-tests">
         <thead>
           <tr>
@@ -29,7 +29,6 @@
           {{ end }}
         </tbody>
       </table>
-      <p class="suite-test-count">{{ len .Tests }} {{ plural (len .Tests) "test" "tests" }}</p>
     </details>
   </div>
 {{ end }}
@@ -1034,11 +1033,6 @@ THE SOFTWARE.
       }
       .pager button {
         padding: 6px 10px;
-      }
-      .suite-test-count {
-        margin: 12px 0 0;
-        font-size: 12px;
-        color: var(--muted);
       }
       .suite-tests {
         width: 100%;
