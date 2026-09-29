@@ -110,16 +110,18 @@ type reportArtifact struct {
 }
 
 type reportModel struct {
-	Headline  string
-	Summary   string
-	Cards     []reportCard
-	Facts     []reportFact
-	Artifacts []reportArtifact
-	Suites    []reportSuite
-	Tests     []reportTest
+	Headline     string
+	HeadlineTone string
+	Runtime      reportRuntime
+	Summary      string
+	Cards        []reportCard
+	Facts        []reportFact
+	Artifacts    []reportArtifact
+	Suites       []reportSuite
+	Tests        []reportTest
 }
 
-type reportRuntime struct{ Framework, Tracer string }
+type reportRuntime struct{ Framework, Tracer, Command, Output, Error string }
 
 type reportSourceFile struct {
 	lines []string
@@ -176,10 +178,11 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	showTestCoverage := findings.CoverageLevel == "test"
 	showSuiteCoverage := findings.CoverageLevel == "suite"
 	model := reportModel{
-		Headline: fmt.Sprintf("%d test %s received.", findings.TestEventCount, plural(findings.TestEventCount, "event", "events")),
-		Summary:  "No findings.",
+		Headline:     fmt.Sprintf("%d test %s received.", findings.TestEventCount, plural(findings.TestEventCount, "event", "events")),
+		Summary:      "No findings.",
+		HeadlineTone: factTone(findings.TestEventCount > 0),
+		Runtime:      info,
 		Facts: []reportFact{
-			{Label: "Test events", Value: fmt.Sprintf("%d", findings.TestEventCount), Tone: factTone(findings.TestEventCount > 0)},
 			{Label: "Tests with coverage", Value: fmt.Sprintf("%d / %d", findings.CoveredTestCount, findings.TestCount), Tone: factTone(findings.TestCount > 0 && findings.CoveredTestCount == findings.TestCount)},
 			{Label: info.Framework, Value: status, Tone: factTone(!commandFailed && findings.TestEventCount > 0)},
 			{Label: "Datadog library", Value: info.Tracer, Tone: "good"},
@@ -192,7 +195,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	}
 	model.Suites = builder.reportSuites(findings.Tests, findings.SuiteCoverages, showSuiteCoverage)
 	if findings.CoveredTestCount == 0 {
-		model.Facts[1].Value = "Not reported"
+		model.Facts[0].Value = "Not reported"
 	}
 
 	if findings.TestEventCount == 0 {

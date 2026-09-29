@@ -241,7 +241,14 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	if err != nil {
 		return err
 	}
-	reportPath, err := writeReport(t.repositoryRoot, session.Directory(), findings, testErr != nil, reportRuntime{Framework: displayName(t.framework.Name()), Tracer: tracerLabel})
+	runtime := reportRuntime{
+		Framework: displayName(t.framework.Name()), Tracer: tracerLabel,
+		Command: shellquote.Join(append([]string{command}, args...)...), Output: string(testOutput),
+	}
+	if testErr != nil {
+		runtime.Error = testErr.Error()
+	}
+	reportPath, err := writeReport(t.repositoryRoot, session.Directory(), findings, testErr != nil, runtime)
 	if err != nil {
 		return err
 	}

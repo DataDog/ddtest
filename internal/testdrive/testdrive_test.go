@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"html"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -343,6 +344,7 @@ func TestRunStillReportsEventsWhenJestFails(t *testing.T) {
 		{name: "suite setup failure without failed events", output: "Cannot find module './missing' from 'setup.js'\n", events: 1363, want: "Cannot find module './missing'"},
 		{name: "no events", output: "SyntaxError: unexpected token in jest.config.js\n", want: "SyntaxError: unexpected token"},
 		{name: "empty output", events: 1, want: "The command produced no output."},
+		{name: "HTML in logs", output: "<script>alert(1)</script>\nTest Suites: 1 failed, 1 total\n", events: 1, want: "Test Suites: 1 failed, 1 total"},
 		{name: "80 lines", output: strings.Repeat("log line\n", 79) + "final failure", events: 1, want: "final failure"},
 		{name: "long output", output: "initial failure\n" + strings.Repeat("log line\n", 79) + "final failure\n", events: 1, want: "... 1 line omitted; see the full test output below ..."},
 	} {
@@ -398,6 +400,24 @@ func TestRunStillReportsEventsWhenJestFails(t *testing.T) {
 			}
 			if string(contents) != tc.output {
 				t.Fatalf("saved output changed: %q", contents)
+			}
+			report, err := os.ReadFile(filepath.Join(installer.sessionDirectory, reportFilename))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{`<details class="command-output">`, "Jest output", "npx jest", "Command failed: exit status 1", tc.output} {
+				if !strings.Contains(html.UnescapeString(string(report)), want) {
+					t.Errorf("report missing full command output or failure context %q", want)
+				}
+			}
+			if tc.output == "" && !strings.Contains(string(report), "The command produced no output.") {
+				t.Fatal("report hides empty command output")
+			}
+			if strings.Contains(string(report), "<script>alert(1)</script>") {
+				t.Fatal("command output can execute HTML")
+			}
+			if strings.Contains(string(report), "<dt>Test events</dt>") {
+				t.Fatal("run details still shows the event count")
 			}
 			if strings.Contains(output.String(), "Full test output: "+repositoryRoot) {
 				t.Fatal("output path is absolute")

@@ -623,7 +623,7 @@ THE SOFTWARE.
       }
       .facts {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 24px;
         margin: 14px 0 0;
       }
@@ -638,6 +638,23 @@ THE SOFTWARE.
       }
       .fact.attention dd {
         color: var(--red);
+      }
+      .command-output {
+        margin-top: 20px;
+        padding-top: 16px;
+        border-top: 1px solid var(--line);
+      }
+      .command-output > summary {
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .command-line { overflow-wrap: anywhere; }
+      .command-error { color: var(--red); }
+      .command-log {
+        max-height: 480px;
+        overflow: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
       }
       .tabs {
         display: flex;
@@ -1112,13 +1129,13 @@ THE SOFTWARE.
           <h1>Test report</h1>
         </div>
         <p class="subtitle">
-          {{ (index .Facts 2).Label }} · local testdrive · {{ .Summary }}
+          {{ .Runtime.Framework }} · local testdrive · {{ .Summary }}
         </p>
       </div>
       <div class="header-actions">
         <div class="run-summary">
           <strong>{{ len .Tests }} tests · {{ len .Suites }} suites</strong
-          ><span class="{{ (index .Facts 0).Tone }}">{{ .Headline }}</span>
+          ><span class="{{ .HeadlineTone }}">{{ .Headline }}</span>
         </div>
         <div class="artifacts">
           {{ range .Artifacts }}
@@ -1227,6 +1244,17 @@ THE SOFTWARE.
             </div>
           {{ end }}
         </dl>
+        <details class="command-output">
+          <summary>{{ .Runtime.Framework }} output · expand logs</summary>
+          {{ if .Runtime.Command }}<p class="command-line"><code>{{ .Runtime.Command }}</code></p>{{ end }}
+          {{ if .Runtime.Error }}<p class="command-error">Command failed: {{ .Runtime.Error }}</p>{{ end }}
+          {{ if .Runtime.Output }}
+            <pre class="command-log" tabindex="0" aria-label="{{ .Runtime.Framework }} command output">{{ .Runtime.Output }}</pre>
+          {{ else }}
+            <p class="muted">The command produced no output.</p>
+          {{ end }}
+          <a href="test-output.txt">Open full output file</a>
+        </details>
       </section>
       <nav class="tabs" role="tablist" aria-label="Report sections">
         <button
