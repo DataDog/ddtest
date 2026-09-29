@@ -448,9 +448,9 @@ func TestReportRuntimeFacts(t *testing.T) {
 		wantStatus    string
 	}{
 		{"passing with reused tracer", 1, false, "dd-trace@6.15.0 · reused", "Passed"},
-		{"failing with isolated tracer", 1, true, "dd-trace@6.15.0 · isolated", "Failed"},
+		{"failing with installed tracer", 1, true, "dd-trace@6.15.0", "Failed"},
 		{"successful command without events", 0, false, "dd-trace@6.15.0 · reused", "No test results received"},
-		{"failed command without events", 0, true, "dd-trace@6.15.0 · isolated", "No test results received"},
+		{"failed command without events", 0, true, "dd-trace@6.15.0", "No test results received"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			model := buildReport(t.TempDir(), intake.Facts{TestEventCount: tc.events}, tc.commandFailed, reportRuntime{Framework: "Jest", Tracer: tc.tracer})
@@ -533,5 +533,29 @@ func TestReportEventSummary(t *testing.T) {
 				t.Fatalf("report missing event summary %q", tc.want)
 			}
 		})
+	}
+}
+
+func TestReportRunDetailsAlwaysVisibleAfterFindings(t *testing.T) {
+	for _, hasFindings := range []bool{false, true} {
+		facts := intake.Facts{TestEventCount: 1}
+		if hasFindings {
+			facts.FailedTests = []intake.Test{{Name: "failed", Status: "fail"}}
+		}
+		report := renderTestReport(t, t.TempDir(), facts)
+		start := strings.Index(report, `id="run-details"`)
+		if start < 0 {
+			t.Fatal("run details missing")
+		}
+		opening, _, _ := strings.Cut(report[start:], ">")
+		if strings.Contains(opening, "hidden") || strings.Contains(report, "run-toggle") {
+			t.Fatal("run details must be visible without a toggle")
+		}
+		if hasFindings && start < strings.Index(report, `id="finding-0"`) {
+			t.Fatal("run details must follow finding cards and their details")
+		}
+		if start > strings.Index(report, `<nav class="tabs"`) {
+			t.Fatal("run details must precede results")
+		}
 	}
 }

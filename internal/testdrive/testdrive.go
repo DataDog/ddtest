@@ -184,7 +184,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		}
 	}
 
-	tracerLabel := t.tracerLabel + " · isolated"
+	tracerLabel := t.tracerLabel
 	if installation.Project {
 		tracerLabel = t.installedTracerLabel(t.projectTracer) + " · reused"
 	}

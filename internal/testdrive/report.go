@@ -165,7 +165,7 @@ func writeReport(repositoryRoot, sessionDirectory string, findings intake.Facts,
 
 func buildReport(repositoryRoot string, findings intake.Facts, commandFailed bool, runtime ...reportRuntime) reportModel {
 	builder := newReportBuilder(repositoryRoot)
-	info := reportRuntime{Framework: "Test command", Tracer: "Isolated installation"}
+	info := reportRuntime{Framework: "Test command", Tracer: "Not reported"}
 	if len(runtime) > 0 {
 		info = runtime[0]
 	}

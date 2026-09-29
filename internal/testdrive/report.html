@@ -1120,13 +1120,6 @@ THE SOFTWARE.
           <strong>{{ len .Tests }} tests · {{ len .Suites }} suites</strong
           ><span class="{{ (index .Facts 0).Tone }}">{{ .Headline }}</span>
         </div>
-        <button
-          id="run-toggle"
-          aria-expanded="false"
-          aria-controls="run-details"
-        >
-          Run details
-        </button>
         <div class="artifacts">
           {{ range .Artifacts }}
             <a class="artifact" href="{{ .Href }}"
@@ -1137,22 +1130,6 @@ THE SOFTWARE.
       </div>
     </header>
     <main>
-      <section
-        id="run-details"
-        class="run-details"
-        aria-label="Run details"
-        hidden
-      >
-        <h2>Run details</h2>
-        <dl class="facts">
-          {{ range .Facts }}
-            <div class="fact {{ .Tone }}">
-              <dt>{{ .Label }}</dt>
-              <dd>{{ .Value }}</dd>
-            </div>
-          {{ end }}
-        </dl>
-      </section>
       {{ if .Cards }}
         <section class="findings" aria-label="Findings">
           {{ range $i, $card := .Cards }}
@@ -1236,6 +1213,21 @@ THE SOFTWARE.
           {{ end }}
         </div>
       {{ end }}
+      <section
+        id="run-details"
+        class="run-details"
+        aria-label="Run details"
+      >
+        <h2>Run details</h2>
+        <dl class="facts">
+          {{ range .Facts }}
+            <div class="fact {{ .Tone }}">
+              <dt>{{ .Label }}</dt>
+              <dd>{{ .Value }}</dd>
+            </div>
+          {{ end }}
+        </dl>
+      </section>
       <nav class="tabs" role="tablist" aria-label="Report sections">
         <button
           id="tab-tests"
@@ -1670,13 +1662,6 @@ THE SOFTWARE.
           });
           render();
         });
-        document
-          .getElementById("run-toggle")
-          .addEventListener("click", function () {
-            var open = this.getAttribute("aria-expanded") !== "true";
-            this.setAttribute("aria-expanded", String(open));
-            document.getElementById("run-details").hidden = !open;
-          });
         var cards = Array.from(document.querySelectorAll(".card-button"));
         cards.forEach(function (button) {
           button.addEventListener("click", function () {

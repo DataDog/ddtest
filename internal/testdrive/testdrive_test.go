@@ -264,7 +264,7 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 		"Test events: 2",
 		"Tests with coverage: 2 / 2",
 		"Jest: Passed",
-		"Datadog library: dd-trace@latest · isolated",
+		"Datadog library: dd-trace@latest",
 		"\x1b]8;;file://",
 		"\x1b\\" + filepath.Join(".testoptimization", "testdrive", filepath.Base(installer.sessionDirectory), "report.html") + "\x1b]8;;",
 	} {
