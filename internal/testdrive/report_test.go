@@ -90,7 +90,7 @@ func TestReportShowsEveryFlakyAttemptErrorAndSource(t *testing.T) {
 
 	report := renderTestReport(t, repositoryRoot, findings)
 	for _, expected := range []string{
-		"Any flaky tests?",
+		"Flaky tests",
 		"Run 1 · Initial run",
 		"Run 2 · Retry · automatic test retry",
 		"20ms",
@@ -129,7 +129,7 @@ func TestReportShowsBroadCoverageFilesAndSource(t *testing.T) {
 
 	report := renderTestReport(t, repositoryRoot, findings)
 	for _, expected := range []string{
-		"Any unusually broad test coverage?",
+		"Broad coverage",
 		"12 files · test level",
 		"Median covered files · 2",
 		"src/one.js",
@@ -303,11 +303,13 @@ func TestReportPreservesModuleAndParameters(t *testing.T) {
 	}
 }
 
-func TestReportSkippedOutcomesHaveNeutralTone(t *testing.T) {
+func TestReportSkippedOutcomesStayDistinctFromFailures(t *testing.T) {
 	test := intake.Test{Name: "skipped", Suite: "suite", Status: "skip", Attempts: []intake.TestRun{{Status: "skip"}}}
 	model := buildReport(t.TempDir(), intake.Facts{Tests: []intake.Test{test}}, false)
-	if model.Tests[0].Tone != "" || model.Tests[0].Attempts[0].Tone != "" || model.Suites[0].Tone != "" || model.Suites[0].Tests[0].Tone != "" {
-		t.Fatalf("skipped result uses failure tone: test=%+v suite=%+v", model.Tests[0], model.Suites[0])
+	for _, status := range []string{model.Tests[0].Status, model.Tests[0].Attempts[0].Status, model.Suites[0].Status, model.Suites[0].Tests[0].Status} {
+		if reportStatus(status) != "Skipped" {
+			t.Fatalf("skipped result is displayed as %q", status)
+		}
 	}
 }
 
@@ -478,5 +480,39 @@ func TestAbsoluteFileURL(t *testing.T) {
 		if got := absoluteFileURL(path); got != want {
 			t.Errorf("absoluteFileURL(%q) = %q, want %q", path, got, want)
 		}
+	}
+}
+
+func TestReportExplorerKeepsIdentitiesEscapedAndDetailsDistinct(t *testing.T) {
+	tests := []intake.Test{
+		{Name: `same <script>alert(1)</script>`, Module: "one", Suite: "shared", Parameters: `{"case":1}`, Status: "pass"},
+		{Name: `same <script>alert(1)</script>`, Module: "two", Suite: "shared", Parameters: `{"case":2}`, Status: "fail"},
+	}
+	model := buildReport(t.TempDir(), intake.Facts{Tests: tests}, false)
+	if model.Tests[0].Name == model.Tests[1].Name || model.Tests[0].Suite == model.Tests[1].Suite {
+		t.Fatal("table loses module or parameter identity")
+	}
+	report := renderTestReport(t, t.TempDir(), intake.Facts{Tests: tests})
+	for _, want := range []string{`data-status="Passed"`, `data-status="Failed"`, `aria-controls="test-detail-0"`, `aria-controls="test-detail-1"`, `id="test-detail-0"`, `id="test-detail-1"`, `&lt;script&gt;alert(1)&lt;/script&gt;`} {
+		if !strings.Contains(report, want) {
+			t.Errorf("report missing %q", want)
+		}
+	}
+	if strings.Contains(report, `same <script>`) {
+		t.Fatal("test name can execute HTML")
+	}
+}
+
+func TestReportStatusFiltersDistinguishFlakySkippedAndUnknown(t *testing.T) {
+	for _, tc := range []struct{ status, want string }{
+		{"Pass", "Passed"}, {"Passed", "Passed"}, {"Fail", "Failed"}, {"Failed", "Failed"}, {"Skip", "Skipped"}, {"Flaky", "Flaky"}, {"Unknown", "Unknown"}, {"", "Unknown"},
+	} {
+		if got := reportStatus(tc.status); got != tc.want {
+			t.Errorf("reportStatus(%q) = %q, want %q", tc.status, got, tc.want)
+		}
+	}
+	model := buildReport(t.TempDir(), intake.Facts{Tests: []intake.Test{{Name: "retried", Status: "pass", Attempts: []intake.TestRun{{Status: "fail"}, {Status: "pass", Retry: true}}}}}, false)
+	if reportStatus(model.Tests[0].Status) != "Flaky" || reportStatus(model.Suites[0].Status) != "Flaky" {
+		t.Fatal("flaky result must not be counted as a clean pass")
 	}
 }

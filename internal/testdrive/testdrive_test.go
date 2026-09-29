@@ -293,7 +293,7 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"Test events received",
-		"Any tests slower than the others?",
+		"Slow tests",
 		"Median test time · 1s",
 		"slow test",
 		"Run 2 · Retry · early flake detection",
@@ -306,13 +306,13 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 		`href="test-output.txt"`,
 		`data-tab="suites"`,
 		`data-tab="tests"`,
-		`<article class="problem-card">`,
+		`class="problem-card"`,
 	} {
 		if !strings.Contains(string(report), expected) {
 			t.Errorf("report does not contain %q", expected)
 		}
 	}
-	for _, hiddenCard := range []string{"Any tests failed?", "Any flaky tests?", "Any unusually broad test coverage?"} {
+	for _, hiddenCard := range []string{"Failed tests", "Flaky tests", "Broad coverage"} {
 		if strings.Contains(string(report), hiddenCard) {
 			t.Errorf("report contains no-problem card %q", hiddenCard)
 		}

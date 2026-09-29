@@ -24,6 +24,7 @@ import (
 const reportFilename = "report.html"
 
 type reportCard struct {
+	Kind      string
 	Title     string
 	Count     int
 	Context   string
@@ -37,7 +38,6 @@ type reportTest struct {
 	Suite         string
 	SourceFile    string
 	Status        string
-	Tone          string
 	Duration      string
 	Attempts      []reportAttempt
 	CoverageLevel string
@@ -48,7 +48,6 @@ type reportTest struct {
 type reportAttempt struct {
 	Number       int
 	Status       string
-	Tone         string
 	Duration     string
 	Kind         string
 	ErrorType    string
@@ -85,7 +84,6 @@ type reportSourceLine struct {
 type reportSuite struct {
 	Name         string
 	Status       string
-	Tone         string
 	Duration     string
 	TestCount    int
 	CoveredCount int
@@ -97,7 +95,6 @@ type reportSuite struct {
 type reportSuiteTest struct {
 	Name     string
 	Status   string
-	Tone     string
 	Duration string
 }
 
@@ -204,6 +201,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	}
 	if findings.EmptyCoverageEntryCount > 0 {
 		model.Cards = append(model.Cards, reportCard{
+			Kind:    "error",
 			Title:   "Tracer error: empty coverage entries",
 			Count:   findings.EmptyCoverageEntryCount,
 			Context: fmt.Sprintf("%d coverage entries had an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.", findings.EmptyCoverageEntryCount),
@@ -211,26 +209,26 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	}
 	if len(findings.FailedTests) > 0 {
 		model.Cards = append(model.Cards, reportCard{
-			Title: "Any tests failed?", Count: len(findings.FailedTests),
+			Kind: "failed", Title: "Failed tests", Context: "Inspect the errors and source behind each failure.", Count: len(findings.FailedTests),
 			Tests: builder.reportTests(findings.FailedTests, showTestCoverage),
 		})
 	}
 	if len(findings.FlakyTests) > 0 {
 		model.Cards = append(model.Cards, reportCard{
-			Title: "Any flaky tests?", Count: len(findings.FlakyTests),
+			Kind: "flaky", Title: "Flaky tests", Context: "These tests both passed and failed across attempts.", Count: len(findings.FlakyTests),
 			Tests: builder.reportTests(findings.FlakyTests, showTestCoverage),
 		})
 	}
 	if len(findings.SlowTests) > 0 {
 		model.Cards = append(model.Cards, reportCard{
-			Title: "Any tests slower than the others?", Count: len(findings.SlowTests),
+			Kind: "slow", Title: "Slow tests", Count: len(findings.SlowTests),
 			Context: "Median test time · " + formatDuration(findings.TestDurationMedian),
 			Tests:   builder.reportTests(findings.SlowTests, showTestCoverage),
 		})
 	}
 	if len(findings.BroadCoverage) > 0 {
 		model.Cards = append(model.Cards, reportCard{
-			Title: "Any unusually broad test coverage?", Count: len(findings.BroadCoverage),
+			Kind: "coverage", Title: "Broad coverage", Count: len(findings.BroadCoverage),
 			Context:   fmt.Sprintf("Median covered files · %d", findings.CoveredFilesMedian),
 			Coverages: builder.reportCoverages(findings.BroadCoverage),
 		})
@@ -253,20 +251,25 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 func (builder *reportBuilder) reportTests(findings []intake.Test, showCoverage bool) []reportTest {
 	tests := make([]reportTest, 0, len(findings))
 	for _, finding := range findings {
-		label := finding.Name
+		name := finding.Name
 		if finding.Parameters != "" {
-			label += " " + finding.Parameters
+			name += " " + finding.Parameters
 		}
+		label := name
 		if finding.Suite != "" {
 			label = finding.Suite + " › " + label
 		}
 		if finding.Module != "" {
 			label = finding.Module + " › " + label
 		}
-		status, tone := testDisplayStatus(finding)
+		status := testDisplayStatus(finding)
+		suite := finding.Suite
+		if finding.Module != "" {
+			suite = finding.Module + " › " + suite
+		}
 		test := reportTest{
-			Label: label, Name: finding.Name, Suite: finding.Suite,
-			SourceFile: finding.SourceFile, Status: status, Tone: tone,
+			Label: label, Name: name, Suite: suite,
+			SourceFile: finding.SourceFile, Status: status,
 			Duration: formatDuration(findingDuration(finding)),
 			Attempts: make([]reportAttempt, 0, len(finding.Attempts)),
 			Source:   builder.readSource(finding.SourceFile, finding.SourceStart, finding.SourceEnd),
@@ -284,7 +287,7 @@ func (builder *reportBuilder) reportTests(findings []intake.Test, showCoverage b
 				}
 			}
 			test.Attempts = append(test.Attempts, reportAttempt{
-				Number: attemptIndex + 1, Status: displayStatus(attempt.Status), Tone: attemptTone(attempt.Status),
+				Number: attemptIndex + 1, Status: displayStatus(attempt.Status),
 				Duration: formatDuration(attempt.Duration), Kind: kind,
 				ErrorType: attempt.ErrorType, ErrorMessage: attempt.ErrorMessage, ErrorStack: attempt.ErrorStack,
 			})
@@ -321,16 +324,15 @@ func (builder *reportBuilder) reportSuites(tests []intake.Test, coverages []inta
 			name = "Unknown suite"
 		}
 		suite, found := byName[key]
-		status, tone := testDisplayStatus(test)
+		status := testDisplayStatus(test)
 		if !found {
 			if test.Module != "" {
 				name = test.Module + " › " + name
 			}
-			suite = &reportSuite{Name: name, Status: suiteStatus(status), Tone: tone, ShowCoverage: showCoverage}
+			suite = &reportSuite{Name: name, Status: suiteStatus(status), ShowCoverage: showCoverage}
 			byName[key] = suite
 		} else if suiteStatusRank(status) > suiteStatusRank(suite.Status) {
 			suite.Status = suiteStatus(status)
-			suite.Tone = tone
 		}
 		suite.TestCount++
 		durations[key] += findingDuration(test)
@@ -339,7 +341,7 @@ func (builder *reportBuilder) reportSuites(tests []intake.Test, coverages []inta
 			testName += " " + test.Parameters
 		}
 		suite.Tests = append(suite.Tests, reportSuiteTest{
-			Name: testName, Status: status, Tone: tone,
+			Name: testName, Status: status,
 			Duration: formatDuration(findingDuration(test)),
 		})
 	}
@@ -407,7 +409,7 @@ func suiteStatusRank(status string) int {
 	}
 }
 
-func testDisplayStatus(test intake.Test) (string, string) {
+func testDisplayStatus(test intake.Test) string {
 	status := test.Status
 	sawPass := status == "pass"
 	sawFailure := status == "fail"
@@ -416,12 +418,12 @@ func testDisplayStatus(test intake.Test) (string, string) {
 		sawFailure = sawFailure || attempt.Status == "fail"
 	}
 	if sawPass && sawFailure {
-		return "Flaky", "attention"
+		return "Flaky"
 	}
 	if status == "" && len(test.Attempts) > 0 {
 		status = test.Attempts[len(test.Attempts)-1].Status
 	}
-	return displayStatus(status), attemptTone(status)
+	return displayStatus(status)
 }
 
 func findingDuration(test intake.Test) time.Duration {
@@ -626,22 +628,27 @@ func factTone(good bool) string {
 	return "attention"
 }
 
+// reportStatus provides consistent labels for the report's test and suite filters.
+func reportStatus(status string) string {
+	switch status {
+	case "Pass", "Passed":
+		return "Passed"
+	case "Fail", "Failed":
+		return "Failed"
+	case "Skip", "Skipped":
+		return "Skipped"
+	case "Flaky":
+		return "Flaky"
+	default:
+		return "Unknown"
+	}
+}
+
 func displayStatus(status string) string {
 	if status == "" {
 		return "Unknown"
 	}
 	return strings.ToUpper(status[:1]) + status[1:]
-}
-
-func attemptTone(status string) string {
-	switch status {
-	case "pass":
-		return "good"
-	case "fail":
-		return "attention"
-	default:
-		return ""
-	}
 }
 
 func formatDuration(duration time.Duration) string {
@@ -690,4 +697,4 @@ func plural(count int, singular, plural string) string {
 //go:embed report.html
 var reportHTML string
 
-var testdriveReport = template.Must(template.New("testdrive-report").Funcs(template.FuncMap{"plural": plural}).Parse(reportHTML))
+var testdriveReport = template.Must(template.New("testdrive-report").Funcs(template.FuncMap{"plural": plural, "reportStatus": reportStatus}).Parse(reportHTML))

@@ -341,7 +341,7 @@ func writeTestFindings(output io.Writer, title string, findings []intake.Test) {
 
 func writeTestFindingRows(output io.Writer, findings []intake.Test) {
 	for _, finding := range findings {
-		status, _ := testDisplayStatus(finding)
+		status := testDisplayStatus(finding)
 		_, _ = fmt.Fprintf(
 			output, "  - %s · %s · %s\n",
 			testFindingLabel(finding), status, formatDuration(findingDuration(finding)),

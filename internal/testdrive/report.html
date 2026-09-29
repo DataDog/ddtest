@@ -1,225 +1,1741 @@
+<!-- Icons: Bootstrap Icons v1.13.1, MIT license (https://github.com/twbs/icons).
+The MIT License (MIT)
 
-{{define "attempts"}}
+Copyright (c) 2019-2024 The Bootstrap Authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+-->
+{{ define "icon-arrow-repeat" }}
+  <svg
+    aria-hidden="true"
+    class="icon"
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    fill="currentColor"
+    class="bi bi-arrow-repeat"
+    viewBox="0 0 16 16"
+  >
+    <path
+      d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41m-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9"
+    />
+    <path
+      fill-rule="evenodd"
+      d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5 5 0 0 0 8 3M3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9z"
+    />
+  </svg>
+{{ end }}
+{{ define "icon-box-arrow-up-right" }}
+  <svg
+    aria-hidden="true"
+    class="icon"
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    fill="currentColor"
+    class="bi bi-box-arrow-up-right"
+    viewBox="0 0 16 16"
+  >
+    <path
+      fill-rule="evenodd"
+      d="M8.636 3.5a.5.5 0 0 0-.5-.5H1.5A1.5 1.5 0 0 0 0 4.5v10A1.5 1.5 0 0 0 1.5 16h10a1.5 1.5 0 0 0 1.5-1.5V7.864a.5.5 0 0 0-1 0V14.5a.5.5 0 0 1-.5.5h-10a.5.5 0 0 1-.5-.5v-10a.5.5 0 0 1 .5-.5h6.636a.5.5 0 0 0 .5-.5"
+    />
+    <path
+      fill-rule="evenodd"
+      d="M16 .5a.5.5 0 0 0-.5-.5h-5a.5.5 0 0 0 0 1h3.793L6.146 9.146a.5.5 0 1 0 .708.708L15 1.707V5.5a.5.5 0 0 0 1 0z"
+    />
+  </svg>
+{{ end }}
+{{ define "icon-check-circle-fill" }}
+  <svg
+    aria-hidden="true"
+    class="icon"
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    fill="currentColor"
+    class="bi bi-check-circle-fill"
+    viewBox="0 0 16 16"
+  >
+    <path
+      d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0m-3.97-3.03a.75.75 0 0 0-1.08.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-.01-1.05z"
+    />
+  </svg>
+{{ end }}
+{{ define "icon-chevron-down" }}
+  <svg
+    aria-hidden="true"
+    class="icon"
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    fill="currentColor"
+    class="bi bi-chevron-down"
+    viewBox="0 0 16 16"
+  >
+    <path
+      fill-rule="evenodd"
+      d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708"
+    />
+  </svg>
+{{ end }}
+{{ define "icon-chevron-right" }}
+  <svg
+    aria-hidden="true"
+    class="icon"
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    fill="currentColor"
+    class="bi bi-chevron-right"
+    viewBox="0 0 16 16"
+  >
+    <path
+      fill-rule="evenodd"
+      d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708"
+    />
+  </svg>
+{{ end }}
+{{ define "icon-exclamation-circle" }}
+  <svg
+    aria-hidden="true"
+    class="icon"
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    fill="currentColor"
+    class="bi bi-exclamation-circle"
+    viewBox="0 0 16 16"
+  >
+    <path
+      d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"
+    />
+    <path
+      d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0M7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0z"
+    />
+  </svg>
+{{ end }}
+{{ define "icon-file-earmark-text" }}
+  <svg
+    aria-hidden="true"
+    class="icon"
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    fill="currentColor"
+    class="bi bi-file-earmark-text"
+    viewBox="0 0 16 16"
+  >
+    <path
+      d="M5.5 7a.5.5 0 0 0 0 1h5a.5.5 0 0 0 0-1zM5 9.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5m0 2a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5"
+    />
+    <path
+      d="M9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.5zm0 1v2A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z"
+    />
+  </svg>
+{{ end }}
+{{ define "icon-question-circle" }}
+  <svg
+    aria-hidden="true"
+    class="icon"
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    fill="currentColor"
+    class="bi bi-question-circle"
+    viewBox="0 0 16 16"
+  >
+    <path
+      d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"
+    />
+    <path
+      d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286m1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94"
+    />
+  </svg>
+{{ end }}
+{{ define "icon-search" }}
+  <svg
+    aria-hidden="true"
+    class="icon"
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    fill="currentColor"
+    class="bi bi-search"
+    viewBox="0 0 16 16"
+  >
+    <path
+      d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001q.044.06.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1 1 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0"
+    />
+  </svg>
+{{ end }}
+{{ define "icon-skip-forward-circle" }}
+  <svg
+    aria-hidden="true"
+    class="icon"
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    fill="currentColor"
+    class="bi bi-skip-forward-circle"
+    viewBox="0 0 16 16"
+  >
+    <path
+      d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"
+    />
+    <path
+      d="M4.271 5.055a.5.5 0 0 1 .52.038L7.5 7.028V5.5a.5.5 0 0 1 .79-.407L11 7.028V5.5a.5.5 0 0 1 1 0v5a.5.5 0 0 1-1 0V8.972l-2.71 1.935a.5.5 0 0 1-.79-.407V8.972l-2.71 1.935A.5.5 0 0 1 4 10.5v-5a.5.5 0 0 1 .271-.445"
+    />
+  </svg>
+{{ end }}
+{{ define "icon-stopwatch" }}
+  <svg
+    aria-hidden="true"
+    class="icon"
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    fill="currentColor"
+    class="bi bi-stopwatch"
+    viewBox="0 0 16 16"
+  >
+    <path
+      d="M8.5 5.6a.5.5 0 1 0-1 0v2.9h-3a.5.5 0 0 0 0 1H8a.5.5 0 0 0 .5-.5z"
+    />
+    <path
+      d="M6.5 1A.5.5 0 0 1 7 .5h2a.5.5 0 0 1 0 1v.57c1.36.196 2.594.78 3.584 1.64l.012-.013.354-.354-.354-.353a.5.5 0 0 1 .707-.708l1.414 1.415a.5.5 0 1 1-.707.707l-.353-.354-.354.354-.013.012A7 7 0 1 1 7 2.071V1.5a.5.5 0 0 1-.5-.5M8 3a6 6 0 1 0 .001 12A6 6 0 0 0 8 3"
+    />
+  </svg>
+{{ end }}
+{{ define "icon-x-circle-fill" }}
+  <svg
+    aria-hidden="true"
+    class="icon"
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    fill="currentColor"
+    class="bi bi-x-circle-fill"
+    viewBox="0 0 16 16"
+  >
+    <path
+      d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0M5.354 4.646a.5.5 0 1 0-.708.708L7.293 8l-2.647 2.646a.5.5 0 0 0 .708.708L8 8.707l2.646 2.647a.5.5 0 0 0 .708-.708L8.707 8l2.647-2.646a.5.5 0 0 0-.708-.708L8 7.293z"
+    />
+  </svg>
+{{ end }}
+{{ define "status" }}
+  <span class="status" data-status="{{ reportStatus . }}"
+    >{{ if eq (reportStatus .) "Passed" }}
+      {{ template "icon-check-circle-fill" }}
+    {{ else if eq (reportStatus .) "Failed" }}
+      {{ template "icon-x-circle-fill" }}
+    {{ else if eq (reportStatus .) "Flaky" }}
+      {{ template "icon-arrow-repeat" }}
+    {{ else if eq (reportStatus .) "Skipped" }}
+      {{ template "icon-skip-forward-circle" }}
+    {{ else }}
+      {{ template "icon-question-circle" }}
+    {{ end }}{{ reportStatus . }}</span
+  >
+{{ end }}
+{{ define "attempts" }}
   <div class="attempts">
-    {{range .Attempts}}<article class="attempt">
-      <div class="attempt-head">
-        <span class="status {{.Tone}}">{{.Status}}</span>
-        <span>Run {{.Number}} · {{.Kind}}</span>
-        <span>{{.Duration}}</span>
+    <h3>Attempts</h3>
+    {{ range .Attempts }}
+      <article class="attempt">
+        <div class="attempt-head">
+          {{ template "status" .Status }}<span
+            >Run {{ .Number }} · {{ .Kind }}</span
+          ><span>{{ .Duration }}</span>
+        </div>
+        {{ if .ErrorMessage }}
+          <!-- Preserve whitespace inside preformatted errors. -->
+          <pre class="error-message">{{if .ErrorType}}{{.ErrorType}}: {{end}}{{.ErrorMessage}}</pre>
+        {{ end }}
+        {{ if .ErrorStack }}
+          <details class="stack">
+            <summary>Stack trace</summary>
+            <pre>{{ .ErrorStack }}</pre>
+          </details>
+        {{ end }}
+      </article>
+    {{ else }}
+      <p class="muted">No attempts reported.</p>
+    {{ end }}
+  </div>
+{{ end }}
+{{ define "source" }}
+  <div class="source-block">
+    <h3>
+      {{ if .Lines }}
+        Source · lines {{ .Start }}–{{ .End }}
+      {{ else }}
+        Source
+      {{ end }}
+    </h3>
+    {{ if .Lines }}
+      <!-- Keep source-line spans adjacent: whitespace here is rendered verbatim. -->
+      <pre class="source"><code>{{range .Lines}}<span class="source-line"><span class="line-number">{{.Number}}</span><span class="line-code">{{.Code}}</span></span>{{end}}</code></pre>
+    {{ else if .Error }}
+      <p class="muted">{{ .Error }}</p>
+    {{ end }}
+  </div>
+{{ end }}
+{{ define "covered-files" }}
+  {{ if . }}
+    <div class="covered-files-wrap">
+      <ul class="covered-files" data-paginated data-page-size="50">
+        {{ range . }}
+          <li class="page-item">{{.Name}}{{if .Missing}} · missing source{{end}}</li>
+        {{ end }}
+      </ul>
+      <div class="pager">
+        <button type="button" data-prev>Previous</button
+        ><span data-page aria-live="polite"></span
+        ><button type="button" data-next>Next</button>
       </div>
-      {{if .ErrorMessage}}<p class="error-message">{{if .ErrorType}}{{.ErrorType}}: {{end}}{{.ErrorMessage}}</p>{{end}}
-      {{if .ErrorStack}}<details class="stack"><summary>Stack trace</summary><pre>{{.ErrorStack}}</pre></details>{{end}}
-    </article>{{end}}
-  </div>
-{{end}}
-{{define "source"}}
-  {{if .Lines}}<div class="source-block">
-    <div class="source-heading">Source · lines {{.Start}}–{{.End}}</div>
-    <pre class="source"><code>{{range .Lines}}<span class="source-line"><span class="line-number">{{.Number}}</span><span class="line-code">{{.Code}}</span></span>{{end}}</code></pre>
-  </div>{{else if .Error}}<p class="source-error">{{.Error}}</p>{{end}}
-{{end}}
-{{define "covered-files"}}
-  {{if .}}<div class="covered-files-wrap">
-    <ul class="covered-files" data-paginated data-page-size="50">{{range .}}<li class="page-item">{{.Name}}{{if .Missing}} · missing source{{end}}</li>{{end}}</ul>
-    <div class="pager"><button type="button" data-prev>Previous</button><span data-page></span><button type="button" data-next>Next</button></div>
-  </div>{{end}}
-{{end}}
-{{define "test-detail"}}
+    </div>
+  {{ end }}
+{{ end }}
+{{ define "test-detail" }}
   <div class="expanded">
-    {{if .SourceFile}}<p class="source-path">{{.SourceFile}}</p>{{end}}
-    {{template "attempts" .}}
-    {{if .CoverageLevel}}<div class="coverage"><strong>Coverage · {{.CoverageLevel}} level · {{len .CoveredFiles}} {{plural (len .CoveredFiles) "file" "files"}}</strong>{{template "covered-files" .CoveredFiles}}</div>{{end}}
-    {{template "source" .Source}}
+    <div class="detail-grid">
+      {{ template "attempts" . }}
+      <div>
+        {{ if .SourceFile }}
+          <p class="source-path">{{ .SourceFile }}</p>
+        {{ end }}{{ template "source" .Source }}
+      </div>
+    </div>
+    {{ if .CoverageLevel }}
+      <details class="coverage">
+        <summary>
+          Test coverage · {{ len .CoveredFiles }}
+          {{ plural (len .CoveredFiles) "file" "files" }}
+        </summary>
+        {{ template "covered-files" .CoveredFiles }}
+      </details>
+    {{ end }}
   </div>
-{{end}}
+{{ end }}
+{{ define "pager" }}
+  <div class="table-footer">
+    <span data-result-count aria-live="polite"></span>
+    <div class="pager">
+      <button type="button" data-prev>Previous</button><span data-page></span
+      ><button type="button" data-next>Next</button>
+    </div>
+  </div>
+{{ end }}
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ddtest · Test Optimization report</title>
-  <style>
-    :root { color-scheme: light; --ink: #17151c; --muted: #68656f; --line: #dedce2; --surface: #fff; --background: #f6f6f7; --accent: #632ca6; --failure: #b42318; }
-    * { box-sizing: border-box; }
-    [hidden] { display: none !important; }
-    body { margin: 0; color: var(--ink); background: var(--background); font: 15px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    button { font: inherit; }
-    main { width: min(1040px, calc(100% - 32px)); margin: 0 auto; padding: 40px 0 64px; }
-    .eyebrow { margin: 0 0 8px; color: var(--muted); font-size: .76rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-    h1 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.15rem); line-height: 1.15; letter-spacing: -.03em; }
-    .summary { margin: 8px 0 28px; color: var(--muted); }
-    .tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--line); margin-bottom: 24px; }
-    .tab { margin-bottom: -1px; padding: 11px 1px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: none; cursor: pointer; }
-    .tab.active { border-bottom-color: var(--accent); color: var(--ink); font-weight: 700; }
-    .count { color: var(--muted); font-size: .82rem; }
-    .section-title { margin: 0 0 12px; font-size: 1rem; }
-    .problems { display: grid; gap: 12px; margin-bottom: 28px; }
-    .problem-card, .run, .result-row { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-    .problem-header { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; padding: 16px 18px; border-bottom: 1px solid var(--line); }
-    .problem-header h2 { margin: 0; font-size: 1rem; }
-    .problem-summary { display: flex; gap: 14px; align-items: baseline; }
-    .problem-context { color: var(--muted); font-size: .82rem; }
-    .problem-count { color: var(--failure); font-weight: 700; }
-    details.result { border-top: 1px solid #ecebef; }
-    details.result:first-child { border-top: 0; }
-    details.result > summary, details.result-row > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 18px; align-items: center; padding: 13px 18px; cursor: pointer; list-style: none; }
-    summary::-webkit-details-marker { display: none; }
-    details.result > summary::after, details.result-row > summary::after { content: "+"; color: var(--muted); font-size: 1.05rem; }
-    details[open].result > summary::after, details[open].result-row > summary::after { content: "−"; }
-    .result-name { min-width: 0; font-weight: 650; overflow-wrap: anywhere; }
-    .result-meta { color: var(--muted); font-size: .84rem; white-space: nowrap; }
-    .expanded { padding: 4px 18px 18px; border-top: 1px solid #ecebef; }
-    .source-path { margin: 14px 0; color: var(--muted); font: .8rem ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .attempts { display: grid; gap: 8px; }
-    .attempt { padding: 12px 14px; border: 1px solid #e9e7ec; border-radius: 8px; background: #fafafa; }
-    .attempt-head { display: flex; flex-wrap: wrap; gap: 7px 14px; color: var(--muted); font-size: .84rem; }
-    .status { color: var(--ink); font-weight: 700; }
-    .status.attention { color: var(--failure); }
-    .error-message { margin: 10px 0 0; color: var(--failure); white-space: pre-wrap; font: .8rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .stack { margin-top: 8px; }
-    .stack summary { color: var(--muted); cursor: pointer; font-size: .8rem; }
-    pre { overflow: auto; margin: 8px 0 0; padding: 14px; border-radius: 7px; background: #f2f2f3; color: #2d2a32; font: .78rem/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
-    .coverage { margin-top: 14px; font-size: .82rem; }
-    .covered-files { margin: 8px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 7px; list-style: none; }
-    .covered-files li { padding: 6px 9px; border-top: 1px solid var(--line); color: var(--muted); font: .74rem ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
-    .covered-files li:first-child { border-top: 0; }
-    .covered-files-wrap > .pager { margin-top: 8px; }
-    .source-block { margin-top: 16px; }
-    .source-heading { color: var(--muted); font-size: .8rem; font-weight: 650; }
-    pre.source { padding: 10px 0; }
-    .source-line { display: grid; grid-template-columns: 46px minmax(max-content, 1fr); min-height: 1.55em; }
-    .line-number { padding-right: 12px; color: #96929c; text-align: right; user-select: none; }
-    .line-code { padding-right: 14px; }
-    .token-keyword { color: #592b8c; font-weight: 650; }
-    .token-string { color: #77540a; }
-    .token-comment { color: #77737c; font-style: italic; }
-    .token-number, .token-literal { color: #315f7d; }
-    .source-error { color: var(--muted); font-size: .8rem; }
-    .run { margin-top: 28px; padding: 17px 18px; }
-    .facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
-    .fact { padding: 0 16px; border-left: 1px solid var(--line); }
-    .fact:first-child { padding-left: 0; border-left: 0; }
-    .fact dt { color: var(--muted); font-size: .78rem; }
-    .fact dd { margin: 4px 0 0; font-weight: 700; }
-    .fact.attention dd { color: var(--failure); }
-    .artifacts { display: flex; gap: 18px; margin-top: 17px; padding-top: 14px; border-top: 1px solid var(--line); }
-    .artifact { color: var(--accent); font-size: .86rem; font-weight: 650; text-decoration: none; }
-    .artifact:hover { text-decoration: underline; }
-    .results { display: grid; gap: 8px; }
-    details.result-row > summary { grid-template-columns: minmax(0, 1fr) auto auto auto auto; }
-    .suite-detail { padding: 4px 18px 18px; border-top: 1px solid #ecebef; }
-    .suite-tests { width: 100%; margin-top: 12px; border-collapse: collapse; font-size: .84rem; }
-    .suite-tests th, .suite-tests td { padding: 8px 0; border-bottom: 1px solid #ecebef; text-align: left; }
-    .suite-tests th { color: var(--muted); font-weight: 500; }
-    .suite-tests th:last-child, .suite-tests td:last-child { text-align: right; }
-    .pager { display: flex; justify-content: flex-end; gap: 12px; align-items: center; margin-top: 14px; color: var(--muted); font-size: .82rem; }
-    .pager button { padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); cursor: pointer; }
-    .pager button:disabled { cursor: default; opacity: .45; }
-    .empty { color: var(--muted); }
-    @media (max-width: 720px) { .facts { grid-template-columns: repeat(2, 1fr); gap: 16px 0; } .fact:nth-child(3) { padding-left: 0; border-left: 0; } details.result-row > summary { grid-template-columns: minmax(0, 1fr) auto auto auto; } .result-meta.secondary { display: none; } }
-  </style>
-</head>
-<body>
-  <main>
-    <p class="eyebrow">ddtest · local testdrive</p>
-    <h1>{{.Headline}}</h1>
-    <p class="summary">{{.Summary}}</p>
-
-    <nav class="tabs" aria-label="Report sections">
-      <button class="tab active" type="button" data-tab="overview">Overview</button>
-      <button class="tab" type="button" data-tab="suites">Suites <span class="count">{{len .Suites}}</span></button>
-      <button class="tab" type="button" data-tab="tests">Tests <span class="count">{{len .Tests}}</span></button>
-    </nav>
-
-    <section id="overview" class="panel">
-      {{if .Cards}}<div class="problems">
-        {{range .Cards}}<article class="problem-card">
-          <header class="problem-header"><h2>{{.Title}}</h2><div class="problem-summary">{{if .Context}}<span class="problem-context">{{.Context}}</span>{{end}}<span class="problem-count">{{.Count}}</span></div></header>
-          <div class="problem-list">
-            {{range .Tests}}<details class="result">
-              <summary><span class="result-name">{{.Label}}</span><span class="result-meta">{{.Status}} · {{.Duration}}</span></summary>
-              {{template "test-detail" .}}
-            </details>{{end}}
-            {{range .Coverages}}<details class="result">
-              <summary><span class="result-name">{{.Name}}</span><span class="result-meta">{{.FileCount}} {{plural .FileCount "file" "files"}} · {{.Level}} level</span></summary>
-              <div class="expanded">
-                {{if .SourceFile}}<p class="source-path">{{.SourceFile}}</p>{{end}}
-                {{template "covered-files" .Files}}
-                {{template "source" .Source}}
-              </div>
-            </details>{{end}}
-          </div>
-        </article>{{end}}
-      </div>{{end}}
-
-      <section class="run" aria-label="Run details">
-        <h2 class="section-title">Run details</h2>
-        <dl class="facts">{{range .Facts}}<div class="fact {{.Tone}}"><dt>{{.Label}}</dt><dd>{{.Value}}</dd></div>{{end}}</dl>
-        <div class="artifacts">{{range .Artifacts}}<a class="artifact" href="{{.Href}}">{{.Title}} ↗</a>{{end}}</div>
-      </section>
-    </section>
-
-    <section id="suites" class="panel" hidden>
-      <h2 class="section-title">All test suites</h2>
-      {{if .Suites}}<div class="results" data-paginated data-page-size="20">
-        {{range .Suites}}<details class="result-row page-item">
-          <summary>
-            <span class="result-name">{{.Name}}</span>
-            <span class="result-meta secondary">{{.TestCount}} {{plural .TestCount "test" "tests"}}{{if .ShowCoverage}} · {{.CoveredCount}} with coverage{{end}}</span>
-            <span class="result-meta status {{.Tone}}">{{.Status}}</span>
-            <span class="result-meta">{{.Duration}}</span>
-          </summary>
-          <div class="suite-detail">
-            {{if .CoveredFiles}}<div class="coverage"><strong>Covered {{plural (len .CoveredFiles) "file" "files"}} · {{len .CoveredFiles}}</strong>{{template "covered-files" .CoveredFiles}}</div>{{end}}
-            <table class="suite-tests"><thead><tr><th>Test</th><th>Status</th><th>Time</th></tr></thead><tbody>
-              {{range .Tests}}<tr><td>{{.Name}}</td><td class="status {{.Tone}}">{{.Status}}</td><td>{{.Duration}}</td></tr>{{end}}
-            </tbody></table>
-          </div>
-        </details>{{end}}
-      </div><div class="pager"><button type="button" data-prev>Previous</button><span data-page></span><button type="button" data-next>Next</button></div>
-      {{else}}<p class="empty">No suites received.</p>{{end}}
-    </section>
-
-    <section id="tests" class="panel" hidden>
-      <h2 class="section-title">All tests</h2>
-      {{if .Tests}}<div class="results" data-paginated data-page-size="20">
-        {{range .Tests}}<details class="result-row page-item">
-          <summary>
-            <span class="result-name">{{.Label}}</span>
-            <span class="result-meta secondary">{{len .Attempts}} {{plural (len .Attempts) "run" "runs"}}</span>
-            <span class="result-meta status {{.Tone}}">{{.Status}}</span>
-            <span class="result-meta">{{.Duration}}</span>
-          </summary>
-          {{template "test-detail" .}}
-        </details>{{end}}
-      </div><div class="pager"><button type="button" data-prev>Previous</button><span data-page></span><button type="button" data-next>Next</button></div>
-      {{else}}<p class="empty">No tests received.</p>{{end}}
-    </section>
-  </main>
-  <script>
-    document.querySelectorAll('.tab').forEach(function (tab) {
-      tab.addEventListener('click', function () {
-        document.querySelectorAll('.tab').forEach(function (item) { item.classList.toggle('active', item === tab); });
-        document.querySelectorAll('.panel').forEach(function (panel) { panel.hidden = panel.id !== tab.dataset.tab; });
-      });
-    });
-    document.querySelectorAll('[data-paginated]').forEach(function (list) {
-      var items = Array.from(list.children).filter(function (item) { return item.classList.contains('page-item'); });
-      var pageSize = Number(list.dataset.pageSize) || 20;
-      var pageCount = Math.max(1, Math.ceil(items.length / pageSize));
-      var page = 0;
-      var pager = list.nextElementSibling;
-      function render() {
-        items.forEach(function (item, index) { item.hidden = index < page * pageSize || index >= (page + 1) * pageSize; });
-        pager.querySelector('[data-page]').textContent = 'Page ' + (page + 1) + ' of ' + pageCount;
-        pager.querySelector('[data-prev]').disabled = page === 0;
-        pager.querySelector('[data-next]').disabled = page === pageCount - 1;
-        pager.hidden = pageCount === 1;
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ddtest · Test report</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #16171b;
+        --surface: #1c1d23;
+        --raised: #22232b;
+        --line: #34353f;
+        --ink: #eeedf5;
+        --muted: #aaaaba;
+        --purple: #b18aff;
+        --purple-dark: #382663;
+        --red: #ff737c;
+        --green: #63d99c;
+        --amber: #f2bc56;
       }
-      pager.querySelector('[data-prev]').addEventListener('click', function () { if (page > 0) { page--; render(); } });
-      pager.querySelector('[data-next]').addEventListener('click', function () { if (page + 1 < pageCount) { page++; render(); } });
-      render();
-    });
-  </script>
-</body>
+      * {
+        box-sizing: border-box;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          14px/1.5 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+      button,
+      input,
+      summary {
+        font: inherit;
+      }
+      button,
+      summary,
+      a {
+        -webkit-tap-highlight-color: transparent;
+      }
+      button,
+      summary {
+        cursor: pointer;
+      }
+      a {
+        color: var(--purple);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      button {
+        color: inherit;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px 13px;
+      }
+      button:hover {
+        background: var(--raised);
+        border-color: #62606f;
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      :focus-visible {
+        outline: 2px solid var(--purple);
+        outline-offset: 4px;
+      }
+      .icon {
+        width: 17px;
+        height: 17px;
+        flex: none;
+        vertical-align: middle;
+      }
+      .page-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 18px 28px;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand-line {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+      }
+      .brand {
+        color: var(--purple);
+        font-size: 34px;
+        letter-spacing: -1.5px;
+        font-weight: 800;
+        line-height: 1;
+      }
+      .slash {
+        color: #656373;
+        font-size: 27px;
+        font-weight: 300;
+      }
+      h1 {
+        font-size: 23px;
+        margin: 0;
+        font-weight: 650;
+        letter-spacing: -0.5px;
+      }
+      .subtitle {
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 26px;
+      }
+      .run-summary {
+        border-left: 1px solid var(--line);
+        padding-left: 24px;
+      }
+      .run-summary strong {
+        display: block;
+        font-weight: 500;
+        margin-bottom: 4px;
+      }
+      .run-summary span {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .artifacts {
+        display: flex;
+        gap: 8px;
+      }
+      .artifact {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        padding: 8px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        color: var(--ink);
+        font-size: 13px;
+      }
+      .artifact:hover {
+        background: var(--raised);
+        text-decoration: none;
+      }
+      main {
+        padding: 22px 28px 44px;
+        max-width: 1800px;
+        margin: auto;
+      }
+      .findings {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(265px, 1fr));
+        gap: 18px;
+        margin-bottom: 24px;
+      }
+      .problem-card {
+        --card-accent: var(--purple);
+        min-width: 0;
+      }
+      .problem-card[data-kind="failed"],
+      .problem-card[data-kind="error"] {
+        --card-accent: var(--red);
+      }
+      .problem-card[data-kind="flaky"],
+      .problem-card[data-kind="slow"] {
+        --card-accent: var(--amber);
+      }
+      .card-button {
+        width: 100%;
+        height: 100%;
+        min-height: 134px;
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--card-accent);
+        padding: 20px 22px;
+        text-align: left;
+        background: var(--surface);
+        border-radius: 8px;
+      }
+      .card-button:hover,
+      .card-button[aria-expanded="true"] {
+        border-color: var(--card-accent);
+        background: var(--raised);
+      }
+      .card-heading {
+        display: flex;
+        gap: 18px;
+        align-items: center;
+      }
+      .card-heading > .icon {
+        width: 31px;
+        height: 31px;
+        color: var(--card-accent);
+      }
+      .card-title {
+        flex: 1;
+      }
+      .card-count {
+        display: block;
+        color: var(--card-accent);
+        font-size: 24px;
+        font-weight: 750;
+        line-height: 1.1;
+      }
+      .card-name {
+        display: block;
+        font-size: 16px;
+        font-weight: 600;
+        margin-top: 4px;
+      }
+      .card-caption {
+        display: block;
+        color: var(--muted);
+        font-size: 13px;
+        margin-top: 14px;
+      }
+      .card-heading > .chevron {
+        color: var(--muted);
+      }
+      .finding-panel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        margin: -4px 0 24px;
+        overflow: hidden;
+      }
+      .finding-panel > header {
+        padding: 14px 20px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: var(--surface);
+      }
+      h2 {
+        font-size: 16px;
+        margin: 0;
+        font-weight: 600;
+      }
+      h3 {
+        font-size: 13px;
+        font-weight: 500;
+        margin: 0 0 10px;
+      }
+      .finding-panel details.result {
+        border-top: 1px solid var(--line);
+      }
+      .finding-panel details.result > summary {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 13px 20px;
+      }
+      .result-meta {
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .run-details {
+        border: 1px solid var(--line);
+        padding: 18px 22px;
+        border-radius: 8px;
+        margin-bottom: 22px;
+        background: var(--surface);
+      }
+      .facts {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 24px;
+        margin: 14px 0 0;
+      }
+      .fact dt {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .fact dd {
+        margin: 4px 0 0;
+        font-weight: 600;
+        overflow-wrap: anywhere;
+      }
+      .fact.attention dd {
+        color: var(--red);
+      }
+      .tabs {
+        display: flex;
+        gap: 6px;
+        border-bottom: 1px solid var(--line);
+        margin-top: 14px;
+      }
+      .tab {
+        border: 0;
+        border-bottom: 3px solid transparent;
+        border-radius: 0;
+        background: none;
+        padding: 14px 22px;
+        color: var(--muted);
+        margin-bottom: -1px;
+      }
+      .tab[aria-selected="true"] {
+        color: var(--purple);
+        border-bottom-color: var(--purple);
+        font-weight: 600;
+      }
+      .tab-count {
+        font-size: 12px;
+        margin-left: 6px;
+        color: var(--muted);
+      }
+      .toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 20px 0 16px;
+        flex-wrap: wrap;
+      }
+      .filters {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .filter {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 13px;
+        padding: 8px 12px;
+      }
+      .filter[aria-pressed="true"] {
+        border-color: var(--purple);
+        background: var(--purple-dark);
+      }
+      .filter .count {
+        background: #2e2f38;
+        color: var(--ink);
+        font-size: 11px;
+        border-radius: 10px;
+        padding: 1px 7px;
+        font-variant-numeric: tabular-nums;
+      }
+      .filter .icon {
+        width: 13px;
+        height: 13px;
+      }
+      .search {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        min-width: 280px;
+        width: 325px;
+        color: var(--muted);
+      }
+      .search:focus-within {
+        border-color: var(--purple);
+      }
+      .search input {
+        width: 100%;
+        min-width: 0;
+        background: none;
+        border: 0;
+        color: var(--ink);
+        outline: none;
+        font-size: 13px;
+      }
+      .search input::placeholder {
+        color: var(--muted);
+      }
+      .table-scroll {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+      }
+      .results-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+      }
+      .results-table th {
+        padding: 12px 16px;
+        background: var(--raised);
+        color: #c3c1ce;
+        font-size: 11px;
+        text-align: left;
+        text-transform: uppercase;
+        font-weight: 500;
+        letter-spacing: 0.025em;
+      }
+      .results-table td {
+        padding: 9px 16px;
+        border-top: 1px solid var(--line);
+        vertical-align: middle;
+      }
+      .results-table .number {
+        width: 44px;
+        padding-right: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .results-table .status-column {
+        width: 112px;
+      }
+      .results-table .file-column {
+        width: 28%;
+      }
+      .results-table .duration-column {
+        width: 100px;
+      }
+      .results-table .attempt-column {
+        width: 94px;
+      }
+      .results-table .coverage-column {
+        width: 132px;
+      }
+      .results-table .expand-column {
+        width: 46px;
+        padding-left: 0;
+      }
+      .result-main {
+        cursor: pointer;
+      }
+      .result-main:hover {
+        background: #202128;
+      }
+      .result-main:has(button[aria-expanded="true"]) {
+        background: var(--surface);
+      }
+      .result-name {
+        border: 0;
+        background: none;
+        padding: 0;
+        text-align: left;
+        font-weight: 500;
+        overflow-wrap: anywhere;
+        color: var(--ink);
+      }
+      .result-name:hover {
+        background: none;
+        color: var(--purple);
+      }
+      .file-name {
+        color: #c2b3f5;
+        font:
+          12px/1.5 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        overflow-wrap: anywhere;
+      }
+      .suite-name {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 3px;
+        overflow-wrap: anywhere;
+      }
+      .duration,
+      .attempt-count {
+        font-size: 13px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .filter[data-status="Passed"] > .icon,
+      .status[data-status="Passed"] {
+        color: var(--green);
+      }
+      .filter[data-status="Failed"] > .icon,
+      .status[data-status="Failed"] {
+        color: var(--red);
+      }
+      .filter[data-status="Flaky"] > .icon,
+      .status[data-status="Flaky"] {
+        color: var(--amber);
+      }
+      .filter[data-status="Skipped"] > .icon,
+      .status[data-status="Skipped"] {
+        color: var(--muted);
+      }
+      .chevron {
+        color: var(--muted);
+        display: inline-flex;
+      }
+      .result-main:has(button[aria-expanded="true"]) .chevron {
+        transform: rotate(180deg);
+      }
+      .results-table .detail-cell {
+        padding: 0;
+        background: var(--surface);
+        border-top: 0;
+      }
+      .expanded {
+        padding: 16px 20px;
+      }
+      .detail-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 28px;
+      }
+      .attempts,
+      .source-block,
+      .detail-grid > div {
+        min-width: 0;
+      }
+      .attempt + .attempt {
+        margin-top: 16px;
+      }
+      .attempt-head {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 12px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      pre {
+        font:
+          12px/1.4 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #202129;
+        padding: 14px;
+        overflow: auto;
+        margin: 10px 0 0;
+      }
+      .error-message {
+        color: #ffb3b8;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .source-path {
+        font:
+          12px/1.5 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        color: var(--muted);
+        margin: 0 0 6px;
+        overflow-wrap: anywhere;
+      }
+      .stack {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      pre.source {
+        padding: 8px 0;
+      }
+      .source-line {
+        display: grid;
+        grid-template-columns: 42px minmax(max-content, 1fr);
+      }
+      .line-number {
+        color: #838293;
+        text-align: right;
+        padding-right: 12px;
+        user-select: none;
+      }
+      .line-code {
+        padding-right: 14px;
+      }
+      .token-keyword {
+        color: #c4a1ff;
+      }
+      .token-string {
+        color: #b7d97d;
+      }
+      .token-number,
+      .token-literal {
+        color: #8bcded;
+      }
+      .token-comment {
+        color: #9996aa;
+        font-style: italic;
+      }
+      .coverage {
+        margin-top: 18px;
+        border-top: 1px solid var(--line);
+        padding-top: 14px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .covered-files {
+        list-style: none;
+        padding: 0;
+        margin: 10px 0 0;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        max-height: 300px;
+        overflow: auto;
+      }
+      .covered-files li {
+        border-top: 1px solid var(--line);
+        padding: 8px 12px;
+        font:
+          12px/1.5 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        overflow-wrap: anywhere;
+      }
+      .covered-files li:first-child {
+        border-top: 0;
+      }
+      .table-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .pager {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 12px;
+        font-size: 12px;
+      }
+      .covered-files-wrap > .pager {
+        margin-top: 10px;
+      }
+      .pager button {
+        padding: 6px 10px;
+      }
+      .suite-tests {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+      }
+      .suite-tests th {
+        background: none;
+      }
+      .empty {
+        text-align: center;
+        padding: 40px 20px;
+        color: var(--muted);
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .empty-findings {
+        margin-bottom: 24px;
+        padding: 18px 22px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        color: var(--muted);
+      }
+      .empty-findings .icon {
+        color: var(--green);
+        margin-right: 10px;
+      }
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+      @media (min-width: 1600px) {
+        .page-header {
+          padding-left: max(28px, calc((100vw - 1744px) / 2));
+          padding-right: max(28px, calc((100vw - 1744px) / 2));
+        }
+      }
+      @media (max-width: 1050px) {
+        .page-header {
+          align-items: flex-start;
+        }
+        .header-actions {
+          gap: 14px;
+        }
+        .run-summary {
+          display: none;
+        }
+        .results-table {
+          min-width: 850px;
+        }
+        .facts {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .search {
+          flex: 1;
+        }
+      }
+      @media (max-width: 640px) {
+        .page-header {
+          padding: 20px 16px;
+          flex-direction: column;
+          gap: 16px;
+        }
+        main {
+          padding: 18px 16px 30px;
+        }
+        .brand {
+          font-size: 29px;
+        }
+        h1 {
+          font-size: 21px;
+        }
+        .findings {
+          gap: 12px;
+        }
+        .card-button {
+          min-height: 115px;
+          padding: 16px;
+        }
+        .detail-grid {
+          grid-template-columns: 1fr;
+        }
+        .table-footer {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        .filter {
+          padding: 7px 9px;
+        }
+        .search {
+          min-width: 100%;
+        }
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        button,
+        a {
+          transition:
+            background 0.12s,
+            border-color 0.12s;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="page-header">
+      <div>
+        <div class="brand-line">
+          <span class="brand">ddtest</span
+          ><span class="slash" aria-hidden="true">/</span>
+          <h1>Test report</h1>
+        </div>
+        <p class="subtitle">
+          {{ (index .Facts 2).Label }} · local testdrive · {{ .Summary }}
+        </p>
+      </div>
+      <div class="header-actions">
+        <div class="run-summary">
+          <strong>{{ len .Tests }} tests · {{ len .Suites }} suites</strong
+          ><span>{{ .Headline }}</span>
+        </div>
+        <button
+          id="run-toggle"
+          aria-expanded="false"
+          aria-controls="run-details"
+        >
+          Run details
+        </button>
+        <div class="artifacts">
+          {{ range .Artifacts }}
+            <a class="artifact" href="{{ .Href }}"
+              >{{ template "icon-box-arrow-up-right" }}{{ .Title }}</a
+            >
+          {{ end }}
+        </div>
+      </div>
+    </header>
+    <main>
+      <section
+        id="run-details"
+        class="run-details"
+        aria-label="Run details"
+        hidden
+      >
+        <h2>Run details</h2>
+        <dl class="facts">
+          {{ range .Facts }}
+            <div class="fact {{ .Tone }}">
+              <dt>{{ .Label }}</dt>
+              <dd>{{ .Value }}</dd>
+            </div>
+          {{ end }}
+        </dl>
+      </section>
+      {{ if .Cards }}
+        <section class="findings" aria-label="Findings">
+          {{ range $i, $card := .Cards }}
+            <article class="problem-card" data-kind="{{ .Kind }}">
+              <button
+                class="card-button"
+                aria-expanded="false"
+                aria-controls="finding-{{ $i }}"
+              >
+                <span class="card-heading"
+                  >{{ if eq .Kind "failed" }}
+                    {{ template "icon-x-circle-fill" }}
+                  {{ else if eq .Kind "flaky" }}
+                    {{ template "icon-arrow-repeat" }}
+                  {{ else if eq .Kind "slow" }}
+                    {{ template "icon-stopwatch" }}
+                  {{ else if eq .Kind "error" }}
+                    {{ template "icon-exclamation-circle" }}
+                  {{ else }}
+                    {{ template "icon-file-earmark-text" }}
+                  {{ end }}<span class="card-title"
+                    ><span class="card-count">{{ .Count }}</span
+                    ><span class="card-name">{{ .Title }}</span></span
+                  ><span class="chevron"
+                    >{{ template "icon-chevron-right" }}</span
+                  ></span
+                ><span class="card-caption">{{ .Context }}</span>
+              </button>
+            </article>
+          {{ end }}
+        </section>
+        {{ range $i, $card := .Cards }}
+          <section
+            id="finding-{{ $i }}"
+            class="finding-panel"
+            aria-label="{{ .Title }}"
+            hidden
+          >
+            <header>
+              <h2>{{ .Title }} · {{ .Count }}</h2>
+              <button data-close-finding="finding-{{ $i }}">Close</button>
+            </header>
+            {{ range .Tests }}
+              <details class="result">
+                <summary>
+                  <span>{{ .Label }}</span
+                  ><span class="result-meta"
+                    >{{ template "status" .Status }} · {{ .Duration }}</span
+                  >
+                </summary>
+                {{ template "test-detail" . }}
+              </details>
+            {{ end }}{{ range .Coverages }}
+              <details class="result">
+                <summary>
+                  <span>{{ .Name }}</span
+                  ><span class="result-meta"
+                    >{{ .FileCount }} {{ plural .FileCount "file" "files" }} · {{ .Level }} level</span
+                  >
+                </summary>
+                <div class="expanded">
+                  {{ if .SourceFile }}
+                    <p class="source-path">{{ .SourceFile }}</p>
+                  {{ end }}{{ template "covered-files" .Files }}{{ if eq .Level "test" }}
+                    {{ template "source" .Source }}
+                  {{ end }}
+                </div>
+              </details>
+            {{ end }}{{ if eq .Kind "error" }}
+              <div class="expanded">{{ .Context }}</div>
+            {{ end }}
+          </section>
+        {{ end }}
+      {{ else }}
+        <div class="empty-findings">
+          {{ if eq .Summary "No findings." }}
+            {{ template "icon-check-circle-fill" }}No findings in this run.
+            Explore the results below.
+          {{ else }}
+            {{ .Summary }}
+          {{ end }}
+        </div>
+      {{ end }}
+      <nav class="tabs" role="tablist" aria-label="Report sections">
+        <button
+          id="tab-tests"
+          class="tab"
+          role="tab"
+          aria-selected="true"
+          aria-controls="tests"
+          data-tab="tests"
+        >
+          Tests <span class="tab-count">{{ len .Tests }}</span></button
+        ><button
+          id="tab-suites"
+          class="tab"
+          role="tab"
+          tabindex="-1"
+          aria-selected="false"
+          aria-controls="suites"
+          data-tab="suites"
+        >
+          Suites <span class="tab-count">{{ len .Suites }}</span>
+        </button>
+      </nav>
+      <div class="toolbar">
+        <div class="filters" role="group" aria-label="Filter results by status">
+          <button class="filter" data-filter="All" aria-pressed="true">
+            All <span class="count">{{ len .Tests }}</span></button
+          ><button
+            class="filter"
+            data-filter="Passed"
+            data-status="Passed"
+            aria-pressed="false"
+          >
+            {{ template "icon-check-circle-fill" }}Passed
+            <span class="count">0</span></button
+          ><button
+            class="filter"
+            data-filter="Failed"
+            data-status="Failed"
+            aria-pressed="false"
+          >
+            {{ template "icon-x-circle-fill" }}Failed
+            <span class="count">0</span></button
+          ><button
+            class="filter"
+            data-filter="Flaky"
+            data-status="Flaky"
+            aria-pressed="false"
+          >
+            {{ template "icon-arrow-repeat" }}Flaky
+            <span class="count">0</span></button
+          ><button
+            class="filter"
+            data-filter="Skipped"
+            data-status="Skipped"
+            aria-pressed="false"
+          >
+            {{ template "icon-skip-forward-circle" }}Skipped
+            <span class="count">0</span></button
+          ><button
+            class="filter"
+            data-filter="Unknown"
+            aria-pressed="false"
+            hidden
+          >
+            Unknown <span class="count">0</span>
+          </button>
+        </div>
+        <label class="search"
+          >{{ template "icon-search" }}<span class="visually-hidden"
+            >Search tests, suites, files, or errors</span
+          ><input
+            id="search"
+            type="search"
+            placeholder="Search tests, files, or errors…"
+            autocomplete="off"
+        /></label>
+      </div>
+      <noscript
+        ><p>
+          Enable JavaScript to search, filter, and expand results.
+        </p></noscript
+      >
+      <section id="suites"
+        class="panel"
+        role="tabpanel"
+        aria-labelledby="tab-suites"
+        hidden
+      >
+        <div class="table-scroll">
+          <table
+            class="results-table"
+            data-explorer
+            data-paginated
+            data-page-size="20"
+          >
+            <caption class="visually-hidden">
+              Test suites
+            </caption>
+            <thead>
+              <tr>
+                <th class="number" scope="col">#</th>
+                <th class="status-column" scope="col">Status</th>
+                <th scope="col">Suite</th>
+                <th class="attempt-column" scope="col">Tests</th>
+                <th class="duration-column" scope="col">Duration</th>
+                <th class="coverage-column" scope="col">Suite coverage</th>
+                <th class="expand-column" scope="col">
+                  <span class="visually-hidden">Details</span>
+                </th>
+              </tr>
+            </thead>
+            {{ range $i, $suite := .Suites }}
+              <tbody data-result data-status="{{ reportStatus .Status }}">
+                <tr class="result-main">
+                  <td class="number">{{ $i }}</td>
+                  <td>{{ template "status" .Status }}</td>
+                  <td>
+                    <button
+                      class="result-name"
+                      aria-expanded="false"
+                      aria-controls="suite-detail-{{ $i }}"
+                    >
+                      {{ .Name }}
+                    </button>
+                  </td>
+                  <td class="attempt-count">{{ .TestCount }}</td>
+                  <td class="duration">{{ .Duration }}</td>
+                  <td class="duration">
+                    {{ if .ShowCoverage }}
+                      {{ len .CoveredFiles }} files
+                    {{ else }}
+                      <span class="muted">Not reported</span>
+                    {{ end }}
+                  </td>
+                  <td class="expand-column">
+                    <span class="chevron"
+                      >{{ template "icon-chevron-down" }}</span
+                    >
+                  </td>
+                </tr>
+                <tr id="suite-detail-{{ $i }}" class="detail-row" hidden>
+                  <td colspan="7" class="detail-cell">
+                    <div class="expanded">
+                      {{ if .ShowCoverage }}
+                        <details class="coverage">
+                          <summary>
+                            Suite coverage · {{ len .CoveredFiles }}
+                            {{ plural (len .CoveredFiles) "file" "files" }} ·
+                            {{ .CoveredCount }} tests with coverage
+                          </summary>
+                          {{ template "covered-files" .CoveredFiles }}
+                        </details>
+                      {{ end }}
+                      <table class="suite-tests">
+                        <thead>
+                          <tr>
+                            <th>Test</th>
+                            <th>Status</th>
+                            <th>Duration</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {{ range .Tests }}
+                            <tr>
+                              <td>{{ .Name }}</td>
+                              <td>{{ template "status" .Status }}</td>
+                              <td>{{ .Duration }}</td>
+                            </tr>
+                          {{ end }}
+                        </tbody>
+                      </table>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            {{ end }}
+          </table>
+        </div>
+        <p class="empty" hidden>
+          No suites match these filters.
+          <button data-clear>Clear filters</button>
+        </p>
+        {{ template "pager" }}
+      </section>
+      <section id="tests"
+        class="panel"
+        role="tabpanel"
+        aria-labelledby="tab-tests"
+      >
+        <div class="table-scroll">
+          <table
+            class="results-table"
+            data-explorer
+            data-paginated
+            data-page-size="20"
+          >
+            <caption class="visually-hidden">
+              Tests
+            </caption>
+            <thead>
+              <tr>
+                <th class="number" scope="col">#</th>
+                <th class="status-column" scope="col">Status</th>
+                <th scope="col">Test</th>
+                <th class="file-column" scope="col">File / suite</th>
+                <th class="duration-column" scope="col">Duration</th>
+                <th class="attempt-column" scope="col">Attempts</th>
+                <th class="coverage-column" scope="col">Test coverage</th>
+                <th class="expand-column" scope="col">
+                  <span class="visually-hidden">Details</span>
+                </th>
+              </tr>
+            </thead>
+            {{ range $i, $test := .Tests }}
+              <tbody data-result data-status="{{ reportStatus .Status }}">
+                <tr class="result-main">
+                  <td class="number">{{ $i }}</td>
+                  <td>{{ template "status" .Status }}</td>
+                  <td>
+                    <button
+                      class="result-name"
+                      aria-expanded="false"
+                      aria-controls="test-detail-{{ $i }}"
+                      title="{{ .Label }}"
+                    >
+                      {{ .Name }}
+                    </button>
+                  </td>
+                  <td>
+                    <div class="file-name">{{ .SourceFile }}</div>
+                    <div class="suite-name">{{ .Suite }}</div>
+                  </td>
+                  <td class="duration">{{ .Duration }}</td>
+                  <td class="attempt-count">{{ len .Attempts }}</td>
+                  <td class="duration">
+                    {{ if .CoverageLevel }}
+                      {{ len .CoveredFiles }} files
+                    {{ else }}
+                      <span class="muted">Not reported</span>
+                    {{ end }}
+                  </td>
+                  <td class="expand-column">
+                    <span class="chevron"
+                      >{{ template "icon-chevron-down" }}</span
+                    >
+                  </td>
+                </tr>
+                <tr id="test-detail-{{ $i }}" class="detail-row" hidden>
+                  <td colspan="8" class="detail-cell">
+                    {{ template "test-detail" . }}
+                  </td>
+                </tr>
+              </tbody>
+            {{ end }}
+          </table>
+        </div>
+        <p class="empty" hidden>
+          No tests match these filters.
+          <button data-clear>Clear filters</button>
+        </p>
+        {{ template "pager" }}
+      </section>
+    </main>
+    <script>
+      (function () {
+        "use strict";
+        var tabs = Array.from(document.querySelectorAll("[data-tab]"));
+        var filters = Array.from(document.querySelectorAll("[data-filter]"));
+        var search = document.getElementById("search");
+        var activeTab = "tests";
+        var status = "All";
+        var query = "";
+        var explorers = {};
+        document.querySelectorAll("[data-explorer]").forEach(function (table) {
+          var panel = table.closest(".panel");
+          var items = Array.from(
+            table.querySelectorAll(":scope > [data-result]"),
+          ).map(function (item, index) {
+            item.querySelector(".number").textContent = index + 1;
+            return {
+              element: item,
+              status: item.dataset.status,
+              text: item.textContent.toLowerCase(),
+            };
+          });
+          explorers[panel.id] = {
+            panel: panel,
+            items: items,
+            page: 0,
+            size: Number(table.dataset.pageSize),
+            matched: [],
+          };
+          panel
+            .querySelector(".table-footer [data-prev]")
+            .addEventListener("click", function () {
+              var state = explorers[panel.id];
+              if (state.page > 0) {
+                state.page--;
+                render();
+              }
+            });
+          panel
+            .querySelector(".table-footer [data-next]")
+            .addEventListener("click", function () {
+              var state = explorers[panel.id];
+              if ((state.page + 1) * state.size < state.matched.length) {
+                state.page++;
+                render();
+              }
+            });
+          panel
+            .querySelector("[data-clear]")
+            .addEventListener("click", function () {
+              status = "All";
+              query = "";
+              search.value = "";
+              explorers[activeTab].page = 0;
+              render();
+              search.focus();
+            });
+          table
+            .querySelectorAll(":scope > [data-result] > .result-main")
+            .forEach(function (row) {
+              var button = row.querySelector("button[aria-controls]");
+              row.addEventListener("click", function () {
+                var open = button.getAttribute("aria-expanded") !== "true";
+                button.setAttribute("aria-expanded", String(open));
+                document.getElementById(
+                  button.getAttribute("aria-controls"),
+                ).hidden = !open;
+              });
+            });
+        });
+        function render() {
+          var state = explorers[activeTab];
+          var searched = state.items.filter(function (item) {
+            return item.text.includes(query);
+          });
+          state.matched = searched.filter(function (item) {
+            return status === "All" || item.status === status;
+          });
+          var pages = Math.max(1, Math.ceil(state.matched.length / state.size));
+          state.page = Math.min(state.page, pages - 1);
+          var visible = new Set(
+            state.matched.slice(
+              state.page * state.size,
+              (state.page + 1) * state.size,
+            ),
+          );
+          state.items.forEach(function (item) {
+            item.element.hidden = !visible.has(item);
+          });
+          filters.forEach(function (button) {
+            var key = button.dataset.filter;
+            var count =
+              key === "All"
+                ? searched.length
+                : searched.filter(function (item) {
+                    return item.status === key;
+                  }).length;
+            button.querySelector(".count").textContent = count;
+            button.setAttribute("aria-pressed", String(status === key));
+            if (key === "Unknown")
+              button.hidden = count === 0 && status !== key;
+          });
+          var panel = state.panel;
+          panel.querySelector(".empty").hidden = state.matched.length !== 0;
+          panel.querySelector(".table-footer [data-page]").textContent =
+            "Page " + (state.page + 1) + " of " + pages;
+          panel.querySelector(".table-footer [data-prev]").disabled =
+            state.page === 0;
+          panel.querySelector(".table-footer [data-next]").disabled =
+            state.page + 1 >= pages;
+          var start = state.matched.length ? state.page * state.size + 1 : 0;
+          var end = Math.min(
+            (state.page + 1) * state.size,
+            state.matched.length,
+          );
+          panel.querySelector("[data-result-count]").textContent =
+            "Showing " +
+            start +
+            "–" +
+            end +
+            " of " +
+            state.matched.length +
+            " " +
+            activeTab +
+            (state.matched.length !== state.items.length
+              ? " · " + state.items.length + " total"
+              : "");
+        }
+        function selectTab(tab) {
+          activeTab = tab.dataset.tab;
+          tabs.forEach(function (item) {
+            var active = item === tab;
+            item.setAttribute("aria-selected", String(active));
+            item.tabIndex = active ? 0 : -1;
+          });
+          document.querySelectorAll(".panel").forEach(function (panel) {
+            panel.hidden = panel.id !== activeTab;
+          });
+          render();
+        }
+        tabs.forEach(function (tab, index) {
+          tab.addEventListener("click", function () {
+            selectTab(tab);
+          });
+          tab.addEventListener("keydown", function (event) {
+            var next;
+            if (event.key === "ArrowRight" || event.key === "ArrowLeft")
+              next = tabs[(index + 1) % tabs.length];
+            if (event.key === "Home") next = tabs[0];
+            if (event.key === "End") next = tabs[tabs.length - 1];
+            if (next) {
+              event.preventDefault();
+              selectTab(next);
+              next.focus();
+            }
+          });
+        });
+        filters.forEach(function (button) {
+          button.addEventListener("click", function () {
+            status = button.dataset.filter;
+            explorers[activeTab].page = 0;
+            render();
+          });
+        });
+        search.addEventListener("input", function () {
+          query = search.value.trim().toLowerCase();
+          Object.values(explorers).forEach(function (state) {
+            state.page = 0;
+          });
+          render();
+        });
+        document
+          .getElementById("run-toggle")
+          .addEventListener("click", function () {
+            var open = this.getAttribute("aria-expanded") !== "true";
+            this.setAttribute("aria-expanded", String(open));
+            document.getElementById("run-details").hidden = !open;
+          });
+        var cards = Array.from(document.querySelectorAll(".card-button"));
+        cards.forEach(function (button) {
+          button.addEventListener("click", function () {
+            var open = button.getAttribute("aria-expanded") !== "true";
+            cards.forEach(function (item) {
+              var selected = open && item === button;
+              item.setAttribute("aria-expanded", String(selected));
+              document.getElementById(
+                item.getAttribute("aria-controls"),
+              ).hidden = !selected;
+            });
+          });
+        });
+        document
+          .querySelectorAll("[data-close-finding]")
+          .forEach(function (button) {
+            button.addEventListener("click", function () {
+              var card = cards.find(function (item) {
+                return (
+                  item.getAttribute("aria-controls") ===
+                  button.dataset.closeFinding
+                );
+              });
+              card.click();
+              card.focus();
+            });
+          });
+        document
+          .querySelectorAll("ul[data-paginated]")
+          .forEach(function (list) {
+            var items = Array.from(list.children),
+              size = Number(list.dataset.pageSize),
+              page = 0,
+              pages = Math.max(1, Math.ceil(items.length / size)),
+              pager = list.nextElementSibling;
+            function paginate() {
+              items.forEach(function (item, index) {
+                item.hidden = index < page * size || index >= (page + 1) * size;
+              });
+              pager.querySelector("[data-page]").textContent =
+                "Page " + (page + 1) + " of " + pages;
+              pager.querySelector("[data-prev]").disabled = page === 0;
+              pager.querySelector("[data-next]").disabled = page + 1 === pages;
+              pager.hidden = pages === 1;
+            }
+            pager
+              .querySelector("[data-prev]")
+              .addEventListener("click", function () {
+                if (page > 0) {
+                  page--;
+                  paginate();
+                }
+              });
+            pager
+              .querySelector("[data-next]")
+              .addEventListener("click", function () {
+                if (page + 1 < pages) {
+                  page++;
+                  paginate();
+                }
+              });
+            paginate();
+          });
+        render();
+      })();
+    </script>
+  </body>
 </html>
