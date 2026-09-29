@@ -681,3 +681,42 @@ func TestSuiteDetailsSeparateCoverageAndCollapsibleTests(t *testing.T) {
 		}
 	}
 }
+
+func TestReportSortingUsesExactDurationsAndAvailableColumns(t *testing.T) {
+	for _, level := range []string{"test", "suite", ""} {
+		facts := intake.Facts{CoverageLevel: level, Tests: []intake.Test{
+			{Name: "short", Suite: "one", Duration: 900 * time.Millisecond},
+			{Name: "long", Suite: "one", Attempts: []intake.TestRun{{Duration: 2 * time.Second}}},
+		}}
+		model := buildReport(t.TempDir(), facts, false)
+		if model.Tests[0].DurationNanos != int64(900*time.Millisecond) || model.Tests[1].DurationNanos != int64(2*time.Second) || model.Suites[0].DurationNanos != int64(2900*time.Millisecond) {
+			t.Fatal("sorting must use exact durations, including attempt fallback and suite totals")
+		}
+		report := renderTestReport(t, t.TempDir(), facts)
+		for _, view := range []struct {
+			id, level string
+			keys      []string
+		}{
+			{"tests", "test", []string{"index", "status", "name", "file", "duration", "attempts"}},
+			{"suites", "suite", []string{"index", "status", "name", "count", "duration"}},
+		} {
+			_, section, _ := strings.Cut(report, `<section id="`+view.id+`"`)
+			section, _, _ = strings.Cut(section, "</section>")
+			for _, key := range view.keys {
+				if !strings.Contains(section, `data-sort="`+key+`"`) {
+					t.Errorf("%s missing sort control for %s", view.id, key)
+				}
+			}
+			if strings.Contains(section, `data-sort="coverage"`) != (level == view.level) {
+				t.Fatal("coverage sorting must match the visible coverage column")
+			}
+			want := `data-sort-value="900000000"`
+			if view.id == "suites" {
+				want = `data-sort-value="2900000000"`
+			}
+			if !strings.Contains(section, want) {
+				t.Fatalf("missing numeric sort value %s", want)
+			}
+		}
+	}
+}

@@ -44,6 +44,7 @@ type reportTest struct {
 	CoverageLevel string
 	CoveredFiles  []reportCoveredFile
 	Source        reportSource
+	DurationNanos int64
 }
 
 type reportAttempt struct {
@@ -83,15 +84,16 @@ type reportSourceLine struct {
 }
 
 type reportSuite struct {
-	Key          string
-	Name         string
-	Status       string
-	Duration     string
-	TestCount    int
-	CoveredCount int
-	ShowCoverage bool
-	CoveredFiles []reportCoveredFile
-	Tests        []reportSuiteTest
+	Key           string
+	Name          string
+	Status        string
+	Duration      string
+	TestCount     int
+	CoveredCount  int
+	ShowCoverage  bool
+	CoveredFiles  []reportCoveredFile
+	Tests         []reportSuiteTest
+	DurationNanos int64
 }
 
 type reportSuiteTest struct {
@@ -300,9 +302,10 @@ func (builder *reportBuilder) reportTests(findings []intake.Test, showCoverage b
 		test := reportTest{
 			Label: label, Name: name, Suite: suite,
 			SourceFile: finding.SourceFile, Status: status,
-			Duration: formatDuration(findingDuration(finding)),
-			Attempts: make([]reportAttempt, 0, len(finding.Attempts)),
-			Source:   builder.readSource(finding.SourceFile, finding.SourceStart, finding.SourceEnd),
+			Duration:      formatDuration(findingDuration(finding)),
+			DurationNanos: int64(findingDuration(finding)),
+			Attempts:      make([]reportAttempt, 0, len(finding.Attempts)),
+			Source:        builder.readSource(finding.SourceFile, finding.SourceStart, finding.SourceEnd),
 		}
 		if showCoverage && finding.CoverageLevel == "test" {
 			test.CoverageLevel = finding.CoverageLevel
@@ -390,6 +393,7 @@ func (builder *reportBuilder) reportSuites(tests []intake.Test, coverages []inta
 	suites := make([]reportSuite, 0, len(byName))
 	for key, suite := range byName {
 		suite.Duration = formatDuration(durations[key])
+		suite.DurationNanos = int64(durations[key])
 		suites = append(suites, *suite)
 	}
 	sort.Slice(suites, func(i, j int) bool { return suites[i].Name < suites[j].Name })

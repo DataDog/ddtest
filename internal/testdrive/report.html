@@ -786,6 +786,28 @@ THE SOFTWARE.
         font-weight: 500;
         letter-spacing: 0.025em;
       }
+      .sort-button {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        border: 0;
+        border-radius: 2px;
+        padding: 0;
+        background: none;
+        color: inherit;
+        font: inherit;
+        text-transform: inherit;
+        letter-spacing: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .sort-button:hover { color: var(--ink); background: none; }
+      .sort-indicator { font-size: 10px; opacity: 0.6; }
+      th[aria-sort="ascending"] .sort-indicator,
+      th[aria-sort="descending"] .sort-indicator {
+        color: var(--purple);
+        opacity: 1;
+      }
       .results-table td {
         padding: 9px 16px;
         border-top: 1px solid var(--line);
@@ -1363,7 +1385,7 @@ THE SOFTWARE.
       </div>
       <noscript
         ><p>
-          Enable JavaScript to search, filter, and expand results.
+          Enable JavaScript to search, filter, sort, and expand results.
         </p></noscript
       >
       <section id="suites"
@@ -1384,13 +1406,25 @@ THE SOFTWARE.
             </caption>
             <thead>
               <tr>
-                <th class="number" scope="col">#</th>
-                <th class="status-column" scope="col">Status</th>
-                <th scope="col">Suite</th>
-                <th class="attempt-column" scope="col">Tests</th>
-                <th class="duration-column" scope="col">Duration</th>
+                <th class="number" scope="col" aria-sort="none">
+                  <button class="sort-button" data-sort="index" data-sort-type="number" aria-label="Sort by Original order">#<span class="sort-indicator" aria-hidden="true">↕</span></button>
+                </th>
+                <th class="status-column" scope="col" aria-sort="none">
+                  <button class="sort-button" data-sort="status" data-sort-type="text" aria-label="Sort by Status">Status<span class="sort-indicator" aria-hidden="true">↕</span></button>
+                </th>
+                <th scope="col" aria-sort="none">
+                  <button class="sort-button" data-sort="name" data-sort-type="text" aria-label="Sort by Suite">Suite<span class="sort-indicator" aria-hidden="true">↕</span></button>
+                </th>
+                <th class="attempt-column" scope="col" aria-sort="none">
+                  <button class="sort-button" data-sort="count" data-sort-type="number" aria-label="Sort by Tests">Tests<span class="sort-indicator" aria-hidden="true">↕</span></button>
+                </th>
+                <th class="duration-column" scope="col" aria-sort="none">
+                  <button class="sort-button" data-sort="duration" data-sort-type="number" aria-label="Sort by Duration">Duration<span class="sort-indicator" aria-hidden="true">↕</span></button>
+                </th>
                 {{ if eq .CoverageLevel "suite" }}
-                <th class="coverage-column" scope="col">Suite coverage</th>
+                <th class="coverage-column" scope="col" aria-sort="none">
+                  <button class="sort-button" data-sort="coverage" data-sort-type="number" aria-label="Sort by Suite coverage">Suite coverage<span class="sort-indicator" aria-hidden="true">↕</span></button>
+                </th>
                 {{ end }}
                 <th class="expand-column" scope="col">
                   <span class="visually-hidden">Details</span>
@@ -1412,9 +1446,9 @@ THE SOFTWARE.
                     </button>
                   </td>
                   <td class="attempt-count">{{ .TestCount }}</td>
-                  <td class="duration">{{ .Duration }}</td>
+                  <td class="duration" data-sort-value="{{ .DurationNanos }}">{{ .Duration }}</td>
                   {{ if eq $.CoverageLevel "suite" }}
-                  <td class="duration">
+                  <td class="duration" data-sort-value="{{ len .CoveredFiles }}">
                     {{ if .ShowCoverage }}
                       {{ len .CoveredFiles }} files
                     {{ else }}
@@ -1460,14 +1494,28 @@ THE SOFTWARE.
             </caption>
             <thead>
               <tr>
-                <th class="number" scope="col">#</th>
-                <th class="status-column" scope="col">Status</th>
-                <th scope="col">Test</th>
-                <th class="file-column" scope="col">File / suite</th>
-                <th class="duration-column" scope="col">Duration</th>
-                <th class="attempt-column" scope="col">Attempts</th>
+                <th class="number" scope="col" aria-sort="none">
+                  <button class="sort-button" data-sort="index" data-sort-type="number" aria-label="Sort by Original order">#<span class="sort-indicator" aria-hidden="true">↕</span></button>
+                </th>
+                <th class="status-column" scope="col" aria-sort="none">
+                  <button class="sort-button" data-sort="status" data-sort-type="text" aria-label="Sort by Status">Status<span class="sort-indicator" aria-hidden="true">↕</span></button>
+                </th>
+                <th scope="col" aria-sort="none">
+                  <button class="sort-button" data-sort="name" data-sort-type="text" aria-label="Sort by Test">Test<span class="sort-indicator" aria-hidden="true">↕</span></button>
+                </th>
+                <th class="file-column" scope="col" aria-sort="none">
+                  <button class="sort-button" data-sort="file" data-sort-type="text" aria-label="Sort by File / suite">File / suite<span class="sort-indicator" aria-hidden="true">↕</span></button>
+                </th>
+                <th class="duration-column" scope="col" aria-sort="none">
+                  <button class="sort-button" data-sort="duration" data-sort-type="number" aria-label="Sort by Duration">Duration<span class="sort-indicator" aria-hidden="true">↕</span></button>
+                </th>
+                <th class="attempt-column" scope="col" aria-sort="none">
+                  <button class="sort-button" data-sort="attempts" data-sort-type="number" aria-label="Sort by Attempts">Attempts<span class="sort-indicator" aria-hidden="true">↕</span></button>
+                </th>
                 {{ if eq .CoverageLevel "test" }}
-                <th class="coverage-column" scope="col">Test coverage</th>
+                <th class="coverage-column" scope="col" aria-sort="none">
+                  <button class="sort-button" data-sort="coverage" data-sort-type="number" aria-label="Sort by Test coverage">Test coverage<span class="sort-indicator" aria-hidden="true">↕</span></button>
+                </th>
                 {{ end }}
                 <th class="expand-column" scope="col">
                   <span class="visually-hidden">Details</span>
@@ -1493,10 +1541,10 @@ THE SOFTWARE.
                     <div class="file-name">{{ .SourceFile }}</div>
                     <div class="suite-name">{{ .Suite }}</div>
                   </td>
-                  <td class="duration">{{ .Duration }}</td>
+                  <td class="duration" data-sort-value="{{ .DurationNanos }}">{{ .Duration }}</td>
                   <td class="attempt-count">{{ len .Attempts }}</td>
                   {{ if eq $.CoverageLevel "test" }}
-                  <td class="duration">
+                  <td class="duration" data-sort-value="{{ if .CoverageLevel }}{{ len .CoveredFiles }}{{ end }}">
                     {{ if .CoverageLevel }}
                       {{ len .CoveredFiles }} files
                     {{ else }}
@@ -1536,13 +1584,33 @@ THE SOFTWARE.
         var status = "All";
         var query = "";
         var explorers = {};
+        var collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
         document.querySelectorAll("[data-explorer]").forEach(function (table) {
           var panel = table.closest(".panel");
+          var sortButtons = Array.from(table.querySelectorAll(":scope > thead [data-sort]"));
+          var sortColumns = sortButtons.map(function (button) {
+            return {
+              key: button.dataset.sort,
+              numeric: button.dataset.sortType === "number",
+              column: Array.from(button.parentElement.parentElement.children).indexOf(button.parentElement),
+            };
+          });
           var items = Array.from(
             table.querySelectorAll(":scope > [data-result]"),
           ).map(function (item, index) {
             item.querySelector(".number").textContent = index + 1;
+            var cells = item.querySelector(".result-main").children;
+            var values = {};
+            sortColumns.forEach(function (column) {
+              var cell = cells[column.column];
+              var value = cell.hasAttribute("data-sort-value")
+                ? cell.dataset.sortValue : cell.textContent.trim().replace(/\s+/g, " ");
+              values[column.key] = value === "" ? null
+                : column.numeric ? Number(value) : value;
+            });
             return {
+              index: index,
+              values: values,
               element: item,
               status: item.dataset.status,
               text: item.textContent.toLowerCase(),
@@ -1554,7 +1622,39 @@ THE SOFTWARE.
             page: 0,
             size: Number(table.dataset.pageSize),
             matched: [],
+            sortKey: null,
+            sortDirection: 1,
           };
+          sortButtons.forEach(function (button) {
+            button.addEventListener("click", function () {
+              var state = explorers[panel.id];
+              var key = button.dataset.sort;
+              state.sortDirection = state.sortKey === key ? -state.sortDirection : 1;
+              state.sortKey = key;
+              state.page = 0;
+              state.items.sort(function (a, b) {
+                var left = a.values[key], right = b.values[key];
+                // Unreported values stay last in either direction.
+                if (left === null || right === null) {
+                  if (left !== right) return left === null ? 1 : -1;
+                  return a.index - b.index;
+                }
+                var order = typeof left === "number" ? left - right : collator.compare(left, right);
+                return order * state.sortDirection || a.index - b.index;
+              });
+              var rows = document.createDocumentFragment();
+              state.items.forEach(function (item) { rows.appendChild(item.element); });
+              table.appendChild(rows);
+              sortButtons.forEach(function (other) {
+                var selected = other === button;
+                other.parentElement.setAttribute("aria-sort", selected
+                  ? state.sortDirection === 1 ? "ascending" : "descending" : "none");
+                other.querySelector(".sort-indicator").textContent = selected
+                  ? state.sortDirection === 1 ? "↑" : "↓" : "↕";
+              });
+              render();
+            });
+          });
           panel
             .querySelector(".table-footer [data-prev]")
             .addEventListener("click", function () {
