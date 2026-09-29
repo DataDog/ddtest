@@ -110,8 +110,7 @@ type reportArtifact struct {
 }
 
 type reportModel struct {
-	Headline      string
-	HeadlineTone  string
+	NoTestEvents  bool
 	CoverageLevel string
 	Runtime       reportRuntime
 	Summary       string
@@ -191,9 +190,8 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		}
 	}
 	model := reportModel{
-		Headline:      fmt.Sprintf("%d test %s received.", findings.TestEventCount, plural(findings.TestEventCount, "event", "events")),
 		Summary:       "No findings.",
-		HeadlineTone:  factTone(findings.TestEventCount > 0),
+		NoTestEvents:  findings.TestEventCount == 0,
 		Runtime:       info,
 		CoverageLevel: findings.CoverageLevel,
 		Facts: []reportFact{
@@ -213,7 +211,6 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	}
 
 	if findings.TestEventCount == 0 {
-		model.Headline = "No test events received."
 		model.Summary = "Check the instrumentation setup."
 	}
 	if findings.EmptyCoverageEntryCount > 0 {

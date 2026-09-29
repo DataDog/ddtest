@@ -389,8 +389,8 @@ func TestBuildReportShowsNoEventsAndRollsUpUnknownSuite(t *testing.T) {
 		{Name: "failed", Status: "fail", Duration: 2 * time.Millisecond},
 	}
 	model := buildReport(t.TempDir(), intake.Facts{Tests: tests}, true)
-	if model.Headline != "No test events received." || model.Summary != "Check the instrumentation setup." {
-		t.Fatalf("headline = %q, summary = %q", model.Headline, model.Summary)
+	if !model.NoTestEvents || model.Summary != "Check the instrumentation setup." {
+		t.Fatalf("no events = %v, summary = %q", model.NoTestEvents, model.Summary)
 	}
 	if len(model.Suites) != 1 || model.Suites[0].Name != "Unknown suite" || model.Suites[0].Status != "Failed" {
 		t.Fatalf("suite rollup = %#v", model.Suites)
@@ -413,8 +413,8 @@ func renderTestReport(t *testing.T, repositoryRoot string, findings intake.Facts
 
 func TestReportSurfacesConfigurationErrorsDespiteReceivedTests(t *testing.T) {
 	model := buildReport(t.TempDir(), intake.Facts{TestEventCount: 1, FailedTests: []intake.Test{{Name: "fails"}}, ConfigurationErrors: []string{"skippable_tests"}}, false)
-	if model.Headline != "1 test event received." {
-		t.Fatalf("headline overstates verification: %s", model.Headline)
+	if model.NoTestEvents {
+		t.Fatal("received events must not show the missing-events warning")
 	}
 	if !strings.Contains(model.Summary, "Tracer configuration errors: skippable_tests.") {
 		t.Fatalf("missing configuration error: %s", model.Summary)
@@ -462,7 +462,7 @@ func TestReportRuntimeFacts(t *testing.T) {
 			if facts["Jest"] != tc.wantStatus || facts["Datadog library"] != tc.tracer {
 				t.Fatalf("incorrect runtime facts: %v", facts)
 			}
-			if tc.events == 0 && (model.Headline != "No test events received." || strings.Contains(model.Summary, "No findings.")) {
+			if tc.events == 0 && (!model.NoTestEvents || strings.Contains(model.Summary, "No findings.")) {
 				t.Fatalf("report implies successful instrumentation without events: %+v", model)
 			}
 		})
@@ -518,22 +518,25 @@ func TestReportStatusFiltersDistinguishFlakySkippedAndUnknown(t *testing.T) {
 	}
 }
 
-func TestReportEventSummary(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		events int
-		want   string
-	}{
-		{"none", 0, `<span class="attention">No test events received.</span>`},
-		{"single", 1, `<span class="good">1 test event received.</span>`},
-		{"multiple", 3, `<span class="good">3 test events received.</span>`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			report := renderTestReport(t, t.TempDir(), intake.Facts{TestEventCount: tc.events, Tests: []intake.Test{{Name: "one test"}}})
-			if !strings.Contains(report, tc.want) {
-				t.Fatalf("report missing event summary %q", tc.want)
-			}
-		})
+func TestReportTotalsAppearOnlyInRunDetails(t *testing.T) {
+	for _, events := range []int{0, 1, 1363} {
+		report := renderTestReport(t, t.TempDir(), intake.Facts{TestEventCount: events, Tests: []intake.Test{{Name: "one test"}}})
+		_, header, _ := strings.Cut(report, `<header class="page-header">`)
+		header, _, _ = strings.Cut(header, "</header>")
+		if strings.Contains(header, "run-totals") || strings.Contains(header, "received") {
+			t.Fatal("header must not show totals or event messages")
+		}
+		_, details, _ := strings.Cut(report, `id="run-details"`)
+		details, _, _ = strings.Cut(details, "</section>")
+		if !strings.Contains(details, `<p class="run-totals">1 test · 1 suite</p>`) {
+			t.Fatal("run details missing test and suite totals")
+		}
+		if strings.Contains(report, "1363") || strings.Contains(report, "test event received") || strings.Contains(report, "test events received") && events > 0 {
+			t.Fatal("report still displays received event counts")
+		}
+		if strings.Contains(details, `<p class="no-test-events">No test events received.</p>`) != (events == 0) {
+			t.Fatal("missing-events warning must match event availability")
+		}
 	}
 }
 

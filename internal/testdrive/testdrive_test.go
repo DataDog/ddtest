@@ -293,7 +293,6 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
-		"2 test events received.",
 		"Slow tests",
 		"Median test time · 1s",
 		"slow test",

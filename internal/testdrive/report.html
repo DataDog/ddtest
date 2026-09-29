@@ -467,22 +467,11 @@ THE SOFTWARE.
         align-items: center;
         gap: 26px;
       }
-      .run-summary {
-        border-left: 1px solid var(--line);
-        padding-left: 24px;
-      }
-      .run-summary strong {
-        display: block;
+      .run-totals {
         font-weight: 500;
-        margin-bottom: 4px;
+        margin: 12px 0 0;
       }
-      .run-summary span {
-        color: var(--muted);
-        font-size: 13px;
-      }
-      .run-summary .attention {
-        color: var(--red);
-      }
+      .no-test-events { color: var(--red); }
       .artifacts {
         display: flex;
         gap: 8px;
@@ -1061,9 +1050,6 @@ THE SOFTWARE.
         .header-actions {
           gap: 14px;
         }
-        .run-summary {
-          display: none;
-        }
         .results-table {
           min-width: 850px;
         }
@@ -1133,10 +1119,6 @@ THE SOFTWARE.
         </p>
       </div>
       <div class="header-actions">
-        <div class="run-summary">
-          <strong>{{ len .Tests }} tests · {{ len .Suites }} suites</strong
-          ><span class="{{ .HeadlineTone }}">{{ .Headline }}</span>
-        </div>
         <div class="artifacts">
           {{ range .Artifacts }}
             <a class="artifact" href="{{ .Href }}"
@@ -1236,6 +1218,8 @@ THE SOFTWARE.
         aria-label="Run details"
       >
         <h2>Run details</h2>
+        <p class="run-totals">{{ len .Tests }} {{ plural (len .Tests) "test" "tests" }} · {{ len .Suites }} {{ plural (len .Suites) "suite" "suites" }}</p>
+        {{ if .NoTestEvents }}<p class="no-test-events">No test events received.</p>{{ end }}
         <dl class="facts">
           {{ range .Facts }}
             <div class="fact {{ .Tone }}">
