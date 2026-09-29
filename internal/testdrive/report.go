@@ -178,6 +178,18 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	}
 	showTestCoverage := findings.CoverageLevel == "test"
 	showSuiteCoverage := findings.CoverageLevel == "suite"
+	suites := builder.reportSuites(findings.Tests, findings.SuiteCoverages, showSuiteCoverage)
+	coverageLabel := "Tests with coverage"
+	covered, total := findings.CoveredTestCount, findings.TestCount
+	if showSuiteCoverage {
+		coverageLabel = "Suites with coverage"
+		covered, total = 0, len(suites)
+		for _, suite := range suites {
+			if suite.CoveredCount > 0 {
+				covered++
+			}
+		}
+	}
 	model := reportModel{
 		Headline:      fmt.Sprintf("%d test %s received.", findings.TestEventCount, plural(findings.TestEventCount, "event", "events")),
 		Summary:       "No findings.",
@@ -185,7 +197,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		Runtime:       info,
 		CoverageLevel: findings.CoverageLevel,
 		Facts: []reportFact{
-			{Label: "Tests with coverage", Value: fmt.Sprintf("%d / %d", findings.CoveredTestCount, findings.TestCount), Tone: factTone(findings.TestCount > 0 && findings.CoveredTestCount == findings.TestCount)},
+			{Label: coverageLabel, Value: fmt.Sprintf("%d / %d", covered, total), Tone: factTone(total > 0 && covered == total)},
 			{Label: info.Framework, Value: status, Tone: factTone(!commandFailed && findings.TestEventCount > 0)},
 			{Label: "Datadog library", Value: info.Tracer, Tone: "good"},
 		},
@@ -195,8 +207,8 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		},
 		Tests: builder.reportTests(findings.Tests, showTestCoverage),
 	}
-	model.Suites = builder.reportSuites(findings.Tests, findings.SuiteCoverages, showSuiteCoverage)
-	if findings.CoveredTestCount == 0 {
+	model.Suites = suites
+	if covered == 0 {
 		model.Facts[0].Value = "Not reported"
 	}
 

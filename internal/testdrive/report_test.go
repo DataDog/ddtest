@@ -597,3 +597,29 @@ func TestReportCoverageColumnsMatchReportedLevel(t *testing.T) {
 		})
 	}
 }
+
+func TestReportCoverageSummaryCountsTheReportedLevel(t *testing.T) {
+	tests := []intake.Test{
+		{Module: "one", Suite: "shared", Name: "first"},
+		{Module: "one", Suite: "shared", Name: "second"},
+		{Module: "two", Suite: "shared", Name: "third"},
+	}
+	for _, tc := range []struct {
+		name, level, label, value, tone string
+		coverages                       []intake.SuiteCoverage
+	}{
+		{"test", "test", "Tests with coverage", "2 / 3", "attention", nil},
+		{"partial suites", "suite", "Suites with coverage", "1 / 2", "attention", []intake.SuiteCoverage{{Module: "one", Suite: "shared", CoveredTests: 2}}},
+		{"all suites", "suite", "Suites with coverage", "2 / 2", "good", []intake.SuiteCoverage{{Module: "one", Suite: "shared", CoveredTests: 2}, {Module: "two", Suite: "shared", CoveredTests: 1}}},
+		{"no suite coverage", "suite", "Suites with coverage", "Not reported", "attention", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			facts := intake.Facts{CoverageLevel: tc.level, Tests: tests, TestCount: 3, CoveredTestCount: 2, SuiteCoverages: tc.coverages}
+			model := buildReport(t.TempDir(), facts, false)
+			want := reportFact{Label: tc.label, Value: tc.value, Tone: tc.tone}
+			if model.Facts[0] != want {
+				t.Fatalf("coverage summary = %+v, want %+v", model.Facts[0], want)
+			}
+		})
+	}
+}
