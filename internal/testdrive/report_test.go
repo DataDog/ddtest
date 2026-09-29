@@ -412,7 +412,7 @@ func renderTestReport(t *testing.T, repositoryRoot string, findings intake.Facts
 
 func TestReportSurfacesConfigurationErrorsDespiteReceivedTests(t *testing.T) {
 	model := buildReport(t.TempDir(), intake.Facts{TestEventCount: 1, FailedTests: []intake.Test{{Name: "fails"}}, ConfigurationErrors: []string{"skippable_tests"}}, false)
-	if model.Headline != "Test events received." {
+	if model.Headline != "1 test event received." {
 		t.Fatalf("headline overstates verification: %s", model.Headline)
 	}
 	if !strings.Contains(model.Summary, "Tracer configuration errors: skippable_tests.") {
@@ -514,5 +514,24 @@ func TestReportStatusFiltersDistinguishFlakySkippedAndUnknown(t *testing.T) {
 	model := buildReport(t.TempDir(), intake.Facts{Tests: []intake.Test{{Name: "retried", Status: "pass", Attempts: []intake.TestRun{{Status: "fail"}, {Status: "pass", Retry: true}}}}}, false)
 	if reportStatus(model.Tests[0].Status) != "Flaky" || reportStatus(model.Suites[0].Status) != "Flaky" {
 		t.Fatal("flaky result must not be counted as a clean pass")
+	}
+}
+
+func TestReportEventSummary(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		events int
+		want   string
+	}{
+		{"none", 0, `<span class="attention">No test events received.</span>`},
+		{"single", 1, `<span class="good">1 test event received.</span>`},
+		{"multiple", 3, `<span class="good">3 test events received.</span>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			report := renderTestReport(t, t.TempDir(), intake.Facts{TestEventCount: tc.events, Tests: []intake.Test{{Name: "one test"}}})
+			if !strings.Contains(report, tc.want) {
+				t.Fatalf("report missing event summary %q", tc.want)
+			}
+		})
 	}
 }

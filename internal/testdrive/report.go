@@ -176,7 +176,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	showTestCoverage := findings.CoverageLevel == "test"
 	showSuiteCoverage := findings.CoverageLevel == "suite"
 	model := reportModel{
-		Headline: "Test events received.",
+		Headline: fmt.Sprintf("%d test %s received.", findings.TestEventCount, plural(findings.TestEventCount, "event", "events")),
 		Summary:  "No findings.",
 		Facts: []reportFact{
 			{Label: "Test events", Value: fmt.Sprintf("%d", findings.TestEventCount), Tone: factTone(findings.TestEventCount > 0)},

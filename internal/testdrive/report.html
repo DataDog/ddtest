@@ -480,6 +480,9 @@ THE SOFTWARE.
         color: var(--muted);
         font-size: 13px;
       }
+      .run-summary .attention {
+        color: var(--red);
+      }
       .artifacts {
         display: flex;
         gap: 8px;
@@ -1115,7 +1118,7 @@ THE SOFTWARE.
       <div class="header-actions">
         <div class="run-summary">
           <strong>{{ len .Tests }} tests · {{ len .Suites }} suites</strong
-          ><span>{{ .Headline }}</span>
+          ><span class="{{ (index .Facts 0).Tone }}">{{ .Headline }}</span>
         </div>
         <button
           id="run-toggle"
