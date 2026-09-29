@@ -1454,7 +1454,7 @@ THE SOFTWARE.
                   <td class="attempt-count">{{ .TestCount }}</td>
                   <td class="duration" data-sort-value="{{ .DurationNanos }}">{{ .Duration }}</td>
                   {{ if eq $.CoverageLevel "suite" }}
-                  <td class="duration" data-sort-value="{{ len .CoveredFiles }}">
+                  <td class="duration" data-sort-value="{{ if .ShowCoverage }}{{ len .CoveredFiles }}{{ end }}">
                     {{ if .ShowCoverage }}
                       {{ len .CoveredFiles }} files
                     {{ else }}

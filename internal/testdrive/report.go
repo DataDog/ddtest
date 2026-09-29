@@ -356,7 +356,7 @@ func (builder *reportBuilder) reportSuites(tests []intake.Test, coverages []inta
 			if test.Module != "" {
 				name = test.Module + " › " + name
 			}
-			suite = &reportSuite{Key: key, Name: name, Status: suiteStatus(status), ShowCoverage: showCoverage}
+			suite = &reportSuite{Key: key, Name: name, Status: suiteStatus(status)}
 			byName[key] = suite
 		} else if suiteStatusRank(status) > suiteStatusRank(suite.Status) {
 			suite.Status = suiteStatus(status)
@@ -378,6 +378,7 @@ func (builder *reportBuilder) reportSuites(tests []intake.Test, coverages []inta
 			if suite, found := byName[key]; found {
 				files := slices.Clone(coverage.Files)
 				slices.Sort(files)
+				suite.ShowCoverage = true
 				suite.CoveredCount = coverage.CoveredTests
 				suite.CoveredFiles = files
 			}

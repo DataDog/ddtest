@@ -743,3 +743,45 @@ func TestSuiteTestLinksTargetExactTest(t *testing.T) {
 		}
 	}
 }
+
+func TestSuiteCoverageDistinguishesUnreportedFromEmpty(t *testing.T) {
+	facts := intake.Facts{
+		CoverageLevel: "suite",
+		Tests: []intake.Test{
+			{Module: "a", Suite: "shared", Name: "covered"},
+			{Module: "b", Suite: "shared", Name: "unreported"},
+			{Module: "c", Suite: "shared", Name: "empty"},
+		},
+		SuiteCoverages: []intake.SuiteCoverage{
+			{Module: "a", Suite: "shared", Files: []string{"source.js"}, CoveredTests: 1},
+			{Module: "c", Suite: "shared", CoveredTests: 1},
+		},
+		SlowSuites: []intake.SlowSuite{{Module: "b", Suite: "shared"}},
+	}
+	model := buildReport(t.TempDir(), facts, false)
+	for index, want := range []bool{true, false, true} {
+		if model.Suites[index].ShowCoverage != want {
+			t.Errorf("suite %d coverage availability = %v, want %v", index, model.Suites[index].ShowCoverage, want)
+		}
+	}
+	report := renderTestReport(t, t.TempDir(), facts)
+	_, section, _ := strings.Cut(report, `<section id="suites"`)
+	section, _, _ = strings.Cut(section, "</section>")
+	rows := strings.Split(section, `<tbody data-result`)[1:]
+	for index, want := range []struct{ label, sortValue string }{
+		{"1 files", "1"}, {"Not reported", ""}, {"0 files", "0"},
+	} {
+		row, _, _ := strings.Cut(rows[index], "</tr>")
+		if !strings.Contains(row, want.label) || !strings.Contains(row, `class="duration" data-sort-value="`+want.sortValue+`"`) {
+			t.Errorf("suite %d missing coverage label %q or sort value %q", index, want.label, want.sortValue)
+		}
+		if strings.Contains(rows[index], `<details class="coverage">`) != (index != 1) {
+			t.Errorf("suite %d coverage details do not match reported data", index)
+		}
+	}
+	_, finding, _ := strings.Cut(report, `id="finding-0"`)
+	finding, _, _ = strings.Cut(finding, `id="run-details"`)
+	if strings.Contains(finding, `<details class="coverage">`) {
+		t.Fatal("slow-suite finding must not invent coverage for an uncovered suite")
+	}
+}
