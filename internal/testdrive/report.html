@@ -1695,13 +1695,19 @@ THE SOFTWARE.
               var button = row.querySelector("button[aria-controls]");
               row.addEventListener("click", function () {
                 var open = button.getAttribute("aria-expanded") !== "true";
-                button.setAttribute("aria-expanded", String(open));
-                document.getElementById(
-                  button.getAttribute("aria-controls"),
-                ).hidden = !open;
+                setDetailExpanded(button, open);
               });
             });
         });
+        function setDetailExpanded(button, open) {
+          if (open && button.closest(".panel").id === "tests") {
+            document.querySelectorAll('#tests .result-name[aria-expanded="true"]').forEach(function (other) {
+              if (other !== button) setDetailExpanded(other, false);
+            });
+          }
+          button.setAttribute("aria-expanded", String(open));
+          document.getElementById(button.getAttribute("aria-controls")).hidden = !open;
+        }
         function render() {
           var state = explorers[activeTab];
           var searched = state.items.filter(function (item) {
@@ -1789,8 +1795,7 @@ THE SOFTWARE.
             state.page = Math.floor(state.matched.indexOf(target) / state.size);
             render();
             var button = target.element.querySelector(".result-name");
-            button.setAttribute("aria-expanded", "true");
-            detail.hidden = false;
+            setDetailExpanded(button, true);
             button.focus({ preventScroll: true });
             button.scrollIntoView({ block: "center" });
           });
