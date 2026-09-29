@@ -22,7 +22,9 @@
         <tbody>
           {{ range .Tests }}
             <tr>
-              <td>{{ .Name }}</td>
+              <td>
+                <button type="button" class="suite-test-link" data-open-test="test-detail-{{ .TestIndex }}">{{ .Name }}</button>
+              </td>
               <td>{{ template "status" .Status }}</td>
               <td>{{ .Duration }}</td>
             </tr>
@@ -847,6 +849,7 @@ THE SOFTWARE.
       .result-main:has(button[aria-expanded="true"]) {
         background: var(--surface);
       }
+      .suite-test-link,
       .result-name {
         border: 0;
         background: none;
@@ -856,6 +859,9 @@ THE SOFTWARE.
         overflow-wrap: anywhere;
         color: var(--ink);
       }
+      .suite-test-link { color: var(--purple); }
+      .suite-test-link:hover { text-decoration: underline; }
+      .suite-test-link:hover,
       .result-name:hover {
         background: none;
         color: var(--purple);
@@ -1766,6 +1772,29 @@ THE SOFTWARE.
           });
           render();
         }
+        document.querySelectorAll("[data-open-test]").forEach(function (link) {
+          link.addEventListener("click", function () {
+            var detail = document.getElementById(link.dataset.openTest);
+            var state = explorers.tests;
+            var target = state.items.find(function (item) {
+              return item.element === detail.parentElement;
+            });
+            // Keep filters that include the target; clear only those hiding it.
+            if (status !== "All" && status !== target.status) status = "All";
+            if (!target.text.includes(query)) {
+              query = "";
+              search.value = "";
+            }
+            selectTab(document.getElementById("tab-tests"));
+            state.page = Math.floor(state.matched.indexOf(target) / state.size);
+            render();
+            var button = target.element.querySelector(".result-name");
+            button.setAttribute("aria-expanded", "true");
+            detail.hidden = false;
+            button.focus({ preventScroll: true });
+            button.scrollIntoView({ block: "center" });
+          });
+        });
         tabs.forEach(function (tab, index) {
           tab.addEventListener("click", function () {
             selectTab(tab);

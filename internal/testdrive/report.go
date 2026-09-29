@@ -92,9 +92,10 @@ type reportSuite struct {
 }
 
 type reportSuiteTest struct {
-	Name     string
-	Status   string
-	Duration string
+	TestIndex int
+	Name      string
+	Status    string
+	Duration  string
 }
 
 type reportFact struct {
@@ -343,7 +344,7 @@ func (builder *reportBuilder) reportCoverages(findings []intake.CoverageFact) []
 func (builder *reportBuilder) reportSuites(tests []intake.Test, coverages []intake.SuiteCoverage, showCoverage bool) []reportSuite {
 	byName := make(map[string]*reportSuite)
 	durations := make(map[string]time.Duration)
-	for _, test := range tests {
+	for index, test := range tests {
 		key := test.Module + "\x00" + test.Suite
 		name := test.Suite
 		if name == "" {
@@ -367,7 +368,7 @@ func (builder *reportBuilder) reportSuites(tests []intake.Test, coverages []inta
 			testName += " " + test.Parameters
 		}
 		suite.Tests = append(suite.Tests, reportSuiteTest{
-			Name: testName, Status: status,
+			TestIndex: index, Name: testName, Status: status,
 			Duration: formatDuration(findingDuration(test)),
 		})
 	}

@@ -704,3 +704,42 @@ func TestReportSortingUsesExactDurationsAndAvailableColumns(t *testing.T) {
 		}
 	}
 }
+
+func TestSuiteTestLinksTargetExactTest(t *testing.T) {
+	facts := intake.Facts{Tests: []intake.Test{
+		{Module: "z", Suite: "shared", Name: "same", Parameters: "first"},
+		{Module: "a", Suite: "shared", Name: "same"},
+		{Module: "z", Suite: "shared", Name: "same", Parameters: "second"},
+		{Module: "z", Suite: "other", Name: "same"},
+	}, SlowSuites: []intake.SlowSuite{{Module: "z", Suite: "shared"}}}
+	model := buildReport(t.TempDir(), facts, false)
+	seen := make(map[int]bool)
+	for _, suite := range model.Suites {
+		for _, test := range suite.Tests {
+			original := facts.Tests[test.TestIndex]
+			if suite.Key != original.Module+"\x00"+original.Suite || test.Name != model.Tests[test.TestIndex].Name {
+				t.Fatalf("suite test targets a different test: %+v", test)
+			}
+			if seen[test.TestIndex] {
+				t.Fatalf("duplicate target: %d", test.TestIndex)
+			}
+			seen[test.TestIndex] = true
+		}
+	}
+	if len(seen) != len(facts.Tests) {
+		t.Fatal("not all tests have navigation targets")
+	}
+	report := renderTestReport(t, t.TempDir(), facts)
+	for index := range facts.Tests {
+		want := 1
+		if index == 0 || index == 2 {
+			want++ // The slow-suite finding uses the same destination.
+		}
+		if got := strings.Count(report, fmt.Sprintf(`data-open-test="test-detail-%d"`, index)); got != want {
+			t.Errorf("test %d has %d links, want %d", index, got, want)
+		}
+		if got := strings.Count(report, fmt.Sprintf(`id="test-detail-%d"`, index)); got != 1 {
+			t.Errorf("test %d has %d destinations, want 1", index, got)
+		}
+	}
+}
