@@ -54,6 +54,7 @@ func TestInstrumentedJestFixture(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, fixture.server.Close())
+		require.NoError(t, fixture.session.Close())
 	})
 
 	require.NoError(t, fixture.run(ctx))
@@ -71,11 +72,13 @@ func TestInstrumentedJestFixturesAreIsolated(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, first.server.Close())
+		require.NoError(t, first.session.Close())
 	})
 	second, err := prepareInstrumentedJestFixture(ctx, repositoryRoot, "second testdrive")
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, second.server.Close())
+		require.NoError(t, second.session.Close())
 	})
 
 	require.NotEqual(t, first.session.Directory(), second.session.Directory())
@@ -105,15 +108,20 @@ func TestInstrumentedJestFixturesAreIsolated(t *testing.T) {
 func requireNPMIntegration(t *testing.T) {
 	t.Helper()
 	if os.Getenv("DDTEST_RUN_NPM_INTEGRATION_TEST") == "" {
-		t.Skip("set DDTEST_RUN_NPM_INTEGRATION_TEST=1 to run Jest with the selected tracer")
+		t.Skip("set DDTEST_RUN_NPM_INTEGRATION_TEST=1 to run Jest with the registry-selected tracer")
 	}
 }
 
-func prepareInstrumentedJestFixture(ctx context.Context, repositoryRoot, sessionName string) (*instrumentedJestFixture, error) {
-	session, err := testdrive.NewSession(repositoryRoot)
+func prepareInstrumentedJestFixture(ctx context.Context, repositoryRoot, sessionName string) (fixture *instrumentedJestFixture, prepareErr error) {
+	session, err := testdrive.NewSession()
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if prepareErr != nil {
+			_ = session.Close()
+		}
+	}()
 	ciInitPath, err := platform.NewJavaScript().InstallTestdriveTracer(ctx, platform.TracerOptions{Directory: session.Directory(), Version: "latest"})
 	if err != nil {
 		return nil, err
@@ -201,10 +209,9 @@ func (f *instrumentedJestFixture) run(ctx context.Context) error {
 func assertFixtureResult(t *testing.T, fixture *instrumentedJestFixture) {
 	t.Helper()
 
-	// The local settings turn on Early Flake Detection with one retry, so the
-	// single locally-new fixture test is deliberately observed twice.
-	require.Equal(t, 2, fixture.testEventCount)
-	require.Equal(t, 2, fixture.coveredTestCount)
+	// Reporting-only validation must not retry a passing test.
+	require.Equal(t, 1, fixture.testEventCount)
+	require.Equal(t, 1, fixture.coveredTestCount)
 	resolvedSessionDirectory, err := filepath.EvalSymlinks(fixture.session.Directory())
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(fixture.ciInitPath, resolvedSessionDirectory+string(filepath.Separator)))
@@ -230,9 +237,6 @@ func assertFixtureResult(t *testing.T, fixture *instrumentedJestFixture) {
 
 	for _, path := range []string{
 		"/api/v2/libraries/tests/services/setting",
-		"/api/v2/ci/libraries/tests",
-		"/api/v2/ci/tests/skippable",
-		"/api/v2/test/libraries/test-management/tests",
 		"/api/v2/citestcycle",
 		"/api/v2/citestcov",
 	} {

@@ -11,73 +11,50 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewSession(t *testing.T) {
+func TestNewSessionUsesTemporaryStorage(t *testing.T) {
 	repositoryRoot := t.TempDir()
-
-	session, err := NewSession(repositoryRoot)
+	t.Chdir(repositoryRoot)
+	session, err := NewSession()
 	require.NoError(t, err)
-
 	require.Equal(t, session.ID(), filepath.Base(session.Directory()))
-	require.Equal(
-		t,
-		filepath.Join(repositoryRoot, constants.PlanDirectory, "testdrive"),
-		filepath.Dir(session.Directory()),
-	)
-	info, err := os.Stat(session.Directory())
+	require.DirExists(t, session.Directory())
+	files, err := os.ReadDir(repositoryRoot)
 	require.NoError(t, err)
-	require.True(t, info.IsDir())
+	require.Empty(t, files, "creating a session must not write into the customer repository")
+	require.NoError(t, session.Close())
+	require.NoDirExists(t, session.Directory())
+	require.NoError(t, session.Close(), "cleanup is idempotent")
 }
 
 func TestNewSessionSupportsConcurrentRuns(t *testing.T) {
 	const runCount = 32
-
-	repositoryRoot := t.TempDir()
-	start := make(chan struct{})
 	sessions := make(chan *Session, runCount)
-	errors := make(chan error, runCount)
-
+	failures := make(chan error, runCount)
 	var group sync.WaitGroup
 	for range runCount {
-		group.Add(1)
-		go func() {
-			defer group.Done()
-			<-start
-
-			session, err := NewSession(repositoryRoot)
+		group.Go(func() {
+			session, err := NewSession()
 			if err != nil {
-				errors <- err
+				failures <- err
 				return
 			}
 			sessions <- session
-		}()
+		})
 	}
-
-	close(start)
 	group.Wait()
 	close(sessions)
-	close(errors)
-
-	for err := range errors {
+	close(failures)
+	for err := range failures {
 		require.NoError(t, err)
 	}
-
-	seen := make(map[string]struct{}, runCount)
+	seen := make(map[string]bool, runCount)
 	for session := range sessions {
-		_, exists := seen[session.Directory()]
-		require.False(t, exists, "session directory was reused: %s", session.Directory())
-		seen[session.Directory()] = struct{}{}
+		require.False(t, seen[session.Directory()])
+		seen[session.Directory()] = true
+		require.NoError(t, session.Close())
 	}
 	require.Len(t, seen, runCount)
-}
-
-func TestNewSessionRejectsPlanPathThatIsAFile(t *testing.T) {
-	repositoryRoot := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repositoryRoot, constants.PlanDirectory), []byte("not a directory"), 0644))
-
-	_, err := NewSession(repositoryRoot)
-	require.ErrorContains(t, err, "create testdrive sessions directory")
 }

@@ -38,7 +38,7 @@ jobs:
 		"api_key: ${{ secrets.DD_API_KEY }}",
 		"NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }}",
 		"ddtest testdrive",
-		"post every `Open report:` link",
+		"share local compatibility",
 		"Ask a human to connect Datadog",
 		"without sharing the key itself",
 	} {
@@ -92,7 +92,7 @@ jobs:
 			if !strings.Contains(output.String(), "ddtest testdrive") {
 				t.Fatalf("Run() did not print the next step:\n%s", output.String())
 			}
-			if !strings.Contains(output.String(), "post every `Open report:` link") {
+			if tc.configured && !strings.Contains(output.String(), "share the validation verdict") {
 				t.Fatalf("Run() did not tell the agent to share the report:\n%s", output.String())
 			}
 		})
@@ -262,7 +262,7 @@ func newJestRepository(t *testing.T, workflow string) string {
 	t.Helper()
 	repositoryRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repositoryRoot, "package.json"), []byte(`{
-  "scripts": {"test": "jest"},
+  "scripts": {"test": "jest", "lint": "eslint ."},
   "devDependencies": {"jest": "30.0.0"}
 }`), 0644); err != nil {
 		t.Fatal(err)
@@ -275,4 +275,20 @@ func newJestRepository(t *testing.T, workflow string) string {
 		t.Fatal(err)
 	}
 	return repositoryRoot
+}
+
+func TestInstructionsUseV3WithoutTracerPinsAndKeepBothReports(t *testing.T) {
+	for language, framework := range map[string]string{"javascript": "jest", "python": "pytest", "ruby": "rspec"} {
+		output := instructions(language, framework)
+		for _, expected := range []string{"datadog/test-visibility-github-action@v3", "Results JSON", "report.html", "testdrive.json", "JavaScript and Python fallback installations are temporary", "Ruby fallback uses `bundle add datadog-ci`", "Fix known runtime incompatibilities", "preserve the workflow", "--check-only", "--tracer-version"} {
+			if !strings.Contains(output, expected) {
+				t.Errorf("%s instructions missing %q", language, expected)
+			}
+		}
+		for _, absent := range []string{"-tracer-version:", "__TRACER_SETTING__"} {
+			if strings.Contains(output, absent) {
+				t.Errorf("%s instructions still contain %q", language, absent)
+			}
+		}
+	}
 }
