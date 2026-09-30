@@ -145,6 +145,18 @@ func TestFeatureAssertionsRequireBehaviorAndTelemetry(t *testing.T) {
 				}
 			}
 			require.Equal(t, "passed", evaluateFeature(feature, run, identity).Status)
+			if feature == "quarantine" {
+				// Older Jest tracers preserve the assertion's failure while
+				// excluding it from the command's overall failure status.
+				run.Tests[0].Status = "failed"
+				require.Equal(t, "passed", evaluateFeature(feature, run, identity).Status)
+				run.Facts.Events[0].Tags["test.test_management.is_quarantined"] = "false"
+				require.Equal(t, "failed", evaluateFeature(feature, run, identity).Status)
+				run.Facts.Events[0].Tags["test.test_management.is_quarantined"] = "true"
+				run.Tests = append(run.Tests, run.Tests[0])
+				require.Equal(t, "failed", evaluateFeature(feature, run, identity).Status)
+				run.Tests = run.Tests[:1]
+			}
 			run.ExitCode = 1
 			require.Equal(t, "failed", evaluateFeature(feature, run, identity).Status)
 			require.Equal(t, "failed", evaluateFeature(feature, validationRun{}, identity).Status)
