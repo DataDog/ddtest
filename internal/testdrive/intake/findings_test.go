@@ -54,8 +54,8 @@ func TestAnalyzeTestsSlowThresholds(t *testing.T) {
 		wantSlow bool
 	}{
 		{name: "fast outlier", median: 10 * time.Millisecond, duration: 400 * time.Millisecond},
-		{name: "exactly five seconds", median: time.Second, duration: 5 * time.Second},
-		{name: "above five seconds", median: time.Second, duration: 5*time.Second + time.Nanosecond, wantSlow: true},
+		{name: "exactly one second", median: 100 * time.Millisecond, duration: time.Second},
+		{name: "above one second", median: 100 * time.Millisecond, duration: time.Second + time.Nanosecond, wantSlow: true},
 		{name: "below five times median", median: 2 * time.Second, duration: 10*time.Second - time.Nanosecond},
 		{name: "exactly five times median", median: 2 * time.Second, duration: 10 * time.Second, wantSlow: true},
 		{name: "above five times median", median: 2 * time.Second, duration: 11 * time.Second, wantSlow: true},
@@ -112,10 +112,28 @@ func TestAddCoverageToTestsUsesActiveCoverageLevel(t *testing.T) {
 	t.Run("suite", func(t *testing.T) {
 		findings, _, _, _, _ := analyzeTests(tests, coverages, "suite")
 		for _, finding := range findings {
-			require.Equal(t, "suite", finding.CoverageLevel)
-			require.Equal(t, []string{"shared.js"}, finding.CoveredFiles)
+			require.Empty(t, finding.CoverageLevel)
+			require.Empty(t, finding.CoveredFiles)
 		}
+		require.Equal(t, []SuiteCoverage{{Suite: "one.test.js", Files: []string{"shared.js"}, CoveredTests: 2}}, suiteCoverages(tests, coverages))
 	})
+}
+
+func TestSuiteCoveragesKeepsModuleIdentityAndPartialCounts(t *testing.T) {
+	tests := []testReference{
+		{sessionID: 1, suiteID: 10, spanID: 1, module: "first", suite: "shared", name: "one"},
+		{sessionID: 1, suiteID: 10, spanID: 2, module: "first", suite: "shared", name: "two"},
+		{sessionID: 2, suiteID: 20, spanID: 3, module: "first", suite: "shared", name: "uncovered"},
+		{sessionID: 3, suiteID: 30, spanID: 4, module: "second", suite: "shared", name: "other"},
+	}
+	coverages := []coverageReference{
+		{testReference: testReference{sessionID: 1, suiteID: 10}, files: []string{"first.js"}},
+		{testReference: testReference{sessionID: 3, suiteID: 30}, files: []string{"second.js"}},
+	}
+	require.ElementsMatch(t, []SuiteCoverage{
+		{Module: "first", Suite: "shared", Files: []string{"first.js"}, CoveredTests: 2},
+		{Module: "second", Suite: "shared", Files: []string{"second.js"}, CoveredTests: 1},
+	}, suiteCoverages(tests, coverages))
 }
 
 func TestAnalyzeCoverageUsesActiveCoverageLevel(t *testing.T) {
@@ -201,14 +219,25 @@ func TestMedianHelpers(t *testing.T) {
 	}))
 }
 
-func TestCoverageLevelAndAppendUnique(t *testing.T) {
+func TestCoverageLevel(t *testing.T) {
 	require.Empty(t, coverageLevel(nil))
 	require.Equal(t, "suite", coverageLevel([]coverageReference{{testReference: testReference{suiteID: 1}}}))
 	require.Equal(t, "test", coverageLevel([]coverageReference{
 		{testReference: testReference{suiteID: 1}},
 		{testReference: testReference{spanID: 2}},
 	}))
-	require.Equal(t, []string{"a.js", "b.js"}, appendUnique([]string{"b.js"}, "a.js", "b.js"))
+}
+
+func TestCoverageFilesMergeDuplicatesAndSortOnce(t *testing.T) {
+	tests := []testReference{{sessionID: 1, suiteID: 10, spanID: 100, name: "one", suite: "suite"}}
+	coverages := []coverageReference{
+		{testReference: testReference{spanID: 100}, files: []string{"b.js", "a.js", "b.js"}},
+		{testReference: testReference{spanID: 100}, files: []string{"c.js", "a.js"}},
+		{testReference: testReference{sessionID: 1, suiteID: 10}, files: []string{"y.js", "x.js", "y.js"}},
+		{testReference: testReference{sessionID: 1, suiteID: 10}, files: []string{"z.js", "x.js"}},
+	}
+	require.Equal(t, map[string][]string{testIdentity(tests[0]): {"a.js", "b.js", "c.js"}}, coverageFilesByTest(tests, coverages))
+	require.Equal(t, []SuiteCoverage{{Suite: "suite", Files: []string{"x.js", "y.js", "z.js"}, CoveredTests: 1}}, suiteCoverages(tests, coverages))
 }
 
 func TestFindingsIncludeConfigurationErrorsAcrossEventLevels(t *testing.T) {
@@ -305,10 +334,18 @@ func TestFindingsPreservesCoverageInEveryCategory(t *testing.T) {
 			require.Len(t, findings.SlowTests, 1)
 			for _, category := range [][]Test{findings.Tests, findings.FailedTests, findings.FlakyTests, findings.SlowTests} {
 				for _, finding := range category {
-					require.Equal(t, level, finding.CoverageLevel)
-					require.Equal(t, []string{"covered.js"}, finding.CoveredFiles)
+					if level == "test" {
+						require.Equal(t, "test", finding.CoverageLevel)
+						require.Equal(t, []string{"covered.js"}, finding.CoveredFiles)
+					} else {
+						require.Empty(t, finding.CoverageLevel)
+						require.Empty(t, finding.CoveredFiles)
+					}
 					require.Contains(t, findings.Tests, finding)
 				}
+			}
+			if level == "suite" {
+				require.Equal(t, []SuiteCoverage{{Files: []string{"covered.js"}, CoveredTests: 4}}, findings.SuiteCoverages)
 			}
 		})
 	}
@@ -339,4 +376,63 @@ func TestAnalyzeTestsDoesNotUseSourceLocationAsIdentity(t *testing.T) {
 	require.Len(t, flaky, 1)
 	require.Len(t, flaky[0].Attempts, 2)
 	require.Empty(t, failed)
+}
+
+func TestSlowSuiteThresholds(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		median, duration time.Duration
+		want             bool
+	}{
+		{"below floor", time.Millisecond, 4 * time.Second, false},
+		{"at floor", time.Second, 5 * time.Second, false},
+		{"above floor", time.Second, 5*time.Second + time.Nanosecond, true},
+		{"below ratio", 2 * time.Second, 10*time.Second - time.Nanosecond, false},
+		{"at ratio", 2 * time.Second, 10 * time.Second, true},
+		{"uniform", 6 * time.Second, 6 * time.Second, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			slow, median := slowSuites([]Test{
+				{Suite: "one", Duration: tc.median}, {Suite: "two", Duration: tc.median},
+				{Suite: "candidate", Duration: tc.duration},
+			})
+			require.Equal(t, tc.median, median)
+			if tc.want {
+				require.Equal(t, []SlowSuite{{Suite: "candidate", Duration: tc.duration}}, slow)
+			} else {
+				require.Empty(t, slow)
+			}
+		})
+	}
+	for _, tests := range [][]Test{nil, {{Suite: "only", Duration: time.Minute}}} {
+		slow, _ := slowSuites(tests)
+		require.Empty(t, slow)
+	}
+}
+
+func TestFactsFindSlowSuitesWithoutCountingRetriesTwice(t *testing.T) {
+	var events []any
+	for i, tc := range []struct {
+		module, suite, name string
+		duration            time.Duration
+		retry               bool
+	}{
+		{"one", "shared", "baseline", time.Second, false},
+		{"two", "shared", "baseline", time.Second, false},
+		{"three", "shared", "first", 4 * time.Second, false},
+		{"three", "shared", "first", 20 * time.Second, true},
+		{"three", "shared", "second", 2 * time.Second, false},
+	} {
+		events = append(events, map[string]any{"type": "test", "content": map[string]any{
+			"span_id": i + 1, "duration": int64(tc.duration), "meta": map[string]any{
+				"test.module": tc.module, "test.suite": tc.suite, "test.name": tc.name, "test.status": "pass", "test.is_retry": tc.retry,
+			},
+		}})
+	}
+	payload, err := msgp.AppendIntf(nil, map[string]any{"events": events})
+	require.NoError(t, err)
+	facts, err := serverWithCoverage(t, payload).Facts()
+	require.NoError(t, err)
+	require.Equal(t, time.Second, facts.SuiteDurationMedian)
+	require.Equal(t, []SlowSuite{{Module: "three", Suite: "shared", Duration: 6 * time.Second}}, facts.SlowSuites)
 }

@@ -2,6 +2,7 @@ package framework
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -133,9 +134,7 @@ func TestJest_DiscoverTestFiles_UsesLocalJestListTests(t *testing.T) {
 	var capturedName string
 	var capturedArgs []string
 	mockExecutor := &jestCommandExecutor{
-		output: []byte(filepath.Join(tempDir, "src", "b.test.ts") + "\n" +
-			filepath.Join(tempDir, "src", "foo.test.js") + "\n" +
-			"warning: ignored because it is not a file\n"),
+		output: jestListOutput(filepath.Join(tempDir, "src", "b.test.ts"), filepath.Join(tempDir, "src", "foo.test.js")),
 		onExecution: func(name string, args []string) {
 			capturedName = name
 			capturedArgs = slices.Clone(args)
@@ -153,7 +152,7 @@ func TestJest_DiscoverTestFiles_UsesLocalJestListTests(t *testing.T) {
 	if capturedName != binJestPath {
 		t.Errorf("expected command %q, got %q", binJestPath, capturedName)
 	}
-	expectedArgs := []string{"--listTests"}
+	expectedArgs := []string{"--listTests", "--json"}
 	if !slices.Equal(capturedArgs, expectedArgs) {
 		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
 	}
@@ -187,7 +186,7 @@ func TestJest_DiscoverTestFiles_StripsInheritedNodeOptions(t *testing.T) {
 	}
 
 	mockExecutor := &jestCommandExecutor{
-		output: []byte(filepath.Join(tempDir, "src", "a.test.js") + "\n"),
+		output: jestListOutput(filepath.Join(tempDir, "src", "a.test.js")),
 	}
 	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
 
@@ -231,9 +230,7 @@ func TestJest_DiscoverTestFiles_WithTestsLocationFiltersListTestsOutput(t *testi
 	var capturedName string
 	var capturedArgs []string
 	mockExecutor := &jestCommandExecutor{
-		output: []byte(filepath.Join(tempDir, "custom", "unit", "b.check.js") + "\n" +
-			filepath.Join(tempDir, "src", "c.test.js") + "\n" +
-			filepath.Join(tempDir, "custom", "unit", "a.check.js") + "\n"),
+		output: jestListOutput(filepath.Join(tempDir, "custom", "unit", "b.check.js"), filepath.Join(tempDir, "src", "c.test.js"), filepath.Join(tempDir, "custom", "unit", "a.check.js")),
 		onExecution: func(name string, args []string) {
 			capturedName = name
 			capturedArgs = slices.Clone(args)
@@ -248,7 +245,7 @@ func TestJest_DiscoverTestFiles_WithTestsLocationFiltersListTestsOutput(t *testi
 	if capturedName != "npx" {
 		t.Errorf("expected command %q, got %q", "npx", capturedName)
 	}
-	expectedArgs := []string{"jest", "--listTests"}
+	expectedArgs := []string{"jest", "--listTests", "--json"}
 	if !slices.Equal(capturedArgs, expectedArgs) {
 		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
 	}
@@ -263,7 +260,7 @@ func TestJest_DiscoverTestFiles_WithTestsLocationReturnsInvalidPatternError(t *t
 	setTestsLocation(t, "custom/[")
 
 	mockExecutor := &jestCommandExecutor{
-		output: []byte("custom/a.check.js\n"),
+		output: []byte("[]"),
 	}
 	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
 
@@ -297,8 +294,7 @@ func TestJest_DiscoverTestFiles_WithTestsExcludePatternFiltersListTestsOutput(t 
 
 	var capturedArgs []string
 	mockExecutor := &jestCommandExecutor{
-		output: []byte(filepath.Join(tempDir, "src", "system", "b.test.js") + "\n" +
-			filepath.Join(tempDir, "src", "a.test.js") + "\n"),
+		output: jestListOutput(filepath.Join(tempDir, "src", "system", "b.test.js"), filepath.Join(tempDir, "src", "a.test.js")),
 		onExecution: func(name string, args []string) {
 			capturedArgs = slices.Clone(args)
 		},
@@ -309,7 +305,7 @@ func TestJest_DiscoverTestFiles_WithTestsExcludePatternFiltersListTestsOutput(t 
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
 	}
 
-	expectedArgs := []string{"jest", "--listTests"}
+	expectedArgs := []string{"jest", "--listTests", "--json"}
 	if !slices.Equal(capturedArgs, expectedArgs) {
 		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
 	}
@@ -337,7 +333,7 @@ func TestJest_DiscoverTestFiles_WithOverride(t *testing.T) {
 	var capturedName string
 	var capturedArgs []string
 	mockExecutor := &jestCommandExecutor{
-		output: []byte(filepath.Join(tempDir, "src", "a.test.js") + "\n"),
+		output: jestListOutput(filepath.Join(tempDir, "src", "a.test.js")),
 		onExecution: func(name string, args []string) {
 			capturedName = name
 			capturedArgs = slices.Clone(args)
@@ -356,7 +352,7 @@ func TestJest_DiscoverTestFiles_WithOverride(t *testing.T) {
 	if capturedName != "pnpm" {
 		t.Errorf("expected command %q, got %q", "pnpm", capturedName)
 	}
-	expectedArgs := []string{"jest", "--runInBand", "--listTests"}
+	expectedArgs := []string{"jest", "--runInBand", "--listTests", "--json"}
 	if !slices.Equal(capturedArgs, expectedArgs) {
 		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
 	}
@@ -508,7 +504,7 @@ func TestJestSeparatorPreservesOptionsAndReplacesSelection(t *testing.T) {
 		{"npx", "--", "jest", "--runInBand", "--", "old.test.js"},
 	} {
 		var got []string
-		j := &Jest{commandOverride: override, executor: &jestCommandExecutor{onExecution: func(_ string, args []string) { got = slices.Clone(args) }}}
+		j := &Jest{commandOverride: override, executor: &jestCommandExecutor{output: []byte("[]"), onExecution: func(_ string, args []string) { got = slices.Clone(args) }}}
 		if err := j.RunTests(t.Context(), []string{"selected.test.js"}, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -522,7 +518,7 @@ func TestJestSeparatorPreservesOptionsAndReplacesSelection(t *testing.T) {
 		if _, err := j.DiscoverTestFiles(t.Context(), discovery.TestFileSet{Pattern: "**/*.test.js"}); err != nil {
 			t.Fatal(err)
 		}
-		want = []string{"--runInBand", "--listTests", "--", "old.test.js"}
+		want = []string{"--runInBand", "--listTests", "--json", "--", "old.test.js"}
 		if override[0] == "npx" {
 			want = append([]string{"--", "jest"}, want...)
 		}
@@ -533,5 +529,52 @@ func TestJestSeparatorPreservesOptionsAndReplacesSelection(t *testing.T) {
 		if !slices.Equal(args, override[1:]) {
 			t.Fatal("command mutated", args)
 		}
+	}
+}
+
+func jestListOutput(paths ...string) []byte {
+	output, err := json.Marshal(paths)
+	if err != nil {
+		panic(err)
+	}
+	return output
+}
+
+func TestJestDiscoveryWithNoisyOutput(t *testing.T) {
+	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	for _, name := range []string{"one.test.js", "two.test.js"} {
+		if err := os.WriteFile(name, []byte("test"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list := string(jestListOutput(filepath.Join(root, "one.test.js"), filepath.Join(root, "two.test.js")))
+	for _, tc := range []struct {
+		name, output, wantError string
+		want                    []string
+	}{
+		{name: "unterminated startup and shutdown logs", output: "startupstartup" + list + "shutdown", want: []string{"one.test.js", "two.test.js"}},
+		{name: "brackets and unrelated arrays", output: "[debug] [123] [\"logging\"]" + list + "[exit]", want: []string{"one.test.js", "two.test.js"}},
+		{name: "empty suite", output: "startup[]shutdown", want: []string{}},
+		{name: "missing result", output: "startupshutdown", wantError: "missing Jest JSON test list"},
+		{name: "truncated result", output: `startup["/incomplete`, wantError: "missing Jest JSON test list"},
+		{name: "ambiguous result", output: "[]" + list, wantError: "ambiguous Jest JSON test list"},
+		{name: "missing file", output: string(jestListOutput(filepath.Join(root, "missing.test.js"))), wantError: "invalid Jest test file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			jest := &Jest{executor: &jestCommandExecutor{output: []byte(tc.output)}}
+			files, err := jest.DiscoverTestFiles(t.Context(), discovery.TestFileSet{Pattern: "**/*.test.js"})
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("got files %v, error %v; want %s", files, err, tc.wantError)
+				}
+			} else if err != nil || !slices.Equal(files, tc.want) {
+				t.Fatalf("got %v, %v; want %v", files, err, tc.want)
+			}
+		})
 	}
 }

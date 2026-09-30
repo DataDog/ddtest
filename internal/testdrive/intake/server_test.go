@@ -152,6 +152,7 @@ func TestServerStoresMessagePackAsJSON(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, json.Valid(storedBytes))
 	require.Contains(t, string(storedBytes), `"events": []`)
+	require.NotContains(t, string(storedBytes), `"raw_body"`)
 }
 
 func TestServerStoresAndRecognizesGzippedMessagePack(t *testing.T) {
@@ -240,6 +241,19 @@ func TestDecodeMultipartStoresEveryPartAsJSON(t *testing.T) {
 	require.Equal(t, "events.msgpack", stored.Parts[1].Filename)
 	require.JSONEq(t, `{"count":2}`, string(stored.Parts[1].Body))
 	require.JSONEq(t, `"hello"`, string(stored.Parts[2].Body))
+
+	server := &Server{directory: t.TempDir()}
+	request := httptest.NewRequest(http.MethodPost, "/observed", bytes.NewReader(body.Bytes()))
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response := httptest.NewRecorder()
+	server.recordRequests(newHandler()).ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+	data, err := os.ReadFile(filepath.Join(server.directory, "001-request.json"))
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"raw_body"`)
+	var persisted storedRequest
+	require.NoError(t, json.Unmarshal(data, &persisted))
+	require.JSONEq(t, string(decoded), string(persisted.Body))
 }
 
 func TestRequestDecodingRejectsMalformedPayloads(t *testing.T) {
@@ -334,7 +348,7 @@ func TestGzippedSettingsRequest(t *testing.T) {
 	require.JSONEq(t, string(payload), string(stored.Body))
 }
 
-func TestFailedAndBinaryRequestsRemainOnDisk(t *testing.T) {
+func TestStoredRequestsOmitRawBody(t *testing.T) {
 	for _, tc := range []struct {
 		name, contentType, encoding string
 		body                        []byte
@@ -365,13 +379,12 @@ func TestFailedAndBinaryRequestsRemainOnDisk(t *testing.T) {
 			require.NoError(t, err)
 			var stored struct {
 				Path            string `json:"path"`
-				RawBody         []byte `json:"raw_body"`
 				DecodeError     string `json:"decode_error"`
 				ContentEncoding string `json:"content_encoding"`
 			}
 			require.NoError(t, json.Unmarshal(data, &stored))
 			require.Equal(t, "/observed", stored.Path)
-			require.Equal(t, tc.body, stored.RawBody)
+			require.NotContains(t, string(data), `"raw_body"`)
 			require.Equal(t, tc.encoding, stored.ContentEncoding)
 			if tc.decodeError != "" {
 				require.Contains(t, stored.DecodeError, tc.decodeError)

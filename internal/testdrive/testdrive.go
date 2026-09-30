@@ -185,7 +185,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		}
 	}
 
-	tracerLabel := t.tracerLabel + " · isolated"
+	tracerLabel := t.tracerLabel
 	if installation.Project {
 		tracerLabel = t.installedTracerLabel(t.projectTracer) + " · reused"
 	}
@@ -242,7 +242,14 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	if err != nil {
 		return err
 	}
-	reportPath, err := writeReport(t.repositoryRoot, session.Directory(), findings, testErr != nil, reportRuntime{Framework: displayName(t.framework.Name()), Tracer: tracerLabel})
+	runtime := reportRuntime{
+		Framework: displayName(t.framework.Name()), Tracer: tracerLabel,
+		Command: shellquote.Join(append([]string{command}, args...)...), Output: string(testOutput),
+	}
+	if testErr != nil {
+		runtime.Error = testErr.Error()
+	}
+	reportPath, err := writeReport(t.repositoryRoot, session.Directory(), findings, testErr != nil, runtime)
 	if err != nil {
 		return err
 	}
@@ -299,7 +306,7 @@ func writeFindings(output io.Writer, findings intake.Facts) {
 		_, _ = fmt.Fprintf(output, "Tracer error: received %d coverage entries with an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.\n", findings.EmptyCoverageEntryCount)
 	}
 	for _, size := range []int{
-		len(findings.FailedTests), len(findings.FlakyTests), len(findings.SlowTests), len(findings.BroadCoverage),
+		len(findings.FailedTests), len(findings.FlakyTests), len(findings.SlowTests), len(findings.SlowSuites), len(findings.BroadCoverage),
 	} {
 		count += size
 	}
@@ -319,6 +326,20 @@ func writeFindings(output io.Writer, findings intake.Facts) {
 		_, _ = fmt.Fprintf(output, "\nTests slower than the others (%d):\n", len(findings.SlowTests))
 		_, _ = fmt.Fprintf(output, "  Median test time: %s\n", formatDuration(findings.TestDurationMedian))
 		writeTestFindingRows(output, findings.SlowTests)
+	}
+	if len(findings.SlowSuites) > 0 {
+		_, _ = fmt.Fprintf(output, "\nSuites slower than the others (%d):\n", len(findings.SlowSuites))
+		_, _ = fmt.Fprintf(output, "  Median suite time: %s\n", formatDuration(findings.SuiteDurationMedian))
+		for _, suite := range findings.SlowSuites {
+			name := suite.Suite
+			if name == "" {
+				name = "Unknown suite"
+			}
+			if suite.Module != "" {
+				name = suite.Module + " › " + name
+			}
+			_, _ = fmt.Fprintf(output, "  - %s · %s\n", name, formatDuration(suite.Duration))
+		}
 	}
 	if len(findings.BroadCoverage) > 0 {
 		_, _ = fmt.Fprintf(output, "\nUnusually broad coverage (%d):\n", len(findings.BroadCoverage))
@@ -342,7 +363,7 @@ func writeTestFindings(output io.Writer, title string, findings []intake.Test) {
 
 func writeTestFindingRows(output io.Writer, findings []intake.Test) {
 	for _, finding := range findings {
-		status, _ := testDisplayStatus(finding)
+		status := testDisplayStatus(finding)
 		_, _ = fmt.Fprintf(
 			output, "  - %s · %s · %s\n",
 			testFindingLabel(finding), status, formatDuration(findingDuration(finding)),

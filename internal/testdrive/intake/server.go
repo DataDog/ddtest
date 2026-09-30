@@ -48,7 +48,6 @@ type storedRequest struct {
 	Timestamp       time.Time       `json:"timestamp"`
 	ContentEncoding string          `json:"content_encoding,omitempty"`
 	DecodeError     string          `json:"decode_error,omitempty"`
-	RawBody         []byte          `json:"raw_body,omitempty"`
 	Method          string          `json:"method"`
 	Path            string          `json:"path"`
 	ContentType     string          `json:"content_type,omitempty"`
@@ -170,9 +169,6 @@ func (s *Server) recordRequests(next http.Handler) http.Handler {
 		}
 		if decodeErr != nil {
 			stored.DecodeError = decodeErr.Error()
-			stored.RawBody = rawRequest.Body
-		} else if !utf8.Valid(body) {
-			stored.RawBody = rawRequest.Body
 		}
 		s.requestsMu.Lock()
 		persistErr := s.persistRequest(len(s.requests)+1, stored)

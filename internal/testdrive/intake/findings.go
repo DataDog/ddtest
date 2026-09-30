@@ -19,7 +19,8 @@ import (
 )
 
 const (
-	minimumSlowDuration       = 5 * time.Second
+	minimumSlowTestDuration   = time.Second
+	minimumSlowSuiteDuration  = 5 * time.Second
 	minimumBroadCoverageFiles = 5
 )
 
@@ -61,6 +62,21 @@ type CoverageFact struct {
 	Files       []string
 }
 
+// SuiteCoverage holds files covered by a suite, separate from individual tests.
+type SuiteCoverage struct {
+	Module       string
+	Suite        string
+	Files        []string
+	CoveredTests int
+}
+
+// SlowSuite describes a suite whose combined test duration is unusually high.
+type SlowSuite struct {
+	Module   string
+	Suite    string
+	Duration time.Duration
+}
+
 // Facts contains the facts shown in the testdrive report.
 type Facts struct {
 	ConfigurationErrors     []string
@@ -69,12 +85,15 @@ type Facts struct {
 	TestEventCount          int
 	CoveredTestCount        int
 	TestDurationMedian      time.Duration
+	SuiteDurationMedian     time.Duration
 	CoveredFilesMedian      int
 	CoverageLevel           string
+	SuiteCoverages          []SuiteCoverage
 	Tests                   []Test
 	FailedTests             []Test
 	FlakyTests              []Test
 	SlowTests               []Test
+	SlowSuites              []SlowSuite
 	BroadCoverage           []CoverageFact
 }
 
@@ -91,6 +110,10 @@ func (s *Server) Facts() (Facts, error) {
 
 	findings := Facts{TestEventCount: len(tests), CoverageLevel: coverageLevel(coverages), EmptyCoverageEntryCount: emptyEntries}
 	findings.Tests, findings.FailedTests, findings.FlakyTests, findings.SlowTests, findings.TestDurationMedian = analyzeTests(tests, coverages, findings.CoverageLevel)
+	if findings.CoverageLevel == "suite" {
+		findings.SuiteCoverages = suiteCoverages(tests, coverages)
+	}
+	findings.SlowSuites, findings.SuiteDurationMedian = slowSuites(findings.Tests)
 	findings.TestCount = len(findings.Tests)
 	findings.CoveredTestCount = uniqueCoveredTestCount(tests, coverages)
 	findings.BroadCoverage, findings.CoveredFilesMedian = analyzeCoverage(tests, coverages, findings.CoverageLevel)
@@ -99,7 +122,10 @@ func (s *Server) Facts() (Facts, error) {
 }
 
 func analyzeTests(tests []testReference, coverages []coverageReference, level string) ([]Test, []Test, []Test, []Test, time.Duration) {
-	filesByTest := coverageFilesByTest(tests, coverages, level)
+	var filesByTest map[string][]string
+	if level == "test" {
+		filesByTest = coverageFilesByTest(tests, coverages)
+	}
 	testsByName := make(map[string][]testReference)
 	order := make([]string, 0)
 	for _, test := range tests {
@@ -117,7 +143,7 @@ func analyzeTests(tests []testReference, coverages []coverageReference, level st
 		attempts := testsByName[key]
 		finding := testFromReference(attempts[0])
 		if files, covered := filesByTest[key]; covered {
-			finding.CoverageLevel = level
+			finding.CoverageLevel = "test"
 			finding.CoveredFiles = files
 		}
 		finding.Attempts = make([]TestRun, 0, len(attempts))
@@ -167,47 +193,86 @@ func analyzeTests(tests []testReference, coverages []coverageReference, level st
 	return all, failed, flaky, slow, median
 }
 
-func coverageFilesByTest(tests []testReference, coverages []coverageReference, level string) map[string][]string {
+func coverageFilesByTest(tests []testReference, coverages []coverageReference) map[string][]string {
 	testsBySpan := make(map[uint64]string, len(tests))
 	for _, test := range tests {
 		testsBySpan[test.spanID] = testIdentity(test)
 	}
-	testFiles := make(map[string][]string)
-	suiteFiles := make(map[suiteReference][]string)
+	filesByTest := make(map[string]map[string]struct{})
 	for _, coverage := range coverages {
-		if level == "test" && coverage.spanID != 0 {
-			if identity := testsBySpan[coverage.spanID]; identity != "" {
-				testFiles[identity] = appendUnique(testFiles[identity], coverage.files...)
-			}
-		}
-		if level != "suite" || coverage.spanID != 0 {
+		if coverage.spanID == 0 {
 			continue
 		}
-		key := suiteReference{sessionID: coverage.sessionID, suiteID: coverage.suiteID}
-		suiteFiles[key] = appendUnique(suiteFiles[key], coverage.files...)
-	}
-
-	if level == "suite" {
-		for _, test := range tests {
-			key := suiteReference{sessionID: test.sessionID, suiteID: test.suiteID}
-			if files, covered := suiteFiles[key]; covered {
-				identity := testIdentity(test)
-				testFiles[identity] = appendUnique(testFiles[identity], files...)
+		if identity := testsBySpan[coverage.spanID]; identity != "" {
+			if filesByTest[identity] == nil {
+				filesByTest[identity] = make(map[string]struct{})
+			}
+			for _, file := range coverage.files {
+				filesByTest[identity][file] = struct{}{}
 			}
 		}
+	}
+	testFiles := make(map[string][]string, len(filesByTest))
+	for identity, files := range filesByTest {
+		testFiles[identity] = sortedCoverageFiles(files)
 	}
 	return testFiles
 }
 
-func appendUnique(values []string, additions ...string) []string {
-	for _, addition := range additions {
-		if slices.Contains(values, addition) {
+func suiteCoverages(tests []testReference, coverages []coverageReference) []SuiteCoverage {
+	testsBySuite := make(map[suiteReference]testReference)
+	for _, test := range tests {
+		testsBySuite[suiteReference{sessionID: test.sessionID, suiteID: test.suiteID}] = test
+	}
+	byName := make(map[string]*SuiteCoverage)
+	filesByName := make(map[string]map[string]struct{})
+	coveredSuites := make(map[suiteReference]struct{})
+	for _, coverage := range coverages {
+		if coverage.spanID != 0 {
 			continue
 		}
-		values = append(values, addition)
+		suiteID := suiteReference{sessionID: coverage.sessionID, suiteID: coverage.suiteID}
+		test, found := testsBySuite[suiteID]
+		if !found {
+			continue
+		}
+		coveredSuites[suiteID] = struct{}{}
+		key := test.module + "\x00" + test.suite
+		if _, found := byName[key]; !found {
+			byName[key] = &SuiteCoverage{Module: test.module, Suite: test.suite}
+			filesByName[key] = make(map[string]struct{})
+		}
+		for _, file := range coverage.files {
+			filesByName[key][file] = struct{}{}
+		}
 	}
-	slices.Sort(values)
-	return values
+	coveredTests := make(map[string]map[string]struct{})
+	for _, test := range tests {
+		if _, found := coveredSuites[suiteReference{sessionID: test.sessionID, suiteID: test.suiteID}]; !found {
+			continue
+		}
+		key := test.module + "\x00" + test.suite
+		if coveredTests[key] == nil {
+			coveredTests[key] = make(map[string]struct{})
+		}
+		coveredTests[key][testIdentity(test)] = struct{}{}
+	}
+	result := make([]SuiteCoverage, 0, len(byName))
+	for key, finding := range byName {
+		finding.Files = sortedCoverageFiles(filesByName[key])
+		finding.CoveredTests = len(coveredTests[key])
+		result = append(result, *finding)
+	}
+	return result
+}
+
+func sortedCoverageFiles(files map[string]struct{}) []string {
+	result := make([]string, 0, len(files))
+	for file := range files {
+		result = append(result, file)
+	}
+	slices.Sort(result)
+	return result
 }
 
 func slowTests(tests []Test) ([]Test, time.Duration) {
@@ -218,11 +283,46 @@ func slowTests(tests []Test) ([]Test, time.Duration) {
 
 	slow := make([]Test, 0)
 	for _, test := range tests {
-		if test.Duration > minimumSlowDuration && test.Duration >= median*5 {
+		if test.Duration > minimumSlowTestDuration && test.Duration >= median*5 {
 			slow = append(slow, test)
 		}
 	}
 	sortTests(slow)
+	return slow, median
+}
+
+func slowSuites(tests []Test) ([]SlowSuite, time.Duration) {
+	bySuite := make(map[string]SlowSuite)
+	for _, test := range tests {
+		key := test.Module + "\x00" + test.Suite
+		suite := bySuite[key]
+		suite.Module, suite.Suite = test.Module, test.Suite
+		suite.Duration += test.Duration
+		bySuite[key] = suite
+	}
+	durations := make([]time.Duration, 0, len(bySuite))
+	for _, suite := range bySuite {
+		durations = append(durations, suite.Duration)
+	}
+	median := medianDurations(durations)
+	var slow []SlowSuite
+	if len(bySuite) < 2 {
+		return slow, median
+	}
+	for _, suite := range bySuite {
+		if suite.Duration > minimumSlowSuiteDuration && suite.Duration >= median*5 {
+			slow = append(slow, suite)
+		}
+	}
+	sort.Slice(slow, func(i, j int) bool {
+		if slow[i].Duration != slow[j].Duration {
+			return slow[i].Duration > slow[j].Duration
+		}
+		if slow[i].Module != slow[j].Module {
+			return slow[i].Module < slow[j].Module
+		}
+		return slow[i].Suite < slow[j].Suite
+	})
 	return slow, median
 }
 
@@ -233,6 +333,13 @@ func medianTestDuration(tests []Test) time.Duration {
 	durations := make([]time.Duration, 0, len(tests))
 	for _, test := range tests {
 		durations = append(durations, test.Duration)
+	}
+	return medianDurations(durations)
+}
+
+func medianDurations(durations []time.Duration) time.Duration {
+	if len(durations) == 0 {
+		return 0
 	}
 	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
 	middle := len(durations) / 2
@@ -291,6 +398,9 @@ func analyzeCoverage(tests []testReference, coverages []coverageReference, level
 			key = fmt.Sprintf("%d/%d", coverage.sessionID, coverage.suiteID)
 			finding.Level = "suite"
 			finding.Name = test.suite
+			if test.module != "" {
+				finding.Name = test.module + " › " + test.suite
+			}
 			finding.SourceFile = test.sourceFile
 		}
 		if current, found := findingsByName[key]; !found || finding.FileCount > current.FileCount {
