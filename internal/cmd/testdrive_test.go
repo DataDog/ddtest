@@ -133,3 +133,9 @@ func TestTestdriveCommandPreview(t *testing.T) {
 		})
 	}
 }
+
+func TestTestdriveCommandHasCheckOnlyFlag(t *testing.T) {
+	if testdriveCmd.Flags().Lookup("check-only") == nil {
+		t.Fatal("testdrive command does not define --check-only")
+	}
+}
