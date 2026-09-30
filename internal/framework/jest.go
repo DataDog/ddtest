@@ -15,7 +15,6 @@ import (
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
-	"github.com/DataDog/ddtest/internal/nodeoptions"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 	"github.com/DataDog/ddtest/internal/utils"
@@ -198,7 +197,7 @@ func filterJestTestFiles(testFiles []string, selectedTestFiles discovery.TestFil
 }
 
 func stripNodeOptionsRequire(nodeOptions string, module string) string {
-	return nodeoptions.WithoutRequire(nodeOptions, module)
+	return utils.NodeOptionsWithoutRequire(nodeOptions, module)
 }
 
 // Jest's --listTests --json writes an array of absolute paths. Preloads and

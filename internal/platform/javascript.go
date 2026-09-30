@@ -15,8 +15,8 @@ import (
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
-	"github.com/DataDog/ddtest/internal/nodeoptions"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/utils"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -94,7 +94,7 @@ func (j *JavaScript) GetPlatformEnv() map[string]string {
 	// Jest and Vitest need CI initialization.
 	// Add the preload only when missing and preserve existing NODE_OPTIONS.
 	currentValue, _ := os.LookupEnv(nodeOptionsEnvVar)
-	if nodeoptions.HasRequire(currentValue, ddTraceCIInitModule) {
+	if utils.NodeOptionsHasRequire(currentValue, ddTraceCIInitModule) {
 		return map[string]string{}
 	}
 
@@ -116,7 +116,7 @@ func addNodeImport(platformEnv map[string]string, module string) map[string]stri
 	if !ok {
 		nodeOptions, _ = os.LookupEnv(nodeOptionsEnvVar)
 	}
-	if nodeoptions.HasImport(nodeOptions, module) {
+	if utils.NodeOptionsHasImport(nodeOptions, module) {
 		return platformEnv
 	}
 
@@ -133,8 +133,8 @@ func javascriptProbeEnv() map[string]string {
 	if !found || current == "" {
 		return nil
 	}
-	cleaned := nodeoptions.WithoutRequire(current, ddTraceCIInitModule)
-	cleaned = nodeoptions.WithoutImport(cleaned, ddTraceRegisterModule)
+	cleaned := utils.NodeOptionsWithoutRequire(current, ddTraceCIInitModule)
+	cleaned = utils.NodeOptionsWithoutImport(cleaned, ddTraceRegisterModule)
 	if cleaned == current {
 		return nil
 	}
@@ -275,7 +275,7 @@ func (j *JavaScript) DetectTracer(ctx context.Context, _ TracerOptions) (string,
 		}
 		return path, nil
 	}
-	absolutePreload := nodeoptions.AbsoluteRequire(os.Getenv(nodeOptionsEnvVar), ddTraceCIInitModule)
+	absolutePreload := utils.NodeOptionsAbsoluteRequire(os.Getenv(nodeOptionsEnvVar), ddTraceCIInitModule)
 	if absolutePreload == "" {
 		return "", fmt.Errorf("failed to resolve %s: %w", ddTraceCIInitModule, projectErr)
 	}

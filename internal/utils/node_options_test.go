@@ -1,4 +1,4 @@
-package nodeoptions
+package utils
 
 import "testing"
 
@@ -18,13 +18,13 @@ func TestCIRequireOptions(t *testing.T) {
 		{name: "similar package", options: "-r dd-trace/ci/initializer", without: "-r dd-trace/ci/initializer"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := HasRequire(test.options, "dd-trace/ci/init"); got != test.has {
+			if got := NodeOptionsHasRequire(test.options, "dd-trace/ci/init"); got != test.has {
 				t.Fatalf("HasRequire() = %t, want %t", got, test.has)
 			}
-			if got := AbsoluteRequire(test.options, "dd-trace/ci/init"); got != test.absolute {
+			if got := NodeOptionsAbsoluteRequire(test.options, "dd-trace/ci/init"); got != test.absolute {
 				t.Fatalf("AbsoluteRequire() = %q, want %q", got, test.absolute)
 			}
-			if got := WithoutRequire(test.options, "dd-trace/ci/init"); got != test.without {
+			if got := NodeOptionsWithoutRequire(test.options, "dd-trace/ci/init"); got != test.without {
 				t.Fatalf("WithoutRequire() = %q, want %q", got, test.without)
 			}
 		})
@@ -33,10 +33,10 @@ func TestCIRequireOptions(t *testing.T) {
 
 func TestRegisterImportOptions(t *testing.T) {
 	options := `--import="/tmp/action install/dd-trace/register.js" --require "/tmp/loader.cjs"`
-	if !HasImport(options, "dd-trace/register.js") {
+	if !NodeOptionsHasImport(options, "dd-trace/register.js") {
 		t.Fatal("absolute register import was not found")
 	}
-	if got := WithoutImport(options, "dd-trace/register.js"); got != `--require "/tmp/loader.cjs"` {
+	if got := NodeOptionsWithoutImport(options, "dd-trace/register.js"); got != `--require "/tmp/loader.cjs"` {
 		t.Fatalf("WithoutImport() = %q", got)
 	}
 }

@@ -15,7 +15,6 @@ import (
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
-	"github.com/DataDog/ddtest/internal/nodeoptions"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 	"github.com/DataDog/ddtest/internal/utils"
@@ -316,5 +315,5 @@ func parseVitestV1DiscoveryOutput(output []byte) ([]string, error) {
 }
 
 func stripNodeOptionsImport(nodeOptions string, module string) string {
-	return nodeoptions.WithoutImport(nodeOptions, module)
+	return utils.NodeOptionsWithoutImport(nodeOptions, module)
 }

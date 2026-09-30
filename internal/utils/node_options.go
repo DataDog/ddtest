@@ -1,11 +1,11 @@
-package nodeoptions
+package utils
 
 import (
 	"path/filepath"
 	"strings"
 )
 
-type token struct {
+type nodeOptionsToken struct {
 	raw   string
 	value string
 }
@@ -13,10 +13,10 @@ type token struct {
 // Node uses double quotes, rather than shell quoting, in NODE_OPTIONS. Keep
 // each original token so removing a preload does not change other options or
 // quoted project loader paths.
-func split(value string) []token {
-	var tokens []token
+func splitNodeOptions(value string) []nodeOptionsToken {
+	var tokens []nodeOptionsToken
 	for index := 0; index < len(value); {
-		for index < len(value) && isSpace(value[index]) {
+		for index < len(value) && isNodeOptionsSpace(value[index]) {
 			index++
 		}
 		if index == len(value) {
@@ -37,22 +37,22 @@ func split(value string) []token {
 				index += 2
 				continue
 			}
-			if !quoted && isSpace(current) {
+			if !quoted && isNodeOptionsSpace(current) {
 				break
 			}
 			decoded.WriteByte(current)
 			index++
 		}
-		tokens = append(tokens, token{raw: value[start:index], value: decoded.String()})
+		tokens = append(tokens, nodeOptionsToken{raw: value[start:index], value: decoded.String()})
 	}
 	return tokens
 }
 
-func isSpace(value byte) bool {
+func isNodeOptionsSpace(value byte) bool {
 	return value == ' ' || value == '\t' || value == '\n' || value == '\r'
 }
 
-func optionValue(tokens []token, index int, option string) (string, int, bool) {
+func nodeOptionsOptionValue(tokens []nodeOptionsToken, index int, option string) (string, int, bool) {
 	value := tokens[index].value
 	if value == option || (option == "--require" && value == "-r") {
 		if index+1 < len(tokens) {
@@ -69,7 +69,7 @@ func optionValue(tokens []token, index int, option string) (string, int, bool) {
 	return "", 1, false
 }
 
-func matchesModule(value, module string) bool {
+func nodeOptionsMatchesModule(value, module string) bool {
 	if value == module {
 		return true
 	}
@@ -78,11 +78,11 @@ func matchesModule(value, module string) bool {
 		(module == "dd-trace/ci/init" && (value == module+".js" || strings.HasSuffix(normalized, "/"+module+".js")))
 }
 
-func find(value, option, module string, absoluteOnly bool) string {
-	tokens := split(value)
+func findNodeOption(value, option, module string, absoluteOnly bool) string {
+	tokens := splitNodeOptions(value)
 	for index := 0; index < len(tokens); index++ {
-		candidate, width, found := optionValue(tokens, index, option)
-		if found && matchesModule(candidate, module) && (!absoluteOnly || filepath.IsAbs(candidate)) {
+		candidate, width, found := nodeOptionsOptionValue(tokens, index, option)
+		if found && nodeOptionsMatchesModule(candidate, module) && (!absoluteOnly || filepath.IsAbs(candidate)) {
 			return candidate
 		}
 		index += width - 1
@@ -90,24 +90,24 @@ func find(value, option, module string, absoluteOnly bool) string {
 	return ""
 }
 
-func HasRequire(value, module string) bool {
-	return find(value, "--require", module, false) != ""
+func NodeOptionsHasRequire(value, module string) bool {
+	return findNodeOption(value, "--require", module, false) != ""
 }
 
-func AbsoluteRequire(value, module string) string {
-	return find(value, "--require", module, true)
+func NodeOptionsAbsoluteRequire(value, module string) string {
+	return findNodeOption(value, "--require", module, true)
 }
 
-func HasImport(value, module string) bool {
-	return find(value, "--import", module, false) != ""
+func NodeOptionsHasImport(value, module string) bool {
+	return findNodeOption(value, "--import", module, false) != ""
 }
 
-func without(value, option, module string) string {
-	tokens := split(value)
+func withoutNodeOption(value, option, module string) string {
+	tokens := splitNodeOptions(value)
 	kept := make([]string, 0, len(tokens))
 	for index := 0; index < len(tokens); {
-		candidate, width, found := optionValue(tokens, index, option)
-		if found && matchesModule(candidate, module) {
+		candidate, width, found := nodeOptionsOptionValue(tokens, index, option)
+		if found && nodeOptionsMatchesModule(candidate, module) {
 			index += width
 			continue
 		}
@@ -117,10 +117,10 @@ func without(value, option, module string) string {
 	return strings.Join(kept, " ")
 }
 
-func WithoutRequire(value, module string) string {
-	return without(value, "--require", module)
+func NodeOptionsWithoutRequire(value, module string) string {
+	return withoutNodeOption(value, "--require", module)
 }
 
-func WithoutImport(value, module string) string {
-	return without(value, "--import", module)
+func NodeOptionsWithoutImport(value, module string) string {
+	return withoutNodeOption(value, "--import", module)
 }
