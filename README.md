@@ -15,9 +15,78 @@ Currently supported:
 - Python with pytest.
 - JavaScript with Cucumber, Cypress, Jest, Mocha, Playwright, or Vitest.
 
+## Try Test Optimization locally
+
+From a supported repository with its test dependencies installed:
+
+```sh
+ddtest onboard
+ddtest testdrive
+```
+
+`onboard` prints GitHub Actions setup instructions. `testdrive` previews its
+commands, asks for confirmation, and runs your own tests against a local intake.
+It needs no Datadog account, API key, or Agent. Non-interactive callers can review
+the preview, then use `ddtest testdrive --yes`.
+
+All nine frameworks listed above are supported. If a repository contains several
+runners, select one with `--framework`. Use `--command` to select a custom entry
+point or a small representative part of a large suite:
+
+```sh
+ddtest onboard --framework playwright
+ddtest testdrive --framework playwright --command 'npm run test:e2e -- --project=chromium' --yes
+```
+
+The terminal links to a self-contained HTML report, decoded JSON traffic, and
+complete test output under `.testoptimization/testdrive/<session>/`. Reports
+separate instrumentation success from failed tests, and explicitly indicate when
+coverage was not reported. Tracer configuration errors are shown separately.
+The local intake supports agentless traffic; Agent/EVP routing is not supported.
+Receiving events does not verify test skipping, EFD, or Test Management behavior.
+Keep this directory out of source control. Each run has its own files and loopback port.
+
+Testdrive reuses the project's tracer when the platform's tracer check succeeds.
+If the check fails, it attempts to install the latest release inside the session.
+`--tracer-version` selects a release or Git revision for that fallback installation;
+JavaScript and Python installations leave project dependency files unchanged;
+Ruby uses `bundle add datadog-ci`, which updates the project Gemfile and lockfile:
+
+```sh
+ddtest testdrive --tracer-version 6.15.0 --yes # JavaScript example
+ddtest testdrive --tracer-version 'git:<commit-sha>' --yes
+```
+
+The same option works for JavaScript, Python, and Ruby. Git selections also accept
+branches and tags; they require Git and the tracer's source-build prerequisites.
+
+Local testdrive prerequisites:
+
+- JavaScript: Node.js 22+, npm if `dd-trace` needs to be installed,
+  and the project's package manager and dependencies. Vitest/ESM loading and
+  Cypress config/support wrappers are supplied automatically.
+- Python: an activated project environment with pytest, and pip if `ddtrace` is
+  absent. Fallback installation uses a session-owned directory; the active
+  environment is unchanged.
+- Ruby: Ruby/Bundler. If `datadog-ci` is unavailable, testdrive runs
+  `bundle add datadog-ci` in the project, honoring `BUNDLE_GEMFILE` and the
+  existing bundle settings. Bundler updates the project Gemfile and lockfile;
+  tests use that same bundle. Native gem builds need build tools.
+- Browser suites: install the project's browsers and start any required services
+  first, or use its existing test command that manages them. Testdrive does not
+  install browsers or start applications on its own.
+
+Project dependency manifests and lockfiles are not edited by testdrive. Testdrive
+uses the framework’s normal command; pass `--command` to run a package script and
+its lifecycle hooks or other custom setup. Tracer downloads require network access. This release covers root projects and GitHub Actions onboarding;
+monorepo orchestration and other CI providers are outside this scope.
+
+See the [Milestone 2 validation record](docs/testing/onboarding-milestone-2.md)
+for tested repository commits, commands, and limitations.
+
 ## Prerequisites
 
-Before using DDTest, you must have **Datadog Test Optimization** already set up and enabled with a Datadog Test Optimization library for your language and framework. DDTest relies on this integration to discover your tests and plan test execution accordingly.
+Before using `ddtest plan` or `ddtest run`, you must have **Datadog Test Optimization** already set up and enabled with a Datadog Test Optimization library for your language and framework. DDTest relies on this integration to discover your tests and plan test execution accordingly.
 
 Minimum supported library and runtime requirements:
 
