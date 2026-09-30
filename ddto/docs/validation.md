@@ -38,6 +38,7 @@ read directly from the installed SDK. No SDK source is copied into this reposito
 
 | Contract | Proof |
 | --- | --- |
+| CLI activation | Unset enables parent-only mode; explicit true/false/parent/empty/custom values, real child processes and SDK-managed retries checked |
 | TestMain, success, logs and exit codes | Native output with CI disabled; real SDK events versus Orchestrion when enabled |
 | Subtests, nested tests, parallel children, cleanup and Context | Fixture asserts completion, callback order and cancellation before cleanup |
 | Fail, FailNow, Error, Errorf, Fatal, Fatalf and Helper | Negative cases compare exit codes, error messages, stacks and source locations; formatting occurs once |

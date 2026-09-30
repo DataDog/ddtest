@@ -7,8 +7,13 @@ The driver uses the Go standard library only. Test binaries use the **unmodified
 ```sh
 go build -o bin/ddtest ./cmd/ddtest
 # Run from a target module which already requires the supported SDK:
-DD_CIVISIBILITY_ENABLED=true /path/to/ddtest test -count=1 -race ./...
+/path/to/ddtest test -count=1 -race ./...
 ```
+
+When `DD_CIVISIBILITY_ENABLED` is absent, the CLI sets it to `parent`. The SDK
+activates CI Visibility for each test process and disables it for ordinary child
+processes. Explicit values, including `false` and an empty value, are retained by
+the CLI; runtime normalization remains the SDK's responsibility.
 
 The tool prepares the SDK's nine `testing` aspects, injects an external test
 file importing `dd-trace-go/v2/civisibility`, then calls native `go test` with an

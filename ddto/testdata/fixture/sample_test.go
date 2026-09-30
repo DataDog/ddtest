@@ -1,11 +1,13 @@
 package fixture_test
 
 import (
+	"context"
 	fixture "example.com/dd-ci-testing-fixture"
 	"flag"
 	"fmt"
 	_ "github.com/DataDog/dd-trace-go/v2/civisibility"
 	"os"
+	"os/exec"
 	"reflect"
 	"runtime"
 	"sync/atomic"
@@ -168,5 +170,32 @@ func TestManaged(t *testing.T) {
 			}
 			t.Error("first fix attempt fails")
 		}
+	}
+}
+
+// TestCLIEnvironment checks the SDK-visible mode and its inheritance by a real
+// child test process. It runs only when selected by the CLI environment suite.
+func TestCLIEnvironment(t *testing.T) {
+	if *mode != "environment" {
+		t.Skip("explicit environment case")
+	}
+	got, defined := os.LookupEnv("DD_CIVISIBILITY_ENABLED")
+	want := os.Getenv("POC_EXPECT_CIVISIBILITY")
+	if !defined || got != want {
+		t.Fatalf("CI Visibility environment: defined=%t value=%q, want %q", defined, got, want)
+	}
+	if os.Getenv("POC_ENV_CHILD") == "true" {
+		return
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	child := exec.CommandContext(ctx, binary, "-test.run=^TestCLIEnvironment$", "-mode=environment")
+	child.Env = append(os.Environ(), "POC_ENV_CHILD=true")
+	if out, err := child.CombinedOutput(); err != nil {
+		t.Fatalf("child environment: %v\n%s", err, out)
 	}
 }
