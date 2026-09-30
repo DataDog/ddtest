@@ -53,7 +53,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			require.Contains(t, output.String(), "Tests with coverage: 0 / 1")
 			require.Equal(t, "ddtest-testdrive", executor.env["DD_API_KEY"])
 			if name == "cucumber" {
-				require.Equal(t, "false", executor.env["DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED"])
+				require.Equal(t, "true", executor.env["DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED"])
 			}
 			switch run.language {
 			case "javascript":
