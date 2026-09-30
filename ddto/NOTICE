@@ -1,0 +1,4 @@
+The testing hook advice is adapted from DataDog/dd-trace-go v2.11.0-rc.1,
+internal/civisibility/integrations/gotesting/orchestrion.yml.
+Copyright 2023-present Datadog, Inc. Licensed under Apache License 2.0.
+The dd-trace-go SDK itself is used unmodified and is not vendored here.

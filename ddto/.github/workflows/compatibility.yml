@@ -1,0 +1,57 @@
+name: Compatibility
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  differential:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            go: '1.26.x'
+          - os: ubuntu-latest
+            go: '1.27.x'
+          - os: macos-latest
+            go: '1.27.x'
+          - os: windows-latest
+            go: '1.27.x'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: testdata/fixture/go.sum
+      - name: Install frozen Orchestrion reference
+        shell: bash
+        run: |
+          go install github.com/DataDog/orchestrion@v1.13.2-0.20260917114356-5c24783fcd76
+          reference="$(go env GOPATH)/bin/orchestrion"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then reference="$reference.exe"; fi
+          echo "ORCHESTRION_BIN=$reference" >> "$GITHUB_ENV"
+      - name: Verify modules and driver dependency boundary
+        shell: bash
+        run: |
+          (cd testdata/fixture && go mod download && go mod verify)
+          go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./cmd/ddtest
+          go vet ./...
+      - name: Unit, runtime and differential compatibility
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          go test -v -timeout=20m ./... 2>&1 | tee artifacts/compatibility.log
+      - name: Race-check the driver and test harness
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -race -timeout=20m ./... 2>&1 | tee artifacts/race.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: compatibility-${{ matrix.os }}-go-${{ matrix.go }}
+          path: artifacts/
+          retention-days: 7
