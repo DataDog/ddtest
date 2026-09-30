@@ -2,6 +2,7 @@ package framework
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"maps"
 	"os"
@@ -54,6 +55,9 @@ func (r *RSpec) DiscoverTests(ctx context.Context, testFiles discovery.TestFileS
 
 	if testFiles.Empty() {
 		return []testoptimization.Test{}, nil
+	}
+	if err := utils.CheckRubyTracer(ctx, r.executor); err != nil {
+		return nil, fmt.Errorf("full test discovery requires datadog-ci: %w", err)
 	}
 
 	executable, baseArgs := r.Command()

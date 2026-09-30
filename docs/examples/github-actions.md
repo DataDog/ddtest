@@ -159,19 +159,37 @@ Replace each Ruby setup step with Node.js dependency installation:
   run: npm ci
 ```
 
-Configure Datadog Test Optimization for JavaScript:
+In the run job, configure Datadog Test Optimization for JavaScript:
 
 ```yaml
 - name: Configure Datadog Test Optimization
-  uses: datadog/test-visibility-github-action@v2
+  uses: datadog/test-visibility-github-action@v3
   with:
     languages: js
     api_key: ${{ secrets.DD_API_KEY }}
     site: datadoghq.com
 ```
 
-DDTest sets `NODE_OPTIONS=-r dd-trace/ci/init` for Jest worker processes, so the
-project dependencies installed before `ddtest plan` must include `dd-trace`.
-The `ddtest plan` and `ddtest run --ci-node ${{ matrix.ci_node_index }}`
-commands can stay the same when the platform and framework are provided through
-the environment.
+The action installs `dd-trace` outside the project and exports its absolute
+preload path as `DD_TRACE_PACKAGE`. DDTest adds the preload automatically unless
+`NODE_OPTIONS` already contains a Datadog CI require. The plan job does not need
+the tracer or the action; supply its Datadog credentials directly:
+
+```yaml
+- id: dd_plan
+  name: Plan test execution with DDTest
+  run: bin/ddtest plan
+  env:
+    DD_API_KEY: ${{ secrets.DD_API_KEY }}
+    DD_SITE: datadoghq.com
+
+- name: Run tests
+  run: bin/ddtest run --ci-node ${{ matrix.ci_node_index }}
+```
+
+Include the action configuration step in the run job after installing the
+project's dependencies and before `ddtest run`. DDTest validates the selected
+preload for execution and excludes it from discovery processes. The project
+does not need a `dd-trace` dependency
+or `NODE_PATH`. For Mocha, set the framework to `mocha` and pass a
+`--command` that invokes Mocha directly if the project needs custom flags.

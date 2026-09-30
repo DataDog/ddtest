@@ -103,7 +103,7 @@ func (m *MockPlatform) DetectFramework() (framework.Framework, error) {
 }
 
 func (m *MockPlatform) SanityCheck(ctx context.Context) error {
-	panic("prerequisites must be checked at command startup")
+	panic("planning must delegate discovery prerequisites to the framework")
 }
 
 func (m *MockPlatform) TestSkippingLevel() settings.TestSkippingLevel {
@@ -4353,6 +4353,75 @@ func TestTestPlanner_PreparePlanningData_RuntimeTagsOverride(t *testing.T) {
 
 	if mockOptimizationClient.Tags["language"] != "ruby" {
 		t.Errorf("Expected language to be 'ruby' from detected tags (not overridden), got %q", mockOptimizationClient.Tags["language"])
+	}
+}
+
+func TestPlanningWithCompleteRuntimeTagsDoesNotProbeRuntime(t *testing.T) {
+	setPlannerRuntimeTags(t, `{"os.platform":"linux","os.architecture":"x86_64","os.version":"6.8.0","runtime.name":"ruby","runtime.version":"3.4.1"}`)
+	fw := &MockFramework{FrameworkName: "rspec", TestFiles: []string{"spec/example_spec.rb"}, FullDiscoveryUnsupported: true}
+	p := &MockPlatform{PlatformName: "ruby", TagsErr: errors.New("runtime is unavailable"), TestLevel: settings.TestSkippingLevelSuite}
+	client := &MockTestOptimizationClient{Skippables: testSkippables(map[string]bool{})}
+	planner := NewWithDependencies(p, fw, client, newDefaultMockCIProviderDetector())
+	if err := planner.PreparePlanningData(t.Context()); err != nil {
+		t.Fatalf("complete tags should bypass runtime probing: %v", err)
+	}
+	for key, value := range map[string]string{"language": "ruby", "os.platform": "linux", "os.architecture": "x86_64", "os.version": "6.8.0", "runtime.name": "ruby", "runtime.version": "3.4.1"} {
+		if client.Tags[key] != value {
+			t.Errorf("tag %s = %q, want %q", key, client.Tags[key], value)
+		}
+	}
+}
+
+func TestPlanningDelegatesFullDiscoveryWithoutTracerCheck(t *testing.T) {
+	for _, name := range []string{"python", "javascript"} {
+		t.Run(name, func(t *testing.T) {
+			setPlannerForceFullTestDiscovery(t, true)
+			setPlannerStrictDiscovery(t, true)
+			discoveryCalled := false
+			fw := &MockFramework{
+				FrameworkName:   name,
+				TestFiles:       []string{"test_example"},
+				Tests:           []testoptimization.Test{{Name: "test_example", Suite: "example", SuiteSourceFile: "test_example"}},
+				OnDiscoverTests: func() { discoveryCalled = true },
+			}
+			p := &MockPlatform{PlatformName: name, Tags: map[string]string{"language": name}}
+			client := &MockTestOptimizationClient{Skippables: testSkippables(map[string]bool{})}
+			planner := NewWithDependencies(p, fw, client, newDefaultMockCIProviderDetector())
+			if err := planner.PreparePlanningData(t.Context()); err != nil {
+				t.Fatalf("planning must allow framework discovery without a tracer check: %v", err)
+			}
+			if !discoveryCalled {
+				t.Fatal("full discovery was not called")
+			}
+		})
+	}
+}
+
+func TestPlanningHandlesFrameworkDiscoveryErrors(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		t.Run(fmt.Sprintf("strict=%t", strict), func(t *testing.T) {
+			setPlannerStrictDiscovery(t, strict)
+			setPlannerForceFullTestDiscovery(t, true)
+			fw := &MockFramework{
+				FrameworkName:    "rspec",
+				TestFiles:        []string{"spec/example_spec.rb"},
+				DiscoverTestsErr: errors.New("full test discovery requires datadog-ci"),
+			}
+			p := &MockPlatform{
+				PlatformName: "ruby",
+				Tags:         map[string]string{"language": "ruby"},
+			}
+			client := &MockTestOptimizationClient{Skippables: testSkippables(map[string]bool{})}
+			planner := NewWithDependencies(p, fw, client, newDefaultMockCIProviderDetector())
+			err := planner.PreparePlanningData(t.Context())
+			if strict {
+				assertPlannerErrorCode(t, err, errcode.PlanFullTestDiscoveryFailed)
+			} else if err != nil {
+				t.Fatalf("planning should fall back to file discovery: %v", err)
+			} else if _, found := planner.testFiles["spec/example_spec.rb"]; !found {
+				t.Fatalf("missing planned test file: %v", planner.testFiles)
+			}
+		})
 	}
 }
 

@@ -40,16 +40,19 @@ var rootCmd = &cobra.Command{
 
 var (
 	planCommand = func(ctx context.Context, telemetryClient telemetry.Client) error {
-		p, fw, err := resolveTestEnvironment(ctx, errcode.PlanPlatformDetectionFailed, errcode.PlanFrameworkDetectionFailed)
+		p, fw, err := resolveTestEnvironment(errcode.PlanPlatformDetectionFailed, errcode.PlanFrameworkDetectionFailed)
 		if err != nil {
 			return err
 		}
 		return planner.NewWithTelemetry(p, fw, telemetryClient).Plan(ctx)
 	}
 	newRunner = func(ctx context.Context, telemetryClient telemetry.Client) (runner.Runner, error) {
-		p, fw, err := resolveTestEnvironment(ctx, errcode.RunPlatformDetectionFailed, errcode.RunFrameworkDetectionFailed)
+		p, fw, err := resolveTestEnvironment(errcode.RunPlatformDetectionFailed, errcode.RunFrameworkDetectionFailed)
 		if err != nil {
 			return nil, err
+		}
+		if err := p.SanityCheck(ctx); err != nil {
+			return nil, errcode.WithCode(errcode.RunPlatformDetectionFailed, fmt.Errorf("sanity check failed for platform %s: %w", p.Name(), err))
 		}
 		return runner.NewWithTelemetry(p, fw, telemetryClient), nil
 	}
@@ -310,8 +313,9 @@ func Execute() error {
 	return rootCmd.ExecuteContext(ctx)
 }
 
-// Resolve selection and prerequisites once, before creating a planner or runner.
-func resolveTestEnvironment(ctx context.Context, platformCode, frameworkCode errcode.Code) (platform.Platform, framework.Framework, error) {
+// Resolve selection once. Execution requires tracer prerequisites; planning
+// can fall back to test-file discovery without an installed tracer.
+func resolveTestEnvironment(platformCode, frameworkCode errcode.Code) (platform.Platform, framework.Framework, error) {
 	p, err := detectPlatform()
 	if err != nil {
 		return nil, nil, errcode.WithCode(platformCode, fmt.Errorf("failed to detect platform: %w", err))
@@ -319,9 +323,6 @@ func resolveTestEnvironment(ctx context.Context, platformCode, frameworkCode err
 	fw, err := p.DetectFramework()
 	if err != nil {
 		return nil, nil, errcode.WithCode(frameworkCode, fmt.Errorf("failed to detect framework: %w", err))
-	}
-	if err := p.SanityCheck(ctx); err != nil {
-		return nil, nil, errcode.WithCode(platformCode, fmt.Errorf("sanity check failed for platform %s: %w", p.Name(), err))
 	}
 	slog.Info("Platform selected", "platform", p.Name())
 	slog.Info("Framework selected", "framework", fw.Name())

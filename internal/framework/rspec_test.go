@@ -89,6 +89,9 @@ type mockCommandExecutor struct {
 }
 
 func (m *mockCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
+	if name == "bundle" && slices.Equal(args, []string{"info", "datadog-ci"}) {
+		return []byte("  * datadog-ci (1.31.0)"), nil
+	}
 	if m.onExecution != nil {
 		m.onExecution(name, args)
 	}
@@ -1280,6 +1283,9 @@ type mockCommandExecutorWithEnvCapture struct {
 }
 
 func (m *mockCommandExecutorWithEnvCapture) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
+	if name == "bundle" && slices.Equal(args, []string{"info", "datadog-ci"}) {
+		return []byte("  * datadog-ci (1.31.0)"), nil
+	}
 	m.combinedOutputEnvMap = envMap
 	if m.onExecution != nil {
 		m.onExecution(name, args)

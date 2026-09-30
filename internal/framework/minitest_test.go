@@ -26,6 +26,9 @@ type mockRailsCommandExecutor struct {
 }
 
 func (m *mockRailsCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
+	if name == "bundle" && slices.Equal(args, []string{"info", "datadog-ci"}) {
+		return []byte("  * datadog-ci (1.31.0)"), nil
+	}
 	// Capture env for assertions
 	m.capturedEnvMap = envMap
 
