@@ -47,12 +47,15 @@ def main():
     shutil.copyfile(config, fixture / "orchestrion.yml")
     (fixture / "orchestrion.tool.go").write_text(
         '//go:build tools\n\npackage fixture\nimport _ "github.com/DataDog/orchestrion"\n')
-    target = work / "fixture.test"
+    targets = {variant: work / variant / "fixture.test"
+               for variant in ("native", "overlay", "orchestrion")}
+    for target in targets.values():
+        target.parent.mkdir()
     commands = {
-        "native": ["go", "test", "-c", "-o", str(target), "."],
-        "overlay": [str(pathlib.Path(args.ddtest).resolve()), "test", "-c", "-o", str(target), "."],
+        "native": ["go", "test", "-c", "-o", str(targets["native"]), "."],
+        "overlay": [str(pathlib.Path(args.ddtest).resolve()), "test", "-c", "-o", str(targets["overlay"]), "."],
         "orchestrion": ["go", "test", "-toolexec=" + str(pathlib.Path(args.orchestrion).resolve())
-                        + " toolexec", "-c", "-o", str(target), "."],
+                        + " toolexec", "-c", "-o", str(targets["orchestrion"]), "."],
     }
     rows, caches = [], {}
     started = time.monotonic()
@@ -64,7 +67,7 @@ def main():
         before = time.perf_counter()
         run(commands[variant], dict(env, GOCACHE=str(cache)))
         row = {"variant": variant, "scenario": scenario, "iteration": index,
-               "wall_seconds": time.perf_counter() - before, "binary_bytes": target.stat().st_size}
+               "wall_seconds": time.perf_counter() - before, "binary_bytes": targets[variant].stat().st_size}
         rows.append(row)
         print(json.dumps(row), flush=True)
         result = {"sdk": module["Version"], "sdk_sum": module.get("Sum"),

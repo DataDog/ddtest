@@ -23,8 +23,10 @@ fresh Go build cache. Warm variants reuse their corresponding cache.
 The cold POC observations are lower than Orchestrion's two observations. The
 native and warm results vary substantially; these measurements do not establish
 a stable percentage improvement, nor a production-application performance claim.
-The POC still adds front-end work on every invocation and is not uniformly faster
-than cached Orchestrion runs. That cost remains an optimization candidate.
+The initial warm comparison also shared its output file between variants.
+Overwriting another variant binary forced additional links; the corrected
+incremental run below is the relevant warm measurement. These original data
+remain published rather than being discarded.
 
 The initial edit benchmark changed a comment. Those rows are explicitly retained
 as `comment-only`; they do not measure a developer's function-body edit. The current
@@ -35,6 +37,28 @@ The initial instrumented fixture binaries were approximately 26.87 MB with both
 tools, versus 18.31 MB native. Runtime dependency size remains because both tools
 link the same SDK. Compilation work avoided by the specialized front-end does not
 remove that runtime dependency graph.
+
+## Corrected incremental comparison
+
+[benchmark-incremental.json](benchmark-incremental.json) retains all 30 measurements
+from a follow-up run. Each variant has a separate output directory and the same
+binary basename. The run reuses its corresponding previous Go cache, updates all
+variants to the same fixture sources, warms them once, then alternates order for
+five unchanged runs and five identical function-body edits. SDK and Orchestrion
+versions and GOMAXPROCS remain unchanged. There are no additional cold measurements.
+
+| Scenario | Native median [range], seconds | POC median [range], seconds | Orchestrion median [range], seconds |
+| --- | --- | --- | --- |
+| Unchanged warm compile | 0.086 [0.085–0.089] | 0.123 [0.122–0.127] | 0.341 [0.339–0.342] |
+| Function-body edit | 1.288 [1.260–1.562] | 1.774 [1.640–1.787] | 2.613 [2.490–2.684] |
+
+In this fixture the POC adds approximately 37 ms over native unchanged compilation,
+compared with 255 ms for Orchestrion. Editing and recompiling has lower observed
+POC wall time than Orchestrion in all five pairs. These are promising local
+observations, with a small sample and no production-application or cross-machine
+performance claim. Runtime event compatibility is established separately by the
+SDK differential tests, not by these timings. The driver still queries packages
+and validates native testing sources each invocation; that front-end cost remains.
 
 ## Decision supported by this POC
 

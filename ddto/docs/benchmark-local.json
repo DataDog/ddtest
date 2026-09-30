@@ -261,6 +261,7 @@
   "limitations": [
     "The initial edit changed only a comment. These rows are retained as comment-only and do not establish function-edit latency.",
     "Wall time only; no total-tree CPU or aggregate peak memory measured.",
-    "Small synthetic fixture; two cold rounds and five warm rounds; not a production application."
+    "Small synthetic fixture; two cold rounds and five warm rounds; not a production application.",
+    "All variants shared the output file. Warm timing was affected by overwriting another variant binary. Use the separate-output incremental run instead."
   ]
 }
