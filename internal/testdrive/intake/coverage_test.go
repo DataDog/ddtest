@@ -160,7 +160,7 @@ func TestCoverageTrackingKeepsValidPayloads(t *testing.T) {
 	require.Equal(t, 2, emptyEntries)
 }
 
-func TestFindingsListsEveryTestWithSuiteCoverage(t *testing.T) {
+func TestFindingsKeepsSuiteCoverageOffTests(t *testing.T) {
 	const sessionID = 10
 	events := msgp.AppendMapHeader(nil, 1)
 	events = msgp.AppendString(events, "events")
@@ -174,9 +174,10 @@ func TestFindingsListsEveryTestWithSuiteCoverage(t *testing.T) {
 	require.Equal(t, 2, findings.TestCount)
 	require.Len(t, findings.Tests, 2)
 	for _, test := range findings.Tests {
-		require.Equal(t, "suite", test.CoverageLevel)
-		require.Equal(t, []string{"src/one.js", "src/two.js"}, test.CoveredFiles)
+		require.Empty(t, test.CoverageLevel)
+		require.Empty(t, test.CoveredFiles)
 	}
+	require.Equal(t, []SuiteCoverage{{Suite: "one.test.js", Files: []string{"src/one.js", "src/two.js"}, CoveredTests: 2}}, findings.SuiteCoverages)
 }
 
 func serverWithCoverage(t *testing.T, events []byte, coverageEntries ...[]byte) *Server {
