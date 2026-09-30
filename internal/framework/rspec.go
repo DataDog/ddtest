@@ -55,6 +55,9 @@ func (r *RSpec) DiscoverTests(ctx context.Context, testFiles discovery.TestFileS
 	if testFiles.Empty() {
 		return []testoptimization.Test{}, nil
 	}
+	if err := requireRubyDiscoveryLibrary(ctx, r.executor); err != nil {
+		return nil, err
+	}
 
 	executable, baseArgs := r.Command()
 	args := append([]string{}, baseArgs...)

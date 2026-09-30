@@ -53,6 +53,9 @@ func (m *Minitest) DiscoverTests(ctx context.Context, testFiles discovery.TestFi
 	if testFiles.Empty() {
 		return []testoptimization.Test{}, nil
 	}
+	if err := requireRubyDiscoveryLibrary(ctx, m.executor); err != nil {
+		return nil, err
+	}
 
 	executable, args, isRails := m.getMinitestCommand(ctx)
 

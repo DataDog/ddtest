@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive"
@@ -205,4 +206,21 @@ func TestRubyTagsWithoutTracer(t *testing.T) {
 	tags, err := ruby.CreateTagsMap(ctx)
 	require.NoError(t, err)
 	requireRuntimeTags(t, tags, "ruby")
+
+	resetSettingsAfterTest(t)
+	writeFixture(t, root, "discovery.rb", "File.write('discovery-ran', 'unexpected')\n")
+	configureFramework(shellCommand("ruby", filepath.Join(root, "discovery.rb")), "")
+	for _, fw := range []framework.Framework{framework.NewRSpec(), framework.NewMinitest()} {
+		t.Run(fw.Name(), func(t *testing.T) {
+			t.Cleanup(func() { _ = os.Remove(filepath.Join(root, "discovery-ran")) })
+			writeFixture(t, root, "example_test.rb", "# File discovery needs no tracer.\n")
+			files := discovery.TestFileSet{Pattern: "*_test.rb"}
+			_, err := fw.DiscoverTests(ctx, files)
+			require.NoFileExists(t, filepath.Join(root, "discovery-ran"), "full discovery must reject the missing library before starting the test command")
+			require.ErrorContains(t, err, "full test discovery requires datadog-ci")
+			discovered, err := fw.DiscoverTestFiles(ctx, files)
+			require.NoError(t, err)
+			require.Equal(t, []string{"example_test.rb"}, discovered)
+		})
+	}
 }
