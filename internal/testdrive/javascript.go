@@ -99,11 +99,5 @@ func (t *Testdrive) javascriptEnvironment(path string) map[string]string {
 		register := absoluteFileURL(filepath.Join(filepath.Dir(filepath.Dir(path)), "register.js"))
 		env["NODE_OPTIONS"] += " --import " + strconv.Quote(register)
 	}
-	// dd-trace 6.15.0 impacted-test detection dereferences scenario.id on
-	// Background/Rule nodes. Basic Cucumber reporting works with it off.
-	if t.framework.Name() == "cucumber" {
-		env["DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED"] = "false"
-	}
-
 	return env
 }
