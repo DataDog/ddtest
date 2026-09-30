@@ -2,6 +2,7 @@ package framework
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"maps"
 	"os"
@@ -53,8 +54,8 @@ func (m *Minitest) DiscoverTests(ctx context.Context, testFiles discovery.TestFi
 	if testFiles.Empty() {
 		return []testoptimization.Test{}, nil
 	}
-	if err := requireRubyDiscoveryLibrary(ctx, m.executor); err != nil {
-		return nil, err
+	if err := utils.CheckRubyTracer(ctx, m.executor); err != nil {
+		return nil, fmt.Errorf("full test discovery requires datadog-ci: %w", err)
 	}
 
 	executable, args, isRails := m.getMinitestCommand(ctx)
