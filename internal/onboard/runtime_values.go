@@ -155,7 +155,7 @@ func runtimeValue(value string, row map[string]any) (string, error) {
 }
 
 var numericNode = regexp.MustCompile(`^v?([0-9]+)(?:\.([0-9]+|x|\*))?(?:\.([0-9]+|x|\*))?$`)
-var minimumEngine = regexp.MustCompile(`^>=\s*([0-9]+(?:\.[0-9]+){0,2})$`)
+var nodeEngineRange = regexp.MustCompile(`^>=\s*([0-9]+(?:\.[0-9]+){0,2})(?:\s+<\s*([0-9]+(?:\.[0-9]+){0,2}))?$`)
 
 func nodeInterval(value string) ([3]int, int, bool) {
 	var version [3]int
@@ -181,29 +181,38 @@ func nodeInterval(value string) ([3]int, int, bool) {
 	return version, precision, true
 }
 
-// CompareNodeRequirement checks a static Node version against a tracer minimum.
+// CompareNodeRequirement checks a tracer minimum and optional exclusive maximum.
+// Partial Node versions must satisfy the range for every possible resolution.
 func CompareNodeRequirement(node, requirement string) (string, string) {
-	minimum := minimumEngine.FindStringSubmatch(requirement)
-	if minimum == nil {
+	bounds := nodeEngineRange.FindStringSubmatch(strings.TrimSpace(requirement))
+	if bounds == nil {
 		return "inconclusive", fmt.Sprintf("Unsupported Node engine range %q; no compatibility assumption was made.", requirement)
 	}
-	required, _, ok := nodeInterval(minimum[1])
+	minimum, _, ok := nodeInterval(bounds[1])
 	if !ok {
 		return "inconclusive", "Cannot parse tracer Node requirement."
+	}
+	var maximum [3]int
+	bounded := bounds[2] != ""
+	if bounded {
+		maximum, _, ok = nodeInterval(bounds[2])
+		if !ok || slices.Compare(minimum[:], maximum[:]) >= 0 {
+			return "inconclusive", "Cannot parse tracer Node requirement: invalid or empty range."
+		}
 	}
 	lower, precision, ok := nodeInterval(node)
 	if !ok {
 		return "inconclusive", fmt.Sprintf("Node version %q is missing or dynamic; use an explicit setup-node version to check it.", node)
 	}
-	if slices.Compare(lower[:], required[:]) >= 0 {
+	// A major/minor selector covers a half-open interval; an exact release ends
+	// at the next patch. Requirements here contain only stable numeric versions.
+	upper := lower
+	upper[precision-1]++
+	if slices.Compare(lower[:], minimum[:]) >= 0 && (!bounded || slices.Compare(upper[:], maximum[:]) <= 0) {
 		return "compatible", fmt.Sprintf("Node %s satisfies %s.", node, requirement)
 	}
-	if precision < 3 {
-		upper := lower
-		upper[precision-1]++
-		if slices.Compare(upper[:], required[:]) > 0 {
-			return "inconclusive", fmt.Sprintf("Node %s can resolve below or above %s; use an exact version.", node, requirement)
-		}
+	if slices.Compare(upper[:], minimum[:]) > 0 && (!bounded || slices.Compare(lower[:], maximum[:]) < 0) {
+		return "inconclusive", fmt.Sprintf("Node %s can resolve inside or outside %s; use an exact version.", node, requirement)
 	}
 	return "incompatible", fmt.Sprintf("Node %s does not satisfy %s. Keep this test coverage, but exclude this runtime from instrumentation or choose a compatible tracer/runtime.", node, requirement)
 }
