@@ -82,11 +82,10 @@ func (p *Python) Detect(root string) (bool, error) {
 // Pytest is the only supported Python framework and is the platform default.
 func (p *Python) DetectFramework() (framework.Framework, error) {
 	hint := settings.GetFramework()
-	fw, err := selectFramework(p.Name(), hint, []framework.Framework{framework.NewPytest()})
+	fw, err := selectFramework(p.Name(), hint, []framework.Framework{framework.NewPytest(p)})
 	if err != nil {
 		return nil, err
 	}
-	fw.SetPlatformEnv(p.GetPlatformEnv())
 	return fw, nil
 }
 
@@ -94,9 +93,9 @@ func (p *Python) TestSkippingLevel() settings.TestSkippingLevel {
 	return settings.TestSkippingLevelTest
 }
 
-// GetPlatformEnv returns environment variables required for Python commands.
+// baseEnv returns environment variables required for Python commands.
 // It appends --ddtrace to PYTEST_ADDOPTS to load the ddtrace pytest plugin.
-func (p *Python) GetPlatformEnv() map[string]string {
+func (p *Python) baseEnv() map[string]string {
 	envMap := make(map[string]string)
 
 	// Get existing PYTEST_ADDOPTS if set, then append --ddtrace

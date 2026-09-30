@@ -45,7 +45,7 @@ func (e *cypressCommandExecutor) capture(name string, args []string, env map[str
 }
 
 func TestCypressFrameworkMetadata(t *testing.T) {
-	cypress := NewCypress()
+	cypress := NewCypress(&testPlatform{})
 	if cypress.Name() != "cypress" {
 		t.Fatalf("Name() = %q, want cypress", cypress.Name())
 	}
@@ -196,7 +196,7 @@ func TestCypressDiscoverTestFilesLoadsConfigAndFilters(t *testing.T) {
 		commandOverride: []string{
 			"pnpm", "exec", "cypress", "run", "--project", "web", "--config-file", "custom.config.ts", "--record",
 		},
-		platformEnv: map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init --max-old-space-size=2048", "CUSTOM": "value"},
+		platform: &testPlatform{env: map[string]string{"NODE_OPTIONS": "--max-old-space-size=2048", "CUSTOM": "value"}},
 	}
 
 	files, err := cypress.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
@@ -261,7 +261,7 @@ func TestCypressRunTests(t *testing.T) {
 		commandOverride: []string{
 			"npx", "cypress", "run", "--browser", "chrome", "--spec", "configured.cy.ts",
 		},
-		platformEnv: map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init", "BASE": "base"},
+		platform: &testPlatform{env: map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init", "BASE": "base"}},
 	}
 	if err := cypress.RunTests(context.Background(), []string{"a.cy.ts", "b.cy.ts"}, map[string]string{"WORKER": "1"}); err != nil {
 		t.Fatal(err)
@@ -292,7 +292,7 @@ func TestCypressRunTestsUsesPathsRelativeToSelectedProject(t *testing.T) {
 		commandOverride: []string{
 			"npx", "cypress", "run", "--project", "apps/web",
 		},
-		platformEnv: make(map[string]string),
+		platform: &testPlatform{env: make(map[string]string)},
 	}
 
 	testFiles := []string{
@@ -322,7 +322,7 @@ func TestCypressUnskippableMarker(t *testing.T) {
 	if err := os.WriteFile(file, []byte("// @datadog unskippable\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if !NewCypress().HasUnskippableMarker(file) {
+	if !NewCypress(&testPlatform{}).HasUnskippableMarker(file) {
 		t.Fatal("expected marker")
 	}
 }

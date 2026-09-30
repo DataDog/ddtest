@@ -17,7 +17,6 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/settings"
-	"github.com/DataDog/ddtest/internal/utils"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -53,7 +52,7 @@ func (j *JavaScript) Detect(repositoryRoot string) (bool, error) {
 func (j *JavaScript) DetectFramework() (framework.Framework, error) {
 	root := "."
 	hint := settings.GetFramework()
-	candidates := []framework.Framework{framework.NewJest(), framework.NewMocha(), framework.NewCypress(), framework.NewPlaywright(), framework.NewCucumber(), framework.NewVitest()}
+	candidates := []framework.Framework{framework.NewJest(j), framework.NewMocha(j), framework.NewCypress(j), framework.NewPlaywright(j), framework.NewCucumber(j), framework.NewVitest(j)}
 	if hint == "" {
 		manifest, found, err := readPackageManifest(root)
 		if err != nil {
@@ -78,11 +77,6 @@ func (j *JavaScript) DetectFramework() (framework.Framework, error) {
 	if err != nil {
 		return nil, err
 	}
-	env := j.GetPlatformEnv()
-	if fw.Name() == "vitest" {
-		env = addNodeImport(env, ddTraceRegisterModule)
-	}
-	fw.SetPlatformEnv(env)
 	return fw, nil
 }
 
@@ -90,12 +84,12 @@ func (j *JavaScript) TestSkippingLevel() settings.TestSkippingLevel {
 	return settings.TestSkippingLevelSuite
 }
 
-// GetPlatformEnv returns environment variables required for JS commands.
-func (j *JavaScript) GetPlatformEnv() map[string]string {
+// baseEnv returns environment variables required for JS commands.
+func (j *JavaScript) baseEnv() map[string]string {
 	// Jest and Vitest need CI initialization.
 	// Add the preload only when missing and preserve existing NODE_OPTIONS.
 	currentValue, _ := os.LookupEnv(nodeOptionsEnvVar)
-	if utils.NodeOptionsHasRequire(currentValue, ddTraceCIInitModule) {
+	if nodeOptionsHasRequire(currentValue, ddTraceCIInitModule) {
 		return map[string]string{}
 	}
 
@@ -120,7 +114,7 @@ func addNodeImport(platformEnv map[string]string, module string) map[string]stri
 	if !ok {
 		nodeOptions, _ = os.LookupEnv(nodeOptionsEnvVar)
 	}
-	if utils.NodeOptionsHasImport(nodeOptions, module) {
+	if nodeOptionsHasImport(nodeOptions, module) {
 		return platformEnv
 	}
 
@@ -129,7 +123,7 @@ func addNodeImport(platformEnv map[string]string, module string) map[string]stri
 	} else {
 		// An explicit external CI preload also identifies its register module,
 		// even when the action's optional ESM variable is unavailable.
-		preload := utils.NodeOptionsRequire(nodeOptions, ddTraceCIInitModule)
+		preload := nodeOptionsRequire(nodeOptions, ddTraceCIInitModule)
 		if filepath.IsAbs(preload) {
 			module = strconv.Quote(filepath.Join(filepath.Dir(filepath.Dir(preload)), "register.js"))
 		}
@@ -147,8 +141,8 @@ func javascriptProbeEnv() map[string]string {
 	if !found || current == "" {
 		return nil
 	}
-	cleaned := utils.NodeOptionsWithoutRequire(current, ddTraceCIInitModule)
-	cleaned = utils.NodeOptionsWithoutImport(cleaned, ddTraceRegisterModule)
+	cleaned := nodeOptionsWithoutRequire(current, ddTraceCIInitModule)
+	cleaned = nodeOptionsWithoutImport(cleaned, ddTraceRegisterModule)
 	if cleaned == current {
 		return nil
 	}
@@ -282,7 +276,7 @@ func (j *JavaScript) DetectTracer(ctx context.Context, _ TracerOptions) (string,
 	// Preserve other project loaders, including Yarn PnP, while ensuring that
 	// the resolution probe itself never starts Test Optimization.
 	probeEnv := javascriptProbeEnv()
-	preload := utils.NodeOptionsRequire(os.Getenv(nodeOptionsEnvVar), ddTraceCIInitModule)
+	preload := nodeOptionsRequire(os.Getenv(nodeOptionsEnvVar), ddTraceCIInitModule)
 	if preload == "" {
 		preload = os.Getenv("DD_TRACE_PACKAGE")
 	}
@@ -352,4 +346,15 @@ func (j *JavaScript) TracerInstallCommand(options TracerOptions) (string, []stri
 		packageName,
 	}
 	return "npm", installArgs, nil
+}
+
+// TracerEnv selects an explicit tracer for an isolated testdrive run, preserving
+// project loaders while replacing any inherited Datadog preload.
+func (j *JavaScript) TracerEnv(preload string) map[string]string {
+	current := nodeOptionsWithoutImport(nodeOptionsWithoutRequire(os.Getenv(nodeOptionsEnvVar), ddTraceCIInitModule), ddTraceRegisterModule)
+	value := "-r " + strconv.Quote(preload)
+	if current != "" {
+		value = current + " " + value
+	}
+	return map[string]string{nodeOptionsEnvVar: value}
 }

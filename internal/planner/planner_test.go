@@ -357,13 +357,7 @@ func (m *MockFramework) RunTests(ctx context.Context, testFiles []string, envMap
 	return m.Err
 }
 
-func (m *MockFramework) SetPlatformEnv(platformEnv map[string]string) {
-	// No-op for mock
-}
-
-func (m *MockFramework) GetPlatformEnv() map[string]string {
-	return nil
-}
+func (m *MockFramework) Platform() framework.Platform { return nil }
 
 func (m *MockFramework) SupportsFullTestDiscovery() bool {
 	return !m.FullDiscoveryUnsupported
@@ -4379,9 +4373,9 @@ func TestPlanningWithoutCompatibleTracerUsesFileDiscovery(t *testing.T) {
 			setPlannerStrictDiscovery(t, strict)
 			setPlannerForceFullTestDiscovery(t, true)
 			fw := &MockFramework{
-				FrameworkName:   "pytest",
-				TestFiles:       []string{"tests/test_example.py"},
-				OnDiscoverTests: func() { t.Error("must not launch full discovery without a compatible tracer") },
+				FrameworkName:    "pytest",
+				TestFiles:        []string{"tests/test_example.py"},
+				DiscoverTestsErr: errors.New("full discovery requires a compatible tracer"),
 			}
 			p := &MockPlatform{
 				PlatformName: "python",

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,9 +20,7 @@ import (
 )
 
 const (
-	binJestPath         = "node_modules/.bin/jest"
-	nodeOptionsEnvVar   = "NODE_OPTIONS"
-	ddTraceCIInitModule = "dd-trace/ci/init"
+	binJestPath = "node_modules/.bin/jest"
 )
 
 var ErrFullTestDiscoveryUnsupported = errors.New("full test discovery is not supported")
@@ -33,24 +30,18 @@ var jestTestFileExtensions = []string{"js", "jsx", "ts", "tsx", "mjs", "cjs"}
 type Jest struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platformEnv     map[string]string
+	platform        Platform
 }
 
-func NewJest() *Jest {
+func NewJest(p Platform) *Jest {
 	return &Jest{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
-		platformEnv:     make(map[string]string),
+		platform:        p,
 	}
 }
 
-func (j *Jest) SetPlatformEnv(platformEnv map[string]string) {
-	j.platformEnv = platformEnv
-}
-
-func (j *Jest) GetPlatformEnv() map[string]string {
-	return j.platformEnv
-}
+func (j *Jest) Platform() Platform { return j.platform }
 
 func (j *Jest) Name() string {
 	return "jest"
@@ -96,12 +87,17 @@ func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFi
 		return slices.Clone(testFiles.ExplicitFiles), nil
 	}
 
+	envMap, err := j.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{Framework: j.Name()})
+	if err != nil {
+		return nil, err
+	}
+
 	command, baseArgs := j.Command()
 	args := slices.Clone(baseArgs)
 	args = withFrameworkOptions(command, args, "jest", "--listTests", "--json")
 
 	slog.Info("Discovering Jest test files with command", "command", command, "args", args)
-	output, err := j.executor.CombinedOutput(ctx, command, args, j.discoveryEnv())
+	output, err := j.executor.CombinedOutput(ctx, command, args, envMap)
 	if err != nil {
 		message := strings.TrimSpace(string(output))
 		if message == "" {
@@ -129,27 +125,11 @@ func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[stri
 
 	slog.Info("Running tests with command", "command", command, "args", args)
 
-	mergedEnv := make(map[string]string)
-	maps.Copy(mergedEnv, j.platformEnv)
-	maps.Copy(mergedEnv, envMap)
-	return j.executor.Run(ctx, command, args, mergedEnv)
-}
-
-func (j *Jest) discoveryEnv() map[string]string {
-	envMap := make(map[string]string, len(j.platformEnv)+1)
-	maps.Copy(envMap, j.platformEnv)
-
-	nodeOptions, ok := envMap[nodeOptionsEnvVar]
-	if !ok {
-		var found bool
-		nodeOptions, found = os.LookupEnv(nodeOptionsEnvVar)
-		if !found {
-			return envMap
-		}
+	mergedEnv, err := j.platform.RunEnv(RuntimeOptions{Framework: j.Name(), Env: envMap})
+	if err != nil {
+		return err
 	}
-
-	envMap[nodeOptionsEnvVar] = stripNodeOptionsRequire(nodeOptions, ddTraceCIInitModule)
-	return envMap
+	return j.executor.Run(ctx, command, args, mergedEnv)
 }
 
 // Decide between user custom command, local jest binary and npx jest
@@ -194,10 +174,6 @@ func filterJestTestFiles(testFiles []string, selectedTestFiles discovery.TestFil
 
 	slices.Sort(filteredFiles)
 	return slices.Compact(filteredFiles), nil
-}
-
-func stripNodeOptionsRequire(nodeOptions string, module string) string {
-	return utils.NodeOptionsWithoutRequire(nodeOptions, module)
 }
 
 // Jest's --listTests --json writes an array of absolute paths. Preloads and

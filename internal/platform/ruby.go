@@ -15,7 +15,6 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/settings"
-	"github.com/DataDog/ddtest/internal/utils"
 )
 
 //go:embed scripts/ruby_env.rb
@@ -49,7 +48,7 @@ func (r *Ruby) Detect(repositoryRoot string) (bool, error) {
 func (r *Ruby) DetectFramework() (framework.Framework, error) {
 	root := "."
 	hint := settings.GetFramework()
-	candidates := []framework.Framework{framework.NewRSpec(), framework.NewMinitest()}
+	candidates := []framework.Framework{framework.NewRSpec(r), framework.NewMinitest(r)}
 	if hint == "" {
 		candidates = nil
 		gemfile, err := os.ReadFile(filepath.Join(root, "Gemfile"))
@@ -61,21 +60,20 @@ func (r *Ruby) DetectFramework() (framework.Framework, error) {
 			return nil, err
 		}
 		if rspec || strings.Contains(string(gemfile), "rspec") {
-			candidates = append(candidates, framework.NewRSpec())
+			candidates = append(candidates, framework.NewRSpec(r))
 		}
 		tests, err := os.Stat(filepath.Join(root, "test"))
 		if err != nil && !os.IsNotExist(err) {
 			return nil, err
 		}
 		if err == nil && tests.IsDir() || strings.Contains(string(gemfile), "minitest") {
-			candidates = append(candidates, framework.NewMinitest())
+			candidates = append(candidates, framework.NewMinitest(r))
 		}
 	}
 	fw, err := selectFramework(r.Name(), hint, candidates)
 	if err != nil {
 		return nil, err
 	}
-	fw.SetPlatformEnv(r.GetPlatformEnv())
 	return fw, nil
 }
 
@@ -83,9 +81,9 @@ func (r *Ruby) TestSkippingLevel() settings.TestSkippingLevel {
 	return r.testSkippingLevel
 }
 
-// GetPlatformEnv returns environment variables required for Ruby commands.
+// baseEnv returns environment variables required for Ruby commands.
 // It sets RUBYOPT to auto-instrument with datadog-ci if not already set.
-func (r *Ruby) GetPlatformEnv() map[string]string {
+func (r *Ruby) baseEnv() map[string]string {
 	envMap := make(map[string]string)
 
 	// Check if RUBYOPT is already set in the environment
@@ -135,17 +133,13 @@ func (r *Ruby) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 	return tags, nil
 }
 
-func (r *Ruby) SanityCheck(ctx context.Context) error {
-	return utils.CheckRubyTracer(ctx, r.executor)
-}
-
 // DetectTracer reads the project tracer's bundle information.
 func (r *Ruby) DetectTracer(ctx context.Context, _ TracerOptions) (string, error) {
-	gemVersion, err := utils.DetectRubyTracer(ctx, r.executor)
+	gemVersion, err := r.detectTracerVersion(ctx)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("  * %s (%s)", utils.RubyTracerGemName, gemVersion.String()), nil
+	return fmt.Sprintf("  * %s (%s)", requiredGemName, gemVersion.String()), nil
 }
 
 func (r *Ruby) InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
@@ -163,7 +157,7 @@ func (r *Ruby) InstallTestdriveTracer(ctx context.Context, options TracerOptions
 }
 
 func (r *Ruby) TracerInstallCommand(options TracerOptions) (string, []string, error) {
-	args := []string{"add", utils.RubyTracerGemName}
+	args := []string{"add", requiredGemName}
 	if ref, ok := strings.CutPrefix(options.Version, "git:"); ok {
 		if ref == "" {
 			return "", nil, fmt.Errorf("tracer git ref must not be empty")

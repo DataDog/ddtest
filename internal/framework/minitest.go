@@ -2,9 +2,7 @@ package framework
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,24 +23,18 @@ const (
 type Minitest struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platformEnv     map[string]string
+	platform        Platform
 }
 
-func NewMinitest() *Minitest {
+func NewMinitest(p Platform) *Minitest {
 	return &Minitest{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
-		platformEnv:     make(map[string]string),
+		platform:        p,
 	}
 }
 
-func (m *Minitest) SetPlatformEnv(platformEnv map[string]string) {
-	m.platformEnv = platformEnv
-}
-
-func (m *Minitest) GetPlatformEnv() map[string]string {
-	return m.platformEnv
-}
+func (m *Minitest) Platform() Platform { return m.platform }
 
 func (m *Minitest) Name() string {
 	return "minitest"
@@ -54,14 +46,14 @@ func (m *Minitest) DiscoverTests(ctx context.Context, testFiles discovery.TestFi
 	if testFiles.Empty() {
 		return []testoptimization.Test{}, nil
 	}
-	if err := utils.CheckRubyTracer(ctx, m.executor); err != nil {
-		return nil, fmt.Errorf("full test discovery requires datadog-ci: %w", err)
+
+	envMap, err := m.platform.DiscoveryEnv(ctx, FullDiscovery, RuntimeOptions{Framework: m.Name()})
+	if err != nil {
+		return nil, err
 	}
 
 	executable, args, isRails := m.getMinitestCommand(ctx)
 
-	envMap := make(map[string]string)
-	maps.Copy(envMap, m.platformEnv)
 	if isRails {
 		if testFiles.UseExplicitFiles() {
 			args = withFrameworkFiles(executable, args, "rails", testFiles.ExplicitFiles)
@@ -113,9 +105,10 @@ func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[
 		}
 	}
 
-	mergedEnv := make(map[string]string)
-	maps.Copy(mergedEnv, m.platformEnv)
-	maps.Copy(mergedEnv, envMap)
+	mergedEnv, err := m.platform.RunEnv(RuntimeOptions{Framework: m.Name(), Env: envMap})
+	if err != nil {
+		return err
+	}
 	return m.executor.Run(ctx, command, args, mergedEnv)
 }
 

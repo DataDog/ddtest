@@ -1,4 +1,4 @@
-package utils
+package platform
 
 import (
 	"context"
@@ -6,22 +6,21 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/version"
 )
 
 const (
-	RubyTracerGemName    = "datadog-ci"
-	rubyTracerMinVersion = "1.31.0"
+	requiredGemName       = "datadog-ci"
+	requiredGemMinVersion = "1.31.0"
 )
 
-// CheckRubyTracer checks the prerequisite shared by Ruby execution and full discovery.
-func CheckRubyTracer(ctx context.Context, executor ext.CommandExecutor) error {
-	gemVersion, err := DetectRubyTracer(ctx, executor)
+// SanityCheck checks the prerequisite shared by Ruby execution and full discovery.
+func (r *Ruby) SanityCheck(ctx context.Context) error {
+	gemVersion, err := r.detectTracerVersion(ctx)
 	if err != nil {
 		return err
 	}
-	requiredVersion, err := version.Parse(rubyTracerMinVersion)
+	requiredVersion, err := version.Parse(requiredGemMinVersion)
 	if err != nil {
 		return err
 	}
@@ -31,14 +30,14 @@ func CheckRubyTracer(ctx context.Context, executor ext.CommandExecutor) error {
 	return nil
 }
 
-// DetectRubyTracer reads the tracer version from the project's bundle.
-func DetectRubyTracer(ctx context.Context, executor ext.CommandExecutor) (version.Version, error) {
+// detectTracerVersion reads the tracer version from the project's bundle.
+func (r *Ruby) detectTracerVersion(ctx context.Context) (version.Version, error) {
 	// Inherit project loaders without adding the instrumentation preload.
-	output, err := executor.CombinedOutput(ctx, "bundle", []string{"info", RubyTracerGemName}, nil)
+	output, err := r.executor.CombinedOutput(ctx, "bundle", []string{"info", requiredGemName}, nil)
 	if err != nil {
 		return version.Version{}, fmt.Errorf("detect project tracer: %s: %w", strings.TrimSpace(string(output)), err)
 	}
-	return parseBundlerInfoVersion(string(output), RubyTracerGemName)
+	return parseBundlerInfoVersion(string(output), requiredGemName)
 }
 
 // bundlerInfoRegex matches bundler info output format: "  * gem-name (version [hash])"

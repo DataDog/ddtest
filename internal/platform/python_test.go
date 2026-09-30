@@ -136,7 +136,7 @@ func TestPython_SanityCheck_InvalidVersion(t *testing.T) {
 	}
 }
 
-func TestPython_GetPlatformEnv_SetsWhenNotSet(t *testing.T) {
+func TestPython_baseEnv_SetsWhenNotSet(t *testing.T) {
 	original, existed := os.LookupEnv(pytestAddOptsEnvVar)
 	if existed {
 		_ = os.Unsetenv(pytestAddOptsEnvVar)
@@ -144,14 +144,14 @@ func TestPython_GetPlatformEnv_SetsWhenNotSet(t *testing.T) {
 	}
 
 	python := NewPython()
-	envMap := python.GetPlatformEnv()
+	envMap := python.baseEnv()
 
 	if envMap[pytestAddOptsEnvVar] != pytestDefaultAddOpts {
 		t.Errorf("expected %s=%q, got %q", pytestAddOptsEnvVar, pytestDefaultAddOpts, envMap[pytestAddOptsEnvVar])
 	}
 }
 
-func TestPython_GetPlatformEnv_AppendsWhenAlreadySet(t *testing.T) {
+func TestPython_baseEnv_AppendsWhenAlreadySet(t *testing.T) {
 	original, existed := os.LookupEnv(pytestAddOptsEnvVar)
 	existingValue := "-v --tb=short"
 	_ = os.Setenv(pytestAddOptsEnvVar, existingValue)
@@ -164,7 +164,7 @@ func TestPython_GetPlatformEnv_AppendsWhenAlreadySet(t *testing.T) {
 	}()
 
 	python := NewPython()
-	envMap := python.GetPlatformEnv()
+	envMap := python.baseEnv()
 
 	expected := existingValue + " " + pytestDefaultAddOpts
 	if envMap[pytestAddOptsEnvVar] != expected {
@@ -304,7 +304,7 @@ func TestPython_DetectFramework_Pytest(t *testing.T) {
 		settings.Init()
 	}()
 
-	// Ensure PYTEST_ADDOPTS is unset so GetPlatformEnv produces a deterministic value
+	// Ensure PYTEST_ADDOPTS is unset so baseEnv produces a deterministic value
 	original, existed := os.LookupEnv(pytestAddOptsEnvVar)
 	if existed {
 		_ = os.Unsetenv(pytestAddOptsEnvVar)
@@ -324,7 +324,7 @@ func TestPython_DetectFramework_Pytest(t *testing.T) {
 		t.Errorf("expected framework name 'pytest', got %q", fw.Name())
 	}
 
-	frameworkEnv := fw.GetPlatformEnv()
+	frameworkEnv := frameworkRunEnv(t, fw)
 	if frameworkEnv[pytestAddOptsEnvVar] != pytestDefaultAddOpts {
 		t.Errorf("expected framework platformEnv %s=%q, got %q",
 			pytestAddOptsEnvVar, pytestDefaultAddOpts, frameworkEnv[pytestAddOptsEnvVar])

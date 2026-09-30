@@ -13,11 +13,10 @@ import (
 )
 
 type Platform interface {
-	Name() string
+	framework.Platform
 	Detect(repositoryRoot string) (bool, error)
 	CreateTagsMap(ctx context.Context) (map[string]string, error)
 	DetectFramework() (framework.Framework, error)
-	SanityCheck(ctx context.Context) error
 	DetectTracer(ctx context.Context, options TracerOptions) (string, error)
 	TracerInstallCommand(options TracerOptions) (string, []string, error)
 	InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error)

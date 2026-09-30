@@ -3,7 +3,6 @@ package framework
 import (
 	"context"
 	"log/slog"
-	"maps"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
@@ -21,24 +20,18 @@ const (
 type PyTest struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platformEnv     map[string]string
+	platform        Platform
 }
 
-func NewPytest() *PyTest {
+func NewPytest(p Platform) *PyTest {
 	return &PyTest{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
-		platformEnv:     make(map[string]string),
+		platform:        p,
 	}
 }
 
-func (p *PyTest) SetPlatformEnv(platformEnv map[string]string) {
-	p.platformEnv = platformEnv
-}
-
-func (p *PyTest) GetPlatformEnv() map[string]string {
-	return p.platformEnv
-}
+func (p *PyTest) Platform() Platform { return p.platform }
 
 func (p *PyTest) Name() string {
 	return "pytest"
@@ -74,6 +67,11 @@ func (p *PyTest) DiscoverTests(ctx context.Context, testFiles discovery.TestFile
 		return []testoptimization.Test{}, nil
 	}
 
+	envMap, err := p.platform.DiscoveryEnv(ctx, FullDiscovery, RuntimeOptions{Framework: p.Name()})
+	if err != nil {
+		return nil, err
+	}
+
 	command, args := p.Command()
 
 	if testFiles.UseExplicitFiles() {
@@ -91,7 +89,7 @@ func (p *PyTest) DiscoverTests(ctx context.Context, testFiles discovery.TestFile
 		args = withFrameworkFiles(command, args, "pytest", files)
 	}
 
-	return discovery.DiscoverTests(ctx, p.executor, command, args, p.platformEnv)
+	return discovery.DiscoverTests(ctx, p.executor, command, args, envMap)
 }
 
 func (p *PyTest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
@@ -121,9 +119,10 @@ func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[st
 	slog.Info("Running tests with command", "command", command, "args", args)
 	args = withFrameworkFiles(command, args, "pytest", testFiles)
 
-	mergedEnv := make(map[string]string)
-	maps.Copy(mergedEnv, p.platformEnv)
-	maps.Copy(mergedEnv, envMap)
+	mergedEnv, err := p.platform.RunEnv(RuntimeOptions{Framework: p.Name(), Env: envMap})
+	if err != nil {
+		return err
+	}
 	return p.executor.Run(ctx, command, args, mergedEnv)
 }
 

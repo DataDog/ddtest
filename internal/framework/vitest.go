@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,7 +21,6 @@ import (
 
 const (
 	binVitestPath           = "node_modules/.bin/vitest"
-	ddTraceRegisterPath     = "dd-trace/register.js"
 	vitestV1DiscoveryMarker = "__DDTEST_VITEST_FILES__"
 )
 
@@ -39,24 +37,18 @@ type vitestExecutor interface {
 type Vitest struct {
 	executor        vitestExecutor
 	commandOverride []string
-	platformEnv     map[string]string
+	platform        Platform
 }
 
-func NewVitest() *Vitest {
+func NewVitest(p Platform) *Vitest {
 	return &Vitest{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
-		platformEnv:     make(map[string]string),
+		platform:        p,
 	}
 }
 
-func (v *Vitest) SetPlatformEnv(platformEnv map[string]string) {
-	v.platformEnv = platformEnv
-}
-
-func (v *Vitest) GetPlatformEnv() map[string]string {
-	return v.platformEnv
-}
+func (v *Vitest) Platform() Platform { return v.platform }
 
 func (v *Vitest) Name() string {
 	return "vitest"
@@ -105,6 +97,11 @@ func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 		}
 	}
 
+	envMap, err := v.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{Framework: v.Name()})
+	if err != nil {
+		return nil, err
+	}
+
 	command, baseArgs := v.Command()
 	outputDir, err := os.MkdirTemp("", "ddtest-vitest-list-*")
 	if err != nil {
@@ -117,7 +114,7 @@ func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 	args = withFrameworkOptions(command, args, "vitest", "--filesOnly", "--json="+outputFile)
 
 	slog.Info("Discovering Vitest test files with command", "command", command, "args", args)
-	stdout, stderr, err := v.executor.Output(ctx, command, args, v.discoveryEnv())
+	stdout, stderr, err := v.executor.Output(ctx, command, args, envMap)
 	if err != nil {
 		output := append(slices.Clone(stdout), stderr...)
 		if supportsVitestV1DiscoveryFallback(output) {
@@ -158,6 +155,10 @@ func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 // discoverVitestV1TestFiles uses the project's vitest/node API to load its
 // configuration and list test files without executing them.
 func (v *Vitest) discoverVitestV1TestFiles(ctx context.Context, command string, baseArgs []string, testFiles discovery.TestFileSet) ([]string, error) {
+	envMap, err := v.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{Framework: v.Name()})
+	if err != nil {
+		return nil, err
+	}
 	cliArgs, err := json.Marshal(vitestCLIArgs(command, baseArgs))
 	if err == nil {
 		slog.Info("Vitest does not support list --filesOnly; using the Vitest 1.6 config-aware discovery API")
@@ -166,7 +167,7 @@ func (v *Vitest) discoverVitestV1TestFiles(ctx context.Context, command string, 
 			"--eval",
 			vitestV1DiscoveryScript,
 			string(cliArgs),
-		}, v.discoveryEnv())
+		}, envMap)
 		if discoveryErr == nil {
 			discoveredFiles, parseErr := parseVitestV1DiscoveryOutput(output)
 			if parseErr == nil {
@@ -197,28 +198,11 @@ func (v *Vitest) RunTests(ctx context.Context, testFiles []string, envMap map[st
 
 	slog.Info("Running tests with command", "command", command, "args", args)
 
-	mergedEnv := make(map[string]string)
-	maps.Copy(mergedEnv, v.platformEnv)
-	maps.Copy(mergedEnv, envMap)
-	return v.executor.Run(ctx, command, args, mergedEnv)
-}
-
-func (v *Vitest) discoveryEnv() map[string]string {
-	envMap := make(map[string]string, len(v.platformEnv)+1)
-	maps.Copy(envMap, v.platformEnv)
-
-	nodeOptions, ok := envMap[nodeOptionsEnvVar]
-	if !ok {
-		var found bool
-		nodeOptions, found = os.LookupEnv(nodeOptionsEnvVar)
-		if !found {
-			return envMap
-		}
+	mergedEnv, err := v.platform.RunEnv(RuntimeOptions{Framework: v.Name(), Env: envMap})
+	if err != nil {
+		return err
 	}
-
-	nodeOptions = stripNodeOptionsRequire(nodeOptions, ddTraceCIInitModule)
-	envMap[nodeOptionsEnvVar] = stripNodeOptionsImport(nodeOptions, ddTraceRegisterPath)
-	return envMap
+	return v.executor.Run(ctx, command, args, mergedEnv)
 }
 
 // Decide between a user custom command, the local Vitest binary and npx.
@@ -312,8 +296,4 @@ func parseVitestV1DiscoveryOutput(output []byte) ([]string, error) {
 		return nil, fmt.Errorf("failed to parse Vitest 1.6 discovery output: %w", err)
 	}
 	return normalizeJavaScriptTestFiles(testFiles), nil
-}
-
-func stripNodeOptionsImport(nodeOptions string, module string) string {
-	return utils.NodeOptionsWithoutImport(nodeOptions, module)
 }

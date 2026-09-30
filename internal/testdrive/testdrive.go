@@ -404,7 +404,7 @@ func testEnvironment(intakeURL, sessionID string) map[string]string {
 func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]string {
 	env := testEnvironment(intakeURL, sessionID)
 	if t.language == "javascript" {
-		maps.Copy(env, javascriptEnvironment(path))
+		maps.Copy(env, platform.NewJavaScript().TracerEnv(path))
 	}
 	return env
 }

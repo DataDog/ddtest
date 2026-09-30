@@ -2,9 +2,7 @@ package framework
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,24 +25,18 @@ const (
 type RSpec struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platformEnv     map[string]string
+	platform        Platform
 }
 
-func NewRSpec() *RSpec {
+func NewRSpec(p Platform) *RSpec {
 	return &RSpec{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
-		platformEnv:     make(map[string]string),
+		platform:        p,
 	}
 }
 
-func (r *RSpec) SetPlatformEnv(platformEnv map[string]string) {
-	r.platformEnv = platformEnv
-}
-
-func (r *RSpec) GetPlatformEnv() map[string]string {
-	return r.platformEnv
-}
+func (r *RSpec) Platform() Platform { return r.platform }
 
 func (r *RSpec) Name() string {
 	return "rspec"
@@ -56,8 +48,10 @@ func (r *RSpec) DiscoverTests(ctx context.Context, testFiles discovery.TestFileS
 	if testFiles.Empty() {
 		return []testoptimization.Test{}, nil
 	}
-	if err := utils.CheckRubyTracer(ctx, r.executor); err != nil {
-		return nil, fmt.Errorf("full test discovery requires datadog-ci: %w", err)
+
+	envMap, err := r.platform.DiscoveryEnv(ctx, FullDiscovery, RuntimeOptions{Framework: r.Name()})
+	if err != nil {
+		return nil, err
 	}
 
 	executable, baseArgs := r.Command()
@@ -69,7 +63,7 @@ func (r *RSpec) DiscoverTests(ctx context.Context, testFiles discovery.TestFileS
 		args = withFrameworkOptions(executable, args, "rspec", "--pattern", testFiles.Pattern)
 	}
 
-	return discovery.DiscoverTests(ctx, r.executor, executable, args, r.platformEnv)
+	return discovery.DiscoverTests(ctx, r.executor, executable, args, envMap)
 }
 
 func (r *RSpec) TestPattern() string {
@@ -95,9 +89,10 @@ func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[str
 	slog.Info("Running tests with command", "command", command, "args", args)
 	args = withFrameworkFiles(command, args, "rspec", testFiles)
 
-	mergedEnv := make(map[string]string)
-	maps.Copy(mergedEnv, r.GetPlatformEnv())
-	maps.Copy(mergedEnv, envMap)
+	mergedEnv, err := r.platform.RunEnv(RuntimeOptions{Framework: r.Name(), Env: envMap})
+	if err != nil {
+		return err
+	}
 	return r.executor.Run(ctx, command, args, mergedEnv)
 }
 
