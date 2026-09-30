@@ -79,11 +79,6 @@ func Prepare(version string) (*Testdrive, error) {
 		return nil, err
 	}
 	language := detectedPlatform.Name()
-	switch runner.Name() {
-	case "jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest":
-	default:
-		return nil, fmt.Errorf("testdrive does not yet support %s", runner.Name())
-	}
 	command, args := runner.Command()
 	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 
@@ -140,6 +135,10 @@ func (t *Testdrive) Preview(output io.Writer) {
 	}
 	_, _ = fmt.Fprintf(output, "  - run: %s\n", shellquote.Join(append([]string{command}, args...)...))
 	_, _ = fmt.Fprintln(output)
+	if t.language == "ruby" && t.projectTracer == "" {
+		_, _ = fmt.Fprintln(output, "Bundler updates Gemfile and Gemfile.lock.")
+		return
+	}
 	patterns := map[string][]string{
 		"javascript": {"package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb"},
 		"python":     {"pyproject.toml", "setup.py", "setup.cfg", "requirements*.txt", "requirements*.in", "Pipfile", "Pipfile.lock", "poetry.lock", "uv.lock", "pdm.lock", "pylock.toml"},
@@ -190,6 +189,10 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	}
 
 	tracerLabel := t.tracerLabel
+	if t.language == "ruby" {
+		// Bundler owns the project dependency selection.
+		tracerLabel = "datadog-ci · installed in project"
+	}
 	if installation.Project {
 		tracerLabel = t.installedTracerLabel(t.projectTracer) + " · reused"
 	}
@@ -426,6 +429,8 @@ func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]st
 		maps.Copy(env, t.javascriptEnvironment(path))
 	case "python":
 		maps.Copy(env, pythonEnvironment(path))
+	case "ruby":
+		maps.Copy(env, rubyEnvironment(path))
 	}
 	return env
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/DataDog/ddtest/internal/settings"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
@@ -17,7 +18,7 @@ import (
 )
 
 func TestPrepareAllSupportedFrameworks(t *testing.T) {
-	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest"} {
+	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest", "rspec", "minitest"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			switch name {
@@ -43,6 +44,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			installer := &fakeTracer{preloadPath: filepath.Join(root, "isolated")}
 			run.platform = installer
 			run.projectTracer = ""
+			run.projectTracer = ""
 			executor := &fakeTestdriveExecutor{}
 			run.executor = executor
 			run.startIntake = func(string) (localIntake, error) {
@@ -65,7 +67,8 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 				require.NotContains(t, executor.env, "NODE_OPTIONS")
 			case "ruby":
 				require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
-				require.Contains(t, preview.String(), "Bundler updates the project Gemfile and lockfile")
+				require.Contains(t, preview.String(), "Bundler updates Gemfile and Gemfile.lock.")
+				require.NotContains(t, preview.String(), "It will not change")
 				require.Contains(t, output.String(), "datadog-ci · installed in project")
 				require.Contains(t, executor.env["RUBYOPT"], "datadog/ci/auto_instrument")
 				require.NotContains(t, executor.env, "NODE_OPTIONS")
@@ -125,7 +128,9 @@ func TestLanguageEnvironmentsPreserveCustomerOptions(t *testing.T) {
 	python := (&Testdrive{language: "python"}).environment("/session/python", "http://127.0.0.1:1234", "session")
 	require.Equal(t, "/session/python"+string(os.PathListSeparator)+"/customer/modules", python["PYTHONPATH"])
 	require.Equal(t, "-q --ddtrace", python["PYTEST_ADDOPTS"])
-
+	ruby := (&Testdrive{language: "ruby"}).environment("/session/Gemfile", "http://127.0.0.1:1234", "session")
+	require.True(t, strings.HasPrefix(ruby["RUBYOPT"], "-W0 "))
+	require.NotContains(t, ruby, "BUNDLE_PATH") // Inherit project Bundler configuration.
 }
 
 func TestCypressWrapperUsesExplicitConfigWithoutEditingIt(t *testing.T) {
@@ -184,6 +189,19 @@ func TestPythonProjectTracerPreservesImportEnvironment(t *testing.T) {
 		t.Fatal("project PYTHONPATH overridden", env)
 	}
 	if env["PYTEST_ADDOPTS"] != "-v --ddtrace" {
+		t.Fatal(env)
+	}
+}
+
+func TestRubyProjectTracerPreservesBundleEnvironment(t *testing.T) {
+	drive := &Testdrive{language: "ruby"}
+	env := drive.environment("", "http://127.0.0.1:1234", "session")
+	for _, key := range []string{"BUNDLE_GEMFILE", "BUNDLE_PATH", "BUNDLE_APP_CONFIG", "BUNDLE_FROZEN", "BUNDLE_WITHOUT"} {
+		if _, changed := env[key]; changed {
+			t.Fatal("project Bundler setting overridden", key)
+		}
+	}
+	if !strings.Contains(env["RUBYOPT"], "-rdatadog/ci/auto_instrument") {
 		t.Fatal(env)
 	}
 }
