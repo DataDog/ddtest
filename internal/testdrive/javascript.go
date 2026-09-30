@@ -2,12 +2,13 @@ package testdrive
 
 import (
 	"encoding/json"
-	"github.com/kballard/go-shellquote"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/DataDog/ddtest/internal/utils"
 )
 
 func javascriptEnvironment(ciInitPath string) map[string]string {
@@ -22,40 +23,11 @@ func javascriptEnvironment(ciInitPath string) map[string]string {
 }
 
 func stripDatadogNodeOptions(value string) string {
-	fields, err := shellquote.Split(value)
-	if err != nil {
-		return value
+	for _, module := range []string{"dd-trace/ci/init", "dd-trace/register.js"} {
+		value = utils.NodeOptionsWithoutRequire(value, module)
+		value = utils.NodeOptionsWithoutImport(value, module)
 	}
-	kept := make([]string, 0, len(fields))
-	for index := 0; index < len(fields); index++ {
-		field := fields[index]
-		if field == "-r" || field == "--require" || field == "--import" {
-			if index+1 < len(fields) && isDatadogNodePreload(fields[index+1]) {
-				index++
-				continue
-			}
-		}
-		if strings.HasPrefix(field, "--require=") && isDatadogNodePreload(strings.TrimPrefix(field, "--require=")) {
-			continue
-		}
-		if strings.HasPrefix(field, "--import=") && isDatadogNodePreload(strings.TrimPrefix(field, "--import=")) {
-			continue
-		}
-		if strings.HasPrefix(field, "-r") && isDatadogNodePreload(strings.TrimPrefix(field, "-r")) {
-			continue
-		}
-		if strings.ContainsAny(field, " \t\r\n\"") {
-			field = strconv.Quote(field)
-		}
-		kept = append(kept, field)
-	}
-	return strings.Join(kept, " ")
-}
-
-func isDatadogNodePreload(value string) bool {
-	value = strings.Trim(value, `"'`)
-	return value == "dd-trace/ci/init" || value == "dd-trace/register.js" || strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/ci/init.js") ||
-		strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/register.js")
+	return value
 }
 
 func javascriptTracerVersion(preload string) string {

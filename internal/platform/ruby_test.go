@@ -80,7 +80,7 @@ func TestRuby_SanityCheck_Passes(t *testing.T) {
 			if name != "bundle" {
 				t.Fatalf("expected command 'bundle', got %q", name)
 			}
-			if len(args) != 2 || args[0] != "info" || args[1] != requiredGemName {
+			if len(args) != 2 || args[0] != "info" || args[1] != "datadog-ci" {
 				t.Fatalf("unexpected args: %v", args)
 			}
 		},

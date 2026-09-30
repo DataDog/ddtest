@@ -298,6 +298,10 @@ func withoutTelemetry(run validationRun) validationRun { run.Facts = intake.Fact
 func TestBaselineRemovesQuotedTracerPreloadsAndPreservesOtherOptions(t *testing.T) {
 	got := stripDatadogNodeOptions(`--require "/project space/node_modules/dd-trace/ci/init.js" --import dd-trace/register.js --require "/project space/setup.js" --max-old-space-size=4096`)
 	require.Equal(t, `--require "/project space/setup.js" --max-old-space-size=4096`, got)
+	for _, tracer := range []string{`--require dd-trace/ci/init.js`, `--require "C:\action install\dd-trace\ci\init.js"`, `-r/tmp/dd-trace/ci/init --import="file:///tmp/dd-trace/register.js"`} {
+		const loader = `--require "C:\project space\loader.cjs" --max-old-space-size=4096`
+		require.Equal(t, loader, stripDatadogNodeOptions(tracer+" "+loader))
+	}
 }
 
 func TestTelemetryRequiresTheCorrectTestFileAndNoRetries(t *testing.T) {

@@ -9,24 +9,21 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/settings"
-	"github.com/DataDog/ddtest/internal/version"
+	"github.com/DataDog/ddtest/internal/utils"
 )
 
 //go:embed scripts/ruby_env.rb
 var rubyEnvScript string
 
 const (
-	requiredGemName       = "datadog-ci"
-	requiredGemMinVersion = "1.31.0"
-	rubyOptEnvVar         = "RUBYOPT"
-	rubyOptDefaultValue   = "-rbundler/setup -rdatadog/ci/auto_instrument"
+	rubyOptEnvVar       = "RUBYOPT"
+	rubyOptDefaultValue = "-rbundler/setup -rdatadog/ci/auto_instrument"
 )
 
 type Ruby struct {
@@ -139,71 +136,16 @@ func (r *Ruby) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 }
 
 func (r *Ruby) SanityCheck(ctx context.Context) error {
-	output, err := r.DetectTracer(ctx, TracerOptions{})
-	if err != nil {
-		return err
-	}
-	if output == "" {
-		return fmt.Errorf("datadog-ci is not installed")
-	}
-
-	requiredVersion, err := version.Parse(requiredGemMinVersion)
-	if err != nil {
-		return err
-	}
-
-	gemVersion, err := parseBundlerInfoVersion(output, requiredGemName)
-	if err != nil {
-		return err
-	}
-
-	if gemVersion.Compare(requiredVersion) < 0 {
-		return fmt.Errorf("datadog-ci gem version %s is lower than required >= %s", gemVersion.String(), requiredVersion.String())
-	}
-
-	return nil
-}
-
-// bundlerInfoRegex matches bundler info output format: "  * gem-name (version [hash])"
-// Captures: 1=gem-name, 2=version
-var bundlerInfoRegex = regexp.MustCompile(`^\s*\*\s+(\S+)\s+\((\d+\.\d+\.\d+)`)
-
-func parseBundlerInfoVersion(output, gemName string) (version.Version, error) {
-	for line := range strings.SplitSeq(output, "\n") {
-		matches := bundlerInfoRegex.FindStringSubmatch(line)
-		if matches == nil {
-			continue
-		}
-
-		matchedGem := matches[1]
-		if matchedGem != gemName {
-			continue
-		}
-
-		versionString := matches[2]
-		parsed, err := version.Parse(versionString)
-		if err != nil {
-			return version.Version{}, fmt.Errorf("failed to parse version from bundle info output: %w", err)
-		}
-
-		return parsed, nil
-	}
-
-	return version.Version{}, fmt.Errorf("unable to find datadog-ci gem version in bundle info output")
+	return utils.CheckRubyTracer(ctx, r.executor)
 }
 
 // DetectTracer reads the project tracer's bundle information.
 func (r *Ruby) DetectTracer(ctx context.Context, _ TracerOptions) (string, error) {
-	// Gemfiles may depend on load paths and project setup supplied by RUBYOPT.
-	stdout, stderr, err := r.executor.Output(ctx, "bundle", []string{"info", requiredGemName}, nil)
-	if err != nil {
-		return "", runtimeTagProbeError("detect project tracer", append(stdout, stderr...), err)
-	}
-	gemVersion, err := parseBundlerInfoVersion(string(stdout), requiredGemName)
+	gemVersion, err := utils.DetectRubyTracer(ctx, r.executor)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("  * %s (%s)", requiredGemName, gemVersion.String()), nil
+	return fmt.Sprintf("  * %s (%s)", utils.RubyTracerGemName, gemVersion.String()), nil
 }
 
 func (r *Ruby) InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error) {
@@ -221,7 +163,7 @@ func (r *Ruby) InstallTestdriveTracer(ctx context.Context, options TracerOptions
 }
 
 func (r *Ruby) TracerInstallCommand(options TracerOptions) (string, []string, error) {
-	args := []string{"add", requiredGemName}
+	args := []string{"add", utils.RubyTracerGemName}
 	if ref, ok := strings.CutPrefix(options.Version, "git:"); ok {
 		if ref == "" {
 			return "", nil, fmt.Errorf("tracer git ref must not be empty")

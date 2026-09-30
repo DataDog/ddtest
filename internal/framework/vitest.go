@@ -315,20 +315,5 @@ func parseVitestV1DiscoveryOutput(output []byte) ([]string, error) {
 }
 
 func stripNodeOptionsImport(nodeOptions string, module string) string {
-	fields := strings.Fields(nodeOptions)
-	stripped := make([]string, 0, len(fields))
-	for i := 0; i < len(fields); i++ {
-		field := fields[i]
-		if field == "--import" {
-			if i+1 < len(fields) && fields[i+1] == module {
-				i++
-				continue
-			}
-		}
-		if strings.HasPrefix(field, "--import=") && strings.TrimPrefix(field, "--import=") == module {
-			continue
-		}
-		stripped = append(stripped, field)
-	}
-	return strings.Join(stripped, " ")
+	return utils.NodeOptionsWithoutImport(nodeOptions, module)
 }

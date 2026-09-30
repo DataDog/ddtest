@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive"
@@ -66,6 +67,9 @@ process.on('exit', () => {
 	// Prove the fixture cannot pass through ordinary node_modules resolution.
 	_, err := javascript.DetectTracer(ctx, platform.TracerOptions{})
 	require.ErrorContains(t, err, "Cannot find module 'dd-trace/ci/init'")
+	tags, err := javascript.CreateTagsMap(ctx)
+	require.NoError(t, err, "planning tags must not require an installed tracer")
+	requireRuntimeTags(t, tags, "javascript")
 	t.Setenv("NODE_OPTIONS", "--require "+strconv.Quote(loader)+" --require "+strconv.Quote(filepath.Join(root, "noisy-preload.cjs"))+" --max-old-space-size=256")
 	require.NoError(t, javascript.SanityCheck(ctx))
 	path, err := javascript.DetectTracer(ctx, platform.TracerOptions{})
@@ -205,9 +209,48 @@ atexit.register(lambda: print('shutdown stderr', file=sys.stderr))
 	python := platform.NewPython()
 	_, err := python.DetectTracer(ctx, platform.TracerOptions{Command: "python"})
 	require.ErrorContains(t, err, "PackageNotFoundError")
+	tags, err := python.CreateTagsMap(ctx)
+	require.NoError(t, err, "planning tags must not require an installed tracer")
+	requireRuntimeTags(t, tags, "python")
 	t.Setenv("PYTHONPATH", filepath.Join(root, "packages"))
 	require.NoError(t, python.SanityCheck(ctx))
 	version, err := python.DetectTracer(ctx, platform.TracerOptions{Command: "python"})
 	require.NoError(t, err)
 	require.Equal(t, "4.11.0", version)
+}
+
+func TestRubyTagsWithoutTracer(t *testing.T) {
+	requireRuntime(t, "bundle")
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	root := t.TempDir()
+	writeFixture(t, root, "Gemfile", "source 'https://rubygems.org'\n")
+	t.Chdir(root)
+	t.Setenv("BUNDLE_GEMFILE", filepath.Join(root, "Gemfile"))
+	t.Setenv("BUNDLE_USER_HOME", filepath.Join(root, "bundle-home"))
+	t.Setenv("RUBYOPT", "")
+	runFixtureCommand(t, ctx, "bundle", "lock", "--local")
+	ruby := platform.NewRuby(settings.TestSkippingLevelTest)
+	_, err := ruby.DetectTracer(ctx, platform.TracerOptions{})
+	require.Error(t, err, "the fixture must not have a tracer in its bundle")
+	tags, err := ruby.CreateTagsMap(ctx)
+	require.NoError(t, err)
+	requireRuntimeTags(t, tags, "ruby")
+
+	resetSettingsAfterTest(t)
+	writeFixture(t, root, "discovery.rb", "File.write('discovery-ran', 'unexpected')\n")
+	configureFramework(shellCommand("ruby", filepath.Join(root, "discovery.rb")), "")
+	for _, fw := range []framework.Framework{framework.NewRSpec(), framework.NewMinitest()} {
+		t.Run(fw.Name(), func(t *testing.T) {
+			t.Cleanup(func() { _ = os.Remove(filepath.Join(root, "discovery-ran")) })
+			writeFixture(t, root, "example_test.rb", "# File discovery needs no tracer.\n")
+			files := discovery.TestFileSet{Pattern: "*_test.rb"}
+			_, err := fw.DiscoverTests(ctx, files)
+			require.NoFileExists(t, filepath.Join(root, "discovery-ran"), "full discovery must reject the missing library before starting the test command")
+			require.ErrorContains(t, err, "full test discovery requires datadog-ci")
+			discovered, err := fw.DiscoverTestFiles(ctx, files)
+			require.NoError(t, err)
+			require.Equal(t, []string{"example_test.rb"}, discovered)
+		})
+	}
 }
