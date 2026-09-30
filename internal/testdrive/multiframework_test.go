@@ -57,7 +57,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			}
 			switch run.language {
 			case "javascript":
-				require.Contains(t, executor.env["NODE_OPTIONS"], "--import")
+				require.NotContains(t, executor.env["NODE_OPTIONS"], "--import")
 			case "python":
 				require.NotEmpty(t, executor.env["PYTHONPATH"])
 				require.Contains(t, executor.env["PYTEST_ADDOPTS"], "--ddtrace")
@@ -71,6 +71,19 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestJavaScriptEnvironmentImportsExistingRegister(t *testing.T) {
+	t.Setenv("NODE_OPTIONS", "")
+	packageDir := filepath.Join(t.TempDir(), "dd-trace")
+	require.NoError(t, os.MkdirAll(filepath.Join(packageDir, "ci"), 0755))
+	register := filepath.Join(packageDir, "register.js")
+	require.NoError(t, os.WriteFile(register, nil, 0644))
+	run := &Testdrive{nodeVersion: func() string { return "v22.0.0" }}
+	preload := filepath.Join(packageDir, "ci", "init.js")
+	require.Contains(t, run.javascriptEnvironment(preload)["NODE_OPTIONS"], " --import ")
+	require.NoError(t, os.Remove(register))
+	require.NotContains(t, run.javascriptEnvironment(preload)["NODE_OPTIONS"], "--import")
 }
 
 func TestSupportsNodeImport(t *testing.T) {
