@@ -78,7 +78,8 @@ func TestJavaScriptActionPreloadIntegration(t *testing.T) {
 	if !filepath.IsAbs(preload) {
 		t.Fatalf("action-style preload must be absolute: %q", preload)
 	}
-	if _, err := os.Stat(preload); err != nil {
+	preloadInfo, err := os.Stat(preload)
+	if err != nil {
 		t.Fatalf("external dd-trace preload is unavailable: %v", err)
 	}
 
@@ -100,7 +101,11 @@ func TestJavaScriptActionPreloadIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved != preload {
+	resolvedInfo, err := os.Stat(resolved)
+	if err != nil {
+		t.Fatalf("resolved tracer is unavailable: %v", err)
+	}
+	if !os.SameFile(preloadInfo, resolvedInfo) {
 		t.Fatalf("resolved tracer = %q, want action preload %q", resolved, preload)
 	}
 }

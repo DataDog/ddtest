@@ -249,6 +249,22 @@ the pattern to explicit file paths before invoking the configured pytest
 command. The default is `python -m pytest`. Since 1.7.0, `--command` overrides
 it.
 
+## JavaScript Tracer Preloads
+
+DDTest resolves `dd-trace/ci/init` from the project when it is installed there.
+It also accepts an absolute `dd-trace/ci/init.js` preload in
+`NODE_OPTIONS`, such as the path supplied by
+`datadog/test-visibility-github-action@v3` through `DD_TRACE_PACKAGE`.
+DDTest validates that path with Node.js. Project-local resolution remains the
+first choice, including projects that use a loader such as Yarn Plug'n'Play.
+
+Runtime checks and test-file discovery remove the Datadog preload from
+`NODE_OPTIONS` so those processes do not start tracing. Other Node options
+and project loaders remain in place. Test workers inherit the absolute preload
+when present; otherwise DDTest adds the project-local `-r dd-trace/ci/init`.
+An action-installed tracer does not need to be added to `package.json` or
+exposed through `NODE_PATH`.
+
 ## Jest Discovery And Instrumentation
 
 For JavaScript/Jest, DDTest discovers test files with Jest's own `--listTests`
@@ -264,8 +280,8 @@ file list returned by Jest after discovery; it does not pass `--tests-location`
 as Jest's `--testMatch`.
 
 DDTest appends `-r dd-trace/ci/init` to `NODE_OPTIONS` for worker processes
-unless `NODE_OPTIONS` already loads `dd-trace/ci/init`. Existing project loaders,
-such as Yarn Plug'n'Play, run before the tracer.
+unless a package-name or absolute CI preload is already present. Existing
+project loaders, such as Yarn Plug'n'Play, run before a preload DDTest adds.
 
 ## Cucumber Discovery And Instrumentation
 
@@ -279,7 +295,7 @@ all filtered out is not added to the execution plan.
 
 Discovery forces Cucumber's internal parallelism to zero, does not execute step
 bodies, disables report publishing through `CUCUMBER_PUBLISH_ENABLED`, and
-removes `-r dd-trace/ci/init` from `NODE_OPTIONS`. Cucumber still loads its
+removes the Datadog CI preload from `NODE_OPTIONS`. Cucumber still loads its
 configuration and support code as part of a normal dry run.
 
 DDTest uses this command priority:
@@ -291,7 +307,7 @@ DDTest uses this command priority:
 During execution, DDTest removes positional feature paths, globs, line filters,
 and rerun files from the base command and appends the current worker's assigned
 feature files. Other supported Cucumber CLI options are preserved. Worker
-processes retain `-r dd-trace/ci/init` for Test Optimization instrumentation.
+processes retain the Datadog CI preload for Test Optimization instrumentation.
 Because DDTest plans at feature-file granularity, scenario line selectors and
 rerun files narrow discovery but are not retained as scenario-level selectors
 during worker execution. Use Cucumber tag or name filters when that scenario
@@ -313,7 +329,7 @@ prevents every worker from running the entire configured suite.
 
 DDTest uses the local `node_modules/.bin/mocha` when present and otherwise
 expects Mocha to be resolvable from the current project. Discovery removes
-`-r dd-trace/ci/init` from `NODE_OPTIONS`; test runs retain it for Test
+the Datadog CI preload from `NODE_OPTIONS`; test runs retain it for Test
 Optimization instrumentation.
 
 ## Vitest Discovery And Instrumentation
@@ -338,9 +354,12 @@ If that API is unavailable, DDTest falls back to its own filesystem glob using
 `--tests-location` or the default Vitest test-file pattern.
 
 DDTest adds `--import dd-trace/register.js` and `-r dd-trace/ci/init` to
-`NODE_OPTIONS` for Vitest worker processes unless they are already present.
+`NODE_OPTIONS` for Vitest worker processes unless equivalent package-name or
+absolute preloads are already present. With the GitHub action, set both
+`-r ${{ env.DD_TRACE_PACKAGE }}` and
+`--import ${{ env.DD_TRACE_ESM_IMPORT }}` on the plan and run steps.
 The tracer's `--require` option follows existing project loaders. Discovery
-removes these options to avoid instrumenting the file-listing process.
+removes both Datadog options to avoid instrumenting the file-listing process.
 
 ## Cypress Discovery And Instrumentation
 
@@ -362,7 +381,7 @@ DDTest uses this command priority:
 During execution DDTest invokes `cypress run --spec` with the files assigned to
 the worker. Cypress Test Optimization instrumentation must already be configured
 in the project's Cypress plugin and support files as documented by `dd-trace`.
-Discovery removes `-r dd-trace/ci/init` from `NODE_OPTIONS`; test runs retain the
+Discovery removes the Datadog CI preload from `NODE_OPTIONS`; test runs retain the
 configured platform environment.
 
 ## Playwright Discovery And Instrumentation
@@ -395,7 +414,7 @@ native file list.
 
 Playwright Test Optimization instrumentation is provided by `dd-trace` through
 `NODE_OPTIONS`, as with other JavaScript frameworks. Discovery temporarily
-removes `-r dd-trace/ci/init` so listing is not reported as a test session; test
+removes the Datadog CI preload so listing is not reported as a test session; test
 runs retain it. Check the `dd-trace` compatibility range for the Playwright
 version in the project; current `dd-trace` 6 releases require Playwright 1.38
 or newer.

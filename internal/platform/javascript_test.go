@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -85,6 +86,33 @@ func TestJavaScript_GetPlatformEnv_DoesNotDuplicateDDTraceInit(t *testing.T) {
 	if len(envMap) != 0 {
 		t.Errorf("expected empty env map when dd-trace init is already present, got %v", envMap)
 	}
+}
+
+func TestJavaScript_DetectTracer_PrefersProjectWithActionPreload(t *testing.T) {
+	t.Setenv(nodeOptionsEnvVar, "-r /external/dd-trace/ci/init.js")
+	executor := &fakeCommandExecutor{responses: []commandResponse{{output: []byte("/project/node_modules/dd-trace/ci/init.js")}}}
+	javascript := &JavaScript{executor: executor}
+
+	path, err := javascript.DetectTracer(t.Context(), TracerOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "/project/node_modules/dd-trace/ci/init.js", path)
+	require.Len(t, executor.commands, 1, "project resolution must precede the action preload")
+	require.Equal(t, map[string]string{nodeOptionsEnvVar: ""}, executor.envs[0])
+	require.Empty(t, javascript.GetPlatformEnv(), "the absolute preload must not be duplicated for workers")
+}
+
+func TestJavaScript_DetectTracer_RejectsInvalidActionPreload(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skipf("node is required: %v", err)
+	}
+	t.Chdir(t.TempDir())
+	t.Setenv("NODE_PATH", "")
+	preload := filepath.Join(t.TempDir(), "dd-trace", "ci", "init.js")
+	t.Setenv(nodeOptionsEnvVar, "-r "+strconv.Quote(preload))
+
+	err := NewJavaScript().SanityCheck(t.Context())
+	require.ErrorContains(t, err, "failed to resolve absolute dd-trace preload")
+	require.ErrorContains(t, err, preload)
 }
 
 func TestJavaScript_GetPlatformEnv_DoesNotDependOnFramework(t *testing.T) {

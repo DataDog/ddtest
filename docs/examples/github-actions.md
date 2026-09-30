@@ -163,15 +163,32 @@ Configure Datadog Test Optimization for JavaScript:
 
 ```yaml
 - name: Configure Datadog Test Optimization
-  uses: datadog/test-visibility-github-action@v2
+  uses: datadog/test-visibility-github-action@v3
   with:
     languages: js
     api_key: ${{ secrets.DD_API_KEY }}
     site: datadoghq.com
 ```
 
-DDTest sets `NODE_OPTIONS=-r dd-trace/ci/init` for Jest worker processes, so the
-project dependencies installed before `ddtest plan` must include `dd-trace`.
-The `ddtest plan` and `ddtest run --ci-node ${{ matrix.ci_node_index }}`
-commands can stay the same when the platform and framework are provided through
-the environment.
+The action installs `dd-trace` outside the project and exports its absolute
+preload path as `DD_TRACE_PACKAGE`. Set `NODE_OPTIONS` on both DDTest steps:
+
+```yaml
+- id: dd_plan
+  name: Plan test execution with DDTest
+  run: bin/ddtest plan
+  env:
+    NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }}
+
+- name: Run tests
+  run: bin/ddtest run --ci-node ${{ matrix.ci_node_index }}
+  env:
+    NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }}
+```
+
+Include the action configuration step in both jobs, after installing the
+project's dependencies and before the corresponding DDTest step. DDTest
+validates the absolute preload, excludes it from discovery processes, and
+keeps it for test workers. The project does not need a `dd-trace` dependency
+or `NODE_PATH`. For Mocha, set the framework to `mocha` and pass a
+`--command` that invokes Mocha directly if the project needs custom flags.

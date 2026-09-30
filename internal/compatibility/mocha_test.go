@@ -2,13 +2,17 @@ package compatibility
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMochaAdapterIntegration(t *testing.T) {
@@ -74,4 +78,40 @@ func TestMochaAdapterCustomLocationAndCommandIntegration(t *testing.T) {
 	if err := mocha.RunTests(ctx, files, nil); err != nil {
 		t.Fatalf("custom-command run failed: %v", err)
 	}
+}
+
+func TestMochaActionPreloadIntegration(t *testing.T) {
+	nodeModules := requireEnv(t, "DDTEST_MOCHA_NODE_MODULES")
+	resetSettingsAfterTest(t)
+	configureFramework("", "")
+
+	root := t.TempDir()
+	if err := os.Symlink(nodeModules, filepath.Join(root, "node_modules")); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, root, "package.json", `{"devDependencies":{"mocha":"11"}}`)
+	writeFixture(t, root, "test/action.spec.js", `const assert = require("assert"); describe("action preload", () => { it("loads for a test run", () => assert.strictEqual(global.ddtestTracerLoaded, true)) })`)
+	marker := filepath.Join(root, "tracer-started")
+	external := t.TempDir()
+	preload := filepath.Join(external, "dd-trace", "ci", "init.js")
+	writeFixture(t, external, "dd-trace/ci/init.js", fmt.Sprintf("require('fs').appendFileSync(%q, 'loaded\\n'); global.ddtestTracerLoaded = true;\n", marker))
+	t.Chdir(root)
+	t.Setenv("NODE_OPTIONS", "-r "+strconv.Quote(preload))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	javascript := platform.NewJavaScript()
+	require.NoError(t, javascript.SanityCheck(ctx))
+	_, err := javascript.CreateTagsMap(ctx)
+	require.NoError(t, err)
+	fw, err := javascript.DetectFramework()
+	require.NoError(t, err)
+	require.Empty(t, fw.GetPlatformEnv(), "worker should inherit the action's absolute preload")
+	files, err := fw.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: fw.TestPattern()})
+	require.NoError(t, err)
+	requireFiles(t, files, []string{"test/action.spec.js"})
+	require.NoFileExists(t, marker, "sanity checks, runtime tags, and discovery must not start tracing")
+
+	require.NoError(t, fw.RunTests(ctx, files, nil))
+	require.FileExists(t, marker, "the test worker must load the action's tracer")
 }

@@ -299,7 +299,7 @@ jobs:
           mocha_dir="${RUNNER_TEMP}/mocha-${{ matrix.mocha }}"
           npm install --prefix "${mocha_dir}" "mocha@${{ matrix.mocha }}"
           DDTEST_MOCHA_NODE_MODULES="${mocha_dir}/node_modules" \
-            go test -v ./internal/compatibility -run '^TestMochaAdapter.*Integration$'
+            go test -v ./internal/compatibility -run '^TestMocha.*Integration$'
 
   cypress-compatibility:
     runs-on: ubuntu-latest
