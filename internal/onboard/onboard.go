@@ -7,13 +7,30 @@
 package onboard
 
 import (
+	_ "embed"
+	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/kballard/go-shellquote"
+	"github.com/pelletier/go-toml/v2"
+	"go.yaml.in/yaml/v3"
 )
+
+const githubAction = "datadog/test-visibility-github-action"
+
+//go:embed instructions/github.md
+var gitHubInstructions string
+
+//go:embed instructions/vitest.md
+var vitestInstructions string
 
 // Run detects the first supported onboarding path and prints its instructions.
 func Run(output io.Writer) error {
@@ -29,14 +46,411 @@ func Run(output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	provider, err := environment.DetectRepositoryCIProvider(repositoryRoot)
-	if err != nil {
+	if _, err := environment.DetectRepositoryCIProvider(repositoryRoot); err != nil {
 		return fmt.Errorf("onboard: %w", err)
 	}
-	switch provider := provider.(type) {
-	case *environment.GitHub:
-		return onboardGitHub(output, provider, repositoryRoot, detectedPlatform.Name(), runner.Name())
-	default:
-		return fmt.Errorf("onboard does not support CI provider %s", provider.Name())
+	language := detectedPlatform.Name()
+	name := runner.Name()
+
+	discovery, err := findWorkflows(repositoryRoot, language, name)
+	workflows, configured := discovery.Workflows, discovery.Configured
+	if err != nil {
+		return err
 	}
+	if len(workflows) == 0 {
+		return fmt.Errorf("onboard could not find a GitHub Actions workflow that runs %s", name)
+	}
+
+	_, _ = fmt.Fprintf(output, "DDTest found %s, %s, and GitHub Actions.\n", language, name)
+	_, _ = fmt.Fprintln(output)
+	_, _ = fmt.Fprintln(output, "Test workflow(s):")
+	for _, workflow := range workflows {
+		_, _ = fmt.Fprintf(output, "  - %s\n", workflow)
+	}
+	if name == "jest" || name == "vitest" {
+		scope, err := DiscoverValidationScope(repositoryRoot, name)
+		if err != nil {
+			return err
+		}
+		WriteValidationScope(output, scope)
+		_, _ = fmt.Fprintf(output, "Run `ddtest testdrive --framework %s --all --check-only --yes`, then finish edits and review separate setup, and run `ddtest testdrive --framework %s --all --tracer-version <resolved-release> --yes`. This aggregates every discovered configuration in one report pair. A --command run validates only its selected configuration.\n", name, name)
+	}
+	if name == "jest" {
+		command, err := JestValidationCommand(repositoryRoot)
+		if err != nil {
+			_, _ = fmt.Fprintf(output, "\nLocal Jest command needs review: %s\n", err)
+		} else if command != "" {
+			_, _ = fmt.Fprintf(output, "\nLocal validation command: %s\nTestdrive selects this command automatically; preserve its config, coverage, and execution options. --command overrides this selection.\n", command)
+		}
+	}
+
+	if len(discovery.Review) > 0 {
+		_, _ = fmt.Fprintln(output, "\nOther CI entry points to review separately:")
+		for _, reason := range discovery.Review {
+			_, _ = fmt.Fprintf(output, "  - %s\n", reason)
+		}
+	}
+	if len(discovery.Unresolved) > 0 {
+		_, _ = fmt.Fprintln(output, "\nCI command discovery is inconclusive:")
+		for _, reason := range discovery.Unresolved {
+			_, _ = fmt.Fprintf(output, "  - %s\n", reason)
+		}
+		_, _ = fmt.Fprintln(output, "Identify the actual test steps before editing CI. Preserve valid commands; do not rewrite them merely to satisfy discovery. Manual review does not turn an unverified programmatic check into a pass.")
+	}
+
+	if len(discovery.Unresolved) == 0 && len(configured) == len(workflows) {
+		_, _ = fmt.Fprintln(output)
+		_, _ = fmt.Fprintln(output, "Datadog Test Optimization already appears in every detected test workflow.")
+		_, _ = fmt.Fprintf(output, "This is configuration detection, not completed onboarding. Run `ddtest testdrive --framework %s` to validate locally. Jest and supported Vitest projects also check CI runtime compatibility; configurations without a validation adapter remain unvalidated.\n", name)
+		_, _ = fmt.Fprintln(output, "After it finishes, share the validation verdict, CI runtime compatibility and feature results using the final response block printed by testdrive. Copy its absolute Markdown report links verbatim, each on its own line; do not shorten them to relative paths or replace them with file:// URLs.")
+		_, _ = fmt.Fprintln(output, "Keep .testoptimization/report.html and .testoptimization/testdrive.json after cleanup, even on failure. Do not declare validation complete while any required check is failed or inconclusive.")
+		if name != "vitest" {
+			return nil
+		}
+	}
+
+	_, _ = fmt.Fprintln(output)
+	_, _ = fmt.Fprintln(output, strings.TrimSpace(instructions(language, name)))
+	return nil
 }
+
+type workflowDiscovery struct {
+	Workflows, Configured, Unresolved, Review []string
+}
+
+type runDefaults struct {
+	WorkingDirectory string `yaml:"working-directory"`
+	Shell            string `yaml:"shell"`
+}
+
+type ciDefaults struct {
+	Run runDefaults `yaml:"run"`
+}
+
+type ciWorkflow struct {
+	Path     string
+	Defaults ciDefaults            `yaml:"defaults"`
+	Env      map[string]string     `yaml:"env"`
+	Jobs     map[string]runtimeJob `yaml:"jobs"`
+}
+
+func readWorkflows(root string) ([]ciWorkflow, error) {
+	var workflows []ciWorkflow
+	directory := filepath.Join(root, ".github", "workflows")
+	entries, err := os.ReadDir(directory)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find GitHub Actions workflows: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || (filepath.Ext(entry.Name()) != ".yml" && filepath.Ext(entry.Name()) != ".yaml") {
+			continue
+		}
+		path := filepath.Join(directory, entry.Name())
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", path, err)
+		}
+		var workflow ciWorkflow
+		if err := yaml.Unmarshal(contents, &workflow); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", path, err)
+		}
+		workflow.Path = ".github/workflows/" + entry.Name()
+		for name, job := range workflow.Jobs {
+			job.Steps = expandCompositeSteps(root, workflow.Path, job.Steps)
+			workflow.Jobs[name] = job
+		}
+		workflows = append(workflows, workflow)
+	}
+	return workflows, nil
+}
+
+func findWorkflows(root, language, name string) (workflowDiscovery, error) {
+	var result workflowDiscovery
+	workflows, err := readWorkflows(root)
+	if err != nil {
+		return result, err
+	}
+	actionLanguage := language
+	if language == "javascript" {
+		actionLanguage = "js"
+	}
+	for _, workflow := range workflows {
+		found, configured := false, true
+		for _, jobName := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[jobName]
+			hasAction := false
+			for i, step := range job.Steps {
+				condition := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(step.If), "${{"), "}}"))
+				if condition == "false" {
+					continue
+				}
+				uses, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
+				languages := step.With["languages"]
+				if uses == githubAction && hasVersion && (condition == "" || condition == "true" || condition == "success()") && !strings.Contains(languages, "${{") {
+					hasAction = hasAction || languages == "all" || slices.Contains(strings.Fields(languages), actionLanguage)
+				}
+				resolution := resolveTestStep(root, workflow, job, step, language, name)
+				if resolution.Review {
+					result.Review = append(result.Review, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, stepNumber(step, i), step.Run, resolution.Reason))
+					continue
+				}
+				if resolution.Matched || resolution.Reason != "" {
+					found = true
+					configured = configured && hasAction && resolution.Reason == ""
+				}
+				if resolution.Reason != "" {
+					result.Unresolved = append(result.Unresolved, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, stepNumber(step, i), step.Run, resolution.Reason))
+				}
+			}
+		}
+		if found {
+			result.Workflows = append(result.Workflows, workflow.Path)
+			if configured {
+				result.Configured = append(result.Configured, workflow.Path)
+			}
+		}
+	}
+	return result, nil
+}
+
+// Resolve literal invocations without running project code. Limit script recursion
+// so cycles in package.json cannot hang onboarding.
+func looksLikeTestJob(root, commands, language, name string, depth int) bool {
+	if depth > 10 {
+		return false
+	}
+	for _, command := range strings.Split(commands, "\n") {
+		command = strings.TrimSpace(command)
+		if command == "" || strings.HasPrefix(command, "#") {
+			continue
+		}
+		// Handle simple shell command lists. Leave quoted shell expressions opaque.
+		if !strings.ContainsAny(command, "\"'`") && strings.ContainsAny(command, ";&|") {
+			for _, part := range strings.FieldsFunc(command, func(r rune) bool { return r == ';' || r == '&' || r == '|' }) {
+				if looksLikeTestJob(root, part, language, name, depth+1) {
+					return true
+				}
+			}
+			continue
+		}
+		args, err := shellquote.Split(command)
+		if err != nil {
+			continue
+		}
+		for len(args) > 0 && strings.Contains(args[0], "=") {
+			args = args[1:]
+		}
+	unwrap:
+		for len(args) > 1 {
+			switch args[0] + " " + args[1] {
+			case "bundle exec", "python -m", "python3 -m", "{envpython} -m", "poetry run":
+				args = args[2:]
+			case "uv run":
+				args = args[2:]
+				for len(args) > 0 && slices.Contains([]string{"--locked", "--frozen", "--no-sync"}, args[0]) {
+					args = args[1:]
+				}
+			default:
+				break unwrap
+			}
+		}
+		if len(args) == 0 {
+			continue
+		}
+		executable := filepath.Base(args[0])
+		if language == "javascript" && slices.Contains([]string{"npm", "pnpm", "yarn", "bun", "npx", "bunx"}, executable) && len(args) > 1 {
+			args = args[1:]
+			direct := executable == "npx" || executable == "bunx" || args[0] == "exec" || args[0] == "dlx"
+			explicitScript := args[0] == "run" || args[0] == "run-script"
+			if !direct && !explicitScript && (slices.Contains([]string{"install", "add", "remove", "update"}, args[0]) || (executable == "npm" && args[0] != "test")) {
+				continue
+			}
+			if args[0] == "run" || args[0] == "run-script" || args[0] == "exec" || args[0] == "dlx" {
+				args = args[1:]
+			}
+			for len(args) > 0 && slices.Contains([]string{"--", "--silent", "--yes", "-y", "--no-install"}, args[0]) {
+				args = args[1:]
+			}
+			if len(args) == 0 {
+				continue
+			}
+			if direct {
+				executable = filepath.Base(args[0])
+			} else {
+				var manifest struct {
+					Scripts map[string]string `json:"scripts"`
+				}
+				contents, err := os.ReadFile(filepath.Join(root, "package.json"))
+				if err != nil || json.Unmarshal(contents, &manifest) != nil {
+					continue
+				}
+				if script, ok := manifest.Scripts[args[0]]; ok {
+					if looksLikeTestJob(root, script, language, name, depth+1) {
+						return true
+					}
+					continue
+				}
+				// Preserve conventional test entry points when the project has no script.
+				if args[0] == "test" {
+					return true
+				}
+				if executable == "npm" {
+					continue
+				}
+				executable = filepath.Base(args[0])
+			}
+		}
+		if executable == name || (name == "cucumber" && executable == "cucumber-js") {
+			if len(args) > 1 && (slices.Contains([]string{"install", "install-deps"}, args[1]) || (name == "cypress" && slices.Contains([]string{"verify", "cache", "info", "version", "help"}, args[1]))) {
+				continue
+			}
+			return true
+		}
+		if language == "ruby" && executable == "rake" {
+			var tasks []string
+			listing := false
+			for i := 1; i < len(args); i++ {
+				arg := args[i]
+				if slices.Contains([]string{"-T", "--tasks", "-D", "--describe", "-P", "--prereqs", "-W", "--where", "-V", "--version", "-h", "--help"}, arg) {
+					listing = true
+				}
+				if slices.Contains([]string{"-f", "--rakefile", "-I", "--libdir", "-r", "--require"}, arg) {
+					i++
+					continue
+				}
+				if !strings.HasPrefix(arg, "-") && !strings.Contains(arg, "=") {
+					tasks = append(tasks, arg)
+				}
+			}
+			if listing {
+				continue
+			}
+			// Keep default and custom tasks as candidates, but exclude known
+			// maintenance tasks that do not execute tests.
+			if len(tasks) == 0 {
+				return true
+			}
+			for _, task := range tasks {
+				task, _, _ = strings.Cut(task, ":")
+				task, _, _ = strings.Cut(task, "[")
+				if !slices.Contains([]string{"rubocop", "standard", "standardrb", "lint", "format", "style", "build", "install", "release", "assets", "clobber", "clean"}, task) {
+					return true
+				}
+			}
+		}
+		if language == "ruby" && executable == "rails" && len(args) > 1 && args[1] == "test" {
+			return true
+		}
+		if language == "python" {
+			if executable == "tox" && toxRunsTests(root, args[1:], name) {
+				return true
+			}
+			if executable == "nox" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Native tox configuration can distinguish test environments from typing and
+// lint environments even when both install pytest. Unknown tox configurations
+// remain candidates, as before; only explicit command overrides exclude a job.
+func toxRunsTests(root string, args []string, name string) bool {
+	type environment struct {
+		Commands [][]any `toml:"commands"`
+	}
+	var project struct {
+		Tool struct {
+			Tox struct {
+				Environments map[string]environment `toml:"env"`
+				Base         environment            `toml:"env_run_base"`
+				Default      []string               `toml:"env_list"`
+			} `toml:"tox"`
+		} `toml:"tool"`
+	}
+	contents, err := os.ReadFile(filepath.Join(root, "pyproject.toml"))
+	if err != nil || toml.Unmarshal(contents, &project) != nil {
+		return true
+	}
+	selected := project.Tool.Tox.Default
+	for i, arg := range args {
+		switch {
+		case (arg == "-e" || arg == "--environment") && i+1 < len(args):
+			selected = strings.Split(args[i+1], ",")
+		case strings.HasPrefix(arg, "--environment="):
+			selected = strings.Split(strings.TrimPrefix(arg, "--environment="), ",")
+		case strings.HasPrefix(arg, "-e") && len(arg) > 2:
+			selected = strings.Split(strings.TrimPrefix(arg, "-e"), ",")
+		}
+	}
+	if len(selected) == 0 {
+		selected = []string{""}
+	}
+	for _, env := range selected {
+		commands := project.Tool.Tox.Environments[env].Commands
+		if commands == nil {
+			commands = project.Tool.Tox.Base.Commands
+		}
+		if commands == nil {
+			return true
+		}
+		for _, command := range commands {
+			var literal []string
+			for _, value := range command {
+				text, ok := value.(string)
+				if !ok {
+					break
+				}
+				literal = append(literal, text)
+			}
+			if len(literal) > 0 && (filepath.Base(literal[0]) == name || (len(literal) > 2 && slices.Contains([]string{"python", "python3", "{envpython}"}, literal[0]) && literal[1] == "-m" && literal[2] == name)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func instructions(language, name string) string {
+	if language == "javascript" && name == "vitest" {
+		return strings.ReplaceAll(vitestInstructions, "ddtest testdrive", "ddtest testdrive --framework vitest")
+	}
+	actionLanguage := language
+	var bootstrap string
+	switch language {
+	case "javascript":
+		actionLanguage = "js"
+		bootstrap = javascriptBootstrap
+		if name == "cypress" {
+			bootstrap += "\n\n" + cypressBootstrap
+		}
+		if name == "cucumber" {
+			bootstrap += "\n\nFor Cucumber, also set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false on the test step. This avoids a tracer crash on Cucumber Background/Rule nodes; basic reporting is unaffected."
+		}
+	case "python":
+		bootstrap = pythonBootstrap
+	case "ruby":
+		bootstrap = rubyBootstrap
+	}
+	text := strings.NewReplacer("__FRAMEWORK__", name, "__LANGUAGE__", actionLanguage, "__BOOTSTRAP__", bootstrap).Replace(gitHubInstructions)
+	return strings.ReplaceAll(text, "ddtest testdrive", "ddtest testdrive --framework "+name)
+}
+
+const javascriptBootstrap = "For every instrumented CI matrix entry, use a Node.js version supported by the tracer selected by the action. The Jest and Vitest testdrives check the action's actual tracer metadata; do not infer CI compatibility from the local Node version. GitHub Actions cannot set NODE_OPTIONS for later steps, so merge this into the existing test step, preserving any current Node options:\n\n```yaml\nenv:\n  NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}\n```\n\nThe --import loader is required for Vitest and other ESM tests."
+
+const pythonBootstrap = "The action exports PYTHONPATH and PYTEST_ADDOPTS=--ddtrace for pytest. Preserve these variables on the existing test step; do not replace its current arguments. Activate the same Python environment used for the tests before the action. If CI uses tox or nox, pass DD_*, PYTHONPATH, and PYTEST_ADDOPTS into the test environment."
+
+const rubyBootstrap = "The action installs datadog-ci into the CI bundle and exports RUBYOPT=-rbundler/setup -rdatadog/ci/auto_instrument. Preserve RUBYOPT on the RSpec or Minitest step and merge any existing Ruby options. Keep the existing bundle exec or binstub entry point."
+
+const cypressBootstrap = `Cypress also needs browser-side instrumentation; NODE_OPTIONS alone is insufficient:
+
+1. In the existing Cypress config, resolve the tracer root from the action's DD_TRACE_PACKAGE value: path.dirname(path.dirname(process.env.DD_TRACE_PACKAGE)). Only enable this configuration when that variable is present. Use import syntax in an ESM config and require in a CommonJS config.
+2. Compose the existing setupNodeEvents callback with the module at path.join(tracerRoot, 'ci/cypress/plugin'), loaded with import in ESM or require in CommonJS. Preserve existing event handlers, including after:run and after:spec; do not replace them.
+3. In setupNodeEvents, generate a support wrapper under RUNNER_TEMP. Write a literal require of path.join(tracerRoot, 'ci/cypress/support'), followed by a literal require of the existing resolved supportFile (unless it is false). Set the returned config.supportFile to that wrapper. Generating literal absolute imports lets Cypress's browser bundler resolve the isolated tracer without adding it to package.json.
+4. Keep the project's existing application startup, browser installation, and cypress run command. Do not use cypress open.
+
+Use the same pattern for e2e or component configuration, whichever the selected job runs. The local testdrive creates equivalent wrappers inside its session automatically. See https://docs.datadoghq.com/tests/setup/javascript/ for the Cypress plugin contract.`
