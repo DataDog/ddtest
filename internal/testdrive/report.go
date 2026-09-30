@@ -28,6 +28,7 @@ type reportCard struct {
 	Title     string
 	Count     int
 	Context   string
+	Advices   []intake.Advice
 	Tests     []reportTest
 	Suites    []reportSuite
 	Coverages []reportCoverage
@@ -220,6 +221,12 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 			Context: fmt.Sprintf("%d coverage entries had an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.", findings.EmptyCoverageEntryCount),
 		})
 	}
+	if findings.MissingCoverage {
+		model.Cards = append(model.Cards, reportCard{
+			Kind: intake.MissingCoverageFinding, Title: "Coverage not reported", Count: 1,
+			Context: "Test events arrived, but no code coverage was reported. Test Impact Analysis cannot map these tests to changed files.",
+		})
+	}
 	if len(findings.FailedTests) > 0 {
 		model.Cards = append(model.Cards, reportCard{
 			Kind: "failed", Title: "Failed tests", Context: "Inspect the errors and source behind each failure.", Count: len(findings.FailedTests),
@@ -260,6 +267,9 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		})
 	}
 	count := len(findings.ConfigurationErrors) + findings.EmptyCoverageEntryCount
+	if findings.MissingCoverage {
+		count++
+	}
 	for _, size := range []int{
 		len(findings.FailedTests), len(findings.FlakyTests), len(findings.SlowTests), len(findings.SlowSuites), len(findings.BroadCoverage),
 	} {
@@ -270,6 +280,13 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	}
 	if len(findings.ConfigurationErrors) > 0 {
 		model.Summary += " Tracer configuration errors: " + strings.Join(findings.ConfigurationErrors, ", ") + ". Inspect the captured traffic and test output."
+	}
+	for _, advice := range intake.Troubleshoot(repositoryRoot, info.Framework, findings) {
+		for i := range model.Cards {
+			if model.Cards[i].Kind == advice.Finding {
+				model.Cards[i].Advices = append(model.Cards[i].Advices, advice)
+			}
+		}
 	}
 	return model
 }

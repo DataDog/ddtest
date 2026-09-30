@@ -301,6 +301,10 @@ func writeFindings(output io.Writer, findings intake.Facts) {
 		_, _ = fmt.Fprintf(output, "Tracer configuration errors: %s. Inspect the captured traffic and test output.\n", strings.Join(findings.ConfigurationErrors, ", "))
 	}
 	count := len(findings.ConfigurationErrors)
+	if findings.MissingCoverage {
+		count++
+		_, _ = fmt.Fprintln(output, "Coverage not reported: test events arrived, but no code coverage was reported. Test Impact Analysis cannot map these tests to changed files.")
+	}
 	if findings.EmptyCoverageEntryCount > 0 {
 		count += findings.EmptyCoverageEntryCount
 		_, _ = fmt.Fprintf(output, "Tracer error: received %d coverage entries with an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.\n", findings.EmptyCoverageEntryCount)
