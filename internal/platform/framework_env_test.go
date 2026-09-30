@@ -110,27 +110,11 @@ func TestFileDiscoveryDoesNotCheckTracer(t *testing.T) {
 	}
 }
 
-func TestPythonFullDiscoveryChecksTracer(t *testing.T) {
-	for _, tc := range []struct {
-		version string
-		fails   bool
-	}{
-		{"4.10.0", true}, {"4.11.0", false},
-	} {
-		t.Run(tc.version, func(t *testing.T) {
-			calls := 0
-			p := NewPython()
-			p.executor = &mockCommandExecutor{combinedOutput: []byte(tc.version), onCombinedOutput: func(_ string, _ []string, _ map[string]string) { calls++ }}
-			env, err := p.DiscoveryEnv(t.Context(), framework.FullDiscovery, framework.RuntimeOptions{Framework: "pytest"})
-			require.Equal(t, 1, calls, "only the framework's discovery request checks the tracer")
-			if tc.fails {
-				require.ErrorContains(t, err, "full test discovery requires ddtrace")
-			} else {
-				require.NoError(t, err)
-				require.Contains(t, env["PYTEST_ADDOPTS"], "--ddtrace")
-			}
-		})
-	}
+func TestPythonFullDiscoveryDoesNotCheckTracer(t *testing.T) {
+	p := &Python{executor: nil}
+	env, err := p.DiscoveryEnv(t.Context(), framework.FullDiscovery, framework.RuntimeOptions{Framework: "pytest"})
+	require.NoError(t, err)
+	require.Contains(t, env["PYTEST_ADDOPTS"], "--ddtrace")
 }
 
 func TestTestdriveTracerEnvironmentPreservesQuotedLoaders(t *testing.T) {

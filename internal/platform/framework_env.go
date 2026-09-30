@@ -89,14 +89,11 @@ func (p *Python) RunEnv(options framework.RuntimeOptions) (map[string]string, er
 	return env, nil
 }
 
-func (p *Python) DiscoveryEnv(ctx context.Context, kind framework.DiscoveryKind, options framework.RuntimeOptions) (map[string]string, error) {
+func (p *Python) DiscoveryEnv(_ context.Context, kind framework.DiscoveryKind, options framework.RuntimeOptions) (map[string]string, error) {
 	switch kind {
 	case framework.FileDiscovery:
 		return copyEnvironment(options.Env), nil
 	case framework.FullDiscovery:
-		if err := p.SanityCheck(ctx); err != nil {
-			return nil, fmt.Errorf("full test discovery requires ddtrace: %w", err)
-		}
 		return p.RunEnv(options)
 	default:
 		return nil, fmt.Errorf("unknown discovery kind: %d", kind)
