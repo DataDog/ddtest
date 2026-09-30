@@ -28,6 +28,12 @@ func TestGoTestFlagsAndVariants(t *testing.T) {
 			t.Fatalf("no-tests contract: %d %q %q %s", code, got, want, stderr)
 		}
 	})
+	t.Run("test-prefix", func(t *testing.T) {
+		out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, "test", "-test.v", "-test.run=^TestPass$", "-count=1", ".")
+		if code != 0 || !strings.Contains(out, "=== RUN   TestPass") {
+			t.Fatalf("native test flag prefix: %d %s\n%s", code, out, stderr)
+		}
+	})
 	t.Run("json-tags-multiple-packages", func(t *testing.T) {
 		out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false", "GOFLAGS=-tags=poc_extra"), driver, "test", "-count=1", "-json", "-run=^(TestTagged|TestOther)$", "./...")
 		if code != 0 || !strings.Contains(out, `"Test":"TestTagged"`) || !strings.Contains(out, `"Test":"TestOther"`) {

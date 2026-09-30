@@ -10,6 +10,7 @@ func TestPackageAndFlagSelection(t *testing.T) {
 		{[]string{"-race", "-tags", "integration", "-run", "TestOne", "./...", "-args", "./not-a-package"}, []string{"./..."}, []string{"-race", "-tags", "integration"}},
 		{[]string{"./one", "-count=2", "./two", "-covermode=atomic", "-cover"}, []string{"./one", "./two"}, []string{"-covermode=atomic", "-cover"}},
 		{[]string{"-json", "-timeout", "10s"}, []string{"."}, nil},
+		{[]string{"-test.v", "-test.run=TestPass", "."}, []string{"."}, nil},
 	}
 	for _, c := range cases {
 		got, err := parseOptions(c.args, "")

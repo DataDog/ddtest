@@ -166,6 +166,12 @@ func prepareFixture(t *testing.T, baseline bool) (string, string) {
 	}
 	dir := filepath.Join(t.TempDir(), "fixture")
 	copyTree(t, filepath.Join(root, "testdata/fixture"), dir)
+	// Go resolves its working directory without the parent's PWD. On macOS,
+	// /var/folders aliases /private/var/folders; overlay keys must use Go's path.
+	dir, err = filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if baseline {
 		// Both compilers use this SAME temporary module graph, including any MVS
 		// upgrades introduced by the reference tool. The SDK version stays fixed.

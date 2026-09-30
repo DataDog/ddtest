@@ -94,7 +94,7 @@ func parseOptions(args []string, goflags string) (options, error) {
 			return o, fmt.Errorf("run ddtest from the target directory; -C is not supported by this POC")
 		}
 		if buildBool[name] || testBool[name] {
-			if buildBool[name] {
+			if buildBool[name] && !strings.HasPrefix(a, "-test.") {
 				o.buildFlags = append(o.buildFlags, a)
 			}
 			continue
