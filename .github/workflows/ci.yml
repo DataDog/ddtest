@@ -216,7 +216,7 @@ jobs:
           dd_trace_dir="${RUNNER_TEMP}/dd-trace-${{ matrix.dd_trace }}"
           npm install --prefix "${dd_trace_dir}" "dd-trace@${{ matrix.dd_trace }}"
           DDTEST_DD_TRACE_NODE_MODULES="${dd_trace_dir}/node_modules" \
-            go test -v ./internal/compatibility -run '^TestJavaScriptPlatformIntegration$'
+            go test -v ./internal/compatibility -run '^TestJavaScript(Platform|ActionPreload)Integration$'
 
   jest-compatibility:
     runs-on: ubuntu-latest

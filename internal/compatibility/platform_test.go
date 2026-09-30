@@ -72,6 +72,39 @@ func TestJavaScriptPlatformIntegration(t *testing.T) {
 	requireRuntimeTags(t, tags, "javascript")
 }
 
+func TestJavaScriptActionPreloadIntegration(t *testing.T) {
+	nodeModules := requireEnv(t, "DDTEST_DD_TRACE_NODE_MODULES")
+	preload := filepath.Join(nodeModules, "dd-trace", "ci", "init.js")
+	if !filepath.IsAbs(preload) {
+		t.Fatalf("action-style preload must be absolute: %q", preload)
+	}
+	if _, err := os.Stat(preload); err != nil {
+		t.Fatalf("external dd-trace preload is unavailable: %v", err)
+	}
+
+	root := t.TempDir()
+	writeFixture(t, root, "package.json", `{"name":"external-tracer-fixture","private":true}`)
+	t.Chdir(root)
+	t.Setenv("DD_TRACE_PACKAGE", preload)
+	t.Setenv("NODE_OPTIONS", "-r "+os.Getenv("DD_TRACE_PACKAGE"))
+
+	// The action installs dd-trace outside the project, so the only usable
+	// tracer is the absolute preload supplied to the plan and run steps.
+	javascript := platform.NewJavaScript()
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	if err := javascript.SanityCheck(ctx); err != nil {
+		t.Fatalf("JavaScript sanity check rejected the action preload: %v", err)
+	}
+	resolved, err := javascript.DetectTracer(ctx, platform.TracerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != preload {
+		t.Fatalf("resolved tracer = %q, want action preload %q", resolved, preload)
+	}
+}
+
 func requireRuntimeTags(t *testing.T, tags map[string]string, language string) {
 	t.Helper()
 	want := map[string]string{
