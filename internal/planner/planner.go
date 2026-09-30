@@ -266,16 +266,20 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	detectedPlatform, testFramework := tp.platform, tp.framework
 
-	// Get platform-detected tags first
-	tags, err := detectedPlatform.CreateTagsMap(ctx)
-	if err != nil {
-		return errcode.WithCode(errcode.PlanPlatformTagsCreationFailed, fmt.Errorf("failed to create platform tags: %w", err))
-	}
-
-	// Check if runtime tags override is provided and merge onto detected tags
 	overrideTags, err := settings.GetRuntimeTagsMap()
 	if err != nil {
 		return errcode.WithCode(errcode.PlanRuntimeTagsInvalid, fmt.Errorf("failed to parse runtime tags override: %w", err))
+	}
+
+	// A complete supplied configuration can plan for a separate execution
+	// environment without probing the planning job's runtime. Partial overrides
+	// still merge onto detected tags for compatibility with existing callers.
+	tags := map[string]string{"language": detectedPlatform.Name()}
+	if !completeRuntimeTags(overrideTags) {
+		tags, err = detectedPlatform.CreateTagsMap(ctx)
+		if err != nil {
+			return errcode.WithCode(errcode.PlanPlatformTagsCreationFailed, fmt.Errorf("failed to create platform tags: %w", err))
+		}
 	}
 
 	if overrideTags != nil {
@@ -500,6 +504,15 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	slog.Info("Test files prepared", "testFilesCount", len(tp.testFiles))
 
 	return nil
+}
+
+func completeRuntimeTags(tags map[string]string) bool {
+	for _, key := range []string{constants.OSPlatform, constants.OSArchitecture, constants.OSVersion, constants.RuntimeName, constants.RuntimeVersion} {
+		if tags[key] == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func (tp *TestPlanner) recordPlanningTelemetry(selection splitSelection) {

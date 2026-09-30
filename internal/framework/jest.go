@@ -21,12 +21,9 @@ import (
 )
 
 const (
-	binJestPath            = "node_modules/.bin/jest"
-	nodeOptionsEnvVar      = "NODE_OPTIONS"
-	ddTraceCIInitModule    = "dd-trace/ci/init"
-	nodeRequireShortArg    = "-r"
-	nodeRequireLongArg     = "--require"
-	nodeRequireLongArgWith = nodeRequireLongArg + "="
+	binJestPath         = "node_modules/.bin/jest"
+	nodeOptionsEnvVar   = "NODE_OPTIONS"
+	ddTraceCIInitModule = "dd-trace/ci/init"
 )
 
 var ErrFullTestDiscoveryUnsupported = errors.New("full test discovery is not supported")
@@ -200,30 +197,7 @@ func filterJestTestFiles(testFiles []string, selectedTestFiles discovery.TestFil
 }
 
 func stripNodeOptionsRequire(nodeOptions string, module string) string {
-	fields := strings.Fields(nodeOptions)
-	stripped := make([]string, 0, len(fields))
-	for i := 0; i < len(fields); i++ {
-		field := fields[i]
-
-		if field == nodeRequireShortArg || field == nodeRequireLongArg {
-			if i+1 < len(fields) && fields[i+1] == module {
-				i++
-				continue
-			}
-		}
-
-		if strings.HasPrefix(field, nodeRequireShortArg) && strings.TrimPrefix(field, nodeRequireShortArg) == module {
-			continue
-		}
-
-		if strings.HasPrefix(field, nodeRequireLongArgWith) && strings.TrimPrefix(field, nodeRequireLongArgWith) == module {
-			continue
-		}
-
-		stripped = append(stripped, field)
-	}
-
-	return strings.Join(stripped, " ")
+	return utils.NodeOptionsWithoutRequire(nodeOptions, module)
 }
 
 // Jest's --listTests --json writes an array of absolute paths. Preloads and

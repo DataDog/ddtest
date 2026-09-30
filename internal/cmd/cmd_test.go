@@ -920,12 +920,22 @@ func (m *fakeTelemetryMetric) Submit(value float64) {
 type selectionPlatform struct {
 	platform.Platform
 	framework                   framework.Framework
+	platformName                string
+	tagsErr                     error
 	frameworkErr, sanityErr     error
 	frameworkCalls, sanityCalls int
 	sanityContext               context.Context
 }
 
-func (p *selectionPlatform) Name() string { return "javascript" }
+func (p *selectionPlatform) Name() string {
+	if p.platformName != "" {
+		return p.platformName
+	}
+	return "javascript"
+}
+func (p *selectionPlatform) CreateTagsMap(context.Context) (map[string]string, error) {
+	return nil, p.tagsErr
+}
 func (p *selectionPlatform) DetectFramework() (framework.Framework, error) {
 	p.frameworkCalls++
 	return p.framework, p.frameworkErr
@@ -945,21 +955,21 @@ func TestResolveTestEnvironment(t *testing.T) {
 		calls++
 		return p, nil
 	}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	gotPlatform, gotFramework, err := resolveTestEnvironment(ctx, errcode.PlanPlatformDetectionFailed, errcode.PlanFrameworkDetectionFailed)
+	gotPlatform, gotFramework, err := resolveTestEnvironment(errcode.PlanPlatformDetectionFailed, errcode.PlanFrameworkDetectionFailed)
 	require.NoError(t, err)
 	require.Same(t, p, gotPlatform)
 	require.Same(t, p.framework, gotFramework)
 	require.Equal(t, 1, calls)
 	require.Equal(t, 1, p.frameworkCalls)
-	require.Equal(t, 1, p.sanityCalls)
-	require.Equal(t, ctx, p.sanityContext)
+	require.Zero(t, p.sanityCalls, "selection must not require a tracer")
 }
 
 func TestCommandsRejectSelectionErrorsBeforePlanningOrExecution(t *testing.T) {
 	for _, command := range []string{"plan", "run"} {
 		for _, stage := range []string{"platform", "framework", "prerequisites"} {
+			if command == "plan" && stage == "prerequisites" {
+				continue // Only execution requires tracer prerequisites.
+			}
 			t.Run(command+"/"+stage, func(t *testing.T) {
 				original := detectPlatform
 				t.Cleanup(func() { detectPlatform = original })
@@ -997,5 +1007,33 @@ func TestCommandsRejectSelectionErrorsBeforePlanningOrExecution(t *testing.T) {
 				require.Equal(t, code, errcode.CodeOf(err))
 			})
 		}
+	}
+}
+
+func TestPlanDoesNotCheckTracerPrerequisites(t *testing.T) {
+	for _, name := range []string{"ruby", "python", "javascript"} {
+		t.Run(name, func(t *testing.T) {
+			original := detectPlatform
+			t.Cleanup(func() { detectPlatform = original })
+			t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS", "")
+			settings.Init()
+			t.Cleanup(settings.Init)
+			probeReached := errors.New("runtime tag probe reached")
+			p := &selectionPlatform{
+				platformName: name,
+				framework:    framework.NewJest(),
+				sanityErr:    errors.New("tracer is not installed"),
+				tagsErr:      probeReached,
+			}
+			detectPlatform = func() (platform.Platform, error) { return p, nil }
+			err := planCommand(t.Context(), telemetry.NoopClient())
+			require.ErrorIs(t, err, probeReached)
+			require.Zero(t, p.sanityCalls)
+
+			_, err = newRunner(t.Context(), telemetry.NoopClient())
+			require.ErrorIs(t, err, p.sanityErr)
+			require.Equal(t, 1, p.sanityCalls)
+			require.Equal(t, t.Context(), p.sanityContext)
+		})
 	}
 }

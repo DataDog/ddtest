@@ -3,6 +3,7 @@ package compatibility
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive"
@@ -43,7 +45,7 @@ func TestJavaScriptProjectEnvironment(t *testing.T) {
 	defer cancel()
 	root := filepath.Join(t.TempDir(), "project with spaces")
 	writeFixture(t, root, "package.json", `{"name":"pnp-regression","private":true,"scripts":{"test":"jest"},"dependencies":{"dd-trace":"file:./tracer"}}`)
-	writeFixture(t, root, "tracer/package.json", `{"name":"dd-trace","version":"1.0.0","dependencies":{"pnp-tracer-helper":"file:../helper"}}`)
+	writeFixture(t, root, "tracer/package.json", `{"name":"dd-trace","version":"6.18.0","engines":{"node":">=18"},"dependencies":{"pnp-tracer-helper":"file:../helper"}}`)
 	writeFixture(t, root, "helper/package.json", `{"name":"pnp-tracer-helper","version":"1.0.0","main":"index.js"}`)
 	writeFixture(t, root, "helper/index.js", "module.exports = 'loaded through PnP';\n")
 	writeFixture(t, root, "tracer/ci/init.js", "global.ddtestTracer = require('pnp-tracer-helper');\n")
@@ -65,6 +67,9 @@ process.on('exit', () => {
 	// Prove the fixture cannot pass through ordinary node_modules resolution.
 	_, err := javascript.DetectTracer(ctx, platform.TracerOptions{})
 	require.ErrorContains(t, err, "Cannot find module 'dd-trace/ci/init'")
+	tags, err := javascript.CreateTagsMap(ctx)
+	require.NoError(t, err, "planning tags must not require an installed tracer")
+	requireRuntimeTags(t, tags, "javascript")
 	t.Setenv("NODE_OPTIONS", "--require "+strconv.Quote(loader)+" --require "+strconv.Quote(filepath.Join(root, "noisy-preload.cjs"))+" --max-old-space-size=256")
 	require.NoError(t, javascript.SanityCheck(ctx))
 	path, err := javascript.DetectTracer(ctx, platform.TracerOptions{})
@@ -84,10 +89,20 @@ process.on('exit', () => {
 	writeFixture(t, root, "example.test.js", "// Worker-startup fixture.\n")
 	writeFixture(t, root, "worker.cjs", `const assert = require('assert');
 const fs = require('fs');
-if (process.argv.includes('--listTests')) {
+if (process.argv.includes('--showConfig')) {
+  assert.strictEqual(global.ddtestTracer, undefined);
+  console.log(JSON.stringify({ version: '30.2.0', configs: [{ rootDir: process.cwd(), testRunner: 'jest-circus/runner' }] }));
+} else if (process.argv.includes('--listTests')) {
   assert.strictEqual(global.ddtestTracer, undefined);
   assert(process.argv.includes('--json'));
   console.log(JSON.stringify([require('path').resolve('example.test.js')]));
+} else if (process.argv.includes('--outputFile')) {
+  const instrumented = process.env.DD_CIVISIBILITY_ENABLED === 'true';
+  assert.strictEqual(global.ddtestTracer, instrumented ? 'loaded through PnP' : undefined);
+  fs.appendFileSync('worker-ran', instrumented ? 'instrumented\n' : 'baseline\n');
+  fs.writeFileSync(process.argv[process.argv.indexOf('--outputFile') + 1], JSON.stringify({
+    testResults: [{ name: require('path').resolve('example.test.js'), assertionResults: [{ fullName: 'works', status: 'passed' }] }]
+  }));
 } else {
   assert.strictEqual(global.ddtestTracer, 'loaded through PnP');
   fs.writeFileSync('worker-ran', 'instrumented');
@@ -109,10 +124,29 @@ if (process.argv.includes('--listTests')) {
 		require.NoError(t, err)
 		var output bytes.Buffer
 		err = drive.Run(ctx, &output)
-		// This fixture checks startup, not telemetry. A successful command with
-		// no events is distinguishable from a failed Node preload.
-		require.ErrorContains(t, err, "command exited successfully, but Test Optimization sent no test events", output.String())
-		require.FileExists(t, filepath.Join(root, "worker-ran"))
+		// The fixture exercises both startup modes but emits no telemetry, so
+		// successful worker startup must not produce a passing validation verdict.
+		require.ErrorContains(t, err, "validation is incomplete", output.String())
+		data, err := os.ReadFile(filepath.Join(root, "worker-ran"))
+		require.NoError(t, err)
+		require.Contains(t, string(data), "baseline\ninstrumented\n")
+		data, err = os.ReadFile(filepath.Join(root, ".testoptimization", "testdrive.json"))
+		require.NoError(t, err)
+		var report struct {
+			Success bool
+			Runs    []struct {
+				Name     string
+				ExitCode *int `json:"exit_code"`
+			}
+		}
+		require.NoError(t, json.Unmarshal(data, &report))
+		require.False(t, report.Success)
+		require.GreaterOrEqual(t, len(report.Runs), 2)
+		for i, name := range []string{"baseline", "reporting-only"} {
+			require.Equal(t, name, report.Runs[i].Name)
+			require.NotNil(t, report.Runs[i].ExitCode)
+			require.Zero(t, *report.Runs[i].ExitCode)
+		}
 	})
 }
 
@@ -175,9 +209,48 @@ atexit.register(lambda: print('shutdown stderr', file=sys.stderr))
 	python := platform.NewPython()
 	_, err := python.DetectTracer(ctx, platform.TracerOptions{Command: "python"})
 	require.ErrorContains(t, err, "PackageNotFoundError")
+	tags, err := python.CreateTagsMap(ctx)
+	require.NoError(t, err, "planning tags must not require an installed tracer")
+	requireRuntimeTags(t, tags, "python")
 	t.Setenv("PYTHONPATH", filepath.Join(root, "packages"))
 	require.NoError(t, python.SanityCheck(ctx))
 	version, err := python.DetectTracer(ctx, platform.TracerOptions{Command: "python"})
 	require.NoError(t, err)
 	require.Equal(t, "4.11.0", version)
+}
+
+func TestRubyTagsWithoutTracer(t *testing.T) {
+	requireRuntime(t, "bundle")
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	root := t.TempDir()
+	writeFixture(t, root, "Gemfile", "source 'https://rubygems.org'\n")
+	t.Chdir(root)
+	t.Setenv("BUNDLE_GEMFILE", filepath.Join(root, "Gemfile"))
+	t.Setenv("BUNDLE_USER_HOME", filepath.Join(root, "bundle-home"))
+	t.Setenv("RUBYOPT", "")
+	runFixtureCommand(t, ctx, "bundle", "lock", "--local")
+	ruby := platform.NewRuby(settings.TestSkippingLevelTest)
+	_, err := ruby.DetectTracer(ctx, platform.TracerOptions{})
+	require.Error(t, err, "the fixture must not have a tracer in its bundle")
+	tags, err := ruby.CreateTagsMap(ctx)
+	require.NoError(t, err)
+	requireRuntimeTags(t, tags, "ruby")
+
+	resetSettingsAfterTest(t)
+	writeFixture(t, root, "discovery.rb", "File.write('discovery-ran', 'unexpected')\n")
+	configureFramework(shellCommand("ruby", filepath.Join(root, "discovery.rb")), "")
+	for _, fw := range []framework.Framework{framework.NewRSpec(), framework.NewMinitest()} {
+		t.Run(fw.Name(), func(t *testing.T) {
+			t.Cleanup(func() { _ = os.Remove(filepath.Join(root, "discovery-ran")) })
+			writeFixture(t, root, "example_test.rb", "# File discovery needs no tracer.\n")
+			files := discovery.TestFileSet{Pattern: "*_test.rb"}
+			_, err := fw.DiscoverTests(ctx, files)
+			require.NoFileExists(t, filepath.Join(root, "discovery-ran"), "full discovery must reject the missing library before starting the test command")
+			require.ErrorContains(t, err, "full test discovery requires datadog-ci")
+			discovered, err := fw.DiscoverTestFiles(ctx, files)
+			require.NoError(t, err)
+			require.Equal(t, []string{"example_test.rb"}, discovered)
+		})
+	}
 }
