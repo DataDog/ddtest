@@ -49,7 +49,11 @@ func TestJavaScriptDiscoveryEnvironment(t *testing.T) {
 			p := NewJavaScript()
 			env, err := p.DiscoveryEnv(t.Context(), framework.FileDiscovery, framework.RuntimeOptions{Framework: name, Env: input, PreloadFiles: []string{"/adapter with spaces/entry.js"}})
 			require.NoError(t, err)
-			require.Equal(t, `--require "/project with spaces/.pnp.cjs" --max-old-space-size=4096 --require "/adapter with spaces/entry.js"`, env["NODE_OPTIONS"])
+			want := `--require "/project with spaces/.pnp.cjs" --import=/external/dd-trace/register.js --max-old-space-size=4096 --require "/adapter with spaces/entry.js"`
+			if name == "vitest" {
+				want = `--require "/project with spaces/.pnp.cjs" --max-old-space-size=4096 --require "/adapter with spaces/entry.js"`
+			}
+			require.Equal(t, want, env["NODE_OPTIONS"])
 			require.Equal(t, map[string]string{"CUSTOM": "value"}, input)
 			require.Equal(t, "value", env["CUSTOM"])
 			require.Equal(t, inherited, os.Getenv("NODE_OPTIONS"))
@@ -117,8 +121,43 @@ func TestPythonFullDiscoveryDoesNotCheckTracer(t *testing.T) {
 	require.Contains(t, env["PYTEST_ADDOPTS"], "--ddtrace")
 }
 
-func TestTestdriveTracerEnvironmentPreservesQuotedLoaders(t *testing.T) {
-	t.Setenv("NODE_OPTIONS", `--require "/project with spaces/.pnp.cjs" --require="/old tracer/dd-trace/ci/init.js" --import="/old tracer/dd-trace/register.js"`)
-	env := NewJavaScript().TracerEnv("/new tracer/dd-trace/ci/init.js")
-	require.Equal(t, `--require "/project with spaces/.pnp.cjs" -r "/new tracer/dd-trace/ci/init.js"`, env["NODE_OPTIONS"])
+func TestSelectedFrameworkKeepsCapturedEnvironment(t *testing.T) {
+	for _, tc := range []struct {
+		p                       Platform
+		framework, key, initial string
+	}{
+		{NewJavaScript(), "mocha", "NODE_OPTIONS", "--require original-loader.cjs"},
+		{NewJavaScript(), "vitest", "NODE_OPTIONS", "--require original-loader.cjs"},
+		{NewRuby(settings.TestSkippingLevelTest), "rspec", "RUBYOPT", "-roriginal_setup"},
+		{NewPython(), "pytest", "PYTEST_ADDOPTS", "-q"},
+	} {
+		t.Run(tc.framework, func(t *testing.T) {
+			resetDetectionSettings(t)
+			settings.Get().Framework = tc.framework
+			t.Setenv(tc.key, tc.initial)
+			if tc.p.Name() == "ruby" {
+				require.NoError(t, os.Unsetenv(tc.key))
+			}
+			t.Setenv("DD_TRACE_PACKAGE", "/original/dd-trace/ci/init.js")
+			t.Setenv("DD_TRACE_ESM_IMPORT", "/original/dd-trace/register.js")
+			fw, err := tc.p.DetectFramework()
+			require.NoError(t, err)
+			before := frameworkRunEnv(t, fw)
+			if tc.p.Name() == "ruby" {
+				require.Equal(t, rubyOptDefaultValue, before[tc.key])
+			} else {
+				require.Contains(t, before[tc.key], tc.initial)
+			}
+
+			t.Setenv(tc.key, "changed after detection")
+			t.Setenv("DD_TRACE_PACKAGE", "/changed/dd-trace/ci/init.js")
+			t.Setenv("DD_TRACE_ESM_IMPORT", "/changed/dd-trace/register.js")
+			require.Equal(t, before, frameworkRunEnv(t, fw))
+			if tc.p.Name() == "javascript" {
+				env, err := tc.p.DiscoveryEnv(t.Context(), framework.FileDiscovery, framework.RuntimeOptions{Framework: tc.framework})
+				require.NoError(t, err)
+				require.Equal(t, tc.initial, env[tc.key])
+			}
+		})
+	}
 }

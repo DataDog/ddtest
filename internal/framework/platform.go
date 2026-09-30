@@ -22,7 +22,7 @@ type RuntimeOptions struct {
 	PreloadFiles []string
 }
 
-// DiscoveryKind distinguishes native file discovery from tracer-based full discovery.
+// DiscoveryKind distinguishes file discovery from full test discovery.
 type DiscoveryKind uint8
 
 const (

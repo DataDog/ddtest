@@ -32,7 +32,8 @@ const (
 )
 
 type JavaScript struct {
-	executor commandExecutor
+	frameworkEnv map[string]string
+	executor     commandExecutor
 }
 
 func NewJavaScript() *JavaScript {
@@ -76,6 +77,10 @@ func (j *JavaScript) DetectFramework() (framework.Framework, error) {
 	fw, err := selectFramework(j.Name(), hint, candidates)
 	if err != nil {
 		return nil, err
+	}
+	j.frameworkEnv = j.baseEnv()
+	if fw.Name() == "vitest" {
+		j.frameworkEnv = addNodeImport(j.frameworkEnv, ddTraceRegisterModule)
 	}
 	return fw, nil
 }
@@ -348,13 +353,56 @@ func (j *JavaScript) TracerInstallCommand(options TracerOptions) (string, []stri
 	return "npm", installArgs, nil
 }
 
-// TracerEnv selects an explicit tracer for an isolated testdrive run, preserving
-// project loaders while replacing any inherited Datadog preload.
-func (j *JavaScript) TracerEnv(preload string) map[string]string {
-	current := nodeOptionsWithoutImport(nodeOptionsWithoutRequire(os.Getenv(nodeOptionsEnvVar), ddTraceCIInitModule), ddTraceRegisterModule)
-	value := "-r " + strconv.Quote(preload)
-	if current != "" {
-		value = current + " " + value
+func (j *JavaScript) RunEnv(options framework.RuntimeOptions) (map[string]string, error) {
+	env := j.executionEnv(options.Framework)
+	maps.Copy(env, options.Env)
+	appendNodePreloads(env, options.PreloadFiles)
+	return env, nil
+}
+
+func (j *JavaScript) DiscoveryEnv(_ context.Context, kind framework.DiscoveryKind, options framework.RuntimeOptions) (map[string]string, error) {
+	if kind != framework.FileDiscovery {
+		return nil, fmt.Errorf("JavaScript full test discovery is not supported")
 	}
-	return map[string]string{nodeOptionsEnvVar: value}
+	env := j.executionEnv(options.Framework)
+	maps.Copy(env, options.Env)
+	current, found := env[nodeOptionsEnvVar]
+	if !found {
+		current, found = os.LookupEnv(nodeOptionsEnvVar)
+	}
+	if found || options.Framework == "cucumber" {
+		current = nodeOptionsWithoutRequire(current, ddTraceCIInitModule)
+		if options.Framework == "vitest" {
+			current = nodeOptionsWithoutImport(current, ddTraceRegisterModule)
+		}
+		env[nodeOptionsEnvVar] = current
+	}
+	appendNodePreloads(env, options.PreloadFiles)
+	return env, nil
+}
+
+func appendNodePreloads(env map[string]string, files []string) {
+	if len(files) == 0 {
+		return
+	}
+	current, found := env[nodeOptionsEnvVar]
+	if !found {
+		current = os.Getenv(nodeOptionsEnvVar)
+	}
+	for _, file := range files {
+		current = strings.TrimSpace(current + " --require " + strconv.Quote(file))
+	}
+	env[nodeOptionsEnvVar] = current
+}
+
+// executionEnv preserves the environment captured when the framework was selected.
+func (j *JavaScript) executionEnv(name string) map[string]string {
+	if j.frameworkEnv != nil {
+		return maps.Clone(j.frameworkEnv)
+	}
+	env := j.baseEnv()
+	if name == "vitest" {
+		env = addNodeImport(env, ddTraceRegisterModule)
+	}
+	return env
 }

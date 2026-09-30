@@ -563,7 +563,7 @@ func TestRunReportsTestOutputWriteFailure(t *testing.T) {
 
 func TestTestEnvironmentPreservesExistingNodeOptions(t *testing.T) {
 	t.Setenv("NODE_OPTIONS", "--require dd-trace/ci/init --max-old-space-size=4096 --import=/tmp/dd-trace/register.js")
-	environment := platform.NewJavaScript().TracerEnv("/tmp/dd-trace/ci/init.js")
+	environment := javascriptEnvironment("/tmp/dd-trace/ci/init.js")
 	if environment["NODE_OPTIONS"] != `--max-old-space-size=4096 -r "/tmp/dd-trace/ci/init.js"` {
 		t.Fatalf("NODE_OPTIONS = %q", environment["NODE_OPTIONS"])
 	}

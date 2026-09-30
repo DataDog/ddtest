@@ -42,7 +42,8 @@ const (
 )
 
 type Python struct {
-	executor commandExecutor
+	frameworkEnv map[string]string
+	executor     commandExecutor
 }
 
 func NewPython() *Python {
@@ -86,6 +87,7 @@ func (p *Python) DetectFramework() (framework.Framework, error) {
 	if err != nil {
 		return nil, err
 	}
+	p.frameworkEnv = p.baseEnv()
 	return fw, nil
 }
 
@@ -260,4 +262,27 @@ func (p *Python) TracerInstallCommand(options TracerOptions) (string, []string, 
 	target := filepath.Join(options.Directory, "python-packages")
 	args := append(append([]string{}, prefixArgs...), "-m", "pip", "install", "--disable-pip-version-check", "--target", target, packageName)
 	return command, args, nil
+}
+
+func (p *Python) RunEnv(options framework.RuntimeOptions) (map[string]string, error) {
+	if len(options.PreloadFiles) != 0 {
+		return nil, fmt.Errorf("Python framework preloads are not supported")
+	}
+	env := maps.Clone(p.frameworkEnv)
+	if env == nil {
+		env = p.baseEnv()
+	}
+	maps.Copy(env, options.Env)
+	return env, nil
+}
+
+func (p *Python) DiscoveryEnv(_ context.Context, kind framework.DiscoveryKind, options framework.RuntimeOptions) (map[string]string, error) {
+	switch kind {
+	case framework.FileDiscovery:
+		return maps.Clone(options.Env), nil
+	case framework.FullDiscovery:
+		return p.RunEnv(options)
+	default:
+		return nil, fmt.Errorf("unknown discovery kind: %d", kind)
+	}
 }

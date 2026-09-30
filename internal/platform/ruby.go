@@ -26,6 +26,7 @@ const (
 )
 
 type Ruby struct {
+	frameworkEnv      map[string]string
 	executor          commandExecutor
 	testSkippingLevel settings.TestSkippingLevel
 }
@@ -74,6 +75,7 @@ func (r *Ruby) DetectFramework() (framework.Framework, error) {
 	if err != nil {
 		return nil, err
 	}
+	r.frameworkEnv = r.baseEnv()
 	return fw, nil
 }
 
@@ -167,4 +169,30 @@ func (r *Ruby) TracerInstallCommand(options TracerOptions) (string, []string, er
 		args = append(args, "--version", options.Version)
 	}
 	return "bundle", args, nil
+}
+
+func (r *Ruby) RunEnv(options framework.RuntimeOptions) (map[string]string, error) {
+	if len(options.PreloadFiles) != 0 {
+		return nil, fmt.Errorf("Ruby framework preloads are not supported")
+	}
+	env := maps.Clone(r.frameworkEnv)
+	if env == nil {
+		env = r.baseEnv()
+	}
+	maps.Copy(env, options.Env)
+	return env, nil
+}
+
+func (r *Ruby) DiscoveryEnv(ctx context.Context, kind framework.DiscoveryKind, options framework.RuntimeOptions) (map[string]string, error) {
+	switch kind {
+	case framework.FileDiscovery:
+		return maps.Clone(options.Env), nil
+	case framework.FullDiscovery:
+		if err := r.SanityCheck(ctx); err != nil {
+			return nil, fmt.Errorf("full test discovery requires datadog-ci: %w", err)
+		}
+		return r.RunEnv(options)
+	default:
+		return nil, fmt.Errorf("unknown discovery kind: %d", kind)
+	}
 }
