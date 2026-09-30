@@ -390,3 +390,32 @@ func TestCucumberRunPreservesWrapperSeparatorAndTags(t *testing.T) {
 		t.Fatal(args)
 	}
 }
+
+func TestCucumberDiscoveryAppliesNodeOptionsDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{name: "missing", env: map[string]string{}, want: ""},
+		{name: "prepared by platform", env: map[string]string{"NODE_OPTIONS": "--require project-loader.cjs"}, want: "--require project-loader.cjs"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			executor := &cucumberCommandExecutor{messages: []cucumberEnvelope{}}
+			cucumber := &Cucumber{
+				executor:        executor,
+				commandOverride: []string{"cucumber-js"},
+				platform:        &testPlatform{env: tc.env},
+			}
+			_, err := cucumber.DiscoverTestFiles(t.Context(), discovery.TestFileSet{Pattern: "features/**/*.feature"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			value, found := executor.capturedEnv["NODE_OPTIONS"]
+			if !found || value != tc.want {
+				t.Fatalf("NODE_OPTIONS = %q (present=%t), want %q", value, found, tc.want)
+			}
+		})
+	}
+}

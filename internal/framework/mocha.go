@@ -98,7 +98,7 @@ func (m *Mocha) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestF
 		return nil, err
 	}
 	defer func() { _ = os.Remove(adapterPath) }()
-	adapterEnv, err = m.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{Framework: m.Name(), Env: adapterEnv, PreloadFiles: []string{adapterPath}})
+	adapterEnv, err = m.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{Env: adapterEnv, PreloadFiles: []string{adapterPath}})
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +142,7 @@ func (m *Mocha) RunTests(ctx context.Context, testFiles []string, envMap map[str
 	defer func() { _ = os.Remove(adapterPath) }()
 	maps.Copy(adapterEnv, envMap)
 	adapterEnv[mochaRequestEnvVar] = string(request)
-	adapterEnv, err = m.platform.RunEnv(RuntimeOptions{Framework: m.Name(), Env: adapterEnv, PreloadFiles: []string{adapterPath}})
+	adapterEnv, err = m.platform.RunEnv(RuntimeOptions{Env: adapterEnv, PreloadFiles: []string{adapterPath}})
 	if err != nil {
 		return err
 	}

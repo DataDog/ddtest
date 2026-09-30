@@ -17,7 +17,8 @@ type Platform interface {
 // Env overrides inherited values, including explicitly empty values. Methods return
 // a fresh map and never modify Env. PreloadFiles are appended after project loaders.
 type RuntimeOptions struct {
-	Framework    string
+	// ESM requests ESM instrumentation for execution and its removal for discovery.
+	ESM          bool
 	Env          map[string]string
 	PreloadFiles []string
 }

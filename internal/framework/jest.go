@@ -87,7 +87,7 @@ func (j *Jest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFi
 		return slices.Clone(testFiles.ExplicitFiles), nil
 	}
 
-	envMap, err := j.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{Framework: j.Name()})
+	envMap, err := j.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +125,7 @@ func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[stri
 
 	slog.Info("Running tests with command", "command", command, "args", args)
 
-	mergedEnv, err := j.platform.RunEnv(RuntimeOptions{Framework: j.Name(), Env: envMap})
+	mergedEnv, err := j.platform.RunEnv(RuntimeOptions{Env: envMap})
 	if err != nil {
 		return err
 	}

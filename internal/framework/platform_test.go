@@ -14,14 +14,17 @@ import (
 
 // testPlatform supplies prepared environments; runtime policy is tested in platform.
 type testPlatform struct {
-	env          map[string]string
-	discoveryErr error
-	runErr       error
+	env              map[string]string
+	discoveryErr     error
+	runErr           error
+	runOptions       RuntimeOptions
+	discoveryOptions RuntimeOptions
 }
 
 func (p *testPlatform) Name() string                      { return "test" }
 func (p *testPlatform) SanityCheck(context.Context) error { return nil }
 func (p *testPlatform) RunEnv(options RuntimeOptions) (map[string]string, error) {
+	p.runOptions = options
 	env := make(map[string]string)
 	maps.Copy(env, p.env)
 	maps.Copy(env, options.Env)
@@ -33,6 +36,7 @@ func (p *testPlatform) RunEnv(options RuntimeOptions) (map[string]string, error)
 }
 func (p *testPlatform) DiscoveryEnv(_ context.Context, _ DiscoveryKind, options RuntimeOptions) (map[string]string, error) {
 	env, _ := p.RunEnv(options)
+	p.discoveryOptions = options
 	return env, p.discoveryErr
 }
 
@@ -89,8 +93,10 @@ func TestFrameworksPropagatePlatformErrors(t *testing.T) {
 				_, err = fw.DiscoverTestFiles(t.Context(), files)
 			}
 			require.ErrorIs(t, err, failure)
+			require.Equal(t, fw.Name() == "vitest", p.discoveryOptions.ESM)
 			require.Zero(t, e.probes, "discovery must stop before executing commands")
 			require.ErrorIs(t, fw.RunTests(t.Context(), []string{"example_test.rb"}, nil), failure)
+			require.Equal(t, fw.Name() == "vitest", p.runOptions.ESM)
 			require.Zero(t, e.runs, "test execution must stop when environment preparation fails")
 		})
 	}

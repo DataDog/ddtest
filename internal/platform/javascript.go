@@ -33,6 +33,7 @@ const (
 
 type JavaScript struct {
 	frameworkEnv map[string]string
+	esmEnv       map[string]string
 	executor     commandExecutor
 }
 
@@ -79,9 +80,7 @@ func (j *JavaScript) DetectFramework() (framework.Framework, error) {
 		return nil, err
 	}
 	j.frameworkEnv = j.baseEnv()
-	if fw.Name() == "vitest" {
-		j.frameworkEnv = addNodeImport(j.frameworkEnv, ddTraceRegisterModule)
-	}
+	j.esmEnv = addNodeImport(maps.Clone(j.frameworkEnv), ddTraceRegisterModule)
 	return fw, nil
 }
 
@@ -354,7 +353,7 @@ func (j *JavaScript) TracerInstallCommand(options TracerOptions) (string, []stri
 }
 
 func (j *JavaScript) RunEnv(options framework.RuntimeOptions) (map[string]string, error) {
-	env := j.executionEnv(options.Framework)
+	env := j.executionEnv(options.ESM)
 	maps.Copy(env, options.Env)
 	appendNodePreloads(env, options.PreloadFiles)
 	return env, nil
@@ -364,15 +363,15 @@ func (j *JavaScript) DiscoveryEnv(_ context.Context, kind framework.DiscoveryKin
 	if kind != framework.FileDiscovery {
 		return nil, fmt.Errorf("JavaScript full test discovery is not supported")
 	}
-	env := j.executionEnv(options.Framework)
+	env := j.executionEnv(options.ESM)
 	maps.Copy(env, options.Env)
 	current, found := env[nodeOptionsEnvVar]
 	if !found {
 		current, found = os.LookupEnv(nodeOptionsEnvVar)
 	}
-	if found || options.Framework == "cucumber" {
+	if found {
 		current = nodeOptionsWithoutRequire(current, ddTraceCIInitModule)
-		if options.Framework == "vitest" {
+		if options.ESM {
 			current = nodeOptionsWithoutImport(current, ddTraceRegisterModule)
 		}
 		env[nodeOptionsEnvVar] = current
@@ -396,12 +395,15 @@ func appendNodePreloads(env map[string]string, files []string) {
 }
 
 // executionEnv preserves the environment captured when the framework was selected.
-func (j *JavaScript) executionEnv(name string) map[string]string {
+func (j *JavaScript) executionEnv(esm bool) map[string]string {
 	if j.frameworkEnv != nil {
+		if esm {
+			return maps.Clone(j.esmEnv)
+		}
 		return maps.Clone(j.frameworkEnv)
 	}
 	env := j.baseEnv()
-	if name == "vitest" {
+	if esm {
 		env = addNodeImport(env, ddTraceRegisterModule)
 	}
 	return env

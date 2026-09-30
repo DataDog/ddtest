@@ -67,7 +67,7 @@ func (p *PyTest) DiscoverTests(ctx context.Context, testFiles discovery.TestFile
 		return []testoptimization.Test{}, nil
 	}
 
-	envMap, err := p.platform.DiscoveryEnv(ctx, FullDiscovery, RuntimeOptions{Framework: p.Name()})
+	envMap, err := p.platform.DiscoveryEnv(ctx, FullDiscovery, RuntimeOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[st
 	slog.Info("Running tests with command", "command", command, "args", args)
 	args = withFrameworkFiles(command, args, "pytest", testFiles)
 
-	mergedEnv, err := p.platform.RunEnv(RuntimeOptions{Framework: p.Name(), Env: envMap})
+	mergedEnv, err := p.platform.RunEnv(RuntimeOptions{Env: envMap})
 	if err != nil {
 		return err
 	}

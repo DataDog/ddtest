@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -11,7 +12,7 @@ import (
 
 func frameworkRunEnv(t *testing.T, f framework.Framework) map[string]string {
 	t.Helper()
-	env, err := f.Platform().RunEnv(framework.RuntimeOptions{Framework: f.Name()})
+	env, err := f.Platform().RunEnv(framework.RuntimeOptions{ESM: f.Name() == "vitest"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,14 +44,14 @@ func TestEveryFrameworkRetainsItsPlatform(t *testing.T) {
 func TestJavaScriptDiscoveryEnvironment(t *testing.T) {
 	inherited := `--require "/project with spaces/.pnp.cjs" --require="/external/dd-trace/ci/init.js" --import=/external/dd-trace/register.js --max-old-space-size=4096`
 	t.Setenv("NODE_OPTIONS", inherited)
-	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cypress", "cucumber"} {
-		t.Run(name, func(t *testing.T) {
+	for _, esm := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ESM=%t", esm), func(t *testing.T) {
 			input := map[string]string{"CUSTOM": "value"}
 			p := NewJavaScript()
-			env, err := p.DiscoveryEnv(t.Context(), framework.FileDiscovery, framework.RuntimeOptions{Framework: name, Env: input, PreloadFiles: []string{"/adapter with spaces/entry.js"}})
+			env, err := p.DiscoveryEnv(t.Context(), framework.FileDiscovery, framework.RuntimeOptions{ESM: esm, Env: input, PreloadFiles: []string{"/adapter with spaces/entry.js"}})
 			require.NoError(t, err)
 			want := `--require "/project with spaces/.pnp.cjs" --import=/external/dd-trace/register.js --max-old-space-size=4096 --require "/adapter with spaces/entry.js"`
-			if name == "vitest" {
+			if esm {
 				want = `--require "/project with spaces/.pnp.cjs" --max-old-space-size=4096 --require "/adapter with spaces/entry.js"`
 			}
 			require.Equal(t, want, env["NODE_OPTIONS"])
@@ -76,12 +77,12 @@ func TestPlatformEnvironmentOverridesAndIsolation(t *testing.T) {
 		t.Run(tc.p.Name(), func(t *testing.T) {
 			for _, value := range []string{"", "explicit override"} {
 				input := map[string]string{tc.key: value, "CUSTOM": "input"}
-				env, err := tc.p.RunEnv(framework.RuntimeOptions{Framework: tc.name, Env: input})
+				env, err := tc.p.RunEnv(framework.RuntimeOptions{ESM: tc.name == "vitest", Env: input})
 				require.NoError(t, err)
 				require.Equal(t, input, env, "explicit values, including empty ones, override defaults")
 				env["CUSTOM"] = "changed"
 				require.Equal(t, "input", input["CUSTOM"])
-				again, err := tc.p.RunEnv(framework.RuntimeOptions{Framework: tc.name, Env: input})
+				again, err := tc.p.RunEnv(framework.RuntimeOptions{ESM: tc.name == "vitest", Env: input})
 				require.NoError(t, err)
 				require.Equal(t, "input", again["CUSTOM"], "returned maps must not share state")
 			}
@@ -116,7 +117,7 @@ func TestFileDiscoveryDoesNotCheckTracer(t *testing.T) {
 
 func TestPythonFullDiscoveryDoesNotCheckTracer(t *testing.T) {
 	p := &Python{executor: nil}
-	env, err := p.DiscoveryEnv(t.Context(), framework.FullDiscovery, framework.RuntimeOptions{Framework: "pytest"})
+	env, err := p.DiscoveryEnv(t.Context(), framework.FullDiscovery, framework.RuntimeOptions{})
 	require.NoError(t, err)
 	require.Contains(t, env["PYTEST_ADDOPTS"], "--ddtrace")
 }
@@ -154,7 +155,7 @@ func TestSelectedFrameworkKeepsCapturedEnvironment(t *testing.T) {
 			t.Setenv("DD_TRACE_ESM_IMPORT", "/changed/dd-trace/register.js")
 			require.Equal(t, before, frameworkRunEnv(t, fw))
 			if tc.p.Name() == "javascript" {
-				env, err := tc.p.DiscoveryEnv(t.Context(), framework.FileDiscovery, framework.RuntimeOptions{Framework: tc.framework})
+				env, err := tc.p.DiscoveryEnv(t.Context(), framework.FileDiscovery, framework.RuntimeOptions{ESM: tc.framework == "vitest"})
 				require.NoError(t, err)
 				require.Equal(t, tc.initial, env[tc.key])
 			}

@@ -49,7 +49,7 @@ func (r *RSpec) DiscoverTests(ctx context.Context, testFiles discovery.TestFileS
 		return []testoptimization.Test{}, nil
 	}
 
-	envMap, err := r.platform.DiscoveryEnv(ctx, FullDiscovery, RuntimeOptions{Framework: r.Name()})
+	envMap, err := r.platform.DiscoveryEnv(ctx, FullDiscovery, RuntimeOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func (r *RSpec) RunTests(ctx context.Context, testFiles []string, envMap map[str
 	slog.Info("Running tests with command", "command", command, "args", args)
 	args = withFrameworkFiles(command, args, "rspec", testFiles)
 
-	mergedEnv, err := r.platform.RunEnv(RuntimeOptions{Framework: r.Name(), Env: envMap})
+	mergedEnv, err := r.platform.RunEnv(RuntimeOptions{Env: envMap})
 	if err != nil {
 		return err
 	}

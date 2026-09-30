@@ -47,7 +47,7 @@ func (m *Minitest) DiscoverTests(ctx context.Context, testFiles discovery.TestFi
 		return []testoptimization.Test{}, nil
 	}
 
-	envMap, err := m.platform.DiscoveryEnv(ctx, FullDiscovery, RuntimeOptions{Framework: m.Name()})
+	envMap, err := m.platform.DiscoveryEnv(ctx, FullDiscovery, RuntimeOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +105,7 @@ func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[
 		}
 	}
 
-	mergedEnv, err := m.platform.RunEnv(RuntimeOptions{Framework: m.Name(), Env: envMap})
+	mergedEnv, err := m.platform.RunEnv(RuntimeOptions{Env: envMap})
 	if err != nil {
 		return err
 	}

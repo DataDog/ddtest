@@ -107,7 +107,7 @@ func (c *Cypress) DiscoverTests(context.Context, discovery.TestFileSet) ([]testo
 }
 
 func (c *Cypress) DiscoverTestFiles(ctx context.Context, selectedFiles discovery.TestFileSet) ([]string, error) {
-	envMap, err := c.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{Framework: c.Name()})
+	envMap, err := c.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +174,7 @@ func (c *Cypress) RunTests(ctx context.Context, testFiles []string, envMap map[s
 	args := cypressRunArgs(command, baseArgs, projectTestFiles)
 
 	slog.Info("Running Cypress tests", "command", command, "args", args, "testFiles", testFiles)
-	mergedEnv, err := c.platform.RunEnv(RuntimeOptions{Framework: c.Name(), Env: envMap})
+	mergedEnv, err := c.platform.RunEnv(RuntimeOptions{Env: envMap})
 	if err != nil {
 		return err
 	}

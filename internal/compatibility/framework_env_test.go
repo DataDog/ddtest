@@ -8,7 +8,7 @@ import (
 
 func frameworkRunEnv(t *testing.T, f framework.Framework) map[string]string {
 	t.Helper()
-	env, err := f.Platform().RunEnv(framework.RuntimeOptions{Framework: f.Name()})
+	env, err := f.Platform().RunEnv(framework.RuntimeOptions{ESM: f.Name() == "vitest"})
 	if err != nil {
 		t.Fatal(err)
 	}

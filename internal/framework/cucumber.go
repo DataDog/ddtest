@@ -115,9 +115,14 @@ func (c *Cucumber) DiscoverTests(context.Context, discovery.TestFileSet) ([]test
 // that survived profile, tag, name and path filtering; their Pickle envelopes
 // carry the feature file URI.
 func (c *Cucumber) DiscoverTestFiles(ctx context.Context, selectedFiles discovery.TestFileSet) ([]string, error) {
-	envMap, err := c.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{Framework: c.Name(), Env: map[string]string{cucumberPublishEnabled: "false"}})
+	envMap, err := c.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{Env: map[string]string{cucumberPublishEnabled: "false"}})
 	if err != nil {
 		return nil, err
+	}
+
+	// Cucumber discovery always supplies NODE_OPTIONS, even when it is empty.
+	if _, found := envMap["NODE_OPTIONS"]; !found {
+		envMap["NODE_OPTIONS"] = ""
 	}
 
 	command, baseArgs := c.Command()
@@ -175,7 +180,7 @@ func (c *Cucumber) RunTests(ctx context.Context, testFiles []string, envMap map[
 	args = append(args, testFiles...)
 
 	slog.Info("Running Cucumber tests with command", "command", command, "args", redactCucumberArgs(args))
-	mergedEnv, err := c.platform.RunEnv(RuntimeOptions{Framework: c.Name(), Env: envMap})
+	mergedEnv, err := c.platform.RunEnv(RuntimeOptions{Env: envMap})
 	if err != nil {
 		return err
 	}

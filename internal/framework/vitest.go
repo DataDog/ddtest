@@ -97,7 +97,7 @@ func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 		}
 	}
 
-	envMap, err := v.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{Framework: v.Name()})
+	envMap, err := v.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{ESM: true})
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +155,7 @@ func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 // discoverVitestV1TestFiles uses the project's vitest/node API to load its
 // configuration and list test files without executing them.
 func (v *Vitest) discoverVitestV1TestFiles(ctx context.Context, command string, baseArgs []string, testFiles discovery.TestFileSet) ([]string, error) {
-	envMap, err := v.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{Framework: v.Name()})
+	envMap, err := v.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{ESM: true})
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +198,7 @@ func (v *Vitest) RunTests(ctx context.Context, testFiles []string, envMap map[st
 
 	slog.Info("Running tests with command", "command", command, "args", args)
 
-	mergedEnv, err := v.platform.RunEnv(RuntimeOptions{Framework: v.Name(), Env: envMap})
+	mergedEnv, err := v.platform.RunEnv(RuntimeOptions{ESM: true, Env: envMap})
 	if err != nil {
 		return err
 	}

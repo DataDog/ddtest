@@ -107,7 +107,7 @@ func (p *Playwright) DiscoverTests(context.Context, discovery.TestFileSet) ([]te
 }
 
 func (p *Playwright) DiscoverTestFiles(ctx context.Context, selectedFiles discovery.TestFileSet) ([]string, error) {
-	envMap, err := p.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{Framework: p.Name()})
+	envMap, err := p.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +163,7 @@ func (p *Playwright) RunTests(ctx context.Context, testFiles []string, envMap ma
 	}
 	args := playwrightRunArgs(command, baseArgs, testFiles)
 	slog.Info("Running Playwright tests", "command", command, "args", args, "testFiles", testFiles)
-	mergedEnv, err := p.platform.RunEnv(RuntimeOptions{Framework: p.Name(), Env: envMap})
+	mergedEnv, err := p.platform.RunEnv(RuntimeOptions{Env: envMap})
 	if err != nil {
 		return err
 	}
