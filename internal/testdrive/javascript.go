@@ -98,8 +98,10 @@ func (t *Testdrive) javascriptEnvironment(path string) map[string]string {
 		version = t.nodeVersion()
 	}
 	if supportsNodeImport(version) {
-		register := absoluteFileURL(filepath.Join(filepath.Dir(filepath.Dir(path)), "register.js"))
-		env["NODE_OPTIONS"] += " --import " + strconv.Quote(register)
+		registerPath := filepath.Join(filepath.Dir(filepath.Dir(path)), "register.js")
+		if info, err := os.Stat(registerPath); err == nil && info.Mode().IsRegular() {
+			env["NODE_OPTIONS"] += " --import " + strconv.Quote(absoluteFileURL(registerPath))
+		}
 	}
 	return env
 }
