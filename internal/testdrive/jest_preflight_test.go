@@ -29,6 +29,8 @@ func TestJestPrerequisitesCoverLuxonAndTSyringe(t *testing.T) {
 		{"24.7.0", "jest-circus/runner", "5.128.0", "24.14.1", ">=18", "incompatible"},
 		{"24.8.0", "jest-circus/runner", "5.128.0", "18.0.0", ">=18", "compatible"},
 		{"27.5.1", "jest-circus/runner", "6.16.0", "24.14.1", ">=22", "incompatible"},
+		{"27.5.1", "jest-circus/runner", "5.86.0", "22.23.2", ">=18 <26", "compatible"},
+		{"30.5.1", "jest-circus/runner", "5.86.0", "26.0.0", ">=18 <26", "incompatible"},
 		{"28.0.0", "jest-circus/runner", "6.16.0", "24.14.1", ">=22", "compatible"},
 		{"30.2.0", "jest-circus/runner", "6.16.0", "20.20.1", ">=22", "incompatible"},
 		{"30.2.0", "jest-circus/runner", "6.16.0", "24.14.1", ">=22", "compatible"},

@@ -139,12 +139,42 @@ func TestNodeRequirements(t *testing.T) {
 		{"22", ">=22", "compatible"}, {"v22.0.0", ">=22", "compatible"}, {"24.1.2", ">=22", "compatible"},
 		{"22", ">=24", "incompatible"}, {"22", ">=22.2.0", "inconclusive"}, {"22.1", ">=22.2.0", "incompatible"},
 		{"22.2", ">=22.2.0", "compatible"}, {"lts/*", ">=22", "inconclusive"}, {"", ">=22", "inconclusive"},
-		{"22", ">=18 <23", "inconclusive"}, {"22", "", "inconclusive"}, {"22", ">=22 || >=24", "inconclusive"},
+		{"22", ">=18 <23", "compatible"}, {"22", "", "inconclusive"}, {"22", ">=22 || >=24", "inconclusive"},
 		{"22.x.3", ">=22", "inconclusive"},
 	} {
 		t.Run(tc.node+"/"+tc.engine, func(t *testing.T) {
 			status, _ := CompareNodeRequirement(tc.node, tc.engine)
 			require.Equal(t, tc.status, status)
+		})
+	}
+}
+
+func TestBoundedNodeRequirements(t *testing.T) {
+	for _, tc := range []struct{ node, engine, status string }{
+		{"v22.23.2", ">=18 <26", "compatible"},
+		{"18.0.0", ">=18 <26", "compatible"},
+		{"25.99.99", ">=18 <26", "compatible"},
+		{"17.99.99", ">=18 <26", "incompatible"},
+		{"26.0.0", ">=18 <26", "incompatible"},
+		{"27.0.0", ">=18 <26", "incompatible"},
+		{"22.x", " >= 18.0.0 < 26.0.0 ", "compatible"},
+		{"26", ">=18 <26", "incompatible"},
+		{"22", ">=22.2.0 <26", "inconclusive"},
+		{"22", ">=18 <22.2.0", "inconclusive"},
+		{"22.1", ">=18 <22.2.0", "compatible"},
+		{"22.2", ">=18 <22.2.0", "incompatible"},
+		{"22.1", ">=18 <22.1.2", "inconclusive"},
+		{"22.1.1", ">=18 <22.1.2", "compatible"},
+		{"22.1.2", ">=18 <22.1.2", "incompatible"},
+		{"22", ">=26 <18", "inconclusive"},
+		{"22", ">=18 <18", "inconclusive"},
+		{"22", ">=18 <26 || >=28", "inconclusive"},
+		{"22", ">=18 <invalid", "inconclusive"},
+		{"22", ">=18 <1000001", "inconclusive"},
+	} {
+		t.Run(tc.node+"/"+tc.engine, func(t *testing.T) {
+			status, reason := CompareNodeRequirement(tc.node, tc.engine)
+			require.Equal(t, tc.status, status, reason)
 		})
 	}
 }
