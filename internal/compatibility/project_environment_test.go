@@ -3,6 +3,7 @@ package compatibility
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,7 +44,7 @@ func TestJavaScriptProjectEnvironment(t *testing.T) {
 	defer cancel()
 	root := filepath.Join(t.TempDir(), "project with spaces")
 	writeFixture(t, root, "package.json", `{"name":"pnp-regression","private":true,"scripts":{"test":"jest"},"dependencies":{"dd-trace":"file:./tracer"}}`)
-	writeFixture(t, root, "tracer/package.json", `{"name":"dd-trace","version":"1.0.0","dependencies":{"pnp-tracer-helper":"file:../helper"}}`)
+	writeFixture(t, root, "tracer/package.json", `{"name":"dd-trace","version":"6.18.0","engines":{"node":">=18"},"dependencies":{"pnp-tracer-helper":"file:../helper"}}`)
 	writeFixture(t, root, "helper/package.json", `{"name":"pnp-tracer-helper","version":"1.0.0","main":"index.js"}`)
 	writeFixture(t, root, "helper/index.js", "module.exports = 'loaded through PnP';\n")
 	writeFixture(t, root, "tracer/ci/init.js", "global.ddtestTracer = require('pnp-tracer-helper');\n")
@@ -84,10 +85,20 @@ process.on('exit', () => {
 	writeFixture(t, root, "example.test.js", "// Worker-startup fixture.\n")
 	writeFixture(t, root, "worker.cjs", `const assert = require('assert');
 const fs = require('fs');
-if (process.argv.includes('--listTests')) {
+if (process.argv.includes('--showConfig')) {
+  assert.strictEqual(global.ddtestTracer, undefined);
+  console.log(JSON.stringify({ version: '30.2.0', configs: [{ rootDir: process.cwd(), testRunner: 'jest-circus/runner' }] }));
+} else if (process.argv.includes('--listTests')) {
   assert.strictEqual(global.ddtestTracer, undefined);
   assert(process.argv.includes('--json'));
   console.log(JSON.stringify([require('path').resolve('example.test.js')]));
+} else if (process.argv.includes('--outputFile')) {
+  const instrumented = process.env.DD_CIVISIBILITY_ENABLED === 'true';
+  assert.strictEqual(global.ddtestTracer, instrumented ? 'loaded through PnP' : undefined);
+  fs.appendFileSync('worker-ran', instrumented ? 'instrumented\n' : 'baseline\n');
+  fs.writeFileSync(process.argv[process.argv.indexOf('--outputFile') + 1], JSON.stringify({
+    testResults: [{ name: require('path').resolve('example.test.js'), assertionResults: [{ fullName: 'works', status: 'passed' }] }]
+  }));
 } else {
   assert.strictEqual(global.ddtestTracer, 'loaded through PnP');
   fs.writeFileSync('worker-ran', 'instrumented');
@@ -109,10 +120,29 @@ if (process.argv.includes('--listTests')) {
 		require.NoError(t, err)
 		var output bytes.Buffer
 		err = drive.Run(ctx, &output)
-		// This fixture checks startup, not telemetry. A successful command with
-		// no events is distinguishable from a failed Node preload.
-		require.ErrorContains(t, err, "command exited successfully, but Test Optimization sent no test events", output.String())
-		require.FileExists(t, filepath.Join(root, "worker-ran"))
+		// The fixture exercises both startup modes but emits no telemetry, so
+		// successful worker startup must not produce a passing validation verdict.
+		require.ErrorContains(t, err, "validation is incomplete", output.String())
+		data, err := os.ReadFile(filepath.Join(root, "worker-ran"))
+		require.NoError(t, err)
+		require.Contains(t, string(data), "baseline\ninstrumented\n")
+		data, err = os.ReadFile(filepath.Join(root, ".testoptimization", "testdrive.json"))
+		require.NoError(t, err)
+		var report struct {
+			Success bool
+			Runs    []struct {
+				Name     string
+				ExitCode *int `json:"exit_code"`
+			}
+		}
+		require.NoError(t, json.Unmarshal(data, &report))
+		require.False(t, report.Success)
+		require.GreaterOrEqual(t, len(report.Runs), 2)
+		for i, name := range []string{"baseline", "reporting-only"} {
+			require.Equal(t, name, report.Runs[i].Name)
+			require.NotNil(t, report.Runs[i].ExitCode)
+			require.Zero(t, *report.Runs[i].ExitCode)
+		}
 	})
 }
 

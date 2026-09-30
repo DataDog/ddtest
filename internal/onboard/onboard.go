@@ -10,9 +10,10 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/platform"
@@ -23,6 +24,9 @@ const githubAction = "datadog/test-visibility-github-action"
 
 //go:embed instructions/github.md
 var gitHubInstructions string
+
+//go:embed instructions/vitest.md
+var vitestInstructions string
 
 // Run detects the first supported onboarding path and prints its instructions.
 func Run(output io.Writer) error {
@@ -41,7 +45,8 @@ func Run(output io.Writer) error {
 	language := detectedPlatform.Name()
 	name := runner.Name()
 
-	workflows, configured, err := findWorkflows(repositoryRoot, language, name)
+	discovery, err := findWorkflows(repositoryRoot, language, name)
+	workflows, configured := discovery.Workflows, discovery.Configured
 	if err != nil {
 		return err
 	}
@@ -55,13 +60,46 @@ func Run(output io.Writer) error {
 	for _, workflow := range workflows {
 		_, _ = fmt.Fprintf(output, "  - %s\n", workflow)
 	}
+	if name == "jest" || name == "vitest" {
+		scope, err := DiscoverValidationScope(repositoryRoot, name)
+		if err != nil {
+			return err
+		}
+		WriteValidationScope(output, scope)
+		_, _ = fmt.Fprintf(output, "Run `ddtest testdrive --framework %s --all --check-only --yes`, then finish edits and review separate setup, and run `ddtest testdrive --framework %s --all --tracer-version <resolved-release> --yes`. This aggregates every discovered configuration in one report pair. A --command run validates only its selected configuration.\n", name, name)
+	}
+	if name == "jest" {
+		command, err := JestValidationCommand(repositoryRoot)
+		if err != nil {
+			_, _ = fmt.Fprintf(output, "\nLocal Jest command needs review: %s\n", err)
+		} else if command != "" {
+			_, _ = fmt.Fprintf(output, "\nLocal validation command: %s\nTestdrive selects this command automatically; preserve its config, coverage, and execution options. --command overrides this selection.\n", command)
+		}
+	}
 
-	if len(configured) == len(workflows) {
+	if len(discovery.Review) > 0 {
+		_, _ = fmt.Fprintln(output, "\nOther CI entry points to review separately:")
+		for _, reason := range discovery.Review {
+			_, _ = fmt.Fprintf(output, "  - %s\n", reason)
+		}
+	}
+	if len(discovery.Unresolved) > 0 {
+		_, _ = fmt.Fprintln(output, "\nCI command discovery is inconclusive:")
+		for _, reason := range discovery.Unresolved {
+			_, _ = fmt.Fprintf(output, "  - %s\n", reason)
+		}
+		_, _ = fmt.Fprintln(output, "Identify the actual test steps before editing CI. Preserve valid commands; do not rewrite them merely to satisfy discovery. Manual review does not turn an unverified programmatic check into a pass.")
+	}
+
+	if len(discovery.Unresolved) == 0 && len(configured) == len(workflows) {
 		_, _ = fmt.Fprintln(output)
 		_, _ = fmt.Fprintln(output, "Datadog Test Optimization already appears in every detected test workflow.")
-		_, _ = fmt.Fprintf(output, "Run `ddtest testdrive --framework %s` to check the setup locally.\n", name)
-		_, _ = fmt.Fprintln(output, "After it finishes, post every `Open report:` link to the user so they can open the local Test Optimization report.")
-		return nil
+		_, _ = fmt.Fprintf(output, "This is configuration detection, not completed onboarding. Run `ddtest testdrive --framework %s` to validate locally. Jest and supported Vitest projects also check CI runtime compatibility; configurations without a validation adapter remain unvalidated.\n", name)
+		_, _ = fmt.Fprintln(output, "After it finishes, share the validation verdict, CI runtime compatibility and feature results using the final response block printed by testdrive. Copy its absolute Markdown report links verbatim, each on its own line; do not shorten them to relative paths or replace them with file:// URLs.")
+		_, _ = fmt.Fprintln(output, "Keep .testoptimization/report.html and .testoptimization/testdrive.json after cleanup, even on failure. Do not declare validation complete while any required check is failed or inconclusive.")
+		if name != "vitest" {
+			return nil
+		}
 	}
 
 	_, _ = fmt.Fprintln(output)
@@ -69,16 +107,35 @@ func Run(output io.Writer) error {
 	return nil
 }
 
-func findWorkflows(repositoryRoot, language, name string) ([]string, []string, error) {
-	var workflows []string
-	var configured []string
-	directory := filepath.Join(repositoryRoot, ".github", "workflows")
+type workflowDiscovery struct {
+	Workflows, Configured, Unresolved, Review []string
+}
+
+type runDefaults struct {
+	WorkingDirectory string `yaml:"working-directory"`
+	Shell            string `yaml:"shell"`
+}
+
+type ciDefaults struct {
+	Run runDefaults `yaml:"run"`
+}
+
+type ciWorkflow struct {
+	Path     string
+	Defaults ciDefaults            `yaml:"defaults"`
+	Env      map[string]string     `yaml:"env"`
+	Jobs     map[string]runtimeJob `yaml:"jobs"`
+}
+
+func readWorkflows(root string) ([]ciWorkflow, error) {
+	var workflows []ciWorkflow
+	directory := filepath.Join(root, ".github", "workflows")
 	entries, err := os.ReadDir(directory)
 	if os.IsNotExist(err) {
-		return workflows, configured, nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("find GitHub Actions workflows: %w", err)
+		return nil, fmt.Errorf("find GitHub Actions workflows: %w", err)
 	}
 	for _, entry := range entries {
 		if entry.IsDir() || (filepath.Ext(entry.Name()) != ".yml" && filepath.Ext(entry.Name()) != ".yaml") {
@@ -87,62 +144,58 @@ func findWorkflows(repositoryRoot, language, name string) ([]string, []string, e
 		path := filepath.Join(directory, entry.Name())
 		contents, err := os.ReadFile(path)
 		if err != nil {
-			return nil, nil, fmt.Errorf("read %s: %w", path, err)
+			return nil, fmt.Errorf("read %s: %w", path, err)
 		}
-		text := strings.ToLower(string(contents))
-		if !looksLikeTestWorkflow(text, language, name) {
-			continue
+		var workflow ciWorkflow
+		if err := yaml.Unmarshal(contents, &workflow); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
-
-		relativePath, err := filepath.Rel(repositoryRoot, path)
-		if err != nil {
-			return nil, nil, fmt.Errorf("make workflow path relative: %w", err)
+		workflow.Path = ".github/workflows/" + entry.Name()
+		for name, job := range workflow.Jobs {
+			job.Steps = expandCompositeSteps(root, workflow.Path, job.Steps)
+			workflow.Jobs[name] = job
 		}
-		relativePath = filepath.ToSlash(relativePath)
-		workflows = append(workflows, relativePath)
-		isConfigured, err := allTestJobsConfigured(contents, language, name)
-		if err != nil {
-			return nil, nil, fmt.Errorf("parse %s: %w", path, err)
-		}
-		if isConfigured {
-			configured = append(configured, relativePath)
-		}
+		workflows = append(workflows, workflow)
 	}
-
-	sort.Strings(workflows)
-	sort.Strings(configured)
-	return workflows, configured, nil
+	return workflows, nil
 }
 
-func allTestJobsConfigured(contents []byte, language, name string) (bool, error) {
-	var workflow struct {
-		Jobs map[string]struct {
-			Steps []struct {
-				Run  string `yaml:"run"`
-				Uses string `yaml:"uses"`
-			} `yaml:"steps"`
-		} `yaml:"jobs"`
+func findWorkflows(root, language, name string) (workflowDiscovery, error) {
+	var result workflowDiscovery
+	workflows, err := readWorkflows(root)
+	if err != nil {
+		return result, err
 	}
-	if err := yaml.Unmarshal(contents, &workflow); err != nil {
-		return false, err
+	for _, workflow := range workflows {
+		found, configured := false, true
+		for _, jobName := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[jobName]
+			hasAction := false
+			for i, step := range job.Steps {
+				uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
+				hasAction = hasAction || uses == githubAction
+				resolution := resolveTestStep(root, workflow, job, step, language, name)
+				if resolution.Review {
+					result.Review = append(result.Review, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, stepNumber(step, i), step.Run, resolution.Reason))
+					continue
+				}
+				if resolution.Matched || resolution.Reason != "" {
+					found = true
+					configured = configured && hasAction && resolution.Reason == ""
+				}
+				if resolution.Reason != "" {
+					result.Unresolved = append(result.Unresolved, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, stepNumber(step, i), step.Run, resolution.Reason))
+				}
+			}
+		}
+		if found {
+			result.Workflows = append(result.Workflows, workflow.Path)
+			if configured {
+				result.Configured = append(result.Configured, workflow.Path)
+			}
+		}
 	}
-	foundTestJob := false
-	for _, job := range workflow.Jobs {
-		var commands []string
-		configured := false
-		for _, step := range job.Steps {
-			commands = append(commands, strings.ToLower(step.Run))
-			configured = configured || strings.Contains(strings.ToLower(step.Uses), githubAction)
-		}
-		if !looksLikeTestJob(strings.Join(commands, "\n"), language, name) {
-			continue
-		}
-		foundTestJob = true
-		if !configured {
-			return false, nil
-		}
-	}
-	return foundTestJob, nil
+	return result, nil
 }
 
 func looksLikeTestJob(commands, language, name string) bool {
@@ -163,25 +216,10 @@ func looksLikeTestJob(commands, language, name string) bool {
 	return false
 }
 
-func looksLikeTestWorkflow(workflow, language, name string) bool {
-	markers := []string{name, githubAction}
-	switch language {
-	case "javascript":
-		markers = append(markers, "npm test", "npm run test", "yarn test", "yarn run test", "pnpm test", "pnpm run test", "bun test", "bun run test")
-	case "ruby":
-		markers = append(markers, "bundle exec rake", "rake test", "rails test")
-	case "python":
-		markers = append(markers, "tox", "nox")
-	}
-	for _, marker := range markers {
-		if strings.Contains(workflow, marker) {
-			return true
-		}
-	}
-	return false
-}
-
 func instructions(language, name string) string {
+	if language == "javascript" && name == "vitest" {
+		return strings.ReplaceAll(vitestInstructions, "ddtest testdrive", "ddtest testdrive --framework vitest")
+	}
 	actionLanguage := language
 	var bootstrap string
 	switch language {
@@ -199,13 +237,11 @@ func instructions(language, name string) string {
 	case "ruby":
 		bootstrap = rubyBootstrap
 	}
-	// Empty inputs override the action's pinned defaults and request the latest release.
-	tracerSetting := actionLanguage + "-tracer-version: '' # Latest release"
-	text := strings.NewReplacer("__FRAMEWORK__", name, "__LANGUAGE__", actionLanguage, "__BOOTSTRAP__", bootstrap, "__TRACER_SETTING__", tracerSetting).Replace(gitHubInstructions)
+	text := strings.NewReplacer("__FRAMEWORK__", name, "__LANGUAGE__", actionLanguage, "__BOOTSTRAP__", bootstrap).Replace(gitHubInstructions)
 	return strings.ReplaceAll(text, "ddtest testdrive", "ddtest testdrive --framework "+name)
 }
 
-const javascriptBootstrap = "Use Node.js 22 or newer. GitHub Actions cannot set NODE_OPTIONS for later steps, so merge this into the existing test step, preserving any current Node options:\n\n```yaml\nenv:\n  NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}\n```\n\nThe --import loader is required for Vitest and other ESM tests."
+const javascriptBootstrap = "For every instrumented CI matrix entry, use a Node.js version supported by the tracer selected by the action. The Jest and Vitest testdrives check the action's actual tracer metadata; do not infer CI compatibility from the local Node version. GitHub Actions cannot set NODE_OPTIONS for later steps, so merge this into the existing test step, preserving any current Node options:\n\n```yaml\nenv:\n  NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}\n```\n\nThe --import loader is required for Vitest and other ESM tests."
 
 const pythonBootstrap = "The action exports PYTHONPATH and PYTEST_ADDOPTS=--ddtrace for pytest. Preserve these variables on the existing test step; do not replace its current arguments. Activate the same Python environment used for the tests before the action. If CI uses tox or nox, pass DD_*, PYTHONPATH, and PYTEST_ADDOPTS into the test environment."
 

@@ -843,3 +843,34 @@ func (e *fakeCommandExecutor) Run(ctx context.Context, name string, args []strin
 	_, err := e.CombinedOutput(ctx, name, args, env)
 	return err
 }
+
+func TestJestSelectionResolvesTagOnceBeforeInstallation(t *testing.T) {
+	directory := t.TempDir()
+	preload := filepath.Join(directory, "node_modules/dd-trace/ci/init.js")
+	executor := &fakeCommandExecutor{responses: []commandResponse{
+		{err: errors.New("project tracer unavailable")}, {output: []byte(`{"version":"5.128.0","engines":{"node":">=18"}}`)}, {err: errors.New("project tracer unavailable")}, {}, {output: []byte(preload)},
+	}}
+	installer := &JavaScript{executor: executor}
+	selected, err := installer.ResolveTestdriveTracer(t.Context(), TracerOptions{Version: "latest-node18"})
+	require.NoError(t, err)
+	require.Len(t, executor.commands, 2)
+	require.Equal(t, "latest-node18", selected.Requested)
+	require.Equal(t, "5.128.0", selected.Version)
+	_, err = installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: directory, Version: selected.Version})
+	require.NoError(t, err)
+	require.Equal(t, "npm", executor.commands[3].name)
+	require.Contains(t, executor.commands[3].args, "dd-trace@5.128.0")
+	require.Len(t, executor.commands, 5)
+}
+
+func TestRegistryCandidateDoesNotProbeOrReplaceProject(t *testing.T) {
+	executor := &fakeCommandExecutor{responses: []commandResponse{{output: []byte(`[{"version":"5.127.0","engines":{"node":">=18"}},{"version":"5.128.0","engines":{"node":">=18"}}]`)}}}
+	installer := &JavaScript{executor: executor}
+	selected, err := installer.ResolveRegistryTracer(t.Context(), "5")
+	require.NoError(t, err)
+	require.Equal(t, "5.128.0", selected.Version)
+	require.Equal(t, ">=18", selected.Node)
+	require.Len(t, executor.commands, 1)
+	require.Equal(t, "npm", executor.commands[0].name)
+	require.Equal(t, []string{"view", "dd-trace@5", "version", "engines", "--json", "--fetch-retries=0", "--fetch-timeout=10000"}, executor.commands[0].args[:7])
+}

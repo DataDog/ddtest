@@ -2,6 +2,7 @@ package testdrive
 
 import (
 	"encoding/json"
+	"github.com/kballard/go-shellquote"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +22,10 @@ func javascriptEnvironment(ciInitPath string) map[string]string {
 }
 
 func stripDatadogNodeOptions(value string) string {
-	fields := strings.Fields(value)
+	fields, err := shellquote.Split(value)
+	if err != nil {
+		return value
+	}
 	kept := make([]string, 0, len(fields))
 	for index := 0; index < len(fields); index++ {
 		field := fields[index]
@@ -40,6 +44,9 @@ func stripDatadogNodeOptions(value string) string {
 		if strings.HasPrefix(field, "-r") && isDatadogNodePreload(strings.TrimPrefix(field, "-r")) {
 			continue
 		}
+		if strings.ContainsAny(field, " \t\r\n\"") {
+			field = strconv.Quote(field)
+		}
 		kept = append(kept, field)
 	}
 	return strings.Join(kept, " ")
@@ -47,7 +54,7 @@ func stripDatadogNodeOptions(value string) string {
 
 func isDatadogNodePreload(value string) bool {
 	value = strings.Trim(value, `"'`)
-	return value == "dd-trace/ci/init" || strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/ci/init.js") ||
+	return value == "dd-trace/ci/init" || value == "dd-trace/register.js" || strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/ci/init.js") ||
 		strings.HasSuffix(filepath.ToSlash(value), "/dd-trace/register.js")
 }
 

@@ -32,9 +32,9 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 		name, manifest, command string
 		files                   map[string]string
 	}{
-		{"jest", `{"scripts":{"test":"jest"},"devDependencies":{"jest":"30.5.1"}}`, "npm test", map[string]string{"one.test.js": `test('adds', () => expect(1+1).toBe(2));`}},
+		{"jest", `{"scripts":{"test":"jest"},"devDependencies":{"jest":"30.5.1"}}`, "npm test -- --runInBand -- one.test.js", map[string]string{"one.test.js": `test('adds', () => expect(1+1).toBe(2));`}},
 		{"mocha", `{"scripts":{"test":"mocha"},"devDependencies":{"mocha":"11.7.5"}}`, "npm test", map[string]string{"test/one.js": `const assert = require('node:assert'); it('adds', () => assert.equal(1+1,2));`}},
-		{"vitest", `{"type":"module","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"3.2.4"}}`, "npm test", map[string]string{"one.test.js": `import {test,expect} from 'vitest'; test('adds', () => expect(1+1).toBe(2));`}},
+		{"vitest", `{"type":"module","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"4.1.6"}}`, "npm test", map[string]string{"one.test.js": `import {test,expect} from 'vitest'; test('adds', () => expect(1+1).toBe(2));`}},
 		{"playwright", `{"scripts":{"test":"playwright test"},"devDependencies":{"@playwright/test":"1.55.1"}}`, "npm test", map[string]string{"one.spec.js": `const {test,expect} = require('@playwright/test'); test('adds', () => expect(1+1).toBe(2));`}},
 		{"cucumber", `{"scripts":{"test":"cucumber-js"},"devDependencies":{"@cucumber/cucumber":"12.2.0"}}`, "npm test", map[string]string{"features/one.feature": "Feature: Arithmetic\n  Scenario: Add\n    Given addition works\n", "features/step_definitions/one.js": `const {Given} = require('@cucumber/cucumber'); Given('addition works', () => require('node:assert').equal(1+1,2));`}},
 		{"cypress", `{"scripts":{"test":"cypress run"},"devDependencies":{"cypress":"15.1.0"}}`, "npm test", map[string]string{"cypress.config.js": `module.exports={e2e:{supportFile:false,setupNodeEvents(on,config){on('task',{answer:()=>42});on('after:run',()=>{require('node:fs').writeFileSync('original-hook.txt','ran');});return config;}}};`, "cypress/e2e/one.cy.js": `it('preserves hooks', () => { cy.task('answer').should('equal',42); });`}},
@@ -80,18 +80,58 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 			}
 			onboard := integrationCommand(t, ctx, root, env, binary, "onboard")
 			require.Contains(t, onboard, "datadog/test-visibility-github-action@v3")
-			output := integrationCommand(t, ctx, root, env, binary, "testdrive", "--yes")
-			require.Contains(t, output, "Test events received.")
-			require.Contains(t, output, "Open report:")
-			reports, err := filepath.Glob(filepath.Join(root, ".testoptimization", "testdrive", "*", "report.html"))
+			args := []string{"testdrive", "--yes"}
+			if fixture.name == "jest" {
+				// The validation contract also requires instrumented CI configuration.
+				// Resolve once so local and CI metadata refer to the same release.
+				version := strings.TrimSpace(integrationCommand(t, ctx, root, env, "npm", "view", "dd-trace", "version"))
+				node := strings.TrimSpace(integrationCommand(t, ctx, root, env, "node", "--version"))
+				integrationFile(t, root, ".github/workflows/test.yml", "name: tests\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-node@v4\n        with:\n          node-version: '"+strings.TrimPrefix(node, "v")+"'\n      - uses: datadog/test-visibility-github-action@v3\n        with:\n          languages: js\n          js-tracer-version: '"+version+"'\n      - run: "+fixture.command+"\n        env:\n          NODE_OPTIONS: \"-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}\"\n")
+				args = append(args, "--tracer-version", version)
+			}
+			command := exec.CommandContext(ctx, binary, args...)
+			command.Dir = root
+			command.Env = append(os.Environ(), env...)
+			rawOutput, runErr := command.CombinedOutput()
+			output := string(rawOutput)
+			switch fixture.name {
+			case "jest":
+				require.NoError(t, runErr, output)
+				t.Log(strings.TrimSpace(output))
+				// Reuse the exact release from the fallback run, and exercise an
+				// explicit wrapper separator with the installed-tracer preview.
+				integrationCommand(t, ctx, root, env, "npm", "install", "--no-save", "--package-lock=false", "--no-audit", "--no-fund", "dd-trace@"+args[len(args)-1])
+				output = integrationCommand(t, ctx, root, env, binary, "testdrive", "--yes", "--command", "npx -- jest --runInBand -- one.test.js")
+				require.Contains(t, output, "reuse installed dd-trace@")
+				require.Contains(t, output, "no installation is needed")
+				require.NotContains(t, output, "npm install")
+				probes, err := filepath.Glob(filepath.Join(root, "ddtest*"))
+				require.NoError(t, err)
+				require.Empty(t, probes)
+			case "vitest":
+				require.Error(t, runErr, output) // Fixture deliberately has no CI installation.
+				require.Contains(t, output, "No observed behavioral regression")
+				require.Contains(t, output, "Feature auto-retries: passed")
+				require.Contains(t, output, "CI runtime incompatible")
+			default:
+				require.Error(t, runErr, output)
+				require.Contains(t, output, "unvalidated")
+			}
+			require.Contains(t, output, "Results JSON:")
+			reports, err := filepath.Glob(filepath.Join(root, ".testoptimization", "testdrive.json"))
 			require.NoError(t, err)
 			require.Len(t, reports, 1)
-			contents, err := os.ReadFile(reports[0])
+			artifacts, err := os.ReadDir(filepath.Join(root, ".testoptimization"))
+			require.NoError(t, err)
+			require.Len(t, artifacts, 2, "only HTML and compact JSON reports should remain")
+			html, err := filepath.Glob(filepath.Join(root, ".testoptimization", "*.html"))
+			require.NoError(t, err)
+			require.Equal(t, []string{filepath.Join(root, ".testoptimization", "report.html")}, html)
+			contents, err := os.ReadFile(html[0])
 			require.NoError(t, err)
 			require.Contains(t, string(contents), "<h1>Test report</h1>")
-			traffic, err := filepath.Glob(filepath.Join(filepath.Dir(reports[0]), "intake", "*citestcycle.json"))
-			require.NoError(t, err)
-			require.NotEmpty(t, traffic)
+			require.Contains(t, output, "Open report:")
+
 			for name, contents := range before {
 				if (fixture.name == "rspec" || fixture.name == "minitest") && (name == "Gemfile" || name == "Gemfile.lock") {
 					continue // bundle add updates Ruby dependency files.
