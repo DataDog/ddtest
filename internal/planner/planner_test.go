@@ -4356,6 +4356,22 @@ func TestTestPlanner_PreparePlanningData_RuntimeTagsOverride(t *testing.T) {
 	}
 }
 
+func TestPlanningWithCompleteRuntimeTagsDoesNotProbeRuntime(t *testing.T) {
+	setPlannerRuntimeTags(t, `{"os.platform":"linux","os.architecture":"x86_64","os.version":"6.8.0","runtime.name":"ruby","runtime.version":"3.4.1"}`)
+	fw := &MockFramework{FrameworkName: "rspec", TestFiles: []string{"spec/example_spec.rb"}, FullDiscoveryUnsupported: true}
+	p := &MockPlatform{PlatformName: "ruby", TagsErr: errors.New("runtime is unavailable"), TestLevel: settings.TestSkippingLevelSuite}
+	client := &MockTestOptimizationClient{Skippables: testSkippables(map[string]bool{})}
+	planner := NewWithDependencies(p, fw, client, newDefaultMockCIProviderDetector())
+	if err := planner.PreparePlanningData(t.Context()); err != nil {
+		t.Fatalf("complete tags should bypass runtime probing: %v", err)
+	}
+	for key, value := range map[string]string{"language": "ruby", "os.platform": "linux", "os.architecture": "x86_64", "os.version": "6.8.0", "runtime.name": "ruby", "runtime.version": "3.4.1"} {
+		if client.Tags[key] != value {
+			t.Errorf("tag %s = %q, want %q", key, client.Tags[key], value)
+		}
+	}
+}
+
 func TestTestPlanner_PreparePlanningData_RuntimeTagsOverrideInvalidJSON(t *testing.T) {
 	ctx := context.Background()
 

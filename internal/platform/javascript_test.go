@@ -88,15 +88,66 @@ func TestJavaScript_GetPlatformEnv_DoesNotDuplicateDDTraceInit(t *testing.T) {
 	}
 }
 
-func TestJavaScript_DetectTracer_PrefersProjectWithActionPreload(t *testing.T) {
+func TestJavaScript_ActionEnvironment(t *testing.T) {
+	preload := "/action install/node_modules/dd-trace/ci/init.js"
+	register := "/action install/node_modules/dd-trace/register.js"
+	t.Setenv(nodeOptionsEnvVar, `--require "/project loader.cjs" --trace-warnings`)
+	t.Setenv("DD_TRACE_PACKAGE", preload)
+	t.Setenv("DD_TRACE_ESM_IMPORT", register)
+
+	executor := &fakeCommandExecutor{responses: []commandResponse{{output: []byte(preload)}}}
+	javascript := &JavaScript{executor: executor}
+	path, err := javascript.DetectTracer(t.Context(), TracerOptions{})
+	require.NoError(t, err)
+	require.Equal(t, preload, path)
+	require.Len(t, executor.commands, 1)
+	require.Contains(t, executor.commands[0].args, preload)
+
+	env := javascript.GetPlatformEnv()
+	require.Equal(t, os.Getenv(nodeOptionsEnvVar)+" -r "+strconv.Quote(preload), env[nodeOptionsEnvVar])
+	addNodeImport(env, ddTraceRegisterModule)
+	require.Equal(t, "--import "+strconv.Quote(register)+" "+os.Getenv(nodeOptionsEnvVar)+" -r "+strconv.Quote(preload), env[nodeOptionsEnvVar])
+}
+
+func TestJavaScript_ExplicitPreloadsTakePrecedence(t *testing.T) {
+	options := `--import "/customer/dd-trace/register.js" -r "/customer/dd-trace/ci/init.js" --trace-warnings`
+	t.Setenv(nodeOptionsEnvVar, options)
+	t.Setenv("DD_TRACE_PACKAGE", "/action/dd-trace/ci/init.js")
+	t.Setenv("DD_TRACE_ESM_IMPORT", "/action/dd-trace/register.js")
+	env := NewJavaScript().GetPlatformEnv()
+	addNodeImport(env, ddTraceRegisterModule)
+	require.Empty(t, env, "workers must inherit the customer's options unchanged")
+}
+
+func TestJavaScript_RegisterUsesExternalPreloadInstallation(t *testing.T) {
+	t.Setenv(nodeOptionsEnvVar, `-r "/customer install/dd-trace/ci/init.js"`)
+	t.Setenv("DD_TRACE_ESM_IMPORT", "")
+	env := NewJavaScript().GetPlatformEnv()
+	addNodeImport(env, ddTraceRegisterModule)
+	require.Equal(t, `--import "/customer install/dd-trace/register.js" `+os.Getenv(nodeOptionsEnvVar), env[nodeOptionsEnvVar])
+}
+
+func TestJavaScript_InvalidActionPackageDoesNotSelectAnotherTracer(t *testing.T) {
+	t.Setenv(nodeOptionsEnvVar, "")
+	t.Setenv("DD_TRACE_PACKAGE", "/missing/dd-trace/ci/init.js")
+	executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("module not found")}}}
+	javascript := &JavaScript{executor: executor}
+	_, err := javascript.DetectTracer(t.Context(), TracerOptions{})
+	require.ErrorContains(t, err, "/missing/dd-trace/ci/init.js")
+	require.Len(t, executor.commands, 1)
+}
+
+func TestJavaScript_DetectTracer_PrefersExplicitActionPreload(t *testing.T) {
 	t.Setenv(nodeOptionsEnvVar, "-r /external/dd-trace/ci/init.js")
-	executor := &fakeCommandExecutor{responses: []commandResponse{{output: []byte("/project/node_modules/dd-trace/ci/init.js")}}}
+	t.Setenv("DD_TRACE_PACKAGE", "/other/dd-trace/ci/init.js")
+	executor := &fakeCommandExecutor{responses: []commandResponse{{output: []byte("/external/dd-trace/ci/init.js")}}}
 	javascript := &JavaScript{executor: executor}
 
 	path, err := javascript.DetectTracer(t.Context(), TracerOptions{})
 	require.NoError(t, err)
-	require.Equal(t, "/project/node_modules/dd-trace/ci/init.js", path)
-	require.Len(t, executor.commands, 1, "project resolution must precede the action preload")
+	require.Equal(t, "/external/dd-trace/ci/init.js", path)
+	require.Len(t, executor.commands, 1, "validate only the explicitly selected preload")
+	require.Contains(t, executor.commands[0].args, "/external/dd-trace/ci/init.js")
 	require.Equal(t, map[string]string{nodeOptionsEnvVar: ""}, executor.envs[0])
 	require.Empty(t, javascript.GetPlatformEnv(), "the absolute preload must not be duplicated for workers")
 }
@@ -111,7 +162,7 @@ func TestJavaScript_DetectTracer_RejectsInvalidActionPreload(t *testing.T) {
 	t.Setenv(nodeOptionsEnvVar, "-r "+strconv.Quote(preload))
 
 	err := NewJavaScript().SanityCheck(t.Context())
-	require.ErrorContains(t, err, "failed to resolve absolute dd-trace preload")
+	require.ErrorContains(t, err, "failed to resolve")
 	require.ErrorContains(t, err, preload)
 }
 

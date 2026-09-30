@@ -1,9 +1,6 @@
 package utils
 
-import (
-	"path/filepath"
-	"strings"
-)
+import "strings"
 
 type nodeOptionsToken struct {
 	raw   string
@@ -78,11 +75,11 @@ func nodeOptionsMatchesModule(value, module string) bool {
 		(module == "dd-trace/ci/init" && (value == module+".js" || strings.HasSuffix(normalized, "/"+module+".js")))
 }
 
-func findNodeOption(value, option, module string, absoluteOnly bool) string {
+func findNodeOption(value, option, module string) string {
 	tokens := splitNodeOptions(value)
 	for index := 0; index < len(tokens); index++ {
 		candidate, width, found := nodeOptionsOptionValue(tokens, index, option)
-		if found && nodeOptionsMatchesModule(candidate, module) && (!absoluteOnly || filepath.IsAbs(candidate)) {
+		if found && nodeOptionsMatchesModule(candidate, module) {
 			return candidate
 		}
 		index += width - 1
@@ -91,15 +88,15 @@ func findNodeOption(value, option, module string, absoluteOnly bool) string {
 }
 
 func NodeOptionsHasRequire(value, module string) bool {
-	return findNodeOption(value, "--require", module, false) != ""
+	return NodeOptionsRequire(value, module) != ""
 }
 
-func NodeOptionsAbsoluteRequire(value, module string) string {
-	return findNodeOption(value, "--require", module, true)
+func NodeOptionsRequire(value, module string) string {
+	return findNodeOption(value, "--require", module)
 }
 
 func NodeOptionsHasImport(value, module string) bool {
-	return findNodeOption(value, "--import", module, false) != ""
+	return findNodeOption(value, "--import", module) != ""
 }
 
 func withoutNodeOption(value, option, module string) string {

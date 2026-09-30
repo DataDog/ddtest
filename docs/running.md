@@ -14,6 +14,29 @@ test files to them. `ddtest run --ci-node N` runs the files assigned to CI node
 `N`; inside that CI node, `--ci-node-workers` controls how many worker processes
 DDTest starts.
 
+## Planning Prerequisites
+
+`ddtest plan` does not require a Datadog tracer on Ruby, Python, or JavaScript.
+Runtime tag probes use the language's built-in APIs. The Ruby probe mirrors the
+Datadog library's CRuby expressions, with compatibility tests comparing the
+values against the library.
+
+Ruby and Python can use an installed tracer for full test discovery. Without
+one, normal planning falls back to file discovery. If you enable
+`--strict-discovery`, a failure of full discovery remains an error.
+`ddtest run` still validates the tracer before executing tests.
+
+To supply the execution environment's exact tags, provide all five OS and
+runtime tags with `--runtime-tags`. A complete set skips the runtime tag probe;
+partial overrides continue to merge onto detected values:
+
+```bash
+ddtest plan --runtime-tags '{"os.platform":"linux","os.architecture":"x86_64","os.version":"6.8.0","runtime.name":"ruby","runtime.version":"3.4.1"}'
+```
+
+Use values from the environment that will execute the tests. Framework discovery
+may still need that framework and its runtime installed in the planning job.
+
 ## Single CI Node
 
 ```bash
@@ -251,17 +274,20 @@ it.
 
 ## JavaScript Tracer Preloads
 
-DDTest resolves `dd-trace/ci/init` from the project when it is installed there.
-It also accepts an absolute `dd-trace/ci/init.js` preload in
-`NODE_OPTIONS`, such as the path supplied by
-`datadog/test-visibility-github-action@v3` through `DD_TRACE_PACKAGE`.
-DDTest validates that path with Node.js. Project-local resolution remains the
-first choice, including projects that use a loader such as Yarn Plug'n'Play.
+For `ddtest run`, DDTest selects the JavaScript tracer in this order:
+
+1. Preserve an existing Datadog CI require in `NODE_OPTIONS`.
+2. If no require is present, append `-r` with the path in `DD_TRACE_PACKAGE`.
+3. If that variable is unset, append `-r dd-trace/ci/init`, resolved from the
+   project, including loaders such as Yarn Plug'n'Play.
+
+The selected preload is validated with Node.js before execution. An invalid
+explicit preload or `DD_TRACE_PACKAGE` produces an error; DDTest does not
+silently switch to another tracer. Planning does not validate or require it.
 
 Runtime checks and test-file discovery remove the Datadog preload from
 `NODE_OPTIONS` so those processes do not start tracing. Other Node options
-and project loaders remain in place. Test workers inherit the absolute preload
-when present; otherwise DDTest adds the project-local `-r dd-trace/ci/init`.
+and project loaders remain in place. Test workers receive the selected preload.
 An action-installed tracer does not need to be added to `package.json` or
 exposed through `NODE_PATH`.
 
@@ -279,7 +305,7 @@ When `--tests-location` or `--tests-exclude-pattern` is set, DDTest filters the
 file list returned by Jest after discovery; it does not pass `--tests-location`
 as Jest's `--testMatch`.
 
-DDTest appends `-r dd-trace/ci/init` to `NODE_OPTIONS` for worker processes
+DDTest appends the selected tracer require to `NODE_OPTIONS` for worker processes
 unless a package-name or absolute CI preload is already present. Existing
 project loaders, such as Yarn Plug'n'Play, run before a preload DDTest adds.
 
@@ -353,11 +379,12 @@ projects, include and exclude patterns, and CLI filters without executing tests.
 If that API is unavailable, DDTest falls back to its own filesystem glob using
 `--tests-location` or the default Vitest test-file pattern.
 
-DDTest adds `--import dd-trace/register.js` and `-r dd-trace/ci/init` to
-`NODE_OPTIONS` for Vitest worker processes unless equivalent package-name or
-absolute preloads are already present. With the GitHub action, set both
-`-r ${{ env.DD_TRACE_PACKAGE }}` and
-`--import ${{ env.DD_TRACE_ESM_IMPORT }}` on the plan and run steps.
+DDTest adds the CI require described above and a `--import` for Vitest worker
+processes. It preserves an existing Datadog register import; otherwise it uses
+`DD_TRACE_ESM_IMPORT`, the `register.js` next to an external tracer's `ci`
+directory, or the project-local `dd-trace/register.js`, in that order.
+The GitHub action exports the paths, so manually setting `NODE_OPTIONS` is
+unnecessary.
 The tracer's `--require` option follows existing project loaders. Discovery
 removes both Datadog options to avoid instrumenting the file-listing process.
 

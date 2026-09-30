@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -101,6 +102,9 @@ func (j *JavaScript) GetPlatformEnv() map[string]string {
 	// Project loaders (for example Yarn PnP) must run before the tracer can
 	// resolve itself and its dependencies. Preserve their existing order.
 	nodeOptions := nodeOptionsDDTraceCIArg
+	if preload := os.Getenv("DD_TRACE_PACKAGE"); preload != "" {
+		nodeOptions = "-r " + strconv.Quote(preload)
+	}
 	if strings.TrimSpace(currentValue) != "" {
 		nodeOptions = currentValue + " " + nodeOptions
 	}
@@ -120,6 +124,16 @@ func addNodeImport(platformEnv map[string]string, module string) map[string]stri
 		return platformEnv
 	}
 
+	if preload := os.Getenv("DD_TRACE_ESM_IMPORT"); preload != "" {
+		module = strconv.Quote(preload)
+	} else {
+		// An explicit external CI preload also identifies its register module,
+		// even when the action's optional ESM variable is unavailable.
+		preload := utils.NodeOptionsRequire(nodeOptions, ddTraceCIInitModule)
+		if filepath.IsAbs(preload) {
+			module = strconv.Quote(filepath.Join(filepath.Dir(filepath.Dir(preload)), "register.js"))
+		}
+	}
 	importOption := nodeImportArg + " " + module
 	if strings.TrimSpace(nodeOptions) != "" {
 		importOption += " " + nodeOptions
@@ -262,29 +276,25 @@ func isDirectJavaScriptCommand(script string, names ...string) bool {
 	return false
 }
 
-// DetectTracer prefers the project tracer, then an absolute CI preload supplied
-// through NODE_OPTIONS by an external installer such as the GitHub action.
+// DetectTracer validates the preload used by workers: an explicit NODE_OPTIONS
+// require, then DD_TRACE_PACKAGE, then the project-installed tracer.
 func (j *JavaScript) DetectTracer(ctx context.Context, _ TracerOptions) (string, error) {
 	// Preserve other project loaders, including Yarn PnP, while ensuring that
 	// the resolution probe itself never starts Test Optimization.
 	probeEnv := javascriptProbeEnv()
-	path, projectErr := tracerProbe(ctx, j.executor, "node", []string{"-e", resolveJavaScriptModule, ddTraceCIInitModule}, probeEnv)
-	if projectErr == nil {
-		if !filepath.IsAbs(path) {
-			return "", fmt.Errorf("resolve %s: node returned non-absolute path %q", ddTraceCIInitModule, path)
-		}
-		return path, nil
+	preload := utils.NodeOptionsRequire(os.Getenv(nodeOptionsEnvVar), ddTraceCIInitModule)
+	if preload == "" {
+		preload = os.Getenv("DD_TRACE_PACKAGE")
 	}
-	absolutePreload := utils.NodeOptionsAbsoluteRequire(os.Getenv(nodeOptionsEnvVar), ddTraceCIInitModule)
-	if absolutePreload == "" {
-		return "", fmt.Errorf("failed to resolve %s: %w", ddTraceCIInitModule, projectErr)
+	if preload == "" {
+		preload = ddTraceCIInitModule
 	}
-	path, err := tracerProbe(ctx, j.executor, "node", []string{"-e", resolveJavaScriptModule, absolutePreload}, probeEnv)
+	path, err := tracerProbe(ctx, j.executor, "node", []string{"-e", resolveJavaScriptModule, preload}, probeEnv)
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve absolute dd-trace preload %q: %w", absolutePreload, err)
+		return "", fmt.Errorf("failed to resolve %s: %w", preload, err)
 	}
 	if !filepath.IsAbs(path) {
-		return "", fmt.Errorf("resolve absolute dd-trace preload %q: node returned non-absolute path %q", absolutePreload, path)
+		return "", fmt.Errorf("resolve %s: node returned non-absolute path %q", preload, path)
 	}
 	return path, nil
 }

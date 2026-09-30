@@ -81,6 +81,15 @@ func TestMochaAdapterCustomLocationAndCommandIntegration(t *testing.T) {
 }
 
 func TestMochaActionPreloadIntegration(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicit_NODE_OPTIONS=%t", explicit), func(t *testing.T) {
+			testMochaActionPreloadIntegration(t, explicit)
+		})
+	}
+}
+
+func testMochaActionPreloadIntegration(t *testing.T, explicit bool) {
+	t.Helper()
 	nodeModules := requireEnv(t, "DDTEST_MOCHA_NODE_MODULES")
 	resetSettingsAfterTest(t)
 	configureFramework("", "")
@@ -96,18 +105,37 @@ func TestMochaActionPreloadIntegration(t *testing.T) {
 	preload := filepath.Join(external, "dd-trace", "ci", "init.js")
 	writeFixture(t, external, "dd-trace/ci/init.js", fmt.Sprintf("require('fs').appendFileSync(%q, 'loaded\\n'); global.ddtestTracerLoaded = true;\n", marker))
 	t.Chdir(root)
-	t.Setenv("NODE_OPTIONS", "-r "+strconv.Quote(preload))
+	t.Setenv("NODE_OPTIONS", "")
+	t.Setenv("DD_TRACE_PACKAGE", "")
+	t.Setenv("NODE_PATH", "")
 
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	javascript := platform.NewJavaScript()
-	require.NoError(t, javascript.SanityCheck(ctx))
+	require.Error(t, javascript.SanityCheck(ctx), "fixture must not have a project tracer")
 	_, err := javascript.CreateTagsMap(ctx)
-	require.NoError(t, err)
+	require.NoError(t, err, "planning tags do not need a tracer")
 	fw, err := javascript.DetectFramework()
 	require.NoError(t, err)
-	require.Empty(t, fw.GetPlatformEnv(), "worker should inherit the action's absolute preload")
 	files, err := fw.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: fw.TestPattern()})
+	require.NoError(t, err, "planning discovery does not need a tracer")
+	requireFiles(t, files, []string{"test/action.spec.js"})
+
+	t.Setenv("DD_TRACE_PACKAGE", preload)
+	if explicit {
+		t.Setenv("NODE_OPTIONS", "-r "+strconv.Quote(preload))
+	}
+	require.NoError(t, javascript.SanityCheck(ctx))
+	_, err = javascript.CreateTagsMap(ctx)
+	require.NoError(t, err)
+	fw, err = javascript.DetectFramework()
+	require.NoError(t, err)
+	if explicit {
+		require.Empty(t, fw.GetPlatformEnv(), "worker should inherit the customer's absolute preload")
+	} else {
+		require.Equal(t, "-r "+strconv.Quote(preload), fw.GetPlatformEnv()["NODE_OPTIONS"])
+	}
+	files, err = fw.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: fw.TestPattern()})
 	require.NoError(t, err)
 	requireFiles(t, files, []string{"test/action.spec.js"})
 	require.NoFileExists(t, marker, "sanity checks, runtime tags, and discovery must not start tracing")

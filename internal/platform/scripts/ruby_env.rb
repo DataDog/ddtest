@@ -1,14 +1,20 @@
 require "json"
+require "etc"
+require "rbconfig"
 
-require "datadog/ci/ext/test"
-require "datadog/core/environment/platform"
+# Match the tracer's CRuby tag expressions without loading datadog-ci.
+# https://github.com/DataDog/dd-trace-rb/blob/0b10368e0a2940c1f4d50c9739b9973b4f8bc32a/lib/datadog/core/environment/platform.rb
+# Datadog::Core::Environment::Ext defines LANG_ENGINE and ENGINE_VERSION.
+# TestRubyPlatformIntegration compares these values against the installed library.
+engine_version = defined?(RUBY_ENGINE_VERSION) ? RUBY_ENGINE_VERSION : RUBY_VERSION
+kernel_release = Etc.uname[:release] if RUBY_VERSION >= "2.2"
 
 tags_map = {
-  Datadog::CI::Ext::Test::TAG_OS_PLATFORM => ::RbConfig::CONFIG["host_os"],
-  Datadog::CI::Ext::Test::TAG_OS_ARCHITECTURE => ::RbConfig::CONFIG["host_cpu"],
-  Datadog::CI::Ext::Test::TAG_OS_VERSION => Datadog::Core::Environment::Platform.kernel_release,
-  Datadog::CI::Ext::Test::TAG_RUNTIME_NAME => Datadog::Core::Environment::Ext::LANG_ENGINE,
-  Datadog::CI::Ext::Test::TAG_RUNTIME_VERSION => Datadog::Core::Environment::Ext::ENGINE_VERSION
+  "os.platform" => RbConfig::CONFIG["host_os"],
+  "os.architecture" => RbConfig::CONFIG["host_cpu"],
+  "os.version" => kernel_release,
+  "runtime.name" => RUBY_ENGINE,
+  "runtime.version" => engine_version
 }
 
 output_file = ARGV[0]
