@@ -24,6 +24,7 @@ func TestReportCountsIndividualFindings(t *testing.T) {
 		want  string
 	}{
 		{"single", intake.Facts{TestEventCount: 1, FailedTests: []intake.Test{{Name: "failed"}}}, "1 finding."},
+		{"missing coverage", intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true}, "1 finding."},
 		{"multiple in one card", intake.Facts{TestEventCount: 2, FailedTests: []intake.Test{{Name: "one"}, {Name: "two"}}}, "2 findings."},
 		{"empty coverage without events", intake.Facts{EmptyCoverageEntryCount: 2}, "2 findings."},
 		{"configuration error without events", intake.Facts{ConfigurationErrors: []string{"skippable_tests"}}, "1 finding."},
@@ -47,6 +48,31 @@ func TestReportCountsIndividualFindings(t *testing.T) {
 				t.Fatalf("summary hides configuration errors: %q", model.Summary)
 			}
 		})
+	}
+}
+
+func TestReportShowsCucumberCoverageTroubleshootingWithFinding(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"devDependencies":{"@cucumber/cucumber":"13.2.1"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	facts := intake.Facts{TestEventCount: 2, TestCount: 2, MissingCoverage: true}
+	model := buildReport(root, facts, false, reportRuntime{Framework: "Cucumber"})
+	if model.Summary != "1 finding." || len(model.Cards) != 1 || len(model.Cards[0].Advices) != 1 {
+		t.Fatalf("missing coverage advice: summary=%q cards=%+v", model.Summary, model.Cards)
+	}
+	path, err := writeReport(root, t.TempDir(), facts, false, reportRuntime{Framework: "Cucumber"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"Coverage not reported", "Cucumber needs nyc for coverage", "npm install --save-dev nyc"} {
+		if !strings.Contains(string(data), expected) {
+			t.Fatalf("report does not show %q", expected)
+		}
 	}
 }
 
