@@ -82,6 +82,7 @@ type MockPlatform struct {
 	PlatformName string
 	Tags         map[string]string
 	TagsErr      error
+	SanityErr    error
 	Framework    framework.Framework
 	TestLevel    settings.TestSkippingLevel
 }
@@ -103,7 +104,7 @@ func (m *MockPlatform) DetectFramework() (framework.Framework, error) {
 }
 
 func (m *MockPlatform) SanityCheck(ctx context.Context) error {
-	panic("prerequisites must be checked at command startup")
+	return m.SanityErr
 }
 
 func (m *MockPlatform) TestSkippingLevel() settings.TestSkippingLevel {
@@ -4369,6 +4370,35 @@ func TestPlanningWithCompleteRuntimeTagsDoesNotProbeRuntime(t *testing.T) {
 		if client.Tags[key] != value {
 			t.Errorf("tag %s = %q, want %q", key, client.Tags[key], value)
 		}
+	}
+}
+
+func TestPlanningWithoutCompatibleTracerUsesFileDiscovery(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		t.Run(fmt.Sprintf("strict=%t", strict), func(t *testing.T) {
+			setPlannerStrictDiscovery(t, strict)
+			setPlannerForceFullTestDiscovery(t, true)
+			fw := &MockFramework{
+				FrameworkName:   "pytest",
+				TestFiles:       []string{"tests/test_example.py"},
+				OnDiscoverTests: func() { t.Error("must not launch full discovery without a compatible tracer") },
+			}
+			p := &MockPlatform{
+				PlatformName: "python",
+				Tags:         map[string]string{"language": "python"},
+				SanityErr:    errors.New("tracer is missing or too old for discovery mode"),
+			}
+			client := &MockTestOptimizationClient{Skippables: testSkippables(map[string]bool{})}
+			planner := NewWithDependencies(p, fw, client, newDefaultMockCIProviderDetector())
+			err := planner.PreparePlanningData(t.Context())
+			if strict {
+				assertPlannerErrorCode(t, err, errcode.PlanFullTestDiscoveryFailed)
+			} else if err != nil {
+				t.Fatalf("planning should fall back to file discovery: %v", err)
+			} else if _, found := planner.testFiles["tests/test_example.py"]; !found {
+				t.Fatalf("missing planned test file: %v", planner.testFiles)
+			}
+		})
 	}
 }
 

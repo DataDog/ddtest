@@ -411,6 +411,17 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 			return nil
 		}
 
+		// Full discovery relies on the tracer's discovery mode. An absent or
+		// older tracer must not abort normal planning or accidentally execute
+		// tests instead of collecting them. File discovery remains available.
+		if err := detectedPlatform.SanityCheck(discoveryCtx); err != nil {
+			if discoveryCtx.Err() == nil {
+				fullDiscoveryErr = fmt.Errorf("full discovery requires a compatible tracer: %w", err)
+				slog.Info("Tracer unavailable for full discovery; using test-file discovery", "error", err)
+			}
+			return nil
+		}
+
 		res, discoveryErr := discoverLocalTests(discoveryCtx, testFramework, resolvedTestFiles)
 		discoveredTests = res
 		fullDiscoveryDuration = time.Since(fullDiscoveryStartTime)

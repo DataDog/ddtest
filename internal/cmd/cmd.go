@@ -313,8 +313,8 @@ func Execute() error {
 	return rootCmd.ExecuteContext(ctx)
 }
 
-// Resolve selection once. Tracer prerequisites are checked only for execution;
-// planning can fall back to test-file discovery without an installed tracer.
+// Resolve selection once. Execution requires tracer prerequisites; planning
+// can fall back to test-file discovery without an installed tracer.
 func resolveTestEnvironment(platformCode, frameworkCode errcode.Code) (platform.Platform, framework.Framework, error) {
 	p, err := detectPlatform()
 	if err != nil {
