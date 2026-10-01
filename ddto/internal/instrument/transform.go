@@ -33,7 +33,7 @@ func Transform(files map[string][]byte) (map[string][]byte, error) {
 			return nil, fmt.Errorf("%s: already instrumented", name)
 		}
 		fs := token.NewFileSet()
-		file, err := parser.ParseFile(fs, name, src, parser.ParseComments)
+		file, err := parser.ParseFile(fs, name, src, parser.ParseComments|parser.SkipObjectResolution)
 		if err != nil {
 			return nil, err
 		}

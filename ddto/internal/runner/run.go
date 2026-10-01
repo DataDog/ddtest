@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -77,7 +78,7 @@ func Prepare(ctx context.Context, dir string, args []string) (plan Plan, err err
 		return plan, fmt.Errorf("resolve packages (SDK %s must already be required): %w\n%s", SDKVersion, e, stderr.String())
 	}
 	var packages []goPackage
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	for {
 		var p goPackage
 		e = decoder.Decode(&p)
@@ -136,6 +137,8 @@ func Prepare(ctx context.Context, dir string, args []string) (plan Plan, err err
 			_ = os.RemoveAll(temp)
 		}
 	}()
+	// Backing files are immutable and shared only within this plan.
+	backingByContent := map[string]string{}
 	add := func(logical, content string) error {
 		if _, exists := replacements[logical]; exists {
 			return fmt.Errorf("generated file conflicts with user overlay: %s", logical)
@@ -145,9 +148,13 @@ func Prepare(ctx context.Context, dir string, args []string) (plan Plan, err err
 		} else if !errors.Is(e, os.ErrNotExist) {
 			return e
 		}
-		backing := filepath.Join(temp, fmt.Sprintf("generated-%d.go", len(replacements)))
-		if e := os.WriteFile(backing, []byte(content), 0600); e != nil {
-			return e
+		backing, exists := backingByContent[content]
+		if !exists {
+			backing = filepath.Join(temp, fmt.Sprintf("generated-%d.go", len(replacements)))
+			if e := os.WriteFile(backing, []byte(content), 0600); e != nil {
+				return e
+			}
+			backingByContent[content] = backing
 		}
 		replacements[logical] = backing
 		return nil

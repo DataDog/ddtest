@@ -58,6 +58,55 @@ GitHub Actions is configured to run the differential suite on Go 1.26/1.27 Linux
 macOS/Windows. A green Go version is compatibility evidence for that tested
 version; it does not imply support for every future toolchain or SDK.
 
+## Compilation performance
+
+The following compile-only measurements use **`go test -c -o <directory>/ -ldflags=-w ./...`**. No test binaries are executed, so SDK runtime and network flushing are excluded. Times are wall-clock medians in seconds. The percentage in the POC column is the reduction relative to Orchestrion, calculated from unrounded medians as `100 × (1 − POC / Orchestrion)`.
+
+Measured on an AMD Ryzen 9 5950X running Arch Linux amd64 and the development toolchain `go1.27.0-X:nodwarf5`. Each configuration uses the first N physical cores (no SMT), `GOMAXPROCS=N`, and `-p=N`. Gin v1.12.0 produces six test binaries; Chi v5.3.2 produces two. All variants use the same project sources and module resolution graph. Both instrumentators use the unmodified `dd-trace-go/v2@v2.11.0-rc.1` SDK; Orchestrion `v1.13.2-0.20260917114356-5c24783fcd76` loads only its `gotesting` aspects. The measured POC source is commit `4e56e8657949aaa1209afbaa19ef9767bbf6da90`.
+
+### Cold build
+
+Two runs per variant with independent, empty Go build caches and no existing output binaries. Downloaded modules and the OS page cache remain warm.
+
+| Project | Cores | Native | Orchestrion | POC |
+| --- | ---: | ---: | ---: | ---: |
+| Gin | 1 | 60.94 s | 141.76 s | 95.63 s (**−32.5%**) |
+| Gin | 4 | 17.74 s | 45.96 s | 27.72 s (**−39.7%**) |
+| Gin | 8 | 12.92 s | 28.32 s | 18.25 s (**−35.6%**) |
+| Gin | 16 | 11.34 s | 26.82 s | 17.33 s (**−35.4%**) |
+| Chi | 1 | 26.61 s | 94.27 s | 65.38 s (**−30.6%**) |
+| Chi | 4 | 7.81 s | 29.41 s | 18.10 s (**−38.5%**) |
+| Chi | 8 | 5.49 s | 19.61 s | 11.72 s (**−40.2%**) |
+| Chi | 16 | 4.64 s | 17.11 s | 10.76 s (**−37.1%**) |
+
+### Cached dependencies with forced linking
+
+Five runs per variant with compiled dependencies in cache. Every run adds a unique `-buildid` alongside `-w` to force fresh links. These timings include CLI preparation, Go build planning, and any required generated-main compilation; they do not isolate the linker or measure unchanged-binary reuse.
+
+| Project | Cores | Native | Orchestrion | POC |
+| --- | ---: | ---: | ---: | ---: |
+| Gin | 1 | 2.49 s | 10.96 s | 6.00 s (**−45.2%**) |
+| Gin | 4 | 1.08 s | 4.98 s | 2.96 s (**−40.7%**) |
+| Gin | 8 | 1.06 s | 5.43 s | 4.23 s (**−22.2%**) |
+| Gin | 16 | 0.99 s | 4.97 s | 4.12 s (**−17.2%**) |
+| Chi | 1 | 0.56 s | 3.87 s | 1.68 s (**−56.7%**) |
+| Chi | 4 | 0.26 s | 1.80 s | 1.21 s (**−32.7%**) |
+| Chi | 8 | 0.25 s | 1.61 s | 1.03 s (**−36.3%**) |
+| Chi | 16 | 0.27 s | 1.73 s | 0.97 s (**−44.2%**) |
+
+[Complete measurements](docs/benchmark-compile-no-dwarf.json) retain all 400 commands: 360 performance samples, 16 A/A controls, and 24 trace validations, with ranges and paired comparisons. All commands succeeded; all 96 output binaries were checked without DWARF; the SDK instrumentation hook was present only in the POC and Orchestrion outputs. CPU and peak memory accounting include the Orchestrion daemon and nested builds.
+
+These are local, exploratory results. Two cold runs do not establish stability, and the physical cores were not reserved from other workloads. Results should not be extrapolated to other applications, platforms, or toolchains. The earlier series that retained DWARF was measured at a different time; its noisy Gin eight-core cold results do not isolate the effect of `-w`. The JSON also preserves unused-constant edit measurements as diagnostics, not evidence for real test-body edit performance.
+
+The commands below illustrate the eight-core configuration from each prepared target module. Use separate Go build caches and output directories for each variant; for the cached-dependency scenario, append a different `-buildid` value to `-ldflags` on each run. CPU affinity and cache cleanup were managed outside the timed commands.
+
+```sh
+GOMAXPROCS=8 go test -p=8 -c -o ./out/native/ -ldflags=-w ./...
+GOMAXPROCS=8 /path/to/ddtest test -p=8 -c -o ./out/poc/ -ldflags=-w ./...
+GOMAXPROCS=8 go test -p=8 -c -o ./out/orchestrion/ \
+  -toolexec="/path/to/orchestrion toolexec" -ldflags=-w ./...
+```
+
 ## Compare compilation
 
 ```sh
