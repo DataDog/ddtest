@@ -123,7 +123,7 @@ func (m *MockFramework) RunTests(ctx context.Context, testFiles []string, envMap
 	return m.Err
 }
 
-func (m *MockFramework) Platform() framework.Platform { return nil }
+func (m *MockFramework) Platform() framework.PlatformEnvironment { return nil }
 
 func (m *MockFramework) SupportsFullTestDiscovery() bool {
 	return !m.FullDiscoveryUnsupported

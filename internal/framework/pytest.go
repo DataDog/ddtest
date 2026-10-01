@@ -20,10 +20,10 @@ const (
 type PyTest struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platform        Platform
+	platform        PlatformEnvironment
 }
 
-func NewPytest(p Platform) *PyTest {
+func NewPytest(p PlatformEnvironment) *PyTest {
 	return &PyTest{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
@@ -31,7 +31,7 @@ func NewPytest(p Platform) *PyTest {
 	}
 }
 
-func (p *PyTest) Platform() Platform { return p.platform }
+func (p *PyTest) Platform() PlatformEnvironment { return p.platform }
 
 func (p *PyTest) Name() string {
 	return "pytest"

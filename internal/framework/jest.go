@@ -30,10 +30,10 @@ var jestTestFileExtensions = []string{"js", "jsx", "ts", "tsx", "mjs", "cjs"}
 type Jest struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platform        Platform
+	platform        PlatformEnvironment
 }
 
-func NewJest(p Platform) *Jest {
+func NewJest(p PlatformEnvironment) *Jest {
 	return &Jest{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
@@ -41,7 +41,7 @@ func NewJest(p Platform) *Jest {
 	}
 }
 
-func (j *Jest) Platform() Platform { return j.platform }
+func (j *Jest) Platform() PlatformEnvironment { return j.platform }
 
 func (j *Jest) Name() string {
 	return "jest"

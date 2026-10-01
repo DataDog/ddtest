@@ -13,7 +13,7 @@ import (
 )
 
 type Platform interface {
-	framework.Platform
+	framework.PlatformEnvironment
 	Detect(repositoryRoot string) (bool, error)
 	CreateTagsMap(ctx context.Context) (map[string]string, error)
 	DetectFramework() (framework.Framework, error)

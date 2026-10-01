@@ -61,7 +61,7 @@ var cucumberValueOptions = map[string]bool{
 type Cucumber struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platform        Platform
+	platform        PlatformEnvironment
 }
 
 type cucumberEnvelope struct {
@@ -74,7 +74,7 @@ type cucumberEnvelope struct {
 	} `json:"testCase"`
 }
 
-func NewCucumber(p Platform) *Cucumber {
+func NewCucumber(p PlatformEnvironment) *Cucumber {
 	return &Cucumber{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
@@ -82,7 +82,7 @@ func NewCucumber(p Platform) *Cucumber {
 	}
 }
 
-func (c *Cucumber) Platform() Platform { return c.platform }
+func (c *Cucumber) Platform() PlatformEnvironment { return c.platform }
 
 func (c *Cucumber) Name() string                    { return "cucumber" }
 func (c *Cucumber) SupportsFullTestDiscovery() bool { return false }

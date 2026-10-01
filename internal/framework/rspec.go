@@ -25,10 +25,10 @@ const (
 type RSpec struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platform        Platform
+	platform        PlatformEnvironment
 }
 
-func NewRSpec(p Platform) *RSpec {
+func NewRSpec(p PlatformEnvironment) *RSpec {
 	return &RSpec{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
@@ -36,7 +36,7 @@ func NewRSpec(p Platform) *RSpec {
 	}
 }
 
-func (r *RSpec) Platform() Platform { return r.platform }
+func (r *RSpec) Platform() PlatformEnvironment { return r.platform }
 
 func (r *RSpec) Name() string {
 	return "rspec"

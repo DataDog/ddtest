@@ -31,10 +31,10 @@ var mochaAdapterScript string
 type Mocha struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platform        Platform
+	platform        PlatformEnvironment
 }
 
-func NewMocha(p Platform) *Mocha {
+func NewMocha(p PlatformEnvironment) *Mocha {
 	return &Mocha{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
@@ -42,7 +42,7 @@ func NewMocha(p Platform) *Mocha {
 	}
 }
 
-func (m *Mocha) Platform() Platform { return m.platform }
+func (m *Mocha) Platform() PlatformEnvironment { return m.platform }
 
 func (m *Mocha) Name() string                    { return "mocha" }
 func (m *Mocha) SupportsFullTestDiscovery() bool { return false }

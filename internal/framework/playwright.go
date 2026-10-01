@@ -34,7 +34,7 @@ var playwrightDiscoveryReporterScript string
 type Playwright struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platform        Platform
+	platform        PlatformEnvironment
 	discoveryRoot   string
 }
 
@@ -47,7 +47,7 @@ type playwrightDiscoveryError struct {
 	Message string `json:"message"`
 }
 
-func NewPlaywright(p Platform) *Playwright {
+func NewPlaywright(p PlatformEnvironment) *Playwright {
 	return &Playwright{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
@@ -55,7 +55,7 @@ func NewPlaywright(p Platform) *Playwright {
 	}
 }
 
-func (p *Playwright) Platform() Platform { return p.platform }
+func (p *Playwright) Platform() PlatformEnvironment { return p.platform }
 
 func (p *Playwright) Name() string                    { return "playwright" }
 func (p *Playwright) SupportsFullTestDiscovery() bool { return false }

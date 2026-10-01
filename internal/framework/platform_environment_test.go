@@ -62,20 +62,52 @@ func (e *platformBoundaryExecutor) Output(ctx context.Context, name string, args
 }
 
 func TestFrameworksPropagatePlatformErrors(t *testing.T) {
-	constructors := []func(Platform, *platformBoundaryExecutor) Framework{
-		func(p Platform, e *platformBoundaryExecutor) Framework { f := NewRSpec(p); f.executor = e; return f },
-		func(p Platform, e *platformBoundaryExecutor) Framework { f := NewMinitest(p); f.executor = e; return f },
-		func(p Platform, e *platformBoundaryExecutor) Framework { f := NewPytest(p); f.executor = e; return f },
-		func(p Platform, e *platformBoundaryExecutor) Framework { f := NewJest(p); f.executor = e; return f },
-		func(p Platform, e *platformBoundaryExecutor) Framework { f := NewMocha(p); f.executor = e; return f },
-		func(p Platform, e *platformBoundaryExecutor) Framework { f := NewVitest(p); f.executor = e; return f },
-		func(p Platform, e *platformBoundaryExecutor) Framework {
+	constructors := []func(PlatformEnvironment, *platformBoundaryExecutor) Framework{
+		func(p PlatformEnvironment, e *platformBoundaryExecutor) Framework {
+			f := NewRSpec(p)
+			f.executor = e
+			return f
+		},
+		func(p PlatformEnvironment, e *platformBoundaryExecutor) Framework {
+			f := NewMinitest(p)
+			f.executor = e
+			return f
+		},
+		func(p PlatformEnvironment, e *platformBoundaryExecutor) Framework {
+			f := NewPytest(p)
+			f.executor = e
+			return f
+		},
+		func(p PlatformEnvironment, e *platformBoundaryExecutor) Framework {
+			f := NewJest(p)
+			f.executor = e
+			return f
+		},
+		func(p PlatformEnvironment, e *platformBoundaryExecutor) Framework {
+			f := NewMocha(p)
+			f.executor = e
+			return f
+		},
+		func(p PlatformEnvironment, e *platformBoundaryExecutor) Framework {
+			f := NewVitest(p)
+			f.executor = e
+			return f
+		},
+		func(p PlatformEnvironment, e *platformBoundaryExecutor) Framework {
 			f := NewPlaywright(p)
 			f.executor = e
 			return f
 		},
-		func(p Platform, e *platformBoundaryExecutor) Framework { f := NewCypress(p); f.executor = e; return f },
-		func(p Platform, e *platformBoundaryExecutor) Framework { f := NewCucumber(p); f.executor = e; return f },
+		func(p PlatformEnvironment, e *platformBoundaryExecutor) Framework {
+			f := NewCypress(p)
+			f.executor = e
+			return f
+		},
+		func(p PlatformEnvironment, e *platformBoundaryExecutor) Framework {
+			f := NewCucumber(p)
+			f.executor = e
+			return f
+		},
 	}
 	for _, newFramework := range constructors {
 		failure := errors.New("platform could not prepare the environment")

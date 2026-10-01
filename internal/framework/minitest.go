@@ -23,10 +23,10 @@ const (
 type Minitest struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platform        Platform
+	platform        PlatformEnvironment
 }
 
-func NewMinitest(p Platform) *Minitest {
+func NewMinitest(p PlatformEnvironment) *Minitest {
 	return &Minitest{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
@@ -34,7 +34,7 @@ func NewMinitest(p Platform) *Minitest {
 	}
 }
 
-func (m *Minitest) Platform() Platform { return m.platform }
+func (m *Minitest) Platform() PlatformEnvironment { return m.platform }
 
 func (m *Minitest) Name() string {
 	return "minitest"

@@ -41,7 +41,7 @@ var cypressDiscoveryConfigScript string
 type Cypress struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platform        Platform
+	platform        PlatformEnvironment
 }
 
 type cypressDiscoveryConfig struct {
@@ -50,7 +50,7 @@ type cypressDiscoveryConfig struct {
 	SpecFiles   []string `json:"specFiles"`
 }
 
-func NewCypress(p Platform) *Cypress {
+func NewCypress(p PlatformEnvironment) *Cypress {
 	return &Cypress{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
@@ -58,7 +58,7 @@ func NewCypress(p Platform) *Cypress {
 	}
 }
 
-func (c *Cypress) Platform() Platform { return c.platform }
+func (c *Cypress) Platform() PlatformEnvironment { return c.platform }
 
 func (c *Cypress) Name() string                    { return "cypress" }
 func (c *Cypress) SupportsFullTestDiscovery() bool { return false }

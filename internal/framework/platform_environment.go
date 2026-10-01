@@ -2,9 +2,9 @@ package framework
 
 import "context"
 
-// Platform supplies the runtime services shared by all test frameworks.
+// PlatformEnvironment prepares runtime environments and checks platform prerequisites for frameworks.
 // Implementations live in package platform; this consumer interface avoids an import cycle.
-type Platform interface {
+type PlatformEnvironment interface {
 	Name() string
 	SanityCheck(context.Context) error
 	// RunEnv prepares execution; the command layer calls SanityCheck before running.

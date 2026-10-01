@@ -37,10 +37,10 @@ type vitestExecutor interface {
 type Vitest struct {
 	executor        vitestExecutor
 	commandOverride []string
-	platform        Platform
+	platform        PlatformEnvironment
 }
 
-func NewVitest(p Platform) *Vitest {
+func NewVitest(p PlatformEnvironment) *Vitest {
 	return &Vitest{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
@@ -48,7 +48,7 @@ func NewVitest(p Platform) *Vitest {
 	}
 }
 
-func (v *Vitest) Platform() Platform { return v.platform }
+func (v *Vitest) Platform() PlatformEnvironment { return v.platform }
 
 func (v *Vitest) Name() string {
 	return "vitest"
