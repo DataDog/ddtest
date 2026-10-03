@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -35,7 +34,7 @@ var playwrightDiscoveryReporterScript string
 type Playwright struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platformEnv     map[string]string
+	platform        PlatformEnvironment
 	discoveryRoot   string
 }
 
@@ -48,18 +47,18 @@ type playwrightDiscoveryError struct {
 	Message string `json:"message"`
 }
 
-func NewPlaywright() *Playwright {
+func NewPlaywright(p PlatformEnvironment) *Playwright {
 	return &Playwright{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
-		platformEnv:     make(map[string]string),
+		platform:        p,
 	}
 }
 
-func (p *Playwright) SetPlatformEnv(platformEnv map[string]string) { p.platformEnv = platformEnv }
-func (p *Playwright) GetPlatformEnv() map[string]string            { return p.platformEnv }
-func (p *Playwright) Name() string                                 { return "playwright" }
-func (p *Playwright) SupportsFullTestDiscovery() bool              { return false }
+func (p *Playwright) Platform() PlatformEnvironment { return p.platform }
+
+func (p *Playwright) Name() string                    { return "playwright" }
+func (p *Playwright) SupportsFullTestDiscovery() bool { return false }
 
 func (p *Playwright) SourceFileForSuite(suite string) (string, bool) {
 	suite = strings.TrimSpace(suite)
@@ -108,6 +107,11 @@ func (p *Playwright) DiscoverTests(context.Context, discovery.TestFileSet) ([]te
 }
 
 func (p *Playwright) DiscoverTestFiles(ctx context.Context, selectedFiles discovery.TestFileSet) ([]string, error) {
+	envMap, err := p.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{})
+	if err != nil {
+		return nil, err
+	}
+
 	command, baseArgs := p.Command()
 	if _, err := playwrightCLIArgs(command, baseArgs); err != nil {
 		return nil, err
@@ -120,7 +124,7 @@ func (p *Playwright) DiscoverTestFiles(ctx context.Context, selectedFiles discov
 
 	args := playwrightDiscoveryArgs(command, baseArgs, reporterPath)
 	slog.Info("Discovering Playwright test files with command", "command", command, "args", args)
-	output, commandErr := p.executor.CombinedOutput(ctx, command, args, p.discoveryEnv())
+	output, commandErr := p.executor.CombinedOutput(ctx, command, args, envMap)
 	discoveryResult, parseErr := parsePlaywrightDiscoveryOutput(output)
 	if commandErr != nil && (!isPlaywrightNoTestsExit(output, commandErr) || len(discoveryResult.Files) > 0) {
 		message := strings.TrimSpace(string(output))
@@ -159,25 +163,11 @@ func (p *Playwright) RunTests(ctx context.Context, testFiles []string, envMap ma
 	}
 	args := playwrightRunArgs(command, baseArgs, testFiles)
 	slog.Info("Running Playwright tests", "command", command, "args", args, "testFiles", testFiles)
-	mergedEnv := make(map[string]string)
-	maps.Copy(mergedEnv, p.platformEnv)
-	maps.Copy(mergedEnv, envMap)
-	return p.executor.Run(ctx, command, args, mergedEnv)
-}
-
-func (p *Playwright) discoveryEnv() map[string]string {
-	envMap := make(map[string]string, len(p.platformEnv)+1)
-	maps.Copy(envMap, p.platformEnv)
-	nodeOptions, ok := envMap[nodeOptionsEnvVar]
-	if !ok {
-		var found bool
-		nodeOptions, found = os.LookupEnv(nodeOptionsEnvVar)
-		if !found {
-			return envMap
-		}
+	mergedEnv, err := p.platform.RunEnv(RuntimeOptions{Env: envMap})
+	if err != nil {
+		return err
 	}
-	envMap[nodeOptionsEnvVar] = stripNodeOptionsRequire(nodeOptions, ddTraceCIInitModule)
-	return envMap
+	return p.executor.Run(ctx, command, args, mergedEnv)
 }
 
 func (p *Playwright) Command() (string, []string) {

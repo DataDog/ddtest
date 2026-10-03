@@ -96,7 +96,7 @@ func (m *vitestCommandExecutor) Run(_ context.Context, name string, args []strin
 }
 
 func TestVitest_FrameworkMetadata(t *testing.T) {
-	vitest := NewVitest()
+	vitest := NewVitest(&testPlatform{})
 	if vitest.Name() != "vitest" {
 		t.Fatalf("Name() = %q, want vitest", vitest.Name())
 	}
@@ -123,7 +123,7 @@ func TestVitest_HasUnskippableMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	vitest := NewVitest()
+	vitest := NewVitest(&testPlatform{})
 	if !vitest.HasUnskippableMarker(markedFile) {
 		t.Fatal("expected unskippable marker")
 	}
@@ -158,9 +158,9 @@ func TestVitest_DiscoverTestFiles_WithCustomCommand(t *testing.T) {
 	vitest := &Vitest{
 		executor:        executor,
 		commandOverride: []string{"pnpm", "exec", "vitest", "run", "--project", "unit*"},
-		platformEnv: map[string]string{
-			"NODE_OPTIONS": "--import dd-trace/register.js -r dd-trace/ci/init --max-old-space-size=4096",
-		},
+		platform: &testPlatform{env: map[string]string{
+			"NODE_OPTIONS": "--max-old-space-size=4096",
+		}},
 	}
 
 	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
@@ -187,7 +187,7 @@ func TestVitest_DiscoverTestFiles_WithCustomCommand(t *testing.T) {
 
 func TestVitest_DiscoverTestFiles_ExplicitFiles(t *testing.T) {
 	executor := &vitestCommandExecutor{err: errors.New("should not execute")}
-	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	vitest := &Vitest{executor: executor, platform: &testPlatform{env: make(map[string]string)}}
 	want := []string{"src/a.test.ts"}
 	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{ExplicitFiles: want})
 	if err != nil {
@@ -220,7 +220,7 @@ func TestVitest_DiscoverTestFiles_ExcludeStillUsesVitestDiscovery(t *testing.T) 
 				vitestListOutputEntry{File: "custom.check.ts", ProjectName: "unit"},
 			),
 		},
-		platformEnv: make(map[string]string),
+		platform: &testPlatform{env: make(map[string]string)},
 	}
 	resolvedTestFiles, err := discovery.ResolveTestFiles(vitest.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
@@ -260,7 +260,7 @@ func TestVitest_DiscoverTestFiles_ExcludeWithEmptyCandidatesStillUsesVitestDisco
 		vitestListOutputEntry{File: "excluded.test.ts", ProjectName: "unit"},
 		vitestListOutputEntry{File: "custom.check.ts", ProjectName: "unit"},
 	)}
-	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	vitest := &Vitest{executor: executor, platform: &testPlatform{env: make(map[string]string)}}
 	resolvedTestFiles, err := discovery.ResolveTestFiles(vitest.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		t.Fatal(err)
@@ -283,7 +283,7 @@ func TestVitest_DiscoverTestFiles_ExcludeWithEmptyCandidatesStillUsesVitestDisco
 
 func TestVitest_DiscoverTestFiles_ErrorIncludesOutput(t *testing.T) {
 	executor := &vitestCommandExecutor{output: []byte("invalid Vitest config"), err: errors.New("exit status 1")}
-	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	vitest := &Vitest{executor: executor, platform: &testPlatform{env: make(map[string]string)}}
 	_, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err == nil || !strings.Contains(err.Error(), "invalid Vitest config") {
 		t.Fatalf("unexpected error: %v", err)
@@ -292,7 +292,7 @@ func TestVitest_DiscoverTestFiles_ErrorIncludesOutput(t *testing.T) {
 
 func TestVitest_DiscoverTestFiles_InvalidJSON(t *testing.T) {
 	executor := &vitestCommandExecutor{output: []byte("not JSON")}
-	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	vitest := &Vitest{executor: executor, platform: &testPlatform{env: make(map[string]string)}}
 	_, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err == nil || !strings.Contains(err.Error(), "failed to parse Vitest test file list") {
 		t.Fatalf("unexpected error: %v", err)
@@ -315,7 +315,7 @@ func TestVitest_DiscoverTestFiles_IgnoresStdoutAndStderrNoise(t *testing.T) {
 		stdout: []byte("Vitest config log\n"),
 		stderr: []byte("Vite deprecation warning\n"),
 	}
-	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	vitest := &Vitest{executor: executor, platform: &testPlatform{env: make(map[string]string)}}
 	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
@@ -351,7 +351,7 @@ func TestVitest_DiscoverTestFiles_Vitest16UsesConfigAwareFallback(t *testing.T) 
 	vitest := &Vitest{
 		executor:        executor,
 		commandOverride: []string{"pnpm", "exec", "vitest", "run", "--project", "unit*"},
-		platformEnv:     make(map[string]string),
+		platform:        &testPlatform{env: make(map[string]string)},
 	}
 
 	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
@@ -395,7 +395,7 @@ func TestVitest_DiscoverTestFiles_Vitest16FallsBackToDDTestGlob(t *testing.T) {
 		outputs: [][]byte{[]byte("Unknown option --filesOnly"), []byte("failed to import vitest/node")},
 		errors:  []error{errors.New("exit status 1"), errors.New("exit status 1")},
 	}
-	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	vitest := &Vitest{executor: executor, platform: &testPlatform{env: make(map[string]string)}}
 	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
@@ -426,7 +426,7 @@ func TestVitest_DiscoverTestFiles_FiltersCustomLocation(t *testing.T) {
 		vitestListOutputEntry{File: "src/b.test.ts", ProjectName: "unit"},
 		vitestListOutputEntry{File: "custom/a.check.ts", ProjectName: "unit"},
 	)}
-	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	vitest := &Vitest{executor: executor, platform: &testPlatform{env: make(map[string]string)}}
 	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
@@ -441,7 +441,7 @@ func TestVitest_RunTests_WithCustomCommand(t *testing.T) {
 	vitest := &Vitest{
 		executor:        executor,
 		commandOverride: []string{"pnpm", "exec", "vitest", "list", "--project", "unit*"},
-		platformEnv:     map[string]string{"NODE_OPTIONS": "--import dd-trace/register.js -r dd-trace/ci/init", "SHARED": "platform"},
+		platform:        &testPlatform{env: map[string]string{"NODE_OPTIONS": "--import dd-trace/register.js -r dd-trace/ci/init", "SHARED": "platform"}},
 	}
 	err := vitest.RunTests(context.Background(), []string{"src/a.test.ts", "src/b.spec.ts"}, map[string]string{"SHARED": "worker"})
 	if err != nil {
@@ -465,7 +465,7 @@ func TestVitest_RunTests_UsesNpxFallback(t *testing.T) {
 	}
 
 	executor := &vitestCommandExecutor{}
-	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	vitest := &Vitest{executor: executor, platform: &testPlatform{env: make(map[string]string)}}
 	if err := vitest.RunTests(context.Background(), []string{"src/a.test.ts"}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -515,13 +515,5 @@ func TestVitestCLIArgs(t *testing.T) {
 	}
 	if got := vitestCLIArgs("node_modules/.bin/vitest", nil); got == nil {
 		t.Fatal("direct binary CLI args must encode as an empty JSON array, not null")
-	}
-}
-
-func TestStripNodeOptionsImport(t *testing.T) {
-	input := "--import dd-trace/register.js --import=other/register.js --max-old-space-size=4096"
-	want := "--import=other/register.js --max-old-space-size=4096"
-	if got := stripNodeOptionsImport(input, ddTraceRegisterPath); got != want {
-		t.Fatalf("got %q, want %q", got, want)
 	}
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive"
 	"github.com/stretchr/testify/require"
 )
@@ -47,7 +48,7 @@ process.on('exit', () => {
 	t.Setenv("NODE_OPTIONS", "--require "+strconv.Quote(filepath.Join(root, "noisy.cjs")))
 	t.Chdir(root)
 
-	jest := framework.NewJest()
+	jest := framework.NewJest(platform.NewJavaScript())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -59,7 +60,7 @@ process.on('exit', () => {
 	wantFiles := []string{"tests/selected.test.js", "tests/unselected.test.js"}
 	requireFiles(t, files, wantFiles)
 
-	if err := jest.RunTests(ctx, []string{"tests/selected.test.js"}, map[string]string{"DDTEST_JEST_WORKER": "selected"}); err != nil {
+	if err := jest.RunTests(ctx, []string{"tests/selected.test.js"}, map[string]string{"DDTEST_JEST_WORKER": "selected", "NODE_OPTIONS": os.Getenv("NODE_OPTIONS")}); err != nil {
 		t.Fatalf("selected-file run failed: %v", err)
 	}
 }

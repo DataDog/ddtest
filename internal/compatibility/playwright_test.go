@@ -13,6 +13,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
 )
 
 func TestPlaywrightAdapterIntegration(t *testing.T) {
@@ -72,7 +73,7 @@ func TestPlaywrightAdapterIntegration(t *testing.T) {
 
 	baseCommand := []string{binary, "test", "--config", "apps/web/playwright.config.js"}
 	configureFramework(shellCommand(baseCommand...), "")
-	playwright := framework.NewPlaywright()
+	playwright := framework.NewPlaywright(platform.NewJavaScript())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	files, err := playwright.DiscoverTestFiles(ctx, discovery.TestFileSet{})
@@ -84,8 +85,8 @@ func TestPlaywrightAdapterIntegration(t *testing.T) {
 
 	projectCommand := append(append([]string{}, baseCommand...), "--project", "one")
 	configureFramework(shellCommand(projectCommand...), "")
-	projectPlaywright := framework.NewPlaywright()
-	if err := projectPlaywright.RunTests(ctx, []string{"apps/web/tests/a.spec.ts"}, nil); err != nil {
+	projectPlaywright := framework.NewPlaywright(platform.NewJavaScript())
+	if err := projectPlaywright.RunTests(ctx, []string{"apps/web/tests/a.spec.ts"}, map[string]string{"NODE_OPTIONS": ""}); err != nil {
 		t.Fatalf("running one assigned file failed: %v", err)
 	}
 	if source, ok := playwright.SourceFileForSuite("a.spec.ts"); !ok || source != "apps/web/tests/a.spec.ts" {
@@ -94,7 +95,7 @@ func TestPlaywrightAdapterIntegration(t *testing.T) {
 
 	emptyCommand := append(append([]string{}, baseCommand...), "__ddtest_no_match__")
 	configureFramework(shellCommand(emptyCommand...), "")
-	emptyPlaywright := framework.NewPlaywright()
+	emptyPlaywright := framework.NewPlaywright(platform.NewJavaScript())
 	if files, err := emptyPlaywright.DiscoverTestFiles(ctx, discovery.TestFileSet{}); err != nil || len(files) != 0 {
 		t.Fatalf("empty native discovery = %v, %v", files, err)
 	}
@@ -102,7 +103,7 @@ func TestPlaywrightAdapterIntegration(t *testing.T) {
 	writeFixture(t, projectRoot, "tests/broken.spec.ts", "throw new Error('collection exploded')\n")
 	brokenCommand := append(append([]string{}, baseCommand...), "broken.spec.ts")
 	configureFramework(shellCommand(brokenCommand...), "")
-	brokenPlaywright := framework.NewPlaywright()
+	brokenPlaywright := framework.NewPlaywright(platform.NewJavaScript())
 	if _, err := brokenPlaywright.DiscoverTestFiles(ctx, discovery.TestFileSet{}); err == nil {
 		t.Fatal("collection failure was accepted as an empty discovery")
 	}

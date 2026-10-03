@@ -7,6 +7,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
 )
 
 func TestPyTestAdapterIntegration(t *testing.T) {
@@ -29,8 +30,8 @@ def test_preserves_worker_environment():
 	t.Chdir(root)
 
 	configureFramework(shellCommand(python, "-m", "pytest"), "")
-	pytest := framework.NewPytest()
-	pytest.SetPlatformEnv(map[string]string{"PYTEST_ADDOPTS": "--ddtrace"})
+	pytest := framework.NewPytest(platform.NewPython())
+	t.Setenv("PYTEST_ADDOPTS", "--ddtrace")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 

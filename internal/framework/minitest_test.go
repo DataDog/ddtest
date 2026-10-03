@@ -26,9 +26,6 @@ type mockRailsCommandExecutor struct {
 }
 
 func (m *mockRailsCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
-	if name == "bundle" && slices.Equal(args, []string{"info", "datadog-ci"}) {
-		return []byte("  * datadog-ci (1.31.0)"), nil
-	}
 	// Capture env for assertions
 	m.capturedEnvMap = envMap
 
@@ -94,19 +91,19 @@ func (m *countingCommandExecutor) Run(ctx context.Context, name string, args []s
 }
 
 func TestNewMinitest(t *testing.T) {
-	minitest := NewMinitest()
+	minitest := NewMinitest(&testPlatform{})
 	if minitest == nil {
-		t.Error("NewMinitest() returned nil")
+		t.Error("NewMinitest(&testPlatform{}) returned nil")
 		return
 	}
 	if minitest.executor == nil {
-		t.Error("NewMinitest() created Minitest with nil executor")
+		t.Error("NewMinitest(&testPlatform{}) created Minitest with nil executor")
 		return
 	}
 }
 
 func TestMinitest_Name(t *testing.T) {
-	minitest := NewMinitest()
+	minitest := NewMinitest(&testPlatform{})
 	expected := "minitest"
 	actual := minitest.Name()
 
@@ -680,7 +677,7 @@ func TestMinitest_DiscoverTestFiles(t *testing.T) {
 		}
 	}
 
-	minitest := NewMinitest()
+	minitest := NewMinitest(&testPlatform{})
 	discoveredFiles, err := discovery.DiscoverTestFiles(minitest.TestPattern(), settings.GetTestsExcludePattern())
 
 	if err != nil {
@@ -753,7 +750,7 @@ func TestMinitest_DiscoverTestFiles_WithTestsLocation(t *testing.T) {
 
 	setTestsLocation(t, filepath.Join("custom", "test", "**", "*_test.rb"))
 
-	minitest := NewMinitest()
+	minitest := NewMinitest(&testPlatform{})
 	files, err := discovery.DiscoverTestFiles(minitest.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
@@ -807,7 +804,7 @@ func TestMinitest_DiscoverTestFiles_WithTestsExcludePattern(t *testing.T) {
 
 	setTestsExcludePattern(t, filepath.Join("test", "system", "**", "*_test.rb"))
 
-	minitest := NewMinitest()
+	minitest := NewMinitest(&testPlatform{})
 	files, err := discovery.DiscoverTestFiles(minitest.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
@@ -843,7 +840,7 @@ func TestMinitest_DiscoverTestFiles_NoTestDirectory(t *testing.T) {
 		_ = os.Chdir(originalDir)
 	}()
 
-	minitest := NewMinitest()
+	minitest := NewMinitest(&testPlatform{})
 	discoveredFiles, err := discovery.DiscoverTestFiles(minitest.TestPattern(), settings.GetTestsExcludePattern())
 
 	if err != nil {
@@ -1531,19 +1528,6 @@ func TestMinitest_getMinitestCommand_RailsApplication_WithBinRails(t *testing.T)
 	}
 }
 
-func TestMinitest_SetPlatformEnv(t *testing.T) {
-	minitest := NewMinitest()
-
-	platformEnv := map[string]string{
-		"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument",
-	}
-	minitest.SetPlatformEnv(platformEnv)
-
-	if minitest.GetPlatformEnv()["RUBYOPT"] != platformEnv["RUBYOPT"] {
-		t.Errorf("expected platformEnv to be set, got %v", minitest.GetPlatformEnv())
-	}
-}
-
 func TestMinitest_RunTests_UsesPlatformEnv(t *testing.T) {
 	testFiles := []string{"test/models/user_test.rb"}
 
@@ -1557,7 +1541,7 @@ func TestMinitest_RunTests_UsesPlatformEnv(t *testing.T) {
 	platformEnv := map[string]string{
 		"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument",
 	}
-	minitest.SetPlatformEnv(platformEnv)
+	minitest.platform = &testPlatform{env: platformEnv}
 
 	err := minitest.RunTests(context.Background(), testFiles, nil)
 	if err != nil {
@@ -1584,7 +1568,7 @@ func TestMinitest_RunTests_MergesPlatformEnvWithPassedEnv(t *testing.T) {
 		"RUBYOPT":      "-rbundler/setup -rdatadog/ci/auto_instrument",
 		"PLATFORM_VAR": "platform_value",
 	}
-	minitest.SetPlatformEnv(platformEnv)
+	minitest.platform = &testPlatform{env: platformEnv}
 
 	// Pass additional env vars
 	additionalEnv := map[string]string{
@@ -1629,7 +1613,7 @@ func TestMinitest_RunTests_AdditionalEnvOverridesPlatformEnv(t *testing.T) {
 		"SHARED_VAR":  "platform_value",
 		"ANOTHER_VAR": "platform_another",
 	}
-	minitest.SetPlatformEnv(platformEnv)
+	minitest.platform = &testPlatform{env: platformEnv}
 
 	// Pass additional env that overrides SHARED_VAR
 	additionalEnv := map[string]string{
@@ -1704,7 +1688,7 @@ func TestMinitest_DiscoverTests_UsesPlatformEnv(t *testing.T) {
 	platformEnv := map[string]string{
 		"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument",
 	}
-	minitest.SetPlatformEnv(platformEnv)
+	minitest.platform = &testPlatform{env: platformEnv}
 
 	_, err := discoverAndParseTests(t, minitest, resolveTestFilesForFramework(t, minitest.TestPattern()))
 	if err != nil {
@@ -1746,7 +1730,7 @@ func TestMinitest_RunTests_RailsApplication_UsesPlatformEnv(t *testing.T) {
 	platformEnv := map[string]string{
 		"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument",
 	}
-	minitest.SetPlatformEnv(platformEnv)
+	minitest.platform = &testPlatform{env: platformEnv}
 
 	err := minitest.RunTests(context.Background(), testFiles, nil)
 	if err != nil {
@@ -1764,7 +1748,7 @@ func TestMinitest_DefaultTestPattern(t *testing.T) {
 	settings.Init()
 	t.Cleanup(settings.Init)
 
-	minitest := NewMinitest()
+	minitest := NewMinitest(&testPlatform{})
 	expected := filepath.Join(minitestRootDir, "**", minitestTestFilePattern)
 	if got := minitest.TestPattern(); got != expected {
 		t.Errorf("expected default test pattern %q, got %q", expected, got)
@@ -1772,14 +1756,14 @@ func TestMinitest_DefaultTestPattern(t *testing.T) {
 }
 
 func TestMinitest_SupportsFullTestDiscovery(t *testing.T) {
-	minitest := NewMinitest()
+	minitest := NewMinitest(&testPlatform{})
 	if !minitest.SupportsFullTestDiscovery() {
 		t.Error("expected Minitest to support full test discovery")
 	}
 }
 
 func TestMinitest_SourceFileForSuite(t *testing.T) {
-	minitest := NewMinitest()
+	minitest := NewMinitest(&testPlatform{})
 
 	sourceFile, ok := minitest.SourceFileForSuite("UserTest at test/models/user_test.rb")
 	if !ok || sourceFile != "test/models/user_test.rb" {
@@ -1794,7 +1778,7 @@ func TestMinitest_HasUnskippableMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	minitest := NewMinitest()
+	minitest := NewMinitest(&testPlatform{})
 	if !minitest.HasUnskippableMarker(markedFile) {
 		t.Fatal("expected Ruby unskippable marker")
 	}
@@ -1807,7 +1791,7 @@ func TestMinitestCommandSharesRailsResolution(t *testing.T) {
 	for _, rails := range []bool{false, true} {
 		t.Run(fmt.Sprint(rails), func(t *testing.T) {
 			t.Chdir(t.TempDir())
-			m := &Minitest{executor: &mockRailsCommandExecutor{isRails: rails}}
+			m := &Minitest{platform: &testPlatform{}, executor: &mockRailsCommandExecutor{isRails: rails}}
 			command, args := m.Command()
 			runnerCommand, runnerArgs, isRails := m.getMinitestCommand(t.Context())
 			if command != runnerCommand || !slices.Equal(args, runnerArgs) || isRails != rails {

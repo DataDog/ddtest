@@ -356,13 +356,7 @@ func (m *MockFramework) RunTests(ctx context.Context, testFiles []string, envMap
 	return m.Err
 }
 
-func (m *MockFramework) SetPlatformEnv(platformEnv map[string]string) {
-	// No-op for mock
-}
-
-func (m *MockFramework) GetPlatformEnv() map[string]string {
-	return nil
-}
+func (m *MockFramework) Platform() framework.PlatformEnvironment { return nil }
 
 func (m *MockFramework) SupportsFullTestDiscovery() bool {
 	return !m.FullDiscoveryUnsupported

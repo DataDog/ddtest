@@ -948,7 +948,7 @@ func (p *selectionPlatform) SanityCheck(ctx context.Context) error {
 func TestResolveTestEnvironment(t *testing.T) {
 	original := detectPlatform
 	t.Cleanup(func() { detectPlatform = original })
-	p := &selectionPlatform{framework: framework.NewJest()}
+	p := &selectionPlatform{framework: framework.NewJest(platform.NewJavaScript())}
 	calls := 0
 	detectPlatform = func() (platform.Platform, error) {
 		calls++
@@ -973,7 +973,7 @@ func TestCommandsRejectSelectionErrorsBeforePlanningOrExecution(t *testing.T) {
 				original := detectPlatform
 				t.Cleanup(func() { detectPlatform = original })
 				failure := errors.New("selection failed")
-				p := &selectionPlatform{framework: framework.NewJest()}
+				p := &selectionPlatform{framework: framework.NewJest(platform.NewJavaScript())}
 				detectPlatform = func() (platform.Platform, error) {
 					if stage == "platform" {
 						return nil, failure
@@ -1020,7 +1020,7 @@ func TestPlanDoesNotCheckTracerPrerequisites(t *testing.T) {
 			probeReached := errors.New("runtime tag probe reached")
 			p := &selectionPlatform{
 				platformName: name,
-				framework:    framework.NewJest(),
+				framework:    framework.NewJest(platform.NewJavaScript()),
 				sanityErr:    errors.New("tracer is not installed"),
 				tagsErr:      probeReached,
 			}

@@ -154,7 +154,7 @@ func TestParsePyprojectToml_InvalidToml(t *testing.T) {
 }
 
 func TestPyTest_testPattern_DefaultWhenNoConfig(t *testing.T) {
-	pytest := &PyTest{platformEnv: map[string]string{}}
+	pytest := &PyTest{platform: &testPlatform{env: map[string]string{}}}
 	if got := pytest.TestPattern(); got != pytestDefaultPattern {
 		t.Errorf("expected default pattern %q, got %q", pytestDefaultPattern, got)
 	}
@@ -162,7 +162,7 @@ func TestPyTest_testPattern_DefaultWhenNoConfig(t *testing.T) {
 
 func TestPyTest_testPattern_ExplicitTestsLocationOverridesConfig(t *testing.T) {
 	setTestsLocation(t, "mydir/**/*_test.py")
-	pytest := &PyTest{platformEnv: map[string]string{}}
+	pytest := &PyTest{platform: &testPlatform{env: map[string]string{}}}
 	if got := pytest.TestPattern(); got != "mydir/**/*_test.py" {
 		t.Errorf("expected explicit location %q, got %q", "mydir/**/*_test.py", got)
 	}
@@ -174,7 +174,7 @@ func TestPyTest_testPattern_MultipleTestpaths(t *testing.T) {
 	if err := os.WriteFile("pytest.ini", []byte("[pytest]\ntestpaths = tests src\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	pytest := &PyTest{platformEnv: map[string]string{}}
+	pytest := &PyTest{platform: &testPlatform{env: map[string]string{}}}
 	if got, want := pytest.TestPattern(), "{tests,src}/**/{test_*,*_test}.py"; got != want {
 		t.Errorf("TestPattern() = %q, want %q", got, want)
 	}
@@ -186,7 +186,7 @@ func TestPyTest_testPattern_MultipleFilePatterns(t *testing.T) {
 	if err := os.WriteFile("pytest.ini", []byte("[pytest]\npython_files = test_*.py *_test.py check_*.py\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	pytest := &PyTest{platformEnv: map[string]string{}}
+	pytest := &PyTest{platform: &testPlatform{env: map[string]string{}}}
 	if got, want := pytest.TestPattern(), "**/{test_*.py,*_test.py,check_*.py}"; got != want {
 		t.Errorf("TestPattern() = %q, want %q", got, want)
 	}

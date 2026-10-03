@@ -21,6 +21,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 )
 
@@ -121,17 +122,17 @@ func TestPreviewNamesOnlyDiscoveredDependencyFiles(t *testing.T) {
 		files          []string
 		want           string
 	}{
-		{"manifest only", "javascript", framework.NewJest(), []string{"package.json"}, "It will not change package.json."},
-		{"npm", "javascript", framework.NewJest(), []string{"package.json", "package-lock.json"}, "It will not change package.json or package-lock.json."},
-		{"pnpm with other languages", "javascript", framework.NewJest(), []string{"package.json", "pnpm-lock.yaml", "Gemfile", "pyproject.toml"}, "It will not change package.json or pnpm-lock.yaml."},
-		{"yarn", "javascript", framework.NewJest(), []string{"package.json", "yarn.lock"}, "It will not change package.json or yarn.lock."},
-		{"bun", "javascript", framework.NewJest(), []string{"package.json", "bun.lock"}, "It will not change package.json or bun.lock."},
-		{"uv", "python", framework.NewPytest(), []string{"pyproject.toml", "uv.lock", "package.json"}, "It will not change pyproject.toml or uv.lock."},
-		{"pip", "python", framework.NewPytest(), []string{"requirements.txt", "requirements-dev.txt"}, "It will not change requirements-dev.txt or requirements.txt."},
-		{"poetry", "python", framework.NewPytest(), []string{"pyproject.toml", "poetry.lock"}, "It will not change pyproject.toml or poetry.lock."},
-		{"ruby reused", "ruby", framework.NewRSpec(), []string{"Gemfile", "Gemfile.lock", "package.json"}, "It will not change Gemfile or Gemfile.lock."},
-		{"multiple locks", "javascript", framework.NewJest(), []string{"package.json", "package-lock.json", "yarn.lock"}, "It will not change package.json, package-lock.json or yarn.lock."},
-		{"no dependency files", "python", framework.NewPytest(), []string{"pytest.ini"}, ""},
+		{"manifest only", "javascript", framework.NewJest(platform.NewJavaScript()), []string{"package.json"}, "It will not change package.json."},
+		{"npm", "javascript", framework.NewJest(platform.NewJavaScript()), []string{"package.json", "package-lock.json"}, "It will not change package.json or package-lock.json."},
+		{"pnpm with other languages", "javascript", framework.NewJest(platform.NewJavaScript()), []string{"package.json", "pnpm-lock.yaml", "Gemfile", "pyproject.toml"}, "It will not change package.json or pnpm-lock.yaml."},
+		{"yarn", "javascript", framework.NewJest(platform.NewJavaScript()), []string{"package.json", "yarn.lock"}, "It will not change package.json or yarn.lock."},
+		{"bun", "javascript", framework.NewJest(platform.NewJavaScript()), []string{"package.json", "bun.lock"}, "It will not change package.json or bun.lock."},
+		{"uv", "python", framework.NewPytest(platform.NewPython()), []string{"pyproject.toml", "uv.lock", "package.json"}, "It will not change pyproject.toml or uv.lock."},
+		{"pip", "python", framework.NewPytest(platform.NewPython()), []string{"requirements.txt", "requirements-dev.txt"}, "It will not change requirements-dev.txt or requirements.txt."},
+		{"poetry", "python", framework.NewPytest(platform.NewPython()), []string{"pyproject.toml", "poetry.lock"}, "It will not change pyproject.toml or poetry.lock."},
+		{"ruby reused", "ruby", framework.NewRSpec(platform.NewRuby(settings.TestSkippingLevelTest)), []string{"Gemfile", "Gemfile.lock", "package.json"}, "It will not change Gemfile or Gemfile.lock."},
+		{"multiple locks", "javascript", framework.NewJest(platform.NewJavaScript()), []string{"package.json", "package-lock.json", "yarn.lock"}, "It will not change package.json, package-lock.json or yarn.lock."},
+		{"no dependency files", "python", framework.NewPytest(platform.NewPython()), []string{"pytest.ini"}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "project [space]")
@@ -707,7 +708,7 @@ func TestPreviewChoosesTracerBeforeConfirmation(t *testing.T) {
 
 func TestEnvironmentAppliesOnlySelectedPlatform(t *testing.T) {
 	for _, language := range []string{"javascript", "python", "ruby"} {
-		drive := &Testdrive{language: language, framework: framework.NewJest()}
+		drive := &Testdrive{language: language, framework: framework.NewJest(platform.NewJavaScript())}
 		env := drive.environment("/tracer/init.js", "http://127.0.0.1:1234", "run")
 		if (env["NODE_OPTIONS"] != "") != (language == "javascript") {
 			t.Fatalf("%s NODE_OPTIONS = %q", language, env["NODE_OPTIONS"])

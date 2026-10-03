@@ -10,6 +10,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
 )
 
 func TestCypressAdapterIntegration(t *testing.T) {
@@ -109,7 +110,7 @@ func TestCypressAdapterIntegration(t *testing.T) {
 			}
 
 			configureFramework(shellCommand(binary, "run", "--project", test.projectName), "")
-			cypress := framework.NewCypress()
+			cypress := framework.NewCypress(platform.NewJavaScript())
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			files, err := cypress.DiscoverTestFiles(ctx, discovery.TestFileSet{})
 			cancel()
@@ -159,7 +160,7 @@ func TestCypressAdapterExecutionIntegration(t *testing.T) {
 		command = []string{xvfb, "-a", binary, "run"}
 	}
 	configureFramework(shellCommand(command...), "")
-	cypress := framework.NewCypress()
+	cypress := framework.NewCypress(platform.NewJavaScript())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -170,7 +171,7 @@ func TestCypressAdapterExecutionIntegration(t *testing.T) {
 	wantFiles := []string{"cypress/e2e/selected.cy.js", "cypress/e2e/unselected.cy.js"}
 	requireFiles(t, files, wantFiles)
 
-	if err := cypress.RunTests(ctx, []string{"cypress/e2e/selected.cy.js"}, nil); err != nil {
+	if err := cypress.RunTests(ctx, []string{"cypress/e2e/selected.cy.js"}, map[string]string{"NODE_OPTIONS": ""}); err != nil {
 		t.Fatalf("selected-file run failed: %v", err)
 	}
 }

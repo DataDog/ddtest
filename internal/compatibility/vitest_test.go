@@ -9,6 +9,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
 )
 
 func TestVitestAdapterIntegration(t *testing.T) {
@@ -43,7 +44,7 @@ test('must not run', () => {
 	t.Chdir(root)
 	configureFramework(shellCommand(filepath.Join(root, "node_modules", ".bin", "vitest"), "--config", "vitest.unit.mjs"), "")
 
-	vitest := framework.NewVitest()
+	vitest := framework.NewVitest(platform.NewJavaScript())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -55,7 +56,7 @@ test('must not run', () => {
 	wantFiles := []string{"checks/selected.check.js", "checks/unselected.check.js"}
 	requireFiles(t, files, wantFiles)
 
-	if err := vitest.RunTests(ctx, []string{"checks/selected.check.js"}, map[string]string{"DDTEST_VITEST_WORKER": "selected"}); err != nil {
+	if err := vitest.RunTests(ctx, []string{"checks/selected.check.js"}, map[string]string{"DDTEST_VITEST_WORKER": "selected", "NODE_OPTIONS": os.Getenv("NODE_OPTIONS")}); err != nil {
 		t.Fatalf("selected-file run failed: %v", err)
 	}
 }
