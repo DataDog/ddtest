@@ -546,7 +546,8 @@ THE SOFTWARE.
         --card-accent: var(--red);
       }
       .problem-card[data-kind="flaky"],
-      .problem-card[data-kind="slow"] {
+      .problem-card[data-kind="slow"],
+      .problem-card[data-kind="missing-coverage"] {
         --card-accent: var(--amber);
       }
       .card-button {
@@ -615,6 +616,17 @@ THE SOFTWARE.
         align-items: center;
         justify-content: space-between;
         background: var(--surface);
+      }
+      .finding-explanation,
+      .finding-advice {
+        padding: 16px 20px;
+        border-top: 1px solid var(--line);
+      }
+      .finding-advice {
+        background: var(--raised);
+      }
+      .finding-advice p {
+        margin: 8px 0;
       }
       h2 {
         font-size: 16px;
@@ -1208,6 +1220,8 @@ THE SOFTWARE.
                     {{ template "icon-arrow-repeat" }}
                   {{ else if eq .Kind "slow" }}
                     {{ template "icon-stopwatch" }}
+                  {{ else if eq .Kind "missing-coverage" }}
+                    {{ template "icon-exclamation-circle" }}
                   {{ else if eq .Kind "error" }}
                     {{ template "icon-exclamation-circle" }}
                   {{ else }}
@@ -1234,6 +1248,16 @@ THE SOFTWARE.
               <h2>{{ .Title }} · {{ .Count }}</h2>
               <button data-close-finding="finding-{{ $i }}">Close</button>
             </header>
+            {{ if eq .Kind "missing-coverage" }}
+              <p class="finding-explanation">{{ .Context }}</p>
+            {{ end }}
+            {{ range .Advices }}
+              <aside class="finding-advice" aria-label="Troubleshooting advice">
+                <strong>{{ .Title }}</strong>
+                <p>{{ .Text }}</p>
+                {{ if .URL }}<a href="{{ .URL }}">Read the setup guide ↗</a>{{ end }}
+              </aside>
+            {{ end }}
             {{ range .Tests }}
               <details class="result">
                 <summary>
