@@ -525,6 +525,3 @@ step against the merged report if that is the policy your project requires.
 A missing or malformed worker report makes DDTest fail instead of publishing an
 incomplete merged result. Test failures remain failures even when merging succeeds.
 Worker reports are retained for diagnosis if execution or merging fails.
-
-The compatibility fixture at `internal/compatibility/fixtures/coverage-workers`
-contains executable reproductions and a six-framework DDTest validation matrix.
