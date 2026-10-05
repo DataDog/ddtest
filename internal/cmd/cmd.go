@@ -108,6 +108,7 @@ type persistentFlagBinding struct {
 }
 
 var rootPersistentFlagBindings = []persistentFlagBinding{
+	{configKey: "coverage_output", flagName: "coverage-output"},
 	{configKey: "platform", flagName: "platform"},
 	{configKey: "framework", flagName: "framework"},
 	{configKey: "min_parallelism", flagName: "min-parallelism"},
@@ -129,6 +130,7 @@ var rootPersistentFlagBindings = []persistentFlagBinding{
 
 func init() {
 	rootCmd.SetVersionTemplate("{{ .Version }}\n")
+	rootCmd.PersistentFlags().String("coverage-output", "", "Collect JavaScript coverage in isolated worker directories and merge reports under this directory (requires project-local nyc)")
 
 	rootCmd.PersistentFlags().String("platform", "", "Platform that runs tests (auto-detected when omitted)")
 	rootCmd.PersistentFlags().String("framework", "", "Test framework to use (auto-detected when omitted)")

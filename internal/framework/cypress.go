@@ -173,7 +173,7 @@ func (c *Cypress) RunTests(ctx context.Context, testFiles []string, envMap map[s
 	mergedEnv := make(map[string]string)
 	maps.Copy(mergedEnv, c.platformEnv)
 	maps.Copy(mergedEnv, envMap)
-	return c.executor.Run(ctx, command, args, mergedEnv)
+	return runJavaScriptTests(ctx, c.executor, "cypress", command, args, mergedEnv)
 }
 
 func (c *Cypress) discoveryEnv() map[string]string {

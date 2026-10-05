@@ -37,6 +37,8 @@ const (
 	PlanSkippablePercentageWriteFailed         Code = "plan_skippable_percentage_write_failed"
 	PlanParallelRunnersWriteFailed             Code = "plan_parallel_runners_write_failed"
 	PlanTestSplitsWriteFailed                  Code = "plan_test_splits_write_failed"
+	RunCoverageSetupFailed                     Code = "run_coverage_setup_failed"
+	RunCoverageMergeFailed                     Code = "run_coverage_merge_failed"
 	RunGitUnavailable                          Code = "run_git_unavailable"
 	RunPlanningFailed                          Code = "run_planning_failed"
 	RunPlanStatusCheckFailed                   Code = "run_plan_status_check_failed"

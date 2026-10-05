@@ -43,6 +43,8 @@ or API cause. Existing codes must not be reused for a different condition.
 
 | Code | Condition |
 | --- | --- |
+| `run_coverage_setup_failed` | Coverage collection is unsupported for the platform, the output directory cannot be created, or project-local NYC is unavailable. |
+| `run_coverage_merge_failed` | A worker report is missing or malformed, or generating the combined report failed. Existing test failures retain their original error code. |
 | `run_git_unavailable` | Git was not installed or could not be found before running tests. |
 | `run_planning_failed` | The automatic planning phase returned an unclassified error. A classified planning failure retains its more precise `plan_*` code. |
 | `run_plan_status_check_failed` | DDTest could not check whether planning artifacts exist. |

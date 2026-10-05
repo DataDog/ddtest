@@ -468,3 +468,63 @@ wall time is at or below that target. Use the same duration format, such as
 within `--min-parallelism` and `--max-parallelism` can meet the target, DDTest
 logs a warning and selects the split with the lowest expected wall time,
 ignoring CI job overhead, to get as close as possible to the target.
+
+## JavaScript Coverage Collection
+
+Independent test processes often share coverage directories. Cypress's coverage
+plugin writes a fixed raw filename; Jest processes overwrite reports; NYC and
+Vitest can remove files another worker still needs. Framework-internal worker
+coordination does not coordinate multiple DDTest processes.
+
+Use `--coverage-output` to let DDTest coordinate collection and merge local
+workers' coverage after they finish:
+
+```sh
+npm install --save-dev nyc
+# Install the appropriate coverage provider too if Vitest needs one.
+ddtest run --framework jest --coverage-output coverage --min-parallelism 2 --max-parallelism 2
+```
+
+This is opt-in. Without the flag, DDTest preserves existing command behavior.
+The mode enables native Jest/Vitest coverage, wraps Mocha/Cucumber/Playwright
+commands in NYC, and isolates an already-configured Cypress coverage plugin.
+For Cypress, install and configure `@cypress/code-coverage` and instrument the
+application or specs as usual. Playwright's NYC integration covers Node-side
+code, not browser page JavaScript. Pass the framework command directly through
+`--command`; do not add a second NYC wrapper.
+
+DDTest uses a fresh directory on every invocation:
+
+```text
+coverage/ddtest-<unique-run>/
+  node-0-worker-0/raw/       # NYC/Cypress intermediate data
+  node-0-worker-0/report/    # First worker's JSON coverage
+  node-0-worker-1/report/    # Second worker's JSON coverage
+  merged/coverage.json      # Combined Istanbul coverage data
+  report/coverage-final.json
+  report/lcov.info
+  report/lcov-report/index.html
+```
+
+The final report directory is printed at completion. Paths remain relative to the
+original project; DDTest does not copy source files into separate checkouts.
+Existing coverage is not deleted. Archive the run directory, then remove it when
+no longer needed. Empty batches create no worker directory and require no report.
+CI-node mode merges the workers on that node; combine reports from separate nodes
+in your CI aggregation job.
+
+The mode owns report destinations and formats: it collects JSON from each worker
+and generates combined JSON, LCOV, HTML, and a console summary. Source inclusion,
+exclusion, instrumentation providers, and source maps still come from the project.
+Custom Cypress `coverage:report` scripts are rejected because arbitrary scripts
+can bypass directory isolation. Native Jest/Vitest and NYC threshold settings
+still run in the workers; this mode does not translate their different threshold
+semantics into a global policy. Configure global coverage gates as a separate
+step against the merged report if that is the policy your project requires.
+
+A missing or malformed worker report makes DDTest fail instead of publishing an
+incomplete merged result. Test failures remain failures even when merging succeeds.
+Worker reports are retained for diagnosis if execution or merging fails.
+
+The compatibility fixture at `internal/compatibility/fixtures/coverage-workers`
+contains executable reproductions and a six-framework DDTest validation matrix.

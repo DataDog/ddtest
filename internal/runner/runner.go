@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/coverage"
 	ciUtils "github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/framework"
@@ -115,6 +117,16 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 	ciNode := settings.GetCiNode()
 	startTime := time.Now()
 	executor := newTestExecutor(ctx, framework, workerEnvMap, tr.planner)
+	if output := settings.Get().CoverageOutput; output != "" {
+		if detectedPlatform.Name() != "javascript" {
+			return errcode.New(errcode.RunCoverageSetupFailed, "--coverage-output is only supported for JavaScript")
+		}
+		executor.coverage, err = coverage.New(ctx, output)
+		if err != nil {
+			return errcode.WithCode(errcode.RunCoverageSetupFailed, err)
+		}
+		slog.Info("Isolating worker coverage", "directory", executor.coverage.Directory)
+	}
 	var executionResult runExecutionResult
 	if ciNode >= 0 {
 		executionResult = executor.runCINode(ciNode, settings.GetCiNodeWorkers())
@@ -122,6 +134,10 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 		executionResult = executor.runParallel()
 	} else {
 		executionResult = executor.runSequential()
+	}
+
+	if executor.coverage != nil {
+		executionResult.err = errors.Join(executionResult.err, errcode.WithCode(errcode.RunCoverageMergeFailed, executor.coverage.Merge(ctx)))
 	}
 
 	if settings.GetReportEnabled() {

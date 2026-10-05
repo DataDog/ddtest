@@ -114,6 +114,7 @@ func ceilDiv(numerator, denominator int) int {
 }
 
 type Config struct {
+	CoverageOutput         string            `mapstructure:"coverage_output"`
 	Platform               string            `mapstructure:"platform"`
 	Framework              string            `mapstructure:"framework"`
 	MinParallelism         int               `mapstructure:"min_parallelism"`

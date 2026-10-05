@@ -174,7 +174,7 @@ func (c *Cucumber) RunTests(ctx context.Context, testFiles []string, envMap map[
 	mergedEnv := make(map[string]string)
 	maps.Copy(mergedEnv, c.platformEnv)
 	maps.Copy(mergedEnv, envMap)
-	return c.executor.Run(ctx, command, args, mergedEnv)
+	return runJavaScriptTests(ctx, c.executor, "cucumber", command, args, mergedEnv)
 }
 
 func (c *Cucumber) discoveryEnv() map[string]string {

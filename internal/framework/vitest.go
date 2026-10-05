@@ -200,7 +200,7 @@ func (v *Vitest) RunTests(ctx context.Context, testFiles []string, envMap map[st
 	mergedEnv := make(map[string]string)
 	maps.Copy(mergedEnv, v.platformEnv)
 	maps.Copy(mergedEnv, envMap)
-	return v.executor.Run(ctx, command, args, mergedEnv)
+	return runJavaScriptTests(ctx, v.executor, "vitest", command, args, mergedEnv)
 }
 
 func (v *Vitest) discoveryEnv() map[string]string {

@@ -132,7 +132,7 @@ func (j *Jest) RunTests(ctx context.Context, testFiles []string, envMap map[stri
 	mergedEnv := make(map[string]string)
 	maps.Copy(mergedEnv, j.platformEnv)
 	maps.Copy(mergedEnv, envMap)
-	return j.executor.Run(ctx, command, args, mergedEnv)
+	return runJavaScriptTests(ctx, j.executor, "jest", command, args, mergedEnv)
 }
 
 func (j *Jest) discoveryEnv() map[string]string {

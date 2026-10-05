@@ -162,7 +162,7 @@ func (p *Playwright) RunTests(ctx context.Context, testFiles []string, envMap ma
 	mergedEnv := make(map[string]string)
 	maps.Copy(mergedEnv, p.platformEnv)
 	maps.Copy(mergedEnv, envMap)
-	return p.executor.Run(ctx, command, args, mergedEnv)
+	return runJavaScriptTests(ctx, p.executor, "playwright", command, args, mergedEnv)
 }
 
 func (p *Playwright) discoveryEnv() map[string]string {

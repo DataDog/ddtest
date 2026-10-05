@@ -140,7 +140,7 @@ func (m *Mocha) RunTests(ctx context.Context, testFiles []string, envMap map[str
 		return err
 	}
 	defer func() { _ = os.Remove(adapterPath) }()
-	return m.executor.Run(ctx, command, baseArgs, adapterEnv)
+	return runJavaScriptTests(ctx, m.executor, "mocha", command, baseArgs, adapterEnv)
 }
 
 func prepareMochaAdapter(baseEnv map[string]string, request []byte) (string, map[string]string, error) {

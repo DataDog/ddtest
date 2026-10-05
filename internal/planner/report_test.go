@@ -563,6 +563,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 	config.Platform = "python"
 	config.Framework = "pytest"
 	config.Command = "pytest -q"
+	config.CoverageOutput = "coverage"
 	config.MinParallelism++
 	config.MaxParallelism += 2
 	config.ParallelRunnerOverhead += time.Second
@@ -598,6 +599,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 	}
 
 	expectedNames := []string{
+		"Coverage output",
 		"Platform",
 		"Framework",
 		"Min parallelism",

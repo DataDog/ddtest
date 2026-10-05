@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/coverage"
 	"github.com/DataDog/ddtest/internal/framework"
 )
 
@@ -14,6 +15,7 @@ type testFilePlanner interface {
 }
 
 type testExecutor struct {
+	coverage     *coverage.Session
 	ctx          context.Context
 	framework    framework.Framework
 	workerEnvMap map[string]string
@@ -45,6 +47,11 @@ func (r runExecutionReport) failure(err error) runExecutionResult {
 // runBatch executes an already selected batch of test files in one worker.
 func (e testExecutor) runBatch(testFiles []string, nodeIndex int, workerIndex int) error {
 	workerEnv := createWorkerEnv(e.workerEnvMap, nodeIndex, workerIndex)
+	if e.coverage != nil && len(testFiles) > 0 {
+		if err := e.coverage.WorkerEnv(workerEnv, nodeIndex, workerIndex); err != nil {
+			return err
+		}
+	}
 
 	slog.Info("Running tests in worker", "nodeIndex", nodeIndex, "workerIndex", workerIndex, "testFilesCount", len(testFiles), "workerEnvKeys", workerEnvKeys(workerEnv))
 	return e.framework.RunTests(e.ctx, testFiles, workerEnv)
