@@ -130,8 +130,8 @@ func TestSharedBackingCompatibility(t *testing.T) {
 				}
 			}
 			if reference != "" {
-				referenceArgs := append([]string{"test", "-toolexec=" + reference + " toolexec"}, args[1:]...)
-				want := execute(t, dir, "go", referenceArgs, true, false)
+				referenceArgs := append([]string{"go", "test"}, args[1:]...)
+				want := execute(t, dir, reference, referenceArgs, true, false)
 				if got.code != want.code || got.out != want.out || !reflect.DeepEqual(got.events, want.events) {
 					t.Fatalf("shared backing differs from Orchestrion: %d/%d\n%s\n%s\n%v\n%v\n%s", got.code, want.code, got.out, want.out, got.events, want.events, want.stderr)
 				}

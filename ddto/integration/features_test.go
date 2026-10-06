@@ -56,8 +56,8 @@ func TestSDKFeaturePolicies(t *testing.T) {
 	for _, compiler := range []struct {
 		name string
 		args []string
-	}{{driver, []string{"test"}}, {"go", []string{"test", "-toolexec=" + reference + " toolexec"}}} {
-		if compiler.name == "go" && reference == "" {
+	}{{driver, []string{"test"}}, {reference, []string{"go", "test"}}} {
+		if compiler.name == "" {
 			continue
 		}
 		bin := filepath.Join(t.TempDir(), executableName("fixture.test"))

@@ -34,6 +34,12 @@ const orchestrionVersion = "v1.13.2-0.20260917114356-5c24783fcd76"
 // after checking that go.mod requires this Orchestrion version.
 const orchestrionPinChecked = "DD_ORCHESTRION_IS_GOMOD_VERSION"
 
+// Reference builds run orchestrion go test, as users do: orchestrion go serves
+// every toolexec call from one in-process job server. With plain go test
+// -toolexec="orchestrion toolexec", the first call starts a daemon whose logs
+// stay open in Go's WORK directory; on Windows go then cannot remove WORK and
+// exits 1 after a successful build.
+
 type capture struct {
 	mu       sync.Mutex
 	events   []map[string]any
@@ -374,7 +380,7 @@ func TestTestingCompatibility(t *testing.T) {
 		variants = append(variants, struct {
 			name, compiler string
 			prefix         []string
-		}{"orchestrion", "go", []string{"test", "-toolexec=" + reference + " toolexec"}})
+		}{"orchestrion", reference, []string{"go", "test"}})
 	}
 	var bins []string
 	for _, variant := range variants {

@@ -51,7 +51,7 @@ func TestGoTestFlagsAndVariants(t *testing.T) {
 				compilers = append(compilers, struct {
 					name string
 					args []string
-				}{"go", []string{"test", "-toolexec=" + reference + " toolexec"}})
+				}{reference, []string{"go", "test"}})
 			}
 			for _, compiler := range compilers {
 				bin := filepath.Join(t.TempDir(), executableName("fixture.test"))
@@ -83,8 +83,8 @@ func TestGoTestFlagsAndVariants(t *testing.T) {
 		for _, compiler := range []struct {
 			name string
 			args []string
-		}{{driver, []string{"test"}}, {"go", []string{"test", "-toolexec=" + reference + " toolexec"}}} {
-			if compiler.name == "go" && reference == "" {
+		}{{driver, []string{"test"}}, {reference, []string{"go", "test"}}} {
+			if compiler.name == "" {
 				continue
 			}
 			bin := filepath.Join(t.TempDir(), executableName("fixture.test"))

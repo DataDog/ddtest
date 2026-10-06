@@ -251,6 +251,10 @@ go test -race -covermode=atomic \
   ./internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage
 ```
 
+The workflow gives Windows 40 minutes instead of 20: without a restored Go
+cache its integration package takes longer than 20 minutes, and setup-go saves
+the cache only after a successful job.
+
 The full compatibility suite exercises actual binaries, payloads, retry
 processes and failure paths. Its comparison preserves CI attributes and
 hierarchy semantics while allowing the documented APM-only differences.

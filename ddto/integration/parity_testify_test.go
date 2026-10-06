@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -89,17 +88,9 @@ func compileTestifyReference(t *testing.T, dir, reference string, tempDir func()
 
 func testifyReferenceBuild(dir, reference string, tempDir func() string, flags ...string) (string, fixtureBuild) {
 	oracle := filepath.Join(tempDir(), executableName("fixture.test"))
-	args := append([]string{"test"}, flags...)
-	args = append(args, "-toolexec="+reference+" toolexec", "-c", "-o", oracle, ".")
-	env := testEnv("DD_CIVISIBILITY_ENABLED=false")
-	if runtime.GOOS == "windows" {
-		// Orchestrion may retain its log and working directory after Go exits.
-		// The fixture owner removes WORK after the reference cases finish;
-		// its cleanup allows the daemon's handles a short time to close.
-		args = append(args, "-work")
-		env = append(env, "GOTMPDIR="+tempDir())
-	}
-	return oracle, fixtureBuild{name: "Testify reference compile", dir: dir, tool: "go", env: env, args: args}
+	args := append([]string{"go", "test"}, flags...)
+	args = append(args, "-c", "-o", oracle, ".")
+	return oracle, fixtureBuild{name: "Testify reference compile", dir: dir, tool: reference, env: testEnv("DD_CIVISIBILITY_ENABLED=false"), args: args}
 }
 
 func runCIVisibilityTestifyParity(t *testing.T, deferred bool) {

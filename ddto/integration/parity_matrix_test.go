@@ -499,7 +499,7 @@ func TestParityUnskippable(t *testing.T) { t.Log("must run") }
 	oracle := bins[0]
 	if reference != "" {
 		oracle = filepath.Join(tempDir(), executableName("fixture.test"))
-		builds = append(builds, fixtureBuild{name: "SDK oracle compile", dir: dir, tool: "go", env: testEnv("DD_CIVISIBILITY_ENABLED=false"), args: []string{"test", "-cover", "-covermode=atomic", "-coverpkg=./...", "-toolexec=" + reference + " toolexec", "-c", "-o", oracle, "."}})
+		builds = append(builds, fixtureBuild{name: "SDK oracle compile", dir: dir, tool: reference, env: testEnv("DD_CIVISIBILITY_ENABLED=false"), args: []string{"go", "test", "-cover", "-covermode=atomic", "-coverpkg=./...", "-c", "-o", oracle, "."}})
 	}
 	buildConcurrently(t, builds...)
 	return &parityFixture{dir: dir, sdk: bins[0], mini: bins[1], oracle: oracle, base: base, head: head}

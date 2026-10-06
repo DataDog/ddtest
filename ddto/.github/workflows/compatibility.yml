@@ -33,7 +33,11 @@ jobs:
             mode: normal
     runs-on: ${{ matrix.os }}
     # Each job runs one complete suite; Linux normal/race jobs run independently.
-    timeout-minutes: 25
+    # Windows compiles the instrumented fixtures much more slowly. Without a
+    # restored Go cache (a new branch, or after go.sum changes) its integration
+    # package needs more than 20 minutes, and setup-go saves the cache only
+    # after a successful job, so the first cold run must be able to finish.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 25 }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
@@ -64,12 +68,13 @@ jobs:
           PARITY_EXECUTION_ORDER: ${{ matrix.mode == 'race' && 'mini-first' || 'sdk-first' }}
           PARITY_REPORT_NAME: ${{ matrix.mode == 'race' && 'parity-race' || 'parity' }}
           PARITY_TEST_MODE: ${{ matrix.mode }}
+          GO_TEST_TIMEOUT: ${{ matrix.os == 'windows-latest' && '40m' || '20m' }}
         run: |
           mkdir -p artifacts
           set -o pipefail
           test_flags=()
           if [[ "$PARITY_TEST_MODE" == "race" ]]; then test_flags+=(-race); fi
-          PARITY_REPORT_PATH="$PWD/artifacts/$PARITY_REPORT_NAME.json" go test "${test_flags[@]}" -v -count=1 -timeout=20m ./... 2>&1 | tee artifacts/compatibility.log
+          PARITY_REPORT_PATH="$PWD/artifacts/$PARITY_REPORT_NAME.json" go test "${test_flags[@]}" -v -count=1 -timeout="$GO_TEST_TIMEOUT" ./... 2>&1 | tee artifacts/compatibility.log
       - name: Publish CI feature parity evidence
         shell: bash
         env:

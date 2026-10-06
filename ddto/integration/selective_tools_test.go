@@ -111,9 +111,9 @@ func TestTestifyCoveredLibraryAndWorkspace(t *testing.T) {
 	oracle := bins[0]
 	if reference != "" {
 		oracle = filepath.Join(t.TempDir(), executableName("fixture.test"))
-		args := append([]string{"test"}, flags...)
-		args = append(args, "-toolexec="+reference+" toolexec", "-c", "-o", oracle, ".")
-		out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), "go", args...)
+		args := append([]string{"go", "test"}, flags...)
+		args = append(args, "-c", "-o", oracle, ".")
+		out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), reference, args...)
 		if code != 0 {
 			t.Fatal(out, stderr)
 		}
