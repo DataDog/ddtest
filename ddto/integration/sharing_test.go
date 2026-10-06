@@ -166,7 +166,7 @@ func TestSharedBackingCollisions(t *testing.T) {
 				t.Error(err)
 			}
 		})
-		out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, "test", "./alpha", "./beta")
+		out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, "test", "--runtime=sdk", "./alpha", "./beta")
 		if code != 2 || !strings.Contains(stderr, "generated file already exists: "+logical) {
 			t.Fatalf("physical collision: %d %s\n%s", code, out, stderr)
 		}

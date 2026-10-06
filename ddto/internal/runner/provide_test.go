@@ -1,7 +1,10 @@
 package runner
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,5 +46,175 @@ func TestModulePathToleratesLineEndingsAndComments(t *testing.T) {
 	}
 	if got := modulePath([]byte("go 1.26.0\n")); got != "" {
 		t.Errorf("module path without a directive: %q", got)
+	}
+}
+
+func TestMiniSourceRoot(t *testing.T) {
+	cache := t.TempDir()
+	version := "v0.0.0-20261006182246-a8e3f52b0606"
+	checkout := t.TempDir()
+	cached := filepath.Join(cache, miniModule+"@"+version)
+	for _, root := range []string{checkout, cached} {
+		if err := os.MkdirAll(filepath.Join(root, "testopt"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module "+miniModule+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct{ name, source, version, want string }{
+		{"checkout", filepath.Join(checkout, "internal", "runner", "provide.go"), version, checkout},
+		{"installed", filepath.Join(cached, "internal", "runner", "provide.go"), version, cached},
+		{"trimpath", miniModule + "@" + version + "/internal/runner/provide.go", version, cached},
+		{"missing-checkout", filepath.Join(t.TempDir(), "internal", "runner", "provide.go"), version, cached},
+		{"other-version", "internal/runner/provide.go", "v1.0.0", ""},
+		{"development-trimpath", "internal/runner/provide.go", "(devel)", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := miniSourceRoot(tc.source, cache, tc.version); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "go.mod"), []byte("module example.com/unrelated\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if validMiniSource(checkout) {
+		t.Fatal("accepted another module as Mini")
+	}
+	if err := os.Remove(filepath.Join(cached, "testopt")); err != nil {
+		t.Fatal(err)
+	}
+	if validMiniSource(cached) {
+		t.Fatal("accepted an incomplete source directory")
+	}
+}
+
+func TestRequireMiniPrefersLocalSourcesAndClientReplacement(t *testing.T) {
+	t.Setenv("GOWORK", "off")
+	t.Setenv("GOPROXY", "off")
+	for _, replacement := range []bool{false, true} {
+		t.Run(fmt.Sprintf("client-replace=%t", replacement), func(t *testing.T) {
+			dir := t.TempDir()
+			modfile := filepath.Join(dir, "go.mod")
+			module := "module example.com/client\n\ngo 1.26.0\n"
+			if replacement {
+				module += "replace " + miniModule + " v1.2.3 => ./client-choice\n"
+			}
+			if err := os.WriteFile(modfile, []byte(module), 0600); err != nil {
+				t.Fatal(err)
+			}
+			root := filepath.Join(dir, "local sources")
+			for _, source := range []string{root, filepath.Join(dir, "client-choice")} {
+				if err := os.MkdirAll(source, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module "+miniModule+"\ngo 1.26.0\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var progress bytes.Buffer
+			// A published version must not cause a lookup before a usable local
+			// source. GOPROXY=off makes that regression fail without networking.
+			if err := requireMini(t.Context(), dir, modfile, root, "v999.0.0", &progress); err != nil {
+				t.Fatal(err)
+			}
+			if progress.Len() != 0 {
+				t.Fatalf("unexpected go get: %s", &progress)
+			}
+			out, err := goTool(t.Context(), dir, nil, "mod", "edit", "-json", "-modfile="+modfile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var parsed struct {
+				Require []struct{ Path, Version string }
+				Replace []struct {
+					Old, New struct{ Path, Version string }
+				}
+			}
+			if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+				t.Fatal(err)
+			}
+			wantPath, wantVersion := root, "v0.0.0"
+			if replacement {
+				wantPath, wantVersion = "./client-choice", "v1.2.3"
+			}
+			if len(parsed.Require) != 1 || parsed.Require[0].Path != miniModule || parsed.Require[0].Version != wantVersion || len(parsed.Replace) != 1 || parsed.Replace[0].New.Path != wantPath {
+				t.Fatalf("unexpected module selection: %s", out)
+			}
+		})
+	}
+}
+
+// The selected runtime's minimum matters; the CLI may use a newer toolchain.
+func TestRequireLocalMiniGoVersion(t *testing.T) {
+	for _, tc := range []struct{ client, runtime, want string }{
+		{"1.25.0", "1.26.0", "1.26.0"},
+		{"1.26.1", "1.26.0", "1.26.1"},
+		{"1.21.0", "1.25.0", "1.25.0"},
+		{"", "1.26.0", "1.26.0"},
+	} {
+		t.Run(tc.client+"-"+tc.runtime, func(t *testing.T) {
+			dir := t.TempDir()
+			root := filepath.Join(dir, "runtime")
+			if err := os.Mkdir(root, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module "+miniModule+"\r\ngo "+tc.runtime+" // selected runtime\r\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			modfile := filepath.Join(dir, "temporary.mod")
+			contents := "module example.com/client\n"
+			if tc.client != "" {
+				contents += "go " + tc.client + "\n"
+			}
+			if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(contents), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(modfile, []byte(contents), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := requireLocalMini(t.Context(), dir, modfile, "./runtime", "v0.0.0", tc.client, true); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(modfile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if version := moduleDirective(got, "go"); version != tc.want {
+				t.Fatalf("Go directive %q, want %q", version, tc.want)
+			}
+		})
+	}
+}
+
+func TestProvideMiniRelativeReplacementFromSubdirectory(t *testing.T) {
+	t.Setenv("GOWORK", "off")
+	t.Setenv("GOPROXY", "off")
+	dir := t.TempDir()
+	for _, child := range []string{"sub", "runtime"} {
+		if err := os.Mkdir(filepath.Join(dir, child), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	original := "module example.com/client\n\ngo 1.25.0\nreplace " + miniModule + " => ./runtime\n"
+	for path, contents := range map[string]string{
+		filepath.Join(dir, "go.mod"):            original,
+		filepath.Join(dir, "runtime", "go.mod"): "module " + miniModule + "\n\ngo 1.26.0\n",
+	} {
+		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	modfile, err := provideRuntime(t.Context(), filepath.Join(dir, "sub"), options{}, Mini, t.TempDir(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(modfile)
+	if err != nil || moduleDirective(contents, "go") != "1.26.0" {
+		t.Fatalf("temporary Go directive: %s, %v", contents, err)
+	}
+	if contents, err := os.ReadFile(filepath.Join(dir, "go.mod")); err != nil || string(contents) != original {
+		t.Fatalf("client module changed: %s, %v", contents, err)
 	}
 }

@@ -60,7 +60,7 @@ func resetCIVisibilityStateForTesting() {
 	sendObjectsPackFileFunc = sendObjectsPackFile
 	repositoryUploadHooksMu.Unlock()
 
-	newCIVisibilityClientWithServiceNameFunc = net.NewClientWithServiceName
+	newCIVisibilityClientWithServiceNameFunc = net.NewClientWithConcurrentTelemetry
 
 	utils.ResetCITags()
 	utils.ResetCIMetrics()

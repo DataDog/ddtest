@@ -1,9 +1,7 @@
 package instrument
 
 import (
-	"bytes"
 	"go/ast"
-	"go/parser"
 	"go/token"
 )
 
@@ -46,36 +44,27 @@ func __dd_civisibility_registerTestingParallelStop(func())
 func init() { __dd_civisibility_registerTestingParallelStop(func() { parallelStop.Add(1) }) }
 `
 
-// DeclaresParallelStop reports whether testing's sources declare the
-// parallelStop counter that ParallelStopHook increments, as an atomic.Int64.
-// A toolchain without it builds without the hook.
-func DeclaresParallelStop(files map[string][]byte) bool {
-	for name, src := range files {
-		if !bytes.Contains(src, []byte("parallelStop")) {
+// declaresParallelStop reports whether this AST declares the counter with the
+// exact type used by ParallelStopHook. Locals, comments and other types do not
+// enable the hook.
+func declaresParallelStop(file *ast.File) bool {
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.VAR {
 			continue
 		}
-		file, err := parser.ParseFile(token.NewFileSet(), name, src, parser.SkipObjectResolution)
-		if err != nil {
-			continue
-		}
-		for _, decl := range file.Decls {
-			gen, ok := decl.(*ast.GenDecl)
-			if !ok || gen.Tok != token.VAR {
+		for _, spec := range gen.Specs {
+			value := spec.(*ast.ValueSpec)
+			selector, ok := value.Type.(*ast.SelectorExpr)
+			if !ok || selector.Sel.Name != "Int64" {
 				continue
 			}
-			for _, spec := range gen.Specs {
-				value := spec.(*ast.ValueSpec)
-				selector, ok := value.Type.(*ast.SelectorExpr)
-				if !ok || selector.Sel.Name != "Int64" {
-					continue
-				}
-				if pkg, ok := selector.X.(*ast.Ident); !ok || pkg.Name != "atomic" {
-					continue
-				}
-				for _, ident := range value.Names {
-					if ident.Name == "parallelStop" {
-						return true
-					}
+			if pkg, ok := selector.X.(*ast.Ident); !ok || pkg.Name != "atomic" {
+				continue
+			}
+			for _, ident := range value.Names {
+				if ident.Name == "parallelStop" {
+					return true
 				}
 			}
 		}

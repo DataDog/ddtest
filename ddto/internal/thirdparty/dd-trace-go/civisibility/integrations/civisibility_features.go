@@ -73,7 +73,7 @@ var (
 	ciVisibilityClient net.Client
 
 	// newCIVisibilityClientWithServiceNameFunc creates the CI Visibility client used during settings bootstrap.
-	newCIVisibilityClientWithServiceNameFunc = net.NewClientWithServiceName
+	newCIVisibilityClientWithServiceNameFunc = net.NewClientWithConcurrentTelemetry
 
 	// ciVisibilitySettings contains the CI Visibility settings for this session
 	ciVisibilitySettings net.SettingsResponseData
@@ -115,7 +115,11 @@ func ensureSettingsInitialization(serviceName string) {
 		defer log.Debug("civisibility: settings initialization complete")
 
 		// Create the CI Visibility client
-		ciVisibilityClient = newCIVisibilityClientWithServiceNameFunc(serviceName)
+		client, waitTelemetry := newCIVisibilityClientWithServiceNameFunc(serviceName)
+		// All exits join startup HTTP before GetSettings can return to a test.
+		// StartApp retains the order of app-started and its following metrics.
+		defer waitTelemetry()
+		ciVisibilityClient = client
 		if ciVisibilityClient == nil {
 			log.Error("civisibility: error getting the ci visibility http client")
 			return

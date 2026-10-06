@@ -1,6 +1,7 @@
 # Validation contract
 
-The default SDK runtime is the unchanged public dd-trace-go SDK, pinned to
+Mini is the default runtime. Explicit `--runtime=sdk` selects the unchanged
+public dd-trace-go SDK, pinned to
 [main at 96aedb31048c](https://github.com/DataDog/dd-trace-go/tree/96aedb31048c07e29e7a20a4333dc3b8d289c52d).
 The reference is Orchestrion commit
 [5c24783fcd76](https://github.com/DataDog/orchestrion/commit/5c24783fcd76f00cd1ff21c418a6662785d6c811),
@@ -85,9 +86,8 @@ line content and multiplicity are retained.
 
 ## Scope limits
 
-The default backend supports module packages with the exact unreplaced SDK.
-The optional mini backend requires this module instead. Standard
-library test targets are unsupported; explicit Go file mode runs native `go test`
+The default Mini backend uses this module. The SDK backend requires the exact
+unreplaced SDK. Standard library test targets are unsupported; explicit Go file mode runs native `go test`
 without instrumentation. Testify callers in client and external modules use the original
 selected runner; dedicated version fixtures cover v1.10.0, v1.11.1 and v1.12.1.
 Other APM integrations remain outside the POC.
@@ -171,3 +171,10 @@ compiler/linker identities, bypass exit status, Unix process replacement,
 coverage, workspaces and fingerprint invalidation. The compile-only matrix
 records unchanged cache hits and cross-strategy reuse separately from runtime
 feature comparisons.
+
+The source-range regression fixture checks an optimized constant-sum test against
+its literal lines 5–10. Normal, unoptimized and race builds must all send that
+range. CLI checks cover default Mini selection, both runtime option forms after
+Go flags, an unchanged Go flag value that resembles `--runtime`, and invalid
+runtime values rejected before a Go process can start. The compiled default
+binary must contain Mini symbols and no SDK runtime symbols.

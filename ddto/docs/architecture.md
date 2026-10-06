@@ -5,9 +5,9 @@ build, and offer a small runtime that writes CI Visibility events. Separating
 them lets us compare instrumentation with the full SDK and with Mini while
 keeping the same testing entry points.
 
-The CLI defaults to `sdk`. That backend requires the exact, unreplaced SDK
-version in [`internal/version`](../internal/version/version.go). The `mini`
-backend links this module's CI runtime, which imports no external module. The
+The CLI defaults to `mini`, which links this module's CI runtime without
+external module imports. Explicit `--runtime=sdk` selects the exact, unreplaced
+SDK version in [`internal/version`](../internal/version/version.go). The
 module requires only Testify v1.7.5 for its own tests, deliberately old so a
 consumer's newer Testify never changes.
 

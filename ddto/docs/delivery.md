@@ -43,12 +43,13 @@ sequenceDiagram
 
 Nested tests and concurrent retry attempts use the same process-wide coordinator.
 Waiting for delivery inside an active group would deadlock the test scheduler.
-The coordinator starts no goroutines. Initial CI settings and repository
-upload run synchronously in this mode. In both modes, telemetry startup is
-synchronous during CI initialization, before the first test: as in the SDK,
-`app-started` goes alone, followed by a `message-batch` with the initial data.
-No test waits for these requests, and `go test` does not count them in any
-test's duration. Deferred delivery also replaces the periodic telemetry worker
+The coordinator starts no goroutines. Initial repository upload completes
+during initialization in this mode. In both modes, settings and telemetry
+startup run concurrently, and initialization waits for both before admitting
+the first test. This also applies to cached settings and request failures.
+As in the SDK, `app-started` goes alone, followed by a `message-batch` with the
+initial data. `go test` does not count startup requests in any test's duration.
+Deferred delivery also replaces the periodic telemetry worker
 with idle checkpoints, which flush only once its interval has elapsed.
 
 A checkpoint delivers only full payloads: sealed test-cycle batches (the event

@@ -30,8 +30,7 @@ func TestMiniCLIWithoutSDK(t *testing.T) {
 			t.Fatalf("native result cache: %d %s %s", code, out, stderr)
 		}
 	}
-	// The default runtime is still the SDK. The module no longer requires it,
-	// so ddtest provides the pinned SDK without editing go.mod.
+	// The default runtime is Mini and must not link the SDK.
 	before, err := os.ReadFile(filepath.Join(dir, "go.mod"))
 	if err != nil {
 		t.Fatal(err)
@@ -39,11 +38,24 @@ func TestMiniCLIWithoutSDK(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), executableName("default.test"))
 	_, stderr, code = command(t, dir, env, driver, "test", "-c", "-o", bin, ".")
 	if code != 0 {
-		t.Fatalf("SDK default could not be provided: %d %s", code, stderr)
+		t.Fatalf("Mini default failed: %d %s", code, stderr)
 	}
 	symbols, stderr, code := command(t, dir, testEnv(), "go", "tool", "nm", bin)
+	if code != 0 || strings.Contains(symbols, "github.com/DataDog/dd-trace-go/v2/internal/civisibility") || !strings.Contains(symbols, "github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer") {
+		t.Fatalf("default did not select Mini: %d %s", code, stderr)
+	}
+	if after, err := os.ReadFile(filepath.Join(dir, "go.mod")); err != nil || string(after) != string(before) {
+		t.Fatalf("default Mini build edited go.mod: %v", err)
+	}
+	// Explicit SDK selection must still provide the pinned SDK, including
+	// when the option follows the package and the module does not require it.
+	_, stderr, code = command(t, dir, env, driver, "test", "-c", "-o", bin, ".", "--runtime", "sdk")
+	if code != 0 {
+		t.Fatalf("SDK could not be provided: %d %s", code, stderr)
+	}
+	symbols, stderr, code = command(t, dir, testEnv(), "go", "tool", "nm", bin)
 	if code != 0 || !strings.Contains(symbols, "github.com/DataDog/dd-trace-go/v2/internal/civisibility") || strings.Contains(symbols, "github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer") {
-		t.Fatalf("SDK default silently changed: %d %s", code, stderr)
+		t.Fatalf("explicit SDK selection failed: %d %s", code, stderr)
 	}
 	if after, err := os.ReadFile(filepath.Join(dir, "go.mod")); err != nil || string(after) != string(before) {
 		t.Fatalf("providing the SDK edited go.mod: %v", err)

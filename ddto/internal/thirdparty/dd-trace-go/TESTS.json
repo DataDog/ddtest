@@ -3,7 +3,7 @@
   "full_file_count": 62,
   "full_ci_test_file_count": 60,
   "selected_test_or_helper_files": 3,
-  "assertion_policy": "Preserve upstream assertions and synthetic input semantics; adapt repository/namespace and replace APM mock bootstrap for the native runtime. End-to-end wire tests verify actual delivery separately.",
+  "assertion_policy": "Preserve upstream assertions and synthetic input semantics; adapt repository/namespace and replace APM mock bootstrap for the native runtime. End-to-end wire tests verify actual delivery separately. Documented correctness adaptations use independent source oracles; named source starts are checked against AST declaration lines.",
   "files": [
     {
       "source": "internal/civisibility/envconfig/enabled_test.go",
@@ -481,9 +481,9 @@
       "source": "internal/civisibility/integrations/manual_api_sourcecache_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcecache_test.go",
       "source_sha256": "aff071e72f16cc26f99ecc09ef478cffc02a52a4cee72634e1653ab610d8c793",
-      "adapted_sha256": "2d858cded376372ea83a9cf73b85b104fbce60eb67b34abcf0b1c429c6af2223",
+      "adapted_sha256": "4b88d8afea6e183f5285aab546d3414e27cba43acd6a8edb6095bafd68e9f7bc",
       "kind": "full",
-      "adaptation": "Native spans replace unused APM mock resets; an explicit CODEOWNERS fixture supplies the upstream repository input; current repository URL is relocated"
+      "adaptation": "Native spans replace unused APM mock resets; an explicit CODEOWNERS fixture supplies the upstream repository input; current repository URL is relocated; confirmed named source ranges start at the AST declaration, including same-named methods and named func1 declarations, instead of the runtime entry PC"
     },
     {
       "source": "internal/civisibility/integrations/manual_api_sourcepath_test.go",
@@ -614,6 +614,10 @@
     {
       "path": "integration/mini_retry_parallel_test.go",
       "purpose": "TestMiniInProcessRetryKeepsAllocsPerRun builds with ddtest's testing overlay and checks that testing.AllocsPerRun works after parallel tests passed at once or retried in process."
+    },
+    {
+      "path": "integration/cli_source_test.go",
+      "purpose": "The optimized sum fixture must report lines 5-10 with normal, unoptimized and race builds. CLI checks verify Mini selection, runtime flag consumption, log identity and errors before Go starts."
     }
   ],
   "local_delivery_checks": [

@@ -45,6 +45,8 @@ process accounting can miss them.
 skips parser object resolution and applies source-position edits. There is no
 DST decoration or type-checking pass in this front-end. Files are sorted for a
 deterministic transformation, and unchanged files do not become overlay outputs.
+The same AST identifies `testing.parallelStop` for the optional shutdown hook;
+hook selection does not parse the sources again.
 
 [`PrepareRuntime`](../internal/runner/run.go) requests only the package fields
 it needs from a targeted `go list`. Testify discovery can add one metadata or
@@ -67,9 +69,12 @@ discovery can still grow with package count.
 This sharing ends when the plan is removed. The POC uses Go's caches and has no
 persistent cache of instrumented binaries or prepared overlays.
 
-When a runtime must be provided, one `go env -json GOMOD GOWORK` call supplies
-the module and workspace paths. The temporary module files read the user's
-effective overlay contents, including replacements or deletion of the sum file.
+When a runtime must be provided, one `go env -json GOMOD GOWORK GOMODCACHE` call
+supplies the module, workspace and cache paths. Local Mini provisioning reads
+the selected runtime's Go requirement and updates the temporary directive in
+the same `go mod edit` call that adds the requirement. The temporary module
+files read the user's effective overlay contents, including replacements or
+deletion of the sum file.
 This also applies to an explicit `-modfile`. Child commands derive `PWD` from
 their working directory before adding environment overrides, so `-C` through a
 symlink keeps the same paths during preparation and compilation. With
@@ -167,10 +172,11 @@ invocation.
 Clock isolation also has costs. Ordinary coverage processing is synchronous when
 telemetry or debug logging is enabled. Deferred mode retains captured profiles
 until its idle checkpoint, so parallel groups can use more temporary disk space.
-Startup telemetry is sent synchronously before the first test in both modes, so
-a slow endpoint delays the start of the session instead of running alongside
-tests; no test's duration includes it. The recorded benchmark tables do not
-measure these scheduling changes. See
+Startup telemetry overlaps the settings request in both modes. Initialization
+waits for both before the first test, including request failures and cached
+settings. A slow endpoint still delays admission; no test's duration includes
+it. The recorded build/runtime benchmark tables do not measure these scheduling
+changes. See
 [delivery](delivery.md) and the SDK port's
 [adaptation record](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md) before
 changing this scheduling during an upstream update.

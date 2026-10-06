@@ -166,8 +166,8 @@ func TestEnsureSettingsInitializationNilClientFactoryDoesNotStartUpload(t *testi
 	resetCIVisibilityStateForTesting()
 	t.Cleanup(resetCIVisibilityStateForTesting)
 
-	newCIVisibilityClientWithServiceNameFunc = func(_ string) civisibilitynet.Client {
-		return nil
+	newCIVisibilityClientWithServiceNameFunc = func(_ string) (civisibilitynet.Client, func()) {
+		return nil, func() {}
 	}
 	uploadRepositoryChangesFunc = func() (int64, error) {
 		t.Fatal("repository upload should not start without a CI Visibility client")
@@ -187,13 +187,13 @@ func TestEnsureSettingsInitializationGitUploadDisabledDoesNotStartUploadOrRetryS
 	t.Setenv(constants.CIVisibilityGitUploadEnabledEnvironmentVariable, "false")
 
 	settingsCalls := 0
-	newCIVisibilityClientWithServiceNameFunc = func(_ string) civisibilitynet.Client {
+	newCIVisibilityClientWithServiceNameFunc = func(_ string) (civisibilitynet.Client, func()) {
 		return &mockCIVisibilityClient{
 			getSettings: func() (*civisibilitynet.SettingsResponseData, error) {
 				settingsCalls++
 				return &civisibilitynet.SettingsResponseData{RequireGit: true}, nil
 			},
-		}
+		}, func() {}
 	}
 	uploadRepositoryChangesFunc = func() (int64, error) {
 		t.Fatal("repository upload should not start when git upload is disabled")
@@ -216,12 +216,12 @@ func TestEnsureSettingsInitializationFlakyRetryEnvironmentOverrideEnablesRetries
 	t.Setenv(constants.CIVisibilityFlakyRetryCountEnvironmentVariable, "2")
 	t.Setenv(constants.CIVisibilityTotalFlakyRetryCountEnvironmentVariable, "5")
 
-	newCIVisibilityClientWithServiceNameFunc = func(_ string) civisibilitynet.Client {
+	newCIVisibilityClientWithServiceNameFunc = func(_ string) (civisibilitynet.Client, func()) {
 		return &mockCIVisibilityClient{
 			getSettings: func() (*civisibilitynet.SettingsResponseData, error) {
 				return &civisibilitynet.SettingsResponseData{FlakyTestRetriesEnabled: false}, nil
 			},
-		}
+		}, func() {}
 	}
 	uploadRepositoryChangesFunc = func() (int64, error) {
 		t.Fatal("repository upload should not start when git upload is disabled")
@@ -244,12 +244,12 @@ func TestEnsureSettingsInitializationGitUploadDisabledSettingsErrorDoesNotRegist
 	t.Cleanup(resetCIVisibilityStateForTesting)
 	t.Setenv(constants.CIVisibilityGitUploadEnabledEnvironmentVariable, "false")
 
-	newCIVisibilityClientWithServiceNameFunc = func(_ string) civisibilitynet.Client {
+	newCIVisibilityClientWithServiceNameFunc = func(_ string) (civisibilitynet.Client, func()) {
 		return &mockCIVisibilityClient{
 			getSettings: func() (*civisibilitynet.SettingsResponseData, error) {
 				return nil, nil
 			},
-		}
+		}, func() {}
 	}
 	uploadRepositoryChangesFunc = func() (int64, error) {
 		t.Fatal("repository upload should not start when git upload is disabled")
@@ -269,12 +269,12 @@ func TestEnsureSettingsInitializationHandlesNilInitialSettingsResponse(t *testin
 
 	uploadStarted := make(chan struct{})
 	uploadRelease := make(chan struct{})
-	newCIVisibilityClientWithServiceNameFunc = func(_ string) civisibilitynet.Client {
+	newCIVisibilityClientWithServiceNameFunc = func(_ string) (civisibilitynet.Client, func()) {
 		return &mockCIVisibilityClient{
 			getSettings: func() (*civisibilitynet.SettingsResponseData, error) {
 				return nil, nil
 			},
-		}
+		}, func() {}
 	}
 	uploadRepositoryChangesFunc = func() (int64, error) {
 		close(uploadStarted)
@@ -298,7 +298,7 @@ func TestEnsureSettingsInitializationHandlesNilRetrySettingsResponse(t *testing.
 	t.Cleanup(resetCIVisibilityStateForTesting)
 
 	settingsCalls := 0
-	newCIVisibilityClientWithServiceNameFunc = func(_ string) civisibilitynet.Client {
+	newCIVisibilityClientWithServiceNameFunc = func(_ string) (civisibilitynet.Client, func()) {
 		return &mockCIVisibilityClient{
 			getSettings: func() (*civisibilitynet.SettingsResponseData, error) {
 				settingsCalls++
@@ -307,7 +307,7 @@ func TestEnsureSettingsInitializationHandlesNilRetrySettingsResponse(t *testing.
 				}
 				return nil, nil
 			},
-		}
+		}, func() {}
 	}
 	uploadRepositoryChangesFunc = func() (int64, error) {
 		return 0, nil

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/runner"
 )
@@ -22,22 +21,17 @@ func main() {
 		os.Exit(runner.RunTool(context.Background(), plan, args, os.Stdin, os.Stdout, os.Stderr))
 	}
 	if len(os.Args) < 2 || os.Args[1] != "test" {
-		fmt.Fprintln(os.Stderr, "usage: ddtest test [--runtime=sdk|mini] [go test flags] [packages]")
+		fmt.Fprintln(os.Stderr, "usage: ddtest test [--runtime=mini|sdk] [go test flags] [packages] (default: mini)")
+		os.Exit(2)
+	}
+	runtime, args, err := runner.ParseRuntimeArgs(os.Args[2:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ddtest:", err)
 		os.Exit(2)
 	}
 	if _, defined := os.LookupEnv("DD_CIVISIBILITY_ENABLED"); !defined {
 		if err := os.Setenv("DD_CIVISIBILITY_ENABLED", "parent"); err != nil {
 			fmt.Fprintln(os.Stderr, "ddtest:", err)
-			os.Exit(2)
-		}
-	}
-	args := os.Args[2:]
-	runtime := runner.SDK
-	if len(args) > 0 && strings.HasPrefix(args[0], "--runtime=") {
-		runtime = runner.Runtime(strings.TrimPrefix(args[0], "--runtime="))
-		args = args[1:]
-		if runtime != runner.SDK && runtime != runner.Mini {
-			fmt.Fprintln(os.Stderr, "ddtest: runtime must be sdk or mini")
 			os.Exit(2)
 		}
 	}

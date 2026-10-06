@@ -6,7 +6,7 @@ For implementation details, read [architecture](architecture.md),
 The experimental `mini` backend keeps the testing hooks and CI policies extracted
 from `dd-trace-go/main` at `96aedb31048c07e29e7a20a4333dc3b8d289c52d`,
 replacing its general tracer with a native CI
-event client. The SDK backend remains the default and uses the original module.
+event client. Mini is the default; `--runtime=sdk` uses the original SDK module.
 Neither the original SDK nor target sources are edited.
 
 ## Use the local POC
@@ -25,11 +25,29 @@ Then run it from the target module. No changes to the module are needed:
 
 When the module does not require the runtime, `ddtest` adds it to a temporary
 copy of `go.mod` and `go.sum` that Go reads through `-modfile`; the module's own
-files stay unchanged, and `go mod tidy` cannot break a later run. Mini comes
-from the module's `replace` directive for this module if there is one, else from
-the published version that built `ddtest`, else from the checkout `ddtest` was
-built from (a `-trimpath` build cannot locate it). The SDK backend adds its
-pinned version the same way; a different required SDK version is still an error.
+files stay unchanged, and `go mod tidy` cannot break a later run. Mini honors
+the client's `replace` directive first. Otherwise, it uses the sources recorded
+in the CLI when they are still available: either a local checkout or the module
+cache used by `go install`. A local checkout supplies its current contents,
+including edits made after building the CLI.
+
+The toolchain must be Go 1.26 or newer; CI covers 1.26 and 1.27. The client's
+`go.mod` may declare an older version. For a local runtime, the temporary
+module uses at least the Go version required by that runtime's `go.mod`,
+including when the client supplies a `replace`. A newer client Go directive
+is retained. This needs no proxy request and leaves the client's files intact.
+
+For a `-trimpath` build or a missing source directory, `ddtest` checks
+`GOMODCACHE` for the exact version recorded in the CLI. Only if no usable local
+copy exists does it fetch that version with `go get`. It does not search for
+other checkouts or substitute a different cached version. A development binary
+without source paths or a published version needs an explicit client `replace`.
+
+The SDK backend uses `go get` to provide its pinned version; a different
+required SDK version is still an error. Before any runtime `go get`, the CLI
+prints a status line and streams Go's download messages and diagnostics to
+`stderr`. This keeps `go test -json` output valid. Go may be quiet while querying
+module metadata, even when the module files are already cached.
 
 With `-mod=mod`, including from `GOFLAGS`, `ddtest` resolves the runtime
 read-only, so it is never added to the module's files. The module's own packages
@@ -51,9 +69,11 @@ import _ "github.com/tonyredondo/dd-ci-testing-poc/testopt"
 A vendored module or a Go workspace must require the runtime this way: `ddtest`
 does not provide it through `-modfile` in those modes.
 
-`--runtime` must immediately follow `test`. Omitting it selects `sdk`. The mini
-backend does not require `dd-trace-go`. Existing application imports of that SDK
-still link it normally; switching the instrumentator does not remove those imports.
+`--runtime=mini` and `--runtime mini` can appear before or after Go flags and
+package names. Put them before custom test flags, `-args` or `--`, which belong
+to the test binary. Omitting the option selects Mini; use `--runtime=sdk` for
+the reference runtime. Mini does not require `dd-trace-go`. Existing application
+imports of that SDK still link it normally; switching the instrumentator does not remove those imports.
 Both backends retain the CLI's `DD_CIVISIBILITY_ENABLED=parent` default when absent.
 Native Go controls compilation, test-result caching, flags and exit status.
 
@@ -95,7 +115,8 @@ this implementation.
 The client writes the CI test-cycle MessagePack protocol directly: envelope
 version 1, test events version 2, and session/module/suite events version 1. CI
 hierarchy IDs are separate from distributed trace identity. The runtime has its
-own experimental version, `0.0.0-ci-mini`.
+own experimental version, `0.0.0`. Its diagnostic log prefix is
+`TestOptimization Tracer v0.0.0`; the SDK backend retains its original prefix.
 
 Agentless delivery uses gzip and `/api/v2/citestcycle`. Agent delivery uses the EVP
 v2 proxy and its intake header. Coverage continues through the extracted native
@@ -348,3 +369,18 @@ retain Uname's single fixed-buffer read and partial-data error behavior. Numeric
 MIB keys were checked against all five pinned upstream targets; injected tests
 cover partial buffers, bounds and whitespace. Native execution is still required
 to establish full cross-platform equivalence.
+
+## Source locations
+
+Mini uses the parsed declaration for a named function's source start and end.
+The runtime entry line identifies the declaration, including same-named methods,
+but can point at the closing brace when Go optimizes a test body away. If source
+cannot be read or the declaration cannot be confirmed, Mini retains the
+runtime start as its fallback. Anonymous functions retain their separate source
+matching rules.
+
+The pinned SDK uses the runtime entry line as the start of named functions.
+For an optimized test declared on lines 5–10 it can therefore report 10–10.
+Mini reports 5–10. Source regression tests assert the original file's lines
+rather than relying only on equality with the SDK. The resolved range also
+feeds impacted-test classification and process-retry metadata.

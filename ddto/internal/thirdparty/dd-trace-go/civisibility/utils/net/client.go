@@ -97,6 +97,31 @@ var (
 
 // NewClientWithServiceNameAndSubdomain creates a new client with the given service name and subdomain.
 func NewClientWithServiceNameAndSubdomain(serviceName, subdomain string) Client {
+	client, startTelemetry := newClientWithServiceNameAndSubdomain(serviceName, subdomain)
+	if startTelemetry != nil {
+		startTelemetry()
+	}
+	return client
+}
+
+// NewClientWithConcurrentTelemetry overlaps the initial telemetry flush with
+// settings requests. The caller must defer the returned wait function before
+// doing any work, including error paths, and finish waiting before running tests.
+// Other constructors retain synchronous telemetry initialization.
+func NewClientWithConcurrentTelemetry(serviceName string) (Client, func()) {
+	client, startTelemetry := newClientWithServiceNameAndSubdomain(serviceName, "api")
+	if startTelemetry == nil {
+		return client, func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		startTelemetry()
+	}()
+	return client, func() { <-done }
+}
+
+func newClientWithServiceNameAndSubdomain(serviceName, subdomain string) (Client, func()) {
 	ciTags := utils.GetCITagsReadOnly()
 
 	// get the environment
@@ -149,7 +174,7 @@ func NewClientWithServiceNameAndSubdomain(serviceName, subdomain string) Client 
 		apiKeyValue = env.Get(constants.APIKeyEnvironmentVariable)
 		if apiKeyValue == "" {
 			log.Error("An API key is required for agentless mode. Use the DD_API_KEY env variable to set it")
-			return nil
+			return nil, nil
 		}
 
 		defaultHeaders["dd-api-key"] = apiKeyValue
@@ -195,32 +220,35 @@ func NewClientWithServiceNameAndSubdomain(serviceName, subdomain string) Client 
 	log.Debug("ciVisibilityHttpClient: new client created [id: %s, agentless: %t, url: %s, env: %s, serviceName: %s, subdomain: %s]",
 		id, agentlessEnabled, baseURL, environment, serviceName, subdomain)
 
+	var startTelemetry func()
 	if !telemetry.Disabled() {
-		telemetryInit.Do(func() {
-			telemetry.ProductStarted(telemetry.NamespaceCIVisibility)
-			telemetry.RegisterAppConfigs(
-				telemetry.Configuration{Name: "service", Value: serviceName},
-				telemetry.Configuration{Name: "env", Value: environment},
-				telemetry.Configuration{Name: "agentless", Value: agentlessEnabled},
-				telemetry.Configuration{Name: "test_session_name", Value: ciTags[constants.TestSessionName]},
-			)
-			if telemetry.GlobalClient() != nil {
-				return
-			}
-			cfg := telemetry.ClientConfig{
-				HTTPClient: requestHandler.Client,
-				APIKey:     apiKeyValue,
-			}
-			if agentURL != nil {
-				cfg.AgentURL = agentURL.String()
-			}
-			client, err := telemetry.NewClient(serviceName, environment, env.Get("DD_VERSION"), cfg)
-			if err != nil {
-				log.Debug("civisibility: failed to create telemetry client: %s", err.Error())
-				return
-			}
-			telemetry.StartApp(client)
-		})
+		startTelemetry = func() {
+			telemetryInit.Do(func() {
+				telemetry.ProductStarted(telemetry.NamespaceCIVisibility)
+				telemetry.RegisterAppConfigs(
+					telemetry.Configuration{Name: "service", Value: serviceName},
+					telemetry.Configuration{Name: "env", Value: environment},
+					telemetry.Configuration{Name: "agentless", Value: agentlessEnabled},
+					telemetry.Configuration{Name: "test_session_name", Value: ciTags[constants.TestSessionName]},
+				)
+				if telemetry.GlobalClient() != nil {
+					return
+				}
+				cfg := telemetry.ClientConfig{
+					HTTPClient: requestHandler.Client,
+					APIKey:     apiKeyValue,
+				}
+				if agentURL != nil {
+					cfg.AgentURL = agentURL.String()
+				}
+				client, err := telemetry.NewClient(serviceName, environment, env.Get("DD_VERSION"), cfg)
+				if err != nil {
+					log.Debug("civisibility: failed to create telemetry client: %s", err.Error())
+					return
+				}
+				telemetry.StartApp(client)
+			})
+		}
 	}
 
 	// we try to get the branch name
@@ -258,7 +286,7 @@ func NewClientWithServiceNameAndSubdomain(serviceName, subdomain string) Client 
 		readCacheScopeIdentity: newReadCacheScopeIdentity(ciTags),
 		headers:                defaultHeaders,
 		handler:                requestHandler,
-	}
+	}, startTelemetry
 }
 
 // NewClientWithServiceName creates a new client with the given service name.

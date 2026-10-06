@@ -23,19 +23,19 @@ func TestGoTestFlagsAndVariants(t *testing.T) {
 		if code != 0 {
 			t.Fatal(stderr)
 		}
-		got, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, "test", "./notests")
+		got, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, "test", "--runtime=sdk", "./notests")
 		if code != 0 || got != want {
 			t.Fatalf("no-tests contract: %d %q %q %s", code, got, want, stderr)
 		}
 	})
 	t.Run("test-prefix", func(t *testing.T) {
-		out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, "test", "-test.v", "-test.run=^TestPass$", "-count=1", ".")
+		out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, "test", "--runtime=sdk", "-test.v", "-test.run=^TestPass$", "-count=1", ".")
 		if code != 0 || !strings.Contains(out, "=== RUN   TestPass") {
 			t.Fatalf("native test flag prefix: %d %s\n%s", code, out, stderr)
 		}
 	})
 	t.Run("json-tags-multiple-packages", func(t *testing.T) {
-		out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false", "GOFLAGS=-tags=poc_extra"), driver, "test", "-count=1", "-json", "-run=^(TestTagged|TestOther)$", "./...")
+		out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false", "GOFLAGS=-tags=poc_extra"), driver, "test", "--runtime=sdk", "-count=1", "-json", "-run=^(TestTagged|TestOther)$", "./...")
 		if code != 0 || !strings.Contains(out, `"Test":"TestTagged"`) || !strings.Contains(out, `"Test":"TestOther"`) {
 			t.Fatalf("json/tags/package selection: %d %s\n%s", code, out, stderr)
 		}
@@ -46,7 +46,7 @@ func TestGoTestFlagsAndVariants(t *testing.T) {
 			compilers := []struct {
 				name string
 				args []string
-			}{{"go", []string{"test"}}, {driver, []string{"test"}}}
+			}{{"go", []string{"test"}}, {driver, []string{"test", "--runtime=sdk"}}}
 			if reference != "" {
 				compilers = append(compilers, struct {
 					name string
@@ -83,7 +83,7 @@ func TestGoTestFlagsAndVariants(t *testing.T) {
 		for _, compiler := range []struct {
 			name string
 			args []string
-		}{{driver, []string{"test"}}, {reference, []string{"go", "test"}}} {
+		}{{driver, []string{"test", "--runtime=sdk"}}, {reference, []string{"go", "test"}}} {
 			if compiler.name == "" {
 				continue
 			}

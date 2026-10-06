@@ -69,7 +69,7 @@ func TestSignalDuringPreparationStopsAndCleansUp(t *testing.T) {
 		signals <- syscall.SIGTERM
 	}()
 	start := time.Now()
-	_, interrupted, err := prepareInterruptibly(context.Background(), t.TempDir(), options{packages: []string{"."}}, Mini, signals)
+	_, interrupted, err := prepareInterruptibly(context.Background(), t.TempDir(), options{packages: []string{"."}}, Mini, signals, io.Discard)
 	if interrupted != syscall.SIGTERM || err == nil || time.Since(start) > 10*time.Second {
 		t.Fatalf("interrupted=%v err=%v after %s", interrupted, err, time.Since(start))
 	}

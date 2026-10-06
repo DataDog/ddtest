@@ -138,12 +138,19 @@ Only declared differences are normalized:
   `testing.go` frame are equivalent by method name. Application frames, their
   source lines, error text and frame order remain compared.
 
-Two Mini corrections intentionally differ from the frozen SDK. Coverage includes
+Mini corrections intentionally differ from the frozen SDK. Coverage includes
 code executed only in `t.Cleanup`, and duplicate Testify method names retain the
 client suite and source location. `TestMiniCoverageIncludesCleanup` and
 `TestMiniTestifyDuplicateIdentity` assert those expected payloads directly;
 the differential comparator does not hide either difference. They run with the
 complete suite on every CI platform.
+
+Mini also reports the declaration start of a confirmed named function, even
+when its optimized entry PC points at the closing brace. The constant-sum
+regression requires lines 5–10. The multi-package fixture requires 5–9 for
+`TestOther` in Mini; its SDK start may be an instruction within that range.
+After checking both contracts and the exact end, that one SDK start is adjusted
+in a copy for comparison. Raw captures and all other source fields are retained.
 
 The span fixture explicitly marks both runtimes' spans as `ciapp-test`. Mini
 adds that origin automatically; SDK public span creation does not automatically

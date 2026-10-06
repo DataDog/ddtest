@@ -2,6 +2,7 @@ package integration
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -39,8 +40,77 @@ func TestCIVisibilityMultiplePackages(t *testing.T) {
 		wallNS = append(wallNS, wall.Nanoseconds())
 	}
 	// Each binary has its own command. Both backends used identical Go args.
-	assertMiniCIAttributes(t, captures[0].events, captures[1].events)
+	sdkEvents, err := comparableOtherSource(captures[0].events, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	miniEvents, err := comparableOtherSource(captures[1].events, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMiniCIAttributes(t, sdkEvents, miniEvents)
 	writeParityEvidence(t, "packages", map[string]any{"timing": parityTiming{"CLI: preparation, compilation, execution and shutdown/flush", wallNS[0], wallNS[1]}, "status": "passed", "sdk": eventCounts{2, 2, 2, 2, 0}, "mini": eventCounts{2, 2, 2, 2, 0}, "scope": "one session per package binary; packages without tests emit no events"})
+}
+
+// TestOther occupies lines 5-9 of other/other_test.go. Its constant expression
+// can disappear during compilation. Mini must report the declaration; the
+// pinned SDK still uses an instruction's line. Check both contracts before
+// comparing the remaining fields, without altering the captured payloads.
+func comparableOtherSource(events []map[string]any, mini bool) ([]map[string]any, error) {
+	result := append([]map[string]any(nil), events...)
+	found := 0
+	for i, event := range events {
+		content := event["content"].(map[string]any)
+		meta, _ := content["meta"].(map[string]any)
+		if event["type"] != "test" || meta["test.name"] != "TestOther" {
+			continue
+		}
+		found++
+		metrics, _ := content["metrics"].(map[string]any)
+		start, ok := metrics["test.source.start"].(float64)
+		file, _ := meta["test.source.file"].(string)
+		if !ok || start < 5 || start > 9 || start != float64(int(start)) || mini && start != 5 || metrics["test.source.end"] != float64(9) || filepath.Base(file) != "other_test.go" {
+			return nil, fmt.Errorf("TestOther source (mini=%t): got %s:%v-%v; Mini requires 5-9, SDK entry must be within 5-9", mini, file, metrics["test.source.start"], metrics["test.source.end"])
+		}
+		copy := maps.Clone(content)
+		copy["metrics"] = maps.Clone(metrics)
+		copy["metrics"].(map[string]any)["test.source.start"] = float64(5)
+		result[i] = maps.Clone(event)
+		result[i]["content"] = copy
+	}
+	if found != 1 {
+		return nil, fmt.Errorf("expected one TestOther event, got %d", found)
+	}
+	return result, nil
+}
+
+func TestOtherSourceComparisonRetainsRangeChecks(t *testing.T) {
+	metrics := map[string]any{"test.source.start": float64(9), "test.source.end": float64(9)}
+	events := []map[string]any{{"type": "test", "content": map[string]any{
+		"meta": map[string]any{"test.name": "TestOther", "test.source.file": "other_test.go"}, "metrics": metrics,
+	}}}
+	if _, err := comparableOtherSource(events, false); err != nil {
+		t.Fatal(err)
+	}
+	if metrics["test.source.start"] != float64(9) {
+		t.Fatal("altered original SDK payload")
+	}
+	if _, err := comparableOtherSource(events, true); err == nil {
+		t.Fatal("accepted the SDK's incorrect start in Mini")
+	}
+	metrics["test.source.start"] = float64(5)
+	if _, err := comparableOtherSource(events, true); err != nil {
+		t.Fatal(err)
+	}
+	metrics["test.source.end"] = float64(10)
+	if _, err := comparableOtherSource(events, true); err == nil {
+		t.Fatal("accepted an incorrect end")
+	}
+	metrics["test.source.end"] = float64(9)
+	delete(metrics, "test.source.start")
+	if _, err := comparableOtherSource(events, false); err == nil {
+		t.Fatal("accepted a missing source start")
+	}
 }
 
 func TestCIVisibilityFuzzCampaign(t *testing.T) {

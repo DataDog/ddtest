@@ -56,7 +56,7 @@ func TestSDKFeaturePolicies(t *testing.T) {
 	for _, compiler := range []struct {
 		name string
 		args []string
-	}{{driver, []string{"test"}}, {reference, []string{"go", "test"}}} {
+	}{{driver, []string{"test", "--runtime=sdk"}}, {reference, []string{"go", "test"}}} {
 		if compiler.name == "" {
 			continue
 		}

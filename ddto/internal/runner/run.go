@@ -63,7 +63,8 @@ func Prepare(ctx context.Context, dir string, args []string) (Plan, error) {
 }
 
 // PrepareRuntime selects the event runtime without changing Go's test options.
-// The selected runtime must already be required by the target module.
+// A missing runtime is provided through a temporary modfile. Preparation is
+// silent; RunRuntime streams provisioning diagnostics to its stderr writer.
 func PrepareRuntime(ctx context.Context, dir string, args []string, runtime Runtime) (Plan, error) {
 	opts, err := parseOptions(args, os.Getenv("GOFLAGS"))
 	if err != nil {
@@ -73,7 +74,7 @@ func PrepareRuntime(ctx context.Context, dir string, args []string, runtime Runt
 	if opts.help || explicitFiles(dir, opts.packages) {
 		return Plan{}, errors.New("help and explicit Go file arguments run without instrumentation")
 	}
-	return prepare(ctx, dir, opts, runtime)
+	return prepare(ctx, dir, opts, runtime, nil)
 }
 
 // workingDirectory applies go test's -C, relative to the caller's directory.
@@ -104,7 +105,7 @@ func explicitFiles(dir string, packages []string) bool {
 	return false
 }
 
-func prepare(ctx context.Context, dir string, opts options, runtime Runtime) (plan Plan, err error) {
+func prepare(ctx context.Context, dir string, opts options, runtime Runtime, progress io.Writer) (plan Plan, err error) {
 	runtimePackage := sdkPackage
 	switch runtime {
 	case SDK:
@@ -180,7 +181,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime) (pl
 		if p.ImportPath == runtimePackage && p.Error != nil {
 			// The module does not require the runtime: provide it through a
 			// temporary go.mod instead of failing or editing the module.
-			if plan.Modfile, e = provideRuntime(ctx, dir, opts, runtime, temp, replacements); e != nil {
+			if plan.Modfile, e = provideRuntime(ctx, dir, opts, runtime, temp, replacements, progress); e != nil {
 				return plan, fmt.Errorf("%s: %s\nddtest could not provide it: %w", p.ImportPath, p.Error.Err, e)
 			}
 			opts.buildFlags = append(opts.buildFlags, "-modfile="+plan.Modfile)
@@ -251,14 +252,14 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime) (pl
 		replacements[logical] = backing
 		return nil
 	}
-	for logical, src := range rewritten {
+	for logical, src := range rewritten.Files {
 		backing := filepath.Join(temp, filepath.Base(logical))
 		if e = os.WriteFile(backing, src, 0600); e != nil {
 			return plan, e
 		}
 		replacements[logical] = backing
 	}
-	if e = add(filepath.Join(native.Dir, "zz_dd_ci_visibility_hooks.go"), hooksForRuntime(runtime, instrument.DeclaresParallelStop(files))); e != nil {
+	if e = add(filepath.Join(native.Dir, "zz_dd_ci_visibility_hooks.go"), hooksForRuntime(runtime, rewritten.ParallelStop)); e != nil {
 		return plan, e
 	}
 	for _, p := range packages {
@@ -322,7 +323,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime) (pl
 	}
 	plan.coverOverlay = needsCoverOverlay(dir, opts, packages, []goPackage{*native})
 	plan.File = filepath.Join(temp, "overlay.json")
-	plan.InstrumentedFiles = len(rewritten)
+	plan.InstrumentedFiles = len(rewritten.Files)
 	encoded, e := json.Marshal(Overlay{Replace: replacements, Testify: testify, Goleak: goleak})
 	if e != nil {
 		return plan, e
@@ -365,7 +366,7 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 		// Native go test handles -C, help and file mode itself.
 		return runGo(ctx, cwd, append([]string{"test"}, args...), nil, signals, stdin, stdout, stderr)
 	}
-	plan, interrupted, err := prepareInterruptibly(ctx, dir, opts, runtime, signals)
+	plan, interrupted, err := prepareInterruptibly(ctx, dir, opts, runtime, signals, stderr)
 	if err == nil {
 		defer os.RemoveAll(plan.Dir)
 	}
@@ -403,7 +404,7 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 
 // prepareInterruptibly cancels package resolution when a signal arrives. The
 // watcher has stopped before returning, so later signals reach go test.
-func prepareInterruptibly(ctx context.Context, dir string, opts options, runtime Runtime, signals <-chan os.Signal) (Plan, os.Signal, error) {
+func prepareInterruptibly(ctx context.Context, dir string, opts options, runtime Runtime, signals <-chan os.Signal, progress io.Writer) (Plan, os.Signal, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var interrupted os.Signal
@@ -416,7 +417,7 @@ func prepareInterruptibly(ctx context.Context, dir string, opts options, runtime
 		case <-stop:
 		}
 	}()
-	plan, err := prepare(ctx, dir, opts, runtime)
+	plan, err := prepare(ctx, dir, opts, runtime, progress)
 	close(stop)
 	<-stopped
 	return plan, interrupted, err

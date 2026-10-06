@@ -17,9 +17,16 @@ type edit struct {
 	text       string
 }
 
+// TestingSources contains rewritten files and optional hooks discovered in the
+// same AST pass. Callers must use the matching hooks when building the overlay.
+type TestingSources struct {
+	Files        map[string][]byte
+	ParallelStop bool
+}
+
 // Transform validates every required hook before returning rewritten sources.
 // Logical filenames are retained in line directives for diagnostics and stacks.
-func Transform(files map[string][]byte) (map[string][]byte, error) {
+func Transform(files map[string][]byte) (TestingSources, error) {
 	names := make([]string, 0, len(files))
 	for name := range files {
 		names = append(names, name)
@@ -27,18 +34,20 @@ func Transform(files map[string][]byte) (map[string][]byte, error) {
 	sort.Strings(names)
 	counts := map[string]int{}
 	output := map[string][]byte{}
+	parallelStop := false
 	for _, name := range names {
 		src := files[name]
 		if bytes.Contains(src, []byte("__dd_civisibility_")) {
-			return nil, fmt.Errorf("%s: already instrumented", name)
+			return TestingSources{}, fmt.Errorf("%s: already instrumented", name)
 		}
 		fs := token.NewFileSet()
 		// Edits use declaration offsets and the original source bytes. Comment
 		// nodes are unused; scanner line directives still update the FileSet.
 		file, err := parser.ParseFile(fs, name, src, parser.SkipObjectResolution)
 		if err != nil {
-			return nil, err
+			return TestingSources{}, err
 		}
+		parallelStop = parallelStop || declaresParallelStop(file)
 		var edits []edit
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -72,12 +81,12 @@ func Transform(files map[string][]byte) (map[string][]byte, error) {
 			switch key {
 			case "M.Run":
 				if fn.Type.Results == nil || len(fn.Type.Results.List) != 1 {
-					return nil, fmt.Errorf("unsupported M.Run result")
+					return TestingSources{}, fmt.Errorf("unsupported M.Run result")
 				}
 				result := fn.Type.Results.List[0]
 				typ, ok := result.Type.(*ast.Ident)
 				if !ok || typ.Name != "int" {
-					return nil, fmt.Errorf("unsupported M.Run result type")
+					return TestingSources{}, fmt.Errorf("unsupported M.Run result type")
 				}
 				resultName := "__dd_ci_result"
 				if len(result.Names) == 1 {
@@ -97,17 +106,17 @@ defer func() {
 			case "T.Run":
 				f, err := arg(1)
 				if err != nil {
-					return nil, err
+					return TestingSources{}, err
 				}
 				prefix = f + " = __dd_civisibility_instrumentTestingTFunc(" + f + ")"
 			case "B.Run":
 				n, err := arg(0)
 				if err != nil {
-					return nil, err
+					return TestingSources{}, err
 				}
 				f, err := arg(1)
 				if err != nil {
-					return nil, err
+					return TestingSources{}, err
 				}
 				prefix = fmt.Sprintf("%s, %s = __dd_civisibility_instrumentTestingBFunc(%s, %s, %s)", n, f, recv, n, f)
 			case "common.Fail", "common.FailNow":
@@ -150,7 +159,7 @@ defer func() {
 				continue
 			}
 			if recv == "" {
-				return nil, fmt.Errorf("%s: unsupported receiver of %s", name, key)
+				return TestingSources{}, fmt.Errorf("%s: unsupported receiver of %s", name, key)
 			}
 			counts[key]++
 			pos := fs.Position(fn.Body.Lbrace + 1)
@@ -172,7 +181,7 @@ defer func() {
 		cursor := 0
 		for _, e := range edits {
 			if e.start < cursor {
-				return nil, fmt.Errorf("%s: overlapping edits", name)
+				return TestingSources{}, fmt.Errorf("%s: overlapping edits", name)
 			}
 			buf.Write(src[cursor:e.start])
 			buf.WriteString(e.text)
@@ -184,11 +193,11 @@ defer func() {
 	required := []string{"M.Run", "T.Run", "B.Run", "common.Fail", "common.FailNow", "common.SkipNow", "T.Parallel", "common.Error", "common.Fatal", "common.Skip", "common.Errorf", "common.Fatalf", "common.Skipf"}
 	for _, key := range required {
 		if counts[key] == 0 {
-			return nil, fmt.Errorf("missing testing hook %s", key)
+			return TestingSources{}, fmt.Errorf("missing testing hook %s", key)
 		}
 		if counts[key] != 1 {
-			return nil, fmt.Errorf("ambiguous testing hook %s: %d matches", key, counts[key])
+			return TestingSources{}, fmt.Errorf("ambiguous testing hook %s: %d matches", key, counts[key])
 		}
 	}
-	return output, nil
+	return TestingSources{Files: output, ParallelStop: parallelStop}, nil
 }

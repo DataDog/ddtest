@@ -151,10 +151,17 @@ that mutation because its background clocks are not safe under it.
 
 [`telemetry/globalclient.go`](telemetry/globalclient.go) runs the flush in
 `StartApp` synchronously in both delivery modes; the SDK starts it in a
-goroutine in normal mode. CI initialization calls `StartApp` before the first
-test, so no test waits for the startup requests or runs while they read
-`time.Local`, and `go test` does not count them in a test's duration. As in the
-SDK, `app-started` is a standalone request followed by a `message-batch`: the
+goroutine in normal mode. The settings client uses
+`NewClientWithConcurrentTelemetry` in
+[`civisibility/utils/net/client.go`](civisibility/utils/net/client.go) to overlap
+that flush with settings initialization. The constructor returns a wait
+function; `ensureSettingsInitialization` defers it inside its `sync.Once`
+callback. That join must cover every return path, including cached settings,
+offline modes and request errors. Other client constructors stay synchronous.
+
+Both operations finish before test admission, so no test runs while startup
+requests read `time.Local`, and `go test` does not count them in a test's
+duration. As in the SDK, `app-started` is a standalone request followed by a `message-batch`: the
 mapper keeps `app-started` out of batches. A slow endpoint delays the session
 start within the client timeouts. `StopApp` still waits on the existing
 WaitGroup, so a concurrent close sends `app-closing` after startup.
@@ -174,6 +181,11 @@ fallback and payload accounting retain their SDK rules.
 Checks: `TestStartupTelemetrySendsBeforeTests` blocks a real loopback startup
 response and checks that `StartApp` waits for it, initial configuration, retry,
 concurrent close and failed initialization in both modes.
+`integration/TestMiniStartupOverlapsSettingsAndTelemetry` independently blocks
+the two HTTP responses, verifies overlap and holds test admission until both
+finish, including failed requests. It runs the test binary with `-race` in
+ordinary and deferred modes. Keep that join when updating the client or settings
+initialization; asynchronous startup without it reintroduces the clock race.
 `TestStoppedTickerCannotRestart` checks terminal close.
 `TestWriterFlushWaitsForResponseCompletion` holds the transport's return-to-idle
 handshake for successful and failed responses.
@@ -444,3 +456,23 @@ omits comment AST construction while preserving original comment bytes.
 4. Refresh `TESTS.json` for adapted assertions and `SOURCE.json` using the shared
    [maintenance procedure](../../../docs/maintenance.md). Rerun comparable
    benchmarks if upstream changes a hot path.
+
+## Source ranges and runtime identity
+
+`civisibility/integrations/manual_api_sourcecache.go` uses `declStartLine` for
+named declarations whose range contains the runtime entry line. Go's
+entry PC can point at the last line of an optimized function. Keep the runtime
+line for matching declarations, especially methods with the same name, but use
+the cached AST for the published range. Missing sources retain the runtime
+fallback, as do unconfirmed declaration matches; closure matching is unchanged.
+No additional source read or parse is needed. During an SDK update, check
+whether upstream has corrected this too.
+
+`TestMiniCLIRuntimeSelectionAndSourceRange` checks emitted lines 5–10 with normal,
+unoptimized and race builds. The source-cache unit tests cover duplicate method
+names, named `func1` declarations, closures, unavailable sources, impacted-test
+classification and process-retry metadata.
+
+`log/log.go` labels native runtime diagnostics `TestOptimization Tracer`, using
+the version owned by `internal/version`. The original SDK's logger is unchanged.
+The native version is also used in event metadata and CI telemetry.

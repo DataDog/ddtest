@@ -378,7 +378,7 @@ func TestTestingCompatibility(t *testing.T) {
 	variants := []struct {
 		name, compiler string
 		prefix         []string
-	}{{"native", "go", []string{"test"}}, {"overlay", driver, []string{"test"}}}
+	}{{"native", "go", []string{"test"}}, {"overlay", driver, []string{"test", "--runtime=sdk"}}}
 	if reference != "" {
 		variants = append(variants, struct {
 			name, compiler string

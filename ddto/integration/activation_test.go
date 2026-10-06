@@ -17,9 +17,9 @@ func testCLIActivation(t *testing.T, mini bool) {
 		dir, driver = prepareFixture(t, false)
 	}
 	run := func(env []string, args ...string) (string, string, int) {
-		prefix := []string{"test"}
+		prefix := []string{"test", "--runtime=sdk"}
 		if mini {
-			prefix = append(prefix, "--runtime=mini")
+			prefix[1] = "--runtime=mini"
 		}
 		return command(t, dir, env, driver, append(prefix, args...)...)
 	}

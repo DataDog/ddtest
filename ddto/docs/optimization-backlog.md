@@ -31,14 +31,17 @@ commits or services, and differences between manifest and network modes.
 
 ## 2. Cache the provided runtime
 
-When the module does not require the selected runtime, every `ddtest` invocation
-runs `go get` into a temporary `go.mod` (about 85 ms for Mini and 260 ms for the
-SDK when warm), plus a second full `go list`.
+When the module does not require the selected runtime, `ddtest` prepares a
+temporary `go.mod` and runs a second full `go list`. Mini uses local sources or
+its exact cached version when available. The SDK, uncached Mini versions and
+versioned client replacements use `go get`, whose metadata queries can still
+need the proxy even with cached downloads. The CLI streams that command's
+diagnostics to `stderr`.
 
 - Cache the resulting `go.mod`/`go.sum` in the user cache directory (outside the
   repository), keyed by the module's `go.mod` and `go.sum` contents, the runtime,
   its version and the Go version.
-- Provisioning queries `GOMOD` and `GOWORK` together with `go env -json`.
+- Provisioning queries `GOMOD`, `GOWORK` and `GOMODCACHE` together with `go env -json`.
   Avoiding that remaining command would require obtaining both values from
   information already collected during preparation.
 - List only the runtime package with the provided modfile instead of repeating

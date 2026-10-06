@@ -1,11 +1,11 @@
 # dd-ci-testing-poc
 
 A testing-only CI Visibility tool built on native Go build overlays.
-The driver uses the Go standard library only. The default `sdk` backend uses the
-**unmodified `dd-trace-go` SDK** at the exact revision pinned in
-[`internal/version`](internal/version/version.go). The experimental `mini` backend
-uses the SDK-derived CI logic and a native event client with a smaller dependency
-graph. See [native runtime usage and contracts](docs/mini-runtime.md).
+The driver uses the Go standard library only. Its default `mini` backend uses
+SDK-derived CI logic and a native event client with no external runtime module
+dependencies. Use `--runtime=sdk` to run the unmodified `dd-trace-go` SDK at the
+exact revision pinned in [`internal/version`](internal/version/version.go).
+See [native runtime usage and contracts](docs/mini-runtime.md).
 
 For maintainers, start with the [documentation guide](docs/README.md):
 [architecture and diagrams](docs/architecture.md),
@@ -19,10 +19,26 @@ go build -o bin/ddtest ./cmd/ddtest
 /path/to/ddtest test -count=1 -race ./...
 ```
 
+Use a Go 1.26 or 1.27 toolchain. The minimum is Go 1.26.0; a client module
+can declare an older Go version. When providing Mini locally, `ddtest` raises
+the Go directive only in its temporary module file to meet Mini's requirement.
+
 If the module does not require the selected runtime (the pinned SDK, or this
 module for Mini), `ddtest` provides it through a temporary copy of `go.mod` and
 `go.sum` passed with `-modfile`. The module's files are never modified, so
-`go mod tidy` cannot break a later run. See [native runtime usage](docs/mini-runtime.md#use-the-local-poc).
+`go mod tidy` cannot break a later run. Mini prefers its local sources or exact
+cached version; any required `go get` reports progress on `stderr`.
+See [native runtime usage](docs/mini-runtime.md#use-the-local-poc).
+
+Runtime selection accepts `--runtime=mini` and `--runtime mini`, before or
+after Go flags and package names. Place it before custom test flags, `-args`
+or `--`; those begin the test binary's arguments. Invalid runtime values fail
+in the CLI before Go starts. For example:
+
+```sh
+ddtest test -count 1 --runtime=mini ./...
+ddtest test -count=1 --runtime sdk ./...
+```
 
 When `DD_CIVISIBILITY_ENABLED` is absent, the CLI sets it to `parent`. The SDK
 activates CI Visibility for each test process and disables it for ordinary child
@@ -30,7 +46,7 @@ processes. Explicit values, including `false` and an empty value, are retained b
 the CLI; runtime normalization remains the SDK's responsibility.
 
 The tool prepares the SDK's nine `testing` aspects, injects an external test
-file importing `dd-trace-go/v2/civisibility`, then calls native `go test` with an
+file importing the selected runtime, then calls native `go test` with an
 overlay. Original project sources, GOROOT and the SDK are not modified on
 disk. Temporary sources are removed after Go finishes. Go owns compilation and
 cache invalidation.
