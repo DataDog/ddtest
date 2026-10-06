@@ -15,7 +15,7 @@ import (
 func (c *capture) featureResponse(w http.ResponseWriter, r *http.Request) bool {
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/setting"):
-		attrs := map[string]any{"itr_enabled": c.profile == "itr", "tests_skipping": c.profile == "itr", "require_git": false, "code_coverage": false, "known_tests_enabled": c.profile == "efd", "impacted_tests_enabled": false, "flaky_test_retries_enabled": false,
+		attrs := map[string]any{"itr_enabled": c.profile == "itr", "tests_skipping": c.profile == "itr", "require_git": false, "code_coverage": c.profile == "coverage", "known_tests_enabled": c.profile == "efd", "impacted_tests_enabled": false, "flaky_test_retries_enabled": c.retry,
 			"early_flake_detection": map[string]any{"enabled": c.profile == "efd", "faulty_session_threshold": 100, "slow_test_retries": map[string]int{"5s": 2, "10s": 2, "30s": 2, "5m": 2}},
 			"test_management":       map[string]any{"enabled": c.profile == "disabled" || c.profile == "quarantined" || c.profile == "attempt_to_fix", "attempt_to_fix_retries": 2}}
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "poc", "type": "ci_app_test_service_libraries_settings", "attributes": attrs}})

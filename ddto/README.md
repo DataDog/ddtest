@@ -1,14 +1,28 @@
 # dd-ci-testing-poc
 
-A testing-only CI Visibility instrumentator using native Go build overlays.
-The driver uses the Go standard library only. Test binaries use the **unmodified
-`github.com/DataDog/dd-trace-go/v2 v2.11.0-rc.1`** SDK and its existing hooks.
+A testing-only CI Visibility tool built on native Go build overlays.
+The driver uses the Go standard library only. The default `sdk` backend uses the
+**unmodified `dd-trace-go` SDK** at the exact revision pinned in
+[`internal/version`](internal/version/version.go). The experimental `mini` backend
+uses the SDK-derived CI logic and a native event client with a smaller dependency
+graph. See [native runtime usage and contracts](docs/mini-runtime.md).
+
+For maintainers, start with the [documentation guide](docs/README.md):
+[architecture and diagrams](docs/architecture.md),
+[source updates](docs/maintenance.md) and
+[performance and profiling](docs/performance.md), and
+[CI feature parity, combinations and remaining gaps](docs/ci-parity.md).
 
 ```sh
 go build -o bin/ddtest ./cmd/ddtest
-# Run from a target module which already requires the supported SDK:
+# Run from the target module; no go.mod changes are needed:
 /path/to/ddtest test -count=1 -race ./...
 ```
+
+If the module does not require the selected runtime (the pinned SDK, or this
+module for Mini), `ddtest` provides it through a temporary copy of `go.mod` and
+`go.sum` passed with `-modfile`. The module's files are never modified, so
+`go mod tidy` cannot break a later run. See [native runtime usage](docs/mini-runtime.md#use-the-local-poc).
 
 When `DD_CIVISIBILITY_ENABLED` is absent, the CLI sets it to `parent`. The SDK
 activates CI Visibility for each test process and disables it for ordinary child
@@ -17,20 +31,38 @@ the CLI; runtime normalization remains the SDK's responsibility.
 
 The tool prepares the SDK's nine `testing` aspects, injects an external test
 file importing `dd-trace-go/v2/civisibility`, then calls native `go test` with an
-overlay. Project sources, GOROOT and the SDK are not rewritten. Temporary
-sources are removed after Go finishes. Go owns compilation and cache invalidation.
+overlay. Original project sources, GOROOT and the SDK are not modified on
+disk. Temporary sources are removed after Go finishes. Go owns compilation and
+cache invalidation.
 The exact SDK ownership marker and linkname ABI are retained, including process
 retry control and abnormal finalization.
 
 This is an experimental POC, not a replacement for supported Orchestrion releases.
 It supports package-mode tests with the pinned SDK, build tags, test selection,
-count/shuffle, JSON, benchmarks, race and coverage. It forwards native flags and
-preserves the user's result-cache choice; use `-count=1` for fresh CI events.
-Existing overlays are merged. Missing or ambiguous hooks and conflicting `-toolexec`
-configuration fail before compilation. Explicit `.go` file mode, `-C`, SDK
-replacements, standard-library test targets and `testify/suite` are outside this
-POC. Run from the desired module directory. Runtime configuration and intentional
-retry/skip/quarantine behavior remain in the SDK.
+count/shuffle, JSON, benchmarks, race and coverage. Arguments follow `go test`'s
+own rules, including `-C`, `--flag` spellings and custom test flags without
+`-args`. It preserves the user's result-cache choice; use `-count=1` for fresh CI
+events. A user overlay is merged into ours, and ours takes precedence. A user
+`-toolexec` runs every tool after ours. Missing or ambiguous hooks fail before
+compilation. Help and explicit `.go` file mode run native `go test` without
+instrumentation, with a warning for file mode. SDK replacements and
+standard-library test targets are outside this POC.
+[Testify suite support](docs/testify.md) covers v1.4.0 and newer v1 releases,
+including callers in external dependencies. Other versions, or an unrecognized
+`suite.Run`, produce a warning; their suites run as ordinary instrumented tests. A selective `-toolexec` hook is
+activated only for reachable Testify suites, goleak in Mini, or covered rewritten
+`testing` sources. Other builds use the overlay directly. Preparation validates the selected
+Testify version and API even when Go can reuse a cached archive. Version fixtures
+cover v1.10.0, v1.11.1 and v1.12.1. Run from the desired module directory. Runtime
+configuration and retry/skip/quarantine behavior remain in the selected runtime.
+
+Mini automatically integrates with reachable goleak v1.3.0 or newer v1 releases,
+independently of `DD_CIVISIBILITY_DEFERRED_DELIVERY`. Older versions produce a
+warning and run without the CI goroutine filters. Set
+`DD_CIVISIBILITY_DEFERRED_DELIVERY=true` to send buffered CI data between completed
+test groups. The next group waits while delivery finishes. See
+[delivery and goleak](docs/delivery.md)
+for connection ownership, parallel tests, memory costs and cache identity.
 
 ## Reproduce verification
 
@@ -58,66 +90,29 @@ GitHub Actions is configured to run the differential suite on Go 1.26/1.27 Linux
 macOS/Windows. A green Go version is compatibility evidence for that tested
 version; it does not imply support for every future toolchain or SDK.
 
-## Compilation performance
+<!-- build-benchmark-summary:start -->
+## Benchmarks
 
-The following compile-only measurements use **`go test -c -o <directory>/ -ldflags=-w ./...`**. No test binaries are executed, so SDK runtime and network flushing are excluded. Times are wall-clock medians in seconds. The percentage in the POC column is the reduction relative to Orchestrion, calculated from unrounded medians as `100 × (1 − POC / Orchestrion)`.
+[Build time, runtime and memory comparisons](docs/benchmarks.md) cover
+Native, Orchestrion, POC SDK and POC Mini at 4/32 CPUs, including Testify,
+coverage, race and deferred delivery. The report also links the repeated
+115-case CI parity comparison and records failed runtime combinations.
 
-Measured on an AMD Ryzen 9 5950X running Arch Linux amd64 and the development toolchain `go1.27.0-X:nodwarf5`. Each configuration uses the first N physical cores (no SMT), `GOMAXPROCS=N`, and `-p=N`. Gin v1.12.0 produces six test binaries; Chi v5.3.2 produces two. All variants use the same project sources and module resolution graph. Both instrumentators use the unmodified `dd-trace-go/v2@v2.11.0-rc.1` SDK; Orchestrion `v1.13.2-0.20260917114356-5c24783fcd76` loads only its `gotesting` aspects. The measured POC source is commit `4e56e8657949aaa1209afbaa19ef9767bbf6da90`.
+The [compile-only dataset](docs/results/20261005-linux-go1.27.1/build/README.md) contains
+6,224 comparative observations, measured at
+POC commit `9d4786fbd27f573bb68c5516bf23b336e8d7bdaa`.
 
-### Cold build
+[Run benchmarks or regenerate the tables](docs/build-benchmarks.md).
+<!-- build-benchmark-summary:end -->
 
-Two runs per variant with independent, empty Go build caches and no existing output binaries. Downloaded modules and the OS page cache remain warm.
+## Source maintenance
 
-| Project | Cores | Native | Orchestrion | POC |
-| --- | ---: | ---: | ---: | ---: |
-| Gin | 1 | 60.94 s | 141.76 s | 95.63 s (**−32.5%**) |
-| Gin | 4 | 17.74 s | 45.96 s | 27.72 s (**−39.7%**) |
-| Gin | 8 | 12.92 s | 28.32 s | 18.25 s (**−35.6%**) |
-| Gin | 16 | 11.34 s | 26.82 s | 17.33 s (**−35.4%**) |
-| Chi | 1 | 26.61 s | 94.27 s | 65.38 s (**−30.6%**) |
-| Chi | 4 | 7.81 s | 29.41 s | 18.10 s (**−38.5%**) |
-| Chi | 8 | 5.49 s | 19.61 s | 11.72 s (**−40.2%**) |
-| Chi | 16 | 4.64 s | 17.11 s | 10.76 s (**−37.1%**) |
-
-### Cached dependencies with forced linking
-
-Five runs per variant with compiled dependencies in cache. Every run adds a unique `-buildid` alongside `-w` to force fresh links. These timings include CLI preparation, Go build planning, and any required generated-main compilation; they do not isolate the linker or measure unchanged-binary reuse.
-
-| Project | Cores | Native | Orchestrion | POC |
-| --- | ---: | ---: | ---: | ---: |
-| Gin | 1 | 2.49 s | 10.96 s | 6.00 s (**−45.2%**) |
-| Gin | 4 | 1.08 s | 4.98 s | 2.96 s (**−40.7%**) |
-| Gin | 8 | 1.06 s | 5.43 s | 4.23 s (**−22.2%**) |
-| Gin | 16 | 0.99 s | 4.97 s | 4.12 s (**−17.2%**) |
-| Chi | 1 | 0.56 s | 3.87 s | 1.68 s (**−56.7%**) |
-| Chi | 4 | 0.26 s | 1.80 s | 1.21 s (**−32.7%**) |
-| Chi | 8 | 0.25 s | 1.61 s | 1.03 s (**−36.3%**) |
-| Chi | 16 | 0.27 s | 1.73 s | 0.97 s (**−44.2%**) |
-
-[Complete measurements](docs/benchmark-compile-no-dwarf.json) retain all 400 commands: 360 performance samples, 16 A/A controls, and 24 trace validations, with ranges and paired comparisons. All commands succeeded; all 96 output binaries were checked without DWARF; the SDK instrumentation hook was present only in the POC and Orchestrion outputs. CPU and peak memory accounting include the Orchestrion daemon and nested builds.
-
-These are local, exploratory results. Two cold runs do not establish stability, and the physical cores were not reserved from other workloads. Results should not be extrapolated to other applications, platforms, or toolchains. The earlier series that retained DWARF was measured at a different time; its noisy Gin eight-core cold results do not isolate the effect of `-w`. The JSON also preserves unused-constant edit measurements as diagnostics, not evidence for real test-body edit performance.
-
-The commands below illustrate the eight-core configuration from each prepared target module. Use separate Go build caches and output directories for each variant; for the cached-dependency scenario, append a different `-buildid` value to `-ldflags` on each run. CPU affinity and cache cleanup were managed outside the timed commands.
-
-```sh
-GOMAXPROCS=8 go test -p=8 -c -o ./out/native/ -ldflags=-w ./...
-GOMAXPROCS=8 /path/to/ddtest test -p=8 -c -o ./out/poc/ -ldflags=-w ./...
-GOMAXPROCS=8 go test -p=8 -c -o ./out/orchestrion/ \
-  -toolexec="/path/to/orchestrion toolexec" -ldflags=-w ./...
-```
-
-## Compare compilation
-
-```sh
-python3 scripts/benchmark.py --ddtest /path/to/ddtest \
-  --orchestrion /path/to/orchestrion --output /var/tmp/dd-ci-benchmark
-```
-
-The bounded script keeps every timing, alternates variant order, isolates cold
-Go build caches, and checks warm compilation and identical package edits. It
-uses `go test -c`, so runtime/network flushing is excluded. It reports wall time,
-not incomplete CPU accounting. Two cold rounds and five warm/edit rounds are
-exploratory data; this small fixture does not establish savings for your application.
-
-See [validation scope](docs/validation.md) and [results](docs/results.md).
+Incorporated sources live in [`internal/thirdparty`](internal/thirdparty/README.md).
+Every origin records its repository, exact upstream SHA, licenses and file hashes.
+The current SDK extraction base is `dd-trace-go/main` at
+`96aedb31048c07e29e7a20a4333dc3b8d289c52d`; differential fixtures use the same
+version. The native client/transport remain separate from the upstream subsets.
+Run `python3 scripts/upstream.py verify` to audit the source record offline.
+The [maintenance guide](docs/maintenance.md) covers three-way SDK updates, codec
+regeneration, platform changes and the required checks. Benchmark reports keep
+the source revision that was measured.

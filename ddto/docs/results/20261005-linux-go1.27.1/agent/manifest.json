@@ -1,0 +1,21 @@
+{
+  "status": "verified",
+  "source_head": "9d4786fbd27f573bb68c5516bf23b336e8d7bdaa",
+  "sdk_commit": "96aedb31048c07e29e7a20a4333dc3b8d289c52d",
+  "cpus": [
+    4,
+    32
+  ],
+  "case": "gin",
+  "repetitions": 3,
+  "warmups": 1,
+  "telemetry_enabled": true,
+  "delivery": "local EVP Agent proxy",
+  "external_agentless_fallback": false,
+  "verified_cpus": [
+    4,
+    32
+  ],
+  "commands": 32,
+  "measured_observations": 24
+}

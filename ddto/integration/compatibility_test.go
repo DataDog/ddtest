@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha1"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,14 +16,23 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/runner"
 )
 
+const sdkVersion = runner.SDKVersion
+
 const orchestrionVersion = "v1.13.2-0.20260917114356-5c24783fcd76"
+
+// orchestrionPinChecked is what orchestrion go sets for its toolexec children
+// after checking that go.mod requires this Orchestrion version.
+const orchestrionPinChecked = "DD_ORCHESTRION_IS_GOMOD_VERSION"
 
 type capture struct {
 	mu       sync.Mutex
@@ -61,20 +71,15 @@ func (c *capture) handler(w http.ResponseWriter, r *http.Request) {
 			c.fail(fmt.Errorf("non-map payload"))
 			return
 		}
-		events, ok := obj["events"].([]any)
-		if !ok {
-			c.fail(fmt.Errorf("missing events: %v", obj))
+		events, err := ciMetadataEvents(obj)
+		if err != nil {
+			c.fail(err)
 			return
 		}
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		for _, event := range events {
-			obj, ok := event.(map[string]any)
-			if !ok {
-				c.failures = append(c.failures, "invalid event")
-				continue
-			}
-			c.events = append(c.events, obj)
+			c.events = append(c.events, event)
 		}
 		w.WriteHeader(202)
 		return
@@ -107,11 +112,32 @@ func testEnv(extra ...string) []string {
 			env = append(env, name+"="+v)
 		}
 	}
+	// configureReferenceFixture checks the Orchestrion pin once. Otherwise every
+	// toolexec call runs go list to check it again, and on any failure rewrites
+	// orchestrion.tool.go and runs go mod tidy.
+	env = append(env, orchestrionPinChecked+"=true")
 	env = append(env, "GOFLAGS=", "DD_CIVISIBILITY_GIT_UPLOAD_ENABLED=false", "DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED=false", "DD_INSTRUMENTATION_TELEMETRY_ENABLED=false", "DD_APPSEC_ENABLED=false", "DD_SERVICE=dd-ci-testing-poc", "DD_ENV=poc", "DD_TEST_SESSION_NAME=poc", "DD_GIT_REPOSITORY_URL=https://github.com/tonyredondo/dd-ci-testing-poc.git", "DD_GIT_COMMIT_SHA=1111111111111111111111111111111111111111", "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=false", "DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED=false")
 	return append(env, extra...)
 }
 func command(t *testing.T, dir string, env []string, name string, args ...string) (string, string, int) {
 	t.Helper()
+	out, stderr, code, _ := commandWithTiming(t, dir, env, name, args...)
+	return out, stderr, code
+}
+
+// Measure only the child process. Fixture setup and result comparisons stay outside.
+func commandWithTiming(t *testing.T, dir string, env []string, name string, args ...string) (string, string, int, time.Duration) {
+	t.Helper()
+	out, stderr, code, wall, err := runCommand(dir, env, name, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out, stderr, code, wall
+}
+
+// runCommand reports start failures and timeouts as errors instead of through
+// testing.T, so independent builds can run in other goroutines.
+func runCommand(dir string, env []string, name string, args ...string) (string, string, int, time.Duration, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
@@ -120,20 +146,74 @@ func command(t *testing.T, dir string, env []string, name string, args ...string
 	var out, errout bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errout
+	start := time.Now()
 	err := cmd.Run()
+	wall := time.Since(start)
 	code := 0
 	if err != nil {
 		if e, ok := err.(*exec.ExitError); ok {
 			code = e.ExitCode()
 		} else {
-			t.Fatalf("%s: %v", name, err)
+			return "", "", 0, wall, fmt.Errorf("%s: %v", name, err)
 		}
 	}
 	if ctx.Err() != nil {
-		t.Fatalf("command timed out: %s %v", name, args)
+		return "", "", 0, wall, fmt.Errorf("command timed out: %s %v", name, args)
 	}
-	return out.String(), errout.String(), code
+	return out.String(), errout.String(), code, wall, nil
 }
+
+// fixtureBuild is one independent compilation of a fixture binary.
+type fixtureBuild struct {
+	name, dir, tool string
+	env, args       []string
+}
+
+// buildConcurrently runs independent fixture compilations together. Each one
+// writes its own output, and Go's build and module caches are safe for
+// concurrent go commands. Builds with -mod=mod run one at a time instead: go
+// may rewrite go.mod while another build reads it, and every Orchestrion
+// toolexec call re-checks its pin with go list, then rewrites
+// orchestrion.tool.go and runs go mod tidy when that check fails. Failures are
+// reported from the test goroutine.
+func buildConcurrently(t *testing.T, builds ...fixtureBuild) {
+	t.Helper()
+	type result struct {
+		out, stderr string
+		code        int
+		err         error
+	}
+	results := make([]result, len(builds))
+	run := func(i int) {
+		r, build := &results[i], builds[i]
+		r.out, r.stderr, r.code, _, r.err = runCommand(build.dir, build.env, build.tool, build.args...)
+	}
+	check := func(i int) {
+		r := results[i]
+		if r.err != nil {
+			t.Fatalf("%s: %v", builds[i].name, r.err)
+		}
+		if r.code != 0 {
+			t.Fatalf("%s: %s\n%s", builds[i].name, r.out, r.stderr)
+		}
+	}
+	if slices.ContainsFunc(builds, func(b fixtureBuild) bool { return slices.Contains(b.args, "-mod=mod") }) {
+		for i := range builds {
+			run(i)
+			check(i)
+		}
+		return
+	}
+	var wg sync.WaitGroup
+	for i := range builds {
+		wg.Go(func() { run(i) })
+	}
+	wg.Wait()
+	for i := range builds {
+		check(i)
+	}
+}
+
 func copyTree(t *testing.T, from, to string) {
 	t.Helper()
 	err := filepath.WalkDir(from, func(path string, d os.DirEntry, err error) error {
@@ -160,11 +240,19 @@ func copyTree(t *testing.T, from, to string) {
 }
 func prepareFixture(t *testing.T, baseline bool) (string, string) {
 	t.Helper()
+	return prepareFixtureWithTempDir(t, baseline, t.TempDir)
+}
+
+// The directory owner must keep the source and driver alive until every child
+// process finishes. Most fixtures are test-owned; shared parity builds live
+// until TestMain finishes.
+func prepareFixtureWithTempDir(t *testing.T, baseline bool, tempDir func() string) (string, string) {
+	t.Helper()
 	root, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join(t.TempDir(), "fixture")
+	dir := filepath.Join(tempDir(), "fixture")
 	copyTree(t, filepath.Join(root, "testdata/fixture"), dir)
 	// Go resolves its working directory without the parent's PWD. On macOS,
 	// /var/folders aliases /private/var/folders; overlay keys must use Go's path.
@@ -173,40 +261,9 @@ func prepareFixture(t *testing.T, baseline bool) (string, string) {
 		t.Fatal(err)
 	}
 	if baseline {
-		// Both compilers use this SAME temporary module graph, including any MVS
-		// upgrades introduced by the reference tool. The SDK version stays fixed.
-		if out, e, code := command(t, dir, testEnv(), "go", "get", "github.com/DataDog/orchestrion@"+orchestrionVersion); code != 0 {
-			t.Fatalf("prepare common graph: %s\n%s", out, e)
-		}
-		out, e, code := command(t, dir, testEnv(), "go", "list", "-m", "-json", "github.com/DataDog/dd-trace-go/v2")
-		if code != 0 {
-			t.Fatalf("SDK: %s", e)
-		}
-		var module struct{ Dir, Version string }
-		if err = json.Unmarshal([]byte(out), &module); err != nil {
-			t.Fatal(err)
-		}
-		if module.Version != "v2.11.0-rc.1" {
-			t.Fatalf("baseline changed SDK: %s", module.Version)
-		}
-		yaml, err := os.ReadFile(filepath.Join(module.Dir, "internal/civisibility/integrations/gotesting/orchestrion.yml"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err = os.WriteFile(filepath.Join(dir, "orchestrion.yml"), yaml, 0644); err != nil {
-			t.Fatal(err)
-		}
-		tool := "//go:build tools\n\npackage fixture\nimport _ \"github.com/DataDog/orchestrion\"\n"
-		if err = os.WriteFile(filepath.Join(dir, "orchestrion.tool.go"), []byte(tool), 0644); err != nil {
-			t.Fatal(err)
-		}
+		configureReferenceFixture(t, dir)
 	}
-	bin := filepath.Join(t.TempDir(), executableName("ddtest"))
-	out, e, code := command(t, root, testEnv(), "go", "build", "-o", bin, "./cmd/ddtest")
-	if code != 0 {
-		t.Fatalf("build driver: %s\n%s", out, e)
-	}
-	return dir, bin
+	return dir, sharedDriver(t, root)
 }
 
 func normalizedOutput(s string) string {
@@ -268,6 +325,8 @@ type execution struct {
 	out, stderr string
 	code        int
 	events      []string
+	wireEvents  []map[string]any
+	wall        time.Duration
 }
 
 func execute(t *testing.T, dir, bin string, args []string, enabled, retry bool) execution {
@@ -279,8 +338,9 @@ func executeProfile(t *testing.T, dir, bin string, args []string, enabled, retry
 	receiver := &capture{retry: retry, profile: profile}
 	server := httptest.NewServer(http.HandlerFunc(receiver.handler))
 	defer server.Close()
-	retryPath := filepath.Join(t.TempDir(), "retry-counter")
-	env := testEnv(fmt.Sprintf("DD_CIVISIBILITY_ENABLED=%t", enabled), "DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL, "DD_TRACE_AGENT_URL="+server.URL, "DD_API_KEY=poc-not-a-real-key", "POC_RETRY_COUNTER="+retryPath)
+	executionDir := t.TempDir()
+	retryPath := filepath.Join(executionDir, "retry-counter")
+	env := testEnv(fmt.Sprintf("DD_CIVISIBILITY_ENABLED=%t", enabled), "DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL, "DD_TRACE_AGENT_URL="+server.URL, "DD_API_KEY=poc-not-a-real-key", "POC_RETRY_COUNTER="+retryPath, "TMPDIR="+executionDir, "TMP="+executionDir, "TEMP="+executionDir, "XDG_CACHE_HOME="+executionDir, fmt.Sprintf("DD_GIT_COMMIT_SHA=%x", sha1.Sum([]byte(dir+"|"+profile))))
 	if retry {
 		env = append(env, "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=true", "DD_CIVISIBILITY_FLAKY_RETRY_COUNT=1", "DD_CIVISIBILITY_TOTAL_FLAKY_RETRY_COUNT=2", "DD_CIVISIBILITY_RETRY_EXECUTION_MODE=process")
 	}
@@ -293,7 +353,7 @@ func executeProfile(t *testing.T, dir, bin string, args []string, enabled, retry
 	if len(receiver.failures) > 0 {
 		t.Fatalf("wire protocol: %v", receiver.failures)
 	}
-	return execution{normalizedOutput(out), stderr, code, normalizedEvents(receiver.events)}
+	return execution{out: normalizedOutput(out), stderr: stderr, code: code, events: normalizedEvents(receiver.events), wireEvents: receiver.events}
 }
 
 func TestTestingCompatibility(t *testing.T) {
@@ -411,4 +471,40 @@ func TestTestingCompatibility(t *testing.T) {
 			}
 		}
 	})
+}
+
+func configureReferenceFixture(t *testing.T, dir string) {
+	t.Helper()
+	// Both compilers use this SAME temporary module graph, including any MVS
+	// upgrades introduced by the reference tool. The SDK version stays fixed.
+	if out, e, code := command(t, dir, testEnv(), "go", "get", "github.com/DataDog/orchestrion@"+orchestrionVersion); code != 0 {
+		t.Fatalf("prepare common graph: %s\n%s", out, e)
+	}
+	out, e, code := command(t, dir, testEnv(), "go", "list", "-m", "-json", "github.com/DataDog/dd-trace-go/v2")
+	if code != 0 {
+		t.Fatalf("SDK: %s", e)
+	}
+	var module struct{ Dir, Version string }
+	if err := json.Unmarshal([]byte(out), &module); err != nil {
+		t.Fatal(err)
+	}
+	if module.Version != sdkVersion {
+		t.Fatalf("baseline changed SDK: %s", module.Version)
+	}
+	yaml, err := os.ReadFile(filepath.Join(module.Dir, "internal/civisibility/integrations/gotesting/orchestrion.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(dir, "orchestrion.yml"), yaml, 0644); err != nil {
+		t.Fatal(err)
+	}
+	tool := "//go:build tools\n\npackage fixture\nimport _ \"github.com/DataDog/orchestrion\"\n"
+	if err = os.WriteFile(filepath.Join(dir, "orchestrion.tool.go"), []byte(tool), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Check the pin once, as orchestrion go does before a build; testEnv then
+	// skips that check in every toolexec call. A different binary fails here.
+	if out, e, code := command(t, dir, testEnv(orchestrionPinChecked+"=false"), os.Getenv("ORCHESTRION_BIN"), "go", "version"); code != 0 || strings.Contains(out+e, "is not present in your go.mod") {
+		t.Fatalf("orchestrion pin: %s\n%s", out, e)
+	}
 }

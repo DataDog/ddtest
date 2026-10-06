@@ -1,4 +1,4 @@
-// The hook advice follows dd-trace-go v2.11.0-rc.1, Apache-2.0.
+// The hook advice follows dd-trace-go main@96aedb31048c07e29e7a20a4333dc3b8d289c52d, Apache-2.0.
 package instrument
 
 import (
@@ -33,7 +33,9 @@ func Transform(files map[string][]byte) (map[string][]byte, error) {
 			return nil, fmt.Errorf("%s: already instrumented", name)
 		}
 		fs := token.NewFileSet()
-		file, err := parser.ParseFile(fs, name, src, parser.ParseComments|parser.SkipObjectResolution)
+		// Edits use declaration offsets and the original source bytes. Comment
+		// nodes are unused; scanner line directives still update the FileSet.
+		file, err := parser.ParseFile(fs, name, src, parser.SkipObjectResolution)
 		if err != nil {
 			return nil, err
 		}
@@ -160,7 +162,13 @@ defer func() {
 		}
 		sort.Slice(edits, func(i, j int) bool { return edits[i].start < edits[j].start })
 		var buf bytes.Buffer
-		fmt.Fprintf(&buf, "//line %s:1\n", name)
+		header := "//line " + name + ":1\n"
+		size := len(src) + len(header)
+		for _, e := range edits {
+			size += len(e.text) - (e.end - e.start)
+		}
+		buf.Grow(size)
+		buf.WriteString(header)
 		cursor := 0
 		for _, e := range edits {
 			if e.start < cursor {

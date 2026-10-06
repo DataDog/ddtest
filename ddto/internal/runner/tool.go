@@ -1,0 +1,119 @@
+package runner
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
+)
+
+// userToolexecEnv carries the user's -toolexec to ddtest's tool wrapper. Every
+// tool then runs through it, after any ddtest input transformation.
+const userToolexecEnv = "DDTEST_USER_TOOLEXEC"
+
+func chainUserToolexec(args []string) ([]string, error) {
+	chain := os.Getenv(userToolexecEnv)
+	if chain == "" {
+		return args, nil
+	}
+	words, err := splitFlags(chain)
+	if err != nil {
+		return nil, fmt.Errorf("ddtest: invalid -toolexec %q: %w", chain, err)
+	}
+	return append(words, args...), nil
+}
+
+func (p Plan) toolMode() string {
+	var modes []string
+	if p.testify {
+		modes = append(modes, "testify")
+	}
+	if p.goleak {
+		modes = append(modes, "goleak")
+	}
+	if p.coverOverlay {
+		modes = append(modes, "cover")
+	}
+	return strings.Join(modes, "-")
+}
+
+// ToolNeedsPlan is the allocation-free dispatch before any plan I/O. Go probes
+// compile/link versions without a package identity; those always stay native.
+func ToolNeedsPlan(mode string, args []string, importPath string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	tool := filepath.Base(args[0])
+	tool = strings.TrimSuffix(tool, ".exe")
+	if tool == "cover" {
+		if !strings.Contains(mode, "cover") {
+			return false
+		}
+		if len(args) == 2 && args[1] == "-V=full" {
+			return true
+		}
+		pkg, _, _ := strings.Cut(importPath, " [")
+		return pkg == "testing"
+	}
+	if tool != "compile" || !strings.Contains(mode, "testify") && !strings.Contains(mode, "goleak") {
+		return false
+	}
+	if len(args) == 2 && args[1] == "-V=full" {
+		return false
+	}
+	pkg, _, _ := strings.Cut(importPath, " [")
+	return pkg == instrument.TestifySuiteImport && strings.Contains(mode, "testify") || pkg == instrument.GoleakImport && strings.Contains(mode, "goleak")
+}
+
+// RunTool handles only a selected transform. CLI bypasses unrelated tools
+// before entering here, with native process replacement on Unix.
+func RunTool(ctx context.Context, overlay string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "ddtest: missing tool executable")
+		return 2
+	}
+	if tool := strings.TrimSuffix(filepath.Base(args[0]), ".exe"); tool == "cover" {
+		return RunCoverTool(ctx, overlay, args, stdin, stdout, stderr)
+	}
+	data, err := os.ReadFile(overlay)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	var plan Overlay
+	if err := json.Unmarshal(data, &plan); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	entry := plan.Testify
+	pkg, _, _ := strings.Cut(os.Getenv("TOOLEXEC_IMPORTPATH"), " [")
+	if pkg == instrument.GoleakImport {
+		entry = plan.Goleak
+	}
+	forwarded, cleanup, err := prepareLibraryCompile(entry, args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	defer cleanup()
+	if forwarded, err = chainUserToolexec(forwarded); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	cmd := exec.CommandContext(ctx, forwarded[0], forwarded[1:]...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
+	if err := cmd.Run(); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			return exit.ExitCode()
+		}
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	return 0
+}

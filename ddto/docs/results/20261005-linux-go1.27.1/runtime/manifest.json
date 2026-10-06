@@ -1,0 +1,10 @@
+{
+  "status": "partial",
+  "completed_cells": 48,
+  "verified_cells": 44,
+  "raw_observations": 1440,
+  "validated_observations": 1440,
+  "set_mode_classification_corrections": 192,
+  "raw_ledger_sha256": "d4536b928b4d54f04d2104a3513b48ba5d6d82eb1120ebef8dd232d29a7e67ef",
+  "validator_sha256": "0d37c9c257c6ccc705989e2f6a58a8f76f8cb7e5779cf61a017cb6091a3f7741"
+}

@@ -1,0 +1,1955 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/DataDog/dd-trace-go",
+  "commit": "96aedb31048c07e29e7a20a4333dc3b8d289c52d",
+  "default_branch": "main",
+  "version": "v2.12.0-dev.3.0.20261002145613-96aedb31048c",
+  "module": "github.com/DataDog/dd-trace-go/v2",
+  "licenses": [
+    "LICENSE"
+  ],
+  "files": [
+    {
+      "path": "ADAPTATIONS.md",
+      "sha256": "29b2cf2e6c73a88d7b7d93febbbcc0c2cf5bdfc0fa4580ceb97122487d7d4730",
+      "role": "local"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "71af67b41ee226793c67e48f29be03eecf0bca592993fb8bbd3de84f1e1475f0",
+      "role": "license",
+      "source_path": "LICENSE",
+      "source_sha256": "71af67b41ee226793c67e48f29be03eecf0bca592993fb8bbd3de84f1e1475f0"
+    },
+    {
+      "path": "NOTICE",
+      "sha256": "4224ad9128e8575fd0947f07ad1448b325d352a7f9db2d0829f2b917f83b0e37",
+      "role": "upstream",
+      "source_path": "NOTICE",
+      "source_sha256": "4224ad9128e8575fd0947f07ad1448b325d352a7f9db2d0829f2b917f83b0e37"
+    },
+    {
+      "path": "README.md",
+      "sha256": "9930f7d8c8258aa90018aa1c2bea1028ebbf95d3df265321c215f8fe5429251b",
+      "role": "local"
+    },
+    {
+      "path": "TESTS.json",
+      "sha256": "01e24c5eb9d758dbf20ec5f52144c04e3b3dca04310ca0eb50718a889de9f8f9",
+      "role": "local"
+    },
+    {
+      "path": "agent.go",
+      "sha256": "3f02bf08803d2dc565431aeeade6ca896aa46f781201c4d36ca33c789514d88d",
+      "role": "adapted",
+      "source_path": "internal/agent.go",
+      "source_sha256": "8821e2b5f7e26f94260563323294966ddb526945d8802fda2cb318fee897c4cc"
+    },
+    {
+      "path": "bazel/bazel_test.go",
+      "sha256": "393beaccb16f76ddcbb29c2453a0e013fe9fb07b363a0ad9422e096455609c42",
+      "role": "adapted",
+      "source_path": "internal/bazel/bazel_test.go",
+      "source_sha256": "2f11987f5b4d386ed1fd95ad91b416ae19e6648c0078fe8632005c2cb54b5254"
+    },
+    {
+      "path": "bazel/mode.go",
+      "sha256": "35509eee5932149de63c5d1ec8c74aaff447f9c4979046a427498d493db372b3",
+      "role": "adapted",
+      "source_path": "internal/bazel/mode.go",
+      "source_sha256": "249618f87a1becf7b49504ac177310d9344e8aa89945c4d32c67fcb71f51fc43"
+    },
+    {
+      "path": "civisibility/civisibility.go",
+      "sha256": "a46f72a63f56847040396580407ace35a18479800743376e87ea4773b76fa182",
+      "role": "upstream",
+      "source_path": "internal/civisibility/civisibility.go",
+      "source_sha256": "a46f72a63f56847040396580407ace35a18479800743376e87ea4773b76fa182"
+    },
+    {
+      "path": "civisibility/constants/ci.go",
+      "sha256": "99eaef8a58893d700ccbb568f8d4a86b35720eb5f54937d2a6c5c6c67ecb4a49",
+      "role": "upstream",
+      "source_path": "internal/civisibility/constants/ci.go",
+      "source_sha256": "99eaef8a58893d700ccbb568f8d4a86b35720eb5f54937d2a6c5c6c67ecb4a49"
+    },
+    {
+      "path": "civisibility/constants/env.go",
+      "sha256": "437867d4736a02d62547a32c904c21adbf378f3b54d326f22309304afda47b87",
+      "role": "upstream",
+      "source_path": "internal/civisibility/constants/env.go",
+      "source_sha256": "437867d4736a02d62547a32c904c21adbf378f3b54d326f22309304afda47b87"
+    },
+    {
+      "path": "civisibility/constants/git.go",
+      "sha256": "1b8e9905a06374d318e9d2dec312578ac7b05a56e7433816c3c51b9b46e9c3a6",
+      "role": "upstream",
+      "source_path": "internal/civisibility/constants/git.go",
+      "source_sha256": "1b8e9905a06374d318e9d2dec312578ac7b05a56e7433816c3c51b9b46e9c3a6"
+    },
+    {
+      "path": "civisibility/constants/os.go",
+      "sha256": "e235f90b03a8d18b948c5082148ecd805f5a8ab2c7e613f12412740cf98ae501",
+      "role": "upstream",
+      "source_path": "internal/civisibility/constants/os.go",
+      "source_sha256": "e235f90b03a8d18b948c5082148ecd805f5a8ab2c7e613f12412740cf98ae501"
+    },
+    {
+      "path": "civisibility/constants/runtime.go",
+      "sha256": "aaa72afb69a4548ba892095edaf0f8c36b2e7177195c2c2f77e11ebeb1d6e3f7",
+      "role": "upstream",
+      "source_path": "internal/civisibility/constants/runtime.go",
+      "source_sha256": "aaa72afb69a4548ba892095edaf0f8c36b2e7177195c2c2f77e11ebeb1d6e3f7"
+    },
+    {
+      "path": "civisibility/constants/span_types.go",
+      "sha256": "1030a9d9deafd5c70e252f395eb85dc2ec0ac8585fb0280473406b658632a24a",
+      "role": "upstream",
+      "source_path": "internal/civisibility/constants/span_types.go",
+      "source_sha256": "1030a9d9deafd5c70e252f395eb85dc2ec0ac8585fb0280473406b658632a24a"
+    },
+    {
+      "path": "civisibility/constants/tags.go",
+      "sha256": "a9e7ae7b1e0f032beb3b4e6e90b37f8990fa9baf9b6f3df6db78cddaa0c1fc44",
+      "role": "upstream",
+      "source_path": "internal/civisibility/constants/tags.go",
+      "source_sha256": "a9e7ae7b1e0f032beb3b4e6e90b37f8990fa9baf9b6f3df6db78cddaa0c1fc44"
+    },
+    {
+      "path": "civisibility/constants/test_tags.go",
+      "sha256": "d1be480f1d7e5ebfc239d88da857c84be8aca94d988f372310427512547c7a01",
+      "role": "upstream",
+      "source_path": "internal/civisibility/constants/test_tags.go",
+      "source_sha256": "d1be480f1d7e5ebfc239d88da857c84be8aca94d988f372310427512547c7a01"
+    },
+    {
+      "path": "civisibility/envconfig/enabled.go",
+      "sha256": "19658ffddcdab1289d4ae66481b6068383cfb225bc375ee1750b17628dba4072",
+      "role": "adapted",
+      "source_path": "internal/civisibility/envconfig/enabled.go",
+      "source_sha256": "41408a96cdd422c1acf0caba41456157f9735cd6b75d05d67b0c4e3997b71393"
+    },
+    {
+      "path": "civisibility/envconfig/enabled_test.go",
+      "sha256": "af10a5a57bf27510876981b394a79383acb41abd5f478215086f5f953e2ad688",
+      "role": "adapted",
+      "source_path": "internal/civisibility/envconfig/enabled_test.go",
+      "source_sha256": "c8d53cadd64dc149cd8528dc0b32048a8ff041a61936322f03cea463c3e49d10"
+    },
+    {
+      "path": "civisibility/integrations/civisibility.go",
+      "sha256": "3f9bfdeb7e3bc8aa31acd1c0e49d4d278063783b0214032bff3139e6c4dab8cc",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/civisibility.go",
+      "source_sha256": "1ef15ef198bb3b318e69b7602c562faccbeb40f94d505ba1cef67c36059c90d5"
+    },
+    {
+      "path": "civisibility/integrations/civisibility_features.go",
+      "sha256": "4ee9e4508fd8ca73d2f9c6a56b7fdf6f0cc13c0fc98152f0151a7583839b005f",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/civisibility_features.go",
+      "source_sha256": "08c2f82bfc944754d4c7870cfd0c0fc5c4d257edcdea844f00a89bd9cc88f5d8"
+    },
+    {
+      "path": "civisibility/integrations/civisibility_features_test.go",
+      "sha256": "c60de6d26595a6644efda397836a76a2396df59d4dc2df66f04f10f53a23b090",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/civisibility_features_test.go",
+      "source_sha256": "b305b518346a7916864815adf9b5dd0ab257ccc861bc8f4cff21d67a36e9d32e"
+    },
+    {
+      "path": "civisibility/integrations/civisibility_http_client_test.go",
+      "sha256": "1bcbb7ce44b4a89460635b356ddbc98ef0c249e6c213ba288f541924463f71a9",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/civisibility_http_client_test.go",
+      "source_sha256": "f3a5d4ebb67abc7b26f5bc50cf92d36b08cd941b1efdc874b1afcfe0f2d17241"
+    },
+    {
+      "path": "civisibility/integrations/civisibility_offline_test.go",
+      "sha256": "21ae7dc5c1c37fc97510eb7e10ffbc061fe748e748e0a6c42f2d527bf8d491f2",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/civisibility_offline_test.go",
+      "source_sha256": "9e289581623ef1124061a734d177ca11209ced50def1ca4d713c32fd0c983425"
+    },
+    {
+      "path": "civisibility/integrations/civisibility_parent_test.go",
+      "sha256": "318065af8032ec9569da962e5a41b46f4a54aa319f2a2bed28b1a8d9c0cc1f1c",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/civisibility_parent_test.go",
+      "source_sha256": "87c77b91fe4ff0304f4089f0f4815d9935418b6b5537bdfca300d8736956a508"
+    },
+    {
+      "path": "civisibility/integrations/civisibility_read_cache_test.go",
+      "sha256": "6f7024a7612daaaa3e1988d91f8b1672d4a6eac29874e3f1a650a11303054e15",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/civisibility_read_cache_test.go",
+      "source_sha256": "b9b701d9ef9dc29c4d85b7665b68678330b7558244ae188b505a758b54c12ed4"
+    },
+    {
+      "path": "civisibility/integrations/civisibility_signal_handler_test.go",
+      "sha256": "6bcb799cdea161a1349202e3715e9ee11aa088bc9147930b5725e18494bfe407",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/civisibility_signal_handler_test.go",
+      "source_sha256": "02c7164b23ce0e0941f53170dd07b651eebedcbc1e751a11f62cabc97dc04d48"
+    },
+    {
+      "path": "civisibility/integrations/common_metadata_benchmark_test.go",
+      "sha256": "ebd3e2f30863425700def109db2f43a529d02ea05dd2f8b8ef8459f106e0baaa",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/integrations/common_metadata_test.go",
+      "sha256": "6141dde31d3457da978a6acbed4e3a73a4b3858bb373f2720737295540f980fc",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/ci_coverage_concurrency_test.go",
+      "sha256": "f67c7a495189a2aba791d6f12ca223d0a41ac7d629425694044a27da88645d6b",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/ci_policy_helpers_test.go",
+      "sha256": "3a90ac15c9dc11b4080e5f9726984319e213899195eaeb548f698933d22c9972",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/context.go",
+      "sha256": "2d2b3b585ff229872df3479396416e5a0447899e779790978eeb57d96c33791d",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/coverage_lifecycle_test.go",
+      "sha256": "29c7c76844a29f0393ec0e3f165525d66fbfa30f5cc33723566ce2b7ef79cce3",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/coverage_payload.go",
+      "sha256": "f4e9a0c30b6f7590d728432374895add6dea6ba0069f2e05ecb6b1f6dc77ff1f",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/coverage/coverage_payload.go",
+      "source_sha256": "7c6632ff16693c793dbdf8c1c9d527ff2d7206b35b358e32527cc254b6b7e231"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/coverage_payload_format.go",
+      "sha256": "9e043473525c32f62b9ba19efab2012b44e4cf776e8ebdf8d15eada5925f8ba9",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/coverage/coverage_payload_format.go",
+      "source_sha256": "20cf4b2be77b860de529a202d85a01abe41812e8cc1e80a4c3f3f58e0b63afa7"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/coverage_payload_test.go",
+      "sha256": "3fdf1f03c36f4c4570992f22f805db82effdd502bbe4e9befc63ab2bd4e0d6d1",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/coverage/coverage_payload_test.go",
+      "source_sha256": "3123d88edd7e19dcbac9ad55ec0222b9f91c2ef94d5511fb5d854e9cfd5b1ccb"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/coverage_writer.go",
+      "sha256": "6ab71f90755a9088f92fbde8efcf5751bec841a01a473f8a4d33cb532823dcd4",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/coverage/coverage_writer.go",
+      "source_sha256": "ec47c70e876239624294dd40334a13cae92b0ea57d0e4f8d707d2ec7a15a2ed4"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/coverage_writer_test.go",
+      "sha256": "97d6e9ed4ed3248a2d4c7a954130eebc5b9d74fccd8120893bcc63759be8103c",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/coverage/coverage_writer_test.go",
+      "source_sha256": "efbb2944244938dc1878b434a1d7ea90cb807916c65174e67217e0a51ba4761d"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/lcov_report.go",
+      "sha256": "050937557e04bd7d1a4472dfda344a2fe044ece0cc381906e0d3a95bbdf2c42c",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/coverage/lcov_report.go",
+      "source_sha256": "6096d74ce03f20c81f65fa8872a92f15215da21809d9620c71faa9aa36344049"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/lcov_report_test.go",
+      "sha256": "c3c410c7090825926e8e5702be10c97538cfa75289438aa6b6ad289adc6dd523",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/coverage/lcov_report_test.go",
+      "source_sha256": "c524a44acc49c08a288f387aa4157879369ac8798711f1e142d4c6a9f9495d33"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/process_coverage.go",
+      "sha256": "a80e08432053d6697e581fd667c88c8464768713a433c2ea47269a024ef8a285",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/coverage/process_coverage.go",
+      "source_sha256": "35b168ef76df6ca58fe1d8144a1dde3bb2aed50b4bbbb58c8bb2dca96612e28b"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/process_coverage_test.go",
+      "sha256": "f127c1c18c8de00d659de555238ca5cd5b46941d3d1d7e4ff447d6accc6aa0d9",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/coverage/process_coverage_test.go",
+      "source_sha256": "b15c366e141a0063219a29dd8d8be393ae821b3367c8c787bc04249ff4739294"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/profile_backfill.go",
+      "sha256": "356fe9b165266deb2c105f95e83e8c4680015c53ae02a0218193be0644f7b50b",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/coverage/profile_backfill.go",
+      "source_sha256": "1d60703d0fbf43cda87751312c7ec9c64f434c369ef2d4ac3fb9e75914c0d1fc"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/reflections.go",
+      "sha256": "e3e1ea0af79e48d83cccd79466bc285a9b8721109f73b9cb113e788cfaa426d6",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/coverage/reflections.go",
+      "source_sha256": "e3e1ea0af79e48d83cccd79466bc285a9b8721109f73b9cb113e788cfaa426d6"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/reflections_test.go",
+      "sha256": "14209f910036427dd17420b3474ed8d628bbd8b7ccf25baf9abbaf24432913f1",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/coverage/reflections_test.go",
+      "source_sha256": "14209f910036427dd17420b3474ed8d628bbd8b7ccf25baf9abbaf24432913f1"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/runtime_coverage_test.go",
+      "sha256": "36fd8cde99baa2dadb093e43ba97f93663eea8b8101bcea38d5ab51619d1ee4a",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/coverage/runtime_coverage_test.go",
+      "source_sha256": "36fd8cde99baa2dadb093e43ba97f93663eea8b8101bcea38d5ab51619d1ee4a"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/test_coverage.go",
+      "sha256": "4574fa00fa99e7039a66f876db135c8ca8d464a3c669bf6bdcadd25cbe9fc920",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/coverage/test_coverage.go",
+      "source_sha256": "90f437bef02e1c4eca6e220f13d128ce8da64109359b66b98db6b5bb3bb5c352"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/test_coverage_msgp.go",
+      "sha256": "439331e40f873253b6437f4fa3665521875bb3020378db551b86a724cb387290",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/coverage/test_coverage_msgp.go",
+      "source_sha256": "383876fff436b5159bb476a1d9e8ed1eb35566d8e28c4ef67fa7a6d758c7a2d4"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/test_coverage_test.go",
+      "sha256": "55154c6691421457d4c51a30329ffc828f1699c84787ba14bcdbc6578ade9989",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/coverage/test_coverage_test.go",
+      "source_sha256": "58c947565f608a52c40ef1253203722b152197e39ee349b3d70b3cdad88cbed3"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/efd_faulty_session.go",
+      "sha256": "906e6421456b664ca6d3858b149ef30f38ca6e51fa8534fba32123755150f07e",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/efd_faulty_session.go",
+      "source_sha256": "af068b6e0aca63c45504733bba83e6373d69239dcc8364bfb25df1645367bd6b"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/final_status.go",
+      "sha256": "6128e3cf94bb521f3956f6964fad804b175d6d1fef0b34c83f647fb6cdd97574",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/final_status.go",
+      "source_sha256": "91cf9dc057df01462ab9b6b03591a4d2e4c41a58b562513eef0eebcec4e43264"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/instrumentation.go",
+      "sha256": "420d2da7d6f10e4d6e12f2be64b13ae7a6becf639d515800e35f0682d07421f7",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/instrumentation.go",
+      "source_sha256": "f5131c68e8c471d94b6b6f22edd3a573d983a75eb79a39518b1c075d1edf936d"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/instrumentation_orchestrion.go",
+      "sha256": "30a3d2a50f723c3b30a2eb9f3827150041a1e0b06aec892d0b70d68f42b63d5d",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/instrumentation_orchestrion.go",
+      "source_sha256": "add69cf78b958e539a537fb65c4121ec67cd92da359d1a5f7425f1cd9ab980a3"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/instrumentation_selector_test.go",
+      "sha256": "3715a55bd8dbae6b3974057127b622e8ab15777ae8b2374d3f3a527bc8f6315b",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/instrumentation_selector_test.go",
+      "source_sha256": "c1673bff20eea826b440682e29a4678a8aab3d49e83776bc84e4ff425edddc47"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/itr_state.go",
+      "sha256": "a6ce421c71e03fad3e01013d4de1942e75429923def0ff9e961c033f21660197",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/itr_state.go",
+      "source_sha256": "3f7f548af4bea6aee100ebc30655db6fcb17dd22c5ca2a52a56718d7c3f231ee"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/itr_state_test.go",
+      "sha256": "13a7e28cc45f8e97d1bdfc96e7c90a91757aacbf09922cb03f8c39da3833575e",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/itr_state_test.go",
+      "source_sha256": "e7466cf422ad6c0af70c6419874e35dad6dabcaa729e05d7e9ecdad3d2683ae9"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/quarantine_norace.go",
+      "sha256": "fc14c68f67f0f51dd2253d8e62cda59aa771376ae90fca7edb1050ffc734c1c4",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/quarantine_norace.go",
+      "source_sha256": "fc14c68f67f0f51dd2253d8e62cda59aa771376ae90fca7edb1050ffc734c1c4"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/quarantine_process.go",
+      "sha256": "6048fcb814d0aee7ce613caef6ece3b958648fe2cd3d41989944a668d34b626e",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/quarantine_process.go",
+      "source_sha256": "127b790b31e406e5b1d4702ef09e0a7b37cfff06488f0f97b20fa987d67cd8e5"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/quarantine_race.go",
+      "sha256": "f7340581f4994fb4383fea8c252810b0e9abac0434960b9de76a699443c65659",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/quarantine_race.go",
+      "source_sha256": "f7340581f4994fb4383fea8c252810b0e9abac0434960b9de76a699443c65659"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/reflection_offsets.go",
+      "sha256": "be8e22204639d39c5ae88a8506bbd2485513c1523df565f2ccf15a40a27c5978",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/reflection_offsets.go",
+      "source_sha256": "886867f8ad2c5d0c099689009d2b01fb6eff8463c1d1276c1c99fe6d9d474a73"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/reflections.go",
+      "sha256": "171f8bf4e45f4f072ecbc9afc45036fb0c010a7ad920238473533e5f2e722db0",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/reflections.go",
+      "source_sha256": "171f8bf4e45f4f072ecbc9afc45036fb0c010a7ad920238473533e5f2e722db0"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_attempt.go",
+      "sha256": "69448b99cc0a17294467875ff87d01b732d38bc987198250e00507a97fdc3257",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_attempt.go",
+      "source_sha256": "7da1c07b104d4e8a3b2918ffc0f6859280a3f8492c35d0292d1ecac9b1547f59"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_attempt_differential_test.go",
+      "sha256": "66b21ef47bf5d47ca2c2e72903eedd3a94d2da7697bc70c912ac28c40759ddd1",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_attempt_differential_test.go",
+      "source_sha256": "ea6b656e45b261d729e4df971d71e9a8a498b4ef9e49615e7f5002143d267627"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_attempt_integration.go",
+      "sha256": "4b3b3b105c10e1d27c7b4df98e38d65709cd0b5fbe97394a07a94ab2eb07c3ea",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_attempt_integration.go",
+      "source_sha256": "1bd6b3bda3bee19f6615784d506a15d47d5d0f981b7f71bc1cca4ae235cdd25a"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_attempt_layout.go",
+      "sha256": "8df5fc6bde8a87b83ac1a900c72a2b127009370f14169d67d42346f2bcda6c3d",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_attempt_layout.go",
+      "source_sha256": "8df5fc6bde8a87b83ac1a900c72a2b127009370f14169d67d42346f2bcda6c3d"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_attempt_methods_go126_test.go",
+      "sha256": "cf04736a75f8423ba919b36834508a21fb2bb4b46a774b7836b432d38b5b3709",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_attempt_methods_go126_test.go",
+      "source_sha256": "cf04736a75f8423ba919b36834508a21fb2bb4b46a774b7836b432d38b5b3709"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_attempt_methods_test.go",
+      "sha256": "b47da87e7107d98e6230e5270e956e2f62c027306470ac7bc157f1148f6a05e4",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_attempt_methods_test.go",
+      "source_sha256": "b47da87e7107d98e6230e5270e956e2f62c027306470ac7bc157f1148f6a05e4"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_attempt_norace.go",
+      "sha256": "2fac2143d85b4ce6be7bad6745a36f7b22f5bc46eaee1af964a2b6a24d19cbac",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_attempt_norace.go",
+      "source_sha256": "2fac2143d85b4ce6be7bad6745a36f7b22f5bc46eaee1af964a2b6a24d19cbac"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_attempt_race.go",
+      "sha256": "bef7ad8080a66a1e9440f8cb83eeef05b827803711487c32757ac43cee794aec",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_attempt_race.go",
+      "source_sha256": "bef7ad8080a66a1e9440f8cb83eeef05b827803711487c32757ac43cee794aec"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_attempt_runner.go",
+      "sha256": "3db656e56733b00ee1dd3f948ebe13b9a06b8805bfb307bec3c95d3dc3300945",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_attempt_runner.go",
+      "source_sha256": "3db656e56733b00ee1dd3f948ebe13b9a06b8805bfb307bec3c95d3dc3300945"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_attempt_runner_test.go",
+      "sha256": "494775aca647c6f9690947401b765b17491750e26309e15b09e452d17d1c7889",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_attempt_runner_test.go",
+      "source_sha256": "494775aca647c6f9690947401b765b17491750e26309e15b09e452d17d1c7889"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_attempt_test.go",
+      "sha256": "7c8cd81879181d680f0ae0db0165f84935e094c1fb85ef5e9aa8c22dc3ebf17f",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_attempt_test.go",
+      "source_sha256": "622692e42d33cea8b17dc71f6067583ffb9ba76936953ef599c8ba3c255a044a"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_attempt_time_other.go",
+      "sha256": "2f73411f62fc0a57f45c75b5510b1b7409b2b1976415c4db9d4675c9cdc97eff",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_attempt_time_other.go",
+      "source_sha256": "2f73411f62fc0a57f45c75b5510b1b7409b2b1976415c4db9d4675c9cdc97eff"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_attempt_time_windows.go",
+      "sha256": "06b0ab454f1d7a29ce972b3ea00097316a25f6fbafceb3160efc95ba9b244130",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_attempt_time_windows.go",
+      "source_sha256": "3c9c89c60ee86158e192cbdf68079a1f0d21584b8ac3dd5e44c0e3a63d0d4315"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_process.go",
+      "sha256": "e7679b9c15a90e7673f97df32d7b6a74f8b1dd4cf0dc7aa22e1f1899578efb59",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_process.go",
+      "source_sha256": "e1bdfd9174b86b856a05dbeb4278d386e8126cbb272248b9f7ab00bf8ee8feca"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_process_control.go",
+      "sha256": "7c6e18e1ecbfdd875430c3432c30eda0df9a2d3a97378264f5665922c50ccae5",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_process_control.go",
+      "source_sha256": "7671d328d8c28bd29eb6c81e15dddc8623feb776a4e4dfb2e0211a81dd95932a"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_process_deferred.go",
+      "sha256": "5aa574d1c8298e2be8386602bc1c123fcd1f2ebf8a880b0f808afc186be5a614",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_process_deferred.go",
+      "source_sha256": "f5efa31791a06e6b2481092015eb5346a4ac4e91302c605cf9b976a5e5cc404e"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_process_other.go",
+      "sha256": "2a2f6325be7112cbdbf0a6aa42c3ed1bf1d3a7bf2c3427cd35196052371700b9",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_process_other.go",
+      "source_sha256": "2a2f6325be7112cbdbf0a6aa42c3ed1bf1d3a7bf2c3427cd35196052371700b9"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_process_unix.go",
+      "sha256": "a28364b631d7c607cd9d6bafc3a6397feea8163a9ea4b3fa2344332b56be875e",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_process_unix.go",
+      "source_sha256": "a28364b631d7c607cd9d6bafc3a6397feea8163a9ea4b3fa2344332b56be875e"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_process_windows.go",
+      "sha256": "cad48a0a475205538a9ae15ec73ebe99921a648a324953bad2c91deb8a3c160b",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_process_windows.go",
+      "source_sha256": "8e1f7b4a20efbb6aa84ade4e60ce05dc8d396d2c30f6b4f08a069368c159e4d1"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_test_helpers_test.go",
+      "sha256": "b0e72ad0de4a5ae4f79883c5d70015e0004c04a418235ed324546f55e25a3c4c",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/retry_test_helpers_test.go",
+      "source_sha256": "b0e72ad0de4a5ae4f79883c5d70015e0004c04a418235ed324546f55e25a3c4c"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/test_execution_finalizer.go",
+      "sha256": "73a3638dd3da557826f38eae6427c620a8ea8edb80df0cb04b301cb109573dd7",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/test_execution_finalizer.go",
+      "source_sha256": "76a569dea1c97bee062050d21e9c3a8c1984420a6069ff9987e779cf3a7c8dc7"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/testify.go",
+      "sha256": "3ef8b04c096b82fe146358c4b0866f76a4d92bae287614d28ce6ee00d0b21523",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/testify.go",
+      "source_sha256": "25105ea7f1a1d46c78c639de90bf61a925c3942adb45dc73dbbdc6fe7e0248c1"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/testing.go",
+      "sha256": "3cd8078751d4f273af29681dcccbfd3d73d6e1dc72e22e0a4af5c84c5e53a131",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/gotesting/testing.go",
+      "source_sha256": "a053656b43cb3fc9673e74f39a41e065420d5d36d0be4631cb95a344973fdfc9"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/testingB.go",
+      "sha256": "b498da5f68b673c1989114d31f5f8e5fe8bb108bb3590d042b22c46832009ef4",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/testingB.go",
+      "source_sha256": "b498da5f68b673c1989114d31f5f8e5fe8bb108bb3590d042b22c46832009ef4"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/testingT.go",
+      "sha256": "79ca5b226980f279f9fc224f27583f1c479ef8bb3ae1d2b087ef071dda45ec4c",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/gotesting/testingT.go",
+      "source_sha256": "79ca5b226980f279f9fc224f27583f1c479ef8bb3ae1d2b087ef071dda45ec4c"
+    },
+    {
+      "path": "civisibility/integrations/logs/logs.go",
+      "sha256": "b9d177201775d9b868402a0fab0fa8a492fcdf90de2517866a5f943241f8112f",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/logs/logs.go",
+      "source_sha256": "06832ae1bc23cbb20f904dcd45cdaa43df57c6f445529cb7116d7f25b4454c0a"
+    },
+    {
+      "path": "civisibility/integrations/logs/logs_additional_test.go",
+      "sha256": "ae9e5f603ab11520a3be922b4644ba8af40cab143b393702de4c8ea09aa16e49",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/logs/logs_additional_test.go",
+      "source_sha256": "ae9e5f603ab11520a3be922b4644ba8af40cab143b393702de4c8ea09aa16e49"
+    },
+    {
+      "path": "civisibility/integrations/logs/logs_payload.go",
+      "sha256": "bb7fdd62b2e284c5d47e475f6542d27d8197631a9981509c43329cb6c7621fa3",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/logs/logs_payload.go",
+      "source_sha256": "bb7fdd62b2e284c5d47e475f6542d27d8197631a9981509c43329cb6c7621fa3"
+    },
+    {
+      "path": "civisibility/integrations/logs/logs_payload_format.go",
+      "sha256": "1343f920b030896960c28f4d6ea0ec08d2738ef0b631885203265c636d907938",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/logs/logs_payload_format.go",
+      "source_sha256": "1343f920b030896960c28f4d6ea0ec08d2738ef0b631885203265c636d907938"
+    },
+    {
+      "path": "civisibility/integrations/logs/logs_payload_test.go",
+      "sha256": "02d682f67fbed2d2631dfc57b55a1dc84860527cdd0171b922c4dab24ca585eb",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/logs/logs_payload_test.go",
+      "source_sha256": "02d682f67fbed2d2631dfc57b55a1dc84860527cdd0171b922c4dab24ca585eb"
+    },
+    {
+      "path": "civisibility/integrations/logs/logs_test.go",
+      "sha256": "af4ff7f7f05d2c3d9c283f8c9e8283911d482f99c53b50307eb6ed954d09cdf3",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/logs/logs_test.go",
+      "source_sha256": "af4ff7f7f05d2c3d9c283f8c9e8283911d482f99c53b50307eb6ed954d09cdf3"
+    },
+    {
+      "path": "civisibility/integrations/logs/logs_writer.go",
+      "sha256": "fc9c33973ed03ee6a471f156ac43b7e949d77af0cfff56055f6b816fdd9eab8e",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/logs/logs_writer.go",
+      "source_sha256": "19d9142417ff5af2daed0d9142a998c2472a24178e8193cf010fe9bd75bd57d0"
+    },
+    {
+      "path": "civisibility/integrations/logs/logs_writer_test.go",
+      "sha256": "15006419447184372787f47d3b5a7a099a560b226abae546a88cd729a64138cc",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/logs/logs_writer_test.go",
+      "source_sha256": "8ef92f56f4ca7061e2998821be6191179a212ee0169ca3dd8aaf7ebbbf77d48d"
+    },
+    {
+      "path": "civisibility/integrations/manual_api.go",
+      "sha256": "71359c71caffa1bfab5ca03097a8c07b9d7d1d03b78b3551ae2c46b0d2d48686",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/manual_api.go",
+      "source_sha256": "71359c71caffa1bfab5ca03097a8c07b9d7d1d03b78b3551ae2c46b0d2d48686"
+    },
+    {
+      "path": "civisibility/integrations/manual_api_common.go",
+      "sha256": "f017f0b8232482bd92e578f012220065cf80c7d18fa0aae8483205f9d8cfa6f6",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/manual_api_common.go",
+      "source_sha256": "8146b3f7cbbafd86b3eef6c5148e03e2f2a2414cdd9742df35f559da1621d6e1"
+    },
+    {
+      "path": "civisibility/integrations/manual_api_ddtest.go",
+      "sha256": "79af170f08781143cf3c6c790aa6a25230469ffb99fa22772831552d8538e500",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/manual_api_ddtest.go",
+      "source_sha256": "7380f18e54348da3d6c9515d1f6e31f8c9fb33e8423cd90791c305cf3d51afc2"
+    },
+    {
+      "path": "civisibility/integrations/manual_api_ddtestmodule.go",
+      "sha256": "78607f6d41f59e543fa72e5bb136013fa83da7ba0a4dd9b43cbbf064d86d6c15",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/manual_api_ddtestmodule.go",
+      "source_sha256": "4493fd0a5522ee1c1230f2661d5f11d5688a123ba6a8d7a4129fca30977075c8"
+    },
+    {
+      "path": "civisibility/integrations/manual_api_ddtestsession.go",
+      "sha256": "fc9fa2590cef15711e9d7b4c29bf6e1de5bdbdd9fce1961ded59d86945a1a9dc",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/manual_api_ddtestsession.go",
+      "source_sha256": "9d230b9b5d673f14e71939bd3b58aeb8aa978e87b2668fc43cb183c57c0c527b"
+    },
+    {
+      "path": "civisibility/integrations/manual_api_ddtestsuite.go",
+      "sha256": "c5e815e1b1744d13eb6c3480feebc7a2e535db188ace2eb87ffd342602bdfc15",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/manual_api_ddtestsuite.go",
+      "source_sha256": "e9d5e02d4d3e13c7b865bd041e9581af760f0ee5da993f324a0a728bf8aae7e6"
+    },
+    {
+      "path": "civisibility/integrations/manual_api_sourcecache.go",
+      "sha256": "fadb9f3a0fb0c35795595c7ca1104f44ab0f5a4901a89da71531d1ca9e490e34",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/manual_api_sourcecache.go",
+      "source_sha256": "6b0f586904032e1839cd96cc40de9cdb0aa2f55f2b76808b7b7fa5cb51542942"
+    },
+    {
+      "path": "civisibility/integrations/manual_api_sourcecache_adjacent_literal_fixture_test.go",
+      "sha256": "edfe8be50ccfa6db853f22dfa3867fd04e07c39aad44c4255d7cd036bea6ed2a",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/manual_api_sourcecache_adjacent_literal_fixture_test.go",
+      "source_sha256": "edfe8be50ccfa6db853f22dfa3867fd04e07c39aad44c4255d7cd036bea6ed2a"
+    },
+    {
+      "path": "civisibility/integrations/manual_api_sourcecache_decl_fixture_test.go",
+      "sha256": "bffc01a08c922b07d594c2ad43449761d254a119b9fb44d99de9ddb518267135",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/manual_api_sourcecache_decl_fixture_test.go",
+      "source_sha256": "bffc01a08c922b07d594c2ad43449761d254a119b9fb44d99de9ddb518267135"
+    },
+    {
+      "path": "civisibility/integrations/manual_api_sourcecache_funcn_fixture_test.go",
+      "sha256": "f628213bdde71615fadee38946d1391b922d6142454c9e2372d23fff056f6f94",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/manual_api_sourcecache_funcn_fixture_test.go",
+      "source_sha256": "f628213bdde71615fadee38946d1391b922d6142454c9e2372d23fff056f6f94"
+    },
+    {
+      "path": "civisibility/integrations/manual_api_sourcecache_same_name_fixture_test.go",
+      "sha256": "57d4449c0baf2bf251a9938074b4566b3efa06d0180a778687480d85a3574982",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/manual_api_sourcecache_same_name_fixture_test.go",
+      "source_sha256": "57d4449c0baf2bf251a9938074b4566b3efa06d0180a778687480d85a3574982"
+    },
+    {
+      "path": "civisibility/integrations/manual_api_sourcecache_suite_fixture_test.go",
+      "sha256": "dc3dac1340f4881d8c223e75ef944939cc27bc927cf7987abbb1ee2380444c05",
+      "role": "upstream",
+      "source_path": "internal/civisibility/integrations/manual_api_sourcecache_suite_fixture_test.go",
+      "source_sha256": "dc3dac1340f4881d8c223e75ef944939cc27bc927cf7987abbb1ee2380444c05"
+    },
+    {
+      "path": "civisibility/integrations/manual_api_sourcecache_test.go",
+      "sha256": "2d858cded376372ea83a9cf73b85b104fbce60eb67b34abcf0b1c429c6af2223",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/manual_api_sourcecache_test.go",
+      "source_sha256": "aff071e72f16cc26f99ecc09ef478cffc02a52a4cee72634e1653ab610d8c793"
+    },
+    {
+      "path": "civisibility/integrations/manual_api_sourcepath_test.go",
+      "sha256": "b38fb4eab15218908a6e6a8b9599eb618de5e1a8ede84d26b606cddc5194d9e0",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/manual_api_sourcepath_test.go",
+      "source_sha256": "51f8df98c5891dd6c6ef4e64525e5aba3da0f5017d876737185ffb9a4902b1b7"
+    },
+    {
+      "path": "civisibility/integrations/meta.go",
+      "sha256": "0cd285cfb66c3f2e24027270042d4dbfc080025e89c863f16e64f716eccc819d",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/meta.go",
+      "source_sha256": "0428e0848198cd988b80270658596bbfb982d3c5647b8f8d23979303167e690f"
+    },
+    {
+      "path": "civisibility/integrations/native_source_helpers_test.go",
+      "sha256": "89dce0c50bec4e6aae6a8a30d44b02b3692cdab770a442a6084215d4d2cca4cc",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/integrations/process_retry_child.go",
+      "sha256": "1e3ec202ca134fcb349b3ee7a5fe50d075983b465dd0883adfe9b0728416658f",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/process_retry_child.go",
+      "source_sha256": "f0107fabe9bca860074ae2f65cd7877e2c4472604a22521dc16b89562f84438a"
+    },
+    {
+      "path": "civisibility/integrations/testing_helpers_test.go",
+      "sha256": "163888c3fc03b8547812633749786c49ddbeea3c624448e6ed8732ff6226ba25",
+      "role": "adapted",
+      "source_path": "internal/civisibility/integrations/testing_helpers_test.go",
+      "source_sha256": "71aff6b4ca061ab11adf4593e554e1f93c6d8e77475ec2aae4d1178b5a9dac47"
+    },
+    {
+      "path": "civisibility/utils/ci_providers.go",
+      "sha256": "ada5425131c3b2c0c6d9c27b135af8c654ba5e5223be721272eb496aa2e40ef7",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/ci_providers.go",
+      "source_sha256": "f87619eac80f09a6a4e90b12392009fa24f8eb50e00d5971d64bea99c99f68b9"
+    },
+    {
+      "path": "civisibility/utils/ci_providers_test.go",
+      "sha256": "4c8ede94e9fe8cffd9afe30f7c0f88cf49c6faec332c861c38dbedb36134e6e8",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/ci_providers_test.go",
+      "source_sha256": "39195586239cc50133355bce01a908ccb75bc1618c282487cf7d1454e6c8c6db"
+    },
+    {
+      "path": "civisibility/utils/codeowners.go",
+      "sha256": "918465f95f793c3102a271353aabb874e88784c04a6af645315e14dcbc3fa661",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/codeowners.go",
+      "source_sha256": "8ff322ff747fc769a24852dbcdaa2521605545e5942e69bb41c3514f941ea18f"
+    },
+    {
+      "path": "civisibility/utils/codeowners_test.go",
+      "sha256": "3084ccb1a62703baf80048dce8ee46b31e86df812826bf5f099b024d9c84861b",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/codeowners_test.go",
+      "source_sha256": "017d81ee71314d617983dbdeb6e1f373efa6ddb53c041e1805ab6c078a9b8219"
+    },
+    {
+      "path": "civisibility/utils/environmentTags.go",
+      "sha256": "7168166852ede591e08a39db6adfa0797381ae37195ede97bc92b9548d06e16f",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/environmentTags.go",
+      "source_sha256": "b9edfc59d95da35311eef551751a52a3e74a607d0cc9dd3229bfbd175519f428"
+    },
+    {
+      "path": "civisibility/utils/environmentTags_test.go",
+      "sha256": "41019b469814fb9fbb61098672f6593af261f31d49ac75950ee1d71f58d02234",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/environmentTags_test.go",
+      "source_sha256": "f7692324404a701d3146785da7a3006801da91a387fd9782f5938ab6326451bd"
+    },
+    {
+      "path": "civisibility/utils/environment_snapshot_test.go",
+      "sha256": "fab434ed96cf4763382a32aa5ad109f59b2cba22774ded76c62334ab1b76b584",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/utils/file_environmental_data.go",
+      "sha256": "b4b3eddb55fd806b9af6265df5aec112c1b12fbdd8c386afba947ab3b4a45179",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/file_environmental_data.go",
+      "source_sha256": "d33f3a341f88dcf37f9ad780cec75a8e75e8e06055906c954d263e354578c931"
+    },
+    {
+      "path": "civisibility/utils/file_environmental_data_test.go",
+      "sha256": "ae698e9d7533a9de5fa414d9f4ffaa18fdc68fba8d628b70cec3c51a30d8ca5d",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/file_environmental_data_test.go",
+      "source_sha256": "bf98aef50f88fd2670bbedd4bb97e89bc5eda538a603eafb74f36b873a1223f1"
+    },
+    {
+      "path": "civisibility/utils/filebitmap/filebitmap.go",
+      "sha256": "7a0a1906f318c68b34f5a65f13c34d476cb1ecb792875dab220c0845f8d75c38",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/filebitmap/filebitmap.go",
+      "source_sha256": "7a0a1906f318c68b34f5a65f13c34d476cb1ecb792875dab220c0845f8d75c38"
+    },
+    {
+      "path": "civisibility/utils/filebitmap/filebitmap_test.go",
+      "sha256": "9c49b70e75c06358f8ce6a66a6c4f08c78e3e4c5e12325f8dbc3c9c2cec473f9",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/filebitmap/filebitmap_test.go",
+      "source_sha256": "9c49b70e75c06358f8ce6a66a6c4f08c78e3e4c5e12325f8dbc3c9c2cec473f9"
+    },
+    {
+      "path": "civisibility/utils/git.go",
+      "sha256": "42dde8d1b9a24d4ec6ae64c75403148bff8c56288ca8b5dc6dcafb012d20c1fc",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/git.go",
+      "source_sha256": "f146aed5bbd7a350309021e1546a931128db8a46bf637dee0b4407bcd78c08ab"
+    },
+    {
+      "path": "civisibility/utils/git_test.go",
+      "sha256": "7ee8850ccfe4f32cefb8ef4c276d4d82f49a2f1ba6d597b46ef7ec4b0f624a2c",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/git_test.go",
+      "source_sha256": "a36fb9a5c074542d6104cb78850c8ac1b03d516a8177e2c61e9e61e2229efd6b"
+    },
+    {
+      "path": "civisibility/utils/home.go",
+      "sha256": "75dbb491875af1a1052bedbafa6ce577822f558b50204f388ee37a09cc04cfbd",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/home.go",
+      "source_sha256": "6dee18e08b625bd33433e29e3bf70891b8439d98046b9b568c6ce187f488dca3"
+    },
+    {
+      "path": "civisibility/utils/home_test.go",
+      "sha256": "3aedd5bbab8b6eb816071298f00225d2359d6c7a26ba3a439fa065dcf4bb2c8d",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/home_test.go",
+      "source_sha256": "3aedd5bbab8b6eb816071298f00225d2359d6c7a26ba3a439fa065dcf4bb2c8d"
+    },
+    {
+      "path": "civisibility/utils/impactedtests/impacted_tests.go",
+      "sha256": "26ba6d1e1fdcc02cc14d7f0d45df47f38756ce507f0b168c34e910adf28d3180",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/impactedtests/impacted_tests.go",
+      "source_sha256": "10849ea3b0337b8651d31808c053a1d6e1cdb3f2c0832a33e8a57e1dd5bd52d0"
+    },
+    {
+      "path": "civisibility/utils/impactedtests/impacted_tests_bench_test.go",
+      "sha256": "310a4a7bc278ea6d2f1d7f8fc556677f7b6334fb9f65acdbc3c57c73b2838c01",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/impactedtests/impacted_tests_bench_test.go",
+      "source_sha256": "b230531c878d92303f63bfc22ee767c4e21e51509046a17db5b8bfd47ea03fd4"
+    },
+    {
+      "path": "civisibility/utils/impactedtests/impacted_tests_test.go",
+      "sha256": "cfe58cab6681ddfb23fdce338873ded943bc3f7c3f242daf46f1448d0c73acd2",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/impactedtests/impacted_tests_test.go",
+      "source_sha256": "f6440547663e6bda9eb17b602da09d3e31305ee14b2b25f751adef00a18d0dcb"
+    },
+    {
+      "path": "civisibility/utils/names.go",
+      "sha256": "9da426cda84079f3853a99fae67b3fdb31aba168fc1610032c4397ddc57a96e7",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/names.go",
+      "source_sha256": "9da426cda84079f3853a99fae67b3fdb31aba168fc1610032c4397ddc57a96e7"
+    },
+    {
+      "path": "civisibility/utils/names_test.go",
+      "sha256": "bac24b5a20a4a5463af46d93ffe45b05bfb89401d7b3b053a910ac4d2d8bb638",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/names_test.go",
+      "source_sha256": "019176c02cd84f920c0fa74ffab9165bd884a4f21f9bcb5d3539eb3ecd130451"
+    },
+    {
+      "path": "civisibility/utils/net/client.go",
+      "sha256": "0ba4e5408e3c7086278daa372458db25d9d3c2041b4b46cd55b5f14ae20c32f6",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/client.go",
+      "source_sha256": "bae03f2398dd7c75141e1b6b8f07e89676eb39e0884ab88b9af95211e797ec8b"
+    },
+    {
+      "path": "civisibility/utils/net/client_test.go",
+      "sha256": "98d71342584b321d84468927abda7dd14344df8b59831936e292b63ea49b8756",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/client_test.go",
+      "source_sha256": "675c0e83ed6f974dc9d03da8e2336fbed1915ce176d2b7d447d397ae4090494b"
+    },
+    {
+      "path": "civisibility/utils/net/coverage.go",
+      "sha256": "f6e70754d83fb7835c5d77ba3d521c2d66926573a7c7b5de0284c8c1651cd429",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/coverage.go",
+      "source_sha256": "f539c7ac10434b3ce22bf7f15a92c51d88a36b8b2639f86e8729f214b30d2876"
+    },
+    {
+      "path": "civisibility/utils/net/coverage_report.go",
+      "sha256": "75aa0f65ceba0961a1b41aa3746e713a3c456d5874b5a73153debe0cb73cc727",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/coverage_report.go",
+      "source_sha256": "c34639bc84a207120f6f9d39f33c41e69d245d1dd8cf72f65687568b70f2cd38"
+    },
+    {
+      "path": "civisibility/utils/net/coverage_report_test.go",
+      "sha256": "d755f1edbdd4612eb699b47313539f3b6627043a60f6a4ab8d5824e85294c7a1",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/coverage_report_test.go",
+      "source_sha256": "b912c87afbe04d20ce64e0d8cb99da4d196f77fac286a1a9e79888dcc23156f3"
+    },
+    {
+      "path": "civisibility/utils/net/coverage_test.go",
+      "sha256": "bef07f3c830137539f5506bec8270162c6e8f56aa9332c2ac668c84e89c409d4",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/coverage_test.go",
+      "source_sha256": "80c6a5bf050c5e46e326ebde53e6e7a85e2a085c58abf44efa6d841568150dc3"
+    },
+    {
+      "path": "civisibility/utils/net/http.go",
+      "sha256": "9a5888c97785f869f69ad8008fca0cf700327a72151d1f3cfdf2a349a96602e1",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/http.go",
+      "source_sha256": "6a0ad6c1e3935019ce88e4d6931a091c562c3e9f96cc2e21474b716ac8cf8d09"
+    },
+    {
+      "path": "civisibility/utils/net/http_test.go",
+      "sha256": "4c280d018a3d9acef0c767aa30d15dd424cb2c49b3f95a044eb5013bda7985cd",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/net/http_test.go",
+      "source_sha256": "4c280d018a3d9acef0c767aa30d15dd424cb2c49b3f95a044eb5013bda7985cd"
+    },
+    {
+      "path": "civisibility/utils/net/known_tests_api.go",
+      "sha256": "bce3338557e9c388ec03460bb2af3a204120f046b58e3b0363b7b36079bf04ba",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/known_tests_api.go",
+      "source_sha256": "1654a9979d9674b981571b02457748fde5c909132ae470707c2cd03e710ffc4e"
+    },
+    {
+      "path": "civisibility/utils/net/known_tests_api_test.go",
+      "sha256": "f6ca5533fee68f790d29a4522bf85a0980876c109ed8849cb0ecc990ffaa68ed",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/known_tests_api_test.go",
+      "source_sha256": "a3a13c0b9835a87a3300965e02573d353af61f04950c26ef00637d320d793101"
+    },
+    {
+      "path": "civisibility/utils/net/logs_api.go",
+      "sha256": "5b86bcb18dc7f652901fd798d89817af09ac5d6febfe4e6a3d794ba50d300a0c",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/net/logs_api.go",
+      "source_sha256": "5b86bcb18dc7f652901fd798d89817af09ac5d6febfe4e6a3d794ba50d300a0c"
+    },
+    {
+      "path": "civisibility/utils/net/read_cache.go",
+      "sha256": "8faa84bc24a9b4a7bdc3892c3bf9808a00f607ad51b62dc4672ddcdd55403e1c",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/read_cache.go",
+      "source_sha256": "34428b9f4f0334d2ba35ab5ef532c32012009e9fb2799bb43cbfabec2b1405d8"
+    },
+    {
+      "path": "civisibility/utils/net/read_cache_benchmark_test.go",
+      "sha256": "1ef59550e2a27f47f710e6b2bc770b740b1bd5b43bd4fa6119f6b3025b86dd8e",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/read_cache_benchmark_test.go",
+      "source_sha256": "947be41f48e189f84f1dcd08191e020af470c24f127a2e4715d34df0fb4f92c0"
+    },
+    {
+      "path": "civisibility/utils/net/read_cache_test.go",
+      "sha256": "f6a5a921d157e8caf1abba01c30a317827d67bfd45fa67e09fb9f36239d98a81",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/read_cache_test.go",
+      "source_sha256": "372b6f26b536302b1d8a7ad3f8d5ab24bc28e1cc752c83584990f6062abd0a9f"
+    },
+    {
+      "path": "civisibility/utils/net/searchcommits_api.go",
+      "sha256": "fc030691bd892240e4afa981db94efc3027ff096516042e789468657bf0593cc",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/searchcommits_api.go",
+      "source_sha256": "936a0413a54d9f8e48967c9e2f7366cfe168fff8a5df40126fa70ef43eb2f2f5"
+    },
+    {
+      "path": "civisibility/utils/net/searchcommits_api_test.go",
+      "sha256": "7b41ae3b381bfb053a1eaee49ea0f838b771548d7edd0ae2b99380ff13bc4581",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/searchcommits_api_test.go",
+      "source_sha256": "f1af0a6bb3e466e4c526c0cb9902dcaf4af684c8dece8adc953597e9e0ff42bb"
+    },
+    {
+      "path": "civisibility/utils/net/sendpackfiles_api.go",
+      "sha256": "286ea5ddf14ef1aed64b6cadfe7a81e9f352d604af90297c9037284ef2eea5c5",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/sendpackfiles_api.go",
+      "source_sha256": "0d98102bf18a0cb61309d04f0af41c0e8214fdad2827da0380c4cc530eed1685"
+    },
+    {
+      "path": "civisibility/utils/net/sendpackfiles_api_test.go",
+      "sha256": "c26ef0bd5296c43ccd01f5df76e2b06f97292e6d52793ab0133721ec56357369",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/sendpackfiles_api_test.go",
+      "source_sha256": "bbd2be36b10b640a432f3c38a23fce7c566ecdf186a5e5fa7c4f29bcb510b47b"
+    },
+    {
+      "path": "civisibility/utils/net/settings_api.go",
+      "sha256": "6772e95b9f36679e214450e40875c64f1e98ee19e1f9233491b67adcff62d228",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/settings_api.go",
+      "source_sha256": "debc40c863dd7eae8e4ab894cdb88aa17f56244bdb2b6f09ab6c5a5ed5ac5a04"
+    },
+    {
+      "path": "civisibility/utils/net/settings_api_test.go",
+      "sha256": "c7eaaf79968b8dcec5ef1398d0570726534ccae05bc7d146dd8d7afb3deb9715",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/settings_api_test.go",
+      "source_sha256": "58dfcb6b753e6f7105a66a6ec574b3ca964cadacd9d1248d528087954adf5261"
+    },
+    {
+      "path": "civisibility/utils/net/skippable.go",
+      "sha256": "bcb440a997a57a725b9a0fc283baf0338c27d8ff11258d6e51edbe3e3ff291f4",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/skippable.go",
+      "source_sha256": "2c0465e55f4e1e7586531e5fba69ce29a9f6bc28d1c5cefe1c14f607b319ddf6"
+    },
+    {
+      "path": "civisibility/utils/net/skippable_test.go",
+      "sha256": "b0378db963469f4698b41adf65994decdcc09ebc47abc1fd1ef6849d8f0e23a1",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/skippable_test.go",
+      "source_sha256": "3d72d6b66e251fbf64c05bc0f976f6e7cb18de7475ef854143e658817a9c24ff"
+    },
+    {
+      "path": "civisibility/utils/net/test_management_tests_api.go",
+      "sha256": "aeced82da3431a8f11068c12a08bb1c2fc1d4b6c6e896b3499c86898cec2f3b0",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/test_management_tests_api.go",
+      "source_sha256": "2d37008185cfad5f0ee44f48c2f7894e0b835029e665b1d5ed28b9902b7ae640"
+    },
+    {
+      "path": "civisibility/utils/net/test_management_tests_api_test.go",
+      "sha256": "0b2bf5264260ed884e793f0bd41f079703b0701cf3b7341a63ab3e8dc81a59a3",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/test_management_tests_api_test.go",
+      "source_sha256": "c1b159510051564d8a01ca47faacd4e633356f204534447f982fa2cef7f6f735"
+    },
+    {
+      "path": "civisibility/utils/net/uds_client_test.go",
+      "sha256": "944950b8bc3d8b579c640bbac8698f552bc8f6da222ae63a78e894b1aebf035b",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/net/uds_client_test.go",
+      "source_sha256": "fe222c289780242fc20d9bf834a62d1098ade436ef8751ca7798978e24a09f46"
+    },
+    {
+      "path": "civisibility/utils/source_paths.go",
+      "sha256": "961c918a5c312d631c3a19ad65533eda213d0930702ee3488b70378cba3237c6",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/source_paths.go",
+      "source_sha256": "82f757acb1badb3771793af823081cf3e9ec8a35d7e3b8c7617fda379d10513a"
+    },
+    {
+      "path": "civisibility/utils/source_paths_test.go",
+      "sha256": "c4c4aed524e7d69ea68cef93422746123200f254aed40f285aa3c29d472fbca2",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/source_paths_test.go",
+      "source_sha256": "2c0986a51c21f3ba4523df13ca66ffb1caf72fa9dcd7fec6bb024af826b3a3bc"
+    },
+    {
+      "path": "civisibility/utils/source_paths_windows_test.go",
+      "sha256": "6463e22b7d281f392c5ac9606d1a24168958976b4c888105943503d64380e740",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/source_paths_windows_test.go",
+      "source_sha256": "8115fc517b693f779f8c5c34df1197696ee2818b469d3d31e8a1cfdba200dbf5"
+    },
+    {
+      "path": "civisibility/utils/telemetry/telemetry.go",
+      "sha256": "a78d8f59f10528b8e5798a4dfbc7d4bfb86a06c0f883b0bcd684849ae3b40b0e",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/telemetry/telemetry.go",
+      "source_sha256": "a78d8f59f10528b8e5798a4dfbc7d4bfb86a06c0f883b0bcd684849ae3b40b0e"
+    },
+    {
+      "path": "civisibility/utils/telemetry/telemetry_count.go",
+      "sha256": "54c946b4a3b5a573418ea2e8090e052367944bbd1d2eb42f8d566bbb2feaf35a",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/telemetry/telemetry_count.go",
+      "source_sha256": "c102dd58d35fa03a8d5899bb8089fc3713ef5cb978cdbe25eb58c0e3e30adc95"
+    },
+    {
+      "path": "civisibility/utils/telemetry/telemetry_distribution.go",
+      "sha256": "fa9fab6c90534ceaf08f8947337165da76d549871634867e3bdd3ddde1558966",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/telemetry/telemetry_distribution.go",
+      "source_sha256": "b165f54ee841de1a22c89f6998de13e65b236c49cfe24b45e57427c8bc42561b"
+    },
+    {
+      "path": "civisibility/utils/telemetry/telemetry_test.go",
+      "sha256": "2e2f441f9ae72d8b47d0e76c8e4905b5fc97dbbfb6154464746e3788cfd7152f",
+      "role": "adapted",
+      "source_path": "internal/civisibility/utils/telemetry/telemetry_test.go",
+      "source_sha256": "4f82821b0c6d1e7c933c92ba17ff19d31a05520c9a5aa187346420cd5b307145"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/codeowners/CODEOWNERS_GITHUB",
+      "sha256": "a26ac21e8ac2f4e88a9e178da73f8617a97e6c6ff9a5d4da4040e9e1090baea5",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/codeowners/CODEOWNERS_GITHUB",
+      "source_sha256": "a26ac21e8ac2f4e88a9e178da73f8617a97e6c6ff9a5d4da4040e9e1090baea5"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/codeowners/CODEOWNERS_GITLAB",
+      "sha256": "673856054dc5e608bbddabb9a9bdc9113eb1db193c55ae45bf72441b87e5dde4",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/codeowners/CODEOWNERS_GITLAB",
+      "source_sha256": "673856054dc5e608bbddabb9a9bdc9113eb1db193c55ae45bf72441b87e5dde4"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/github-event.json",
+      "sha256": "257a32ee122726542e1abbabc16822c456ec0d9cab4ff669cad357ef09fa46de",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/github-event.json",
+      "source_sha256": "257a32ee122726542e1abbabc16822c456ec0d9cab4ff669cad357ef09fa46de"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/providers/appveyor.json",
+      "sha256": "0d6a168561a78a993495cc1ca89aff7b94ff555181027f482ed07a7d050aebc6",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/providers/appveyor.json",
+      "source_sha256": "0d6a168561a78a993495cc1ca89aff7b94ff555181027f482ed07a7d050aebc6"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/providers/awscodepipeline.json",
+      "sha256": "86a81effad8093645c1420a7ca7b09e6e8e511dcf96503ad145b83ab2f8753f8",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/providers/awscodepipeline.json",
+      "source_sha256": "86a81effad8093645c1420a7ca7b09e6e8e511dcf96503ad145b83ab2f8753f8"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/providers/azurepipelines.json",
+      "sha256": "3ff552d4e581c36fb8368c4ada238bdcb8345f960edf9e4bafad342611133a00",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/providers/azurepipelines.json",
+      "source_sha256": "3ff552d4e581c36fb8368c4ada238bdcb8345f960edf9e4bafad342611133a00"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/providers/bitbucket.json",
+      "sha256": "055021dd2912e30c67827962d3266cd667023c1a983b888fc2fd09b9c168a509",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/providers/bitbucket.json",
+      "source_sha256": "055021dd2912e30c67827962d3266cd667023c1a983b888fc2fd09b9c168a509"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/providers/bitrise.json",
+      "sha256": "8f7f4560ab1124a4088cb4bb8635fb884085133247abda9d406556ff2166534a",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/providers/bitrise.json",
+      "source_sha256": "8f7f4560ab1124a4088cb4bb8635fb884085133247abda9d406556ff2166534a"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/providers/buddy.json",
+      "sha256": "0f7bc0ef7a22fca39021b3ed2630b0902191a9b3f8442d2f2781caae8ecab103",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/providers/buddy.json",
+      "source_sha256": "0f7bc0ef7a22fca39021b3ed2630b0902191a9b3f8442d2f2781caae8ecab103"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/providers/buildkite.json",
+      "sha256": "f4783742e6fd024765bce37aaad102578603f4b3178267740f4e6c9004f4fddd",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/providers/buildkite.json",
+      "source_sha256": "f4783742e6fd024765bce37aaad102578603f4b3178267740f4e6c9004f4fddd"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/providers/circleci.json",
+      "sha256": "282e71e647fcf7e6f0da7849c531d147133af4127f29331eab6949e55ccf95fe",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/providers/circleci.json",
+      "source_sha256": "282e71e647fcf7e6f0da7849c531d147133af4127f29331eab6949e55ccf95fe"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/providers/codefresh.json",
+      "sha256": "68f2e34e5b3b3b79c3d2a071094ea1755f318eeb66f935534ce0abede7a463df",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/providers/codefresh.json",
+      "source_sha256": "68f2e34e5b3b3b79c3d2a071094ea1755f318eeb66f935534ce0abede7a463df"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/providers/drone.json",
+      "sha256": "e0af588738b6ff19e81a2c6e1ebb59b5c5903692e89011488ca459c09d1207a9",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/providers/drone.json",
+      "source_sha256": "e0af588738b6ff19e81a2c6e1ebb59b5c5903692e89011488ca459c09d1207a9"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/providers/github.json",
+      "sha256": "cc392aa7d9c1d13dffd64b011656f940798b99795aee049f13384de41955fe3f",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/providers/github.json",
+      "source_sha256": "cc392aa7d9c1d13dffd64b011656f940798b99795aee049f13384de41955fe3f"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/providers/gitlab.json",
+      "sha256": "f2277c77b94abe580c071dbf3be6f8e2a6fd050f0b71e8fdca1c0d74ed95224e",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/providers/gitlab.json",
+      "source_sha256": "f2277c77b94abe580c071dbf3be6f8e2a6fd050f0b71e8fdca1c0d74ed95224e"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/providers/jenkins.json",
+      "sha256": "d43741e90f72da45010d48d670ace417820135a3e43382add8cf2c21bbe41234",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/providers/jenkins.json",
+      "source_sha256": "d43741e90f72da45010d48d670ace417820135a3e43382add8cf2c21bbe41234"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/providers/teamcity.json",
+      "sha256": "8cae0e2f3c83d6d98168b2bc031ed8954416d564ea4b21aab1a95865c684a697",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/providers/teamcity.json",
+      "source_sha256": "8cae0e2f3c83d6d98168b2bc031ed8954416d564ea4b21aab1a95865c684a697"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/providers/travisci.json",
+      "sha256": "0ed872ff22bf47dbe64314a840d2f280c11e7c218522aab03793d9706a75c71b",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/providers/travisci.json",
+      "source_sha256": "0ed872ff22bf47dbe64314a840d2f280c11e7c218522aab03793d9706a75c71b"
+    },
+    {
+      "path": "civisibility/utils/testdata/fixtures/providers/usersupplied.json",
+      "sha256": "c005d5b26ff01d34d9344567e95ec1fb6eb0329c1f7533d15ebcce55eb89a6f7",
+      "role": "upstream",
+      "source_path": "internal/civisibility/utils/testdata/fixtures/providers/usersupplied.json",
+      "source_sha256": "c005d5b26ff01d34d9344567e95ec1fb6eb0329c1f7533d15ebcce55eb89a6f7"
+    },
+    {
+      "path": "container_linux.go",
+      "sha256": "6d87cf42b60ea046389f28d70baa5c0c127ea31e67d57508ca5cb7e90d14e061",
+      "role": "upstream",
+      "source_path": "internal/container_linux.go",
+      "source_sha256": "6d87cf42b60ea046389f28d70baa5c0c127ea31e67d57508ca5cb7e90d14e061"
+    },
+    {
+      "path": "container_stub.go",
+      "sha256": "8cd028315e412b98d0625e0aab5a063c14620c17894aceca74da44460116e318",
+      "role": "upstream",
+      "source_path": "internal/container_stub.go",
+      "source_sha256": "8cd028315e412b98d0625e0aab5a063c14620c17894aceca74da44460116e318"
+    },
+    {
+      "path": "ddtrace/ext/app_types.go",
+      "sha256": "dfda64100de56326def009c687ecca4520a4edc692b37ab0d0efb7d534e89403",
+      "role": "adapted",
+      "source_path": "ddtrace/ext/app_types.go",
+      "source_sha256": "2f0b156153a19c4e625abd58a9dd7f63549efa3a1bdf812ef161f325a50c8724"
+    },
+    {
+      "path": "ddtrace/ext/aws.go",
+      "sha256": "9a69158893bd25797d72db855529c25efb3f1b0b7a986a3d03e6926d2879aa6c",
+      "role": "upstream",
+      "source_path": "ddtrace/ext/aws.go",
+      "source_sha256": "9a69158893bd25797d72db855529c25efb3f1b0b7a986a3d03e6926d2879aa6c"
+    },
+    {
+      "path": "ddtrace/ext/db.go",
+      "sha256": "cd75bb53b6a746d1ad539cf6cbb57a4eaf7af2655fd7ab4fea4fb9296bb879c0",
+      "role": "upstream",
+      "source_path": "ddtrace/ext/db.go",
+      "source_sha256": "cd75bb53b6a746d1ad539cf6cbb57a4eaf7af2655fd7ab4fea4fb9296bb879c0"
+    },
+    {
+      "path": "ddtrace/ext/gcp.go",
+      "sha256": "358bf8e18cbb3a98463e47d4272c2296ba2489e119b1019353e8ede9a6c03004",
+      "role": "upstream",
+      "source_path": "ddtrace/ext/gcp.go",
+      "source_sha256": "358bf8e18cbb3a98463e47d4272c2296ba2489e119b1019353e8ede9a6c03004"
+    },
+    {
+      "path": "ddtrace/ext/graphql.go",
+      "sha256": "df79e5b969d562ae572d83fc70328674cba7478fb078a8ab5628197918ec4dda",
+      "role": "upstream",
+      "source_path": "ddtrace/ext/graphql.go",
+      "source_sha256": "df79e5b969d562ae572d83fc70328674cba7478fb078a8ab5628197918ec4dda"
+    },
+    {
+      "path": "ddtrace/ext/log_key.go",
+      "sha256": "6b39e166e5eaa89d2946e347b8cb98740c977b3ee7c802268fc0956e40ae3b2d",
+      "role": "upstream",
+      "source_path": "ddtrace/ext/log_key.go",
+      "source_sha256": "6b39e166e5eaa89d2946e347b8cb98740c977b3ee7c802268fc0956e40ae3b2d"
+    },
+    {
+      "path": "ddtrace/ext/messaging.go",
+      "sha256": "ab8c431af632c57f3bd93bdbaf866b8426b84f689eef3344a7213fd58296e752",
+      "role": "upstream",
+      "source_path": "ddtrace/ext/messaging.go",
+      "source_sha256": "ab8c431af632c57f3bd93bdbaf866b8426b84f689eef3344a7213fd58296e752"
+    },
+    {
+      "path": "ddtrace/ext/peer.go",
+      "sha256": "3a023f98d7a298b118b31fd65f303e16aa71abd4bc736c1842dcd0acb0dfe0b7",
+      "role": "upstream",
+      "source_path": "ddtrace/ext/peer.go",
+      "source_sha256": "3a023f98d7a298b118b31fd65f303e16aa71abd4bc736c1842dcd0acb0dfe0b7"
+    },
+    {
+      "path": "ddtrace/ext/priority.go",
+      "sha256": "598d3499f6b9a8558f24e0e41fb8c6a0c235a872978f2f88a1f0d34b3c0a9251",
+      "role": "upstream",
+      "source_path": "ddtrace/ext/priority.go",
+      "source_sha256": "598d3499f6b9a8558f24e0e41fb8c6a0c235a872978f2f88a1f0d34b3c0a9251"
+    },
+    {
+      "path": "ddtrace/ext/rpc.go",
+      "sha256": "4d0d4897141d9b261d15e4c4b4bf10c072087dad77c081b083cc290a1b3a1b61",
+      "role": "upstream",
+      "source_path": "ddtrace/ext/rpc.go",
+      "source_sha256": "4d0d4897141d9b261d15e4c4b4bf10c072087dad77c081b083cc290a1b3a1b61"
+    },
+    {
+      "path": "ddtrace/ext/span_kind.go",
+      "sha256": "accb1e49a6bd53dba2052b6d3b1f9626d207419cea3b1171f395064b58371a85",
+      "role": "upstream",
+      "source_path": "ddtrace/ext/span_kind.go",
+      "source_sha256": "accb1e49a6bd53dba2052b6d3b1f9626d207419cea3b1171f395064b58371a85"
+    },
+    {
+      "path": "ddtrace/ext/system.go",
+      "sha256": "aa537913ae76b59b883c4984c81f02de4498b9d82133a35b424e3c4dcd01cf03",
+      "role": "upstream",
+      "source_path": "ddtrace/ext/system.go",
+      "source_sha256": "aa537913ae76b59b883c4984c81f02de4498b9d82133a35b424e3c4dcd01cf03"
+    },
+    {
+      "path": "ddtrace/ext/tags.go",
+      "sha256": "db4db2bce3452b70640b00e9ae3ef4e1b91bee137cdd80df8a4ee2332d98554d",
+      "role": "upstream",
+      "source_path": "ddtrace/ext/tags.go",
+      "source_sha256": "db4db2bce3452b70640b00e9ae3ef4e1b91bee137cdd80df8a4ee2332d98554d"
+    },
+    {
+      "path": "env.go",
+      "sha256": "903e322b4ac21e7aa34b3ef1ab719e3e141ed9858961e545619c8343e9ccd88f",
+      "role": "adapted",
+      "source_path": "internal/env.go",
+      "source_sha256": "a25103c602ceed1385180637f00c17f3ecaafc9b2738d872296c098e515b207b"
+    },
+    {
+      "path": "env/env.go",
+      "sha256": "b45a93a28a50c6ba481ad2ff213b3ede8ddfed22daa1838558861b0bcec0e518",
+      "role": "adapted",
+      "source_path": "internal/env/env.go",
+      "source_sha256": "93d14bb3b2962716639ac356bae4e494f9af22cb112cce63542d8c847ace302b"
+    },
+    {
+      "path": "env/supported_configurations.gen.go",
+      "sha256": "2f3062a9f59058d9d09ac3a3af5b54848ae2a08ed74af3e61c6e4d4a4de0b838",
+      "role": "upstream",
+      "source_path": "internal/env/supported_configurations.gen.go",
+      "source_sha256": "2f3062a9f59058d9d09ac3a3af5b54848ae2a08ed74af3e61c6e4d4a4de0b838"
+    },
+    {
+      "path": "env/supported_configurations.go",
+      "sha256": "cf503a35b07db69fce811c5bf18ae9cfdbc0f70d5b8f60af5bf1233e3f37c392",
+      "role": "adapted",
+      "source_path": "internal/env/supported_configurations.go",
+      "source_sha256": "7bd2b32aa93e6e9b8d3e741e0a044ee392adf0e4416a06f5f9dfaff1a9b01a34"
+    },
+    {
+      "path": "globalconfig/globalconfig.go",
+      "sha256": "6dfae856b67e3bfe7ad8646a6a5a14779a42b247cebebca7bd757f405d60048a",
+      "role": "adapted",
+      "source_path": "internal/globalconfig/globalconfig.go",
+      "source_sha256": "04c54ff7d1556c0910395f745cd46abbae4f2941f35b6c4dfa4c08fb359bbaf0"
+    },
+    {
+      "path": "globalconfig/globalconfig_test.go",
+      "sha256": "2834d201ba5c6adb7147f979454b42f05dad0dcd231572d179638481a8accb3b",
+      "role": "adapted",
+      "source_path": "internal/globalconfig/globalconfig_test.go",
+      "source_sha256": "9cb7469d9dacb9cc440e61eafecba2bbf0dcd1bf3874b0c9b64e9d3530bf5569"
+    },
+    {
+      "path": "hostname/azure/azure.go",
+      "sha256": "b9816df3c2f576c14c737414cec53802af3ed3fc29ec655751dbdd8437ceda46",
+      "role": "adapted",
+      "source_path": "internal/hostname/azure/azure.go",
+      "source_sha256": "fb4bbedbc92dc7c74b33acbdf931e0333e50f96602555555b28d280ce4006d62"
+    },
+    {
+      "path": "hostname/cachedfetch/fetcher.go",
+      "sha256": "8fe9f4e65a505ed08d7acaccd6320675fc63ca608e499e80e80f66e8ab98cc82",
+      "role": "adapted",
+      "source_path": "internal/hostname/cachedfetch/fetcher.go",
+      "source_sha256": "8718504b2c0674d86d20253c0fa682a316e7d1b330de9ae73746ba162ee153cb"
+    },
+    {
+      "path": "hostname/ec2/ec2.go",
+      "sha256": "8d85ac97a3e6586f7500e5ed330ace03ec09c878a10da426724d961153a5fc9b",
+      "role": "adapted",
+      "source_path": "internal/hostname/ec2/ec2.go",
+      "source_sha256": "a771c3565708921c2dcb150a6134a3c15983f6ef955d4c657a41ef1a90ce4642"
+    },
+    {
+      "path": "hostname/ecs/aws.go",
+      "sha256": "9ac78b456ea0d753b034de63e30c89fc90a05711116d99996c9a0257c8fc3411",
+      "role": "adapted",
+      "source_path": "internal/hostname/ecs/aws.go",
+      "source_sha256": "0159fd985a786bd22b6633571a87370bdf724b177ad046a6e9475b9329b28953"
+    },
+    {
+      "path": "hostname/fqdn_nix.go",
+      "sha256": "5ed82bc9ef2c8d27db6ae3f79bad7600d69d7a8cc0610e0838d35b64c7f6742e",
+      "role": "upstream",
+      "source_path": "internal/hostname/fqdn_nix.go",
+      "source_sha256": "5ed82bc9ef2c8d27db6ae3f79bad7600d69d7a8cc0610e0838d35b64c7f6742e"
+    },
+    {
+      "path": "hostname/fqdn_windows.go",
+      "sha256": "7137dc6f161533e6e0a69ee0df61d47af7d782bf31d1697cabe32e1eac546324",
+      "role": "upstream",
+      "source_path": "internal/hostname/fqdn_windows.go",
+      "source_sha256": "7137dc6f161533e6e0a69ee0df61d47af7d782bf31d1697cabe32e1eac546324"
+    },
+    {
+      "path": "hostname/gce/gce.go",
+      "sha256": "93fb82143079f5eeb09223b3e022ea7f13d23cebe2d0c0d6e9f945ea05ef9f3c",
+      "role": "adapted",
+      "source_path": "internal/hostname/gce/gce.go",
+      "source_sha256": "050a2bba0c9f7ee49aed66cf8e5ceeb5d3d651d60faaf659b7b086a46e1b0f13"
+    },
+    {
+      "path": "hostname/httputils/helpers.go",
+      "sha256": "2c200e98936bff32445765588164beb87caaca87f6fc992b38f606e5f0cd93be",
+      "role": "upstream",
+      "source_path": "internal/hostname/httputils/helpers.go",
+      "source_sha256": "2c200e98936bff32445765588164beb87caaca87f6fc992b38f606e5f0cd93be"
+    },
+    {
+      "path": "hostname/providers.go",
+      "sha256": "f2b9ff93a8c3b2989a4d6c98557e1650deb6b0a5125f635e90cfe7f31d56c684",
+      "role": "adapted",
+      "source_path": "internal/hostname/providers.go",
+      "source_sha256": "0bcd019043cb45eacb19a1025a3c694f0681834597a79f707128c63ed1bc3de2"
+    },
+    {
+      "path": "hostname/validate/validate.go",
+      "sha256": "598713b636390d48243fe90b2d13b4f4e98d28addbcf30a55f827c5556635b9f",
+      "role": "adapted",
+      "source_path": "internal/hostname/validate/validate.go",
+      "source_sha256": "b1ac8e7b90166266f08789c60e3dafd55cf077369e1a8e039c14ff2c85399c28"
+    },
+    {
+      "path": "locking/mutex.go",
+      "sha256": "c335bea5189dcbdf0d6a6d073046c7b2d8c01d8ffb5be9bbed333b3503a0858d",
+      "role": "adapted",
+      "source_path": "internal/locking/mutex.go",
+      "source_sha256": "759732cb3c7c090d7e6c9e384e2ba7abff08f0938b2f3d5a114708188ae36d44"
+    },
+    {
+      "path": "log/log.go",
+      "sha256": "975007676d00a8107453dabb2864448e756f1e789e7d5886377125a83c95602d",
+      "role": "adapted",
+      "source_path": "internal/log/log.go",
+      "source_sha256": "021fafa9f8f8b154356fdf3a80a099cd949fecd9eba8d212946ee61597600e74"
+    },
+    {
+      "path": "osinfo/osinfo.go",
+      "sha256": "3c7a60a71cebcaa4f58e35c421e4fe847b2b76700a1d2819a519a1db5b821dcb",
+      "role": "upstream",
+      "source_path": "internal/osinfo/osinfo.go",
+      "source_sha256": "3c7a60a71cebcaa4f58e35c421e4fe847b2b76700a1d2819a519a1db5b821dcb"
+    },
+    {
+      "path": "osinfo/osinfo_unix.go",
+      "sha256": "dc7323fdd22808def825a484fdbe5201656fc846a5caa0b64b55ea0eaf16aa4d",
+      "role": "adapted",
+      "source_path": "internal/osinfo/osinfo_unix.go",
+      "source_sha256": "24beb920b042b2f753e409b95c0509b52a4ccf0afc03207f4a897d4701db98aa"
+    },
+    {
+      "path": "osinfo/osinfo_unix_test.go",
+      "sha256": "d342f2084e4a066b440e17e7a5b919669bcf137a619d51ba6e74500040faff43",
+      "role": "local"
+    },
+    {
+      "path": "osinfo/osinfo_windows.go",
+      "sha256": "0e2bb4692507627e524c92bbce417f9ba356a063ad0ed70a853efa8180865590",
+      "role": "adapted",
+      "source_path": "internal/osinfo/osinfo_windows.go",
+      "source_sha256": "721549ef9184169aa82ef849c463f45e25181520b0634ea8f5dcbe2d7718e112"
+    },
+    {
+      "path": "stacktrace/classification_test.go",
+      "sha256": "edd78698aebf6b297751d10d090e14555d74818fea0c40129ab57a3a6f6c26ea",
+      "role": "local"
+    },
+    {
+      "path": "stacktrace/contribs_generated.go",
+      "sha256": "d759dd6bcedb68cf4d044fa144ebcb19ffde02ff2b72281735271e8dfb46c929",
+      "role": "upstream",
+      "source_path": "internal/stacktrace/contribs_generated.go",
+      "source_sha256": "d759dd6bcedb68cf4d044fa144ebcb19ffde02ff2b72281735271e8dfb46c929"
+    },
+    {
+      "path": "stacktrace/stacktrace.go",
+      "sha256": "4cab050a71b8fdb5b6065b8872b2912f69f90741b4beeeabb954a8e9a38d48da",
+      "role": "adapted",
+      "source_path": "internal/stacktrace/stacktrace.go",
+      "source_sha256": "360529c3bbbc04fda98b12026ef2ecfa23278927cf63ce1652be6a020896c0a7"
+    },
+    {
+      "path": "stacktrace/trie.go",
+      "sha256": "c4571d0dcfddc53891096903ef7086de354e7880c8c0135abb84e10718555743",
+      "role": "adapted",
+      "source_path": "internal/stacktrace/trie.go",
+      "source_sha256": "16de3b053c3021530b5c91f7e0312e7a919eeb178d9e1a4707f5c083269889d5"
+    },
+    {
+      "path": "telemetry/api.go",
+      "sha256": "6cb5e406c0555e087e12229213a079662fdf2f5deee2e8676dcf1a2b3a6e2b4a",
+      "role": "adapted",
+      "source_path": "internal/telemetry/api.go",
+      "source_sha256": "26bc270f03ca66bf5aebb9a274f0717fbc4d50e964cb9557f8984f7275a5022f"
+    },
+    {
+      "path": "telemetry/backend.go",
+      "sha256": "5ccac5ea22165dc4419ea86f22a79d86fc3d83fa0bd97fe2c1a071356b603760",
+      "role": "adapted",
+      "source_path": "internal/telemetry/backend.go",
+      "source_sha256": "37e5b6778108c77f68ab628562c436ea26b07f5c88ea3d080b6d200f39047835"
+    },
+    {
+      "path": "telemetry/client.go",
+      "sha256": "45100dc2e2380bbde846620cd5e90cb61db93dcc6d8757d3208a4fde54cf14ab",
+      "role": "adapted",
+      "source_path": "internal/telemetry/client.go",
+      "source_sha256": "98c09ac5c1927c95161fdb0959c173364366dc6edcecfcedef907ecf4a125fc6"
+    },
+    {
+      "path": "telemetry/client_config.go",
+      "sha256": "5fecf76534f30524a4240185e7562018f7a0f9dae559443cd8b435bee1204594",
+      "role": "adapted",
+      "source_path": "internal/telemetry/client_config.go",
+      "source_sha256": "b8659fa40a98656b9f46d994c47fe72ea40327dbaec70beb5e49f1494dc3d20d"
+    },
+    {
+      "path": "telemetry/concurrency_test.go",
+      "sha256": "8fcc2da24e0d7b237158bbb7fbb5fcff542329633738c42ec61605feaaf6aa7f",
+      "role": "local"
+    },
+    {
+      "path": "telemetry/configuration.go",
+      "sha256": "2f8a1c6cbfc68971f1be0fd6af4595d3f41f437468e93f0317fc73dfdbb498b8",
+      "role": "adapted",
+      "source_path": "internal/telemetry/configuration.go",
+      "source_sha256": "20b7d48e7b9e13640739393b281997143e5deb2a90c126d92fd64e77adefd638"
+    },
+    {
+      "path": "telemetry/distributions.go",
+      "sha256": "ff62264e4681b98cee4367a6fcb73e1878ca79f58134304056cdb60ea5db286d",
+      "role": "adapted",
+      "source_path": "internal/telemetry/distributions.go",
+      "source_sha256": "eef9af1b3111afff6ae0d7ae7270d1eec3eb4f43f261a0d9f12c70f7a2792185"
+    },
+    {
+      "path": "telemetry/globalclient.go",
+      "sha256": "bf657808ca4d8cbb100a04b8bf7638745767cf92f4af6370b3ce214b49602673",
+      "role": "adapted",
+      "source_path": "internal/telemetry/globalclient.go",
+      "source_sha256": "87bbf0ba701f4310d520cfdc44d212e9069bf15974de95f10e53403100899d86"
+    },
+    {
+      "path": "telemetry/integration.go",
+      "sha256": "af0390ab34dc6a52b178028c7a701f9b07e9b9fff43e3495239687fa13cce853",
+      "role": "adapted",
+      "source_path": "internal/telemetry/integration.go",
+      "source_sha256": "ced06fe559f18e0a98749990b2c0d0fd0e63717491003aa72ac4b3825f78276e"
+    },
+    {
+      "path": "telemetry/internal/knownmetrics/known_metric.golang.go",
+      "sha256": "6fca3eb3a85cd54425a43404ac5c786ce44e1f404b1cd3d1922c0fbef2467946",
+      "role": "adapted",
+      "source_path": "internal/telemetry/internal/knownmetrics/known_metric.golang.go",
+      "source_sha256": "98e576b8758ab4c8a5454c16da9f629866e405567b7203523a464466045e43f2"
+    },
+    {
+      "path": "telemetry/internal/knownmetrics/known_metrics.common.go",
+      "sha256": "b08bb72f9881de9459b2d1f81e490344baacfc33394567078e806c88ec4acd32",
+      "role": "adapted",
+      "source_path": "internal/telemetry/internal/knownmetrics/known_metrics.common.go",
+      "source_sha256": "3701afc684a6481d00b834843f726186b195c75d054fb7cb338f00a85641c5c8"
+    },
+    {
+      "path": "telemetry/internal/knownmetrics/known_metrics.go",
+      "sha256": "9389dda59fc74955625bac368065e533b2f2d2a886e356e7665a9bff4faf121c",
+      "role": "adapted",
+      "source_path": "internal/telemetry/internal/knownmetrics/known_metrics.go",
+      "source_sha256": "1c080c28092ad977c7b13c97b14df18695b60e0aa8523516704ebe4845078877"
+    },
+    {
+      "path": "telemetry/internal/mapper/app_closing.go",
+      "sha256": "d2dcadd76302e8deadf4b9398e15f464633905c51654152e2bafbbcbfecdc8c1",
+      "role": "adapted",
+      "source_path": "internal/telemetry/internal/mapper/app_closing.go",
+      "source_sha256": "0caeada6f3f6657114e69dd16d070330c4743355e7f12a5cc31533ed1ed4957c"
+    },
+    {
+      "path": "telemetry/internal/mapper/app_started.go",
+      "sha256": "661682998608052485b30f478fb887ba0d152093574bd0aabf3541c4e274326f",
+      "role": "adapted",
+      "source_path": "internal/telemetry/internal/mapper/app_started.go",
+      "source_sha256": "a3a8d20756db371861b04a670c64a9324aaf10bad28c2087aa7588cbdfd62070"
+    },
+    {
+      "path": "telemetry/internal/mapper/default.go",
+      "sha256": "dfb490a7ebc43c7b9d61801ef4ca0702682106b2c283bd683a16a3d32b9d06d5",
+      "role": "adapted",
+      "source_path": "internal/telemetry/internal/mapper/default.go",
+      "source_sha256": "8faf0d1225a4d5add0f1412da9a981d659735ffacb6c0f399d350cf131705d7c"
+    },
+    {
+      "path": "telemetry/internal/mapper/mapper.go",
+      "sha256": "5cee9b39ef483dfe19076b3753cf2f873600c4e304bc9f834f8c726187c88b25",
+      "role": "adapted",
+      "source_path": "internal/telemetry/internal/mapper/mapper.go",
+      "source_sha256": "9d475818cc788e7a78565d7c709d0e7286af8773eed11106a24ec234a8f0e427"
+    },
+    {
+      "path": "telemetry/internal/range.go",
+      "sha256": "994dda60856dfb5193aef7020f8f3be2acec64aece96b1fdcf2153cfd3c1fd44",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/range.go",
+      "source_sha256": "994dda60856dfb5193aef7020f8f3be2acec64aece96b1fdcf2153cfd3c1fd44"
+    },
+    {
+      "path": "telemetry/internal/recorder.go",
+      "sha256": "36ac283057f4de39bc244769966a88e8836eb9145696dd83f708a695de836402",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/recorder.go",
+      "source_sha256": "36ac283057f4de39bc244769966a88e8836eb9145696dd83f708a695de836402"
+    },
+    {
+      "path": "telemetry/internal/ringbuffer.go",
+      "sha256": "e21e4d58fa78f420463fd52a72405d5cd8e3d3bd5547db259fa37a5e1fd70ab7",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/ringbuffer.go",
+      "source_sha256": "e21e4d58fa78f420463fd52a72405d5cd8e3d3bd5547db259fa37a5e1fd70ab7"
+    },
+    {
+      "path": "telemetry/internal/syncpool.go",
+      "sha256": "8c27f99a08991aeb71f99f3e4b833f938beca9d9399d63e35382c76d8975b127",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/syncpool.go",
+      "source_sha256": "8c27f99a08991aeb71f99f3e4b833f938beca9d9399d63e35382c76d8975b127"
+    },
+    {
+      "path": "telemetry/internal/ticker.go",
+      "sha256": "9cc8877675a8feb2e153bd169b7163d4e173a5eafd0f21ab58171b6af3a058bb",
+      "role": "adapted",
+      "source_path": "internal/telemetry/internal/ticker.go",
+      "source_sha256": "d12ae562403502996505a3bf5dfbd4eb9c5d91faab87cf01656a92741cc37a05"
+    },
+    {
+      "path": "telemetry/internal/ticker_lifecycle_test.go",
+      "sha256": "58412a1f148a63e005f77c7c0ffdeb00d282f5c6c7e5e1ff24dd5d1c36e9cce0",
+      "role": "local"
+    },
+    {
+      "path": "telemetry/internal/ticker_test.go",
+      "sha256": "846b8ad446b1764c8b0968ce214b0e734feb524078fc0b6e92cc80bfdcdeabf5",
+      "role": "local"
+    },
+    {
+      "path": "telemetry/internal/tracerconfig.go",
+      "sha256": "a5c7af8b821babe19723a9ebcac4d7408d6f3dd80b7e1df0c867eaecd6d7fde4",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/tracerconfig.go",
+      "source_sha256": "a5c7af8b821babe19723a9ebcac4d7408d6f3dd80b7e1df0c867eaecd6d7fde4"
+    },
+    {
+      "path": "telemetry/internal/transport/app_closing.go",
+      "sha256": "4928f3b5cc93240d4e3c0ea88692bc8fd0a5d85270f141cb46bd5d4a034dbd28",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/transport/app_closing.go",
+      "source_sha256": "4928f3b5cc93240d4e3c0ea88692bc8fd0a5d85270f141cb46bd5d4a034dbd28"
+    },
+    {
+      "path": "telemetry/internal/transport/app_configuration_change.go",
+      "sha256": "1505939a0f906da77be8af8edfdace6daab6a7fef17d23ebbf63a070c4b609c6",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/transport/app_configuration_change.go",
+      "source_sha256": "1505939a0f906da77be8af8edfdace6daab6a7fef17d23ebbf63a070c4b609c6"
+    },
+    {
+      "path": "telemetry/internal/transport/app_integration_change.go",
+      "sha256": "4b258ea7b24dac49432ee776c60702874ef5df7b4aa41bd3cefa5a70dd8f10b6",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/transport/app_integration_change.go",
+      "source_sha256": "4b258ea7b24dac49432ee776c60702874ef5df7b4aa41bd3cefa5a70dd8f10b6"
+    },
+    {
+      "path": "telemetry/internal/transport/app_product_change.go",
+      "sha256": "39827e8a2ec1b52c7f3c6e7eb74d8f0ce56081ba56ba74ba362f690b056e94ee",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/transport/app_product_change.go",
+      "source_sha256": "39827e8a2ec1b52c7f3c6e7eb74d8f0ce56081ba56ba74ba362f690b056e94ee"
+    },
+    {
+      "path": "telemetry/internal/transport/app_started.go",
+      "sha256": "e48b0a78b5074029e54f5157f8d3b9cbfb774ccbdd1e70217fb64fa62a6d9b5d",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/transport/app_started.go",
+      "source_sha256": "e48b0a78b5074029e54f5157f8d3b9cbfb774ccbdd1e70217fb64fa62a6d9b5d"
+    },
+    {
+      "path": "telemetry/internal/transport/body.go",
+      "sha256": "11435e13a0ddb799999beb6e5faa2440505b69945d42e57d988885bd8183874e",
+      "role": "adapted",
+      "source_path": "internal/telemetry/internal/transport/body.go",
+      "source_sha256": "f10f830b8e8a7d7fda6affc96f1fcaec05aa04fa43f7b08249f292a8508cdf80"
+    },
+    {
+      "path": "telemetry/internal/transport/conf_key_value.go",
+      "sha256": "06ba4bd1c2e7d2af87969d15d297b0fc54105f594722b7d096c7d26cf6a2427e",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/transport/conf_key_value.go",
+      "source_sha256": "06ba4bd1c2e7d2af87969d15d297b0fc54105f594722b7d096c7d26cf6a2427e"
+    },
+    {
+      "path": "telemetry/internal/transport/distributions.go",
+      "sha256": "2f18bff63f22cac5095b464352f90c4da3623f48d7d4e149ad6e24dcc861d285",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/transport/distributions.go",
+      "source_sha256": "2f18bff63f22cac5095b464352f90c4da3623f48d7d4e149ad6e24dcc861d285"
+    },
+    {
+      "path": "telemetry/internal/transport/error.go",
+      "sha256": "2937e8d569f865dabfda2df3607103d6ffc8ebf1f23c8dcd07be72f03d331226",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/transport/error.go",
+      "source_sha256": "2937e8d569f865dabfda2df3607103d6ffc8ebf1f23c8dcd07be72f03d331226"
+    },
+    {
+      "path": "telemetry/internal/transport/generate-metrics.go",
+      "sha256": "4968942c7c9b76f41912b3b5ec306f5bd0fc8b3ca2ebea7facd0d6cf075b3664",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/transport/generate-metrics.go",
+      "source_sha256": "4968942c7c9b76f41912b3b5ec306f5bd0fc8b3ca2ebea7facd0d6cf075b3664"
+    },
+    {
+      "path": "telemetry/internal/transport/logs.go",
+      "sha256": "ab91722dd32e15e4bf0228da802d3f196df280561b3efeb96aafe77fb5c0b153",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/transport/logs.go",
+      "source_sha256": "ab91722dd32e15e4bf0228da802d3f196df280561b3efeb96aafe77fb5c0b153"
+    },
+    {
+      "path": "telemetry/internal/transport/message_batch.go",
+      "sha256": "272ac6a278c2d3cb1237af118637a016edc83ef17816ced58b6e5157ce7a1a8b",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/transport/message_batch.go",
+      "source_sha256": "272ac6a278c2d3cb1237af118637a016edc83ef17816ced58b6e5157ce7a1a8b"
+    },
+    {
+      "path": "telemetry/internal/transport/namespace.go",
+      "sha256": "e4bd06d9c8009c5e9334ee35dea5b361848a1b24700ce5c618c092e064f1e2f1",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/transport/namespace.go",
+      "source_sha256": "e4bd06d9c8009c5e9334ee35dea5b361848a1b24700ce5c618c092e064f1e2f1"
+    },
+    {
+      "path": "telemetry/internal/transport/origin.go",
+      "sha256": "82c8e04778317e394e2bb0af3892e1175f7702a39b674e91ff4a73cd66c749e4",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/transport/origin.go",
+      "source_sha256": "82c8e04778317e394e2bb0af3892e1175f7702a39b674e91ff4a73cd66c749e4"
+    },
+    {
+      "path": "telemetry/internal/transport/payload.go",
+      "sha256": "5aee5249f242be59cbaaf4730855f312789a237126233b2e05b6968a13f3a1ca",
+      "role": "upstream",
+      "source_path": "internal/telemetry/internal/transport/payload.go",
+      "source_sha256": "5aee5249f242be59cbaaf4730855f312789a237126233b2e05b6968a13f3a1ca"
+    },
+    {
+      "path": "telemetry/internal/transport/requesttype.go",
+      "sha256": "3a0f5d0f1e849fec8e4e6e1d7e0b764d98d1ca54b2eb08fc2bfc23b58668dbee",
+      "role": "adapted",
+      "source_path": "internal/telemetry/internal/transport/requesttype.go",
+      "source_sha256": "48f43afed11b53f2f72f4a3b4c4238b281f185c074b004a31b14bbc4d163486f"
+    },
+    {
+      "path": "telemetry/internal/writer.go",
+      "sha256": "5ba6a871e238f1b0f565dfecb6b275318cf8555c8a7b54794b451a074642ffaa",
+      "role": "adapted",
+      "source_path": "internal/telemetry/internal/writer.go",
+      "source_sha256": "d13665bb661561f291036ffc215a65845716f0a9e904d31c69067f787474afe5"
+    },
+    {
+      "path": "telemetry/internal/writer_lifecycle_test.go",
+      "sha256": "79d4dfd2c5040d6ab94713bb38e32974d4895c314e9a82334640d1dbcfa98ca3",
+      "role": "local"
+    },
+    {
+      "path": "telemetry/metrichandle.go",
+      "sha256": "0993ac80332eacfb5f99bb25785419e091fde8f4f8e3351b927a6e4b32db7e99",
+      "role": "adapted",
+      "source_path": "internal/telemetry/metrichandle.go",
+      "source_sha256": "6a572b5da4419ad1f1368704d164ebe055041c7aabbd0687f9a0b9db8da436c6"
+    },
+    {
+      "path": "telemetry/metrics.go",
+      "sha256": "6a5620f4076197676d4ff0837c53791294204f36ea7ac332b6e3a71a2582c897",
+      "role": "adapted",
+      "source_path": "internal/telemetry/metrics.go",
+      "source_sha256": "5e1664994afaef8f356e2985a6718ae1f4505cc823094f3af0e19844b9c90b9d"
+    },
+    {
+      "path": "telemetry/options.go",
+      "sha256": "24521902cefc67f42e62e752ecf7c0924555e77b6abaaa7605f6cd536c8876a7",
+      "role": "adapted",
+      "source_path": "internal/telemetry/options.go",
+      "source_sha256": "e08dfaa8592f80173571c7b2ecbb46ca07f95654e0456e63fcdab7b3aa26c03e"
+    },
+    {
+      "path": "telemetry/performance_test.go",
+      "sha256": "6372af4106102ee485e48e3624e92108783661eec5eff67bbf2f0e291e2fbd25",
+      "role": "local"
+    },
+    {
+      "path": "telemetry/product.go",
+      "sha256": "b852830ad3d19674b1f023b30ccb8a8f890ecf01f36b030cbf7f25d14fe0add3",
+      "role": "adapted",
+      "source_path": "internal/telemetry/product.go",
+      "source_sha256": "4abd5fb445b37c0a664e857f6b1f171c29d98e20f2af9ea3ee202027e468a2be"
+    },
+    {
+      "path": "telemetry/record.go",
+      "sha256": "021e32d59656d851f9c203ee7304503af3c11e638b0e0a0d740df611cb846250",
+      "role": "upstream",
+      "source_path": "internal/telemetry/record.go",
+      "source_sha256": "021e32d59656d851f9c203ee7304503af3c11e638b0e0a0d740df611cb846250"
+    },
+    {
+      "path": "telemetry/startup_lifecycle_test.go",
+      "sha256": "f229f9af79db755fd0092c75e48ba5f5eb9242aecb175210c8b011f6e9aea4bc",
+      "role": "local"
+    },
+    {
+      "path": "telemetry/telemetrytest/capture.go",
+      "sha256": "4dbc718eaef2909750a4db87365acb36774a9abd9ed7574eff20026e2ea2ddfd",
+      "role": "adapted",
+      "source_path": "internal/telemetry/telemetrytest/capture.go",
+      "source_sha256": "1b9d5489ee545d6861da90c033ce8b36b66897b14fb3c751ec456881cb724746"
+    },
+    {
+      "path": "telemetry/telemetrytest/capture_test.go",
+      "sha256": "b01209edce487a4b4e4cb1c32aad362ad1fa44b337ca3299af6b908a4b843ee9",
+      "role": "adapted",
+      "source_path": "internal/telemetry/telemetrytest/capture_test.go",
+      "source_sha256": "efe097c2eb80d2214c3e7043d6856b6afafd811447ddcf4f3518965af40ca86f"
+    },
+    {
+      "path": "telemetry/telemetrytest/globalclient_test.go",
+      "sha256": "9e43a8d38ae9fb8c4144e78ab04fc5fd8127a0603a19e17fed1638f3537a4149",
+      "role": "adapted",
+      "source_path": "internal/telemetry/telemetrytest/globalclient_test.go",
+      "source_sha256": "e4c1e59233c3ef6ad52c7da53be3e84038591c453181ad9d9616564a2ecdc416"
+    },
+    {
+      "path": "telemetry/telemetrytest/record.go",
+      "sha256": "257886bb4fb1b5a66da171418c90eae7ccf6c8f9f5de49523067421983e40a67",
+      "role": "adapted",
+      "source_path": "internal/telemetry/telemetrytest/record.go",
+      "source_sha256": "888b312dba9690a42c0082720a536da540be91532748357dbd1f7b802ff9dfc6"
+    },
+    {
+      "path": "uds.go",
+      "sha256": "eced174f860fee92ea66397f3d769ecdf600af31f86f5eee513275c5e2189e72",
+      "role": "upstream",
+      "source_path": "internal/uds.go",
+      "source_sha256": "eced174f860fee92ea66397f3d769ecdf600af31f86f5eee513275c5e2189e72"
+    },
+    {
+      "path": "urlsanitizer/sanitizer.go",
+      "sha256": "88b1954c55daa2a0d4fc2f7d8115d708c3f6d144ef2f1b6e6c86e49ab37bac71",
+      "role": "upstream",
+      "source_path": "internal/urlsanitizer/sanitizer.go",
+      "source_sha256": "88b1954c55daa2a0d4fc2f7d8115d708c3f6d144ef2f1b6e6c86e49ab37bac71"
+    },
+    {
+      "path": "utils.go",
+      "sha256": "e017933dfa5f794cb5c46eb787ba8ce01f2f17c7dfa358751d8044eba3710cae",
+      "role": "adapted",
+      "source_path": "internal/utils.go",
+      "source_sha256": "7b2caa9a9040c85c0d47c7512cb9280fe376cbbc9b62034210f368db94fc6353"
+    }
+  ],
+  "layout_mapping": {
+    "internal/": "./",
+    "ddtrace/ext/": "ddtrace/ext/"
+  },
+  "excluded_features": [
+    "general APM tracer",
+    "APM version implementation",
+    "security/profiling/mock integrations",
+    "YAML/Fleet configuration",
+    "telemetry heartbeats",
+    "dependency/endpoint inventories",
+    "APM process enrichment"
+  ],
+  "additional_sources": [
+    {
+      "path": "ddtrace/tracer/civisibility_tslv.go",
+      "sha256": "34d12cb45f719abda1f558e7ce5f06eaef2313d604417a61d55243eb6382d33e",
+      "use": "Native CI wire schema adapted in internal/minitracer/events.go; client implementation remains POC-owned."
+    }
+  ]
+}

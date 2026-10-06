@@ -1,0 +1,23 @@
+{
+  "mini": {
+    "sessions": 1,
+    "modules": 1,
+    "suites": 1,
+    "tests": 1,
+    "spans": 2
+  },
+  "scope": "root/child spans attached to the active test context; external APM integration uses propagation",
+  "sdk": {
+    "sessions": 1,
+    "modules": 1,
+    "suites": 1,
+    "tests": 1,
+    "spans": 2
+  },
+  "status": "passed",
+  "timing": {
+    "scope": "prebuilt binary: startup, settings, execution and shutdown/flush",
+    "sdk_wall_ns": 12671278,
+    "mini_wall_ns": 8805109
+  }
+}

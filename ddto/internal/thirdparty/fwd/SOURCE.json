@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/philhofer/fwd",
+  "commit": "20a13a1f6b7cb47a126dcb75152e21e1383bbaba",
+  "version": "v1.2.0",
+  "module": "github.com/philhofer/fwd",
+  "licenses": [
+    "LICENSE.md"
+  ],
+  "files": [
+    {
+      "path": "LICENSE.md",
+      "sha256": "430da36bd967b28fc662f05e9245306da10941e93911052114a20ef10e4410f8",
+      "role": "license",
+      "source_path": "LICENSE.md",
+      "source_sha256": "430da36bd967b28fc662f05e9245306da10941e93911052114a20ef10e4410f8"
+    },
+    {
+      "path": "README.md",
+      "sha256": "da2147e5da1e0c72469fa0c2c06f89ea0476b7822ab6b3bdd455bdab56557450",
+      "role": "local"
+    },
+    {
+      "path": "reader.go",
+      "sha256": "88f5751d45838451210c319b234cf367a90e6fca7147e3bebcea18de296f53fc",
+      "role": "upstream",
+      "source_path": "reader.go",
+      "source_sha256": "88f5751d45838451210c319b234cf367a90e6fca7147e3bebcea18de296f53fc"
+    },
+    {
+      "path": "reader_test.go",
+      "sha256": "952100de4af00d2f2077291b01a7823a46b07f25cb396eba0866704bc207aaf3",
+      "role": "upstream",
+      "source_path": "reader_test.go",
+      "source_sha256": "952100de4af00d2f2077291b01a7823a46b07f25cb396eba0866704bc207aaf3"
+    },
+    {
+      "path": "writer.go",
+      "sha256": "8c476ac3d403f6c9bd6bf753921a8afbe49311ab69d20c32e9062d00cdfa80fb",
+      "role": "upstream",
+      "source_path": "writer.go",
+      "source_sha256": "8c476ac3d403f6c9bd6bf753921a8afbe49311ab69d20c32e9062d00cdfa80fb"
+    },
+    {
+      "path": "writer_appengine.go",
+      "sha256": "c013679a8f71aeb0647e34d978a478dab37226459f8e05aa5c374e40cd9bf4cf",
+      "role": "upstream",
+      "source_path": "writer_appengine.go",
+      "source_sha256": "c013679a8f71aeb0647e34d978a478dab37226459f8e05aa5c374e40cd9bf4cf"
+    },
+    {
+      "path": "writer_test.go",
+      "sha256": "8cca5099144e2c2479db91fcff4b2a5ace24923de74b11f62cdebb31db4c71cb",
+      "role": "upstream",
+      "source_path": "writer_test.go",
+      "source_sha256": "8cca5099144e2c2479db91fcff4b2a5ace24923de74b11f62cdebb31db4c71cb"
+    },
+    {
+      "path": "writer_tinygo.go",
+      "sha256": "c9a263f367f5dfcc3e90b45e4caf3b272233762a9f5c8756206eb1079c8bf397",
+      "role": "upstream",
+      "source_path": "writer_tinygo.go",
+      "source_sha256": "c9a263f367f5dfcc3e90b45e4caf3b272233762a9f5c8756206eb1079c8bf397"
+    },
+    {
+      "path": "writer_unsafe.go",
+      "sha256": "34956ec561f9e4d085ff9548ac6940079b98d42ece75cfd69cdfea51649e70cd",
+      "role": "upstream",
+      "source_path": "writer_unsafe.go",
+      "source_sha256": "34956ec561f9e4d085ff9548ac6940079b98d42ece75cfd69cdfea51649e70cd"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "mini": {
+    "sessions": 1,
+    "modules": 1,
+    "suites": 1,
+    "tests": 1,
+    "spans": 0
+  },
+  "scope": "Unix Agent: settings and test-cycle delivery over a real socket",
+  "sdk": {
+    "sessions": 1,
+    "modules": 1,
+    "suites": 1,
+    "tests": 1,
+    "spans": 0
+  },
+  "status": "passed",
+  "timing": {
+    "scope": "prebuilt binary: startup, settings, execution and shutdown/flush",
+    "sdk_wall_ns": 19731003,
+    "mini_wall_ns": 15579384
+  }
+}

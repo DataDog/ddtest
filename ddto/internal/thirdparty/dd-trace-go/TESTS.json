@@ -1,0 +1,641 @@
+{
+  "sdk": "github.com/DataDog/dd-trace-go/v2@v2.12.0-dev.3.0.20261002145613-96aedb31048c",
+  "full_file_count": 62,
+  "full_ci_test_file_count": 60,
+  "selected_test_or_helper_files": 3,
+  "assertion_policy": "Preserve upstream assertions and synthetic input semantics; adapt repository/namespace and replace APM mock bootstrap for the native runtime. End-to-end wire tests verify actual delivery separately.",
+  "files": [
+    {
+      "source": "internal/civisibility/envconfig/enabled_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/envconfig/enabled_test.go",
+      "source_sha256": "c8d53cadd64dc149cd8528dc0b32048a8ff041a61936322f03cea463c3e49d10",
+      "adapted_sha256": "af10a5a57bf27510876981b394a79383acb41abd5f478215086f5f953e2ad688",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/integrations/civisibility_features_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_features_test.go",
+      "source_sha256": "b305b518346a7916864815adf9b5dd0ab257ccc861bc8f4cff21d67a36e9d32e",
+      "adapted_sha256": "c60de6d26595a6644efda397836a76a2396df59d4dc2df66f04f10f53a23b090",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/integrations/civisibility_http_client_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_http_client_test.go",
+      "source_sha256": "f3a5d4ebb67abc7b26f5bc50cf92d36b08cd941b1efdc874b1afcfe0f2d17241",
+      "adapted_sha256": "1bcbb7ce44b4a89460635b356ddbc98ef0c249e6c213ba288f541924463f71a9",
+      "kind": "full",
+      "adaptation": "Restore helper renamed to native CI bootstrap cleanup"
+    },
+    {
+      "source": "internal/civisibility/integrations/civisibility_offline_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_offline_test.go",
+      "source_sha256": "9e289581623ef1124061a734d177ca11209ced50def1ca4d713c32fd0c983425",
+      "adapted_sha256": "21ae7dc5c1c37fc97510eb7e10ffbc061fe748e748e0a6c42f2d527bf8d491f2",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/integrations/civisibility_read_cache_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_read_cache_test.go",
+      "source_sha256": "b9b701d9ef9dc29c4d85b7665b68678330b7558244ae188b505a758b54c12ed4",
+      "adapted_sha256": "6f7024a7612daaaa3e1988d91f8b1672d4a6eac29874e3f1a650a11303054e15",
+      "kind": "full",
+      "adaptation": "Internal import relocation; run all read-cache assertions in a fresh subprocess to isolate backend counts from asynchronous mock bootstrap workers"
+    },
+    {
+      "source": "internal/civisibility/integrations/civisibility_signal_handler_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_signal_handler_test.go",
+      "source_sha256": "02c7164b23ce0e0941f53170dd07b651eebedcbc1e751a11f62cabc97dc04d48",
+      "adapted_sha256": "6bcb799cdea161a1349202e3715e9ee11aa088bc9147930b5725e18494bfe407",
+      "kind": "full",
+      "adaptation": "Native writer-free CI bootstrap replaces APM mock initialization; signal/shutdown assertions preserved"
+    },
+    {
+      "source": "internal/civisibility/integrations/testing_helpers_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/testing_helpers_test.go",
+      "source_sha256": "71aff6b4ca061ab11adf4593e554e1f93c6d8e77475ec2aae4d1178b5a9dac47",
+      "adapted_sha256": "163888c3fc03b8547812633749786c49ddbeea3c624448e6ed8732ff6226ba25",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/ci_providers_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/ci_providers_test.go",
+      "source_sha256": "39195586239cc50133355bce01a908ccb75bc1618c282487cf7d1454e6c8c6db",
+      "adapted_sha256": "4c8ede94e9fe8cffd9afe30f7c0f88cf49c6faec332c861c38dbedb36134e6e8",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/codeowners_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/codeowners_test.go",
+      "source_sha256": "017d81ee71314d617983dbdeb6e1f373efa6ddb53c041e1805ab6c078a9b8219",
+      "adapted_sha256": "3084ccb1a62703baf80048dce8ee46b31e86df812826bf5f099b024d9c84861b",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/environmentTags_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/environmentTags_test.go",
+      "source_sha256": "f7692324404a701d3146785da7a3006801da91a387fd9782f5938ab6326451bd",
+      "adapted_sha256": "41019b469814fb9fbb61098672f6593af261f31d49ac75950ee1d71f58d02234",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/file_environmental_data_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/file_environmental_data_test.go",
+      "source_sha256": "bf98aef50f88fd2670bbedd4bb97e89bc5eda538a603eafb74f36b873a1223f1",
+      "adapted_sha256": "ae698e9d7533a9de5fa414d9f4ffaa18fdc68fba8d628b70cec3c51a30d8ca5d",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/git_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/git_test.go",
+      "source_sha256": "a36fb9a5c074542d6104cb78850c8ac1b03d516a8177e2c61e9e61e2229efd6b",
+      "adapted_sha256": "7ee8850ccfe4f32cefb8ef4c276d4d82f49a2f1ba6d597b46ef7ec4b0f624a2c",
+      "kind": "full",
+      "adaptation": "Three history-dependent tests create an isolated Git fixture with a real commit instead of assuming the checkout has a .git directory"
+    },
+    {
+      "source": "internal/civisibility/utils/home_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/home_test.go",
+      "source_sha256": "3aedd5bbab8b6eb816071298f00225d2359d6c7a26ba3a439fa065dcf4bb2c8d",
+      "adapted_sha256": "3aedd5bbab8b6eb816071298f00225d2359d6c7a26ba3a439fa065dcf4bb2c8d",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/names_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/names_test.go",
+      "source_sha256": "019176c02cd84f920c0fa74ffab9165bd884a4f21f9bcb5d3539eb3ecd130451",
+      "adapted_sha256": "bac24b5a20a4a5463af46d93ffe45b05bfb89401d7b3b053a910ac4d2d8bb638",
+      "kind": "full",
+      "adaptation": "Expected runtime module namespace is relocated to this POC"
+    },
+    {
+      "source": "internal/civisibility/utils/source_paths_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/source_paths_test.go",
+      "source_sha256": "2c0986a51c21f3ba4523df13ca66ffb1caf72fa9dcd7fec6bb024af826b3a3bc",
+      "adapted_sha256": "c4c4aed524e7d69ea68cef93422746123200f254aed40f285aa3c29d472fbca2",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/source_paths_windows_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/source_paths_windows_test.go",
+      "source_sha256": "8115fc517b693f779f8c5c34df1197696ee2818b469d3d31e8a1cfdba200dbf5",
+      "adapted_sha256": "6463e22b7d281f392c5ac9606d1a24168958976b4c888105943503d64380e740",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/filebitmap/filebitmap_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap/filebitmap_test.go",
+      "source_sha256": "9c49b70e75c06358f8ce6a66a6c4f08c78e3e4c5e12325f8dbc3c9c2cec473f9",
+      "adapted_sha256": "9c49b70e75c06358f8ce6a66a6c4f08c78e3e4c5e12325f8dbc3c9c2cec473f9",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/impactedtests/impacted_tests_bench_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/impactedtests/impacted_tests_bench_test.go",
+      "source_sha256": "b230531c878d92303f63bfc22ee767c4e21e51509046a17db5b8bfd47ea03fd4",
+      "adapted_sha256": "310a4a7bc278ea6d2f1d7f8fc556677f7b6334fb9f65acdbc3c57c73b2838c01",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/impactedtests/impacted_tests_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/impactedtests/impacted_tests_test.go",
+      "source_sha256": "f6440547663e6bda9eb17b602da09d3e31305ee14b2b25f751adef00a18d0dcb",
+      "adapted_sha256": "cfe58cab6681ddfb23fdce338873ded943bc3f7c3f242daf46f1448d0c73acd2",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/net/client_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/client_test.go",
+      "source_sha256": "675c0e83ed6f974dc9d03da8e2336fbed1915ce176d2b7d447d397ae4090494b",
+      "adapted_sha256": "98d71342584b321d84468927abda7dd14344df8b59831936e292b63ea49b8756",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/net/coverage_report_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/coverage_report_test.go",
+      "source_sha256": "b912c87afbe04d20ce64e0d8cb99da4d196f77fac286a1a9e79888dcc23156f3",
+      "adapted_sha256": "d755f1edbdd4612eb699b47313539f3b6627043a60f6a4ab8d5824e85294c7a1",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/net/coverage_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/coverage_test.go",
+      "source_sha256": "80c6a5bf050c5e46e326ebde53e6e7a85e2a085c58abf44efa6d841568150dc3",
+      "adapted_sha256": "bef07f3c830137539f5506bec8270162c6e8f56aa9332c2ac668c84e89c409d4",
+      "kind": "full",
+      "adaptation": "Internal import relocation, including the vendored MessagePack runtime; upstream assertions preserved."
+    },
+    {
+      "source": "internal/civisibility/utils/net/http_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/http_test.go",
+      "source_sha256": "4c280d018a3d9acef0c767aa30d15dd424cb2c49b3f95a044eb5013bda7985cd",
+      "adapted_sha256": "4c280d018a3d9acef0c767aa30d15dd424cb2c49b3f95a044eb5013bda7985cd",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/net/known_tests_api_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/known_tests_api_test.go",
+      "source_sha256": "a3a13c0b9835a87a3300965e02573d353af61f04950c26ef00637d320d793101",
+      "adapted_sha256": "f6ca5533fee68f790d29a4522bf85a0980876c109ed8849cb0ecc990ffaa68ed",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/net/read_cache_benchmark_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/read_cache_benchmark_test.go",
+      "source_sha256": "947be41f48e189f84f1dcd08191e020af470c24f127a2e4715d34df0fb4f92c0",
+      "adapted_sha256": "1ef59550e2a27f47f710e6b2bc770b740b1bd5b43bd4fa6119f6b3025b86dd8e",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/net/read_cache_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/read_cache_test.go",
+      "source_sha256": "372b6f26b536302b1d8a7ad3f8d5ab24bc28e1cc752c83584990f6062abd0a9f",
+      "adapted_sha256": "f6a5a921d157e8caf1abba01c30a317827d67bfd45fa67e09fb9f36239d98a81",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/net/searchcommits_api_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/searchcommits_api_test.go",
+      "source_sha256": "f1af0a6bb3e466e4c526c0cb9902dcaf4af684c8dece8adc953597e9e0ff42bb",
+      "adapted_sha256": "7b41ae3b381bfb053a1eaee49ea0f838b771548d7edd0ae2b99380ff13bc4581",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/net/sendpackfiles_api_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/sendpackfiles_api_test.go",
+      "source_sha256": "bbd2be36b10b640a432f3c38a23fce7c566ecdf186a5e5fa7c4f29bcb510b47b",
+      "adapted_sha256": "c26ef0bd5296c43ccd01f5df76e2b06f97292e6d52793ab0133721ec56357369",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/net/settings_api_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/settings_api_test.go",
+      "source_sha256": "58dfcb6b753e6f7105a66a6ec574b3ca964cadacd9d1248d528087954adf5261",
+      "adapted_sha256": "c7eaaf79968b8dcec5ef1398d0570726534ccae05bc7d146dd8d7afb3deb9715",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/net/skippable_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/skippable_test.go",
+      "source_sha256": "3d72d6b66e251fbf64c05bc0f976f6e7cb18de7475ef854143e658817a9c24ff",
+      "adapted_sha256": "b0378db963469f4698b41adf65994decdcc09ebc47abc1fd1ef6849d8f0e23a1",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/net/test_management_tests_api_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/test_management_tests_api_test.go",
+      "source_sha256": "c1b159510051564d8a01ca47faacd4e633356f204534447f982fa2cef7f6f735",
+      "adapted_sha256": "0b2bf5264260ed884e793f0bd41f079703b0701cf3b7341a63ab3e8dc81a59a3",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/net/uds_client_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/uds_client_test.go",
+      "source_sha256": "fe222c289780242fc20d9bf834a62d1098ade436ef8751ca7798978e24a09f46",
+      "adapted_sha256": "944950b8bc3d8b579c640bbac8698f552bc8f6da222ae63a78e894b1aebf035b",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/utils/telemetry/telemetry_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/telemetry/telemetry_test.go",
+      "source_sha256": "4f82821b0c6d1e7c933c92ba17ff19d31a05520c9a5aa187346420cd5b307145",
+      "adapted_sha256": "2e2f441f9ae72d8b47d0e76c8e4905b5fc97dbbfb6154464746e3788cfd7152f",
+      "kind": "full",
+      "adaptation": "Original assertions retained; local regression checks added for bound lifecycle counters, feature tags and client resets."
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/retry_attempt_differential_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/retry_attempt_differential_test.go",
+      "source_sha256": "ea6b656e45b261d729e4df971d71e9a8a498b4ef9e49615e7f5002143d267627",
+      "adapted_sha256": "66b21ef47bf5d47ca2c2e72903eedd3a94d2da7697bc70c912ac28c40759ddd1",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/retry_attempt_methods_go126_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/retry_attempt_methods_go126_test.go",
+      "source_sha256": "cf04736a75f8423ba919b36834508a21fb2bb4b46a774b7836b432d38b5b3709",
+      "adapted_sha256": "cf04736a75f8423ba919b36834508a21fb2bb4b46a774b7836b432d38b5b3709",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/retry_attempt_methods_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/retry_attempt_methods_test.go",
+      "source_sha256": "b47da87e7107d98e6230e5270e956e2f62c027306470ac7bc157f1148f6a05e4",
+      "adapted_sha256": "b47da87e7107d98e6230e5270e956e2f62c027306470ac7bc157f1148f6a05e4",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/retry_attempt_runner_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/retry_attempt_runner_test.go",
+      "source_sha256": "494775aca647c6f9690947401b765b17491750e26309e15b09e452d17d1c7889",
+      "adapted_sha256": "494775aca647c6f9690947401b765b17491750e26309e15b09e452d17d1c7889",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/retry_attempt_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/retry_attempt_test.go",
+      "source_sha256": "622692e42d33cea8b17dc71f6067583ffb9ba76936953ef599c8ba3c255a044a",
+      "adapted_sha256": "7c8cd81879181d680f0ae0db0165f84935e094c1fb85ef5e9aa8c22dc3ebf17f",
+      "kind": "full",
+      "adaptation": "Two nil unsafe.Pointer checks use require.Zero: Testify before v1.8.2, including the required v1.7.5, does not treat a nil unsafe.Pointer as nil"
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/retry_test_helpers_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/retry_test_helpers_test.go",
+      "source_sha256": "b0e72ad0de4a5ae4f79883c5d70015e0004c04a418235ed324546f55e25a3c4c",
+      "adapted_sha256": "b0e72ad0de4a5ae4f79883c5d70015e0004c04a418235ed324546f55e25a3c4c",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/integrations/logs/logs_additional_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/logs/logs_additional_test.go",
+      "source_sha256": "ae9e5f603ab11520a3be922b4644ba8af40cab143b393702de4c8ea09aa16e49",
+      "adapted_sha256": "ae9e5f603ab11520a3be922b4644ba8af40cab143b393702de4c8ea09aa16e49",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/integrations/logs/logs_payload_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/logs/logs_payload_test.go",
+      "source_sha256": "02d682f67fbed2d2631dfc57b55a1dc84860527cdd0171b922c4dab24ca585eb",
+      "adapted_sha256": "02d682f67fbed2d2631dfc57b55a1dc84860527cdd0171b922c4dab24ca585eb",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/integrations/logs/logs_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/logs/logs_test.go",
+      "source_sha256": "af4ff7f7f05d2c3d9c283f8c9e8283911d482f99c53b50307eb6ed954d09cdf3",
+      "adapted_sha256": "af4ff7f7f05d2c3d9c283f8c9e8283911d482f99c53b50307eb6ed954d09cdf3",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/integrations/logs/logs_writer_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/logs/logs_writer_test.go",
+      "source_sha256": "8ef92f56f4ca7061e2998821be6191179a212ee0169ca3dd8aaf7ebbbf77d48d",
+      "adapted_sha256": "15006419447184372787f47d3b5a7a099a560b226abae546a88cd729a64138cc",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/coverage/coverage_payload_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage/coverage_payload_test.go",
+      "source_sha256": "3123d88edd7e19dcbac9ad55ec0222b9f91c2ef94d5511fb5d854e9cfd5b1ccb",
+      "adapted_sha256": "3fdf1f03c36f4c4570992f22f805db82effdd502bbe4e9befc63ab2bd4e0d6d1",
+      "kind": "full",
+      "adaptation": "Internal import relocation, including the vendored MessagePack runtime; upstream assertions preserved."
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/coverage/coverage_writer_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage/coverage_writer_test.go",
+      "source_sha256": "efbb2944244938dc1878b434a1d7ea90cb807916c65174e67217e0a51ba4761d",
+      "adapted_sha256": "97d6e9ed4ed3248a2d4c7a954130eebc5b9d74fccd8120893bcc63759be8103c",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/coverage/lcov_report_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage/lcov_report_test.go",
+      "source_sha256": "c524a44acc49c08a288f387aa4157879369ac8798711f1e142d4c6a9f9495d33",
+      "adapted_sha256": "c3c410c7090825926e8e5702be10c97538cfa75289438aa6b6ad289adc6dd523",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/coverage/process_coverage_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage/process_coverage_test.go",
+      "source_sha256": "b15c366e141a0063219a29dd8d8be393ae821b3367c8c787bc04249ff4739294",
+      "adapted_sha256": "f127c1c18c8de00d659de555238ca5cd5b46941d3d1d7e4ff447d6accc6aa0d9",
+      "kind": "full",
+      "adaptation": "Internal import relocation, including the vendored MessagePack runtime; upstream assertions preserved."
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/coverage/reflections_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage/reflections_test.go",
+      "source_sha256": "14209f910036427dd17420b3474ed8d628bbd8b7ccf25baf9abbaf24432913f1",
+      "adapted_sha256": "14209f910036427dd17420b3474ed8d628bbd8b7ccf25baf9abbaf24432913f1",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/coverage/test_coverage_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage/test_coverage_test.go",
+      "source_sha256": "58c947565f608a52c40ef1253203722b152197e39ee349b3d70b3cdad88cbed3",
+      "adapted_sha256": "55154c6691421457d4c51a30329ffc828f1699c84787ba14bcdbc6578ade9989",
+      "kind": "full",
+      "adaptation": "Internal import relocation only"
+    },
+    {
+      "source": "internal/bazel/bazel_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/bazel/bazel_test.go",
+      "source_sha256": "2f11987f5b4d386ed1fd95ad91b416ae19e6648c0078fe8632005c2cb54b5254",
+      "adapted_sha256": "393beaccb16f76ddcbb29c2453a0e013fe9fb07b363a0ad9422e096455609c42",
+      "kind": "full",
+      "adaptation": "Internal import relocation, including the vendored MessagePack runtime; upstream assertions preserved."
+    },
+    {
+      "source": "internal/telemetry/telemetrytest/capture.go",
+      "destination": "internal/thirdparty/dd-trace-go/telemetry/telemetrytest/capture.go",
+      "source_sha256": "1b9d5489ee545d6861da90c033ce8b36b66897b14fb3c751ec456881cb724746",
+      "adapted_sha256": "4dbc718eaef2909750a4db87365acb36774a9abd9ed7574eff20026e2ea2ddfd",
+      "kind": "adapted",
+      "adaptation": "Internal import relocation and removal of the retired APM dependency loader or endpoint-inventory API. CI recording assertions retained."
+    },
+    {
+      "source": "internal/telemetry/telemetrytest/capture_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/telemetry/telemetrytest/capture_test.go",
+      "source_sha256": "efe097c2eb80d2214c3e7043d6856b6afafd811447ddcf4f3518965af40ca86f",
+      "adapted_sha256": "b01209edce487a4b4e4cb1c32aad362ad1fa44b337ca3299af6b908a4b843ee9",
+      "kind": "replacement",
+      "adaptation": "Retired upstream APM endpoint-inventory test with its removed feature; replacement asserts CI metrics delivery and absence of heartbeat, dependencies and endpoints."
+    },
+    {
+      "source": "internal/telemetry/telemetrytest/globalclient_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/telemetry/telemetrytest/globalclient_test.go",
+      "source_sha256": "e4c1e59233c3ef6ad52c7da53be3e84038591c453181ad9d9616564a2ecdc416",
+      "adapted_sha256": "9e43a8d38ae9fb8c4144e78ab04fc5fd8127a0603a19e17fed1638f3537a4149",
+      "kind": "full",
+      "adaptation": "If the enclosing suite disables telemetry, run all original recorder assertions in a fresh local test process with telemetry enabled before initialization"
+    },
+    {
+      "source": "internal/telemetry/telemetrytest/record.go",
+      "destination": "internal/thirdparty/dd-trace-go/telemetry/telemetrytest/record.go",
+      "source_sha256": "888b312dba9690a42c0082720a536da540be91532748357dbd1f7b802ff9dfc6",
+      "adapted_sha256": "257886bb4fb1b5a66da171418c90eae7ccf6c8f9f5de49523067421983e40a67",
+      "kind": "adapted",
+      "adaptation": "Internal import relocation and removal of the retired APM dependency loader or endpoint-inventory API. CI recording assertions retained."
+    },
+    {
+      "source": "internal/civisibility/integrations/manual_api_sourcecache_adjacent_literal_fixture_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcecache_adjacent_literal_fixture_test.go",
+      "source_sha256": "edfe8be50ccfa6db853f22dfa3867fd04e07c39aad44c4255d7cd036bea6ed2a",
+      "adapted_sha256": "edfe8be50ccfa6db853f22dfa3867fd04e07c39aad44c4255d7cd036bea6ed2a",
+      "kind": "full",
+      "adaptation": "native writer-free CI bootstrap replaces unused APM mock buffer reset"
+    },
+    {
+      "source": "internal/civisibility/integrations/manual_api_sourcecache_decl_fixture_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcecache_decl_fixture_test.go",
+      "source_sha256": "bffc01a08c922b07d594c2ad43449761d254a119b9fb44d99de9ddb518267135",
+      "adapted_sha256": "bffc01a08c922b07d594c2ad43449761d254a119b9fb44d99de9ddb518267135",
+      "kind": "full",
+      "adaptation": "native writer-free CI bootstrap replaces unused APM mock buffer reset"
+    },
+    {
+      "source": "internal/civisibility/integrations/manual_api_sourcecache_funcn_fixture_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcecache_funcn_fixture_test.go",
+      "source_sha256": "f628213bdde71615fadee38946d1391b922d6142454c9e2372d23fff056f6f94",
+      "adapted_sha256": "f628213bdde71615fadee38946d1391b922d6142454c9e2372d23fff056f6f94",
+      "kind": "full",
+      "adaptation": "native writer-free CI bootstrap replaces unused APM mock buffer reset"
+    },
+    {
+      "source": "internal/civisibility/integrations/manual_api_sourcecache_same_name_fixture_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcecache_same_name_fixture_test.go",
+      "source_sha256": "57d4449c0baf2bf251a9938074b4566b3efa06d0180a778687480d85a3574982",
+      "adapted_sha256": "57d4449c0baf2bf251a9938074b4566b3efa06d0180a778687480d85a3574982",
+      "kind": "full",
+      "adaptation": "native writer-free CI bootstrap replaces unused APM mock buffer reset"
+    },
+    {
+      "source": "internal/civisibility/integrations/manual_api_sourcecache_suite_fixture_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcecache_suite_fixture_test.go",
+      "source_sha256": "dc3dac1340f4881d8c223e75ef944939cc27bc927cf7987abbb1ee2380444c05",
+      "adapted_sha256": "dc3dac1340f4881d8c223e75ef944939cc27bc927cf7987abbb1ee2380444c05",
+      "kind": "full",
+      "adaptation": "native writer-free CI bootstrap replaces unused APM mock buffer reset"
+    },
+    {
+      "source": "internal/civisibility/integrations/manual_api_sourcecache_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcecache_test.go",
+      "source_sha256": "aff071e72f16cc26f99ecc09ef478cffc02a52a4cee72634e1653ab610d8c793",
+      "adapted_sha256": "2d858cded376372ea83a9cf73b85b104fbce60eb67b34abcf0b1c429c6af2223",
+      "kind": "full",
+      "adaptation": "Native spans replace unused APM mock resets; an explicit CODEOWNERS fixture supplies the upstream repository input; current repository URL is relocated"
+    },
+    {
+      "source": "internal/civisibility/integrations/manual_api_sourcepath_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcepath_test.go",
+      "source_sha256": "51f8df98c5891dd6c6ef4e64525e5aba3da0f5017d876737185ffb9a4902b1b7",
+      "adapted_sha256": "b38fb4eab15218908a6e6a8b9599eb618de5e1a8ede84d26b606cddc5194d9e0",
+      "kind": "full",
+      "adaptation": "Runtime self-path and repository URL are relocated; source parsing and trimpath assertions remain intact"
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/instrumentation_selector_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/instrumentation_selector_test.go",
+      "source_sha256": "c1673bff20eea826b440682e29a4678a8aab3d49e83776bc84e4ff425edddc47",
+      "adapted_sha256": "3715a55bd8dbae6b3974057127b622e8ab15777ae8b2374d3f3a527bc8f6315b",
+      "kind": "full",
+      "adaptation": "internal import relocation; helper assertions invoked by native policy test entrypoint"
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/itr_state_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/itr_state_test.go",
+      "source_sha256": "e7466cf422ad6c0af70c6419874e35dad6dabcaa729e05d7e9ecdad3d2683ae9",
+      "adapted_sha256": "13a7e28cc45f8e97d1bdfc96e7c90a91757aacbf09922cb03f8c39da3833575e",
+      "kind": "full",
+      "adaptation": "internal import relocation; helper assertions invoked by native policy test entrypoint"
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/retry_process_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/ci_policy_helpers_test.go",
+      "source_sha256": "e6b80942c6218282fbf896b741e54ce4a33886de522e7134457a27485db06d6b",
+      "adapted_sha256": "3a90ac15c9dc11b4080e5f9726984319e213899195eaeb548f698933d22c9972",
+      "kind": "helpers",
+      "adaptation": "extracted only recording CI event/session/module/suite/test helpers; no APM tracer mocks"
+    },
+    {
+      "source": "internal/civisibility/integrations/civisibility_parent_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_parent_test.go",
+      "source_sha256": "87c77b91fe4ff0304f4089f0f4815d9935418b6b5537bdfca300d8736956a508",
+      "adapted_sha256": "318065af8032ec9569da962e5a41b46f4a54aa319f2a2bed28b1a8d9c0cc1f1c",
+      "kind": "full",
+      "adaptation": "APM mock startup is replaced by a writer-free native CI bootstrap callback; assertions preserved"
+    },
+    {
+      "source": "internal/civisibility/integrations/manual_api_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/native_source_helpers_test.go",
+      "source_sha256": "4bd9aa343481def100495d099d85910f93c0165d26b676913981815d89a01145",
+      "adapted_sha256": "89dce0c50bec4e6aae6a8a30d44b02b3692cdab770a442a6084215d4d2cca4cc",
+      "kind": "helpers",
+      "adaptation": "Only the four original session/module/suite/test constructor helpers are extracted; source tests use native spans"
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/quarantine_process_race_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/ci_coverage_concurrency_test.go",
+      "source_sha256": "9567417fe639c414d332aebd0aa5699c1b8d280892375c933a189fa703020413",
+      "adapted_sha256": "f67c7a495189a2aba791d6f12ca223d0a41ac7d629425694044a27da88645d6b",
+      "kind": "selected tests",
+      "adaptation": "Only TestQuarantinedRaceCoverageCoordinatorDiscardsOnlySiblingOverlap, TestQuarantinedRaceParallelContinuationDisablesCoverage and TestQuarantinedRaceAggregateCoverageStartsAtSelectedRoot are extracted"
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/coverage/runtime_coverage_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage/runtime_coverage_test.go",
+      "source_sha256": "36fd8cde99baa2dadb093e43ba97f93663eea8b8101bcea38d5ab51619d1ee4a",
+      "adapted_sha256": "36fd8cde99baa2dadb093e43ba97f93663eea8b8101bcea38d5ab51619d1ee4a",
+      "kind": "full",
+      "adaptation": "Original runtime coverage-emitter concurrency and recovery assertions; atomic coverage required."
+    }
+  ],
+  "ci_files_not_fully_ported": [
+    "internal/civisibility/integrations/civisibility_read_cache_e2e_test.go",
+    "internal/civisibility/integrations/gotesting/efd_faulty_session_test.go",
+    "internal/civisibility/integrations/gotesting/failnow/failnow_test.go",
+    "internal/civisibility/integrations/gotesting/fixtures/itrbackfill/manual/app/app_test.go",
+    "internal/civisibility/integrations/gotesting/fixtures/itrbackfill/manual/app/main_test.go",
+    "internal/civisibility/integrations/gotesting/itrbackfillfixture/itrbackfill_fixture_test.go",
+    "internal/civisibility/integrations/gotesting/legacy_mrun/legacy_mrun_test.go",
+    "internal/civisibility/integrations/gotesting/quarantine_process_norace_test.go",
+    "internal/civisibility/integrations/gotesting/quarantine_process_race_test.go",
+    "internal/civisibility/integrations/gotesting/quarantine_process_test.go",
+    "internal/civisibility/integrations/gotesting/reflections_test.go",
+    "internal/civisibility/integrations/gotesting/retry_attempt_integration_test.go",
+    "internal/civisibility/integrations/gotesting/retry_process_deferred_test.go",
+    "internal/civisibility/integrations/gotesting/retry_process_race_test.go",
+    "internal/civisibility/integrations/gotesting/retry_process_test.go",
+    "internal/civisibility/integrations/gotesting/retry_process_unix_test.go",
+    "internal/civisibility/integrations/gotesting/retry_process_windows_test.go",
+    "internal/civisibility/integrations/gotesting/retryprocess/burst_benchmark_test.go",
+    "internal/civisibility/integrations/gotesting/retryprocess/fixtures_test.go",
+    "internal/civisibility/integrations/gotesting/retryprocess/retryprocess_test.go",
+    "internal/civisibility/integrations/gotesting/subtests/fixtures_test.go",
+    "internal/civisibility/integrations/gotesting/subtests/main_test.go",
+    "internal/civisibility/integrations/gotesting/subtests/subtestcontroller_test.go",
+    "internal/civisibility/integrations/gotesting/testcontroller_test.go",
+    "internal/civisibility/integrations/gotesting/testify_test.go",
+    "internal/civisibility/integrations/gotesting/testify_utils_test.go",
+    "internal/civisibility/integrations/gotesting/testing_test.go",
+    "internal/civisibility/integrations/manual_api_mocktracer_test.go",
+    "internal/civisibility/integrations/manual_api_test.go"
+  ],
+  "not_fully_ported_scope": "APM mock/span-count tests, Orchestrion-specific fixtures, subprocess control and platform cases are not represented as a complete upstream suite. POC-owned SDK/Orchestrion differential tests separately cover native testing and Testify lifecycle, retries, EFD, ITR, quarantine, attempt-to-fix, coverage and deferred delivery; they do not turn this inventory into a full upstream-suite port.",
+  "ci_only_cleanup": "The retired APM endpoint test is explicitly marked replacement; reduced telemetry helpers are marked adapted. Full CI test-file count is unchanged. The unused telemetrytest MockClient helper is not incorporated, so tests need no testify/mock.",
+  "base_commit": "96aedb31048c07e29e7a20a4333dc3b8d289c52d",
+  "local_performance_tests": [
+    {
+      "path": "telemetry/concurrency_test.go",
+      "purpose": "Canonical registration, startup replay, swaps and test resets; coherent count/gauge/rate points and collection under concurrent submission."
+    },
+    {
+      "path": "civisibility/utils/telemetry/telemetry_test.go",
+      "purpose": "Original SDK tests plus ordinary/feature-tag metric equivalence across fresh clients."
+    },
+    {
+      "path": "stacktrace/classification_test.go",
+      "purpose": "Concurrent first use preserves internal filtering and third-party/customer classification."
+    }
+  ],
+  "local_delivery_checks": [
+    {
+      "path": "integration/parity_matrix_test.go",
+      "purpose": "TestDeferredDeliveryParityMatrix compares 17 deferred CI combinations against unchanged SDK/Orchestrion."
+    },
+    {
+      "path": "integration/parity_testify_test.go",
+      "purpose": "TestDeferredDeliveryTestifyParity compares seven deferred suite combinations."
+    },
+    {
+      "path": "integration/goleak_test.go",
+      "purpose": "Normal and deferred goleak checks retain real test/HTTP leak detection; library coverage and race are exercised."
+    },
+    {
+      "path": "integration/mini_test.go",
+      "purpose": "Map only Mini executeInternalTest.func1 testing.go:844 to SDK testing.go:838; other library locations and application frames stay strict."
+    }
+  ],
+  "local_common_metadata_checks": [
+    {
+      "path": "internal/minitracer/common_tags_test.go",
+      "purpose": "Decoded HTTP defaults/overrides, numeric masking, mixed snapshots, sealed concurrency and conservative byte accounting."
+    },
+    {
+      "path": "integration/common_metadata_test.go",
+      "purpose": "Semantic SDK comparison resolves declared CI defaults while retaining raw wire placement and wrong/missing/override/collision negative controls."
+    },
+    {
+      "path": "internal/thirdparty/dd-trace-go/civisibility/integrations/common_metadata_test.go",
+      "purpose": "Retain late tags, direct cached-map updates, Unicode truncation and Bazel filtering."
+    },
+    {
+      "path": "internal/thirdparty/dd-trace-go/civisibility/utils/environment_snapshot_test.go",
+      "purpose": "Immutable old snapshots and revisions follow AddCITags, direct edits and reset."
+    },
+    {
+      "path": "internal/minitracer/common_budget_test.go",
+      "purpose": "Large default replaced by text/metric consumes no byte budget; valid payload is delivered and kept below intake limit."
+    }
+  ]
+}

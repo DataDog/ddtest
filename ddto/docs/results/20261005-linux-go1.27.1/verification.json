@@ -1,0 +1,27 @@
+{
+  "head": "9d4786fbd27f573bb68c5516bf23b336e8d7bdaa",
+  "clean_worktree": true,
+  "runtime_complete_cells": 48,
+  "runtime_verified_cells": 44,
+  "raw_runtime_groups": 1440,
+  "measured_runtime_groups": 1200,
+  "warmups": 240,
+  "actual_failed_groups": 60,
+  "passing_groups_without_a_successful_coverage_sdk_oracle": 11,
+  "parity_rounds": 12,
+  "parity_cases": 1380,
+  "artifact_bytes": 23618333472,
+  "active_seconds": 37387.534154,
+  "limit_seconds": 37800,
+  "verified_at": "2026-10-05T06:56:28.985353+00:00",
+  "report_sha256": {
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/README.md": "2c33df9caa601abe7d3276e3b57bd8236122e13540171251df3a01d2a4c4b44f",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/README.md": "f6def4b83a71bc7dc8c798ba6d3767e5ad586de8e49400df89a1bc3c8792aca6",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/runtime-completion/validated/README.md": "a8c62caaad749327358b235d25f410419819f24d4f8890bd72f2d979173110d5",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/runtime-completion/validated/statistics.json": "9d03be7c73d114b4f63c0529057964089e5b72f73df94d8958a60a6c4411c1b8",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/runtime-completion/validated/observations.csv": "e583f4ad93c928cb59f9b52550376f415021254045f8ca1b7ce8347d2153c4f1",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/parity/README.md": "2584c83c7a5613cb66dea91a4b538833618971193de0f3f489439ae708d6b302",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/parity/statistics.json": "6fbf306e78a51278b58883c2beda364be526f54943a21bdc287676bd8a855e6b",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/runtime-agent/README.md": "db3b2db568d44ae1af16b274362305c98e16aa5549d5fefd5f6d00d4a653d9d7"
+  }
+}

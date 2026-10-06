@@ -1,4 +1,10 @@
-The testing hook advice is adapted from DataDog/dd-trace-go v2.11.0-rc.1,
-internal/civisibility/integrations/gotesting/orchestrion.yml.
-Copyright 2023-present Datadog, Inc. Licensed under Apache License 2.0.
-The dd-trace-go SDK itself is used unmodified and is not vendored here.
+This project includes CI Visibility code derived from DataDog/dd-trace-go,
+Copyright Datadog, Inc., under the Apache License 2.0.
+The current extraction base, exact source paths and hashes are recorded in
+internal/thirdparty/dd-trace-go/SOURCE.json. Original copyright headers remain.
+
+MessagePack runtime sources from tinylib/msgp and philhofer/fwd retain their
+MIT licenses under internal/thirdparty/msgp and internal/thirdparty/fwd.
+Go-derived MessagePack routines retain the BSD license in msgp/LICENSE-go.
+Selected golang/sys platform sources retain the BSD license in
+internal/thirdparty/xsys/LICENSE. Each origin has a README and exact commit.

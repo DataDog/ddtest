@@ -7,8 +7,22 @@ import (
 	"testing"
 )
 
-func TestCLIActivation(t *testing.T) {
-	dir, driver := prepareFixture(t, false)
+func TestCLIActivation(t *testing.T)     { testCLIActivation(t, false) }
+func TestMiniCLIActivation(t *testing.T) { testCLIActivation(t, true) }
+func testCLIActivation(t *testing.T, mini bool) {
+	var dir, driver string
+	if mini {
+		dir, driver = prepareMiniFixture(t)
+	} else {
+		dir, driver = prepareFixture(t, false)
+	}
+	run := func(env []string, args ...string) (string, string, int) {
+		prefix := []string{"test"}
+		if mini {
+			prefix = append(prefix, "--runtime=mini")
+		}
+		return command(t, dir, env, driver, append(prefix, args...)...)
+	}
 	for _, tc := range []struct {
 		name, value, wantEnvironment string
 		defined                      bool
@@ -30,7 +44,7 @@ func TestCLIActivation(t *testing.T) {
 			if tc.defined {
 				env = append(env, "DD_CIVISIBILITY_ENABLED="+tc.value)
 			}
-			out, stderr, code := command(t, dir, env, driver, "test", "-count=1", "-run=^TestCLIEnvironment$", ".", "-args", "-mode=environment")
+			out, stderr, code := run(env, "-count=1", "-run=^TestCLIEnvironment$", ".", "-args", "-mode=environment")
 			if code != 0 {
 				t.Fatalf("CLI activation: %d\n%s\n%s", code, out, stderr)
 			}
@@ -56,7 +70,7 @@ func TestCLIActivation(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(receiver.handler))
 		defer server.Close()
 		env := testEnv("DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL, "DD_TRACE_AGENT_URL="+server.URL, "DD_API_KEY=poc-not-a-real-key", "POC_RETRY_COUNTER="+filepath.Join(t.TempDir(), "retry-counter"), "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=true", "DD_CIVISIBILITY_FLAKY_RETRY_COUNT=1", "DD_CIVISIBILITY_TOTAL_FLAKY_RETRY_COUNT=2", "DD_CIVISIBILITY_RETRY_EXECUTION_MODE=process")
-		out, stderr, code := command(t, dir, env, driver, "test", "-count=1", "-run=^TestRetry$", ".", "-args", "-mode=retry")
+		out, stderr, code := run(env, "-count=1", "-run=^TestRetry$", ".", "-args", "-mode=retry")
 		if code != 0 {
 			t.Fatalf("parent-mode managed retry: %d\n%s\n%s", code, out, stderr)
 		}

@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,38 +8,108 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
-const SDKVersion = "v2.11.0-rc.1"
+const SDKVersion = version.SDKVersion
 const sdkPackage = "github.com/DataDog/dd-trace-go/v2/civisibility"
+const miniPackage = "github.com/tonyredondo/dd-ci-testing-poc/testopt"
 
 type goPackage struct {
 	Dir, Name, ImportPath              string
+	Standard                           bool
 	GoFiles, TestGoFiles, XTestGoFiles []string
+	Imports, TestImports, XTestImports []string
+	Deps                               []string
 	Module                             *struct {
 		Path, Version string
-		Replace       *struct{ Dir string }
+		Main          bool
+		Replace       *struct{ Dir, Version string }
 	}
 	Error *struct{ Err string }
 }
-type Overlay struct{ Replace map[string]string }
+type Overlay struct {
+	Replace map[string]string
+	Testify *LibraryEntry `json:",omitempty"`
+	Goleak  *LibraryEntry `json:",omitempty"`
+}
 
 type Plan struct {
 	File, Dir                       string
 	InstrumentedFiles, TestPackages int
+	// Modfile is a temporary go.mod that provides a runtime the module does
+	// not require; the module's own go.mod and go.sum stay untouched.
+	Modfile string
+	// Warnings name optional integrations skipped for unsupported libraries.
+	Warnings     []string
+	coverOverlay bool
+	testify      bool
+	goleak       bool
+	goleakCache  string
 }
 
 // Prepare creates a complete plan before native Go compilation starts. Callers
 // own the plan directory and must remove it after all compiler processes finish.
-func Prepare(ctx context.Context, dir string, args []string) (plan Plan, err error) {
+func Prepare(ctx context.Context, dir string, args []string) (Plan, error) {
+	return PrepareRuntime(ctx, dir, args, SDK)
+}
+
+// PrepareRuntime selects the event runtime without changing Go's test options.
+// The selected runtime must already be required by the target module.
+func PrepareRuntime(ctx context.Context, dir string, args []string, runtime Runtime) (Plan, error) {
 	opts, err := parseOptions(args, os.Getenv("GOFLAGS"))
 	if err != nil {
-		return plan, err
+		return Plan{}, err
+	}
+	dir = workingDirectory(dir, opts)
+	if opts.help || explicitFiles(dir, opts.packages) {
+		return Plan{}, errors.New("help and explicit Go file arguments run without instrumentation")
+	}
+	return prepare(ctx, dir, opts, runtime)
+}
+
+// workingDirectory applies go test's -C, relative to the caller's directory.
+func workingDirectory(dir string, opts options) string {
+	if opts.chdir == "" || filepath.IsAbs(opts.chdir) {
+		if opts.chdir != "" {
+			return filepath.Clean(opts.chdir)
+		}
+		return dir
+	}
+	return filepath.Join(dir, opts.chdir)
+}
+
+// explicitFiles mirrors go test's file mode: an argument ending in .go selects
+// it only when that argument names an existing file rather than a package.
+func explicitFiles(dir string, packages []string) bool {
+	for _, p := range packages {
+		if !strings.HasSuffix(p, ".go") {
+			continue
+		}
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(dir, p)
+		}
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+func prepare(ctx context.Context, dir string, opts options, runtime Runtime) (plan Plan, err error) {
+	runtimePackage := sdkPackage
+	switch runtime {
+	case SDK:
+	case Mini:
+		runtimePackage = miniPackage
+	default:
+		return plan, fmt.Errorf("unknown CI runtime: %s", runtime)
 	}
 	replacements := map[string]string{}
 	if opts.overlay != "" {
@@ -66,49 +135,66 @@ func Prepare(ctx context.Context, dir string, args []string) (plan Plan, err err
 			replacements[filepath.Clean(from)] = to
 		}
 	}
-	listArgs := append([]string{"list", "-json=Dir,Name,ImportPath,GoFiles,TestGoFiles,XTestGoFiles,Module,Error"}, opts.buildFlags...)
-	listArgs = append(listArgs, opts.packages...)
-	listArgs = append(listArgs, "testing", sdkPackage)
-	cmd := exec.CommandContext(ctx, "go", listArgs...)
-	cmd.Dir = dir
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	data, e := cmd.Output()
+	temp, e := os.MkdirTemp("", "dd-ci-testing-poc-")
 	if e != nil {
-		return plan, fmt.Errorf("resolve packages (SDK %s must already be required): %w\n%s", SDKVersion, e, stderr.String())
+		return plan, e
 	}
-	var packages []goPackage
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	for {
-		var p goPackage
-		e = decoder.Decode(&p)
-		if e == io.EOF {
+	plan.Dir = temp
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(temp)
+		}
+	}()
+	list := func() ([]goPackage, error) {
+		listArgs := append([]string{"list", "-e", "-json=Dir,Name,ImportPath,Standard,GoFiles,TestGoFiles,XTestGoFiles,Imports,TestImports,XTestImports,Deps,Module,Error"}, opts.buildFlags...)
+		listArgs = append(listArgs, opts.packages...)
+		listArgs = append(listArgs, "testing", runtimePackage)
+		cmd := exec.CommandContext(ctx, "go", listArgs...)
+		// Keep Env nil: os/exec then sets PWD to dir, so go list reports
+		// package directories with the spelling of dir, even through symbolic
+		// links. Relative patterns are matched against that same spelling.
+		cmd.Dir = dir
+		return readPackages(cmd, "resolve packages")
+	}
+	packages, e := list()
+	if e != nil {
+		return plan, e
+	}
+	for _, p := range packages {
+		if p.ImportPath == runtimePackage && p.Error != nil {
+			// The module does not require the runtime: provide it through a
+			// temporary go.mod instead of failing or editing the module.
+			if plan.Modfile, e = provideRuntime(ctx, dir, opts, runtime, temp); e != nil {
+				return plan, fmt.Errorf("%s: %s\nddtest could not provide it: %w", p.ImportPath, p.Error.Err, e)
+			}
+			opts.buildFlags = append(opts.buildFlags, "-modfile="+plan.Modfile)
+			if packages, e = list(); e != nil {
+				return plan, e
+			}
 			break
 		}
-		if e != nil {
-			return plan, e
-		}
+	}
+	for _, p := range packages {
 		if p.Error != nil {
 			return plan, fmt.Errorf("%s: %s", p.ImportPath, p.Error.Err)
 		}
-		packages = append(packages, p)
 	}
 	var native *goPackage
-	foundSDK := false
+	foundRuntime := false
 	for i := range packages {
 		p := &packages[i]
 		if p.ImportPath == "testing" {
 			native = p
 		}
-		if p.ImportPath == sdkPackage {
-			if p.Module == nil || p.Module.Version != SDKVersion || p.Module.Replace != nil {
+		if p.ImportPath == runtimePackage {
+			if runtime == SDK && (p.Module == nil || p.Module.Version != SDKVersion || p.Module.Replace != nil) {
 				return plan, fmt.Errorf("POC requires unmodified dd-trace-go %s", SDKVersion)
 			}
-			foundSDK = true
+			foundRuntime = true
 		}
 	}
-	if !foundSDK || native == nil {
-		return plan, fmt.Errorf("missing testing or SDK package")
+	if !foundRuntime || native == nil {
+		return plan, fmt.Errorf("missing testing or selected CI runtime package")
 	}
 	files := map[string][]byte{}
 	for _, file := range native.GoFiles {
@@ -127,17 +213,7 @@ func Prepare(ctx context.Context, dir string, args []string) (plan Plan, err err
 	if e != nil {
 		return plan, e
 	}
-	temp, e := os.MkdirTemp("", "dd-ci-testing-poc-")
-	if e != nil {
-		return plan, e
-	}
-	plan.Dir = temp
-	defer func() {
-		if err != nil {
-			_ = os.RemoveAll(temp)
-		}
-	}()
-	// Backing files are immutable and shared only within this plan.
+	// Backing files are shared only within this plan and finalized before Go starts.
 	backingByContent := map[string]string{}
 	add := func(logical, content string) error {
 		if _, exists := replacements[logical]; exists {
@@ -166,25 +242,72 @@ func Prepare(ctx context.Context, dir string, args []string) (plan Plan, err err
 		}
 		replacements[logical] = backing
 	}
-	if e = add(filepath.Join(native.Dir, "zz_dd_ci_visibility_hooks.go"), instrument.Hooks); e != nil {
+	if e = add(filepath.Join(native.Dir, "zz_dd_ci_visibility_hooks.go"), hooksForRuntime(runtime)); e != nil {
 		return plan, e
 	}
 	for _, p := range packages {
-		if p.ImportPath == "testing" || p.ImportPath == sdkPackage || len(p.TestGoFiles)+len(p.XTestGoFiles) == 0 {
+		if p.ImportPath == "testing" || p.ImportPath == runtimePackage || len(p.TestGoFiles)+len(p.XTestGoFiles) == 0 {
 			continue
 		}
 		if p.Module == nil {
 			return plan, fmt.Errorf("stdlib tests are outside this POC: %s", p.ImportPath)
 		}
-		content := "package " + p.Name + "_test\nimport _ " + fmt.Sprintf("%q", sdkPackage) + "\n"
+		content := "package " + p.Name + "_test\nimport _ " + fmt.Sprintf("%q", runtimePackage) + "\n"
 		if e = add(filepath.Join(p.Dir, "zz_dd_ci_visibility_test.go"), content); e != nil {
 			return plan, e
 		}
 		plan.TestPackages++
 	}
+	libraries, e := resolveTestLibraries(ctx, dir, opts, packages)
+	if e != nil {
+		return plan, e
+	}
+	testify, warning, e := prepareTestifyPackage(libraries[instrument.TestifySuiteImport], replacements, runtime, temp)
+	if e != nil {
+		return plan, e
+	}
+	if warning != "" {
+		plan.Warnings = append(plan.Warnings, warning)
+	}
+	plan.testify = testify != nil
+	if testify != nil {
+		// Exported marker changes testing's content ID, which suite imports.
+		// Native compiler identity can then be shared with uninstrumented packages.
+		marker := replacements[filepath.Join(native.Dir, "zz_dd_ci_visibility_hooks.go")]
+		file, e := os.OpenFile(marker, os.O_APPEND|os.O_WRONLY, 0600)
+		if e != nil {
+			return plan, e
+		}
+		_, e = file.WriteString(instrument.TestifyCacheMarker(testify.Fingerprint))
+		closeErr := file.Close()
+		if e == nil {
+			e = closeErr
+		}
+		if e != nil {
+			return plan, e
+		}
+	}
+	var goleak *LibraryEntry
+	if runtime == Mini {
+		goleak, warning, e = prepareGoleak(libraries[instrument.GoleakImport], replacements, temp)
+		if e != nil {
+			return plan, e
+		}
+		if warning != "" {
+			plan.Warnings = append(plan.Warnings, warning)
+		}
+		if goleak != nil {
+			plan.goleak = true
+			plan.goleakCache, e = goleakCacheFlag(dir, opts, libraries[instrument.GoleakImport], goleak.Fingerprint)
+			if e != nil {
+				return plan, e
+			}
+		}
+	}
+	plan.coverOverlay = needsCoverOverlay(dir, opts, packages, []goPackage{*native})
 	plan.File = filepath.Join(temp, "overlay.json")
 	plan.InstrumentedFiles = len(rewritten)
-	encoded, e := json.Marshal(Overlay{Replace: replacements})
+	encoded, e := json.Marshal(Overlay{Replace: replacements, Testify: testify, Goleak: goleak})
 	if e != nil {
 		return plan, e
 	}
@@ -197,44 +320,170 @@ func Prepare(ctx context.Context, dir string, args []string) (plan Plan, err err
 // Run retains native test output, flags, working directory, and exit status.
 // It deliberately preserves the user's test-result caching choice.
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	dir, err := os.Getwd()
+	return RunRuntime(ctx, args, SDK, stdin, stdout, stderr)
+}
+
+// RunRuntime compiles and executes tests using one explicitly selected runtime.
+// Interrupt and termination signals are forwarded to go test instead of ending
+// ddtest first: the plan is removed only after Go exits, and the result keeps
+// go test's exit status. A signal during preparation stops it and cleans up.
+func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Reader, stdout, stderr io.Writer) int {
+	signals := make(chan os.Signal, 4)
+	signal.Notify(signals, forwardedSignals...)
+	defer signal.Stop(signals)
+	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
-	plan, err := Prepare(ctx, dir, args)
+	opts, err := parseOptions(args, os.Getenv("GOFLAGS"))
 	if err != nil {
 		fmt.Fprintln(stderr, "ddtest:", err)
 		return 2
 	}
-	defer os.RemoveAll(plan.Dir)
-	forwarded := []string{"test", "-overlay=" + plan.File}
-	// The merged overlay replaces only the user's overlay flag, never test flags.
-	for i := 0; i < len(args); i++ {
-		if args[i] == "-args" {
-			forwarded = append(forwarded, args[i:]...)
-			break
+	dir := workingDirectory(cwd, opts)
+	if opts.help || explicitFiles(dir, opts.packages) {
+		if !opts.help {
+			fmt.Fprintln(stderr, "ddtest: warning: explicit Go files run without CI Visibility instrumentation")
 		}
-		if args[i] == "-overlay" {
-			i++
-			continue
-		}
-		if strings.HasPrefix(args[i], "-overlay=") {
-			continue
-		}
-		forwarded = append(forwarded, args[i])
+		// Native go test handles -C, help and file mode itself.
+		return runGo(ctx, cwd, append([]string{"test"}, args...), nil, signals, stdin, stdout, stderr)
 	}
-	cmd := exec.CommandContext(ctx, "go", forwarded...)
-	cmd.Dir = dir
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-	cmd.WaitDelay = 5 * time.Second
-	if err = cmd.Run(); err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			return exit.ExitCode()
-		}
+	plan, interrupted, err := prepareInterruptibly(ctx, dir, opts, runtime, signals)
+	if err == nil {
+		defer os.RemoveAll(plan.Dir)
+	}
+	if interrupted != nil {
+		return interruptedStatus(interrupted)
+	}
+	if err != nil {
 		fmt.Fprintln(stderr, "ddtest:", err)
 		return 2
 	}
-	return 0
+	for _, warning := range plan.Warnings {
+		fmt.Fprintln(stderr, "ddtest: warning:", warning)
+	}
+	var tool string
+	var env []string
+	if plan.coverOverlay || plan.testify || plan.goleak {
+		executable, e := os.Executable()
+		if e != nil {
+			fmt.Fprintln(stderr, e)
+			return 2
+		}
+		if tool, e = toolCommand(executable, plan.File, plan.toolMode()); e != nil {
+			fmt.Fprintln(stderr, e)
+			return 2
+		}
+		if opts.toolexec != "" {
+			// The user's -toolexec, including one from GOFLAGS, runs every tool
+			// after ours, exactly as it would without ddtest.
+			env = append(os.Environ(), userToolexecEnv+"="+opts.toolexec)
+		}
+	}
+	forwarded := goTestArguments(plan, opts, tool)
+	return runGo(ctx, dir, forwarded, env, signals, stdin, stdout, stderr)
+}
+
+// prepareInterruptibly cancels package resolution when a signal arrives. The
+// watcher has stopped before returning, so later signals reach go test.
+func prepareInterruptibly(ctx context.Context, dir string, opts options, runtime Runtime, signals <-chan os.Signal) (Plan, os.Signal, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var interrupted os.Signal
+	stop, stopped := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stopped)
+		select {
+		case interrupted = <-signals:
+			cancel()
+		case <-stop:
+		}
+	}()
+	plan, err := prepare(ctx, dir, opts, runtime)
+	close(stop)
+	<-stopped
+	return plan, interrupted, err
+}
+
+// goTestArguments keeps the user's arguments in order. Our overlay already
+// contains the user's entries and our -toolexec chains the user's, so those
+// flags are replaced wherever they appear before the test binary arguments.
+// Go applies per-package flags in order: the goleak cache marker follows the
+// last user -gcflags, which keeps goleak's other effective compiler flags.
+func goTestArguments(plan Plan, opts options, tool string) []string {
+	forwarded := []string{"test", "-overlay=" + plan.File}
+	if plan.Modfile != "" {
+		forwarded = append(forwarded, "-modfile="+plan.Modfile)
+	}
+	if tool != "" {
+		forwarded = append(forwarded, "-toolexec="+tool)
+	}
+	lastGcflags := -1
+	if plan.goleakCache != "" {
+		for i, argument := range opts.arguments {
+			if argument.flag == "gcflags" {
+				lastGcflags = i
+			}
+		}
+		if lastGcflags < 0 {
+			forwarded = append(forwarded, plan.goleakCache)
+		}
+	}
+	for i, argument := range opts.arguments {
+		if argument.flag == "overlay" || argument.flag == "toolexec" && tool != "" || argument.flag == "modfile" && plan.Modfile != "" {
+			continue
+		}
+		forwarded = append(forwarded, argument.raw...)
+		if i == lastGcflags {
+			forwarded = append(forwarded, plan.goleakCache)
+		}
+	}
+	return forwarded
+}
+
+// runGo retains native output and exit status. Signals are forwarded to Go
+// rather than killing it; context cancellation interrupts it, then kills it
+// after a grace period.
+func runGo(ctx context.Context, dir string, args, env []string, signals <-chan os.Signal, stdin io.Reader, stdout, stderr io.Writer) int {
+	cmd := exec.Command("go", args...)
+	cmd.Dir, cmd.Env = dir, env
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
+	cmd.WaitDelay = 5 * time.Second
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintln(stderr, "ddtest:", err)
+		return 2
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	canceled := ctx.Done()
+	var kill <-chan time.Time
+	for {
+		select {
+		case err := <-done:
+			if err == nil {
+				return 0
+			}
+			var exit *exec.ExitError
+			if errors.As(err, &exit) {
+				if code, signaled := signalExitCode(exit.ProcessState); signaled {
+					return code
+				}
+				return exit.ExitCode()
+			}
+			fmt.Fprintln(stderr, "ddtest:", err)
+			return 2
+		case s := <-signals:
+			_ = cmd.Process.Signal(s)
+		case <-canceled:
+			canceled = nil
+			_ = interruptProcess(cmd.Process)
+			timer := time.NewTimer(10 * time.Second)
+			defer timer.Stop()
+			kill = timer.C
+		case <-kill:
+			kill = nil
+			_ = cmd.Process.Kill()
+		}
+	}
 }

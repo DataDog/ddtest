@@ -1,0 +1,385 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/tinylib/msgp",
+  "commit": "6f99c863451752e6aa9c7aacde4215a471a64242",
+  "version": "v1.6.4",
+  "module": "github.com/tinylib/msgp",
+  "licenses": [
+    "LICENSE",
+    "LICENSE-go"
+  ],
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "17df22e31ef6a84f70909eed5185f41443a03dd05b14e8dec319d5c2bd7d7b3b",
+      "role": "license",
+      "source_path": "LICENSE",
+      "source_sha256": "17df22e31ef6a84f70909eed5185f41443a03dd05b14e8dec319d5c2bd7d7b3b"
+    },
+    {
+      "path": "LICENSE-go",
+      "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+      "role": "license"
+    },
+    {
+      "path": "README.md",
+      "sha256": "d465ad54bdbac79d902972b5017f4c9e8dbb2b4d2f89dbe00d2d11f63331f9c3",
+      "role": "local"
+    },
+    {
+      "path": "msgp/advise_linux.go",
+      "sha256": "cebe44b320fd068b88cc3480dc964f194a6ba1a6e5a6f8b02c6e520b62c04a66",
+      "role": "upstream",
+      "source_path": "msgp/advise_linux.go",
+      "source_sha256": "cebe44b320fd068b88cc3480dc964f194a6ba1a6e5a6f8b02c6e520b62c04a66"
+    },
+    {
+      "path": "msgp/advise_other.go",
+      "sha256": "32c8e15d3667517543cd2fc32a5f23e1e4b915c8794db82cf26a142192d846a9",
+      "role": "upstream",
+      "source_path": "msgp/advise_other.go",
+      "source_sha256": "32c8e15d3667517543cd2fc32a5f23e1e4b915c8794db82cf26a142192d846a9"
+    },
+    {
+      "path": "msgp/autoshim.go",
+      "sha256": "4012c758cf15cbb43274c35bebd8bbffb6641615cf8317bfc120248a242d0687",
+      "role": "upstream",
+      "source_path": "msgp/autoshim.go",
+      "source_sha256": "4012c758cf15cbb43274c35bebd8bbffb6641615cf8317bfc120248a242d0687"
+    },
+    {
+      "path": "msgp/circular.go",
+      "sha256": "9ea129327f603720acbcf259bd15d684cda91f572f53902fb02feebc42eb3b98",
+      "role": "upstream",
+      "source_path": "msgp/circular.go",
+      "source_sha256": "9ea129327f603720acbcf259bd15d684cda91f572f53902fb02feebc42eb3b98"
+    },
+    {
+      "path": "msgp/defgen_test.go",
+      "sha256": "d0f9cc92bd1b04407ec8661c67f88ee22831ac0be963ce502ce5e1d0fd5dd3af",
+      "role": "local"
+    },
+    {
+      "path": "msgp/defs.go",
+      "sha256": "363bd99b75f33aba31cce23035199133d3ad26560d6116094bc0af45a04b3af6",
+      "role": "upstream",
+      "source_path": "msgp/defs.go",
+      "source_sha256": "363bd99b75f33aba31cce23035199133d3ad26560d6116094bc0af45a04b3af6"
+    },
+    {
+      "path": "msgp/defs_test.go",
+      "sha256": "955eeac9e2cddfd242f75ff97e8bb8ac3a0136ce84f4950ccde5460d68af893a",
+      "role": "adapted",
+      "source_path": "msgp/defs_test.go",
+      "source_sha256": "6769d25e5c28d42f34b7753a523d1ed3b868b855acac9fe05c68d780b6730001"
+    },
+    {
+      "path": "msgp/edit.go",
+      "sha256": "843948372d5382be8bfa165d315ef3c57372cea028b2d52d05523c69522b0a95",
+      "role": "upstream",
+      "source_path": "msgp/edit.go",
+      "source_sha256": "843948372d5382be8bfa165d315ef3c57372cea028b2d52d05523c69522b0a95"
+    },
+    {
+      "path": "msgp/edit_test.go",
+      "sha256": "db5eb4752de2ee4ff6e32a14fce4b1204b506723535dafcd056080af53c4198c",
+      "role": "upstream",
+      "source_path": "msgp/edit_test.go",
+      "source_sha256": "db5eb4752de2ee4ff6e32a14fce4b1204b506723535dafcd056080af53c4198c"
+    },
+    {
+      "path": "msgp/elsize.go",
+      "sha256": "8e3b150b92bad5432d0675188f166718c947963476ddc52d2e1add5a7097087e",
+      "role": "upstream",
+      "source_path": "msgp/elsize.go",
+      "source_sha256": "8e3b150b92bad5432d0675188f166718c947963476ddc52d2e1add5a7097087e"
+    },
+    {
+      "path": "msgp/elsize_default.go",
+      "sha256": "1d57f9a2b6f3f578f0db580cd6e4f4c9f4044a91dc94aa3010296623895c69ed",
+      "role": "upstream",
+      "source_path": "msgp/elsize_default.go",
+      "source_sha256": "1d57f9a2b6f3f578f0db580cd6e4f4c9f4044a91dc94aa3010296623895c69ed"
+    },
+    {
+      "path": "msgp/elsize_test.go",
+      "sha256": "fd93142ea0c14f277d1ab5283c390a7d5d8f4df379e0c25a5364bd10be008f03",
+      "role": "upstream",
+      "source_path": "msgp/elsize_test.go",
+      "source_sha256": "fd93142ea0c14f277d1ab5283c390a7d5d8f4df379e0c25a5364bd10be008f03"
+    },
+    {
+      "path": "msgp/elsize_tinygo.go",
+      "sha256": "104800d8c1c5a7b200e24c69b23478f9cf5d2293615660becc09619e76ba6f8b",
+      "role": "upstream",
+      "source_path": "msgp/elsize_tinygo.go",
+      "source_sha256": "104800d8c1c5a7b200e24c69b23478f9cf5d2293615660becc09619e76ba6f8b"
+    },
+    {
+      "path": "msgp/errors.go",
+      "sha256": "c1dbbd1ec4a9d903ca19060ef08c701a250f59de8a2f7d343e30a90c09b725e7",
+      "role": "upstream",
+      "source_path": "msgp/errors.go",
+      "source_sha256": "c1dbbd1ec4a9d903ca19060ef08c701a250f59de8a2f7d343e30a90c09b725e7"
+    },
+    {
+      "path": "msgp/errors_default.go",
+      "sha256": "0af0d77764da08e1130c4fb6358b03e987f86dd7be8f34f7686995d2a9d11f4a",
+      "role": "upstream",
+      "source_path": "msgp/errors_default.go",
+      "source_sha256": "0af0d77764da08e1130c4fb6358b03e987f86dd7be8f34f7686995d2a9d11f4a"
+    },
+    {
+      "path": "msgp/errors_test.go",
+      "sha256": "575eddfa160f5562904109f6cafeb502ab6d5d76e7b20d5791b97dccceb091b0",
+      "role": "upstream",
+      "source_path": "msgp/errors_test.go",
+      "source_sha256": "575eddfa160f5562904109f6cafeb502ab6d5d76e7b20d5791b97dccceb091b0"
+    },
+    {
+      "path": "msgp/errors_tinygo.go",
+      "sha256": "0741a47a856fffd4c962b50d1665cb031e3ccd929b1f2cddaf2ee85186e5723b",
+      "role": "upstream",
+      "source_path": "msgp/errors_tinygo.go",
+      "source_sha256": "0741a47a856fffd4c962b50d1665cb031e3ccd929b1f2cddaf2ee85186e5723b"
+    },
+    {
+      "path": "msgp/extension.go",
+      "sha256": "e49c051dab89e9c879a20eea578003fc6a1cc17fb46ab10a91886126c8155983",
+      "role": "upstream",
+      "source_path": "msgp/extension.go",
+      "source_sha256": "e49c051dab89e9c879a20eea578003fc6a1cc17fb46ab10a91886126c8155983"
+    },
+    {
+      "path": "msgp/extension_test.go",
+      "sha256": "4081ecff0a1bc2291876dece5137504492da961d8e7f7d9519fb22eac5f25a3e",
+      "role": "upstream",
+      "source_path": "msgp/extension_test.go",
+      "source_sha256": "4081ecff0a1bc2291876dece5137504492da961d8e7f7d9519fb22eac5f25a3e"
+    },
+    {
+      "path": "msgp/file.go",
+      "sha256": "7923bd09bd9fb30be5807f86e54d67f2f7cd22269532bc934ca33fa4eaae3e00",
+      "role": "upstream",
+      "source_path": "msgp/file.go",
+      "source_sha256": "7923bd09bd9fb30be5807f86e54d67f2f7cd22269532bc934ca33fa4eaae3e00"
+    },
+    {
+      "path": "msgp/file_port.go",
+      "sha256": "139de1e7fab81b33e2e2e05a90ca082a22730b03b05e6f76bff7b9bfec23272d",
+      "role": "upstream",
+      "source_path": "msgp/file_port.go",
+      "source_sha256": "139de1e7fab81b33e2e2e05a90ca082a22730b03b05e6f76bff7b9bfec23272d"
+    },
+    {
+      "path": "msgp/file_test.go",
+      "sha256": "6e9cf164cda6e930bcf370a8c130caedb3261675adefd196ba279cb3e7c2660c",
+      "role": "adapted",
+      "source_path": "msgp/file_test.go",
+      "source_sha256": "c0ebe2768a523c84d2825301fdd04c04ec4ff1c6f0fddb0b80d90a7268a579e4"
+    },
+    {
+      "path": "msgp/floatbench_test.go",
+      "sha256": "b21c4acab6104e75f0c8364b0f37ac82ad170885b6864a16f45d02414868afb8",
+      "role": "upstream",
+      "source_path": "msgp/floatbench_test.go",
+      "source_sha256": "b21c4acab6104e75f0c8364b0f37ac82ad170885b6864a16f45d02414868afb8"
+    },
+    {
+      "path": "msgp/fuzz_test.go",
+      "sha256": "3d498160b028f5b2007bcaf40397c4c44cb16e6c534decfd745b1967870003f4",
+      "role": "upstream",
+      "source_path": "msgp/fuzz_test.go",
+      "source_sha256": "3d498160b028f5b2007bcaf40397c4c44cb16e6c534decfd745b1967870003f4"
+    },
+    {
+      "path": "msgp/integers.go",
+      "sha256": "cf76da9386b7e7e17e5d522f92e580682a7119a99b5566c83786f05f3fa2249b",
+      "role": "upstream",
+      "source_path": "msgp/integers.go",
+      "source_sha256": "cf76da9386b7e7e17e5d522f92e580682a7119a99b5566c83786f05f3fa2249b"
+    },
+    {
+      "path": "msgp/integers_test.go",
+      "sha256": "953ba6c6a9ed2bb882f7c67eb39ed8b899221e2445223182a4fcdd07584c9056",
+      "role": "upstream",
+      "source_path": "msgp/integers_test.go",
+      "source_sha256": "953ba6c6a9ed2bb882f7c67eb39ed8b899221e2445223182a4fcdd07584c9056"
+    },
+    {
+      "path": "msgp/iter.go",
+      "sha256": "29ede73fcc59f3eb67b2bf564d47c2408c80bdd8fcfcfb59fd4e094783acc8e1",
+      "role": "upstream",
+      "source_path": "msgp/iter.go",
+      "source_sha256": "29ede73fcc59f3eb67b2bf564d47c2408c80bdd8fcfcfb59fd4e094783acc8e1"
+    },
+    {
+      "path": "msgp/iter_test.go",
+      "sha256": "0d62a272af73919da105d0b34c18609c2d540cb032fd09c32e8054da6769b31c",
+      "role": "upstream",
+      "source_path": "msgp/iter_test.go",
+      "source_sha256": "0d62a272af73919da105d0b34c18609c2d540cb032fd09c32e8054da6769b31c"
+    },
+    {
+      "path": "msgp/json.go",
+      "sha256": "d4ca5e29caeab3a6e388b1275a203b6a5ecb65c1cd6c88f99f8f8ba8f47ae360",
+      "role": "upstream",
+      "source_path": "msgp/json.go",
+      "source_sha256": "d4ca5e29caeab3a6e388b1275a203b6a5ecb65c1cd6c88f99f8f8ba8f47ae360"
+    },
+    {
+      "path": "msgp/json_bytes.go",
+      "sha256": "2c2763cd3df4a1fad0116e71ff549948ffc6255f67685fd74dff8f92d6360dce",
+      "role": "upstream",
+      "source_path": "msgp/json_bytes.go",
+      "source_sha256": "2c2763cd3df4a1fad0116e71ff549948ffc6255f67685fd74dff8f92d6360dce"
+    },
+    {
+      "path": "msgp/json_bytes_test.go",
+      "sha256": "8bcf4824959092e6f178b1bd7f774605cfd9cd05555fa77ac23675ee1c2fdb3b",
+      "role": "upstream",
+      "source_path": "msgp/json_bytes_test.go",
+      "source_sha256": "8bcf4824959092e6f178b1bd7f774605cfd9cd05555fa77ac23675ee1c2fdb3b"
+    },
+    {
+      "path": "msgp/json_test.go",
+      "sha256": "8f19901f1fb683761bafffb024331b02d56af0ad7efb266717dd06e17ff1c1ba",
+      "role": "upstream",
+      "source_path": "msgp/json_test.go",
+      "source_sha256": "8f19901f1fb683761bafffb024331b02d56af0ad7efb266717dd06e17ff1c1ba"
+    },
+    {
+      "path": "msgp/number.go",
+      "sha256": "fe2fc8ab7ef192359917c42a5620f31a6873565bde78979b285579e03ff537f9",
+      "role": "upstream",
+      "source_path": "msgp/number.go",
+      "source_sha256": "fe2fc8ab7ef192359917c42a5620f31a6873565bde78979b285579e03ff537f9"
+    },
+    {
+      "path": "msgp/number_test.go",
+      "sha256": "96be753665894ceb0300bf261e967b778bdd75596a770375f51b62df61c62d13",
+      "role": "upstream",
+      "source_path": "msgp/number_test.go",
+      "source_sha256": "96be753665894ceb0300bf261e967b778bdd75596a770375f51b62df61c62d13"
+    },
+    {
+      "path": "msgp/purego.go",
+      "sha256": "87dee7f7553733f02fb1373ffebe046fd5f5a3639d357ecb45bb122dfe42ff15",
+      "role": "upstream",
+      "source_path": "msgp/purego.go",
+      "source_sha256": "87dee7f7553733f02fb1373ffebe046fd5f5a3639d357ecb45bb122dfe42ff15"
+    },
+    {
+      "path": "msgp/raw_test.go",
+      "sha256": "e3a298cc82ac45682c908526f050cc234f3fe5be3f80b5b2fcc61654926ba377",
+      "role": "upstream",
+      "source_path": "msgp/raw_test.go",
+      "source_sha256": "e3a298cc82ac45682c908526f050cc234f3fe5be3f80b5b2fcc61654926ba377"
+    },
+    {
+      "path": "msgp/read.go",
+      "sha256": "fb7f1c0bfe62bbd20ab1ba807158c2dd106a09e51a80fd3e1410dbb33e174d4c",
+      "role": "adapted",
+      "source_path": "msgp/read.go",
+      "source_sha256": "be521d500f880823efd13fc1caffc2b9e477619c4baa4a36d5005a1afa05bda0"
+    },
+    {
+      "path": "msgp/read_bytes.go",
+      "sha256": "8a865ab944433074e47163acce511beb46a8709d08df0154ddbdd29167616ba9",
+      "role": "upstream",
+      "source_path": "msgp/read_bytes.go",
+      "source_sha256": "8a865ab944433074e47163acce511beb46a8709d08df0154ddbdd29167616ba9"
+    },
+    {
+      "path": "msgp/read_bytes_test.go",
+      "sha256": "9f08bf11c106fe1c0720698e46f4cb7cb94be9d7547af57be128cc343974607d",
+      "role": "upstream",
+      "source_path": "msgp/read_bytes_test.go",
+      "source_sha256": "9f08bf11c106fe1c0720698e46f4cb7cb94be9d7547af57be128cc343974607d"
+    },
+    {
+      "path": "msgp/read_test.go",
+      "sha256": "1eeedb76a6bf0b25c5cf0c161d2e9d80d70fa57fcc1eaecee96a3f064a3ef6dd",
+      "role": "upstream",
+      "source_path": "msgp/read_test.go",
+      "source_sha256": "1eeedb76a6bf0b25c5cf0c161d2e9d80d70fa57fcc1eaecee96a3f064a3ef6dd"
+    },
+    {
+      "path": "msgp/setof/_gen/main.go",
+      "sha256": "31666a0b5b50567c230243658905bad1991955ad40cfe5ab8b460a6534dedbec",
+      "role": "adapted",
+      "source_path": "msgp/setof/_gen/main.go",
+      "source_sha256": "f2b88d40745ba93babbd648287f99ccb5152498f0b35a78fc0336640b8f3ddc3"
+    },
+    {
+      "path": "msgp/setof/generated.go",
+      "sha256": "c5eb3ac16558f2e54c166e5893fca81a70909d0de354fb19dcd3af10bfa24d22",
+      "role": "adapted",
+      "source_path": "msgp/setof/generated.go",
+      "source_sha256": "d001a89a7ef3eb2f010588243b27bf8a07d0babe0b5c3496c8d3a4d00478029b"
+    },
+    {
+      "path": "msgp/setof/generated_test.go",
+      "sha256": "80f0e31dad6a6a6b96148713ae0958fdb24ece5cbf053f57bb20781533eebe13",
+      "role": "adapted",
+      "source_path": "msgp/setof/generated_test.go",
+      "source_sha256": "4aba19e86906e7f6ff66152fa15a64fad51555ceef134988c800267d6112577d"
+    },
+    {
+      "path": "msgp/setof/setof.go",
+      "sha256": "1edfcba8e73b0177d8996a384a3a0673a5f9f1fdcbb719d8c72c6c4fbe2a3392",
+      "role": "upstream",
+      "source_path": "msgp/setof/setof.go",
+      "source_sha256": "1edfcba8e73b0177d8996a384a3a0673a5f9f1fdcbb719d8c72c6c4fbe2a3392"
+    },
+    {
+      "path": "msgp/size.go",
+      "sha256": "fbcc4d698224c12e754aabfc48ec6a9261aca3ecb04dd1fdf882817fe589a12f",
+      "role": "upstream",
+      "source_path": "msgp/size.go",
+      "source_sha256": "fbcc4d698224c12e754aabfc48ec6a9261aca3ecb04dd1fdf882817fe589a12f"
+    },
+    {
+      "path": "msgp/testdata/FuzzCorpus.zip",
+      "sha256": "14142806cabceeb8e47469f6c7d430980151f1c6ebc5932501c45e576398982e",
+      "role": "upstream",
+      "source_path": "msgp/testdata/FuzzCorpus.zip",
+      "source_sha256": "14142806cabceeb8e47469f6c7d430980151f1c6ebc5932501c45e576398982e"
+    },
+    {
+      "path": "msgp/unsafe.go",
+      "sha256": "a37738c109f94034d1ed40ae1641791511098b79679cba16f874a5c8669bd75e",
+      "role": "upstream",
+      "source_path": "msgp/unsafe.go",
+      "source_sha256": "a37738c109f94034d1ed40ae1641791511098b79679cba16f874a5c8669bd75e"
+    },
+    {
+      "path": "msgp/write.go",
+      "sha256": "bdee975448f05b596f97fd8dfc74df45582abfefa330de7cbd43905b1969557c",
+      "role": "upstream",
+      "source_path": "msgp/write.go",
+      "source_sha256": "bdee975448f05b596f97fd8dfc74df45582abfefa330de7cbd43905b1969557c"
+    },
+    {
+      "path": "msgp/write_bytes.go",
+      "sha256": "b1306806790cf338ac404d1bff04be745c41373236d586f522dd784be581b5b9",
+      "role": "upstream",
+      "source_path": "msgp/write_bytes.go",
+      "source_sha256": "b1306806790cf338ac404d1bff04be745c41373236d586f522dd784be581b5b9"
+    },
+    {
+      "path": "msgp/write_bytes_test.go",
+      "sha256": "b61aebafa0c64be419c8b833bae13893bd2919d7e10b3c9daf1b413c213c46b9",
+      "role": "upstream",
+      "source_path": "msgp/write_bytes_test.go",
+      "source_sha256": "b61aebafa0c64be419c8b833bae13893bd2919d7e10b3c9daf1b413c213c46b9"
+    },
+    {
+      "path": "msgp/write_test.go",
+      "sha256": "f570deb2f523b020f0ac09ea7893199e889a94c06bffdc08e79e8c6645b9c937",
+      "role": "upstream",
+      "source_path": "msgp/write_test.go",
+      "source_sha256": "f570deb2f523b020f0ac09ea7893199e889a94c06bffdc08e79e8c6645b9c937"
+    }
+  ]
+}

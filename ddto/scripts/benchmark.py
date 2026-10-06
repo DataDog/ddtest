@@ -41,7 +41,7 @@ def main():
 
     run(["go", "get", "github.com/DataDog/orchestrion@" + ORCHESTRION_VERSION])
     module = json.loads(run(["go", "list", "-m", "-json", "github.com/DataDog/dd-trace-go/v2"]).stdout)
-    if module["Version"] != "v2.11.0-rc.1":
+    if module["Version"] != json.loads((pathlib.Path(__file__).resolve().parents[1] / "internal/thirdparty/dd-trace-go/SOURCE.json").read_text())["version"]:
         raise RuntimeError("reference changed the pinned SDK")
     config = pathlib.Path(module["Dir"]) / "internal/civisibility/integrations/gotesting/orchestrion.yml"
     shutil.copyfile(config, fixture / "orchestrion.yml")

@@ -1,0 +1,1452 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2024 Datadog, Inc.
+
+package gotesting
+
+import (
+	"fmt"
+	"reflect"
+	"runtime"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+	"unsafe"
+
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/envconfig"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
+)
+
+type (
+	// instrumentationMetadata contains the internal instrumentation metadata
+	instrumentationMetadata struct {
+		IsInternal bool
+	}
+
+	// testExecutionMetadata contains metadata regarding an unique *testing.T or *testing.B execution
+	testExecutionMetadata struct {
+		test                         integrations.Test // internal CI Visibility test event
+		originalTest                 *testing.T        // original test that was executed
+		error                        atomic.Int32      // flag to check if the test event has error data already
+		skipped                      atomic.Int32      // flag to check if the test event has skipped data already
+		panicData                    any               // panic data recovered from an internal test execution when using an additional feature wrapper
+		panicStacktrace              string            // stacktrace from the panic recovered from an internal test
+		skipReason                   string            // skip reason captured from instrumentCloseAndSkip when hasAdditionalFeatureWrapper is true
+		processRetryError            atomic.Pointer[processRetryErrorInfo]
+		processRetrySkipReason       atomic.Pointer[string]
+		processRetryPanic            atomic.Pointer[processRetryErrorInfo]
+		processRetryOwner            *testExecutionMetadata
+		isARetry                     bool // flag to tag if a current test execution is a retry
+		isANewTest                   bool // flag to tag if a current test a new test
+		isAModifiedTest              bool // flag to tag if a current test a modified test
+		isEarlyFlakeDetectionEnabled bool // flag to tag if Early Flake Detection is enabled for this execution
+		isFlakyTestRetriesEnabled    bool // flag to tag if Flaky Test Retries is enabled for this execution
+		isItrForcedRun               bool // flag to preserve ITR forced-run state across parent-owned process retries
+		isItrSkipped                 bool
+		flakyRetryBudgetReservation  *flakyRetryBudgetReservation
+		isQuarantined                bool          // flag to check if the test is quarantined
+		isDisabled                   bool          // flag to check if the test is disabled
+		isAttemptToFix               bool          // flag to check if the test is marked as attempt to fix
+		isLastRetry                  bool          // flag to check if the current execution is the last retry
+		allAttemptsPassed            bool          // flag to check if all attempts passed for a test marked as attempt to fix
+		allRetriesFailed             bool          // flag to check if all retries failed for a test
+		hasAdditionalFeatureWrapper  bool          // flag to check if the current execution is part of an additional feature wrapper
+		identity                     *testIdentity // identity of the current execution (test or subtest)
+		hasExplicitQuarantined       bool          // flag to mark if quarantine state comes from explicit configuration
+		hasExplicitDisabled          bool          // flag to mark if disabled state comes from explicit configuration
+		hasExplicitAttemptToFix      bool          // flag to mark if attempt-to-fix state comes from explicit configuration
+		suppressParentRetryMetadata  bool          // prevents metadata-only subtest overrides from inheriting parent retry-wrapper control fields
+
+		// Fields for test.final_status computation
+		anyExecutionPassed            bool               // tracks if any prior execution passed (for final status calculation)
+		anyExecutionFailed            bool               // tracks if any prior execution failed (for final status calculation)
+		remainingRetries              int64              // remaining retries at the start of this execution
+		retryContinuationDecided      bool               // whether retry admission has been evaluated for this execution
+		retryContinuationAdmitted     bool               // whether another retry was admitted after this execution
+		initialRetryCount             int64              // retry count selected from the initial execution duration
+		initialRetryCountSet          bool               // whether initialRetryCount has already been selected
+		efdFellBackToFlakyRetries     bool               // whether a slow EFD test fell through to FTR retry semantics
+		shouldOrchestrateAttemptToFix bool               // whether this wrapper controls ATF retries
+		isEfdInParallel               bool               // true only when parallel EFD path is active
+		cleanupResult                 *testCleanupResult // records cleanup completion for this retry attempt.
+		usesFreshRetryAttemptRuntime  bool
+		isFreshRetryAttemptDescendant bool
+		suppressCoverageCollection    bool
+		suppressUserTestBody          bool
+		retryAttemptFinalizer         func(retryAttemptResult)
+		deferredRetryEvent            *deferredProcessRetryEvent
+		quarantinedRaceProcess        *quarantinedRaceProcessContext
+		quarantinedRaceChild          *quarantinedRaceChildState
+		quarantinedRaceReplay         atomic.Pointer[quarantinedRaceReplayState]
+		processRetryAttemptOwner      string
+		processRetryManagedDescendant bool
+		processRetryParallelPause     func() func()
+		processRetryParallelPaused    atomic.Bool
+	}
+
+	// runTestWithRetryOptions contains the options for calling runTestWithRetry function
+	runTestWithRetryOptions struct {
+		targetFunc                    func(t *testing.T) // target function to retry
+		t                             *testing.T         // test to be executed
+		parallelEFDAllowed            bool               // enables EFD batch semantics and deferred process concurrency when the effective execution qualifies
+		testInfo                      *commonInfo
+		processRetryIdentity          *testIdentity
+		processRetryMRunEpoch         uint64
+		processRetryInvocationOrdinal uint64
+		processRetryInvocationCounter *atomic.Uint64
+		processRetryPhaseID           uint64
+		processRetryFuzzGuard         *processRetryFuzzGuardSnapshot
+		processRetryLaunchTemplate    *processRetryLaunchBaseline
+		processRetryCoordinator       *processRetryCoordinator
+		efdFaultySessionGuard         earlyFlakeDetectionFaultySession
+		retryAttemptGroupFactory      func(*testing.T) (*retryAttemptGroup, string)
+		retryAttemptObserveOutput     bool
+		retryAttemptObserveOutputSet  bool
+		retryAttemptMaskingFallback   bool
+		failfastEnabled               func() bool
+		nativeFailfastObserved        func() bool
+		postRetryFamilyTransition     func(*testExecutionMetadata)
+
+		// function to modify the execution metadata before each execution (first callback executed). It's also called before postOnRetryEnd to do a final sync
+		preExecMetaAdjust func(execMeta *testExecutionMetadata, executionIndex int)
+
+		// function to decide whether we are in the last retry (second callback executed if we are in a retry execution)
+		preIsLastRetry func(execMeta *testExecutionMetadata, executionIndex int, remainingRetries int64) bool
+
+		// adjust retry count function depending on the duration of the first execution (first callback executed post test execution only in the first execution of the test)
+		postAdjustRetryCount func(execMeta *testExecutionMetadata, duration time.Duration) int64
+
+		// function to run after each test execution (second callback executed after test execution)
+		postPerExecution func(ptrToLocalT *testing.T, execMeta *testExecutionMetadata, executionIndex int, duration time.Duration)
+
+		// function to decide whether we want to perform a retry (third callback executed after test execution)
+		postShouldRetry func(ptrToLocalT *testing.T, execMeta *testExecutionMetadata, executionIndex int, remainingRetries int64) bool
+
+		// function executed when all execution have finished (last callback executed after all test executions(+retries))
+		postOnRetryEnd func(t *testing.T, executionIndex int, lastPtrToLocalT *testing.T, result retryGroupPolicyResult)
+	}
+
+	additionalFeatureWrapperOptions struct {
+		processRetryAllowed        bool
+		parallelEFDAllowed         bool
+		processRetryFuzzGuard      *processRetryFuzzGuardSnapshot
+		mRunEpoch                  uint64
+		mRunInvocations            *atomic.Uint64
+		processRetryLaunchTemplate *processRetryLaunchBaseline
+		processRetryCoordinator    *processRetryCoordinator
+		quarantinedRaceProcess     *quarantinedRaceProcessContext
+		efdFaultySessionGuard      earlyFlakeDetectionFaultySession
+		retryAttemptObserveOutput  bool
+	}
+
+	// executionOptions holds the execution options for the test
+	executionOptions struct {
+		options                     *runTestWithRetryOptions // options for the test execution
+		executionIndex              int                      // current execution index
+		retryCount                  int64                    // remaining retry count
+		originalExecutionMetadata   *testExecutionMetadata   // original test execution metadata
+		panicExecutionMetadata      *testExecutionMetadata   // panicked execution metadata
+		nativeFatalPanic            any                      // original panic value when Go requires native-fatal propagation
+		nativeFatalTrace            []retryAttemptTerminal   // complete native terminal chain when one value cannot preserve observable behavior
+		nativeFatalTraceReplay      bool                     // true when terminal propagation must replay the complete chain
+		ptrToLocalT                 *testing.T               // pointer to the local test instance
+		executionMetadata           *testExecutionMetadata   // current test execution metadata
+		module                      integrations.TestModule  // module associated with the test
+		suite                       integrations.TestSuite   // suite associated with the test
+		efdBatchMetadataActive      bool                     // preserves configured EFD batch metadata; it does not imply concurrent in-process execution
+		processRetryLaunchBaseline  *processRetryLaunchBaseline
+		flakyRetryBudgetReservation *flakyRetryBudgetReservation
+		retryAttemptGroup           *retryAttemptGroup
+		rawAttemptFailureSeen       bool
+		failfastRawFailure          bool
+		nativeFailfastStop          bool
+		capabilityFallbackCompleted bool
+		lastObservation             retryAttemptObservation
+		deferredQueued              bool
+		efdFaultySessionChecked     bool
+	}
+
+	flakyRetryBudgetReservation struct {
+		state atomic.Int32
+	}
+
+	// testCleanupResult captures how testing cleanup execution completed for a retry attempt.
+	testCleanupResult struct {
+		panicData       any    // panic value returned by testing.common.runCleanup.
+		panicStacktrace string // stacktrace captured when cleanup returned a panic value.
+		goexit          bool   // true when cleanup called runtime.Goexit before runCleanup returned.
+		ran             bool   // true after this attempt has executed its testing cleanups.
+	}
+
+	retryGroupPolicyResult struct {
+		failfastRawFailure bool
+		nativeFailfastStop bool
+		lateFailure        bool
+	}
+
+	// additionalFeatureMetadata is the effective per-test state used to select and apply CI Visibility additional features.
+	additionalFeatureMetadata struct {
+		identity                      *testIdentity           // fully-qualified test or subtest identity
+		isTestManagementEnabled       bool                    // whether Test Management is enabled for the session
+		isEarlyFlakeDetectionEnabled  bool                    // whether EFD remains effective for this test after suppression
+		isFlakyTestRetriesEnabled     bool                    // whether FTR remains effective for this test after suppression
+		isQuarantined                 bool                    // effective Test Management quarantine directive
+		isDisabled                    bool                    // effective Test Management disabled directive
+		isAttemptToFix                bool                    // effective Test Management attempt-to-fix directive
+		isNew                         bool                    // selector-level known-new test result for EFD
+		isModified                    bool                    // selector-level modified-test result when known ahead of span creation
+		hasExplicitQuarantined        bool                    // true when quarantine was set by an exact Test Management match
+		hasExplicitDisabled           bool                    // true when disabled was set by an exact Test Management match
+		hasExplicitAttemptToFix       bool                    // true when attempt-to-fix was set by an exact Test Management match
+		managementMatchKind           testManagementMatchKind // specificity of the Test Management match
+		efdFellBackToFlakyRetries     bool                    // whether a slow EFD test fell through to FTR retry semantics
+		shouldOrchestrateAttemptToFix bool                    // true when this layer owns the ATF retry lifecycle
+	}
+
+	// additionalFeaturePath identifies how CI Visibility should apply additional feature behavior for a test.
+	additionalFeaturePath int
+
+	// additionalFeatureSelection records the selected path and the effective reasons used to choose it.
+	additionalFeatureSelection struct {
+		path    additionalFeaturePath    // selected additional-feature execution path
+		reasons additionalFeatureReasons // allocation-free reasons derived from the same metadata snapshot as the path
+	}
+
+	additionalFeatureReasons uint16
+)
+
+const (
+	additionalFeatureReasonTestManagementDisabled additionalFeatureReasons = 1 << iota
+	additionalFeatureReasonTestManagementQuarantined
+	additionalFeatureReasonAttemptToFixZeroRetries
+	additionalFeatureReasonAttemptToFix
+	additionalFeatureReasonInheritedSubtestState
+	additionalFeatureReasonEFDNewTest
+	additionalFeatureReasonEFDModifiedTest
+	additionalFeatureReasonEFDZeroRetries
+	additionalFeatureReasonFlakyRetry
+)
+
+const unexpectedTestTerminationMessage = "test executed panic(nil) or runtime.Goexit"
+
+var (
+	// ciVisibilityEnabledValue holds a value to check if ci visibility is enabled or not (1 = enabled / 0 = disabled)
+	ciVisibilityEnabledValue int32 = -1
+
+	// instrumentationMap holds a map of *runtime.Func for tracking instrumented functions
+	instrumentationMap = map[*runtime.Func]*instrumentationMetadata{}
+
+	// instrumentationMapMutex is a read-write mutex for synchronizing access to instrumentationMap.
+	instrumentationMapMutex sync.RWMutex
+
+	// ciVisibilityTests holds a map of *testing.T or *testing.B to execution metadata for tracking tests.
+	ciVisibilityTestMetadata = map[unsafe.Pointer]*testExecutionMetadata{}
+
+	// ciVisibilityTestMetadataMutex is a read-write mutex for synchronizing access to ciVisibilityTestMetadata.
+	ciVisibilityTestMetadataMutex sync.RWMutex
+)
+
+const (
+	// internalParallelEFDMaxConcurrency bounds the experimental parallel-EFD scheduler without adding another configuration key.
+	internalParallelEFDMaxConcurrency int64 = 4
+
+	// additionalFeaturePathNone keeps the original instrumentation path without preloading additional feature metadata.
+	additionalFeaturePathNone additionalFeaturePath = iota
+	// additionalFeaturePathMetadataOnly preloads exact subtest metadata without retry isolation.
+	additionalFeaturePathMetadataOnly
+	// additionalFeaturePathDisabledFast applies disabled-test metadata and skips without cloning testing.T.
+	additionalFeaturePathDisabledFast
+	// additionalFeaturePathRetryWrapper uses retry isolation for features that need owned execution control.
+	additionalFeaturePathRetryWrapper
+)
+
+// String returns a stable label for additional-feature path debug logs.
+func (p additionalFeaturePath) String() string {
+	switch p {
+	case additionalFeaturePathNone:
+		return "none"
+	case additionalFeaturePathMetadataOnly:
+		return "metadata_only"
+	case additionalFeaturePathDisabledFast:
+		return "disabled_fast_path"
+	case additionalFeaturePathRetryWrapper:
+		return "retry_wrapper"
+	default:
+		return fmt.Sprintf("unknown(%d)", p)
+	}
+}
+
+// isCiVisibilityEnabled reports whether DD_CIVISIBILITY_ENABLED enables CI Visibility for this process.
+func isCiVisibilityEnabled() bool {
+	// let's check if the value has already been loaded from the env-vars
+	enabledValue := atomic.LoadInt32(&ciVisibilityEnabledValue)
+	if enabledValue == -1 {
+		// Get the DD_CIVISIBILITY_ENABLED env var, if not present we default to false (for now). This is because if we are here, it means
+		// that the process was instrumented for ci visibility or by using orchestrion.
+		// So effectively this env-var will act as a kill switch for cases where the code is instrumented, but
+		// we don't want the civisibility instrumentation to be enabled.
+		// *** For preview releases we will default to false, meaning that the use of ci visibility must be opt-in ***
+		mode, ok := envconfig.FromEnv()
+		if ok && envconfig.Enabled(mode) {
+			atomic.StoreInt32(&ciVisibilityEnabledValue, 1)
+			return true
+		}
+		atomic.StoreInt32(&ciVisibilityEnabledValue, 0)
+		return false
+
+	}
+
+	return enabledValue == 1
+}
+
+// getInstrumentationMetadata gets the stored instrumentation metadata for a given *runtime.Func.
+func getInstrumentationMetadata(fn *runtime.Func) *instrumentationMetadata {
+	instrumentationMapMutex.RLock()
+	defer instrumentationMapMutex.RUnlock()
+	if v, ok := instrumentationMap[fn]; ok {
+		return v
+	}
+	return nil
+}
+
+// setInstrumentationMetadata stores an instrumentation metadata for a given *runtime.Func.
+func setInstrumentationMetadata(fn *runtime.Func, metadata *instrumentationMetadata) {
+	instrumentationMapMutex.Lock()
+	defer instrumentationMapMutex.Unlock()
+	instrumentationMap[fn] = metadata
+}
+
+// createTestMetadata creates the CI visibility test metadata associated with a given *testing.T, *testing.B, *testing.common
+func createTestMetadata(tb testing.TB, originalTest *testing.T) *testExecutionMetadata {
+	ciVisibilityTestMetadataMutex.Lock()
+	defer ciVisibilityTestMetadataMutex.Unlock()
+	execMetadata := &testExecutionMetadata{originalTest: originalTest}
+	ciVisibilityTestMetadata[reflect.ValueOf(tb).UnsafePointer()] = execMetadata
+	return execMetadata
+}
+
+// getTestMetadata retrieves the CI visibility test metadata associated with a given *testing.T, *testing.B, *testing.common
+func getTestMetadata(tb testing.TB) *testExecutionMetadata {
+	return getTestMetadataFromPointer(reflect.ValueOf(tb).UnsafePointer())
+}
+
+// getTestMetadataFromPointer retrieves the CI visibility test metadata associated with a given *testing.T, *testing.B, *testing.common using a pointer
+func getTestMetadataFromPointer(ptr unsafe.Pointer) *testExecutionMetadata {
+	ciVisibilityTestMetadataMutex.RLock()
+	defer ciVisibilityTestMetadataMutex.RUnlock()
+	if v, ok := ciVisibilityTestMetadata[ptr]; ok {
+		return v
+	}
+	return nil
+}
+
+// deleteTestMetadata delete the CI visibility test metadata associated with a given *testing.T, *testing.B, *testing.common
+func deleteTestMetadata(tb testing.TB) {
+	ciVisibilityTestMetadataMutex.Lock()
+	defer ciVisibilityTestMetadataMutex.Unlock()
+	delete(ciVisibilityTestMetadata, reflect.ValueOf(tb).UnsafePointer())
+}
+
+// checkIfCIVisibilityExitIsRequiredByPanic checks the additional features settings to decide if we allow individual tests to panic or not
+func checkIfCIVisibilityExitIsRequiredByPanic() bool {
+	// Apply additional features
+	settings := integrations.GetSettings()
+
+	// If we don't plan to do retries then we allow to panic
+	return !settings.FlakyTestRetriesEnabled && !settings.EarlyFlakeDetection.Enabled
+}
+
+// selectAdditionalFeaturePath chooses the lightest execution path that still preserves the effective feature behavior.
+func selectAdditionalFeaturePath(
+	meta *additionalFeatureMetadata,
+	flakyRetryCount, remainingFlakyRetryBudget int64,
+	attemptToFixRetryCount int,
+	efdRetryPossible bool,
+	needsMetadataOnly bool,
+) additionalFeatureSelection {
+	if meta == nil {
+		return additionalFeatureSelection{path: additionalFeaturePathNone}
+	}
+
+	if meta.isDisabled && !meta.isAttemptToFix {
+		reasons := additionalFeatureReasonTestManagementDisabled
+		if meta.isQuarantined {
+			reasons |= additionalFeatureReasonTestManagementQuarantined
+		}
+		return additionalFeatureSelection{path: additionalFeaturePathDisabledFast, reasons: reasons}
+	}
+
+	if meta.isAttemptToFix && meta.shouldOrchestrateAttemptToFix {
+		if attemptToFixRetryCount <= 0 && !meta.isDisabled && !meta.isQuarantined {
+			return additionalFeatureSelection{path: additionalFeaturePathMetadataOnly, reasons: additionalFeatureReasonAttemptToFixZeroRetries}
+		}
+		return additionalFeatureSelection{path: additionalFeaturePathRetryWrapper, reasons: additionalFeatureReasonAttemptToFix}
+	}
+
+	if meta.isDisabled {
+		reasons := additionalFeatureReasonTestManagementDisabled
+		if meta.isAttemptToFix {
+			reasons |= additionalFeatureReasonAttemptToFix
+		}
+		return additionalFeatureSelection{path: additionalFeaturePathRetryWrapper, reasons: reasons}
+	}
+
+	if meta.isQuarantined {
+		reasons := additionalFeatureReasonTestManagementQuarantined
+		if meta.isAttemptToFix {
+			reasons |= additionalFeatureReasonAttemptToFix
+		}
+		return additionalFeatureSelection{path: additionalFeaturePathRetryWrapper, reasons: reasons}
+	}
+
+	if needsMetadataOnly {
+		return additionalFeatureSelection{path: additionalFeaturePathMetadataOnly, reasons: additionalFeatureReasonInheritedSubtestState}
+	}
+
+	var reasons additionalFeatureReasons
+	efdCandidate := false
+	if meta.isEarlyFlakeDetectionEnabled {
+		if meta.isNew {
+			efdCandidate = true
+			if efdRetryPossible {
+				reasons |= additionalFeatureReasonEFDNewTest
+			}
+		} else if meta.isModified {
+			efdCandidate = true
+			if efdRetryPossible {
+				reasons |= additionalFeatureReasonEFDModifiedTest
+			}
+		}
+	}
+	if meta.isFlakyTestRetriesEnabled && flakyRetryCount > 0 && remainingFlakyRetryBudget > 0 {
+		reasons |= additionalFeatureReasonFlakyRetry
+	}
+	if reasons == 0 {
+		if efdCandidate {
+			return additionalFeatureSelection{path: additionalFeaturePathMetadataOnly, reasons: additionalFeatureReasonEFDZeroRetries}
+		}
+		return additionalFeatureSelection{path: additionalFeaturePathNone}
+	}
+	return additionalFeatureSelection{path: additionalFeaturePathRetryWrapper, reasons: reasons}
+}
+
+// logAdditionalFeatureSelection writes the selected non-default path with the same effective reasons used by the selector.
+func logAdditionalFeatureSelection(meta *additionalFeatureMetadata, selection additionalFeatureSelection) {
+	if meta == nil || selection.path == additionalFeaturePathNone || !log.DebugEnabled() {
+		return
+	}
+	name := "<unknown>"
+	if meta.identity != nil {
+		name = meta.identity.FullName
+	}
+	log.Debug("gotesting: additional feature path test=%s path=%s reasons=[%s]", name, selection.path.String(), selection.reasons.String())
+}
+
+func (reasons additionalFeatureReasons) String() string {
+	ordered := [...]struct {
+		value additionalFeatureReasons
+		name  string
+	}{
+		{additionalFeatureReasonTestManagementDisabled, "test_management_disabled"},
+		{additionalFeatureReasonTestManagementQuarantined, "test_management_quarantined"},
+		{additionalFeatureReasonAttemptToFixZeroRetries, "attempt_to_fix_zero_retries"},
+		{additionalFeatureReasonAttemptToFix, "attempt_to_fix"},
+		{additionalFeatureReasonInheritedSubtestState, "inherited_subtest_state"},
+		{additionalFeatureReasonEFDNewTest, "efd_new_test"},
+		{additionalFeatureReasonEFDModifiedTest, "efd_modified_candidate"},
+		{additionalFeatureReasonEFDZeroRetries, "efd_zero_retries"},
+		{additionalFeatureReasonFlakyRetry, "flaky_retry"},
+	}
+	var builder strings.Builder
+	for _, reason := range ordered {
+		if reasons&reason.value == 0 {
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteByte(' ')
+		}
+		builder.WriteString(reason.name)
+	}
+	return builder.String()
+}
+
+// applyAdditionalFeatureMetadataToExecution copies effective feature metadata into one concrete test execution.
+func applyAdditionalFeatureMetadataToExecution(execMeta *testExecutionMetadata, meta *additionalFeatureMetadata) {
+	if execMeta == nil || meta == nil {
+		return
+	}
+	execMeta.identity = meta.identity
+	if meta.hasExplicitQuarantined {
+		// Exact Test Management data is applied before parent propagation, which still OR-inherits quarantine today.
+		execMeta.isQuarantined = meta.isQuarantined
+		execMeta.hasExplicitQuarantined = true
+	} else {
+		// Ancestor-level quarantine accumulates with state propagated from parent executions.
+		execMeta.isQuarantined = execMeta.isQuarantined || meta.isQuarantined
+	}
+	if meta.hasExplicitDisabled {
+		// Exact Test Management data is applied before parent propagation, which still OR-inherits disabled today.
+		execMeta.isDisabled = meta.isDisabled
+		execMeta.hasExplicitDisabled = true
+	} else {
+		// Ancestor-level disabled state accumulates with state propagated from parent executions.
+		execMeta.isDisabled = execMeta.isDisabled || meta.isDisabled
+	}
+	if meta.hasExplicitAttemptToFix {
+		// Only explicit attempt-to-fix data can clear inherited attempt-to-fix state.
+		execMeta.isAttemptToFix = meta.isAttemptToFix
+		execMeta.hasExplicitAttemptToFix = true
+	} else {
+		// Non-exact attempt-to-fix state is inherited additively.
+		execMeta.isAttemptToFix = execMeta.isAttemptToFix || meta.isAttemptToFix
+	}
+	execMeta.isEarlyFlakeDetectionEnabled = execMeta.isEarlyFlakeDetectionEnabled || meta.isEarlyFlakeDetectionEnabled
+	execMeta.isFlakyTestRetriesEnabled = execMeta.isFlakyTestRetriesEnabled || meta.isFlakyTestRetriesEnabled
+	execMeta.isANewTest = execMeta.isANewTest || meta.isNew
+	execMeta.isAModifiedTest = execMeta.isAModifiedTest || meta.isModified
+	execMeta.efdFellBackToFlakyRetries = meta.efdFellBackToFlakyRetries
+	execMeta.shouldOrchestrateAttemptToFix = meta.shouldOrchestrateAttemptToFix
+}
+
+// syncFeatureMetadataFromExecution keeps wrapper-level metadata aligned with the latest concrete execution.
+func syncFeatureMetadataFromExecution(meta *additionalFeatureMetadata, execMeta *testExecutionMetadata) {
+	if meta == nil || execMeta == nil {
+		return
+	}
+	meta.identity = execMeta.identity
+	// isDisabled and isQuarantined use a one-way ratchet: inherited state from the parent
+	// (propagated via propagateTestExecutionMetadataFlags) can only accumulate true, never
+	// clear back to false. This serves two goals simultaneously:
+	//   1. Prevents corruption: a transient execMeta.isDisabled=false (due to propagation
+	//      ordering) cannot zero ptrMeta.isDisabled=true across retry iterations, which would
+	//      cause all subsequent spans to lose the disabled tag.
+	//   2. Preserves child-inherits-parent skip: when a child has its own retry wrapper but its
+	//      parent is disabled/quarantined, propagateTestExecutionMetadataFlags ORs the parent
+	//      state into execMeta. The ratchet lets that accumulated true reach ptrMeta so that
+	//      postOnRetryEnd (which reads ptrMeta.isDisabled || ptrMeta.isQuarantined) still calls
+	//      SkipNow as expected instead of failing the Go test run.
+	meta.isDisabled = meta.isDisabled || execMeta.isDisabled
+	meta.isQuarantined = meta.isQuarantined || execMeta.isQuarantined
+	// isAttemptToFix and hasExplicit* are set once from the authoritative management directive
+	// and do not need to be synced from execution metadata — they are stable by construction.
+	meta.isEarlyFlakeDetectionEnabled = execMeta.isEarlyFlakeDetectionEnabled
+	meta.isFlakyTestRetriesEnabled = execMeta.isFlakyTestRetriesEnabled
+	meta.isNew = execMeta.isANewTest
+	meta.isModified = execMeta.isAModifiedTest
+	meta.efdFellBackToFlakyRetries = execMeta.efdFellBackToFlakyRetries
+}
+
+// wrapWithAdditionalFeatureMetadata preloads metadata without entering retry isolation.
+func wrapWithAdditionalFeatureMetadata(f func(*testing.T), meta *additionalFeatureMetadata, suppressParentRetryMetadata, skipAfterRun bool) func(*testing.T) {
+	wrapper := func(t *testing.T) {
+		t.Helper()
+		execMeta := getTestMetadata(t)
+		createdMetadata := false
+		deletedMetadata := false
+		if execMeta == nil {
+			execMeta = createTestMetadata(t, nil)
+			createdMetadata = true
+		}
+		defer func() {
+			if createdMetadata && !deletedMetadata {
+				deleteTestMetadata(t)
+			}
+		}()
+
+		applyAdditionalFeatureMetadataToExecution(execMeta, meta)
+		if suppressParentRetryMetadata {
+			execMeta.suppressParentRetryMetadata = true
+		}
+
+		f(t)
+
+		skipCurrentTest := skipAfterRun || (execMeta.isDisabled && !execMeta.isAttemptToFix)
+		if skipCurrentTest {
+			// The disabled fast path, and inherited-disabled metadata-only subtests,
+			// close the CI Visibility event before this point. Mark skip instrumentation
+			// as already handled so Go's SkipNow does not close it again.
+			execMeta.skipped.Store(1)
+			if createdMetadata {
+				deleteTestMetadata(t)
+				deletedMetadata = true
+			}
+			t.SkipNow()
+		}
+	}
+	setInstrumentationMetadata(runtime.FuncForPC(reflect.ValueOf(wrapper).Pointer()), &instrumentationMetadata{IsInternal: true})
+	return wrapper
+}
+
+// applyAdditionalFeaturesToTestFunc applies all the additional features as wrapper of a func(*testing.T).
+// parentExecMeta is optional and allows subtests to inherit behaviour from their parent test when needed.
+func applyAdditionalFeaturesToTestFunc(
+	f func(*testing.T),
+	testInfo *commonInfo,
+	parentExecMeta *testExecutionMetadata,
+	wrapperOpts additionalFeatureWrapperOptions,
+) func(*testing.T) {
+	// Apply additional features
+	settings := integrations.GetSettings()
+
+	// Ensure that session-level additional features and capability tags are initialized before any path returns early.
+	_ = integrations.GetKnownTests()
+
+	// If none of the additional features are enabled, return the original function.
+	if !settings.TestManagement.Enabled && !settings.EarlyFlakeDetection.Enabled && !settings.FlakyTestRetriesEnabled {
+		return f
+	}
+
+	identity := testInfo.identity
+	if identity == nil {
+		// Derive an identity for tests that did not populate it (such as subtests discovered at runtime).
+		identity = newTestIdentity(testInfo.moduleName, testInfo.suiteName, testInfo.testName)
+	}
+	isSubtest := len(identity.Segments) > 1
+
+	meta := additionalFeatureMetadata{
+		identity:                     identity,
+		isTestManagementEnabled:      settings.TestManagement.Enabled,
+		isEarlyFlakeDetectionEnabled: settings.EarlyFlakeDetection.Enabled,
+		isFlakyTestRetriesEnabled:    settings.FlakyTestRetriesEnabled,
+		managementMatchKind:          testManagementMatchNone,
+	}
+
+	// Test Management feature
+	if meta.isTestManagementEnabled {
+		// Pull the most specific directives available for the current identity.
+		if data, matchKind, ok := getTestManagementData(identity); ok && data != nil {
+			meta.managementMatchKind = matchKind
+			meta.isQuarantined = data.Quarantined
+			meta.isDisabled = data.Disabled
+			meta.isAttemptToFix = data.AttemptToFix
+			if matchKind == testManagementMatchExact {
+				meta.hasExplicitQuarantined = true
+				meta.hasExplicitDisabled = true
+				meta.hasExplicitAttemptToFix = true
+			}
+		}
+	}
+
+	// determine whether attempt-to-fix retries should be orchestrated at this level
+	meta.shouldOrchestrateAttemptToFix = meta.isAttemptToFix
+	if parentExecMeta != nil && parentExecMeta.isAttemptToFix {
+		// The parent already controls the attempt-to-fix loop; subtests should only orchestrate if explicitly requested.
+		meta.shouldOrchestrateAttemptToFix = meta.hasExplicitAttemptToFix && meta.isAttemptToFix && !parentExecMeta.isAttemptToFix
+	}
+
+	if isSubtest {
+		if !settings.SubtestFeaturesEnabled {
+			// Feature gate keeps legacy behaviour when subtests support is disabled.
+			return f
+		}
+		// Require an exact match before applying subtest-specific directives; fallbacks remain parent-scoped.
+		if meta.managementMatchKind != testManagementMatchExact {
+			return f
+		}
+		// Subtests currently inherit parent EFD/flaky retry behaviour; disable here to avoid double wrapping.
+		meta.isEarlyFlakeDetectionEnabled = false
+		meta.isFlakyTestRetriesEnabled = false
+	}
+
+	if (meta.isDisabled || meta.isQuarantined) && !meta.isAttemptToFix {
+		// Disabled and quarantined tests have Test Management semantics; unrelated retry features must not own them.
+		meta.isEarlyFlakeDetectionEnabled = false
+		meta.isFlakyTestRetriesEnabled = false
+	}
+
+	// Early Flake Detection feature
+	if meta.isEarlyFlakeDetectionEnabled {
+		// Record whether the test is new so we can surface it in spans later.
+		isKnown, hasKnownData := isKnownTest(testInfo)
+		meta.isNew = hasKnownData && !isKnown
+		if !meta.isNew && settings.ImpactedTestsEnabled {
+			meta.isModified = integrations.IsTestFuncModified(testInfo.testName, testInfo.sourceFunc)
+		}
+	}
+
+	var flakyRetryCount int64
+	var remainingFlakyRetryBudget int64
+	var flakyRetriesSettings *integrations.FlakyRetriesSetting
+	if meta.isFlakyTestRetriesEnabled {
+		flakyRetriesSettings = integrations.GetFlakyRetriesSettings()
+		flakyRetryCount = flakyRetriesSettings.RetryCount
+		remainingFlakyRetryBudget = flakyRetryBudgetRemaining(flakyRetriesSettings)
+	}
+
+	parentAttemptToFixActive := parentExecMeta != nil && parentExecMeta.isAttemptToFix
+	needsMetadataOnly := isSubtest &&
+		meta.managementMatchKind == testManagementMatchExact &&
+		parentAttemptToFixActive &&
+		!meta.shouldOrchestrateAttemptToFix &&
+		!meta.isDisabled &&
+		!meta.isQuarantined
+	selection := selectAdditionalFeaturePath(
+		&meta,
+		flakyRetryCount,
+		remainingFlakyRetryBudget,
+		settings.TestManagement.AttemptToFixRetries,
+		efdHasPossibleRetry(settings),
+		needsMetadataOnly,
+	)
+	logAdditionalFeatureSelection(&meta, selection)
+
+	// get the pointer to use the reference in the wrapper
+	ptrMeta := &meta
+	quarantineProcess := wrapperOpts.quarantinedRaceProcess
+	if quarantineProcess == nil && parentExecMeta != nil {
+		quarantineProcess = parentExecMeta.quarantinedRaceProcess
+	}
+	if selection.path == additionalFeaturePathRetryWrapper && ptrMeta.isQuarantined && quarantineProcess != nil {
+		wrapper := func(t *testing.T) {
+			runQuarantinedRaceProcessIsolation(t, testInfo, parentExecMeta, ptrMeta, quarantineProcess)
+		}
+		setInstrumentationMetadata(runtime.FuncForPC(reflect.ValueOf(wrapper).Pointer()), &instrumentationMetadata{IsInternal: true})
+		return wrapper
+	}
+
+	switch selection.path {
+	case additionalFeaturePathNone:
+		return f
+	case additionalFeaturePathMetadataOnly:
+		return wrapWithAdditionalFeatureMetadata(f, ptrMeta, needsMetadataOnly, false)
+	case additionalFeaturePathDisabledFast:
+		return wrapWithAdditionalFeatureMetadata(f, ptrMeta, false, true)
+	}
+
+	// Create a unified wrapper that will use a single runTestWithRetry call.
+	wrapper := func(t *testing.T) {
+		t.Helper()
+		originalExecMeta := getTestMetadata(t)
+
+		var outcomes retryOutcomeAccumulator
+
+		runTestWithRetry(&runTestWithRetryOptions{
+			targetFunc:                    f,
+			t:                             t,
+			parallelEFDAllowed:            wrapperOpts.parallelEFDAllowed,
+			testInfo:                      testInfo,
+			processRetryIdentity:          identity,
+			processRetryMRunEpoch:         wrapperOpts.mRunEpoch,
+			processRetryInvocationCounter: wrapperOpts.mRunInvocations,
+			processRetryLaunchTemplate:    wrapperOpts.processRetryLaunchTemplate,
+			processRetryCoordinator:       wrapperOpts.processRetryCoordinator,
+			efdFaultySessionGuard:         wrapperOpts.efdFaultySessionGuard,
+			processRetryFuzzGuard:         wrapperOpts.processRetryFuzzGuard,
+			retryAttemptObserveOutput:     wrapperOpts.retryAttemptObserveOutput,
+			retryAttemptObserveOutputSet:  true,
+			retryAttemptMaskingFallback:   ptrMeta.isDisabled || ptrMeta.isQuarantined,
+			preExecMetaAdjust: func(execMeta *testExecutionMetadata, _ int) {
+				// Synchronize the test execution metadata with the original test execution metadata.
+
+				applyAdditionalFeatureMetadataToExecution(execMeta, ptrMeta)
+				// An exact subtest wrapper owns its retry tags independently from the
+				// surrounding parent attempt. It may still inherit Test Management
+				// state, but parent retry control fields must not make the child claim
+				// retry or attempt-to-fix completion ownership.
+				if isSubtest {
+					execMeta.suppressParentRetryMetadata = true
+				}
+				execMeta.allAttemptsPassed = outcomes.allAttemptsPassed()
+				execMeta.allRetriesFailed = outcomes.allRetriesFailed()
+
+				// Copy test.final_status tracking state from the wrapper-level accumulator.
+				execMeta.anyExecutionPassed = outcomes.anyPassed()
+				execMeta.anyExecutionFailed = outcomes.anyFailed()
+
+				// Propagate flags from the original test metadata.
+				propagateTestExecutionMetadataFlags(execMeta, originalExecMeta)
+
+				syncFeatureMetadataFromExecution(ptrMeta, execMeta)
+			},
+			postRetryFamilyTransition: func(execMeta *testExecutionMetadata) {
+				syncFeatureMetadataFromExecution(ptrMeta, execMeta)
+			},
+			preIsLastRetry: func(execMeta *testExecutionMetadata, _ int, remainingRetries int64) bool {
+				last, recognized := retryExecutionIsLast(execMeta, remainingRetries, flakyRetryBudgetRemaining(flakyRetriesSettings))
+				return recognized && last
+			},
+			postAdjustRetryCount: func(execMeta *testExecutionMetadata, duration time.Duration) int64 {
+				// adjust retry count only runs after the first run
+
+				if execMeta.isAttemptToFix && ptrMeta.shouldOrchestrateAttemptToFix {
+					if execMeta.identity != nil && len(execMeta.identity.Segments) > 1 {
+						log.Debug("postAdjustRetryCount attempt_to_fix identity=%s setting=%d", execMeta.identity.FullName, settings.TestManagement.AttemptToFixRetries)
+					}
+				}
+				retryCount := computeAdjustedRetryCount(execMeta, duration)
+				syncFeatureMetadataFromExecution(ptrMeta, execMeta)
+				return retryCount
+			},
+			postPerExecution: func(ptrToLocalT *testing.T, execMeta *testExecutionMetadata, executionIndex int, _ time.Duration) {
+				failed := ptrToLocalT.Failed()
+				skipped := ptrToLocalT.Skipped()
+				log.Debug("applyAdditionalFeaturesToTestFunc: postPerExecution called for execution %d, failed: %t, skipped: %t", executionIndex, failed, skipped)
+
+				outcomes.observe(failed, skipped)
+
+				if execMeta.isAttemptToFix {
+					status := "PASS"
+					if failed {
+						status = "FAIL"
+					} else if skipped {
+						status = "SKIP"
+					}
+					if execMeta.identity != nil && len(execMeta.identity.Segments) > 1 {
+						log.Debug("postPerExecution attempt_to_fix identity=%s orchestrate=%t run=%d status=%s", execMeta.identity.FullName, ptrMeta.shouldOrchestrateAttemptToFix, executionIndex, status)
+					}
+
+					if ptrMeta.shouldOrchestrateAttemptToFix {
+						isSubtest := execMeta.identity != nil && len(execMeta.identity.Segments) > 1
+						if !isSubtest {
+							ptrToLocalT.Logf("  [attempt to fix retry: %d (%s)]", executionIndex+1, status)
+						}
+					}
+					return
+				}
+
+				if usesEfdRetrySemantics(execMeta) {
+					if skipped {
+						log.Debug("applyAdditionalFeaturesToTestFunc: EFD test skipped, incrementing skip count")
+					} else if failed {
+						log.Debug("applyAdditionalFeaturesToTestFunc: EFD test failed, incrementing fail count")
+					} else {
+						log.Debug("applyAdditionalFeaturesToTestFunc: EFD test passed, incrementing pass count")
+					}
+					return
+				}
+
+				if execMeta.isFlakyTestRetriesEnabled {
+					return
+				}
+			},
+			postShouldRetry: func(ptrToLocalT *testing.T, execMeta *testExecutionMetadata, _ int, remainingRetries int64) bool {
+				if execMeta.isAttemptToFix && ptrMeta.shouldOrchestrateAttemptToFix {
+					// For attempt-to-fix tests, retry if remaining retries > 0.
+					return remainingRetries > 0
+				}
+
+				if usesEfdRetrySemantics(execMeta) {
+					// Clean skips do not add flakiness signal, so EFD stops before scheduling retries.
+					cleanSkip := ptrToLocalT.Skipped() && !ptrToLocalT.Failed()
+					return !cleanSkip && remainingRetries >= 0
+				}
+
+				if execMeta.isFlakyTestRetriesEnabled {
+					return willRetryAfterExecution(
+						ptrToLocalT.Failed(),
+						ptrToLocalT.Skipped(),
+						execMeta,
+						remainingRetries,
+						flakyRetryBudgetRemaining(flakyRetriesSettings),
+					)
+				}
+
+				// No retries for other cases.
+				return false
+			},
+			postOnRetryEnd: func(t *testing.T, executionIndex int, lastPtrToLocalT *testing.T, result retryGroupPolicyResult) {
+				// if the test is disabled or quarantined, skip the test result to the testing framework
+				if ptrMeta.isDisabled || ptrMeta.isQuarantined {
+					log.Debug("applyAdditionalFeaturesToTestFunc: Skipping test result for disabled or quarantined test")
+					t.SkipNow()
+					return
+				}
+
+				// get the test common privates
+				tCommonPrivates := getTestPrivateFields(t)
+				if tCommonPrivates == nil {
+					panic("getting test private fields failed")
+				}
+
+				// Attempt-to-fix owns result propagation when it is active, even if EFD or FTR
+				// metadata is also present for tag compatibility.
+				attemptToFixActive := ptrMeta.isAttemptToFix
+				if result.failfastRawFailure || result.lateFailure || attemptToFixActive && outcomes.anyFailed() {
+					tCommonPrivates.SetFailed(true)
+					tParentCommonPrivates := getTestParentPrivateFields(t)
+					if tParentCommonPrivates == nil {
+						panic("getting test parent private fields failed")
+					}
+					tParentCommonPrivates.SetFailed(true)
+					return
+				}
+
+				// if early flake detection is enabled, we need to set the test status
+				efdOnNewTest := ptrMeta.isEarlyFlakeDetectionEnabled && ptrMeta.isNew && !ptrMeta.efdFellBackToFlakyRetries && !attemptToFixActive
+				efdOnModifiedTest := ptrMeta.isEarlyFlakeDetectionEnabled && ptrMeta.isModified && !ptrMeta.efdFellBackToFlakyRetries && !attemptToFixActive
+				if efdOnNewTest || efdOnModifiedTest {
+					log.Debug("applyAdditionalFeaturesToTestFunc: Setting test status for Early Flake Detection")
+					status := "passed"
+					if !outcomes.anyPassed() {
+						if outcomes.skipped > 0 {
+							status = "skipped"
+							tCommonPrivates.SetSkipped(true)
+						}
+						if outcomes.anyFailed() {
+							status = "failed"
+							tCommonPrivates.SetFailed(true)
+							tParentCommonPrivates := getTestParentPrivateFields(t)
+							if tParentCommonPrivates == nil {
+								panic("getting test parent private fields failed")
+							}
+							tParentCommonPrivates.SetFailed(true)
+						}
+					}
+					if executionIndex > 0 {
+						fmt.Printf("  [ %v after %v retries by Datadog's early flake detection ]\n", status, executionIndex)
+					}
+					return
+				}
+
+				// if the test is a flaky test retries test, we need to set the test status
+				if ptrMeta.isFlakyTestRetriesEnabled && !attemptToFixActive {
+					log.Debug("applyAdditionalFeaturesToTestFunc: Setting test status for Flaky Test Retries")
+					tCommonPrivates.SetFailed(lastPtrToLocalT.Failed())
+					tCommonPrivates.SetSkipped(lastPtrToLocalT.Skipped())
+					if lastPtrToLocalT.Failed() {
+						tParentCommonPrivates := getTestParentPrivateFields(t)
+						if tParentCommonPrivates == nil {
+							panic("getting test parent private fields failed")
+						}
+						tParentCommonPrivates.SetFailed(true)
+					}
+					if executionIndex > 0 {
+						status := "passed"
+						if t.Failed() {
+							status = "failed"
+						} else if t.Skipped() {
+							status = "skipped"
+						}
+						fmt.Printf("    [ %v after %v retries by Datadog's auto test retries ]\n", status, executionIndex)
+					}
+					return
+				}
+
+				log.Debug("applyAdditionalFeaturesToTestFunc: Setting test status for regular test execution")
+				tCommonPrivates.SetFailed(lastPtrToLocalT.Failed())
+				tCommonPrivates.SetSkipped(lastPtrToLocalT.Skipped())
+				if lastPtrToLocalT.Failed() {
+					tParentCommonPrivates := getTestParentPrivateFields(t)
+					if tParentCommonPrivates == nil {
+						panic("getting test parent private fields failed")
+					}
+					tParentCommonPrivates.SetFailed(true)
+				}
+			},
+		})
+	}
+
+	// Mark the wrapper as instrumented.
+	setInstrumentationMetadata(runtime.FuncForPC(reflect.ValueOf(wrapper).Pointer()), &instrumentationMetadata{IsInternal: true})
+	return wrapper
+}
+
+// runTestWithRetry encapsulates the common retry logic for test functions.
+func runTestWithRetry(options *runTestWithRetryOptions) {
+	// Set this func as a helper func of t
+	options.t.Helper()
+
+	// Initialize execution options variables
+	execOpts := &executionOptions{
+		options:                     options,
+		executionIndex:              -1,
+		retryCount:                  int64(0),
+		originalExecutionMetadata:   getTestMetadata(options.t),
+		flakyRetryBudgetReservation: &flakyRetryBudgetReservation{},
+	}
+	defer refundFlakyRetryBudgetReservation(execOpts)
+	if options.processRetryIdentity != nil && len(options.processRetryIdentity.Segments) > 1 {
+		runRetryAttemptCapabilityFallback(options, "selected_subtest_fresh_layout_unavailable")
+		return
+	}
+	prepareDeferredProcessRetryInvocation(execOpts)
+	groupFactory := options.retryAttemptGroupFactory
+	var group *retryAttemptGroup
+	var reason string
+	if groupFactory != nil {
+		group, reason = groupFactory(options.t)
+	} else if options.retryAttemptObserveOutputSet {
+		group, reason = newRetryAttemptGroupWithOutputObservation(options.t, options.retryAttemptObserveOutput)
+	} else {
+		group, reason = newRetryAttemptGroup(options.t)
+	}
+	if reason == "" {
+		execOpts.retryAttemptGroup = group
+		defer group.retire()
+	} else {
+		runRetryAttemptCapabilityFallback(options, reason)
+		return
+	}
+
+	// The first execution always stays in the parent. Process mode is an opt-in
+	// backend for additional attempts only.
+	shouldRetry := executeTestIteration(execOpts)
+	if execOpts.capabilityFallbackCompleted {
+		return
+	}
+	if execOpts.deferredQueued {
+		return
+	}
+	if shouldRetry && !isProcessRetryChild() {
+		calculatedRetryCount := execOpts.retryCount
+		remainingAttempts := calculatedRetryCount + 1
+		runSequentialRetries := func() {
+			for {
+				if retryContinuationStopped(execOpts) {
+					execOpts.retryCount = 0
+					break
+				}
+				if !executeTestIteration(execOpts) {
+					break
+				}
+			}
+		}
+
+		if options.processRetryCoordinator != nil && processRetryShuttingDown() {
+			execOpts.retryCount = 0
+		} else {
+			parallelEFDSelected := shouldUseParallelEFD(options, execOpts.executionMetadata, remainingAttempts, internalParallelEFDMaxConcurrency)
+			if parallelEFDSelected {
+				// Fresh in-process attempts share Go's real testState. Keep them serial so
+				// T.Run can restore one matcher namespace without approximating the native scheduler.
+				// Retain the EFD batch marker because final-status aggregation remains the
+				// same regardless of whether the samples are scheduled concurrently.
+				execOpts.efdBatchMetadataActive = true
+				if options.processRetryCoordinator != nil {
+					log.Debug("runTestWithRetry: deferred process retry unavailable; falling back to in-process retries")
+				}
+				log.Debug("runTestWithRetry: executing configured parallel EFD serially for testing.T parity")
+			}
+			runSequentialRetries()
+		}
+	}
+	lateFailure := applyRetryAttemptLateFailure(execOpts)
+	// Adjust execution metadata
+	if options.preExecMetaAdjust != nil {
+		options.preExecMetaAdjust(execOpts.executionMetadata, execOpts.executionIndex)
+	}
+
+	// Call onRetryEnd
+	if options.postOnRetryEnd != nil {
+		options.postOnRetryEnd(options.t, execOpts.executionIndex, execOpts.ptrToLocalT, retryGroupPolicyResult{
+			failfastRawFailure: execOpts.failfastRawFailure,
+			nativeFailfastStop: execOpts.nativeFailfastStop,
+			lateFailure:        lateFailure,
+		})
+	}
+
+	// After all test executions, check if we need to close the suite and the module
+	if execOpts.originalExecutionMetadata == nil {
+		checkModuleAndSuite(execOpts.module, execOpts.suite)
+	}
+
+	// Preserve native fatal control flow after aggregate status and telemetry are finalized.
+	if options.t.Failed() && execOpts.nativeFatalTraceReplay {
+		integrations.ExitCiVisibility()
+		replayRetryAttemptNativeTerminalTrace(execOpts.nativeFatalTrace)
+	}
+	if options.t.Failed() && execOpts.nativeFatalPanic != nil {
+		integrations.ExitCiVisibility()
+		panic(execOpts.nativeFatalPanic)
+	}
+
+	// Re-panic if test failed and panic data exists
+	if options.t.Failed() && execOpts.panicExecutionMetadata != nil {
+		// Ensure we flush all CI visibility data and close the session event
+		integrations.ExitCiVisibility()
+		panic(fmt.Sprintf("test failed and panicked after %d retries.\n%v\n%v", execOpts.executionIndex, execOpts.panicExecutionMetadata.panicData, execOpts.panicExecutionMetadata.panicStacktrace))
+	}
+}
+
+func runRetryAttemptCapabilityFallback(options *runTestWithRetryOptions, reason string) {
+	log.Debug("runTestWithRetry: fresh retry attempt runtime unavailable: %s", reason)
+	execMeta := getTestMetadata(options.t)
+	createdMetadata := execMeta == nil
+	if createdMetadata {
+		execMeta = createTestMetadata(options.t, nil)
+	}
+	previousCoverageSuppression := execMeta.suppressCoverageCollection
+	previousBodySuppression := execMeta.suppressUserTestBody
+	selectedSubtest := options.processRetryIdentity != nil && len(options.processRetryIdentity.Segments) > 1
+	execMeta.suppressCoverageCollection = previousCoverageSuppression || options.retryAttemptMaskingFallback || selectedSubtest
+	execMeta.suppressUserTestBody = options.retryAttemptMaskingFallback
+	execMeta.retryContinuationDecided = true
+	execMeta.retryContinuationAdmitted = false
+	if options.preExecMetaAdjust != nil {
+		options.preExecMetaAdjust(execMeta, 0)
+	}
+	execMeta.remainingRetries = 0
+	defer func() {
+		execMeta.suppressCoverageCollection = previousCoverageSuppression
+		execMeta.suppressUserTestBody = previousBodySuppression
+		if createdMetadata {
+			deleteTestMetadata(options.t)
+		}
+	}()
+	options.targetFunc(options.t)
+	if options.retryAttemptMaskingFallback && options.postOnRetryEnd != nil {
+		options.postOnRetryEnd(options.t, 0, options.t, retryGroupPolicyResult{})
+	}
+}
+
+func applyRetryAttemptLateFailure(execOpts *executionOptions) bool {
+	if execOpts == nil || execOpts.retryAttemptGroup == nil || !execOpts.retryAttemptGroup.hasLateFailure() {
+		return false
+	}
+	if execOpts.executionMetadata != nil && (execOpts.executionMetadata.isDisabled || execOpts.executionMetadata.isQuarantined) {
+		return true
+	}
+	if fields := getTestPrivateFields(execOpts.ptrToLocalT); fields != nil {
+		fields.SetFailed(true)
+	}
+	if execOpts.executionMetadata != nil {
+		execOpts.executionMetadata.anyExecutionFailed = true
+		execOpts.executionMetadata.allAttemptsPassed = false
+	}
+	if fields := getTestPrivateFields(execOpts.options.t); fields != nil {
+		fields.SetFailed(true)
+	}
+	if parent := getTestParentPrivateFields(execOpts.options.t); parent != nil {
+		parent.SetFailed(true)
+	}
+	return true
+}
+
+// shouldUseParallelEFD returns true only when the post-first-execution state qualifies for the parallel EFD scheduler.
+func shouldUseParallelEFD(options *runTestWithRetryOptions, execMeta *testExecutionMetadata, remainingAttempts, maxConcurrency int64) bool {
+	if options == nil || execMeta == nil {
+		return false
+	}
+	if !options.parallelEFDAllowed {
+		return false
+	}
+	if remainingAttempts <= 1 || maxConcurrency <= 1 {
+		return false
+	}
+	if execMeta.isAttemptToFix && execMeta.shouldOrchestrateAttemptToFix {
+		return false
+	}
+	return usesEfdRetrySemantics(execMeta)
+}
+
+// executeTestIteration runs a single attempt of the test (or subtest), recording metadata and
+// ensuring the retry orchestration has the latest execution context.
+func executeTestIteration(execOpts *executionOptions) bool {
+	return executeFreshRetryAttemptIteration(execOpts)
+}
+
+func reserveRetryBudgetIfNeeded(execOpts *executionOptions, t *testing.T, execMeta *testExecutionMetadata, executionIndex int) bool {
+	if retryContinuationStoppedForDeferredAdmission(execOpts, t, execMeta) {
+		return false
+	}
+	if usesFlakyRetryBudget(execMeta) && execMeta.flakyRetryBudgetReservation != nil && execMeta.flakyRetryBudgetReservation.reserved() {
+		return true
+	}
+	if !execOpts.options.postShouldRetry(t, execMeta, executionIndex, execOpts.retryCount) {
+		return false
+	}
+	if !admitEarlyFlakeDetectionContinuation(execOpts, t, execMeta) {
+		return false
+	}
+	if !usesFlakyRetryBudget(execMeta) {
+		return true
+	}
+	if execOpts.flakyRetryBudgetReservation == nil {
+		execOpts.flakyRetryBudgetReservation = &flakyRetryBudgetReservation{}
+	}
+	if !execOpts.flakyRetryBudgetReservation.reserve() {
+		return false
+	}
+	return true
+}
+
+func admitEarlyFlakeDetectionContinuation(execOpts *executionOptions, t *testing.T, execMeta *testExecutionMetadata) bool {
+	if execOpts == nil || execOpts.options == nil || execMeta == nil || !usesEfdRetrySemantics(execMeta) {
+		return true
+	}
+	guard := execOpts.options.efdFaultySessionGuard
+	if guard == nil {
+		return true
+	}
+
+	admission := earlyFlakeDetectionAdmissionAllowed
+	if !execOpts.efdFaultySessionChecked {
+		execOpts.efdFaultySessionChecked = true
+		switch {
+		case execMeta.isANewTest:
+			admission = guard.admitNewTest(execMeta.identity)
+		case execMeta.isAModifiedTest:
+			admission = guard.retryState()
+		}
+	} else {
+		admission = guard.retryState()
+	}
+	if admission == earlyFlakeDetectionAdmissionAllowed {
+		return true
+	}
+
+	// EFD suppression may fall through to FTR only for a still-failing test
+	// with no successful attempt. Preserve factual EFD metadata while switching
+	// the retry family and resetting its independent per-test budget once.
+	failed := t != nil && t.Failed()
+	if retryCount, ok := transitionSuppressedEFDToFlakyRetries(execMeta, failed, execMeta.anyExecutionPassed); ok {
+		execOpts.retryCount = retryCount
+		if execOpts.options.postRetryFamilyTransition != nil {
+			execOpts.options.postRetryFamilyTransition(execMeta)
+		}
+		return true
+	}
+	return false
+}
+
+func transitionSuppressedEFDToFlakyRetries(execMeta *testExecutionMetadata, failed, anyPassed bool) (int64, bool) {
+	if execMeta == nil || !failed || anyPassed || !execMeta.isFlakyTestRetriesEnabled || execMeta.efdFellBackToFlakyRetries {
+		return 0, false
+	}
+	execMeta.efdFellBackToFlakyRetries = true
+	retryCount := integrations.GetFlakyRetriesSettings().RetryCount - 1
+	return retryCount, retryCount >= 0
+}
+
+func usesFlakyRetryBudget(execMeta *testExecutionMetadata) bool {
+	return execMeta != nil && execMeta.isFlakyTestRetriesEnabled && !execMeta.isAttemptToFix && !usesEfdRetrySemantics(execMeta)
+}
+
+func consumeFlakyRetryBudgetReservation(execOpts *executionOptions) {
+	if execOpts == nil {
+		return
+	}
+	if execOpts.flakyRetryBudgetReservation != nil {
+		execOpts.flakyRetryBudgetReservation.consume()
+	}
+	execOpts.flakyRetryBudgetReservation = &flakyRetryBudgetReservation{}
+}
+
+func refundFlakyRetryBudgetReservation(execOpts *executionOptions) {
+	if execOpts == nil || execOpts.flakyRetryBudgetReservation == nil {
+		return
+	}
+	execOpts.flakyRetryBudgetReservation.refund()
+}
+
+const (
+	flakyRetryBudgetIdle int32 = iota
+	flakyRetryBudgetReserving
+	flakyRetryBudgetReserved
+	flakyRetryBudgetConsumed
+	flakyRetryBudgetRefunded
+)
+
+func (r *flakyRetryBudgetReservation) reserve() bool {
+	if r == nil {
+		return false
+	}
+	for {
+		switch r.state.Load() {
+		case flakyRetryBudgetReserved:
+			return true
+		case flakyRetryBudgetConsumed, flakyRetryBudgetRefunded:
+			return false
+		case flakyRetryBudgetReserving:
+			runtime.Gosched()
+		case flakyRetryBudgetIdle:
+			if !r.state.CompareAndSwap(flakyRetryBudgetIdle, flakyRetryBudgetReserving) {
+				continue
+			}
+			if !tryReserveFlakyRetryBudget() {
+				r.state.Store(flakyRetryBudgetIdle)
+				return false
+			}
+			r.state.Store(flakyRetryBudgetReserved)
+			return true
+		}
+	}
+}
+
+func (r *flakyRetryBudgetReservation) reserved() bool {
+	return r != nil && r.state.Load() == flakyRetryBudgetReserved
+}
+
+func (r *flakyRetryBudgetReservation) consume() {
+	if r != nil {
+		r.state.CompareAndSwap(flakyRetryBudgetReserved, flakyRetryBudgetConsumed)
+	}
+}
+
+func (r *flakyRetryBudgetReservation) refund() {
+	if r == nil || !r.state.CompareAndSwap(flakyRetryBudgetReserved, flakyRetryBudgetRefunded) {
+		return
+	}
+	atomic.AddInt64(&integrations.GetFlakyRetriesSettings().RemainingTotalRetryCount, 1)
+}
+
+// runTestCleanup executes testing cleanups for a retry attempt. It isolates
+// cleanup Goexit in a helper goroutine so retry orchestration can treat cleanup
+// failures as attempt failures instead of letting them escape the retry loop.
+func runTestCleanup(t *testing.T, result *testCleanupResult) {
+	runTestCleanupWithOptions(t, result, false)
+}
+
+func runTestCleanupWithOptions(t *testing.T, result *testCleanupResult, neutralizeNativeParallelRelease bool) {
+	completeParallelSubtests(t, getTestPrivateFields(t), neutralizeNativeParallelRelease)
+	runTestCleanupCallbacks(t, result)
+}
+
+func runTestCleanupCallbacks(t *testing.T, result *testCleanupResult) {
+	result.ran = true
+	done := make(chan struct{})
+	go func() {
+		completed := false
+		defer func() {
+			if !completed {
+				result.goexit = true
+			}
+			close(done)
+		}()
+		result.panicData = testingTRunCleanup(t, 1)
+		if result.panicData != nil {
+			result.panicStacktrace = utils.GetStacktrace(1)
+		}
+		completed = true
+	}()
+	<-done
+}
+
+// completeParallelSubtests releases and waits for parallel subtests owned by a
+// Datadog-managed clone. It mirrors testing.tRunner's scheduler accounting:
+// release the parent slot before unblocking children, then reacquire it for
+// sequential parents before running cleanup.
+func completeParallelSubtests(t *testing.T, localTPrivateFields *commonPrivateFields, neutralizeNativeParallelRelease bool) {
+	if localTPrivateFields == nil || localTPrivateFields.sub == nil || len(*localTPrivateFields.sub) == 0 {
+		return
+	}
+
+	subtests := *localTPrivateFields.sub
+	parentIsParallel := isParallelTest(t, localTPrivateFields)
+	*localTPrivateFields.sub = nil
+	testState := getTestState(t)
+	if testState != nil {
+		testingTestStateRelease(testState)
+	}
+	if localTPrivateFields.barrier != nil && *localTPrivateFields.barrier != nil {
+		close(*localTPrivateFields.barrier)
+	}
+	for _, sub := range subtests {
+		pvSub := getTestPrivateFields(sub)
+		if pvSub != nil && pvSub.signal != nil {
+			<-*pvSub.signal
+		}
+	}
+	if testState != nil && !parentIsParallel {
+		testingTestStateWaitParallel(testState)
+	}
+	if neutralizeNativeParallelRelease && parentIsParallel && localTPrivateFields.isParallel != nil {
+		// A process-retry child drains native tRunner subtests before writing
+		// JSON. After we clear t.sub, Go's native tRunner would otherwise take
+		// its len(t.sub)==0 && t.isParallel release path and release the same
+		// scheduler slot twice.
+		*localTPrivateFields.isParallel = false
+	}
+}
+
+// isParallelTest reports whether the active test has entered Go's parallel-test
+// path. Datadog-managed retry clones forward Parallel to the original *testing.T,
+// so the original must also be checked before deciding whether to reacquire the
+// scheduler slot.
+func isParallelTest(t *testing.T, localTPrivateFields *commonPrivateFields) bool {
+	if localTPrivateFields != nil && localTPrivateFields.isParallel != nil && *localTPrivateFields.isParallel {
+		return true
+	}
+	if execMeta := getTestMetadata(t); execMeta != nil && execMeta.originalTest != nil {
+		originalFields := getTestPrivateFields(execMeta.originalTest)
+		return originalFields != nil && originalFields.isParallel != nil && *originalFields.isParallel
+	}
+	return false
+}
+
+// runAndApplyTestCleanup runs a retry attempt's cleanups before its span is
+// finalized, then applies any cleanup failure to the attempt metadata.
+func runAndApplyTestCleanup(t *testing.T, execMeta *testExecutionMetadata) {
+	if execMeta == nil || execMeta.cleanupResult == nil || execMeta.cleanupResult.ran {
+		return
+	}
+	runTestCleanup(t, execMeta.cleanupResult)
+	applyTestCleanupResult(t, execMeta, execMeta.cleanupResult)
+}
+
+// runAndApplyTestCleanupWithDuration adds user cleanup time to the test body
+// duration without counting CI Visibility work performed between them.
+func runAndApplyTestCleanupWithDuration(t *testing.T, execMeta *testExecutionMetadata, bodyDuration time.Duration) time.Duration {
+	cleanupStart := time.Now()
+	runAndApplyTestCleanup(t, execMeta)
+	return bodyDuration + time.Since(cleanupStart)
+}
+
+// applyTestCleanupResult applies cleanup panics to the test attempt so retry
+// orchestration can make the normal retry decision. A cleanup FailNow or
+// SkipNow has already changed the testing.T state before Goexit. A bare cleanup
+// Goexit does not fail a native test, so it must not synthesize a failure here.
+func applyTestCleanupResult(t *testing.T, execMeta *testExecutionMetadata, result *testCleanupResult) {
+	if result == nil || result.panicData == nil {
+		return
+	}
+	t.Fail()
+	execMeta.panicData = result.panicData
+	execMeta.panicStacktrace = result.panicStacktrace
+}
+
+// propagateTestExecutionMetadataFlags propagates the test execution metadata flags from the original test execution metadata to the current one.
+func propagateTestExecutionMetadataFlags(execMeta *testExecutionMetadata, originalExecMeta *testExecutionMetadata) {
+	if execMeta == nil || originalExecMeta == nil {
+		return
+	}
+
+	// Propagate the test execution metadata
+	execMeta.isANewTest = execMeta.isANewTest || originalExecMeta.isANewTest
+	execMeta.isAModifiedTest = execMeta.isAModifiedTest || originalExecMeta.isAModifiedTest
+	execMeta.isEarlyFlakeDetectionEnabled = execMeta.isEarlyFlakeDetectionEnabled || originalExecMeta.isEarlyFlakeDetectionEnabled
+	execMeta.isFlakyTestRetriesEnabled = execMeta.isFlakyTestRetriesEnabled || originalExecMeta.isFlakyTestRetriesEnabled
+	if execMeta.flakyRetryBudgetReservation == nil {
+		execMeta.flakyRetryBudgetReservation = originalExecMeta.flakyRetryBudgetReservation
+	}
+	if execMeta.quarantinedRaceProcess == nil {
+		execMeta.quarantinedRaceProcess = originalExecMeta.quarantinedRaceProcess
+	}
+	execMeta.isQuarantined = execMeta.isQuarantined || originalExecMeta.isQuarantined
+	execMeta.isDisabled = execMeta.isDisabled || originalExecMeta.isDisabled
+	if !execMeta.suppressParentRetryMetadata {
+		execMeta.isARetry = execMeta.isARetry || originalExecMeta.isARetry
+		execMeta.isEfdInParallel = execMeta.isEfdInParallel || originalExecMeta.isEfdInParallel
+		execMeta.hasAdditionalFeatureWrapper = execMeta.hasAdditionalFeatureWrapper || originalExecMeta.hasAdditionalFeatureWrapper
+	}
+	if !execMeta.hasExplicitAttemptToFix && originalExecMeta.isAttemptToFix {
+		// Preserve attempt-to-fix inheritance only when the child didn't explicitly override it.
+		execMeta.isAttemptToFix = true
+	}
+}
+
+// isAnEfdExecution checks if the current test execution is an Early Flake Detection execution.
+func isAnEfdExecution(execMeta *testExecutionMetadata) bool {
+	return execMeta != nil &&
+		execMeta.isEarlyFlakeDetectionEnabled &&
+		!execMeta.isAttemptToFix &&
+		(execMeta.isANewTest || execMeta.isAModifiedTest)
+}
+
+func usesEfdRetrySemantics(execMeta *testExecutionMetadata) bool {
+	return execMeta != nil && isAnEfdExecution(execMeta) && !execMeta.efdFellBackToFlakyRetries
+}
+
+//go:linkname testingTRunCleanup testing.(*common).runCleanup
+func testingTRunCleanup(c *testing.T, ph int) (panicVal any)
+
+//go:linkname testingTestStateWaitParallel testing.(*testState).waitParallel
+func testingTestStateWaitParallel(s *testingTestState)
+
+//go:linkname testingTestStateRelease testing.(*testState).release
+func testingTestStateRelease(s *testingTestState)

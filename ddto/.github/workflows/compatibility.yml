@@ -1,22 +1,38 @@
 name: Compatibility
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
   differential:
+    name: differential (${{ matrix.os }}, ${{ matrix.go }}, ${{ matrix.mode }})
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             go: '1.26.x'
+            mode: normal
+          - os: ubuntu-latest
+            go: '1.26.x'
+            mode: race
           - os: ubuntu-latest
             go: '1.27.x'
+            mode: normal
+          - os: ubuntu-latest
+            go: '1.27.x'
+            mode: race
           - os: macos-latest
             go: '1.27.x'
+            mode: normal
           - os: windows-latest
             go: '1.27.x'
+            mode: normal
     runs-on: ${{ matrix.os }}
+    # Each job runs one complete suite; Linux normal/race jobs run independently.
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -31,6 +47,11 @@ jobs:
           reference="$(go env GOPATH)/bin/orchestrion"
           if [[ "$RUNNER_OS" == "Windows" ]]; then reference="$reference.exe"; fi
           echo "ORCHESTRION_BIN=$reference" >> "$GITHUB_ENV"
+      - name: Verify incorporated sources and licenses
+        shell: bash
+        run: |
+          python scripts/upstream.py verify
+          python -m unittest discover -s scripts -p "test_*.py"
       - name: Verify modules and driver dependency boundary
         shell: bash
         run: |
@@ -39,19 +60,26 @@ jobs:
           go vet ./...
       - name: Unit, runtime and differential compatibility
         shell: bash
+        env:
+          PARITY_EXECUTION_ORDER: ${{ matrix.mode == 'race' && 'mini-first' || 'sdk-first' }}
+          PARITY_REPORT_NAME: ${{ matrix.mode == 'race' && 'parity-race' || 'parity' }}
+          PARITY_TEST_MODE: ${{ matrix.mode }}
         run: |
           mkdir -p artifacts
           set -o pipefail
-          go test -v -timeout=20m ./... 2>&1 | tee artifacts/compatibility.log
-      - name: Race-check the driver and test harness
-        if: runner.os == 'Linux'
+          test_flags=()
+          if [[ "$PARITY_TEST_MODE" == "race" ]]; then test_flags+=(-race); fi
+          PARITY_REPORT_PATH="$PWD/artifacts/$PARITY_REPORT_NAME.json" go test "${test_flags[@]}" -v -count=1 -timeout=20m ./... 2>&1 | tee artifacts/compatibility.log
+      - name: Publish CI feature parity evidence
         shell: bash
+        env:
+          PARITY_REPORT_NAME: ${{ matrix.mode == 'race' && 'parity-race' || 'parity' }}
         run: |
-          set -o pipefail
-          go test -race -timeout=20m ./... 2>&1 | tee artifacts/race.log
+          python scripts/parity_report.py "artifacts/$PARITY_REPORT_NAME.json" --output "artifacts/$PARITY_REPORT_NAME.md"
+          cat "artifacts/$PARITY_REPORT_NAME.md" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: compatibility-${{ matrix.os }}-go-${{ matrix.go }}
+          name: compatibility-${{ matrix.os }}-go-${{ matrix.go }}-${{ matrix.mode }}
           path: artifacts/
           retention-days: 7

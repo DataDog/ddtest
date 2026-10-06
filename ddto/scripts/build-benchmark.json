@@ -1,0 +1,303 @@
+{
+  "schema_version": 1,
+  "sdk_version": "v2.12.0-dev.3.0.20261002145613-96aedb31048c",
+  "sdk_commit": "96aedb31048c07e29e7a20a4333dc3b8d289c52d",
+  "orchestrion_version": "v1.13.2-0.20260917114356-5c24783fcd76",
+  "testify_version": "v1.12.1",
+  "cpus": [
+    4,
+    32
+  ],
+  "repetitions": {
+    "baseline": {
+      "cold": 5,
+      "cached": 10,
+      "warm-link": 20,
+      "test-body-edit": 10,
+      "edited": 3
+    },
+    "expanded": {
+      "cold": 3,
+      "cached": 10,
+      "warm-link": 10,
+      "test-body-edit": 5,
+      "edited": 3
+    }
+  },
+  "subjects": {
+    "gin": {
+      "module": "github.com/gin-gonic/gin",
+      "version": "v1.12.0",
+      "commit": "73726dc606796a025971fe451f0aa6f1b9b847f6",
+      "expected_binaries": [
+        "binding.test",
+        "bytesconv.test",
+        "fs.test",
+        "gin.test",
+        "ginS.test",
+        "render.test"
+      ],
+      "package": "gin",
+      "edit_file": "gin_test.go",
+      "edit_signature": "func TestLoadHTMLGlobDebugMode(t *testing.T) {"
+    },
+    "chi": {
+      "module": "github.com/go-chi/chi/v5",
+      "version": "v5.3.2",
+      "commit": "38939062c5df4d3e8814aad1a488983112627ced",
+      "expected_binaries": [
+        "chi.test",
+        "middleware.test"
+      ],
+      "package": "chi",
+      "edit_file": "mux_test.go",
+      "edit_signature": "func TestMuxBasic(t *testing.T) {"
+    },
+    "testify-direct": {
+      "fixture": true,
+      "expected_binaries": [
+        "testify-direct.test"
+      ],
+      "package": "fixture",
+      "edit_file": "sample_test.go",
+      "edit_signature": "func TestSuite(t *testing.T){"
+    },
+    "testify-external": {
+      "fixture": true,
+      "expected_binaries": [
+        "testify-external.test"
+      ],
+      "package": "fixture",
+      "edit_file": "sample_test.go",
+      "edit_signature": "func TestSuite(t *testing.T){"
+    }
+  },
+  "cases": [
+    {
+      "id": "gin",
+      "subject": "gin",
+      "label": "Gin",
+      "flags": [],
+      "series": "baseline"
+    },
+    {
+      "id": "chi",
+      "subject": "chi",
+      "label": "Chi",
+      "flags": [],
+      "series": "baseline"
+    },
+    {
+      "subject": "gin",
+      "flags": [
+        "-race"
+      ],
+      "id": "gin--race",
+      "label": "Gin",
+      "series": "expanded"
+    },
+    {
+      "subject": "gin",
+      "flags": [
+        "-cover"
+      ],
+      "id": "gin--cover",
+      "label": "Gin",
+      "series": "expanded"
+    },
+    {
+      "subject": "gin",
+      "flags": [
+        "-coverpkg=./...",
+        "-covermode=atomic"
+      ],
+      "id": "gin--cover-client",
+      "label": "Gin",
+      "series": "expanded"
+    },
+    {
+      "subject": "gin",
+      "flags": [
+        "-race",
+        "-coverpkg=./...",
+        "-covermode=atomic"
+      ],
+      "id": "gin--race-cover-client",
+      "label": "Gin",
+      "series": "expanded"
+    },
+    {
+      "subject": "chi",
+      "flags": [
+        "-race"
+      ],
+      "id": "chi--race",
+      "label": "Chi",
+      "series": "expanded"
+    },
+    {
+      "subject": "chi",
+      "flags": [
+        "-cover"
+      ],
+      "id": "chi--cover",
+      "label": "Chi",
+      "series": "expanded"
+    },
+    {
+      "subject": "chi",
+      "flags": [
+        "-coverpkg=./...",
+        "-covermode=atomic"
+      ],
+      "id": "chi--cover-client",
+      "label": "Chi",
+      "series": "expanded"
+    },
+    {
+      "subject": "chi",
+      "flags": [
+        "-race",
+        "-coverpkg=./...",
+        "-covermode=atomic"
+      ],
+      "id": "chi--race-cover-client",
+      "label": "Chi",
+      "series": "expanded"
+    },
+    {
+      "subject": "testify-direct",
+      "flags": [],
+      "id": "testify-direct--normal",
+      "label": "Testify Direct",
+      "series": "expanded"
+    },
+    {
+      "subject": "testify-direct",
+      "flags": [
+        "-race"
+      ],
+      "id": "testify-direct--race",
+      "label": "Testify Direct",
+      "series": "expanded"
+    },
+    {
+      "subject": "testify-direct",
+      "flags": [
+        "-cover"
+      ],
+      "id": "testify-direct--cover",
+      "label": "Testify Direct",
+      "series": "expanded"
+    },
+    {
+      "subject": "testify-direct",
+      "flags": [
+        "-coverpkg=./...",
+        "-covermode=atomic"
+      ],
+      "id": "testify-direct--cover-client",
+      "label": "Testify Direct",
+      "series": "expanded"
+    },
+    {
+      "subject": "testify-direct",
+      "flags": [
+        "-race",
+        "-coverpkg=./...",
+        "-covermode=atomic"
+      ],
+      "id": "testify-direct--race-cover-client",
+      "label": "Testify Direct",
+      "series": "expanded"
+    },
+    {
+      "subject": "testify-direct",
+      "flags": [
+        "-coverpkg=testing,github.com/stretchr/testify/suite",
+        "-covermode=atomic"
+      ],
+      "id": "testify-direct--cover-testing",
+      "label": "Testify Direct",
+      "series": "expanded"
+    },
+    {
+      "subject": "testify-direct",
+      "flags": [
+        "-race",
+        "-coverpkg=testing,github.com/stretchr/testify/suite",
+        "-covermode=atomic"
+      ],
+      "id": "testify-direct--race-cover-testing",
+      "label": "Testify Direct",
+      "series": "expanded"
+    },
+    {
+      "subject": "testify-external",
+      "flags": [],
+      "id": "testify-external--normal",
+      "label": "Testify External",
+      "series": "expanded"
+    },
+    {
+      "subject": "testify-external",
+      "flags": [
+        "-race"
+      ],
+      "id": "testify-external--race",
+      "label": "Testify External",
+      "series": "expanded"
+    },
+    {
+      "subject": "testify-external",
+      "flags": [
+        "-cover"
+      ],
+      "id": "testify-external--cover",
+      "label": "Testify External",
+      "series": "expanded"
+    },
+    {
+      "subject": "testify-external",
+      "flags": [
+        "-coverpkg=./...",
+        "-covermode=atomic"
+      ],
+      "id": "testify-external--cover-client",
+      "label": "Testify External",
+      "series": "expanded"
+    },
+    {
+      "subject": "testify-external",
+      "flags": [
+        "-race",
+        "-coverpkg=./...",
+        "-covermode=atomic"
+      ],
+      "id": "testify-external--race-cover-client",
+      "label": "Testify External",
+      "series": "expanded"
+    },
+    {
+      "subject": "testify-external",
+      "flags": [
+        "-coverpkg=testing,github.com/stretchr/testify/suite",
+        "-covermode=atomic"
+      ],
+      "id": "testify-external--cover-testing",
+      "label": "Testify External",
+      "series": "expanded"
+    },
+    {
+      "subject": "testify-external",
+      "flags": [
+        "-race",
+        "-coverpkg=testing,github.com/stretchr/testify/suite",
+        "-covermode=atomic"
+      ],
+      "id": "testify-external--race-cover-testing",
+      "label": "Testify External",
+      "series": "expanded"
+    }
+  ]
+}
