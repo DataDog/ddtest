@@ -101,7 +101,7 @@ var lineChangeRegex = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,
 
 // NewImpactedTestAnalyzer creates a new instance of ImpactedTestAnalyzer.
 func NewImpactedTestAnalyzer() (*ImpactedTestAnalyzer, error) {
-	ciTags := utils.GetCITags()
+	ciTags := utils.GetCITagsReadOnly()
 
 	// Get the current commit SHA
 	currentCommitSha := ciTags[constants.GitHeadCommit]

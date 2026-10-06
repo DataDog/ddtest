@@ -28,9 +28,10 @@ var metricLogLossOnce sync.Once
 
 // swappableMetricHandle is a MetricHandle that holds a pointer to another MetricHandle and a recorder to replay actions done before the actual MetricHandle is set.
 type swappableMetricHandle struct {
-	ptr      atomic.Pointer[MetricHandle]
-	recorder internal.Recorder[MetricHandle]
-	maker    func(client Client) MetricHandle
+	ptr       atomic.Pointer[MetricHandle]
+	startupMu sync.Mutex // Orders the last recorded submission with the initial replay.
+	recorder  internal.Recorder[MetricHandle]
+	maker     func(client Client) MetricHandle
 }
 
 func (t *swappableMetricHandle) Submit(value float64) {
@@ -40,19 +41,31 @@ func (t *swappableMetricHandle) Submit(value float64) {
 
 	inner := t.ptr.Load()
 	if inner == nil || *inner == nil {
-		if !t.recorder.Record(func(handle MetricHandle) {
-			handle.Submit(value)
-		}) {
-			metricLogLossOnce.Do(func() {
-				msg := "telemetry: metric is losing values because the telemetry client has not been started yet, dropping telemetry data, please start the telemetry client earlier to avoid data loss"
-				log.Debug("%s\n", msg)
-				Log(NewRecord(LogError, msg), WithStacktrace())
-			})
-		}
+		t.submitBeforeStart(value)
 		return
 	}
 
 	(*inner).Submit(value)
+}
+
+// The running-client path needs only the atomic load above. Before startup,
+// recheck under the replay lock so a late producer cannot enqueue after replay.
+func (t *swappableMetricHandle) submitBeforeStart(value float64) {
+	t.startupMu.Lock()
+	if inner := t.ptr.Load(); inner != nil && *inner != nil {
+		t.startupMu.Unlock()
+		(*inner).Submit(value)
+		return
+	}
+	recorded := t.recorder.Record(func(handle MetricHandle) { handle.Submit(value) })
+	t.startupMu.Unlock()
+	if !recorded {
+		metricLogLossOnce.Do(func() {
+			msg := "telemetry: metric is losing values because the telemetry client has not been started yet, dropping telemetry data, please start the telemetry client earlier to avoid data loss"
+			log.Debug("%s\n", msg)
+			Log(NewRecord(LogError, msg), WithStacktrace())
+		})
+	}
 }
 
 func (t *swappableMetricHandle) Get() float64 {
@@ -65,6 +78,8 @@ func (t *swappableMetricHandle) Get() float64 {
 }
 
 func (t *swappableMetricHandle) swap(handle MetricHandle) {
+	t.startupMu.Lock()
+	defer t.startupMu.Unlock()
 	if t.ptr.Swap(&handle) == nil {
 		t.recorder.Replay(handle)
 	}

@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/citransport"
@@ -13,14 +15,43 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
 )
 
-type commonMetadataTransport struct{ bytes, requests int64 }
+type commonMetadataTransport struct{ bytes, requests atomic.Int64 }
 
 func (c *commonMetadataTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	n, err := io.Copy(io.Discard, r.Body)
 	_ = r.Body.Close()
-	c.bytes += n
-	c.requests++
+	c.bytes.Add(n)
+	c.requests.Add(1)
 	return &http.Response{StatusCode: 202, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, err
+}
+
+func TestCommonMetadataTransportCountsConcurrentSends(t *testing.T) {
+	const sends = 64
+	const payload = "test payload"
+	sink := &commonMetadataTransport{}
+	var workers sync.WaitGroup
+	for range sends {
+		workers.Go(func() {
+			request, err := http.NewRequest(http.MethodPost, "http://fixture.invalid", strings.NewReader(payload))
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			response, err := sink.RoundTrip(request)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_ = response.Body.Close()
+		})
+	}
+	workers.Wait()
+	if got := sink.requests.Load(); got != sends {
+		t.Fatalf("requests = %d, want %d", got, sends)
+	}
+	if got := sink.bytes.Load(); got != int64(sends*len(payload)) {
+		t.Fatalf("bytes = %d, want %d", got, sends*len(payload))
+	}
 }
 
 // Include SDK option construction, span creation, batching, encoding and delivery.
@@ -57,7 +88,7 @@ func BenchmarkCommonMetadataLifecycle(b *testing.B) {
 			if client.DroppedEvents() != 0 {
 				b.Fatal("dropped events")
 			}
-			b.ReportMetric(float64(sink.bytes)/float64(b.N), "wire-B/event")
+			b.ReportMetric(float64(sink.bytes.Load())/float64(b.N), "wire-B/event")
 		})
 	}
 }

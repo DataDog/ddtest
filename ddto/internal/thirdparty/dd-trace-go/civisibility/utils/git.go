@@ -894,7 +894,7 @@ func GetBaseBranchSha(defaultBranch string) (string, error) {
 	var candidateBranches []string
 
 	// Check if we have git.pull_request.base_branch from CI provider environment variables
-	ciTags := GetCITags()
+	ciTags := GetCITagsReadOnly()
 	gitPrBaseBranch := ciTags[constants.GitPrBaseBranch]
 
 	if gitPrBaseBranch != "" {

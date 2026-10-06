@@ -38,8 +38,9 @@ SDK when warm), plus a second full `go list`.
 - Cache the resulting `go.mod`/`go.sum` in the user cache directory (outside the
   repository), keyed by the module's `go.mod` and `go.sum` contents, the runtime,
   its version and the Go version.
-- Read `GOMOD` from the first `go list` (`Module.GoMod`) instead of separate
-  `go env GOMOD` calls, and query `GOWORK` with the same command.
+- Provisioning queries `GOMOD` and `GOWORK` together with `go env -json`.
+  Avoiding that remaining command would require obtaining both values from
+  information already collected during preparation.
 - List only the runtime package with the provided modfile instead of repeating
   the full package list.
 
@@ -58,10 +59,6 @@ allocations per test to `testing`'s own 17.
   in a global `sync.Map`, with one store and one delete per test. Under
   `t.Parallel` this shows measurable contention. The `testing` overlay could add
   a field to `testing.common` instead.
-- **CI tag snapshot.** `GetCITagsSnapshot` compares all CI tags with
-  `maps.Equal` for every span (about 4% of CPU with trivial tests). The adaptation
-  record keeps that check while `GetCITags` exposes its mutable map; removing it
-  means returning a copy and dropping direct-edit compatibility.
 - **CI metric options.** Numeric CI metrics build new options for every span by
   design ("fresh per call"); caching them by revision needs the same decision.
 

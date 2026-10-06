@@ -32,7 +32,7 @@ type SourceFilePath struct {
 
 // ResolveSourceFilePathFromCITags resolves a runtime source path into tag and filesystem forms.
 func ResolveSourceFilePathFromCITags(sourcePath string) SourceFilePath {
-	return resolveSourceFilePath(sourcePath, GetCITags(), buildInfoMainModulePath())
+	return resolveSourceFilePath(sourcePath, GetCITagsReadOnly(), buildInfoMainModulePath())
 }
 
 // resolveSourceFilePath resolves a runtime source path with injectable inputs for deterministic tests.

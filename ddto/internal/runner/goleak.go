@@ -119,10 +119,9 @@ func goleakCacheFlag(dir string, opts options, pkg *goPackage, fingerprint strin
 			value = flags[i]
 		}
 		value = strings.TrimSpace(value)
-		match := false // unqualified flags apply only to command-line packages
-		for _, selected := range opts.packages {
-			match = match || matchPackagePattern(selected, dir, pkg)
-		}
+		// Package arguments also accept absolute directories. They have already
+		// been resolved by Go; per-package flag patterns have different rules.
+		match := pkg.commandLine
 		if value != "" && !strings.HasPrefix(value, "-") {
 			pattern, rest, ok := strings.Cut(value, "=")
 			if !ok {

@@ -20,37 +20,37 @@ const miniModule = "github.com/tonyredondo/dd-ci-testing-poc"
 // require it, for example after go mod tidy removed an unused requirement. Go
 // then reads a temporary copy of go.mod and go.sum through -modfile; the
 // module's own files are never modified. It returns that copy's path.
-func provideRuntime(ctx context.Context, dir string, opts options, selected Runtime, temp string) (string, error) {
+func provideRuntime(ctx context.Context, dir string, opts options, selected Runtime, temp string, replacements map[string]string) (string, error) {
+	out, err := goTool(ctx, dir, "env", "-json", "GOMOD", "GOWORK")
+	if err != nil {
+		return "", err
+	}
+	var environment struct{ GOMOD, GOWORK string }
+	if err := json.Unmarshal([]byte(out), &environment); err != nil {
+		return "", fmt.Errorf("read Go module environment: %w", err)
+	}
 	source := opts.modfile
 	if source == "" {
-		out, err := goTool(ctx, dir, "env", "GOMOD")
-		if err != nil {
-			return "", err
-		}
-		source = strings.TrimSpace(out)
+		source = environment.GOMOD
 		if source == "" || source == os.DevNull {
 			return "", errors.New("run ddtest inside a Go module")
 		}
 	} else if !filepath.IsAbs(source) {
 		source = filepath.Join(dir, source)
 	}
-	if work, err := goTool(ctx, dir, "env", "GOWORK"); err == nil && strings.TrimSpace(work) != "" && strings.TrimSpace(work) != "off" {
+	if environment.GOWORK != "" && environment.GOWORK != "off" {
 		return "", errors.New("in workspace mode, add the runtime module to go.work or require it in the module")
 	}
-	gomod, err := goTool(ctx, dir, "env", "GOMOD")
-	if err != nil {
-		return "", err
-	}
-	vendored := filepath.Join(filepath.Dir(strings.TrimSpace(gomod)), "vendor", "modules.txt")
+	vendored := filepath.Join(filepath.Dir(environment.GOMOD), "vendor", "modules.txt")
 	if _, err := os.Stat(vendored); err == nil && opts.mod != "mod" && opts.mod != "readonly" {
 		return "", errors.New("the module vendors its dependencies: require the runtime with a tools file and run go mod vendor")
 	}
 	modfile := filepath.Join(temp, "go.mod")
-	if err := copyFile(source, modfile); err != nil {
+	if err := copyModuleFile(source, modfile, replacements); err != nil {
 		return "", err
 	}
 	sum := strings.TrimSuffix(source, ".mod") + ".sum"
-	if err := copyFile(sum, filepath.Join(temp, "go.sum")); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := copyModuleFile(sum, filepath.Join(temp, "go.sum"), replacements); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
 	if selected == SDK {
@@ -146,7 +146,7 @@ func modulePath(data []byte) string {
 func goTool(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "go", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	cmd.Env = append(cmd.Environ(), "GOFLAGS=")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
@@ -155,7 +155,15 @@ func goTool(ctx context.Context, dir string, args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
-func copyFile(from, to string) error {
+// copyModuleFile reads the same logical file as Go, including overlay replacement
+// or deletion. The temporary -modfile no longer has the original overlay path.
+func copyModuleFile(from, to string, replacements map[string]string) error {
+	if actual, replaced := replacements[filepath.Clean(from)]; replaced {
+		if actual == "" {
+			return &os.PathError{Op: "open", Path: from, Err: os.ErrNotExist}
+		}
+		from = actual
+	}
 	data, err := os.ReadFile(from)
 	if err != nil {
 		return err

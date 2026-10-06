@@ -106,7 +106,9 @@ func New(c Config) (*Transport, error) {
 // Send retries transient failures using the same immutable payload. Context
 // cancellation bounds both requests and backoff; permanent 4xx responses fail.
 func (t *Transport) Send(ctx context.Context, payload []byte) error {
-	cidelivery.BeginSend()
+	if err := cidelivery.BeginSendContext(ctx); err != nil {
+		return err
+	}
 	defer cidelivery.EndSend()
 	if t.config.CloseIdleAfterSend {
 		defer t.client.CloseIdleConnections()

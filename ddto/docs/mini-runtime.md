@@ -31,6 +31,12 @@ the published version that built `ddtest`, else from the checkout `ddtest` was
 built from (a `-trimpath` build cannot locate it). The SDK backend adds its
 pinned version the same way; a different required SDK version is still an error.
 
+With `-mod=mod`, including from `GOFLAGS`, `ddtest` resolves the runtime
+read-only, so it is never added to the module's files. The module's own packages
+can still update `go.mod` and `go.sum`, as `go test` would. When `ddtest`
+provides the runtime, requirements needed only by test files go to the temporary
+copy instead.
+
 To pin the runtime in `go.mod` instead, require it and keep the requirement with
 a file that `go mod tidy` and `go mod vendor` see but builds ignore:
 
@@ -185,7 +191,10 @@ capabilities before asynchronous settings loading, so emitted events retain them
 The local suite checks real loopback payloads against the SDK, preserving test
 attributes, statuses, error messages, stack frames and source lines. Mini stack
 comparisons canonicalize the relocated library namespace/root and map the known
-deferred-wrapper location from line 844 to the pinned SDK's line 838. Application
+test-wrapper location from line 840 to the pinned SDK's line 838, plus the
+two subtest calls at `instrumentation_orchestrion.go:321/327` to SDK lines
+319/325. Stack mappings check the function and exact line. Testify's `Error Trace`
+lists only source locations, so its entries use the exact file and line. Application
 frames and other library locations remain strict. The expanded comparator keeps CI
 metadata, metrics, service/resource/type, custom tags, capability tags and ITR
 correlation. It explicitly excludes APM sampling/profiling/process enrichment

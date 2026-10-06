@@ -175,6 +175,8 @@ func (c *Client) completeLocked(batch readyBatch, err error) {
 		c.retryBackoff = min(max(2*c.retryBackoff, minRetryBackoff), maxRetryBackoff)
 		c.nextRetry = time.Now().Add(c.retryBackoff)
 		if c.closed {
+			c.terminalFailures++
+			c.terminalErr = err
 			c.discardBatchLocked(batch.events)
 		} else {
 			c.ready = append([]readyBatch{batch}, c.ready...)
@@ -354,8 +356,8 @@ func (c *Client) Flush(ctx context.Context) error {
 			return err
 		}
 		ran := false
-		err := cidelivery.RunIfIdle(func() error { ran = true; return c.flush(ctx) })
-		if !ran {
+		err := cidelivery.RunIfIdle(ctx, func() error { ran = true; return c.flush(ctx) })
+		if !ran && err == nil {
 			// The next checkpoint also delivers the open batch.
 			c.mu.Lock()
 			c.flushRequested = true
@@ -408,13 +410,15 @@ func (c *Client) discardBatchLocked(batch []*ciEvent) {
 // Close seals the client, performs a final flush and releases connections.
 // An unsuccessful final flush abandons each remaining payload once. Earlier
 // Flush failures remain retryable; a closed client cannot resend an abandoned
-// payload.
+// payload. A delivery already in flight at entry is part of this final flush;
+// its terminal error is returned too. Later empty closes do not replay it.
 func (c *Client) Close(ctx context.Context) error {
 	defer c.removeConnectionCloser()
 	if c.removeIdleFlush != nil {
 		c.removeIdleFlush()
 	}
 	c.mu.Lock()
+	previousFailures := c.terminalFailures
 	c.closed = true
 	c.space.Broadcast() // Waiting finishers reject their events.
 	c.mu.Unlock()
@@ -433,6 +437,11 @@ func (c *Client) Close(ctx context.Context) error {
 		c.lastErr = err
 		c.mu.Unlock()
 	}
+	c.mu.Lock()
+	if err == nil && c.terminalFailures != previousFailures {
+		err = c.terminalErr
+	}
+	c.mu.Unlock()
 	c.transport.CloseIdleConnections()
 	return err
 }

@@ -52,7 +52,7 @@ func CreateTestSession(options ...TestSessionStartOption) TestSession {
 	}
 
 	if defaults.command == "" {
-		defaults.command = utils.GetCITags()[constants.TestCommand]
+		defaults.command = utils.GetCITagsReadOnly()[constants.TestCommand]
 	}
 	if defaults.workingDirectory == "" {
 		wd, err := os.Getwd()
@@ -119,7 +119,7 @@ func CreateTestSession(options ...TestSessionStartOption) TestSession {
 		testingEventType = append(testingEventType, telemetry.HasCodeOwnerEventType...)
 	}
 
-	ciProviderName, hasCiProvider := utils.GetCITags()[constants.CIProviderName]
+	ciProviderName, hasCiProvider := utils.GetCITagsReadOnly()[constants.CIProviderName]
 	if !hasCiProvider {
 		testingEventType = append(testingEventType, telemetry.UnsupportedCiEventType...)
 	}
@@ -191,7 +191,7 @@ func (t *tslvTestSession) Close(exitCode int, options ...TestSessionCloseOption)
 	// Native startup can finish before asynchronous CI feature discovery.
 	// Publish newly discovered capabilities and ITR correlation before sealing
 	// the session event, preserving explicit session attributes.
-	for key, value := range utils.GetCITags() {
+	for key, value := range utils.GetCITagsReadOnly() {
 		if strings.HasPrefix(key, "_dd.library_capabilities.") || key == constants.ItrCorrelationIDTag {
 			if _, exists := t.GetTag(key); !exists {
 				t.SetTag(key, value)
@@ -206,7 +206,7 @@ func (t *tslvTestSession) Close(exitCode int, options ...TestSessionCloseOption)
 	if utils.GetCodeOwners() != nil {
 		testingEventType = append(testingEventType, telemetry.HasCodeOwnerEventType...)
 	}
-	if _, hasCiProvider := utils.GetCITags()[constants.CIProviderName]; !hasCiProvider {
+	if _, hasCiProvider := utils.GetCITagsReadOnly()[constants.CIProviderName]; !hasCiProvider {
 		testingEventType = append(testingEventType, telemetry.UnsupportedCiEventType...)
 	}
 	if faultyEFDSession {

@@ -30,6 +30,8 @@ var (
 	ciTagsMutex    sync.Mutex
 	ciTagsRevision uint64 // Advances when a new immutable tag snapshot is published.
 	ciTagsSnapshot map[string]string
+	ciTagsDirty    bool // The current map was rebuilt after an explicit update.
+	ciTagsEscaped  bool // GetCITags exposed this map to legacy direct edits.
 
 	// ciMetrics holds the CI/CD environment numeric variable information
 	currentCiMetrics  map[string]float64 // currentCiMetrics holds the CI/CD metrics after originalCiMetrics + addedMetrics
@@ -54,7 +56,16 @@ var (
 func GetCITags() map[string]string {
 	ciTagsMutex.Lock()
 	defer ciTagsMutex.Unlock()
-	return getCITagsLocked()
+	tags := getCITagsLocked()
+	ciTagsEscaped = true
+	return tags
+}
+
+// GetCITagsReadOnly returns an immutable snapshot for internal readers. Callers
+// must use AddCITags/AddCITagsMap for updates, or GetCITags for legacy direct edits.
+func GetCITagsReadOnly() map[string]string {
+	tags, _ := GetCITagsSnapshot()
+	return tags
 }
 
 // GetCITagsSnapshot returns read-only tags and their revision together. Updates
@@ -66,10 +77,11 @@ func GetCITagsSnapshot() (map[string]string, uint64) {
 	tags := getCITagsLocked()
 	// GetCITags historically exposes the cached map. Retain sequential direct
 	// edits as well as AddCITags updates; the published snapshot owns its copy.
-	if ciTagsSnapshot == nil || !maps.Equal(tags, ciTagsSnapshot) {
+	if ciTagsSnapshot == nil || (ciTagsDirty || ciTagsEscaped) && !maps.Equal(tags, ciTagsSnapshot) {
 		ciTagsSnapshot = maps.Clone(tags)
 		ciTagsRevision++
 	}
+	ciTagsDirty = false
 	return ciTagsSnapshot, ciTagsRevision
 }
 
@@ -91,6 +103,7 @@ func getCITagsLocked() map[string]string {
 
 	// Update the current tags
 	currentCiTags = newTags
+	ciTagsDirty, ciTagsEscaped = true, false
 	return currentCiTags
 }
 
@@ -223,7 +236,7 @@ func ResetCIMetrics() {
 //
 //	The relative path from the CI workspace root to the specified path, or the original path if an error occurs.
 func GetRelativePathFromCITagsSourceRoot(path string) string {
-	tags := GetCITags()
+	tags := GetCITagsReadOnly()
 	if v, ok := tags[constants.CIWorkspacePath]; ok {
 		relPath, err := filepath.Rel(v, path)
 		if err == nil {

@@ -125,30 +125,34 @@ func TestFailedFlushRetainsBatch(t *testing.T) {
 }
 
 func TestFlushCancellationWhileAnotherFlushRuns(t *testing.T) {
-	entered, release := make(chan struct{}), make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { close(entered); <-release; w.WriteHeader(202) }))
-	defer server.Close()
-	client, err := New(Config{Transport: citransport.Config{Endpoint: server.URL}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	span, _ := client.StartSpan(context.Background(), "test", SpanType("test"))
-	span.Finish()
-	done := make(chan error, 1)
-	go func() { done <- client.Flush(context.Background()) }()
-	<-entered
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	err = client.Flush(ctx)
-	close(release)
-	if err != context.DeadlineExceeded {
-		t.Fatalf("uncancelable queue: %v", err)
-	}
-	if err = <-done; err != nil {
-		t.Fatal(err)
-	}
-	if err = client.Close(context.Background()); err != nil {
-		t.Fatal(err)
+	for _, deferred := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ordinary", true: "deferred"}[deferred], func(t *testing.T) {
+			entered, release := make(chan struct{}), make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { close(entered); <-release; w.WriteHeader(202) }))
+			defer server.Close()
+			client, err := New(Config{DeferUntilIdle: deferred, Transport: citransport.Config{Endpoint: server.URL}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			span, _ := client.StartSpan(context.Background(), "test", SpanType("test"))
+			span.Finish()
+			done := make(chan error, 1)
+			go func() { done <- client.Flush(context.Background()) }()
+			<-entered
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			defer cancel()
+			err = client.Flush(ctx)
+			close(release)
+			if err != context.DeadlineExceeded {
+				t.Fatalf("uncancelable queue: %v", err)
+			}
+			if err = <-done; err != nil {
+				t.Fatal(err)
+			}
+			if err = client.Close(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

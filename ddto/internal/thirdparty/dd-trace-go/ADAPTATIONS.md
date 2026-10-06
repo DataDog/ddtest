@@ -1,4 +1,4 @@
-# Performance adaptations to the SDK port
+# Runtime adaptations to the SDK port
 
 Base: [`96aedb31048c07e29e7a20a4333dc3b8d289c52d`](https://github.com/DataDog/dd-trace-go/commit/96aedb31048c07e29e7a20a4333dc3b8d289c52d).
 `SOURCE.json` retains each original path/hash alongside the local hash. This
@@ -32,6 +32,50 @@ Checks: `TestBoundCountReplaysSwapsAndResets`,
 `TestEventCountersDisabled`, plus the HTTP
 telemetry parity matrix. Verify the feature-tag fallback and disabled behavior,
 not just the ordinary three-counter benchmark.
+
+## Startup metric and global-call replay
+
+[`telemetry/metrichandle.go`](telemetry/metrichandle.go) uses `startupMu` to
+coordinate recording a submission with the first handle swap and replay.
+A producer that observed an empty pointer checks it again under this lock.
+It either records before replay or submits to the installed handle. This
+prevents an increment from entering the recorder after it has been drained.
+
+The active-client path still loads the atomic pointer and submits directly.
+Recorder bounds, overflow logging and later client swaps keep their existing
+behavior. During an SDK update, preserve this handover even if the recorder's
+own queue is already safe for concurrent access: queue safety alone does not
+make recording and replay one operation.
+
+Checks: `TestMetricStartupReplayIncludesConcurrentSubmissions` overlaps 64
+producers with installation, below the recorder limit, and checks every
+increment. Run it with `-race`, alongside client-swap and HTTP telemetry tests.
+
+`telemetry/globalclient.go` uses a separate startup lock for global callbacks
+such as logs, configuration and product changes. The cold path rechecks the
+client and records under that lock; `SwapClient` publishes under the same lock.
+Replay and callbacks run after release, so nested telemetry calls cannot
+self-deadlock. Active-client calls retain their atomic load and direct dispatch.
+`TestGlobalClientStartupReplaysEveryCall` overlaps 64 calls with publication and
+requires every callback once. The unchanged implementation loses calls under
+that same test, even without a data race.
+
+## Close-action registration
+
+[`civisibility/integrations/civisibility.go`](civisibility/integrations/civisibility.go)
+appends close actions and pre-close barriers, then executes each list backwards.
+Registration grows linearly with the number of actions. Coverage registers an
+action per test, so prepending a copied slice would allocate quadratically.
+
+Keep LIFO ordering within each list, and run every pre-close barrier before the
+ordinary actions. A barrier can register an ordinary action; shutdown must
+include it. The existing locks, single shutdown owner and wait for that owner
+also apply to signal-triggered shutdown.
+
+Checks: `TestCloseActionsKeepLIFOAndRunBarriersFirst`,
+`TestConcurrentCloseActionsRunOnce` and the signal-handler tests. Use
+`BenchmarkCloseActionRegistration` to compare allocation growth at 1,000,
+4,000 and 16,000 registrations.
 
 ## Counter points kept inline
 
@@ -72,6 +116,20 @@ delivery, processing runs synchronously when telemetry or debug logging needs
 wall-clock timestamps. With both disabled, it can run in a worker using the
 monotonic duration clock. This synchronization adds post-test work to ordinary
 delivery when diagnostics are enabled.
+
+`gotesting/coverage_cleanup.go` registers the after-snapshot before the user
+body, so Go executes user cleanups and descendants first. The coverage barrier
+stays in place through this snapshot. Retry-owned cleanup follows the same
+order and only the initial attempt collects coverage. An active collector owns
+a small shutdown marker until cleanup; a body or descendant panic transfers
+terminal delivery to that cleanup rather than closing its writers too early.
+
+Coverage and log writers force-drain their final partial payload during stop,
+including terminal shutdown before test admission is released. An ordinary
+idle checkpoint would skip that work and leave the writer waiting for itself.
+`TestMiniCoverageIncludesCleanup` checks cleanup-only lines under race, ordinary
+and deferred delivery, including retries, EFD, parallel descendants and panic.
+This corrects the pinned SDK's cleanup omission instead of reproducing it.
 
 Each processing job closes its completion channel, including on a profile error.
 The close action waits for that channel. A completed worker can exit immediately;
@@ -142,6 +200,18 @@ method. Both match the same literal prefix, including a method named `Test`.
 The SDK's other method-registration and suite-grouping rules stay in place.
 Run Testify parity with method filtering, lifecycle hooks, helpers, retries and
 coverage whenever upstream changes this advice.
+
+Mini's `instrumentTestifySuiteRunScoped` entry hook registers only the current
+suite invocation and restores an enclosing scope on return. Resolved methods
+bind to their actual `*testing.T` until cleanup, preserving descendant identity
+if the suite runner has already returned. Go's numeric `#NN` suffix is removed
+only for matching a Go method name. Events keep the full native test name.
+The SDK backend and legacy Orchestrion hook keep the original ABI.
+
+`TestTestifyScopeRestoresAndBindsMethods` and
+`TestTestifyMethodBindingOutlivesSuiteRun` exercise lookup and lifetime;
+`TestMiniTestifyDuplicateIdentity` checks the wire hierarchy, suite and source
+with a covered Testify library, nested children, `-count=2` and `-race`.
 
 ## Pack file cleanup
 
@@ -226,8 +296,8 @@ of them without changing any event:
   names, so closures capture them by value instead of moving them to the heap.
 - `utils.GetModuleAndSuiteName` caches its result by program counter.
 
-The CI tag snapshot check and per-call CI metrics are unchanged (see shared CI
-string tags). Checks: `TestTestifyLookupMatchesReflection`,
+CI string snapshots use the revision/escaped-map contract below; numeric CI
+metrics remain fresh per call. Checks: `TestTestifyLookupMatchesReflection`,
 `TestFindTestifyTestMatchesFinalElement`, Testify and native parity. When
 syncing, keep new per-test debug logs guarded without moving any line that can
 appear in an error stack, and re-measure allocations per test with a
@@ -287,19 +357,29 @@ Checks: `TestDeferredDeliveryParityMatrix` (17 policy combinations),
 `TestDeferredDeliveryTestifyParity` (seven suite combinations),
 `TestMiniGoleakIntegration` (normal/deferred, covered library, race, external
 helper and real leak controls), coordinator/transport tests and `-race`.
-The error-stack comparator maps only the relocated wrapper's known line 844
-to the pinned SDK's line 838; application frames and other library lines remain
-strict. A source move must update that explicit mapping with proof, not erase
-stack locations globally.
+The error-stack comparator maps the test wrapper's line 840 to SDK line 838
+and the two subtest calls at `instrumentation_orchestrion.go:321/327` to SDK
+lines 319/325. Stack mappings require the exact function and location, including
+inside Testify's embedded panic stack. Its `Error Trace` section lists only
+files and lines; those entries use the exact source location. Application
+frames and other library lines remain strict. A source move needs an explicit
+mapping backed by tests; preserve location checks for every other frame.
 
 ## Shared CI string tags
 
 `civisibility/utils/environmentTags.go` adds `GetCITagsSnapshot`, an owned,
-read-only snapshot with a revision. Current contents are checked with `maps.Equal`
-under the existing mutex. This retains the SDK's sequential direct cached-map
-edits as well as `AddCITags`, `AddCITagsMap` and resets. Published snapshots never
-change. Do not replace this content check with pointer identity or update-only
-invalidation while the original `GetCITags` map remains mutable.
+read-only snapshot with a revision. Internal consumers use `GetCITagsReadOnly`.
+Without a mutable-map reader, an unchanged snapshot needs only the existing
+mutex and two state checks. `AddCITags`, `AddCITagsMap` and resets invalidate the
+current map; the next snapshot checks whether its contents actually changed,
+so no-op updates keep their revision.
+
+`GetCITags` marks the current map as exposed. Every later snapshot of that map
+uses `maps.Equal` to observe sequential direct edits, including edits made long
+after the map was returned. Rebuilding the current map clears that mark because
+old references no longer affect it. Published snapshots never change. When
+porting an upstream reader, use the read-only API unless that reader must mutate
+the map. Keep the escaped-map path and the late-edit/concurrent-reader tests.
 
 `civisibility/integrations/manual_api_common.go` caches truncated string options
 per snapshot revision and Bazel mode. CI/Git/OS/runtime strings and
@@ -326,6 +406,12 @@ wire/concurrency/bounds tests and the SDK/Mini parity matrices. The differential
 capture expands only the declared shared CI keys before semantic comparison;
 its negative controls retain missing/wrong values, overrides and numeric
 collisions. Keep the raw-payload placement assertions too.
+
+`BenchmarkCommonMetadataLifecycle` counts request bytes and requests with
+atomics because its transport is shared by concurrent senders. Keep those
+counters synchronized when changing the sink; a data race invalidates the
+`wire-B/event` result. `TestCommonMetadataTransportCountsConcurrentSends`
+checks both totals during ordinary test runs, including `-race` runs.
 
 ## POC-owned code outside this source subset
 

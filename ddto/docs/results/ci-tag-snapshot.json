@@ -1,0 +1,108 @@
+{
+  "scope": "Serial lookup of 64 initialized CI tags; excludes startup, span creation, serialization and HTTP",
+  "go": "go1.27.0-X:nodwarf5 linux/amd64",
+  "cpu": "AMD Ryzen 9 5950X",
+  "gomaxprocs": 4,
+  "before_commit": "8db19ff5a9235506214e91acfb760c1c63b6683f",
+  "after_source_sha256": "00faa1deebe18e335ba4953f1e4412d82790841356db8c1701f424c899c50248",
+  "command": "go test ./internal/thirdparty/dd-trace-go/civisibility/utils -run=^$ -bench=^BenchmarkCITagsSnapshot$ -benchtime=300ms -count=1",
+  "method": "Three alternating pairs; before uses a Go overlay of environmentTags.go from the before commit plus a read-only API wrapper for compilation",
+  "samples": [
+    {
+      "round": 1,
+      "variant": "before",
+      "mutable_exposed": false,
+      "ns_per_op": 1074.0,
+      "bytes_per_op": 0,
+      "allocations_per_op": 0
+    },
+    {
+      "round": 1,
+      "variant": "before",
+      "mutable_exposed": true,
+      "ns_per_op": 1094.0,
+      "bytes_per_op": 0,
+      "allocations_per_op": 0
+    },
+    {
+      "round": 1,
+      "variant": "after",
+      "mutable_exposed": false,
+      "ns_per_op": 5.246,
+      "bytes_per_op": 0,
+      "allocations_per_op": 0
+    },
+    {
+      "round": 1,
+      "variant": "after",
+      "mutable_exposed": true,
+      "ns_per_op": 1066.0,
+      "bytes_per_op": 0,
+      "allocations_per_op": 0
+    },
+    {
+      "round": 2,
+      "variant": "after",
+      "mutable_exposed": false,
+      "ns_per_op": 5.394,
+      "bytes_per_op": 0,
+      "allocations_per_op": 0
+    },
+    {
+      "round": 2,
+      "variant": "after",
+      "mutable_exposed": true,
+      "ns_per_op": 1088.0,
+      "bytes_per_op": 0,
+      "allocations_per_op": 0
+    },
+    {
+      "round": 2,
+      "variant": "before",
+      "mutable_exposed": false,
+      "ns_per_op": 1046.0,
+      "bytes_per_op": 0,
+      "allocations_per_op": 0
+    },
+    {
+      "round": 2,
+      "variant": "before",
+      "mutable_exposed": true,
+      "ns_per_op": 1042.0,
+      "bytes_per_op": 0,
+      "allocations_per_op": 0
+    },
+    {
+      "round": 3,
+      "variant": "before",
+      "mutable_exposed": false,
+      "ns_per_op": 1089.0,
+      "bytes_per_op": 0,
+      "allocations_per_op": 0
+    },
+    {
+      "round": 3,
+      "variant": "before",
+      "mutable_exposed": true,
+      "ns_per_op": 1049.0,
+      "bytes_per_op": 0,
+      "allocations_per_op": 0
+    },
+    {
+      "round": 3,
+      "variant": "after",
+      "mutable_exposed": false,
+      "ns_per_op": 5.244,
+      "bytes_per_op": 0,
+      "allocations_per_op": 0
+    },
+    {
+      "round": 3,
+      "variant": "after",
+      "mutable_exposed": true,
+      "ns_per_op": 1049.0,
+      "bytes_per_op": 0,
+      "allocations_per_op": 0
+    }
+  ]
+}

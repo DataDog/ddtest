@@ -24,6 +24,7 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 		}
 		if p.ImportPath == instrument.GoleakImport || p.ImportPath == instrument.TestifySuiteImport {
 			copy := p
+			copy.commandLine = true
 			selected[p.ImportPath] = &copy
 		}
 		for _, imports := range [][]string{p.Deps, p.TestImports, p.XTestImports} {
@@ -68,7 +69,7 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 		return nil, err
 	}
 	for _, p := range dependencies {
-		if p.ImportPath == instrument.GoleakImport || p.ImportPath == instrument.TestifySuiteImport {
+		if selected[p.ImportPath] == nil && (p.ImportPath == instrument.GoleakImport || p.ImportPath == instrument.TestifySuiteImport) {
 			copy := p
 			selected[p.ImportPath] = &copy
 		}

@@ -198,8 +198,16 @@ func canonicalTestifyDiagnostic(text string) string {
 	sdkPath := "/internal/civisibility/"
 	miniPath := "/internal/thirdparty/dd-trace-go/civisibility/"
 	lines := strings.Split(text, "\n")
-	stack := false
+	stack, assertionTrace := false, false
 	for i, line := range lines {
+		miniLocation := strings.Contains(line, miniPath)
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Error Trace:") {
+			assertionTrace = true
+		}
+		if strings.HasPrefix(trimmed, "Error:") || strings.HasPrefix(trimmed, "Test:") {
+			assertionTrace = false
+		}
 		if strings.Contains(line, "goroutine ") && strings.Contains(line, "[running]") {
 			stack = true
 		}
@@ -219,6 +227,20 @@ func canonicalTestifyDiagnostic(text string) string {
 				if pos := strings.LastIndex(line, "("); pos >= 0 && strings.HasSuffix(line, ")") {
 					line = line[:pos] + "()"
 				}
+			}
+		}
+		if miniLocation {
+			const sourcePrefix = "ci-runtime/civisibility/"
+			if start := strings.Index(line, sourcePrefix); start >= 0 {
+				location := line[start+len(sourcePrefix):]
+				if assertionTrace {
+					location = canonicalMiniAssertionLocation(location)
+				} else if stack && i > 0 {
+					function := strings.TrimSpace(lines[i-1])
+					function = strings.TrimSuffix(strings.TrimPrefix(function, sourcePrefix), "()")
+					location = canonicalMiniCallSite(function, location)
+				}
+				line = line[:start] + sourcePrefix + location
 			}
 		}
 		lines[i] = line

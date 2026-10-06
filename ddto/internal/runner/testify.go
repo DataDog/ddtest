@@ -15,15 +15,16 @@ import (
 const minimumTestifyVersion = "v1.4.0"
 
 // Bump when compiler-side edits change without changing prepared inputs.
-const testifyContractVersion = "ddtest-testify-entry-v1"
+const testifyContractVersion = "ddtest-testify-entry-v2"
 
 // LibraryEntry contains the inputs for one selected library entry. Other packages never
 // need to read the tool plan. Covered sources are transformed after go cover.
 type LibraryEntry struct {
-	Package     string `json:",omitempty"`
-	Sources     map[string]string
-	HookFile    string
-	Fingerprint string
+	ScopedTestify bool   `json:",omitempty"`
+	Package       string `json:",omitempty"`
+	Sources       map[string]string
+	HookFile      string
+	Fingerprint   string
 }
 
 // prepareTestifyPackage returns a warning instead of an entry when the selected
@@ -87,16 +88,17 @@ func prepareTestifyEntry(suite *goPackage, replacements map[string]string, runti
 		files[logical] = src
 		actualPaths[logical] = actual
 	}
-	rewritten, err := instrument.TransformTestifyPackage(files)
+	rewritten, err := instrument.TransformTestifyPackage(files, runtime == Mini)
 	if err != nil {
 		return nil, err
 	}
 	hook := "github.com/DataDog/dd-trace-go/v2/internal/civisibility/integrations/gotesting.instrumentTestifySuiteRun"
 	if runtime == Mini {
+		hook += "Scoped"
 		hook = strings.Replace(hook, "github.com/DataDog/dd-trace-go/v2/internal/civisibility/", "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/", 1)
 	}
-	tool := &LibraryEntry{Sources: map[string]string{}, HookFile: filepath.Join(temp, "testify-hook.go")}
-	hookSource := instrument.TestifyEntryHook(hook)
+	tool := &LibraryEntry{ScopedTestify: runtime == Mini, Sources: map[string]string{}, HookFile: filepath.Join(temp, "testify-hook.go")}
+	hookSource := instrument.TestifyEntryHook(hook, runtime == Mini)
 	hash := sha256.New()
 	hash.Write([]byte(testifyContractVersion))
 	hash.Write([]byte(hookSource))
@@ -200,7 +202,9 @@ func prepareLibraryCompile(plan *LibraryEntry, args []string) ([]string, func(),
 			cleanup()
 			return nil, nil, err
 		}
-		rewrite := instrument.TransformTestifyEntry
+		rewrite := func(name string, src []byte) ([]byte, bool, error) {
+			return instrument.TransformTestifyEntry(name, src, plan.ScopedTestify)
+		}
 		if plan.Package == instrument.GoleakImport {
 			rewrite = instrument.TransformGoleakEntry
 		}

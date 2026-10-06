@@ -55,7 +55,7 @@ func Start(options ...StartOption) {
 	for _, option := range options {
 		option(&config)
 	}
-	if session, ok := utils.GetCITags()[constants.TestSessionName]; ok {
+	if session, ok := utils.GetCITagsReadOnly()[constants.TestSessionName]; ok {
 		config.Metadata = map[string]map[string]string{}
 		for _, kind := range []string{"test", "test_session_end", "test_module_end", "test_suite_end"} {
 			config.Metadata[kind] = map[string]string{"test_session.name": session}

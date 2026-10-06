@@ -62,6 +62,8 @@ type Client struct {
 	maxEvents              int
 	timeout                time.Duration
 	closed                 bool
+	terminalFailures       uint64 // Final delivery failures, used by concurrent Close callers.
+	terminalErr            error
 	lastErr                error
 	dropped                uint64
 	payload                bytes.Buffer // Protected by sendMu; released after oversized batches.

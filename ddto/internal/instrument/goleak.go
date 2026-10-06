@@ -47,6 +47,7 @@ func TransformGoleakEntry(name string, src []byte) ([]byte, bool, error) {
 			prefix + "thirdparty/dd-trace-go/civisibility/integrations.(*ciVisibilitySignalHandler).run",
 			prefix + "thirdparty/dd-trace-go/telemetry/internal.(*Ticker).run",
 			prefix + "cidelivery.BeginSend",
+			prefix + "cidelivery.BeginSendContext",
 			prefix + "thirdparty/dd-trace-go/civisibility/integrations/logs.(*logsWriter).sendPayload",
 			prefix + "thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage.(*coverageWriter).sendPayload",
 			prefix + "minitracer.(*Client).deliverInBackground",

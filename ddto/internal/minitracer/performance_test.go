@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/citransport"
 )
@@ -18,6 +19,36 @@ func (benchmarkTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	_ = r.Body.Close()
 	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
 }
+
+// Compare CI-shaped options (including values outside Meta) with options that
+// all add text tags. Capacity changes must handle both, including custom spans.
+func BenchmarkSpanMetadata(b *testing.B) {
+	common := NewCommonTags(map[string]string{"ci.provider.name": "fixture", "git.branch": "main"})
+	for _, shape := range []string{"ci", "text-only"} {
+		b.Run(shape, func(b *testing.B) {
+			for _, tags := range []int{0, 4, 12, 32, 128} {
+				b.Run(fmt.Sprintf("tags=%d", tags), func(b *testing.B) {
+					options := []StartSpanOption{SpanType("test"), ResourceName("fixture.test"), StartTime(time.Now()),
+						Tag("test_session_id", "1"), Tag("test_module_id", "2"), Tag("test_suite_id", "3"),
+						Tag("test.name", "TestFixture"), Tag("test.status", "pass"), common.Option()}
+					if shape == "text-only" {
+						options = nil
+					}
+					for i := range tags {
+						options = append(options, Tag(fmt.Sprintf("custom.%d", i), "value"))
+					}
+					b.ReportAllocs()
+					b.ResetTimer()
+					for range b.N {
+						span, _ := newSpan(nil, context.Background(), "testing.test", options...)
+						span.Finish()
+					}
+				})
+			}
+		})
+	}
+}
+
 func BenchmarkEventLifecycle(b *testing.B) {
 	for _, gzip := range []bool{false, true} {
 		b.Run(fmt.Sprintf("gzip=%t", gzip), func(b *testing.B) {

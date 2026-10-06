@@ -38,8 +38,11 @@ func (t *TestifyTest) moduleAndSuite(moduleName, suiteName string) (string, stri
 var (
 	// testifyTestsByParentT is a map that stores the TestifyTest structs for each parent T.
 	testifyTestsByParentT = map[unsafe.Pointer][]TestifyTest{}
+	// Resolved method identities survive the end of suite.Run until their T
+	// finishes, so parallel descendants retain the same source attribution.
+	testifyTestsByT = map[unsafe.Pointer]*TestifyTest{}
 
-	// testifyTestsByParentTMutex is a mutex to protect the testifyTestsByParentT map.
+	// testifyTestsByParentTMutex protects suite scopes and resolved T bindings.
 	testifyTestsByParentTMutex sync.RWMutex
 )
 
@@ -53,10 +56,14 @@ func getTestifyTest(t *testing.T) *TestifyTest {
 	}
 	layout := getTestingInternalsLayout()
 	if layout == nil || layout.disabled || !layout.testFieldsOK {
-		return getTestifyTestFromReflectValue(reflect.ValueOf(t))
+		return bindTestifyTest(t, getTestifyTestFromReflectValue(reflect.ValueOf(t)))
 	}
 	var found *TestifyTest
 	for base := commonBaseForTest(t, layout); base != nil; {
+		if bound := getBoundTestifyTest(base); bound != nil {
+			found = bound
+			break
+		}
 		parent := pointerWord(base, layout.common.parent)
 		if parent == nil {
 			break
@@ -69,7 +76,7 @@ func getTestifyTest(t *testing.T) *TestifyTest {
 		base = parent
 	}
 	runtime.KeepAlive(t)
-	return found
+	return bindTestifyTest(t, found)
 }
 
 // testifySuitesRegistered lets ordinary tests skip the parent walk.
@@ -78,6 +85,18 @@ var testifySuitesRegistered atomic.Bool
 // findTestifyTest matches the test name's final "/<method>" element without
 // building the suffix string.
 func findTestifyTest(tests []TestifyTest, name string) *TestifyTest {
+	// Go appends #NN when sibling names collide. Testify methods are Go
+	// identifiers and cannot contain #, so this suffix is unambiguous.
+	if suffix := strings.LastIndexByte(name, '#'); suffix > strings.LastIndexByte(name, '/') {
+		digits := name[suffix+1:]
+		valid := len(digits) >= 2
+		for _, digit := range digits {
+			valid = valid && digit >= '0' && digit <= '9'
+		}
+		if valid {
+			name = name[:suffix]
+		}
+	}
 	for i := range tests {
 		method := tests[i].methodName
 		if len(name) > len(method) && strings.HasSuffix(name, method) && name[len(name)-len(method)-1] == '/' {
@@ -94,9 +113,12 @@ func getTestifyTestFromReflectValue(tValue reflect.Value) *TestifyTest {
 	if !tValue.IsValid() || tValue.IsZero() || tValue.IsNil() {
 		return nil
 	}
+	if bound := getBoundTestifyTest(tValue.UnsafePointer()); bound != nil {
+		return bound
+	}
 	// get the parent field for testing.T or common
 	member := reflect.Indirect(tValue).FieldByName("parent")
-	if !member.IsValid() && !member.IsNil() {
+	if !member.IsValid() || member.IsNil() {
 		return nil
 	}
 	memberPtr := unsafe.Pointer(member.UnsafeAddr())
@@ -154,6 +176,12 @@ func registerTestifySuite(t *testing.T, suite any) {
 		}
 	}
 
+	tests = append(tests, testifySuiteMethods(methodFinder, suiteName, moduleName)...)
+	setTestifyTestsByParentT(tPtr, tests)
+}
+
+func testifySuiteMethods(methodFinder reflect.Type, suiteName, moduleName string) []TestifyTest {
+	var tests []TestifyTest
 	// iterate over the methods of the suite to find the Test methods
 	for method := range methodFinder.Methods() {
 
@@ -182,8 +210,59 @@ func registerTestifySuite(t *testing.T, suite any) {
 		})
 	}
 
-	// store the TestifyTest structs for the parent T
-	setTestifyTestsByParentT(tPtr, tests)
+	return tests
+}
+
+// registerTestifySuiteScope limits the method lookup to this suite.Run call.
+// Nested calls restore the previous suite; a completed scope leaves no stale
+// registration on the parent T. The legacy Orchestrion ABI remains above.
+func registerTestifySuiteScope(t *testing.T, suite any) func() {
+	if t == nil || suite == nil {
+		return func() {}
+	}
+	typ := reflect.TypeOf(suite)
+	tests := testifySuiteMethods(typ, typ.Elem().Name(), typ.Elem().PkgPath())
+	ptr := unsafe.Pointer(t)
+	testifyTestsByParentTMutex.Lock()
+	previous, hadPrevious := testifyTestsByParentT[ptr]
+	testifyTestsByParentT[ptr] = tests
+	testifySuitesRegistered.Store(true)
+	testifyTestsByParentTMutex.Unlock()
+	return func() {
+		testifyTestsByParentTMutex.Lock()
+		if hadPrevious {
+			testifyTestsByParentT[ptr] = previous
+		} else {
+			delete(testifyTestsByParentT, ptr)
+		}
+		testifyTestsByParentTMutex.Unlock()
+	}
+}
+
+func getBoundTestifyTest(ptr unsafe.Pointer) *TestifyTest {
+	testifyTestsByParentTMutex.RLock()
+	defer testifyTestsByParentTMutex.RUnlock()
+	return testifyTestsByT[ptr]
+}
+
+func bindTestifyTest(t *testing.T, found *TestifyTest) *TestifyTest {
+	if found == nil {
+		return nil
+	}
+	ptr := unsafe.Pointer(t)
+	testifyTestsByParentTMutex.Lock()
+	if existing := testifyTestsByT[ptr]; existing != nil {
+		testifyTestsByParentTMutex.Unlock()
+		return existing
+	}
+	testifyTestsByT[ptr] = found
+	testifyTestsByParentTMutex.Unlock()
+	t.Cleanup(func() {
+		testifyTestsByParentTMutex.Lock()
+		delete(testifyTestsByT, ptr)
+		testifyTestsByParentTMutex.Unlock()
+	})
+	return found
 }
 
 func getTestifyTestsByParentT(ptr unsafe.Pointer) ([]TestifyTest, bool) {

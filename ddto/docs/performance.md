@@ -67,6 +67,15 @@ discovery can still grow with package count.
 This sharing ends when the plan is removed. The POC uses Go's caches and has no
 persistent cache of instrumented binaries or prepared overlays.
 
+When a runtime must be provided, one `go env -json GOMOD GOWORK` call supplies
+the module and workspace paths. The temporary module files read the user's
+effective overlay contents, including replacements or deletion of the sum file.
+This also applies to an explicit `-modfile`. Child commands derive `PWD` from
+their working directory before adding environment overrides, so `-C` through a
+symlink keeps the same paths during preparation and compilation. With
+`-mod=mod`, a separate read-only `go list` resolves the runtime, so the package
+query cannot add it to the module's requirements.
+
 ## Testify discovery and tool overhead
 
 The [Testify contract](testify.md) selects `-toolexec` from actual reachability,
@@ -102,6 +111,11 @@ has its own versioned bridge; ordinary client-only coverage needs no bridge.
 Goleak has a package-scoped compiler flag marker because it does not import
 `testing`. Its worker filters and connection checkpoint are described in
 [delivery and goleak](delivery.md).
+Unqualified `-gcflags` apply when Go resolved goleak as a command-line target,
+including an absolute directory argument. The marker retains those flags;
+package selection is not inferred with the pattern rules used by qualified
+compiler flags. The CLI regression tests in `integration/runner_transparency_test.go`
+cover this distinction, module overlays and the symlink case.
 
 ## Enqueue and delivery
 
@@ -133,6 +147,7 @@ invocation.
 | Sealed span maps | Metadata and metric snapshots on `Finish` | Setters must never mutate a finished span's maps |
 | Shared CI tag snapshots and cached options | Per-span closures, common map entries and repeated wire strings | Preserve late updates, getters, option precedence, numeric overrides, child spans and Bazel filtering |
 | Metadata capacity estimate | Repeated map growth while applying common tags | Include per-event and client tags in the estimate |
+| Appended close-action lists | Copying all prior actions on every registration | Execute in LIFO order, with pre-close barriers before ordinary actions |
 | Lazy metric maps | A map allocation for events without numeric metrics | Tag type transitions must retain their existing semantics |
 | Direct event encoding | An intermediate encoded event array and its payload copy | Preserve field names, event versions and byte limits |
 | Queue and payload reuse | Fresh backing storage after every successful batch | Retryable flush failures retain events; final closure discards a failed batch once |
@@ -181,6 +196,26 @@ swaps retain the existing swappable handle.
 Counts and gauges keep their value/timestamp inline under a short mutex. A flush
 detaches the whole point under that mutex, then encodes it after releasing the
 lock. This removes per-submission snapshots while preserving collection boundaries.
+
+### Checking metadata capacity
+
+`newSpan` estimates metadata capacity from the option count and client tags.
+Some options set timestamps, hierarchy fields or shared metadata without adding
+a local map entry. A smaller reservation saves space for those spans, but can
+force extra map growth for custom spans containing mostly text tags.
+
+Keep the current estimate until an alternative handles both shapes. A fixed
+capacity of eight, including a version limited to small option lists, regresses
+the text-heavy cases. `BenchmarkSpanMetadata` covers CI-shaped and text-only
+options with 0, 4, 12, 32 and 128 additional tags:
+
+```sh
+go test ./internal/minitracer -run '^$' -bench '^BenchmarkSpanMetadata$' -benchmem -count=5
+```
+
+Compare allocation counts as well as time, and include the complete CI lifecycle
+benchmark before changing production. Options are functions; their count alone
+does not reveal how many map entries they will add.
 
 ## The ownership rules behind reuse
 
@@ -234,6 +269,34 @@ gzip with less compression work and potentially more wire bytes. Coverage and
 log writers keep their own SDK compression settings. Compare CPU and transmitted
 bytes when changing this level; decoded content and intake limits must remain
 unchanged.
+
+## CI tag snapshot lookup
+
+Internal readers use `GetCITagsReadOnly`, so a published snapshot can be reused
+without comparing every string on every span. Explicit updates invalidate it.
+A caller that requests the mutable `GetCITags` map opts that map back into full
+content checks, preserving late sequential edits.
+
+`BenchmarkCITagsSnapshot` measures one lookup with 64 initialized tags. Three
+alternating before/after pairs on Linux, Go 1.27 and `GOMAXPROCS=4` gave:
+
+| Lookup | Before, median ns/op | Current, median ns/op | Allocation |
+| --- | ---: | ---: | ---: |
+| Internal read-only callers | 1,074 | 5.25 | 0 B/op, 0 allocs/op |
+| Mutable map exposed | 1,049 | 1,066 | 0 B/op, 0 allocs/op |
+
+The read-only lookup removes about 99.5% of this operation's time. The mutable
+path retains its scan; its observations overlap the baseline range. This is a
+serial microbenchmark, not a prediction of build or whole-suite speedup.
+[Raw observations and inputs](results/ci-tag-snapshot.json) retain all samples.
+Run it with:
+
+```sh
+GOMAXPROCS=4 go test ./internal/thirdparty/dd-trace-go/civisibility/utils \
+  -run='^$' -bench='^BenchmarkCITagsSnapshot$' -benchtime=300ms -count=3
+```
+
+Update and concurrent-reader tests cover the cache's correctness separately.
 
 ## Profiling the native event path
 

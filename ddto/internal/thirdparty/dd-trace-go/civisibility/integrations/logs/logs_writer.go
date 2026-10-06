@@ -91,7 +91,8 @@ func (w *logsWriter) stop() {
 		w.startUpload(payloadToFlush)
 	}
 	if w.deferred {
-		cidelivery.Checkpoint()
+		// Shutdown can run before a panicking test releases admission.
+		cidelivery.Shutdown()
 	}
 	w.wg.Wait()
 	if closer, ok := w.client.(interface{ CloseIdleConnections() }); ok {

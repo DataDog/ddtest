@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ const sdkPackage = "github.com/DataDog/dd-trace-go/v2/civisibility"
 const miniPackage = "github.com/tonyredondo/dd-ci-testing-poc/testopt"
 
 type goPackage struct {
+	commandLine                        bool // Selected by the original package query, not dependency discovery.
 	Dir, Name, ImportPath              string
 	Standard                           bool
 	GoFiles, TestGoFiles, XTestGoFiles []string
@@ -145,10 +147,9 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime) (pl
 			_ = os.RemoveAll(temp)
 		}
 	}()
-	list := func() ([]goPackage, error) {
+	list := func(patterns ...string) ([]goPackage, error) {
 		listArgs := append([]string{"list", "-e", "-json=Dir,Name,ImportPath,Standard,GoFiles,TestGoFiles,XTestGoFiles,Imports,TestImports,XTestImports,Deps,Module,Error"}, opts.buildFlags...)
-		listArgs = append(listArgs, opts.packages...)
-		listArgs = append(listArgs, "testing", runtimePackage)
+		listArgs = append(listArgs, patterns...)
 		cmd := exec.CommandContext(ctx, "go", listArgs...)
 		// Keep Env nil: os/exec then sets PWD to dir, so go list reports
 		// package directories with the spelling of dir, even through symbolic
@@ -156,7 +157,22 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime) (pl
 		cmd.Dir = dir
 		return readPackages(cmd, "resolve packages")
 	}
-	packages, e := list()
+	patterns := append(append([]string(nil), opts.packages...), "testing", runtimePackage)
+	var packages []goPackage
+	if opts.mod == "mod" {
+		// -mod=mod lets a query add requirements to go.mod and go.sum. Native go
+		// test adds them only for the user's packages, never for the runtime it
+		// does not import. List those packages with the user's flags, then
+		// resolve the runtime read-only: a missing runtime is provided below.
+		packages, e = list(patterns[:len(patterns)-1]...)
+		if e == nil && !slices.ContainsFunc(packages, func(p goPackage) bool { return p.ImportPath == runtimePackage }) {
+			var probe []goPackage
+			probe, e = list("-mod=readonly", runtimePackage)
+			packages = append(packages, probe...)
+		}
+	} else {
+		packages, e = list(patterns...)
+	}
 	if e != nil {
 		return plan, e
 	}
@@ -164,11 +180,11 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime) (pl
 		if p.ImportPath == runtimePackage && p.Error != nil {
 			// The module does not require the runtime: provide it through a
 			// temporary go.mod instead of failing or editing the module.
-			if plan.Modfile, e = provideRuntime(ctx, dir, opts, runtime, temp); e != nil {
+			if plan.Modfile, e = provideRuntime(ctx, dir, opts, runtime, temp, replacements); e != nil {
 				return plan, fmt.Errorf("%s: %s\nddtest could not provide it: %w", p.ImportPath, p.Error.Err, e)
 			}
 			opts.buildFlags = append(opts.buildFlags, "-modfile="+plan.Modfile)
-			if packages, e = list(); e != nil {
+			if packages, e = list(patterns...); e != nil {
 				return plan, e
 			}
 			break
@@ -378,7 +394,7 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 		if opts.toolexec != "" {
 			// The user's -toolexec, including one from GOFLAGS, runs every tool
 			// after ours, exactly as it would without ddtest.
-			env = append(os.Environ(), userToolexecEnv+"="+opts.toolexec)
+			env = []string{userToolexecEnv + "=" + opts.toolexec}
 		}
 	}
 	forwarded := goTestArguments(plan, opts, tool)
@@ -445,9 +461,13 @@ func goTestArguments(plan Plan, opts options, tool string) []string {
 // runGo retains native output and exit status. Signals are forwarded to Go
 // rather than killing it; context cancellation interrupts it, then kills it
 // after a grace period.
-func runGo(ctx context.Context, dir string, args, env []string, signals <-chan os.Signal, stdin io.Reader, stdout, stderr io.Writer) int {
+func runGo(ctx context.Context, dir string, args, envOverrides []string, signals <-chan os.Signal, stdin io.Reader, stdout, stderr io.Writer) int {
 	cmd := exec.Command("go", args...)
-	cmd.Dir, cmd.Env = dir, env
+	cmd.Dir = dir
+	if len(envOverrides) != 0 {
+		// Environ computes PWD from Dir, including its symbolic-link spelling.
+		cmd.Env = append(cmd.Environ(), envOverrides...)
+	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Start(); err != nil {

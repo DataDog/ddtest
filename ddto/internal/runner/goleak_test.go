@@ -10,18 +10,21 @@ func TestGoleakCacheFlagPreservesEffectiveCompilerFlags(t *testing.T) {
 	pkg := &goPackage{Dir: filepath.Join(t.TempDir(), "vendor", "go.uber.org", "goleak"), ImportPath: "go.uber.org/goleak"}
 	dir := filepath.Dir(filepath.Dir(filepath.Dir(pkg.Dir)))
 	for _, tc := range []struct {
-		env  string
-		args []string
-		want string
+		env      string
+		args     []string
+		want     string
+		selected bool
 	}{
-		{"", []string{"."}, "-I=ddtest-goleak-hash"},
-		{"-gcflags=all=-N", []string{"-gcflags=go.uber.org/goleak=-l", "."}, "-l -I=ddtest-goleak-hash"},
-		{"'-gcflags=all=-N -l'", []string{"-gcflags=example.com/...=-B", "."}, "-N -l -I=ddtest-goleak-hash"},
-		{"-gcflags=-N", []string{"."}, "-I=ddtest-goleak-hash"},
-		{"", []string{"-gcflags=-N", "go.uber.org/goleak"}, "-N -I=ddtest-goleak-hash"},
-		{"", []string{"-gcflags=./...=-N", "."}, "-I=ddtest-goleak-hash"},
-		{"", []string{"-gcflags=./vendor/go.uber.org/...=-N", "."}, "-N -I=ddtest-goleak-hash"},
+		{"", []string{"."}, "-I=ddtest-goleak-hash", false},
+		{"-gcflags=all=-N", []string{"-gcflags=go.uber.org/goleak=-l", "."}, "-l -I=ddtest-goleak-hash", false},
+		{"'-gcflags=all=-N -l'", []string{"-gcflags=example.com/...=-B", "."}, "-N -l -I=ddtest-goleak-hash", false},
+		{"-gcflags=-N", []string{"."}, "-I=ddtest-goleak-hash", false},
+		{"", []string{"-gcflags=-N", "go.uber.org/goleak"}, "-N -I=ddtest-goleak-hash", true},
+		{"", []string{"-gcflags=-N -l", pkg.Dir}, "-N -l -I=ddtest-goleak-hash", true},
+		{"", []string{"-gcflags=./...=-N", "."}, "-I=ddtest-goleak-hash", false},
+		{"", []string{"-gcflags=./vendor/go.uber.org/...=-N", "."}, "-N -I=ddtest-goleak-hash", false},
 	} {
+		pkg.commandLine = tc.selected
 		t.Setenv("GOFLAGS", tc.env)
 		opts, err := parseOptions(tc.args, tc.env)
 		if err != nil {

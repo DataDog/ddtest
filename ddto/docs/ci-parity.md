@@ -50,6 +50,7 @@ policy combinations and counts are exported by every workflow run.
 | Impacted tests | Actual two-commit Git diff; known-test EFD reruns, ITR interaction, environment disable | Verified |
 | Test management | Disabled, quarantined, attempt-to-fix; overlapping flags, ATR/EFD, ITR, subtests, feature override and both retry modes | Verified for selected overlaps; not every permutation |
 | Per-test coverage | Atomic/race coverage, pass versus skip, exact distinct-function bitmaps with count/shuffle and retries; initial-attempt-only behavior matches SDK | Verified |
+| Cleanup coverage | Cleanup-only code, parallel children, retries, skip/failure and terminal panic; normal/deferred delivery | Mini correction checked directly; the pinned SDK omits cleanup-only lines |
 | Coverage report upload | Gzip multipart LCOV and its complete event metadata; combined with ITR and per-test coverage | Verified |
 | CI logs | Actual logs intake JSON, test/trace correlation and line multiplicity; retries and manual hierarchy logs | Verified |
 | Git metadata and upload | Commit/base metadata, CODEOWNERS and actual Git pack upload when settings require it; original Git fixture assertions retained | Verified |
@@ -65,6 +66,7 @@ policy combinations and counts are exported by every workflow run.
 | Additional CI spans | Two explicitly CI-marked spans attached to the active test context, including test → parent → child identity; manual hierarchy child span | Verified internal span API; automatic APM integration is outside Mini |
 | Context propagation | W3C and Datadog carriers, 128-bit identity, extraction by SDK propagator | Verified carrier compatibility; in-process APM shim not implemented |
 | CI telemetry | Original CI instrumentation/unit assertions; wire fixture compares semantic CI count/rate metrics and validates request counters against actual HTTP requests | Partial: representative wire counts verified; distributions/policy cross-product unverified; failure counters have known differences |
+| Duplicate Testify methods | Two suite types under one parent, repeated invocations, nested children and ordinary siblings; covered library entry and race | Mini correction checked directly; the pinned SDK misattributes duplicate method names |
 | `testify/suite` | 26 Mini cases against full SDK/Orchestrion, plus a POC SDK pass/skip control; version fixtures v1.10.0/v1.11.1/v1.12.1, aliases, helpers, lifecycle, retries, management and race/coverage | Verified for local and external-module callers; method-level ITR retains the SDK limitation |
 
 The inventory follows the SDK's CI integrations, manual API, coverage, feature
@@ -124,13 +126,24 @@ Only declared differences are normalized:
   numeric values remain required. CI request counters are checked against each
   sender's requests because batching can differ. All other captured CI semantic
   counters compare exactly.
-- Relocated SDK library stack paths are canonicalized. Mini's known deferred
-  wrapper line 844 is mapped to the pinned SDK's line 838; other library
-  locations remain strict. For the six `testing`
+- Relocated SDK library stack paths are canonicalized. Mini's test-wrapper
+  line 840 maps to SDK line 838. Its two subtest calls at
+  `instrumentation_orchestrion.go:321/327` map to SDK lines 319/325. Each mapping
+  requires the exact function and source location. Testify's embedded panic
+  stack uses the same mapping; its `Error Trace` section lists only files and
+  lines, so those entries use the exact source location. Other library locations
+  remain strict. For the six `testing`
   failure methods, Orchestrion's `<generated>:1` frame (bare on Go 1.26, prefixed on Go 1.27)
   and the toolchain's
   `testing.go` frame are equivalent by method name. Application frames, their
   source lines, error text and frame order remain compared.
+
+Two Mini corrections intentionally differ from the frozen SDK. Coverage includes
+code executed only in `t.Cleanup`, and duplicate Testify method names retain the
+client suite and source location. `TestMiniCoverageIncludesCleanup` and
+`TestMiniTestifyDuplicateIdentity` assert those expected payloads directly;
+the differential comparator does not hide either difference. They run with the
+complete suite on every CI platform.
 
 The span fixture explicitly marks both runtimes' spans as `ciapp-test`. Mini
 adds that origin automatically; SDK public span creation does not automatically

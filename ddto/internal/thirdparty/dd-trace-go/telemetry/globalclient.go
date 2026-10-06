@@ -24,7 +24,8 @@ import (
 const telemetryQueuedLogStackSkip = 1
 
 var (
-	globalClient atomic.Pointer[Client]
+	globalClient          atomic.Pointer[Client]
+	globalClientStartupMu sync.Mutex // Orders recording with publishing the first client.
 
 	// globalClientRecorder contains all actions done on the global client done before StartApp() with an actual client object is called
 	globalClientRecorder = internal.NewRecorder[Client]()
@@ -84,7 +85,9 @@ func SwapClient(client Client) Client {
 		return nil
 	}
 
+	globalClientStartupMu.Lock()
 	oldClientPtr := globalClient.Swap(&client)
+	globalClientStartupMu.Unlock()
 	var oldClient Client
 	if oldClientPtr != nil && *oldClientPtr != nil {
 		oldClient = *oldClientPtr
@@ -279,7 +282,18 @@ func globalClientCall(fun func(client Client)) {
 
 	client := globalClient.Load()
 	if client == nil || *client == nil {
-		if !globalClientRecorder.Record(fun) {
+		globalClientStartupMu.Lock()
+		// Publication and recording share this lock. Replay can run outside it:
+		// every queued call is committed before the client becomes visible.
+		client = globalClient.Load()
+		if client != nil && *client != nil {
+			globalClientStartupMu.Unlock()
+			fun(*client)
+			return
+		}
+		recorded := globalClientRecorder.Record(fun)
+		globalClientStartupMu.Unlock()
+		if !recorded {
 			globalClientLogLossOnce.Do(func() {
 				log.Debug("telemetry: global client recorder queue is full, dropping telemetry data, please start the telemetry client earlier to avoid data loss")
 			})

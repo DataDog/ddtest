@@ -1,6 +1,34 @@
 package runner
 
-import "testing"
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestCopyModuleFileUsesOverlayContentsAndDeletion(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"go.mod", "go.sum", "alternate.mod", "alternate.sum"} {
+		t.Run(name, func(t *testing.T) {
+			logical, backing, output := filepath.Join(dir, name), filepath.Join(dir, name+".backing"), filepath.Join(dir, name+".copy")
+			for path, contents := range map[string]string{logical: "physical", backing: "overlaid"} {
+				if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := copyModuleFile(logical, output, map[string]string{logical: backing}); err != nil {
+				t.Fatal(err)
+			}
+			if data, err := os.ReadFile(output); err != nil || string(data) != "overlaid" {
+				t.Fatalf("copied %q, %v", data, err)
+			}
+			if err := copyModuleFile(logical, output, map[string]string{logical: ""}); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("deleted overlay: %v", err)
+			}
+		})
+	}
+}
 
 // A Windows checkout can convert go.mod to CRLF line endings.
 func TestModulePathToleratesLineEndingsAndComments(t *testing.T) {

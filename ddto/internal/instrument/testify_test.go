@@ -50,7 +50,7 @@ func FuzzTransformTestify(f *testing.F) {
 		if len(src) > 64<<10 {
 			t.Skip()
 		}
-		out, changed, err := TransformTestifyEntry("suite.go", []byte(src))
+		out, changed, err := TransformTestifyEntry("suite.go", []byte(src), false)
 		if err != nil || !changed {
 			return
 		}
@@ -67,7 +67,7 @@ func BenchmarkTransformTestifyEntry(b *testing.B) {
 	src := []byte(`package suite;import "testing";type TestingSuite interface{};func Run(t *testing.T,s TestingSuite){}`)
 	b.ReportAllocs()
 	for b.Loop() {
-		if _, _, err := TransformTestifyEntry("suite.go", src); err != nil {
+		if _, _, err := TransformTestifyEntry("suite.go", src, false); err != nil {
 			b.Fatal(err)
 		}
 	}

@@ -78,7 +78,7 @@ func GetCodeOwnersWithStatus() (*CodeOwners, bool) {
 	}
 
 	hasNonMissingError := false
-	tags := GetCITags()
+	tags := GetCITagsReadOnly()
 	if v, ok := tags[constants.CIWorkspacePath]; ok {
 		paths := []string{
 			filepath.Join(v, "CODEOWNERS"),

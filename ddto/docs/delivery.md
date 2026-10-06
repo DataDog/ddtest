@@ -61,7 +61,9 @@ at once and finishes every request before it returns, so the next test starts
 with no CI delivery in flight. Payloads sent together can arrive in any order;
 each keeps its events in order.
 
-Coverage counter snapshots are captured in the before/after hooks. Deferred
+Coverage counter snapshots bracket the initial attempt, including its user
+cleanups and descendants. The final snapshot runs in an early-registered
+`t.Cleanup`, after user cleanups in Go's reverse registration order. Deferred
 delivery postpones their processing as well as their upload until the whole
 test group is idle. It never captures counters from a later test. In ordinary
 delivery, processing finishes in the after hook when telemetry or debug logging
@@ -94,6 +96,16 @@ for its `Close` timing. Deferred mode is not a guarantee that no goroutine exist
 in the test process: CI still installs its signal handler, and tests may start
 their own workers.
 
+`Flush` honors its context while waiting for deferred test admission and the
+send lock. HTTP delivery also honors cancellation while goleak has paused new
+sends. Canceling either wait starts no request and leaves no waiter goroutine.
+
+`Client.Close` returns a final delivery error, including a failed background
+payload that was already in flight when closing started. Rejected payloads are
+counted once. The runtime logs this error and any dropped events; `ddtest`
+returns the `go` command's exit code. A later empty `Close` does not report an
+older failure again.
+
 ## Automatic goleak integration
 
 When the selected Mini test graph reaches `go.uber.org/goleak`, `ddtest` prepares
@@ -108,9 +120,9 @@ continues without the integration; its leak checks can then report CI workers.
 
 ```mermaid
 flowchart TD
-    Find["goleak Find"] --> Wait["Wait for active CI sends"]
-    Wait --> Pause["Pause new CI sends"]
-    Pause --> Close["Close owned idle CI connections"]
+    Find["goleak Find"] --> Pause["Pause new CI sends"]
+    Pause --> Wait["Wait for active CI sends"]
+    Wait --> Close["Close owned idle CI connections"]
     Close --> Check["Run original goleak checks"]
     Check --> Resume["Resume CI sends on return"]
 ```
@@ -188,8 +200,10 @@ Different snapshots or an event with no shared base trigger the same local
 fallback for that event kind; other kinds can still share their defaults.
 
 The SDK's tag API publishes updates through `AddCITags` and `AddCITagsMap`, and
-also exposes a mutable cached map. Snapshot lookup compares current
-contents, so sequential direct edits and resets are seen too. A changed snapshot
+also exposes a mutable cached map. Internal readers use `GetCITagsReadOnly`,
+which reuses the immutable snapshot until an explicit update. Once `GetCITags`
+exposes the current mutable map, snapshot lookup checks its contents on every
+read so even later direct edits remain visible. A changed snapshot
 gets a new revision; cached, UTF-8-truncated options are rebuilt once. Existing
 spans keep their old values, including when later feature discovery changes tags.
 Concurrent direct writes to the exposed SDK map remain unsupported; use its

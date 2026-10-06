@@ -767,6 +767,11 @@ func (ddm *M) executeInternalTest(testInfo *testingTInfo, wrapperOpts additional
 			}
 		}
 
+		if tCoverage != nil {
+			// Capture after user cleanup and descendants, before delivery resumes.
+			registerTestCoverageCleanup(t, tCoverage, tParentOldBarrier)
+		}
+
 		// Initialize the chatty printer if not already done.
 		instrumentChattyPrinter(t)
 
@@ -775,17 +780,6 @@ func (ddm *M) executeInternalTest(testInfo *testingTInfo, wrapperOpts additional
 		defer func() {
 			r := recover()
 			bodyDuration := time.Since(startTime)
-
-			if tCoverage != nil {
-				// Collect coverage after test execution so we can calculate the diff comparing to the baseline.
-				tCoverage.CollectCoverageAfterTestExecution()
-
-				// now we restore the original parent barrier
-				tParent := getTestParentPrivateFields(t)
-				if tParent != nil && tParent.barrier != nil {
-					*tParent.barrier = tParentOldBarrier
-				}
-			}
 
 			if execMeta.usesFreshRetryAttemptRuntime {
 				bodyTerminal := r
@@ -825,7 +819,9 @@ func (ddm *M) executeInternalTest(testInfo *testingTInfo, wrapperOpts additional
 			finalizeInstrumentedTestExecution(t, execMeta, test, suite, module, duration, nil, r, terminalStack, true)
 			if r != nil && !execMeta.hasAdditionalFeatureWrapper {
 				checkModuleAndSuite(module, suite)
-				integrations.ExitCiVisibility()
+				if !requestCoverageShutdown(t) {
+					integrations.ExitCiVisibility()
+				}
 				panic(r)
 			}
 			if r == nil && !execMeta.hasAdditionalFeatureWrapper {

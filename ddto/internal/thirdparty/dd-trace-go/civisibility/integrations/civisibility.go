@@ -121,7 +121,7 @@ func internalCiVisibilityInitialization(tracerInitializer func([]tracer.StartOpt
 		utils.AddCITagsMap(libraryCapabilities())
 
 		// Preload all CI, Git, and CodeOwners tags.
-		ciTags := utils.GetCITags()
+		ciTags := utils.GetCITagsReadOnly()
 		_ = utils.GetCIMetrics()
 
 		// Check if DD_SERVICE has been set; otherwise default to the repo name (from the spec).
@@ -270,7 +270,8 @@ func shouldInitializeCiVisibilityLogs(logsEnabled bool) bool {
 func PushCiVisibilityCloseAction(action ciVisibilityCloseAction) {
 	closeActionsMutex.Lock()
 	defer closeActionsMutex.Unlock()
-	closeActions = append([]ciVisibilityCloseAction{action}, closeActions...)
+	// Append in registration order; shutdown walks backwards to preserve LIFO.
+	closeActions = append(closeActions, action)
 }
 
 // TryPushCiVisibilityPreCloseAction adds a barrier that runs before regular
@@ -282,7 +283,7 @@ func TryPushCiVisibilityPreCloseAction(action ciVisibilityCloseAction) bool {
 	if state == civisibility.StateExiting || state == civisibility.StateExited {
 		return false
 	}
-	preCloseActions = append([]ciVisibilityCloseAction{action}, preCloseActions...)
+	preCloseActions = append(preCloseActions, action)
 	return true
 }
 
@@ -334,8 +335,8 @@ func exitCiVisibility(stopSignalHandler bool) {
 	if cidelivery.Enabled() {
 		cidelivery.Shutdown()
 	}
-	for _, barrier := range barriers {
-		barrier()
+	for i := len(barriers) - 1; i >= 0; i-- {
+		barriers[i]()
 	}
 
 	closeActionsMutex.Lock()
@@ -352,8 +353,8 @@ func exitCiVisibility(stopSignalHandler bool) {
 		closeCIVisibilityIdleConnections()
 		log.Debug("civisibility: done.")
 	}()
-	for _, v := range closeActions {
-		v()
+	for i := len(closeActions) - 1; i >= 0; i-- {
+		closeActions[i]()
 	}
 }
 

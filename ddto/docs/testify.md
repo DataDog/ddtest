@@ -3,7 +3,19 @@
 `ddtest` registers a Testify suite at the entry of the client's original
 `suite.Run`. All callers reach that entry, including helpers in other modules.
 Testify still owns its runner, assertions, lifecycle hooks and `WithStats`.
-Both `--runtime=sdk` and `--runtime=mini` use the same transformation.
+The SDK backend calls its original registration hook. Mini registers a scope
+and defers its release until `suite.Run` returns, including a panic. Each
+method binds to the active suite before execution; the binding lasts through
+its descendants and cleanup. This keeps `TestShared#01` attached to the second
+suite when two suites expose `TestShared`. An ordinary sibling after
+`suite.Run` gets no stale suite metadata.
+
+Use `ddtest` and the Mini runtime from the same revision: the scoped hook is
+an internal linkname contract.
+
+The scope follows Testify's serial method runner. It does not add support for
+concurrent `suite.Run` calls sharing the same parent `*testing.T`; Testify's
+own suite state also assumes serial use.
 
 The minimum supported version is **Testify v1.4.0**: from that release on,
 `Run(*testing.T, TestingSuite)` runs each suite method as `t.Run(method)`, which
@@ -61,7 +73,7 @@ checks that warm-cache counterexample. The [performance guide](performance.md)
 records the discovery and cache constraints.
 
 Preparation reads only the selected Testify sources. It validates the entry,
-adds a registration call and prepares a linkname declaration for the selected
+adds a registration call (with a deferred release for Mini) and prepares a linkname declaration for the selected
 CI runtime. The compiler receives temporary source paths; module-cache files
 and client files stay untouched. There are no wrappers in client packages,
 and no Testify source is incorporated into Mini.

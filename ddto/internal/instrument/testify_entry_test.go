@@ -10,7 +10,7 @@ import (
 func TestSuiteEntryRetainsLinesAndCoveredLocations(t *testing.T) {
 	for _, header := range []string{"", "//line /original/suite.go:1:1\n"} {
 		src := header + "package suite\nimport tt \"testing\"\ntype TestingSuite interface{}\nfunc Run(test *tt.T, target TestingSuite){ original() }\nfunc (s TestingSuite) Run() {}\n"
-		out, changed, err := TransformTestifyEntry("/backing/suite.go", []byte(src))
+		out, changed, err := TransformTestifyEntry("/backing/suite.go", []byte(src), false)
 		if err != nil || !changed {
 			t.Fatal(changed, err)
 		}
@@ -25,7 +25,7 @@ func TestSuiteEntryRetainsLinesAndCoveredLocations(t *testing.T) {
 		}
 	}
 	for _, src := range []string{`package suite;func Run(){}`, `package suite; import "testing";type TestingSuite interface{};func Run(_ *testing.T,s TestingSuite){}`} {
-		if _, _, err := TransformTestifyEntry("bad.go", []byte(src)); err == nil {
+		if _, _, err := TransformTestifyEntry("bad.go", []byte(src), false); err == nil {
 			t.Fatal("unsupported entry accepted")
 		}
 	}
@@ -34,20 +34,38 @@ func TestSuiteEntryRetainsLinesAndCoveredLocations(t *testing.T) {
 func TestTestifyPackageReusesValidationWithoutSkippingFiles(t *testing.T) {
 	run := []byte("package suite\nimport tt \"testing\"\ntype TestingSuite interface{}\nfunc Run(test *tt.T,target TestingSuite){ original() }\n")
 	helper := []byte("package suite\nconst description=\"__dd_ci_registerTestifySuite\"\n")
-	want, _, err := TransformTestifyEntry("suite.go", run)
+	want, _, err := TransformTestifyEntry("suite.go", run, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := TransformTestifyPackage(map[string][]byte{"suite.go": run, "helper.go": helper})
+	out, err := TransformTestifyPackage(map[string][]byte{"suite.go": run, "helper.go": helper}, false)
 	if err != nil || len(out) != 1 || string(out["suite.go"]) != string(want) {
 		t.Fatalf("package transformation differs: %q, %v", out, err)
 	}
 	for _, bad := range []string{"package suite;var __dd_ci_registerTestifySuite int", "package suite;func broken("} {
-		if _, err := TransformTestifyPackage(map[string][]byte{"suite.go": run, "helper.go": []byte(bad)}); err == nil {
+		if _, err := TransformTestifyPackage(map[string][]byte{"suite.go": run, "helper.go": []byte(bad)}, false); err == nil {
 			t.Fatal("unmodified helper bypassed validation", bad)
 		}
 	}
-	if _, err := TransformTestifyPackage(map[string][]byte{"helper.go": helper}); err == nil {
+	if _, err := TransformTestifyPackage(map[string][]byte{"helper.go": helper}, false); err == nil {
 		t.Fatal("missing Run accepted")
+	}
+}
+
+func TestScopedTestifyEntryPreservesLinesAndUsesCleanupContract(t *testing.T) {
+	src := []byte("package suite\nimport \"testing\"\ntype TestingSuite interface{}\nfunc Run(t *testing.T,s TestingSuite){}\n")
+	out, changed, err := TransformTestifyEntry("suite.go", src, true)
+	if err != nil || !changed {
+		t.Fatal(changed, err)
+	}
+	if !strings.Contains(string(out), "defer "+TestifyRegisterName+"(t,s)();") || strings.Count(string(out), "\n") != strings.Count(string(src), "\n") {
+		t.Fatal(string(out))
+	}
+	hook := TestifyEntryHook("fixture.hook", true)
+	if !strings.Contains(hook, "(*testing.T, interface{}) func()") {
+		t.Fatal(hook)
+	}
+	if _, err := parser.ParseFile(token.NewFileSet(), "hook.go", hook, 0); err != nil {
+		t.Fatal(err)
 	}
 }

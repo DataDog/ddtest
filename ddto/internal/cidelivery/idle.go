@@ -4,6 +4,7 @@
 package cidelivery
 
 import (
+	"context"
 	"os"
 	"strconv"
 	"sync"
@@ -20,7 +21,7 @@ func Enabled() bool {
 // Buffered work may grow for the lifetime of a parallel group: waiting for an
 // idle checkpoint from inside that group would deadlock Go's test scheduler.
 type Coordinator struct {
-	admission sync.Mutex
+	admission contextMutex
 	active    int
 	mu        sync.Mutex
 	callbacks []*idleCallback
@@ -103,10 +104,16 @@ func Shutdown() {
 
 // RunIfIdle serializes an explicit client flush with test admission. A skipped
 // flush is picked up by the client's registered checkpoint callback.
-func RunIfIdle(run func() error) error {
-	process.admission.Lock()
-	defer process.admission.Unlock()
-	if process.active != 0 {
+func RunIfIdle(ctx context.Context, run func() error) error {
+	return process.runIfIdle(ctx, run)
+}
+
+func (c *Coordinator) runIfIdle(ctx context.Context, run func() error) error {
+	if err := c.admission.lock(ctx); err != nil {
+		return err
+	}
+	defer c.admission.Unlock()
+	if c.active != 0 {
 		return nil
 	}
 	return run()

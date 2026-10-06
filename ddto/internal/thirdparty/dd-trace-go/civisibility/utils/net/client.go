@@ -97,7 +97,7 @@ var (
 
 // NewClientWithServiceNameAndSubdomain creates a new client with the given service name and subdomain.
 func NewClientWithServiceNameAndSubdomain(serviceName, subdomain string) Client {
-	ciTags := utils.GetCITags()
+	ciTags := utils.GetCITagsReadOnly()
 
 	// get the environment
 	environment := env.Get("DD_ENV")

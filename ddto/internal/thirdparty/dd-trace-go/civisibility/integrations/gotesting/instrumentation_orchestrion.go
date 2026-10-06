@@ -306,7 +306,9 @@ func instrumentTestingTFunc(f func(*testing.T)) func(*testing.T) {
 				}
 				if nativeTerminal != nil && !execMeta.hasAdditionalFeatureWrapper {
 					checkModuleAndSuite(module, suite)
-					integrations.ExitCiVisibility()
+					if !requestCoverageShutdown(currentT) {
+						integrations.ExitCiVisibility()
+					}
 					panic(nativeTerminal)
 				}
 				if !execMeta.hasAdditionalFeatureWrapper {
@@ -643,6 +645,25 @@ func instrumentTestifySuiteRun(t *testing.T, suite any) {
 
 	log.Debug("instrumentTestifySuiteRun: instrumenting testify suite run")
 	registerTestifySuite(t, suite)
+}
+
+// instrumentTestifySuiteRunScoped is the Mini entry contract. The returned
+// callback restores the enclosing suite when suite.Run returns or panics.
+//
+//go:linkname instrumentTestifySuiteRunScoped
+func instrumentTestifySuiteRunScoped(t *testing.T, suite any) func() {
+	release, ok := acquireOrchestrionTestingHook()
+	if !ok {
+		return func() {}
+	}
+	defer release()
+	if isProcessRetryChild() {
+		metadata := getTestMetadata(t)
+		if metadata == nil || metadata.quarantinedRaceChild == nil {
+			return func() {}
+		}
+	}
+	return registerTestifySuiteScope(t, suite)
 }
 
 // getTestOptimizationContext helper function to get the context of the test

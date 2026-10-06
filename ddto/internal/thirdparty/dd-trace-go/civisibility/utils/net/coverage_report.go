@@ -146,7 +146,7 @@ func coverageReportEvent(format string, flags []string) map[string]any {
 		event["report.flags"] = flags
 	}
 
-	for key, value := range utils.GetCITags() {
+	for key, value := range utils.GetCITagsReadOnly() {
 		if value == "" {
 			continue
 		}

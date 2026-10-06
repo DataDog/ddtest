@@ -1,11 +1,33 @@
 package cidelivery
 
 import (
+	"context"
 	"sync"
 	"time"
 )
 
-var sendGate sync.RWMutex
+// A pending leak check blocks new sends before waiting for active sends.
+// State changes wake waiters through a channel, so sends can honor deadlines.
+var sendGate struct {
+	checks  sync.Mutex
+	mu      sync.Mutex
+	active  int
+	paused  bool
+	changed chan struct{}
+}
+
+func sendGateChangedLocked() {
+	if sendGate.changed != nil {
+		close(sendGate.changed)
+		sendGate.changed = nil
+	}
+}
+func sendGateWaitLocked() <-chan struct{} {
+	if sendGate.changed == nil {
+		sendGate.changed = make(chan struct{})
+	}
+	return sendGate.changed
+}
 
 // backgroundWork tracks CI start-up goroutines that are neither senders nor
 // named workers, such as the repository upload and its git subprocesses.
@@ -68,8 +90,58 @@ type connectionCloser struct{ close func() }
 // BeginSend and EndSend bracket only CI network delivery. A leak check waits
 // for existing sends, then pauses new ones until goleak has taken its snapshots.
 // The named waiting frame lets the shim distinguish our senders from user work.
-func BeginSend() { sendGate.RLock() }
-func EndSend()   { sendGate.RUnlock() }
+func BeginSend() { _ = BeginSendContext(context.Background()) }
+
+// BeginSendContext waits for leak-check admission without ignoring cancellation.
+// Only a successful call acquires a send slot and must be paired with EndSend.
+func BeginSendContext(ctx context.Context) error {
+	sendGate.mu.Lock()
+	defer sendGate.mu.Unlock()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !sendGate.paused {
+			sendGate.active++
+			return nil
+		}
+		changed := sendGateWaitLocked()
+		sendGate.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+		}
+		sendGate.mu.Lock()
+	}
+}
+func EndSend() {
+	sendGate.mu.Lock()
+	sendGate.active--
+	if sendGate.active == 0 {
+		sendGateChangedLocked()
+	}
+	sendGate.mu.Unlock()
+}
+
+func pauseSends() func() {
+	sendGate.checks.Lock()
+	sendGate.mu.Lock()
+	sendGate.paused = true
+	for sendGate.active != 0 {
+		changed := sendGateWaitLocked()
+		sendGate.mu.Unlock()
+		<-changed
+		sendGate.mu.Lock()
+	}
+	sendGate.mu.Unlock()
+	return func() {
+		sendGate.mu.Lock()
+		sendGate.paused = false
+		sendGateChangedLocked()
+		sendGate.mu.Unlock()
+		sendGate.checks.Unlock()
+	}
+}
 
 func RegisterConnectionCloser(close func()) func() {
 	entry := &connectionCloser{close: close}
@@ -93,7 +165,7 @@ func PrepareLeakCheck() func() {
 	// Tracked start-up work, such as the repository upload, would otherwise be
 	// reported as a leak while it runs git or waits between requests.
 	waitForBackground(backgroundWaitLimit)
-	sendGate.Lock()
+	resume := pauseSends()
 	connections.Lock()
 	closers := make([]func(), 0, len(connections.closers))
 	for entry := range connections.closers {
@@ -103,5 +175,5 @@ func PrepareLeakCheck() func() {
 	for _, close := range closers {
 		close()
 	}
-	return sendGate.Unlock
+	return resume
 }

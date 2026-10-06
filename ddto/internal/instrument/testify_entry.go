@@ -12,20 +12,22 @@ import (
 
 // TransformTestifyEntry registers the suite at its original Run entry. Keeping
 // the library runner intact also covers callers in other modules. The same edit
-// works on Go's covered source without introducing a coverage counter.
-func TransformTestifyEntry(name string, src []byte) ([]byte, bool, error) {
+// works on Go's covered source without introducing a coverage counter. scoped
+// selects Mini's cleanup-returning hook; the SDK uses its original void hook.
+func TransformTestifyEntry(name string, src []byte, scoped bool) ([]byte, bool, error) {
 	fs := token.NewFileSet()
 	file, err := parser.ParseFile(fs, name, src, parser.SkipObjectResolution)
 	if err != nil {
 		return nil, false, err
 	}
-	return transformTestifyEntry(name, src, fs, file)
+	return transformTestifyEntry(name, src, fs, file, scoped)
 }
 
 // TransformTestifyPackage validates and rewrites the selected library using one
 // AST per file. ASTs live only for this preparation; covered compiler inputs are
-// parsed independently by TransformTestifyEntry.
-func TransformTestifyPackage(files map[string][]byte) (map[string][]byte, error) {
+// parsed independently by TransformTestifyEntry. scoped must match the hook
+// signature emitted by TestifyEntryHook.
+func TransformTestifyPackage(files map[string][]byte, scoped bool) (map[string][]byte, error) {
 	names := make([]string, 0, len(files))
 	for name := range files {
 		names = append(names, name)
@@ -42,7 +44,7 @@ func TransformTestifyPackage(files map[string][]byte) (map[string][]byte, error)
 		if err := checkTestifyNames(name, src, file); err != nil {
 			return nil, err
 		}
-		out, changed, err := transformTestifyEntry(name, src, fs, file)
+		out, changed, err := transformTestifyEntry(name, src, fs, file, scoped)
 		if err != nil {
 			return nil, err
 		}
@@ -56,7 +58,7 @@ func TransformTestifyPackage(files map[string][]byte) (map[string][]byte, error)
 	return output, nil
 }
 
-func transformTestifyEntry(name string, src []byte, fs *token.FileSet, file *ast.File) ([]byte, bool, error) {
+func transformTestifyEntry(name string, src []byte, fs *token.FileSet, file *ast.File, scoped bool) ([]byte, bool, error) {
 	var run *ast.FuncDecl
 	for _, decl := range file.Decls {
 		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Name.Name == "Run" {
@@ -84,7 +86,11 @@ func transformTestifyEntry(name string, src []byte, fs *token.FileSet, file *ast
 		parameters[i] = field.Names[0].Name
 	}
 	pos := fs.PositionFor(run.Body.Lbrace, false).Offset + 1
-	edits := []edit{{pos, pos, TestifyRegisterName + "(" + strings.Join(parameters, ",") + ");"}}
+	registration := TestifyRegisterName + "(" + strings.Join(parameters, ",") + ")"
+	if scoped {
+		registration = "defer " + registration + "()"
+	}
+	edits := []edit{{pos, pos, registration + ";"}}
 	// Existing //line directives in covered sources already map to the original
 	// file. Normal temporary sources need an inline directive with no extra line.
 	if fs.Position(file.Package).Filename == name {
@@ -100,8 +106,12 @@ func transformTestifyEntry(name string, src []byte, fs *token.FileSet, file *ast
 
 // TestifyEntryHook uses testing, which suite already imports, and an unsafe
 // linkname declaration. No CI runtime import is added to the library's graph.
-func TestifyEntryHook(hook string) string {
-	return "package suite\nimport (\"testing\"; _ \"unsafe\")\n//go:linkname " + TestifyRegisterName + " " + hook + "\nfunc " + TestifyRegisterName + "(*testing.T, interface{})\n"
+func TestifyEntryHook(hook string, scoped bool) string {
+	result := ""
+	if scoped {
+		result = " func()"
+	}
+	return "package suite\nimport (\"testing\"; _ \"unsafe\")\n//go:linkname " + TestifyRegisterName + " " + hook + "\nfunc " + TestifyRegisterName + "(*testing.T, interface{})" + result + "\n"
 }
 
 // TestifyCacheMarker must be exported: an unused private constant need not

@@ -64,3 +64,67 @@ func TestFindTestifyTestMatchesFinalElement(t *testing.T) {
 		}
 	}
 }
+
+type firstScopedSuite struct{}
+
+func (*firstScopedSuite) TestShared() {}
+
+type secondScopedSuite struct{}
+
+func (*secondScopedSuite) TestShared() {}
+
+func TestTestifyScopeRestoresAndBindsMethods(t *testing.T) {
+	outer := registerTestifySuiteScope(t, new(firstScopedSuite))
+	t.Run("TestShared", func(method *testing.T) {
+		data := getTestifyTest(method)
+		if data == nil || data.suite != reflect.TypeOf(new(firstScopedSuite)) {
+			t.Fatalf("first: %+v", data)
+		}
+		inner := registerTestifySuiteScope(t, new(secondScopedSuite))
+		method.Run("nested", func(child *testing.T) {
+			fast := getTestifyTest(child)
+			slow := getTestifyTestFromReflectValue(reflect.ValueOf(child))
+			if fast == nil || slow == nil || fast.suite != data.suite || slow.suite != data.suite {
+				t.Fatal("nested child lost bound method")
+			}
+		})
+		inner()
+	})
+	nested := registerTestifySuiteScope(t, new(secondScopedSuite))
+	t.Run("TestShared", func(method *testing.T) {
+		data := getTestifyTest(method)
+		if data == nil || data.suite != reflect.TypeOf(new(secondScopedSuite)) {
+			t.Fatalf("duplicate: %+v", data)
+		}
+	})
+	nested()
+	outer()
+	t.Run("TestShared", func(method *testing.T) {
+		if getTestifyTest(method) != nil {
+			t.Fatal("ordinary sibling inherited a finished suite")
+		}
+	})
+}
+
+func TestTestifyMethodBindingOutlivesSuiteRun(t *testing.T) {
+	end := registerTestifySuiteScope(t, new(firstScopedSuite))
+	t.Run("TestShared", func(method *testing.T) {
+		want := getTestifyTest(method)
+		method.Parallel()
+		method.Run("nested", func(child *testing.T) {
+			got := getTestifyTest(child)
+			if want == nil || got == nil || got.suite != want.suite {
+				child.Fatal("parallel child lost the finished suite")
+			}
+		})
+	})
+	end()
+	end = registerTestifySuiteScope(t, new(secondScopedSuite))
+	t.Run("TestShared", func(method *testing.T) {
+		got := getTestifyTest(method)
+		if got == nil || got.suite != reflect.TypeOf(new(secondScopedSuite)) {
+			method.Fatal("second suite attribution lost")
+		}
+	})
+	end()
+}

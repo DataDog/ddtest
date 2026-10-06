@@ -74,7 +74,9 @@ func (w *coverageWriter) stop() {
 	log.Debug("coverageWriter: stopping writer")
 	w.flush()
 	if w.deferred {
-		cidelivery.Checkpoint()
+		// stop also runs during a terminal panic, before test cleanup releases
+		// admission. Drain the final partial payload before joining its send.
+		cidelivery.Shutdown()
 	}
 	w.wg.Wait()
 	if closer, ok := w.client.(interface{ CloseIdleConnections() }); ok {
