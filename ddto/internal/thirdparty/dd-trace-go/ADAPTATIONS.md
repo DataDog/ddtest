@@ -143,6 +143,42 @@ The SDK's other method-registration and suite-grouping rules stay in place.
 Run Testify parity with method filtering, lifecycle hooks, helpers, retries and
 coverage whenever upstream changes this advice.
 
+## Per-test allocations
+
+Each instrumented test runs the SDK's span creation, source lookup and Testify
+checks. With 20,000 trivial subtests under Mini, that path added about 88
+allocations per test to `testing`'s own 17; these adaptations remove about half
+of them without changing any event:
+
+- Debug logs on per-test paths in `manual_api_ddtest.go`,
+  `gotesting/instrumentation_orchestrion.go` and `gotesting/testing.go` are
+  guarded by `log.DebugEnabled()`: Go evaluates and boxes the arguments of a
+  disabled call. In `instrumentation_orchestrion.go` the guards replace blank
+  lines or an `else`, so no line moves: its closures appear in error stacks,
+  which parity compares line by line with the pinned SDK. Logs on rare paths
+  (directives, failures, skips, benchmarks and retries) stay unguarded.
+- `truncateCIVisibilityTagValue` in `meta.go` returns the original value when a
+  string needs no truncation, instead of boxing it again.
+- `getTestifyTest` in `gotesting/testify.go` returns at once until a suite
+  registers, then walks parents through the validated `testing` offsets, like
+  the other private field accesses; reflection remains the fallback. Method
+  matching no longer builds `"/" + method` strings.
+- `createTest` uses the module's test operation name, a concatenated resource
+  name and hierarchy IDs formatted once by the session, module and suite
+  constructors (their only construction sites; the IDs never change). Origin and
+  manual-keep options are built once in `manual_api_common.go`.
+- `instrumentTestingTFunc` declares the module and suite names inside its
+  closure with `TestifyTest.moduleAndSuite` instead of reassigning the captured
+  names, so closures capture them by value instead of moving them to the heap.
+- `utils.GetModuleAndSuiteName` caches its result by program counter.
+
+The CI tag snapshot check and per-call CI metrics are unchanged (see shared CI
+string tags). Checks: `TestTestifyLookupMatchesReflection`,
+`TestFindTestifyTestMatchesFinalElement`, Testify and native parity. When
+syncing, keep new per-test debug logs guarded without moving any line that can
+appear in an error stack, and re-measure allocations per test with a
+many-subtest fixture.
+
 ## Lazy stack classification
 
 [`stacktrace/stacktrace.go`](stacktrace/stacktrace.go) constructs its immutable
@@ -189,7 +225,7 @@ asynchronous feature initialization and repository upload in
 `integrations/civisibility.go` and `civisibility_features.go` register with
 `cidelivery.TrackBackground`, so a check first waits for them, including git
 subprocesses, for up to one minute. Named telemetry, coverage and
-log worker functions, and Mini's background test-cycle sender, permit exact
+log worker functions, and Mini's background and checkpoint test-cycle senders, permit exact
 filters without ignoring `net/http` or a user goroutine snapshot. Preserve worker names together with
 `internal/instrument/goleak.go` when moving these functions.
 

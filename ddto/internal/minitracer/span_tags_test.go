@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/citransport"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/ddtrace/ext"
 )
 
@@ -89,5 +91,30 @@ func TestErrorTagsFollowSDK(t *testing.T) {
 				t.Fatalf("handling stack=%q (%v)", got, ok)
 			}
 		})
+	}
+}
+
+// dd-trace-go copies a test span's meta before it moves the ITR correlation to
+// its own field, so a test event carries it in both; session, module and suite
+// events keep it only in meta.
+func TestTestEventKeepsITRCorrelationInMeta(t *testing.T) {
+	client, err := New(Config{Transport: citransport.Config{Endpoint: "http://intake.invalid", HTTPClient: &http.Client{Transport: benchmarkTransport{}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close(context.Background())
+	const key = "itr_correlation_id"
+	for _, kind := range []string{"test", "test_session_end"} {
+		span, _ := client.StartSpan(context.Background(), kind, SpanType(kind), Tag(key, "correlation"))
+		span.Finish()
+	}
+	client.mu.Lock()
+	test, session := client.events[0], client.events[1]
+	client.mu.Unlock()
+	if test.Content.CorrelationID != "correlation" || test.Content.Meta[key] != "correlation" {
+		t.Fatalf("test event: field=%q meta=%v", test.Content.CorrelationID, test.Content.Meta)
+	}
+	if session.Content.CorrelationID != "" || session.Content.Meta[key] != "correlation" {
+		t.Fatalf("session event: field=%q meta=%v", session.Content.CorrelationID, session.Content.Meta)
 	}
 }

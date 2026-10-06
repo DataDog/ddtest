@@ -156,11 +156,11 @@ func instrumentTestingTFunc(f func(*testing.T)) func(*testing.T) {
 	instrumentedFn := func(t *testing.T) {
 		// Check if we have testify suite data related to this test
 		testifyData := getTestifyTest(t)
-		if testifyData != nil {
-			// If we have testify data, we need to extract the module and suite name from the testify suite
-			moduleName = testifyData.moduleName
-			suiteName = testifyData.suiteName
-		}
+		// If we have testify data, we need to extract the module and suite name
+		// from the testify suite. New variables that are never reassigned are
+		// captured by value, so the closures do not move them to the heap for
+		// every test.
+		moduleName, suiteName := testifyData.moduleAndSuite(moduleName, suiteName)
 
 		subtestIdentity := newTestIdentity(moduleName, suiteName, t.Name())
 		isSubtest := len(subtestIdentity.Segments) > 1
@@ -177,9 +177,9 @@ func instrumentTestingTFunc(f func(*testing.T)) func(*testing.T) {
 			settings := integrations.GetSettings()
 			shouldInstrument := settings != nil && settings.SubtestFeaturesEnabled
 			hasDirective := false
-
-			log.Debug("subtest gating module=%s suite=%s identity=%s", moduleName, suiteName, subtestIdentity.FullName)
-
+			if log.DebugEnabled() {
+				log.Debug("subtest gating module=%s suite=%s identity=%s", moduleName, suiteName, subtestIdentity.FullName)
+			}
 			if parentExecMeta != nil {
 				if parentExecMeta.isAttemptToFix || parentExecMeta.isDisabled || parentExecMeta.isQuarantined {
 					hasDirective = true
@@ -195,7 +195,7 @@ func instrumentTestingTFunc(f func(*testing.T)) func(*testing.T) {
 						log.Debug("subtest gating exact match for %s: disabled=%t quarantined=%t attempt_to_fix=%t",
 							subtestIdentity.FullName, data.Disabled, data.Quarantined, data.AttemptToFix)
 					}
-				} else {
+				} else if log.DebugEnabled() {
 					log.Debug("subtest gating no exact match for %s (hasData=%t matchKind=%d)", subtestIdentity.FullName, hasData, matchKind)
 				}
 			}
@@ -218,9 +218,9 @@ func instrumentTestingTFunc(f func(*testing.T)) func(*testing.T) {
 
 			addModulesCounters(moduleName, 1)
 			addSuitesCounters(suiteName, 1)
-
-			log.Debug("instrumentTestingTFunc: creating test span for %s", currentT.Name())
-
+			if log.DebugEnabled() {
+				log.Debug("instrumentTestingTFunc: creating test span for %s", currentT.Name())
+			}
 			module := session.GetOrCreateModule(moduleName)
 			suite := module.GetOrCreateSuite(suiteName)
 			test := suite.CreateTest(currentT.Name())

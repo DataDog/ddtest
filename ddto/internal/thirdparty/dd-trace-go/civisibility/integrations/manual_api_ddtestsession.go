@@ -29,6 +29,7 @@ var _ TestSession = (*tslvTestSession)(nil)
 type tslvTestSession struct {
 	ciVisibilityCommon
 	sessionID        uint64
+	sessionIDText    string // sessionID formatted once for test events
 	command          string
 	workingDirectory string
 	framework        string
@@ -95,6 +96,7 @@ func CreateTestSession(options ...TestSessionStartOption) TestSession {
 
 	s := &tslvTestSession{
 		sessionID:        sessionID,
+		sessionIDText:    strconv.FormatUint(sessionID, 10),
 		command:          defaults.command,
 		workingDirectory: defaults.workingDirectory,
 		framework:        defaults.framework,

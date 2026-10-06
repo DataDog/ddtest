@@ -83,6 +83,10 @@ func Flush() {
 		}
 	}
 }
+
+// Stop closes the process-wide client. Like dd-trace-go's tracer.Stop, it
+// flushes aggregated error logs: log.Error otherwise prints only after a
+// minute, so failures and lost events reported at exit would never appear.
 func Stop() {
 	if c := active.Swap(nil); c != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
@@ -94,6 +98,7 @@ func Stop() {
 			log.Error("CI mini tracer lost %d events", dropped)
 		}
 	}
+	log.Flush()
 }
 
 // EndpointForAgent constructs the native EVP endpoint from an agent base URL.

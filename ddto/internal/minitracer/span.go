@@ -310,6 +310,8 @@ func (s *Span) Finish(options ...FinishOption) {
 	event.Content.SuiteID, _ = strconv.ParseUint(s.hierarchy[2], 10, 64)
 	switch content.Type {
 	case "test":
+		// dd-trace-go copies meta before it moves the correlation to this
+		// field, so test events carry it in both places.
 		event.Content.CorrelationID = content.Meta["itr_correlation_id"]
 		event.Version = 2
 		event.Content.ParentID = 0

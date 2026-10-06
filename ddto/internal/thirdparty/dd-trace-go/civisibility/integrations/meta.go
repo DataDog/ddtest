@@ -26,7 +26,7 @@ func setCIVisibilitySpanTag(span *tracer.Span, key string, value any) {
 // truncateCIVisibilityTagValue limits string tag values while leaving metric
 // and boolean tag values unchanged.
 func truncateCIVisibilityTagValue(value any) any {
-	if v, ok := value.(string); ok {
+	if v, ok := value.(string); ok && len(v) > ciVisibilityMetaValueMaxChars {
 		return truncateCIVisibilityMetaValue(v)
 	}
 	return value

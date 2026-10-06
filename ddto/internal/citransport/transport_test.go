@@ -210,3 +210,40 @@ func TestDeliveryErrorsKeepTheirCause(t *testing.T) {
 		t.Fatalf("network error lost its cause: %v", err)
 	}
 }
+
+// Concurrent senders keep one idle connection each on the cloned standard
+// transport, never lowering a larger caller setting or changing the caller's
+// transport or a custom RoundTripper.
+func TestIdleConnectionLimitForConcurrentSenders(t *testing.T) {
+	limit := func(c Config) (int, http.RoundTripper) {
+		t.Helper()
+		c.Endpoint = "http://intake.invalid/api/v2/citestcycle"
+		transport, err := New(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if standard, ok := transport.client.Transport.(*http.Transport); ok {
+			return standard.MaxIdleConnsPerHost, standard
+		}
+		return -1, transport.client.Transport
+	}
+	if got, _ := limit(Config{}); got != 0 {
+		t.Fatalf("limit changed without a request: %d", got)
+	}
+	if got, _ := limit(Config{MaxIdleConnsPerHost: 4}); got != 4 {
+		t.Fatalf("concurrent sender limit: %d", got)
+	}
+	caller := &http.Transport{MaxIdleConnsPerHost: 10}
+	got, clone := limit(Config{MaxIdleConnsPerHost: 4, HTTPClient: &http.Client{Transport: caller}})
+	if got != 10 || clone == http.RoundTripper(caller) || caller.MaxIdleConnsPerHost != 10 {
+		t.Fatalf("caller transport not preserved: clone=%d caller=%d", got, caller.MaxIdleConnsPerHost)
+	}
+	custom := roundTripperFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("unused") })
+	if got, rt := limit(Config{MaxIdleConnsPerHost: 4, HTTPClient: &http.Client{Transport: custom}}); got != -1 || rt == nil {
+		t.Fatal("custom RoundTripper replaced")
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

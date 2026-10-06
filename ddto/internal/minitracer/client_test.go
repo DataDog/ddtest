@@ -181,8 +181,9 @@ func TestQueueBoundAndConcurrentBackpressure(t *testing.T) {
 	}
 	finish := func() { span, _ := client.StartSpan(context.Background(), "test", SpanType("test")); span.Finish() }
 	// While intake fails, sealed batches are retained up to the bound plus the
-	// open batch. Further events are rejected immediately, never waiting.
-	retained := 2 * (maxReadyBatches + 1)
+	// open batch. Once a delivery has failed, further events are rejected
+	// instead of waiting for a sender.
+	retained := 2 * (maxPendingBatches + 1)
 	for range retained + 3 {
 		finish()
 	}
@@ -192,7 +193,7 @@ func TestQueueBoundAndConcurrentBackpressure(t *testing.T) {
 	client.mu.Lock()
 	sealed, open := len(client.ready)+client.inflight, len(client.events)
 	client.mu.Unlock()
-	if sealed != maxReadyBatches || open != 2 {
+	if sealed != maxPendingBatches || open != 2 {
 		t.Fatalf("queue exceeded bound: sealed=%d open=%d", sealed, open)
 	}
 	// A successful explicit flush delivers the retained batches and clears the
@@ -219,7 +220,8 @@ func TestQueueBoundAndConcurrentBackpressure(t *testing.T) {
 }
 
 // TestFinishNeverWaitsForIntake covers the failure mode that previously made
-// tests slow: a blackholed endpoint delays delivery, never Finish.
+// tests slow: below the pending bound, a blackholed endpoint delays delivery,
+// never Finish.
 func TestFinishNeverWaitsForIntake(t *testing.T) {
 	release := make(chan struct{})
 	var count atomic.Int32

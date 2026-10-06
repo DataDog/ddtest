@@ -11,8 +11,10 @@ Set `DD_CIVISIBILITY_DEFERRED_DELIVERY=true` before running the test binary:
 DD_CIVISIBILITY_DEFERRED_DELIVERY=true ddtest test --runtime=mini -count=1 ./...
 ```
 
-The default is ordinary delivery: finishing an event never waits for the
-network, and a background sender delivers full batches. With the variable
+The default is ordinary delivery: finishing an event never performs network
+I/O, and up to eight background senders deliver full batches. When delivery falls
+behind, a finishing test waits for a sender rather than losing events; after a
+failed delivery it drops events beyond the queue bound instead. With the variable
 enabled, delivery runs between completed test groups, and remaining data is sent
 at session close. Sequential tests can have a delivery checkpoint after each
 test. Parallel tests continue together until the whole group finishes; the next
@@ -53,6 +55,11 @@ A checkpoint delivers only full payloads: sealed test-cycle batches (the event
 count or 2.5 MiB threshold) and full coverage/log payloads. Partial payloads
 wait for the end of the session, so a serial suite sends one payload per full
 batch rather than one per test.
+
+A checkpoint, deferred `Flush` or `Close` sends up to eight test-cycle payloads
+at once and finishes every request before it returns, so the next test starts
+with no CI delivery in flight. Payloads sent together can arrive in any order;
+each keeps its events in order.
 
 Coverage counter snapshots are captured in the before/after hooks. Deferred
 delivery postpones their processing as well as their upload until the whole
@@ -109,8 +116,8 @@ flowchart TD
 ```
 
 The shim adds exact function filters for the CI signal handler, telemetry ticker,
-blocked CI senders, Mini's background test-cycle sender, diagnostic log sender
-and coverage sender. It preserves the
+blocked CI senders, Mini's background and checkpoint test-cycle senders,
+diagnostic log sender and coverage sender. It preserves the
 caller's options and goleak's original validation, retry loop and error result.
 Waiting for an active CI request can add its remaining HTTP/retry time before
 goleak starts that loop; the checkpoint waits for delivery rather than canceling it.

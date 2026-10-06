@@ -39,6 +39,10 @@ type Config struct {
 	// HTTP transports are cloned so this cannot close the caller's connections.
 	// A custom RoundTripper retains its own connection ownership policy.
 	CloseIdleAfterSend bool
+	// MaxIdleConnsPerHost raises a cloned standard transport's idle connection
+	// limit (net/http keeps two by default) for concurrent senders. A larger
+	// configured value is kept; a custom RoundTripper is unchanged.
+	MaxIdleConnsPerHost int
 }
 type Transport struct {
 	config Config
@@ -80,7 +84,15 @@ func New(c Config) (*Transport, error) {
 		transport = http.DefaultTransport
 	}
 	if standard, ok := transport.(*http.Transport); ok {
-		copyClient.Transport = standard.Clone()
+		clone := standard.Clone()
+		limit := clone.MaxIdleConnsPerHost
+		if limit == 0 {
+			limit = http.DefaultMaxIdleConnsPerHost
+		}
+		if c.MaxIdleConnsPerHost > limit {
+			clone.MaxIdleConnsPerHost = c.MaxIdleConnsPerHost
+		}
+		copyClient.Transport = clone
 	} else {
 		copyClient.Transport = transport
 	}

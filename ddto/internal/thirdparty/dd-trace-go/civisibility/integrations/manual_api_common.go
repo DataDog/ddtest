@@ -110,10 +110,7 @@ func fillCommonTags(opts []tracer.StartSpanOption) []tracer.StartSpanOption {
 	combined := make([]tracer.StartSpanOption, len(opts), len(opts)+len(common)+len(ciMetrics)+2)
 	copy(combined, opts)
 	opts = combined
-	opts = append(opts, []tracer.StartSpanOption{
-		ciVisibilityTag(constants.Origin, constants.CIAppTestOrigin),
-		ciVisibilityTag(ext.ManualKeep, true),
-	}...)
+	opts = append(opts, originOption, manualKeepOption)
 
 	opts = append(opts, common...)
 
@@ -175,3 +172,9 @@ func (c *ciVisibilityCommon) setContextValue(key, value any) {
 	defer c.ctxMutex.Unlock()
 	c.ctx = context.WithValue(c.ctx, key, value)
 }
+
+// Constant options are built once instead of for every event.
+var (
+	originOption     = ciVisibilityTag(constants.Origin, constants.CIAppTestOrigin)
+	manualKeepOption = ciVisibilityTag(ext.ManualKeep, true)
+)

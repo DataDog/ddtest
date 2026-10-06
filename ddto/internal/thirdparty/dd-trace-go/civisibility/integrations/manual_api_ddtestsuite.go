@@ -27,9 +27,10 @@ var _ TestSuite = (*tslvTestSuite)(nil)
 // tslvTestSuite implements the DdTestSuite interface and represents a suite of tests within a module.
 type tslvTestSuite struct {
 	ciVisibilityCommon
-	module  *tslvTestModule
-	suiteID uint64
-	name    string
+	module      *tslvTestModule
+	suiteID     uint64
+	suiteIDText string // suiteID formatted once for test events
+	name        string
 }
 
 // createTestSuite initializes a new test suite within a given module.
@@ -62,9 +63,10 @@ func createTestSuite(module *tslvTestModule, name string, startTime time.Time) T
 	setCIVisibilitySpanTag(span, constants.TestSuiteIDTag, strconv.FormatUint(suiteID, 10))
 
 	suite := &tslvTestSuite{
-		module:  module,
-		suiteID: suiteID,
-		name:    name,
+		module:      module,
+		suiteID:     suiteID,
+		suiteIDText: strconv.FormatUint(suiteID, 10),
+		name:        name,
 		ciVisibilityCommon: ciVisibilityCommon{
 			startTime: startTime,
 			tags:      suiteTags,

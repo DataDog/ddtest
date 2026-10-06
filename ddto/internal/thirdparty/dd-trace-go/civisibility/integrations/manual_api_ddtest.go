@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -60,12 +59,9 @@ func createTest(suite *tslvTestSuite, name string, startTime time.Time) Test {
 		return nil
 	}
 
-	operationName := "test"
-	if suite.module.framework != "" {
-		operationName = fmt.Sprintf("%s.%s", strings.ToLower(suite.module.framework), operationName)
-	}
+	operationName := suite.module.testOperation
 
-	resourceName := fmt.Sprintf("%s.%s", suite.name, name)
+	resourceName := suite.name + "." + name
 
 	// Test tags should include suite, module, and session tags so the backend can calculate the suite, module, and session fingerprint from the test.
 	testTags := append(slices.Clone(suite.tags), ciVisibilityTag(constants.TestName, name))
@@ -77,10 +73,10 @@ func createTest(suite *tslvTestSuite, name string, startTime time.Time) Test {
 
 	span, ctx := tracer.StartSpanFromContext(context.Background(), operationName, testOpts...)
 	if suite.module.session != nil {
-		setCIVisibilitySpanTag(span, constants.TestSessionIDTag, strconv.FormatUint(suite.module.session.sessionID, 10))
+		setCIVisibilitySpanTag(span, constants.TestSessionIDTag, suite.module.session.sessionIDText)
 	}
-	setCIVisibilitySpanTag(span, constants.TestModuleIDTag, strconv.FormatUint(suite.module.moduleID, 10))
-	setCIVisibilitySpanTag(span, constants.TestSuiteIDTag, strconv.FormatUint(suite.suiteID, 10))
+	setCIVisibilitySpanTag(span, constants.TestModuleIDTag, suite.module.moduleIDText)
+	setCIVisibilitySpanTag(span, constants.TestSuiteIDTag, suite.suiteIDText)
 	testID := span.Context().SpanID()
 
 	t := &tslvTest{
@@ -237,8 +233,10 @@ func (t *tslvTest) SetTestFunc(fn *runtime.Func) {
 	runtimeStartLine := functionMetadata.runtimeStartLine
 	sourcePath := functionMetadata.sourcePath
 	file := sourcePath.RelativePath
-	log.Debug("civisibility: resolving test source location [function:%s file:%s start_line:%d relative_file:%s runtime_file:%s filesystem_file:%s filesystem_known:%t entry:%#x]",
-		fn.Name(), runtimePath, runtimeStartLine, file, sourcePath.RuntimePath, sourcePath.FilesystemPath, sourcePath.FilesystemKnown, fn.Entry())
+	if log.DebugEnabled() {
+		log.Debug("civisibility: resolving test source location [function:%s file:%s start_line:%d relative_file:%s runtime_file:%s filesystem_file:%s filesystem_known:%t entry:%#x]",
+			fn.Name(), runtimePath, runtimeStartLine, file, sourcePath.RuntimePath, sourcePath.FilesystemPath, sourcePath.FilesystemKnown, fn.Entry())
+	}
 	t.SetTag(constants.TestSourceFile, file)
 	t.SetTag(constants.TestSourceStartLine, runtimeStartLine)
 	t.suite.SetTag(constants.TestSourceFile, file)
@@ -246,8 +244,10 @@ func (t *tslvTest) SetTestFunc(fn *runtime.Func) {
 	// Source inspection is cached per file so repeated retries/subtests do not reparse the same file.
 	metadata := functionMetadata.fileMetadata
 	if !metadata.parseOK {
-		log.Debug("civisibility: failed parsing test source file [function:%s file:%s runtime_file:%s relative_file:%s start_line:%d error:%s]",
-			fn.Name(), sourcePath.FilesystemPath, runtimePath, file, runtimeStartLine, metadata.parseErr.Error())
+		if log.DebugEnabled() {
+			log.Debug("civisibility: failed parsing test source file [function:%s file:%s runtime_file:%s relative_file:%s start_line:%d error:%s]",
+				fn.Name(), sourcePath.FilesystemPath, runtimePath, file, runtimeStartLine, metadata.parseErr.Error())
+		}
 	}
 	if metadata.parseOK {
 		// let's check if the suite was marked as unskippable before
@@ -260,8 +260,10 @@ func (t *tslvTest) SetTestFunc(fn *runtime.Func) {
 		// get the function name without the package name
 		fullName := functionMetadata.fullName
 		name := functionMetadata.shortName
-		log.Debug("civisibility: scanning AST for test source range [function:%s short_name:%s file:%s runtime_file:%s relative_file:%s runtime_start_line:%d]",
-			fullName, name, sourcePath.FilesystemPath, runtimePath, file, runtimeStartLine)
+		if log.DebugEnabled() {
+			log.Debug("civisibility: scanning AST for test source range [function:%s short_name:%s file:%s runtime_file:%s relative_file:%s runtime_start_line:%d]",
+				fullName, name, sourcePath.FilesystemPath, runtimePath, file, runtimeStartLine)
+		}
 
 		// Resolve the source range from cached metadata but keep the existing declaration/literal
 		// matching rules and the same debug logs the tests already assert.
@@ -269,8 +271,10 @@ func (t *tslvTest) SetTestFunc(fn *runtime.Func) {
 		startLine := resolution.startLine
 		endLine := resolution.endLine
 		if resolution.matchedDeclaration != nil {
-			log.Debug("civisibility: matched AST function declaration [function:%s decl_name:%s decl_start_line:%d body_start_line:%d body_end_line:%d runtime_start_line:%d]",
-				fullName, name, resolution.matchedDeclaration.declStartLine, resolution.matchedDeclaration.bodyStartLine, resolution.matchedDeclaration.endLine, runtimeStartLine)
+			if log.DebugEnabled() {
+				log.Debug("civisibility: matched AST function declaration [function:%s decl_name:%s decl_start_line:%d body_start_line:%d body_end_line:%d runtime_start_line:%d]",
+					fullName, name, resolution.matchedDeclaration.declStartLine, resolution.matchedDeclaration.bodyStartLine, resolution.matchedDeclaration.endLine, runtimeStartLine)
+			}
 		}
 		for _, literal := range functionLiteralsToLog(functionMetadata.fileMetadata.functionLiterals, resolution.inspectedLiteralCount, log.DebugEnabled()) {
 			delta := literal.bodyStartLine - runtimeStartLine
@@ -278,8 +282,10 @@ func (t *tslvTest) SetTestFunc(fn *runtime.Func) {
 				fullName, literal.bodyStartLine, literal.endLine, runtimeStartLine, delta)
 		}
 		if resolution.matchedLiteral != nil {
-			log.Debug("civisibility: matched AST function literal [function:%s adjusted_start_line:%d end_line:%d]",
-				fullName, startLine, endLine)
+			if log.DebugEnabled() {
+				log.Debug("civisibility: matched AST function literal [function:%s adjusted_start_line:%d end_line:%d]",
+					fullName, startLine, endLine)
+			}
 		}
 		if !isUnskippable && resolution.functionUnskippable {
 			isUnskippable = true
@@ -291,11 +297,15 @@ func (t *tslvTest) SetTestFunc(fn *runtime.Func) {
 		if endLine >= startLine {
 			t.SetTag(constants.TestSourceStartLine, startLine)
 			t.SetTag(constants.TestSourceEndLine, endLine)
-			log.Debug("civisibility: resolved test source range [function:%s file:%s start_line:%d end_line:%d]",
-				fullName, file, startLine, endLine)
+			if log.DebugEnabled() {
+				log.Debug("civisibility: resolved test source range [function:%s file:%s start_line:%d end_line:%d]",
+					fullName, file, startLine, endLine)
+			}
 		} else {
-			log.Debug("civisibility: test source range incomplete [function:%s file:%s start_line:%d end_line:%d]",
-				fullName, file, startLine, endLine)
+			if log.DebugEnabled() {
+				log.Debug("civisibility: test source range incomplete [function:%s file:%s start_line:%d end_line:%d]",
+					fullName, file, startLine, endLine)
+			}
 		}
 
 		// if the function is marked as unskippable, set the appropriate tag
@@ -401,4 +411,12 @@ func init() {
 		globalTestEventStartHook = nil
 		globalEventFinishHook = nil
 	})
+}
+
+// testOperationName returns the test span operation for a module's framework.
+func testOperationName(framework string) string {
+	if framework == "" {
+		return "test"
+	}
+	return strings.ToLower(framework) + ".test"
 }

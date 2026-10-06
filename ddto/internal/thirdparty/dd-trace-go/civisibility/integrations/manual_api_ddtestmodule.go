@@ -26,10 +26,12 @@ var _ TestModule = (*tslvTestModule)(nil)
 // tslvTestModule implements the DdTestModule interface and represents a module within a test session.
 type tslvTestModule struct {
 	ciVisibilityCommon
-	session   *tslvTestSession
-	moduleID  uint64
-	name      string
-	framework string
+	session       *tslvTestSession
+	moduleID      uint64
+	moduleIDText  string // moduleID formatted once for test events
+	testOperation string // test span operation, computed once from framework
+	name          string
+	framework     string
 
 	suites map[string]TestSuite
 }
@@ -73,11 +75,13 @@ func createTestModule(session *tslvTestSession, name string, framework string, f
 	setCIVisibilitySpanTag(span, constants.TestModuleIDTag, strconv.FormatUint(moduleID, 10))
 
 	module := &tslvTestModule{
-		session:   session,
-		moduleID:  moduleID,
-		name:      name,
-		framework: framework,
-		suites:    map[string]TestSuite{},
+		session:       session,
+		moduleID:      moduleID,
+		moduleIDText:  strconv.FormatUint(moduleID, 10),
+		testOperation: testOperationName(framework),
+		name:          name,
+		framework:     framework,
+		suites:        map[string]TestSuite{},
 		ciVisibilityCommon: ciVisibilityCommon{
 			startTime: startTime,
 			tags:      moduleTags,

@@ -596,6 +596,10 @@
     {
       "path": "stacktrace/classification_test.go",
       "purpose": "Concurrent first use preserves internal filtering and third-party/customer classification."
+    },
+    {
+      "path": "civisibility/integrations/gotesting/testify_lookup_test.go",
+      "purpose": "Offset-based Testify lookup resolves the same suite method as reflection for methods, nested subtests, unmatched siblings and ordinary tests."
     }
   ],
   "local_delivery_checks": [

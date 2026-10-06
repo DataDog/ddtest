@@ -170,6 +170,9 @@ stateDiagram-v2
     Mutable --> Mutable: SetTag or SetError
     Mutable --> Sealed: First Finish
     Sealed --> Queued: Client accepts event
+    Sealed --> Waiting: Pending bound while delivery succeeds
+    Waiting --> Queued: A sender frees space
+    Waiting --> Rejected: Delivery fails or client closes
     Sealed --> Rejected: Client rejects event
     Queued --> Sending: Flush or batch threshold
     Sending --> Queued: Failure while client is open
@@ -194,20 +197,30 @@ or numeric overrides use local strings for the affected kind/key. The
 that boundary; ordinary child spans receive no CI defaults.
 
 The client has two synchronization boundaries. `mu` protects the open batch,
-sealed batches, closure, error and drop state. `sendMu` is a context-aware token
-that serializes delivery, including ownership of the payload buffer. `Finish`
-never takes the token and never performs network I/O: it appends to the open
-batch and seals it once it reaches the event-count or byte threshold.
+sealed batches, sender, closure, error and drop state. `sendMu` is a
+context-aware token that serializes explicit flushes and idle-checkpoint
+deliveries, including ownership of their payload buffer; background senders and
+the additional deferred-mode senders encode into their own reusable buffers.
+`Finish` never takes the token and never
+performs network I/O: it appends to the open batch and seals it once it reaches
+the event-count or byte threshold.
 
-In ordinary mode, one background sender delivers sealed batches in order, each
-bounded by `FlushTimeout`. A failed batch stays first in line, and background
-retries back off from one to ten seconds; any successful delivery clears the
-backoff. At most four sealed batches, including one in flight, plus the open
-batch are retained. Beyond that bound new events are rejected and counted
-immediately instead of waiting. Deferred mode starts no sender: idle
-checkpoints deliver sealed batches, and the open batch waits for `Close` or an
-explicit `Flush`. Its pending queue can exceed the bound, while each outgoing
-payload keeps the intake limits.
+In ordinary mode, up to eight background senders deliver sealed batches
+concurrently, like the SDK's concurrent flushes, each bounded by
+`FlushTimeout`. At most eight sealed batches, including those in flight, plus
+the open batch are retained. A finisher that reaches that bound waits for a
+sender while the intake accepts payloads, so a slow intake loses no events.
+After a failed delivery, until the next success, it is rejected and counted
+instead, so an unavailable intake cannot stall tests; a blackholed one can delay
+finishers at the bound until the first delivery fails, at most `FlushTimeout`
+(ten seconds by default). A failed
+batch returns to the front of the queue, and background retries back off from
+one to ten seconds; any successful delivery clears the backoff and the failure
+state. Deferred mode starts no background sender and never waits: idle
+checkpoints deliver sealed batches, up to eight at once, and finish every send
+before the next test starts; the open batch waits for `Close` or an explicit
+`Flush`. Its pending queue can exceed the bound, while each outgoing payload
+keeps the intake limits.
 
 Ordinary CI telemetry updates use bound handles for their existing tag
 combinations. The global swappable handle retains startup replay and follows

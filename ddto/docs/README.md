@@ -18,6 +18,7 @@ the guide for the work you need to do:
 | Understand Testify discovery and selective tool dispatch | [Testify design](testify.md) and [preparation constraints](performance.md) |
 | Repeat compile benchmarks or regenerate their tables | [Build benchmark runner and protocol](build-benchmarks.md) |
 | Compare build time, runtime and memory | [Latest benchmark comparison](benchmarks.md) |
+| Pick up deferred performance work | [Optimization backlog](optimization-backlog.md) |
 
 The source record lives beside each incorporated library in
 [`internal/thirdparty`](../internal/thirdparty/README.md). Its manifests identify

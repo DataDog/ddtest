@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 )
 
 var (
@@ -46,13 +47,26 @@ var (
 //	module - The module name extracted from the full function name.
 //	suite  - The base name of the file where the function is located.
 func GetModuleAndSuiteName(pc uintptr) (module string, suite string) {
+	if cached, ok := moduleAndSuiteNames.Load(pc); ok {
+		names := cached.(moduleAndSuiteName)
+		return names.module, names.suite
+	}
 	funcValue := runtime.FuncForPC(pc)
 	funcFullName := funcValue.Name()
 	lastSlash := max(strings.LastIndexByte(funcFullName, '/'), 0)
 	firstDot := strings.IndexByte(funcFullName[lastSlash:], '.') + lastSlash
 	file, _ := funcValue.FileLine(funcValue.Entry())
-	return funcFullName[:firstDot], filepath.Base(file)
+	module, suite = funcFullName[:firstDot], filepath.Base(file)
+	moduleAndSuiteNames.Store(pc, moduleAndSuiteName{module: module, suite: suite})
+	return module, suite
 }
+
+// moduleAndSuiteNames caches GetModuleAndSuiteName by program counter: every
+// t.Run of the same function resolves the same names. Entries are bounded by
+// the functions in the binary.
+var moduleAndSuiteNames sync.Map // uintptr -> moduleAndSuiteName
+
+type moduleAndSuiteName struct{ module, suite string }
 
 // GetStacktrace retrieves the current stack trace, skipping a specified number of frames.
 //

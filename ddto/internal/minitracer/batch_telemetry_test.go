@@ -44,7 +44,7 @@ func TestPayloadDropCountsTerminalBatches(t *testing.T) {
 	}
 	// The bounded queue retains later batches; beyond it, events are rejected
 	// one by one without being counted as payloads.
-	for range 2*maxReadyBatches + 1 {
+	for range 2*maxPendingBatches + 1 {
 		finish()
 	}
 	if c.DroppedEvents() != 1 || drops() != 0 {
@@ -54,7 +54,7 @@ func TestPayloadDropCountsTerminalBatches(t *testing.T) {
 		t.Fatal("terminal delivery failure suppressed")
 	}
 	// Every retained batch is abandoned once: the ready batches and the open one.
-	if drops() != maxReadyBatches+1 || c.DroppedEvents() != 2*(maxReadyBatches+1)+1 {
+	if drops() != maxPendingBatches+1 || c.DroppedEvents() != 2*(maxPendingBatches+1)+1 {
 		t.Fatalf("abandoned batches: payloads=%v events=%d", drops(), c.DroppedEvents())
 	}
 	// Neither repeated close/flush nor finishing additional spans may count those
@@ -66,7 +66,7 @@ func TestPayloadDropCountsTerminalBatches(t *testing.T) {
 	}
 	wg.Wait()
 	finish()
-	if err = c.Flush(context.Background()); err != nil || drops() != maxReadyBatches+1 || calls.Load() != sent || c.DroppedEvents() != 2*(maxReadyBatches+1)+2 {
+	if err = c.Flush(context.Background()); err != nil || drops() != maxPendingBatches+1 || calls.Load() != sent || c.DroppedEvents() != 2*(maxPendingBatches+1)+2 {
 		t.Fatalf("discarded batch counted or sent again: payloads=%v events=%d attempts=%d err=%v", drops(), c.DroppedEvents(), calls.Load(), err)
 	}
 }

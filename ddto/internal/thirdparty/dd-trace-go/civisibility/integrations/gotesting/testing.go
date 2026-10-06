@@ -1216,7 +1216,9 @@ func setTestTagsFromExecutionMetadataNoClose(test integrations.Test, execMeta *t
 	// Set the Test Optimization test to the execution metadata
 	execMeta.test = test
 	if execMeta.identity != nil && len(execMeta.identity.Segments) > 1 {
-		log.Debug("setTestTagsFromExecutionMetadata assigned test for %s", execMeta.identity.FullName)
+		if log.DebugEnabled() {
+			log.Debug("setTestTagsFromExecutionMetadata assigned test for %s", execMeta.identity.FullName)
+		}
 	}
 
 	// If the execution is for a new test we tag the test event as new
