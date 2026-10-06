@@ -7,7 +7,6 @@ package integrations
 
 import (
 	"fmt"
-	"os"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -671,13 +670,8 @@ func sendObjectsPackFile(commitSha string, commitsToInclude []string, commitsToE
 	// send the pack files
 	log.Debug("civisibility: sending pack file with missing commits. files: %v", packFiles) //nolint:gocritic // File list logging for debugging
 
-	// try to remove the pack files after sending them
-	defer func(files []string) {
-		// best effort to remove the pack files after sending
-		for _, file := range files {
-			_ = os.Remove(file)
-		}
-	}(packFiles)
+	// remove the pack files and their temporary directory after sending them
+	defer utils.RemovePackFiles(packFiles)
 
 	// send the pack files
 	return ciVisibilityClient.SendPackFiles(commitSha, packFiles)

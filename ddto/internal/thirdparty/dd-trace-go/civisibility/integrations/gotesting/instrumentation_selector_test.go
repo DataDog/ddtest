@@ -6,6 +6,7 @@
 package gotesting
 
 import (
+	"runtime"
 	"testing"
 	"time"
 
@@ -165,9 +166,30 @@ func exerciseAdditionalFeaturePathSelection(t *testing.T) {
 	}
 }
 
+// allocsPerRun measures like testing.AllocsPerRun. This package's tests run
+// fresh retry attempts that call Parallel without ddtest's testing overlay,
+// which balances testing's parallel-test accounting, so with -count above one
+// testing.AllocsPerRun would report a parallel test still running.
+func allocsPerRun(runs int, f func()) float64 {
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
+	f()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for range runs {
+		f()
+	}
+	runtime.ReadMemStats(&after)
+	return float64((after.Mallocs - before.Mallocs) / uint64(runs))
+}
+
+var allocsSink []byte
+
 func TestAdditionalFeatureSelectorDoesNotAllocate(t *testing.T) {
+	if allocsPerRun(10, func() { allocsSink = make([]byte, 64) }) < 1 {
+		t.Fatal("allocation measurement does not observe allocations")
+	}
 	meta := additionalFeatureMetadata{isEarlyFlakeDetectionEnabled: true, isModified: true}
-	allocs := testing.AllocsPerRun(1000, func() {
+	allocs := allocsPerRun(1000, func() {
 		selection := selectAdditionalFeaturePath(&meta, 0, 0, 0, true, false)
 		if selection.path != additionalFeaturePathRetryWrapper {
 			panic("unexpected selection")

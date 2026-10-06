@@ -242,7 +242,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime) (pl
 		}
 		replacements[logical] = backing
 	}
-	if e = add(filepath.Join(native.Dir, "zz_dd_ci_visibility_hooks.go"), hooksForRuntime(runtime)); e != nil {
+	if e = add(filepath.Join(native.Dir, "zz_dd_ci_visibility_hooks.go"), hooksForRuntime(runtime, instrument.DeclaresParallelStop(files))); e != nil {
 		return plan, e
 	}
 	for _, p := range packages {

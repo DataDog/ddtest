@@ -226,7 +226,7 @@ func finalizeFreshRetryAttempt(attempt *retryAttemptRoot, resultCh chan<- retryA
 			*fieldPtr[chan bool](base, layout.common.signal) <- true
 			result.nativeSignalExecuted = true
 		}
-		resultCh <- result
+		publishRetryAttemptResult(attempt, resultCh, result)
 	}()
 
 	result.raceCheckpointCount, result.raceDetected = checkRetryAttemptRaces(base, layout)
@@ -287,7 +287,7 @@ func finalizeFreshRetryAttempt(attempt *retryAttemptRoot, resultCh chan<- retryA
 		result.parallelLeaseHeld = attempt.parallelLeaseTransfer.Load() && *fieldPtr[bool](base, layout.common.isParallel)
 		snapshotRetryAttemptResult(attempt, base, layout, &result)
 		attempt.freezeGenerationFailure()
-		resultCh <- result
+		publishRetryAttemptResult(attempt, resultCh, result)
 		published = true
 		return
 	}
@@ -314,7 +314,7 @@ func finalizeFreshRetryAttempt(attempt *retryAttemptRoot, resultCh chan<- retryA
 			result.cleanupObservation = retryAttemptCleanupObservation(attempt.cleanupObservation.Load())
 			snapshotRetryAttemptResult(attempt, base, layout, &result)
 			attempt.freezeGenerationFailure()
-			resultCh <- result
+			publishRetryAttemptResult(attempt, resultCh, result)
 			published = true
 			return
 		}
@@ -349,7 +349,7 @@ func finalizeFreshRetryAttempt(attempt *retryAttemptRoot, resultCh chan<- retryA
 	attempt.freezeGenerationFailure()
 	*fieldPtr[chan bool](base, layout.common.signal) <- true
 	result.nativeSignalExecuted = true
-	resultCh <- result
+	publishRetryAttemptResult(attempt, resultCh, result)
 	published = true
 }
 
@@ -539,7 +539,7 @@ func (r *retryAttemptRoot) beginRootParallelSchedulerTransfer() {
 		}
 	}
 	if transitioned {
-		testingTestStateRelease(getTestState(r.test))
+		releaseSharedParallelLease(r)
 	}
 	close(*fieldPtr[chan bool](commonBaseForTest(r.parent, layout), layout.common.barrier))
 }

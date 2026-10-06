@@ -1,5 +1,12 @@
 package instrument
 
+import (
+	"bytes"
+	"go/ast"
+	"go/parser"
+	"go/token"
+)
+
 // Hooks uses the exact link targets and signatures in the SDK's Orchestrion
 // advice. Keeping these symbols also preserves the SDK's woven ownership gate.
 const Hooks = `package testing
@@ -28,3 +35,50 @@ func __dd_civisibility_instrumentTestingParallel(*T) bool
 func __dd_civisibility_instrumentTestingBFunc(*B, string, func(*B)) (string, func(*B))
 func init() { __dd_civisibility_instrumentTestingBuiltWithOrchestrion() }
 `
+
+// ParallelStopHook lets Mini's in-process retries record the end of a parallel
+// test in testing's own accounting, which only testing's tRunner updates. A
+// retry attempt that calls Parallel ends outside tRunner; without the record,
+// testing.AllocsPerRun panics in every later test of the binary. The linker
+// rejects any other access to the counter.
+const ParallelStopHook = `//go:linkname __dd_civisibility_registerTestingParallelStop github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.registerTestingParallelStop
+func __dd_civisibility_registerTestingParallelStop(func())
+func init() { __dd_civisibility_registerTestingParallelStop(func() { parallelStop.Add(1) }) }
+`
+
+// DeclaresParallelStop reports whether testing's sources declare the
+// parallelStop counter that ParallelStopHook increments, as an atomic.Int64.
+// A toolchain without it builds without the hook.
+func DeclaresParallelStop(files map[string][]byte) bool {
+	for name, src := range files {
+		if !bytes.Contains(src, []byte("parallelStop")) {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), name, src, parser.SkipObjectResolution)
+		if err != nil {
+			continue
+		}
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				value := spec.(*ast.ValueSpec)
+				selector, ok := value.Type.(*ast.SelectorExpr)
+				if !ok || selector.Sel.Name != "Int64" {
+					continue
+				}
+				if pkg, ok := selector.X.(*ast.Ident); !ok || pkg.Name != "atomic" {
+					continue
+				}
+				for _, ident := range value.Names {
+					if ident.Name == "parallelStop" {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}

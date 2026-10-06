@@ -143,6 +143,60 @@ The SDK's other method-registration and suite-grouping rules stay in place.
 Run Testify parity with method filtering, lifecycle hooks, helpers, retries and
 coverage whenever upstream changes this advice.
 
+## Pack file cleanup
+
+Upstream `CreatePackFiles` in [`civisibility/utils/git.go`](civisibility/utils/git.go)
+runs `git pack-objects` into a `.dd-pack-objects*` directory in the temporary
+directory, then in the working directory when git cannot move its pack across
+devices, which is the usual case for a tmpfs `/tmp`. After the upload,
+`sendObjectsPackFile` removed only the `.pack` files. The failed attempt's empty
+directory stayed in the temporary directory, and the fallback left a directory
+with git's `.idx` and `.rev` files in the user's working tree.
+
+Here the fallback is the repository's common git directory: it holds the
+objects, so the move succeeds, and the working tree never receives a temporary
+directory. `git rev-parse --git-common-dir` runs without command telemetry, so
+git metrics match the SDK. A failed attempt or an empty result removes its
+directory, and `RemovePackFiles` removes the directory after the upload.
+
+Checks: `TestRemovePackFilesRemovesTemporaryDirectory`,
+`TestPackFilesFallBackToGitDirectory`, `TestFailedPackFilesLeaveNoDirectory`
+and the git upload parity case, where Mini must leave its temporary directory
+empty. The fake git in these tests and in `TestCreatePackFilesMissingPackFile`
+skips the options before the command, which cmd also splits at `=` for
+`git.bat`, and the tests check that `pack-objects` ran, so Windows exercises the
+same paths.
+
+## Parallel retry accounting
+
+Every execution of a test with additional features (retries, early flake
+detection, attempt to fix) runs as a fresh attempt in
+[`gotesting/retry_attempt_runner.go`](civisibility/integrations/gotesting/retry_attempt_runner.go),
+outside testing's `tRunner`. testing counts each attempt that calls `Parallel`
+as a started parallel test. The first such attempt moves the parallel lease to
+the original test, whose `tRunner` records one end. Upstream records no end for
+later parallel attempts, so after a retried parallel test testing still counts
+a parallel test as running, and `testing.AllocsPerRun` panics in every later
+test of the binary.
+
+Mini records those ends. ddtest's testing overlay adds `ParallelStopHook` from
+`internal/instrument/hooks.go`, only for Mini and only when testing declares
+`parallelStop atomic.Int64`; the linker allows no other access to the counter.
+The hook registers a function in
+[`retry_attempt_parallel_stop.go`](civisibility/integrations/gotesting/retry_attempt_parallel_stop.go).
+`beginRootParallelSchedulerTransfer` marks attempts that go parallel after the
+lease moved, and `finalizeFreshRetryAttempt` records their end before it
+publishes the result, as `tRunner` does before it releases its caller. Both
+edits replace single lines, so no line in a retry's error stack moves. The SDK
+runtime keeps upstream behavior.
+
+Checks: `TestSharedParallelLeaseAttemptsRecordTheirEnd`,
+`TestSequentialAttemptsRecordNoParallelEnd`, `TestParallelStopHookOnlyForMini`,
+`TestToolchainTestingDeclaresParallelStop` and
+`TestMiniInProcessRetryKeepsAllocsPerRun`. This package's own tests run without
+the overlay, so `TestAdditionalFeatureSelectorDoesNotAllocate` measures
+allocations without `testing.AllocsPerRun`.
+
 ## Per-test allocations
 
 Each instrumented test runs the SDK's span creation, source lookup and Testify

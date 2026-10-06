@@ -46,7 +46,8 @@ func sharedDriver(t *testing.T, root string) string {
 			return
 		}
 		bin := filepath.Join(dir, executableName("ddtest"))
-		out, stderr, code, _, err := runCommand(root, testEnv(), "go", "build", "-o", bin, "./cmd/ddtest")
+		// Like a user's build, ddtest keeps the checkout's VCS information.
+		out, stderr, code, _, err := runCommand(root, testEnv("GOFLAGS="), "go", "build", "-o", bin, "./cmd/ddtest")
 		switch {
 		case err != nil:
 			sharedDriverBuild.err = err.Error()

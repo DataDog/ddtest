@@ -141,10 +141,6 @@ func TestDeferredFailureRetainsUnsentChunks(t *testing.T) {
 	}
 }
 
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
 // A serial suite reaches an idle checkpoint after every test. Only full
 // batches are delivered there; the rest waits for Close.
 func TestDeferredCheckpointsDeliverOnlyFullBatches(t *testing.T) {
@@ -206,14 +202,15 @@ func waitForNoDrainWorkers(t *testing.T) {
 // An idle checkpoint sends up to maxConcurrentSends batches at once, and every
 // sender finishes before the checkpoint returns and the next test starts.
 func TestDeferredCheckpointSendsConcurrently(t *testing.T) {
-	var received, active, peak atomic.Int32
+	var received deliveries
+	var active, peak atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := active.Add(1)
 		defer active.Add(-1)
 		for p := peak.Load(); n > p && !peak.CompareAndSwap(p, n); p = peak.Load() {
 		}
 		time.Sleep(20 * time.Millisecond)
-		received.Add(countEvents(t, r))
+		received.record(t, r)
 		w.WriteHeader(202)
 	}))
 	defer server.Close()
@@ -230,8 +227,8 @@ func TestDeferredCheckpointSendsConcurrently(t *testing.T) {
 	if err := client.deliverReady(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if received.Load() != total || client.DroppedEvents() != 0 {
-		t.Fatalf("delivered=%d dropped=%d of %d", received.Load(), client.DroppedEvents(), total)
+	if delivered := received.distinct(t); delivered != total || client.DroppedEvents() != 0 {
+		t.Fatalf("delivered=%d dropped=%d of %d", delivered, client.DroppedEvents(), total)
 	}
 	if p := peak.Load(); p < 2 || p > maxConcurrentSends {
 		t.Fatalf("concurrent requests: %d", p)

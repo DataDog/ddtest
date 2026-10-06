@@ -122,7 +122,9 @@ func testEnv(extra ...string) []string {
 	// toolexec call runs go list to check it again, and on any failure rewrites
 	// orchestrion.tool.go and runs go mod tidy.
 	env = append(env, orchestrionPinChecked+"=true")
-	env = append(env, "GOFLAGS=", "DD_CIVISIBILITY_GIT_UPLOAD_ENABLED=false", "DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED=false", "DD_INSTRUMENTATION_TELEMETRY_ENABLED=false", "DD_APPSEC_ENABLED=false", "DD_SERVICE=dd-ci-testing-poc", "DD_ENV=poc", "DD_TEST_SESSION_NAME=poc", "DD_GIT_REPOSITORY_URL=https://github.com/tonyredondo/dd-ci-testing-poc.git", "DD_GIT_COMMIT_SHA=1111111111111111111111111111111111111111", "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=false", "DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED=false")
+	// Fixtures live in temporary directories. Without VCS stamping, go never
+	// runs git for a repository found above them, which can belong to anything.
+	env = append(env, "GOFLAGS=-buildvcs=false", "DD_CIVISIBILITY_GIT_UPLOAD_ENABLED=false", "DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED=false", "DD_INSTRUMENTATION_TELEMETRY_ENABLED=false", "DD_APPSEC_ENABLED=false", "DD_SERVICE=dd-ci-testing-poc", "DD_ENV=poc", "DD_TEST_SESSION_NAME=poc", "DD_GIT_REPOSITORY_URL=https://github.com/tonyredondo/dd-ci-testing-poc.git", "DD_GIT_COMMIT_SHA=1111111111111111111111111111111111111111", "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=false", "DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED=false")
 	return append(env, extra...)
 }
 func command(t *testing.T, dir string, env []string, name string, args ...string) (string, string, int) {
@@ -333,6 +335,7 @@ type execution struct {
 	events      []string
 	wireEvents  []map[string]any
 	wall        time.Duration
+	leftovers   []string // Entries left in the run's temporary directory.
 }
 
 func execute(t *testing.T, dir, bin string, args []string, enabled, retry bool) execution {

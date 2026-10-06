@@ -84,8 +84,11 @@ sequenceDiagram
 The transformer parses Go's `testing` package and applies edits at source
 positions. It returns only changed files and retains logical filenames through
 line directives. A generated file declares the private SDK hooks with
-`go:linkname`. Each selected package with tests receives a virtual external
-test file that blank-imports the chosen runtime.
+`go:linkname`. For Mini, when testing declares its parallel-test counter, the
+file also registers the function that in-process retries use to record the end
+of a parallel attempt; nothing outside testing can reach that counter. Each
+selected package with tests receives a virtual external test file that
+blank-imports the chosen runtime.
 
 Existing overlays are merged before transformation, and every user `-overlay`
 spelling is replaced by the merged plan. Generated-path collisions, missing or

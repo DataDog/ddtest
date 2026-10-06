@@ -97,9 +97,9 @@
       "source": "internal/civisibility/utils/git_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/git_test.go",
       "source_sha256": "a36fb9a5c074542d6104cb78850c8ac1b03d516a8177e2c61e9e61e2229efd6b",
-      "adapted_sha256": "7ee8850ccfe4f32cefb8ef4c276d4d82f49a2f1ba6d597b46ef7ec4b0f624a2c",
+      "adapted_sha256": "818d816b813319e88012fe09d2b2dff2dc58da5819ef54792dc3ce1c1a3d91f7",
       "kind": "full",
-      "adaptation": "Three history-dependent tests create an isolated Git fixture with a real commit instead of assuming the checkout has a .git directory"
+      "adaptation": "Three history-dependent tests create an isolated Git fixture with a real commit instead of assuming the checkout has a .git directory; TestPackFiles removes its pack files, and TestCreatePackFilesMissingPackFile uses a fake git that also handles cmd's argument splitting on Windows and checks that pack-objects ran and left no directory"
     },
     {
       "source": "internal/civisibility/utils/home_test.go",
@@ -497,9 +497,9 @@
       "source": "internal/civisibility/integrations/gotesting/instrumentation_selector_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/instrumentation_selector_test.go",
       "source_sha256": "c1673bff20eea826b440682e29a4678a8aab3d49e83776bc84e4ff425edddc47",
-      "adapted_sha256": "3715a55bd8dbae6b3974057127b622e8ab15777ae8b2374d3f3a527bc8f6315b",
+      "adapted_sha256": "4abc06af4df24e38420d750adbe5ca80683534c49d5971976d1adb35c0242f73",
       "kind": "full",
-      "adaptation": "internal import relocation; helper assertions invoked by native policy test entrypoint"
+      "adaptation": "internal import relocation; helper assertions invoked by native policy test entrypoint; the allocation check measures like testing.AllocsPerRun without its parallel-test guard, because this package's retry tests run without ddtest's testing overlay and leave testing counting a parallel test"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/itr_state_test.go",
@@ -600,6 +600,20 @@
     {
       "path": "civisibility/integrations/gotesting/testify_lookup_test.go",
       "purpose": "Offset-based Testify lookup resolves the same suite method as reflection for methods, nested subtests, unmatched siblings and ordinary tests."
+    }
+  ],
+  "local_compatibility_checks": [
+    {
+      "path": "civisibility/utils/git_packfiles_test.go",
+      "purpose": "Pack files fall back to the git directory instead of the working tree, and every attempt, empty result and upload removes its temporary directory."
+    },
+    {
+      "path": "civisibility/integrations/gotesting/retry_attempt_parallel_stop_test.go",
+      "purpose": "Parallel retry attempts that share the original's lease record their end in testing's parallel-test accounting; the lease owner and sequential attempts record nothing."
+    },
+    {
+      "path": "integration/mini_retry_parallel_test.go",
+      "purpose": "TestMiniInProcessRetryKeepsAllocsPerRun builds with ddtest's testing overlay and checks that testing.AllocsPerRun works after parallel tests passed at once or retried in process."
     }
   ],
   "local_delivery_checks": [

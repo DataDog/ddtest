@@ -702,21 +702,19 @@ func CreatePackFiles(commitsToInclude []string, commitsToExclude []string) []str
 		objectsShasString.WriteString(objectSha + "\n")
 	}
 
-	workingDirectory := func() string {
-		wd, err := os.Getwd()
-		if err != nil {
-			return "."
-		}
-		return wd
-	}
-
 	var temporaryPath string
 	var out string
 	var err error
 
 	// Git can throw a cross device error if the temporal folder is in a different drive than the .git folder (eg. symbolic link)
-	// to handle this edge case, we first try with a temp folder and if we fail then we try in the working directory folder.
-	for _, folder := range []string{"", workingDirectory()} {
+	// to handle this edge case, we first try with a temp folder and if we fail then we try in the git directory, which
+	// shares a device with the objects and keeps the working tree free of temporary files. A directory that ends
+	// without pack files is removed; RemovePackFiles removes the rest after the upload.
+	for _, folderFor := range []func() string{os.TempDir, gitCommonDir} {
+		folder := folderFor()
+		if folder == "" {
+			continue
+		}
 		// get a temporary path to store the pack files
 		temporaryPath, err = os.MkdirTemp(folder, ".dd-pack-objects")
 		if err != nil {
@@ -730,6 +728,7 @@ func CreatePackFiles(commitsToInclude []string, commitsToExclude []string) []str
 		if err == nil {
 			break
 		}
+		_ = os.RemoveAll(temporaryPath)
 	}
 
 	if err != nil {
@@ -751,7 +750,40 @@ func CreatePackFiles(commitsToInclude []string, commitsToExclude []string) []str
 		packFiles = append(packFiles, file)
 	}
 
+	if len(packFiles) == 0 {
+		_ = os.RemoveAll(temporaryPath)
+	}
 	return packFiles
+}
+
+// RemovePackFiles deletes pack files from CreatePackFiles together with their
+// temporary directory, including the index files git writes next to them.
+func RemovePackFiles(packFiles []string) {
+	if len(packFiles) == 0 {
+		return
+	}
+	if dir := filepath.Dir(packFiles[0]); strings.HasPrefix(filepath.Base(dir), ".dd-pack-objects") {
+		_ = os.RemoveAll(dir)
+		return
+	}
+	for _, file := range packFiles {
+		_ = os.Remove(file)
+	}
+}
+
+// gitCommonDir returns the absolute path of the git directory that holds the
+// repository's objects, or "" when git cannot report it. It records no command
+// telemetry, so git metrics stay those of the SDK.
+func gitCommonDir() string {
+	out, err := execGitString(telemetry.NotSpecifiedCommandsType, "rev-parse", "--git-common-dir")
+	if err != nil || out == "" || strings.HasPrefix(out, "-") {
+		return ""
+	}
+	dir, err := filepath.Abs(filepath.FromSlash(out))
+	if err != nil {
+		return ""
+	}
+	return dir
 }
 
 // getParentGitFolder searches from the given directory upwards to find the nearest .git directory.

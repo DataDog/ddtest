@@ -381,8 +381,10 @@ func runParityCase(t *testing.T, dir, bin string, tc parityCase) (*parityReceive
 	receiver := &parityReceiver{policy: tc.Policy, side: map[string][][]byte{}, requests: map[string]int{}}
 	server := httptest.NewServer(http.HandlerFunc(receiver.handler))
 	defer server.Close()
-	scratch := t.TempDir()
-	env := testEnv("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL, "DD_TRACE_AGENT_URL="+server.URL, "DD_API_KEY=fixture", "TMPDIR="+scratch, "TMP="+scratch, "TEMP="+scratch, "XDG_CACHE_HOME="+scratch, "POC_RETRY_COUNTER="+filepath.Join(scratch, "attempt"), "DD_TEST_MANAGEMENT_ATTEMPT_TO_FIX_RETRIES=2", "DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_MAX_RETRIES=2")
+	// The temporary directory is separate from the cache and the retry counter,
+	// so a run's leftovers there can be checked.
+	scratch, tmp := t.TempDir(), t.TempDir()
+	env := testEnv("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL, "DD_TRACE_AGENT_URL="+server.URL, "DD_API_KEY=fixture", "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp, "XDG_CACHE_HOME="+scratch, "POC_RETRY_COUNTER="+filepath.Join(scratch, "attempt"), "DD_TEST_MANAGEMENT_ATTEMPT_TO_FIX_RETRIES=2", "DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_MAX_RETRIES=2")
 	if tc.Coverage {
 		env = append(env, "DD_CIVISIBILITY_CODE_COVERAGE_ENABLED=true")
 	}
@@ -396,7 +398,30 @@ func runParityCase(t *testing.T, dir, bin string, tc parityCase) (*parityReceive
 	if len(receiver.failures) != 0 {
 		t.Fatal(receiver.failures)
 	}
-	return receiver, execution{code: code, out: normalizedOutput(out), stderr: stderr, wireEvents: receiver.events, wall: wall}
+	return receiver, execution{code: code, out: normalizedOutput(out), stderr: stderr, wireEvents: receiver.events, wall: wall, leftovers: directoryEntries(t, tmp)}
+}
+
+// directoryEntries lists the names in dir, which must exist.
+func directoryEntries(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
+}
+
+// requireNoMiniLeftovers enforces that Mini leaves nothing in the temporary
+// directory: no traces outside the CI payloads it sends.
+func requireNoMiniLeftovers(t *testing.T, mini execution) {
+	t.Helper()
+	if len(mini.leftovers) != 0 {
+		t.Fatalf("Mini left temporary files: %v", mini.leftovers)
+	}
 }
 
 // The report contains counts, scenario outcomes and process walltimes, not raw logs or credentials.
@@ -557,6 +582,7 @@ func runCIVisibilityParityMatrix(t *testing.T, deferred bool) {
 			defer func() { results = append(results, row) }()
 			want, sdk := runParityCase(t, dir, oracle, tc)
 			got, mini := runParityCase(t, dir, fixture.mini, tc)
+			requireNoMiniLeftovers(t, mini)
 			row = assertParityCase(t, tc, want, got, sdk, mini)
 		})
 	}
@@ -679,6 +705,7 @@ func runGroupedParityCases(t *testing.T, dir, sdkBin, miniBin string, cases []pa
 		t.Run("compare-"+tc.Name, func(t *testing.T) {
 			row := parityResult{Scenario: tc.Name, Features: tc.Features, Status: "failed"}
 			defer func() { results = append(results, row) }()
+			requireNoMiniLeftovers(t, mini[i].result)
 			row = assertParityCase(t, tc, sdk[i].receiver, mini[i].receiver, sdk[i].result, mini[i].result)
 		})
 	}

@@ -152,6 +152,7 @@ func runCIVisibilityTestifyParity(t *testing.T, deferred bool) {
 		t.Run(tc.Name, func(t *testing.T) {
 			want, sdk := runParityCase(t, dir, oracle, tc)
 			got, mini := runParityCase(t, dir, fixture.mini, tc)
+			requireNoMiniLeftovers(t, mini)
 			normalizeTestifyEvents(t, want.events)
 			normalizeTestifyEvents(t, got.events)
 			row := assertParityCase(t, tc, want, got, sdk, mini)
