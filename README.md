@@ -29,7 +29,9 @@ commands, asks for confirmation, and runs your own tests against a local intake.
 It needs no Datadog account, API key, or Agent. Non-interactive callers can review
 the preview, then use `ddtest testdrive --yes`.
 
-All nine frameworks listed above are supported. If a repository contains several
+All nine frameworks listed above can collect local telemetry. Compatibility and
+feature validation currently support Jest; other frameworks explicitly remain
+unvalidated. If a repository contains several
 runners, select one with `--framework`. Use `--command` to select a custom entry
 point or a small representative part of a large suite:
 
@@ -38,22 +40,95 @@ ddtest onboard --framework playwright
 ddtest testdrive --framework playwright --command 'npm run test:e2e -- --project=chromium' --yes
 ```
 
-The terminal links to a self-contained HTML report, decoded JSON traffic, and
-complete test output under `.testoptimization/testdrive/<session>/`. Reports
-separate instrumentation success from failed tests, and explicitly indicate when
-coverage was not reported. Tracer configuration errors are shown separately.
+Testdrive prints a terminal summary and retains two reports:
+`.testoptimization/report.html` uses the upstream HTML renderer to show the latest
+instrumented suite's tests, findings, attempts, source excerpts, coverage and full
+command output. With `--all`, output is labeled by configuration.
+`.testoptimization/testdrive.json` records the validation verdict: an explicit
+`success` flag, compatibility, CI runtime and feature verdicts, and the working
+directory. Each validation run records its exact shell-quoted command,
+instrumentation/probe mode, exit code and aggregate counts. Mismatch examples are
+limited to ten and diagnostic text is capped at 1,024 characters in the JSON.
+
+The HTML describes the instrumented suite, not the overall validation verdict;
+synthetic feature probes never replace its findings. It links to the compact
+JSON rather than discarded traffic or output files. Each executed suite replaces
+the HTML at the same path. Configuration-only checks leave earlier HTML unchanged
+and do not claim that tests were rerun. Raw output and telemetry payload files
+are discarded after validation; report directories do not accumulate.
+
+JavaScript/Python fallback tracers, captured requests, and runner files live in a
+private OS temporary directory. Ruby fallback installation uses the project bundle
+and retains its dependency changes. Testdrive removes that directory on success, failure, and
+handled cancellation. Temporary probe files inside the project are also removed.
+Bounded setup errors and summaries of attempted runs are preserved when the report
+can be written. Other `.testoptimization` data is preserved.
+
+Jest validation has two stages:
+
+1. Run the same command without instrumentation and with reporting-only
+   instrumentation. Compare test identities, outcomes, failure details, and
+   process exit codes; ignore timings, result ordering, and stack frames.
+   Existing failures are acceptable when both runs match. If results differ,
+   repeat the pair: changing results are inconclusive, while a repeatable
+   difference is a suspected regression. Matching results require matching
+   telemetry before compatibility can be reported. Setup failures before tests
+   execute are inconclusive.
+2. Place a temporary probe beside an existing test, preserving the project's
+   Jest configuration. Establish passing and failing controls, then enable one
+   feature per run: auto retries, early flake detection, skipping, quarantine,
+   disabled tests, and attempt-to-fix. Check actual execution, exit outcome, and
+   feature-specific telemetry. Remove the probe when finished, including on
+   errors. If the command/configuration cannot select the probe, its checks are
+   inconclusive. These checks validate the probe under the selected configuration;
+   they do not establish compatibility for every test environment in a monorepo.
+
+Jest skipping uses the control's `test.source.file` to identify the file to skip;
+test-management scenarios keep the reported suite and test names. Some tracer
+versions report a different suite name when a file is skipped. The report retains
+both names and notes the difference separately from whether skipping worked.
+A missing source path makes the skipping check inconclusive.
+
+`testdrive.json` separates compatibility (`compatible`, `suspected regression`,
+`inconclusive`) from each feature (`passed`, `failed`, `inconclusive`, `unvalidated`).
+For Jest repositories with detected GitHub Actions test jobs, `ci_runtime` records
+whether each instrumented Node runtime satisfies its workflow-selected tracer's
+`engines.node` requirement. The checker reads public GitHub action metadata at the
+configured action ref and npm package metadata, honoring `js-tracer-version` when
+set. No tracer version or minimum Node version is pinned in the checker. This can
+differ from the tracer installed for the local testdrive.
+
+The check supports literal `actions/setup-node` versions, static matrix axes, and
+static `include`/`exclude`, and matrix equality/inequality, boolean values, `startsWith`, `!`, `&&`, `||`, and parentheses.
+Explicitly excluded entries remain visible as uninstrumented. Dynamic matrices,
+version files, LTS aliases, other conditions, mixed-type comparisons, unsupported engine
+ranges, and unavailable metadata are inconclusive. Currently engine comparison
+supports minimum requirements such as `>=22` or `>=22.2.0`; it does not approximate
+other ranges. This checks the declared setup-node runtime, not arbitrary shell
+commands that might later change Node. It does not execute CI or prove bootstrap
+correctness, remote instrumentation, or Datadog backend connectivity.
+
+The command exits successfully only when local compatibility, all feature checks,
+and the applicable CI runtime check succeed. A runtime incompatibility or unknown
+configuration makes `success` false even if every local test matches. Repositories
+without detected GitHub Actions test jobs can still pass local validation; their
+CI runtime result is explicitly `not applicable`. The suite's own failures do not
+automatically fail validation.
+Other frameworks collect reporting-only telemetry and return an inconclusive
+validation result until adapters exist.
+
 The local intake supports agentless traffic; Agent/EVP routing is not supported.
-Receiving events does not verify test skipping, EFD, or Test Management behavior.
-Keep this directory out of source control. Each run has its own files and loopback port.
+No results are sent to Datadog. Temporary installations and run files are removed;
+only the HTML findings and compact JSON validation reports remain. Keep both out of source control.
 
 Testdrive reuses the project's tracer when the platform's tracer check succeeds.
-If the check fails, it attempts to install the latest release inside the session.
+If the check fails, it attempts a fallback installation (latest by default).
 `--tracer-version` selects a release or Git revision for that fallback installation;
 JavaScript and Python installations leave project dependency files unchanged;
 Ruby uses `bundle add datadog-ci`, which updates the project Gemfile and lockfile:
 
 ```sh
-ddtest testdrive --tracer-version 6.15.0 --yes # JavaScript example
+ddtest testdrive --tracer-version <selected-release-or-tag> --yes
 ddtest testdrive --tracer-version 'git:<commit-sha>' --yes
 ```
 
@@ -76,9 +151,43 @@ Local testdrive prerequisites:
   first, or use its existing test command that manages them. Testdrive does not
   install browsers or start applications on its own.
 
+Jest preflight resolves the fallback selection once before installation and inspects
+`--showConfig` for the effective Jest version, runner, and configuration. It checks
+known dd-trace 5/6 Jest requirements and the tracer's Node engine minimum before
+running the suite. Unknown combinations remain unverified. Use `--command` with
+the project's actual Jest arguments when it uses a custom config. Preflight loads
+project JavaScript after confirmation. Preview runs a read-only installed-tracer probe
+(with a 10-second timeout) to show whether the tracer will be reused or installed;
+it does not load Jest configuration, install dependencies, or run tests.
+
+`ddtest testdrive --check-only --yes` performs those configuration checks and static
+CI checks without installing a tracer or running tests. It updates the same JSON
+report, with `check_only: true`, `checks_passed`, and test execution marked not
+exercised. A successful configuration check does not set validation `success`.
+The latest paired Jest execution is preserved under `retained_execution.result`,
+including its timestamp, tracer, commands, counts, and feature verdicts. Later
+configuration checks, unsupported-framework runs, and setup failures retain this
+historical evidence; a new paired Jest execution supersedes it. There is no growing
+report history. Retained evidence never changes the current invocation's verdict:
+after changing the command, configuration, source, dependencies, runtime, or tracer,
+rerun full validation before claiming current compatibility or feature success.
+
+Full validation records `local_success` separately from the combined `success`.
+CI Node compatibility and exact local/CI tracer agreement are separate findings;
+actual CI execution is always `not exercised`. Moving CI selectors are valid only
+for the version resolved during this check. Pin the selected release in the
+workflow to retain that agreement. Unsupported checker syntax requires review,
+not a workflow rewrite. Manual review does not override a programmatic verdict. Onboarding uses
+`datadog/test-visibility-github-action@v3` and leaves tracer-version inputs unset.
+
 Project dependency manifests and lockfiles are not edited by testdrive. Testdrive
-uses the framework’s normal command; pass `--command` to run a package script and
-its lifecycle hooks or other custom setup. Tracer downloads require network access. This release covers root projects and GitHub Actions onboarding;
+automatically selects a unique, statically resolved root-level Jest CI command,
+including its package script and options. Without a CI command, it tries `test:ci`
+and then `test`; otherwise it uses the runner default. Ambiguous commands, lifecycle
+hooks, and scripts that cannot forward Jest options safely require review and an
+explicit `--command`. An explicit command always takes precedence. Generated Jest
+coverage goes into temporary session storage and is removed afterward; existing
+customer coverage is preserved. Tracer downloads require network access. This release covers root projects and GitHub Actions onboarding;
 monorepo orchestration and other CI providers are outside this scope.
 
 See the [Milestone 2 validation record](docs/testing/onboarding-milestone-2.md)

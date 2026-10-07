@@ -2,7 +2,21 @@
 
 Status: Milestones 0, 1, and 2 implemented; Milestones 3 and 4 proposed
 
-Last updated: 2026-09-22
+Last updated: 2026-09-24
+
+## Validation prototype update
+
+The prototype based on PR #147 now uses the validation contract described in
+[the README](../../README.md): paired Jest compatibility runs, separate controlled
+feature probes, terminal output, the upstream HTML findings report at
+`.testoptimization/report.html` and compact validation evidence at
+`.testoptimization/testdrive.json`, and project-tracer reuse or a resolved fallback installation.
+The compact report retains success, verdicts, validation commands, modes, exit codes, aggregate counts and bounded diagnostics. The HTML embeds full instrumented command output; separate raw output and event files are discarded. Each run removes its scratch files and updates the same reports. Configuration-only, unsupported-framework, and setup-failure runs preserve the latest paired Jest execution as historical evidence, without reusing its verdict for the current invocation. A new paired Jest execution supersedes that evidence. Onboarding targets the v3 GitHub Action without tracer
+version pins in the universal template. The agent selects a compatible release for the repository and aligns the CI input with the locally checked version. Jest preflight checks the effective configuration before suite execution; `--check-only` reruns configuration checks without tests. Static matrices support includes/excludes and common boolean conditions. Unknown checker syntax remains unverified and must not cause workflow rewrites. Local compatibility, features, CI runtime compatibility, tracer agreement, and actual CI execution are reported separately. Other frameworks can collect telemetry but remain explicitly
+unvalidated. Receiving events alone is not proof of compatibility.
+
+The milestone narrative below describes the earlier implementation and its
+historical evidence, including raw traffic retention and pinned versions. The upstream HTML renderer is retained unchanged; its current artifact link points to the compact validation JSON because raw files are cleaned up.
 
 ## Goal
 
@@ -99,7 +113,7 @@ Milestone 1 turned the spike into the current `onboard` and `testdrive` flow des
 
 Its important interaction contract is:
 
-- detection and preview happen before any write or external command;
+- detection and preview happen before any write, installation, or test execution; a read-only tracer probe selects the reuse or installation preview;
 - `ddtest testdrive --yes` is the explicit non-interactive path;
 - running the command is one decision—there is no persisted plan, checksum, approval file, or second execution command;
 - instrumentation success is independent of whether customer tests pass;

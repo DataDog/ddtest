@@ -1333,7 +1333,7 @@ THE SOFTWARE.
           {{ else }}
             <p class="muted">The command produced no output.</p>
           {{ end }}
-          <a href="test-output.txt">Open full output file</a>
+          {{ range .Artifacts }}{{ if eq .Href "test-output.txt" }}<a href="{{ .Href }}">Open full output file</a>{{ end }}{{ end }}
         </details>
       </section>
       <nav class="tabs" role="tablist" aria-label="Report sections">

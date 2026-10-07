@@ -79,6 +79,9 @@ type SlowSuite struct {
 
 // Facts contains the facts shown in the testdrive report.
 type Facts struct {
+	SettingsRequests        int
+	SkippableRequests       int
+	Events                  []Event
 	ConfigurationErrors     []string
 	EmptyCoverageEntryCount int
 	MissingCoverage         bool
@@ -110,6 +113,19 @@ func (s *Server) Facts() (Facts, error) {
 	}
 
 	findings := Facts{TestEventCount: len(tests), CoverageLevel: coverageLevel(coverages), EmptyCoverageEntryCount: emptyEntries}
+	s.requestsMu.Lock()
+	for _, request := range s.requests {
+		if request.Method != http.MethodPost {
+			continue
+		}
+		switch request.Path {
+		case constants.SettingsURLPath:
+			findings.SettingsRequests++
+		case constants.SkippableTestsURLPath:
+			findings.SkippableRequests++
+		}
+	}
+	s.requestsMu.Unlock()
 	findings.Tests, findings.FailedTests, findings.FlakyTests, findings.SlowTests, findings.TestDurationMedian = analyzeTests(tests, coverages, findings.CoverageLevel)
 	if findings.CoverageLevel == "suite" {
 		findings.SuiteCoverages = suiteCoverages(tests, coverages)
@@ -120,6 +136,10 @@ func (s *Server) Facts() (Facts, error) {
 	findings.MissingCoverage = len(tests) > 0 && len(coverages) == 0 && emptyEntries == 0
 	findings.BroadCoverage, findings.CoveredFilesMedian = analyzeCoverage(tests, coverages, findings.CoverageLevel)
 	findings.ConfigurationErrors, err = s.configurationErrors()
+	if err != nil {
+		return findings, err
+	}
+	findings.Events, err = s.events()
 	return findings, err
 }
 
