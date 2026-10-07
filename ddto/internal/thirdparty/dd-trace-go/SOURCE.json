@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "580bffbc1b2b3f1efc7ec60bed483333db1d09a3137a94597491b00f2c6746b1",
+      "sha256": "860ce82daf9c4b83b1f188dd25aafba8016479989a5c7667f0d4131a3a91568c",
       "role": "local"
     },
     {
@@ -30,12 +30,12 @@
     },
     {
       "path": "README.md",
-      "sha256": "9930f7d8c8258aa90018aa1c2bea1028ebbf95d3df265321c215f8fe5429251b",
+      "sha256": "f5356ed2c564ed15a36dc92ef885ad3762d31f58c9021df1e1230e73c8857db9",
       "role": "local"
     },
     {
       "path": "TESTS.json",
-      "sha256": "1d18d850b738f25628c6cb87da0bd2b2dc67b30e48714d4793db1d6d2df51f82",
+      "sha256": "b53220084aa0f4adcea38a60ab7634c166a2c6cb92af0eb7d5401e03cf2a760d",
       "role": "local"
     },
     {
@@ -359,15 +359,36 @@
       "source_sha256": "91cf9dc057df01462ab9b6b03591a4d2e4c41a58b562513eef0eebcec4e43264"
     },
     {
+      "path": "civisibility/integrations/gotesting/fuzz_events.go",
+      "sha256": "44197d246ccc917ae39a2286e8a4a935ab9b407a5ed22bf0393364f41e544061",
+      "role": "adapted",
+      "source_commit": "7b32e1812cb5c1fb807a63cc5042750f3d3cd672",
+      "source_path": "internal/civisibility/integrations/gotesting/fuzz_events.go",
+      "source_sha256": "a40c5908e563dd170eba22871304e485b9e0d44064974f20a775a5d3bf1c2f83"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/fuzz_events_test.go",
+      "sha256": "be967ea7d9a418752ad58cb22a42c431ca28e2f16b6171a13f456bd40606309b",
+      "role": "adapted",
+      "source_commit": "7b32e1812cb5c1fb807a63cc5042750f3d3cd672",
+      "source_path": "internal/civisibility/integrations/gotesting/fuzz_events_test.go",
+      "source_sha256": "dce83df9f524068447d65afea0be2fff7ad494b1520d266e8b4f139038e6d624"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/fuzz_layout_test.go",
+      "sha256": "4fe42996bc9d7aaacfd8011e474de21f71995ba2a56de88a253bdb96bbfd3a46",
+      "role": "local"
+    },
+    {
       "path": "civisibility/integrations/gotesting/instrumentation.go",
-      "sha256": "420d2da7d6f10e4d6e12f2be64b13ae7a6becf639d515800e35f0682d07421f7",
+      "sha256": "f74b20b1f20758f3d572eb5d21165fa63e4bac5f25493ad532e36700e42a9204",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/instrumentation.go",
       "source_sha256": "f5131c68e8c471d94b6b6f22edd3a573d983a75eb79a39518b1c075d1edf936d"
     },
     {
       "path": "civisibility/integrations/gotesting/instrumentation_orchestrion.go",
-      "sha256": "c83b1274d20468efe18de51ac2f08b7ba7bfb541e28c37f0fca264594fabbcf1",
+      "sha256": "f67d91b11a9aff1e45156af971a3e0dfa370b1581382770a9fc22239a44c4cb8",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/instrumentation_orchestrion.go",
       "source_sha256": "add69cf78b958e539a537fb65c4121ec67cd92da359d1a5f7425f1cd9ab980a3"
@@ -416,7 +437,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/reflection_offsets.go",
-      "sha256": "be8e22204639d39c5ae88a8506bbd2485513c1523df565f2ccf15a40a27c5978",
+      "sha256": "5e1e9bf57f74d62abde5ba869605643a14285df05b37e22944d3b5da32a41321",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/reflection_offsets.go",
       "source_sha256": "886867f8ad2c5d0c099689009d2b01fb6eff8463c1d1276c1c99fe6d9d474a73"
@@ -599,7 +620,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/testing.go",
-      "sha256": "01bd29fa0f9951e40ee85f7f75cd008bea4e5ac20d57fa43a2eee63960fe16e4",
+      "sha256": "494c06e7fa62b2e6118571b6a5ba31d06c52ab6a0a972bbe70f7a0548e0b06a8",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/testing.go",
       "source_sha256": "a053656b43cb3fc9673e74f39a41e065420d5d36d0be4631cb95a344973fdfc9"
@@ -612,11 +633,51 @@
       "source_sha256": "b498da5f68b673c1989114d31f5f8e5fe8bb108bb3590d042b22c46832009ef4"
     },
     {
+      "path": "civisibility/integrations/gotesting/testingExample.go",
+      "sha256": "6895b1874828328d44f2fa5071d325057555357853f261412688cc3fd8d3d0ff",
+      "role": "adapted",
+      "source_commit": "7b32e1812cb5c1fb807a63cc5042750f3d3cd672",
+      "source_path": "internal/civisibility/integrations/gotesting/testingExample.go",
+      "source_sha256": "6d2cd01ded4c3b39350762b2b9a07aecb2efa064f3ebf1b5e9e202d8bf3ebd5a"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/testingExample_test.go",
+      "sha256": "db52e5fe98edb20c6f0f3281183895e539c715c9cb4b936fcf7efeebafdc629c",
+      "role": "adapted",
+      "source_commit": "7b32e1812cb5c1fb807a63cc5042750f3d3cd672",
+      "source_path": "internal/civisibility/integrations/gotesting/testingExample_test.go",
+      "source_sha256": "db52e5fe98edb20c6f0f3281183895e539c715c9cb4b936fcf7efeebafdc629c"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/testingF.go",
+      "sha256": "01e063880dc1750cf529da91671fba3e97366a74e01d06947bbb62945ce313d4",
+      "role": "adapted",
+      "source_commit": "7b32e1812cb5c1fb807a63cc5042750f3d3cd672",
+      "source_path": "internal/civisibility/integrations/gotesting/testingF.go",
+      "source_sha256": "7a62a0af9a53bd8fa7abccf320cf47ed62acc559268973c08c937a4e5bd31ab8"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/testingF_test.go",
+      "sha256": "b0360b5a8a557ae48bed45cc4fa5b30ced5ae518c14903fa0149b8c417f5ff75",
+      "role": "adapted",
+      "source_commit": "7b32e1812cb5c1fb807a63cc5042750f3d3cd672",
+      "source_path": "internal/civisibility/integrations/gotesting/testingF_test.go",
+      "source_sha256": "b0360b5a8a557ae48bed45cc4fa5b30ced5ae518c14903fa0149b8c417f5ff75"
+    },
+    {
       "path": "civisibility/integrations/gotesting/testingT.go",
       "sha256": "79ca5b226980f279f9fc224f27583f1c479ef8bb3ae1d2b087ef071dda45ec4c",
       "role": "upstream",
       "source_path": "internal/civisibility/integrations/gotesting/testingT.go",
       "source_sha256": "79ca5b226980f279f9fc224f27583f1c479ef8bb3ae1d2b087ef071dda45ec4c"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/testing_workloads_test.go",
+      "sha256": "8aea286a6e3acc97ca44aa49a39f137849a843bd254f83f3430552ea3e6561a5",
+      "role": "adapted",
+      "source_commit": "7b32e1812cb5c1fb807a63cc5042750f3d3cd672",
+      "source_path": "internal/civisibility/integrations/gotesting/testing_workloads_test.go",
+      "source_sha256": "143475d3970c0ded6bbe602dc79906669a4538e312d159e318348bc374b72791"
     },
     {
       "path": "civisibility/integrations/logs/logs.go",
@@ -1960,6 +2021,12 @@
       "role": "adapted",
       "source_path": "internal/utils.go",
       "source_sha256": "7b2caa9a9040c85c0d47c7512cb9280fe376cbbc9b62034210f368db94fc6353"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/fuzz_offsets.go",
+      "sha256": "8e613d64f52bb78f5eedf857d39229dd81b3a82932911a46f3dd69afeeae8806",
+      "role": "local",
+      "purpose": "Validated testing.F offsets discovered once with the testing.T layout"
     }
   ],
   "layout_mapping": {
@@ -1980,6 +2047,72 @@
       "path": "ddtrace/tracer/civisibility_tslv.go",
       "sha256": "34d12cb45f719abda1f558e7ce5f06eaef2313d604417a61d55243eb6382d33e",
       "use": "Native CI wire schema adapted in internal/minitracer/events.go; client implementation remains POC-owned."
+    },
+    {
+      "path": "internal/civisibility/integrations/gotesting/orchestrion.yml",
+      "sha256": "5c76eca7763b9e6b475f2da159821c708a917930e96508e8612228acd9bf2e57",
+      "commit": "7b32e1812cb5c1fb807a63cc5042750f3d3cd672",
+      "purpose": "F.Fuzz hook signature and advice implemented by the Mini AST transformer"
+    }
+  ],
+  "feature_ports": [
+    {
+      "name": "go-fuzz-examples",
+      "pr": "https://github.com/DataDog/dd-trace-go/pull/5442",
+      "commit": "7b32e1812cb5c1fb807a63cc5042750f3d3cd672",
+      "base_commit": "feba7b04cef0506bda95fe618905da6fc9bcd78d",
+      "files": [
+        {
+          "path": "civisibility/integrations/gotesting/testingF.go",
+          "source_path": "internal/civisibility/integrations/gotesting/testingF.go",
+          "source_sha256": "7a62a0af9a53bd8fa7abccf320cf47ed62acc559268973c08c937a4e5bd31ab8"
+        },
+        {
+          "path": "civisibility/integrations/gotesting/testingExample.go",
+          "source_path": "internal/civisibility/integrations/gotesting/testingExample.go",
+          "source_sha256": "6d2cd01ded4c3b39350762b2b9a07aecb2efa064f3ebf1b5e9e202d8bf3ebd5a"
+        },
+        {
+          "path": "civisibility/integrations/gotesting/fuzz_events.go",
+          "source_path": "internal/civisibility/integrations/gotesting/fuzz_events.go",
+          "source_sha256": "a40c5908e563dd170eba22871304e485b9e0d44064974f20a775a5d3bf1c2f83"
+        },
+        {
+          "path": "civisibility/integrations/gotesting/instrumentation.go",
+          "source_path": "internal/civisibility/integrations/gotesting/instrumentation.go",
+          "source_sha256": "19d482de88ae510e34db412273a5cf940eacc1192da0b26947622df76b52cdc6"
+        },
+        {
+          "path": "civisibility/integrations/gotesting/instrumentation_orchestrion.go",
+          "source_path": "internal/civisibility/integrations/gotesting/instrumentation_orchestrion.go",
+          "source_sha256": "e07e0e5d272cdf6148fea865f53b1f1f40dfe29b60b4c461bfe29a5dd52784b3"
+        },
+        {
+          "path": "civisibility/integrations/gotesting/testing.go",
+          "source_path": "internal/civisibility/integrations/gotesting/testing.go",
+          "source_sha256": "73324a56f1b1c581df8620a4f67a51743b198b2470d43f9b645425fff6a63646"
+        },
+        {
+          "path": "civisibility/integrations/gotesting/testingF_test.go",
+          "source_path": "internal/civisibility/integrations/gotesting/testingF_test.go",
+          "source_sha256": "b0360b5a8a557ae48bed45cc4fa5b30ced5ae518c14903fa0149b8c417f5ff75"
+        },
+        {
+          "path": "civisibility/integrations/gotesting/testingExample_test.go",
+          "source_path": "internal/civisibility/integrations/gotesting/testingExample_test.go",
+          "source_sha256": "db52e5fe98edb20c6f0f3281183895e539c715c9cb4b936fcf7efeebafdc629c"
+        },
+        {
+          "path": "civisibility/integrations/gotesting/fuzz_events_test.go",
+          "source_path": "internal/civisibility/integrations/gotesting/fuzz_events_test.go",
+          "source_sha256": "dce83df9f524068447d65afea0be2fff7ad494b1520d266e8b4f139038e6d624"
+        },
+        {
+          "path": "civisibility/integrations/gotesting/testing_workloads_test.go",
+          "source_path": "internal/civisibility/integrations/gotesting/testing_workloads_test.go",
+          "source_sha256": "143475d3970c0ded6bbe602dc79906669a4538e312d159e318348bc374b72791"
+        }
+      ]
     }
   ]
 }

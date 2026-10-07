@@ -659,5 +659,40 @@
       "path": "internal/minitracer/common_budget_test.go",
       "purpose": "Large default replaced by text/metric consumes no byte budget; valid payload is delivered and kept below intake limit."
     }
+  ],
+  "feature_ports": [
+    {
+      "pr": "https://github.com/DataDog/dd-trace-go/pull/5442",
+      "commit": "7b32e1812cb5c1fb807a63cc5042750f3d3cd672",
+      "files": [
+        {
+          "source": "internal/civisibility/integrations/gotesting/testingF_test.go",
+          "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/testingF_test.go",
+          "source_sha256": "b0360b5a8a557ae48bed45cc4fa5b30ced5ae518c14903fa0149b8c417f5ff75",
+          "adaptation": "Import relocation only; original assertions retained"
+        },
+        {
+          "source": "internal/civisibility/integrations/gotesting/testingExample_test.go",
+          "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/testingExample_test.go",
+          "source_sha256": "db52e5fe98edb20c6f0f3281183895e539c715c9cb4b936fcf7efeebafdc629c",
+          "adaptation": "Import relocation only; original assertions retained"
+        },
+        {
+          "source": "internal/civisibility/integrations/gotesting/fuzz_events_test.go",
+          "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/fuzz_events_test.go",
+          "source_sha256": "dce83df9f524068447d65afea0be2fff7ad494b1520d266e8b4f139038e6d624",
+          "adaptation": "Import relocation only; original assertions retained"
+        },
+        {
+          "source": "internal/civisibility/integrations/gotesting/testing_workloads_test.go",
+          "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/testing_workloads_test.go",
+          "source_sha256": "143475d3970c0ded6bbe602dc79906669a4538e312d159e318348bc374b72791",
+          "adaptation": "Import relocation only; original assertions retained"
+        }
+      ],
+      "fixtures_manifest": "testdata/fuzzexamples/SOURCE.json",
+      "scenarios": 16,
+      "additional_combinations": "Manual/automatic entrypoints and normal/deferred delivery; additional goleak/coverage cases are local regressions"
+    }
   ]
 }

@@ -52,6 +52,16 @@ func TransformGoleakEntry(name string, src []byte) ([]byte, bool, error) {
 			prefix + "thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage.(*coverageWriter).sendPayload",
 			prefix + "minitracer.(*Client).deliverInBackground",
 			prefix + "minitracer.(*Client).drainWorker",
+			// The root waits for its seed while goleak runs inside that seed.
+			prefix + "thirdparty/dd-trace-go/civisibility/integrations/gotesting.(*M).executeInternalFuzzTarget.func1",
+			prefix + "thirdparty/dd-trace-go/civisibility/integrations/gotesting.(*M).executeInternalFuzzTarget.func2",
+			prefix + "thirdparty/dd-trace-go/civisibility/integrations/gotesting.(*M).instrumentInternalFuzzTargets.(*M).executeInternalFuzzTarget.func1",
+			prefix + "thirdparty/dd-trace-go/civisibility/integrations/gotesting.(*M).instrumentInternalFuzzTargets.(*M).executeInternalFuzzTarget.func2",
+			// Native testing also has a pipe reader while an example executes.
+			"testing.runExample.func1",
+			prefix + "thirdparty/dd-trace-go/civisibility/integrations/gotesting.runManagedExample",
+			// Example output capture waits on the pipe owned by the wrapper.
+			prefix + "thirdparty/dd-trace-go/civisibility/integrations/gotesting.captureExampleOutput",
 		}
 		options := arg.Names[0].Name
 		// Find also accepts a caller-owned variadic slice with spare capacity.

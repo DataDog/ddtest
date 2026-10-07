@@ -2,9 +2,10 @@
 
 Mini registers `testify/suite` at its original entry, including callers in external
 modules. A 26-case Testify comparison checks the original runner, lifecycle,
-policies and covered helpers. The native `testing` path has 65 scenarios against
-the unmodified SDK instrumented by Orchestrion. Together with 17 deferred testing
-and seven deferred Testify cases, these make the 115-case matrix. Additional
+policies and covered helpers. The native `testing` path has 64 scenarios against
+the unmodified SDK instrumented by Orchestrion. Together with 16 deferred testing
+and seven deferred Testify cases, these make 113 comparisons. Fuzz and executable
+Examples add 64 comparisons and 14 atomic-coverage combinations against SDK PR #5442. Additional
 fixtures check manual hierarchy calls, CI child spans, multiple package binaries,
 Unix sockets, a bounded fuzz campaign and CI telemetry.
 This evidence does not establish complete product parity.
@@ -55,7 +56,8 @@ policy combinations and counts are exported by every workflow run.
 | CI logs | Actual logs intake JSON, test/trace correlation and line multiplicity; retries and manual hierarchy logs | Verified |
 | Git metadata and upload | Commit/base metadata, CODEOWNERS and actual Git pack upload when settings require it; original Git fixture assertions retained | Verified |
 | CI providers, version and session name | GitHub wire fixture; ported SDK provider fixtures, `DD_VERSION`, custom tags and explicit/job/command session naming | Verified at those levels; other providers have unit evidence |
-| Empty selection, list, examples and fuzz seeds | Same session-only events as SDK; a one-iteration fuzz campaign compares parent/worker sessions | Verified SDK limitation: no example/fuzz-case test events; long campaigns unverified |
+| Empty selection and list | Session-only events | Verified |
+| Fuzz roots, seeds and executable Examples | SDK PR #5442: 16 scenarios, manual/automatic, normal/deferred, atomic coverage and goleak | See the [78-comparison feature matrix](fuzz-examples.md); active mutations and workers emit no events |
 | Benchmarks | Same benchmark events, metric keys/types and run counts; values must be finite/nonnegative | Verified semantics; measured timings/allocations differ |
 | Panic, Goexit and timeout | Existing reference fixtures compare diagnostics, exit status and abnormal finalization | Verified for those fixtures |
 | CLI activation and Go flags | Parent default, explicit values and child inheritance; overlays, GOFLAGS, tags, JSON, selection and native result-cache semantics | Verified |
@@ -90,12 +92,12 @@ a test event, while their module/suite/session are closed once by the controller
 | ATR recovery / exhaustion | 1 | 1 | 1 | 2 / 3 | 0 | Equal in both execution modes |
 | EFD new test | 1 | 1 | 1 | 3 | 0 | Equal in both execution modes |
 | Two package binaries | 2 | 2 | 2 | 2 | 0 | Equal |
-| Empty selection / list / examples and seeds | 1 | 0 | 0 | 0 | 0 | Equal SDK limitation |
+| Empty selection / list | 1 | 0 | 0 | 0 | 0 | Equal SDK limitation |
 | Manual hierarchy | 1 | 2 | 4 | 12 | 1 | Equal |
 | Test with CI parent/child spans | 1 | 1 | 1 | 1 | 2 | Equal |
 | Testify suite with pass/skip methods | 1 | 1 | 2 | 3 | 0 | Equal, including hierarchy and method source metadata |
 
-The 65 matrix scenarios total **65 sessions, 62 modules, 63 suites and 142 test
+The 64 testing scenarios total **64 sessions, 62 modules, 63 suites and 142 test
 events** in each runtime, with no extra spans. Additional span fixtures deliberately
 create them. This aggregate is a fixture observation, not an expected count for
 an arbitrary build; per-scenario counts and ancestry checks prevent equal totals
@@ -126,17 +128,26 @@ Only declared differences are normalized:
   numeric values remain required. CI request counters are checked against each
   sender's requests because batching can differ. All other captured CI semantic
   counters compare exactly.
-- Relocated SDK library stack paths are canonicalized. Mini's test-wrapper
-  line 840 maps to SDK line 838. Its two subtest calls at
-  `instrumentation_orchestrion.go:321/327` map to SDK lines 319/325. Each mapping
-  requires the exact function and source location. Testify's embedded panic
-  stack uses the same mapping; its `Error Trace` section lists only files and
-  lines, so those entries use the exact source location. Other library locations
-  remain strict. For the six `testing`
-  failure methods, Orchestrion's `<generated>:1` frame (bare on Go 1.26, prefixed on Go 1.27)
-  and the toolchain's
-  `testing.go` frame are equivalent by method name. Application frames, their
-  source lines, error text and frame order remain compared.
+- Relocated SDK library stack paths are canonicalized. The exact internal
+  function/line pairs below account for inserted hooks and helpers. Testify's
+  embedded panic stack uses the same mappings; its `Error Trace` lists only
+  file/line locations. Application frames and other library locations remain
+  strict. For the six `testing` failure methods, Orchestrion's `<generated>:1`
+  frame and the toolchain's `testing.go` frame are equivalent by method name.
+
+| Mini location | SDK location | Internal function |
+| --- | --- | --- |
+| `testing.go:866` | `testing.go:838` | `(*M).executeInternalTest.func1` |
+| `instrumentation_orchestrion.go:426` | `instrumentation_orchestrion.go:319` | Source-options wrapper `.func1.1` maps to the original test wrapper `.func1.1` |
+| `instrumentation_orchestrion.go:432` | `instrumentation_orchestrion.go:325` | Source-options wrapper `.func1` maps to the original test wrapper `.func1` |
+| `instrumentation.go:775` | `instrumentation.go:728` | `applyAdditionalFeaturesToTestFunc.func2` |
+| `instrumentation.go:1011` | `instrumentation.go:964` | `runTestWithRetry` |
+| `instrumentation.go:1138` | `instrumentation.go:1091` | `runRetryAttemptCapabilityFallback` |
+
+The PR-specific [Fuzz/Examples comparator](fuzz-examples.md) keeps application
+frames strict and canonicalizes incorporated source lines separately. Go 1.26
+can number Mini's root and deferred closures `.func2`/`.func2.1`; the comparator
+maps only those known F-root owners to `.func1`/`.func1.1` in `testingF.go`.
 
 Mini corrections intentionally differ from the frozen SDK. Coverage includes
 code executed only in `t.Cleanup`, and duplicate Testify method names retain the
@@ -236,7 +247,8 @@ scenario durations, event counts and supplemental fixtures; `manifest.json`
 records the execution order, reference versions and harness input hashes.
 The summary keeps medians and ranges without imposing a speed threshold.
 
-The current JSON report uses schema 3. Each scenario and additional fixture
+The current JSON report uses schema 4, which requires the complete Fuzz/Examples
+and coverage evidence as well as the ordinary testing matrix. Each scenario and additional fixture
 records `timing.sdk_wall_ns` and `timing.mini_wall_ns` as integer monotonic-clock
 nanoseconds. Markdown shows seconds and the signed change `(Mini / SDK - 1) * 100`.
 Missing or invalid timing observations fail report validation. `execution_block`
@@ -273,7 +285,7 @@ Set `PARITY_EXECUTION_ORDER=sdk-first` or `mini-first` to use grouped execution.
 Each variant runs all matrix cases before their differential comparisons. The
 block timer includes receiver setup, child-process execution and shutdown/flush;
 it excludes compilation and comparison. This is a measured interval, not the
-sum of the individual child clocks. Schema 3 exports `execution_block` and
+sum of the individual child clocks. Schema 4 exports `execution_block` and
 `execution_order`. The normal job uses SDK first; Linux race validation uses
 Mini first so both paths are exercised by CI. Both commands use `-count=1` to
 regenerate their evidence instead of reusing a Go test-result cache entry.

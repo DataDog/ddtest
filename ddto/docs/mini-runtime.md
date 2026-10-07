@@ -211,12 +211,10 @@ capabilities before asynchronous settings loading, so emitted events retain them
 
 The local suite checks real loopback payloads against the SDK, preserving test
 attributes, statuses, error messages, stack frames and source lines. Mini stack
-comparisons canonicalize the relocated library namespace/root and map the known
-test-wrapper location from line 840 to the pinned SDK's line 838, plus the
-two subtest calls at `instrumentation_orchestrion.go:321/327` to SDK lines
-319/325. Stack mappings check the function and exact line. Testify's `Error Trace`
-lists only source locations, so its entries use the exact file and line. Application
-frames and other library locations remain strict. The expanded comparator keeps CI
+comparisons canonicalize the relocated library namespace and the exact internal
+function/line pairs listed in [the comparison contract](ci-parity.md#comparison-contract).
+Testify's `Error Trace` lists only source locations, so its entries use the exact
+file and line. Application frames and other library locations remain strict. The expanded comparator keeps CI
 metadata, metrics, service/resource/type, custom tags, capability tags and ITR
 correlation. It explicitly excludes APM sampling/profiling/process enrichment
 and process-local identity/order. Duplicate SDK Git aliases and hierarchy IDs
@@ -241,7 +239,8 @@ This is a POC. Real Datadog intake acceptance and UI behavior are unverified.
 Agent tests use a loopback EVP implementation, not a deployed agent. Bazel
 manifest/payload-file contracts are checked against the SDK using a real offline
 manifest, read cache and output files; an actual Bazel build/toolchain invocation
-has not been run. Full fuzz campaigns remain unverified. The
+has not been run. Fuzz roots, seeds, examples and a bounded active campaign are
+compared with SDK PR #5442; see [Fuzz and Examples](fuzz-examples.md). The
 [Testify comparison](testify.md) checks suite entry registration, external callers,
 lifecycle, policies and coverage against the original SDK/Orchestrion runner. The
 [compatibility workflow](validation.md#compatibility-workflow) runs natively on
@@ -309,7 +308,7 @@ never drops a CI attribute, changes a present value, crosses session identities
 or fills a missing test attribute. Unit checks reject conflicts and omissions.
 This is semantic inheritance parity, not byte-identical event placement.
 
-Sessions without test events (including listing, examples and fuzz seeds)
+Sessions without test events (including listing and empty selection)
 validate Mini's complete capabilities against the frozen SDK declarations and
 permit only missing SDK capabilities. This applies only when both runtimes
 emit sessions without tests. Wrong values, unknown capabilities, missing test

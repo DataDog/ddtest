@@ -1,0 +1,87 @@
+{
+  "repository": "https://github.com/DataDog/dd-trace-go",
+  "pr": 5442,
+  "commit": "7b32e1812cb5c1fb807a63cc5042750f3d3cd672",
+  "version": "v2.12.0-dev.3.0.20261001212005-7b32e1812cb5",
+  "base_commit": "feba7b04cef0506bda95fe618905da6fc9bcd78d",
+  "files": [
+    {
+      "path": "app/app_test.go",
+      "source_path": "internal/civisibility/integrations/gotesting/fixtures/itrbackfill/fuzzexample/app/app_test.go",
+      "source_sha256": "c4ad2c0732d0e4855b61ab003b6617af9e1791a357246cb316fe66c2b3de426a",
+      "sha256": "c4ad2c0732d0e4855b61ab003b6617af9e1791a357246cb316fe66c2b3de426a",
+      "adaptation": "None"
+    },
+    {
+      "path": "app/corpus_test.go",
+      "source_path": "internal/civisibility/integrations/gotesting/fixtures/itrbackfill/fuzzexample/app/corpus_test.go",
+      "source_sha256": "ca7f61c8962fc211f06b94f91b9d79d0be711596c761f26e9a71b23a1ace08ee",
+      "sha256": "ca7f61c8962fc211f06b94f91b9d79d0be711596c761f26e9a71b23a1ace08ee",
+      "adaptation": "None"
+    },
+    {
+      "path": "app/lifecycle_test.go",
+      "source_path": "internal/civisibility/integrations/gotesting/fixtures/itrbackfill/fuzzexample/app/lifecycle_test.go",
+      "source_sha256": "54a15e5278f762af026de27549f4e104c659694334cd7e052907b767c2e67c0c",
+      "sha256": "54a15e5278f762af026de27549f4e104c659694334cd7e052907b767c2e67c0c",
+      "adaptation": "None"
+    },
+    {
+      "path": "app/main_test.go",
+      "source_path": "internal/civisibility/integrations/gotesting/fixtures/itrbackfill/fuzzexample/app/main_test.go",
+      "source_sha256": "736aea4f6a69c685deb05c87358df8d8f6f98ef89729a17aad86063dc8e94ce4",
+      "sha256": "736aea4f6a69c685deb05c87358df8d8f6f98ef89729a17aad86063dc8e94ce4",
+      "adaptation": "None"
+    },
+    {
+      "path": "app/shutdown_test.go",
+      "source_path": "internal/civisibility/integrations/gotesting/fixtures/itrbackfill/fuzzexample/app/shutdown_test.go",
+      "source_sha256": "f7d72a28251d890f65da8f0bdbf5ec968b3956b834e1cc1c1d7daf418b12b0a0",
+      "sha256": "f7d72a28251d890f65da8f0bdbf5ec968b3956b834e1cc1c1d7daf418b12b0a0",
+      "adaptation": "None"
+    },
+    {
+      "path": "internal/fuzzfixture/main.go",
+      "source_path": "internal/civisibility/integrations/gotesting/fixtures/itrbackfill/internal/fuzzfixture/main.go",
+      "source_sha256": "4ca04dcfbd7428813caf2035df587bb858443f6cf2837d29d29d4c5c800dd106",
+      "sha256": "4ca04dcfbd7428813caf2035df587bb858443f6cf2837d29d29d4c5c800dd106",
+      "adaptation": "None"
+    },
+    {
+      "path": "internal/fuzzfixture/subprocess.go",
+      "source_path": "internal/civisibility/integrations/gotesting/fixtures/itrbackfill/internal/fuzzfixture/subprocess.go",
+      "source_sha256": "acff0cf7e152b04b9608b344ed76aa92ffd480c9864472d05f44cca30a0e1c7b",
+      "sha256": "acff0cf7e152b04b9608b344ed76aa92ffd480c9864472d05f44cca30a0e1c7b",
+      "adaptation": "None"
+    },
+    {
+      "path": "internal/mockci/mockci.go",
+      "source_path": "internal/civisibility/integrations/gotesting/fixtures/itrbackfill/internal/mockci/mockci.go",
+      "source_sha256": "c0c3526a577a7339e758368d05dff0fc60173a8da1f1a362d5c0f94733e13548",
+      "sha256": "780d2fd02e98d6836878cbfe8207f1d9d86987713eccfb4ef473825e3858b1d0",
+      "adaptation": "Original assertions; export wire/coverage data, enable coverage variants, isolate real cache per intake and pass its root to children; restore exact OS environment"
+    },
+    {
+      "path": "LICENSE",
+      "source_path": "LICENSE",
+      "source_sha256": "71af67b41ee226793c67e48f29be03eecf0bca592993fb8bbd3de84f1e1475f0",
+      "sha256": "71af67b41ee226793c67e48f29be03eecf0bca592993fb8bbd3de84f1e1475f0",
+      "adaptation": "None"
+    },
+    {
+      "path": "app/cache_control_test.go",
+      "sha256": "69d9e22cec703af77f942cf7d8cd949f9c838b1e0e2cb7007ac7ff18350fc08d",
+      "role": "local",
+      "adaptation": "Fixture cache inheritance/isolation control; not SDK production code"
+    },
+    {
+      "path": "internal/mockci/cache_scope_test.go",
+      "sha256": "dbd2628ac1c3436ef51219f91d75d069acbbe1ef87346621efacbdcbdfe8647f",
+      "role": "local",
+      "adaptation": "Fixture cache inheritance/isolation control; not SDK production code"
+    }
+  ],
+  "licenses": [
+    "LICENSE"
+  ]
+}

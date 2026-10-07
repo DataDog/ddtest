@@ -1,3 +1,6 @@
 # Provenance hashes are computed over upstream LF source text on all platforms.
 internal/thirdparty/** text=auto eol=lf
 internal/thirdparty/**/*.zip -text
+
+# Fixture manifests also hash the original LF source bytes.
+testdata/fuzzexamples/** text=auto eol=lf

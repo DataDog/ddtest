@@ -24,6 +24,7 @@ directory and use forward slashes.
 | `role: adapted` | A derived file with local changes |
 | `role: local` | POC-owned code, test or documentation beside the upstream package |
 | `licenses` | License files that must remain present and recorded |
+| `feature_ports` | Separately frozen feature PRs, original paths/hashes and local destinations; select their SHA with `--source-commit` |
 | `additional_sources` | Upstream inputs used for an extraction or schema outside a direct file copy |
 
 The SDK's [test inventory](../internal/thirdparty/dd-trace-go/TESTS.json) records
@@ -308,3 +309,12 @@ After a platform change, check Unix `exec` replacement and Windows child exit
 status separately. A cross-compiled CLI is build proof; the workflow must run
 the integration fixtures natively on that platform. Update the architecture,
 Testify contract, validation inventory and performance guide together.
+
+## Fuzz and Examples source updates
+
+The general SDK base and PR #5442 feature have separate revisions. Use
+`--source-commit` with the recorded feature SHA when generating its patch.
+The [feature guide](fuzz-examples.md) describes its adapters, offset validation,
+fixtures and required checks. When the upstream default branch contains the
+feature, compare both records before selecting a new common base; preserve the
+original assertions, local deferred admission and precise goleak filters.

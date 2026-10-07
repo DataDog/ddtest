@@ -12,6 +12,8 @@ For maintainers, start with the [documentation guide](docs/README.md):
 [source updates](docs/maintenance.md) and
 [performance and profiling](docs/performance.md), and
 [CI feature parity, combinations and remaining gaps](docs/ci-parity.md).
+[Fuzz and Examples](docs/fuzz-examples.md) documents their native lifecycle,
+deferred delivery and SDK PR comparison.
 
 ```sh
 go build -o bin/ddtest ./cmd/ddtest

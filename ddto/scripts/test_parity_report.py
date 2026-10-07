@@ -40,6 +40,75 @@ class ParityReportTests(unittest.TestCase):
             self.path.with_name(f"parity-{name}.json").write_text(json.dumps(item))
         return parity_report.render(self.path)
 
+    def test_fuzz_examples_requires_every_reference_and_delivery_combination(self):
+        report = {"sdk_commit": parity_report.FUZZ_EXAMPLE_COMMIT, "scenarios": [
+            {"scenario": scenario, "mode": mode, "deferred": deferred,
+             "status": "passed", "sdk": self.report["scenarios"][0]["sdk"],
+             "mini": self.report["scenarios"][0]["mini"], "timing": self.timing}
+            for scenario in parity_report.FUZZ_EXAMPLE_SCENARIOS
+            for mode in ("manual", "orchestrion") for deferred in (False, True)]}
+        parity_report.validate_fuzz_examples(report)
+        for change, message in (
+                (lambda value: value["scenarios"].pop(), "missing fuzz/example"),
+                (lambda value: value["scenarios"].append(value["scenarios"][0]), "duplicated fuzz/example"),
+                (lambda value: value.update(sdk_commit="a" * 40), "unexpected fuzz/example SDK"),
+                (lambda value: value["scenarios"][0].update(status="failed"), "failed fuzz/example"),
+                (lambda value: value["scenarios"][0].update(mini=dict(value["scenarios"][0]["mini"], tests=99)), "failed fuzz/example")):
+            altered = copy.deepcopy(report)
+            change(altered)
+            with self.assertRaisesRegex(ValueError, message):
+                parity_report.validate_fuzz_examples(altered)
+
+    def test_current_schema_requires_feature_matrix(self):
+        self.report.update(schema_version=4)
+        self.report["scenarios"] = self.report["scenarios"][:64]
+        with self.assertRaises(FileNotFoundError):
+            self.render()
+
+    def current_feature_evidence(self):
+        self.report.update(schema_version=4)
+        self.report["scenarios"] = self.report["scenarios"][:64]
+        self.evidence["fuzz"]["sdk_commit"] = parity_report.FUZZ_EXAMPLE_COMMIT
+        rows = [
+            {"scenario": scenario, "mode": mode, "deferred": deferred,
+             "status": "passed", "sdk": self.report["scenarios"][0]["sdk"],
+             "mini": self.report["scenarios"][0]["mini"], "timing": self.timing}
+            for scenario in sorted(parity_report.FUZZ_EXAMPLE_SCENARIOS)
+            for mode in ("manual", "orchestrion") for deferred in (False, True)]
+        common = {"sdk_commit": parity_report.FUZZ_EXAMPLE_COMMIT, "sdk_version": "fixture"}
+        self.evidence["fuzz-examples"] = dict(common, scenarios=rows)
+        covered = {"pass", "seed-lifecycle", "test-management", "active-fuzz",
+                   "skip-lifecycle", "parallel-duration", "filtered"}
+        self.evidence["fuzz-examples-coverage"] = dict(common, scenarios=[
+            row for row in rows if row["mode"] == "orchestrion" and row["scenario"] in covered])
+
+    def test_current_report_renders_complete_feature_and_coverage_tables(self):
+        self.current_feature_evidence()
+        text = self.render()
+        self.assertIn("Matrix: 64 passing scenarios", text)
+        self.assertIn("## Go Fuzz and executable Examples", text)
+        self.assertIn("### Coverage combinations", text)
+        self.assertIn("| corpus-lifecycle | manual | True |", text)
+        self.assertIn("| filtered | False |", text)
+
+    def test_current_report_rejects_missing_or_failing_coverage(self):
+        self.current_feature_evidence()
+        covered = self.evidence["fuzz-examples-coverage"]
+        valid = copy.deepcopy(covered["scenarios"])
+        for rows, message in (
+                (valid[:-1], "missing fuzz/example"),
+                (valid + [valid[0]], "duplicated fuzz/example"),
+                ([dict(valid[0], status="failed")] + valid[1:], "failed fuzz/example")):
+            covered["scenarios"] = rows
+            with self.assertRaisesRegex(ValueError, message):
+                self.render()
+
+    def test_current_report_rejects_a_different_campaign_reference(self):
+        self.current_feature_evidence()
+        self.evidence["fuzz"]["sdk_commit"] = "a" * 40
+        with self.assertRaisesRegex(ValueError, "fuzz campaign reference differs"):
+            self.render()
+
     def test_testify_passed_contract_and_counts(self):
         item = self.evidence["testify"]
         item["status"] = "passed"

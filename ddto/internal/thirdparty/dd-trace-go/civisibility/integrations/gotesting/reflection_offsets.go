@@ -146,6 +146,7 @@ type testingInternalsLayout struct {
 	outputWriter   outputWriterLayout
 	testState      testStateLayout
 	benchmark      benchmarkFieldsLayout
+	fuzz           fuzzFieldsLayout
 
 	testFieldsOK      bool
 	parentFieldsOK    bool
@@ -173,6 +174,7 @@ func getTestingInternalsLayout() *testingInternalsLayout {
 			reflect.TypeFor[testing.T](),
 			reflect.TypeFor[testing.B](),
 		)
+		testingInternalsLayoutValue.fuzz = buildFuzzFieldsLayout(reflect.TypeFor[testing.F](), testingInternalsLayoutValue)
 	})
 	return testingInternalsLayoutValue
 }

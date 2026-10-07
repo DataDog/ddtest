@@ -1,0 +1,18 @@
+goos: linux
+goarch: amd64
+pkg: github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting
+cpu: AMD Ryzen 9 5950X 16-Core Processor
+BenchmarkFuzzNativeResult/root         	 1986669	       598.3 ns/op	     336 B/op	       6 allocs/op
+BenchmarkFuzzNativeResult/root         	 2028987	       596.5 ns/op	     336 B/op	       6 allocs/op
+BenchmarkFuzzNativeResult/root         	 2005713	       597.5 ns/op	     336 B/op	       6 allocs/op
+BenchmarkFuzzNativeResult/root         	 2007646	       598.3 ns/op	     336 B/op	       6 allocs/op
+BenchmarkFuzzNativeResult/root         	 1969212	       609.2 ns/op	     336 B/op	       6 allocs/op
+BenchmarkFuzzNativeResult/root         	 2011614	       596.7 ns/op	     336 B/op	       6 allocs/op
+BenchmarkFuzzNativeResult/seed         	 2158051	       556.1 ns/op	     336 B/op	       6 allocs/op
+BenchmarkFuzzNativeResult/seed         	 2132446	       561.1 ns/op	     336 B/op	       6 allocs/op
+BenchmarkFuzzNativeResult/seed         	 2167682	       556.8 ns/op	     336 B/op	       6 allocs/op
+BenchmarkFuzzNativeResult/seed         	 1975009	       601.0 ns/op	     336 B/op	       6 allocs/op
+BenchmarkFuzzNativeResult/seed         	 1981618	       589.7 ns/op	     336 B/op	       6 allocs/op
+BenchmarkFuzzNativeResult/seed         	 2096959	       575.3 ns/op	     336 B/op	       6 allocs/op
+PASS
+ok  	github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting	14.372s

@@ -333,3 +333,9 @@ Public-intake acceptance, actual Bazel toolchain execution, full fuzz campaigns
 and arbitrary downstream projects require separate evidence. See the
 [validation contract](validation.md) for exercised cases and
 [maintenance guide](maintenance.md) for upgrade requirements.
+
+## Fuzz and executable Examples
+
+[Fuzz and Examples](fuzz-examples.md) follows the native descriptor wrappers,
+seed result queue and stdout capture. Its diagrams show normal and fatal
+finalization, deferred admission and the private-field access barrier.

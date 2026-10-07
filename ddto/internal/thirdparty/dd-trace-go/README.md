@@ -7,6 +7,8 @@
 - License: original Apache-2.0 text in [LICENSE](LICENSE).
 - Files and hashes: [SOURCE.json](SOURCE.json).
 - Ported test inventory and adaptations: [TESTS.json](TESTS.json).
+- Fuzz/Examples feature port: [PR #5442](https://github.com/DataDog/dd-trace-go/pull/5442),
+  `7b32e1812cb5c1fb807a63cc5042750f3d3cd672`, recorded separately in `feature_ports`.
 
 ## Layout and adaptations
 

@@ -5,7 +5,9 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -114,34 +116,27 @@ func TestOtherSourceComparisonRetainsRangeChecks(t *testing.T) {
 }
 
 func TestCIVisibilityFuzzCampaign(t *testing.T) {
-	dir, driver := prepareMiniFixture(t)
-	bins := compileMiniPair(t, dir, driver)
-	// A fixed iteration budget and one worker bound the experiment. The cache
-	// path is identical so test.command is comparable, and this is not a timing test.
-	cache := filepath.Join(t.TempDir(), "fuzz-cache")
-	tc := parityCase{Args: []string{"-test.run=^$", "-test.fuzz=FuzzAdd", "-test.fuzztime=1x", "-test.parallel=1", "-test.fuzzcachedir=" + cache}}
-	captures := []*parityReceiver{}
-	var wallNS []int64
-	for _, bin := range bins {
-		receiver, result := runParityCase(t, dir, bin, tc)
-		if result.code != 0 {
-			t.Fatalf("fuzz execution: %s %s", result.out, result.stderr)
-		}
-		captures = append(captures, receiver)
-		wallNS = append(wallNS, result.wall.Nanoseconds())
+	if os.Getenv("ORCHESTRION_BIN") == "" {
+		t.Skip("set ORCHESTRION_BIN for SDK PR #5442 parity")
 	}
-	assertMiniCIAttributes(t, captures[0].events, captures[1].events)
-	sdk, err := countCIEvents(captures[0].events)
+	sdkFixture := prepareFuzzExampleFixture(t, "sdk", "orchestrion")
+	miniFixture := prepareFuzzExampleFixture(t, "mini", "orchestrion")
+	expected, sdkWall := runFuzzExampleScenario(t, sdkFixture, "active-fuzz", false)
+	actual, miniWall := runFuzzExampleScenario(t, miniFixture, "active-fuzz", false)
+	a, b := normalizeFuzzExampleEvents(expected, sdkFixture), normalizeFuzzExampleEvents(actual, miniFixture)
+	if !reflect.DeepEqual(ciWireEvents(a), ciWireEvents(b)) {
+		t.Fatal("active fuzz wire parity differs")
+	}
+	sdk, err := countCIEvents(a)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mini, err := countCIEvents(captures[1].events)
+	mini, err := countCIEvents(b)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sdk != mini || sdk.Sessions == 0 {
-		t.Fatalf("fuzz counts: SDK %+v Mini %+v", sdk, mini)
+	if sdk != mini || sdk.Sessions == 0 || sdk.Tests == 0 {
+		t.Fatalf("fuzz counts SDK=%+v Mini=%+v", sdk, mini)
 	}
-	writeParityEvidence(t, "fuzz", map[string]any{"timing": parityTiming{binaryTimingScope, wallNS[0], wallNS[1]}, "status": "passed", "sdk": sdk, "mini": mini, "scope": "one-iteration campaign; SDK does not emit seed/case test events"})
-	t.Log(fmt.Sprintf("Fuzz SDK=Mini %+v", sdk))
+	writeParityEvidence(t, "fuzz", map[string]any{"timing": parityTiming{binaryTimingScope, sdkWall.Nanoseconds(), miniWall.Nanoseconds()}, "status": "passed", "sdk": sdk, "mini": mini, "sdk_commit": fuzzExampleSDKCommit, "scope": "SDK PR #5442: coordinator and non-selected seeds; mutations and workers emit no events"})
 }

@@ -17,8 +17,8 @@ def summarize(paths):
         # Require all matrix and supplemental feature evidence before timing it.
         parity_report.render(path)
         report = json.loads(path.read_text())
-        if report.get("schema_version") != 3:
-            raise ValueError("whole-matrix timings require schema 3")
+        if report.get("schema_version") not in (3, 4):
+            raise ValueError("whole-matrix timings require a grouped report")
         current_identity = {key: report[key] for key in
                             ("sdk_commit", "sdk_version", "sdk_instrumentation", "go", "os", "architecture")}
         current_contracts = [(row["scenario"], row["features"], row["sdk"], row["mini"], row["sdk_exit"], row["mini_exit"])
@@ -56,10 +56,10 @@ def markdown(summary):
              f"SDK: `{identity['sdk_commit']}`; instrumentation: `{identity['sdk_instrumentation']}`.", "",
              f"{len(summary['samples'])} measured rounds, with equal numbers of SDK-first and Mini-first rounds.",
              f"Every round compares all {summary['scenario_count']} matrix scenarios and all additional fixtures.",
-             "The primary measurement is one continuous 65-scenario block per variant,",
+             f"The primary measurement is one continuous {summary['scenario_count']}-scenario block per variant,",
              "including receiver setup, child startup, settings, execution/retries and shutdown/flush.",
              "Compilation and the differential comparisons are outside that block.",
-             "The seven additional fixtures have separate raw timing records and are not included in the block.", "",
+             "Additional fixtures have separate raw timing records and are not included in the block.", "",
              "| Scope | SDK median (s) | Mini median (s) | Mini vs SDK |",
              "| --- | ---: | ---: | ---: |",
              f"| Entire matrix execution | {stats['sdk']['median_seconds']:.6f} | {stats['mini']['median_seconds']:.6f} | {summary['median_delta_percent']:+.1f}% |", "",

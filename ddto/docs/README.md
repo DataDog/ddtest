@@ -7,6 +7,7 @@ the guide for the work you need to do:
 | You need to... | Read |
 | --- | --- |
 | Follow a test from CLI invocation to CI event delivery | [Architecture and diagrams](architecture.md) |
+| Maintain Fuzz roots, seeds, executable examples and their native lifecycle | [Fuzz and Examples](fuzz-examples.md) |
 | Maintain Testify callers, supported versions or the coverage bridge | [Testify design and compatibility](testify.md) |
 | Use deferred delivery or maintain automatic goleak support | [Delivery checkpoints and goleak](delivery.md) |
 | Update the SDK, MessagePack codecs or platform subset | [Source updates and maintenance](maintenance.md) |

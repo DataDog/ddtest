@@ -32,12 +32,10 @@ jobs:
             go: '1.27.x'
             mode: normal
     runs-on: ${{ matrix.os }}
-    # Each job runs one complete suite; Linux normal/race jobs run independently.
-    # Windows compiles the instrumented fixtures much more slowly. Without a
-    # restored Go cache (a new branch, or after go.sum changes) its integration
-    # package needs more than 20 minutes, and setup-go saves the cache only
-    # after a successful job, so the first cold run must be able to finish.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 25 }}
+    # Fuzz lifecycle fixtures run many subprocesses. Race-enabled children also
+    # wait for the race detector at exit; retain that wait and allow the complete
+    # matrix to finish. Windows needs extra time for cold fixture compilation.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || matrix.mode == 'race' && 45 || 35 }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
@@ -68,7 +66,7 @@ jobs:
           PARITY_EXECUTION_ORDER: ${{ matrix.mode == 'race' && 'mini-first' || 'sdk-first' }}
           PARITY_REPORT_NAME: ${{ matrix.mode == 'race' && 'parity-race' || 'parity' }}
           PARITY_TEST_MODE: ${{ matrix.mode }}
-          GO_TEST_TIMEOUT: ${{ matrix.os == 'windows-latest' && '40m' || '20m' }}
+          GO_TEST_TIMEOUT: ${{ matrix.os == 'windows-latest' && '55m' || matrix.mode == 'race' && '40m' || '30m' }}
         run: |
           mkdir -p artifacts
           set -o pipefail

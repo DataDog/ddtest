@@ -52,3 +52,14 @@ func StartTime(v time.Time) StartSpanOption { return minitracer.StartTime(v) }
 
 // FinishTime sets the event's end timestamp.
 func FinishTime(v time.Time) FinishOption { return minitracer.FinishTime(v) }
+
+// F adapts testing.F for manual fuzz instrumentation. With ddtest's automatic
+// hooks, the adapter delegates to them and does not produce duplicate events.
+type F = gotesting.F
+
+// GetFuzz preserves the original testing.F and the fuzz callback's exact type.
+func GetFuzz(f *testing.F) *F { return gotesting.GetFuzz(f) }
+
+// RunM instruments a TestMain entrypoint without the CLI. Tests retain Go's
+// exit code; ddtest's automatic M.Run hook owns instrumented builds.
+func RunM(m *testing.M) int { return gotesting.RunM(m) }

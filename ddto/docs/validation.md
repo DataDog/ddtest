@@ -64,7 +64,8 @@ read directly from the installed SDK. The SDK backend reads the original module;
 | Test-result cache | Second package-mode run is cached; count=1 runs again |
 | Existing overlay | Both command flag and GOFLAGS preserve an intentional test failure |
 | Race and atomic coverage | Actual instrumented fixture builds/runs; SDK events compared to Orchestrion |
-| Benchmark, Example and fuzz seed | Native execution and reference SDK event semantics; one-iteration campaign in the parity inventory |
+| Benchmarks | Native execution and reference SDK event semantics |
+| Fuzz and executable Examples | Exact SDK PR #5442 workloads/assertions, 64 event comparisons plus 14 atomic coverage combinations; normal/deferred and goleak |
 | Process retries | First attempt fails, second passes; reference events and process exit |
 | EFD, ITR, disabled, quarantine, attempt-to-fix | Real SDK requests against loopback policy responses and reference event equivalence |
 | Panic, Goexit and timeout | Abnormal exit and diagnostic marker; enabled/disabled reference event equivalence |
@@ -95,8 +96,8 @@ The AST transformer validates hook presence and ambiguity and selected shape
 constraints; future Go source/ABI changes still require a new compatibility run.
 The [compatibility workflow](../.github/workflows/compatibility.yml) defines the
 supported test matrix. Adding a Go or SDK version requires exercising its private
-hooks and runtime behavior. Full fuzz campaigns and arbitrary downstream modules
-need separate validation.
+hooks and runtime behavior. Long-running campaigns and arbitrary downstream modules need separate validation.
+[Fuzz and Examples](fuzz-examples.md) records the bounded campaign and feature cases.
 
 ## Mini runtime contracts
 

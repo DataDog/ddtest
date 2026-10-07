@@ -226,7 +226,11 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		}
 		files[path] = src
 	}
-	rewritten, e := instrument.Transform(files)
+	transform := instrument.Transform
+	if runtime == Mini {
+		transform = instrument.TransformWithFuzz
+	}
+	rewritten, e := transform(files)
 	if e != nil {
 		return plan, e
 	}

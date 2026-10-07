@@ -70,7 +70,7 @@ func parityCases() []parityCase {
 		{Name: "multiple-suites", Features: []string{"hierarchy", "source"}, Args: run("Test(Pass|ParityOtherSuite)"), MinTests: 2},
 		{Name: "empty-selection", Features: []string{"lifecycle", "empty"}, Args: run("DoesNotExist")},
 		{Name: "list", Features: []string{"lifecycle", "list"}, Args: []string{"-test.list=TestPass"}},
-		{Name: "examples-fuzz-seeds", Features: []string{"examples", "fuzz-seeds"}, Args: run("(ExampleAdd|FuzzAdd)")},
+		// Fuzz and Examples are covered against SDK PR #5442 in TestFuzzExampleParity.
 		{Name: "settings-unavailable", Features: []string{"settings", "failure"}, Args: run("TestPass"), Policy: policySettings{SettingsFailure: true}, MinTests: 1},
 		{Name: "tags-version-ci", Features: []string{"metadata", "version", "ci"}, Args: run("TestPass"), Env: []string{"DD_VERSION=parity-1", "DD_TAGS=team:ci,custom:retained", "GITHUB_ACTIONS=true", "GITHUB_JOB=unit-tests", "GITHUB_REPOSITORY=tonyredondo/dd-ci-testing-poc", "GITHUB_RUN_ID=123"}, MinTests: 1},
 		{Name: "coverage-pass-skip", Features: []string{"coverage", "skip"}, Args: run("Test(Pass|Skip)"), Policy: policySettings{Coverage: true}, Coverage: true, MinTests: 2},
@@ -435,10 +435,7 @@ func writeParityReport(t *testing.T, results []parityResult, block *parityTiming
 	if strings.Contains(t.Name(), "DeferredDelivery") {
 		path = strings.TrimSuffix(path, filepath.Ext(path)) + "-deferred.json"
 	}
-	schema := 2
-	if block != nil {
-		schema = 3
-	}
+	schema := 4
 	data, err := json.MarshalIndent(struct {
 		SchemaVersion      int            `json:"schema_version"`
 		SDKVersion         string         `json:"sdk_version"`
@@ -539,7 +536,7 @@ func runCIVisibilityParityMatrix(t *testing.T, deferred bool) {
 	if deferred {
 		selected := map[string]bool{
 			"pass": true, "nested-cleanup-context": true, "parallel-count-shuffle": true,
-			"empty-selection": true, "list": true, "examples-fuzz-seeds": true,
+			"empty-selection": true, "list": true,
 			"error-Fatal": true, "coverage-parallel-shuffle": true, "coverage-report": true,
 			"logs-atr": true, "atr-coverage-in_process": true, "atr-coverage-process": true,
 			"atr-parallel-in_process": true, "atr-parallel-process": true,

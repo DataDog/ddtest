@@ -71,3 +71,9 @@ func declaresParallelStop(file *ast.File) bool {
 	}
 	return false
 }
+
+// FuzzHook preserves the callback's concrete type through the native F.Fuzz hook.
+const FuzzHook = `
+//go:linkname __dd_civisibility_instrumentTestingFuzzFunc github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.instrumentTestingFuzzFunc
+func __dd_civisibility_instrumentTestingFuzzFunc(any) any
+`

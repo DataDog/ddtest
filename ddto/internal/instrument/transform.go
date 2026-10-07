@@ -27,6 +27,16 @@ type TestingSources struct {
 // Transform validates every required hook before returning rewritten sources.
 // Logical filenames are retained in line directives for diagnostics and stacks.
 func Transform(files map[string][]byte) (TestingSources, error) {
+	return transform(files, false)
+}
+
+// TransformWithFuzz adds the F.Fuzz hook supported by the native runtime.
+// The older frozen SDK reference retains its own hook set.
+func TransformWithFuzz(files map[string][]byte) (TestingSources, error) {
+	return transform(files, true)
+}
+
+func transform(files map[string][]byte, fuzz bool) (TestingSources, error) {
 	names := make([]string, 0, len(files))
 	for name := range files {
 		names = append(names, name)
@@ -109,6 +119,15 @@ defer func() {
 					return TestingSources{}, err
 				}
 				prefix = f + " = __dd_civisibility_instrumentTestingTFunc(" + f + ")"
+			case "F.Fuzz":
+				if !fuzz {
+					continue
+				}
+				f, err := arg(0)
+				if err != nil {
+					return TestingSources{}, err
+				}
+				prefix = f + " = __dd_civisibility_instrumentTestingFuzzFunc(" + f + ")"
 			case "B.Run":
 				n, err := arg(0)
 				if err != nil {
@@ -191,6 +210,9 @@ defer func() {
 		output[name] = buf.Bytes()
 	}
 	required := []string{"M.Run", "T.Run", "B.Run", "common.Fail", "common.FailNow", "common.SkipNow", "T.Parallel", "common.Error", "common.Fatal", "common.Skip", "common.Errorf", "common.Fatalf", "common.Skipf"}
+	if fuzz {
+		required = append(required, "F.Fuzz")
+	}
 	for _, key := range required {
 		if counts[key] == 0 {
 			return TestingSources{}, fmt.Errorf("missing testing hook %s", key)

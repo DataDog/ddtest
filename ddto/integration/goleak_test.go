@@ -16,9 +16,11 @@ func TestMiniGoleakIntegration(t *testing.T) {
 	source := `package fixture_test
 import (
  "context"
+ "fmt"
  "io"
  "net/http"
  "os"
+ "strings"
  "testing"
  "go.uber.org/goleak"
  "github.com/tonyredondo/dd-ci-testing-poc/testopt"
@@ -57,6 +59,32 @@ func TestUserHTTPLeak(t *testing.T) {
  io.Copy(io.Discard,response.Body);response.Body.Close()
  t.Cleanup(http.DefaultClient.CloseIdleConnections)
  goleak.VerifyNone(t)
+}
+func FuzzGoleakClean(f *testing.F) {
+ f.Add("a");f.Add("b")
+ f.Fuzz(func(t *testing.T,value string){goleak.VerifyNone(t)})
+}
+func FuzzGoleakUserLeak(f *testing.F) {
+ f.Add("leak")
+ f.Fuzz(func(t *testing.T,value string){
+  ch:=make(chan struct{}); t.Cleanup(func(){close(ch)})
+  go func(){<-ch}()
+  goleak.VerifyNone(t)
+ })
+}
+func GoleakClean() {}
+func GoleakUserLeak() {}
+func ExampleGoleakClean() {
+ if err:=goleak.Find();err!=nil {panic(err)}
+ fmt.Println("clean")
+ // Output: clean
+}
+func ExampleGoleakUserLeak() {
+ ch:=make(chan struct{});defer close(ch)
+ go func(){<-ch}()
+ if err:=goleak.Find();err==nil || !strings.Contains(err.Error(),"ExampleGoleakUserLeak") {panic("user leak hidden")}
+ fmt.Println("detected")
+ // Output: detected
 }
 func TestParallelA(t *testing.T) {t.Parallel()}
 func TestParallelB(t *testing.T) {t.Parallel()}
@@ -100,12 +128,23 @@ func TestParallelB(t *testing.T) {t.Parallel()}
 			for _, tc := range []struct {
 				run, marker string
 				want        int
+				managed     bool
 			}{
-				{"Test(Clean|IgnoreCurrent|CallerOptions|ExternalHelper|InvalidOptions|AfterDelivery|ParallelA|ParallelB)", "", 0},
-				{"TestUserLeak", "TestUserLeak.func", 1},
-				{"TestUserHTTPLeak", "persistConn", 1},
+				{"Test(Clean|IgnoreCurrent|CallerOptions|ExternalHelper|InvalidOptions|AfterDelivery|ParallelA|ParallelB)", "", 0, false},
+				{"TestUserLeak", "TestUserLeak.func", 1, false},
+				{"TestUserHTTPLeak", "persistConn", 1, false},
+				{"FuzzGoleakClean", "", 0, false},
+				{"FuzzGoleakUserLeak", "FuzzGoleakUserLeak.func", 1, false},
+				{"ExampleGoleak(Clean|UserLeak)", "", 0, false},
+				{"ExampleGoleakClean", "", 0, true},
+				{"ExampleGoleakUserLeak", "", 0, true},
+				{"FuzzGoleakClean", "", 0, true},
 			} {
 				receiver := &parityReceiver{policy: policySettings{Coverage: true}, side: map[string][][]byte{}, requests: map[string]int{}}
+				if tc.managed {
+					receiver.policy.Quarantined = true
+					receiver.policy.ManagementTarget = tc.run
+				}
 				server := httptest.NewServer(http.HandlerFunc(receiver.handler))
 				env := testEnv("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=false", "DD_TRACE_AGENT_URL="+server.URL, "DD_INSTRUMENTATION_TELEMETRY_ENABLED=true", "DD_CIVISIBILITY_CODE_COVERAGE_ENABLED=true", "DD_CIVISIBILITY_DEFERRED_DELIVERY="+deferred)
 				out, stderr, code := command(t, dir, env, bin, "-test.v", "-test.run=^"+tc.run+"$", "-test.timeout=20s")

@@ -57,6 +57,40 @@ class SourceAuditTests(unittest.TestCase):
         original.unlink()
         self.assertEqual(upstream.compare_source(self.manifest, source), [("missing", "internal/source.go")])
 
+    def test_feature_port_keeps_base_and_selects_exact_revision(self):
+        entry = self.manifest["files"][1]
+        entry.update(source_path="internal/source.go", source_sha256="b" * 64)
+        self.manifest["feature_ports"] = [{
+            "name": "feature", "commit": "c" * 40,
+            "files": [{"path": "source.go", "source_path": "internal/source.go", "source_sha256": "d" * 64}],
+        }]
+        self.assertEqual(upstream.verify_library(self.root, self.manifest), [])
+        self.assertEqual(upstream.source_entries(self.manifest)[0]["sha256"], "b" * 64)
+        self.assertEqual(upstream.source_entries(self.manifest, "c" * 40)[0]["sha256"], "d" * 64)
+        self.manifest["feature_ports"][0]["commit"] = "main"
+        self.assertIn("feature port needs an exact commit", upstream.verify_library(self.root, self.manifest))
+
+    def test_feature_patch_uses_original_paths_and_requires_recorded_hash(self):
+        source = self.root / "feature"
+        (source / "internal").mkdir(parents=True)
+        raw = b"package upstream_feature\n"
+        (source / "internal/source.go").write_bytes(raw)
+        self.manifest["feature_ports"] = [{"name": "feature", "commit": "c" * 40, "files": [{
+            "path": "source.go", "source_path": "internal/source.go", "source_sha256": hashlib.sha256(raw).hexdigest(),
+        }]}]
+        patch = upstream.local_patch(self.root, self.manifest, source, "c" * 40)
+        self.assertIn("--- upstream/internal/source.go", patch)
+        self.assertIn("+++ local/source.go", patch)
+        (source / "internal/source.go").write_text("package drift\n")
+        with self.assertRaises(ValueError):
+            upstream.local_patch(self.root, self.manifest, source, "c" * 40)
+
+    def test_feature_port_rejects_untracked_local_source_and_missing_original_hash(self):
+        self.manifest["feature_ports"] = [{"commit": "c" * 40, "files": [{"path": "missing.go", "source_path": "internal/missing.go"}]}]
+        errors = upstream.verify_library(self.root, self.manifest)
+        self.assertIn("feature port file absent from manifest: missing.go", errors)
+        self.assertIn("feature port needs a source hash: missing.go", errors)
+
 
 if __name__ == "__main__":
     unittest.main()

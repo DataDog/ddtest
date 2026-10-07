@@ -365,17 +365,16 @@ log worker functions, and Mini's background and checkpoint test-cycle senders, p
 filters without ignoring `net/http` or a user goroutine snapshot. Preserve worker names together with
 `internal/instrument/goleak.go` when moving these functions.
 
-Checks: `TestDeferredDeliveryParityMatrix` (17 policy combinations),
+Checks: `TestDeferredDeliveryParityMatrix` (16 policy combinations),
 `TestDeferredDeliveryTestifyParity` (seven suite combinations),
 `TestMiniGoleakIntegration` (normal/deferred, covered library, race, external
 helper and real leak controls), coordinator/transport tests and `-race`.
-The error-stack comparator maps the test wrapper's line 840 to SDK line 838
-and the two subtest calls at `instrumentation_orchestrion.go:321/327` to SDK
-lines 319/325. Stack mappings require the exact function and location, including
-inside Testify's embedded panic stack. Its `Error Trace` section lists only
-files and lines; those entries use the exact source location. Application
-frames and other library lines remain strict. A source move needs an explicit
-mapping backed by tests; preserve location checks for every other frame.
+The error-stack comparator maps exact internal function/line pairs for the test
+wrapper, subtest calls and retry helpers. The complete mapping is recorded in
+[the comparison contract](../../../docs/ci-parity.md#comparison-contract).
+Testify's embedded panic stack uses the same mappings; its `Error Trace` lists
+only file/line locations. Application frames and other library lines remain
+strict. A source move needs an explicit mapping backed by negative tests.
 
 ## Shared CI string tags
 
@@ -476,3 +475,31 @@ classification and process-retry metadata.
 `log/log.go` labels native runtime diagnostics `TestOptimization Tracer`, using
 the version owned by `internal/version`. The original SDK's logger is unchanged.
 The native version is also used in event metadata and CI telemetry.
+
+## Fuzz and executable Examples
+
+The feature port is SDK PR #5442 at
+`7b32e1812cb5c1fb807a63cc5042750f3d3cd672`; it has its own source hashes,
+separate from the general SDK base. `testingF.go`, `testingExample.go` and
+`fuzz_events.go` retain the native lifecycle and original test assertions.
+`instrumentation.go`, `instrumentation_orchestrion.go` and `testing.go` merge
+that delta while preserving this port's coverage-aware shutdown.
+
+Tracer flushes route to `minitracer.Flush`. F roots hold deferred admission
+through seeds and cleanups; examples hold it through output capture and event
+finalization. The selective goleak wrapper names the owned fuzz waiter, both
+example readers and the managed-example waiter. User leak negative cases must
+remain failures. No sender/worker filters are widened to net/http or all testing.
+
+`fuzz_offsets.go` joins the existing one-time testing layout discovery. It
+validates common type/offset, F's own scheduler pointer and fuzzCalled bool.
+`nativeResult` reads cached failure/skip fields under common.mu. Only the
+post-M.Run drain reads duration; fatal drains use the captured finish time.
+This removes the per-event private-field reflection and common wrapper allocation.
+Six repeated result-collection benchmarks are recorded in `docs/results`.
+
+Checks: original F/Example/queue/lifecycle tests; synthetic offset/type drift;
+`TestFuzzFatalResultDoesNotReadActiveDuration` with race; the exact PR's 16
+scenarios through manual/automatic entrypoints and both delivery modes;
+atomic coverage controls and negative goleak fixtures. The feature guide in
+`docs/fuzz-examples.md` links all provenance and reproduction commands.
