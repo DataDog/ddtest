@@ -223,46 +223,90 @@ func (v *Vitest) RunTests(ctx context.Context, testFiles []string, envMap map[st
 	return v.executor.Run(ctx, command, args, adapterEnv)
 }
 
+// prepareVitestExactFiles writes a worker's adapter and assignment, then builds
+// the environment that loads them. The caller must remove adapterDir after the run.
 func prepareVitestExactFiles(baseEnv map[string]string, testFiles []string) (string, map[string]string, error) {
-	selectedFiles := make([]string, len(testFiles))
-	for i, file := range testFiles {
-		absolute, err := filepath.Abs(file)
-		if err != nil {
-			return "", nil, fmt.Errorf("failed to resolve Vitest test file: %w", err)
-		}
-		selectedFiles[i] = absolute
-	}
-	encodedFiles, err := json.Marshal(selectedFiles)
+	assignedFilesJSON, err := encodeVitestAssignedFiles(testFiles)
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to encode Vitest test files: %w", err)
+		return "", nil, err
 	}
+
 	adapterDir, err := os.MkdirTemp("", "ddtest-vitest-run-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create Vitest execution adapter: %w", err)
 	}
-	adapterPath := filepath.Join(adapterDir, "exact-files.mjs")
-	filesPath := filepath.Join(adapterDir, "files.json")
-	for path, contents := range map[string][]byte{
-		adapterPath: []byte(vitestExactFilesScript),
-		filepath.Join(adapterDir, "vitest_exact_files_modern.mjs"): []byte(vitestExactFilesModernScript),
-		filepath.Join(adapterDir, "vitest_exact_files_legacy.mjs"): []byte(vitestExactFilesLegacyScript),
-		filesPath: encodedFiles,
-	} {
-		if err := os.WriteFile(path, contents, 0600); err != nil {
-			_ = os.RemoveAll(adapterDir)
-			return "", nil, fmt.Errorf("failed to write Vitest execution adapter: %w", err)
+	if err := writeVitestExecutionAdapter(adapterDir, assignedFilesJSON); err != nil {
+		_ = os.RemoveAll(adapterDir)
+		return "", nil, err
+	}
+
+	return adapterDir, vitestExactFilesEnv(baseEnv, adapterDir), nil
+}
+
+func encodeVitestAssignedFiles(testFiles []string) ([]byte, error) {
+	// Resolve paths in ddtest's working directory before any command wrapper starts.
+	// The Node adapter resolves symlinks when comparing these paths with Vitest's specs.
+	absoluteFiles := make([]string, len(testFiles))
+	for i, file := range testFiles {
+		absolute, err := filepath.Abs(file)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve Vitest test file: %w", err)
+		}
+		absoluteFiles[i] = absolute
+	}
+	encodedFiles, err := json.Marshal(absoluteFiles)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode Vitest test files: %w", err)
+	}
+	return encodedFiles, nil
+}
+
+func writeVitestExecutionAdapter(adapterDir string, assignedFilesJSON []byte) error {
+	// Keep the modules together so the entrypoint's relative imports work.
+	// JSON keeps the assignment independent of command-line quoting.
+	files := []struct {
+		name     string
+		contents []byte
+	}{
+		{"exact-files.mjs", []byte(vitestExactFilesScript)},
+		{"vitest_exact_files_modern.mjs", []byte(vitestExactFilesModernScript)},
+		{"vitest_exact_files_legacy.mjs", []byte(vitestExactFilesLegacyScript)},
+		{"files.json", assignedFilesJSON},
+	}
+	for _, file := range files {
+		path := filepath.Join(adapterDir, file.name)
+		if err := os.WriteFile(path, file.contents, 0600); err != nil {
+			return fmt.Errorf("failed to write Vitest execution adapter file %q: %w", file.name, err)
 		}
 	}
+	return nil
+}
+
+func vitestExactFilesEnv(baseEnv map[string]string, adapterDir string) map[string]string {
 	adapterEnv := make(map[string]string, len(baseEnv)+2)
 	maps.Copy(adapterEnv, baseEnv)
-	nodeOptions, ok := adapterEnv[nodeOptionsEnvVar]
+
+	// Preserve worker options, including tracing hooks. Inherit the process options
+	// only when the worker hasn't set NODE_OPTIONS (an explicit empty value wins).
+	nodeOptions, ok := baseEnv[nodeOptionsEnvVar]
 	if !ok {
 		nodeOptions = os.Getenv(nodeOptionsEnvVar)
 	}
-	importURL := &url.URL{Scheme: "file", Path: "/" + strings.TrimPrefix(filepath.ToSlash(adapterPath), "/")}
-	adapterEnv[nodeOptionsEnvVar] = strings.TrimSpace(nodeOptions + " --import " + strconv.Quote(importURL.String()))
-	adapterEnv[vitestSelectedFilesEnv] = filesPath
-	return adapterDir, adapterEnv, nil
+
+	// NODE_OPTIONS also reaches Vitest launched through npx/pnpm. The entrypoint
+	// activates only in the Vitest process and reads its assignment from files.json.
+	adapterPath := filepath.Join(adapterDir, "exact-files.mjs")
+	// File URLs need forward slashes and a leading slash, including on Windows.
+	importPath := filepath.ToSlash(adapterPath)
+	if !strings.HasPrefix(importPath, "/") {
+		importPath = "/" + importPath
+	}
+	importURL := url.URL{Scheme: "file", Path: importPath}
+	// Quote the URL so NODE_OPTIONS also works when the temp path contains spaces.
+	importOption := "--import " + strconv.Quote(importURL.String())
+	adapterEnv[nodeOptionsEnvVar] = strings.TrimSpace(nodeOptions + " " + importOption)
+	adapterEnv[vitestSelectedFilesEnv] = filepath.Join(adapterDir, "files.json")
+	return adapterEnv
 }
 
 func (v *Vitest) discoveryEnv() map[string]string {
