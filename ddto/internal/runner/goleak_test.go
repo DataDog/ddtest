@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -83,5 +85,105 @@ func TestGoleakToolDispatch(t *testing.T) {
 	}
 	if ToolNeedsPlan("testify-cover", args, "go.uber.org/goleak") {
 		t.Fatal("goleak enabled without detection")
+	}
+}
+
+const goleakFindSource = "package goleak\ntype Option interface{}\nfunc Find(options ...Option) error { return nil }\n"
+const goleakForkVersion = "v0.0.0-20260702071827-065a2facff42"
+
+func goleakPackage(t *testing.T, version, source string) *goPackage {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "leaks.go"), []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	pkg := &goPackage{Dir: dir, ImportPath: "go.uber.org/goleak", GoFiles: []string{"leaks.go"}}
+	pkg.Module = &struct {
+		Path, Version string
+		Main          bool
+		Replace       *struct{ Path, Dir, Version string }
+	}{Path: "go.uber.org/goleak", Version: version}
+	return pkg
+}
+
+func TestGoleakForkReplacement(t *testing.T) {
+	pkg := goleakPackage(t, "v1.3.0", goleakFindSource)
+	metadata := `{"Path":"go.uber.org/goleak","Version":"v1.3.0","Replace":{"Path":"github.com/tonyredondo/goleak","Version":"v0.0.0-20260702071827-065a2facff42"}}`
+	if err := json.Unmarshal([]byte(metadata), &pkg.Module); err != nil {
+		t.Fatal(err)
+	}
+	entry, warning, err := prepareGoleak(pkg, nil, t.TempDir())
+	if err != nil || entry == nil || warning != "" {
+		t.Fatalf("fork not instrumented: entry=%v warning=%q err=%v", entry, warning, err)
+	}
+}
+
+func TestGoleakReplacementVersionPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, required, path, version string
+		want                          bool
+	}{
+		{"fork independent pseudo-version", "v1.3.0", "github.com/tonyredondo/goleak", goleakForkVersion, true},
+		{"other fork independent version", "v1.3.0", "example.com/goleak", "v0.1.0", true},
+		{"fork independent major", "v1.3.0", "example.com/goleak/v2", "v2.0.0", true},
+		{"fork original too old", "v1.2.1", "example.com/goleak", "v1.3.0", false},
+		{"fork unknown original", "", "example.com/goleak", "v1.3.0", false},
+		{"fork unsupported original major", "v2.0.0", "example.com/goleak", "v1.3.0", false},
+		{"same module downgrade", "v1.3.0", "go.uber.org/goleak", "v1.2.1", false},
+		{"same module upgrade", "v1.2.1", "go.uber.org/goleak", "v1.3.0", true},
+		{"local replacement", "v1.3.0", "../goleak", "", true},
+		{"local old original", "v1.2.1", "../goleak", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pkg := goleakPackage(t, tc.required, goleakFindSource)
+			pkg.Module.Replace = &struct{ Path, Dir, Version string }{Path: tc.path, Version: tc.version}
+			entry, warning, err := prepareGoleak(pkg, nil, t.TempDir())
+			if err != nil || (entry != nil) != tc.want || (warning == "") != tc.want {
+				t.Fatalf("want supported=%t: entry=%v warning=%q err=%v", tc.want, entry, warning, err)
+			}
+		})
+	}
+}
+
+func TestGoleakForkReplacementGuards(t *testing.T) {
+	const incompatible = "package goleak\ntype Option interface{}\nfunc Find(options []Option) error {return nil}\n"
+	for _, tc := range []struct {
+		name, source string
+		overlay      bool
+	}{
+		{"changed API", incompatible, false},
+		{"missing entry", "package goleak\n", false},
+		{"overlay changes API", incompatible, true},
+		{"overlay removes entry", "package goleak\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := tc.source
+			if tc.overlay {
+				source = goleakFindSource
+			}
+			pkg := goleakPackage(t, "v1.3.0", source)
+			pkg.Module.Replace = &struct{ Path, Dir, Version string }{Path: "github.com/tonyredondo/goleak", Version: goleakForkVersion}
+			var replacements map[string]string
+			if tc.overlay {
+				backing := filepath.Join(t.TempDir(), "leaks.go")
+				if err := os.WriteFile(backing, []byte(tc.source), 0600); err != nil {
+					t.Fatal(err)
+				}
+				replacements = map[string]string{filepath.Join(pkg.Dir, "leaks.go"): backing}
+			}
+			entry, warning, err := prepareGoleak(pkg, replacements, t.TempDir())
+			if err != nil || entry != nil || !strings.Contains(warning, "unsupported library API") {
+				t.Fatalf("API validation bypassed: entry=%v warning=%q err=%v", entry, warning, err)
+			}
+			if !strings.Contains(warning, "goleak v1.3.0 is not instrumented") || !strings.Contains(warning, "replacement github.com/tonyredondo/goleak "+goleakForkVersion) {
+				t.Fatalf("warning omits replacement identity: %s", warning)
+			}
+		})
+	}
+	pkg := goleakPackage(t, "v1.3.0", goleakFindSource)
+	pkg.Module.Replace = &struct{ Path, Dir, Version string }{Path: "github.com/tonyredondo/goleak", Version: goleakForkVersion}
+	pkg.GoFiles = []string{"missing.go"}
+	if _, _, err := prepareGoleak(pkg, nil, t.TempDir()); err == nil {
+		t.Fatal("unreadable fork source was ignored")
 	}
 }

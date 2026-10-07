@@ -117,9 +117,30 @@ Calling `VerifyNone`, `VerifyTestMain` or a helper in another module reaches tha
 same entry. An unused requirement in `go.mod` does not activate the integration.
 The minimum supported version is v1.3.0, the first with `IgnoreAnyFunction`;
 v2 needs a separate review. Preparation checks the selected version and entry
-signature before a warm cache can skip compilation. The current version fixture
-uses v1.3.0. An unsupported version or entry produces a warning and the build
-continues without the integration; its leak checks can then report CI workers.
+signature before a warm cache can skip compilation. An unsupported version or
+entry produces a warning and the build continues without the integration; its
+leak checks can then report CI workers.
+
+For a replacement with a different module path, the minimum-version check uses
+`go.uber.org/goleak`'s effective original version from `go list`. A fork can have
+an independent version scheme. For a versioned replacement within
+`go.uber.org/goleak`, the replacement version applies; a downgrade below v1.3.0
+still warns. A local replacement uses the original version. This is the same
+policy used for Testify.
+
+For example, this replacement is supported:
+
+```go
+require go.uber.org/goleak v1.3.0
+
+replace go.uber.org/goleak => github.com/tonyredondo/goleak v0.0.0-20260702071827-065a2facff42
+```
+
+The original version is the client's compatibility contract. Preparation still
+checks `Find(options ...Option) error` in the actual replacement sources,
+including overlays. An incompatible entry warns with both the original version
+and the replacement identity. The compiled-source fingerprint keys Go's cache;
+using a fork adds no new query or runtime dependency.
 
 ```mermaid
 flowchart TD
@@ -250,6 +271,11 @@ The SDK-port changes are recorded in
 `TestMiniGoleakIntegration` runs ordinary/deferred delivery, external helpers,
 invalid options, parallel TestMain, explicit delivery, race and library coverage,
 with per-test coverage enabled by the local settings endpoint.
+`TestMiniGoleakForkReplacement` runs the same cases against the replacement above
+with `GODEBUG=tracebackancestors=10`, including detection of user goroutines and
+HTTP connections. Unit tests cover other fork version schemes, upstream
+upgrades/downgrades, local replacements and incompatible entries or overlays.
+Both integration tests run in the cross-platform compatibility workflow.
 `TestGoleakCacheAndWarmVersionGuard` checks unchanged cache reuse, a changed
 goleak source with unrelated standard packages still cached, and rejection of an
 unsupported version with unchanged cached source.

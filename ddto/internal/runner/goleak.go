@@ -18,13 +18,7 @@ func prepareGoleak(pkg *goPackage, replacements map[string]string, temp string) 
 	if pkg == nil {
 		return nil, "", nil
 	}
-	version := ""
-	if pkg.Module != nil {
-		version = pkg.Module.Version
-		if pkg.Module.Replace != nil && pkg.Module.Replace.Version != "" {
-			version = pkg.Module.Replace.Version
-		}
-	}
+	version := libraryVersion(pkg)
 	reason := "requires v1.3.0 or a later v1 release"
 	entry, err := (*LibraryEntry)(nil), error(nil)
 	if supportedGoleakVersion(version) {
@@ -34,8 +28,14 @@ func prepareGoleak(pkg *goPackage, replacements map[string]string, temp string) 
 		}
 	}
 	if entry == nil && err == nil {
-		if version == "" {
-			version = "(unknown version)"
+		if pkg.Module != nil && pkg.Module.Replace != nil {
+			replacement := pkg.Module.Replace
+			if replacement.Path != "" && replacement.Path != pkg.Module.Path {
+				reason += "; replacement " + replacement.Path
+				if replacement.Version != "" {
+					reason += " " + replacement.Version
+				}
+			}
 		}
 		return nil, fmt.Sprintf("goleak %s is not instrumented (%s); its leak checks run without CI goroutine filters and can report CI workers", version, reason), nil
 	}

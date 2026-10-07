@@ -46,7 +46,7 @@ func prepareTestifyPackage(suite *goPackage, replacements map[string]string, run
 				}
 			}
 		}
-		return nil, fmt.Sprintf("Testify %s is not instrumented (%s); its suites run as ordinary tests without Testify suite metadata", testifyVersion(suite), reason), nil
+		return nil, fmt.Sprintf("Testify %s is not instrumented (%s); its suites run as ordinary tests without Testify suite metadata", libraryVersion(suite), reason), nil
 	}
 	return entry, "", err
 }
@@ -56,29 +56,8 @@ type unsupportedLibrary struct{ message string }
 
 func (u unsupportedLibrary) Error() string { return u.message }
 
-// testifyVersion selects the upstream version used for compatibility checks.
-// Forks have independent version schemes, so use the original module's effective
-// version from go list. A versioned replacement within the same module instead
-// selects that upstream release; it can downgrade below our supported minimum.
-// Local replacements use the original version. All selected sources still pass
-// API validation before the build can use its cache.
-func testifyVersion(suite *goPackage) string {
-	if suite.Module == nil {
-		return "(unknown version)"
-	}
-	version := suite.Module.Version
-	if replacement := suite.Module.Replace; replacement != nil && replacement.Version != "" &&
-		(replacement.Path == "" || replacement.Path == suite.Module.Path) {
-		version = replacement.Version
-	}
-	if version == "" {
-		return "(unknown version)"
-	}
-	return version
-}
-
 func prepareTestifyEntry(suite *goPackage, replacements map[string]string, runtime Runtime, temp string) (*LibraryEntry, error) {
-	if !instrument.SupportsTestifyVersion(testifyVersion(suite)) {
+	if !instrument.SupportsTestifyVersion(libraryVersion(suite)) {
 		return nil, unsupportedLibrary{fmt.Sprintf("requires %s or a later v1 release", minimumTestifyVersion)}
 	}
 	files := map[string][]byte{}

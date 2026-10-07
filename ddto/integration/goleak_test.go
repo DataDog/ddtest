@@ -12,6 +12,23 @@ import (
 // Goleak belongs to this temporary consumer, never to Mini's runtime graph.
 // Its module-cache sources exercise the selective compiler entry, not an overlay.
 func TestMiniGoleakIntegration(t *testing.T) {
+	testMiniGoleakIntegration(t, "")
+}
+
+func TestMiniGoleakForkReplacement(t *testing.T) {
+	testMiniGoleakIntegration(t, "github.com/tonyredondo/goleak@v0.0.0-20260702071827-065a2facff42")
+}
+
+func testMiniGoleakIntegration(t *testing.T, replacement string) {
+	t.Helper()
+	envForGoleak := func(extra ...string) []string {
+		if replacement != "" {
+			// The client's CI enables ancestor stacks; this fork fixes their
+			// parsing without changing the declared upstream API.
+			extra = append(extra, "GODEBUG=tracebackancestors=10")
+		}
+		return testEnv(extra...)
+	}
 	dir, driver := prepareMiniFixture(t)
 	source := `package fixture_test
 import (
@@ -104,7 +121,13 @@ func TestParallelB(t *testing.T) {t.Parallel()}
 	for _, args := range [][]string{
 		{"mod", "edit", "-require=go.uber.org/goleak@v1.3.0", "-require=example.com/leakhelper@v0.0.0", "-replace=example.com/leakhelper=" + helper},
 	} {
-		out, stderr, code := command(t, dir, testEnv(), "go", args...)
+		out, stderr, code := command(t, dir, envForGoleak(), "go", args...)
+		if code != 0 {
+			t.Fatal(out, stderr)
+		}
+	}
+	if replacement != "" {
+		out, stderr, code := command(t, dir, envForGoleak(), "go", "mod", "edit", "-replace=go.uber.org/goleak="+replacement)
 		if code != 0 {
 			t.Fatal(out, stderr)
 		}
@@ -115,9 +138,12 @@ func TestParallelB(t *testing.T) {t.Parallel()}
 	args := append([]string{"test", "--runtime=mini", "-x", "-c", "-o", bin}, flags...)
 	args = append(args, ".")
 	for i := range 2 {
-		out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, args...)
+		out, stderr, code := command(t, dir, envForGoleak("DD_CIVISIBILITY_ENABLED=false"), driver, args...)
 		if code != 0 {
 			t.Fatalf("compile %d: %s %s", i, out, stderr)
+		}
+		if strings.Contains(stderr, "goleak") && strings.Contains(stderr, "is not instrumented") {
+			t.Fatalf("goleak integration was skipped: %s", stderr)
 		}
 		if i == 1 && len(compilerTraceLines(stderr)) != 0 {
 			t.Fatal("unchanged goleak build did not reuse Go's cache", stderr)
@@ -146,7 +172,7 @@ func TestParallelB(t *testing.T) {t.Parallel()}
 					receiver.policy.ManagementTarget = tc.run
 				}
 				server := httptest.NewServer(http.HandlerFunc(receiver.handler))
-				env := testEnv("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=false", "DD_TRACE_AGENT_URL="+server.URL, "DD_INSTRUMENTATION_TELEMETRY_ENABLED=true", "DD_CIVISIBILITY_CODE_COVERAGE_ENABLED=true", "DD_CIVISIBILITY_DEFERRED_DELIVERY="+deferred)
+				env := envForGoleak("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=false", "DD_TRACE_AGENT_URL="+server.URL, "DD_INSTRUMENTATION_TELEMETRY_ENABLED=true", "DD_CIVISIBILITY_CODE_COVERAGE_ENABLED=true", "DD_CIVISIBILITY_DEFERRED_DELIVERY="+deferred)
 				out, stderr, code := command(t, dir, env, bin, "-test.v", "-test.run=^"+tc.run+"$", "-test.timeout=20s")
 				server.Close()
 				if code != tc.want || tc.marker != "" && !strings.Contains(out+stderr, tc.marker) {

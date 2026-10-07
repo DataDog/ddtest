@@ -81,3 +81,24 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 	}
 	return selected, nil
 }
+
+// libraryVersion selects the upstream version used for compatibility checks.
+// Forks have independent version schemes, so use the original module's effective
+// version from go list. A versioned replacement within the same module instead
+// selects that upstream release; it can downgrade below our supported minimum.
+// Local replacements use the original version. All selected sources still pass
+// API validation before the build can use its cache.
+func libraryVersion(pkg *goPackage) string {
+	if pkg.Module == nil {
+		return "(unknown version)"
+	}
+	version := pkg.Module.Version
+	if replacement := pkg.Module.Replace; replacement != nil && replacement.Version != "" &&
+		(replacement.Path == "" || replacement.Path == pkg.Module.Path) {
+		version = replacement.Version
+	}
+	if version == "" {
+		return "(unknown version)"
+	}
+	return version
+}
