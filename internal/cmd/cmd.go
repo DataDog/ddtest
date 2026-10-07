@@ -140,7 +140,7 @@ func init() {
 	rootCmd.PersistentFlags().String("worker-env", "", "Worker environment configuration")
 	rootCmd.PersistentFlags().Int("ci-node", -1, "CI node index to run (0-indexed; default: -1 disables CI-node mode)")
 	rootCmd.PersistentFlags().String("ci-node-workers", "1", `Number of parallel workers per CI node (positive integer or "ncpu"; default: 1)`)
-	rootCmd.PersistentFlags().String("command", "", "Test command that ddtest should wrap (not supported for Vitest)")
+	rootCmd.PersistentFlags().String("command", "", "Test command that ddtest should wrap")
 	rootCmd.PersistentFlags().String("vitest-config", "", "Vitest configuration file for discovery and execution (defaults to Vitest config discovery)")
 	rootCmd.PersistentFlags().String("tests-location", "", "Glob pattern used to discover test files")
 	rootCmd.PersistentFlags().String("tests-exclude-pattern", "", "Glob pattern used to exclude test files from discovery")
