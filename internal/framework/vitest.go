@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/discovery"
@@ -24,10 +26,14 @@ const (
 	binVitestPath           = "node_modules/.bin/vitest"
 	ddTraceRegisterPath     = "dd-trace/register.js"
 	vitestV1DiscoveryMarker = "__DDTEST_VITEST_FILES__"
+	vitestSelectedFilesEnv  = "DDTEST_VITEST_SELECTED_FILES"
 )
 
 //go:embed scripts/vitest_v1_discovery.mjs
 var vitestV1DiscoveryScript string
+
+//go:embed scripts/vitest_exact_files.mjs
+var vitestExactFilesScript string
 
 var vitestTestFileExtensions = []string{"js", "jsx", "ts", "tsx", "mjs", "mts", "cjs", "cts"}
 
@@ -191,6 +197,9 @@ func (v *Vitest) discoverVitestV1TestFiles(ctx context.Context, command string, 
 }
 
 func (v *Vitest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
+	if len(testFiles) == 0 {
+		return nil
+	}
 	command, baseArgs := v.Command()
 	args := vitestArgsForSubcommand(baseArgs, "run")
 	args = withFrameworkFiles(command, args, "vitest", testFiles)
@@ -200,7 +209,49 @@ func (v *Vitest) RunTests(ctx context.Context, testFiles []string, envMap map[st
 	mergedEnv := make(map[string]string)
 	maps.Copy(mergedEnv, v.platformEnv)
 	maps.Copy(mergedEnv, envMap)
-	return v.executor.Run(ctx, command, args, mergedEnv)
+	adapterDir, adapterEnv, err := prepareVitestExactFiles(mergedEnv, testFiles)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(adapterDir) }()
+	return v.executor.Run(ctx, command, args, adapterEnv)
+}
+
+func prepareVitestExactFiles(baseEnv map[string]string, testFiles []string) (string, map[string]string, error) {
+	selectedFiles := make([]string, len(testFiles))
+	for i, file := range testFiles {
+		absolute, err := filepath.Abs(file)
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to resolve Vitest test file: %w", err)
+		}
+		selectedFiles[i] = absolute
+	}
+	encodedFiles, err := json.Marshal(selectedFiles)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to encode Vitest test files: %w", err)
+	}
+	adapterDir, err := os.MkdirTemp("", "ddtest-vitest-run-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create Vitest execution adapter: %w", err)
+	}
+	adapterPath := filepath.Join(adapterDir, "exact-files.mjs")
+	filesPath := filepath.Join(adapterDir, "files.json")
+	for path, contents := range map[string][]byte{adapterPath: []byte(vitestExactFilesScript), filesPath: encodedFiles} {
+		if err := os.WriteFile(path, contents, 0600); err != nil {
+			_ = os.RemoveAll(adapterDir)
+			return "", nil, fmt.Errorf("failed to write Vitest execution adapter: %w", err)
+		}
+	}
+	adapterEnv := make(map[string]string, len(baseEnv)+2)
+	maps.Copy(adapterEnv, baseEnv)
+	nodeOptions, ok := adapterEnv[nodeOptionsEnvVar]
+	if !ok {
+		nodeOptions = os.Getenv(nodeOptionsEnvVar)
+	}
+	importURL := &url.URL{Scheme: "file", Path: "/" + strings.TrimPrefix(filepath.ToSlash(adapterPath), "/")}
+	adapterEnv[nodeOptionsEnvVar] = strings.TrimSpace(nodeOptions + " --import " + strconv.Quote(importURL.String()))
+	adapterEnv[vitestSelectedFilesEnv] = filesPath
+	return adapterDir, adapterEnv, nil
 }
 
 func (v *Vitest) discoveryEnv() map[string]string {

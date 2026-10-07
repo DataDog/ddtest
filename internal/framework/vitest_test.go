@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,6 +16,7 @@ import (
 )
 
 type vitestCommandExecutor struct {
+	onRun          func(string, []string, map[string]string) error
 	output         []byte
 	stdout         []byte
 	stderr         []byte
@@ -92,6 +94,9 @@ func (m *vitestCommandExecutor) Run(_ context.Context, name string, args []strin
 	m.capturedName = name
 	m.capturedArgs = slices.Clone(args)
 	m.capturedEnvMap = envMap
+	if m.onRun != nil {
+		return m.onRun(name, args, envMap)
+	}
 	return m.err
 }
 
@@ -472,6 +477,57 @@ func TestVitest_RunTests_UsesNpxFallback(t *testing.T) {
 	wantArgs := []string{"vitest", "run", "src/a.test.ts"}
 	if executor.capturedName != "npx" || !slices.Equal(executor.capturedArgs, wantArgs) {
 		t.Fatalf("command = %q, args = %v", executor.capturedName, executor.capturedArgs)
+	}
+}
+
+func TestVitest_RunTests_ExactSelectionEnvironmentAndCleanup(t *testing.T) {
+	for _, runErr := range []error{nil, errors.New("test process failed")} {
+		t.Run(fmt.Sprintf("run error %v", runErr), func(t *testing.T) {
+			var selectionPath string
+			workerEnv := map[string]string{"NODE_OPTIONS": "--max-old-space-size=2048"}
+			executor := &vitestCommandExecutor{onRun: func(_ string, _ []string, env map[string]string) error {
+				selectionPath = env[vitestSelectedFilesEnv]
+				contents, err := os.ReadFile(selectionPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var files []string
+				if err := json.Unmarshal(contents, &files); err != nil {
+					t.Fatal(err)
+				}
+				absolute, err := filepath.Abs("src/endOfYear/test.ts")
+				if err != nil || !slices.Equal(files, []string{absolute}) {
+					t.Fatalf("selected files = %v, error = %v", files, err)
+				}
+				if !strings.HasPrefix(env["NODE_OPTIONS"], workerEnv["NODE_OPTIONS"]+" --import ") {
+					t.Fatalf("lost worker NODE_OPTIONS: %q", env["NODE_OPTIONS"])
+				}
+				if _, err := os.Stat(filepath.Join(filepath.Dir(selectionPath), "exact-files.mjs")); err != nil {
+					t.Fatal(err)
+				}
+				return runErr
+			}}
+			vitest := &Vitest{executor: executor, platformEnv: map[string]string{"NODE_OPTIONS": "platform-options"}}
+			if err := vitest.RunTests(t.Context(), []string{"src/endOfYear/test.ts"}, workerEnv); !errors.Is(err, runErr) {
+				t.Fatalf("got %v, want %v", err, runErr)
+			}
+			if _, err := os.Stat(filepath.Dir(selectionPath)); !os.IsNotExist(err) {
+				t.Fatalf("adapter directory was not cleaned up: %v", err)
+			}
+			if len(workerEnv) != 1 || workerEnv["NODE_OPTIONS"] != "--max-old-space-size=2048" {
+				t.Fatalf("mutated worker environment: %v", workerEnv)
+			}
+		})
+	}
+}
+
+func TestVitest_RunTests_EmptyBatch(t *testing.T) {
+	executor := &vitestCommandExecutor{onRun: func(string, []string, map[string]string) error {
+		t.Fatal("empty batch must not invoke Vitest")
+		return nil
+	}}
+	if err := (&Vitest{executor: executor}).RunTests(t.Context(), nil, nil); err != nil {
+		t.Fatal(err)
 	}
 }
 

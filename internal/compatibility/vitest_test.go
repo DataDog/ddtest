@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,4 +59,60 @@ test('must not run', () => {
 	if err := vitest.RunTests(ctx, []string{"checks/selected.check.js"}, map[string]string{"DDTEST_VITEST_WORKER": "selected"}); err != nil {
 		t.Fatalf("selected-file run failed: %v", err)
 	}
+
+	t.Run("exact file membership with overlapping names", func(t *testing.T) {
+		writeFixture(t, root, "vitest.overlap.mjs", `export default {
+  test: { dir: 'src', include: ['**/test.js'], setupFiles: ['./setup.js'] },
+}
+`)
+		for _, name := range []string{"endOfYear", "eachWeekendOfYear", "otherEndOfYear"} {
+			writeFixture(t, root, "src/"+name+"/test.js", `import { expect, test } from 'vitest'
+import { appendFileSync } from 'node:fs'
+test('runs only in its assigned batch', () => {
+  expect(globalThis.ddtestVitestSetup).toBe(true)
+  expect(process.env.DDTEST_VITEST_WORKER).toBe('`+name+`')
+  appendFileSync(process.env.DDTEST_VITEST_EVENTS, '`+name+`\n')
+})
+`)
+		}
+		for _, tc := range []struct {
+			name, command, selected string
+		}{
+			{"direct", shellCommand(filepath.Join(root, "node_modules/.bin/vitest"), "--config", "vitest.overlap.mjs"), "src/endOfYear/test.js"},
+			{"node with separator", shellCommand("node", filepath.Join(root, "node_modules/vitest/vitest.mjs"), "run", "--config", "vitest.overlap.mjs", "--", "old.test.js"), filepath.Join(root, "src/endOfYear/test.js")},
+			{"package manager", shellCommand("npx", "--no-install", "vitest", "run", "--config", "vitest.overlap.mjs"), "src/eachWeekendOfYear/test.js"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				events := filepath.Join(root, "executed.txt")
+				if err := os.WriteFile(events, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+				configureFramework(tc.command, "")
+				name := filepath.Base(filepath.Dir(tc.selected))
+				if err := framework.NewVitest().RunTests(ctx, []string{tc.selected}, map[string]string{
+					"DDTEST_VITEST_WORKER": name, "DDTEST_VITEST_EVENTS": events,
+				}); err != nil {
+					t.Fatalf("exact-file run failed: %v", err)
+				}
+				contents, err := os.ReadFile(events)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(contents) != name+"\n" {
+					t.Fatalf("executed %q, want exactly %q", contents, name+"\n")
+				}
+			})
+		}
+
+		// An empty batch must not turn into an unfiltered full-suite run.
+		configureFramework(shellCommand(filepath.Join(root, "node_modules/.bin/vitest"), "--config", "vitest.overlap.mjs"), "")
+		if err := framework.NewVitest().RunTests(ctx, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		// Preserve the framework's nonzero exit status on an assigned test failure.
+		err := framework.NewVitest().RunTests(ctx, []string{"src/endOfYear/test.js"}, map[string]string{"DDTEST_VITEST_WORKER": "wrong"})
+		if err == nil || !strings.Contains(err.Error(), "exit status 1") {
+			t.Fatalf("expected assigned-test failure, got %v", err)
+		}
+	})
 }
