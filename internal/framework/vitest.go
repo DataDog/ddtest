@@ -4,15 +4,12 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/discovery"
@@ -22,43 +19,32 @@ import (
 	"github.com/DataDog/ddtest/internal/utils"
 )
 
-const (
-	binVitestPath           = "node_modules/.bin/vitest"
-	ddTraceRegisterPath     = "dd-trace/register.js"
-	vitestV1DiscoveryMarker = "__DDTEST_VITEST_FILES__"
-	vitestSelectedFilesEnv  = "DDTEST_VITEST_SELECTED_FILES"
-)
+const ddTraceRegisterPath = "dd-trace/register.js"
 
-//go:embed scripts/vitest_v1_discovery.mjs
-var vitestV1DiscoveryScript string
+//go:embed scripts/vitest.mjs
+var vitestScript string
 
-//go:embed scripts/vitest_exact_files.mjs
-var vitestExactFilesScript string
+//go:embed scripts/vitest_modern.mjs
+var vitestModernScript string
 
-//go:embed scripts/vitest_exact_files_modern.mjs
-var vitestExactFilesModernScript string
-
-//go:embed scripts/vitest_exact_files_legacy.mjs
-var vitestExactFilesLegacyScript string
+//go:embed scripts/vitest_legacy.mjs
+var vitestLegacyScript string
 
 var vitestTestFileExtensions = []string{"js", "jsx", "ts", "tsx", "mjs", "mts", "cjs", "cts"}
 
-type vitestExecutor interface {
-	ext.CommandExecutor
-	Output(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, []byte, error)
-}
-
 type Vitest struct {
-	executor        vitestExecutor
-	commandOverride []string
-	platformEnv     map[string]string
+	executor      ext.CommandExecutor
+	configFile    string
+	customCommand string
+	platformEnv   map[string]string
 }
 
 func NewVitest() *Vitest {
 	return &Vitest{
-		executor:        &ext.DefaultCommandExecutor{},
-		commandOverride: loadCommandOverride(),
-		platformEnv:     make(map[string]string),
+		executor:      &ext.DefaultCommandExecutor{},
+		configFile:    settings.GetVitestConfig(),
+		customCommand: settings.GetCommand(),
+		platformEnv:   make(map[string]string),
 	}
 }
 
@@ -103,11 +89,14 @@ func (v *Vitest) DiscoverTests(ctx context.Context, testFiles discovery.TestFile
 	return nil, ErrFullTestDiscoveryUnsupported
 }
 
-// DiscoverTestFiles uses Vitest's config-aware file listing when available,
-// then falls back to the Vitest 1.6 API and finally DDTest's filesystem glob.
+// DiscoverTestFiles uses the same config-aware Node adapter as execution.
+// A discovery failure is returned to the caller, never replaced with a broader glob.
 func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestFileSet) ([]string, error) {
-	// With an exclude pattern, ExplicitFiles contains candidates from DDTest's generic
-	// glob. Vitest discovery must remain authoritative before applying the exclude.
+	if err := v.validateCommand(); err != nil {
+		return nil, err
+	}
+	// With an exclude pattern, explicit files are generic glob candidates;
+	// Vitest's configuration must remain authoritative before excluding files.
 	if settings.GetTestsExcludePattern() == "" {
 		if testFiles.Empty() {
 			return []string{}, nil
@@ -117,196 +106,95 @@ func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 		}
 	}
 
-	command, baseArgs := v.Command()
-	outputDir, err := os.MkdirTemp("", "ddtest-vitest-list-*")
+	dir, err := prepareVitestAdapter(vitestRequest{Config: v.configFile, Discover: true})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Vitest discovery output directory: %w", err)
+		return nil, err
 	}
-	defer func() { _ = os.RemoveAll(outputDir) }()
-	outputFile := filepath.Join(outputDir, "files.json")
-
-	args := vitestArgsForSubcommand(baseArgs, "list")
-	args = withFrameworkOptions(command, args, "vitest", "--filesOnly", "--json="+outputFile)
-
-	slog.Info("Discovering Vitest test files with command", "command", command, "args", args)
-	stdout, stderr, err := v.executor.Output(ctx, command, args, v.discoveryEnv())
+	defer func() { _ = os.RemoveAll(dir) }()
+	output, err := v.executor.CombinedOutput(ctx, "node", []string{filepath.Join(dir, "vitest.mjs")}, v.discoveryEnv())
 	if err != nil {
-		output := append(slices.Clone(stdout), stderr...)
-		if supportsVitestV1DiscoveryFallback(output) {
-			return v.discoverVitestV1TestFiles(ctx, command, baseArgs, testFiles)
-		}
-		message := strings.TrimSpace(string(output))
-		if message == "" {
-			return nil, fmt.Errorf("failed to discover Vitest test files: %w", err)
-		}
-		return nil, fmt.Errorf("failed to discover Vitest test files: %s: %w", message, err)
+		return nil, fmt.Errorf("failed to discover Vitest test files: %s: %w", strings.TrimSpace(string(output)), err)
 	}
-
-	if message := strings.TrimSpace(string(stderr)); message != "" {
-		slog.Debug("Vitest test file discovery wrote to stderr", "output", message)
+	if message := strings.TrimSpace(string(output)); message != "" {
+		slog.Debug("Vitest discovery output", "output", message)
 	}
-	if message := strings.TrimSpace(string(stdout)); message != "" {
-		slog.Debug("Vitest test file discovery wrote to stdout", "output", message)
-	}
-	output, err := os.ReadFile(outputFile)
+	// Keep the result separate from configuration/plugin logs on stdout.
+	contents, err := os.ReadFile(filepath.Join(dir, "files.json"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read Vitest test file list: %w", err)
 	}
-	discoveredFiles, err := parseVitestListFilesOutput(output)
-	if err != nil {
-		message := strings.TrimSpace(string(stderr))
-		if message == "" {
-			return nil, fmt.Errorf("failed to parse Vitest test file list: %w", err)
-		}
-		return nil, fmt.Errorf("failed to parse Vitest test file list: %w; stderr: %s", err, message)
+	var files []string
+	if err := json.Unmarshal(contents, &files); err != nil {
+		return nil, fmt.Errorf("failed to parse Vitest test file list: %w", err)
 	}
+	files = normalizeJavaScriptTestFiles(files)
 	if settings.GetTestsLocation() == "" && settings.GetTestsExcludePattern() == "" {
-		return discoveredFiles, nil
+		return files, nil
 	}
-
-	return filterJavaScriptTestFiles(discoveredFiles, testFiles)
-}
-
-// discoverVitestV1TestFiles uses the project's vitest/node API to load its
-// configuration and list test files without executing them.
-func (v *Vitest) discoverVitestV1TestFiles(ctx context.Context, command string, baseArgs []string, testFiles discovery.TestFileSet) ([]string, error) {
-	cliArgs, err := json.Marshal(vitestCLIArgs(command, baseArgs))
-	if err == nil {
-		slog.Info("Vitest does not support list --filesOnly; using the Vitest 1.6 config-aware discovery API")
-		output, discoveryErr := v.executor.CombinedOutput(ctx, "node", []string{
-			"--input-type=module",
-			"--eval",
-			vitestV1DiscoveryScript,
-			string(cliArgs),
-		}, v.discoveryEnv())
-		if discoveryErr == nil {
-			discoveredFiles, parseErr := parseVitestV1DiscoveryOutput(output)
-			if parseErr == nil {
-				if settings.GetTestsLocation() == "" && settings.GetTestsExcludePattern() == "" {
-					return discoveredFiles, nil
-				}
-				return filterJavaScriptTestFiles(discoveredFiles, testFiles)
-			}
-			err = parseErr
-		} else {
-			message := strings.TrimSpace(string(output))
-			if message == "" {
-				err = discoveryErr
-			} else {
-				err = fmt.Errorf("%s: %w", message, discoveryErr)
-			}
-		}
-	}
-
-	slog.Warn("Vitest 1.6 config-aware discovery failed; using ddtest glob discovery", "error", err)
-	return discovery.DiscoverTestFiles(testFiles.Pattern, settings.GetTestsExcludePattern())
+	return filterJavaScriptTestFiles(files, testFiles)
 }
 
 func (v *Vitest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
+	if err := v.validateCommand(); err != nil {
+		return err
+	}
 	if len(testFiles) == 0 {
 		return nil
 	}
-	command, baseArgs := v.Command()
-	args := vitestArgsForSubcommand(baseArgs, "run")
-	args = withFrameworkFiles(command, args, "vitest", testFiles)
-
-	slog.Info("Running tests with command", "command", command, "args", args)
-
-	mergedEnv := make(map[string]string)
-	maps.Copy(mergedEnv, v.platformEnv)
-	maps.Copy(mergedEnv, envMap)
-	adapterDir, adapterEnv, err := prepareVitestExactFiles(mergedEnv, testFiles)
+	dir, err := prepareVitestAdapter(vitestRequest{Config: v.configFile, Files: testFiles})
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(adapterDir) }()
-	return v.executor.Run(ctx, command, args, adapterEnv)
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	env := make(map[string]string)
+	maps.Copy(env, v.platformEnv)
+	maps.Copy(env, envMap)
+	slog.Info("Running assigned Vitest files with Node API", "config", v.configFile, "files", testFiles)
+	return v.executor.Run(ctx, "node", []string{filepath.Join(dir, "vitest.mjs")}, env)
 }
 
-// prepareVitestExactFiles writes a worker's adapter and assignment, then builds
-// the environment that loads them. The caller must remove adapterDir after the run.
-func prepareVitestExactFiles(baseEnv map[string]string, testFiles []string) (string, map[string]string, error) {
-	assignedFilesJSON, err := encodeVitestAssignedFiles(testFiles)
-	if err != nil {
-		return "", nil, err
-	}
-
-	adapterDir, err := os.MkdirTemp("", "ddtest-vitest-run-*")
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to create Vitest execution adapter: %w", err)
-	}
-	if err := writeVitestExecutionAdapter(adapterDir, assignedFilesJSON); err != nil {
-		_ = os.RemoveAll(adapterDir)
-		return "", nil, err
-	}
-
-	return adapterDir, vitestExactFilesEnv(baseEnv, adapterDir), nil
-}
-
-func encodeVitestAssignedFiles(testFiles []string) ([]byte, error) {
-	// Resolve paths in ddtest's working directory before any command wrapper starts.
-	// The Node adapter resolves symlinks when comparing these paths with Vitest's specs.
-	absoluteFiles := make([]string, len(testFiles))
-	for i, file := range testFiles {
-		absolute, err := filepath.Abs(file)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve Vitest test file: %w", err)
-		}
-		absoluteFiles[i] = absolute
-	}
-	encodedFiles, err := json.Marshal(absoluteFiles)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode Vitest test files: %w", err)
-	}
-	return encodedFiles, nil
-}
-
-func writeVitestExecutionAdapter(adapterDir string, assignedFilesJSON []byte) error {
-	// Keep the modules together so the entrypoint's relative imports work.
-	// JSON keeps the assignment independent of command-line quoting.
-	files := []struct {
-		name     string
-		contents []byte
-	}{
-		{"exact-files.mjs", []byte(vitestExactFilesScript)},
-		{"vitest_exact_files_modern.mjs", []byte(vitestExactFilesModernScript)},
-		{"vitest_exact_files_legacy.mjs", []byte(vitestExactFilesLegacyScript)},
-		{"files.json", assignedFilesJSON},
-	}
-	for _, file := range files {
-		path := filepath.Join(adapterDir, file.name)
-		if err := os.WriteFile(path, file.contents, 0600); err != nil {
-			return fmt.Errorf("failed to write Vitest execution adapter file %q: %w", file.name, err)
-		}
+func (v *Vitest) validateCommand() error {
+	if strings.TrimSpace(v.customCommand) != "" {
+		return fmt.Errorf("Vitest uses DDTest's Node API adapter and does not support --command; move options to vitest.config.ts or select a config with --vitest-config (see docs/running.md#vitest-integration)")
 	}
 	return nil
 }
 
-func vitestExactFilesEnv(baseEnv map[string]string, adapterDir string) map[string]string {
-	adapterEnv := make(map[string]string, len(baseEnv)+2)
-	maps.Copy(adapterEnv, baseEnv)
+// Command identifies the adapter's runtime. RunTests supplies its temporary script.
+func (v *Vitest) Command() (string, []string) {
+	return "node", nil
+}
 
-	// Preserve worker options, including tracing hooks. Inherit the process options
-	// only when the worker hasn't set NODE_OPTIONS (an explicit empty value wins).
-	nodeOptions, ok := baseEnv[nodeOptionsEnvVar]
-	if !ok {
-		nodeOptions = os.Getenv(nodeOptionsEnvVar)
-	}
+type vitestRequest struct {
+	Config   string   `json:"config,omitempty"`
+	Discover bool     `json:"discover,omitempty"`
+	Files    []string `json:"files,omitempty"`
+}
 
-	// NODE_OPTIONS also reaches Vitest launched through npx/pnpm. The entrypoint
-	// activates only in the Vitest process and reads its assignment from files.json.
-	adapterPath := filepath.Join(adapterDir, "exact-files.mjs")
-	// File URLs need forward slashes and a leading slash, including on Windows.
-	importPath := filepath.ToSlash(adapterPath)
-	if !strings.HasPrefix(importPath, "/") {
-		importPath = "/" + importPath
+// prepareVitestAdapter keeps the entrypoint, version adapters, and request
+// together. The caller owns the directory and removes it after Node exits.
+func prepareVitestAdapter(request vitestRequest) (string, error) {
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode Vitest request: %w", err)
 	}
-	importURL := url.URL{Scheme: "file", Path: importPath}
-	// Quote the URL so NODE_OPTIONS also works when the temp path contains spaces.
-	importOption := "--import " + strconv.Quote(importURL.String())
-	adapterEnv[nodeOptionsEnvVar] = strings.TrimSpace(nodeOptions + " " + importOption)
-	adapterEnv[vitestSelectedFilesEnv] = filepath.Join(adapterDir, "files.json")
-	return adapterEnv
+	dir, err := os.MkdirTemp("", "ddtest-vitest-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create Vitest adapter directory: %w", err)
+	}
+	for name, contents := range map[string]string{
+		"vitest.mjs":        vitestScript,
+		"vitest_modern.mjs": vitestModernScript,
+		"vitest_legacy.mjs": vitestLegacyScript,
+		"request.json":      string(encoded),
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0600); err != nil {
+			_ = os.RemoveAll(dir)
+			return "", fmt.Errorf("failed to write Vitest adapter file %q: %w", name, err)
+		}
+	}
+	return dir, nil
 }
 
 func (v *Vitest) discoveryEnv() map[string]string {
@@ -325,99 +213,6 @@ func (v *Vitest) discoveryEnv() map[string]string {
 	nodeOptions = stripNodeOptionsRequire(nodeOptions, ddTraceCIInitModule)
 	envMap[nodeOptionsEnvVar] = stripNodeOptionsImport(nodeOptions, ddTraceRegisterPath)
 	return envMap
-}
-
-// Decide between a user custom command, the local Vitest binary and npx.
-func (v *Vitest) Command() (string, []string) {
-	if len(v.commandOverride) > 0 {
-		return v.commandOverride[0], v.commandOverride[1:]
-	}
-
-	if info, err := os.Stat(binVitestPath); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
-		slog.Debug("Using local Vitest binary")
-		return binVitestPath, []string{"run"}
-	}
-
-	slog.Debug("Using npx vitest for Vitest commands")
-	return "npx", []string{"vitest", "run"}
-}
-
-func vitestArgsForSubcommand(baseArgs []string, subcommand string) []string {
-	args := slices.Clone(baseArgs)
-	subcommandIndex := 0
-	for i, arg := range args {
-		if isVitestExecutable(arg) {
-			subcommandIndex = i + 1
-			break
-		}
-	}
-
-	if subcommandIndex < len(args) {
-		switch args[subcommandIndex] {
-		case "run", "watch", "dev", "list":
-			args[subcommandIndex] = subcommand
-			return args
-		}
-	}
-
-	return slices.Insert(args, subcommandIndex, subcommand)
-}
-
-func vitestCLIArgs(command string, baseArgs []string) []string {
-	if isVitestExecutable(command) {
-		return append([]string{}, baseArgs...)
-	}
-
-	for i, arg := range baseArgs {
-		if isVitestExecutable(arg) {
-			return append([]string{}, baseArgs[i+1:]...)
-		}
-	}
-
-	return []string{}
-}
-
-func isVitestExecutable(value string) bool {
-	base := filepath.Base(value)
-	return base == "vitest" || base == "vitest.mjs"
-}
-
-func supportsVitestV1DiscoveryFallback(output []byte) bool {
-	message := strings.ToLower(string(output))
-	return strings.Contains(message, "unknown option") &&
-		(strings.Contains(message, "filesonly") || strings.Contains(message, "files-only"))
-}
-
-func parseVitestListFilesOutput(output []byte) ([]string, error) {
-	var listedFiles []struct {
-		File string `json:"file"`
-	}
-	if err := json.Unmarshal(output, &listedFiles); err != nil {
-		return nil, err
-	}
-
-	paths := make([]string, 0, len(listedFiles))
-	for _, listedFile := range listedFiles {
-		paths = append(paths, listedFile.File)
-	}
-	return normalizeJavaScriptTestFiles(paths), nil
-}
-
-func parseVitestV1DiscoveryOutput(output []byte) ([]string, error) {
-	markerIndex := strings.LastIndex(string(output), vitestV1DiscoveryMarker)
-	if markerIndex < 0 {
-		return nil, errors.New("Vitest 1.6 discovery output did not contain a file list")
-	}
-
-	encodedFiles := string(output[markerIndex+len(vitestV1DiscoveryMarker):])
-	if lineEnd := strings.IndexByte(encodedFiles, '\n'); lineEnd >= 0 {
-		encodedFiles = encodedFiles[:lineEnd]
-	}
-	var testFiles []string
-	if err := json.Unmarshal([]byte(encodedFiles), &testFiles); err != nil {
-		return nil, fmt.Errorf("failed to parse Vitest 1.6 discovery output: %w", err)
-	}
-	return normalizeJavaScriptTestFiles(testFiles), nil
 }
 
 func stripNodeOptionsImport(nodeOptions string, module string) string {

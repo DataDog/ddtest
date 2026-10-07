@@ -118,6 +118,7 @@ var rootPersistentFlagBindings = []persistentFlagBinding{
 	{configKey: "ci_node", flagName: "ci-node"},
 	{configKey: "ci_node_workers", flagName: "ci-node-workers"},
 	{configKey: "command", flagName: "command"},
+	{configKey: "vitest_config", flagName: "vitest-config"},
 	{configKey: "tests_location", flagName: "tests-location"},
 	{configKey: "tests_exclude_pattern", flagName: "tests-exclude-pattern"},
 	{configKey: "test_discovery_cache", flagName: "test-discovery-cache"},
@@ -139,7 +140,8 @@ func init() {
 	rootCmd.PersistentFlags().String("worker-env", "", "Worker environment configuration")
 	rootCmd.PersistentFlags().Int("ci-node", -1, "CI node index to run (0-indexed; default: -1 disables CI-node mode)")
 	rootCmd.PersistentFlags().String("ci-node-workers", "1", `Number of parallel workers per CI node (positive integer or "ncpu"; default: 1)`)
-	rootCmd.PersistentFlags().String("command", "", "Test command that ddtest should wrap")
+	rootCmd.PersistentFlags().String("command", "", "Test command that ddtest should wrap (not supported for Vitest)")
+	rootCmd.PersistentFlags().String("vitest-config", "", "Vitest configuration file for discovery and execution (defaults to Vitest config discovery)")
 	rootCmd.PersistentFlags().String("tests-location", "", "Glob pattern used to discover test files")
 	rootCmd.PersistentFlags().String("tests-exclude-pattern", "", "Glob pattern used to exclude test files from discovery")
 	rootCmd.PersistentFlags().String("test-discovery-cache", "", "Path to a restored test discovery cache file to import before planning")

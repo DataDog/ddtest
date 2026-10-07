@@ -170,17 +170,18 @@ file list and Jest flags itself.
 
 ## Vitest Support
 
-Use `--command` when your project runs Vitest through a package manager or uses
-Vitest projects:
+Install Vitest and `dd-trace` 5.125.0 or higher in the project. Put Vitest options
+in its configuration; DDTest uses the Node API directly and rejects `--command`.
+Select a non-default configuration consistently during planning and execution:
 
 ```bash
-ddtest run --platform javascript --framework vitest --command "pnpm exec vitest run --project unit*"
+ddtest plan --platform javascript --framework vitest --vitest-config vitest.ci.config.ts
+ddtest run --platform javascript --framework vitest --vitest-config vitest.ci.config.ts
 ```
 
-The command must invoke Vitest directly. During planning, DDTest changes the
-`run` subcommand to `list --filesOnly --json` on Vitest 2.0 and newer. On Vitest 1.6,
-DDTest passes the Vitest arguments to its config-aware discovery API. DDTest
-supplies the selected test files during execution.
+Run package-script setup steps before DDTest and export any required environment
+variables. See [Vitest integration](running.md#vitest-integration) for migrating
+command flags, selecting projects, and configuring reporters and coverage.
 
 ## Mocha Support
 

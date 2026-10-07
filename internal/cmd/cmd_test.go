@@ -651,6 +651,13 @@ func TestFlagBinding(t *testing.T) {
 		t.Fatalf("Error setting target-time flag: %v", err)
 	}
 
+	if err := rootCmd.PersistentFlags().Set("vitest-config", "config/vitest.ts"); err != nil {
+		t.Fatal(err)
+	}
+	if viper.GetString("vitest_config") != "config/vitest.ts" {
+		t.Fatalf("vitest-config was not bound: %q", viper.GetString("vitest_config"))
+	}
+
 	// Check that viper picks up the flag values
 	if viper.GetString("platform") != "python" {
 		t.Errorf("expected viper platform to be 'python', got %q", viper.GetString("platform"))
