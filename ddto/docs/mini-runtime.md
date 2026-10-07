@@ -116,7 +116,7 @@ The client writes the CI test-cycle MessagePack protocol directly: envelope
 version 1, test events version 2, and session/module/suite events version 1. CI
 hierarchy IDs are separate from distributed trace identity. The runtime has its
 own experimental version, `0.0.0`. Its diagnostic log prefix is
-`TestOptimization Tracer v0.0.0`; the SDK backend retains its original prefix.
+`TestOptimization.run  v0.0.0`; the SDK backend retains its original prefix.
 
 Agentless delivery uses gzip and `/api/v2/citestcycle`. Agent delivery uses the EVP
 v2 proxy and its intake header. Coverage continues through the extracted native

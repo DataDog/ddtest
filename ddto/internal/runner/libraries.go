@@ -10,8 +10,11 @@ import (
 
 // Both optional integrations share the existing test-import graph query.
 // Known dependency closures are not queried again; external helpers remain.
-func resolveTestLibraries(ctx context.Context, dir string, opts options, packages []goPackage) (map[string]*goPackage, error) {
-	selected := map[string]*goPackage{}
+func resolveTestLibraries(ctx context.Context, dir string, opts options, packages []goPackage) (selected map[string]*goPackage, err error) {
+	debug := debugFromContext(ctx)
+	phase := debug.start("resolve test libraries")
+	defer func() { phase.finish(err) }()
+	selected = map[string]*goPackage{}
 	paths, suite := testifyDependencyImports(packages)
 	wanted := map[string]bool{}
 	if suite {
@@ -51,6 +54,7 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 			requests[path] = true
 		}
 	}
+	debug.printf("test-library query pending_imports=%d known_libraries=%d", len(requests), len(selected))
 	if len(requests) == 0 {
 		return selected, nil
 	}
@@ -68,6 +72,7 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 	if err != nil {
 		return nil, err
 	}
+	debug.printf("test-library query resolved=%d", len(dependencies))
 	for _, p := range dependencies {
 		if selected[p.ImportPath] == nil && (p.ImportPath == instrument.GoleakImport || p.ImportPath == instrument.TestifySuiteImport) {
 			copy := p

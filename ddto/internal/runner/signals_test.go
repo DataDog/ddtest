@@ -3,10 +3,12 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -23,12 +25,14 @@ func fakeGo(t *testing.T, script string) {
 }
 
 func TestRunGoForwardsSignalsAndKeepsExitStatus(t *testing.T) {
+	t.Setenv("DD_TRACE_DEBUG", "true")
+	debugContext := withCLIDebug(context.Background(), io.Discard)
 	// A handled interrupt keeps the child's own exit status.
 	fakeGo(t, "trap 'kill $!; exit 7' INT\nsleep 30 >/dev/null 2>&1 &\nwait\n")
 	signals := make(chan os.Signal, 1)
 	result := make(chan int, 1)
 	go func() {
-		result <- runGo(context.Background(), t.TempDir(), []string{"test"}, nil, signals, nil, io.Discard, io.Discard)
+		result <- runGo(debugContext, t.TempDir(), []string{"test"}, nil, signals, nil, io.Discard, io.Discard)
 	}()
 	time.Sleep(200 * time.Millisecond)
 	signals <- os.Interrupt
@@ -39,7 +43,7 @@ func TestRunGoForwardsSignalsAndKeepsExitStatus(t *testing.T) {
 	// A child killed by a signal is reported with the shell convention.
 	fakeGo(t, "exec sleep 30\n")
 	go func() {
-		result <- runGo(context.Background(), t.TempDir(), []string{"test"}, nil, signals, nil, io.Discard, io.Discard)
+		result <- runGo(debugContext, t.TempDir(), []string{"test"}, nil, signals, nil, io.Discard, io.Discard)
 	}()
 	time.Sleep(200 * time.Millisecond)
 	signals <- syscall.SIGTERM
@@ -49,7 +53,7 @@ func TestRunGoForwardsSignalsAndKeepsExitStatus(t *testing.T) {
 
 	// Context cancellation interrupts first instead of killing.
 	fakeGo(t, "trap 'kill $!; exit 3' INT\nsleep 30 >/dev/null 2>&1 &\nwait\n")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(debugContext)
 	go func() {
 		result <- runGo(ctx, t.TempDir(), []string{"test"}, nil, nil, nil, io.Discard, io.Discard)
 	}()
@@ -75,5 +79,21 @@ func TestSignalDuringPreparationStopsAndCleansUp(t *testing.T) {
 	}
 	if code := interruptedStatus(interrupted); code != 128+int(syscall.SIGTERM) {
 		t.Fatalf("status=%d", code)
+	}
+}
+
+func TestCLIDebugCanceledPreparation(t *testing.T) {
+	fakeGo(t, "exec sleep 30\n")
+	t.Setenv("DD_TRACE_DEBUG", "true")
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	var stderr bytes.Buffer
+	if code := RunRuntime(ctx, []string{"."}, Mini, nil, io.Discard, &stderr); code != 2 {
+		t.Fatalf("canceled preparation exit=%d", code)
+	}
+	for _, want := range []string{"resolve packages finished duration=", "prepare finished duration=", "status=error", "ddtest exit_code=2"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("missing %q: %s", want, &stderr)
+		}
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
 func TestGoleakCacheAndWarmVersionGuard(t *testing.T) {
@@ -74,7 +76,7 @@ func TestGoleakCacheAndWarmVersionGuard(t *testing.T) {
 	// sources: the unsupported version builds without the integration, and the
 	// cached instrumented object is not reused.
 	out, stderr, code = command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, args...)
-	if code != 0 || !strings.Contains(stderr, "ddtest: warning: goleak v1.2.1 is not instrumented") || strings.Contains(stderr, "tool-overlay") {
+	if code != 0 || !strings.Contains(stderr, version.BuildLogPrefix+" WARN: goleak v1.2.1 is not instrumented") || strings.Contains(stderr, "tool-overlay") {
 		t.Fatalf("cached unsupported version: exit=%d\n%s\n%s", code, out, stderr)
 	}
 	symbols, stderr, code := command(t, dir, testEnv(), "go", "tool", "nm", filepath.Join(dir, executableName("fixture.test")))

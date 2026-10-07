@@ -10,7 +10,8 @@ See [native runtime usage and contracts](docs/mini-runtime.md).
 For maintainers, start with the [documentation guide](docs/README.md):
 [architecture and diagrams](docs/architecture.md),
 [source updates](docs/maintenance.md) and
-[performance and profiling](docs/performance.md), and
+[performance and profiling](docs/performance.md),
+[CLI build diagnostics](docs/cli-debug.md), and
 [CI feature parity, combinations and remaining gaps](docs/ci-parity.md).
 [Fuzz and Examples](docs/fuzz-examples.md) documents their native lifecycle,
 deferred delivery and SDK PR comparison.
@@ -31,6 +32,10 @@ module for Mini), `ddtest` provides it through a temporary copy of `go.mod` and
 `go mod tidy` cannot break a later run. Mini prefers its local sources or exact
 cached version; any required `go get` reports progress on `stderr`.
 See [native runtime usage](docs/mini-runtime.md#use-the-local-poc).
+
+Set `DD_TRACE_DEBUG=true` for CLI preparation and build diagnostics on `stderr`,
+including phase durations, runtime provisioning and selective tool decisions.
+See [CLI build diagnostics](docs/cli-debug.md) for the fields and timing limits.
 
 Runtime selection accepts `--runtime=mini` and `--runtime mini`, before or
 after Go flags and package names. Place it before custom test flags, `-args`

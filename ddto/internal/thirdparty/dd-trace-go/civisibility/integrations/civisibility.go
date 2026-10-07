@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/cidelivery"
 	tracer "github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"
@@ -100,6 +101,12 @@ func internalCiVisibilityInitialization(tracerInitializer func([]tracer.StartOpt
 		}
 
 		log.Debug("civisibility: initializing")
+		if log.DebugEnabled() {
+			started := time.Now()
+			defer func() {
+				log.Debug("civisibility: runtime bootstrap finished duration=%s", time.Since(started).Round(time.Microsecond))
+			}()
+		}
 
 		enabledMode, _ := envconfig.FromEnv()
 		parentOnly := enabledMode == envconfig.EnabledModeParent

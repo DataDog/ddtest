@@ -91,7 +91,7 @@ func TestStarted(t *testing.T) { if err := os.WriteFile(os.Getenv("DDTEST_STARTE
 				marker := filepath.Join(t.TempDir(), "started")
 				cmd := exec.CommandContext(ctx, binary, "-test.run=^TestStarted$", "-test.count=1")
 				cmd.Dir = dir
-				cmd.Env = testEnv("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=false", "DD_TRACE_AGENT_URL="+server.URL, "DD_INSTRUMENTATION_TELEMETRY_ENABLED=true", fmt.Sprintf("DD_CIVISIBILITY_DEFERRED_DELIVERY=%t", deferred), "DDTEST_STARTED_FILE="+marker, "XDG_CACHE_HOME="+t.TempDir())
+				cmd.Env = testEnv("DD_TRACE_DEBUG=true", "DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=false", "DD_TRACE_AGENT_URL="+server.URL, "DD_INSTRUMENTATION_TELEMETRY_ENABLED=true", fmt.Sprintf("DD_CIVISIBILITY_DEFERRED_DELIVERY=%t", deferred), "DDTEST_STARTED_FILE="+marker, "XDG_CACHE_HOME="+t.TempDir())
 				var stdout, stderr bytes.Buffer
 				cmd.Stdout = &stdout
 				cmd.Stderr = &stderr
@@ -130,6 +130,11 @@ func TestStarted(t *testing.T) { if err := os.WriteFile(os.Getenv("DDTEST_STARTE
 				<-done
 				if runErr != nil {
 					t.Fatalf("%v\n%s\n%s", runErr, &stdout, &stderr)
+				}
+				for _, marker := range []string{"runtime bootstrap finished duration=", "settings initialization finished duration=", "telemetry: request finished type=app-started duration=", "ciVisibilityHttpClient: request finished path="} {
+					if !strings.Contains(stderr.String(), marker) {
+						t.Errorf("missing timing %q: %s", marker, &stderr)
+					}
 				}
 				if _, err := os.Stat(marker); err != nil {
 					t.Fatalf("test never ran: %v", err)

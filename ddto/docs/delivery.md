@@ -47,10 +47,12 @@ The coordinator starts no goroutines. Initial repository upload completes
 during initialization in this mode. In both modes, settings and telemetry
 startup run concurrently, and initialization waits for both before admitting
 the first test. This also applies to cached settings and request failures.
-As in the SDK, `app-started` goes alone, followed by a `message-batch` with the
-initial data. `go test` does not count startup requests in any test's duration.
-Deferred delivery also replaces the periodic telemetry worker
-with idle checkpoints, which flush only once its interval has elapsed.
+`app-started` goes alone. Other initial telemetry payloads are snapshotted and
+queued for the next regular flush or shutdown, retaining their timestamps and
+order. A deferred flush runs at an idle checkpoint once its interval has
+elapsed; ordinary telemetry keeps its periodic worker. Final shutdown drains
+pending telemetry in both modes. `go test` does not count the joined settings
+and `app-started` requests in any test's duration.
 
 A checkpoint delivers only full payloads: sealed test-cycle batches (the event
 count or 2.5 MiB threshold) and full coverage/log payloads. Partial payloads

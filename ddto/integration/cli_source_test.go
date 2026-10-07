@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
 // Keep the declaration at line 5 and the closing brace at line 10. A compiler
@@ -50,7 +52,11 @@ func TestMiniCLIRuntimeSelectionAndSourceRange(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("exit=%d\n%s\n%s", code, out, stderr)
 			}
-			if !strings.Contains(out+stderr, "TestOptimization Tracer v0.0.0 DEBUG:") || strings.Contains(out+stderr, "Datadog Tracer") {
+			logs := out + stderr
+			if !strings.Contains(logs, version.RunLogPrefix+" DEBUG:") ||
+				strings.Contains(logs, "Datadog Tracer") ||
+				strings.Contains(logs, "TestOptimization Tracer") ||
+				!strings.Contains(stderr, version.BuildLogPrefix+" DEBUG: ") {
 				t.Fatalf("unexpected runtime/logger:\n%s\n%s", out, stderr)
 			}
 			receiver.mu.Lock()
@@ -94,7 +100,7 @@ func TestInvalidRuntimeFailsBeforeGo(t *testing.T) {
 		// No go executable is available: reaching preparation would produce a
 		// different error. No module, compiler or network request is needed.
 		out, stderr, code := command(t, t.TempDir(), testEnv("PATH="), driver, args...)
-		if code != 2 || !strings.HasPrefix(stderr, "ddtest:") || !strings.Contains(stderr, "runtime") || strings.Contains(stderr, "executable file") || out != "" {
+		if code != 2 || !strings.HasPrefix(stderr, version.BuildLogPrefix+" ERROR:") || !strings.Contains(stderr, "runtime") || strings.Contains(stderr, "executable file") || out != "" {
 			t.Errorf("%q: exit=%d stdout=%q stderr=%q", args, code, out, stderr)
 		}
 	}

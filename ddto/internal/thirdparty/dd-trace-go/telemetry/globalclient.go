@@ -50,10 +50,9 @@ func GlobalClient() Client {
 	return *client
 }
 
-// StartApp starts the telemetry client with the given client send the app-started telemetry and sets it as the global (*client)
-// then calls client.Flush on the client. CI initialization calls it before the
-// first test, so the flush is synchronous in both delivery modes: no test waits
-// for these requests or runs while they read the clock.
+// StartApp publishes the client and joins the standalone app-started request.
+// The CI client retains other startup snapshots until a regular flush or close.
+// Both delivery modes finish startup HTTP before the first test is admitted.
 func StartApp(client Client) {
 	if Disabled() {
 		return
@@ -76,7 +75,11 @@ func StartApp(client Client) {
 	}
 
 	defer startAppFlushWg.Done()
-	client.Flush()
+	if initial, ok := client.(interface{ flushStartup() }); ok {
+		initial.flushStartup()
+	} else {
+		client.Flush()
+	}
 }
 
 // SwapClient swaps the global client with the given client and Flush the old (*client).

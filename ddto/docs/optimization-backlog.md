@@ -84,3 +84,24 @@ remaining cost when per-test coverage is enabled.
    `-test.memprofilerate=1` for exact allocation counts per subtest.
 4. For startup, run the binary with one subtest and count subprocesses by putting
    logging wrappers for `git` and `go` first in `PATH`.
+
+## Mini provisioning at module roots
+
+When the effective module file does not mention Mini, the CLI probes module
+selection using temporary module and checksum files. If Go reports that Mini
+is unknown, provisioning precedes the full package query. The query then uses
+the final module, so it observes dependency-version changes caused by adding
+the runtime. A declared Mini keeps the ordinary single-query path.
+
+The probe is conservative. Subdirectory runs without an explicit modfile,
+vendor mode, escaped module text and files that mention Mini use normal package
+resolution. Workspace and transitive selections remain Go's decision. `-mod=mod`
+also retains native package resolution before runtime provisioning, preserving
+Go's own authorized module edits. Review these guards before extending the
+optimization; a filename or missing direct `require` does not prove that the
+runtime is unavailable.
+
+Checks: `TestPreprovideMiniRespectsEffectiveModuleAndWorkspace`,
+`TestCLIDebugEarlyLocalProvisioning`, module-overlay and `-mod=mod` regressions.
+Compare Mini already required, a client replacement and CLI-local provisioning;
+preparation gains must not add queries to the common required-runtime path.

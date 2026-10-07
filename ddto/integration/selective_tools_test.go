@@ -67,9 +67,13 @@ func TestSelective(t *testing.T){suite.Run(t,new(SelectiveSuite))}
 			bin := filepath.Join(t.TempDir(), executableName("fixture.test"))
 			args := append([]string{"test", "--runtime=mini", "-c", "-x", "-o", bin}, flags...)
 			args = append(args, ".")
-			out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, args...)
+			out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false", "DD_TRACE_DEBUG=true"), driver, args...)
 			if code != 0 {
 				t.Fatal(out, stderr)
+			}
+			logs := cliDebugLines(stderr)
+			if !strings.Contains(logs, fmt.Sprintf("tool selection testify=%t goleak=false cover=%t", tc.wantSuite, tc.wantTool && strings.Contains(strings.Join(tc.flags, " "), "coverpkg=testing"))) {
+				t.Fatalf("debug tool selection does not match native tool activation: %s", logs)
 			}
 			if strings.Contains(stderr, "tool-overlay") != tc.wantTool {
 				t.Fatalf("toolexec activation=%v, want %v: %s", strings.Contains(stderr, "tool-overlay"), tc.wantTool, stderr)
@@ -90,14 +94,14 @@ func TestToolBypassHasNativeIdentityAndExit(t *testing.T) {
 	for _, name := range []string{"compile", "link", "asm", "cover"} {
 		tool := filepath.Join(tools, executableName(name))
 		want, werr, wcode := command(t, dir, testEnv(), tool, "-V=full")
-		got, gerr, gcode := command(t, dir, testEnv("TOOLEXEC_IMPORTPATH=example.com/unrelated"), driver, "tool-overlay", "testify", "missing-plan", tool, "-V=full")
+		got, gerr, gcode := command(t, dir, testEnv("TOOLEXEC_IMPORTPATH=example.com/unrelated", "DD_TRACE_DEBUG=true"), driver, "tool-overlay", "testify", "missing-plan", tool, "-V=full")
 		if got != want || gerr != werr || gcode != wcode {
 			t.Fatalf("%s probe differs: %d/%d %s %s", name, gcode, wcode, got, gerr)
 		}
 	}
 	tool := filepath.Join(tools, executableName("compile"))
 	want, werr, wcode := command(t, dir, testEnv(), tool, "-ddtest-invalid")
-	got, gerr, gcode := command(t, dir, testEnv("TOOLEXEC_IMPORTPATH=example.com/unrelated"), driver, "tool-overlay", "testify", "missing-plan", tool, "-ddtest-invalid")
+	got, gerr, gcode := command(t, dir, testEnv("TOOLEXEC_IMPORTPATH=example.com/unrelated", "DD_TRACE_DEBUG=true"), driver, "tool-overlay", "testify", "missing-plan", tool, "-ddtest-invalid")
 	if got != want || gerr != werr || gcode != wcode {
 		t.Fatalf("native failure differs: %d/%d %s %s", gcode, wcode, got, gerr)
 	}

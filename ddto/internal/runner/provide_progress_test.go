@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	pocversion "github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
 // Observe real Go output before its module download is allowed to finish.
@@ -92,6 +94,8 @@ func TestRuntimeDownloadProgress(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
 			progress := &downloadProgress{seen: make(chan struct{}, 1)}
+			t.Setenv("DD_TRACE_DEBUG", "true")
+			ctx = withCLIDebug(ctx, progress)
 			done := make(chan error, 1)
 			go func() {
 				// No local source: resolve exactly the CLI's published version.
@@ -109,7 +113,7 @@ func TestRuntimeDownloadProgress(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatalf("download output was buffered until completion: %s", progress)
 			}
-			if !strings.Contains(progress.String(), "ddtest: preparing runtime with go get "+miniModule+"@"+version) {
+			if !strings.Contains(progress.String(), "go get started") || !strings.Contains(progress.String(), pocversion.BuildLogPrefix+" INFO: preparing runtime with go get "+miniModule+"@"+version) {
 				t.Fatalf("missing initial status: %s", progress)
 			}
 			if outcome == "cancel" {
@@ -121,6 +125,9 @@ func TestRuntimeDownloadProgress(t *testing.T) {
 			case err := <-done:
 				if (err == nil) != (outcome == "success") {
 					t.Fatalf("outcome=%s err=%v\n%s", outcome, err, progress)
+				}
+				if !strings.Contains(progress.String(), "go get finished duration=") {
+					t.Fatalf("missing download timing: %s", progress)
 				}
 				if outcome == "failure" && (!strings.Contains(progress.String(), "404 Not Found") || strings.Contains(err.Error(), "404 Not Found")) {
 					t.Fatalf("error must be streamed without duplication: err=%v\n%s", err, progress)

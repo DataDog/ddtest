@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/runner"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
 func prepareTestifyFixture(t *testing.T, reference bool) (string, string) {
@@ -346,7 +347,7 @@ func TestTestifyUnsupportedEntryWarnsAndPreservesClientNames(t *testing.T) {
 		t.Fatal(out, stderr)
 	}
 	out, stderr, code = command(t, dir, testEnv(), driver, "test", "--runtime=mini", "-mod=mod", "-run=^TestParitySuite$/^TestPass$", ".")
-	if code != 0 || !strings.Contains(stderr, "ddtest: warning: Testify v1.11.1 is not instrumented") {
+	if code != 0 || !strings.Contains(stderr, version.BuildLogPrefix+" WARN: Testify v1.11.1 is not instrumented") {
 		t.Fatalf("unsupported entry: %d %s %s", code, out, stderr)
 	}
 	out, stderr, code = command(t, dir, testEnv(), "go", "mod", "edit", "-dropreplace=github.com/stretchr/testify")

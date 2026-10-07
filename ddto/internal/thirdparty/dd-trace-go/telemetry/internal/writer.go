@@ -316,6 +316,7 @@ func (w *writer) Flush(payload transport.Payload) ([]EndpointRequestResult, erro
 		request.Body = sumReaderCloser
 		response, err := w.httpClient.Do(request)
 		if err != nil {
+			logRequestCompletion(requestType, now, 0, true)
 			results = append(results, EndpointRequestResult{Error: err, RequestAttempted: true})
 			continue
 		}
@@ -332,6 +333,7 @@ func (w *writer) Flush(payload transport.Payload) ([]EndpointRequestResult, erro
 		// retain only the existing diagnostic prefix and request timing.
 		_, _ = io.Copy(io.Discard, response.Body)
 		_ = response.Body.Close()
+		logRequestCompletion(requestType, now, response.StatusCode, false)
 		if failed {
 			results = append(results, EndpointRequestResult{Error: &WriterStatusCodeError{
 				Status: response.Status,
@@ -361,6 +363,13 @@ func (w *writer) Flush(payload transport.Payload) ([]EndpointRequestResult, erro
 	}
 
 	return results, err
+}
+
+// Debug measures completion through EOF; telemetry metrics retain header timing.
+func logRequestCompletion(kind transport.RequestType, started time.Time, status int, networkError bool) {
+	if log.DebugEnabled() {
+		log.Debug("telemetry: request finished type=%s duration=%s status_code=%d network_error=%t", kind, time.Since(started).Round(time.Microsecond), status, networkError)
+	}
 }
 
 // RecordWriter is a Writer that stores the payloads in memory. Used for testing purposes

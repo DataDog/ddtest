@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
 // userToolexecEnv carries the user's -toolexec to ddtest's tool wrapper. Every
@@ -75,7 +76,7 @@ func ToolNeedsPlan(mode string, args []string, importPath string) bool {
 // before entering here, with native process replacement on Unix.
 func RunTool(ctx context.Context, overlay string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "ddtest: missing tool executable")
+		fmt.Fprintln(stderr, version.BuildLogPrefix+" ERROR: missing tool executable")
 		return 2
 	}
 	if tool := strings.TrimSuffix(filepath.Base(args[0]), ".exe"); tool == "cover" {

@@ -11,6 +11,7 @@ the guide for the work you need to do:
 | Maintain Testify callers, supported versions or the coverage bridge | [Testify design and compatibility](testify.md) |
 | Use deferred delivery or maintain automatic goleak support | [Delivery checkpoints and goleak](delivery.md) |
 | Update the SDK, MessagePack codecs or platform subset | [Source updates and maintenance](maintenance.md) |
+| Diagnose CLI preparation, runtime provisioning or native build time | [CLI build diagnostics](cli-debug.md) |
 | Change allocations, batching, compression or build preparation | [Performance and ownership constraints](performance.md) |
 | Configure Mini or use its public API | [Native runtime usage](mini-runtime.md) |
 | Compare CI features and policy combinations with the SDK | [Feature parity and event counts](ci-parity.md) |

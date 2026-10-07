@@ -203,7 +203,13 @@ func (c *client) Config() ClientConfig {
 // Flush sends all the data sources before calling flush
 // This function is called by the flushTicker so it should not panic, or it will crash the whole customer application.
 // If a panic occurs, we stop the telemetry and log the error.
-func (c *client) Flush() {
+func (c *client) Flush() { c.flushData(0) }
+
+// flushStartup sends the standalone app-started request before tests. Remaining
+// snapshots stay in the existing queue until a regular flush or shutdown.
+func (c *client) flushStartup() { c.flushData(1) }
+
+func (c *client) flushData(limit int) {
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -230,7 +236,7 @@ func (c *client) Flush() {
 		}
 	}
 
-	nbBytes, err := c.flush(payloads)
+	nbBytes, err := c.flushPayloads(payloads, limit)
 	if err != nil {
 		log.Debug("telemetry: error while flushing CI telemetry data: %s", err.Error())
 
@@ -252,6 +258,10 @@ func (c *client) transform(payloads []transport.Payload) []transport.Payload {
 // flush sends all the data sources to the writer after having sent them through the [transform] function.
 // It returns the amount of bytes sent to the writer.
 func (c *client) flush(payloads []transport.Payload) (int, error) {
+	return c.flushPayloads(payloads, 0)
+}
+
+func (c *client) flushPayloads(payloads []transport.Payload, limit int) (int, error) {
 	c.flushMu.Lock()
 	defer c.flushMu.Unlock()
 	payloads = c.transform(payloads)
@@ -272,6 +282,10 @@ func (c *client) flush(payloads []transport.Payload) (int, error) {
 	)
 
 	for i, payload := range payloads {
+		if limit != 0 && i >= limit {
+			c.payloadQueue.Enqueue(payloads[i:]...)
+			break
+		}
 		results, err := c.writer.Flush(payload)
 		c.computeFlushMetrics(results, err)
 		if err != nil {

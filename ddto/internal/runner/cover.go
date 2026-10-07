@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
 // RunCoverTool handles Go's cover tool for ddtest's private -toolexec
@@ -19,7 +21,7 @@ import (
 // linker identities stay native; cover's identity includes our contract.
 func RunCoverTool(ctx context.Context, overlay string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "ddtest: missing cover tool executable")
+		fmt.Fprintln(stderr, version.BuildLogPrefix+" ERROR: missing cover tool executable")
 		return 2
 	}
 	if len(args) == 2 && args[1] == "-V=full" {

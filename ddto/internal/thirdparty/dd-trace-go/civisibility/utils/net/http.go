@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -217,6 +218,17 @@ func (rh *RequestHandler) SendRequest(config RequestConfig) (*Response, error) {
 }
 
 func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int) (stopRetries bool, response *Response, requestError error) {
+	statusCode := 0
+	if log.DebugEnabled() {
+		started := time.Now()
+		path := ""
+		if parsed, err := url.Parse(config.URL); err == nil {
+			path = parsed.EscapedPath()
+		}
+		defer func() {
+			log.Debug("ciVisibilityHttpClient: request finished path=%s attempt=%d duration=%s status_code=%d retry=%t", path, attempt, time.Since(started).Round(time.Microsecond), statusCode, !stopRetries)
+		}()
+	}
 	var req *http.Request
 
 	if len(config.Files) > 0 {
@@ -316,7 +328,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 	defer resp.Body.Close()
 
 	// Capture the status code
-	statusCode := resp.StatusCode
+	statusCode = resp.StatusCode
 
 	// Check for rate-limiting (HTTP 429)
 	if resp.StatusCode == HTTPStatusTooManyRequests {

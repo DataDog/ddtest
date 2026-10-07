@@ -113,11 +113,17 @@ func ensureSettingsInitialization(serviceName string) {
 	settingsInitializationOnce.Do(func() {
 		log.Debug("civisibility: initializing settings")
 		defer log.Debug("civisibility: settings initialization complete")
+		if log.DebugEnabled() {
+			started := time.Now()
+			defer func() {
+				log.Debug("civisibility: settings initialization finished duration=%s", time.Since(started).Round(time.Microsecond))
+			}()
+		}
 
 		// Create the CI Visibility client
 		client, waitTelemetry := newCIVisibilityClientWithServiceNameFunc(serviceName)
 		// All exits join startup HTTP before GetSettings can return to a test.
-		// StartApp retains the order of app-started and its following metrics.
+		// StartApp joins app-started; queued metrics retain their order for later flushes.
 		defer waitTelemetry()
 		ciVisibilityClient = client
 		if ciVisibilityClient == nil {

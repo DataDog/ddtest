@@ -161,10 +161,23 @@ offline modes and request errors. Other client constructors stay synchronous.
 
 Both operations finish before test admission, so no test runs while startup
 requests read `time.Local`, and `go test` does not count them in a test's
-duration. As in the SDK, `app-started` is a standalone request followed by a `message-batch`: the
-mapper keeps `app-started` out of batches. A slow endpoint delays the session
-start within the client timeouts. `StopApp` still waits on the existing
-WaitGroup, so a concurrent close sends `app-closing` after startup.
+duration. The CI client sends only the standalone `app-started` request during
+startup. `telemetry/client.go` snapshots the other data sources at that same
+point and retains their mapped payloads in its existing bounded queue. Their
+values and timestamps survive later submissions. A regular flush sends those
+snapshots before newer payloads; `StopApp` drains them before `app-closing`.
+Retries and oversized-payload handling use the same queue and writer paths.
+Other implementations of the telemetry client interface retain their ordinary
+`Flush` behavior.
+
+Delivery keeps the selected mode: ordinary telemetry uses its existing periodic
+flush, while deferred telemetry flushes at eligible idle checkpoints. Both
+modes flush on shutdown. No startup worker is left sending that second payload
+during the first test, and no new goroutine or timer is created. Ordinary mode
+continues to permit later periodic requests during tests; use
+`DD_CIVISIBILITY_DEFERRED_DELIVERY=true` to keep those requests outside test
+bodies. A slow `app-started` response still delays startup within the client
+timeouts. `StopApp` waits for the startup WaitGroup before final delivery.
 
 [`telemetry/internal/ticker.go`](telemetry/internal/ticker.go) orders `Stop`
 with interval changes under the ticker mutex, so an interval change after `Stop`
@@ -186,6 +199,10 @@ the two HTTP responses, verifies overlap and holds test admission until both
 finish, including failed requests. It runs the test binary with `-race` in
 ordinary and deferred modes. Keep that join when updating the client or settings
 initialization; asynchronous startup without it reintroduces the clock race.
+`TestStartupFlushRetainsMetricsUntilNextFlush` compares a retained payload
+byte for byte after a later submission and final flush, including failed and
+oversized startup requests. Keep snapshot ownership and request ordering when
+updating the mapper or queue.
 `TestStoppedTickerCannotRestart` checks terminal close.
 `TestWriterFlushWaitsForResponseCompletion` holds the transport's return-to-idle
 handshake for successful and failed responses.
@@ -472,9 +489,11 @@ unoptimized and race builds. The source-cache unit tests cover duplicate method
 names, named `func1` declarations, closures, unavailable sources, impacted-test
 classification and process-retry metadata.
 
-`log/log.go` labels native runtime diagnostics `TestOptimization Tracer`, using
-the version owned by `internal/version`. The original SDK's logger is unchanged.
-The native version is also used in event metadata and CI telemetry.
+`log/log.go` uses `internal/version.RunLogPrefix` for native runtime diagnostics:
+`TestOptimization.run  v0.0.0`. CLI diagnostics use `BuildLogPrefix`:
+`TestOptimization.build v0.0.0`. Both prefixes share the native version, also
+used in event metadata and CI telemetry. Preserve this identity when updating
+the incorporated logger. The original SDK's logger is unchanged.
 
 ## Fuzz and executable Examples
 

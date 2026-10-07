@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -216,5 +218,110 @@ func TestProvideMiniRelativeReplacementFromSubdirectory(t *testing.T) {
 	}
 	if contents, err := os.ReadFile(filepath.Join(dir, "go.mod")); err != nil || string(contents) != original {
 		t.Fatalf("client module changed: %s, %v", contents, err)
+	}
+}
+
+func TestPreprovideMiniRespectsEffectiveModuleAndWorkspace(t *testing.T) {
+	t.Setenv("GOPROXY", "off")
+	t.Setenv("GOWORK", "off")
+	for _, scenario := range []string{"absent", "required", "modfile", "overlay", "workspace", "escaped"} {
+		t.Run(scenario, func(t *testing.T) {
+			dir := t.TempDir()
+			bare := "module example.com/preprovide\n\ngo 1.26.0\n"
+			required := bare + "require " + miniModule + " v0.0.0\n"
+			contents := bare
+			if scenario == "required" {
+				contents = required
+			}
+			if scenario == "escaped" {
+				contents += "// conservative fallback \\ notation\n"
+			}
+			path := filepath.Join(dir, "go.mod")
+			if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+				t.Fatal(err)
+			}
+			opts := options{}
+			replacements := map[string]string{}
+			if scenario == "modfile" || scenario == "overlay" {
+				selected := filepath.Join(dir, "selected.mod")
+				if err := os.WriteFile(selected, []byte(required), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if scenario == "modfile" {
+					opts.modfile = selected
+					opts.buildFlags = []string{"-modfile=" + selected}
+				} else {
+					replacements[path] = selected
+				}
+			}
+			if scenario == "workspace" {
+				root := filepath.Join(dir, "runtime")
+				if err := os.Mkdir(root, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module "+miniModule+"\ngo 1.26.0\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				work := filepath.Join(dir, "go.work")
+				if err := os.WriteFile(work, []byte("go 1.26.0\nuse (\n.\n./runtime\n)\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("GOWORK", work)
+			}
+			modfile, err := preprovideMini(t.Context(), dir, opts, t.TempDir(), replacements, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (modfile != "") != (scenario == "absent") {
+				t.Fatalf("scenario=%s modfile=%s", scenario, modfile)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil || string(got) != contents {
+				t.Fatalf("client module changed: %s %v", got, err)
+			}
+		})
+	}
+}
+
+func TestPreprovideMiniPreservesTransitiveSelectionAndChecksums(t *testing.T) {
+	t.Setenv("GOWORK", "off")
+	t.Setenv("GOSUMDB", "off")
+	t.Setenv("GONOPROXY", "none")
+	t.Setenv("GOMODCACHE", t.TempDir())
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/" + miniModule + "/@v/v1.2.3.mod":
+			fmt.Fprintf(w, "module %s\ngo 1.26.0\n", miniModule)
+		case "/" + miniModule + "/@v/v1.2.3.info":
+			fmt.Fprint(w, `{"Version":"v1.2.3","Time":"2026-10-06T00:00:00Z"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer proxy.Close()
+	t.Setenv("GOPROXY", proxy.URL)
+	dir := t.TempDir()
+	bridge := filepath.Join(dir, "bridge")
+	if err := os.Mkdir(bridge, 0700); err != nil {
+		t.Fatal(err)
+	}
+	original := "module example.com/transitive\ngo 1.26.0\nrequire example.com/bridge v0.0.0\nreplace example.com/bridge => ./bridge\n"
+	for file, contents := range map[string]string{
+		filepath.Join(dir, "go.mod"):    original,
+		filepath.Join(bridge, "go.mod"): "module example.com/bridge\ngo 1.26.0\nrequire " + miniModule + " v1.2.3\n",
+	} {
+		if err := os.WriteFile(file, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	modfile, err := preprovideMini(t.Context(), dir, options{}, t.TempDir(), nil, nil)
+	if err != nil || modfile != "" {
+		t.Fatalf("replaced a transitive runtime: %s %v", modfile, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "go.mod")); err != nil || string(got) != original {
+		t.Fatalf("client module changed: %s %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "go.sum")); !os.IsNotExist(err) {
+		t.Fatalf("module probe created client checksums: %v", err)
 	}
 }

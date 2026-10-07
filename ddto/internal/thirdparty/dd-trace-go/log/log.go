@@ -67,7 +67,7 @@ const (
 	LevelError
 )
 
-var prefixMsg = "TestOptimization Tracer " + version.Tag
+var prefixMsg = version.RunLogPrefix
 
 // Logger implementations are able to log given messages that the tracer might
 // output. This interface is duplicated here to avoid a cyclic dependency

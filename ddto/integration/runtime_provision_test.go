@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
 // go mod tidy removes the runtime requirement: nothing in the module imports it,
@@ -88,7 +90,7 @@ func TestSDKProvisionProgressUsesStderr(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit=%d\n%s\n%s", code, out, stderr)
 	}
-	if !strings.Contains(stderr, "ddtest: preparing runtime with go get ") || !strings.Contains(stderr, "go: added github.com/DataDog/dd-trace-go/v2 ") {
+	if !strings.Contains(stderr, version.BuildLogPrefix+" INFO: preparing runtime with go get ") || !strings.Contains(stderr, "go: added github.com/DataDog/dd-trace-go/v2 ") {
 		t.Fatalf("missing provisioning progress: %s", stderr)
 	}
 	decoder := json.NewDecoder(strings.NewReader(out))

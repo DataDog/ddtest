@@ -106,6 +106,9 @@ func explicitFiles(dir string, packages []string) bool {
 }
 
 func prepare(ctx context.Context, dir string, opts options, runtime Runtime, progress io.Writer) (plan Plan, err error) {
+	debug := debugFromContext(ctx)
+	phase := debug.start("prepare")
+	defer func() { phase.finish(err) }()
 	runtimePackage := sdkPackage
 	switch runtime {
 	case SDK:
@@ -120,12 +123,15 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(dir, path)
 		}
+		phase := debug.start("read user overlay")
 		data, e := os.ReadFile(path)
 		if e != nil {
+			phase.finish(e)
 			return plan, e
 		}
 		var overlay Overlay
 		if e = json.Unmarshal(data, &overlay); e != nil {
+			phase.finish(e)
 			return plan, e
 		}
 		for from, to := range overlay.Replace {
@@ -137,6 +143,8 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			}
 			replacements[filepath.Clean(from)] = to
 		}
+		phase.finish(nil)
+		debug.printf("user overlay entries=%d", len(replacements))
 	}
 	temp, e := os.MkdirTemp("", "dd-ci-testing-poc-")
 	if e != nil {
@@ -148,7 +156,12 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			_ = os.RemoveAll(temp)
 		}
 	}()
-	list := func(patterns ...string) ([]goPackage, error) {
+	list := func(patterns ...string) (packages []goPackage, err error) {
+		phase := debug.start("resolve packages")
+		defer func() {
+			phase.finish(err)
+			debug.printf("package query patterns=%d resolved=%d", len(patterns), len(packages))
+		}()
 		listArgs := append([]string{"list", "-e", "-json=Dir,Name,ImportPath,Standard,GoFiles,TestGoFiles,XTestGoFiles,Imports,TestImports,XTestImports,Deps,Module,Error"}, opts.buildFlags...)
 		listArgs = append(listArgs, patterns...)
 		cmd := exec.CommandContext(ctx, "go", listArgs...)
@@ -157,6 +170,15 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		// links. Relative patterns are matched against that same spelling.
 		cmd.Dir = dir
 		return readPackages(cmd, "resolve packages")
+	}
+	if runtime == Mini && opts.mod != "mod" {
+		plan.Modfile, e = preprovideMini(ctx, dir, opts, temp, replacements, progress)
+		if e != nil {
+			return plan, e
+		}
+		if plan.Modfile != "" {
+			opts.buildFlags = append(opts.buildFlags, "-modfile="+plan.Modfile)
+		}
 	}
 	patterns := append(append([]string(nil), opts.packages...), "testing", runtimePackage)
 	var packages []goPackage
@@ -178,7 +200,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		return plan, e
 	}
 	for _, p := range packages {
-		if p.ImportPath == runtimePackage && p.Error != nil {
+		if p.ImportPath == runtimePackage && p.Error != nil && plan.Modfile == "" {
 			// The module does not require the runtime: provide it through a
 			// temporary go.mod instead of failing or editing the module.
 			if plan.Modfile, e = provideRuntime(ctx, dir, opts, runtime, temp, replacements, progress); e != nil {
@@ -207,30 +229,16 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			if runtime == SDK && (p.Module == nil || p.Module.Version != SDKVersion || p.Module.Replace != nil) {
 				return plan, fmt.Errorf("POC requires unmodified dd-trace-go %s", SDKVersion)
 			}
+			if debug != nil && p.Module != nil {
+				debug.printf("runtime module_version=%q replacement=%t", p.Module.Version, p.Module.Replace != nil)
+			}
 			foundRuntime = true
 		}
 	}
 	if !foundRuntime || native == nil {
 		return plan, fmt.Errorf("missing testing or selected CI runtime package")
 	}
-	files := map[string][]byte{}
-	for _, file := range native.GoFiles {
-		path := filepath.Join(native.Dir, file)
-		actual := path
-		if to, ok := replacements[path]; ok {
-			actual = to
-		}
-		src, e := os.ReadFile(actual)
-		if e != nil {
-			return plan, e
-		}
-		files[path] = src
-	}
-	transform := instrument.Transform
-	if runtime == Mini {
-		transform = instrument.TransformWithFuzz
-	}
-	rewritten, e := transform(files)
+	rewritten, e := transformTesting(native, replacements, runtime, debug)
 	if e != nil {
 		return plan, e
 	}
@@ -283,7 +291,10 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	if e != nil {
 		return plan, e
 	}
+	testifyPhase := debug.start("instrument testify")
 	testify, warning, e := prepareTestifyPackage(libraries[instrument.TestifySuiteImport], replacements, runtime, temp)
+	testifyPhase.finish(e)
+	debug.printf("testify detected=%t instrumented=%t warning=%t", libraries[instrument.TestifySuiteImport] != nil, testify != nil, warning != "")
 	if e != nil {
 		return plan, e
 	}
@@ -310,7 +321,10 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	}
 	var goleak *LibraryEntry
 	if runtime == Mini {
+		goleakPhase := debug.start("instrument goleak")
 		goleak, warning, e = prepareGoleak(libraries[instrument.GoleakImport], replacements, temp)
+		goleakPhase.finish(e)
+		debug.printf("goleak detected=%t instrumented=%t warning=%t", libraries[instrument.GoleakImport] != nil, goleak != nil, warning != "")
 		if e != nil {
 			return plan, e
 		}
@@ -328,14 +342,47 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	plan.coverOverlay = needsCoverOverlay(dir, opts, packages, []goPackage{*native})
 	plan.File = filepath.Join(temp, "overlay.json")
 	plan.InstrumentedFiles = len(rewritten.Files)
+	writePhase := debug.start("write overlay")
 	encoded, e := json.Marshal(Overlay{Replace: replacements, Testify: testify, Goleak: goleak})
+	if e != nil {
+		writePhase.finish(e)
+		return plan, e
+	}
+	e = os.WriteFile(plan.File, encoded, 0600)
+	writePhase.finish(e)
 	if e != nil {
 		return plan, e
 	}
-	if e = os.WriteFile(plan.File, encoded, 0600); e != nil {
-		return plan, e
-	}
+	debug.printf("plan ready testing_files=%d test_packages=%d overlay_entries=%d generated_backing_files=%d temporary_modfile=%t cover_bridge=%t", plan.InstrumentedFiles, plan.TestPackages, len(replacements), len(backingByContent), plan.Modfile != "", plan.coverOverlay)
 	return plan, nil
+}
+
+func transformTesting(native *goPackage, replacements map[string]string, runtime Runtime, debug *cliDebug) (result instrument.TestingSources, err error) {
+	phase := debug.start("instrument testing")
+	defer func() { phase.finish(err) }()
+	files := map[string][]byte{}
+	for _, file := range native.GoFiles {
+		path := filepath.Join(native.Dir, file)
+		actual := path
+		if to, ok := replacements[path]; ok {
+			actual = to
+		}
+		src, e := os.ReadFile(actual)
+		if e != nil {
+			return result, e
+		}
+		files[path] = src
+	}
+	transform := instrument.Transform
+	if runtime == Mini {
+		transform = instrument.TransformWithFuzz
+	}
+	result, err = transform(files)
+	if err != nil {
+		return result, err
+	}
+	debug.printf("testing sources=%d rewritten=%d fuzz=%t parallel_stop=%t", len(files), len(result.Files), runtime == Mini, result.ParallelStop)
+	return result, nil
 }
 
 // Run retains native test output, flags, working directory, and exit status.
@@ -348,7 +395,22 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 // Interrupt and termination signals are forwarded to go test instead of ending
 // ddtest first: the plan is removed only after Go exits, and the result keeps
 // go test's exit status. A signal during preparation stops it and cleans up.
-func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Reader, stdout, stderr io.Writer) int {
+func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Reader, stdout, stderr io.Writer) (exitCode int) {
+	ctx = withCLIDebug(ctx, stderr)
+	debug := debugFromContext(ctx)
+	if debug != nil {
+		stderr = debug.writer
+	}
+	started := debug.start("ddtest")
+	defer func() {
+		var err error
+		if exitCode != 0 {
+			err = errors.New("command failed")
+		}
+		started.finish(err)
+		debug.printf("ddtest exit_code=%d", exitCode)
+	}()
+	debug.printf("runtime=%s", runtime)
 	signals := make(chan os.Signal, 4)
 	signal.Notify(signals, forwardedSignals...)
 	defer signal.Stop(signals)
@@ -359,14 +421,16 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 	}
 	opts, err := parseOptions(args, os.Getenv("GOFLAGS"))
 	if err != nil {
-		fmt.Fprintln(stderr, "ddtest:", err)
+		fmt.Fprintln(stderr, version.BuildLogPrefix+" ERROR:", err)
 		return 2
 	}
 	dir := workingDirectory(cwd, opts)
+	debug.printf("working_directory=%q package_patterns=%d build_flags=%d", dir, len(opts.packages), len(opts.buildFlags))
 	if opts.help || explicitFiles(dir, opts.packages) {
 		if !opts.help {
-			fmt.Fprintln(stderr, "ddtest: warning: explicit Go files run without CI Visibility instrumentation")
+			fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN: explicit Go files run without CI Visibility instrumentation")
 		}
+		debug.printf("instrumentation bypass help=%t explicit_files=%t", opts.help, !opts.help)
 		// Native go test handles -C, help and file mode itself.
 		return runGo(ctx, cwd, append([]string{"test"}, args...), nil, signals, stdin, stdout, stderr)
 	}
@@ -375,14 +439,15 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 		defer os.RemoveAll(plan.Dir)
 	}
 	if interrupted != nil {
+		debug.printf("preparation interrupted")
 		return interruptedStatus(interrupted)
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, "ddtest:", err)
+		fmt.Fprintln(stderr, version.BuildLogPrefix+" ERROR:", err)
 		return 2
 	}
 	for _, warning := range plan.Warnings {
-		fmt.Fprintln(stderr, "ddtest: warning:", warning)
+		fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN:", warning)
 	}
 	var tool string
 	var env []string
@@ -402,6 +467,7 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 			env = []string{userToolexecEnv + "=" + opts.toolexec}
 		}
 	}
+	debug.printf("tool selection testify=%t goleak=%t cover=%t user_toolexec=%t", plan.testify, plan.goleak, plan.coverOverlay, opts.toolexec != "")
 	forwarded := goTestArguments(plan, opts, tool)
 	return runGo(ctx, dir, forwarded, env, signals, stdin, stdout, stderr)
 }
@@ -466,7 +532,17 @@ func goTestArguments(plan Plan, opts options, tool string) []string {
 // runGo retains native output and exit status. Signals are forwarded to Go
 // rather than killing it; context cancellation interrupts it, then kills it
 // after a grace period.
-func runGo(ctx context.Context, dir string, args, envOverrides []string, signals <-chan os.Signal, stdin io.Reader, stdout, stderr io.Writer) int {
+func runGo(ctx context.Context, dir string, args, envOverrides []string, signals <-chan os.Signal, stdin io.Reader, stdout, stderr io.Writer) (exitCode int) {
+	debug := debugFromContext(ctx)
+	phase := debug.start("go test")
+	defer func() {
+		var err error
+		if exitCode != 0 {
+			err = errors.New("command failed")
+		}
+		phase.finish(err)
+		debug.printf("go test exit_code=%d", exitCode)
+	}()
 	cmd := exec.Command("go", args...)
 	cmd.Dir = dir
 	if len(envOverrides) != 0 {
@@ -476,7 +552,7 @@ func runGo(ctx context.Context, dir string, args, envOverrides []string, signals
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintln(stderr, "ddtest:", err)
+		fmt.Fprintln(stderr, version.BuildLogPrefix+" ERROR:", err)
 		return 2
 	}
 	done := make(chan error, 1)
@@ -496,17 +572,20 @@ func runGo(ctx context.Context, dir string, args, envOverrides []string, signals
 				}
 				return exit.ExitCode()
 			}
-			fmt.Fprintln(stderr, "ddtest:", err)
+			fmt.Fprintln(stderr, version.BuildLogPrefix+" ERROR:", err)
 			return 2
 		case s := <-signals:
+			debug.printf("forwarding signal to go test")
 			_ = cmd.Process.Signal(s)
 		case <-canceled:
+			debug.printf("go test context canceled; interrupting")
 			canceled = nil
 			_ = interruptProcess(cmd.Process)
 			timer := time.NewTimer(10 * time.Second)
 			defer timer.Stop()
 			kill = timer.C
 		case <-kill:
+			debug.printf("go test grace period expired; killing")
 			kill = nil
 			_ = cmd.Process.Kill()
 		}

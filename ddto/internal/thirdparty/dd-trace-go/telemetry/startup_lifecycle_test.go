@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -163,5 +164,73 @@ func TestStartupTelemetrySendsBeforeTests(t *testing.T) {
 	// This client has metrics/logs disabled, so closing is a standalone event.
 	if bodies[len(bodies)-1].Type != "app-closing" {
 		t.Fatalf("session close missing: %+v", bodies)
+	}
+}
+
+// Initial metrics must retain their values and timestamps across later submissions.
+func TestStartupFlushRetainsMetricsUntilNextFlush(t *testing.T) {
+	for _, outcome := range []string{"success", "retry", "oversized"} {
+		t.Run(outcome, func(t *testing.T) {
+			var mu sync.Mutex
+			var requests []startupEnvelope
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var envelope startupEnvelope
+				if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
+					t.Error(err)
+				}
+				mu.Lock()
+				requests = append(requests, envelope)
+				n := len(requests)
+				mu.Unlock()
+				if n <= 2 && outcome == "retry" {
+					w.WriteHeader(503)
+				} else if envelope.Type == "app-started" && outcome == "oversized" {
+					w.WriteHeader(413)
+				} else {
+					w.WriteHeader(202)
+				}
+			}))
+			defer server.Close()
+			c, err := NewClient("snapshot", "", "", ClientConfig{HTTPClient: server.Client(), AgentURL: server.URL, AgentlessURL: server.URL, APIKey: "placeholder", MetricsEnabled: true, Debug: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			native := c.(*client)
+			counter := native.Count(transport.NamespaceCIVisibility, "startup.snapshot", nil)
+			counter.Submit(7)
+			native.AppStart()
+			native.flushStartup()
+			mu.Lock()
+			firstCount := len(requests)
+			firstType := requests[0].Type
+			mu.Unlock()
+			if firstType != "app-started" || firstCount > 2 {
+				t.Fatalf("startup sent metrics: %+v", requests)
+			}
+			snapshots := native.payloadQueue.Flush()
+			if len(snapshots) == 0 {
+				t.Fatal("startup did not retain any snapshots")
+			}
+			expected, err := json.Marshal(snapshots[len(snapshots)-1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			native.payloadQueue.Enqueue(snapshots...)
+			counter.Submit(3)
+			native.AppStop()
+			native.Flush()
+			mu.Lock()
+			defer mu.Unlock()
+			found := false
+			for _, envelope := range requests[firstCount:] {
+				if bytes.Equal(envelope.Payload, expected) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("queued metric snapshot changed: %+v", requests)
+			}
+		})
 	}
 }
