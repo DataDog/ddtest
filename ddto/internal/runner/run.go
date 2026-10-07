@@ -32,7 +32,7 @@ type goPackage struct {
 	Module                             *struct {
 		Path, Version string
 		Main          bool
-		Replace       *struct{ Dir, Version string }
+		Replace       *struct{ Path, Dir, Version string }
 	}
 	Error *struct{ Err string }
 }

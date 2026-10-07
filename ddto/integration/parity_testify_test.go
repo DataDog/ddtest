@@ -2,6 +2,7 @@ package integration
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -281,16 +282,29 @@ func TestTestifyDiagnosticNormalizationRetainsApplicationErrors(t *testing.T) {
 
 func TestTestifySupportedVersionsAndNativeSemantics(t *testing.T) {
 	// The fixture itself needs Testify v1.6.0+ (SuiteInformation, s.Run).
-	for _, version := range []string{"v1.10.0", "v1.11.1", "v1.12.1"} {
-		t.Run(version, func(t *testing.T) {
+	for _, selected := range []struct{ name, target string }{
+		{"v1.10.0", "github.com/stretchr/testify@v1.10.0"},
+		{"v1.11.1", "github.com/stretchr/testify@v1.11.1"},
+		{"v1.12.1", "github.com/stretchr/testify@v1.12.1"},
+		{"DataDog-fork", "github.com/DataDog/testify@v1.1.5-0.20250616071259-629a0cde43ec"},
+	} {
+		t.Run(selected.name, func(t *testing.T) {
 			dir, driver := prepareTestifyFixture(t, false)
-			out, stderr, code := command(t, dir, testEnv(), "go", "mod", "edit", "-replace=github.com/stretchr/testify=github.com/stretchr/testify@"+version)
+			// Keep the upstream requirement used by dd-go. Upstream replacements
+			// select their target release; the fork uses its independent version.
+			out, stderr, code := command(t, dir, testEnv(), "go", "mod", "edit", "-require=github.com/stretchr/testify@v1.12.1", "-replace=github.com/stretchr/testify="+selected.target)
 			if code != 0 {
 				t.Fatal(out, stderr)
 			}
-			bins := compileMiniPair(t, dir, driver, "-mod=mod", "-tags=testify_extra")
+			flags := []string{"-mod=mod", "-tags=testify_extra"}
+			if selected.name == "DataDog-fork" {
+				flags = append(flags, "-race", "-cover", "-covermode=atomic", "-coverpkg=./...")
+			}
+			bins := compileMiniPair(t, dir, driver, flags...)
 			native := filepath.Join(t.TempDir(), executableName("fixture.test"))
-			out, stderr, code = command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), "go", "test", "-mod=mod", "-tags=testify_extra", "-c", "-o", native, ".")
+			buildArgs := append([]string{"test"}, flags...)
+			buildArgs = append(buildArgs, "-c", "-o", native, ".")
+			out, stderr, code = command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), "go", buildArgs...)
 			if code != 0 {
 				t.Fatal(out, stderr)
 			}
@@ -315,7 +329,40 @@ func TestTestifySupportedVersionsAndNativeSemantics(t *testing.T) {
 			if err != nil || counts != (eventCounts{1, 1, 2, 3, 0}) {
 				t.Fatal(counts, err)
 			}
+			if selected.name == "DataDog-fork" {
+				checkDataDogTestifyParity(t, dir, bins)
+			}
 		})
+	}
+}
+
+// Keep this focused on the fork's original suite runner and the entry hook.
+// The binaries also include race and coverage instrumentation.
+func checkDataDogTestifyParity(t *testing.T, dir string, bins []string) {
+	t.Helper()
+	cases := []parityCase{
+		{Name: "nested", Args: []string{"-test.run=^TestParitySuite$/^TestNested$"}, MinTests: 3},
+		{Name: "lifecycle-stats", Args: []string{"-test.run=^TestParityLifecycle$"}, MinTests: 4},
+		{Name: "external-helper", Args: []string{"-test.run=^TestParityExternalHelper$/^TestPass$"}, MinTests: 2},
+		{Name: "panic", Args: []string{"-test.run=^TestParitySuite$/^TestPanic$"}, WantExit: 1, MinTests: 2},
+		{Name: "coverage", Args: []string{"-test.run=^TestParitySuite$/^Test(Pass|Nested)$"}, Policy: policySettings{Coverage: true}, Coverage: true, MinTests: 4},
+		{Name: "atr", Args: []string{"-test.run=^TestParitySuite$/^TestFlaky$"}, Env: []string{"DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=true", "DD_CIVISIBILITY_FLAKY_RETRY_COUNT=2", "DD_CIVISIBILITY_RETRY_EXECUTION_MODE=in_process"}, Policy: policySettings{Retry: true}, MinTests: 3},
+	}
+	for _, deferred := range []bool{false, true} {
+		for _, tc := range cases {
+			t.Run(fmt.Sprintf("%s/deferred=%t", tc.Name, deferred), func(t *testing.T) {
+				tc.Env = append(tc.Env, fmt.Sprintf("DD_CIVISIBILITY_DEFERRED_DELIVERY=%t", deferred))
+				want, sdk := runParityCase(t, dir, bins[0], tc)
+				got, mini := runParityCase(t, dir, bins[1], tc)
+				requireNoMiniLeftovers(t, mini)
+				normalizeTestifyEvents(t, want.events)
+				normalizeTestifyEvents(t, got.events)
+				assertParityCase(t, tc, want, got, sdk, mini)
+				if tc.Coverage {
+					assertTestifyCoverageFilenames(t, &want.miniWireCapture, &got.miniWireCapture)
+				}
+			})
+		}
 	}
 }
 

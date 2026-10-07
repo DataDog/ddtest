@@ -17,7 +17,7 @@ The scope follows Testify's serial method runner. It does not add support for
 concurrent `suite.Run` calls sharing the same parent `*testing.T`; Testify's
 own suite state also assumes serial use.
 
-The minimum supported version is **Testify v1.4.0**: from that release on,
+The minimum supported upstream version is **Testify v1.4.0**: from that release on,
 `Run(*testing.T, TestingSuite)` runs each suite method as `t.Run(method)`, which
 is all the registration needs. Releases v1.4.0 through v1.12.1 produced identical
 events for the same suite. The compatibility suite runs v1.10.0, v1.11.1 and
@@ -30,6 +30,50 @@ entry does not stop the build. `ddtest` prints a warning and leaves Testify
 uninstrumented; its suite methods are still reported as ordinary subtests,
 without Testify suite metadata. Unreadable sources and reserved-name collisions
 remain errors.
+
+## DataDog fork replacement
+
+Both runtimes support this replacement, including clients requiring upstream
+Testify v1.12.1:
+
+```go
+require github.com/stretchr/testify v1.12.1
+
+replace github.com/stretchr/testify => github.com/DataDog/testify v1.1.5-0.20250616071259-629a0cde43ec
+```
+
+This fork's `suite/suite.go` matches upstream v1.10.0 byte for byte. Its
+pseudo-version starts with v1.1.5, so comparing that number with the upstream
+minimum would reject a compatible runner.
+
+Preparation uses the effective module metadata returned by `go list`:
+
+- For a replacement with a different module path, use the original Testify
+  version for the minimum-version check. Forks have independent version schemes;
+  their release numbers do not identify an upstream Testify release.
+- For a versioned replacement within `github.com/stretchr/testify`, check the
+  replacement version. Replacing v1.12.1 with upstream v1.3.0 still warns.
+- For a local replacement, check the original module version.
+
+This policy supports forks without a module allowlist or a pinned revision.
+The original version is the client's declared compatibility contract; Go does
+not verify that a fork preserves it. Preparation therefore still validates
+`Run(*testing.T, TestingSuite)` in the effective selected sources before the
+build can use its cache. Overlays participate in that check. An incompatible
+entry produces a warning naming both the original version and the replacement.
+The prepared-source fingerprint continues to protect the compiler cache; no
+new subprocess, cache or runtime dependency is needed.
+
+`TestTestifyDataDogReplacement` reproduces the version rejection for Mini and
+SDK. `TestTestifyReplacementVersionPolicy` covers independent fork versions,
+upstream upgrades and downgrades, local replacements, and unsupported original
+versions. `TestTestifyForkReplacementGuards` checks incompatible entries and
+overlays for both runtimes. The `DataDog-fork` case of
+`TestTestifySupportedVersionsAndNativeSemantics` compiles the actual replacement
+with native Go, SDK and Mini, including race and coverage. It checks native
+behavior, suite hierarchy, lifecycle hooks, external helpers, panic, coverage,
+retries and ordinary/deferred Mini delivery. These tests run in the existing
+cross-platform compatibility workflow.
 
 ## Preparation and tool selection
 
