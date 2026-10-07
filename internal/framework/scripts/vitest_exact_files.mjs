@@ -15,6 +15,9 @@ if (filesPath && ['vitest', 'vitest.mjs', 'vitest.js'].includes(basename(entrypo
   const require = createRequire(pathToFileURL(realpathSync(entrypoint)))
   const { startVitest, parseCLI } = await import(pathToFileURL(require.resolve('vitest/node')).href)
   const major = Number(require('vitest/package.json').version.split('.')[0])
+  const runner = major >= 3
+    ? await import('./vitest_exact_files_modern.mjs')
+    : await import('./vitest_exact_files_legacy.mjs')
   // Use Vitest's own parser to preserve command options. Positional filters
   // are replaced by the exact assignment.
   const { options } = parseCLI(['vitest', ...process.argv.slice(2)])
@@ -39,20 +42,13 @@ if (filesPath && ['vitest', 'vitest.mjs', 'vitest.js'].includes(basename(entrypo
     if (process.exitCode) {
       throw new Error('Vitest failed to initialize the exact-file runner')
     }
-    const modern = major >= 3
-    // Vitest 3+ has a public specification API. Vitest 1-2 use the older
-    // discovery/run methods; keep the original specs (including project/pool).
-    let specs = modern
-      ? await context.getRelevantTestSpecifications()
-      : await context.filterTestsBySource(await context.globTestFiles())
-    specs = specs.filter(spec => selected.has(canonicalPath(spec.moduleId ?? spec[1])))
+    const discovered = await runner.discoverSpecifications(context)
+    const specs = discovered.filter(spec => selected.has(canonicalPath(runner.filePath(spec))))
     if (specs.length === 0) {
       console.error('No assigned Vitest test files found')
       process.exitCode = context.config.passWithNoTests ? 0 : 1
-    } else if (modern) {
-      await context.runTestSpecifications(specs, true)
     } else {
-      await context.runFiles(specs, true)
+      await runner.runSpecifications(context, specs)
     }
   } catch (error) {
     console.error(error)

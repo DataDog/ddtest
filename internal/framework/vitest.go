@@ -35,6 +35,12 @@ var vitestV1DiscoveryScript string
 //go:embed scripts/vitest_exact_files.mjs
 var vitestExactFilesScript string
 
+//go:embed scripts/vitest_exact_files_modern.mjs
+var vitestExactFilesModernScript string
+
+//go:embed scripts/vitest_exact_files_legacy.mjs
+var vitestExactFilesLegacyScript string
+
 var vitestTestFileExtensions = []string{"js", "jsx", "ts", "tsx", "mjs", "mts", "cjs", "cts"}
 
 type vitestExecutor interface {
@@ -236,7 +242,12 @@ func prepareVitestExactFiles(baseEnv map[string]string, testFiles []string) (str
 	}
 	adapterPath := filepath.Join(adapterDir, "exact-files.mjs")
 	filesPath := filepath.Join(adapterDir, "files.json")
-	for path, contents := range map[string][]byte{adapterPath: []byte(vitestExactFilesScript), filesPath: encodedFiles} {
+	for path, contents := range map[string][]byte{
+		adapterPath: []byte(vitestExactFilesScript),
+		filepath.Join(adapterDir, "vitest_exact_files_modern.mjs"): []byte(vitestExactFilesModernScript),
+		filepath.Join(adapterDir, "vitest_exact_files_legacy.mjs"): []byte(vitestExactFilesLegacyScript),
+		filesPath: encodedFiles,
+	} {
 		if err := os.WriteFile(path, contents, 0600); err != nil {
 			_ = os.RemoveAll(adapterDir)
 			return "", nil, fmt.Errorf("failed to write Vitest execution adapter: %w", err)

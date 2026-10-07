@@ -502,8 +502,10 @@ func TestVitest_RunTests_ExactSelectionEnvironmentAndCleanup(t *testing.T) {
 				if !strings.HasPrefix(env["NODE_OPTIONS"], workerEnv["NODE_OPTIONS"]+" --import ") {
 					t.Fatalf("lost worker NODE_OPTIONS: %q", env["NODE_OPTIONS"])
 				}
-				if _, err := os.Stat(filepath.Join(filepath.Dir(selectionPath), "exact-files.mjs")); err != nil {
-					t.Fatal(err)
+				for _, name := range []string{"exact-files.mjs", "vitest_exact_files_modern.mjs", "vitest_exact_files_legacy.mjs"} {
+					if _, err := os.Stat(filepath.Join(filepath.Dir(selectionPath), name)); err != nil {
+						t.Fatal(err)
+					}
 				}
 				return runErr
 			}}
