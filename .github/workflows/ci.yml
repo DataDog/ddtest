@@ -270,7 +270,7 @@ jobs:
           vitest_dir="${RUNNER_TEMP}/vitest-${{ matrix.vitest }}"
           # npm 10.9.8 crashes while resolving Vitest's peer dependencies.
           # Keep peer resolution enabled: Vitest 5 requires Vite as a peer.
-          npx --yes npm@11.11.1 install --prefix "${vitest_dir}" "vitest@${{ matrix.vitest }}" "dd-trace@5.111.0"
+          npx --yes npm@11.11.1 install --prefix "${vitest_dir}" "vitest@${{ matrix.vitest }}" "@vitest/coverage-v8@${{ matrix.vitest }}" "dd-trace@5.125.0"
           DDTEST_VITEST_NODE_MODULES="${vitest_dir}/node_modules" \
           DDTEST_DD_TRACE_NODE_MODULES="${vitest_dir}/node_modules" \
             go test -v ./internal/compatibility -run '^TestVitest(Adapter|Tracing)Integration$'

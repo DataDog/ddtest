@@ -28,7 +28,7 @@ Minimum supported library and runtime requirements:
   Cucumber support is tested with `@cucumber/cucumber` 7 through 13; Cypress
   support requires Cypress 12 or higher; Mocha support requires Mocha 8 or higher;
   Playwright support requires Playwright 1.18 or higher; Vitest support requires
-  Vitest 1.6 or higher.
+  Vitest 1.6 or higher and `dd-trace` **5.125.0** or higher for its programmatic runner.
 
 For instructions on setting up Test Optimization, see the [Datadog Test Optimization documentation](https://docs.datadoghq.com/tests/setup/).
 

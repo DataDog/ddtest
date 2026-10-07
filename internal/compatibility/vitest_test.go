@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
-	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
 )
 
@@ -56,6 +55,8 @@ export default function () {
 
 test('preserves config while running an assigned file', () => {
   expect(globalThis.ddtestVitestSetup).toBe(true)
+  expect(process.env.TEST).toBe('true')
+  expect(process.env.VITEST).toBe('true')
   expect(process.env.DDTEST_VITEST_WORKER).toBe('selected')
 })
 `)
@@ -108,6 +109,7 @@ test('runs only in its assigned batch', () => {
 		for _, tc := range []struct {
 			name, command, selected string
 		}{
+			{"shard in run mode", shellCommand(filepath.Join(root, "node_modules/.bin/vitest"), "--config", "vitest.overlap.mjs", "--shard=1/1"), "src/endOfYear/test.js"},
 			{"direct", shellCommand(filepath.Join(root, "node_modules/.bin/vitest"), "--config", "vitest.overlap.mjs"), "src/endOfYear/test.js"},
 			{"node with separator", shellCommand("node", filepath.Join(root, "node_modules/vitest/vitest.mjs"), "run", "--config", "vitest.overlap.mjs", "--", "old.test.js"), filepath.Join(root, "src/endOfYear/test.js")},
 			{"package manager", shellCommand("npx", "--no-install", "vitest", "run", "--config", "vitest.overlap.mjs"), "src/eachWeekendOfYear/test.js"},
@@ -225,6 +227,66 @@ test('must not run', () => { throw new Error('file assignment lost') })
 		}
 	})
 
+	t.Run("CI snapshots require an explicit update", func(t *testing.T) {
+		writeFixture(t, root, "snapshot.config.mjs", `export default { test: { include: ['snapshot.test.js'] } }`)
+		writeFixture(t, root, "snapshot.test.js", `import { expect, test } from 'vitest'
+test('snapshot policy', () => { expect({ assigned: true }).toMatchSnapshot() })
+`)
+		command := []string{filepath.Join(root, "node_modules/.bin/vitest"), "--config", "snapshot.config.mjs"}
+		configureFramework(shellCommand(command...), "")
+		err := framework.NewVitest().RunTests(ctx, []string{"snapshot.test.js"}, map[string]string{"CI": "true"})
+		if err == nil || !strings.Contains(err.Error(), "exit status 1") {
+			t.Fatalf("expected missing-snapshot failure in CI, got %v", err)
+		}
+		snapshot := filepath.Join(root, "__snapshots__/snapshot.test.js.snap")
+		if _, err := os.Stat(snapshot); !os.IsNotExist(err) {
+			t.Fatalf("snapshot should not be written without --update, got %v", err)
+		}
+		configureFramework(shellCommand(append(command, "--update")...), "")
+		if err := framework.NewVitest().RunTests(ctx, []string{"snapshot.test.js"}, map[string]string{"CI": "true"}); err != nil {
+			t.Fatalf("explicit snapshot update failed: %v", err)
+		}
+		if _, err := os.Stat(snapshot); err != nil {
+			t.Fatalf("explicit update did not write a snapshot: %v", err)
+		}
+	})
+
+	t.Run("coverage provider and reporting", func(t *testing.T) {
+		writeFixture(t, root, "coverage.config.mjs", `export default { test: {
+  include: ['coverage.test.js'],
+  coverage: { enabled: true, provider: 'v8', include: ['math.js'], reporter: ['json'], reportsDirectory: './coverage-report' },
+} }`)
+		writeFixture(t, root, "math.js", `export function add(a, b) { return a + b }`)
+		writeFixture(t, root, "coverage.test.js", `import { expect, test } from 'vitest'
+import { add } from './math.js'
+test('records coverage', () => { expect(add(1, 2)).toBe(3) })
+`)
+		configureFramework(shellCommand(filepath.Join(root, "node_modules/.bin/vitest"), "--config", "coverage.config.mjs"), "")
+		if err := framework.NewVitest().RunTests(ctx, []string{"coverage.test.js"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		report, err := os.ReadFile(filepath.Join(root, "coverage-report/coverage-final.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var coverage map[string]struct {
+			Statements map[string]int `json:"s"`
+		}
+		if err := json.Unmarshal(report, &coverage); err != nil {
+			t.Fatal(err)
+		}
+		for file, counts := range coverage {
+			if filepath.Base(file) == "math.js" {
+				for _, count := range counts.Statements {
+					if count > 0 {
+						return
+					}
+				}
+			}
+		}
+		t.Fatalf("coverage did not record executed statements in math.js: %s", report)
+	})
+
 	t.Run("no matching specification", func(t *testing.T) {
 		configureFramework(shellCommand(filepath.Join(root, "node_modules/.bin/vitest"), "--config", "vitest.unit.mjs"), "")
 		err := framework.NewVitest().RunTests(ctx, []string{"src/endOfYear/test.js"}, nil)
@@ -248,7 +310,9 @@ func TestVitestTracingIntegration(t *testing.T) {
 	}
 	writeFixture(t, root, "vitest.config.mjs", `export default { test: { dir: 'src', include: ['**/test.js'] } }`)
 	writeFixture(t, root, "src/endOfYear/test.js", `import { test } from 'vitest'
-test('ddtest exact traced assignment', () => {})
+test('ddtest exact traced assignment', () => {
+  if (process.env.DDTEST_FAIL_ASSIGNED === 'true') throw new Error('assigned failure')
+})
 `)
 	writeFixture(t, root, "src/eachWeekendOfYear/test.js", `import { test } from 'vitest'
 test('ddtest unassigned traced file', () => { throw new Error('unassigned file ran') })
@@ -296,42 +360,31 @@ test('ddtest unassigned traced file', () => { throw new Error('unassigned file r
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	// Compare against the CLI baseline: the minimum tracer has no Vitest 5
-	// sequencer hook, so that combination cannot emit CI events even without
-	// ddtest. Exercise its file-selection adapter in the other integration test.
-	if err := (&ext.DefaultCommandExecutor{}).Run(ctx, filepath.Join(root, "node_modules/.bin/vitest"),
-		[]string{"run", "src/endOfYear/test.js", "--exclude", "**/eachWeekendOfYear/**"}, vitest.GetPlatformEnv()); err != nil {
-		t.Fatal(err)
-	}
-	mu.Lock()
-	baselineTraced := bytes.Contains(payloads, []byte("test_session_end"))
-	payloads = nil
-	mu.Unlock()
-	if !baselineTraced {
-		manifest, err := os.ReadFile(filepath.Join(nodeModules, "vitest/package.json"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var pkg struct{ Version string }
-		if err := json.Unmarshal(manifest, &pkg); err != nil {
-			t.Fatal(err)
-		}
-		if !strings.HasPrefix(pkg.Version, "5.") {
-			t.Fatal("unmodified Vitest CLI did not emit a CI session")
-		}
-		t.Skip("installed dd-trace does not emit a CI session for the unmodified Vitest CLI")
-	}
-	if err := vitest.RunTests(ctx, []string{"src/endOfYear/test.js"}, nil); err != nil {
-		t.Fatal(err)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	for _, marker := range []string{"test_session_end", "test_suite_end", "ddtest exact traced assignment"} {
-		if !bytes.Contains(payloads, []byte(marker)) {
-			t.Errorf("CI payloads missing %q", marker)
-		}
-	}
-	if bytes.Contains(payloads, []byte("ddtest unassigned traced file")) {
-		t.Error("CI payload contains an unassigned test")
+	for _, failure := range []bool{false, true} {
+		t.Run("assigned failure="+strconv.FormatBool(failure), func(t *testing.T) {
+			mu.Lock()
+			payloads = nil
+			mu.Unlock()
+			err := vitest.RunTests(ctx, []string{"src/endOfYear/test.js"}, map[string]string{
+				"DDTEST_FAIL_ASSIGNED": strconv.FormatBool(failure),
+			})
+			if failure {
+				if err == nil || !strings.Contains(err.Error(), "exit status 1") {
+					t.Fatalf("expected assigned-test failure, got %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			for _, marker := range []string{"test_session_end", "test_suite_end", "ddtest exact traced assignment"} {
+				if !bytes.Contains(payloads, []byte(marker)) {
+					t.Errorf("CI payloads missing %q", marker)
+				}
+			}
+			if bytes.Contains(payloads, []byte("ddtest unassigned traced file")) {
+				t.Error("CI payload contains an unassigned test")
+			}
+		})
 	}
 }
