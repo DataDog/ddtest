@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 )
 
 func TestSendCancellationWhileLeakCheckPausesTransport(t *testing.T) {
+	recorder := recordTransportDebug(t, true)
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); w.WriteHeader(202) }))
 	defer server.Close()
@@ -35,6 +37,9 @@ func TestSendCancellationWhileLeakCheckPausesTransport(t *testing.T) {
 		t.Fatal("Send ignored deadline")
 	}
 	resume()
+	if !strings.Contains(strings.Join(recorder.Logs(), "\n"), "attempts=0 status=canceled") {
+		t.Fatal("paused cancellation was not diagnosed", recorder.Logs())
+	}
 	if requests.Load() != 0 {
 		t.Fatal("canceled send reached HTTP server")
 	}

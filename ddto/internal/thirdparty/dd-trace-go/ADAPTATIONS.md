@@ -210,6 +210,36 @@ Run these with `-race`, plus the clock integration and HTTP telemetry parity.
 When synchronizing upstream, check response ownership and startup scheduling
 alongside the telemetry metrics; checking wire fields alone misses these races.
 
+## Runtime delivery and shutdown diagnostics
+
+`civisibility/integrations/manual_api_ddtestsession.go` measures session closure,
+including its mutex wait, module closure and `tracer.Flush`. Its deferred summary
+runs after unlocking and identifies repeated closes. The exit-code field stays
+the command result; a failed delivery is logged separately.
+
+`civisibility/integrations/civisibility.go` measures the complete shutdown call
+and its barriers, close actions, CI logger and final telemetry phases. The total
+summary runs after shutdown defers, state publication and the signal-handler
+join. A non-owner call includes its wait or inactive check. Keep the existing
+LIFO order, single owner, error handling and signal semantics during an update.
+
+These timings use the incorporated logger and are enabled only in debug mode.
+They add no worker, timer or request. Native `internal/minitracer/runtime.go`
+measures flush/close, and `internal/citransport/transport.go` records each HTTP
+attempt plus complete payload delivery. Per-attempt logs end after response
+consumption/close, before backoff; payload delivery includes admission, retries
+and ownership cleanup. Existing telemetry request-latency metrics still end at
+headers. Host/path diagnostics omit queries, headers, bodies and raw errors.
+
+Checks: transport diagnostics cover ordinary/agentless delivery, gzip, retries,
+429, permanent and network failures, early cancellation and paused admission.
+`TestRequestDiagnosticWaitsForResponseClose` checks the completion boundary;
+`TestCloseActionsKeepLIFOAndRunBarriersFirst` checks shutdown ownership and order.
+`integration/TestMiniStartupOverlapsSettingsAndTelemetry` checks emitted runtime
+phases, four hierarchy events and successful process exit with real HTTP and
+`-race`, including normal/deferred delivery and startup failures. See
+[debug timing boundaries](../../../docs/cli-debug.md#runtime-timing).
+
 ## Source metadata parsing
 
 [`civisibility/integrations/manual_api_sourcecache.go`](civisibility/integrations/manual_api_sourcecache.go)

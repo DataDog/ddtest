@@ -7,8 +7,9 @@ Agent and a fixture of trivial subtests; see [how to measure](#how-to-measure).
 
 ## 1. Compute per-invocation data once in the CLI
 
-Every test binary starts CI Visibility on its own. In `go test ./...` that work
-repeats once per package, although the results are the same for all of them.
+Every test binary starts CI Visibility on its own. In `go test ./...` much of
+that work repeats once per package. Some inputs can differ across modules or
+services, so sharing must use the effective request configuration.
 
 - **Git metadata.** Startup runs four `git` subprocesses in sequence:
   `rev-parse --show-toplevel`, `ls-remote --get-url`,
@@ -25,9 +26,45 @@ repeats once per package, although the results are the same for all of them.
   files. Validate that the manifest data is identical for all packages of one
   invocation and that results still upload through the network.
 
-Expected gain: roughly the startup overhead times the number of packages, plus
-one round trip per avoided request. Risks: stale data if an invocation spans
-commits or services, and differences between manifest and network modes.
+### Shared settings and initial telemetry
+
+Investigate having `ddtest` coordinate settings and initial feature requests
+before running package binaries. The same design could coordinate the initial
+telemetry `app-started` requests. This is a backlog item; the runtime currently
+owns those requests and its application lifecycle.
+
+A macOS/arm64 observation on Go 1.27.1 with two trivial test packages showed
+`app-started` taking 422–431 ms per binary. Settings initialization overlapped
+with that request and waited for it. This identifies startup network latency as
+a candidate, but one run does not establish a saving. Package starts also
+already overlap under `go test`.
+
+The experiment must preserve:
+
+- Settings keys: repository URL, commit, service, environment and all effective
+  test configurations. Share only matching requests within one invocation;
+  keep independent invocations and different module configurations separate.
+- Feature responses, errors and fallback behavior for ITR, retries, EFD,
+  impacted tests and test management. Reusing manifest inputs must still allow
+  network delivery of events.
+- Telemetry runtime IDs and application lifecycle. One `app-started` per CLI
+  would change today's per-process identity; define how parent/child identity,
+  configurations, metrics, timestamps, request sequence and `app-closing` work
+  before reducing that count. Preserve child telemetry throughout the experiment.
+- Session, module, suite, test and span event counts and hierarchy. Shared
+  initialization does not combine their sessions.
+- Compile-only `go test -c` behavior: building must not start CI sessions or send
+  runtime telemetry. Standalone binaries, process retries and interrupted
+  parents must still initialize safely without a live CLI coordinator.
+- Deferred delivery and goleak admission: initial HTTP work must finish before
+  tests begin. Any shared state must have invocation-scoped ownership and
+  cleanup, without secrets in logs or persistent caches.
+
+Measure first-test admission and complete-command wall time across one and many
+packages, with both local and delayed HTTP receivers. Compare cold and cached
+builds separately. Check telemetry and feature parity before claiming a saving.
+Remote requests can dominate a trivial package, but sharing only helps the
+command's elapsed time when it removes work from its critical path.
 
 ## 2. Cache the provided runtime
 

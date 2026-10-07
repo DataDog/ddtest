@@ -17,6 +17,7 @@ import (
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/citransport"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/bazel"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
 )
 
@@ -151,6 +152,11 @@ func waitFor(t *testing.T, condition func() bool) {
 }
 
 func TestBazelNativeEventFilesAndWriteFailure(t *testing.T) {
+	recorder := &log.RecordLogger{}
+	t.Cleanup(log.UseLogger(recorder))
+	level := log.GetLevel()
+	t.Cleanup(func() { log.SetLevel(level) })
+	log.SetLevel(log.LevelDebug)
 	t.Setenv(bazel.PayloadsInFilesEnv, "true")
 	t.Setenv(bazel.UndeclaredOutputsDirEnv, t.TempDir())
 	bazel.ResetForTesting()
@@ -191,5 +197,20 @@ func TestBazelNativeEventFilesAndWriteFailure(t *testing.T) {
 	s.Finish()
 	if err = c.Close(context.Background()); err == nil || c.LastError() == nil {
 		t.Fatal("write failure suppressed")
+	}
+	lines := strings.Join(recorder.Logs(), "\n")
+	if strings.Contains(lines, "test-cycle: request finished") {
+		t.Fatal("Bazel files reported an HTTP attempt")
+	}
+	for _, status := range []string{"ok", "error"} {
+		found := false
+		for _, line := range recorder.Logs() {
+			if strings.Contains(line, "send finished duration=") && strings.Contains(line, "mode=files") && strings.HasSuffix(line, "attempts=0 status="+status) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("missing Bazel result %s: %s", status, lines)
+		}
 	}
 }

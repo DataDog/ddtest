@@ -131,7 +131,7 @@ func TestStarted(t *testing.T) { if err := os.WriteFile(os.Getenv("DDTEST_STARTE
 				if runErr != nil {
 					t.Fatalf("%v\n%s\n%s", runErr, &stdout, &stderr)
 				}
-				for _, marker := range []string{"runtime bootstrap finished duration=", "settings initialization finished duration=", "telemetry: request finished type=app-started duration=", "ciVisibilityHttpClient: request finished path="} {
+				for _, marker := range []string{"runtime bootstrap finished duration=", "settings initialization finished duration=", "telemetry: request finished type=app-started duration=", "ciVisibilityHttpClient: request finished path=", "test-cycle: request finished host=", "test-cycle: send finished duration=", "ci mini tracer: flush finished duration=", "ci mini tracer: close finished duration=", "civisibility: session close finished duration=", "civisibility: shutdown finished duration=", "civisibility: telemetry stop finished duration="} {
 					if !strings.Contains(stderr.String(), marker) {
 						t.Errorf("missing timing %q: %s", marker, &stderr)
 					}

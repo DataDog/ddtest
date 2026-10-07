@@ -15,6 +15,7 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/cidelivery"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/bazel"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
 )
 
 // TestCycleMaxPayloadBytes and TestCycleFlushBytes match the CI Visibility
@@ -105,7 +106,28 @@ func New(c Config) (*Transport, error) {
 
 // Send retries transient failures using the same immutable payload. Context
 // cancellation bounds both requests and backoff; permanent 4xx responses fail.
-func (t *Transport) Send(ctx context.Context, payload []byte) error {
+func (t *Transport) Send(ctx context.Context, payload []byte) (sendErr error) {
+	attempts := 0
+	mode := "agent"
+	if t.config.Agentless {
+		mode = "agentless"
+	}
+	if log.DebugEnabled() {
+		started := time.Now()
+		log.Debug("test-cycle: send started payload_bytes=%d", len(payload))
+		// Registered first so the duration includes admission, retries, body
+		// ownership release and any connection cleanup, even on early returns.
+		defer func() {
+			status := "ok"
+			if sendErr != nil {
+				status = "error"
+				if errors.Is(sendErr, context.Canceled) || errors.Is(sendErr, context.DeadlineExceeded) {
+					status = "canceled"
+				}
+			}
+			log.Debug("test-cycle: send finished duration=%s mode=%s payload_bytes=%d attempts=%d status=%s", time.Since(started), mode, len(payload), attempts, status)
+		}()
+	}
 	if err := cidelivery.BeginSendContext(ctx); err != nil {
 		return err
 	}
@@ -125,6 +147,7 @@ func (t *Transport) Send(ctx context.Context, payload []byte) error {
 		return errors.New("CI test-cycle payload exceeds the intake limit")
 	}
 	if bazel.IsPayloadFilesModeEnabled() {
+		mode = "files"
 		data, err := bazel.MsgpackToJSON(payload)
 		if err != nil {
 			return err
@@ -159,6 +182,7 @@ func (t *Transport) Send(ctx context.Context, payload []byte) error {
 			return err
 		}
 		requestStart := time.Now()
+		attempts++
 		resp, err := t.client.Do(req)
 		telemetry.EndpointPayloadRequestsMs(telemetry.TestCycleEndpointType, float64(time.Since(requestStart).Milliseconds()))
 		retry := false
@@ -177,18 +201,20 @@ func (t *Transport) Send(ctx context.Context, payload []byte) error {
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 			_ = resp.Body.Close()
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				logTestCycleRequest(req, resp, false, requestStart, attempts, false, len(body))
 				return nil
 			}
 			telemetry.EndpointPayloadRequestsErrors(telemetry.TestCycleEndpointType, telemetry.GetErrorTypeFromStatusCode(resp.StatusCode))
 			last = statusError(resp.StatusCode, detail)
 			retry = resp.StatusCode == 429 || resp.StatusCode >= 500
-			if resp.StatusCode == 429 && attempt+1 < t.config.Attempts {
-				if seconds, e := strconv.Atoi(resp.Header.Get("Retry-After")); e == nil && seconds >= 0 && seconds <= 60 {
-					if err = wait(ctx, time.Duration(seconds)*time.Second); err != nil {
-						return err
-					}
-					continue
+		}
+		logTestCycleRequest(req, resp, err != nil, requestStart, attempts, retry && attempt+1 < t.config.Attempts, len(body))
+		if err == nil && resp.StatusCode == 429 && attempt+1 < t.config.Attempts {
+			if seconds, e := strconv.Atoi(resp.Header.Get("Retry-After")); e == nil && seconds >= 0 && seconds <= 60 {
+				if err = wait(ctx, time.Duration(seconds)*time.Second); err != nil {
+					return err
 				}
+				continue
 			}
 		}
 		if !retry || attempt+1 == t.config.Attempts {
@@ -200,6 +226,22 @@ func (t *Transport) Send(ctx context.Context, payload []byte) error {
 	}
 	return last
 }
+
+// Request duration ends after response consumption and close, before backoff.
+// The request metric above still measures arrival of headers, like the SDK.
+func logTestCycleRequest(req *http.Request, resp *http.Response, networkError bool, started time.Time, attempt int, retry bool, bodyBytes int) {
+	if !log.DebugEnabled() {
+		return
+	}
+	statusCode := 0
+	if resp != nil {
+		statusCode = resp.StatusCode
+	}
+	// Omit query strings, headers, bodies and raw errors: they can contain
+	// credentials. Host/path still distinguish Agent, intake and staging routes.
+	log.Debug("test-cycle: request finished host=%s path=%s attempt=%d duration=%s status_code=%d network_error=%t retry=%t body_bytes=%d gzip=%t", req.URL.Host, req.URL.EscapedPath(), attempt, time.Since(started), statusCode, networkError, retry, bodyBytes, req.Header.Get("Content-Encoding") == "gzip")
+}
+
 func statusError(code int, body []byte) error {
 	if text := strings.TrimSpace(string(body)); text != "" {
 		return fmt.Errorf("CI Visibility endpoint returned HTTP %d: %s (Status: %s)", code, text, http.StatusText(code))

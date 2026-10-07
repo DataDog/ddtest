@@ -78,7 +78,14 @@ func Flush() {
 	if c := active.Load(); c != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 		defer cancel()
-		if err := c.Flush(ctx); err != nil {
+		var started time.Time
+		if log.DebugEnabled() {
+			started = time.Now()
+			log.Debug("ci mini tracer: flush started")
+		}
+		err := c.Flush(ctx)
+		logClientCompletion("flush", started, err)
+		if err != nil {
 			log.Error("CI event flush failed: %s", err.Error())
 		}
 	}
@@ -91,7 +98,14 @@ func Stop() {
 	if c := active.Swap(nil); c != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 		defer cancel()
-		if err := c.Close(ctx); err != nil {
+		var started time.Time
+		if log.DebugEnabled() {
+			started = time.Now()
+			log.Debug("ci mini tracer: close started")
+		}
+		err := c.Close(ctx)
+		logClientCompletion("close", started, err)
+		if err != nil {
 			log.Error("CI event close failed: %s", err.Error())
 		}
 		if dropped := c.DroppedEvents(); dropped != 0 {
@@ -99,6 +113,17 @@ func Stop() {
 		}
 	}
 	log.Flush()
+}
+
+func logClientCompletion(operation string, started time.Time, err error) {
+	if started.IsZero() {
+		return
+	}
+	status := "ok"
+	if err != nil {
+		status = "error"
+	}
+	log.Debug("ci mini tracer: %s finished duration=%s status=%s", operation, time.Since(started), status)
 }
 
 // EndpointForAgent constructs the native EVP endpoint from an agent base URL.

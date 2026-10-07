@@ -89,6 +89,16 @@ Mini records these additional durations under the same debug setting:
 | `settings initialization finished` | Settings setup and its join with initial telemetry, including error paths |
 | `ciVisibilityHttpClient: request finished` | One attempt, serialization, response consumption and any retry backoff |
 | `telemetry: request finished` | One endpoint attempt through response EOF and close |
+| `test-cycle: request finished` | One HTTP attempt through bounded response consumption and close, before retry backoff |
+| `test-cycle: send finished` | One payload delivery, including admission pauses, compression, HTTP attempts, backoff and request-body/connection cleanup; in Bazel file mode, conversion and file writing |
+| `ci mini tracer: flush finished` | The process-wide client's flush, including waiting for other sends and serializing/delivering queued events |
+| `ci mini tracer: close finished` | The process-wide client's terminal close and final delivery |
+| `civisibility: session close finished` | Waiting for the session lock, closing modules, finishing the session event and flushing the tracer |
+| `civisibility: shutdown barriers finished` | Deferred-delivery drain and all pre-close barriers |
+| `civisibility: close actions finished` | Registered close actions, in their existing order |
+| `civisibility: logger stop finished` | CI log writer shutdown |
+| `civisibility: telemetry stop finished` | Telemetry shutdown, its final sends and idle CI connection cleanup |
+| `civisibility: shutdown finished` | The complete CI shutdown call, including state publication and the signal-handler join |
 
 The bootstrap can launch feature initialization asynchronously. Its duration
 therefore does not mean the runtime is ready to enter a test. Settings and
@@ -96,9 +106,40 @@ therefore does not mean the runtime is ready to enter a test. Settings and
 endpoint path or telemetry request type, status and retry information without
 adding headers, query strings or bodies.
 
+A session closes before `civisibility: exiting`, so its flush can explain a gap
+between `PASS` and that line. Test-cycle summaries report a sanitized host/path,
+one-based attempt number, HTTP status (`0` without a response), network-error
+flag, planned retry, request body bytes and gzip use. The payload summary reports
+uncompressed bytes and the actual attempt count. `retry=true` means another
+attempt is permitted; cancellation can still prevent it. `mode=files` identifies
+Bazel output without an HTTP request.
+
+For example, these illustrative runtime lines show a completed delivery:
+
+```text
+2026/10/07 10:00:00 TestOptimization.run  v0.0.0 DEBUG: test-cycle: request finished host=localhost:8126 path=/evp_proxy/v2/api/v2/citestcycle attempt=1 duration=15ms status_code=202 network_error=false retry=false body_bytes=2048 gzip=false
+2026/10/07 10:00:00 TestOptimization.run  v0.0.0 DEBUG: test-cycle: send finished duration=16ms mode=agent payload_bytes=2048 attempts=1 status=ok
+2026/10/07 10:00:00 TestOptimization.run  v0.0.0 DEBUG: civisibility: session close finished duration=17ms exit_code=0 already_closed=false
+```
+
+Session close, flush, send and request timings overlap. Complete shutdown contains
+the smaller shutdown phases. Do not add them together. `owner=false` on a shutdown
+summary means that call did not run the teardown: it either waited for its owner
+or found CI already inactive. `already_closed=true` identifies a repeated session
+close. Session `exit_code` is the test command's result; delivery errors are
+reported separately and do not change it. `status=ok` on a send or flush describes
+that operation, not acceptance by a remote backend beyond the HTTP response.
+
+Mini writes to the test process's `stderr`; `go test` can include that stream
+in package output or JSON `Output` events. Go groups output by package, even
+when binaries run concurrently. Keep each package's runtime logs together when
+reading a multi-package command, and do not sum their durations as the CLI's
+elapsed time.
+
 The telemetry debug duration includes response consumption. The existing
-`telemetry_api.ms` metric keeps its measurement at response headers. Logging
-must not redefine that metric or change request accounting.
+`telemetry_api.ms` metric keeps its measurement at response headers. Test-cycle
+`endpoint_payload.requests_ms` also keeps its measurement at headers. Logging
+must not redefine either metric or change request accounting.
 
 These logs can produce a phase table for one invocation. Repeated invocations
 are needed for medians and ranges. They do not measure the exact first test-body
@@ -108,7 +149,7 @@ build-only observation.
 
 ## Output, cache and ownership
 
-Debug lines stay out of `stdout`, including `go test -json`. The CLI does not
+The CLI's debug lines stay out of `stdout`, including `go test -json`. The CLI does not
 change test arguments, generated sources, fingerprints, compiler identities or
 exit codes when logging is enabled. Go still decides cache reuse; environment
 variables read by a test can legitimately affect Go's test-result cache.

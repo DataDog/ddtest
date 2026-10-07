@@ -306,6 +306,16 @@ func ExitCiVisibility() {
 // exitCiVisibility executes CI Visibility shutdown and optionally stops the
 // signal handler. Signal-triggered shutdown skips that wait to avoid self-deadlock.
 func exitCiVisibility(stopSignalHandler bool) {
+	debug := log.DebugEnabled()
+	owner := false
+	if debug {
+		started := time.Now()
+		// Registered before shutdown defers so state publication, unlocks and
+		// the signal-handler join all belong to the complete duration.
+		defer func() {
+			log.Debug("civisibility: shutdown finished duration=%s owner=%t", time.Since(started), owner)
+		}()
+	}
 	closeActionsMutex.Lock()
 	if civisibility.GetState() != civisibility.StateInitialized {
 		done := ciVisibilityShutdownDone
@@ -319,6 +329,7 @@ func exitCiVisibility(stopSignalHandler bool) {
 		}
 		return
 	}
+	owner = true
 	civisibility.SetState(civisibility.StateExiting)
 
 	done := make(chan struct{})
@@ -339,11 +350,18 @@ func exitCiVisibility(stopSignalHandler bool) {
 		closeActionsMutex.Unlock()
 	}()
 	log.Debug("civisibility: exiting")
+	var stageStarted time.Time
+	if debug {
+		stageStarted = time.Now()
+	}
 	if cidelivery.Enabled() {
 		cidelivery.Shutdown()
 	}
 	for i := len(barriers) - 1; i >= 0; i-- {
 		barriers[i]()
+	}
+	if debug {
+		log.Debug("civisibility: shutdown barriers finished duration=%s actions=%d", time.Since(stageStarted), len(barriers))
 	}
 
 	closeActionsMutex.Lock()
@@ -352,16 +370,34 @@ func exitCiVisibility(stopSignalHandler bool) {
 		closeActions = []ciVisibilityCloseAction{}
 		preCloseActions = []ciVisibilityCloseAction{}
 		log.Debug("civisibility: flushing and stopping the logger")
+		if debug {
+			stageStarted = time.Now()
+		}
 		logs.Stop()
+		if debug {
+			log.Debug("civisibility: logger stop finished duration=%s", time.Since(stageStarted))
+		}
 		log.Debug("civisibility: flushing and stopping tracer")
 		tracer.Flush()
 		tracer.Stop()
+		if debug {
+			stageStarted = time.Now()
+		}
 		telemetry.StopApp()
 		closeCIVisibilityIdleConnections()
+		if debug {
+			log.Debug("civisibility: telemetry stop finished duration=%s", time.Since(stageStarted))
+		}
 		log.Debug("civisibility: done.")
 	}()
+	if debug {
+		stageStarted = time.Now()
+	}
 	for i := len(closeActions) - 1; i >= 0; i-- {
 		closeActions[i]()
+	}
+	if debug {
+		log.Debug("civisibility: close actions finished duration=%s actions=%d", time.Since(stageStarted), len(closeActions))
 	}
 }
 

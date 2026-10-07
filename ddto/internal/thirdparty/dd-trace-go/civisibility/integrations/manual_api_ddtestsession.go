@@ -18,6 +18,7 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/locking"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
 )
 
 // Test Session
@@ -157,9 +158,20 @@ func (t *tslvTestSession) WorkingDirectory() string { return t.workingDirectory 
 
 // Close closes the test session with the given exit code.
 func (t *tslvTestSession) Close(exitCode int, options ...TestSessionCloseOption) {
+	alreadyClosed := false
+	if log.DebugEnabled() {
+		started := time.Now()
+		log.Debug("civisibility: session close started exit_code=%d", exitCode)
+		// Includes the session lock, module closure and tracer.Flush. Emit after
+		// unlocking; a delivery failure is reported by the tracer, not exit_code.
+		defer func() {
+			log.Debug("civisibility: session close finished duration=%s exit_code=%d already_closed=%t", time.Since(started), exitCode, alreadyClosed)
+		}()
+	}
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
 	if t.closed {
+		alreadyClosed = true
 		return
 	}
 
