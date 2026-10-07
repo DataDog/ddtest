@@ -552,3 +552,40 @@ Checks: original F/Example/queue/lifecycle tests; synthetic offset/type drift;
 scenarios through manual/automatic entrypoints and both delivery modes;
 atomic coverage controls and negative goleak fixtures. The feature guide in
 `docs/fuzz-examples.md` links all provenance and reproduction commands.
+
+## CODEOWNERS-derived services
+
+Mini's opt-in service selection lives in local
+`civisibility/utils/service_name.go`. It reuses the incorporated CODEOWNERS
+parser and derives one process service from the selected package. The default
+is disabled; the format is `service-$(owner)`. A nonempty explicit `DD_SERVICE`
+keeps priority. Formats are literal strings, with no shell evaluation.
+
+`testopt` registers a generated test caller before TestMain changes its working
+directory. That registration preserves shared backing files and records no
+source when disabled. Runtime resolution keeps absolute/trimpath source paths
+and workspace boundaries. The result is process-local and immutable after its
+first resolution. Test-only resets require stopped readers.
+
+`civisibility/utils/codeowners.go` extracts the original pattern predicate into
+`codeOwnerPatternMatches`. Existing file matching retains its order and
+multi-section behavior. `MatchDirectory` uses the local
+`codeowners_directory.go` predicate in that same precedence pass. It supports
+ancestor directory ownership, segment wildcards and recursive `**` patterns,
+including zero intermediate segments. A terminal `/*` selects direct children;
+a trailing `/` includes descendants. File metadata continues using the original
+SDK predicate. Do not change its semantics during service matcher updates.
+
+The CI bootstrap and `civisibility/utils/net/client.go` share the selected
+service. Preserve that binding during SDK updates: settings and telemetry must
+not name a different service from events or logs. The new environment keys are
+registered in local `env/ci_service.go`, without editing the generated SDK map.
+No upstream revision is changed by this adaptation.
+
+Checks: all original GitHub/GitLab CODEOWNERS tests, `TestCodeOwnersPackageService`,
+`TestCodeOwnersServiceMissingInputs`, `TestCodeOwnersServiceCacheConcurrentReaders`,
+`TestCodeOwnersPackageDirectoryPaths`, `TestMiniCodeOwnersPackageServices` and
+`TestMiniCodeOwnersCompiledServices`. Keep the compiled-binary cases with the
+feature disabled at build time and enabled at execution, as well as explicit
+service priority and the HTTP service assertions. See the
+[feature guide](../../../docs/codeowners-service.md) for configuration and limits.

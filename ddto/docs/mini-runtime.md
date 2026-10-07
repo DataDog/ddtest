@@ -9,6 +9,8 @@ replacing its general tracer with a native CI
 event client. Mini is the default; `--runtime=sdk` uses the original SDK module.
 Neither the original SDK nor target sources are edited.
 
+For optional package-based service names, see [services from CODEOWNERS](codeowners-service.md).
+
 ## Use the local POC
 
 Build the driver from this checkout:

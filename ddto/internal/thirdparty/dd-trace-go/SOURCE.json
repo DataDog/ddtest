@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "44534fe70a8d5cde693cfcfb82321456b3529546247d8e3a669f86bf2c9e5c75",
+      "sha256": "440f9e6f0f476bf3d8b21fee2b7113c04e8222bbc66b6e3f8d536758bd7da8d4",
       "role": "local"
     },
     {
@@ -138,7 +138,7 @@
     },
     {
       "path": "civisibility/integrations/civisibility.go",
-      "sha256": "174f30cae3c2e0cb4c3625c4e478586b0790c5fe6043624ef2b6f45ad152e77d",
+      "sha256": "ecb157826e38226fd9ab1e8e8203b0d4df02c2555346c064c2bc6aa3fa8318b0",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/civisibility.go",
       "source_sha256": "1ef15ef198bb3b318e69b7602c562faccbeb40f94d505ba1cef67c36059c90d5"
@@ -378,6 +378,12 @@
       "path": "civisibility/integrations/gotesting/fuzz_layout_test.go",
       "sha256": "4fe42996bc9d7aaacfd8011e474de21f71995ba2a56de88a253bdb96bbfd3a46",
       "role": "local"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/fuzz_offsets.go",
+      "sha256": "8e613d64f52bb78f5eedf857d39229dd81b3a82932911a46f3dd69afeeae8806",
+      "role": "local",
+      "purpose": "Validated testing.F offsets discovered once with the testing.T layout"
     },
     {
       "path": "civisibility/integrations/gotesting/instrumentation.go",
@@ -875,7 +881,7 @@
     },
     {
       "path": "civisibility/utils/codeowners.go",
-      "sha256": "444a1125a172379887f8761d52463929733f66f1cf83998c609f4d812460cc21",
+      "sha256": "d047bd16ae753015b56d38c0aebe723311f9281886450f0c02ad76da13842bad",
       "role": "adapted",
       "source_path": "internal/civisibility/utils/codeowners.go",
       "source_sha256": "8ff322ff747fc769a24852dbcdaa2521605545e5942e69bb41c3514f941ea18f"
@@ -1004,7 +1010,7 @@
     },
     {
       "path": "civisibility/utils/net/client.go",
-      "sha256": "1ecab170aa14408363ad4e55e64dbb0297c5fb8104e9422bba0b7174c039ec63",
+      "sha256": "f2bacdf009f7f9d9e2a7fbfd364b70b64154350f2844d9a7a2c42e80b70e4f93",
       "role": "adapted",
       "source_path": "internal/civisibility/utils/net/client.go",
       "source_sha256": "bae03f2398dd7c75141e1b6b8f07e89676eb39e0884ab88b9af95211e797ec8b"
@@ -1176,6 +1182,16 @@
       "role": "adapted",
       "source_path": "internal/civisibility/utils/net/uds_client_test.go",
       "source_sha256": "fe222c289780242fc20d9bf834a62d1098ade436ef8751ca7798978e24a09f46"
+    },
+    {
+      "path": "civisibility/utils/service_name.go",
+      "sha256": "98697f783942dd5d724e228dd8dc2cd13d0e5ca2fdd9934e420503eb7beca9a4",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/utils/service_name_test.go",
+      "sha256": "e470d330ac34136feae85dc0420e3ffe257ce444d44273274b1b1961e648a7cd",
+      "role": "local"
     },
     {
       "path": "civisibility/utils/source_paths.go",
@@ -1470,6 +1486,11 @@
       "role": "adapted",
       "source_path": "internal/env.go",
       "source_sha256": "a25103c602ceed1385180637f00c17f3ecaafc9b2738d872296c098e515b207b"
+    },
+    {
+      "path": "env/ci_service.go",
+      "sha256": "cb058b36aadfcb91f0c2611bd0d76905b1536d49f5508b6386aa0f41512e2457",
+      "role": "local"
     },
     {
       "path": "env/env.go",
@@ -2023,10 +2044,10 @@
       "source_sha256": "7b2caa9a9040c85c0d47c7512cb9280fe376cbbc9b62034210f368db94fc6353"
     },
     {
-      "path": "civisibility/integrations/gotesting/fuzz_offsets.go",
-      "sha256": "8e613d64f52bb78f5eedf857d39229dd81b3a82932911a46f3dd69afeeae8806",
+      "path": "civisibility/utils/codeowners_directory.go",
       "role": "local",
-      "purpose": "Validated testing.F offsets discovered once with the testing.T layout"
+      "sha256": "d9efc65dde98794cbbc571127bb6e4de2929de550576f417731f1193ff767d74",
+      "purpose": "Package-directory wildcard matching for opt-in CODEOWNERS service names"
     }
   ],
   "layout_mapping": {

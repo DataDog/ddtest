@@ -13,6 +13,7 @@ the guide for the work you need to do:
 | Update the SDK, MessagePack codecs or platform subset | [Source updates and maintenance](maintenance.md) |
 | Diagnose CLI preparation, runtime provisioning or native build time | [CLI build diagnostics](cli-debug.md) |
 | Change allocations, batching, compression or build preparation | [Performance and ownership constraints](performance.md) |
+| Name package services from CODEOWNERS | [CODEOWNERS service configuration](codeowners-service.md) |
 | Configure Mini or use its public API | [Native runtime usage](mini-runtime.md) |
 | Compare CI features and policy combinations with the SDK | [Feature parity and event counts](ci-parity.md) |
 | Check what compatibility tests establish | [Validation contract](validation.md) |

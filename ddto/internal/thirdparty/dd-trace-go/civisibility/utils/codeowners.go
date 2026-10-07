@@ -263,90 +263,72 @@ func (co *CodeOwners) GetSection(section string) *Section {
 // Match finds the first entry in the CodeOwners that matches the given value.
 // It returns a pointer to the matched entry, or nil if no match is found.
 func (co *CodeOwners) Match(value string) (*Entry, bool) {
+	return co.match(value, codeOwnerPatternMatches)
+}
+
+// MatchDirectory resolves package ownership, including ancestor directory rules
+// and segment wildcards, without changing the SDK's file-metadata matching.
+func (co *CodeOwners) MatchDirectory(value string) (*Entry, bool) {
+	return co.match(value, codeOwnerDirectoryPatternMatches)
+}
+
+func (co *CodeOwners) match(value string, matches func(string, string) bool) (*Entry, bool) {
 	if co == nil {
 		return nil, false
 	}
 	var matchedEntries []Entry
-
 	for _, section := range co.Sections {
 		for _, entry := range section.Entries {
-			pattern := entry.Pattern
-			finalPattern := pattern
-
-			var includeAnythingBefore, includeAnythingAfter bool
-
-			if strings.HasPrefix(pattern, "/") {
-				includeAnythingBefore = false
-			} else {
-				if strings.HasPrefix(finalPattern, "*") {
-					finalPattern = finalPattern[1:]
-				}
-				includeAnythingBefore = true
-			}
-
-			if strings.HasSuffix(pattern, "/") {
-				includeAnythingAfter = true
-			} else if strings.HasSuffix(pattern, "/*") {
-				includeAnythingAfter = true
-				finalPattern = finalPattern[:len(finalPattern)-1]
-			} else {
-				includeAnythingAfter = false
-			}
-
-			if includeAnythingAfter {
-				found := includeAnythingBefore && strings.Contains(value, finalPattern) || strings.HasPrefix(value, finalPattern)
-				if !found {
-					continue
-				}
-
-				if !strings.HasSuffix(pattern, "/*") {
-					matchedEntries = append(matchedEntries, entry)
-					break
-				}
-
-				patternEnd := strings.Index(value, finalPattern)
-				if patternEnd != -1 {
-					patternEnd += len(finalPattern)
-					remainingString := value[patternEnd:]
-					if strings.Index(remainingString, "/") == -1 {
-						matchedEntries = append(matchedEntries, entry)
-						break
-					}
-				}
-			} else {
-				if includeAnythingBefore {
-					if strings.HasSuffix(value, finalPattern) {
-						matchedEntries = append(matchedEntries, entry)
-						break
-					}
-				} else if value == finalPattern {
-					matchedEntries = append(matchedEntries, entry)
-					break
-				}
+			found := matches(entry.Pattern, value)
+			if found {
+				matchedEntries = append(matchedEntries, entry)
+				break
 			}
 		}
 	}
-
 	switch len(matchedEntries) {
 	case 0:
 		return nil, false
 	case 1:
 		return &matchedEntries[0], true
 	default:
-		patterns := make([]string, 0)
+		patterns := make([]string, 0, len(matchedEntries))
 		owners := make([]string, 0)
-		sections := make([]string, 0)
+		sections := make([]string, 0, len(matchedEntries))
 		for _, entry := range matchedEntries {
 			patterns = append(patterns, entry.Pattern)
 			owners = append(owners, entry.Owners...)
 			sections = append(sections, entry.Section)
 		}
-		return &Entry{
-			Pattern: strings.Join(patterns, " | "),
-			Owners:  owners,
-			Section: strings.Join(sections, " | "),
-		}, true
+		return &Entry{Pattern: strings.Join(patterns, " | "), Owners: owners, Section: strings.Join(sections, " | ")}, true
 	}
+}
+
+// Keep file matching identical to the incorporated SDK. Directory matching
+// uses the same parsed entries with its package-specific pattern predicate.
+func codeOwnerPatternMatches(pattern, value string) bool {
+	finalPattern := pattern
+	includeAnythingBefore := !strings.HasPrefix(pattern, "/")
+	if includeAnythingBefore && strings.HasPrefix(finalPattern, "*") {
+		finalPattern = finalPattern[1:]
+	}
+	if strings.HasSuffix(pattern, "/") || strings.HasSuffix(pattern, "/*") {
+		if strings.HasSuffix(pattern, "/*") {
+			finalPattern = finalPattern[:len(finalPattern)-1]
+		}
+		if !(includeAnythingBefore && strings.Contains(value, finalPattern) || strings.HasPrefix(value, finalPattern)) {
+			return false
+		}
+		if !strings.HasSuffix(pattern, "/*") {
+			return true
+		}
+		end := strings.Index(value, finalPattern)
+		return end >= 0 && !strings.Contains(value[end+len(finalPattern):], "/")
+	}
+	if includeAnythingBefore {
+		return strings.HasSuffix(value, finalPattern)
+	}
+	return value == finalPattern
 }
 
 // GetOwnersString returns a formatted string of the owners list in an Entry.

@@ -4,12 +4,15 @@ package testopt
 
 import (
 	"context"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/citransport"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"
+	infra "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
 )
 
 // Config controls the native event client.
@@ -62,4 +65,21 @@ func GetFuzz(f *testing.F) *F { return gotesting.GetFuzz(f) }
 
 // RunM instruments a TestMain entrypoint without the CLI. Tests retain Go's
 // exit code; ddtest's automatic M.Run hook owns instrumented builds.
-func RunM(m *testing.M) int { return gotesting.RunM(m) }
+func RunM(m *testing.M) int {
+	registerTestPackage(1)
+	return gotesting.RunM(m)
+}
+
+// RegisterTestPackage records the caller's source directory for opt-in
+// CODEOWNERS services. ddtest calls it from its generated test-package init;
+// ordinary imports and disabled configuration perform no source lookup.
+func RegisterTestPackage() { registerTestPackage(1) }
+
+func registerTestPackage(skip int) {
+	if !infra.BoolEnv(utils.ServiceFromCodeOwnersEnv, false) {
+		return
+	}
+	if _, file, _, ok := runtime.Caller(skip + 1); ok {
+		utils.RegisterTestPackageSource(file)
+	}
+}

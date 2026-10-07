@@ -282,6 +282,11 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			return plan, fmt.Errorf("stdlib tests are outside this POC: %s", p.ImportPath)
 		}
 		content := "package " + p.Name + "_test\nimport _ " + fmt.Sprintf("%q", runtimePackage) + "\n"
+		if runtime == Mini {
+			// The caller's compiler path identifies this package without baking
+			// its directory into the source. Identical packages still share files.
+			content = "package " + p.Name + "_test\nimport __dd_ci_runtime " + fmt.Sprintf("%q", runtimePackage) + "\nfunc init() { __dd_ci_runtime.RegisterTestPackage() }\n"
+		}
 		if e = add(filepath.Join(p.Dir, "zz_dd_ci_visibility_test.go"), content); e != nil {
 			return plan, e
 		}

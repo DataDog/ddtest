@@ -6,6 +6,7 @@ SDK-derived CI logic and a native event client with no external runtime module
 dependencies. Use `--runtime=sdk` to run the unmodified `dd-trace-go` SDK at the
 exact revision pinned in [`internal/version`](internal/version/version.go).
 See [native runtime usage and contracts](docs/mini-runtime.md).
+Mini also supports optional [services from CODEOWNERS](docs/codeowners-service.md).
 
 For maintainers, start with the [documentation guide](docs/README.md):
 [architecture and diagrams](docs/architecture.md),
