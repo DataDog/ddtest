@@ -63,10 +63,13 @@ func ServiceFromCodeOwners() string {
 			return
 		}
 		owner := "not-owned"
-		if entry, found := owners.MatchDirectory(path.Clean("/" + directory)); found && len(entry.Owners) != 0 {
-			owner = strings.TrimPrefix(entry.Owners[0], "@")
-			if slash := strings.LastIndexByte(owner, '/'); slash >= 0 {
-				owner = owner[slash+1:]
+		if entry, found := owners.MatchDirectory(path.Clean("/" + directory)); found && entry.FirstOwner() != "" {
+			owner = entry.FirstOwner()
+			if strings.HasPrefix(owner, "@") {
+				owner = strings.TrimLeft(owner, "@")
+				if slash := strings.LastIndexByte(owner, '/'); slash >= 0 {
+					owner = owner[slash+1:]
+				}
 			}
 			if owner == "" {
 				owner = "not-owned"

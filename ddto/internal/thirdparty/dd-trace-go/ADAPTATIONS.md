@@ -567,22 +567,43 @@ source when disabled. Runtime resolution keeps absolute/trimpath source paths
 and workspace boundaries. The result is process-local and immutable after its
 first resolution. Test-only resets require stopped readers.
 
-`civisibility/utils/codeowners.go` extracts the original pattern predicate into
-`codeOwnerPatternMatches`. Existing file matching retains its order and
-multi-section behavior. `MatchDirectory` uses the local
-`codeowners_directory.go` predicate in that same precedence pass. It supports
-ancestor directory ownership, segment wildcards and recursive `**` patterns,
-including zero intermediate segments. A terminal `/*` selects direct children;
-a trailing `/` includes descendants. File metadata continues using the original
-SDK predicate. Do not change its semantics during service matcher updates.
+`civisibility/utils/codeownership/` owns host-specific discovery, parsing and compiled
+file/directory matching. `utils/codeowners_discovery.go` supplies CI context and caches
+its resolver. The package implements GitHub and GitLab rules, including
+inline-comment differences, ownerless GitHub rules, sections, defaults,
+exclusions, roles and character classes. File selection follows each host's
+location priority, including `docs/CODEOWNERS`.
+
+Matching and owner classification use Go runes and standard Unicode tables.
+Section names use `strings.ToUpper`. Keep these contracts when updating the
+SDK; the package does not carry Unicode compatibility tables. Pattern and
+matching limits apply per segment. File decoding accepts BOMs and common line
+endings separately from the UTF-8 parser.
+
+Results have private immutable state. Owner lists are deduplicated once and
+tags are prepared with each result. File and directory patterns share compiled
+tokens, ASCII literals use string equality, and rooted literal prefixes are
+checked once before wildcard matching. A section without exclusions stops at
+its winning rule. Sections with exclusions retain the scan needed for sticky
+exclusions. Owner unions allocate only when another section adds an owner;
+small lists use slices and large lists use a map, preserving declaration order.
+
+Directory queries use an explicit target: a trailing slash includes the package
+itself, terminal `/*` selects direct children, and other directory patterns can
+be inherited. No guessed filename determines the service. File and service
+caches retain their process lifetimes. The [package guide](../../../docs/codeownership.md)
+describes the contracts and Go tests to keep during an SDK update.
 
 The CI bootstrap and `civisibility/utils/net/client.go` share the selected
 service. Preserve that binding during SDK updates: settings and telemetry must
 not name a different service from events or logs. The new environment keys are
 registered in local `env/ci_service.go`, without editing the generated SDK map.
-No upstream revision is changed by this adaptation.
+The SDK base remains independently pinned.
 
-Checks: all original GitHub/GitLab CODEOWNERS tests, `TestCodeOwnersPackageService`,
+Checks: `TestGitHubRules`, `TestGitLabRules`, `TestRepositoryExamples`,
+`TestUnicodePaths`, `TestGoUnicodeSectionsAndOwners`, parser
+bounds/concurrency/discovery tests,
+`TestCodeOwnersPackageService`,
 `TestCodeOwnersServiceMissingInputs`, `TestCodeOwnersServiceCacheConcurrentReaders`,
 `TestCodeOwnersPackageDirectoryPaths`, `TestMiniCodeOwnersPackageServices` and
 `TestMiniCodeOwnersCompiledServices`. Keep the compiled-binary cases with the

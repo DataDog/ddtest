@@ -23,12 +23,14 @@ Quote the format with single quotes. Your shell must pass `$(owner)` literally;
 Mini replaces that token and never executes a command. An empty format selects
 the default. A format without the token produces that literal service name.
 
-The selected rule follows the incorporated CODEOWNERS resolver. It supports
-exact package paths, inherited directory rules, segment wildcards (`*`, `?`)
+The selected rule follows the host-specific
+[CODEOWNERS parser](codeownership.md). It supports exact package paths,
+inherited directory rules, segment wildcards (`*`, `?`)
 and recursive wildcards (`**`), preserving rule precedence. A terminal `/*`
 selects direct children; a trailing `/` includes descendants. The first owner supplies the service name: `@organization/team`
 becomes `team`, `@username` becomes `username`, and email owners keep their full
-address. Other owners remain available in the existing `test.codeowners` tag.
+address. GitLab role owners such as `@@maintainer` become `maintainer`. Other
+owners remain available in the existing `test.codeowners` tag.
 A valid CODEOWNERS file with no matching owner uses `not-owned`, giving
 `service-not-owned` with the default format.
 
@@ -77,7 +79,8 @@ service in a runtime debug message.
 - `internal/runner/run.go` emits the Mini registration call;
   `testopt/testopt.go` captures its caller once.
 - `civisibility/utils/service_name.go` owns selection and process caching.
-  `codeowners.go` shares its matcher between file and directory queries.
+  `utils/codeowners_discovery.go` caches discovery; `utils/codeownership/` owns parsing,
+  file selection and both kinds of queries.
 - The CI bootstrap applies the selected name to the tracer. CI clients reuse
   it for settings, telemetry and logs; explicit client names retain priority.
 - The two local configuration keys are registered in `env/ci_service.go`.

@@ -19,6 +19,7 @@ import (
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/codeownership"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
 
 	"github.com/stretchr/testify/assert"
@@ -127,10 +128,14 @@ func TestLoadSourceFileMetadataCachesValidFiles(t *testing.T) {
 func TestLoadSourceFunctionMetadataCachesResolvedFunction(t *testing.T) {
 	resetSourceCacheTestState(t)
 
-	// The SDK repository supplies CODEOWNERS; give this standalone port the same input.
+	// Use an actual temporary ruleset while retaining the function's real
+	// workspace identity. A temporary cwd is not the function's source root.
 	ownersDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(ownersDir, "CODEOWNERS"), []byte("* @ci-fixture\n"), 0o600))
 	t.Chdir(ownersDir)
+	owners, err := codeownership.Discover(codeownership.Locations{Workspace: ownersDir})
+	require.NoError(t, err)
+	lookup := func() (codeOwnerMatcher, bool) { return owners, true }
 
 	fn := namedSourceFixtureRuntimeFunc()
 	first := loadSourceFunctionMetadata(fn)
@@ -140,8 +145,8 @@ func TestLoadSourceFunctionMetadataCachesResolvedFunction(t *testing.T) {
 	require.Equal(t, first.runtimeStartLine, second.runtimeStartLine)
 	require.Equal(t, first.sourcePath, second.sourcePath)
 	require.Equal(t, first.resolution, second.resolution)
-	firstOwner, firstOwnerFound := loadSourceFunctionCodeOwner(first)
-	secondOwner, secondOwnerFound := loadSourceFunctionCodeOwner(second)
+	firstOwner, firstOwnerFound := loadSourceFunctionCodeOwnerWithLookup(first, lookup)
+	secondOwner, secondOwnerFound := loadSourceFunctionCodeOwnerWithLookup(second, lookup)
 	require.True(t, firstOwnerFound)
 	require.Equal(t, firstOwnerFound, secondOwnerFound)
 	require.Equal(t, firstOwner, secondOwner)
@@ -161,20 +166,20 @@ func TestLoadSourceFunctionMetadataCachesResolvedFunction(t *testing.T) {
 
 type recordingCodeOwnerMatcher struct {
 	calls int
-	entry utils.Entry
+	entry *codeownership.Ownership
 }
 
-func (m *recordingCodeOwnerMatcher) Match(string) (*utils.Entry, bool) {
+func (m *recordingCodeOwnerMatcher) Match(string) (*codeownership.Ownership, bool) {
 	m.calls++
-	return &m.entry, true
+	return m.entry, true
 }
 
 type staticCodeOwnerMatcher struct {
-	entry utils.Entry
+	entry *codeownership.Ownership
 }
 
-func (m *staticCodeOwnerMatcher) Match(string) (*utils.Entry, bool) {
-	return &m.entry, true
+func (m *staticCodeOwnerMatcher) Match(string) (*codeownership.Ownership, bool) {
+	return m.entry, true
 }
 
 func TestSourceFileCodeOwnerCacheIsSharedAcrossFunctions(t *testing.T) {
@@ -188,7 +193,7 @@ func TestSourceFileCodeOwnerCacheIsSharedAcrossFunctions(t *testing.T) {
 	secondSlot := sourceFileSlot(second.sourcePath.FilesystemPath, newSourceFileCacheSlot)
 	require.Same(t, firstSlot, secondSlot)
 
-	matcher := &recordingCodeOwnerMatcher{entry: utils.Entry{Owners: []string{"@shared-owner"}}}
+	matcher := &recordingCodeOwnerMatcher{entry: testCodeOwner(t, "@shared-owner")}
 	firstOwner, firstFound := loadSourceFileCodeOwner(firstSlot, matcher, true, first.sourcePath.RelativePath)
 	secondOwner, secondFound := loadSourceFileCodeOwner(secondSlot, matcher, true, second.sourcePath.RelativePath)
 
@@ -201,7 +206,7 @@ func TestSourceFileCodeOwnerCacheIsSharedAcrossFunctions(t *testing.T) {
 
 func TestSourceFileCodeOwnerCacheCachesCompletedMissingLookup(t *testing.T) {
 	slot := &sourceFileCacheSlot{}
-	matcher := &recordingCodeOwnerMatcher{entry: utils.Entry{Owners: []string{"@unexpected-owner"}}}
+	matcher := &recordingCodeOwnerMatcher{entry: testCodeOwner(t, "@unexpected-owner")}
 
 	firstOwner, firstFound := loadSourceFileCodeOwner(slot, nil, true, "source.go")
 	secondOwner, secondFound := loadSourceFileCodeOwner(slot, matcher, true, "source.go")
@@ -215,7 +220,7 @@ func TestSourceFileCodeOwnerCacheCachesCompletedMissingLookup(t *testing.T) {
 
 func TestSourceFileCodeOwnerCacheRetriesIncompleteLookup(t *testing.T) {
 	slot := &sourceFileCacheSlot{}
-	matcher := &recordingCodeOwnerMatcher{entry: utils.Entry{Owners: []string{"@recovered-owner"}}}
+	matcher := &recordingCodeOwnerMatcher{entry: testCodeOwner(t, "@recovered-owner")}
 
 	firstOwner, firstFound := loadSourceFileCodeOwner(slot, nil, false, "source.go")
 	secondOwner, secondFound := loadSourceFileCodeOwner(slot, matcher, true, "source.go")
@@ -233,7 +238,7 @@ func TestSourceFunctionCodeOwnerCacheSkipsCompletedLookup(t *testing.T) {
 		fileSlot:   slot,
 		sourcePath: utils.SourceFilePath{RelativePath: "source.go"},
 	}
-	matcher := &recordingCodeOwnerMatcher{entry: utils.Entry{Owners: []string{"@cached-owner"}}}
+	matcher := &recordingCodeOwnerMatcher{entry: testCodeOwner(t, "@cached-owner")}
 	lookups := 0
 	lookup := func() (codeOwnerMatcher, bool) {
 		lookups++
@@ -257,7 +262,7 @@ func TestSourceFunctionCodeOwnerCacheConcurrentHitsSkipCompletedLookup(t *testin
 		fileSlot:   slot,
 		sourcePath: utils.SourceFilePath{RelativePath: "source.go"},
 	}
-	matcher := &staticCodeOwnerMatcher{entry: utils.Entry{Owners: []string{"@cached-owner"}}}
+	matcher := &staticCodeOwnerMatcher{entry: testCodeOwner(t, "@cached-owner")}
 	var lookups atomic.Int64
 	lookup := func() (codeOwnerMatcher, bool) {
 		lookups.Add(1)
@@ -289,7 +294,7 @@ func TestSourceFunctionCodeOwnerCacheConcurrentHitsSkipCompletedLookup(t *testin
 }
 
 func BenchmarkSourceFileCodeOwnerSharedMiss(b *testing.B) {
-	matcher := &recordingCodeOwnerMatcher{entry: utils.Entry{Owners: []string{"@shared-owner"}}}
+	matcher := &recordingCodeOwnerMatcher{entry: testCodeOwner(b, "@shared-owner")}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
@@ -305,7 +310,7 @@ func BenchmarkSourceFileCodeOwnerSharedMiss(b *testing.B) {
 
 func BenchmarkSourceFileCodeOwnerCachedResult(b *testing.B) {
 	slot := &sourceFileCacheSlot{}
-	matcher := &recordingCodeOwnerMatcher{entry: utils.Entry{Owners: []string{"@shared-owner"}}}
+	matcher := &recordingCodeOwnerMatcher{entry: testCodeOwner(b, "@shared-owner")}
 	loadSourceFileCodeOwner(slot, matcher, true, "source.go")
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -324,7 +329,7 @@ func BenchmarkSourceFunctionCodeOwnerCachedResult(b *testing.B) {
 		fileSlot:   slot,
 		sourcePath: utils.SourceFilePath{RelativePath: "source.go"},
 	}
-	matcher := &recordingCodeOwnerMatcher{entry: utils.Entry{Owners: []string{"@shared-owner"}}}
+	matcher := &recordingCodeOwnerMatcher{entry: testCodeOwner(b, "@shared-owner")}
 	lookups := 0
 	lookup := func() (codeOwnerMatcher, bool) {
 		lookups++
@@ -1130,4 +1135,33 @@ func countSourceResolutionLogLinesForFunction(lines []string, functionName, want
 		}
 	}
 	return count
+}
+
+func testCodeOwner(t testing.TB, owner string) *codeownership.Ownership {
+	t.Helper()
+	rules, err := codeownership.Parse(strings.NewReader("* "+owner), codeownership.GitHub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, ok := rules.Match("/source.go")
+	if !ok {
+		t.Fatal("missing fixture ownership")
+	}
+	return result
+}
+
+func TestSourceFileCodeOwnerRejectsForeignPaths(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "CODEOWNERS"), []byte("* @global"), 0600))
+	owners, err := codeownership.Discover(codeownership.Locations{Workspace: root})
+	require.NoError(t, err)
+	for _, value := range []string{filepath.Join(t.TempDir(), "outside.go"), "../outside.go", `C:\foreign\source.go`, ""} {
+		slot := &sourceFileCacheSlot{}
+		tag, found := loadSourceFileCodeOwner(slot, owners, true, value)
+		require.False(t, found, value)
+		require.Empty(t, tag, value)
+	}
+	tag, found := loadSourceFileCodeOwner(&sourceFileCacheSlot{}, owners, true, "inside.go")
+	require.True(t, found)
+	require.Equal(t, `["@global"]`, tag)
 }

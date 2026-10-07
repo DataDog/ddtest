@@ -24,6 +24,7 @@ func TestCodeOwnersPackageService(t *testing.T) {
 		{name: "upstream organization", enabled: "true", format: "dd-go-$(owner)", rules: "* @DataDog/ci-app", directory: "pkg", want: "dd-go-ci-app"},
 		{name: "username", enabled: "true", rules: "* @user", directory: "pkg", want: "service-user"},
 		{name: "email", enabled: "true", rules: "* ci@example.com", directory: "pkg", want: "service-ci@example.com"},
+		{name: "email with slash", enabled: "true", rules: "* ci/tests@example.com", directory: "pkg", want: "service-ci/tests@example.com"},
 		{name: "first owner", enabled: "true", rules: "* @org/first @org/second", directory: "pkg", want: "service-first"},
 		{name: "last directory rule", enabled: "true", rules: "* @org/fallback\n/pkg/ @org/specific", directory: "pkg", want: "service-specific"},
 		{name: "exact directory rule", enabled: "true", rules: "* @org/fallback\n/pkg @org/specific", directory: "pkg", want: "service-specific"},
@@ -73,11 +74,11 @@ func TestCodeOwnersPackageService(t *testing.T) {
 
 func TestCodeOwnersServiceMissingInputs(t *testing.T) {
 	for _, tc := range []struct {
-		name, content                      string
+		name, content, want                string
 		missing, outside, workspaceMissing bool
 	}{
 		{name: "missing file", missing: true},
-		{name: "malformed file", content: strings.Repeat("x", 70*1024)},
+		{name: "invalid rule is diagnosed", content: strings.Repeat("x", 70*1024), want: "service-not-owned"},
 		{name: "outside workspace", content: "* @org/team\n", outside: true},
 		{name: "missing workspace", content: "* @org/team\n", workspaceMissing: true},
 	} {
@@ -99,7 +100,7 @@ func TestCodeOwnersServiceMissingInputs(t *testing.T) {
 				originalCiTags = map[string]string{}
 			}
 			registerCodeOwnersTestPackage(t, source)
-			if got := ServiceFromCodeOwners(); got != "" {
+			if got := ServiceFromCodeOwners(); got != tc.want {
 				t.Fatalf("fallback overridden: %q", got)
 			}
 		})

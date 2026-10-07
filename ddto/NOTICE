@@ -8,3 +8,8 @@ MIT licenses under internal/thirdparty/msgp and internal/thirdparty/fwd.
 Go-derived MessagePack routines retain the BSD license in msgp/LICENSE-go.
 Selected golang/sys platform sources retain the BSD license in
 internal/thirdparty/xsys/LICENSE. Each origin has a README and exact commit.
+
+The CODEOWNERS algorithm was adapted from DataDog/dd-trace-dotnet at
+843640c32bae5fe6dcdf790906f6431fe15f6973, Copyright 2017 Datadog, Inc.
+It is maintained as Go CI Visibility code under the Apache License 2.0
+included in LICENSE and internal/thirdparty/dd-trace-go/LICENSE.

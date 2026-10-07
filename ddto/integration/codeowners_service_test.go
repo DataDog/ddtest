@@ -263,3 +263,70 @@ func TestMiniCodeOwnersCompiledServices(t *testing.T) {
 		})
 	}
 }
+
+// These expectations come from the host specifications, not the older SDK
+// parser. Verify ownership and service on actual events received over HTTP.
+func TestMiniCodeOwnersSpecificationOnWire(t *testing.T) {
+	for _, dialect := range []string{"github", "gitlab"} {
+		t.Run(dialect, func(t *testing.T) {
+			dir, driver := prepareCodeOwnersFixture(t)
+			if dialect == "github" {
+				if err := os.WriteFile(filepath.Join(dir, "CODEOWNERS"), []byte("* @wrong-priority\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				rules := "* @fallback\n/**/alpha @example/alpha-team @example/second # @ignored\n/beta/ @example/beta-team\n/unowned/\n"
+				if err := os.WriteFile(filepath.Join(dir, ".github", "CODEOWNERS"), []byte(rules), 0600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				rules := "[Packages] @example/alpha-team\n/alpha/\n/beta/ @example/beta-team\n!/unowned/\n"
+				if err := os.WriteFile(filepath.Join(dir, "CODEOWNERS"), []byte(rules), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, deferred := range []string{"false", "true"} {
+				t.Run("deferred="+deferred, func(t *testing.T) {
+					c := newCodeOwnersReceiver()
+					server := httptest.NewServer(http.HandlerFunc(c.handler))
+					extra := []string{"DD_CIVISIBILITY_DEFERRED_DELIVERY=" + deferred}
+					if dialect == "gitlab" {
+						extra = append(extra, "DD_GIT_REPOSITORY_URL=https://gitlab.com/example/repo.git")
+					}
+					out, stderr, code := command(t, dir, codeOwnersTestEnv(dir, server.URL, extra...), driver, "test", "--runtime=mini", "-mod=mod", "-count=1", "-run=^TestService$", "./alpha", "./beta", "./unowned")
+					server.Close()
+					if code != 0 {
+						t.Fatalf("exit=%d\n%s\n%s", code, out, stderr)
+					}
+					checkCodeOwnersServices(t, c, map[string]bool{"service-alpha-team": true, "service-beta-team": true, "service-not-owned": true})
+					count := 0
+					for _, event := range c.events {
+						if event["type"] != "test" {
+							continue
+						}
+						content := event["content"].(map[string]any)
+						meta := content["meta"].(map[string]any)
+						service, _ := content["service"].(string)
+						want := ""
+						switch service {
+						case "service-alpha-team":
+							want = `["@example/alpha-team","@example/second"]`
+							if dialect == "gitlab" {
+								want = `["@example/alpha-team"]`
+							}
+						case "service-beta-team":
+							want = `["@example/beta-team"]`
+						}
+						got, _ := meta["test.codeowners"].(string)
+						if got != want {
+							t.Errorf("service=%q codeowners=%q want=%q", service, got, want)
+						}
+						count++
+					}
+					if count != 3 {
+						t.Fatalf("test events=%d, want 3", count)
+					}
+				})
+			}
+		})
+	}
+}

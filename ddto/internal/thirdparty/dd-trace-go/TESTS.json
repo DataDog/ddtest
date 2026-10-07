@@ -1,8 +1,8 @@
 {
   "sdk": "github.com/DataDog/dd-trace-go/v2@v2.12.0-dev.3.0.20261002145613-96aedb31048c",
-  "full_file_count": 62,
-  "full_ci_test_file_count": 60,
-  "selected_test_or_helper_files": 3,
+  "full_file_count": 61,
+  "full_ci_test_file_count": 59,
+  "selected_test_or_helper_files": 7,
   "assertion_policy": "Preserve upstream assertions and synthetic input semantics; adapt repository/namespace and replace APM mock bootstrap for the native runtime. End-to-end wire tests verify actual delivery separately. Documented correctness adaptations use independent source oracles; named source starts are checked against AST declaration lines.",
   "files": [
     {
@@ -17,7 +17,7 @@
       "source": "internal/civisibility/integrations/civisibility_features_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_features_test.go",
       "source_sha256": "b305b518346a7916864815adf9b5dd0ab257ccc861bc8f4cff21d67a36e9d32e",
-      "adapted_sha256": "c60de6d26595a6644efda397836a76a2396df59d4dc2df66f04f10f53a23b090",
+      "adapted_sha256": "7800d80684692486a24132cccc7a88bd6b65a040b3ad8eb98cead3ef42c401df",
       "kind": "full",
       "adaptation": "Internal import relocation only"
     },
@@ -57,7 +57,7 @@
       "source": "internal/civisibility/integrations/testing_helpers_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/testing_helpers_test.go",
       "source_sha256": "71aff6b4ca061ab11adf4593e554e1f93c6d8e77475ec2aae4d1178b5a9dac47",
-      "adapted_sha256": "163888c3fc03b8547812633749786c49ddbeea3c624448e6ed8732ff6226ba25",
+      "adapted_sha256": "e0cf8f706f4f7d4da9a82f0eaf5657e5e5de22b1044a4eeecfd49cc7e9c10ce6",
       "kind": "full",
       "adaptation": "Internal import relocation only"
     },
@@ -71,11 +71,11 @@
     },
     {
       "source": "internal/civisibility/utils/codeowners_test.go",
-      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/codeowners_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/codeowners_discovery_test.go",
       "source_sha256": "017d81ee71314d617983dbdeb6e1f373efa6ddb53c041e1805ab6c078a9b8219",
-      "adapted_sha256": "3084ccb1a62703baf80048dce8ee46b31e86df812826bf5f099b024d9c84861b",
-      "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adapted_sha256": "7b6ad6695080fa5ab820d377a3bf863dc76cbf21e1003095b1262ddbdfb063cf",
+      "kind": "selected",
+      "adaptation": "Discovery/cache assertions retained through the new resolver. Parser expectations move to codeownership tests, using native Go rule tables and examples. Correct GitHub interior slash anchoring, host location priority, comments, GitLab defaults/exclusions and valid long-line handling. Mutable Entry/Section tests are replaced by immutable ownership tests."
     },
     {
       "source": "internal/civisibility/utils/environmentTags_test.go",
@@ -121,7 +121,7 @@
       "source": "internal/civisibility/utils/source_paths_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/source_paths_test.go",
       "source_sha256": "2c0986a51c21f3ba4523df13ca66ffb1caf72fa9dcd7fec6bb024af826b3a3bc",
-      "adapted_sha256": "c4c4aed524e7d69ea68cef93422746123200f254aed40f285aa3c29d472fbca2",
+      "adapted_sha256": "c269e2685311a77bfa86a2a24b01ccb332a7696780665dc470d2c52f23a89b5a",
       "kind": "full",
       "adaptation": "Internal import relocation only"
     },
@@ -481,7 +481,7 @@
       "source": "internal/civisibility/integrations/manual_api_sourcecache_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcecache_test.go",
       "source_sha256": "aff071e72f16cc26f99ecc09ef478cffc02a52a4cee72634e1653ab610d8c793",
-      "adapted_sha256": "4b88d8afea6e183f5285aab546d3414e27cba43acd6a8edb6095bafd68e9f7bc",
+      "adapted_sha256": "a6c34f8d2c0ea1e01c99b52bfa017e566d61be231b11ae470349d0dd6f2baaef",
       "kind": "full",
       "adaptation": "Native spans replace unused APM mock resets; an explicit CODEOWNERS fixture supplies the upstream repository input; current repository URL is relocated; confirmed named source ranges start at the AST declaration, including same-named methods and named func1 declarations, instead of the runtime entry PC"
     },
@@ -694,5 +694,12 @@
       "scenarios": 16,
       "additional_combinations": "Manual/automatic entrypoints and normal/deferred delivery; additional goleak/coverage cases are local regressions"
     }
-  ]
+  ],
+  "local_codeownership_checks": {
+    "rule_tables": "civisibility/utils/codeownership/github_test.go and gitlab_test.go: GitHub/GitLab rule precedence, owners, sections, exclusions, escaping, globstars, classes and diagnostics",
+    "go_examples": "civisibility/utils/codeownership/example_test.go and testdata: public API example, Go package ownership, rune-based wildcards, Go Unicode casing and email owners",
+    "boundaries": "civisibility/utils/codeownership/codeowners_test.go: immutable results, concurrent readers, missing files, bounded matching, large tokens/headers/lines, duplicate compaction, encodings and line endings",
+    "discovery": "civisibility/utils/codeownership/locator_test.go: host locations, repository/worktree roots, workspace rebasing, traversal rejection, read errors and stable decisions",
+    "integration": "integration/codeowners_service_test.go: actual owner/service payloads, normal/deferred delivery, compiled binaries, coverage, race, trimpath, Testify and goleak"
+  }
 }

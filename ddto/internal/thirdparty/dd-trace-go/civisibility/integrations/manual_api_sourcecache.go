@@ -9,12 +9,14 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/codeownership"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/impactedtests"
 )
 
@@ -162,7 +164,7 @@ func loadSourceFunctionCodeOwnerWithLookup(metadata sourceFunctionMetadata, look
 }
 
 type codeOwnerMatcher interface {
-	Match(string) (*utils.Entry, bool)
+	Match(string) (*codeownership.Ownership, bool)
 }
 
 func loadSourceFileCodeOwner(slot *sourceFileCacheSlot, codeOwners codeOwnerMatcher, lookupComplete bool, sourceFile string) (string, bool) {
@@ -180,11 +182,15 @@ func loadSourceFileCodeOwner(slot *sourceFileCacheSlot, codeOwners codeOwnerMatc
 }
 
 func resolveSourceFileCodeOwner(slot *sourceFileCacheSlot, codeOwners codeOwnerMatcher, sourceFile string) {
-	if codeOwners == nil {
+	if codeOwners == nil || sourceFile == "" || filepath.IsAbs(sourceFile) ||
+		strings.HasPrefix(sourceFile, "../") || strings.HasPrefix(sourceFile, `..\`) ||
+		len(sourceFile) > 1 && sourceFile[1] == ':' {
+		// An unresolved compiler path outside the workspace must not inherit the
+		// repository's catch-all rule. Logical paths have already been rebased.
 		return
 	}
 	if match, found := codeOwners.Match("/" + sourceFile); found {
-		slot.codeOwner = match.GetOwnersString()
+		slot.codeOwner = match.Tag()
 		slot.codeOwnerFound = true
 	}
 }

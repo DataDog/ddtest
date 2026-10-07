@@ -310,6 +310,14 @@ status separately. A cross-compiled CLI is build proof; the workflow must run
 the integration fixtures natively on that platform. Update the architecture,
 Testify contract, validation inventory and performance guide together.
 
+## CODEOWNERS source updates
+
+`civisibility/utils/codeownership` is maintained with the SDK code and recorded as
+local additions until an upstream Go revision includes it. The
+[package guide](codeownership.md) describes matching, Unicode behavior and
+checks. Update it through the same SDK workflow; keep the Go rule tables,
+examples and wire tests alongside the implementation.
+
 ## Fuzz and Examples source updates
 
 The general SDK base and PR #5442 feature have separate revisions. Use
