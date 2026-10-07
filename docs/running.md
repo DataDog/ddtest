@@ -203,7 +203,9 @@ ddtest run --platform javascript --framework mocha --command "pnpm exec mocha --
 
 For JavaScript/Vitest, the command must invoke Vitest directly. During planning,
 DDTest uses `list --filesOnly --json` on Vitest 2.0 and newer and the config-aware
-discovery API on Vitest 1.6. It appends selected files during execution:
+discovery API on Vitest 1.6. During execution, it selects assigned files by exact
+canonical path through Vitest's Node API, preserving the command's configuration,
+project filters, and reporters:
 
 ```bash
 ddtest run --platform javascript --framework vitest --command "pnpm exec vitest run --project unit*"
