@@ -81,6 +81,7 @@ type SlowSuite struct {
 type Facts struct {
 	ConfigurationErrors     []string
 	EmptyCoverageEntryCount int
+	MissingCoverage         bool
 	TestCount               int
 	TestEventCount          int
 	CoveredTestCount        int
@@ -116,6 +117,7 @@ func (s *Server) Facts() (Facts, error) {
 	findings.SlowSuites, findings.SuiteDurationMedian = slowSuites(findings.Tests)
 	findings.TestCount = len(findings.Tests)
 	findings.CoveredTestCount = uniqueCoveredTestCount(tests, coverages)
+	findings.MissingCoverage = len(tests) > 0 && len(coverages) == 0 && emptyEntries == 0
 	findings.BroadCoverage, findings.CoveredFilesMedian = analyzeCoverage(tests, coverages, findings.CoverageLevel)
 	findings.ConfigurationErrors, err = s.configurationErrors()
 	return findings, err
