@@ -91,12 +91,12 @@ func TestOrchestrionLauncherFlagPriority(t *testing.T) {
 }
 
 func TestOrchestrionToolModes(t *testing.T) {
-	for _, mode := range []string{"orchestrion", "orchestrion-testify", "orchestrion-goleak", "orchestrion-cover", "orchestrion-testify-goleak-cover", "mini-orchestrion", "mini-orchestrion-testify-goleak-cover"} {
+	for _, mode := range []string{"orchestrion", "orchestrion-testify", "orchestrion-goleak", "orchestrion-cover", "orchestrion-testify-goleak-cover", "mini-sdk", "mini-sdk-testify-goleak-cover", "mini-sdk-orchestrion", "mini-sdk-orchestrion-testify-goleak-cover"} {
 		if !ValidToolMode(mode) {
 			t.Fatal(mode)
 		}
 	}
-	for _, mode := range []string{"", "unknown", "orchestrion-orchestrion", "orchestrion-cover-testify", "mini-testify", "mini-cover", "mini-orchestrion-orchestrion"} {
+	for _, mode := range []string{"", "unknown", "orchestrion-orchestrion", "orchestrion-cover-testify", "mini-testify", "mini-cover", "mini-sdk-sdk", "mini-sdk-orchestrion-orchestrion"} {
 		if ValidToolMode(mode) {
 			t.Fatal("invalid mode", mode)
 		}

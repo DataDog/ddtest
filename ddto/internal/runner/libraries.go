@@ -8,9 +8,9 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
 )
 
-// Both optional integrations share the existing test-import graph query.
+// Optional integrations and SDK CI ownership share the test-import graph query.
 // Known dependency closures are not queried again; external helpers remain.
-func resolveTestLibraries(ctx context.Context, dir string, opts options, packages []goPackage) (selected map[string]*goPackage, err error) {
+func resolveTestLibraries(ctx context.Context, dir string, opts options, packages []goPackage) (selected map[string]*goPackage, sdkCI bool, err error) {
 	debug := debugFromContext(ctx)
 	phase := debug.start("resolve test libraries")
 	defer func() { phase.finish(err) }()
@@ -22,6 +22,7 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 	}
 	knownGoleak := false
 	for _, p := range packages {
+		sdkCI = sdkCI || p.ImportPath == sdkPackage || isSDKCIPackage(p.ImportPath)
 		if p.ImportPath == sdkPackage || p.ImportPath == miniPackage {
 			continue
 		}
@@ -32,6 +33,7 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 		}
 		for _, imports := range [][]string{p.Deps, p.TestImports, p.XTestImports} {
 			for _, path := range imports {
+				sdkCI = sdkCI || isSDKCIPackage(path)
 				if path == instrument.GoleakImport {
 					knownGoleak = true
 				}
@@ -56,7 +58,7 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 	}
 	debug.printf("test-library query pending_imports=%d known_libraries=%d", len(requests), len(selected))
 	if len(requests) == 0 {
-		return selected, nil
+		return selected, sdkCI, nil
 	}
 	paths = paths[:0]
 	for path := range requests {
@@ -70,16 +72,17 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 	cmd.Dir = dir
 	dependencies, err := readPackages(cmd, "resolve optional test-library dependencies")
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	debug.printf("test-library query resolved=%d", len(dependencies))
 	for _, p := range dependencies {
+		sdkCI = sdkCI || isSDKCIPackage(p.ImportPath)
 		if selected[p.ImportPath] == nil && (p.ImportPath == instrument.GoleakImport || p.ImportPath == instrument.TestifySuiteImport) {
 			copy := p
 			selected[p.ImportPath] = &copy
 		}
 	}
-	return selected, nil
+	return selected, sdkCI, nil
 }
 
 // libraryVersion selects the upstream version used for compatibility checks.

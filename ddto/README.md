@@ -70,10 +70,12 @@ own rules, including `-C`, `--flag` spellings and custom test flags without
 events. A user overlay is merged into ours, and ours takes precedence. A user
 `-toolexec` runs after ours. Recognized Orchestrion wrappers bypass packages
 already owned by ddtest; [composition](docs/orchestrion.md) explains that
-boundary. Missing or ambiguous hooks fail before compilation. Help and explicit
+boundary. When the test graph includes the full SDK, Mini disables its CI
+reporter during compilation while keeping APM available, including builds without
+Orchestrion. Missing or ambiguous hooks fail before compilation. Help and explicit
 `.go` file mode run native `go test` without
-instrumentation, with a warning for file mode. SDK replacements and
-standard-library test targets are outside this POC.
+instrumentation, with a warning for file mode. `--runtime=sdk` requires the pinned,
+unmodified SDK. Standard-library test targets are outside this POC.
 [Testify suite support](docs/testify.md) covers v1.4.0 and newer v1 releases,
 including callers in external dependencies. Other versions, or an unrecognized
 `suite.Run`, produce a warning; their suites run as ordinary instrumented tests. A selective `-toolexec` hook is

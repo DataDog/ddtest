@@ -86,12 +86,15 @@ Windows. An explicitly supplied `ORCHESTRION_JOBSERVER_URL` is retained.
 Arbitrary outer wrappers, such as `env orchestrion toolexec`, are not recognized
 as this composition; use one of the forms above.
 
-A client can also contain manual SDK test shims or blank imports. In a combined
-Mini build, the compiler rewrites the SDK's CI environment reader and CI mode
+A client can also contain manual SDK test shims or blank imports. When Mini
+owns reporting, the compiler rewrites the SDK's CI environment reader and CI mode
 getters to keep those shims inactive and keep APM on its own transport. The
 process environment remains available to Mini. These changes affect temporary
 compiler inputs only, not the client's sources or module cache. Unexpected SDK
 signatures fail the build instead of silently enabling another CI reporter.
+The guard also applies without Orchestrion when the selected test graph contains
+the SDK. It detects dependencies of test helpers during the existing graph query.
+Both `DD_CIVISIBILITY_ENABLED=parent` and `true` leave Mini as the sole CI reporter.
 
 Mini's deferred delivery, retries and goleak shim continue to own Mini's data and
 goroutines. The goleak shim does not ignore arbitrary application or APM
@@ -100,10 +103,10 @@ their usual leak-test policy.
 
 ## Cache and maintenance
 
-The testing overlay carries `DDTestMiniOrchestrionContract` when Mini and
-Orchestrion are combined. The SDK's dependency on `testing` propagates this
-contract into its compilation inputs. Changing between SDK, Mini alone and
-Mini with Orchestrion therefore changes the relevant Go cache entries without
+The testing overlay carries `DDTestMiniSDKCIContract` whenever Mini guards the
+SDK. The SDK's dependency on `testing` propagates this contract into its
+compilation inputs. Builds that guard SDK CI have distinct cache inputs from
+native and SDK-owned builds, without
 adding a global compiler-version suffix. Bump the contract in
 [`internal/runner/sdk_ci.go`](../internal/runner/sdk_ci.go) when the SDK guards
 change.
@@ -134,7 +137,10 @@ Covered cases also compare individual test coverage payloads.
 
 `TestMiniOrchestrionLegacySDKShim` checks single reporting with an existing SDK
 shim with the pinned SDK and v2.11.0-rc.2, in true/parent activation and both
-delivery modes. Inline executions check successful and failed tests, invalid CLI
+delivery modes. `TestMiniLegacySDKShim` covers the same SDK versions without
+Orchestrion, with a shim reached through a test helper. It verifies subtest
+reporting, failed-test exit codes, APM delivery and native SDK builds on both
+sides of a Mini build. Inline executions check successful and failed tests, invalid CLI
 forms and a missing executable. Client module and source files are checked for
 changes. Unit tests cover private API drift, tool dispatch, quoting, version probes
 and temporary-file cleanup. The existing compatibility workflow runs these

@@ -112,10 +112,13 @@ func applyGoLauncher(ctx context.Context, opts *options) {
 // ValidToolMode validates the CLI private tool entrypoint before dispatch.
 func ValidToolMode(mode string) bool {
 	if strings.HasPrefix(mode, "mini-") {
-		if !strings.HasPrefix(mode, "mini-orchestrion") {
+		if mode == "mini-sdk" {
+			return true
+		}
+		if !strings.HasPrefix(mode, "mini-sdk-") {
 			return false
 		}
-		mode = strings.TrimPrefix(mode, "mini-")
+		mode = strings.TrimPrefix(mode, "mini-sdk-")
 	}
 	if mode == "orchestrion" {
 		return true

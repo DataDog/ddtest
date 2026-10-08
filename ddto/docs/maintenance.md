@@ -333,6 +333,12 @@ original assertions, local deferred admission and precise goleak filters.
 application weaving to Orchestrion. Keep version probes chained through the
 original tool, even for packages whose compilation bypasses Orchestrion.
 
+Mini activates the SDK guard when the existing package query finds SDK CI
+dependencies, including those reached through test-only helpers. Orchestrion
+builds always activate it because weaving can introduce SDK imports. Keep that
+detection in the shared dependency query; it needs no extra Go command. A client
+that merely requires an unused SDK keeps the wrapper disabled.
+
 The Mini-specific SDK guard rewrites `envconfig.FromEnv`,
 `Config.CIVisibilityEnabled` and `Config.CIVisibilityAgentlessActive` in temporary
 compiler inputs. Both CI initialization and transport selection must stay
@@ -340,8 +346,10 @@ inactive in the full SDK while Mini owns reporting. Check the SDK consumers
 when these private APIs change. Do not disable CI by changing the process
 environment: Mini needs it, and runtime mutation could race with tests.
 
-Bump `miniOrchestrionCacheMarker` when the guard semantics change. Verify both
+Bump `miniSDKCICacheMarker` when the guard semantics change. Verify both
 build orders against SDK mode, and retain the actual APM HTTP test; a mock span
 alone cannot establish which transport the SDK uses. The composition tests also
-exercise the SDK's manual test shim and v2.11 configuration boundaries. No SDK
-source in the module cache or incorporated runtime is changed by this guard.
+exercise the SDK's manual test shim and v2.11 configuration boundaries.
+`TestMiniLegacySDKShim` verifies the same boundary without Orchestrion, including
+native SDK builds before and after Mini, failed tests and APM HTTP delivery.
+No SDK source in the module cache or incorporated runtime is changed by this guard.

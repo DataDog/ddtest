@@ -55,6 +55,7 @@ type Plan struct {
 	launcher         *goLauncher
 	orchestrion      bool
 	mini             bool
+	sdkCI            bool
 	testify          bool
 	goleak           bool
 	goleakCache      string
@@ -277,9 +278,16 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		}
 		replacements[logical] = backing
 	}
+	libraries, sdkCI, e := resolveTestLibraries(ctx, dir, opts, packages)
+	if e != nil {
+		return plan, e
+	}
+	// Orchestrion may introduce SDK imports during compilation. Other builds
+	// need the gate only when the already resolved client graph contains it.
+	plan.sdkCI = plan.mini && (plan.orchestrion || sdkCI)
 	hooks := hooksForRuntime(runtime, rewritten.ParallelStop)
-	if plan.orchestrion && plan.mini {
-		hooks += miniOrchestrionCacheMarker
+	if plan.sdkCI {
+		hooks += miniSDKCICacheMarker
 	}
 	if e = add(filepath.Join(native.Dir, "zz_dd_ci_visibility_hooks.go"), hooks); e != nil {
 		return plan, e
@@ -301,10 +309,6 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			return plan, e
 		}
 		plan.TestPackages++
-	}
-	libraries, e := resolveTestLibraries(ctx, dir, opts, packages)
-	if e != nil {
-		return plan, e
 	}
 	testifyPhase := debug.start("instrument testify")
 	testify, warning, e := prepareTestifyPackage(libraries[instrument.TestifySuiteImport], replacements, runtime, temp)
@@ -371,7 +375,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	if e = prepareOrchestrionLauncher(ctx, dir, opts, &plan, progress); e != nil {
 		return plan, e
 	}
-	debug.printf("plan ready testing_files=%d test_packages=%d overlay_entries=%d generated_backing_files=%d temporary_modfile=%t cover_bridge=%t", plan.InstrumentedFiles, plan.TestPackages, len(replacements), len(backingByContent), plan.Modfile != "", plan.coverOverlay)
+	debug.printf("plan ready testing_files=%d test_packages=%d overlay_entries=%d generated_backing_files=%d temporary_modfile=%t cover_bridge=%t sdk_ci_gate=%t", plan.InstrumentedFiles, plan.TestPackages, len(replacements), len(backingByContent), plan.Modfile != "", plan.coverOverlay, plan.sdkCI)
 	return plan, nil
 }
 
@@ -470,7 +474,7 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 	}
 	var tool string
 	var env []string
-	if plan.coverOverlay || plan.testify || plan.goleak || plan.orchestrion {
+	if plan.coverOverlay || plan.testify || plan.goleak || plan.orchestrion || plan.sdkCI {
 		executable, e := os.Executable()
 		if e != nil {
 			fmt.Fprintln(stderr, e)
@@ -491,7 +495,7 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 			env[1] = orchestrionBypassEnv + "=" + string(runtime)
 		}
 	}
-	debug.printf("tool selection testify=%t goleak=%t cover=%t user_toolexec=%t orchestrion=%t", plan.testify, plan.goleak, plan.coverOverlay, opts.toolexec != "", plan.orchestrion)
+	debug.printf("tool selection testify=%t goleak=%t cover=%t user_toolexec=%t orchestrion=%t sdk_ci_gate=%t", plan.testify, plan.goleak, plan.coverOverlay, opts.toolexec != "", plan.orchestrion, plan.sdkCI)
 	forwarded := goTestArguments(plan, opts, tool)
 	if plan.launcher != nil {
 		ctx = context.WithValue(ctx, goLauncherKey{}, *plan.launcher)

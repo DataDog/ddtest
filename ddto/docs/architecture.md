@@ -108,8 +108,12 @@ One private `-toolexec` hook substitutes compiler inputs for that package,
 including covered sources. It also bridges covered rewritten `testing` sources
 when needed. Unrelated calls bypass plan loading and replace the wrapper with
 the native tool on Unix. Mini also prepares a reachable goleak `Find` entry;
-the same graph lookup and wrapper serve both libraries. Builds needing none
-of these features omit `-toolexec`.
+the same graph lookup and wrapper serve both libraries. That lookup also detects
+the full SDK in production dependencies and test-only helpers. Mini then guards
+the SDK's CI initialization and transport configuration through the same wrapper,
+including builds without Orchestrion. APM remains available. Builds needing none
+of these features omit `-toolexec`; declaring an unused SDK dependency does not
+activate the guard.
 The suite fingerprint travels through `testing` export data; compiler and
 linker identities remain native, so unrelated packages share Go's cache. The
 selected version and API are checked before Go can reuse a cached suite. A

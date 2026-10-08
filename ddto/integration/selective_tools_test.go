@@ -33,18 +33,28 @@ func TestSelective(t *testing.T){suite.Run(t,new(SelectiveSuite))}
 	if err := os.WriteFile(filepath.Join(dir, "assert_only_test.go"), []byte(assertOnly), 0600); err != nil {
 		t.Fatal(err)
 	}
+	sdk := `//go:build selective_sdk
+
+package fixture
+import _ "github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
+`
+	if err := os.WriteFile(filepath.Join(dir, "sdk.go"), []byte(sdk), 0600); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("GOFLAGS", "")
 	for _, tc := range []struct {
-		name                string
-		flags               []string
-		wantSuite, wantTool bool
+		name                         string
+		flags                        []string
+		wantSuite, wantTool, wantSDK bool
 	}{
-		{"assert only", nil, false, false},
-		{"native coverage", []string{"-coverpkg=./..."}, false, false},
-		{"covered testing", []string{"-coverpkg=testing"}, false, true},
-		{"suite", []string{"-tags=selective_suite"}, true, true},
-		{"suite with native helper coverage", []string{"-tags=selective_suite", "-coverpkg=./..."}, true, true},
-		{"suite with covered testing", []string{"-tags=selective_suite", "-coverpkg=testing"}, true, true},
+		{"assert only", nil, false, false, false},
+		{"native coverage", []string{"-coverpkg=./..."}, false, false, false},
+		{"covered testing", []string{"-coverpkg=testing"}, false, true, false},
+		{"suite", []string{"-tags=selective_suite"}, true, true, false},
+		{"suite with native helper coverage", []string{"-tags=selective_suite", "-coverpkg=./..."}, true, true, false},
+		{"suite with covered testing", []string{"-tags=selective_suite", "-coverpkg=testing"}, true, true, false},
+		{"SDK", []string{"-tags=selective_sdk"}, false, true, true},
+		{"SDK and suite", []string{"-tags=selective_sdk,selective_suite"}, true, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			flags := append([]string{"-mod=mod"}, tc.flags...)
@@ -74,6 +84,9 @@ func TestSelective(t *testing.T){suite.Run(t,new(SelectiveSuite))}
 			logs := cliDebugLines(stderr)
 			if !strings.Contains(logs, fmt.Sprintf("tool selection testify=%t goleak=false cover=%t", tc.wantSuite, tc.wantTool && strings.Contains(strings.Join(tc.flags, " "), "coverpkg=testing"))) {
 				t.Fatalf("debug tool selection does not match native tool activation: %s", logs)
+			}
+			if !strings.Contains(logs, fmt.Sprintf("sdk_ci_gate=%t", tc.wantSDK)) {
+				t.Fatalf("SDK CI gate does not follow the selected graph: %s", logs)
 			}
 			if strings.Contains(stderr, "tool-overlay") != tc.wantTool {
 				t.Fatalf("toolexec activation=%v, want %v: %s", strings.Contains(stderr, "tool-overlay"), tc.wantTool, stderr)

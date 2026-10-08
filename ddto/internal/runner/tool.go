@@ -32,10 +32,10 @@ func chainUserToolexec(args []string) ([]string, error) {
 
 func (p Plan) toolMode() string {
 	var modes []string
+	if p.sdkCI {
+		modes = append(modes, "mini-sdk")
+	}
 	if p.orchestrion {
-		if p.mini {
-			modes = append(modes, "mini")
-		}
 		modes = append(modes, "orchestrion")
 	}
 	if p.testify {
@@ -69,7 +69,7 @@ func ToolNeedsPlan(mode string, args []string, importPath string) bool {
 		pkg, _, _ := strings.Cut(importPath, " [")
 		return pkg == "testing"
 	}
-	if tool == "compile" && strings.HasPrefix(mode, "mini-orchestrion") && isSDKCIPackage(importPath) && !(len(args) == 2 && args[1] == "-V=full") {
+	if tool == "compile" && (mode == "mini-sdk" || strings.HasPrefix(mode, "mini-sdk-")) && isSDKCIPackage(importPath) && !(len(args) == 2 && args[1] == "-V=full") {
 		return true
 	}
 	if tool != "compile" || !strings.Contains(mode, "testify") && !strings.Contains(mode, "goleak") {

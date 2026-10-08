@@ -20,8 +20,8 @@ func isSDKCIPackage(pkg string) bool {
 
 // This exported testing constant changes the SDK's cache inputs through
 // internal/env's testing dependency. Bump it when the CI gate contract changes.
-const miniOrchestrionCacheMarker = `
-const DDTestMiniOrchestrionContract = "mini-orchestrion-ci-gate-v2"
+const miniSDKCICacheMarker = `
+const DDTestMiniSDKCIContract = "mini-sdk-ci-gate-v1"
 `
 
 // prepareSDKCICompile rewrites the compiler's actual inputs, including covered

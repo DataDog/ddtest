@@ -9,7 +9,7 @@ import (
 )
 
 func TestSDKCIGateDispatch(t *testing.T) {
-	for _, mode := range []string{"mini-orchestrion", "mini-orchestrion-testify-goleak-cover"} {
+	for _, mode := range []string{"mini-sdk", "mini-sdk-goleak", "mini-sdk-orchestrion", "mini-sdk-orchestrion-testify-goleak-cover"} {
 		if !ToolNeedsPlan(mode, []string{"compile", "env.go"}, sdkCIEnvironmentPackage) {
 			t.Fatal(mode)
 		}
@@ -23,7 +23,7 @@ func TestSDKCIGateDispatch(t *testing.T) {
 	if ToolNeedsPlan("orchestrion", []string{"compile", "env.go"}, sdkCIEnvironmentPackage) {
 		t.Fatal("SDK backend was gated")
 	}
-	if ToolNeedsPlan("mini-orchestrion", []string{"compile", "env.go"}, sdkCIEnvironmentPackage+"-other") {
+	if ToolNeedsPlan("mini-sdk", []string{"compile", "env.go"}, sdkCIEnvironmentPackage+"-other") {
 		t.Fatal("wrong package gated")
 	}
 }
