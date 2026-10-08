@@ -19,8 +19,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/bazel"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"

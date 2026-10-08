@@ -22,9 +22,8 @@ import (
 	"time"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/cidelivery"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
-
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
 )
 
 // Constants for common strings

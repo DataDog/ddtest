@@ -49,84 +49,126 @@ func FinishTime(v time.Time) FinishOption   { return func(c *finishConfig) { c.t
 // exactly become metrics, and error tags set the error flag and details.
 func (s *Span) SetTag(key string, value any) {
 	s.mu.Lock()
+	if s.finished {
+		s.mu.Unlock()
+		return
+	}
+	value = dereference(value)
+	if s.setScalarTag(key, value) {
+		s.mu.Unlock()
+		return
+	}
+	// Formatting may call user code, including getters or Finish on this span.
+	// Keep ordinary scalar tags on the single-lock path, and apply formatted
+	// values only after checking ownership again.
+	s.mu.Unlock()
+	if key == ext.Error || key == ext.ErrorNoStackTrace {
+		s.setError(value.(error), key == ext.Error)
+		return
+	}
+	tags := prepareTextTags(key, value)
+	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.finished {
 		return
 	}
-	value = dereference(value)
+	for _, tag := range tags {
+		if tag.numeric {
+			s.setMetric(tag.key, tag.number)
+		} else {
+			s.setTextTag(tag.key, tag.text)
+		}
+	}
+}
+
+// setScalarTag runs under mu and never invokes methods supplied by the caller.
+func (s *Span) setScalarTag(key string, value any) bool {
 	switch key {
 	case ext.ManualKeep:
-		return // CI events are always recorded, without a sampler.
-	case ext.Error:
-		s.setError(value, true)
-		return
-	case ext.ErrorNoStackTrace:
-		s.setError(value, false)
-		return
+		return true // CI events are always recorded, without a sampler.
+	case ext.Error, ext.ErrorNoStackTrace:
+		if _, ok := value.(error); ok {
+			return false
+		}
+		s.content.Error = 1
+		if value == nil || value == false {
+			s.content.Error = 0
+		}
+		return true
 	}
 	switch v := value.(type) {
 	case bool:
 		s.setTextTag(key, strconv.FormatBool(v))
-		return
+		return true
 	case string:
 		s.setTextTag(key, v)
-		return
+		return true
 	}
 	if v, ok := toFloat64(value); ok {
 		s.setMetric(key, v)
-		return
+		return true
 	}
+	return false
+}
+
+type preparedTextTag struct {
+	key, text string
+	number    float64
+	numeric   bool
+}
+
+func prepareTextTags(key string, value any) []preparedTextTag {
 	if v, ok := value.(fmt.Stringer); ok {
-		s.setTextTag(key, safeString(v, value))
-		return
+		return []preparedTextTag{{key: key, text: safeString(v, value)}}
 	}
 	if v, ok := value.([]byte); ok {
-		s.setTextTag(key, string(v))
-		return
+		return []preparedTextTag{{key: key, text: string(v)}}
 	}
 	if value != nil && reflect.TypeOf(value).Kind() == reflect.Slice {
 		// Slices use the SDK's dot notation: key.0, key.1, ...
 		slice := reflect.ValueOf(value)
+		tags := make([]preparedTextTag, slice.Len())
 		for i := 0; i < slice.Len(); i++ {
 			element := slice.Index(i).Interface()
 			name := key + "." + strconv.Itoa(i)
 			if number, ok := toFloat64(element); ok {
-				s.setMetric(name, number)
+				tags[i] = preparedTextTag{key: name, number: number, numeric: true}
 			} else {
-				s.setTextTag(name, fmt.Sprintf("%v", element))
+				tags[i] = preparedTextTag{key: name, text: fmt.Sprintf("%v", element)}
 			}
 		}
-		return
+		return tags
 	}
-	s.setTextTag(key, fmt.Sprint(value))
+	return []preparedTextTag{{key: key, text: fmt.Sprint(value)}}
 }
 
 // setError mirrors the SDK: an error value records its message and type, a
 // formatted stack for fmt.Formatter errors, and the stack where it was handled.
 // Nil clears the flag; any other value sets it.
-func (s *Span) setError(value any, stack bool) {
-	switch v := value.(type) {
-	case bool:
-		s.content.Error = 0
-		if v {
-			s.content.Error = 1
-		}
-	case error:
-		s.content.Error = 1
-		s.setTextTag(ext.ErrorMsg, v.Error())
-		s.setTextTag(ext.ErrorType, reflect.TypeOf(v).String())
-		if !stack {
-			return
-		}
-		if _, ok := v.(fmt.Formatter); ok {
-			s.setTextTag(ext.ErrorStack, fmt.Sprintf("%+v", v))
+func (s *Span) setError(value error, stack bool) {
+	message, kind := value.Error(), reflect.TypeOf(value).String()
+	var formatted, handling string
+	_, formatter := value.(fmt.Formatter)
+	if stack {
+		if formatter {
+			formatted = fmt.Sprintf("%+v", value)
 		}
 		// Skip setError and SetTag, like the SDK's own capture wrapper.
-		s.setTextTag(ext.ErrorHandlingStack, stacktrace.Format(stacktrace.SkipAndCaptureWithInternalFrames(0, 2)))
-	case nil:
-		s.content.Error = 0
-	default:
-		s.content.Error = 1
+		handling = stacktrace.Format(stacktrace.SkipAndCaptureWithInternalFrames(0, 2))
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.finished {
+		return
+	}
+	s.content.Error = 1
+	s.setTextTag(ext.ErrorMsg, message)
+	s.setTextTag(ext.ErrorType, kind)
+	if stack {
+		if formatter {
+			s.setTextTag(ext.ErrorStack, formatted)
+		}
+		s.setTextTag(ext.ErrorHandlingStack, handling)
 	}
 }
 
@@ -247,6 +289,20 @@ func hierarchyIndex(key string) int {
 	return -1
 }
 func (s *Span) setMeta(key, value string) {
+	switch key {
+	case ext.SpanName:
+		s.content.Name = value
+		return
+	case ext.ServiceName:
+		s.content.Service = value
+		return
+	case ext.ResourceName:
+		s.content.Resource = value
+		return
+	case ext.SpanType:
+		s.content.Type = value
+		return
+	}
 	if i := hierarchyIndex(key); i >= 0 {
 		s.hierarchy[i] = value
 		s.hierarchySet |= 1 << i

@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 )
 
 // resetGlobalState is a helper that resets the package level variables that keep
@@ -127,7 +127,7 @@ func TestInitializeWriteLogStopConcurrentRace(t *testing.T) {
 	<-sendEntered
 
 	var writeWG sync.WaitGroup
-	for i := range 128 {
+	for i := 0; i < 128; i++ {
 		writeWG.Go(func() {
 			WriteLog(uint64(i+1), "module", "suite", "test", fmt.Sprintf("message-%d", i), "")
 		})
@@ -154,7 +154,7 @@ func TestInitializeWriteLogStopConcurrentRace(t *testing.T) {
 
 func TestLogsPayloadResetAndRead(t *testing.T) {
 	p := newLogsPayload()
-	for i := range 5 {
+	for i := 0; i < 5; i++ {
 		p.push(&logEntry{Message: "msg" + strconv.Itoa(i)})
 	}
 

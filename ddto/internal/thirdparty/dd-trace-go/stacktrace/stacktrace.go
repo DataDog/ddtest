@@ -202,7 +202,7 @@ func parseSymbol(name string) symbol {
 // indexSymbolDot returns the first dot outside generic type arguments.
 func indexSymbolDot(name string) int {
 	bracketDepth := 0
-	for i := range len(name) {
+	for i := 0; i < len(name); i++ {
 		switch name[i] {
 		case '[':
 			bracketDepth++

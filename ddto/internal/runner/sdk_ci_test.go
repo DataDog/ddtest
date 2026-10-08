@@ -38,13 +38,13 @@ func TestSDKCIGateCompilerInputs(t *testing.T) {
 	if err := os.WriteFile(original, source, 0600); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"compile", "-o", "output.a", original}
+	args := []string{"compile", "-o", "output.a", sdkCompilerCacheMarker(sdkCIEnvironmentPackage), original}
 	got, cleanup, err := prepareSDKCICompile(args, sdkCIEnvironmentPackage)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cleanup()
-	if !reflect.DeepEqual(args, []string{"compile", "-o", "output.a", original}) || !reflect.DeepEqual(got[:3], args[:3]) || got[3] == original {
+	if !reflect.DeepEqual(args, []string{"compile", "-o", "output.a", sdkCompilerCacheMarker(sdkCIEnvironmentPackage), original}) || !reflect.DeepEqual(got[:3], args[:3]) || got[3] == original {
 		t.Fatal(args, got)
 	}
 	rewritten, err := os.ReadFile(got[3])
@@ -71,5 +71,25 @@ func TestSDKCIGateCompilerInputs(t *testing.T) {
 	entries, err := os.ReadDir(dir)
 	if err != nil || len(entries) != 1 {
 		t.Fatal("failure left temporary sources", entries, err)
+	}
+}
+
+func TestSDKCompilerCacheMarkerKeepsUserFlags(t *testing.T) {
+	t.Setenv("GOFLAGS", "-gcflags=all=-N")
+	for _, path := range []string{sdkCIConfigPackage, sdkCIEnvironmentPackage, sdkTracerPackage} {
+		opts, err := parseOptions([]string{"-gcflags=" + path + "=-l", "."}, os.Getenv("GOFLAGS"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		marker := sdkCompilerCacheMarker(path)
+		flag, err := packageCompilerCacheFlag(t.TempDir(), opts, &goPackage{ImportPath: path}, marker)
+		if err != nil || flag != "-gcflags="+path+"=-l "+marker {
+			t.Fatalf("%s: %q %v", path, flag, err)
+		}
+		args := []string{"compile", "-l", marker, "-I=client-path", "source.go"}
+		got := removeCompilerCacheMarker(append([]string(nil), args...), marker)
+		if !reflect.DeepEqual(got, []string{"compile", "-l", "-I=client-path", "source.go"}) || args[2] != marker {
+			t.Fatal(got, args)
+		}
 	}
 }

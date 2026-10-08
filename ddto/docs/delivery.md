@@ -136,6 +136,11 @@ require go.uber.org/goleak v1.3.0
 replace go.uber.org/goleak => github.com/tonyredondo/goleak v0.0.0-20260702071827-065a2facff42
 ```
 
+Go hashes the goleak source fingerprint as a package-scoped compiler flag.
+The wrapper removes that exact marker before invoking the compiler, including
+goleak's external tests and generated test main. Client compiler flags remain
+intact. This also works with compilers that reject `-I` together with `-importcfg`.
+
 The original version is the client's compatibility contract. Preparation still
 checks `Find(options ...Option) error` in the actual replacement sources,
 including overlays. An incompatible entry warns with both the original version

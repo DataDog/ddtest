@@ -218,8 +218,10 @@ modules through `replace` and `go.work`, dynamic tool activation, native tool
 identities and failures, and cache invalidation. A bounded fuzz test checks
 source edits.
 
-The compatibility workflow discovers these tests on Linux Go 1.26 and 1.27,
-and macOS/Windows Go 1.27. Linux also runs the race harness. Local Linux and
+The compatibility workflow discovers these tests on Linux Go 1.26/1.27 and
+macOS/Windows Go 1.27. Go 1.25 and tip run selected native Mini fixtures with
+Testify, coverage, goleak and deferred delivery. Linux also runs the stable
+toolchains with the race harness. Local Linux and
 cross-compilation proof cannot replace execution in the other platform jobs.
 
 ## Maintenance and remaining boundary

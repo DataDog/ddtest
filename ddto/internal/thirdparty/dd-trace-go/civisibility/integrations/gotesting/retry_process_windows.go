@@ -14,9 +14,8 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/xsys/windows"
-
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/locking"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/xsys/windows"
 )
 
 // ProcessRetryContainmentSupported reports whether this platform can contain

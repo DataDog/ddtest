@@ -34,14 +34,16 @@ The log records:
 
 - The selected runtime, its resolved module version and replacement status, and
   the effective working directory, including `-C`.
-- Package resolution, with the number of requested patterns and resolved packages.
+- The effective toolchain version and package resolution, with the number of
+  requested patterns and resolved packages.
 - An early `resolve runtime module` probe when Mini is absent from the effective
   module text. It uses a temporary module and checksum file. An unknown module
   is an expected result; Go still resolves every package after provisioning.
 - Runtime provisioning and each `go env`, `go mod` or `go get` invocation.
   Mini reports whether it uses a client replacement, local CLI sources, or a
   published version. Local CLI sources can be a checkout or its exact cached
-  module. Raising the temporary module's Go directive is recorded too.
+  module. Older client languages use a temporary workspace, without changing
+  their module's Go directive.
 - The `testing` transformation, its source and rewritten-file counts, and the
   Fuzz and parallel-stop hooks selected for that runtime.
 - Optional library discovery, including how many imports still need a query.

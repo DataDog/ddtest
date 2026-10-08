@@ -15,7 +15,7 @@ versions.
 Shell examples use POSIX syntax. On Windows, use Git Bash or set environment
 variables with PowerShell; locally built executables can use a `.exe` suffix.
 
-Use an installed Go 1.26 or 1.27 toolchain:
+Use an installed Go 1.25 or newer toolchain:
 
 ```sh
 go install github.com/tonyredondo/dd-ci-testing-poc/cmd/ddtest@main
@@ -107,11 +107,14 @@ The SDK backend requires the exact version pinned in
 | Goleak | Automatic Mini integration for v1.3.0 and newer v1 releases, including compatible forks; real test leaks remain visible. [Details](docs/delivery.md#automatic-goleak-integration) |
 | Orchestrion and APM | Combined builds and independent SDK span copies under context-associated Mini tests. [Build commands](docs/orchestrion.md), [span association](docs/sdk-span-mirror.md) |
 | Bazel | Offline manifest and payload-file contracts; a real Bazel toolchain invocation is not part of the validation. [Details](docs/mini-runtime.md#delivery-and-offline-output) |
-| Platforms | Linux with Go 1.26/1.27, macOS and Windows with Go 1.27; Linux also runs the full suite with `-race`. [CI matrix](docs/validation.md#compatibility-workflow) |
+| Platforms | Linux with Go 1.25/1.26/1.27 and tip, macOS and Windows with Go 1.27; Linux also runs stable versions with `-race`. [CI matrix](docs/validation.md#compatibility-workflow) |
 
-A client's `go.mod` can declare an older Go version; the installed toolchain
-must meet Mini's Go 1.26 minimum. Future Go and private SDK layouts need their
-own compatibility runs. Standard-library test targets are unsupported. Explicit
+When using `ddtest`, a client's `go.mod` can declare Go 1.21 or newer; the
+installed toolchain must meet Mini's Go 1.25 minimum. Older toolchains are
+rejected before module provisioning. Instrumentation preserves the client's
+language version, including its loop-variable behavior. A direct `testopt`
+dependency requires the consuming module to declare Go 1.25 or newer. Future Go
+and private SDK layouts need their own compatibility runs. Standard-library test targets are unsupported. Explicit
 `.go` file mode runs native Go without instrumentation and prints a warning.
 The [validation contract](docs/validation.md) distinguishes loopback protocol
 checks from live intake, UI and downstream-project validation.

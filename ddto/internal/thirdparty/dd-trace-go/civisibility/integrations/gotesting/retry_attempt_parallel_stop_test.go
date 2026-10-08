@@ -4,7 +4,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 )
 
 // testing counts each parallel attempt as a started parallel test, while the
@@ -56,7 +56,7 @@ func TestSequentialAttemptsRecordNoParallelEnd(t *testing.T) {
 			group, reason := newRetryAttemptGroup(original)
 			require.Empty(original, reason)
 			defer group.retire()
-			for range 2 {
+			for i := 0; i < 2; i++ {
 				root, result, reason := runFreshRetryAttemptInGroup(group, func(*testing.T) {})
 				require.Empty(original, reason)
 				require.NotNil(original, root)

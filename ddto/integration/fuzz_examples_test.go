@@ -142,7 +142,11 @@ func buildFuzzExampleFixture(t *testing.T, backend, mode string, covered bool) f
 		}
 	}
 	module := prefix + fuzzFixtureSuffix
-	mod := "module " + module + "\n\ngo 1.26.0\n\nrequire " + dependency + "\n" + extra
+	language := "1.26.0"
+	if backend == "mini" {
+		language = "1.25.0"
+	}
+	mod := "module " + module + "\n\ngo " + language + "\n\nrequire " + dependency + "\n" + extra
 	if backend == "sdk" && mode == "orchestrion" {
 		mod += "\nrequire github.com/DataDog/orchestrion " + orchestrionVersion + "\n"
 		if err := os.WriteFile(filepath.Join(dir, "orchestrion.tool.go"), []byte("//go:build tools\n\npackage fixture\nimport _ \"github.com/DataDog/orchestrion\"\n"), 0600); err != nil {

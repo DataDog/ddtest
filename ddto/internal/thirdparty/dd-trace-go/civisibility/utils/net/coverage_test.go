@@ -16,12 +16,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
-
-	"github.com/stretchr/testify/assert"
-
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/bazel"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
 )
 
 func TestCoverageApiRequest(t *testing.T) {

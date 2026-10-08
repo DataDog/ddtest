@@ -153,7 +153,7 @@ func (rq *RingQueue[T]) Flush() []T {
 	}
 
 	copyBuf := make([]T, count)
-	for i := range count {
+	for i := 0; i < count; i++ {
 		copyBuf[i] = buf[(head+i)%len(buf)]
 	}
 

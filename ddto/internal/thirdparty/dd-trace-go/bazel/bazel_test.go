@@ -11,9 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
-
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
 )
 
 func TestCurrentMode_DirectManifestPath(t *testing.T) {

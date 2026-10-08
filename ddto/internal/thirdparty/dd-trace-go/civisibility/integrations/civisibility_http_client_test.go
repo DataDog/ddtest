@@ -12,10 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility"
 	civisibilitynet "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/net"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestExitCiVisibilityClosesCIVisibilityHTTPClientIdleConnections(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 func TestRuntimeIDFormat(t *testing.T) {
 	pattern := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 	seen := make(map[string]bool)
-	for range 32 {
+	for i := 0; i < 32; i++ {
 		id := newRuntimeID()
 		if !pattern.MatchString(id) {
 			t.Fatalf("runtime ID is not a lowercase UUIDv4: %q", id)

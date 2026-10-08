@@ -1,0 +1,177 @@
+{
+  "differential": {
+    "cli": [
+      "TestAdaptedMiniBodyCallSitesMatchSource",
+      "TestCLIActivation",
+      "TestCLIDebugBuildTransparency",
+      "TestCLIDebugEarlyLocalProvisioning",
+      "TestCLIDebugFailuresAndNativeBypass",
+      "TestCLIDebugJSONAndResultCache",
+      "TestCLIDebugLocalProvisioning",
+      "TestCanonicalMiniCallSitesRetainOtherLocations",
+      "TestCanonicalMiniStackMapsOnlyAdaptedCallSite",
+      "TestCanonicalMiniStackRetainsApplicationFrames",
+      "TestCompilerTraceLines",
+      "TestDecodeWirePayload",
+      "TestDynamicToolSelection",
+      "TestExistingOverlay",
+      "TestGoTestFlagsAndVariants",
+      "TestGoleakCacheAndWarmVersionGuard",
+      "TestInvalidRuntimeFailsBeforeGo",
+      "TestMiniBazelOfflineAndPayloadFiles",
+      "TestMiniCLIActivation",
+      "TestMiniCLIRuntimeSelectionAndSourceRange",
+      "TestMiniCLIWithoutSDK",
+      "TestMiniChdirSymlinkWithUserTool",
+      "TestMiniCodeOwnersCompiledServices",
+      "TestMiniCodeOwnersPackageServices",
+      "TestMiniCodeOwnersSpecificationOnWire",
+      "TestMiniConsumerAddsOnlyOwnModule",
+      "TestMiniContinuesAfterPackageSetupFailures",
+      "TestMiniCoverageIncludesCleanup",
+      "TestMiniCoverageWithGlobalTimeChanges",
+      "TestMiniDeliveryFailurePreservesGoExit",
+      "TestMiniFixtureRuntimeImportLineEndings",
+      "TestMiniGoleakAbsoluteTargetRetainsCompilerFlags",
+      "TestMiniGoleakForkReplacement",
+      "TestMiniGoleakIntegration",
+      "TestMiniInProcessRetryKeepsAllocsPerRun",
+      "TestMiniLocalProvisionAvoidsProxy",
+      "TestMiniModModeLeavesModuleFiles",
+      "TestMiniModModeResolvesClientRequirements",
+      "TestMiniPreservesConsumerLanguage",
+      "TestMiniPreservesOlderConsumerDependencies",
+      "TestMiniPropagationExtractedBySDK",
+      "TestMiniProvisionsVendorAndPreservesPatchedSources",
+      "TestMiniProvisionsWorkspaceWithoutChangingModules",
+      "TestMiniPublicTestingContext",
+      "TestMiniRaceAndCoverage",
+      "TestMiniRuntimeProvisionUsesModuleOverlay",
+      "TestMiniRuntimeWithoutRequirementLeavesModuleUntouched",
+      "TestMiniStartupOverlapsSettingsAndTelemetry",
+      "TestMiniTestifyDuplicateIdentity",
+      "TestMiniTestingCompatibility",
+      "TestParallelNormalizationPreservesOutput",
+      "TestResultCache",
+      "TestSDKProvisionProgressUsesStderr",
+      "TestSharedBackingCollisions",
+      "TestSharedGeneratedFiles",
+      "TestSharedParityFixtureFailedBuild",
+      "TestSharedParityFixtureLifetime",
+      "TestTestifyContractInvalidatesOnlyTestingDependents",
+      "TestTestifyCoveredLibraryAndWorkspace",
+      "TestTestifyMovedCallSitesInFormattedDiagnostics",
+      "TestTestifyVersionGuardWithWarmVendoredSources",
+      "TestTestingCompatibility",
+      "TestToolBypassHasNativeIdentityAndExit",
+      "TestToolBypassProcessReplacement",
+      "TestWorkspaceCommandPreservesLogicalWorkingDirectory"
+    ],
+    "parity": [
+      "TestCIComparatorRetainsProductAttributes",
+      "TestCIComparatorSessionInheritance",
+      "TestCIComparatorSessionOnlyCapabilities",
+      "TestCIComparatorSessionOnlySelection",
+      "TestCIComparatorSharedMetadataRetainsValuesAndOverrides",
+      "TestCIVisibilityAdditionalSpans",
+      "TestCIVisibilityManualHierarchy",
+      "TestCIVisibilityMultiplePackages",
+      "TestCIVisibilityParityMatrix",
+      "TestCIVisibilityTelemetryInventory",
+      "TestCIVisibilityTestifyParity",
+      "TestDeferredDeliveryParityMatrix",
+      "TestDeferredDeliveryTestifyParity",
+      "TestMiniCIConfigurationWireParity",
+      "TestMiniParallelAndRetryCoverageAttribution",
+      "TestMiniWireHierarchyAgentAndCoverage",
+      "TestOracleStackComparisonRetainsApplication",
+      "TestOtherSourceComparisonRetainsRangeChecks",
+      "TestParityGraphRejectsLostEvents",
+      "TestSDKFeaturePolicies",
+      "TestTestifyCoverageCacheAndGOFLAGS",
+      "TestTestifyDiagnosticNormalizationRetainsApplicationErrors",
+      "TestTestifyRegularCallerDefaultCoverage",
+      "TestTestifySupportedVersionsAndNativeSemantics",
+      "TestTestifyUnsupportedEntryWarnsAndPreservesClientNames",
+      "TestTestifyUserOverlay"
+    ],
+    "fuzz": [
+      "TestCIVisibilityFuzzCampaign",
+      "TestFuzzExampleCoverageParity",
+      "TestFuzzExampleFixtureProvenance",
+      "TestFuzzExampleParity",
+      "TestFuzzExamplePrintedDuration",
+      "TestFuzzExampleStackComparisonKeepsApplicationFrames",
+      "TestFuzzFixtureCacheIsolation",
+      "TestFuzzRootStackAliasIsLimitedToThePort",
+      "TestMiniFuzzExampleLifecycle",
+      "TestMiniPublicFuzzExampleAPI",
+      "TestMiniToolchainFeatures"
+    ],
+    "orchestrion": [
+      "TestMiniOrchestrionClientPinnedTool",
+      "TestMiniOrchestrionComposition",
+      "TestMiniOrchestrionInlineAndFailures",
+      "TestSharedBackingCompatibility"
+    ],
+    "sdk": [
+      "TestMiniLegacySDKShim",
+      "TestMiniOrchestrionLegacySDKShim",
+      "TestMiniOrchestrionLibrariesAndDelivery",
+      "TestMiniSDKMirrorContextMatrix",
+      "TestMiniSDKSpanMirror",
+      "TestMiniUnsupportedSDKMirrorRetainsTestReporting"
+    ]
+  },
+  "mini": {
+    "native": [
+      "TestGoleakCacheAndWarmVersionGuard",
+      "TestMiniChdirSymlinkWithUserTool",
+      "TestMiniConsumerAddsOnlyOwnModule",
+      "TestMiniContinuesAfterPackageSetupFailures",
+      "TestMiniCoverageIncludesCleanup",
+      "TestMiniGoleakAbsoluteTargetRetainsCompilerFlags",
+      "TestMiniGoleakIntegration",
+      "TestMiniLocalProvisionAvoidsProxy",
+      "TestMiniModModeLeavesModuleFiles",
+      "TestMiniModModeResolvesClientRequirements",
+      "TestMiniPreservesConsumerLanguage",
+      "TestMiniPreservesOlderConsumerDependencies",
+      "TestMiniProvisionsVendorAndPreservesPatchedSources",
+      "TestMiniProvisionsWorkspaceWithoutChangingModules",
+      "TestMiniRuntimeProvisionUsesModuleOverlay",
+      "TestMiniStartupOverlapsSettingsAndTelemetry"
+    ],
+    "fuzz": [
+      "TestMiniFuzzExampleLifecycle",
+      "TestMiniPublicFuzzExampleAPI",
+      "TestMiniToolchainFeatures"
+    ]
+  },
+  "tip_additional": {
+    "native": [
+      "TestMiniLegacySDKShim",
+      "TestMiniSDKMirrorContextMatrix",
+      "TestMiniSDKSpanMirror",
+      "TestMiniUnsupportedSDKMirrorRetainsTestReporting"
+    ]
+  },
+  "platform_tests": {
+    "linux": {
+      "parity": [
+        "TestCIVisibilityUnixAgent"
+      ]
+    },
+    "darwin": {
+      "parity": [
+        "TestCIVisibilityUnixAgent"
+      ]
+    },
+    "windows": {
+      "cli": [
+        "TestSharedParityWorkspaceRejectsPersistentLock",
+        "TestSharedParityWorkspaceWaitsForOpenFile"
+      ]
+    }
+  }
+}

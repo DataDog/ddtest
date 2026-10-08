@@ -50,7 +50,7 @@ func BenchmarkCITelemetry(b *testing.B) {
 					}
 				})
 			} else {
-				for range b.N {
+				for i := 0; i < b.N; i++ {
 					operation()
 				}
 			}
@@ -61,7 +61,7 @@ func BenchmarkCITelemetry(b *testing.B) {
 }
 func BenchmarkCITelemetryStartup(b *testing.B) {
 	b.ReportAllocs()
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		c, err := NewClient("fixture", "benchmark", "1.0", ClientConfig{AgentURL: "http://fixture.invalid", HTTPClient: &http.Client{Transport: benchmarkHTTP{}}})
 		if err != nil {
 			b.Fatal(err)

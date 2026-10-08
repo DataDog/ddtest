@@ -150,7 +150,9 @@ func runCommand(dir string, env []string, name string, args ...string) (string, 
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	cmd.Env = env
+	// An explicit Env disables os/exec's automatic PWD update. Keep the
+	// logical directory so workspaces under macOS /var aliases resolve alike.
+	cmd.Env = append(env, "PWD="+dir)
 	var out, errout bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errout

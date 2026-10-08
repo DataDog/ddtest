@@ -15,11 +15,10 @@ import (
 	"testing"
 	"time"
 
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // sourcePathFixtureFunc is a real runtime function used to exercise SetTestFunc path resolution.

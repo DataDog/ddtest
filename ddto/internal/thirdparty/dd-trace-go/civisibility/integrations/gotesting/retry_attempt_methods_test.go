@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 )
 
 func TestProcessRetryParityFreshRunnerStablePublicState(t *testing.T) {
@@ -112,7 +112,7 @@ func TestProcessRetryParityFreshRunnerConcurrentReportingMethods(t *testing.T) {
 	attempt, result, reason := runFreshRetryAttempt(t, func(local *testing.T) {
 		writer := local.Output()
 		var workers sync.WaitGroup
-		for i := range 16 {
+		for i := 0; i < 16; i++ {
 			workers.Go(func() {
 				local.Helper()
 				local.Logf("worker %d", i)
@@ -142,7 +142,7 @@ func TestProcessRetryParityFreshRunnerSerializesConcurrentIndentedWrites(t *test
 	const workers = 16
 	var writes sync.WaitGroup
 	writeErrors := make(chan error, workers)
-	for range workers {
+	for i := 0; i < workers; i++ {
 		writes.Go(func() {
 			_, err := writer.Write([]byte("concurrent output\n"))
 			writeErrors <- err

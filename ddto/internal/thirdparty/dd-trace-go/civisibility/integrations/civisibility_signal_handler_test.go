@@ -11,9 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestExitCiVisibilityStopsSignalHandler(t *testing.T) {
@@ -41,7 +40,7 @@ func TestStopCIVisibilitySignalHandlerIsIdempotent(t *testing.T) {
 	require.NotNil(t, handler)
 
 	var wg sync.WaitGroup
-	for range 16 {
+	for i := 0; i < 16; i++ {
 		wg.Go(func() {
 			stopCIVisibilitySignalHandler()
 		})

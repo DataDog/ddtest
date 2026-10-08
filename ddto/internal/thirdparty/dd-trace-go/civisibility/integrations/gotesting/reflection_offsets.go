@@ -170,10 +170,7 @@ var (
 // and callers fall back to the reflection implementation.
 func getTestingInternalsLayout() *testingInternalsLayout {
 	testingInternalsLayoutOnce.Do(func() {
-		testingInternalsLayoutValue = buildTestingInternalsLayout(
-			reflect.TypeFor[testing.T](),
-			reflect.TypeFor[testing.B](),
-		)
+		testingInternalsLayoutValue = buildTestingInternalsLayout(reflect.TypeFor[testing.T](), reflect.TypeFor[testing.B]())
 		testingInternalsLayoutValue.fuzz = buildFuzzFieldsLayout(reflect.TypeFor[testing.F](), testingInternalsLayoutValue)
 	})
 	return testingInternalsLayoutValue

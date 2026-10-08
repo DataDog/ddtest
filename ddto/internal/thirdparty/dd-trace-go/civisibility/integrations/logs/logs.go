@@ -13,7 +13,6 @@ import (
 	"time"
 
 	infra "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go"
-
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/hostname"
 )
 

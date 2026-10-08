@@ -17,3 +17,7 @@ syscalls. [EXTRACTION.json](EXTRACTION.json) records each selected declaration
 and its source hash. ABI, registry and metadata tests stay beside the code.
 
 Follow the [shared audit and update procedure](../README.md#audit-and-update).
+
+This copy uses native Go 1.25 APIs. Follow the
+[source-language rules](../../../docs/maintenance.md#verification-before-publication)
+when updating this copy, then record its local hashes.

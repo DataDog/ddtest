@@ -10,10 +10,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/bazel"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestGetCITagsCache(t *testing.T) {

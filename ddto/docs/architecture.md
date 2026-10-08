@@ -103,6 +103,11 @@ compares its flag table with the toolchain's help. When the plan needs the
 selective tool, a user `-toolexec` (from arguments or GOFLAGS) runs every tool
 after ours. Help and explicit Go-file mode run native `go test`.
 
+Preparation requires a Go 1.25 or newer toolchain. Mini uses that source language
+while an older client keeps its own language in a temporary workspace. Client
+GODEBUG settings, alternate modfiles and overlays still control the test program;
+[provisioning](mini-runtime.md#runtime-provisioning) describes the file boundaries.
+
 [Testify preparation](testify.md) detects the suite package in the actual test
 import graph and prepares a registration call at its original `Run` entry.
 One private `-toolexec` hook substitutes compiler inputs for that package,
@@ -123,7 +128,10 @@ linker identities remain native, so unrelated packages share Go's cache. The
 selected version and API are checked before Go can reuse a cached suite. A
 coverage bridge has its own version contract. Its dispatch, cache invalidation
 and source ownership are described in [Testify instrumentation](testify.md).
-Goleak's package-only cache marker, delivery pause and exact worker filters are
+Each rewritten SDK package has its own compiler marker. A transitive marker
+through `testing` is insufficient when Go reuses unchanged dependency export data.
+The wrapper removes these markers before invoking the compiler; user flags stay
+intact. Goleak's package-only cache marker, delivery pause and exact worker filters are
 described in [delivery and goleak](delivery.md).
 
 The plan lives for one invocation. Identical generated content shares a backing

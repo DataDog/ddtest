@@ -483,7 +483,7 @@ func AppendIntf(b []byte, i any) ([]byte, error) {
 	case reflect.Array, reflect.Slice:
 		l := v.Len()
 		b = AppendArrayHeader(b, uint32(l))
-		for i := range l {
+		for i := 0; i < l; i++ {
 			b, err = AppendIntf(b, v.Index(i).Interface())
 			if err != nil {
 				return b, err

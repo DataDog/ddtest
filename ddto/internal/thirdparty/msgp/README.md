@@ -17,3 +17,7 @@ keep the BSD notice in `LICENSE-go`. Follow the
 when changing sources or generation pins.
 
 Follow the [shared audit and update procedure](../README.md#audit-and-update).
+
+This copy uses native Go 1.25 APIs. Follow the
+[source-language rules](../../../docs/maintenance.md#verification-before-publication)
+when updating this copy, then record its local hashes.

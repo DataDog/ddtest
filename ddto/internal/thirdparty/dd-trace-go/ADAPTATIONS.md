@@ -452,11 +452,14 @@ envelope metadata in payload-file mode. New CI metrics or special tag handling
 in upstream require review of this boundary.
 
 Mini's `internal/minitracer/common_tags.go` owns getters and wire projection.
-Homogeneous event kinds share strings in metadata; text/numeric overrides or a
-mixed snapshot fall back to local strings without mutating sealed maps. Child
-spans do not receive CI defaults. Accounting excludes replaced default values
-and includes envelope overhead conservatively, even when the wire payload
-shrinks. A large masked default must never reject a smaller valid event.
+The immutable snapshot avoids rebuilding maps when spans start. Delivery copies
+the effective strings onto each CI event, matching the SDK representation.
+Text and numeric overrides retain their precedence; sealed maps never change.
+Child spans do not receive CI defaults. Accounting includes the event strings
+and excludes masked defaults. A large masked default must never reject a smaller
+valid event. Standard language/runtime ID/library/env/session envelope entries
+remain unchanged. Per-event projection adds wire bytes and delivery allocations;
+changing that placement requires evidence from the real intake.
 
 Checks: `TestCITagsSnapshotUpdatesAndRetainsOldValues`,
 `TestCommonTagOptionsKeepUpdatesTruncationAndBazelFiltering`, the native shared-tag
@@ -632,3 +635,39 @@ Checks: `TestNativeContextWithoutSDK`, `TestSDKMirrorScopeAndCancellation`,
 `TestSDKMirrorAPIDrift`, `TestMiniSDKSpanMirror` and
 `TestMiniSDKMirrorContextMatrix`. The [mirror guide](../../../docs/sdk-span-mirror.md)
 describes selection, delivery and the process-retry boundary.
+
+## Dependency-free test assertions and source language
+
+Ported SDK tests retain their inputs and boolean/fatal assertion behavior through
+`internal/testassert` and `internal/testassert/require`. These helpers use the
+standard library. Keeping external assertion imports in dependency tests would
+make a consumer's `go mod tidy` resolve Testify even without runtime imports.
+When synchronizing tests, relocate assert/require imports and add any missing
+helper behavior with its own regression tests.
+
+The root module declares Go 1.25 and uses native APIs for contexts, test helpers,
+string sequences, reflection, maps, random values and `WaitGroup.Go`.
+`internal/compat` retains only `AsType` and `Pointer`, the Go 1.26 helpers used
+by this port. Keep real Go-version constraints around private `testing` layouts;
+do not add a language header to ordinary files. Source manifests retain the
+upstream hashes and record each local adaptation.
+
+An older client language is preserved through a temporary workspace: Mini is a
+separate main module, and each client's `go` directive still governs its sources.
+The workspace keeps the caller's GODEBUG defaults, including explicit overrides.
+Native `-mod=mod` first resolves the client's test imports; adding Mini does not
+add requirements or raise the client's language. No process-wide environment
+variables are changed.
+
+Checks: `TestAssertionResults`, `TestFatalAssertionStopsExecution`,
+`TestMiniConsumerAddsOnlyOwnModule`, `TestMiniPreservesConsumerLanguage`,
+`TestMiniModModeResolvesClientRequirements` and
+`TestMiniPreservesOlderConsumerDependencies`, plus the ported SDK tests on
+Go 1.25, 1.26, 1.27 and tip.
+
+Container and OS-release discovery check scanner errors and report them at debug
+level. They retain metadata read before a later failure, preserving the SDK's
+best-effort behavior. OS-release parsing skips malformed lines without a value.
+`TestContainerReadersHandleReadErrors`, `TestContainerReaderStopsAtFirstID` and
+`TestOSReleaseHandlesMalformedLinesAndReadErrors` cover these paths; tip's
+scanner analyzer checks the error handling with `go vet`.

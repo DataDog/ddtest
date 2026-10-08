@@ -26,7 +26,7 @@ func ExamplePublic(){fmt.Println("public")
 }
 `
 	for name, text := range map[string]string{
-		"go.mod":         fmt.Sprintf("module example.com/mini-public-fuzz\n\ngo 1.26.0\nrequire github.com/tonyredondo/dd-ci-testing-poc v0.0.0\nreplace github.com/tonyredondo/dd-ci-testing-poc => %q\n", filepath.ToSlash(root)),
+		"go.mod":         fmt.Sprintf("module example.com/mini-public-fuzz\n\ngo 1.25.0\nrequire github.com/tonyredondo/dd-ci-testing-poc v0.0.0\nreplace github.com/tonyredondo/dd-ci-testing-poc => %q\n", filepath.ToSlash(root)),
 		"public_test.go": source,
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0600); err != nil {

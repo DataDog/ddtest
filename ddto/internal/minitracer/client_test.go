@@ -188,7 +188,7 @@ func TestQueueBoundAndConcurrentBackpressure(t *testing.T) {
 	// open batch. Once a delivery has failed, further events are rejected
 	// instead of waiting for a sender.
 	retained := 2 * (maxPendingBatches + 1)
-	for range retained + 3 {
+	for i := 0; i < retained+3; i++ {
 		finish()
 	}
 	if client.DroppedEvents() != 3 || client.LastError() == nil {
@@ -207,7 +207,7 @@ func TestQueueBoundAndConcurrentBackpressure(t *testing.T) {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
-	for range retained {
+	for i := 0; i < retained; i++ {
 		wg.Go(finish)
 	}
 	wg.Wait()
@@ -250,7 +250,7 @@ func TestFinishNeverWaitsForIntake(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	for range 35 {
+	for i := 0; i < 35; i++ {
 		span, _ := client.StartSpan(context.Background(), "test", SpanType("test"))
 		span.Finish()
 	}

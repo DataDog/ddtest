@@ -489,7 +489,8 @@ func (r *retryAttemptRoot) lastTerminalStack(kinds ...retryAttemptTerminalKind) 
 	}
 	r.terminalMu.Lock()
 	defer r.terminalMu.Unlock()
-	for _, terminal := range slices.Backward(r.terminalTrace) {
+	for i := len(r.terminalTrace) - 1; i >= 0; i-- {
+		terminal := r.terminalTrace[i]
 		if slices.Contains(kinds, terminal.kind) {
 			return append([]byte(nil), terminal.stack...)
 		}

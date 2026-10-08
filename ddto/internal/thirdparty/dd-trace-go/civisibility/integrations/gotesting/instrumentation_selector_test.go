@@ -175,7 +175,7 @@ func allocsPerRun(runs int, f func()) float64 {
 	f()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	for range runs {
+	for i := 0; i < runs; i++ {
 		f()
 	}
 	runtime.ReadMemStats(&after)

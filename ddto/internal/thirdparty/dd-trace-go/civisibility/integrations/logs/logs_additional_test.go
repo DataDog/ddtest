@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
 )
 
 // TestIsEnabled_CachesValue ensures that once the IsEnabled value is evaluated

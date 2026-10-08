@@ -96,60 +96,27 @@ func supportedGoleakVersion(version string) bool {
 }
 
 // Goleak does not import testing, so its cache key cannot inherit our testing
-// marker as Testify does. A package-scoped, unused import-search directory keys
-// this transform without changing the compiler identity for other packages.
+// marker as Testify does. A package-scoped gcflags marker keys this transform
+// without changing other packages. The tool wrapper removes our exact marker
+// before invoking the compiler; user include paths remain intact.
 // Go supplies every import through -importcfg; the sentinel is never read.
 func goleakCacheFlag(dir string, opts options, pkg *goPackage, fingerprint string) (string, error) {
-	flags, err := splitFlags(os.Getenv("GOFLAGS"))
-	if err != nil {
-		return "", err
-	}
-	flags = append(flags, opts.buildFlags...)
-	var effective []string
-	for i := 0; i < len(flags); i++ {
-		name, value, assigned := strings.Cut(strings.TrimLeft(flags[i], "-"), "=")
-		if name != "gcflags" {
-			continue
-		}
-		if !assigned {
-			i++
-			if i == len(flags) {
-				return "", fmt.Errorf("missing gcflags value")
-			}
-			value = flags[i]
-		}
-		value = strings.TrimSpace(value)
-		// Package arguments also accept absolute directories. They have already
-		// been resolved by Go; per-package flag patterns have different rules.
-		match := pkg.commandLine
-		if value != "" && !strings.HasPrefix(value, "-") {
-			pattern, rest, ok := strings.Cut(value, "=")
-			if !ok {
-				return "", fmt.Errorf("invalid gcflags pattern")
-			}
-			match = matchPackagePattern(strings.TrimSpace(pattern), dir, pkg)
-			value = rest
-		}
-		if match {
-			effective, err = splitFlags(value)
-			if err != nil {
-				return "", err
-			}
+	return packageCompilerCacheFlag(dir, opts, pkg, "-I=ddtest-goleak-"+fingerprint)
+}
+
+// removeGoleakCacheMarker filters an owned argument slice. Go has already
+// included the marker in the cache key; it is not a compiler include path.
+func removeGoleakCacheMarker(args []string, fingerprint string) []string {
+	return removeCompilerCacheMarker(args, "-I=ddtest-goleak-"+fingerprint)
+}
+
+// removeCompilerCacheMarker filters an owned argument slice.
+func removeCompilerCacheMarker(args []string, marker string) []string {
+	kept := args[:0]
+	for _, arg := range args {
+		if arg != marker {
+			kept = append(kept, arg)
 		}
 	}
-	effective = append(effective, "-I=ddtest-goleak-"+fingerprint)
-	quoted := make([]string, len(effective))
-	for i, flag := range effective {
-		if strings.ContainsAny(flag, " \t\r\n") {
-			if !strings.Contains(flag, "'") {
-				flag = "'" + flag + "'"
-			} else if !strings.Contains(flag, "\"") {
-				flag = "\"" + flag + "\""
-			} else {
-				return "", fmt.Errorf("cannot quote goleak compiler flag")
-			}
-		}
-		quoted[i] = flag
-	}
-	return "-gcflags=" + instrument.GoleakImport + "=" + strings.Join(quoted, " "), nil
+	return kept
 }

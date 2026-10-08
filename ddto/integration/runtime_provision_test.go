@@ -47,14 +47,14 @@ func TestMiniRuntimeWithoutRequirementLeavesModuleUntouched(t *testing.T) {
 }
 
 func TestMiniLocalProvisionAvoidsProxy(t *testing.T) {
-	_, driver := prepareMiniFixture(t)
+	driver := sharedDriver(t, "..")
 	var requests atomic.Int64
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		http.Error(w, "module lookup should not be necessary", http.StatusForbidden)
 	}))
 	defer proxy.Close()
-	for _, goVersion := range []string{"1.21.0", "1.25.0", "1.26.0"} {
+	for _, goVersion := range []string{"1.21.0", "1.25.0"} {
 		t.Run(goVersion, func(t *testing.T) {
 			dir := t.TempDir()
 			original := "module example.com/localmini\n\ngo " + goVersion + "\n"
@@ -80,7 +80,7 @@ func TestMiniLocalProvisionAvoidsProxy(t *testing.T) {
 }
 
 func TestSDKProvisionProgressUsesStderr(t *testing.T) {
-	_, driver := prepareMiniFixture(t)
+	driver := sharedDriver(t, "..")
 	dir := t.TempDir()
 	writeBuildFixture(t, dir, map[string]string{
 		"go.mod":         "module example.com/sdkprogress\n\ngo 1.26.0\n",

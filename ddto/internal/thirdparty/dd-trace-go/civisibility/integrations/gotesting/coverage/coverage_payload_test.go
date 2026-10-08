@@ -12,15 +12,14 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
-
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
 )
 
 func newCoverageData(n int) []*ciTestCoverageData {
 	list := make([]*ciTestCoverageData, n)
-	for i := range n {
+	for i := 0; i < n; i++ {
 		cov := newCiTestCoverageData(NewTestCoverage(uint64(i), uint64(i), uint64(i), uint64(i), "").(*testCoverage))
 		list[i] = cov
 	}
@@ -39,7 +38,7 @@ func TestCoveragePayloadIntegrity(t *testing.T) {
 			p := newCoveragePayload()
 			var allEvents ciTestCoverages
 
-			for i := range n {
+			for i := 0; i < n; i++ {
 				list := newCoverageData(i%5 + 1)
 				allEvents = append(allEvents, list...)
 				for _, event := range list {
@@ -67,7 +66,7 @@ func TestCoveragePayloadDecode(t *testing.T) {
 		t.Run(strconv.Itoa(n), func(t *testing.T) {
 			assert := assert.New(t)
 			p := newCoveragePayload()
-			for i := range n {
+			for i := 0; i < n; i++ {
 				list := newCoverageData(i%5 + 1)
 				for _, event := range list {
 					p.push(event)

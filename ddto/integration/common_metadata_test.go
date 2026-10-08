@@ -95,14 +95,14 @@ func assertSessionCommonMetadataPlacement(t *testing.T, capture *miniWireCapture
 				continue
 			}
 			found = true
-			defaults := metadata["test_session_end"].(map[string]any)
+			defaults, _ := metadata["test_session_end"].(map[string]any)
 			meta := event["content"].(map[string]any)["meta"].(map[string]any)
 			for _, key := range []string{"os.platform", "runtime.version", "git.commit.sha"} {
 				if value, ok := defaults[key].(string); !ok || value == "" {
-					t.Fatalf("missing shared session %s", key)
+					t.Fatalf("session common metadata missing %s", key)
 				}
 				if _, repeated := meta[key]; repeated {
-					t.Fatalf("session repeats shared %s", key)
+					t.Fatalf("session repeats shared metadata %s", key)
 				}
 			}
 		}

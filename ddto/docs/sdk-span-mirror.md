@@ -99,21 +99,26 @@ Comments and strings containing `__ddtest` are allowed; identifiers with that
 prefix are reserved for generated code.
 
 Each operation needs one anchor. Duplicate constructors, snapshot builders or
-finish calls fail compilation. The snapshot must come from the supplied span
-under its nil guard and be used with that span and the incoming context.
+finish calls disable the optional mirror with a warning. The snapshot must come
+from the supplied span under its nil guard and be used with that span and the
+incoming context.
 Finish needs a direct lock and deferred unlock. Extra mutex references,
 receiver aliases or reassignment are rejected because the hook cannot prove
 that capture still owns the protected data. Moving these operations into new
 helpers requires an explicit matcher update and behavioral tests.
 
-The current fixtures use v2.11.0-rc.2 and the SDK revision pinned in
-`internal/version`. Other private SDK layouts need validation before support
-can be claimed.
+The fixtures validate the pinned SDK and v2.11.0-rc.2. The SDK 2.10.1 regression
+checks the fallback: incompatible mirror hooks produce a warning, the application
+SDK compiles unchanged, and Mini still reports the tests. Mandatory CI ownership
+guards remain active to prevent duplicate test reporting. Preparation validates
+selected sources before compilation; late compiler inputs receive the same
+optional-mirror fallback. Other layouts need their own mirror validation.
 
-Bump `miniSDKCICacheMarker` whenever the compiler edits or generated hook
+Bump the contracts in `sdkCompilerCacheMarker` whenever the compiler edits or generated hook
 change. Go does not hash wrapper-generated source into its original build
 action, so an unchanged marker can reuse an incompatible SDK archive.
-Native/SDK builds must remain independent of that marker.
+CI guards and span copies have separate package-scoped compiler markers.
+Disabled mirrors omit the tracer marker. Native/SDK builds use neither marker.
 
 The runtime uses cached typed `testing` offsets to bind the native context
 before the test body runs. It preserves `cancelCtx`. SDK-free Mini binaries

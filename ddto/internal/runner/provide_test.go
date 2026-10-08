@@ -38,15 +38,15 @@ func TestCopyModuleFileUsesOverlayContentsAndDeletion(t *testing.T) {
 // A Windows checkout can convert go.mod to CRLF line endings.
 func TestModulePathToleratesLineEndingsAndComments(t *testing.T) {
 	for _, data := range []string{
-		"module " + miniModule + "\n\ngo 1.26.0\n",
-		"module " + miniModule + "\r\n\r\ngo 1.26.0\r\n",
+		"module " + miniModule + "\n\ngo 1.25.0\n",
+		"module " + miniModule + "\r\n\r\ngo 1.25.0\r\n",
 		"// comment\r\nmodule \"" + miniModule + "\"\r\n",
 	} {
 		if got := modulePath([]byte(data)); got != miniModule {
 			t.Errorf("modulePath(%q) = %q", data, got)
 		}
 	}
-	if got := modulePath([]byte("go 1.26.0\n")); got != "" {
+	if got := modulePath([]byte("go 1.25.0\n")); got != "" {
 		t.Errorf("module path without a directive: %q", got)
 	}
 }
@@ -99,7 +99,7 @@ func TestRequireMiniPrefersLocalSourcesAndClientReplacement(t *testing.T) {
 		t.Run(fmt.Sprintf("client-replace=%t", replacement), func(t *testing.T) {
 			dir := t.TempDir()
 			modfile := filepath.Join(dir, "go.mod")
-			module := "module example.com/client\n\ngo 1.26.0\n"
+			module := "module example.com/client\n\ngo 1.25.0\n"
 			if replacement {
 				module += "replace " + miniModule + " v1.2.3 => ./client-choice\n"
 			}
@@ -111,7 +111,7 @@ func TestRequireMiniPrefersLocalSourcesAndClientReplacement(t *testing.T) {
 				if err := os.MkdirAll(source, 0700); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module "+miniModule+"\ngo 1.26.0\n"), 0600); err != nil {
+				if err := os.WriteFile(filepath.Join(source, "go.mod"), []byte("module "+miniModule+"\ngo 1.25.0\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -151,10 +151,10 @@ func TestRequireMiniPrefersLocalSourcesAndClientReplacement(t *testing.T) {
 // The selected runtime's minimum matters; the CLI may use a newer toolchain.
 func TestRequireLocalMiniGoVersion(t *testing.T) {
 	for _, tc := range []struct{ client, runtime, want string }{
-		{"1.25.0", "1.26.0", "1.26.0"},
-		{"1.26.1", "1.26.0", "1.26.1"},
-		{"1.21.0", "1.25.0", "1.25.0"},
-		{"", "1.26.0", "1.26.0"},
+		{"1.25.0", "1.21.0", "1.25.0"},
+		{"1.26.1", "1.21.0", "1.26.1"},
+		{"1.21.0", "1.26.0", "1.21.0"},
+		{"", "1.26.0", ""},
 	} {
 		t.Run(tc.client+"-"+tc.runtime, func(t *testing.T) {
 			dir := t.TempDir()
@@ -176,8 +176,10 @@ func TestRequireLocalMiniGoVersion(t *testing.T) {
 			if err := os.WriteFile(modfile, []byte(contents), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if err := requireLocalMini(t.Context(), dir, modfile, "./runtime", "v0.0.0", tc.client, true); err != nil {
-				t.Fatal(err)
+			err := requireLocalMini(t.Context(), dir, modfile, "./runtime", "v0.0.0", tc.client, true)
+			needsNewer := compareGoVersion(tc.client, tc.runtime) < 0
+			if (err != nil) != needsNewer {
+				t.Fatalf("newer=%t, error=%v", needsNewer, err)
 			}
 			got, err := os.ReadFile(modfile)
 			if err != nil {
@@ -202,7 +204,7 @@ func TestProvideMiniRelativeReplacementFromSubdirectory(t *testing.T) {
 	original := "module example.com/client\n\ngo 1.25.0\nreplace " + miniModule + " => ./runtime\n"
 	for path, contents := range map[string]string{
 		filepath.Join(dir, "go.mod"):            original,
-		filepath.Join(dir, "runtime", "go.mod"): "module " + miniModule + "\n\ngo 1.26.0\n",
+		filepath.Join(dir, "runtime", "go.mod"): "module " + miniModule + "\n\ngo 1.21.0\n",
 	} {
 		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
 			t.Fatal(err)
@@ -213,7 +215,7 @@ func TestProvideMiniRelativeReplacementFromSubdirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	contents, err := os.ReadFile(modfile)
-	if err != nil || moduleDirective(contents, "go") != "1.26.0" {
+	if err != nil || moduleDirective(contents, "go") != "1.25.0" {
 		t.Fatalf("temporary Go directive: %s, %v", contents, err)
 	}
 	if contents, err := os.ReadFile(filepath.Join(dir, "go.mod")); err != nil || string(contents) != original {
@@ -227,7 +229,7 @@ func TestPreprovideMiniRespectsEffectiveModuleAndWorkspace(t *testing.T) {
 	for _, scenario := range []string{"absent", "required", "modfile", "overlay", "workspace", "escaped"} {
 		t.Run(scenario, func(t *testing.T) {
 			dir := t.TempDir()
-			bare := "module example.com/preprovide\n\ngo 1.26.0\n"
+			bare := "module example.com/preprovide\n\ngo 1.25.0\n"
 			required := bare + "require " + miniModule + " v0.0.0\n"
 			contents := bare
 			if scenario == "required" {
@@ -259,11 +261,11 @@ func TestPreprovideMiniRespectsEffectiveModuleAndWorkspace(t *testing.T) {
 				if err := os.Mkdir(root, 0700); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module "+miniModule+"\ngo 1.26.0\n"), 0600); err != nil {
+				if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module "+miniModule+"\ngo 1.25.0\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
 				work := filepath.Join(dir, "go.work")
-				if err := os.WriteFile(work, []byte("go 1.26.0\nuse (\n.\n./runtime\n)\n"), 0600); err != nil {
+				if err := os.WriteFile(work, []byte("go 1.25.0\nuse (\n.\n./runtime\n)\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
 				t.Setenv("GOWORK", work)
@@ -291,7 +293,7 @@ func TestPreprovideMiniPreservesTransitiveSelectionAndChecksums(t *testing.T) {
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/" + miniModule + "/@v/v1.2.3.mod":
-			fmt.Fprintf(w, "module %s\ngo 1.26.0\n", miniModule)
+			fmt.Fprintf(w, "module %s\ngo 1.25.0\n", miniModule)
 		case "/" + miniModule + "/@v/v1.2.3.info":
 			fmt.Fprint(w, `{"Version":"v1.2.3","Time":"2026-10-06T00:00:00Z"}`)
 		default:
@@ -305,10 +307,10 @@ func TestPreprovideMiniPreservesTransitiveSelectionAndChecksums(t *testing.T) {
 	if err := os.Mkdir(bridge, 0700); err != nil {
 		t.Fatal(err)
 	}
-	original := "module example.com/transitive\ngo 1.26.0\nrequire example.com/bridge v0.0.0\nreplace example.com/bridge => ./bridge\n"
+	original := "module example.com/transitive\ngo 1.25.0\nrequire example.com/bridge v0.0.0\nreplace example.com/bridge => ./bridge\n"
 	for file, contents := range map[string]string{
 		filepath.Join(dir, "go.mod"):    original,
-		filepath.Join(bridge, "go.mod"): "module example.com/bridge\ngo 1.26.0\nrequire " + miniModule + " v1.2.3\n",
+		filepath.Join(bridge, "go.mod"): "module example.com/bridge\ngo 1.25.0\nrequire " + miniModule + " v1.2.3\n",
 	} {
 		if err := os.WriteFile(file, []byte(contents), 0600); err != nil {
 			t.Fatal(err)

@@ -17,7 +17,7 @@ import (
 func runConcurrent(workers int, f func(int)) {
 	var wg sync.WaitGroup
 	start := make(chan struct{})
-	for i := range workers {
+	for i := 0; i < workers; i++ {
 		wg.Go(func() { <-start; f(i) })
 	}
 	close(start)
@@ -27,7 +27,7 @@ func runConcurrent(workers int, f func(int)) {
 func TestMetricStartupReplayIncludesConcurrentSubmissions(t *testing.T) {
 	// Stay below the recorder's bound. This tests the handover, not overflow.
 	const workers = 64
-	for round := range 256 {
+	for round := 0; round < 256; round++ {
 		handle := &swappableMetricHandle{recorder: internal.NewRecorder[MetricHandle]()}
 		target := &count{}
 		runConcurrent(workers+1, func(i int) {
@@ -107,7 +107,7 @@ func TestConcurrentMetricCollectionPreservesValues(t *testing.T) {
 	runConcurrent(workers, func(worker int) {
 		c := m.LoadOrStore(NamespaceCIVisibility, transport.CountMetric, "fixture", nil)
 		handles[worker] = d.LoadOrStore(NamespaceCIVisibility, "fixture", nil)
-		for i := range iterations {
+		for i := 0; i < iterations; i++ {
 			c.Submit(1)
 			handles[worker].Submit(float64(worker*iterations + i))
 		}
@@ -285,7 +285,7 @@ func TestConcurrentLogCollectionPreservesCounts(t *testing.T) {
 		}
 	}()
 	runConcurrent(workers, func(int) {
-		for range iterations {
+		for i := 0; i < iterations; i++ {
 			logger.Add(NewRecord(LogWarn, "fixture"), WithTags([]string{"ci:true"}))
 		}
 	})
@@ -308,7 +308,7 @@ func TestLogLimitAndStacktracePreserved(t *testing.T) {
 	logger.Add(NewRecord(LogWarn, "first"), WithTags([]string{"ci:true"}), WithStacktrace())
 	logger.Add(NewRecord(LogWarn, "first"), WithTags([]string{"ci:true"}), WithStacktrace())
 	logger.Add(NewRecord(LogError, "second"))
-	for range 4 {
+	for i := 0; i < 4; i++ {
 		logger.Add(NewRecord(LogError, "dropped"))
 	}
 	logs := logger.Payload().(transport.Logs).Logs
@@ -349,7 +349,7 @@ func TestGlobalClientStartupReplaysEveryCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	for round := range 256 {
+	for round := 0; round < 256; round++ {
 		globalClient.Store(nil)
 		globalClientRecorder.Clear()
 		var calls atomic.Int32

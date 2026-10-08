@@ -77,7 +77,7 @@ func TestSlowIntakeDeliversEveryEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	const total = 10 * 5 * maxPendingBatches
-	for range total {
+	for i := 0; i < total; i++ {
 		span, _ := client.StartSpan(context.Background(), "test", SpanType("test"))
 		span.Finish()
 	}
@@ -105,7 +105,7 @@ func TestFailingIntakeDoesNotStallFinishers(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	for range 10 * maxPendingBatches {
+	for i := 0; i < 10*maxPendingBatches; i++ {
 		span, _ := client.StartSpan(context.Background(), "test", SpanType("test"))
 		span.Finish()
 	}
@@ -136,7 +136,7 @@ func TestCloseReleasesWaitingFinisher(t *testing.T) {
 	}
 	finish := func() { span, _ := client.StartSpan(context.Background(), "test", SpanType("test")); span.Finish() }
 	// Reach the pending bound and fill the open batch; deliveries stay in flight.
-	for range maxPendingBatches + 1 {
+	for i := 0; i < maxPendingBatches+1; i++ {
 		finish()
 	}
 	waiting := make(chan struct{})
@@ -179,7 +179,7 @@ func TestDeferredDeliveryNeverWaitsForSpace(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for range total {
+		for i := 0; i < total; i++ {
 			span, _ := client.StartSpan(context.Background(), "test", SpanType("test"))
 			span.Finish()
 		}

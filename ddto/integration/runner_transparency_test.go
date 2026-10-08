@@ -23,47 +23,51 @@ func TestMiniRuntimeProvisionUsesModuleOverlay(t *testing.T) {
 	_, driver := prepareMiniFixture(t)
 	helper := t.TempDir()
 	writeBuildFixture(t, helper, map[string]string{
-		"go.mod":    "module example.com/overlayhelper\n\ngo 1.26.0\n",
+		"go.mod":    "module example.com/overlayhelper\n\ngo 1.21\n",
 		"helper.go": "package overlayhelper\nconst Value = 7\n",
 	})
-	for _, modfile := range []string{"go.mod", "custom.mod"} {
-		t.Run(modfile, func(t *testing.T) {
-			// Go resolves its working directory physically. macOS temp paths may
-			// contain /var -> /private/var; overlay keys must use that same path.
-			dir, err := filepath.EvalSymlinks(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			original := "module example.com/overlayclient\n\ngo 1.26.0\n"
-			writeBuildFixture(t, dir, map[string]string{
-				"go.mod": original, modfile: original,
-				"client_test.go": "package overlayclient\nimport (\"testing\"; \"example.com/overlayhelper\")\nfunc TestOverlay(t *testing.T) { if overlayhelper.Value != 7 { t.Fatal(\"overlay helper missing\") } }\n",
-			})
-			backing := filepath.Join(t.TempDir(), "backing.mod")
-			if err := os.WriteFile(backing, []byte(original+fmt.Sprintf("\nrequire example.com/overlayhelper v0.0.0\nreplace example.com/overlayhelper => %q\n", filepath.ToSlash(helper))), 0600); err != nil {
-				t.Fatal(err)
-			}
-			data, err := json.Marshal(map[string]any{"Replace": map[string]string{filepath.Join(dir, modfile): backing}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			overlay := filepath.Join(t.TempDir(), "overlay.json")
-			if err := os.WriteFile(overlay, data, 0600); err != nil {
-				t.Fatal(err)
-			}
-			flags := []string{"-mod=readonly", "-overlay=" + overlay, "-count=1"}
-			if modfile != "go.mod" {
-				flags = append(flags, "-modfile="+modfile)
-			}
-			for _, prefix := range [][]string{{"go", "test"}, {driver, "test", "--runtime=mini"}} {
-				args := append(append(append([]string(nil), prefix[1:]...), flags...), ".")
-				out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), prefix[0], args...)
-				if code != 0 {
-					t.Fatalf("%v: exit %d\n%s\n%s", prefix, code, out, stderr)
-				}
-			}
-			if after, err := os.ReadFile(filepath.Join(dir, modfile)); err != nil || string(after) != original {
-				t.Fatalf("module changed: %q %v", after, err)
+	for _, language := range []string{"1.21", "1.25.0"} {
+		t.Run(language, func(t *testing.T) {
+			for _, modfile := range []string{"go.mod", "custom.mod"} {
+				t.Run(modfile, func(t *testing.T) {
+					// Go resolves its working directory physically. macOS temp paths may
+					// contain /var -> /private/var; overlay keys must use that same path.
+					dir, err := filepath.EvalSymlinks(t.TempDir())
+					if err != nil {
+						t.Fatal(err)
+					}
+					original := "module example.com/overlayclient\n\ngo " + language + "\n"
+					writeBuildFixture(t, dir, map[string]string{
+						"go.mod": original, modfile: original,
+						"client_test.go": "package overlayclient\nimport (\"testing\"; \"example.com/overlayhelper\")\nfunc TestOverlay(t *testing.T) { if overlayhelper.Value != 7 { t.Fatal(\"overlay helper missing\") } }\n",
+					})
+					backing := filepath.Join(t.TempDir(), "backing.mod")
+					if err := os.WriteFile(backing, []byte(original+fmt.Sprintf("\nrequire example.com/overlayhelper v0.0.0\nreplace example.com/overlayhelper => %q\n", filepath.ToSlash(helper))), 0600); err != nil {
+						t.Fatal(err)
+					}
+					data, err := json.Marshal(map[string]any{"Replace": map[string]string{filepath.Join(dir, modfile): backing}})
+					if err != nil {
+						t.Fatal(err)
+					}
+					overlay := filepath.Join(t.TempDir(), "overlay.json")
+					if err := os.WriteFile(overlay, data, 0600); err != nil {
+						t.Fatal(err)
+					}
+					flags := []string{"-mod=readonly", "-overlay=" + overlay, "-count=1"}
+					if modfile != "go.mod" {
+						flags = append(flags, "-modfile="+modfile)
+					}
+					for _, prefix := range [][]string{{"go", "test"}, {driver, "test", "--runtime=mini"}} {
+						args := append(append(append([]string(nil), prefix[1:]...), flags...), ".")
+						out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), prefix[0], args...)
+						if code != 0 {
+							t.Fatalf("%v: exit %d\n%s\n%s", prefix, code, out, stderr)
+						}
+					}
+					if after, err := os.ReadFile(filepath.Join(dir, modfile)); err != nil || string(after) != original {
+						t.Fatalf("module changed: %q %v", after, err)
+					}
+				})
 			}
 		})
 	}
@@ -73,7 +77,7 @@ func TestMiniChdirSymlinkWithUserTool(t *testing.T) {
 	_, driver := prepareMiniFixture(t)
 	dir := t.TempDir()
 	writeBuildFixture(t, dir, map[string]string{
-		"go.mod":         "module example.com/symbolic\n\ngo 1.26.0\n",
+		"go.mod":         "module example.com/symbolic\n\ngo 1.25.0\n",
 		"client_test.go": "package symbolic\nimport \"testing\"\nfunc TestProbe(t *testing.T){}\n",
 	})
 	link := filepath.Join(t.TempDir(), "symbolic")
@@ -103,7 +107,7 @@ func TestMiniGoleakAbsoluteTargetRetainsCompilerFlags(t *testing.T) {
 	// Only compiler invocation is under test; the real goleak runtime has its
 	// own integration matrix. Keep this source/API fixture small and offline.
 	writeBuildFixture(t, library, map[string]string{
-		"go.mod":        "module go.uber.org/goleak\n\ngo 1.26.0\n",
+		"go.mod":        "module go.uber.org/goleak\n\ngo 1.25.0\n",
 		"leaks.go":      "package goleak\ntype Option func()\nfunc IgnoreAnyFunction(string) Option { return func(){} }\nfunc Find(options ...Option) error { return nil }\n",
 		"leaks_test.go": "package goleak\nimport \"testing\"\nfunc TestFind(t *testing.T){if Find()!=nil{t.Fatal(\"Find\")}}\n",
 	})
@@ -139,7 +143,7 @@ func TestMiniModModeLeavesModuleFiles(t *testing.T) {
 	}
 	// go mod tidy keeps a replace without its requirement. With -mod=mod, a
 	// query that resolves the runtime would add that requirement to go.mod.
-	module := fmt.Sprintf("module example.com/modmode\n\ngo 1.26.0\n\nreplace github.com/tonyredondo/dd-ci-testing-poc => %q\n", filepath.ToSlash(root))
+	module := fmt.Sprintf("module example.com/modmode\n\ngo 1.25.0\n\nreplace github.com/tonyredondo/dd-ci-testing-poc => %q\n", filepath.ToSlash(root))
 	for _, mode := range []struct {
 		name       string
 		flags, env []string

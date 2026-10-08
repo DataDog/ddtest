@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"go/version"
+	goversion "go/version"
 	"io"
 	"os"
 	"os/exec"
@@ -87,13 +87,12 @@ func provideRuntime(ctx context.Context, dir string, opts options, selected Runt
 	logger := debugFromContext(ctx)
 	phase := logger.start("provide runtime")
 	defer func() { phase.finish(err) }()
-	out, err := goTool(ctx, dir, nil, "env", "-json", "GOMOD", "GOWORK", "GOMODCACHE")
-	if err != nil {
-		return "", err
-	}
-	var environment struct{ GOMOD, GOWORK, GOMODCACHE string }
-	if err := json.Unmarshal([]byte(out), &environment); err != nil {
-		return "", fmt.Errorf("read Go module environment: %w", err)
+	environment := opts.environment
+	if environment == nil {
+		environment, err = readGoEnvironment(ctx, dir)
+		if err != nil {
+			return "", err
+		}
 	}
 	source := opts.modfile
 	if source == "" {
@@ -181,9 +180,8 @@ func requireMini(ctx context.Context, dir, modfile, localRoot, version string, p
 	return fmt.Errorf("cannot provide %s: ddtest has no available local sources or published version; require it in the module or add a replace directive", miniModule)
 }
 
-// requireLocalMini raises only the temporary module's Go directive when the
-// selected local runtime requires it, just as go get does for a published one.
-// Read the selected replacement's requirement, not the CLI's toolchain version.
+// requireLocalMini keeps the consumer's source language unchanged. Our module
+// supports Go 1.25; older client languages use a temporary workspace instead.
 func requireLocalMini(ctx context.Context, dir, modfile, root, selectedVersion, goVersion string, addReplace bool) error {
 	path := root
 	if !filepath.IsAbs(path) {
@@ -194,9 +192,8 @@ func requireLocalMini(ctx context.Context, dir, modfile, root, selectedVersion, 
 		return fmt.Errorf("read local Mini module: %w", err)
 	}
 	args := []string{"mod", "edit", "-modfile=" + modfile, "-require=" + miniModule + "@" + selectedVersion}
-	if required := moduleDirective(data, "go"); required != "" && version.Compare("go"+goVersion, "go"+required) < 0 {
-		debugFromContext(ctx).printf("temporary module go directive raised from=%s to=%s", goVersion, required)
-		args = append(args, "-go="+required)
+	if required := moduleDirective(data, "go"); required != "" && goversion.Compare("go"+goVersion, "go"+required) < 0 {
+		return fmt.Errorf("selected Mini requires module Go %s; ddtest will not change consumer language Go %s: use a workspace with the selected runtime", required, goVersion)
 	}
 	if addReplace {
 		args = append(args, "-replace="+miniModule+"="+root)

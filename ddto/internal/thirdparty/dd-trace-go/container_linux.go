@@ -16,6 +16,8 @@ import (
 	"regexp"
 	"strings"
 	"syscall"
+
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
 )
 
 const (
@@ -72,6 +74,9 @@ func parseContainerID(r io.Reader) string {
 			return parts[1]
 		}
 	}
+	if err := scn.Err(); err != nil {
+		log.Debug("civisibility: error reading container ID: %v", err)
+	}
 	return ""
 }
 
@@ -103,6 +108,9 @@ func parseCgroupNodePath(r io.Reader) map[string]string {
 		if tokens[1] == cgroupV1BaseController || tokens[1] == "" {
 			res[tokens[1]] = tokens[2]
 		}
+	}
+	if err := scn.Err(); err != nil {
+		log.Debug("civisibility: error reading cgroup controllers: %v", err)
 	}
 	return res
 }

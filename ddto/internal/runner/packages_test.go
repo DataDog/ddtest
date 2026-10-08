@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -36,6 +37,26 @@ func TestPackageListHelperProcess(t *testing.T) {
 		}
 	case "cancel":
 		time.Sleep(10 * time.Second)
+	case "descendant":
+		cmd := exec.Command(os.Args[0], "-test.run=^TestPackageListHelperProcess$", "--", "hold-stdout")
+		cmd.Env = os.Environ()
+		cmd.Stdout = os.Stdout
+		if err := cmd.Start(); err != nil {
+			panic(err)
+		}
+		time.Sleep(10 * time.Second)
+	case "hold-stdout":
+		control := os.Getenv("DDTEST_PACKAGE_LIST_CONTROL")
+		if err := os.WriteFile(filepath.Join(control, "ready"), nil, 0600); err != nil {
+			panic(err)
+		}
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(filepath.Join(control, "release")); err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 	os.Exit(0)
 }
@@ -51,7 +72,7 @@ func TestReadPackages(t *testing.T) {
 			defer cancel()
 			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPackageListHelperProcess$", "--", mode)
 			cmd.Env = append(os.Environ(), "DDTEST_PACKAGE_LIST_HELPER=1")
-			packages, err := readPackages(cmd, "resolve fixture")
+			packages, err := readPackages(ctx, cmd, "resolve fixture")
 			if mode == "success" {
 				if err != nil || len(packages) != 2 || packages[0].ImportPath != "example.com/one" || packages[1].ImportPath != "example.com/two" || !slices.Equal(packages[0].Deps, []string{"fmt"}) {
 					t.Fatalf("decoded packages = %+v, error = %v", packages, err)
@@ -76,8 +97,40 @@ func TestReadPackages(t *testing.T) {
 		})
 	}
 	cmd := exec.Command(t.TempDir()+"/missing-go", "list")
-	if packages, err := readPackages(cmd, "resolve fixture"); err == nil || packages != nil {
+	if packages, err := readPackages(context.Background(), cmd, "resolve fixture"); err == nil || packages != nil {
 		t.Fatalf("missing executable = %+v, %v", packages, err)
+	}
+}
+
+func TestReadPackagesCancelsAnInheritedStdout(t *testing.T) {
+	control := t.TempDir()
+	t.Cleanup(func() { _ = os.WriteFile(filepath.Join(control, "release"), nil, 0600) })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPackageListHelperProcess$", "--", "descendant")
+	cmd.Env = append(os.Environ(), "DDTEST_PACKAGE_LIST_HELPER=1", "DDTEST_PACKAGE_LIST_CONTROL="+control)
+	result := make(chan error, 1)
+	go func() { _, err := readPackages(ctx, cmd, "resolve descendant"); result <- err }()
+	deadline := time.Now().Add(8 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(control, "ready")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("stdout holder did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if err == nil || cmd.ProcessState == nil {
+			t.Fatalf("canceled command was not joined: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		_ = os.WriteFile(filepath.Join(control, "release"), nil, 0600)
+		<-result
+		t.Fatal("cancellation waited for the descendant to close stdout")
 	}
 }
 

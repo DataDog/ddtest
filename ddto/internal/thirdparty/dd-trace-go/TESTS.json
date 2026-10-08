@@ -3,55 +3,55 @@
   "full_file_count": 61,
   "full_ci_test_file_count": 59,
   "selected_test_or_helper_files": 7,
-  "assertion_policy": "Preserve upstream assertions and synthetic input semantics; adapt repository/namespace and replace APM mock bootstrap for the native runtime. End-to-end wire tests verify actual delivery separately. Documented correctness adaptations use independent source oracles; named source starts are checked against AST declaration lines.",
+  "assertion_policy": "Preserve upstream assertions and synthetic input semantics; adapt repository/namespace and replace APM mock bootstrap for the native runtime. End-to-end wire tests verify actual delivery separately. Documented correctness adaptations use independent source oracles; named source starts are checked against AST declaration lines. Assert/require calls use equivalent standard-library-only internal test helpers; the port uses native Go 1.25 APIs, with two helpers for Go 1.26 calls; temporary workspaces preserve each consumer module language.",
   "files": [
     {
       "source": "internal/civisibility/envconfig/enabled_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/envconfig/enabled_test.go",
       "source_sha256": "c8d53cadd64dc149cd8528dc0b32048a8ff041a61936322f03cea463c3e49d10",
-      "adapted_sha256": "af10a5a57bf27510876981b394a79383acb41abd5f478215086f5f953e2ad688",
+      "adapted_sha256": "0dc1c478e0840625612e5a777ba3c726d793d829ad2ea0bb0ad5ab546ab09237",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/civisibility_features_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_features_test.go",
       "source_sha256": "b305b518346a7916864815adf9b5dd0ab257ccc861bc8f4cff21d67a36e9d32e",
-      "adapted_sha256": "7800d80684692486a24132cccc7a88bd6b65a040b3ad8eb98cead3ef42c401df",
+      "adapted_sha256": "95d60e7ae18a2bf8b2ff19f3d2215403c653059b4ca9cc4e083cb896d418a963",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/civisibility_http_client_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_http_client_test.go",
       "source_sha256": "f3a5d4ebb67abc7b26f5bc50cf92d36b08cd941b1efdc874b1afcfe0f2d17241",
-      "adapted_sha256": "1bcbb7ce44b4a89460635b356ddbc98ef0c249e6c213ba288f541924463f71a9",
+      "adapted_sha256": "dbc36ec9338d991984cc8ebb2ac399d4740d2d5f43ea6d1c52b20e12051c3d8c",
       "kind": "full",
-      "adaptation": "Restore helper renamed to native CI bootstrap cleanup"
+      "adaptation": "Restore helper renamed to native CI bootstrap cleanup; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/civisibility_offline_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_offline_test.go",
       "source_sha256": "9e289581623ef1124061a734d177ca11209ced50def1ca4d713c32fd0c983425",
-      "adapted_sha256": "21ae7dc5c1c37fc97510eb7e10ffbc061fe748e748e0a6c42f2d527bf8d491f2",
+      "adapted_sha256": "2834c7315bc221688c184695a712f8e7b8505d31e9d86a4cf0e5902905955ee7",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/civisibility_read_cache_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_read_cache_test.go",
       "source_sha256": "b9b701d9ef9dc29c4d85b7665b68678330b7558244ae188b505a758b54c12ed4",
-      "adapted_sha256": "6f7024a7612daaaa3e1988d91f8b1672d4a6eac29874e3f1a650a11303054e15",
+      "adapted_sha256": "6a5bfdc7ee12510f72c5d8cd8d98eb1c5c3f5651425571573ac1a4be82108999",
       "kind": "full",
-      "adaptation": "Internal import relocation; run all read-cache assertions in a fresh subprocess to isolate backend counts from asynchronous mock bootstrap workers"
+      "adaptation": "Internal import relocation; run all read-cache assertions in a fresh subprocess to isolate backend counts from asynchronous mock bootstrap workers; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/civisibility_signal_handler_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_signal_handler_test.go",
       "source_sha256": "02c7164b23ce0e0941f53170dd07b651eebedcbc1e751a11f62cabc97dc04d48",
-      "adapted_sha256": "6bcb799cdea161a1349202e3715e9ee11aa088bc9147930b5725e18494bfe407",
+      "adapted_sha256": "d2d02c9b7ddbcc9b09950676a53ae24084042fef9dab7f3af1ca2ed87027b5b8",
       "kind": "full",
-      "adaptation": "Native writer-free CI bootstrap replaces APM mock initialization; signal/shutdown assertions preserved"
+      "adaptation": "Native writer-free CI bootstrap replaces APM mock initialization; signal/shutdown assertions preserved; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/testing_helpers_test.go",
@@ -73,7 +73,7 @@
       "source": "internal/civisibility/utils/codeowners_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/codeowners_discovery_test.go",
       "source_sha256": "017d81ee71314d617983dbdeb6e1f373efa6ddb53c041e1805ab6c078a9b8219",
-      "adapted_sha256": "7b6ad6695080fa5ab820d377a3bf863dc76cbf21e1003095b1262ddbdfb063cf",
+      "adapted_sha256": "7ae825d9daea7ddb32e9b6ac5a51d5919f8913e706aab8143112497c04adab61",
       "kind": "selected",
       "adaptation": "Discovery/cache assertions retained through the new resolver. Parser expectations move to codeownership tests, using native Go rule tables and examples. Correct GitHub interior slash anchoring, host location priority, comments, GitLab defaults/exclusions and valid long-line handling. Mutable Entry/Section tests are replaced by immutable ownership tests."
     },
@@ -81,9 +81,9 @@
       "source": "internal/civisibility/utils/environmentTags_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/environmentTags_test.go",
       "source_sha256": "f7692324404a701d3146785da7a3006801da91a387fd9782f5938ab6326451bd",
-      "adapted_sha256": "41019b469814fb9fbb61098672f6593af261f31d49ac75950ee1d71f58d02234",
+      "adapted_sha256": "6b9c51ac42f2d01f5295610b0f38205875d6d8ce06e02a7d86c501a584918e7b",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/file_environmental_data_test.go",
@@ -97,9 +97,9 @@
       "source": "internal/civisibility/utils/git_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/git_test.go",
       "source_sha256": "a36fb9a5c074542d6104cb78850c8ac1b03d516a8177e2c61e9e61e2229efd6b",
-      "adapted_sha256": "818d816b813319e88012fe09d2b2dff2dc58da5819ef54792dc3ce1c1a3d91f7",
+      "adapted_sha256": "bb9fa22c11a6dd78a61fd7a070df05d930a257edf83bb25237daea164a2de72d",
       "kind": "full",
-      "adaptation": "Three history-dependent tests create an isolated Git fixture with a real commit instead of assuming the checkout has a .git directory; TestPackFiles removes its pack files, and TestCreatePackFilesMissingPackFile uses a fake git that also handles cmd's argument splitting on Windows and checks that pack-objects ran and left no directory"
+      "adaptation": "Three history-dependent tests create an isolated Git fixture with a real commit instead of assuming the checkout has a .git directory; TestPackFiles removes its pack files, and TestCreatePackFilesMissingPackFile uses a fake git that also handles cmd's argument splitting on Windows and checks that pack-objects ran and left no directory; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/home_test.go",
@@ -113,31 +113,31 @@
       "source": "internal/civisibility/utils/names_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/names_test.go",
       "source_sha256": "019176c02cd84f920c0fa74ffab9165bd884a4f21f9bcb5d3539eb3ecd130451",
-      "adapted_sha256": "bac24b5a20a4a5463af46d93ffe45b05bfb89401d7b3b053a910ac4d2d8bb638",
+      "adapted_sha256": "b88ec8f86dfe3d40abcc929e75cc642eb21881c3e3893d06b7ae05d04c706116",
       "kind": "full",
-      "adaptation": "Expected runtime module namespace is relocated to this POC"
+      "adaptation": "Expected runtime module namespace is relocated to this POC; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/source_paths_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/source_paths_test.go",
       "source_sha256": "2c0986a51c21f3ba4523df13ca66ffb1caf72fa9dcd7fec6bb024af826b3a3bc",
-      "adapted_sha256": "c269e2685311a77bfa86a2a24b01ccb332a7696780665dc470d2c52f23a89b5a",
+      "adapted_sha256": "b67f60d42215735cd71adecc1caba65b7142ac089bc8a367a32102b6c157e9dc",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/source_paths_windows_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/source_paths_windows_test.go",
       "source_sha256": "8115fc517b693f779f8c5c34df1197696ee2818b469d3d31e8a1cfdba200dbf5",
-      "adapted_sha256": "6463e22b7d281f392c5ac9606d1a24168958976b4c888105943503d64380e740",
+      "adapted_sha256": "1973336fe5cd6bdd78e8221a2a99615eb980d5a4614f404877bdacb19035b371",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/filebitmap/filebitmap_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap/filebitmap_test.go",
       "source_sha256": "9c49b70e75c06358f8ce6a66a6c4f08c78e3e4c5e12325f8dbc3c9c2cec473f9",
-      "adapted_sha256": "9c49b70e75c06358f8ce6a66a6c4f08c78e3e4c5e12325f8dbc3c9c2cec473f9",
+      "adapted_sha256": "12047825c4ee6fdfa44069c6728218cb228c5cd7080331223c1af2a14897633a",
       "kind": "full",
       "adaptation": "Internal import relocation only"
     },
@@ -153,9 +153,9 @@
       "source": "internal/civisibility/utils/impactedtests/impacted_tests_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/impactedtests/impacted_tests_test.go",
       "source_sha256": "f6440547663e6bda9eb17b602da09d3e31305ee14b2b25f751adef00a18d0dcb",
-      "adapted_sha256": "cfe58cab6681ddfb23fdce338873ded943bc3f7c3f242daf46f1448d0c73acd2",
+      "adapted_sha256": "e339e006ca44595d8fba4967435b7dfe5f9f9b069e6b2f35efc7707b0ee96957",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/net/client_test.go",
@@ -169,33 +169,33 @@
       "source": "internal/civisibility/utils/net/coverage_report_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/coverage_report_test.go",
       "source_sha256": "b912c87afbe04d20ce64e0d8cb99da4d196f77fac286a1a9e79888dcc23156f3",
-      "adapted_sha256": "d755f1edbdd4612eb699b47313539f3b6627043a60f6a4ab8d5824e85294c7a1",
+      "adapted_sha256": "67f1636801ba0097be48d2d1d7d0fecabaa5a97b57852fe947234bb06bfa4a7b",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/net/coverage_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/coverage_test.go",
       "source_sha256": "80c6a5bf050c5e46e326ebde53e6e7a85e2a085c58abf44efa6d841568150dc3",
-      "adapted_sha256": "bef07f3c830137539f5506bec8270162c6e8f56aa9332c2ac668c84e89c409d4",
+      "adapted_sha256": "f95f38a5debc3236a8be1b30feaac3534f44576be04c18d2fd580554636cd91e",
       "kind": "full",
-      "adaptation": "Internal import relocation, including the vendored MessagePack runtime; upstream assertions preserved."
+      "adaptation": "Internal import relocation, including the vendored MessagePack runtime; upstream assertions preserved.; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/net/http_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/http_test.go",
       "source_sha256": "4c280d018a3d9acef0c767aa30d15dd424cb2c49b3f95a044eb5013bda7985cd",
-      "adapted_sha256": "4c280d018a3d9acef0c767aa30d15dd424cb2c49b3f95a044eb5013bda7985cd",
+      "adapted_sha256": "f7294863947456dae5ffe1931b32a2e0e034909de1d016845630313389e0a0eb",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/net/known_tests_api_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/known_tests_api_test.go",
       "source_sha256": "a3a13c0b9835a87a3300965e02573d353af61f04950c26ef00637d320d793101",
-      "adapted_sha256": "f6ca5533fee68f790d29a4522bf85a0980876c109ed8849cb0ecc990ffaa68ed",
+      "adapted_sha256": "930403017c4778b46388dd565e841f2a9111ce1efeb06f9c99ef9fb386fa9599",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/net/read_cache_benchmark_test.go",
@@ -209,63 +209,63 @@
       "source": "internal/civisibility/utils/net/read_cache_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/read_cache_test.go",
       "source_sha256": "372b6f26b536302b1d8a7ad3f8d5ab24bc28e1cc752c83584990f6062abd0a9f",
-      "adapted_sha256": "f6a5a921d157e8caf1abba01c30a317827d67bfd45fa67e09fb9f36239d98a81",
+      "adapted_sha256": "6900979f9fcd6ed78d91c09001c0a05a4c5ee3af3b4396e20f46daaf439b9723",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/net/searchcommits_api_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/searchcommits_api_test.go",
       "source_sha256": "f1af0a6bb3e466e4c526c0cb9902dcaf4af684c8dece8adc953597e9e0ff42bb",
-      "adapted_sha256": "7b41ae3b381bfb053a1eaee49ea0f838b771548d7edd0ae2b99380ff13bc4581",
+      "adapted_sha256": "946d3501070236caa7c8beea0b73f128f0ccf0ecc15ac7c2fe6414ba864503da",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/net/sendpackfiles_api_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/sendpackfiles_api_test.go",
       "source_sha256": "bbd2be36b10b640a432f3c38a23fce7c566ecdf186a5e5fa7c4f29bcb510b47b",
-      "adapted_sha256": "c26ef0bd5296c43ccd01f5df76e2b06f97292e6d52793ab0133721ec56357369",
+      "adapted_sha256": "07db2d588dfe41de044e0302b56274384cc387267f332bb984157fa5c9605e82",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/net/settings_api_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/settings_api_test.go",
       "source_sha256": "58dfcb6b753e6f7105a66a6ec574b3ca964cadacd9d1248d528087954adf5261",
-      "adapted_sha256": "c7eaaf79968b8dcec5ef1398d0570726534ccae05bc7d146dd8d7afb3deb9715",
+      "adapted_sha256": "2f751536898a1ba2ea8b390d1f5df966fe61ec1ea31fbc1b1c9af7e91e783a4a",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/net/skippable_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/skippable_test.go",
       "source_sha256": "3d72d6b66e251fbf64c05bc0f976f6e7cb18de7475ef854143e658817a9c24ff",
-      "adapted_sha256": "b0378db963469f4698b41adf65994decdcc09ebc47abc1fd1ef6849d8f0e23a1",
+      "adapted_sha256": "e416398cf5603314f1e5527a8114b03056ed3f1ba3396c100960a50257eaa5a8",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/net/test_management_tests_api_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/test_management_tests_api_test.go",
       "source_sha256": "c1b159510051564d8a01ca47faacd4e633356f204534447f982fa2cef7f6f735",
-      "adapted_sha256": "0b2bf5264260ed884e793f0bd41f079703b0701cf3b7341a63ab3e8dc81a59a3",
+      "adapted_sha256": "c254f3cac86e8a244c7747d95bde65964a304da158efa033052b775991afe556",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/net/uds_client_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/uds_client_test.go",
       "source_sha256": "fe222c289780242fc20d9bf834a62d1098ade436ef8751ca7798978e24a09f46",
-      "adapted_sha256": "944950b8bc3d8b579c640bbac8698f552bc8f6da222ae63a78e894b1aebf035b",
+      "adapted_sha256": "6659bdf887de4a221927169e8a39f91ff90005ee4bb8ad680e831799a8611bc9",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/utils/telemetry/telemetry_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/telemetry/telemetry_test.go",
       "source_sha256": "4f82821b0c6d1e7c933c92ba17ff19d31a05520c9a5aa187346420cd5b307145",
-      "adapted_sha256": "2e2f441f9ae72d8b47d0e76c8e4905b5fc97dbbfb6154464746e3788cfd7152f",
+      "adapted_sha256": "558d0da6f86543ec0c5d0efcc582842bbdd59d85d7a835c503099722f2998af0",
       "kind": "full",
       "adaptation": "Original assertions retained; local regression checks added for bound lifecycle counters, feature tags and client resets."
     },
@@ -273,41 +273,41 @@
       "source": "internal/civisibility/integrations/gotesting/retry_attempt_differential_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/retry_attempt_differential_test.go",
       "source_sha256": "ea6b656e45b261d729e4df971d71e9a8a498b4ef9e49615e7f5002143d267627",
-      "adapted_sha256": "66b21ef47bf5d47ca2c2e72903eedd3a94d2da7697bc70c912ac28c40759ddd1",
+      "adapted_sha256": "f4fddae54147911fad0b015b8e36b116e33a5e7442c82e03ce7ddbe71255bcc4",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/retry_attempt_methods_go126_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/retry_attempt_methods_go126_test.go",
       "source_sha256": "cf04736a75f8423ba919b36834508a21fb2bb4b46a774b7836b432d38b5b3709",
-      "adapted_sha256": "cf04736a75f8423ba919b36834508a21fb2bb4b46a774b7836b432d38b5b3709",
+      "adapted_sha256": "70b77674e32c5ecf63fa9ff69fde21c594a44ad648ef519bc5b3adb283ef9a46",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/retry_attempt_methods_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/retry_attempt_methods_test.go",
       "source_sha256": "b47da87e7107d98e6230e5270e956e2f62c027306470ac7bc157f1148f6a05e4",
-      "adapted_sha256": "b47da87e7107d98e6230e5270e956e2f62c027306470ac7bc157f1148f6a05e4",
+      "adapted_sha256": "1ccda3468cf8abbd08e03c1bc1a9a753c5a8d6aaf33910c44add9edc3c5c7ec6",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/retry_attempt_runner_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/retry_attempt_runner_test.go",
       "source_sha256": "494775aca647c6f9690947401b765b17491750e26309e15b09e452d17d1c7889",
-      "adapted_sha256": "494775aca647c6f9690947401b765b17491750e26309e15b09e452d17d1c7889",
+      "adapted_sha256": "9588965caf625b6e96caec5f3aea8e1fce48f88d4ad26f51de60b8c4638a62c6",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/retry_attempt_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/retry_attempt_test.go",
       "source_sha256": "622692e42d33cea8b17dc71f6067583ffb9ba76936953ef599c8ba3c255a044a",
-      "adapted_sha256": "7c8cd81879181d680f0ae0db0165f84935e094c1fb85ef5e9aa8c22dc3ebf17f",
+      "adapted_sha256": "290489a05896072f570cc2a2e28690dfb5c28abbea6c5822722d1e914f777bdc",
       "kind": "full",
-      "adaptation": "Two nil unsafe.Pointer checks use require.Zero: Testify before v1.8.2, including the required v1.7.5, does not treat a nil unsafe.Pointer as nil"
+      "adaptation": "Two nil unsafe.Pointer checks use require.Zero: Testify before v1.8.2, including the required v1.7.5, does not treat a nil unsafe.Pointer as nil; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/retry_test_helpers_test.go",
@@ -321,49 +321,49 @@
       "source": "internal/civisibility/integrations/logs/logs_additional_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/logs/logs_additional_test.go",
       "source_sha256": "ae9e5f603ab11520a3be922b4644ba8af40cab143b393702de4c8ea09aa16e49",
-      "adapted_sha256": "ae9e5f603ab11520a3be922b4644ba8af40cab143b393702de4c8ea09aa16e49",
+      "adapted_sha256": "5cdc679e1f1e4e4a2f6661239889e529642b63140457ccd3f77767d54fd20fab",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/logs/logs_payload_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/logs/logs_payload_test.go",
       "source_sha256": "02d682f67fbed2d2631dfc57b55a1dc84860527cdd0171b922c4dab24ca585eb",
-      "adapted_sha256": "02d682f67fbed2d2631dfc57b55a1dc84860527cdd0171b922c4dab24ca585eb",
+      "adapted_sha256": "e4e2c3e75cbb8b3215dac3b99b239cad4cf64e5a058949924a1ad4dd22a897a0",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/logs/logs_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/logs/logs_test.go",
       "source_sha256": "af4ff7f7f05d2c3d9c283f8c9e8283911d482f99c53b50307eb6ed954d09cdf3",
-      "adapted_sha256": "af4ff7f7f05d2c3d9c283f8c9e8283911d482f99c53b50307eb6ed954d09cdf3",
+      "adapted_sha256": "e02a31925d97b9e8f62e83405b797b26feed08850adac7c1277f9d20ccc085b3",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/logs/logs_writer_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/logs/logs_writer_test.go",
       "source_sha256": "8ef92f56f4ca7061e2998821be6191179a212ee0169ca3dd8aaf7ebbbf77d48d",
-      "adapted_sha256": "15006419447184372787f47d3b5a7a099a560b226abae546a88cd729a64138cc",
+      "adapted_sha256": "b46fe3640906f73e1ee4f881c82928b04691407af97539b3dc4acee85670c84d",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/coverage/coverage_payload_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage/coverage_payload_test.go",
       "source_sha256": "3123d88edd7e19dcbac9ad55ec0222b9f91c2ef94d5511fb5d854e9cfd5b1ccb",
-      "adapted_sha256": "3fdf1f03c36f4c4570992f22f805db82effdd502bbe4e9befc63ab2bd4e0d6d1",
+      "adapted_sha256": "d89805fc2ee041cbea32c2d4ce6733954c70371a85fb742a1ddc5e4fd9f7a628",
       "kind": "full",
-      "adaptation": "Internal import relocation, including the vendored MessagePack runtime; upstream assertions preserved."
+      "adaptation": "Internal import relocation, including the vendored MessagePack runtime; upstream assertions preserved.; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/coverage/coverage_writer_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage/coverage_writer_test.go",
       "source_sha256": "efbb2944244938dc1878b434a1d7ea90cb807916c65174e67217e0a51ba4761d",
-      "adapted_sha256": "97d6e9ed4ed3248a2d4c7a954130eebc5b9d74fccd8120893bcc63759be8103c",
+      "adapted_sha256": "c77fb5437485a3e3329921cff4c79347dcc9bf80f2598a8450e01acf6ca9714b",
       "kind": "full",
-      "adaptation": "Internal import relocation only"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/coverage/lcov_report_test.go",
@@ -377,9 +377,9 @@
       "source": "internal/civisibility/integrations/gotesting/coverage/process_coverage_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage/process_coverage_test.go",
       "source_sha256": "b15c366e141a0063219a29dd8d8be393ae821b3367c8c787bc04249ff4739294",
-      "adapted_sha256": "f127c1c18c8de00d659de555238ca5cd5b46941d3d1d7e4ff447d6accc6aa0d9",
+      "adapted_sha256": "8a0bda43185c95438e97ed38c0efa350030f6afbbf60dd2f938cbe1247194ebb",
       "kind": "full",
-      "adaptation": "Internal import relocation, including the vendored MessagePack runtime; upstream assertions preserved."
+      "adaptation": "Internal import relocation, including the vendored MessagePack runtime; upstream assertions preserved.; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/coverage/reflections_test.go",
@@ -401,7 +401,7 @@
       "source": "internal/bazel/bazel_test.go",
       "destination": "internal/thirdparty/dd-trace-go/bazel/bazel_test.go",
       "source_sha256": "2f11987f5b4d386ed1fd95ad91b416ae19e6648c0078fe8632005c2cb54b5254",
-      "adapted_sha256": "393beaccb16f76ddcbb29c2453a0e013fe9fb07b363a0ad9422e096455609c42",
+      "adapted_sha256": "2635bdcbd87c577b53dc0ad5ec71f0a0ef8042d0166e95bf90b8436b939cd2b6",
       "kind": "full",
       "adaptation": "Internal import relocation, including the vendored MessagePack runtime; upstream assertions preserved."
     },
@@ -425,9 +425,9 @@
       "source": "internal/telemetry/telemetrytest/globalclient_test.go",
       "destination": "internal/thirdparty/dd-trace-go/telemetry/telemetrytest/globalclient_test.go",
       "source_sha256": "e4c1e59233c3ef6ad52c7da53be3e84038591c453181ad9d9616564a2ecdc416",
-      "adapted_sha256": "9e43a8d38ae9fb8c4144e78ab04fc5fd8127a0603a19e17fed1638f3537a4149",
+      "adapted_sha256": "6ae496316d4d21cc5d348ece4a0583ecb3dc52855ab024359fdfaa6d7160e5d6",
       "kind": "full",
-      "adaptation": "If the enclosing suite disables telemetry, run all original recorder assertions in a fresh local test process with telemetry enabled before initialization"
+      "adaptation": "If the enclosing suite disables telemetry, run all original recorder assertions in a fresh local test process with telemetry enabled before initialization; standard-library assertion helpers"
     },
     {
       "source": "internal/telemetry/telemetrytest/record.go",
@@ -481,23 +481,23 @@
       "source": "internal/civisibility/integrations/manual_api_sourcecache_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcecache_test.go",
       "source_sha256": "aff071e72f16cc26f99ecc09ef478cffc02a52a4cee72634e1653ab610d8c793",
-      "adapted_sha256": "a6c34f8d2c0ea1e01c99b52bfa017e566d61be231b11ae470349d0dd6f2baaef",
+      "adapted_sha256": "368ad1b975175c7bdf6d7ef28eb3e2c15f1aaf4b9ab141a4325aca32728ebf76",
       "kind": "full",
-      "adaptation": "Native spans replace unused APM mock resets; an explicit CODEOWNERS fixture supplies the upstream repository input; current repository URL is relocated; confirmed named source ranges start at the AST declaration, including same-named methods and named func1 declarations, instead of the runtime entry PC"
+      "adaptation": "Native spans replace unused APM mock resets; an explicit CODEOWNERS fixture supplies the upstream repository input; current repository URL is relocated; confirmed named source ranges start at the AST declaration, including same-named methods and named func1 declarations, instead of the runtime entry PC; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/manual_api_sourcepath_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcepath_test.go",
       "source_sha256": "51f8df98c5891dd6c6ef4e64525e5aba3da0f5017d876737185ffb9a4902b1b7",
-      "adapted_sha256": "b38fb4eab15218908a6e6a8b9599eb618de5e1a8ede84d26b606cddc5194d9e0",
+      "adapted_sha256": "6cf4e255fec885e958c5885256bb54b17d75734be247a01fbacb049cceab76b6",
       "kind": "full",
-      "adaptation": "Runtime self-path and repository URL are relocated; source parsing and trimpath assertions remain intact"
+      "adaptation": "Runtime self-path and repository URL are relocated; source parsing and trimpath assertions remain intact; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/instrumentation_selector_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/instrumentation_selector_test.go",
       "source_sha256": "c1673bff20eea826b440682e29a4678a8aab3d49e83776bc84e4ff425edddc47",
-      "adapted_sha256": "4abc06af4df24e38420d750adbe5ca80683534c49d5971976d1adb35c0242f73",
+      "adapted_sha256": "81496ac997c95339d6273451840fe6fe13d529f56ce685964f477607346dd2bc",
       "kind": "full",
       "adaptation": "internal import relocation; helper assertions invoked by native policy test entrypoint; the allocation check measures like testing.AllocsPerRun without its parallel-test guard, because this package's retry tests run without ddtest's testing overlay and leave testing counting a parallel test"
     },
@@ -513,17 +513,17 @@
       "source": "internal/civisibility/integrations/gotesting/retry_process_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/ci_policy_helpers_test.go",
       "source_sha256": "e6b80942c6218282fbf896b741e54ce4a33886de522e7134457a27485db06d6b",
-      "adapted_sha256": "3a90ac15c9dc11b4080e5f9726984319e213899195eaeb548f698933d22c9972",
+      "adapted_sha256": "3d0f38e45c9f1fbf60d6a85b3c3019182baf88301bd46c1d154c07835b840e4f",
       "kind": "helpers",
-      "adaptation": "extracted only recording CI event/session/module/suite/test helpers; no APM tracer mocks"
+      "adaptation": "extracted only recording CI event/session/module/suite/test helpers; no APM tracer mocks; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/civisibility_parent_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_parent_test.go",
       "source_sha256": "87c77b91fe4ff0304f4089f0f4815d9935418b6b5537bdfca300d8736956a508",
-      "adapted_sha256": "318065af8032ec9569da962e5a41b46f4a54aa319f2a2bed28b1a8d9c0cc1f1c",
+      "adapted_sha256": "7041d5e39b88dc282d8f578184d97334e7fef4909429eaf0d19185c930fbeb29",
       "kind": "full",
-      "adaptation": "APM mock startup is replaced by a writer-free native CI bootstrap callback; assertions preserved"
+      "adaptation": "APM mock startup is replaced by a writer-free native CI bootstrap callback; assertions preserved; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/manual_api_test.go",
@@ -537,15 +537,15 @@
       "source": "internal/civisibility/integrations/gotesting/quarantine_process_race_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/ci_coverage_concurrency_test.go",
       "source_sha256": "9567417fe639c414d332aebd0aa5699c1b8d280892375c933a189fa703020413",
-      "adapted_sha256": "f67c7a495189a2aba791d6f12ca223d0a41ac7d629425694044a27da88645d6b",
+      "adapted_sha256": "bdac7b37da1edee1abd33a7765b8f042e763698a2e4c32636e9df683c08c204e",
       "kind": "selected tests",
-      "adaptation": "Only TestQuarantinedRaceCoverageCoordinatorDiscardsOnlySiblingOverlap, TestQuarantinedRaceParallelContinuationDisablesCoverage and TestQuarantinedRaceAggregateCoverageStartsAtSelectedRoot are extracted"
+      "adaptation": "Only TestQuarantinedRaceCoverageCoordinatorDiscardsOnlySiblingOverlap, TestQuarantinedRaceParallelContinuationDisablesCoverage and TestQuarantinedRaceAggregateCoverageStartsAtSelectedRoot are extracted; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/coverage/runtime_coverage_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage/runtime_coverage_test.go",
       "source_sha256": "36fd8cde99baa2dadb093e43ba97f93663eea8b8101bcea38d5ab51619d1ee4a",
-      "adapted_sha256": "36fd8cde99baa2dadb093e43ba97f93663eea8b8101bcea38d5ab51619d1ee4a",
+      "adapted_sha256": "7995f5381bb09f93c56db18d370601535fe48dd8c6beeabd17f9326dc5424ceb",
       "kind": "full",
       "adaptation": "Original runtime coverage-emitter concurrency and recovery assertions; atomic coverage required."
     }

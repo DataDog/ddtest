@@ -9,11 +9,10 @@ import (
 	"os"
 	"testing"
 
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	internalenv "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/env"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestParseEnabledMode(t *testing.T) {

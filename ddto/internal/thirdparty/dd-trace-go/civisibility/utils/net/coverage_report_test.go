@@ -17,8 +17,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/compat"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/bazel"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	civisibilityutils "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
@@ -164,8 +164,8 @@ func TestCoverageReportApiRequestOmitsInvalidFlags(t *testing.T) {
 		value *string
 	}{
 		{name: "unset"},
-		{name: "empty", value: new(" , , ")},
-		{name: "over maximum", value: new(makeCoverageReportFlags(maxCoverageReportFlags + 1))},
+		{name: "empty", value: compat.Pointer(" , , ")},
+		{name: "over maximum", value: compat.Pointer(makeCoverageReportFlags(maxCoverageReportFlags + 1))},
 	}
 
 	defer log.UseLogger(log.DiscardLogger{})()
@@ -411,5 +411,5 @@ func makeCoverageReportFlagSlice(count int) []string {
 
 //go:fix inline
 func stringPointer(value string) *string {
-	return new(value)
+	return compat.Pointer(value)
 }

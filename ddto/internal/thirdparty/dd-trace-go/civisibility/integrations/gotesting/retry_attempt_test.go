@@ -14,7 +14,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/stretchr/testify/require"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 )
 
 func retryParityOriginalTestA(*testing.T) {}
@@ -240,7 +240,7 @@ func TestProcessRetryParityFreshAttemptSnapshotsHelpersUnderNativeLock(t *testin
 	t.Cleanup(cleanupWorker)
 	<-started
 
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		attempt, reason := newRetryAttemptRoot(t)
 		require.Empty(t, reason)
 		require.NotNil(t, attempt)
@@ -346,7 +346,7 @@ func BenchmarkProcessRetryParityFreshAttemptStateInitialization(b *testing.B) {
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		root := createNewTestFastWithoutContext(layout)
 		parent := createNewTestFastWithoutContext(layout)
 		rootBase := commonBaseForTest(root, layout)

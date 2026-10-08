@@ -20,10 +20,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
-
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/env"
 	logger "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
 )
 
 const (

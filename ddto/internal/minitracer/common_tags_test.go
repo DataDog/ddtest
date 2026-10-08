@@ -126,9 +126,9 @@ func TestCommonMetadataConcurrentProjectionAndBounds(t *testing.T) {
 	span.Finish()
 	event := &ciEvent{Type: "test", Content: span.content, common: common}
 	var wg sync.WaitGroup
-	for range 8 {
+	for i := 0; i < 8; i++ {
 		wg.Go(func() {
-			for range 30 {
+			for i := 0; i < 30; i++ {
 				metadata, events := prepareCommonMetadata(nil, ciEvents{event})
 				var raw bytes.Buffer
 				payload := testCycleBatch{Version: 1, Metadata: metadata, Events: events}

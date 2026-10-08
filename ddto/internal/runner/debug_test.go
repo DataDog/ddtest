@@ -63,9 +63,9 @@ func TestCLIDebugPhasesAndConcurrentStderr(t *testing.T) {
 	var output bytes.Buffer
 	logger := debugFromContext(withCLIDebug(context.Background(), &output))
 	var workers sync.WaitGroup
-	for range 8 {
+	for i := 0; i < 8; i++ {
 		workers.Go(func() {
-			for range 100 {
+			for i := 0; i < 100; i++ {
 				phase := logger.start("fixture")
 				_, _ = io.WriteString(logger.writer, "native stderr\n")
 				phase.finish(errors.New("private diagnostic must stay out of phase summaries"))

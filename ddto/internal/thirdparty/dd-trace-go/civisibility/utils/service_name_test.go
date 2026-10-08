@@ -118,7 +118,7 @@ func TestCodeOwnersServiceCacheConcurrentReaders(t *testing.T) {
 	writeCodeOwnersFile(t, filepath.Join(root, "CODEOWNERS"), "/pkg/ @org/team\n")
 	registerCodeOwnersTestPackage(t, filepath.Join(root, "pkg", "virtual_test.go"))
 	var workers sync.WaitGroup
-	for range 32 {
+	for i := 0; i < 32; i++ {
 		workers.Go(func() {
 			if got := ServiceFromCodeOwners(); got != "dd-go-team" {
 				t.Errorf("service=%q", got)

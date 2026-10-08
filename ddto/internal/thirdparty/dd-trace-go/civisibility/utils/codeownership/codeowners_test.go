@@ -131,16 +131,16 @@ func TestOwnershipIsImmutableAndStable(t *testing.T) {
 		t.Fatal("single-rule ownership was not reused")
 	}
 	gl, _ := Parse(strings.NewReader("* @first\n[Second]\n* @second @first"), GitLab)
-	for range 50 {
+	for i := 0; i < 50; i++ {
 		got, _ := gl.Match("/a.go")
 		if got.Tag() != `["@first","@second"]` {
 			t.Fatalf("unstable section order: %s", got.Tag())
 		}
 	}
 	var workers sync.WaitGroup
-	for range 32 {
+	for i := 0; i < 32; i++ {
 		workers.Go(func() {
-			for range 100 {
+			for i := 0; i < 100; i++ {
 				got, _ := gl.Match("/a.go")
 				if got.Tag() != `["@first","@second"]` {
 					t.Error(got.Tag())
@@ -267,7 +267,7 @@ func TestPathologicalMatchingAndLargeOwnerLists(t *testing.T) {
 	pattern := strings.Repeat("*a", 32) + "b"
 	c, _ := Parse(strings.NewReader("* @global\n"+pattern+" @slow"), GitHub)
 	nonMatch := "/" + strings.Repeat("a", 2000) + "c"
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		got, _ := c.Match(nonMatch)
 		if got.FirstOwner() != "@global" {
 			t.Fatal(got.Tag())
@@ -280,7 +280,7 @@ func TestPathologicalMatchingAndLargeOwnerLists(t *testing.T) {
 	var workers sync.WaitGroup
 	start := make(chan struct{})
 	done := make(chan struct{})
-	for range 4 {
+	for i := 0; i < 4; i++ {
 		workers.Go(func() {
 			<-start
 			got, _ := c.Match(nonMatch)
@@ -303,11 +303,11 @@ func TestPathologicalMatchingAndLargeOwnerLists(t *testing.T) {
 	}
 	var text strings.Builder
 	text.WriteString("*.go")
-	for i := range 5000 {
+	for i := 0; i < 5000; i++ {
 		fmt.Fprintf(&text, " @owner%d", i)
 	}
 	c, _ = Parse(strings.NewReader(text.String()), GitHub)
-	for range 20 {
+	for i := 0; i < 20; i++ {
 		got, _ := c.Match("/file.go")
 		if len(got.owners) != 5000 {
 			t.Fatal(len(got.owners))
@@ -452,7 +452,7 @@ func TestLargeSectionUnionKeepsOrderAndImmutableOwners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for range 3 {
+	for i := 0; i < 3; i++ {
 		got, found := c.Match("/main.go")
 		if !found || !slices.Equal(got.Owners(), want) {
 			t.Fatalf("union: %v", got.Owners())
@@ -469,7 +469,7 @@ func TestFileAndDirectoryQueriesKeepSeparateRequirements(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for range 3 {
+			for i := 0; i < 3; i++ {
 				if got, found := c.MatchDirectory("/pkg"); !found || got.FirstOwner() != "@owner" {
 					t.Fatal("directory must own itself", dialect, pattern)
 				}

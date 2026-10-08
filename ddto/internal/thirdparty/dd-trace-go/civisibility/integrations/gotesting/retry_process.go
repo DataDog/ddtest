@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/compat"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/envconfig"
@@ -704,9 +705,9 @@ type processRetryOutputWaiter interface {
 func finishProcessRetryOutputCapturesAfterWait(timeout time.Duration, captures ...processRetryOutputWaiter) error {
 	errCh := make(chan error, len(captures))
 	for _, capture := range captures {
-		go func() {
+		go func(capture processRetryOutputWaiter) {
 			errCh <- capture.FinishAfterWait(timeout)
-		}()
+		}(capture)
 	}
 	var err error
 	for range captures {
@@ -2260,7 +2261,7 @@ func attemptFromWaitError(attempt *processRetryAttemptResult, waitErr error) {
 		attempt.ExitStatusObserved = true
 		return
 	}
-	if exitErr, ok := errors.AsType[*exec.ExitError](waitErr); ok {
+	if exitErr, ok := compat.AsType[*exec.ExitError](waitErr); ok {
 		attempt.ExitCode = exitErr.ExitCode()
 		attempt.ExitStatusObserved = true
 		attempt.Err = errors.Join(attempt.Err, processRetryWaitErrorEvidence(waitErr))
@@ -2341,7 +2342,7 @@ func effectiveProcessRetryStatus(attempt processRetryAttemptResult, metadataCanc
 		return failed("test_panic")
 	}
 	if attempt.Err != nil {
-		if _, ok := errors.AsType[*exec.ExitError](attempt.Err); !ok {
+		if _, ok := compat.AsType[*exec.ExitError](attempt.Err); !ok {
 			return failed("process_error")
 		}
 	}
@@ -3541,8 +3542,8 @@ func markProcessRetryChildFailed(tb testing.TB) {
 		ancestry = append(ancestry, fields)
 		fields = getCommonParentPrivateFields(fields)
 	}
-	for _, fields := range slices.Backward(ancestry) {
-		fields.SetFailed(true)
+	for i := len(ancestry) - 1; i >= 0; i-- {
+		ancestry[i].SetFailed(true)
 	}
 }
 

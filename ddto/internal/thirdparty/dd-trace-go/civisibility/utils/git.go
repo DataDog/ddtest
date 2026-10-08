@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/compat"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/bazel"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
@@ -162,7 +163,7 @@ func execGit(commandType telemetry.CommandType, args ...string) (val []byte, err
 		telemetry.GitCommand(commandType)
 		defer func() {
 			telemetry.GitCommandMs(commandType, float64(time.Since(startTime).Milliseconds()))
-			if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+			if exitErr, ok := compat.AsType[*exec.ExitError](err); ok {
 				switch exitErr.ExitCode() {
 				case -1:
 					telemetry.GitCommandErrors(commandType, telemetry.ECMinus1CommandExitCode)
@@ -228,7 +229,7 @@ func execGitStringWithInput(commandType telemetry.CommandType, input string, arg
 		telemetry.GitCommand(commandType)
 		defer func() {
 			telemetry.GitCommandMs(commandType, float64(time.Since(startTime).Milliseconds()))
-			if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+			if exitErr, ok := compat.AsType[*exec.ExitError](err); ok {
 				switch exitErr.ExitCode() {
 				case -1:
 					telemetry.GitCommandErrors(commandType, telemetry.ECMinus1CommandExitCode)

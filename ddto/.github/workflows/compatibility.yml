@@ -6,36 +6,31 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONIOENCODING: utf-8
 jobs:
+  plan:
+    name: Test groups
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      differential: ${{ steps.matrix.outputs.differential }}
+      mini: ${{ steps.matrix.outputs.mini }}
+      tip: ${{ steps.matrix.outputs.tip }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - id: matrix
+        run: python scripts/ci_shards.py matrix >> "$GITHUB_OUTPUT"
+
   differential:
-    name: differential (${{ matrix.os }}, ${{ matrix.go }}, ${{ matrix.mode }})
+    name: differential (${{ matrix.os }}, ${{ matrix.go }}, ${{ matrix.mode }}, ${{ matrix.shard }})
+    needs: plan
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            go: '1.26.x'
-            mode: normal
-          - os: ubuntu-latest
-            go: '1.26.x'
-            mode: race
-          - os: ubuntu-latest
-            go: '1.27.x'
-            mode: normal
-          - os: ubuntu-latest
-            go: '1.27.x'
-            mode: race
-          - os: macos-latest
-            go: '1.27.x'
-            mode: normal
-          - os: windows-latest
-            go: '1.27.x'
-            mode: normal
+      matrix: ${{ fromJSON(needs.plan.outputs.differential) }}
     runs-on: ${{ matrix.os }}
-    # Fuzz lifecycle fixtures run many subprocesses. Race-enabled children also
-    # wait for the race detector at exit; retain that wait and allow the complete
-    # matrix to finish. Windows needs extra time for cold fixture compilation.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || matrix.mode == 'race' && 45 || 35 }}
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || matrix.os == 'macos-latest' && 25 || matrix.mode == 'race' && 25 || 20 }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
@@ -43,46 +38,186 @@ jobs:
           go-version: ${{ matrix.go }}
           cache-dependency-path: testdata/fixture/go.sum
       - name: Install frozen Orchestrion reference
+        if: matrix.shard != 'units'
         shell: bash
         run: |
           go install github.com/DataDog/orchestrion@v1.13.2-0.20260917114356-5c24783fcd76
           reference="$(go env GOPATH)/bin/orchestrion"
           if [[ "$RUNNER_OS" == "Windows" ]]; then reference="$reference.exe"; fi
           echo "ORCHESTRION_BIN=$reference" >> "$GITHUB_ENV"
-      - name: Verify incorporated sources and licenses
+      - name: Verify fixture modules
+        shell: bash
+        run: (cd testdata/fixture && go mod download && go mod verify)
+      - name: Audit sources, dependency boundary and vet
+        if: matrix.shard == 'units'
         shell: bash
         run: |
           python scripts/upstream.py verify
           python -m unittest discover -s scripts -p "test_*.py"
-      - name: Verify modules and driver dependency boundary
-        shell: bash
-        run: |
-          (cd testdata/fixture && go mod download && go mod verify)
-          go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./cmd/ddtest
+          python scripts/dependency_boundary.py
           go vet ./...
-      - name: Unit, runtime and differential compatibility
+      - name: Run test group
         shell: bash
         env:
-          PARITY_EXECUTION_ORDER: ${{ matrix.mode == 'race' && 'mini-first' || 'sdk-first' }}
-          PARITY_REPORT_NAME: ${{ matrix.mode == 'race' && 'parity-race' || 'parity' }}
-          PARITY_TEST_MODE: ${{ matrix.mode }}
-          GO_TEST_TIMEOUT: ${{ matrix.os == 'windows-latest' && '55m' || matrix.mode == 'race' && '40m' || '30m' }}
+          CI_SUITE: ${{ matrix.suite }}
+          CI_PLATFORM: ${{ matrix.os }}
+          CI_GO: ${{ matrix.go }}
+          CI_MODE: ${{ matrix.mode }}
+          CI_SHARD: ${{ matrix.shard }}
+          GO_TEST_TIMEOUT: ${{ matrix.shard == 'units' && '10m' || matrix.os == 'windows-latest' && '35m' || matrix.os == 'macos-latest' && '20m' || matrix.mode == 'race' && '20m' || '15m' }}
         run: |
-          mkdir -p artifacts
-          set -o pipefail
-          test_flags=()
-          if [[ "$PARITY_TEST_MODE" == "race" ]]; then test_flags+=(-race); fi
-          PARITY_REPORT_PATH="$PWD/artifacts/$PARITY_REPORT_NAME.json" go test "${test_flags[@]}" -v -count=1 -timeout="$GO_TEST_TIMEOUT" ./... 2>&1 | tee artifacts/compatibility.log
-      - name: Publish CI feature parity evidence
-        shell: bash
-        env:
-          PARITY_REPORT_NAME: ${{ matrix.mode == 'race' && 'parity-race' || 'parity' }}
-        run: |
-          python scripts/parity_report.py "artifacts/$PARITY_REPORT_NAME.json" --output "artifacts/$PARITY_REPORT_NAME.md"
-          cat "artifacts/$PARITY_REPORT_NAME.md" >> "$GITHUB_STEP_SUMMARY"
+          python scripts/ci_shards.py run --suite "$CI_SUITE" --os "$CI_PLATFORM" \
+            --go "$CI_GO" --mode "$CI_MODE" --shard "$CI_SHARD" \
+            --timeout "$GO_TEST_TIMEOUT" --output artifacts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: compatibility-${{ matrix.os }}-go-${{ matrix.go }}-${{ matrix.mode }}
+          name: ci-shard-differential-${{ matrix.os }}-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.shard }}
           path: artifacts/
+          retention-days: 7
+
+  go-tip:
+    name: Build shared Go tip
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      sha: ${{ steps.build.outputs.sha }}
+    steps:
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.x'
+          cache: false
+      - name: Build and archive toolchain
+        id: build
+        shell: bash
+        run: |
+          bootstrap="$(go env GOROOT)"
+          git clone --depth=1 https://go.googlesource.com/go "$RUNNER_TEMP/go-tip"
+          tip_sha="$(git -C "$RUNNER_TEMP/go-tip" rev-parse HEAD)"
+          echo "Go tip source: $tip_sha"
+          echo "sha=$tip_sha" >> "$GITHUB_OUTPUT"
+          (cd "$RUNNER_TEMP/go-tip/src" && GOROOT_BOOTSTRAP="$bootstrap" ./make.bash)
+          mkdir "$RUNNER_TEMP/toolchain"
+          echo "$tip_sha" > "$RUNNER_TEMP/toolchain/tip-sha.txt"
+          tar --exclude=.git -czf "$RUNNER_TEMP/toolchain/go-tip.tar.gz" -C "$RUNNER_TEMP" go-tip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: go-tip-toolchain
+          path: ${{ runner.temp }}/toolchain/
+          retention-days: 1
+
+  mini:
+    name: mini (Linux, ${{ matrix.go }}, ${{ matrix.mode }}, ${{ matrix.shard }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.mini) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: testdata/fixture/go.sum
+      - name: Audit sources, dependency boundary and vet
+        if: matrix.shard == 'units'
+        shell: bash
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          python scripts/upstream.py verify
+          python -m unittest discover -s scripts -p "test_*.py"
+          python scripts/dependency_boundary.py
+          go vet ./...
+      - name: Run native Mini group
+        shell: bash
+        env:
+          GOTOOLCHAIN: local
+          CI_GO: ${{ matrix.go }}
+          CI_MODE: ${{ matrix.mode }}
+          CI_SHARD: ${{ matrix.shard }}
+        run: |
+          python scripts/ci_shards.py run --suite mini --os ubuntu-latest \
+            --go "$CI_GO" --mode "$CI_MODE" --shard "$CI_SHARD" \
+            --timeout 20m --output artifacts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ci-shard-mini-ubuntu-latest-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.shard }}
+          path: artifacts/
+          retention-days: 7
+
+  tip:
+    name: mini (Linux, tip, normal, ${{ matrix.shard }})
+    needs: [plan, go-tip]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.tip) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.x'
+          cache-dependency-path: testdata/fixture/go.sum
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: go-tip-toolchain
+          path: ${{ runner.temp }}/toolchain/
+      - name: Select shared Go tip
+        shell: bash
+        env:
+          GO_TIP_SHA: ${{ needs.go-tip.outputs.sha }}
+        run: |
+          test "$(cat "$RUNNER_TEMP/toolchain/tip-sha.txt")" = "$GO_TIP_SHA"
+          tar -xzf "$RUNNER_TEMP/toolchain/go-tip.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/go-tip/bin" >> "$GITHUB_PATH"
+          echo "GOTOOLCHAIN=local" >> "$GITHUB_ENV"
+          echo "GO_TIP_SHA=$GO_TIP_SHA" >> "$GITHUB_ENV"
+      - name: Audit sources, dependency boundary and vet
+        if: matrix.shard == 'units'
+        shell: bash
+        run: |
+          python scripts/upstream.py verify
+          python -m unittest discover -s scripts -p "test_*.py"
+          python scripts/dependency_boundary.py
+          go vet ./...
+      - name: Run native Mini group on tip
+        shell: bash
+        env:
+          CI_SHARD: ${{ matrix.shard }}
+        run: |
+          python scripts/ci_shards.py run --suite mini --os ubuntu-latest \
+            --go tip --mode normal --shard "$CI_SHARD" --timeout 20m --output artifacts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ci-shard-mini-ubuntu-latest-go-tip-normal-${{ matrix.shard }}
+          path: artifacts/
+          retention-days: 7
+
+  evidence:
+    name: Complete compatibility evidence
+    if: always()
+    needs: [plan, differential, mini, go-tip, tip]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: ci-shard-*
+          path: shards/
+      - name: Verify all groups and render full parity
+        run: |
+          python scripts/ci_shards.py aggregate --input shards --output reports
+          cat reports/summary.md >> "$GITHUB_STEP_SUMMARY"
+          for report in reports/*/parity.md; do cat "$report" >> "$GITHUB_STEP_SUMMARY"; done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: compatibility-evidence
+          path: reports/
           retention-days: 7

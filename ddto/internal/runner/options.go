@@ -92,6 +92,10 @@ type options struct {
 	toolexec             string
 	coverage             bool
 	coverPatterns        []string
+	// workfile applies only to preparation children, never os.Setenv.
+	workfile         string
+	environment      *goEnvironment
+	workspaceGoFlags *string
 	// help and fileMode select native go test without instrumentation.
 	help, fileMode bool
 }

@@ -97,7 +97,7 @@ func TestCLIDebugFailuresAndNativeBypass(t *testing.T) {
 		want string
 	}{
 		{"test-failure", []string{"test", "-count=1", "-run=^TestFailures$/^Fail$", ".", "-args", "-mode=fail"}, 1, "go test exit_code=1"},
-		{"package-failure", []string{"test", "./missing-package"}, 2, "prepare finished duration="},
+		{"package-failure", []string{"test", "./missing-package"}, 1, "go test exit_code=1"},
 		{"overlay-failure", []string{"test", "-overlay=" + invalidOverlay, "."}, 2, "read user overlay finished duration="},
 		{"help", []string{"test", "-help"}, 2, "instrumentation bypass help=true"},
 	} {
@@ -108,7 +108,7 @@ func TestCLIDebugFailuresAndNativeBypass(t *testing.T) {
 				t.Fatalf("exit=%d want=%d logs=%s", code, tc.code, logs)
 			}
 			if tc.name == "package-failure" && !strings.Contains(logs, "status=error") {
-				t.Fatal("failed preparation reported success")
+				t.Fatal("Go package failure reported success")
 			}
 			if tc.name == "help" && strings.Contains(logs, "prepare started") {
 				t.Fatal("help started instrumentation")

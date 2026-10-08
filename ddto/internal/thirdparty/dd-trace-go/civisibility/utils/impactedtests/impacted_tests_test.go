@@ -10,8 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
 	ddlog "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
@@ -557,7 +556,7 @@ func TestIsImpactedConcurrentAccess(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		wg.Go(func() {
 			assert.True(t, analyzer.IsImpacted("test", "/workspace/pkg/source_test.go", 12, 14))
 			assert.False(t, analyzer.IsImpacted("test", "/workspace/pkg/source_test.go", 1, 2))

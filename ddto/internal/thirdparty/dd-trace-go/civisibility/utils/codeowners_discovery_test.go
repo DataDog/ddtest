@@ -2,10 +2,11 @@
 package utils
 
 import (
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 )
 
 func resetCodeOwnersTestState(t *testing.T, workspace string) {

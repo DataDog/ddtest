@@ -8,13 +8,14 @@ package gotesting
 import (
 	"context"
 	"fmt"
-	"github.com/stretchr/testify/require"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations"
 	"os"
 	"reflect"
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations"
 )
 
 type processRetryRecordingEvent struct {

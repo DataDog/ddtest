@@ -26,7 +26,7 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 		if p.ImportPath == sdkPackage || p.ImportPath == miniPackage {
 			continue
 		}
-		if p.ImportPath == instrument.GoleakImport || p.ImportPath == instrument.TestifySuiteImport {
+		if p.ImportPath == instrument.GoleakImport || p.ImportPath == instrument.TestifySuiteImport || isSDKCIPackage(p.ImportPath) || p.ImportPath == sdkTracerPackage {
 			copy := p
 			copy.commandLine = true
 			selected[p.ImportPath] = &copy
@@ -56,6 +56,11 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 			requests[path] = true
 		}
 	}
+	if sdkCI || isOrchestrionToolexec(opts.toolexec) {
+		requests[sdkTracerPackage] = true
+		requests[sdkCIConfigPackage] = true
+		requests[sdkCIEnvironmentPackage] = true
+	}
 	debug.printf("test-library query pending_imports=%d known_libraries=%d", len(requests), len(selected))
 	if len(requests) == 0 {
 		return selected, sdkCI, nil
@@ -65,19 +70,25 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
-	args := []string{"list", mode, "-json=Dir,Name,ImportPath,Standard,GoFiles,Module,Error"}
+	args := []string{"list", "-e", mode, "-json=Dir,Name,ImportPath,Standard,GoFiles,Module,Error"}
 	args = append(args, opts.buildFlags...)
 	args = append(args, paths...)
 	cmd := exec.CommandContext(ctx, "go", args...)
 	cmd.Dir = dir
-	dependencies, err := readPackages(cmd, "resolve optional test-library dependencies")
+	if opts.workfile != "" {
+		cmd.Env = append(cmd.Environ(), "GOWORK="+opts.workfile)
+		if opts.workspaceGoFlags != nil {
+			cmd.Env = append(cmd.Env, "GOFLAGS="+*opts.workspaceGoFlags)
+		}
+	}
+	dependencies, err := readPackages(ctx, cmd, "resolve optional test-library dependencies")
 	if err != nil {
 		return nil, false, err
 	}
 	debug.printf("test-library query resolved=%d", len(dependencies))
 	for _, p := range dependencies {
 		sdkCI = sdkCI || isSDKCIPackage(p.ImportPath)
-		if selected[p.ImportPath] == nil && (p.ImportPath == instrument.GoleakImport || p.ImportPath == instrument.TestifySuiteImport) {
+		if selected[p.ImportPath] == nil && (p.ImportPath == instrument.GoleakImport || p.ImportPath == instrument.TestifySuiteImport || p.ImportPath == sdkTracerPackage || isSDKCIPackage(p.ImportPath)) {
 			copy := p
 			selected[p.ImportPath] = &copy
 		}

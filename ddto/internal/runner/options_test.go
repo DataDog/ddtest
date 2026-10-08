@@ -93,7 +93,7 @@ func TestSplitFlagsMatchesQuotedSplit(t *testing.T) {
 }
 
 func TestGoTestArgumentsReplaceUserOverlayAndToolexec(t *testing.T) {
-	plan := Plan{File: "/plan/overlay.json", goleakCache: "-gcflags=go.uber.org/goleak=-I=marker"}
+	plan := Plan{File: "/plan/overlay.json", compilerCache: []string{"-gcflags=go.uber.org/goleak=-I=marker"}}
 	for _, tc := range []struct {
 		args []string
 		tool string

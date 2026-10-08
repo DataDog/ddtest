@@ -24,7 +24,7 @@ type ciEvent struct {
 	Type    string       `msg:"type"`
 	Version int32        `msg:"version"`
 	Content eventContent `msg:"content"`
-	common  *CommonTags  `msg:"-"` // Immutable defaults, projected into envelope or event at delivery.
+	common  *CommonTags  `msg:"-"` // Immutable defaults, projected onto the event at delivery.
 }
 type eventContent struct {
 	SessionID     uint64             `msg:"test_session_id,omitempty"`    // identifier of this session

@@ -126,12 +126,12 @@ func TestFuzzFatalResultDoesNotReadActiveDuration(t *testing.T) {
 	mu.Unlock()
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		for i := range 10000 {
+		for i := 0; i < 10000; i++ {
 			*duration = time.Duration(i)
 		}
 	})
 	event := fuzzTestEvent{native: native}
-	for range 10000 {
+	for i := 0; i < 10000; i++ {
 		failed, skipped, got := event.nativeResult(false)
 		if !failed || skipped || got != 0 {
 			t.Fatalf("fatal result=%t/%t/%s", failed, skipped, got)

@@ -10,8 +10,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
 )
 

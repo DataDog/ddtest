@@ -69,7 +69,7 @@ func TestCIByteBatchingAndCompression(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for range 8 {
+			for i := 0; i < 8; i++ {
 				s, _ := c.StartSpan(context.Background(), "test", SpanType("test"), Tag("large", strings.Repeat("a", 1<<20)))
 				s.Finish()
 			}

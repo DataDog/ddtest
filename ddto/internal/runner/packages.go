@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +14,7 @@ import (
 // second, complete JSON copy. It always drains stdout and waits for the command,
 // including after a decoding failure. A command failure takes precedence over
 // partial or malformed output, as it did with Cmd.Output.
-func readPackages(cmd *exec.Cmd, failureContext string) ([]goPackage, error) {
+func readPackages(ctx context.Context, cmd *exec.Cmd, failureContext string) ([]goPackage, error) {
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	// A canceled go list is killed; do not wait indefinitely for descendants
@@ -26,6 +27,18 @@ func readPackages(cmd *exec.Cmd, failureContext string) ([]goPackage, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("%s: %w\n%s", failureContext, err, stderr.String())
 	}
+	// StdoutPipe is read by this goroutine, outside exec's copying goroutines.
+	// WaitDelay cannot bound a read that prevents us from reaching Wait.
+	closed := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		_ = stdout.Close()
+		close(closed)
+	})
+	defer func() {
+		if !stop() {
+			<-closed
+		}
+	}()
 	var packages []goPackage
 	decoder := json.NewDecoder(stdout)
 	var decodeErr error
@@ -46,6 +59,9 @@ func readPackages(cmd *exec.Cmd, failureContext string) ([]goPackage, error) {
 	}
 	if err := cmd.Wait(); err != nil {
 		return nil, fmt.Errorf("%s: %w\n%s", failureContext, err, stderr.String())
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("%s: %w", failureContext, err)
 	}
 	if decodeErr != nil {
 		return nil, decodeErr

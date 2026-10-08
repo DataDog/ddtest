@@ -20,7 +20,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/stretchr/testify/require"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 )
 
 func requireRetryAttemptParallelConflict(t *testing.T, panicData any) {

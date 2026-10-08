@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 )
 
 // Pack files must not outlive their upload, and their temporary directory must

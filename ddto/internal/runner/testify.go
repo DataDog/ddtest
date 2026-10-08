@@ -228,5 +228,10 @@ func prepareLibraryCompile(plan *LibraryEntry, args []string) ([]string, func(),
 		cleanup()
 		return nil, nil, fmt.Errorf("optional library compiler inputs contain no instrumented entry")
 	}
+	if plan.Package == instrument.GoleakImport {
+		// Go has already hashed this package's gcflags. The cache marker is
+		// not a real include path; newer compilers reject -I with -importcfg.
+		result = removeGoleakCacheMarker(result, plan.Fingerprint)
+	}
 	return append(result, plan.HookFile), cleanup, nil
 }

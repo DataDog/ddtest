@@ -829,7 +829,7 @@ func (mw *Writer) writeSlice(v reflect.Value) (err error) {
 	if err != nil {
 		return
 	}
-	for i := range sz {
+	for i := uint32(0); i < sz; i++ {
 		err = mw.WriteIntf(v.Index(int(i)).Interface())
 		if err != nil {
 			return

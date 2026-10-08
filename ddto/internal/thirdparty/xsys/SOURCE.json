@@ -22,7 +22,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "f9cabd3f40dc485420faed65d00417503207662d1b184c5ebad59e774c068426",
+      "sha256": "d24b1092a6116f77452f015b91ba858ba1a93f0c530039ebb19a4a1bb6cb7a86",
       "role": "local"
     },
     {
@@ -67,7 +67,7 @@
     },
     {
       "path": "windows/calls_windows_test.go",
-      "sha256": "50286d07e1ab4587a48d86b68cb3db09b30467d41ab8087a0d90c2dde9121dc0",
+      "sha256": "53e580b327c2c06c90cafc3443ba53e473b994c538ba82a842e201e416a75800",
       "role": "local"
     },
     {

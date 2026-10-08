@@ -13,8 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/bazel"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
@@ -309,7 +308,7 @@ func countFakeGitFetches(t *testing.T, fetchesFile string) int {
 	}
 	assert.NoError(t, err)
 	fetches := 0
-	for field := range strings.FieldsSeq(string(data)) {
+	for _, field := range strings.Fields(string(data)) {
 		if field == "fetch" {
 			fetches++
 		}

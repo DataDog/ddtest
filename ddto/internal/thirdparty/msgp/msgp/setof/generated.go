@@ -75,7 +75,7 @@ func (s *String) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k string
 		k, err = reader.ReadString()
 		if err != nil {
@@ -104,7 +104,7 @@ func (s *String) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k string
 		k, bytes, err = msgp.ReadStringBytes(bytes)
 		if err != nil {
@@ -218,7 +218,7 @@ func (s *StringSorted) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k string
 		k, err = reader.ReadString()
 		if err != nil {
@@ -247,7 +247,7 @@ func (s *StringSorted) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k string
 		k, bytes, err = msgp.ReadStringBytes(bytes)
 		if err != nil {
@@ -349,7 +349,7 @@ func (s *Int) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int
 		k, err = reader.ReadInt()
 		if err != nil {
@@ -378,7 +378,7 @@ func (s *Int) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int
 		k, bytes, err = msgp.ReadIntBytes(bytes)
 		if err != nil {
@@ -505,7 +505,7 @@ func (s *IntSorted) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int
 		k, err = reader.ReadInt()
 		if err != nil {
@@ -534,7 +534,7 @@ func (s *IntSorted) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int
 		k, bytes, err = msgp.ReadIntBytes(bytes)
 		if err != nil {
@@ -634,7 +634,7 @@ func (s *Uint) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint
 		k, err = reader.ReadUint()
 		if err != nil {
@@ -663,7 +663,7 @@ func (s *Uint) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint
 		k, bytes, err = msgp.ReadUintBytes(bytes)
 		if err != nil {
@@ -790,7 +790,7 @@ func (s *UintSorted) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint
 		k, err = reader.ReadUint()
 		if err != nil {
@@ -819,7 +819,7 @@ func (s *UintSorted) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint
 		k, bytes, err = msgp.ReadUintBytes(bytes)
 		if err != nil {
@@ -919,7 +919,7 @@ func (s *Byte) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k byte
 		k, err = reader.ReadByte()
 		if err != nil {
@@ -948,7 +948,7 @@ func (s *Byte) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k byte
 		k, bytes, err = msgp.ReadByteBytes(bytes)
 		if err != nil {
@@ -1075,7 +1075,7 @@ func (s *ByteSorted) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k byte
 		k, err = reader.ReadByte()
 		if err != nil {
@@ -1104,7 +1104,7 @@ func (s *ByteSorted) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k byte
 		k, bytes, err = msgp.ReadByteBytes(bytes)
 		if err != nil {
@@ -1204,7 +1204,7 @@ func (s *Int8) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int8
 		k, err = reader.ReadInt8()
 		if err != nil {
@@ -1233,7 +1233,7 @@ func (s *Int8) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int8
 		k, bytes, err = msgp.ReadInt8Bytes(bytes)
 		if err != nil {
@@ -1360,7 +1360,7 @@ func (s *Int8Sorted) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int8
 		k, err = reader.ReadInt8()
 		if err != nil {
@@ -1389,7 +1389,7 @@ func (s *Int8Sorted) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int8
 		k, bytes, err = msgp.ReadInt8Bytes(bytes)
 		if err != nil {
@@ -1489,7 +1489,7 @@ func (s *Uint8) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint8
 		k, err = reader.ReadUint8()
 		if err != nil {
@@ -1518,7 +1518,7 @@ func (s *Uint8) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint8
 		k, bytes, err = msgp.ReadUint8Bytes(bytes)
 		if err != nil {
@@ -1645,7 +1645,7 @@ func (s *Uint8Sorted) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint8
 		k, err = reader.ReadUint8()
 		if err != nil {
@@ -1674,7 +1674,7 @@ func (s *Uint8Sorted) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint8
 		k, bytes, err = msgp.ReadUint8Bytes(bytes)
 		if err != nil {
@@ -1774,7 +1774,7 @@ func (s *Int16) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int16
 		k, err = reader.ReadInt16()
 		if err != nil {
@@ -1803,7 +1803,7 @@ func (s *Int16) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int16
 		k, bytes, err = msgp.ReadInt16Bytes(bytes)
 		if err != nil {
@@ -1930,7 +1930,7 @@ func (s *Int16Sorted) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int16
 		k, err = reader.ReadInt16()
 		if err != nil {
@@ -1959,7 +1959,7 @@ func (s *Int16Sorted) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int16
 		k, bytes, err = msgp.ReadInt16Bytes(bytes)
 		if err != nil {
@@ -2059,7 +2059,7 @@ func (s *Uint16) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint16
 		k, err = reader.ReadUint16()
 		if err != nil {
@@ -2088,7 +2088,7 @@ func (s *Uint16) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint16
 		k, bytes, err = msgp.ReadUint16Bytes(bytes)
 		if err != nil {
@@ -2215,7 +2215,7 @@ func (s *Uint16Sorted) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint16
 		k, err = reader.ReadUint16()
 		if err != nil {
@@ -2244,7 +2244,7 @@ func (s *Uint16Sorted) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint16
 		k, bytes, err = msgp.ReadUint16Bytes(bytes)
 		if err != nil {
@@ -2344,7 +2344,7 @@ func (s *Int32) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int32
 		k, err = reader.ReadInt32()
 		if err != nil {
@@ -2373,7 +2373,7 @@ func (s *Int32) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int32
 		k, bytes, err = msgp.ReadInt32Bytes(bytes)
 		if err != nil {
@@ -2500,7 +2500,7 @@ func (s *Int32Sorted) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int32
 		k, err = reader.ReadInt32()
 		if err != nil {
@@ -2529,7 +2529,7 @@ func (s *Int32Sorted) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int32
 		k, bytes, err = msgp.ReadInt32Bytes(bytes)
 		if err != nil {
@@ -2629,7 +2629,7 @@ func (s *Uint32) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint32
 		k, err = reader.ReadUint32()
 		if err != nil {
@@ -2658,7 +2658,7 @@ func (s *Uint32) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint32
 		k, bytes, err = msgp.ReadUint32Bytes(bytes)
 		if err != nil {
@@ -2785,7 +2785,7 @@ func (s *Uint32Sorted) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint32
 		k, err = reader.ReadUint32()
 		if err != nil {
@@ -2814,7 +2814,7 @@ func (s *Uint32Sorted) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint32
 		k, bytes, err = msgp.ReadUint32Bytes(bytes)
 		if err != nil {
@@ -2914,7 +2914,7 @@ func (s *Int64) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int64
 		k, err = reader.ReadInt64()
 		if err != nil {
@@ -2943,7 +2943,7 @@ func (s *Int64) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int64
 		k, bytes, err = msgp.ReadInt64Bytes(bytes)
 		if err != nil {
@@ -3070,7 +3070,7 @@ func (s *Int64Sorted) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int64
 		k, err = reader.ReadInt64()
 		if err != nil {
@@ -3099,7 +3099,7 @@ func (s *Int64Sorted) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k int64
 		k, bytes, err = msgp.ReadInt64Bytes(bytes)
 		if err != nil {
@@ -3199,7 +3199,7 @@ func (s *Uint64) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint64
 		k, err = reader.ReadUint64()
 		if err != nil {
@@ -3228,7 +3228,7 @@ func (s *Uint64) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint64
 		k, bytes, err = msgp.ReadUint64Bytes(bytes)
 		if err != nil {
@@ -3355,7 +3355,7 @@ func (s *Uint64Sorted) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint64
 		k, err = reader.ReadUint64()
 		if err != nil {
@@ -3384,7 +3384,7 @@ func (s *Uint64Sorted) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k uint64
 		k, bytes, err = msgp.ReadUint64Bytes(bytes)
 		if err != nil {
@@ -3484,7 +3484,7 @@ func (s *Float64) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k float64
 		k, err = reader.ReadFloat64()
 		if err != nil {
@@ -3513,7 +3513,7 @@ func (s *Float64) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k float64
 		k, bytes, err = msgp.ReadFloat64Bytes(bytes)
 		if err != nil {
@@ -3640,7 +3640,7 @@ func (s *Float64Sorted) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k float64
 		k, err = reader.ReadFloat64()
 		if err != nil {
@@ -3669,7 +3669,7 @@ func (s *Float64Sorted) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k float64
 		k, bytes, err = msgp.ReadFloat64Bytes(bytes)
 		if err != nil {
@@ -3769,7 +3769,7 @@ func (s *Float32) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k float32
 		k, err = reader.ReadFloat32()
 		if err != nil {
@@ -3798,7 +3798,7 @@ func (s *Float32) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k float32
 		k, bytes, err = msgp.ReadFloat32Bytes(bytes)
 		if err != nil {
@@ -3925,7 +3925,7 @@ func (s *Float32Sorted) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k float32
 		k, err = reader.ReadFloat32()
 		if err != nil {
@@ -3954,7 +3954,7 @@ func (s *Float32Sorted) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k float32
 		k, bytes, err = msgp.ReadFloat32Bytes(bytes)
 		if err != nil {

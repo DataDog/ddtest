@@ -3,9 +3,11 @@ package integration
 import (
 	"encoding/json"
 	"fmt"
+	"go/version"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,6 +30,15 @@ func prepareMiniFixtureWithTempDir(t *testing.T, tempDir func() string) (string,
 		out, stderr, code := command(t, dir, testEnv(), "go", args...)
 		if code != 0 {
 			t.Fatalf("mini module: %s %s", out, stderr)
+		}
+	}
+	// The frozen SDK reference requires Go 1.26. The minimum-toolchain tests
+	// exercise Mini on its own, without upgrading the toolchain through that SDK.
+	toolchain := strings.Fields(strings.TrimPrefix(runtime.Version(), "devel "))[0]
+	if version.Compare(toolchain, "go1.26") < 0 {
+		mod := "module example.com/dd-ci-testing-fixture\ngo 1.25.0\nrequire github.com/tonyredondo/dd-ci-testing-poc v0.0.0\nreplace github.com/tonyredondo/dd-ci-testing-poc => " + strconv.Quote(filepath.ToSlash(root)) + "\n"
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(mod), 0600); err != nil {
+			t.Fatal(err)
 		}
 	}
 	// Keep the fixture neutral: each CLI backend injects its own runtime. An
@@ -156,6 +167,8 @@ var adaptedMiniCallSites = []struct{ function, mini, sdk, sdkFunction string }{
 	{"integrations/gotesting.(*M).executeInternalTest.func1", "integrations/gotesting/testing.go:867", "integrations/gotesting/testing.go:838", "integrations/gotesting.(*M).executeInternalTest.func1"},
 	{"integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1.1", "integrations/gotesting/instrumentation_orchestrion.go:427", "integrations/gotesting/instrumentation_orchestrion.go:319", "integrations/gotesting.instrumentTestingTFunc.func1.1"},
 	{"integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1", "integrations/gotesting/instrumentation_orchestrion.go:433", "integrations/gotesting/instrumentation_orchestrion.go:325", "integrations/gotesting.instrumentTestingTFunc.func1"},
+	{"integrations/gotesting.runRetryAttemptBody", "integrations/gotesting/retry_attempt_runner.go:452", "integrations/gotesting/retry_attempt_runner.go:452", "integrations/gotesting.runRetryAttemptBody"},
+	{"integrations/gotesting.runFreshRetryAttemptOwner", "integrations/gotesting/retry_attempt_runner.go:202", "integrations/gotesting/retry_attempt_runner.go:202", "integrations/gotesting.runFreshRetryAttemptOwner"},
 }
 
 // Keep the strict exception table tied to actual user-body calls. A moved call
@@ -165,6 +178,8 @@ func TestAdaptedMiniBodyCallSitesMatchSource(t *testing.T) {
 		"integrations/gotesting.(*M).executeInternalTest.func1":                  "testInfo.originalFunc(t)",
 		"integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1.1": "f(currentT)",
 		"integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1":   "wrappedFunc(t)",
+		"integrations/gotesting.runRetryAttemptBody":                             "target(t)",
+		"integrations/gotesting.runFreshRetryAttemptOwner":                       "runRetryAttemptBody(attempt, t, target)",
 	}
 	for _, site := range adaptedMiniCallSites {
 		call, selected := calls[site.function]

@@ -24,7 +24,7 @@ func TestConcurrentStackClassification(t *testing.T) {
 	}
 	start := make(chan struct{})
 	var wg sync.WaitGroup
-	for range 32 {
+	for i := 0; i < 32; i++ {
 		wg.Go(func() {
 			<-start
 			if len(CaptureRaw(0).PCs) == 0 {

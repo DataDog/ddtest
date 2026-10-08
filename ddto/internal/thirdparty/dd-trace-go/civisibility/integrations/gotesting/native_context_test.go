@@ -1,6 +1,8 @@
 package gotesting
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestNativeContextWithoutSDK(t *testing.T) {
 	ctx := t.Context()

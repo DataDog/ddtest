@@ -17,13 +17,12 @@ import (
 	"testing"
 	"time"
 
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/codeownership"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // namedSourceFixtureFunc provides a stable top-level declaration for cache tests.
@@ -278,7 +277,7 @@ func TestSourceFunctionCodeOwnerCacheConcurrentHitsSkipCompletedLookup(t *testin
 	wait.Add(readers)
 	owners := make([]string, readers)
 	foundResults := make([]bool, readers)
-	for index := range readers {
+	for index := 0; index < readers; index++ {
 		go func() {
 			defer wait.Done()
 			owners[index], foundResults[index] = loadSourceFunctionCodeOwnerWithLookup(metadata, lookup)
@@ -286,7 +285,7 @@ func TestSourceFunctionCodeOwnerCacheConcurrentHitsSkipCompletedLookup(t *testin
 	}
 	wait.Wait()
 
-	for index := range readers {
+	for index := 0; index < readers; index++ {
 		require.True(t, foundResults[index])
 		require.Equal(t, owner, owners[index])
 	}
@@ -297,7 +296,7 @@ func BenchmarkSourceFileCodeOwnerSharedMiss(b *testing.B) {
 	matcher := &recordingCodeOwnerMatcher{entry: testCodeOwner(b, "@shared-owner")}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		slot := &sourceFileCacheSlot{}
 		loadSourceFileCodeOwner(slot, matcher, true, "source.go")
 		loadSourceFileCodeOwner(slot, matcher, true, "source.go")
@@ -314,7 +313,7 @@ func BenchmarkSourceFileCodeOwnerCachedResult(b *testing.B) {
 	loadSourceFileCodeOwner(slot, matcher, true, "source.go")
 	b.ReportAllocs()
 	b.ResetTimer()
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		loadSourceFileCodeOwner(slot, matcher, true, "source.go")
 	}
 	b.StopTimer()
@@ -338,7 +337,7 @@ func BenchmarkSourceFunctionCodeOwnerCachedResult(b *testing.B) {
 	loadSourceFunctionCodeOwnerWithLookup(metadata, lookup)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		loadSourceFunctionCodeOwnerWithLookup(metadata, lookup)
 	}
 	b.StopTimer()

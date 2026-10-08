@@ -121,7 +121,7 @@ func TestDeferredFailureRetainsUnsentChunks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for range 5 {
+	for i := 0; i < 5; i++ {
 		s, _ := client.StartSpan(context.Background(), "test")
 		s.Finish()
 	}
@@ -165,7 +165,7 @@ func TestDeferredCheckpointsDeliverOnlyFullBatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		release := cidelivery.Begin()
 		span, _ := client.StartSpan(context.Background(), "test", SpanType("test"))
 		span.Finish()
@@ -220,7 +220,7 @@ func TestDeferredCheckpointSendsConcurrently(t *testing.T) {
 	}
 	defer client.Close(context.Background())
 	const total = 4 * maxConcurrentSends
-	for range total {
+	for i := 0; i < total; i++ {
 		span, _ := client.StartSpan(context.Background(), "test", SpanType("test"))
 		span.Finish()
 	}
@@ -251,7 +251,7 @@ func TestDeferredCheckpointStopsAfterFailure(t *testing.T) {
 	}
 	defer func() { _ = client.Close(context.Background()) }()
 	const total = 4 * maxConcurrentSends
-	for range total {
+	for i := 0; i < total; i++ {
 		span, _ := client.StartSpan(context.Background(), "test", SpanType("test"))
 		span.Finish()
 	}

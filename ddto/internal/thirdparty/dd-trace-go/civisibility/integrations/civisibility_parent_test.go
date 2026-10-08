@@ -10,12 +10,11 @@ import (
 	"testing"
 
 	tracer "github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	internalenv "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/env"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestInternalCiVisibilityInitializationParentModeRewritesEnvAfterTracerInitialization(t *testing.T) {

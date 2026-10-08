@@ -11,8 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/net"
 )
 
@@ -51,7 +50,7 @@ func TestCoverageWriterConcurrentFlush(t *testing.T) {
 	writer := newCoverageWriter()
 	coverage := &testCoverage{}
 
-	for range concurrentConnectionLimit + 1 {
+	for i := 0; i < concurrentConnectionLimit+1; i++ {
 		writer.add(coverage)
 	}
 	writer.flush()
@@ -77,7 +76,7 @@ func TestCoverageWriterConcurrentAddAndFlush(t *testing.T) {
 	}}
 
 	var wg sync.WaitGroup
-	for range 64 {
+	for i := 0; i < 64; i++ {
 		wg.Go(func() {
 			writer.add(&testCoverage{})
 		})

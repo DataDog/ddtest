@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 )
 
 const DefaultMultipartMemorySize = 10 << 20 // 10MB
@@ -557,7 +557,7 @@ func TestExponentialBackoffDelays(t *testing.T) {
 
 	// Simulate exponential backoff with 3 retries and 1-second initial delay
 	var duration time.Duration
-	for i := range 3 {
+	for i := 0; i < 3; i++ {
 		duration = duration + getExponentialBackoffDuration(i, 1*time.Second)
 	}
 

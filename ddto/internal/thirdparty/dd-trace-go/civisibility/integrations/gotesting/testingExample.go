@@ -17,12 +17,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/cidelivery"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/ddtrace/ext"
-
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/cidelivery"
 )
 
 type testingExampleInfo struct {

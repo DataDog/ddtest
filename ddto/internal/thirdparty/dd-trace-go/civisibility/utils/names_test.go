@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
 )
 
 func TestGetModuleAndSuiteName(t *testing.T) {

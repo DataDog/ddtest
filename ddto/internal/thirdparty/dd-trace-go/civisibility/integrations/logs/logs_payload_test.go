@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
 )
 
 func newLogEntry(i int) *logEntry {
@@ -31,7 +31,7 @@ func TestLogsPayloadDecode(t *testing.T) {
 		t.Run(strconv.Itoa(n), func(t *testing.T) {
 			assert := assert.New(t)
 			p := newLogsPayload()
-			for i := range n {
+			for i := 0; i < n; i++ {
 				p.push(newLogEntry(i%5 + 1))
 			}
 			var got logsEntriesPayload

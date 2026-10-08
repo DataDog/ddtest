@@ -24,7 +24,7 @@ func (s *Foo) DecodeMsg(reader *msgp.Reader) error {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k string
 		k, err = reader.ReadString()
 		if err != nil {
@@ -53,7 +53,7 @@ func (s *Foo) UnmarshalMsg(bytes []byte) ([]byte, error) {
 	} else {
 		clear(dst)
 	}
-	for range sz {
+	for i := uint32(0); i < sz; i++ {
 		var k string
 		k, bytes, err = msgp.ReadStringBytes(bytes)
 		if err != nil {

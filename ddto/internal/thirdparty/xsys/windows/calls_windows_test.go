@@ -20,7 +20,7 @@ func TestSystemDLLAndPerformanceCounter(t *testing.T) {
 	counter := dll.NewProc("QueryPerformanceCounter")
 	frequency := dll.NewProc("QueryPerformanceFrequency")
 	var wg sync.WaitGroup
-	for range 16 {
+	for i := 0; i < 16; i++ {
 		wg.Go(func() {
 			if err := counter.Find(); err != nil {
 				t.Error(err)

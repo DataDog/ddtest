@@ -119,7 +119,7 @@ func SwapClient(client Client) Client {
 // It returns a function that can be used to swap back the global client
 func MockClient(client Client) func() {
 	globalClientRecorder.Clear()
-	metricsHandleSwappablePointers.Clear()
+	(&metricsHandleSwappablePointers).Clear()
 	metricRegistryGeneration.Add(1)
 
 	oldClient := SwapClient(client)

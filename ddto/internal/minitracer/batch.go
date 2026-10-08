@@ -244,7 +244,7 @@ func (c *Client) drainLocked(ctx context.Context, perBatchTimeout bool) error {
 		c.mu.Lock()
 		extra := min(len(c.ready), maxConcurrentSends) - 1
 		c.mu.Unlock()
-		for range extra {
+		for i := 0; i < extra; i++ {
 			workers.Add(1)
 			go c.drainWorker(d, &workers)
 		}

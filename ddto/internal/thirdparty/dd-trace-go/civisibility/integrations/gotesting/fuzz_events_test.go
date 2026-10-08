@@ -15,8 +15,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/stretchr/testify/require"
-
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations"
 )
@@ -224,7 +223,7 @@ func TestFuzzEventsFatalDrainDoesNotReadUnprotectedDuration(t *testing.T) {
 	}()
 	<-started
 	defer func() { close(stop); <-stopped }()
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		event := newProcessRetryRecordingTestForTesting("active root")
 		queue := &fuzzEventQueue{}
 		queue.add(fuzzTestEvent{native: native, metadata: &testExecutionMetadata{}, test: event, suite: event.suite, module: event.suite.module, finishTime: time.Now()})
@@ -258,7 +257,7 @@ func TestFuzzEventsConcurrentAdmissionAndRepeatedFinish(t *testing.T) {
 	const count = 1000
 	events := make([]*processRetryRecordingTest, count)
 	var workers sync.WaitGroup
-	for i := range count {
+	for i := 0; i < count; i++ {
 		events[i] = newProcessRetryRecordingTestForTesting("seed")
 		workers.Go(func() {
 			event := events[i]
@@ -286,7 +285,7 @@ func TestFuzzEventsAdmissionOverlapsFatalDrain(t *testing.T) {
 	const count = 1000
 	events := make([]*processRetryRecordingTest, count)
 	var workers sync.WaitGroup
-	for i := range count {
+	for i := 0; i < count; i++ {
 		events[i] = newProcessRetryRecordingTestForTesting("seed")
 		workers.Go(func() {
 			event := events[i]
@@ -321,7 +320,7 @@ func setFuzzNativeField[V any](t *testing.T, native any, name string, value V) {
 func BenchmarkFuzzEventsRetention(b *testing.B) {
 	for b.Loop() {
 		queue := &fuzzEventQueue{}
-		for range 10000 {
+		for i := 0; i < 10000; i++ {
 			queue.add(fuzzTestEvent{})
 		}
 		// Measure only queue storage; native testing objects and tracer events

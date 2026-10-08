@@ -44,7 +44,7 @@ func TestPayloadDropCountsTerminalBatches(t *testing.T) {
 	}
 	// The bounded queue retains later batches; beyond it, events are rejected
 	// one by one without being counted as payloads.
-	for range 2*maxPendingBatches + 1 {
+	for i := 0; i < 2*maxPendingBatches+1; i++ {
 		finish()
 	}
 	if c.DroppedEvents() != 1 || drops() != 0 {
@@ -61,7 +61,7 @@ func TestPayloadDropCountsTerminalBatches(t *testing.T) {
 	// payloads twice or resend an abandoned batch.
 	sent := calls.Load()
 	var wg sync.WaitGroup
-	for range 8 {
+	for i := 0; i < 8; i++ {
 		wg.Go(func() { _ = c.Close(context.Background()) })
 	}
 	wg.Wait()
@@ -86,7 +86,7 @@ func TestRetainedBatchRecoveryDoesNotCountPayloadDrop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for range 3 {
+	for i := 0; i < 3; i++ {
 		s, _ := c.StartSpan(context.Background(), "test", SpanType("test"))
 		s.Finish()
 	}
@@ -114,7 +114,7 @@ func TestCanceledCloseCountsInflightPayloadOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for range 3 {
+	for i := 0; i < 3; i++ {
 		s, _ := c.StartSpan(context.Background(), "test", SpanType("test"))
 		s.Finish()
 	}
@@ -163,7 +163,7 @@ func TestCanceledCloseAbandonsBufferedPayloadOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for range 3 {
+	for i := 0; i < 3; i++ {
 		s, _ := c.StartSpan(context.Background(), "test", SpanType("test"))
 		s.Finish()
 	}

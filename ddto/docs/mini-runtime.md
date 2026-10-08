@@ -64,10 +64,20 @@ substitutes a different cached version. A development binary with neither
 sources nor a published version needs a client replacement.
 
 Use a Go toolchain installed outside `GOMODCACHE`; Go prohibits overlays within
-that cache, including downloaded toolchains. CI exercises Go 1.26 and 1.27.
-A client module can declare an older version: local provisioning raises only
-the temporary Go directive to the selected runtime's minimum. A newer client
-directive is retained.
+that cache, including downloaded toolchains. Mini requires Go 1.25 or newer;
+preparation checks the toolchain selected by Go. A client declaring Go 1.21
+keeps that language version, including its loop-variable semantics and timer
+defaults. For older client languages, Mini becomes a separate main module in
+a temporary workspace. The client's module files stay unchanged except for
+updates its own `-mod=mod` imports would require under native Go.
+
+Mini uses native Go 1.25 APIs. `internal/compat` contains only `AsType` and
+`Pointer`, which adapt Go 1.26 helpers used by the incorporated sources. The
+distributed module has no external requirements, including test requirements.
+CI checks Go 1.25, 1.26, 1.27 and a recorded tip revision. The full SDK reference
+requires Go 1.26. Go 1.25 and tip have a native Mini feature suite; tip also
+checks manual SDK span copies. The frozen Orchestrion reference fails on tip,
+so its complete differential comparisons run on Go 1.26/1.27.
 
 The SDK backend provides its pinned version with `go get`. A different selected
 or replaced SDK is rejected. Mini's application-SDK integration has separate
@@ -75,23 +85,24 @@ or replaced SDK is rejected. Mini's application-SDK integration has separate
 
 ### Vendor mode and workspaces
 
-These modes must already make the runtime available; `ddtest` does not supply
-it through `-modfile`. Require this module and keep the import visible to
-`go mod tidy` and `go mod vendor`, for example in `tools.go`:
+Mini can be supplied without a persistent requirement in these modes. A
+workspace run uses a temporary `go.work` with absolute `use` and local
+replacement paths. The effective Mini sources become a main module in that
+workspace. Existing requirements and local or remote replacements retain their
+selected sources; absent runtimes use the CLI sources or its exact published
+version. The original workspace, checksums and module files stay unchanged.
 
-```go
-//go:build tools
+For a module using `vendor`, a temporary workspace contains the client and Mini.
+Its vendor snapshot retains the client's vendored sources, including patches.
+Files use hard links where supported and copies otherwise. The snapshot has its
+own `modules.txt`; the original vendor tree is never edited. Native Go still
+reports inconsistent vendor metadata rather than silently selecting other
+versions. An already vendored Mini can continue using its existing sources.
 
-package tools
-
-import _ "github.com/tonyredondo/dd-ci-testing-poc/testopt"
-```
-
-Use your usual module version or local replacement, then tidy/vendor as needed.
-The file is excluded from normal builds. Mini's runtime and CLI import only
-this module and the standard library; the repository's test dependencies are
-not runtime imports. [Consumer tests and audit commands](maintenance.md#verification-before-publication)
-check this boundary.
+Mini's runtime, CLI and ported SDK test helpers use only the standard library
+and this module. [Consumer checks](maintenance.md#verification-before-publication)
+verify that `go mod tidy` adds no external modules and that old client dependency
+versions are retained.
 
 ## Test context and propagation
 

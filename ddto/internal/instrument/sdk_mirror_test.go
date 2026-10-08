@@ -33,7 +33,7 @@ func TestSDKMirrorCosmeticChanges(t *testing.T) {
 		"context_import_alias": strings.NewReplacer(`"context"`, `gocontext "context"`, "context.Context", "gocontext.Context").Replace(sdkMirrorSource),
 	}
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module mirrorfixtures\n\ngo 1.26.0\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module mirrorfixtures\n\ngo 1.25.0\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	for name, source := range variants {

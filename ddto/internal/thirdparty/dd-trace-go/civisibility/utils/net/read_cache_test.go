@@ -20,9 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/bazel"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/env"
@@ -335,7 +334,7 @@ func TestReadThroughShortLivedCacheDoesNotStoreNonCacheableResponses(t *testing.
 		return readCacheLiveResult[string]{Value: "non-cacheable", Cacheable: false}, nil
 	}
 
-	for range 2 {
+	for i := 0; i < 2; i++ {
 		value, err := readThroughShortLivedCache(c, "unit", map[string]string{"request": "same"}, live, nil)
 		require.NoError(t, err)
 		require.Equal(t, "non-cacheable", value)

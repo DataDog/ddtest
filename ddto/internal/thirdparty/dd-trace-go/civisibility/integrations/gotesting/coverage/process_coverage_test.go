@@ -14,10 +14,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
-
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
 )
 
 func TestMergeProcessCoverageProfilesAddsIsolatedCounts(t *testing.T) {

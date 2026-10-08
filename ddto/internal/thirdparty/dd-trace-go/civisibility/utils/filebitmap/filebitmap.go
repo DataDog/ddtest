@@ -109,7 +109,7 @@ func (fb *FileBitmap) HasActiveBits() bool {
 // IntersectsWith returns true if this bitmap has at least one common set bit with the other bitmap.
 func (fb *FileBitmap) IntersectsWith(other *FileBitmap) bool {
 	minSize := min(len(other.data), len(fb.data))
-	for i := range minSize {
+	for i := 0; i < minSize; i++ {
 		if (fb.data[i] & other.data[i]) != 0 {
 			return true
 		}
@@ -151,7 +151,7 @@ func Or(a, b *FileBitmap, reuseBuffer bool) *FileBitmap {
 	}
 
 	// Perform bitwise OR on the overlapping region.
-	for i := range minSize {
+	for i := 0; i < minSize; i++ {
 		res.data[i] = a.data[i] | b.data[i]
 	}
 
@@ -191,7 +191,7 @@ func And(a, b *FileBitmap, reuseBuffer bool) *FileBitmap {
 	}
 
 	// Perform bitwise AND on the overlapping region.
-	for i := range minSize {
+	for i := 0; i < minSize; i++ {
 		res.data[i] = a.data[i] & b.data[i]
 	}
 	// For the remaining bytes (if any), fill with 0.

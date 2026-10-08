@@ -46,8 +46,9 @@ type Config struct {
 	MaxIdleConnsPerHost int
 }
 type Transport struct {
-	config Config
-	client *http.Client
+	config  Config
+	client  *http.Client
+	secrets []string
 }
 
 // New validates configuration before any event can be accepted.
@@ -101,12 +102,29 @@ func New(c Config) (*Transport, error) {
 		copyClient.Timeout = 10 * time.Second
 	}
 	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Transport{config: c, client: &copyClient}, nil
+	t := &Transport{config: c, client: &copyClient}
+	if c.APIKey != "" {
+		t.secrets = append(t.secrets, c.APIKey)
+	}
+	if u != nil {
+		for _, values := range u.Query() {
+			for _, value := range values {
+				if value != "" {
+					t.secrets = append(t.secrets, value, url.QueryEscape(value))
+				}
+			}
+		}
+		if u.Fragment != "" {
+			t.secrets = append(t.secrets, u.Fragment)
+		}
+	}
+	return t, nil
 }
 
 // Send retries transient failures using the same immutable payload. Context
 // cancellation bounds both requests and backoff; permanent 4xx responses fail.
 func (t *Transport) Send(ctx context.Context, payload []byte) (sendErr error) {
+	defer func() { sendErr = t.safeError(sendErr) }()
 	attempts := 0
 	mode := "agent"
 	if t.config.Agentless {
@@ -188,9 +206,7 @@ func (t *Transport) Send(ctx context.Context, payload []byte) (sendErr error) {
 		retry := false
 		if err != nil {
 			telemetry.EndpointPayloadRequestsErrors(telemetry.TestCycleEndpointType, telemetry.NetworkErrorType)
-			// Like the SDK, keep the cause. net/http names the request URL
-			// without user info; credentials travel only in headers.
-			last = fmt.Errorf("CI Visibility request failed: %w", err)
+			last = fmt.Errorf("CI Visibility request failed: %w", safeRequestError(err))
 			retry = true
 		} else {
 			// Like the SDK, a failure reports up to 1000 bytes of the response.

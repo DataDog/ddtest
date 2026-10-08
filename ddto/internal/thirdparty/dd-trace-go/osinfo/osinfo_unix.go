@@ -10,11 +10,13 @@ package osinfo
 import (
 	"bufio"
 	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/xsys/unix"
 )
 
@@ -52,18 +54,30 @@ func init() {
 	}
 
 	defer f.Close()
-	scanner := bufio.NewScanner(f)
+	if err := readOSRelease(f); err != nil {
+		log.Debug("civisibility: error reading OS release: %v", err)
+	}
+}
+
+// readOSRelease applies available metadata even if a later read fails, matching
+// the SDK's best-effort discovery. Malformed lines do not supply a field value.
+func readOSRelease(r io.Reader) error {
+	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		parts := strings.SplitN(scanner.Text(), "=", 2)
-		switch parts[0] {
+		key, value, ok := strings.Cut(scanner.Text(), "=")
+		if !ok {
+			continue
+		}
+		switch key {
 		case "NAME":
-			osName = strings.Trim(parts[1], "\"")
+			osName = strings.Trim(value, "\"")
 		case "VERSION":
-			osVersion = strings.Trim(parts[1], "\"")
+			osVersion = strings.Trim(value, "\"")
 		case "VERSION_ID":
 			if osVersion == "" { // Fallback to VERSION_ID if VERSION is not set
-				osVersion = strings.Trim(parts[1], "\"")
+				osVersion = strings.Trim(value, "\"")
 			}
 		}
 	}
+	return scanner.Err()
 }

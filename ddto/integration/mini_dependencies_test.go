@@ -2,7 +2,6 @@ package integration
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,7 +16,7 @@ func TestMiniConsumerAddsOnlyOwnModule(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := t.TempDir()
-	mod := []byte("module example.com/mini-consumer\n\ngo 1.26.0\n\nrequire github.com/tonyredondo/dd-ci-testing-poc v0.0.0\n\nreplace github.com/tonyredondo/dd-ci-testing-poc => " + strconv.Quote(filepath.ToSlash(root)) + "\n")
+	mod := []byte("module example.com/mini-consumer\n\ngo 1.25.0\n\nrequire github.com/tonyredondo/dd-ci-testing-poc v0.0.0\n\nreplace github.com/tonyredondo/dd-ci-testing-poc => " + strconv.Quote(filepath.ToSlash(root)) + "\n")
 	if err := os.WriteFile(filepath.Join(client, "go.mod"), mod, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -40,9 +39,8 @@ func TestMiniConsumerAddsOnlyOwnModule(t *testing.T) {
 	if len(parsed.Require) != 1 || parsed.Require[0].Path != "github.com/tonyredondo/dd-ci-testing-poc" {
 		t.Fatalf("consumer requires extra modules: %+v", parsed.Require)
 	}
-	// Go's minimal version selection applies this module's requirements to
-	// consumers. Its only requirements are its own test dependencies, at old
-	// versions, so a consumer keeps any newer version it already selects.
+	// Requirements apply to consumers even when only the SDK's tests import
+	// them. SDK assertions use local helpers built on the standard library.
 	stdout, stderr, code = command(t, root, testEnv(), "go", "mod", "edit", "-json")
 	if code != 0 {
 		t.Fatalf("module requirements: %s%s", stdout, stderr)
@@ -54,11 +52,8 @@ func TestMiniConsumerAddsOnlyOwnModule(t *testing.T) {
 		t.Fatal(err)
 	}
 	declared := map[string]string{"example.com/mini-consumer": "", "github.com/tonyredondo/dd-ci-testing-poc": "v0.0.0"}
-	for _, r := range own.Require {
-		declared[r.Path] = r.Version
-		if r.Path == "github.com/stretchr/testify" && !versionAtMost(r.Version, maxTestifyRequirement) {
-			t.Fatalf("testify %s raises consumers' versions; keep it at %s or lower", r.Version, maxTestifyRequirement)
-		}
+	if len(own.Require) != 0 {
+		t.Fatalf("distributed runtime declares external modules: %+v", own.Require)
 	}
 	stdout, stderr, code = command(t, client, env, "go", "list", "-m", "-f", "{{.Path}} {{.Version}}", "all")
 	if code != 0 {
@@ -91,25 +86,4 @@ func TestMiniConsumerAddsOnlyOwnModule(t *testing.T) {
 			t.Fatalf("external runtime package %s from %s", pkg.ImportPath, pkg.Module.Path)
 		}
 	}
-}
-
-// maxTestifyRequirement is the newest Testify this module may require: the
-// oldest release that builds its tests and requires a yaml.v3 without
-// CVE-2022-28948. Consumers with Testify v1.7.5 or newer keep their version.
-const maxTestifyRequirement = "v1.7.5"
-
-// versionAtMost compares release versions of the form vMAJOR.MINOR.PATCH.
-func versionAtMost(version, limit string) bool {
-	parse := func(v string) [3]int {
-		var parts [3]int
-		fmt.Sscanf(strings.TrimPrefix(v, "v"), "%d.%d.%d", &parts[0], &parts[1], &parts[2])
-		return parts
-	}
-	a, b := parse(version), parse(limit)
-	for i := range a {
-		if a[i] != b[i] {
-			return a[i] < b[i]
-		}
-	}
-	return true
 }

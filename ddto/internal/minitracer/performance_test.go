@@ -34,12 +34,12 @@ func BenchmarkSpanMetadata(b *testing.B) {
 					if shape == "text-only" {
 						options = nil
 					}
-					for i := range tags {
+					for i := 0; i < tags; i++ {
 						options = append(options, Tag(fmt.Sprintf("custom.%d", i), "value"))
 					}
 					b.ReportAllocs()
 					b.ResetTimer()
-					for range b.N {
+					for i := 0; i < b.N; i++ {
 						span, _ := newSpan(nil, context.Background(), "testing.test", options...)
 						span.Finish()
 					}
@@ -53,7 +53,7 @@ func BenchmarkEventLifecycle(b *testing.B) {
 	for _, gzip := range []bool{false, true} {
 		b.Run(fmt.Sprintf("gzip=%t", gzip), func(b *testing.B) {
 			tags := make(map[string]string, 12)
-			for i := range 12 {
+			for i := 0; i < 12; i++ {
 				tags[fmt.Sprintf("ci.tag.%d", i)] = "representative-static-ci-value"
 			}
 			c, err := New(Config{Service: "fixture", Tags: tags, Transport: citransport.Config{Endpoint: "http://diagnostic.invalid", Agentless: gzip, APIKey: "fake-key", HTTPClient: &http.Client{Transport: benchmarkTransport{}}}})
@@ -62,7 +62,7 @@ func BenchmarkEventLifecycle(b *testing.B) {
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
-			for range b.N {
+			for i := 0; i < b.N; i++ {
 				s, _ := c.StartSpan(context.Background(), "test", SpanType("test"), Tag("test_session_id", "1"), Tag("test_module_id", "2"), Tag("test_suite_id", "3"), Tag("test.name", "name"), Tag("test.status", "pass"))
 				s.Finish()
 			}

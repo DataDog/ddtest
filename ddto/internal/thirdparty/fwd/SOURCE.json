@@ -17,55 +17,55 @@
     },
     {
       "path": "README.md",
-      "sha256": "da2147e5da1e0c72469fa0c2c06f89ea0476b7822ab6b3bdd455bdab56557450",
+      "sha256": "4e6f4a91840db3639c93a3a97f159565e1ffbfa9e7b778f2124a2f739dca6411",
       "role": "local"
     },
     {
       "path": "reader.go",
       "sha256": "88f5751d45838451210c319b234cf367a90e6fca7147e3bebcea18de296f53fc",
-      "role": "upstream",
+      "role": "adapted",
       "source_path": "reader.go",
       "source_sha256": "88f5751d45838451210c319b234cf367a90e6fca7147e3bebcea18de296f53fc"
     },
     {
       "path": "reader_test.go",
       "sha256": "952100de4af00d2f2077291b01a7823a46b07f25cb396eba0866704bc207aaf3",
-      "role": "upstream",
+      "role": "adapted",
       "source_path": "reader_test.go",
       "source_sha256": "952100de4af00d2f2077291b01a7823a46b07f25cb396eba0866704bc207aaf3"
     },
     {
       "path": "writer.go",
       "sha256": "8c476ac3d403f6c9bd6bf753921a8afbe49311ab69d20c32e9062d00cdfa80fb",
-      "role": "upstream",
+      "role": "adapted",
       "source_path": "writer.go",
       "source_sha256": "8c476ac3d403f6c9bd6bf753921a8afbe49311ab69d20c32e9062d00cdfa80fb"
     },
     {
       "path": "writer_appengine.go",
-      "sha256": "c013679a8f71aeb0647e34d978a478dab37226459f8e05aa5c374e40cd9bf4cf",
-      "role": "upstream",
+      "sha256": "9146ab2d4e33f85d1106a05c383cda3ec3f8ed03314a5f74e6309346fbc2edcf",
+      "role": "adapted",
       "source_path": "writer_appengine.go",
       "source_sha256": "c013679a8f71aeb0647e34d978a478dab37226459f8e05aa5c374e40cd9bf4cf"
     },
     {
       "path": "writer_test.go",
       "sha256": "8cca5099144e2c2479db91fcff4b2a5ace24923de74b11f62cdebb31db4c71cb",
-      "role": "upstream",
+      "role": "adapted",
       "source_path": "writer_test.go",
       "source_sha256": "8cca5099144e2c2479db91fcff4b2a5ace24923de74b11f62cdebb31db4c71cb"
     },
     {
       "path": "writer_tinygo.go",
-      "sha256": "c9a263f367f5dfcc3e90b45e4caf3b272233762a9f5c8756206eb1079c8bf397",
-      "role": "upstream",
+      "sha256": "04cd47dc11c59211f64723e2a21673f0553de84615a88f4746883575be344a42",
+      "role": "adapted",
       "source_path": "writer_tinygo.go",
       "source_sha256": "c9a263f367f5dfcc3e90b45e4caf3b272233762a9f5c8756206eb1079c8bf397"
     },
     {
       "path": "writer_unsafe.go",
-      "sha256": "34956ec561f9e4d085ff9548ac6940079b98d42ece75cfd69cdfea51649e70cd",
-      "role": "upstream",
+      "sha256": "0d75f55921773ee85bb0eddc00afe096e0805121d387c9629a76cdf0fa93cb58",
+      "role": "adapted",
       "source_path": "writer_unsafe.go",
       "source_sha256": "34956ec561f9e4d085ff9548ac6940079b98d42ece75cfd69cdfea51649e70cd"
     }

@@ -1,9 +1,9 @@
+//go:build !windows
+
 // Unless explicitly stated otherwise all files in this repository are licensed
 // under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2026 Datadog, Inc.
-
-//go:build !windows
 
 package utils
 
@@ -12,10 +12,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestResolveSourceFilePath(t *testing.T) {

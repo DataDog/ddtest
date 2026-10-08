@@ -20,6 +20,12 @@ func TestToolDispatch(t *testing.T) {
 		{"testify", "compile", "example.com/client", false, false},
 		{"testify", "compile", "github.com/stretchr/testify/suite", true, false},
 		{"testify", "link", "example.com/client.test", false, false},
+		{"goleak", "compile", "go.uber.org/goleak_test [go.uber.org/goleak.test]", false, true},
+		{"goleak", "compile", "go.uber.org/goleak_test", true, false},
+		{"goleak", "compile", "go.uber.org/goleak.test", false, true},
+		{"goleak", "compile", "go.uber.org/goleak.test", true, false},
+		{"goleak", "compile", "example.com/client.test", false, false},
+		{"testify", "compile", "go.uber.org/goleak_test", false, false},
 		{"testify", "asm", "example.com/client", false, false},
 		{"testify", "cover", "example.com/client", false, false},
 		{"cover", "cover", "example.com/client", false, false},
@@ -76,6 +82,21 @@ func TestPreparedSuiteCompilerInputs(t *testing.T) {
 	cleanup()
 	if _, err := os.Stat(got[1]); !os.IsNotExist(err) {
 		t.Fatal("temporary compiler source remains", err)
+	}
+}
+
+func TestGoleakCompilerRemovesOnlyItsOwnCacheMarker(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "leaks.go")
+	plan := &LibraryEntry{Package: "go.uber.org/goleak", Fingerprint: "abc", Sources: map[string]string{source: "prepared.go"}, HookFile: "hook.go"}
+	args := []string{"compile", "-importcfg", "imports", "-I=ddtest-goleak-abc", "-I=client-path", "-N", "-l", source}
+	got, cleanup, err := prepareLibraryCompile(plan, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	want := []string{"compile", "-importcfg", "imports", "-I=client-path", "-N", "-l", "prepared.go", "hook.go"}
+	if !reflect.DeepEqual(got, want) || args[3] != "-I=ddtest-goleak-abc" {
+		t.Fatalf("compiler arguments changed: %v / %v", got, args)
 	}
 }
 

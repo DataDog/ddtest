@@ -111,7 +111,7 @@ func TestParallelB(t *testing.T) {t.Parallel()}
 	}
 	helper := t.TempDir()
 	for name, data := range map[string]string{
-		"go.mod":    "module example.com/leakhelper\n\ngo 1.26.0\nrequire go.uber.org/goleak v1.3.0\n",
+		"go.mod":    "module example.com/leakhelper\n\ngo 1.25.0\nrequire go.uber.org/goleak v1.3.0\n",
 		"helper.go": "package leakhelper\nimport \"go.uber.org/goleak\"\nfunc Check(t goleak.TestingT) {goleak.VerifyNone(t)}\n",
 	} {
 		if err := os.WriteFile(filepath.Join(helper, name), []byte(data), 0600); err != nil {
@@ -137,7 +137,7 @@ func TestParallelB(t *testing.T) {t.Parallel()}
 	flags := []string{"-mod=mod", "-race", "-cover", "-covermode=atomic", "-coverpkg=./...,go.uber.org/goleak"}
 	args := append([]string{"test", "--runtime=mini", "-x", "-c", "-o", bin}, flags...)
 	args = append(args, ".")
-	for i := range 2 {
+	for i := 0; i < 2; i++ {
 		out, stderr, code := command(t, dir, envForGoleak("DD_CIVISIBILITY_ENABLED=false"), driver, args...)
 		if code != 0 {
 			t.Fatalf("compile %d: %s %s", i, out, stderr)

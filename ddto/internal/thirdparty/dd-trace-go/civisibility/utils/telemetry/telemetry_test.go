@@ -127,7 +127,7 @@ func TestEventCountersKeepCanonicalAndFeatureTagsAcrossClients(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Repeat with new registries: retained handles must not target an
 			// earlier test client after MockClient clears the global cache.
-			for range 2 {
+			for i := 0; i < 2; i++ {
 				client := &telemetrytest.RecordClient{}
 				restore := globaltelemetry.MockClient(client)
 				EventCreated(tc.framework, tc.eventType)

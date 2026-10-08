@@ -64,7 +64,7 @@ func TestConcurrentActivityRetainsQueuedWork(t *testing.T) {
 	parent := coordinator.begin()
 	var delivered atomic.Int32
 	var group sync.WaitGroup
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		group.Go(func() {
 			release := coordinator.begin()
 			coordinator.queue(func() { delivered.Add(1) })

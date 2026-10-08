@@ -209,7 +209,10 @@ the independent Orchestrion reference.
 [`compatibility.yml`](../.github/workflows/compatibility.yml) runs the suite on
 Linux Go 1.26/1.27 and macOS/Windows Go 1.27. Linux normal and race suites run
 as separate jobs, with SDK-first and Mini-first execution respectively. Each
-job runs the complete suite once. The six-job matrix runs on pull requests,
+differential job runs the complete suite once. Two Go 1.25 jobs run native Mini
+in normal/race modes. A third native job builds a recorded Go tip revision and
+also checks manual SDK span copies. The frozen Orchestrion reference fails on
+tip, so this job does not establish Orchestrion parity. The nine-job matrix runs on pull requests,
 pushes to `main` and manual dispatch; feature branch pushes use the pull request
 run instead of launching a second matrix. Artifact names include the mode.
 Each job uploads JSON counts, supplemental evidence, logs and a Markdown table;

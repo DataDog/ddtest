@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/compat"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/internal"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/internal/mapper"
@@ -354,7 +355,7 @@ func (c *client) computeFlushMetrics(results []internal.EndpointRequestResult, r
 			if os.IsTimeout(result.Error) {
 				typ = "type:timeout"
 			}
-			if _, ok := errors.AsType[*internal.WriterStatusCodeError](result.Error); ok {
+			if _, ok := compat.AsType[*internal.WriterStatusCodeError](result.Error); ok {
 				typ = "type:status_code"
 			}
 			c.Count(transport.NamespaceTelemetry, "telemetry_api.errors", []string{endpoint, typ}).Submit(1)

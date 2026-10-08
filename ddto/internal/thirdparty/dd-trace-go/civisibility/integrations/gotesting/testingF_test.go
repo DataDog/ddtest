@@ -12,7 +12,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/stretchr/testify/require"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
 )
 
 func TestCompleteFuzzTargetLifecycleCleanupFatalSuppressesBodyPanic(t *testing.T) {
@@ -48,6 +48,7 @@ func TestCompleteFuzzParallelSeedsOffsetsNativeDurationOnce(t *testing.T) {
 				fields := getTestPrivateFields((*testing.T)(unsafe.Pointer(f)))
 				*fields.barrier = make(chan bool)
 				for _, wait := range tc.waits {
+					wait := wait // Each seed reads its delay after the barrier opens.
 					seed := &testing.T{}
 					seedFields := getTestPrivateFields(seed)
 					*seedFields.signal = make(chan bool)
