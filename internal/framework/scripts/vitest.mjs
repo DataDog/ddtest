@@ -40,5 +40,7 @@ try {
     }
   }
 } finally {
-  await context.close()
+  // Use Vitest's CLI shutdown policy: close gracefully, then terminate after
+  // teardownTimeout if leaked handles keep the process alive.
+  await context.exit()
 }

@@ -26,6 +26,22 @@ func configureVitest(config string) {
 	settings.Get().VitestConfig = config
 }
 
+// Teardown completes asynchronously, but the interval deliberately stays active.
+// This distinguishes a leaked handle from a teardown promise that never resolves.
+func writeVitestShutdownSetup(t *testing.T, root string) {
+	t.Helper()
+	writeFixture(t, root, "shutdown-setup.mjs", `import { writeFileSync } from 'node:fs'
+export default function () {
+  if (process.env.DDTEST_LEAK_HANDLE !== 'true') return
+  setInterval(() => {}, 1000)
+  return async () => {
+    await new Promise(resolve => setTimeout(resolve, 50))
+    writeFileSync(process.env.DDTEST_VITEST_TEARDOWN, 'completed')
+  }
+}
+`)
+}
+
 func TestVitestAdapterIntegration(t *testing.T) {
 	nodeModules := requireEnv(t, "DDTEST_VITEST_NODE_MODULES")
 	resetSettingsAfterTest(t)
@@ -100,6 +116,31 @@ test('must not run', () => {
 	if contents, err := os.ReadFile(lifecycle); err != nil || string(contents) != "config\nsetup\nteardown\n" {
 		t.Fatalf("Vitest lifecycle = %q, error = %v", contents, err)
 	}
+
+	t.Run("completed teardown with a leaked handle", func(t *testing.T) {
+		writeVitestShutdownSetup(t, root)
+		writeFixture(t, root, "shutdown.config.mjs", `export default { test: {
+  include: ['checks/selected.check.js'], setupFiles: ['./setup.js'],
+  globalSetup: ['./shutdown-setup.mjs'], teardownTimeout: 1000,
+} }`)
+		configureVitest("shutdown.config.mjs")
+		teardown := filepath.Join(t.TempDir(), "teardown.txt")
+		// Leave ample startup time, but fail if shutdown waits on the leaked timer.
+		shutdownCtx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		err := framework.NewVitest().RunTests(shutdownCtx, []string{"checks/selected.check.js"}, map[string]string{
+			"DDTEST_VITEST_WORKER": "selected", "DDTEST_LEAK_HANDLE": "true", "DDTEST_VITEST_TEARDOWN": teardown,
+		})
+		if contents, readErr := os.ReadFile(teardown); readErr != nil || string(contents) != "completed" {
+			t.Fatalf("global teardown did not complete: contents = %q, error = %v", contents, readErr)
+		}
+		if shutdownCtx.Err() != nil {
+			t.Fatalf("Vitest stayed alive after teardown completed: %v", shutdownCtx.Err())
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
 
 	t.Run("exact file membership with overlapping names", func(t *testing.T) {
 		writeFixture(t, root, "vitest.overlap.mjs", `export default {
@@ -330,7 +371,10 @@ func TestVitestTracingIntegration(t *testing.T) {
 	if err := os.Symlink(nodeModules, filepath.Join(root, "node_modules")); err != nil {
 		t.Fatal(err)
 	}
-	writeFixture(t, root, "vitest.config.mjs", `export default { test: { dir: 'src', include: ['**/test.js'] } }`)
+	writeVitestShutdownSetup(t, root)
+	writeFixture(t, root, "vitest.config.mjs", `export default { test: {
+  dir: 'src', include: ['**/test.js'], globalSetup: ['./shutdown-setup.mjs'], teardownTimeout: 1000,
+} }`)
 	writeFixture(t, root, "src/endOfYear/test.js", `import { test } from 'vitest'
 test('ddtest exact traced assignment', () => {
   if (process.env.DDTEST_FAIL_ASSIGNED === 'true') throw new Error('assigned failure')
@@ -380,17 +424,37 @@ test('ddtest unassigned traced file', () => { throw new Error('unassigned file r
 		"DD_INSTRUMENTATION_TELEMETRY_ENABLED":  "false",
 		"DD_TRACE_STARTUP_LOGS":                 "false",
 	})
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
-	defer cancel()
-	for _, failure := range []bool{false, true} {
-		t.Run("assigned failure="+strconv.FormatBool(failure), func(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		failure      bool
+		leakedHandle bool
+	}{
+		{name: "passing"},
+		{name: "failing", failure: true},
+		{name: "passing with leaked handle", leakedHandle: true},
+		{name: "failing with leaked handle", failure: true, leakedHandle: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			teardown := filepath.Join(t.TempDir(), "teardown.txt")
 			mu.Lock()
 			payloads = nil
 			mu.Unlock()
 			err := vitest.RunTests(ctx, []string{"src/endOfYear/test.js"}, map[string]string{
-				"DDTEST_FAIL_ASSIGNED": strconv.FormatBool(failure),
+				"DDTEST_FAIL_ASSIGNED":   strconv.FormatBool(tc.failure),
+				"DDTEST_LEAK_HANDLE":     strconv.FormatBool(tc.leakedHandle),
+				"DDTEST_VITEST_TEARDOWN": teardown,
 			})
-			if failure {
+			if tc.leakedHandle {
+				if contents, readErr := os.ReadFile(teardown); readErr != nil || string(contents) != "completed" {
+					t.Fatalf("global teardown did not complete: contents = %q, error = %v", contents, readErr)
+				}
+			}
+			if ctx.Err() != nil {
+				t.Fatalf("Vitest did not exit before the watchdog: %v", ctx.Err())
+			}
+			if tc.failure {
 				if err == nil || !strings.Contains(err.Error(), "exit status 1") {
 					t.Fatalf("expected assigned-test failure, got %v", err)
 				}
