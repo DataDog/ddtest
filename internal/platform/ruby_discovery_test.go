@@ -1,4 +1,4 @@
-package framework
+package platform
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/discovery"
+	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,9 +43,11 @@ func TestRubyFullDiscoveryRequiresCompatibleTracer(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			executor := &rubyPrerequisiteExecutor{t: t, output: tc.output, err: tc.err}
-			for _, fw := range []Framework{
-				newTestRSpecWithExecutor(executor),
-				newTestMinitestWithExecutor(executor),
+			ruby := NewRuby(settings.TestSkippingLevelTest)
+			ruby.executor = executor
+			for _, fw := range []framework.Framework{
+				framework.NewRSpec(ruby),
+				framework.NewMinitest(ruby),
 			} {
 				t.Run(fw.Name(), func(t *testing.T) {
 					executor.t = t
@@ -57,4 +61,9 @@ func TestRubyFullDiscoveryRequiresCompatibleTracer(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (e *rubyPrerequisiteExecutor) Output(ctx context.Context, name string, args []string, env map[string]string) ([]byte, []byte, error) {
+	output, err := e.CombinedOutput(ctx, name, args, env)
+	return output, nil, err
 }

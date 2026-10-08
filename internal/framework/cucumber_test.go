@@ -81,7 +81,7 @@ func cucumberTestCaseEnvelope(pickleID string) cucumberEnvelope {
 }
 
 func TestCucumberBasics(t *testing.T) {
-	cucumber := NewCucumber()
+	cucumber := NewCucumber(&testPlatform{})
 	if cucumber.Name() != "cucumber" {
 		t.Fatalf("Name() = %q, want cucumber", cucumber.Name())
 	}
@@ -107,7 +107,7 @@ func TestCucumberHasUnskippableMarker(t *testing.T) {
 	if err := os.WriteFile(marked, []byte("@datadog:unskippable\nFeature: guarded\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if !NewCucumber().HasUnskippableMarker(marked) {
+	if !NewCucumber(&testPlatform{}).HasUnskippableMarker(marked) {
 		t.Fatal("expected @datadog:unskippable feature to be guarded")
 	}
 }
@@ -226,10 +226,10 @@ func TestCucumberDiscoverTestFilesUsesSelectedTestCases(t *testing.T) {
 	cucumber := &Cucumber{
 		executor:        executor,
 		commandOverride: []string{"pnpm", "exec", "cucumber-js", "features/**/*.feature", "--tags", "@smoke"},
-		platformEnv: map[string]string{
-			"NODE_OPTIONS": "-r dd-trace/ci/init --max-old-space-size=4096",
+		platform: &testPlatform{env: map[string]string{
+			"NODE_OPTIONS": "--max-old-space-size=4096",
 			"CUSTOM":       "value",
-		},
+		}},
 	}
 
 	files, err := cucumber.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: cucumber.TestPattern()})
@@ -281,7 +281,7 @@ func TestCucumberDiscoverTestFilesFiltersLocationAndExclude(t *testing.T) {
 		cucumberPickleEnvelope("excluded", "features/excluded.feature"), cucumberTestCaseEnvelope("excluded"),
 		cucumberPickleEnvelope("outside", "other/outside.feature"), cucumberTestCaseEnvelope("outside"),
 	}}
-	cucumber := &Cucumber{executor: executor, commandOverride: []string{"cucumber-js"}, platformEnv: map[string]string{}}
+	cucumber := &Cucumber{executor: executor, commandOverride: []string{"cucumber-js"}, platform: &testPlatform{env: map[string]string{}}}
 	files, err := cucumber.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: cucumber.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
@@ -312,7 +312,7 @@ func TestCucumberDiscoverTestFilesEmptyGlobCandidatesStillUsesCucumber(t *testin
 	executor := &cucumberCommandExecutor{messages: []cucumberEnvelope{
 		cucumberPickleEnvelope("configured", "custom/from-config.feature"), cucumberTestCaseEnvelope("configured"),
 	}}
-	cucumber := &Cucumber{executor: executor, commandOverride: []string{"cucumber-js"}, platformEnv: map[string]string{}}
+	cucumber := &Cucumber{executor: executor, commandOverride: []string{"cucumber-js"}, platform: &testPlatform{env: map[string]string{}}}
 	files, err := cucumber.DiscoverTestFiles(context.Background(), discovery.TestFileSet{
 		Pattern:       cucumber.TestPattern(),
 		ExplicitFiles: []string{},
@@ -330,7 +330,7 @@ func TestCucumberDiscoverTestFilesEmptyGlobCandidatesStillUsesCucumber(t *testin
 
 func TestCucumberDiscoverTestFilesReportsCommandError(t *testing.T) {
 	executor := &cucumberCommandExecutor{output: []byte("invalid profile"), combinedErr: errors.New("exit status 1")}
-	cucumber := &Cucumber{executor: executor, commandOverride: []string{"cucumber-js"}, platformEnv: map[string]string{}}
+	cucumber := &Cucumber{executor: executor, commandOverride: []string{"cucumber-js"}, platform: &testPlatform{env: map[string]string{}}}
 	_, err := cucumber.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: cucumber.TestPattern()})
 	if err == nil || !strings.Contains(err.Error(), "invalid profile") {
 		t.Fatalf("error = %v", err)
@@ -344,7 +344,7 @@ func TestCucumberRunTestsReplacesConfiguredPaths(t *testing.T) {
 		commandOverride: []string{
 			"pnpm", "exec", "cucumber-js", "features/v1/*.feature", "--profile", "ci", "--tags", "not @slow",
 		},
-		platformEnv: map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init", "SHARED": "platform"},
+		platform: &testPlatform{env: map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init", "SHARED": "platform"}},
 	}
 	err := cucumber.RunTests(context.Background(), []string{"features/a.feature", "features/b.feature"}, map[string]string{"SHARED": "worker"})
 	if err != nil {
@@ -377,7 +377,7 @@ func TestParseCucumberMessagesRejectsMalformedLine(t *testing.T) {
 
 func TestCucumberRunPreservesWrapperSeparatorAndTags(t *testing.T) {
 	executor := &cucumberCommandExecutor{}
-	c := &Cucumber{executor: executor, commandOverride: []string{"npx", "--", "cucumber-js", "--tags", "@smoke", "--", "old.feature"}}
+	c := &Cucumber{platform: &testPlatform{}, executor: executor, commandOverride: []string{"npx", "--", "cucumber-js", "--tags", "@smoke", "--", "old.feature"}}
 	if err := c.RunTests(t.Context(), []string{"selected.feature"}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -388,5 +388,34 @@ func TestCucumberRunPreservesWrapperSeparatorAndTags(t *testing.T) {
 	_, args := c.Command()
 	if !slices.Equal(args, []string{"--", "cucumber-js", "--tags", "@smoke", "--", "old.feature"}) {
 		t.Fatal(args)
+	}
+}
+
+func TestCucumberDiscoveryAppliesNodeOptionsDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{name: "missing", env: map[string]string{}, want: ""},
+		{name: "prepared by platform", env: map[string]string{"NODE_OPTIONS": "--require project-loader.cjs"}, want: "--require project-loader.cjs"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			executor := &cucumberCommandExecutor{messages: []cucumberEnvelope{}}
+			cucumber := &Cucumber{
+				executor:        executor,
+				commandOverride: []string{"cucumber-js"},
+				platform:        &testPlatform{env: tc.env},
+			}
+			_, err := cucumber.DiscoverTestFiles(t.Context(), discovery.TestFileSet{Pattern: "features/**/*.feature"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			value, found := executor.capturedEnv["NODE_OPTIONS"]
+			if !found || value != tc.want {
+				t.Fatalf("NODE_OPTIONS = %q (present=%t), want %q", value, found, tc.want)
+			}
+		})
 	}
 }

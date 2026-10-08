@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -62,7 +61,7 @@ var cucumberValueOptions = map[string]bool{
 type Cucumber struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platformEnv     map[string]string
+	platform        PlatformEnvironment
 }
 
 type cucumberEnvelope struct {
@@ -75,18 +74,18 @@ type cucumberEnvelope struct {
 	} `json:"testCase"`
 }
 
-func NewCucumber() *Cucumber {
+func NewCucumber(p PlatformEnvironment) *Cucumber {
 	return &Cucumber{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
-		platformEnv:     make(map[string]string),
+		platform:        p,
 	}
 }
 
-func (c *Cucumber) SetPlatformEnv(platformEnv map[string]string) { c.platformEnv = platformEnv }
-func (c *Cucumber) GetPlatformEnv() map[string]string            { return c.platformEnv }
-func (c *Cucumber) Name() string                                 { return "cucumber" }
-func (c *Cucumber) SupportsFullTestDiscovery() bool              { return false }
+func (c *Cucumber) Platform() PlatformEnvironment { return c.platform }
+
+func (c *Cucumber) Name() string                    { return "cucumber" }
+func (c *Cucumber) SupportsFullTestDiscovery() bool { return false }
 
 func (c *Cucumber) SourceFileForSuite(suite string) (string, bool) {
 	suite = utils.NormalizePath(strings.TrimSpace(suite))
@@ -116,6 +115,16 @@ func (c *Cucumber) DiscoverTests(context.Context, discovery.TestFileSet) ([]test
 // that survived profile, tag, name and path filtering; their Pickle envelopes
 // carry the feature file URI.
 func (c *Cucumber) DiscoverTestFiles(ctx context.Context, selectedFiles discovery.TestFileSet) ([]string, error) {
+	envMap, err := c.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{Env: map[string]string{cucumberPublishEnabled: "false"}})
+	if err != nil {
+		return nil, err
+	}
+
+	// Cucumber discovery always supplies NODE_OPTIONS, even when it is empty.
+	if _, found := envMap["NODE_OPTIONS"]; !found {
+		envMap["NODE_OPTIONS"] = ""
+	}
+
 	command, baseArgs := c.Command()
 	if _, err := cucumberCLIArgs(command, baseArgs); err != nil {
 		return nil, err
@@ -139,7 +148,7 @@ func (c *Cucumber) DiscoverTestFiles(ctx context.Context, selectedFiles discover
 		"--format", "message:"+filepath.Base(messagePath),
 	)
 	slog.Info("Discovering Cucumber test files with command", "command", command, "args", redactCucumberArgs(args))
-	output, err := c.executor.CombinedOutput(ctx, command, args, c.discoveryEnv())
+	output, err := c.executor.CombinedOutput(ctx, command, args, envMap)
 	if err != nil {
 		message := strings.TrimSpace(string(output))
 		if message == "" {
@@ -171,22 +180,11 @@ func (c *Cucumber) RunTests(ctx context.Context, testFiles []string, envMap map[
 	args = append(args, testFiles...)
 
 	slog.Info("Running Cucumber tests with command", "command", command, "args", redactCucumberArgs(args))
-	mergedEnv := make(map[string]string)
-	maps.Copy(mergedEnv, c.platformEnv)
-	maps.Copy(mergedEnv, envMap)
-	return c.executor.Run(ctx, command, args, mergedEnv)
-}
-
-func (c *Cucumber) discoveryEnv() map[string]string {
-	envMap := make(map[string]string, len(c.platformEnv)+2)
-	maps.Copy(envMap, c.platformEnv)
-	nodeOptions, ok := envMap[nodeOptionsEnvVar]
-	if !ok {
-		nodeOptions, _ = os.LookupEnv(nodeOptionsEnvVar)
+	mergedEnv, err := c.platform.RunEnv(RuntimeOptions{Env: envMap})
+	if err != nil {
+		return err
 	}
-	envMap[nodeOptionsEnvVar] = stripNodeOptionsRequire(nodeOptions, ddTraceCIInitModule)
-	envMap[cucumberPublishEnabled] = "false"
-	return envMap
+	return c.executor.Run(ctx, command, args, mergedEnv)
 }
 
 func (c *Cucumber) Command() (string, []string) {

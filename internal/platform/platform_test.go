@@ -197,7 +197,7 @@ func TestAutomaticPlatformAndFrameworkSelection(t *testing.T) {
 			fw, err := p.DetectFramework()
 			require.NoError(t, err)
 			require.Equal(t, tc.runner, fw.Name())
-			require.Contains(t, fw.GetPlatformEnv(), tc.env)
+			require.Contains(t, frameworkRunEnv(t, fw), tc.env)
 			lang, readOnly, err := detectFixture(t, root, "")
 			require.NoError(t, err)
 			require.Equal(t, p.Name(), lang)

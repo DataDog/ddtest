@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,8 +17,6 @@ import (
 	"github.com/DataDog/ddtest/internal/testoptimization"
 	"github.com/DataDog/ddtest/internal/utils"
 )
-
-const ddTraceRegisterPath = "dd-trace/register.js"
 
 //go:embed scripts/vitest.mjs
 var vitestScript string
@@ -36,25 +33,19 @@ type Vitest struct {
 	executor      ext.CommandExecutor
 	configFile    string
 	customCommand string
-	platformEnv   map[string]string
+	platform      PlatformEnvironment
 }
 
-func NewVitest() *Vitest {
+func NewVitest(p PlatformEnvironment) *Vitest {
 	return &Vitest{
 		executor:      &ext.DefaultCommandExecutor{},
 		configFile:    settings.GetVitestConfig(),
 		customCommand: settings.GetCommand(),
-		platformEnv:   make(map[string]string),
+		platform:      p,
 	}
 }
 
-func (v *Vitest) SetPlatformEnv(platformEnv map[string]string) {
-	v.platformEnv = platformEnv
-}
-
-func (v *Vitest) GetPlatformEnv() map[string]string {
-	return v.platformEnv
-}
+func (v *Vitest) Platform() PlatformEnvironment { return v.platform }
 
 func (v *Vitest) Name() string {
 	return "vitest"
@@ -106,12 +97,16 @@ func (v *Vitest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 		}
 	}
 
+	env, err := v.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{ESM: true})
+	if err != nil {
+		return nil, err
+	}
 	dir, err := prepareVitestAdapter(vitestRequest{Config: v.configFile, Discover: true})
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
-	output, err := v.executor.CombinedOutput(ctx, "node", []string{filepath.Join(dir, "vitest.mjs")}, v.discoveryEnv())
+	output, err := v.executor.CombinedOutput(ctx, "node", []string{filepath.Join(dir, "vitest.mjs")}, env)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover Vitest test files: %s: %w", strings.TrimSpace(string(output)), err)
 	}
@@ -147,9 +142,10 @@ func (v *Vitest) RunTests(ctx context.Context, testFiles []string, envMap map[st
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	env := make(map[string]string)
-	maps.Copy(env, v.platformEnv)
-	maps.Copy(env, envMap)
+	env, err := v.platform.RunEnv(RuntimeOptions{ESM: true, Env: envMap})
+	if err != nil {
+		return err
+	}
 	slog.Info("Running assigned Vitest files with Node API", "config", v.configFile, "files", testFiles)
 	return v.executor.Run(ctx, "node", []string{filepath.Join(dir, "vitest.mjs")}, env)
 }
@@ -195,26 +191,4 @@ func prepareVitestAdapter(request vitestRequest) (string, error) {
 		}
 	}
 	return dir, nil
-}
-
-func (v *Vitest) discoveryEnv() map[string]string {
-	envMap := make(map[string]string, len(v.platformEnv)+1)
-	maps.Copy(envMap, v.platformEnv)
-
-	nodeOptions, ok := envMap[nodeOptionsEnvVar]
-	if !ok {
-		var found bool
-		nodeOptions, found = os.LookupEnv(nodeOptionsEnvVar)
-		if !found {
-			return envMap
-		}
-	}
-
-	nodeOptions = stripNodeOptionsRequire(nodeOptions, ddTraceCIInitModule)
-	envMap[nodeOptionsEnvVar] = stripNodeOptionsImport(nodeOptions, ddTraceRegisterPath)
-	return envMap
-}
-
-func stripNodeOptionsImport(nodeOptions string, module string) string {
-	return utils.NodeOptionsWithoutImport(nodeOptions, module)
 }

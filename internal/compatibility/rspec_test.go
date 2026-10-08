@@ -8,6 +8,8 @@ import (
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/settings"
 )
 
 func TestRSpecAdapterIntegration(t *testing.T) {
@@ -35,8 +37,8 @@ end
 `)
 	t.Chdir(root)
 
-	rspec := framework.NewRSpec()
-	rspec.SetPlatformEnv(map[string]string{"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument"})
+	rspec := framework.NewRSpec(platform.NewRuby(settings.TestSkippingLevelTest))
+	t.Setenv("RUBYOPT", "-rbundler/setup -rdatadog/ci/auto_instrument")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 

@@ -28,7 +28,7 @@ func TestMochaAdapterIntegration(t *testing.T) {
 	writeFixture(t, root, "test/unselected.spec.js", `describe("unselected", () => { it("must not run", () => { throw new Error("unselected file ran") }) })`)
 	t.Chdir(root)
 
-	mocha := framework.NewMocha()
+	mocha := framework.NewMocha(platform.NewJavaScript())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	files, err := mocha.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: mocha.TestPattern()})
@@ -37,7 +37,7 @@ func TestMochaAdapterIntegration(t *testing.T) {
 	}
 	want := []string{"test/selected.spec.js", "test/unselected.spec.js"}
 	requireFiles(t, files, want)
-	if err := mocha.RunTests(ctx, []string{"test/selected.spec.js"}, nil); err != nil {
+	if err := mocha.RunTests(ctx, []string{"test/selected.spec.js"}, map[string]string{"NODE_OPTIONS": ""}); err != nil {
 		t.Fatalf("selected-file run failed: %v", err)
 	}
 
@@ -67,7 +67,7 @@ func TestMochaAdapterCustomLocationAndCommandIntegration(t *testing.T) {
 	t.Chdir(root)
 	configureFramework(shellCommand(wrapper, mochaCommand), "spec/**/*.js")
 
-	mocha := framework.NewMocha()
+	mocha := framework.NewMocha(platform.NewJavaScript())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	files, err := mocha.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: mocha.TestPattern()})
@@ -75,7 +75,7 @@ func TestMochaAdapterCustomLocationAndCommandIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireFiles(t, files, []string{"spec/custom.spec.js"})
-	if err := mocha.RunTests(ctx, files, nil); err != nil {
+	if err := mocha.RunTests(ctx, files, map[string]string{"NODE_OPTIONS": ""}); err != nil {
 		t.Fatalf("custom-command run failed: %v", err)
 	}
 }
@@ -131,9 +131,9 @@ func testMochaActionPreloadIntegration(t *testing.T, explicit bool) {
 	fw, err = javascript.DetectFramework()
 	require.NoError(t, err)
 	if explicit {
-		require.Empty(t, fw.GetPlatformEnv(), "worker should inherit the customer's absolute preload")
+		require.Empty(t, frameworkRunEnv(t, fw), "worker should inherit the customer's absolute preload")
 	} else {
-		require.Equal(t, "-r "+strconv.Quote(preload), fw.GetPlatformEnv()["NODE_OPTIONS"])
+		require.Equal(t, "-r "+strconv.Quote(preload), frameworkRunEnv(t, fw)["NODE_OPTIONS"])
 	}
 	files, err = fw.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: fw.TestPattern()})
 	require.NoError(t, err)

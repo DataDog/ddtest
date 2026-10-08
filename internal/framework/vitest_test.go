@@ -66,7 +66,7 @@ func (m *vitestCommandExecutor) Run(_ context.Context, name string, args []strin
 }
 
 func TestVitest_FrameworkMetadata(t *testing.T) {
-	vitest := NewVitest()
+	vitest := NewVitest(&testPlatform{})
 	if vitest.Name() != "vitest" {
 		t.Fatalf("Name() = %q, want vitest", vitest.Name())
 	}
@@ -93,7 +93,7 @@ func TestVitest_HasUnskippableMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	vitest := NewVitest()
+	vitest := NewVitest(&testPlatform{})
 	if !vitest.HasUnskippableMarker(markedFile) {
 		t.Fatal("expected unskippable marker")
 	}
@@ -128,9 +128,9 @@ func TestVitest_DiscoverTestFiles_WithConfig(t *testing.T) {
 	vitest := &Vitest{
 		executor:   executor,
 		configFile: "vitest.unit.ts",
-		platformEnv: map[string]string{
-			"NODE_OPTIONS": "--import dd-trace/register.js -r dd-trace/ci/init --max-old-space-size=4096",
-		},
+		platform: &testPlatform{env: map[string]string{
+			"NODE_OPTIONS": "--max-old-space-size=4096",
+		}},
 	}
 
 	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
@@ -157,7 +157,7 @@ func TestVitest_DiscoverTestFiles_WithConfig(t *testing.T) {
 
 func TestVitest_DiscoverTestFiles_ExplicitFiles(t *testing.T) {
 	executor := &vitestCommandExecutor{err: errors.New("should not execute")}
-	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	vitest := &Vitest{executor: executor, platform: &testPlatform{}}
 	want := []string{"src/a.test.ts"}
 	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{ExplicitFiles: want})
 	if err != nil {
@@ -190,7 +190,7 @@ func TestVitest_DiscoverTestFiles_ExcludeStillUsesVitestDiscovery(t *testing.T) 
 				"custom.check.ts",
 			),
 		},
-		platformEnv: make(map[string]string),
+		platform: &testPlatform{},
 	}
 	resolvedTestFiles, err := discovery.ResolveTestFiles(vitest.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
@@ -230,7 +230,7 @@ func TestVitest_DiscoverTestFiles_ExcludeWithEmptyCandidatesStillUsesVitestDisco
 		"excluded.test.ts",
 		"custom.check.ts",
 	)}
-	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	vitest := &Vitest{executor: executor, platform: &testPlatform{}}
 	resolvedTestFiles, err := discovery.ResolveTestFiles(vitest.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		t.Fatal(err)
@@ -253,7 +253,7 @@ func TestVitest_DiscoverTestFiles_ExcludeWithEmptyCandidatesStillUsesVitestDisco
 
 func TestVitest_DiscoverTestFiles_ErrorIncludesOutput(t *testing.T) {
 	executor := &vitestCommandExecutor{output: []byte("invalid Vitest config"), err: errors.New("exit status 1")}
-	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	vitest := &Vitest{executor: executor, platform: &testPlatform{}}
 	_, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err == nil || !strings.Contains(err.Error(), "invalid Vitest config") {
 		t.Fatalf("unexpected error: %v", err)
@@ -262,7 +262,7 @@ func TestVitest_DiscoverTestFiles_ErrorIncludesOutput(t *testing.T) {
 
 func TestVitest_DiscoverTestFiles_InvalidJSON(t *testing.T) {
 	executor := &vitestCommandExecutor{output: []byte("not JSON")}
-	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	vitest := &Vitest{executor: executor, platform: &testPlatform{}}
 	_, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err == nil || !strings.Contains(err.Error(), "failed to parse Vitest test file list") {
 		t.Fatalf("unexpected error: %v", err)
@@ -285,7 +285,7 @@ func TestVitest_DiscoverTestFiles_IgnoresStdoutAndStderrNoise(t *testing.T) {
 		stdout: []byte("Vitest config log\n"),
 		stderr: []byte("Vite deprecation warning\n"),
 	}
-	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	vitest := &Vitest{executor: executor, platform: &testPlatform{}}
 	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
@@ -316,7 +316,7 @@ func TestVitest_DiscoverTestFiles_FiltersCustomLocation(t *testing.T) {
 		"src/b.test.ts",
 		"custom/a.check.ts",
 	)}
-	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
+	vitest := &Vitest{executor: executor, platform: &testPlatform{}}
 	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
 	if err != nil {
 		t.Fatal(err)
@@ -346,7 +346,7 @@ func TestVitest_ConfigFromEnvironment(t *testing.T) {
 	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_VITEST_CONFIG", "config with spaces/vitest.ts")
 	viper.Reset()
 	settings.Init()
-	if got := NewVitest().configFile; got != "config with spaces/vitest.ts" {
+	if got := NewVitest(&testPlatform{}).configFile; got != "config with spaces/vitest.ts" {
 		t.Fatalf("config = %q", got)
 	}
 }
@@ -382,7 +382,7 @@ func TestVitest_RunTests_ExactSelectionEnvironmentAndCleanup(t *testing.T) {
 				}
 				return runErr
 			}}
-			vitest := &Vitest{executor: executor, configFile: "vitest.unit.ts", platformEnv: map[string]string{"NODE_OPTIONS": "platform-options", "SHARED": "platform"}}
+			vitest := &Vitest{executor: executor, configFile: "vitest.unit.ts", platform: &testPlatform{env: map[string]string{"NODE_OPTIONS": "platform-options", "SHARED": "platform"}}}
 			if err := vitest.RunTests(t.Context(), []string{"src/endOfYear/test.ts"}, workerEnv); !errors.Is(err, runErr) {
 				t.Fatalf("got %v, want %v", err, runErr)
 			}
@@ -401,15 +401,7 @@ func TestVitest_RunTests_EmptyBatch(t *testing.T) {
 		t.Fatal("empty batch must not invoke Vitest")
 		return nil
 	}}
-	if err := (&Vitest{executor: executor}).RunTests(t.Context(), nil, nil); err != nil {
+	if err := (&Vitest{executor: executor, platform: &testPlatform{}}).RunTests(t.Context(), nil, nil); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestStripNodeOptionsImport(t *testing.T) {
-	input := "--import dd-trace/register.js --import=other/register.js --max-old-space-size=4096"
-	want := "--import=other/register.js --max-old-space-size=4096"
-	if got := stripNodeOptionsImport(input, ddTraceRegisterPath); got != want {
-		t.Fatalf("got %q, want %q", got, want)
 	}
 }

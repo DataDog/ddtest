@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -42,7 +41,7 @@ var cypressDiscoveryConfigScript string
 type Cypress struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platformEnv     map[string]string
+	platform        PlatformEnvironment
 }
 
 type cypressDiscoveryConfig struct {
@@ -51,18 +50,18 @@ type cypressDiscoveryConfig struct {
 	SpecFiles   []string `json:"specFiles"`
 }
 
-func NewCypress() *Cypress {
+func NewCypress(p PlatformEnvironment) *Cypress {
 	return &Cypress{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
-		platformEnv:     make(map[string]string),
+		platform:        p,
 	}
 }
 
-func (c *Cypress) SetPlatformEnv(platformEnv map[string]string) { c.platformEnv = platformEnv }
-func (c *Cypress) GetPlatformEnv() map[string]string            { return c.platformEnv }
-func (c *Cypress) Name() string                                 { return "cypress" }
-func (c *Cypress) SupportsFullTestDiscovery() bool              { return false }
+func (c *Cypress) Platform() PlatformEnvironment { return c.platform }
+
+func (c *Cypress) Name() string                    { return "cypress" }
+func (c *Cypress) SupportsFullTestDiscovery() bool { return false }
 
 func (c *Cypress) SourceFileForSuite(suite string) (string, bool) {
 	suite = strings.TrimSpace(suite)
@@ -108,6 +107,11 @@ func (c *Cypress) DiscoverTests(context.Context, discovery.TestFileSet) ([]testo
 }
 
 func (c *Cypress) DiscoverTestFiles(ctx context.Context, selectedFiles discovery.TestFileSet) ([]string, error) {
+	envMap, err := c.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{})
+	if err != nil {
+		return nil, err
+	}
+
 	command, baseArgs := c.Command()
 	cliArgs, err := cypressCLIArgs(command, baseArgs)
 	if err != nil {
@@ -129,7 +133,7 @@ func (c *Cypress) DiscoverTestFiles(ctx context.Context, selectedFiles discovery
 
 	args := cypressDiscoveryArgs(command, baseArgs, discoveryConfigPath)
 	slog.Info("Discovering Cypress test files with command", "command", command, "args", args)
-	output, err := c.executor.CombinedOutput(ctx, command, args, c.discoveryEnv())
+	output, err := c.executor.CombinedOutput(ctx, command, args, envMap)
 	config, configErr := parseCypressDiscoveryOutput(output)
 	if err != nil && configErr != nil {
 		message := strings.TrimSpace(string(output))
@@ -170,25 +174,11 @@ func (c *Cypress) RunTests(ctx context.Context, testFiles []string, envMap map[s
 	args := cypressRunArgs(command, baseArgs, projectTestFiles)
 
 	slog.Info("Running Cypress tests", "command", command, "args", args, "testFiles", testFiles)
-	mergedEnv := make(map[string]string)
-	maps.Copy(mergedEnv, c.platformEnv)
-	maps.Copy(mergedEnv, envMap)
-	return c.executor.Run(ctx, command, args, mergedEnv)
-}
-
-func (c *Cypress) discoveryEnv() map[string]string {
-	envMap := make(map[string]string, len(c.platformEnv)+1)
-	maps.Copy(envMap, c.platformEnv)
-	nodeOptions, ok := envMap[nodeOptionsEnvVar]
-	if !ok {
-		var found bool
-		nodeOptions, found = os.LookupEnv(nodeOptionsEnvVar)
-		if !found {
-			return envMap
-		}
+	mergedEnv, err := c.platform.RunEnv(RuntimeOptions{Env: envMap})
+	if err != nil {
+		return err
 	}
-	envMap[nodeOptionsEnvVar] = stripNodeOptionsRequire(nodeOptions, ddTraceCIInitModule)
-	return envMap
+	return c.executor.Run(ctx, command, args, mergedEnv)
 }
 
 func (c *Cypress) Command() (string, []string) {

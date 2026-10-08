@@ -10,6 +10,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
@@ -25,15 +26,15 @@ func TestPositionalSelectionNarrowsFrameworkDiscovery(t *testing.T) {
 		exclude   string
 		want      []string
 	}{
-		{name: "RSpec directory", framework: framework.NewRSpec(), args: []string{"spec/models"}, want: []string{"spec/models/user_spec.rb"}},
-		{name: "RSpec broad glob", framework: framework.NewRSpec(), args: []string{"spec/**/*"}, want: []string{"spec/models/user_spec.rb", "spec/requests/api_spec.rb"}},
-		{name: "pytest directory", framework: framework.NewPytest(), args: []string{"tests"}, want: []string{"tests/test_user.py"}},
-		{name: "multiple overlapping arguments", framework: framework.NewRSpec(), args: []string{"spec/models", "spec/requests/api_spec.rb", "spec/models/*"}, want: []string{"spec/models/user_spec.rb", "spec/requests/api_spec.rb"}},
-		{name: "helper is not a test", framework: framework.NewRSpec(), args: []string{"spec/models/helper.rb"}},
-		{name: "outside default roots", framework: framework.NewRSpec(), args: []string{"custom_specs"}},
-		{name: "custom discovery root", framework: framework.NewRSpec(), args: []string{"custom_specs"}, location: "custom_specs/**/*_spec.rb", want: []string{"custom_specs/extra_spec.rb"}},
-		{name: "exclude still applies", framework: framework.NewRSpec(), args: []string{"spec"}, exclude: "spec/requests/**", want: []string{"spec/models/user_spec.rb"}},
-		{name: "unmatched glob", framework: framework.NewRSpec(), args: []string{"missing/**"}},
+		{name: "RSpec directory", framework: framework.NewRSpec(platform.NewRuby(settings.TestSkippingLevelTest)), args: []string{"spec/models"}, want: []string{"spec/models/user_spec.rb"}},
+		{name: "RSpec broad glob", framework: framework.NewRSpec(platform.NewRuby(settings.TestSkippingLevelTest)), args: []string{"spec/**/*"}, want: []string{"spec/models/user_spec.rb", "spec/requests/api_spec.rb"}},
+		{name: "pytest directory", framework: framework.NewPytest(platform.NewPython()), args: []string{"tests"}, want: []string{"tests/test_user.py"}},
+		{name: "multiple overlapping arguments", framework: framework.NewRSpec(platform.NewRuby(settings.TestSkippingLevelTest)), args: []string{"spec/models", "spec/requests/api_spec.rb", "spec/models/*"}, want: []string{"spec/models/user_spec.rb", "spec/requests/api_spec.rb"}},
+		{name: "helper is not a test", framework: framework.NewRSpec(platform.NewRuby(settings.TestSkippingLevelTest)), args: []string{"spec/models/helper.rb"}},
+		{name: "outside default roots", framework: framework.NewRSpec(platform.NewRuby(settings.TestSkippingLevelTest)), args: []string{"custom_specs"}},
+		{name: "custom discovery root", framework: framework.NewRSpec(platform.NewRuby(settings.TestSkippingLevelTest)), args: []string{"custom_specs"}, location: "custom_specs/**/*_spec.rb", want: []string{"custom_specs/extra_spec.rb"}},
+		{name: "exclude still applies", framework: framework.NewRSpec(platform.NewRuby(settings.TestSkippingLevelTest)), args: []string{"spec"}, exclude: "spec/requests/**", want: []string{"spec/models/user_spec.rb"}},
+		{name: "unmatched glob", framework: framework.NewRSpec(platform.NewRuby(settings.TestSkippingLevelTest)), args: []string{"missing/**"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())

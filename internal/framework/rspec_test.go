@@ -89,9 +89,6 @@ type mockCommandExecutor struct {
 }
 
 func (m *mockCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
-	if name == "bundle" && slices.Equal(args, []string{"info", "datadog-ci"}) {
-		return []byte("  * datadog-ci (1.31.0)"), nil
-	}
 	if m.onExecution != nil {
 		m.onExecution(name, args)
 	}
@@ -108,13 +105,13 @@ func (m *mockCommandExecutor) Run(ctx context.Context, name string, args []strin
 }
 
 func newTestRSpecWithExecutor(executor ext.CommandExecutor) *RSpec {
-	rspec := NewRSpec()
+	rspec := NewRSpec(&testPlatform{})
 	rspec.executor = executor
 	return rspec
 }
 
 func newTestRSpecWithOverride(commandOverride []string) *RSpec {
-	rspec := NewRSpec()
+	rspec := NewRSpec(&testPlatform{})
 	rspec.commandOverride = commandOverride
 	return rspec
 }
@@ -126,7 +123,7 @@ func newTestRSpecWithExecutorAndOverride(executor ext.CommandExecutor, commandOv
 }
 
 func newTestMinitestWithExecutor(executor ext.CommandExecutor) *Minitest {
-	minitest := NewMinitest()
+	minitest := NewMinitest(&testPlatform{})
 	minitest.executor = executor
 	return minitest
 }
@@ -138,24 +135,24 @@ func newTestMinitestWithExecutorAndOverride(executor ext.CommandExecutor, comman
 }
 
 func TestNewRSpec(t *testing.T) {
-	rspec := NewRSpec()
+	rspec := NewRSpec(&testPlatform{})
 	if rspec == nil {
-		t.Error("NewRSpec() returned nil")
+		t.Error("NewRSpec(&testPlatform{}) returned nil")
 		return
 	}
 	if rspec.executor == nil {
-		t.Error("NewRSpec() created RSpec with nil executor")
+		t.Error("NewRSpec(&testPlatform{}) created RSpec with nil executor")
 		return
 	}
 
 	// Verify it's using the default executor
 	if _, ok := rspec.executor.(*ext.DefaultCommandExecutor); !ok {
-		t.Error("NewRSpec() should use DefaultCommandExecutor")
+		t.Error("NewRSpec(&testPlatform{}) should use DefaultCommandExecutor")
 	}
 }
 
 func TestRSpec_Name(t *testing.T) {
-	rspec := NewRSpec()
+	rspec := NewRSpec(&testPlatform{})
 	expected := "rspec"
 	actual := rspec.Name()
 
@@ -178,7 +175,7 @@ func TestRSpec_getRSpecCommand_WithBinRSpec(t *testing.T) {
 		t.Fatalf("failed to create bin/rspec: %v", err)
 	}
 
-	rspec := NewRSpec()
+	rspec := NewRSpec(&testPlatform{})
 	command, baseArgs := rspec.Command()
 
 	if command != "bin/rspec" {
@@ -203,7 +200,7 @@ func TestRSpec_getRSpecCommand_WithNonExecutableBinRSpec(t *testing.T) {
 		t.Fatalf("failed to create bin/rspec: %v", err)
 	}
 
-	rspec := NewRSpec()
+	rspec := NewRSpec(&testPlatform{})
 	command, baseArgs := rspec.Command()
 
 	if command != "bundle" {
@@ -224,7 +221,7 @@ func TestRSpec_getRSpecCommand_WithoutBinRSpec(t *testing.T) {
 	// Ensure bin/rspec doesn't exist
 	_ = os.RemoveAll("bin")
 
-	rspec := NewRSpec()
+	rspec := NewRSpec(&testPlatform{})
 	command, baseArgs := rspec.Command()
 
 	if command != "bundle" {
@@ -676,7 +673,7 @@ func TestRSpec_DiscoverTestFiles(t *testing.T) {
 		}
 	}
 
-	rspec := NewRSpec()
+	rspec := NewRSpec(&testPlatform{})
 	discoveredFiles, err := discovery.DiscoverTestFiles(rspec.TestPattern(), settings.GetTestsExcludePattern())
 
 	if err != nil {
@@ -750,7 +747,7 @@ func TestRSpec_DiscoverTestFiles_WithTestsLocation(t *testing.T) {
 
 	setTestsLocation(t, filepath.Join("custom", "spec", "**", "*_spec.rb"))
 
-	rspec := NewRSpec()
+	rspec := NewRSpec(&testPlatform{})
 	files, err := discovery.DiscoverTestFiles(rspec.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
@@ -804,7 +801,7 @@ func TestRSpec_DiscoverTestFiles_WithTestsExcludePattern(t *testing.T) {
 
 	setTestsExcludePattern(t, filepath.Join("spec", "system", "**", "*_spec.rb"))
 
-	rspec := NewRSpec()
+	rspec := NewRSpec(&testPlatform{})
 	files, err := discovery.DiscoverTestFiles(rspec.TestPattern(), settings.GetTestsExcludePattern())
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
@@ -1130,7 +1127,7 @@ func TestRSpec_DiscoverTestFiles_NoSpecDirectory(t *testing.T) {
 		_ = os.Chdir(originalDir)
 	}()
 
-	rspec := NewRSpec()
+	rspec := NewRSpec(&testPlatform{})
 	discoveredFiles, err := discovery.DiscoverTestFiles(rspec.TestPattern(), settings.GetTestsExcludePattern())
 
 	if err != nil {
@@ -1140,19 +1137,6 @@ func TestRSpec_DiscoverTestFiles_NoSpecDirectory(t *testing.T) {
 	// Should return empty slice when spec directory doesn't exist
 	if len(discoveredFiles) != 0 {
 		t.Errorf("expected 0 test files, got %d", len(discoveredFiles))
-	}
-}
-
-func TestRSpec_SetPlatformEnv(t *testing.T) {
-	rspec := NewRSpec()
-
-	platformEnv := map[string]string{
-		"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument",
-	}
-	rspec.SetPlatformEnv(platformEnv)
-
-	if rspec.GetPlatformEnv()["RUBYOPT"] != platformEnv["RUBYOPT"] {
-		t.Errorf("expected platformEnv to be set, got %v", rspec.GetPlatformEnv())
 	}
 }
 
@@ -1171,7 +1155,7 @@ func TestRSpec_RunTests_UsesPlatformEnv(t *testing.T) {
 	platformEnv := map[string]string{
 		"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument",
 	}
-	rspec.SetPlatformEnv(platformEnv)
+	rspec.platform = &testPlatform{env: platformEnv}
 
 	err := rspec.RunTests(context.Background(), testFiles, nil)
 	if err != nil {
@@ -1200,7 +1184,7 @@ func TestRSpec_RunTests_MergesPlatformEnvWithPassedEnv(t *testing.T) {
 		"RUBYOPT":      "-rbundler/setup -rdatadog/ci/auto_instrument",
 		"PLATFORM_VAR": "platform_value",
 	}
-	rspec.SetPlatformEnv(platformEnv)
+	rspec.platform = &testPlatform{env: platformEnv}
 
 	// Pass additional env vars
 	additionalEnv := map[string]string{
@@ -1247,7 +1231,7 @@ func TestRSpec_RunTests_AdditionalEnvOverridesPlatformEnv(t *testing.T) {
 		"SHARED_VAR":  "platform_value",
 		"ANOTHER_VAR": "platform_another",
 	}
-	rspec.SetPlatformEnv(platformEnv)
+	rspec.platform = &testPlatform{env: platformEnv}
 
 	// Pass additional env that overrides SHARED_VAR
 	additionalEnv := map[string]string{
@@ -1283,9 +1267,6 @@ type mockCommandExecutorWithEnvCapture struct {
 }
 
 func (m *mockCommandExecutorWithEnvCapture) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
-	if name == "bundle" && slices.Equal(args, []string{"info", "datadog-ci"}) {
-		return []byte("  * datadog-ci (1.31.0)"), nil
-	}
 	m.combinedOutputEnvMap = envMap
 	if m.onExecution != nil {
 		m.onExecution(name, args)
@@ -1344,7 +1325,7 @@ func TestRSpec_DiscoverTests_UsesPlatformEnv(t *testing.T) {
 	platformEnv := map[string]string{
 		"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument",
 	}
-	rspec.SetPlatformEnv(platformEnv)
+	rspec.platform = &testPlatform{env: platformEnv}
 
 	_, err := discoverAndParseTests(t, rspec, resolveTestFilesForFramework(t, rspec.TestPattern()))
 	if err != nil {
@@ -1378,7 +1359,7 @@ func TestRSpec_DefaultTestPattern(t *testing.T) {
 	settings.Init()
 	t.Cleanup(settings.Init)
 
-	rspec := NewRSpec()
+	rspec := NewRSpec(&testPlatform{})
 	expected := filepath.Join(rspecRootDir, "**", rspecTestFilePattern)
 	if got := rspec.TestPattern(); got != expected {
 		t.Errorf("expected default test pattern %q, got %q", expected, got)
@@ -1386,14 +1367,14 @@ func TestRSpec_DefaultTestPattern(t *testing.T) {
 }
 
 func TestRSpec_SupportsFullTestDiscovery(t *testing.T) {
-	rspec := NewRSpec()
+	rspec := NewRSpec(&testPlatform{})
 	if !rspec.SupportsFullTestDiscovery() {
 		t.Error("expected RSpec to support full test discovery")
 	}
 }
 
 func TestRSpec_SourceFileForSuite(t *testing.T) {
-	rspec := NewRSpec()
+	rspec := NewRSpec(&testPlatform{})
 
 	sourceFile, ok := rspec.SourceFileForSuite("User model at spec/models/user_spec.rb")
 	if !ok || sourceFile != "spec/models/user_spec.rb" {
@@ -1421,7 +1402,7 @@ func TestRSpec_HasUnskippableMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rspec := NewRSpec()
+	rspec := NewRSpec(&testPlatform{})
 	if !rspec.HasUnskippableMarker(markedFile) {
 		t.Fatal("expected Ruby unskippable marker")
 	}

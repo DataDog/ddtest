@@ -172,7 +172,7 @@ func TestLoadCommandOverride_Integration(t *testing.T) {
 
 			switch tt.frameworkType {
 			case "rspec":
-				rspec := NewRSpec()
+				rspec := NewRSpec(&testPlatform{})
 				command, args := rspec.Command()
 
 				if command != tt.expectedCommand {
@@ -190,7 +190,7 @@ func TestLoadCommandOverride_Integration(t *testing.T) {
 					}
 				}
 			case "minitest":
-				minitest := NewMinitest()
+				minitest := NewMinitest(&testPlatform{})
 				command, args, _ := minitest.getMinitestCommand(context.Background())
 
 				if command != tt.expectedCommand {
@@ -223,15 +223,15 @@ func TestFrameworkCommand(t *testing.T) {
 		command   string
 		args      []string
 	}{
-		{NewJest(), "npx", []string{"jest"}},
-		{NewMocha(), "npx", []string{"mocha"}},
-		{NewCucumber(), "npx", []string{"cucumber-js"}},
-		{NewVitest(), "node", nil},
-		{NewPlaywright(), "npx", []string{"playwright", "test"}},
-		{NewCypress(), "npx", []string{"cypress", "run"}},
-		{NewPytest(), "python", []string{"-m", "pytest"}},
-		{NewRSpec(), "bundle", []string{"exec", "rspec"}},
-		{NewMinitest(), "bundle", []string{"exec", "rake", "test"}},
+		{NewJest(&testPlatform{}), "npx", []string{"jest"}},
+		{NewMocha(&testPlatform{}), "npx", []string{"mocha"}},
+		{NewCucumber(&testPlatform{}), "npx", []string{"cucumber-js"}},
+		{NewVitest(&testPlatform{}), "node", nil},
+		{NewPlaywright(&testPlatform{}), "npx", []string{"playwright", "test"}},
+		{NewCypress(&testPlatform{}), "npx", []string{"cypress", "run"}},
+		{NewPytest(&testPlatform{}), "python", []string{"-m", "pytest"}},
+		{NewRSpec(&testPlatform{}), "bundle", []string{"exec", "rspec"}},
+		{NewMinitest(&testPlatform{}), "bundle", []string{"exec", "rake", "test"}},
 	} {
 		t.Run(tc.framework.Name(), func(t *testing.T) {
 			command, args := tc.framework.Command()
@@ -245,8 +245,8 @@ func TestFrameworkCommand(t *testing.T) {
 		path      string
 		args      []string
 	}{
-		{NewJest(), binJestPath, nil},
-		{NewRSpec(), binRSpecPath, nil},
+		{NewJest(&testPlatform{}), binJestPath, nil},
+		{NewRSpec(&testPlatform{}), binRSpecPath, nil},
 	} {
 		if err := os.MkdirAll(filepath.Dir(tc.path), 0755); err != nil {
 			t.Fatal(err)
@@ -266,7 +266,7 @@ func TestFrameworkCommandPreservesOverride(t *testing.T) {
 	viper.Reset()
 	viper.Set("command", `npm test -- --runInBand "path with spaces"`)
 	settings.Init()
-	for _, f := range []Framework{NewJest(), NewMocha(), NewCucumber(), NewPlaywright(), NewCypress(), NewPytest(), NewRSpec(), NewMinitest()} {
+	for _, f := range []Framework{NewJest(&testPlatform{}), NewMocha(&testPlatform{}), NewCucumber(&testPlatform{}), NewPlaywright(&testPlatform{}), NewCypress(&testPlatform{}), NewPytest(&testPlatform{}), NewRSpec(&testPlatform{}), NewMinitest(&testPlatform{})} {
 		command, args := f.Command()
 		if command != "npm" || !slices.Equal(args, []string{"test", "--", "--runInBand", "path with spaces"}) {
 			t.Fatalf("%s: %s %q", f.Name(), command, args)

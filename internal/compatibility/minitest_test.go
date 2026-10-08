@@ -8,6 +8,8 @@ import (
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/settings"
 )
 
 func TestMinitestAdapterIntegration(t *testing.T) {
@@ -50,8 +52,8 @@ end
 `)
 	t.Chdir(root)
 
-	minitest := framework.NewMinitest()
-	minitest.SetPlatformEnv(map[string]string{"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument"})
+	minitest := framework.NewMinitest(platform.NewRuby(settings.TestSkippingLevelTest))
+	t.Setenv("RUBYOPT", "-rbundler/setup -rdatadog/ci/auto_instrument")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 

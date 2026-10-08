@@ -18,6 +18,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 )
 
@@ -95,7 +96,14 @@ test('must not run', () => {
 	t.Chdir(root)
 	configureVitest("vitest.unit.mjs")
 
-	vitest := framework.NewVitest()
+	vitest := framework.NewVitest(platform.NewJavaScript())
+	runVitest := func(ctx context.Context, files []string, env map[string]string) error {
+		if env == nil {
+			env = make(map[string]string)
+		}
+		env["NODE_OPTIONS"] = ""
+		return framework.NewVitest(platform.NewJavaScript()).RunTests(ctx, files, env)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -108,7 +116,7 @@ test('must not run', () => {
 	requireFiles(t, files, wantFiles)
 
 	lifecycle := filepath.Join(root, "lifecycle.txt")
-	if err := vitest.RunTests(ctx, []string{"checks/selected.check.js"}, map[string]string{
+	if err := runVitest(ctx, []string{"checks/selected.check.js"}, map[string]string{
 		"DDTEST_VITEST_WORKER": "selected", "DDTEST_VITEST_CONFIG_EVENTS": lifecycle,
 	}); err != nil {
 		t.Fatalf("selected-file run failed: %v", err)
@@ -128,7 +136,7 @@ test('must not run', () => {
 		// Leave ample startup time, but fail if shutdown waits on the leaked timer.
 		shutdownCtx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 		defer cancel()
-		err := framework.NewVitest().RunTests(shutdownCtx, []string{"checks/selected.check.js"}, map[string]string{
+		err := runVitest(shutdownCtx, []string{"checks/selected.check.js"}, map[string]string{
 			"DDTEST_VITEST_WORKER": "selected", "DDTEST_LEAK_HANDLE": "true", "DDTEST_VITEST_TEARDOWN": teardown,
 		})
 		if contents, readErr := os.ReadFile(teardown); readErr != nil || string(contents) != "completed" {
@@ -174,7 +182,7 @@ test('runs only in its assigned batch', () => {
 				}
 				configureVitest("vitest.overlap.mjs")
 				name := filepath.Base(filepath.Dir(tc.selected))
-				if err := framework.NewVitest().RunTests(ctx, []string{tc.selected}, map[string]string{
+				if err := runVitest(ctx, []string{tc.selected}, map[string]string{
 					"DDTEST_VITEST_WORKER": name, "DDTEST_VITEST_EVENTS": events, "DDTEST_SHARD": tc.shard,
 				}); err != nil {
 					t.Fatalf("exact-file run failed: %v", err)
@@ -191,11 +199,11 @@ test('runs only in its assigned batch', () => {
 
 		// An empty batch must not turn into an unfiltered full-suite run.
 		configureVitest("vitest.overlap.mjs")
-		if err := framework.NewVitest().RunTests(ctx, nil, nil); err != nil {
+		if err := runVitest(ctx, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		// Preserve the framework's nonzero exit status on an assigned test failure.
-		err := framework.NewVitest().RunTests(ctx, []string{"src/endOfYear/test.js"}, map[string]string{"DDTEST_VITEST_WORKER": "wrong"})
+		err := runVitest(ctx, []string{"src/endOfYear/test.js"}, map[string]string{"DDTEST_VITEST_WORKER": "wrong"})
 		if err == nil || !strings.Contains(err.Error(), "exit status 1") {
 			t.Fatalf("expected assigned-test failure, got %v", err)
 		}
@@ -244,7 +252,7 @@ test('must not run', () => { throw new Error('file assignment lost') })
 				want = append(want, "two")
 			}
 			configureVitest("multi-project.config.mjs")
-			if err := framework.NewVitest().RunTests(ctx, []string{"project-checks/selected.test.js"}, map[string]string{"DDTEST_VITEST_EVENTS": events, "DDTEST_PROJECT_FILTER": project}); err != nil {
+			if err := runVitest(ctx, []string{"project-checks/selected.test.js"}, map[string]string{"DDTEST_VITEST_EVENTS": events, "DDTEST_PROJECT_FILTER": project}); err != nil {
 				t.Fatal(err)
 			}
 			contents, err := os.ReadFile(events)
@@ -286,7 +294,7 @@ test('must not run', () => { throw new Error('file assignment lost') })
 test('snapshot policy', () => { expect({ assigned: true }).toMatchSnapshot() })
 `)
 		configureVitest("snapshot.config.mjs")
-		err := framework.NewVitest().RunTests(ctx, []string{"snapshot.test.js"}, map[string]string{"CI": "true"})
+		err := runVitest(ctx, []string{"snapshot.test.js"}, map[string]string{"CI": "true"})
 		if err == nil || !strings.Contains(err.Error(), "exit status 1") {
 			t.Fatalf("expected missing-snapshot failure in CI, got %v", err)
 		}
@@ -294,7 +302,7 @@ test('snapshot policy', () => { expect({ assigned: true }).toMatchSnapshot() })
 		if _, err := os.Stat(snapshot); !os.IsNotExist(err) {
 			t.Fatalf("snapshot should not be written without explicit update, got %v", err)
 		}
-		if err := framework.NewVitest().RunTests(ctx, []string{"snapshot.test.js"}, map[string]string{"CI": "true", "DDTEST_UPDATE_SNAPSHOTS": "true"}); err != nil {
+		if err := runVitest(ctx, []string{"snapshot.test.js"}, map[string]string{"CI": "true", "DDTEST_UPDATE_SNAPSHOTS": "true"}); err != nil {
 			t.Fatalf("explicit snapshot update failed: %v", err)
 		}
 		if _, err := os.Stat(snapshot); err != nil {
@@ -313,7 +321,7 @@ import { add } from './math.js'
 test('records coverage', () => { expect(add(1, 2)).toBe(3) })
 `)
 		configureVitest("coverage.config.mjs")
-		if err := framework.NewVitest().RunTests(ctx, []string{"coverage.test.js"}, nil); err != nil {
+		if err := runVitest(ctx, []string{"coverage.test.js"}, nil); err != nil {
 			t.Fatal(err)
 		}
 		report, err := os.ReadFile(filepath.Join(root, "coverage-report/coverage-final.json"))
@@ -341,11 +349,11 @@ test('records coverage', () => { expect(add(1, 2)).toBe(3) })
 	t.Run("configuration errors fail discovery and execution", func(t *testing.T) {
 		writeFixture(t, root, "broken.config.mjs", `throw new Error('invalid fixture config')`)
 		configureVitest("broken.config.mjs")
-		_, err := framework.NewVitest().DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: "**/*.test.js"})
+		_, err := framework.NewVitest(platform.NewJavaScript()).DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: "**/*.test.js"})
 		if err == nil || !strings.Contains(err.Error(), "broken.config.mjs") {
 			t.Fatalf("expected configuration error, got %v", err)
 		}
-		err = framework.NewVitest().RunTests(ctx, []string{"src/endOfYear/test.js"}, nil)
+		err = runVitest(ctx, []string{"src/endOfYear/test.js"}, nil)
 		if err == nil || !strings.Contains(err.Error(), "exit status 1") {
 			t.Fatalf("expected configuration failure, got %v", err)
 		}
@@ -353,11 +361,11 @@ test('records coverage', () => { expect(add(1, 2)).toBe(3) })
 
 	t.Run("no matching specification", func(t *testing.T) {
 		configureVitest("vitest.unit.mjs")
-		err := framework.NewVitest().RunTests(ctx, []string{"src/endOfYear/test.js"}, nil)
+		err := runVitest(ctx, []string{"src/endOfYear/test.js"}, nil)
 		if err == nil || !strings.Contains(err.Error(), "exit status 1") {
 			t.Fatalf("expected no-test failure, got %v", err)
 		}
-		if err := framework.NewVitest().RunTests(ctx, []string{"src/endOfYear/test.js"}, map[string]string{"DDTEST_PASS_WITH_NO_TESTS": "true"}); err != nil {
+		if err := runVitest(ctx, []string{"src/endOfYear/test.js"}, map[string]string{"DDTEST_PASS_WITH_NO_TESTS": "true"}); err != nil {
 			t.Fatalf("passWithNoTests failed: %v", err)
 		}
 	})
@@ -409,9 +417,9 @@ test('ddtest unassigned traced file', () => { throw new Error('unassigned file r
 	t.Chdir(root)
 	t.Setenv("NODE_OPTIONS", "")
 	configureVitest("")
-	vitest := framework.NewVitest()
+	settings.Get().Framework = "vitest"
 	tracerRoot := filepath.Join(tracerModules, "dd-trace")
-	vitest.SetPlatformEnv(map[string]string{
+	for key, value := range map[string]string{
 		"NODE_OPTIONS": "--require " + strconv.Quote(filepath.Join(tracerRoot, "ci/init.js")) +
 			" --import " + strconv.Quote(filepath.Join(tracerRoot, "register.js")),
 		"DD_TRACE_AGENT_URL":                    agent.URL,
@@ -423,7 +431,14 @@ test('ddtest unassigned traced file', () => { throw new Error('unassigned file r
 		"DD_GIT_METADATA_ENABLED":               "false",
 		"DD_INSTRUMENTATION_TELEMETRY_ENABLED":  "false",
 		"DD_TRACE_STARTUP_LOGS":                 "false",
-	})
+	} {
+		t.Setenv(key, value)
+	}
+	p := platform.NewJavaScript()
+	vitest, err := p.DetectFramework()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name         string
 		failure      bool

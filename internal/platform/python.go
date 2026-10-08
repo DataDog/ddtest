@@ -42,7 +42,8 @@ const (
 )
 
 type Python struct {
-	executor commandExecutor
+	frameworkEnv map[string]string
+	executor     commandExecutor
 }
 
 func NewPython() *Python {
@@ -82,11 +83,11 @@ func (p *Python) Detect(root string) (bool, error) {
 // Pytest is the only supported Python framework and is the platform default.
 func (p *Python) DetectFramework() (framework.Framework, error) {
 	hint := settings.GetFramework()
-	fw, err := selectFramework(p.Name(), hint, []framework.Framework{framework.NewPytest()})
+	fw, err := selectFramework(p.Name(), hint, []framework.Framework{framework.NewPytest(p)})
 	if err != nil {
 		return nil, err
 	}
-	fw.SetPlatformEnv(p.GetPlatformEnv())
+	p.frameworkEnv = p.baseEnv()
 	return fw, nil
 }
 
@@ -94,9 +95,9 @@ func (p *Python) TestSkippingLevel() settings.TestSkippingLevel {
 	return settings.TestSkippingLevelTest
 }
 
-// GetPlatformEnv returns environment variables required for Python commands.
+// baseEnv returns environment variables required for Python commands.
 // It appends --ddtrace to PYTEST_ADDOPTS to load the ddtrace pytest plugin.
-func (p *Python) GetPlatformEnv() map[string]string {
+func (p *Python) baseEnv() map[string]string {
 	envMap := make(map[string]string)
 
 	// Get existing PYTEST_ADDOPTS if set, then append --ddtrace
@@ -261,4 +262,27 @@ func (p *Python) TracerInstallCommand(options TracerOptions) (string, []string, 
 	target := filepath.Join(options.Directory, "python-packages")
 	args := append(append([]string{}, prefixArgs...), "-m", "pip", "install", "--disable-pip-version-check", "--target", target, packageName)
 	return command, args, nil
+}
+
+func (p *Python) RunEnv(options framework.RuntimeOptions) (map[string]string, error) {
+	if len(options.PreloadFiles) != 0 {
+		return nil, fmt.Errorf("Python framework preloads are not supported")
+	}
+	env := maps.Clone(p.frameworkEnv)
+	if env == nil {
+		env = p.baseEnv()
+	}
+	maps.Copy(env, options.Env)
+	return env, nil
+}
+
+func (p *Python) DiscoveryEnv(_ context.Context, kind framework.DiscoveryKind, options framework.RuntimeOptions) (map[string]string, error) {
+	switch kind {
+	case framework.FileDiscovery:
+		return maps.Clone(options.Env), nil
+	case framework.FullDiscovery:
+		return p.RunEnv(options)
+	default:
+		return nil, fmt.Errorf("unknown discovery kind: %d", kind)
+	}
 }

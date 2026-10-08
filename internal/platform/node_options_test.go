@@ -1,4 +1,4 @@
-package utils
+package platform
 
 import "testing"
 
@@ -18,13 +18,13 @@ func TestCIRequireOptions(t *testing.T) {
 		{name: "similar package", options: "-r dd-trace/ci/initializer", without: "-r dd-trace/ci/initializer"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := NodeOptionsHasRequire(test.options, "dd-trace/ci/init"); got != test.has {
+			if got := nodeOptionsHasRequire(test.options, "dd-trace/ci/init"); got != test.has {
 				t.Fatalf("HasRequire() = %t, want %t", got, test.has)
 			}
-			if got := NodeOptionsRequire(test.options, "dd-trace/ci/init"); got != test.require {
+			if got := nodeOptionsRequire(test.options, "dd-trace/ci/init"); got != test.require {
 				t.Fatalf("Require() = %q, want %q", got, test.require)
 			}
-			if got := NodeOptionsWithoutRequire(test.options, "dd-trace/ci/init"); got != test.without {
+			if got := nodeOptionsWithoutRequire(test.options, "dd-trace/ci/init"); got != test.without {
 				t.Fatalf("WithoutRequire() = %q, want %q", got, test.without)
 			}
 		})
@@ -33,10 +33,18 @@ func TestCIRequireOptions(t *testing.T) {
 
 func TestRegisterImportOptions(t *testing.T) {
 	options := `--import="/tmp/action install/dd-trace/register.js" --require "/tmp/loader.cjs"`
-	if !NodeOptionsHasImport(options, "dd-trace/register.js") {
+	if !nodeOptionsHasImport(options, "dd-trace/register.js") {
 		t.Fatal("absolute register import was not found")
 	}
-	if got := NodeOptionsWithoutImport(options, "dd-trace/register.js"); got != `--require "/tmp/loader.cjs"` {
+	if got := nodeOptionsWithoutImport(options, "dd-trace/register.js"); got != `--require "/tmp/loader.cjs"` {
 		t.Fatalf("WithoutImport() = %q", got)
+	}
+}
+
+func TestStripNodeOptionsImport(t *testing.T) {
+	input := "--import dd-trace/register.js --import=other/register.js --max-old-space-size=4096"
+	want := "--import=other/register.js --max-old-space-size=4096"
+	if got := nodeOptionsWithoutImport(input, ddTraceRegisterModule); got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }
