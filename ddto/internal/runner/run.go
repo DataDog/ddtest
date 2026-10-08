@@ -49,11 +49,15 @@ type Plan struct {
 	// not require; the module's own go.mod and go.sum stay untouched.
 	Modfile string
 	// Warnings name optional integrations skipped for unsupported libraries.
-	Warnings     []string
-	coverOverlay bool
-	testify      bool
-	goleak       bool
-	goleakCache  string
+	Warnings         []string
+	coverOverlay     bool
+	orchestrionChain string
+	launcher         *goLauncher
+	orchestrion      bool
+	mini             bool
+	testify          bool
+	goleak           bool
+	goleakCache      string
 }
 
 // Prepare creates a complete plan before native Go compilation starts. Callers
@@ -151,6 +155,8 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		return plan, e
 	}
 	plan.Dir = temp
+	plan.mini = runtime == Mini
+	plan.orchestrion = isOrchestrionToolexec(opts.toolexec)
 	defer func() {
 		if err != nil {
 			_ = os.RemoveAll(temp)
@@ -271,7 +277,11 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		}
 		replacements[logical] = backing
 	}
-	if e = add(filepath.Join(native.Dir, "zz_dd_ci_visibility_hooks.go"), hooksForRuntime(runtime, rewritten.ParallelStop)); e != nil {
+	hooks := hooksForRuntime(runtime, rewritten.ParallelStop)
+	if plan.orchestrion && plan.mini {
+		hooks += miniOrchestrionCacheMarker
+	}
+	if e = add(filepath.Join(native.Dir, "zz_dd_ci_visibility_hooks.go"), hooks); e != nil {
 		return plan, e
 	}
 	for _, p := range packages {
@@ -358,6 +368,9 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	if e != nil {
 		return plan, e
 	}
+	if e = prepareOrchestrionLauncher(ctx, dir, opts, &plan, progress); e != nil {
+		return plan, e
+	}
 	debug.printf("plan ready testing_files=%d test_packages=%d overlay_entries=%d generated_backing_files=%d temporary_modfile=%t cover_bridge=%t", plan.InstrumentedFiles, plan.TestPackages, len(replacements), len(backingByContent), plan.Modfile != "", plan.coverOverlay)
 	return plan, nil
 }
@@ -429,6 +442,7 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 		fmt.Fprintln(stderr, version.BuildLogPrefix+" ERROR:", err)
 		return 2
 	}
+	applyGoLauncher(ctx, &opts)
 	dir := workingDirectory(cwd, opts)
 	debug.printf("working_directory=%q package_patterns=%d build_flags=%d", dir, len(opts.packages), len(opts.buildFlags))
 	if opts.help || explicitFiles(dir, opts.packages) {
@@ -456,7 +470,7 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 	}
 	var tool string
 	var env []string
-	if plan.coverOverlay || plan.testify || plan.goleak {
+	if plan.coverOverlay || plan.testify || plan.goleak || plan.orchestrion {
 		executable, e := os.Executable()
 		if e != nil {
 			fmt.Fprintln(stderr, e)
@@ -466,14 +480,22 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 			fmt.Fprintln(stderr, e)
 			return 2
 		}
-		if opts.toolexec != "" {
-			// The user's -toolexec, including one from GOFLAGS, runs every tool
-			// after ours, exactly as it would without ddtest.
-			env = []string{userToolexecEnv + "=" + opts.toolexec}
+		// Reset private chain state inherited from a parent instrumented test.
+		// An unrelated wrapper must never inherit Orchestrion's package bypass.
+		chain := opts.toolexec
+		if plan.orchestrionChain != "" {
+			chain = plan.orchestrionChain
+		}
+		env = []string{userToolexecEnv + "=" + chain, orchestrionBypassEnv + "=false"}
+		if plan.orchestrion {
+			env[1] = orchestrionBypassEnv + "=" + string(runtime)
 		}
 	}
-	debug.printf("tool selection testify=%t goleak=%t cover=%t user_toolexec=%t", plan.testify, plan.goleak, plan.coverOverlay, opts.toolexec != "")
+	debug.printf("tool selection testify=%t goleak=%t cover=%t user_toolexec=%t orchestrion=%t", plan.testify, plan.goleak, plan.coverOverlay, opts.toolexec != "", plan.orchestrion)
 	forwarded := goTestArguments(plan, opts, tool)
+	if plan.launcher != nil {
+		ctx = context.WithValue(ctx, goLauncherKey{}, *plan.launcher)
+	}
 	return runGo(ctx, dir, forwarded, env, signals, stdin, stdout, stderr)
 }
 
@@ -548,7 +570,12 @@ func runGo(ctx context.Context, dir string, args, envOverrides []string, signals
 		phase.finish(err)
 		debug.printf("go test exit_code=%d", exitCode)
 	}()
-	cmd := exec.Command("go", args...)
+	command := []string{"go"}
+	if launcher, ok := ctx.Value(goLauncherKey{}).(goLauncher); ok {
+		command = launcher.command
+	}
+	argv := append(append([]string(nil), command[1:]...), args...)
+	cmd := exec.Command(command[0], argv...)
 	cmd.Dir = dir
 	if len(envOverrides) != 0 {
 		// Environ computes PWD from Dir, including its symbolic-link spelling.

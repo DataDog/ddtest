@@ -21,7 +21,7 @@ does not need the CLI.
 flowchart TB
     subgraph build["Build time"]
         CLI["ddtest test: choose<br/>sdk or mini"] --> Plan["Resolve packages and<br/>prepare overlay"]
-        Plan --> Selection{"Testify, Mini goleak or<br/>covered testing sources?"}
+        Plan --> Selection{"Testify, Mini goleak,<br/>coverage or Orchestrion?"}
         Selection -->|Yes| Tools["Selective<br/>compiler/coverage<br/>wrapper"]
         Selection -->|No| Go["Native go test:<br/>compile and link"]
         Tools --> Go
@@ -35,9 +35,11 @@ flowchart TB
     end
 ```
 
-Orchestrion is the reference instrumenter in differential tests. The POC
-implements only its testing advice. Its front-end prepares one overlay per
-invocation, so compiler processes do not each load an instrumentation engine.
+Orchestrion is the reference instrumenter in differential tests and can also
+[share a build with Mini](orchestrion.md) to instrument application code. The POC
+implements only the testing hooks. Its front-end prepares one overlay per
+invocation. Its compiler processes perform only selected source edits;
+Orchestrion owns the application instrumentation engine in combined builds.
 
 | Code | Owns |
 | --- | --- |

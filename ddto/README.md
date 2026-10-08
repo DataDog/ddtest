@@ -6,7 +6,8 @@ SDK-derived CI logic and a native event client with no external runtime module
 dependencies. Use `--runtime=sdk` to run the unmodified `dd-trace-go` SDK at the
 exact revision pinned in [`internal/version`](internal/version/version.go).
 See [native runtime usage and contracts](docs/mini-runtime.md).
-Mini also supports optional [services from CODEOWNERS](docs/codeowners-service.md).
+Mini also supports optional [services from CODEOWNERS](docs/codeowners-service.md)
+and [combined builds with Orchestrion](docs/orchestrion.md) for application tracing.
 
 For maintainers, start with the [documentation guide](docs/README.md):
 [architecture and diagrams](docs/architecture.md),
@@ -67,16 +68,18 @@ count/shuffle, JSON, benchmarks, race and coverage. Arguments follow `go test`'s
 own rules, including `-C`, `--flag` spellings and custom test flags without
 `-args`. It preserves the user's result-cache choice; use `-count=1` for fresh CI
 events. A user overlay is merged into ours, and ours takes precedence. A user
-`-toolexec` runs every tool after ours. Missing or ambiguous hooks fail before
-compilation. Help and explicit `.go` file mode run native `go test` without
+`-toolexec` runs after ours. Recognized Orchestrion wrappers bypass packages
+already owned by ddtest; [composition](docs/orchestrion.md) explains that
+boundary. Missing or ambiguous hooks fail before compilation. Help and explicit
+`.go` file mode run native `go test` without
 instrumentation, with a warning for file mode. SDK replacements and
 standard-library test targets are outside this POC.
 [Testify suite support](docs/testify.md) covers v1.4.0 and newer v1 releases,
 including callers in external dependencies. Other versions, or an unrecognized
 `suite.Run`, produce a warning; their suites run as ordinary instrumented tests. A selective `-toolexec` hook is
-activated only for reachable Testify suites, goleak in Mini, or covered rewritten
-`testing` sources. Other builds use the overlay directly. Preparation validates the selected
-Testify version and API even when Go can reuse a cached archive. Version fixtures
+activated for reachable Testify suites, goleak in Mini, covered rewritten
+`testing` sources, or recognized Orchestrion composition. Other builds use the
+overlay directly. Preparation validates the selected Testify version and API even when Go can reuse a cached archive. Version fixtures
 cover v1.10.0, v1.11.1 and v1.12.1. Run from the desired module directory. Runtime
 configuration and retry/skip/quarantine behavior remain in the selected runtime.
 
@@ -97,9 +100,10 @@ ORCHESTRION_BIN="$(go env GOPATH)/bin/orchestrion" go test -v ./...
 
 With `ORCHESTRION_BIN`, the suite compares **both instruments using the same
 temporary module graph, SDK version, fixture sources and binary basename**.
-Orchestrion loads the SDK's actual `gotesting/orchestrion.yml`; other APM
-integrations are outside the comparison. Its required tool dependency is added
-only to the temporary comparison fixture, never the driver module or SDK.
+Orchestrion loads the SDK's actual `gotesting/orchestrion.yml`. The combined-build
+suite also checks custom span weaving and APM delivery over HTTP. Its required
+tool dependency is added only to the temporary comparison fixture, never the
+driver module or SDK.
 Without that variable, tests still verify the overlay against native Go and the
 real SDK, but the Orchestrion differential check has not run.
 

@@ -176,3 +176,9 @@ The CLI tests compare debug-disabled and debug-enabled binaries byte for byte,
 check JSON output and Go cache reuse, and cover build errors, downloads,
 provisioning, signals and tool bypasses. These tests run in the compatibility
 workflow on Linux, macOS and Windows, including Linux `-race` jobs.
+
+When a combined build selects `go tool orchestrion`, the
+`resolve Orchestrion executable` phase measures Go's tool lookup and any cold
+tool compilation. Its output is a Go-owned cached executable, reused by all
+compiler calls in that invocation. Application compilation and weaving remain
+inside the `go test` duration.

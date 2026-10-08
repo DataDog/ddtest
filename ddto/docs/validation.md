@@ -20,8 +20,12 @@ test imports uses `go list -find`; unknown imports require `-deps` to discover
 libraries through helpers. Version and API validation happen before the native
 build-cache lookup. A selective compiler wrapper transforms `testify/suite`
 and, in Mini, reachable `go.uber.org/goleak`; a coverage bridge handles rewritten
-`testing` sources when coverage includes them. Other builds omit `-toolexec`. The POC has
-no configuration engine, build daemon or nested dependency build.
+`testing` sources when coverage includes them.
+[Combined Orchestrion builds](orchestrion.md) use the same selective wrapper
+to preserve application weaving and a single CI reporter. Other builds omit
+`-toolexec`. The POC has no configuration engine or build daemon. Selecting a
+module-declared Orchestrion tool lets Go build/cache that tool before the test
+build; Orchestrion owns any additional builds it needs for application weaving.
 
 The nine SDK aspects are retained: M.Run, T.Run, B.Run, Fail, FailNow, formatted
 errors, formatted skips, SkipNow and Parallel. Formatting wraps the already
@@ -70,6 +74,7 @@ read directly from the installed SDK. The SDK backend reads the original module;
 | EFD, ITR, disabled, quarantine, attempt-to-fix | Real SDK requests against loopback policy responses and reference event equivalence |
 | Panic, Goexit and timeout | Abnormal exit and diagnostic marker; enabled/disabled reference event equivalence |
 | Unsupported input | Missing/ambiguous hooks, malformed source and double instrumentation rejected |
+| Mini + Orchestrion | Explicit wrappers, GOFLAGS and toolexec; injected APM span and HTTP delivery; one CI hierarchy, Testify, goleak, retries, coverage and race |
 | Command line | Go's own package/flag classification, `-C`, `--flag` spellings, custom test flags, overlay precedence and chained `-toolexec` |
 
 The backend responses are synthetic, but hooks, retry processes, serialization

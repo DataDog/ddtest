@@ -14,13 +14,13 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
-// userToolexecEnv carries the user's -toolexec to ddtest's tool wrapper. Every
-// tool then runs through it, after any ddtest input transformation.
+// userToolexecEnv carries the user's -toolexec after ddtest's input transformation.
+// Orchestrion skips packages that ddtest owns; unrelated wrappers run every tool.
 const userToolexecEnv = "DDTEST_USER_TOOLEXEC"
 
 func chainUserToolexec(args []string) ([]string, error) {
 	chain := os.Getenv(userToolexecEnv)
-	if chain == "" {
+	if chain == "" || bypassOrchestrionPackage(args) {
 		return args, nil
 	}
 	words, err := splitFlags(chain)
@@ -32,6 +32,12 @@ func chainUserToolexec(args []string) ([]string, error) {
 
 func (p Plan) toolMode() string {
 	var modes []string
+	if p.orchestrion {
+		if p.mini {
+			modes = append(modes, "mini")
+		}
+		modes = append(modes, "orchestrion")
+	}
 	if p.testify {
 		modes = append(modes, "testify")
 	}
@@ -45,7 +51,8 @@ func (p Plan) toolMode() string {
 }
 
 // ToolNeedsPlan is the allocation-free dispatch before any plan I/O. Go probes
-// compile/link versions without a package identity; those always stay native.
+// compile/link versions without a package identity; those skip plan I/O and
+// still reach the selected user tool, including Orchestrion.
 func ToolNeedsPlan(mode string, args []string, importPath string) bool {
 	if len(args) == 0 {
 		return false
@@ -61,6 +68,9 @@ func ToolNeedsPlan(mode string, args []string, importPath string) bool {
 		}
 		pkg, _, _ := strings.Cut(importPath, " [")
 		return pkg == "testing"
+	}
+	if tool == "compile" && strings.HasPrefix(mode, "mini-orchestrion") && isSDKCIPackage(importPath) && !(len(args) == 2 && args[1] == "-V=full") {
+		return true
 	}
 	if tool != "compile" || !strings.Contains(mode, "testify") && !strings.Contains(mode, "goleak") {
 		return false
@@ -81,6 +91,15 @@ func RunTool(ctx context.Context, overlay string, args []string, stdin io.Reader
 	}
 	if tool := strings.TrimSuffix(filepath.Base(args[0]), ".exe"); tool == "cover" {
 		return RunCoverTool(ctx, overlay, args, stdin, stdout, stderr)
+	}
+	if isSDKCIPackage(os.Getenv("TOOLEXEC_IMPORTPATH")) {
+		forwarded, cleanup, err := prepareSDKCICompile(args, os.Getenv("TOOLEXEC_IMPORTPATH"))
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 2
+		}
+		defer cleanup()
+		return runChainedTool(ctx, forwarded, stdin, stdout, stderr)
 	}
 	data, err := os.ReadFile(overlay)
 	if err != nil {
@@ -103,7 +122,12 @@ func RunTool(ctx context.Context, overlay string, args []string, stdin io.Reader
 		return 2
 	}
 	defer cleanup()
-	if forwarded, err = chainUserToolexec(forwarded); err != nil {
+	return runChainedTool(ctx, forwarded, stdin, stdout, stderr)
+}
+
+func runChainedTool(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	forwarded, err := chainUserToolexec(args)
+	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}

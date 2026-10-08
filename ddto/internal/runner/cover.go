@@ -116,26 +116,7 @@ func translateCoverInputs(overlay string, args []string) ([]string, error) {
 }
 
 func toolCommand(executable, overlay, mode string) (string, error) {
-	quote := func(s string) (string, error) {
-		// cmd/go's quoted.Split preserves backslashes; strconv.Quote would double
-		// Windows separators. Choose a delimiter absent from the path instead.
-		if !strings.Contains(s, "'") {
-			return "'" + s + "'", nil
-		}
-		if !strings.Contains(s, `"`) {
-			return `"` + s + `"`, nil
-		}
-		return "", fmt.Errorf("cannot quote cover tool path containing both quote characters: %s", s)
-	}
-	exe, err := quote(executable)
-	if err != nil {
-		return "", err
-	}
-	path, err := quote(overlay)
-	if err != nil {
-		return "", err
-	}
-	return exe + " tool-overlay " + mode + " " + path, nil
+	return quoteToolWords([]string{executable, "tool-overlay", mode, overlay})
 }
 
 // Match only the packages whose regular sources changed. Test files are not
