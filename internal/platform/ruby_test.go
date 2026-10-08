@@ -473,7 +473,7 @@ func TestDetectPlatform_Unsupported(t *testing.T) {
 	}
 }
 
-func TestRuby_GetPlatformEnv_SetsRUBYOPT_WhenNotSet(t *testing.T) {
+func TestRuby_baseEnv_SetsRUBYOPT_WhenNotSet(t *testing.T) {
 	// Ensure RUBYOPT is not set
 	originalValue, existed := os.LookupEnv("RUBYOPT")
 	if existed {
@@ -482,7 +482,7 @@ func TestRuby_GetPlatformEnv_SetsRUBYOPT_WhenNotSet(t *testing.T) {
 	}
 
 	ruby := newTestRuby()
-	envMap := ruby.GetPlatformEnv()
+	envMap := ruby.baseEnv()
 
 	expectedValue := "-rbundler/setup -rdatadog/ci/auto_instrument"
 	if envMap["RUBYOPT"] != expectedValue {
@@ -490,7 +490,7 @@ func TestRuby_GetPlatformEnv_SetsRUBYOPT_WhenNotSet(t *testing.T) {
 	}
 }
 
-func TestRuby_GetPlatformEnv_DoesNotOverride_WhenAlreadySet(t *testing.T) {
+func TestRuby_baseEnv_DoesNotOverride_WhenAlreadySet(t *testing.T) {
 	// Set RUBYOPT to a custom value
 	originalValue, existed := os.LookupEnv("RUBYOPT")
 	customValue := "-rbundler/setup -rsome_other_require"
@@ -504,9 +504,9 @@ func TestRuby_GetPlatformEnv_DoesNotOverride_WhenAlreadySet(t *testing.T) {
 	}()
 
 	ruby := newTestRuby()
-	envMap := ruby.GetPlatformEnv()
+	envMap := ruby.baseEnv()
 
-	// When RUBYOPT is already set, GetPlatformEnv should not include it
+	// When RUBYOPT is already set, baseEnv should not include it
 	if _, exists := envMap["RUBYOPT"]; exists {
 		t.Error("expected RUBYOPT to not be in envMap when it's already set in environment")
 	}
@@ -537,7 +537,7 @@ func TestRuby_DetectFramework_SetsPlatformEnv(t *testing.T) {
 	}
 
 	// Verify the framework received the correct platform env
-	frameworkPlatformEnv := fw.GetPlatformEnv()
+	frameworkPlatformEnv := frameworkRunEnv(t, fw)
 	expectedRubyOpt := "-rbundler/setup -rdatadog/ci/auto_instrument"
 	if frameworkPlatformEnv["RUBYOPT"] != expectedRubyOpt {
 		t.Errorf("expected framework platformEnv RUBYOPT=%q, got %q", expectedRubyOpt, frameworkPlatformEnv["RUBYOPT"])

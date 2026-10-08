@@ -51,7 +51,7 @@ func (e *playwrightCommandExecutor) capture(name string, args []string, env map[
 }
 
 func TestPlaywrightFrameworkMetadata(t *testing.T) {
-	playwright := NewPlaywright()
+	playwright := NewPlaywright(&testPlatform{})
 	if playwright.Name() != "playwright" || playwright.SupportsFullTestDiscovery() {
 		t.Fatalf("unexpected metadata: %q, full=%v", playwright.Name(), playwright.SupportsFullTestDiscovery())
 	}
@@ -193,7 +193,7 @@ func TestPlaywrightDiscoverTestFilesUsesNativeListAndNormalizes(t *testing.T) {
 		commandOverride: []string{
 			"pnpm", "exec", "playwright", "test", "--config", "apps/web/playwright.config.ts", "--project", "chromium", "--reporter", "html",
 		},
-		platformEnv: map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init --max-old-space-size=2048", "CUSTOM": "value"},
+		platform: &testPlatform{env: map[string]string{"NODE_OPTIONS": "--max-old-space-size=2048", "CUSTOM": "value"}},
 	}
 	discovered, err := playwright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
 	if err != nil {
@@ -230,7 +230,7 @@ func TestPlaywrightDiscoveryAcceptsOnlyTheNoTestsExit(t *testing.T) {
 			playwrightErrorMarker + `{"message":"Error: No tests found"}`),
 		err: playwrightCommandExitError{code: 1},
 	}
-	playwright := &Playwright{executor: executor, commandOverride: []string{"playwright", "test"}, platformEnv: map[string]string{}}
+	playwright := &Playwright{executor: executor, commandOverride: []string{"playwright", "test"}, platform: &testPlatform{env: map[string]string{}}}
 	files, err := playwright.DiscoverTestFiles(context.Background(), discovery.TestFileSet{})
 	if err != nil || len(files) != 0 {
 		t.Fatalf("empty discovery = %v, %v", files, err)
@@ -301,7 +301,7 @@ func TestPlaywrightRunTestsMergesEnvironmentAndSkipsEmptyAssignments(t *testing.
 	playwright := &Playwright{
 		executor:        executor,
 		commandOverride: []string{"playwright", "test", "old.spec.ts", "--shard", "1/3"},
-		platformEnv:     map[string]string{"SHARED": "platform", "PLATFORM": "yes"},
+		platform:        &testPlatform{env: map[string]string{"SHARED": "platform", "PLATFORM": "yes"}},
 	}
 	if err := playwright.RunTests(context.Background(), nil, nil); err != nil || executor.runCalls != 0 {
 		t.Fatalf("empty RunTests() = %v, calls = %d", err, executor.runCalls)
@@ -326,7 +326,7 @@ func TestPlaywrightSourceFileForSuiteUsesConfigDirectory(t *testing.T) {
 	if err := os.WriteFile("apps/web/playwright.config.ts", []byte("export default {}\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	playwright := &Playwright{commandOverride: []string{"playwright", "test", "--config", "apps/web/playwright.config.ts"}}
+	playwright := &Playwright{platform: &testPlatform{}, commandOverride: []string{"playwright", "test", "--config", "apps/web/playwright.config.ts"}}
 	if source, ok := playwright.SourceFileForSuite("tests/a.spec.ts"); !ok || source != "apps/web/tests/a.spec.ts" {
 		t.Fatalf("SourceFileForSuite() = %q, %v", source, ok)
 	}

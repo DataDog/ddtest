@@ -182,6 +182,27 @@ atexit.register(lambda: print('shutdown stderr', file=sys.stderr))
 	tags, err := python.CreateTagsMap(ctx)
 	require.NoError(t, err, "planning tags must not require an installed tracer")
 	requireRuntimeTags(t, tags, "python")
+	resetSettingsAfterTest(t)
+	// A custom discovery command can supply the report without importing ddtrace.
+	writeFixture(t, root, "discovery.py", `import json, os
+from pathlib import Path
+report = Path(os.environ["DD_TEST_OPTIMIZATION_DISCOVERY_FILE"])
+report.parent.mkdir(parents=True, exist_ok=True)
+report.write_text(json.dumps({"name": "test_example", "suite": "test_example.py", "suiteSourceFile": "test_example.py"}))
+`)
+	writeFixture(t, root, "test_example.py", "def test_example(): pass\n")
+	configureFramework(shellCommand("python", filepath.Join(root, "discovery.py")), "")
+	pytest := framework.NewPytest(python)
+	files := discovery.TestFileSet{Pattern: "test_*.py"}
+	tests, err := pytest.DiscoverTests(ctx, files)
+	require.NoError(t, err)
+	require.Len(t, tests, 1)
+	require.Equal(t, "test_example", tests[0].Name)
+	require.Equal(t, "test_example.py", tests[0].SuiteSourceFile)
+	discovered, err := pytest.DiscoverTestFiles(ctx, files)
+	require.NoError(t, err)
+	require.Equal(t, []string{"test_example.py"}, discovered)
+
 	t.Setenv("PYTHONPATH", filepath.Join(root, "packages"))
 	require.NoError(t, python.SanityCheck(ctx))
 	version, err := python.DetectTracer(ctx, platform.TracerOptions{Command: "python"})
@@ -210,7 +231,7 @@ func TestRubyTagsWithoutTracer(t *testing.T) {
 	resetSettingsAfterTest(t)
 	writeFixture(t, root, "discovery.rb", "File.write('discovery-ran', 'unexpected')\n")
 	configureFramework(shellCommand("ruby", filepath.Join(root, "discovery.rb")), "")
-	for _, fw := range []framework.Framework{framework.NewRSpec(), framework.NewMinitest()} {
+	for _, fw := range []framework.Framework{framework.NewRSpec(platform.NewRuby(settings.TestSkippingLevelTest)), framework.NewMinitest(platform.NewRuby(settings.TestSkippingLevelTest))} {
 		t.Run(fw.Name(), func(t *testing.T) {
 			t.Cleanup(func() { _ = os.Remove(filepath.Join(root, "discovery-ran")) })
 			writeFixture(t, root, "example_test.rb", "# File discovery needs no tracer.\n")

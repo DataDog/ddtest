@@ -17,7 +17,6 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/settings"
-	"github.com/DataDog/ddtest/internal/utils"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -33,7 +32,9 @@ const (
 )
 
 type JavaScript struct {
-	executor commandExecutor
+	frameworkEnv map[string]string
+	esmEnv       map[string]string
+	executor     commandExecutor
 }
 
 func NewJavaScript() *JavaScript {
@@ -53,7 +54,7 @@ func (j *JavaScript) Detect(repositoryRoot string) (bool, error) {
 func (j *JavaScript) DetectFramework() (framework.Framework, error) {
 	root := "."
 	hint := settings.GetFramework()
-	candidates := []framework.Framework{framework.NewJest(), framework.NewMocha(), framework.NewCypress(), framework.NewPlaywright(), framework.NewCucumber(), framework.NewVitest()}
+	candidates := []framework.Framework{framework.NewJest(j), framework.NewMocha(j), framework.NewCypress(j), framework.NewPlaywright(j), framework.NewCucumber(j), framework.NewVitest(j)}
 	if hint == "" {
 		manifest, found, err := readPackageManifest(root)
 		if err != nil {
@@ -78,11 +79,8 @@ func (j *JavaScript) DetectFramework() (framework.Framework, error) {
 	if err != nil {
 		return nil, err
 	}
-	env := j.GetPlatformEnv()
-	if fw.Name() == "vitest" {
-		env = addNodeImport(env, ddTraceRegisterModule)
-	}
-	fw.SetPlatformEnv(env)
+	j.frameworkEnv = j.baseEnv()
+	j.esmEnv = addNodeImport(maps.Clone(j.frameworkEnv), ddTraceRegisterModule)
 	return fw, nil
 }
 
@@ -90,12 +88,12 @@ func (j *JavaScript) TestSkippingLevel() settings.TestSkippingLevel {
 	return settings.TestSkippingLevelSuite
 }
 
-// GetPlatformEnv returns environment variables required for JS commands.
-func (j *JavaScript) GetPlatformEnv() map[string]string {
+// baseEnv returns environment variables required for JS commands.
+func (j *JavaScript) baseEnv() map[string]string {
 	// Jest and Vitest need CI initialization.
 	// Add the preload only when missing and preserve existing NODE_OPTIONS.
 	currentValue, _ := os.LookupEnv(nodeOptionsEnvVar)
-	if utils.NodeOptionsHasRequire(currentValue, ddTraceCIInitModule) {
+	if nodeOptionsHasRequire(currentValue, ddTraceCIInitModule) {
 		return map[string]string{}
 	}
 
@@ -120,7 +118,7 @@ func addNodeImport(platformEnv map[string]string, module string) map[string]stri
 	if !ok {
 		nodeOptions, _ = os.LookupEnv(nodeOptionsEnvVar)
 	}
-	if utils.NodeOptionsHasImport(nodeOptions, module) {
+	if nodeOptionsHasImport(nodeOptions, module) {
 		return platformEnv
 	}
 
@@ -129,7 +127,7 @@ func addNodeImport(platformEnv map[string]string, module string) map[string]stri
 	} else {
 		// An explicit external CI preload also identifies its register module,
 		// even when the action's optional ESM variable is unavailable.
-		preload := utils.NodeOptionsRequire(nodeOptions, ddTraceCIInitModule)
+		preload := nodeOptionsRequire(nodeOptions, ddTraceCIInitModule)
 		if filepath.IsAbs(preload) {
 			module = strconv.Quote(filepath.Join(filepath.Dir(filepath.Dir(preload)), "register.js"))
 		}
@@ -147,8 +145,8 @@ func javascriptProbeEnv() map[string]string {
 	if !found || current == "" {
 		return nil
 	}
-	cleaned := utils.NodeOptionsWithoutRequire(current, ddTraceCIInitModule)
-	cleaned = utils.NodeOptionsWithoutImport(cleaned, ddTraceRegisterModule)
+	cleaned := nodeOptionsWithoutRequire(current, ddTraceCIInitModule)
+	cleaned = nodeOptionsWithoutImport(cleaned, ddTraceRegisterModule)
 	if cleaned == current {
 		return nil
 	}
@@ -282,7 +280,7 @@ func (j *JavaScript) DetectTracer(ctx context.Context, _ TracerOptions) (string,
 	// Preserve other project loaders, including Yarn PnP, while ensuring that
 	// the resolution probe itself never starts Test Optimization.
 	probeEnv := javascriptProbeEnv()
-	preload := utils.NodeOptionsRequire(os.Getenv(nodeOptionsEnvVar), ddTraceCIInitModule)
+	preload := nodeOptionsRequire(os.Getenv(nodeOptionsEnvVar), ddTraceCIInitModule)
 	if preload == "" {
 		preload = os.Getenv("DD_TRACE_PACKAGE")
 	}
@@ -352,4 +350,181 @@ func (j *JavaScript) TracerInstallCommand(options TracerOptions) (string, []stri
 		packageName,
 	}
 	return "npm", installArgs, nil
+}
+
+func (j *JavaScript) RunEnv(options framework.RuntimeOptions) (map[string]string, error) {
+	env := j.executionEnv(options.ESM)
+	maps.Copy(env, options.Env)
+	appendNodePreloads(env, options.PreloadFiles)
+	return env, nil
+}
+
+func (j *JavaScript) DiscoveryEnv(_ context.Context, kind framework.DiscoveryKind, options framework.RuntimeOptions) (map[string]string, error) {
+	if kind != framework.FileDiscovery {
+		return nil, fmt.Errorf("JavaScript full test discovery is not supported")
+	}
+	env := j.executionEnv(options.ESM)
+	maps.Copy(env, options.Env)
+	current, found := env[nodeOptionsEnvVar]
+	if !found {
+		current, found = os.LookupEnv(nodeOptionsEnvVar)
+	}
+	if found {
+		current = nodeOptionsWithoutRequire(current, ddTraceCIInitModule)
+		if options.ESM {
+			current = nodeOptionsWithoutImport(current, ddTraceRegisterModule)
+		}
+		env[nodeOptionsEnvVar] = current
+	}
+	appendNodePreloads(env, options.PreloadFiles)
+	return env, nil
+}
+
+func appendNodePreloads(env map[string]string, files []string) {
+	if len(files) == 0 {
+		return
+	}
+	current, found := env[nodeOptionsEnvVar]
+	if !found {
+		current = os.Getenv(nodeOptionsEnvVar)
+	}
+	for _, file := range files {
+		current = strings.TrimSpace(current + " --require " + strconv.Quote(file))
+	}
+	env[nodeOptionsEnvVar] = current
+}
+
+// executionEnv preserves the environment captured when the framework was selected.
+func (j *JavaScript) executionEnv(esm bool) map[string]string {
+	if j.frameworkEnv != nil {
+		if esm {
+			return maps.Clone(j.esmEnv)
+		}
+		return maps.Clone(j.frameworkEnv)
+	}
+	env := j.baseEnv()
+	if esm {
+		env = addNodeImport(env, ddTraceRegisterModule)
+	}
+	return env
+}
+
+type nodeOptionsToken struct {
+	raw   string
+	value string
+}
+
+// Node uses double quotes, rather than shell quoting, in NODE_OPTIONS. Keep
+// each original token so removing a preload does not change other options or
+// quoted project loader paths.
+func splitnodeOptions(value string) []nodeOptionsToken {
+	var tokens []nodeOptionsToken
+	for index := 0; index < len(value); {
+		for index < len(value) && isnodeOptionsSpace(value[index]) {
+			index++
+		}
+		if index == len(value) {
+			break
+		}
+		start := index
+		var decoded strings.Builder
+		quoted := false
+		for index < len(value) {
+			current := value[index]
+			if current == '"' {
+				quoted = !quoted
+				index++
+				continue
+			}
+			if current == '\\' && index+1 < len(value) && value[index+1] == '"' {
+				decoded.WriteByte('"')
+				index += 2
+				continue
+			}
+			if !quoted && isnodeOptionsSpace(current) {
+				break
+			}
+			decoded.WriteByte(current)
+			index++
+		}
+		tokens = append(tokens, nodeOptionsToken{raw: value[start:index], value: decoded.String()})
+	}
+	return tokens
+}
+
+func isnodeOptionsSpace(value byte) bool {
+	return value == ' ' || value == '\t' || value == '\n' || value == '\r'
+}
+
+func nodeOptionsOptionValue(tokens []nodeOptionsToken, index int, option string) (string, int, bool) {
+	value := tokens[index].value
+	if value == option || (option == "--require" && value == "-r") {
+		if index+1 < len(tokens) {
+			return tokens[index+1].value, 2, true
+		}
+		return "", 1, false
+	}
+	if strings.HasPrefix(value, option+"=") {
+		return strings.TrimPrefix(value, option+"="), 1, true
+	}
+	if option == "--require" && strings.HasPrefix(value, "-r") && len(value) > 2 {
+		return strings.TrimPrefix(value, "-r"), 1, true
+	}
+	return "", 1, false
+}
+
+func nodeOptionsMatchesModule(value, module string) bool {
+	if value == module {
+		return true
+	}
+	normalized := strings.ReplaceAll(value, "\\", "/")
+	return strings.HasSuffix(normalized, "/"+module) ||
+		(module == "dd-trace/ci/init" && (value == module+".js" || strings.HasSuffix(normalized, "/"+module+".js")))
+}
+
+func findNodeOption(value, option, module string) string {
+	tokens := splitnodeOptions(value)
+	for index := 0; index < len(tokens); index++ {
+		candidate, width, found := nodeOptionsOptionValue(tokens, index, option)
+		if found && nodeOptionsMatchesModule(candidate, module) {
+			return candidate
+		}
+		index += width - 1
+	}
+	return ""
+}
+
+func nodeOptionsHasRequire(value, module string) bool {
+	return nodeOptionsRequire(value, module) != ""
+}
+
+func nodeOptionsRequire(value, module string) string {
+	return findNodeOption(value, "--require", module)
+}
+
+func nodeOptionsHasImport(value, module string) bool {
+	return findNodeOption(value, "--import", module) != ""
+}
+
+func withoutNodeOption(value, option, module string) string {
+	tokens := splitnodeOptions(value)
+	kept := make([]string, 0, len(tokens))
+	for index := 0; index < len(tokens); {
+		candidate, width, found := nodeOptionsOptionValue(tokens, index, option)
+		if found && nodeOptionsMatchesModule(candidate, module) {
+			index += width
+			continue
+		}
+		kept = append(kept, tokens[index].raw)
+		index++
+	}
+	return strings.Join(kept, " ")
+}
+
+func nodeOptionsWithoutRequire(value, module string) string {
+	return withoutNodeOption(value, "--require", module)
+}
+
+func nodeOptionsWithoutImport(value, module string) string {
+	return withoutNodeOption(value, "--import", module)
 }

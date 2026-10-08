@@ -37,24 +37,24 @@ func (m *jestCommandExecutor) Run(ctx context.Context, name string, args []strin
 }
 
 func TestNewJest(t *testing.T) {
-	jest := NewJest()
+	jest := NewJest(&testPlatform{})
 	if jest == nil {
-		t.Fatal("NewJest() returned nil")
+		t.Fatal("NewJest(&testPlatform{}) returned nil")
 	}
 	if jest.executor == nil {
-		t.Error("NewJest() created Jest with nil executor")
+		t.Error("NewJest(&testPlatform{}) created Jest with nil executor")
 	}
 }
 
 func TestJest_Name(t *testing.T) {
-	jest := NewJest()
+	jest := NewJest(&testPlatform{})
 	if jest.Name() != "jest" {
 		t.Errorf("expected %q, got %q", "jest", jest.Name())
 	}
 }
 
 func TestJest_DiscoverTests_Unsupported(t *testing.T) {
-	jest := NewJest()
+	jest := NewJest(&testPlatform{})
 	tests, err := jest.DiscoverTests(context.Background(), discovery.TestFileSet{})
 
 	if tests != nil {
@@ -69,7 +69,7 @@ func TestJest_DiscoverTests_Unsupported(t *testing.T) {
 }
 
 func TestJest_SourceFileForSuite(t *testing.T) {
-	jest := NewJest()
+	jest := NewJest(&testPlatform{})
 
 	sourceFile, ok := jest.SourceFileForSuite("src/example.test.js")
 	if !ok || sourceFile != "src/example.test.js" {
@@ -92,7 +92,7 @@ func TestJest_HasUnskippableMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	jest := NewJest()
+	jest := NewJest(&testPlatform{})
 	if !jest.HasUnskippableMarker(markedFile) {
 		t.Fatal("expected marker when @datadog and unskippable are present")
 	}
@@ -141,8 +141,8 @@ func TestJest_DiscoverTestFiles_UsesLocalJestListTests(t *testing.T) {
 		},
 	}
 	jest := &Jest{
-		executor:    mockExecutor,
-		platformEnv: map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init --max-old-space-size=4096", "CUSTOM_ENV": "value"},
+		executor: mockExecutor,
+		platform: &testPlatform{env: map[string]string{"NODE_OPTIONS": "--max-old-space-size=4096", "CUSTOM_ENV": "value"}},
 	}
 	files, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
 	if err != nil {
@@ -169,7 +169,7 @@ func TestJest_DiscoverTestFiles_UsesLocalJestListTests(t *testing.T) {
 	}
 }
 
-func TestJest_DiscoverTestFiles_StripsInheritedNodeOptions(t *testing.T) {
+func TestJest_DiscoverTestFiles_UsesPlatformDiscoveryEnvironment(t *testing.T) {
 	t.Setenv("NODE_OPTIONS", "--require dd-trace/ci/init --max-old-space-size=4096")
 
 	tempDir := t.TempDir()
@@ -188,7 +188,7 @@ func TestJest_DiscoverTestFiles_StripsInheritedNodeOptions(t *testing.T) {
 	mockExecutor := &jestCommandExecutor{
 		output: jestListOutput(filepath.Join(tempDir, "src", "a.test.js")),
 	}
-	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
+	jest := &Jest{executor: mockExecutor, platform: &testPlatform{env: map[string]string{"NODE_OPTIONS": "--max-old-space-size=4096"}}}
 
 	files, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
 	if err != nil {
@@ -236,7 +236,7 @@ func TestJest_DiscoverTestFiles_WithTestsLocationFiltersListTestsOutput(t *testi
 			capturedArgs = slices.Clone(args)
 		},
 	}
-	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
+	jest := &Jest{executor: mockExecutor, platform: &testPlatform{env: make(map[string]string)}}
 	files, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
@@ -262,7 +262,7 @@ func TestJest_DiscoverTestFiles_WithTestsLocationReturnsInvalidPatternError(t *t
 	mockExecutor := &jestCommandExecutor{
 		output: []byte("[]"),
 	}
-	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
+	jest := &Jest{executor: mockExecutor, platform: &testPlatform{env: make(map[string]string)}}
 
 	_, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
 	if err == nil {
@@ -299,7 +299,7 @@ func TestJest_DiscoverTestFiles_WithTestsExcludePatternFiltersListTestsOutput(t 
 			capturedArgs = slices.Clone(args)
 		},
 	}
-	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
+	jest := &Jest{executor: mockExecutor, platform: &testPlatform{env: make(map[string]string)}}
 	files, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles failed: %v", err)
@@ -342,7 +342,7 @@ func TestJest_DiscoverTestFiles_WithOverride(t *testing.T) {
 	jest := &Jest{
 		executor:        mockExecutor,
 		commandOverride: []string{"pnpm", "jest", "--runInBand"},
-		platformEnv:     make(map[string]string),
+		platform:        &testPlatform{env: make(map[string]string)},
 	}
 
 	if _, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()}); err != nil {
@@ -363,7 +363,7 @@ func TestJest_DiscoverTestFiles_CommandError(t *testing.T) {
 		output: []byte("invalid jest config"),
 		err:    errors.New("exit status 1"),
 	}
-	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
+	jest := &Jest{executor: mockExecutor, platform: &testPlatform{env: make(map[string]string)}}
 
 	_, err := jest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: jest.TestPattern()})
 	if err == nil {
@@ -398,8 +398,8 @@ func TestJest_RunTests_UsesLocalJestBinary(t *testing.T) {
 		},
 	}
 	jest := &Jest{
-		executor:    mockExecutor,
-		platformEnv: map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init", "SHARED": "platform"},
+		executor: mockExecutor,
+		platform: &testPlatform{env: map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init", "SHARED": "platform"}},
 	}
 
 	err := jest.RunTests(context.Background(), []string{"src/a.test.js", "src/b.test.ts"}, map[string]string{"SHARED": "worker", "DD_ENV": "ci"})
@@ -441,7 +441,7 @@ func TestJest_RunTests_UsesNpxFallback(t *testing.T) {
 			capturedArgs = slices.Clone(args)
 		},
 	}
-	jest := &Jest{executor: mockExecutor, platformEnv: make(map[string]string)}
+	jest := &Jest{executor: mockExecutor, platform: &testPlatform{env: make(map[string]string)}}
 
 	if err := jest.RunTests(context.Background(), []string{"src/a.test.js"}, nil); err != nil {
 		t.Fatalf("RunTests failed: %v", err)
@@ -453,20 +453,6 @@ func TestJest_RunTests_UsesNpxFallback(t *testing.T) {
 	expectedArgs := []string{"jest", "--runTestsByPath", "src/a.test.js"}
 	if !slices.Equal(capturedArgs, expectedArgs) {
 		t.Errorf("expected args %v, got %v", expectedArgs, capturedArgs)
-	}
-}
-
-func TestJest_SetPlatformEnv(t *testing.T) {
-	jest := NewJest()
-	env := map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init", "FOO": "bar"}
-	jest.SetPlatformEnv(env)
-
-	got := jest.GetPlatformEnv()
-	if got["NODE_OPTIONS"] != "-r dd-trace/ci/init" {
-		t.Errorf("expected NODE_OPTIONS %q, got %q", "-r dd-trace/ci/init", got["NODE_OPTIONS"])
-	}
-	if got["FOO"] != "bar" {
-		t.Errorf("expected FOO %q, got %q", "bar", got["FOO"])
 	}
 }
 
@@ -482,7 +468,7 @@ func TestJest_RunTests_WithOverride(t *testing.T) {
 	jest := &Jest{
 		executor:        mockExecutor,
 		commandOverride: []string{"pnpm", "jest", "--runInBand"},
-		platformEnv:     make(map[string]string),
+		platform:        &testPlatform{env: make(map[string]string)},
 	}
 
 	if err := jest.RunTests(context.Background(), []string{"src/a.test.js"}, nil); err != nil {
@@ -504,7 +490,7 @@ func TestJestSeparatorPreservesOptionsAndReplacesSelection(t *testing.T) {
 		{"npx", "--", "jest", "--runInBand", "--", "old.test.js"},
 	} {
 		var got []string
-		j := &Jest{commandOverride: override, executor: &jestCommandExecutor{output: []byte("[]"), onExecution: func(_ string, args []string) { got = slices.Clone(args) }}}
+		j := &Jest{platform: &testPlatform{}, commandOverride: override, executor: &jestCommandExecutor{output: []byte("[]"), onExecution: func(_ string, args []string) { got = slices.Clone(args) }}}
 		if err := j.RunTests(t.Context(), []string{"selected.test.js"}, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -566,7 +552,7 @@ func TestJestDiscoveryWithNoisyOutput(t *testing.T) {
 		{name: "missing file", output: string(jestListOutput(filepath.Join(root, "missing.test.js"))), wantError: "invalid Jest test file"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			jest := &Jest{executor: &jestCommandExecutor{output: []byte(tc.output)}}
+			jest := &Jest{platform: &testPlatform{}, executor: &jestCommandExecutor{output: []byte(tc.output)}}
 			files, err := jest.DiscoverTestFiles(t.Context(), discovery.TestFileSet{Pattern: "**/*.test.js"})
 			if tc.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) {

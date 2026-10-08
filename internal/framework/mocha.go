@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/discovery"
@@ -32,21 +31,21 @@ var mochaAdapterScript string
 type Mocha struct {
 	executor        ext.CommandExecutor
 	commandOverride []string
-	platformEnv     map[string]string
+	platform        PlatformEnvironment
 }
 
-func NewMocha() *Mocha {
+func NewMocha(p PlatformEnvironment) *Mocha {
 	return &Mocha{
 		executor:        &ext.DefaultCommandExecutor{},
 		commandOverride: loadCommandOverride(),
-		platformEnv:     make(map[string]string),
+		platform:        p,
 	}
 }
 
-func (m *Mocha) SetPlatformEnv(platformEnv map[string]string) { m.platformEnv = platformEnv }
-func (m *Mocha) GetPlatformEnv() map[string]string            { return m.platformEnv }
-func (m *Mocha) Name() string                                 { return "mocha" }
-func (m *Mocha) SupportsFullTestDiscovery() bool              { return false }
+func (m *Mocha) Platform() PlatformEnvironment { return m.platform }
+
+func (m *Mocha) Name() string                    { return "mocha" }
+func (m *Mocha) SupportsFullTestDiscovery() bool { return false }
 
 func (m *Mocha) SourceFileForSuite(suite string) (string, bool) {
 	suite = strings.TrimSpace(suite)
@@ -94,11 +93,15 @@ func (m *Mocha) DiscoverTestFiles(ctx context.Context, testFiles discovery.TestF
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode Mocha discovery request: %w", err)
 	}
-	adapterPath, adapterEnv, err := prepareMochaAdapter(m.discoveryEnv(), request)
+	adapterPath, adapterEnv, err := prepareMochaAdapter(request)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = os.Remove(adapterPath) }()
+	adapterEnv, err = m.platform.DiscoveryEnv(ctx, FileDiscovery, RuntimeOptions{Env: adapterEnv, PreloadFiles: []string{adapterPath}})
+	if err != nil {
+		return nil, err
+	}
 
 	slog.Info("Discovering Mocha test files", "command", command, "args", baseArgs)
 	output, err := m.executor.CombinedOutput(ctx, command, baseArgs, adapterEnv)
@@ -132,18 +135,22 @@ func (m *Mocha) RunTests(ctx context.Context, testFiles []string, envMap map[str
 	}
 
 	slog.Info("Running Mocha tests", "command", command, "args", baseArgs, "testFiles", testFiles)
-	mergedEnv := make(map[string]string)
-	maps.Copy(mergedEnv, m.platformEnv)
-	maps.Copy(mergedEnv, envMap)
-	adapterPath, adapterEnv, err := prepareMochaAdapter(mergedEnv, request)
+	adapterPath, adapterEnv, err := prepareMochaAdapter(request)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = os.Remove(adapterPath) }()
+	maps.Copy(adapterEnv, envMap)
+	adapterEnv[mochaRequestEnvVar] = string(request)
+	adapterEnv, err = m.platform.RunEnv(RuntimeOptions{Env: adapterEnv, PreloadFiles: []string{adapterPath}})
+	if err != nil {
+		return err
+	}
+
 	return m.executor.Run(ctx, command, baseArgs, adapterEnv)
 }
 
-func prepareMochaAdapter(baseEnv map[string]string, request []byte) (string, map[string]string, error) {
+func prepareMochaAdapter(request []byte) (string, map[string]string, error) {
 	adapterFile, err := os.CreateTemp("", "ddtest-mocha-adapter-*.js")
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create Mocha adapter: %w", err)
@@ -160,30 +167,8 @@ func prepareMochaAdapter(baseEnv map[string]string, request []byte) (string, map
 		return "", nil, fmt.Errorf("failed to close Mocha adapter: %w", err)
 	}
 
-	adapterEnv := make(map[string]string, len(baseEnv)+2)
-	maps.Copy(adapterEnv, baseEnv)
-	nodeOptions, ok := adapterEnv[nodeOptionsEnvVar]
-	if !ok {
-		nodeOptions = os.Getenv(nodeOptionsEnvVar)
-	}
-	adapterEnv[nodeOptionsEnvVar] = strings.TrimSpace(nodeOptions + " --require " + strconv.Quote(adapterPath))
-	adapterEnv[mochaRequestEnvVar] = string(request)
+	adapterEnv := map[string]string{mochaRequestEnvVar: string(request)}
 	return adapterPath, adapterEnv, nil
-}
-
-func (m *Mocha) discoveryEnv() map[string]string {
-	envMap := make(map[string]string, len(m.platformEnv)+1)
-	maps.Copy(envMap, m.platformEnv)
-	nodeOptions, ok := envMap[nodeOptionsEnvVar]
-	if !ok {
-		var found bool
-		nodeOptions, found = os.LookupEnv(nodeOptionsEnvVar)
-		if !found {
-			return envMap
-		}
-	}
-	envMap[nodeOptionsEnvVar] = stripNodeOptionsRequire(nodeOptions, ddTraceCIInitModule)
-	return envMap
 }
 
 func (m *Mocha) Command() (string, []string) {

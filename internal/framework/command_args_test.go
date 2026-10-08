@@ -44,8 +44,8 @@ func TestRubyAndPythonSelectedFileArguments(t *testing.T) {
 		runner Framework
 		want   []string
 	}{
-		{&RSpec{executor: executor, commandOverride: []string{"bundle", "exec", "rspec", "--tag", "smoke", "--", "old.rb"}}, []string{"exec", "rspec", "--tag", "smoke", "--format", "progress", "--", "selected"}},
-		{&PyTest{executor: executor, commandOverride: []string{"python", "-m", "pytest", "-k", "smoke", "--", "old.py"}}, []string{"-m", "pytest", "-k", "smoke", "--", "selected"}},
+		{&RSpec{platform: &testPlatform{}, executor: executor, commandOverride: []string{"bundle", "exec", "rspec", "--tag", "smoke", "--", "old.rb"}}, []string{"exec", "rspec", "--tag", "smoke", "--format", "progress", "--", "selected"}},
+		{&PyTest{platform: &testPlatform{}, executor: executor, commandOverride: []string{"python", "-m", "pytest", "-k", "smoke", "--", "old.py"}}, []string{"-m", "pytest", "-k", "smoke", "--", "selected"}},
 	} {
 		if err := tc.runner.RunTests(t.Context(), []string{"selected"}, nil); err != nil {
 			t.Fatal(err)

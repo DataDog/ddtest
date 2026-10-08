@@ -28,7 +28,7 @@ func TestPyTest_DiscoverTests_WithExplicitFiles(t *testing.T) {
 		},
 	}
 
-	pytest := &PyTest{executor: mockExecutor, platformEnv: map[string]string{}}
+	pytest := &PyTest{executor: mockExecutor, platform: &testPlatform{env: map[string]string{}}}
 	testFiles := discovery.TestFileSet{ExplicitFiles: explicitFiles}
 	_, _ = pytest.DiscoverTests(context.Background(), testFiles)
 
@@ -70,7 +70,7 @@ func TestPyTest_DiscoverTests_WithPatternGlobsFiles(t *testing.T) {
 		},
 	}
 
-	pytest := &PyTest{executor: mockExecutor, platformEnv: map[string]string{}}
+	pytest := &PyTest{executor: mockExecutor, platform: &testPlatform{env: map[string]string{}}}
 	// Pattern-based (no explicit files): pytest.go will glob the pattern
 	pattern := filepath.Join(tmpDir, "test_*.py")
 	testFiles := discovery.TestFileSet{Pattern: pattern}
@@ -96,7 +96,7 @@ func TestPyTest_DiscoverTests_EmptyFileSet(t *testing.T) {
 		},
 	}
 
-	pytest := &PyTest{executor: mockExecutor, platformEnv: map[string]string{}}
+	pytest := &PyTest{executor: mockExecutor, platform: &testPlatform{env: map[string]string{}}}
 	tests, err := pytest.DiscoverTests(context.Background(), discovery.TestFileSet{ExplicitFiles: []string{}})
 
 	if err != nil {
@@ -150,7 +150,7 @@ func TestPyTest_DiscoverTests_Success(t *testing.T) {
 		},
 	}
 
-	pytest := &PyTest{executor: mockExecutor, platformEnv: map[string]string{}}
+	pytest := &PyTest{executor: mockExecutor, platform: &testPlatform{env: map[string]string{}}}
 	testFiles := discovery.TestFileSet{ExplicitFiles: []string{"tests/test_user.py", "tests/test_auth.py"}}
 	tests, err := pytest.DiscoverTests(context.Background(), testFiles)
 	if err != nil {
@@ -178,8 +178,8 @@ func TestPyTest_DiscoverTests_Success(t *testing.T) {
 	}
 }
 
-func TestPyTest_MetadataAndPlatformEnv(t *testing.T) {
-	pytest := NewPytest()
+func TestPyTest_Metadata(t *testing.T) {
+	pytest := NewPytest(&testPlatform{})
 	if pytest.Name() != "pytest" {
 		t.Errorf("expected framework name pytest, got %q", pytest.Name())
 	}
@@ -187,15 +187,10 @@ func TestPyTest_MetadataAndPlatformEnv(t *testing.T) {
 		t.Error("expected PyTest to support full test discovery")
 	}
 
-	platformEnv := map[string]string{"PYTEST_ADDOPTS": "--ddtrace"}
-	pytest.SetPlatformEnv(platformEnv)
-	if got := pytest.GetPlatformEnv(); got["PYTEST_ADDOPTS"] != platformEnv["PYTEST_ADDOPTS"] {
-		t.Errorf("expected platform env to be retained, got %v", got)
-	}
 }
 
 func TestPyTest_SupportsFullTestDiscovery(t *testing.T) {
-	pytest := NewPytest()
+	pytest := NewPytest(&testPlatform{})
 	if !pytest.SupportsFullTestDiscovery() {
 		t.Error("expected PyTest to support full test discovery")
 	}
@@ -219,7 +214,7 @@ func TestPyTest_RunTests_WithCommandOverride(t *testing.T) {
 
 	pytest := &PyTest{
 		executor:        mockExecutor,
-		platformEnv:     map[string]string{},
+		platform:        &testPlatform{env: map[string]string{}},
 		commandOverride: []string{"pytest"},
 	}
 	if err := pytest.RunTests(context.Background(), testFiles, nil); err != nil {
@@ -255,7 +250,7 @@ func TestPyTest_DiscoverTests_WithCommandOverride(t *testing.T) {
 
 	pytest := &PyTest{
 		executor:        mockExecutor,
-		platformEnv:     map[string]string{},
+		platform:        &testPlatform{env: map[string]string{}},
 		commandOverride: []string{"pytest"},
 	}
 	testFiles := discovery.TestFileSet{ExplicitFiles: explicitFiles}
@@ -294,10 +289,10 @@ func TestPyTest_RunTests(t *testing.T) {
 
 	pytest := &PyTest{
 		executor: mockExecutor,
-		platformEnv: map[string]string{
+		platform: &testPlatform{env: map[string]string{
 			"PYTEST_ADDOPTS": "--ddtrace",
 			"SHARED_VAR":     "platform",
-		},
+		}},
 	}
 	if err := pytest.RunTests(context.Background(), testFiles, envMap); err != nil {
 		t.Fatalf("RunTests failed: %v", err)

@@ -42,7 +42,7 @@ func (m *mochaCommandExecutor) capture(name string, args []string, envMap map[st
 }
 
 func TestMochaBasics(t *testing.T) {
-	mocha := NewMocha()
+	mocha := NewMocha(&testPlatform{})
 	if mocha.Name() != "mocha" {
 		t.Fatalf("Name() = %q, want mocha", mocha.Name())
 	}
@@ -109,7 +109,7 @@ func TestMochaDiscoverTestFiles(t *testing.T) {
 	mocha := &Mocha{
 		executor:        executor,
 		commandOverride: []string{"pnpm", "exec", "mocha", "--parallel"},
-		platformEnv:     map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init --max-old-space-size=4096", "CUSTOM": "value"},
+		platform:        &testPlatform{env: map[string]string{"NODE_OPTIONS": "--max-old-space-size=4096", "CUSTOM": "value"}},
 	}
 	files, err := mocha.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: mocha.TestPattern()})
 	if err != nil {
@@ -146,7 +146,7 @@ func TestMochaDiscoverTestFilesPassesCustomLocation(t *testing.T) {
 	mocha := &Mocha{
 		executor:        executor,
 		commandOverride: []string{"mocha"},
-		platformEnv:     make(map[string]string),
+		platform:        &testPlatform{env: make(map[string]string)},
 	}
 
 	files, err := mocha.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: mocha.TestPattern()})
@@ -172,7 +172,7 @@ func TestMochaRunTests(t *testing.T) {
 	mocha := &Mocha{
 		executor:        executor,
 		commandOverride: []string{"npx", "mocha", "--parallel"},
-		platformEnv:     map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init", "BASE": "base"},
+		platform:        &testPlatform{env: map[string]string{"NODE_OPTIONS": "-r dd-trace/ci/init", "BASE": "base"}},
 	}
 	files := []string{"test/a.spec.js"}
 	if err := mocha.RunTests(context.Background(), files, map[string]string{"WORKER": "1"}); err != nil {
@@ -209,7 +209,7 @@ func TestMochaUnskippableMarker(t *testing.T) {
 	if err := os.WriteFile(file, []byte("// @datadog unskippable\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if !NewMocha().HasUnskippableMarker(file) {
+	if !NewMocha(&testPlatform{}).HasUnskippableMarker(file) {
 		t.Fatal("expected marker")
 	}
 }
@@ -234,7 +234,7 @@ func TestMochaDiscoveryFailureIncludesOutput(t *testing.T) {
 	mocha := &Mocha{
 		executor:        &mochaCommandExecutor{output: []byte("bad config"), combinedErr: errors.New("exit 1")},
 		commandOverride: []string{"mocha"},
-		platformEnv:     make(map[string]string),
+		platform:        &testPlatform{env: make(map[string]string)},
 	}
 	_, err := mocha.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: mocha.TestPattern()})
 	if err == nil || !strings.Contains(err.Error(), "bad config") {

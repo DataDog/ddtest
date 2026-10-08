@@ -54,22 +54,22 @@ func TestJavaScript_TestSkippingLevel(t *testing.T) {
 	}
 }
 
-func TestJavaScript_GetPlatformEnv_SetsNODEOPTIONS(t *testing.T) {
+func TestJavaScript_baseEnv_SetsNODEOPTIONS(t *testing.T) {
 	t.Setenv(nodeOptionsEnvVar, "")
 
 	javascript := NewJavaScript()
-	envMap := javascript.GetPlatformEnv()
+	envMap := javascript.baseEnv()
 
 	if envMap[nodeOptionsEnvVar] != nodeOptionsDDTraceCIArg {
 		t.Errorf("expected NODE_OPTIONS to be %q, got %q", nodeOptionsDDTraceCIArg, envMap[nodeOptionsEnvVar])
 	}
 }
 
-func TestJavaScript_GetPlatformEnv_PreservesExistingNODEOPTIONS(t *testing.T) {
+func TestJavaScript_baseEnv_PreservesExistingNODEOPTIONS(t *testing.T) {
 	t.Setenv(nodeOptionsEnvVar, "--max-old-space-size=4096")
 
 	javascript := NewJavaScript()
-	envMap := javascript.GetPlatformEnv()
+	envMap := javascript.baseEnv()
 
 	expected := "--max-old-space-size=4096 " + nodeOptionsDDTraceCIArg
 	if envMap[nodeOptionsEnvVar] != expected {
@@ -77,11 +77,11 @@ func TestJavaScript_GetPlatformEnv_PreservesExistingNODEOPTIONS(t *testing.T) {
 	}
 }
 
-func TestJavaScript_GetPlatformEnv_DoesNotDuplicateDDTraceInit(t *testing.T) {
+func TestJavaScript_baseEnv_DoesNotDuplicateDDTraceInit(t *testing.T) {
 	t.Setenv(nodeOptionsEnvVar, "-r dd-trace/ci/init --max-old-space-size=4096")
 
 	javascript := NewJavaScript()
-	envMap := javascript.GetPlatformEnv()
+	envMap := javascript.baseEnv()
 
 	if len(envMap) != 0 {
 		t.Errorf("expected empty env map when dd-trace init is already present, got %v", envMap)
@@ -103,7 +103,7 @@ func TestJavaScript_ActionEnvironment(t *testing.T) {
 	require.Len(t, executor.commands, 1)
 	require.Contains(t, executor.commands[0].args, preload)
 
-	env := javascript.GetPlatformEnv()
+	env := javascript.baseEnv()
 	require.Equal(t, os.Getenv(nodeOptionsEnvVar)+" -r "+strconv.Quote(preload), env[nodeOptionsEnvVar])
 	addNodeImport(env, ddTraceRegisterModule)
 	require.Equal(t, "--import "+strconv.Quote(register)+" "+os.Getenv(nodeOptionsEnvVar)+" -r "+strconv.Quote(preload), env[nodeOptionsEnvVar])
@@ -114,7 +114,7 @@ func TestJavaScript_ExplicitPreloadsTakePrecedence(t *testing.T) {
 	t.Setenv(nodeOptionsEnvVar, options)
 	t.Setenv("DD_TRACE_PACKAGE", "/action/dd-trace/ci/init.js")
 	t.Setenv("DD_TRACE_ESM_IMPORT", "/action/dd-trace/register.js")
-	env := NewJavaScript().GetPlatformEnv()
+	env := NewJavaScript().baseEnv()
 	addNodeImport(env, ddTraceRegisterModule)
 	require.Empty(t, env, "workers must inherit the customer's options unchanged")
 }
@@ -122,7 +122,7 @@ func TestJavaScript_ExplicitPreloadsTakePrecedence(t *testing.T) {
 func TestJavaScript_RegisterUsesExternalPreloadInstallation(t *testing.T) {
 	t.Setenv(nodeOptionsEnvVar, `-r "/customer install/dd-trace/ci/init.js"`)
 	t.Setenv("DD_TRACE_ESM_IMPORT", "")
-	env := NewJavaScript().GetPlatformEnv()
+	env := NewJavaScript().baseEnv()
 	addNodeImport(env, ddTraceRegisterModule)
 	require.Equal(t, `--import "/customer install/dd-trace/register.js" `+os.Getenv(nodeOptionsEnvVar), env[nodeOptionsEnvVar])
 }
@@ -149,7 +149,7 @@ func TestJavaScript_DetectTracer_PrefersExplicitActionPreload(t *testing.T) {
 	require.Len(t, executor.commands, 1, "validate only the explicitly selected preload")
 	require.Contains(t, executor.commands[0].args, "/external/dd-trace/ci/init.js")
 	require.Equal(t, map[string]string{nodeOptionsEnvVar: ""}, executor.envs[0])
-	require.Empty(t, javascript.GetPlatformEnv(), "the absolute preload must not be duplicated for workers")
+	require.Empty(t, javascript.baseEnv(), "the absolute preload must not be duplicated for workers")
 }
 
 func TestJavaScript_DetectTracer_RejectsInvalidActionPreload(t *testing.T) {
@@ -166,7 +166,7 @@ func TestJavaScript_DetectTracer_RejectsInvalidActionPreload(t *testing.T) {
 	require.ErrorContains(t, err, preload)
 }
 
-func TestJavaScript_GetPlatformEnv_DoesNotDependOnFramework(t *testing.T) {
+func TestJavaScript_baseEnv_DoesNotDependOnFramework(t *testing.T) {
 	t.Setenv(nodeOptionsEnvVar, "")
 	viper.Reset()
 	viper.Set("framework", "vitest")
@@ -176,7 +176,7 @@ func TestJavaScript_GetPlatformEnv_DoesNotDependOnFramework(t *testing.T) {
 		settings.Init()
 	}()
 
-	if got := NewJavaScript().GetPlatformEnv()[nodeOptionsEnvVar]; got != nodeOptionsDDTraceCIArg {
+	if got := NewJavaScript().baseEnv()[nodeOptionsEnvVar]; got != nodeOptionsDDTraceCIArg {
 		t.Fatalf("NODE_OPTIONS = %q, want %q", got, nodeOptionsDDTraceCIArg)
 	}
 }
@@ -329,7 +329,7 @@ func TestJavaScript_DetectFramework_Mocha(t *testing.T) {
 	if fw.Name() != "mocha" {
 		t.Fatalf("framework name = %q, want mocha", fw.Name())
 	}
-	if got := fw.GetPlatformEnv()[nodeOptionsEnvVar]; got != nodeOptionsDDTraceCIArg {
+	if got := frameworkRunEnv(t, fw)[nodeOptionsEnvVar]; got != nodeOptionsDDTraceCIArg {
 		t.Fatalf("NODE_OPTIONS = %q, want %q", got, nodeOptionsDDTraceCIArg)
 	}
 }
@@ -351,7 +351,7 @@ func TestJavaScript_DetectFramework_Cypress(t *testing.T) {
 	if fw.Name() != "cypress" {
 		t.Fatalf("framework name = %q, want cypress", fw.Name())
 	}
-	if got := fw.GetPlatformEnv()[nodeOptionsEnvVar]; got != nodeOptionsDDTraceCIArg {
+	if got := frameworkRunEnv(t, fw)[nodeOptionsEnvVar]; got != nodeOptionsDDTraceCIArg {
 		t.Fatalf("NODE_OPTIONS = %q, want %q", got, nodeOptionsDDTraceCIArg)
 	}
 }
@@ -373,7 +373,7 @@ func TestJavaScript_DetectFramework_Playwright(t *testing.T) {
 	if fw.Name() != "playwright" {
 		t.Fatalf("framework name = %q, want playwright", fw.Name())
 	}
-	if got := fw.GetPlatformEnv()[nodeOptionsEnvVar]; got != nodeOptionsDDTraceCIArg {
+	if got := frameworkRunEnv(t, fw)[nodeOptionsEnvVar]; got != nodeOptionsDDTraceCIArg {
 		t.Fatalf("NODE_OPTIONS = %q, want %q", got, nodeOptionsDDTraceCIArg)
 	}
 }
@@ -395,7 +395,7 @@ func TestJavaScript_DetectFramework_Cucumber(t *testing.T) {
 	if fw.Name() != "cucumber" {
 		t.Fatalf("framework name = %q, want cucumber", fw.Name())
 	}
-	if got := fw.GetPlatformEnv()[nodeOptionsEnvVar]; got != nodeOptionsDDTraceCIArg {
+	if got := frameworkRunEnv(t, fw)[nodeOptionsEnvVar]; got != nodeOptionsDDTraceCIArg {
 		t.Fatalf("NODE_OPTIONS = %q, want %q", got, nodeOptionsDDTraceCIArg)
 	}
 }
@@ -418,7 +418,7 @@ func TestJavaScript_DetectFramework_Vitest(t *testing.T) {
 		t.Fatalf("framework name = %q, want vitest", fw.Name())
 	}
 	wantNodeOptions := nodeImportArg + " " + ddTraceRegisterModule + " " + nodeOptionsDDTraceCIArg
-	if got := fw.GetPlatformEnv()[nodeOptionsEnvVar]; got != wantNodeOptions {
+	if got := frameworkRunEnv(t, fw)[nodeOptionsEnvVar]; got != wantNodeOptions {
 		t.Fatalf("NODE_OPTIONS = %q, want %q", got, wantNodeOptions)
 	}
 }
@@ -439,7 +439,7 @@ func TestJavaScript_DetectFramework_VitestPreservesExistingOptions(t *testing.T)
 	}
 
 	want := nodeImportArg + " " + ddTraceRegisterModule + " " + nodeOptionsDDTraceCIArg + " --max-old-space-size=4096"
-	if got := fw.GetPlatformEnv()[nodeOptionsEnvVar]; got != want {
+	if got := frameworkRunEnv(t, fw)[nodeOptionsEnvVar]; got != want {
 		t.Fatalf("NODE_OPTIONS = %q, want %q", got, want)
 	}
 }
@@ -459,7 +459,7 @@ func TestJavaScript_DetectFramework_VitestDoesNotDuplicateRegister(t *testing.T)
 		t.Fatalf("DetectFramework failed: %v", err)
 	}
 
-	nodeOptions := fw.GetPlatformEnv()[nodeOptionsEnvVar]
+	nodeOptions := frameworkRunEnv(t, fw)[nodeOptionsEnvVar]
 	if strings.Count(nodeOptions, ddTraceRegisterModule) != 1 {
 		t.Fatalf("NODE_OPTIONS contains duplicate registration: %q", nodeOptions)
 	}
@@ -591,13 +591,13 @@ func TestJavaScript_DetectFramework_SetsPlatformEnv(t *testing.T) {
 		t.Fatal("expected framework to be non-nil")
 	}
 
-	frameworkPlatformEnv := fw.GetPlatformEnv()
+	frameworkPlatformEnv := frameworkRunEnv(t, fw)
 	if frameworkPlatformEnv[nodeOptionsEnvVar] != nodeOptionsDDTraceCIArg {
 		t.Errorf("expected framework platformEnv %s=%q, got %q", nodeOptionsEnvVar, nodeOptionsDDTraceCIArg, frameworkPlatformEnv[nodeOptionsEnvVar])
 	}
 }
 
-func TestJavaScript_GetPlatformEnv_UnsetNODEOPTIONS(t *testing.T) {
+func TestJavaScript_baseEnv_UnsetNODEOPTIONS(t *testing.T) {
 	// When NODE_OPTIONS is completely unset (not just empty), we should still
 	// set it to the dd-trace init argument.
 	if err := os.Unsetenv(nodeOptionsEnvVar); err != nil {
@@ -605,7 +605,7 @@ func TestJavaScript_GetPlatformEnv_UnsetNODEOPTIONS(t *testing.T) {
 	}
 
 	javascript := NewJavaScript()
-	envMap := javascript.GetPlatformEnv()
+	envMap := javascript.baseEnv()
 
 	if envMap[nodeOptionsEnvVar] != nodeOptionsDDTraceCIArg {
 		t.Errorf("expected NODE_OPTIONS to be %q, got %q", nodeOptionsDDTraceCIArg, envMap[nodeOptionsEnvVar])

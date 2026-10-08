@@ -10,6 +10,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
 )
 
 func TestCucumberAdapterIntegration(t *testing.T) {
@@ -63,7 +64,7 @@ Given('a failing step', function () { throw new Error('unassigned file ran') })
 	}
 
 	configureFramework(shellCommand(cucumberBinary), "")
-	cucumber := framework.NewCucumber()
+	cucumber := framework.NewCucumber(platform.NewJavaScript())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	discovered, err := cucumber.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: cucumber.TestPattern()})
@@ -74,7 +75,7 @@ Given('a failing step', function () { throw new Error('unassigned file ran') })
 	if !slices.Equal(discovered, wantFiles) {
 		t.Fatalf("discovered = %v", discovered)
 	}
-	if err := cucumber.RunTests(ctx, []string{"features/included.feature"}, nil); err != nil {
+	if err := cucumber.RunTests(ctx, []string{"features/included.feature"}, map[string]string{"NODE_OPTIONS": ""}); err != nil {
 		t.Fatalf("selected-file run failed: %v", err)
 	}
 }
