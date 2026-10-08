@@ -179,7 +179,7 @@ starting each worker.
 Use `--command` to override the framework's default base test command where
 supported. DDTest applies this override to RSpec run and full
 discovery, Minitest run and full discovery, Cucumber, Cypress, Jest, Mocha,
-Playwright, and Vitest run and file discovery, and pytest run and discovery
+and Playwright run and file discovery, and pytest run and discovery
 (since 1.7.0):
 
 ```bash
@@ -201,13 +201,9 @@ replaces configured `spec` entries with each worker's assigned files:
 ddtest run --platform javascript --framework mocha --command "pnpm exec mocha --parallel"
 ```
 
-For JavaScript/Vitest, the command must invoke Vitest directly. During planning,
-DDTest uses `list --filesOnly --json` on Vitest 2.0 and newer and the config-aware
-discovery API on Vitest 1.6. It appends selected files during execution:
-
-```bash
-ddtest run --platform javascript --framework vitest --command "pnpm exec vitest run --project unit*"
-```
+Vitest uses a direct Node API integration and does not accept `--command`.
+Use `--vitest-config` to select a configuration file; see
+[Vitest integration](#vitest-integration) for migration instructions.
 
 For JavaScript/Cypress, the command must invoke Cypress directly. DDTest keeps
 configuration options such as `--project`, `--config-file`, `--config`,
@@ -358,35 +354,78 @@ expects Mocha to be resolvable from the current project. Discovery removes
 the Datadog CI preload from `NODE_OPTIONS`; test runs retain it for Test
 Optimization instrumentation.
 
-## Vitest Discovery And Instrumentation
+## Vitest Integration
 
-For JavaScript/Vitest 2.0 or higher, DDTest discovers test files with Vitest's
-native `list --filesOnly --json` command. It uses this priority:
+DDTest launches its own Node adapter using the project's installed `vitest/node`
+API. Install Vitest **1.6 or higher**, `dd-trace` **5.125.0 or higher**, and any
+configured coverage or environment packages before running DDTest. Run from the
+project directory where Node can resolve those packages. DDTest does not install
+Vitest through `npx`.
 
-1. `--command` when set, replacing its Vitest subcommand with `list` and
-   appending `--filesOnly --json`.
-2. The local executable `node_modules/.bin/vitest` when present.
-3. `npx vitest`.
+Both planning and execution load the normal Vitest/Vite configuration. To use a
+non-default file, pass the same `--vitest-config` value to both commands:
 
-Vitest resolves its own Vite/Vitest configuration, projects, and default test
-matching. When `--tests-location` or `--tests-exclude-pattern` is set, DDTest
-filters the file list returned by Vitest after discovery.
+```bash
+ddtest plan --platform javascript --framework vitest --vitest-config vitest.ci.config.ts
+ddtest run --platform javascript --framework vitest --vitest-config vitest.ci.config.ts
+```
 
-Vitest 1.6 does not support `list --filesOnly`. When DDTest detects that specific
-unsupported-option error, it uses the `vitest/node` discovery API instead. This
-loads the project's Vitest configuration and discovers files for its configured
-projects, include and exclude patterns, and CLI filters without executing tests.
-If that API is unavailable, DDTest falls back to its own filesystem glob using
-`--tests-location` or the default Vitest test-file pattern.
+Alternatively, set
+`DD_TEST_OPTIMIZATION_RUNNER_VITEST_CONFIG=vitest.ci.config.ts` for both steps.
+Paths are relative to the working directory. The option selects a config file;
+it does not change the working directory.
 
-DDTest adds the CI require described above and a `--import` for Vitest worker
-processes. It preserves an existing Datadog register import; otherwise it uses
+Vitest owns configuration, project discovery, setup/teardown, reporters, and
+coverage. DDTest runs once with `run: true` and `watch: false`, and executes only
+the discovered project/pool specifications whose canonical file paths belong to
+the worker's assignment. The same file can still run in multiple configured
+projects. Vitest 3–5 use the public specification API; Vitest 1.6–2 use a separate
+legacy adapter. Configuration and discovery errors fail the operation rather
+than falling back to a filesystem glob.
+
+### Migrating from a Vitest command wrapper
+
+`--command` and `DD_TEST_OPTIMIZATION_RUNNER_COMMAND` are rejected for Vitest,
+including direct `vitest`, `node .../vitest.mjs`, `npx`, `pnpm`, and npm-script
+invocations. Remove the command override and move Vitest options to its config:
+
+| Previous command option | Configuration or replacement |
+| --- | --- |
+| `--config vitest.ci.config.ts` | DDTest's `--vitest-config vitest.ci.config.ts` |
+| `--project 'unit*'` | `test.project: ['unit*']` |
+| `--testNamePattern smoke` | `test.testNamePattern: 'smoke'` |
+| `--reporter json --outputFile results.json` | `test.reporters: ['json']`, `test.outputFile: 'results.json'` |
+| `--coverage` | `test.coverage.enabled: true` plus an installed coverage provider |
+| `--passWithNoTests` | `test.passWithNoTests: true` |
+| Test-file arguments | Positional selections to `ddtest plan`, then `ddtest run` |
+
+For example, replace `--command 'pnpm exec vitest run --config
+vitest.ci.config.ts --project unit*'` with `--vitest-config vitest.ci.config.ts`
+and add `project: ['unit*']` under that file's `test` configuration. Regenerate
+any saved plan after changing the configuration or selection.
+
+Shell setup and npm lifecycle scripts are not executed by the adapter. Run
+preparation steps before DDTest, and export required environment variables to
+DDTest. Keep Node flags and project loaders in `NODE_OPTIONS`; DDTest preserves
+them. For Yarn Plug'n'Play, make its loaders available to Node in that environment.
+Choose the Node version on `PATH` before starting DDTest.
+
+Use Vitest directly for watch mode, UI, benchmarks, report merging, and other
+CLI-only workflows. For snapshot updates, run Vitest with `--update`, or
+explicitly enable `test.update` in a dedicated config. Missing snapshots in CI
+still fail by default. Prefer DDTest's worker/CI-node settings for splitting;
+a configured Vitest `test.shard` additionally shards each assigned batch.
+
+### Tracing
+
+DDTest adds the Datadog CI require and register import to worker `NODE_OPTIONS`.
+It preserves an existing Datadog register import; otherwise it uses
 `DD_TRACE_ESM_IMPORT`, the `register.js` next to an external tracer's `ci`
 directory, or the project-local `dd-trace/register.js`, in that order.
-The GitHub action exports the paths, so manually setting `NODE_OPTIONS` is
-unnecessary.
-The tracer's `--require` option follows existing project loaders. Discovery
-removes both Datadog options to avoid instrumenting the file-listing process.
+The GitHub action exports the paths, so manually setting Datadog `NODE_OPTIONS`
+is unnecessary. The tracer's require follows existing project loaders.
+Discovery removes both Datadog options to avoid instrumenting file listing.
+The adapter itself is a directly executed script, not a `NODE_OPTIONS` preload.
 
 ## Cypress Discovery And Instrumentation
 

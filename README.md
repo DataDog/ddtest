@@ -28,7 +28,8 @@ Minimum supported library and runtime requirements:
   Cucumber support is tested with `@cucumber/cucumber` 7 through 13; Cypress
   support requires Cypress 12 or higher; Mocha support requires Mocha 8 or higher;
   Playwright support requires Playwright 1.18 or higher; Vitest support requires
-  Vitest 1.6 or higher.
+  Vitest 1.6 or higher and `dd-trace` **5.125.0** or higher. Vitest uses a direct
+  Node API integration; see [configuration and migration instructions](docs/running.md#vitest-integration).
 
 For instructions on setting up Test Optimization, see the [Datadog Test Optimization documentation](https://docs.datadoghq.com/tests/setup/).
 
@@ -216,7 +217,8 @@ parallelism details, see [Running DDTest](docs/running.md).
 | --- | --- |
 | `--platform` | Language/platform. Currently supported: `ruby`, `python`, `javascript`. |
 | `--framework` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cucumber`, `cypress`, `jest`, `mocha`, `playwright`, `vitest`. |
-| `--command` | Override the default base command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, Playwright, and Vitest run/discovery, and pytest run/discovery (since 1.7.0). For ddtest versions prior to 1.7.0 with pytest, the command cannot be changed. Pass extra flags with `PYTEST_ADDOPTS`. |
+| `--command` | Override the default base command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, and Playwright run/discovery. Vitest rejects this option; use `--vitest-config` and configure options in Vitest. |
+| `--vitest-config` | Vitest config file used by both planning and execution; defaults to Vitest config discovery. See [migration instructions](docs/running.md#vitest-integration). |
 | `--min-parallelism` | Minimum CI node or worker count DDTest considers when planning. |
 | `--max-parallelism` | Maximum CI node or worker count DDTest considers when planning. |
 | `--target-time` | Target wall time DDTest tries to satisfy when selecting parallelism. |

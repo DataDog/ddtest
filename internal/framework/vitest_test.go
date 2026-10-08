@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,86 +13,55 @@ import (
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/spf13/viper"
 )
 
 type vitestCommandExecutor struct {
-	output         []byte
-	stdout         []byte
-	stderr         []byte
-	err            error
-	capturedName   string
-	capturedArgs   []string
-	capturedEnvMap map[string]string
+	onRun                  func(string, []string, map[string]string) error
+	output, stdout, stderr []byte
+	err                    error
+	capturedName           string
+	capturedArgs           []string
+	capturedEnvMap         map[string]string
+	capturedRequest        vitestRequest
 }
 
-type vitestCommandCall struct {
-	name string
-	args []string
-}
-
-type vitestListOutputEntry struct {
-	File        string `json:"file"`
-	ProjectName string `json:"projectName,omitempty"`
-}
-
-func vitestListOutput(t *testing.T, entries ...vitestListOutputEntry) []byte {
+func vitestListOutput(t *testing.T, files ...string) []byte {
 	t.Helper()
-	output, err := json.Marshal(entries)
+	output, err := json.Marshal(files)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return output
 }
 
-type vitestSequenceExecutor struct {
-	outputs [][]byte
-	errors  []error
-	calls   []vitestCommandCall
-}
-
-func (m *vitestSequenceExecutor) CombinedOutput(_ context.Context, name string, args []string, _ map[string]string) ([]byte, error) {
-	callIndex := len(m.calls)
-	m.calls = append(m.calls, vitestCommandCall{name: name, args: slices.Clone(args)})
-	return m.outputs[callIndex], m.errors[callIndex]
-}
-
-func (m *vitestSequenceExecutor) Output(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, []byte, error) {
-	output, err := m.CombinedOutput(ctx, name, args, envMap)
-	return output, nil, err
-}
-
-func (m *vitestSequenceExecutor) Run(_ context.Context, _ string, _ []string, _ map[string]string) error {
-	return nil
-}
-
-func (m *vitestCommandExecutor) CombinedOutput(_ context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
-	m.capturedName = name
-	m.capturedArgs = slices.Clone(args)
-	m.capturedEnvMap = envMap
-	return append(slices.Clone(m.output), m.stderr...), m.err
-}
-
-func (m *vitestCommandExecutor) Output(_ context.Context, name string, args []string, envMap map[string]string) ([]byte, []byte, error) {
-	m.capturedName = name
-	m.capturedArgs = slices.Clone(args)
-	m.capturedEnvMap = envMap
-	if m.err == nil {
-		for _, arg := range args {
-			if outputFile, ok := strings.CutPrefix(arg, "--json="); ok {
-				if err := os.WriteFile(outputFile, m.output, 0644); err != nil {
-					return m.stdout, m.stderr, err
-				}
-				return m.stdout, m.stderr, nil
-			}
-		}
+func (m *vitestCommandExecutor) capture(name string, args []string, env map[string]string) error {
+	m.capturedName, m.capturedArgs, m.capturedEnvMap = name, slices.Clone(args), env
+	request, err := os.ReadFile(filepath.Join(filepath.Dir(args[0]), "request.json"))
+	if err != nil {
+		return err
 	}
-	return m.output, m.stderr, m.err
+	return json.Unmarshal(request, &m.capturedRequest)
 }
 
-func (m *vitestCommandExecutor) Run(_ context.Context, name string, args []string, envMap map[string]string) error {
-	m.capturedName = name
-	m.capturedArgs = slices.Clone(args)
-	m.capturedEnvMap = envMap
+func (m *vitestCommandExecutor) CombinedOutput(_ context.Context, name string, args []string, env map[string]string) ([]byte, error) {
+	if err := m.capture(name, args, env); err != nil {
+		return nil, err
+	}
+	if m.err != nil {
+		return m.output, m.err
+	}
+	err := os.WriteFile(filepath.Join(filepath.Dir(args[0]), "files.json"), m.output, 0600)
+	return append(slices.Clone(m.stdout), m.stderr...), err
+}
+
+func (m *vitestCommandExecutor) Run(_ context.Context, name string, args []string, env map[string]string) error {
+	if err := m.capture(name, args, env); err != nil {
+		return err
+	}
+	if m.onRun != nil {
+		return m.onRun(name, args, env)
+	}
 	return m.err
 }
 
@@ -132,7 +102,7 @@ func TestVitest_HasUnskippableMarker(t *testing.T) {
 	}
 }
 
-func TestVitest_DiscoverTestFiles_WithCustomCommand(t *testing.T) {
+func TestVitest_DiscoverTestFiles_WithConfig(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -150,14 +120,14 @@ func TestVitest_DiscoverTestFiles_WithCustomCommand(t *testing.T) {
 
 	executor := &vitestCommandExecutor{
 		output: vitestListOutput(t,
-			vitestListOutputEntry{File: filepath.Join(tempDir, "packages", "b.spec.ts"), ProjectName: "integration"},
-			vitestListOutputEntry{File: "packages/a.test.ts", ProjectName: "unit"},
-			vitestListOutputEntry{File: "packages/a.test.ts", ProjectName: "duplicate"},
+			filepath.Join(tempDir, "packages", "b.spec.ts"),
+			"packages/a.test.ts",
+			"packages/a.test.ts",
 		),
 	}
 	vitest := &Vitest{
-		executor:        executor,
-		commandOverride: []string{"pnpm", "exec", "vitest", "run", "--project", "unit*"},
+		executor:   executor,
+		configFile: "vitest.unit.ts",
 		platformEnv: map[string]string{
 			"NODE_OPTIONS": "--import dd-trace/register.js -r dd-trace/ci/init --max-old-space-size=4096",
 		},
@@ -167,14 +137,14 @@ func TestVitest_DiscoverTestFiles_WithCustomCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DiscoverTestFiles() failed: %v", err)
 	}
-	if executor.capturedName != "pnpm" {
-		t.Fatalf("command = %q, want pnpm", executor.capturedName)
+	if executor.capturedName != "node" || len(executor.capturedArgs) != 1 || filepath.Base(executor.capturedArgs[0]) != "vitest.mjs" {
+		t.Fatalf("command = %q %q", executor.capturedName, executor.capturedArgs)
 	}
-	wantArgs := []string{"exec", "vitest", "list", "--project", "unit*", "--filesOnly"}
-	if len(executor.capturedArgs) != len(wantArgs)+1 ||
-		!slices.Equal(executor.capturedArgs[:len(wantArgs)], wantArgs) ||
-		!strings.HasPrefix(executor.capturedArgs[len(wantArgs)], "--json=") {
-		t.Fatalf("args = %v, want %v followed by --json=<file>", executor.capturedArgs, wantArgs)
+	if executor.capturedRequest.Config != "vitest.unit.ts" || !executor.capturedRequest.Discover {
+		t.Fatalf("request = %+v", executor.capturedRequest)
+	}
+	if _, err := os.Stat(filepath.Dir(executor.capturedArgs[0])); !os.IsNotExist(err) {
+		t.Fatalf("discovery adapter directory was not cleaned up: %v", err)
 	}
 	if got := executor.capturedEnvMap["NODE_OPTIONS"]; got != "--max-old-space-size=4096" {
 		t.Fatalf("discovery NODE_OPTIONS = %q", got)
@@ -215,9 +185,9 @@ func TestVitest_DiscoverTestFiles_ExcludeStillUsesVitestDiscovery(t *testing.T) 
 	vitest := &Vitest{
 		executor: &vitestCommandExecutor{
 			output: vitestListOutput(t,
-				vitestListOutputEntry{File: "generic.test.ts", ProjectName: "unit"},
-				vitestListOutputEntry{File: "excluded.test.ts", ProjectName: "unit"},
-				vitestListOutputEntry{File: "custom.check.ts", ProjectName: "unit"},
+				"generic.test.ts",
+				"excluded.test.ts",
+				"custom.check.ts",
 			),
 		},
 		platformEnv: make(map[string]string),
@@ -257,8 +227,8 @@ func TestVitest_DiscoverTestFiles_ExcludeWithEmptyCandidatesStillUsesVitestDisco
 
 	setTestsExcludePattern(t, "excluded.test.ts")
 	executor := &vitestCommandExecutor{output: vitestListOutput(t,
-		vitestListOutputEntry{File: "excluded.test.ts", ProjectName: "unit"},
-		vitestListOutputEntry{File: "custom.check.ts", ProjectName: "unit"},
+		"excluded.test.ts",
+		"custom.check.ts",
 	)}
 	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
 	resolvedTestFiles, err := discovery.ResolveTestFiles(vitest.TestPattern(), settings.GetTestsExcludePattern())
@@ -311,7 +281,7 @@ func TestVitest_DiscoverTestFiles_IgnoresStdoutAndStderrNoise(t *testing.T) {
 		t.Fatal(err)
 	}
 	executor := &vitestCommandExecutor{
-		output: vitestListOutput(t, vitestListOutputEntry{File: testFile, ProjectName: "unit"}),
+		output: vitestListOutput(t, testFile),
 		stdout: []byte("Vitest config log\n"),
 		stderr: []byte("Vite deprecation warning\n"),
 	}
@@ -321,86 +291,6 @@ func TestVitest_DiscoverTestFiles_IgnoresStdoutAndStderrNoise(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(files) != 1 || filepath.Base(files[0]) != "named.test.ts" {
-		t.Fatalf("files = %v", files)
-	}
-}
-
-func TestVitest_DiscoverTestFiles_Vitest16UsesConfigAwareFallback(t *testing.T) {
-	tempDir := t.TempDir()
-	oldWd, _ := os.Getwd()
-	defer func() { _ = os.Chdir(oldWd) }()
-	if err := os.Chdir(tempDir); err != nil {
-		t.Fatal(err)
-	}
-	for _, file := range []string{"packages/a.test.ts", "custom/b.check.ts"} {
-		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(file, []byte("test"), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	executor := &vitestSequenceExecutor{
-		outputs: [][]byte{
-			[]byte("CACError: Unknown option `--filesOnly`"),
-			[]byte("config log\n" + vitestV1DiscoveryMarker + `["packages/a.test.ts","custom/b.check.ts"]` + "\nclose log\n"),
-		},
-		errors: []error{errors.New("exit status 1"), nil},
-	}
-	vitest := &Vitest{
-		executor:        executor,
-		commandOverride: []string{"pnpm", "exec", "vitest", "run", "--project", "unit*"},
-		platformEnv:     make(map[string]string),
-	}
-
-	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(files, []string{"custom/b.check.ts", "packages/a.test.ts"}) {
-		t.Fatalf("files = %v", files)
-	}
-	if len(executor.calls) != 2 {
-		t.Fatalf("calls = %v", executor.calls)
-	}
-	nativeArgs := executor.calls[0].args
-	wantNativeArgs := []string{"exec", "vitest", "list", "--project", "unit*", "--filesOnly"}
-	if executor.calls[0].name != "pnpm" ||
-		len(nativeArgs) != len(wantNativeArgs)+1 ||
-		!slices.Equal(nativeArgs[:len(wantNativeArgs)], wantNativeArgs) ||
-		!strings.HasPrefix(nativeArgs[len(wantNativeArgs)], "--json=") {
-		t.Fatalf("native discovery call = %#v", executor.calls[0])
-	}
-	if executor.calls[1].name != "node" || len(executor.calls[1].args) != 4 {
-		t.Fatalf("Vitest 1.6 discovery call = %#v", executor.calls[1])
-	}
-	if got := executor.calls[1].args[3]; got != `["run","--project","unit*"]` {
-		t.Fatalf("Vitest 1.6 CLI args = %s", got)
-	}
-}
-
-func TestVitest_DiscoverTestFiles_Vitest16FallsBackToDDTestGlob(t *testing.T) {
-	tempDir := t.TempDir()
-	oldWd, _ := os.Getwd()
-	defer func() { _ = os.Chdir(oldWd) }()
-	if err := os.Chdir(tempDir); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile("fallback.test.ts", []byte("test"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	executor := &vitestSequenceExecutor{
-		outputs: [][]byte{[]byte("Unknown option --filesOnly"), []byte("failed to import vitest/node")},
-		errors:  []error{errors.New("exit status 1"), errors.New("exit status 1")},
-	}
-	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
-	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(files, []string{"fallback.test.ts"}) {
 		t.Fatalf("files = %v", files)
 	}
 }
@@ -423,8 +313,8 @@ func TestVitest_DiscoverTestFiles_FiltersCustomLocation(t *testing.T) {
 	setTestsLocation(t, "custom/**/*.check.ts")
 
 	executor := &vitestCommandExecutor{output: vitestListOutput(t,
-		vitestListOutputEntry{File: "src/b.test.ts", ProjectName: "unit"},
-		vitestListOutputEntry{File: "custom/a.check.ts", ProjectName: "unit"},
+		"src/b.test.ts",
+		"custom/a.check.ts",
 	)}
 	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
 	files, err := vitest.DiscoverTestFiles(context.Background(), discovery.TestFileSet{Pattern: vitest.TestPattern()})
@@ -436,85 +326,83 @@ func TestVitest_DiscoverTestFiles_FiltersCustomLocation(t *testing.T) {
 	}
 }
 
-func TestVitest_RunTests_WithCustomCommand(t *testing.T) {
+func TestVitest_RejectsCustomCommand(t *testing.T) {
 	executor := &vitestCommandExecutor{}
-	vitest := &Vitest{
-		executor:        executor,
-		commandOverride: []string{"pnpm", "exec", "vitest", "list", "--project", "unit*"},
-		platformEnv:     map[string]string{"NODE_OPTIONS": "--import dd-trace/register.js -r dd-trace/ci/init", "SHARED": "platform"},
+	vitest := &Vitest{executor: executor, customCommand: "pnpm exec vitest run"}
+	_, discoveryErr := vitest.DiscoverTestFiles(t.Context(), discovery.TestFileSet{ExplicitFiles: []string{"a.test.js"}})
+	runErr := vitest.RunTests(t.Context(), []string{"a.test.js"}, nil)
+	for _, err := range []error{discoveryErr, runErr} {
+		if err == nil || !strings.Contains(err.Error(), "does not support --command") || !strings.Contains(err.Error(), "--vitest-config") {
+			t.Fatalf("expected migration instructions, got %v", err)
+		}
 	}
-	err := vitest.RunTests(context.Background(), []string{"src/a.test.ts", "src/b.spec.ts"}, map[string]string{"SHARED": "worker"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantArgs := []string{"exec", "vitest", "run", "--project", "unit*", "src/a.test.ts", "src/b.spec.ts"}
-	if executor.capturedName != "pnpm" || !slices.Equal(executor.capturedArgs, wantArgs) {
-		t.Fatalf("command = %q, args = %v", executor.capturedName, executor.capturedArgs)
-	}
-	if executor.capturedEnvMap["SHARED"] != "worker" {
-		t.Fatal("worker environment should override platform environment")
+	if executor.capturedName != "" {
+		t.Fatal("custom command must not be executed")
 	}
 }
 
-func TestVitest_RunTests_UsesNpxFallback(t *testing.T) {
-	tempDir := t.TempDir()
-	oldWd, _ := os.Getwd()
-	defer func() { _ = os.Chdir(oldWd) }()
-	if err := os.Chdir(tempDir); err != nil {
-		t.Fatal(err)
-	}
-
-	executor := &vitestCommandExecutor{}
-	vitest := &Vitest{executor: executor, platformEnv: make(map[string]string)}
-	if err := vitest.RunTests(context.Background(), []string{"src/a.test.ts"}, nil); err != nil {
-		t.Fatal(err)
-	}
-	wantArgs := []string{"vitest", "run", "src/a.test.ts"}
-	if executor.capturedName != "npx" || !slices.Equal(executor.capturedArgs, wantArgs) {
-		t.Fatalf("command = %q, args = %v", executor.capturedName, executor.capturedArgs)
+func TestVitest_ConfigFromEnvironment(t *testing.T) {
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_VITEST_CONFIG", "config with spaces/vitest.ts")
+	viper.Reset()
+	settings.Init()
+	if got := NewVitest().configFile; got != "config with spaces/vitest.ts" {
+		t.Fatalf("config = %q", got)
 	}
 }
 
-func TestVitestArgsForSubcommand(t *testing.T) {
-	tests := []struct {
-		name string
-		args []string
-		want []string
-	}{
-		{name: "replace run", args: []string{"exec", "vitest", "run", "--project", "unit"}, want: []string{"exec", "vitest", "list", "--project", "unit"}},
-		{name: "insert after vitest", args: []string{"vitest", "--project", "unit"}, want: []string{"vitest", "list", "--project", "unit"}},
-		{name: "project named run", args: []string{"exec", "vitest", "--project", "run"}, want: []string{"exec", "vitest", "list", "--project", "run"}},
-		{name: "direct binary args", args: []string{"--project", "unit"}, want: []string{"list", "--project", "unit"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := vitestArgsForSubcommand(tt.args, "list"); !slices.Equal(got, tt.want) {
-				t.Fatalf("got %v, want %v", got, tt.want)
+func TestVitest_RunTests_ExactSelectionEnvironmentAndCleanup(t *testing.T) {
+	for _, runErr := range []error{nil, errors.New("test process failed")} {
+		t.Run(fmt.Sprintf("run error %v", runErr), func(t *testing.T) {
+			var adapterDir string
+			workerEnv := map[string]string{"NODE_OPTIONS": "--max-old-space-size=2048", "SHARED": "worker"}
+			executor := &vitestCommandExecutor{onRun: func(name string, args []string, env map[string]string) error {
+				if name != "node" || len(args) != 1 {
+					t.Fatalf("command = %q %q", name, args)
+				}
+				adapterDir = filepath.Dir(args[0])
+				contents, err := os.ReadFile(filepath.Join(adapterDir, "request.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var request vitestRequest
+				if err := json.Unmarshal(contents, &request); err != nil {
+					t.Fatal(err)
+				}
+				if request.Discover || request.Config != "vitest.unit.ts" || !slices.Equal(request.Files, []string{"src/endOfYear/test.ts"}) {
+					t.Fatalf("request = %+v", request)
+				}
+				if env["NODE_OPTIONS"] != workerEnv["NODE_OPTIONS"] || env["SHARED"] != "worker" {
+					t.Fatalf("worker environment was changed: %v", env)
+				}
+				for _, name := range []string{"vitest.mjs", "vitest_modern.mjs", "vitest_legacy.mjs"} {
+					if _, err := os.Stat(filepath.Join(adapterDir, name)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return runErr
+			}}
+			vitest := &Vitest{executor: executor, configFile: "vitest.unit.ts", platformEnv: map[string]string{"NODE_OPTIONS": "platform-options", "SHARED": "platform"}}
+			if err := vitest.RunTests(t.Context(), []string{"src/endOfYear/test.ts"}, workerEnv); !errors.Is(err, runErr) {
+				t.Fatalf("got %v, want %v", err, runErr)
+			}
+			if _, err := os.Stat(adapterDir); !os.IsNotExist(err) {
+				t.Fatalf("adapter directory was not cleaned up: %v", err)
+			}
+			if len(workerEnv) != 2 || workerEnv["NODE_OPTIONS"] != "--max-old-space-size=2048" {
+				t.Fatalf("mutated worker environment: %v", workerEnv)
 			}
 		})
 	}
 }
 
-func TestVitestCLIArgs(t *testing.T) {
-	tests := []struct {
-		name    string
-		command string
-		args    []string
-		want    []string
-	}{
-		{name: "package manager", command: "pnpm", args: []string{"exec", "vitest", "run", "--project", "unit"}, want: []string{"run", "--project", "unit"}},
-		{name: "direct binary without subcommand", command: "node_modules/.bin/vitest", args: []string{"--config", "vitest.unit.ts"}, want: []string{"--config", "vitest.unit.ts"}},
-		{name: "npx default", command: "npx", args: []string{"vitest"}, want: nil},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := vitestCLIArgs(tt.command, tt.args); !slices.Equal(got, tt.want) {
-				t.Fatalf("got %v, want %v", got, tt.want)
-			}
-		})
-	}
-	if got := vitestCLIArgs("node_modules/.bin/vitest", nil); got == nil {
-		t.Fatal("direct binary CLI args must encode as an empty JSON array, not null")
+func TestVitest_RunTests_EmptyBatch(t *testing.T) {
+	executor := &vitestCommandExecutor{onRun: func(string, []string, map[string]string) error {
+		t.Fatal("empty batch must not invoke Vitest")
+		return nil
+	}}
+	if err := (&Vitest{executor: executor}).RunTests(t.Context(), nil, nil); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -226,7 +226,7 @@ func TestFrameworkCommand(t *testing.T) {
 		{NewJest(), "npx", []string{"jest"}},
 		{NewMocha(), "npx", []string{"mocha"}},
 		{NewCucumber(), "npx", []string{"cucumber-js"}},
-		{NewVitest(), "npx", []string{"vitest", "run"}},
+		{NewVitest(), "node", nil},
 		{NewPlaywright(), "npx", []string{"playwright", "test"}},
 		{NewCypress(), "npx", []string{"cypress", "run"}},
 		{NewPytest(), "python", []string{"-m", "pytest"}},
@@ -266,7 +266,7 @@ func TestFrameworkCommandPreservesOverride(t *testing.T) {
 	viper.Reset()
 	viper.Set("command", `npm test -- --runInBand "path with spaces"`)
 	settings.Init()
-	for _, f := range []Framework{NewJest(), NewMocha(), NewCucumber(), NewVitest(), NewPlaywright(), NewCypress(), NewPytest(), NewRSpec(), NewMinitest()} {
+	for _, f := range []Framework{NewJest(), NewMocha(), NewCucumber(), NewPlaywright(), NewCypress(), NewPytest(), NewRSpec(), NewMinitest()} {
 		command, args := f.Command()
 		if command != "npm" || !slices.Equal(args, []string{"test", "--", "--runInBand", "path with spaces"}) {
 			t.Fatalf("%s: %s %q", f.Name(), command, args)

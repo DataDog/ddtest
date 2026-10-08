@@ -563,6 +563,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 	config.Platform = "python"
 	config.Framework = "pytest"
 	config.Command = "pytest -q"
+	config.VitestConfig = "vitest.ci.config.ts"
 	config.MinParallelism++
 	config.MaxParallelism += 2
 	config.ParallelRunnerOverhead += time.Second
@@ -608,6 +609,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 		"CI node",
 		"CI node workers",
 		"Command",
+		"Vitest config",
 		"Tests location",
 		"Positional selection",
 		"Tests exclude pattern",

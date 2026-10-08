@@ -47,14 +47,18 @@ fi
 
 ## Vitest
 
-When another runner consumes DDTest's file list for Vitest, load both dd-trace
-initialization entry points:
+Vitest's CLI treats file arguments as substring filters. Passing a DDTest file
+list to `vitest run` can execute additional files with overlapping names.
+Use [DDTest's Vitest integration](running.md#vitest-integration) to execute exact
+assignments, or build the external runner around Vitest's
+[specification API](https://vitest.dev/api/advanced/vitest#runtestspecifications)
+and retain only specifications whose file paths are in the assignment.
+
+An external Node API runner must also load both Datadog initialization entry
+points and use `dd-trace` 5.125.0 or higher:
 
 ```bash
 export NODE_OPTIONS="--import dd-trace/register.js -r dd-trace/ci/init${NODE_OPTIONS:+ $NODE_OPTIONS}"
-if [ -s .testoptimization/runner/test-files.txt ]; then
-  xargs ./node_modules/.bin/vitest run < .testoptimization/runner/test-files.txt
-fi
 ```
 
 ## Mocha

@@ -124,6 +124,7 @@ type Config struct {
 	CiNode                 int               `mapstructure:"ci_node"`
 	CiNodeWorkers          int               `mapstructure:"ci_node_workers"`
 	Command                string            `mapstructure:"command"`
+	VitestConfig           string            `mapstructure:"vitest_config"`
 	TestsLocation          string            `mapstructure:"tests_location"`
 	TestsSelectionPattern  string            `mapstructure:"-"` // CLI positional scope, applied after discovery.
 	TestsExcludePattern    string            `mapstructure:"tests_exclude_pattern"`
@@ -228,6 +229,7 @@ func setDefaults() {
 	viper.SetDefault("ci_node", -1)
 	viper.SetDefault("ci_node_workers", strconv.Itoa(defaultCiNodeWorkers))
 	viper.SetDefault("command", "")
+	viper.SetDefault("vitest_config", "")
 	viper.SetDefault("tests_location", "")
 	viper.SetDefault("tests_exclude_pattern", "")
 	viper.SetDefault("test_discovery_cache", "")
@@ -337,6 +339,10 @@ func GetCiNodeWorkers() int {
 
 func GetCommand() string {
 	return Get().Command
+}
+
+func GetVitestConfig() string {
+	return Get().VitestConfig
 }
 
 func GetTestsLocation() string {
