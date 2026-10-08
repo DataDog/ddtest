@@ -1,0 +1,101 @@
+package tracer
+
+import (
+	"context"
+	"iter"
+	"sync"
+	"sync/atomic"
+)
+
+// These private types model the fields consumed by the compiler hook. The
+// integration suite separately tests the complete SDK and its HTTP payloads.
+type SpanContext struct{ owner *Span }
+type spanCtx struct {
+	context.Context
+	span     *Span
+	snapshot *SpanContext
+}
+type StartSpanConfig struct {
+	Context context.Context
+	Parent  *SpanContext
+}
+type spanMutex struct {
+	sync.Mutex
+	held atomic.Bool
+}
+
+func (m *spanMutex) Lock()   { m.Mutex.Lock(); m.held.Store(true) }
+func (m *spanMutex) Unlock() { m.held.Store(false); m.Mutex.Unlock() }
+
+type metadata map[string]string
+
+func (m metadata) All() iter.Seq2[string, string] {
+	return func(yield func(string, string) bool) {
+		for k, v := range m {
+			if !yield(k, v) {
+				return
+			}
+		}
+	}
+}
+
+type Span struct {
+	mu                                spanMutex
+	context                           *SpanContext
+	name, service, resource, spanType string
+	start, duration                   int64
+	error                             int32
+	spanID                            uint64
+	meta                              metadata
+	metrics                           map[string]float64
+	finished, disabled                bool
+	panicBefore, panicAfter           bool
+	pprofCtx                          context.Context
+}
+
+func newSpanContext(s *Span, parent *SpanContext) *SpanContext { return &SpanContext{owner: s} }
+func (s *Span) Context() *SpanContext                          { return s.context }
+func (c *SpanContext) TraceIDBytes() [16]byte                  { return [16]byte{1} }
+func (c *SpanContext) finish(s *Span)                          { s.finished = true }
+
+func spanStart(operationName string, opts StartSpanConfig) *Span {
+	var (
+		context      *SpanContext = opts.Parent
+		pprofContext              = opts.Context
+	)
+	if context != nil && pprofContext == nil {
+		pprofContext = context.owner.pprofCtx
+	}
+	span := &Span{name: operationName, resource: "initial", meta: metadata{}, metrics: map[string]float64{}, pprofCtx: pprofContext}
+	span.context = newSpanContext(span, context)
+	return span
+}
+
+func (s *Span) finish(finishTime int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.finished || s.disabled {
+		return
+	}
+	s.duration = finishTime - s.start
+	if s.panicBefore {
+		panic("before bookkeeping")
+	}
+	s.context.finish(s)
+	if s.panicAfter {
+		panic("after bookkeeping")
+	}
+	// Finish bookkeeping may be followed by additional SDK field updates.
+	s.resource = "final"
+	s.meta["tail"] = "final"
+	s.metrics["tail"] = 42
+}
+
+func ContextWithSpan(ctx context.Context, s *Span) context.Context {
+	var snapshot *SpanContext
+	if s != nil {
+		snapshot = s.Context()
+	}
+	newCtx := &spanCtx{Context: ctx, span: s, snapshot: snapshot}
+	return newCtx
+}

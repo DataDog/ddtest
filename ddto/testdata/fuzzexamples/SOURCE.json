@@ -51,8 +51,8 @@
       "path": "internal/fuzzfixture/subprocess.go",
       "source_path": "internal/civisibility/integrations/gotesting/fixtures/itrbackfill/internal/fuzzfixture/subprocess.go",
       "source_sha256": "acff0cf7e152b04b9608b344ed76aa92ffd480c9864472d05f44cca30a0e1c7b",
-      "sha256": "acff0cf7e152b04b9608b344ed76aa92ffd480c9864472d05f44cca30a0e1c7b",
-      "adaptation": "None"
+      "sha256": "31972d0e7155eb4e70f256c9103ed3f9ccb82bf59c8eaf08825e0b0f834164a5",
+      "adaptation": "Preserve duration assertions; canonicalize only printed negative zero, rejecting negative nonzero values. Same parser for SDK and Mini."
     },
     {
       "path": "internal/mockci/mockci.go",
@@ -79,6 +79,12 @@
       "sha256": "dbd2628ac1c3436ef51219f91d75d069acbbe1ef87346621efacbdcbdfe8647f",
       "role": "local",
       "adaptation": "Fixture cache inheritance/isolation control; not SDK production code"
+    },
+    {
+      "path": "internal/fuzzfixture/duration_test.go",
+      "sha256": "462dd965f743b3937e73b03d19e487b539a9694c49b20d706dc953e88374d3ea",
+      "role": "local",
+      "adaptation": "Printed-duration regression for signed zero and rejection of negative nonzero, missing and mismatched results."
     }
   ],
   "licenses": [

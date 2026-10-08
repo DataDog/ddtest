@@ -12,6 +12,7 @@ import (
 const (
 	sdkCIConfigPackage      = "github.com/DataDog/dd-trace-go/v2/internal/config"
 	sdkCIEnvironmentPackage = "github.com/DataDog/dd-trace-go/v2/internal/civisibility/envconfig"
+	sdkTracerPackage        = "github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
 )
 
 func isSDKCIPackage(pkg string) bool {
@@ -19,9 +20,9 @@ func isSDKCIPackage(pkg string) bool {
 }
 
 // This exported testing constant changes the SDK's cache inputs through
-// internal/env's testing dependency. Bump it when the CI gate contract changes.
+// internal/env's testing dependency. Bump it when SDK guard or mirror compiler edits change.
 const miniSDKCICacheMarker = `
-const DDTestMiniSDKCIContract = "mini-sdk-ci-gate-v1"
+const DDTestMiniSDKCIContract = "mini-sdk-ci-mirror-v4"
 `
 
 // prepareSDKCICompile rewrites the compiler's actual inputs, including covered
@@ -39,6 +40,7 @@ func prepareSDKCICompile(args []string, pkg string) ([]string, func(), error) {
 		start--
 	}
 	found := false
+	var mirrorFound uint8
 	for i := start; i < len(args); i++ {
 		source, err := os.ReadFile(args[i])
 		if err != nil {
@@ -49,7 +51,19 @@ func prepareSDKCICompile(args []string, pkg string) ([]string, func(), error) {
 		if pkg == sdkCIConfigPackage {
 			transform = instrument.TransformSDKCIConfig
 		}
-		rewritten, changed, err := transform(args[i], source)
+		var rewritten []byte
+		var changed bool
+		if pkg == sdkTracerPackage {
+			var hooks uint8
+			rewritten, hooks, err = instrument.TransformSDKMirror(args[i], source)
+			if hooks&mirrorFound != 0 {
+				err = fmt.Errorf("ambiguous SDK mirror API")
+			}
+			mirrorFound |= hooks
+			changed = hooks != 0
+		} else {
+			rewritten, changed, err = transform(args[i], source)
+		}
 		if err != nil {
 			cleanup()
 			return nil, nil, err
@@ -57,7 +71,7 @@ func prepareSDKCICompile(args []string, pkg string) ([]string, func(), error) {
 		if !changed {
 			continue
 		}
-		if found {
+		if found && pkg != sdkTracerPackage {
 			cleanup()
 			return nil, nil, fmt.Errorf("ambiguous SDK CI configuration entry")
 		}
@@ -81,6 +95,29 @@ func prepareSDKCICompile(args []string, pkg string) ([]string, func(), error) {
 			return nil, nil, closeErr
 		}
 		forwarded[i] = file.Name()
+	}
+	if pkg == sdkTracerPackage {
+		if mirrorFound != 15 {
+			cleanup()
+			return nil, nil, fmt.Errorf("unsupported SDK span mirror API: missing hooks (found %d)", mirrorFound)
+		}
+		file, err := os.CreateTemp("", "ddtest-sdk-mirror-*.go")
+		if err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		temporary = append(temporary, file.Name())
+		_, err = file.WriteString(instrument.SDKMirrorHook)
+		closeErr := file.Close()
+		if err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		if closeErr != nil {
+			cleanup()
+			return nil, nil, closeErr
+		}
+		forwarded = append(forwarded, file.Name())
 	}
 	if !found {
 		cleanup()

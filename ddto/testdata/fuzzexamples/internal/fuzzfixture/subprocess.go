@@ -316,11 +316,24 @@ func fuzzTargetName(target func(*testing.F)) string {
 
 func printedDuration(t *testing.T, output, name string) string {
 	t.Helper()
-	match := regexp.MustCompile(`--- PASS: ` + regexp.QuoteMeta(name) + ` \(([0-9.]+)s\)`).FindStringSubmatch(output)
-	if len(match) != 2 {
+	duration, ok := findPrintedDuration(output, name)
+	if !ok {
 		t.Fatalf("missing Go duration for %s: %s", name, output)
 	}
-	return match[1]
+	return duration
+}
+
+func findPrintedDuration(output, name string) (string, bool) {
+	match := regexp.MustCompile(`--- PASS: ` + regexp.QuoteMeta(name) + ` \(([0-9.]+|-0\.00)s\)`).FindStringSubmatch(output)
+	if len(match) != 2 {
+		return "", false
+	}
+	// Windows can print a tiny negative duration rounded to -0.00. Compare
+	// the same rounded zero; retain rejection of negative nonzero durations.
+	if match[1] == "-0.00" {
+		return "0.00", true
+	}
+	return match[1], true
 }
 
 func runLifecycleChild(t *testing.T, root, enabled string, extraEnv ...string) (string, int) {

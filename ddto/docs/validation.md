@@ -75,6 +75,7 @@ read directly from the installed SDK. The SDK backend reads the original module;
 | Panic, Goexit and timeout | Abnormal exit and diagnostic marker; enabled/disabled reference event equivalence |
 | Unsupported input | Missing/ambiguous hooks, malformed source and double instrumentation rejected |
 | Mini + Orchestrion | Explicit wrappers, GOFLAGS and toolexec; injected APM span and HTTP delivery; one CI hierarchy, Testify, goleak, retries, coverage and race |
+| SDK span copies under Mini tests | Independent APM/CI HTTP captures; original propagation and parentage, final fields, pooling, parallel/retry isolation, Testify, seeds, benchmarks, goleak, coverage and Orchestrion |
 | Command line | Go's own package/flag classification, `-C`, `--flag` spellings, custom test flags, overlay precedence and chained `-toolexec` |
 
 The backend responses are synthetic, but hooks, retry processes, serialization

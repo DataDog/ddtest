@@ -72,7 +72,9 @@ events. A user overlay is merged into ours, and ours takes precedence. A user
 already owned by ddtest; [composition](docs/orchestrion.md) explains that
 boundary. When the test graph includes the full SDK, Mini disables its CI
 reporter during compilation while keeping APM available, including builds without
-Orchestrion. Missing or ambiguous hooks fail before compilation. Help and explicit
+Orchestrion. [SDK span copies](docs/sdk-span-mirror.md) report context-associated
+operations beneath Mini tests while preserving their original APM traces.
+Missing or ambiguous hooks fail before compilation. Help and explicit
 `.go` file mode run native `go test` without
 instrumentation, with a warning for file mode. `--runtime=sdk` requires the pinned,
 unmodified SDK. Standard-library test targets are outside this POC.

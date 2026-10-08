@@ -610,3 +610,25 @@ bounds/concurrency/discovery tests,
 feature disabled at build time and enabled at execution, as well as explicit
 service priority and the HTTP service assertions. See the
 [feature guide](../../../docs/codeowners-service.md) for configuration and limits.
+
+## Native contexts for SDK span copies
+
+`civisibility/integrations/native_context.go` attaches a private Mini test scope
+to the native testing context. `gotesting/context.go` uses the existing typed
+offset cache before the user body starts. Root tests, subtests, fuzz callbacks
+and benchmarks bind their own event identity. Go retains cancellation ownership;
+isolated process-retry children retain their identity-free context contract.
+SDK-free binaries skip binding with zero allocations.
+
+The SDK compiler mirror lives in the POC's `internal/instrument/sdk_mirror.go`
+and targets the original SDK module's inputs, leaving its APM parentage and
+delivery intact. Mini captures final fields under the SDK lock and enqueues a
+detached copy after unlock. State belongs to `SpanContext` to survive pooling.
+There are no new dependencies or goroutines. Keep cache-marker invalidation,
+lock ordering, API validation and context lifetime checks during SDK updates.
+
+Checks: `TestNativeContextWithoutSDK`, `TestSDKMirrorScopeAndCancellation`,
+`TestSDKMirrorCaptureOwnsFinalData`, `TestSDKMirrorConcurrentCapture`,
+`TestSDKMirrorAPIDrift`, `TestMiniSDKSpanMirror` and
+`TestMiniSDKMirrorContextMatrix`. The [mirror guide](../../../docs/sdk-span-mirror.md)
+describes selection, delivery and the process-retry boundary.

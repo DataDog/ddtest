@@ -87,6 +87,11 @@ The harness compares every CI attribute and count, and checks hierarchy IDs.
 Library version and relocated internal stacks have documented normalization;
 application functions and source lines remain strict.
 
+Parallel-duration checks compare Go's printed time with the event at the same
+two-decimal precision. The shared SDK/Mini fixture treats Windows' `-0.00s`
+as rounded zero. Negative nonzero values and missing results still fail; virtual
+clock tests check the exact wait subtraction independently of that formatting.
+
 The matrix has 16 scenarios, manual/automatic entrypoints, and Mini normal/deferred
 delivery: **64 comparisons**. Automatic SDK means the frozen Orchestrion binary
 and the exact PR's advice. Automatic Mini means this checkout's `ddtest`.

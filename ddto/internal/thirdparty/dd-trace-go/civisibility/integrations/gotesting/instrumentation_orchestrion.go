@@ -423,6 +423,7 @@ func instrumentTestingTFuncWithSourceOptions(
 			}()
 
 			if !execMeta.suppressUserTestBody {
+				bindNativeTestContext(currentT, test)
 				f(currentT)
 			}
 			bodyReturned = true
@@ -663,6 +664,7 @@ func instrumentTestingBFunc(pb *testing.B, name string, f func(*testing.B)) (str
 			b.StartTimer()
 
 			// Execute original func
+			bindNativeTestContext(b, test)
 			f(b)
 		}
 

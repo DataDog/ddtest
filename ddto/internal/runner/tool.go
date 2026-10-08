@@ -69,7 +69,7 @@ func ToolNeedsPlan(mode string, args []string, importPath string) bool {
 		pkg, _, _ := strings.Cut(importPath, " [")
 		return pkg == "testing"
 	}
-	if tool == "compile" && (mode == "mini-sdk" || strings.HasPrefix(mode, "mini-sdk-")) && isSDKCIPackage(importPath) && !(len(args) == 2 && args[1] == "-V=full") {
+	if tool == "compile" && (mode == "mini-sdk" || strings.HasPrefix(mode, "mini-sdk-")) && (isSDKCIPackage(importPath) || importPath == sdkTracerPackage) && !(len(args) == 2 && args[1] == "-V=full") {
 		return true
 	}
 	if tool != "compile" || !strings.Contains(mode, "testify") && !strings.Contains(mode, "goleak") {
@@ -92,7 +92,7 @@ func RunTool(ctx context.Context, overlay string, args []string, stdin io.Reader
 	if tool := strings.TrimSuffix(filepath.Base(args[0]), ".exe"); tool == "cover" {
 		return RunCoverTool(ctx, overlay, args, stdin, stdout, stderr)
 	}
-	if isSDKCIPackage(os.Getenv("TOOLEXEC_IMPORTPATH")) {
+	if pkg := os.Getenv("TOOLEXEC_IMPORTPATH"); isSDKCIPackage(pkg) || pkg == sdkTracerPackage {
 		forwarded, cleanup, err := prepareSDKCICompile(args, os.Getenv("TOOLEXEC_IMPORTPATH"))
 		if err != nil {
 			fmt.Fprintln(stderr, err)

@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "f8e382ebdfd33539faaa509ade86088e53a3a6ecb1694f1a50594f9269ddcca8",
+      "sha256": "49a58289ac859762e602d7dcb5fc9f73248134d8648e5aeaa7f8cd3a8b5fd19c",
       "role": "local"
     },
     {
@@ -35,7 +35,7 @@
     },
     {
       "path": "TESTS.json",
-      "sha256": "939f81b1c6164a70ccebc4c06e85c13ea10dd34fc80c820ca6686ddee9181baf",
+      "sha256": "8015d3fff6922ff17a80e327658afa4800719274d57ec20079300ab2df82295e",
       "role": "local"
     },
     {
@@ -294,7 +294,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/context.go",
-      "sha256": "2d2b3b585ff229872df3479396416e5a0447899e779790978eeb57d96c33791d",
+      "sha256": "cc0bbe698c1d85978de91b72446695aa61095fa40e50e4b54ab19bccfcb36440",
       "role": "local"
     },
     {
@@ -469,7 +469,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/instrumentation_orchestrion.go",
-      "sha256": "f67d91b11a9aff1e45156af971a3e0dfa370b1581382770a9fc22239a44c4cb8",
+      "sha256": "4c41f5bfb53ff4eeb7f122da0d521e3668cdf252786ae4bf448aaad656cb7719",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/instrumentation_orchestrion.go",
       "source_sha256": "add69cf78b958e539a537fb65c4121ec67cd92da359d1a5f7425f1cd9ab980a3"
@@ -701,7 +701,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/testing.go",
-      "sha256": "494c06e7fa62b2e6118571b6a5ba31d06c52ab6a0a972bbe70f7a0548e0b06a8",
+      "sha256": "20f638a60e896a323666a277b8d46042e9a7ec18b6c6f06ffdf460ee9f1dd8b6",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/testing.go",
       "source_sha256": "a053656b43cb3fc9673e74f39a41e065420d5d36d0be4631cb95a344973fdfc9"
@@ -2103,6 +2103,16 @@
       "role": "adapted",
       "source_path": "internal/utils.go",
       "source_sha256": "7b2caa9a9040c85c0d47c7512cb9280fe376cbbc9b62034210f368db94fc6353"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/native_context_test.go",
+      "sha256": "8a230e69cfac8679d7524fb31ccd18c018257925f9bb209cacae875ba42921e2",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/integrations/native_context.go",
+      "sha256": "7407013a73b2daaa9c61d27b3f6740d9bc46c2f8afbb8323d0a403959e12d07f",
+      "role": "local"
     }
   ],
   "layout_mapping": {

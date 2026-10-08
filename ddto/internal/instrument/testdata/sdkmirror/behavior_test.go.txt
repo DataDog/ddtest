@@ -1,0 +1,135 @@
+package tracer
+
+import (
+	"context"
+	"testing"
+)
+
+type copyState struct {
+	owner                *Span
+	operation, resource  string
+	ctx                  context.Context
+	parent               any
+	meta                 map[string]string
+	metrics              map[string]float64
+	captures, deliveries int
+}
+
+var copies []*copyState
+
+func __ddtestMirrorStart(ctx context.Context, parent any, name string) any {
+	state := &copyState{ctx: ctx, operation: name, parent: parent}
+	copies = append(copies, state)
+	return state
+}
+func __ddtestMirrorContext(ctx context.Context, state any) context.Context {
+	return context.WithValue(ctx, "mirror", state)
+}
+func __ddtestMirrorCapture(state any, name, service, resource, kind string, start, duration int64, err int32, meta func(func(string, string) bool), metrics map[string]float64, trace [16]byte, id uint64) any {
+	copy := state.(*copyState)
+	if !copy.owner.mu.held.Load() {
+		panic("capture outside SDK lock")
+	}
+	copy.captures++
+	copy.resource = resource
+	copy.meta = map[string]string{}
+	meta(func(k, v string) bool { copy.meta[k] = v; return true })
+	copy.metrics = map[string]float64{}
+	for k, v := range metrics {
+		copy.metrics[k] = v
+	}
+	return copy
+}
+func __ddtestMirrorDeliver(state any) {
+	if state == nil {
+		return
+	}
+	copy := state.(*copyState)
+	if copy.owner.mu.held.Load() {
+		panic("delivery under SDK lock")
+	}
+	copy.deliveries++
+}
+
+func TestFinalFieldsAndLifetime(t *testing.T) {
+	copies = nil
+	ctx := context.WithValue(context.Background(), "client", 123)
+	span := spanStart("operation", StartSpanConfig{Context: ctx})
+	if len(copies) != 1 {
+		t.Fatalf("creation count: %d", len(copies))
+	}
+	copy := copies[0]
+	copy.owner = span
+	if copy.operation != "operation" || copy.ctx.Value("client") != 123 {
+		t.Fatal("creation inputs lost")
+	}
+	linked := ContextWithSpan(ctx, span)
+	if linked.Value("mirror") != copy || linked.Value("client") != 123 {
+		t.Fatal("context snapshot lost")
+	}
+	span.finish(10)
+	if copy.captures != 1 || copy.deliveries != 1 || copy.resource != "final" || copy.meta["tail"] != "final" || copy.metrics["tail"] != 42 {
+		t.Fatalf("final capture: %+v", copy)
+	}
+	span.resource = "recycled"
+	span.meta["tail"] = "recycled"
+	span.metrics["tail"] = 99
+	if copy.resource != "final" || copy.meta["tail"] != "final" || copy.metrics["tail"] != 42 {
+		t.Fatal("capture shares mutable SDK fields")
+	}
+	span.finish(20)
+	if copy.captures != 1 || copy.deliveries != 1 {
+		t.Fatal("duplicate finish emitted a copy")
+	}
+	detached := ContextWithSpan(linked, nil)
+	if detached.Value("mirror") != nil || detached.Value("client") != 123 {
+		t.Fatal("nil SDK span did not detach")
+	}
+	disabled := spanStart("disabled", StartSpanConfig{Context: ctx})
+	disabled.disabled = true
+	skipped := copies[1]
+	skipped.owner = disabled
+	disabled.finish(30)
+	if skipped.captures != 0 || skipped.deliveries != 0 {
+		t.Fatal("early return emitted a copy")
+	}
+}
+
+func TestParentContextAndPanics(t *testing.T) {
+	copies = nil
+	ctx := context.WithValue(context.Background(), "client", 123)
+	root := spanStart("root", StartSpanConfig{Context: ctx})
+	parent := copies[0]
+	parent.owner = root
+	child := spanStart("child", StartSpanConfig{Parent: root.Context()})
+	state := copies[1]
+	state.owner = child
+	if state.parent != parent || state.ctx.Value("client") != 123 {
+		t.Fatal("selected parent context lost")
+	}
+	child.panicBefore = true
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("SDK panic was swallowed")
+			}
+		}()
+		child.finish(10)
+	}()
+	if state.captures != 0 || state.deliveries != 0 || child.mu.held.Load() {
+		t.Fatal("unfinished span copied or lock retained")
+	}
+	child.panicBefore = false
+	child.panicAfter = true
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("SDK panic was swallowed")
+			}
+		}()
+		child.finish(20)
+	}()
+	if state.captures != 1 || state.deliveries != 1 || child.mu.held.Load() {
+		t.Fatal("finished span lost or lock retained")
+	}
+}

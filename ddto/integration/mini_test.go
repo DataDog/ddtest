@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -152,9 +153,38 @@ var adaptedMiniCallSites = []struct{ function, mini, sdk, sdkFunction string }{
 	{"integrations/gotesting.applyAdditionalFeaturesToTestFunc.func2", "integrations/gotesting/instrumentation.go:775", "integrations/gotesting/instrumentation.go:728", "integrations/gotesting.applyAdditionalFeaturesToTestFunc.func2"},
 	{"integrations/gotesting.runTestWithRetry", "integrations/gotesting/instrumentation.go:1011", "integrations/gotesting/instrumentation.go:964", "integrations/gotesting.runTestWithRetry"},
 	{"integrations/gotesting.runRetryAttemptCapabilityFallback", "integrations/gotesting/instrumentation.go:1138", "integrations/gotesting/instrumentation.go:1091", "integrations/gotesting.runRetryAttemptCapabilityFallback"},
-	{"integrations/gotesting.(*M).executeInternalTest.func1", "integrations/gotesting/testing.go:866", "integrations/gotesting/testing.go:838", "integrations/gotesting.(*M).executeInternalTest.func1"},
-	{"integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1.1", "integrations/gotesting/instrumentation_orchestrion.go:426", "integrations/gotesting/instrumentation_orchestrion.go:319", "integrations/gotesting.instrumentTestingTFunc.func1.1"},
-	{"integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1", "integrations/gotesting/instrumentation_orchestrion.go:432", "integrations/gotesting/instrumentation_orchestrion.go:325", "integrations/gotesting.instrumentTestingTFunc.func1"},
+	{"integrations/gotesting.(*M).executeInternalTest.func1", "integrations/gotesting/testing.go:867", "integrations/gotesting/testing.go:838", "integrations/gotesting.(*M).executeInternalTest.func1"},
+	{"integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1.1", "integrations/gotesting/instrumentation_orchestrion.go:427", "integrations/gotesting/instrumentation_orchestrion.go:319", "integrations/gotesting.instrumentTestingTFunc.func1.1"},
+	{"integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1", "integrations/gotesting/instrumentation_orchestrion.go:433", "integrations/gotesting/instrumentation_orchestrion.go:325", "integrations/gotesting.instrumentTestingTFunc.func1"},
+}
+
+// Keep the strict exception table tied to actual user-body calls. A moved call
+// must update this table; normalizing an adjacent arbitrary frame is not valid.
+func TestAdaptedMiniBodyCallSitesMatchSource(t *testing.T) {
+	calls := map[string]string{
+		"integrations/gotesting.(*M).executeInternalTest.func1":                  "testInfo.originalFunc(t)",
+		"integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1.1": "f(currentT)",
+		"integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1":   "wrappedFunc(t)",
+	}
+	for _, site := range adaptedMiniCallSites {
+		call, selected := calls[site.function]
+		if !selected {
+			continue
+		}
+		name, number, ok := strings.Cut(site.mini, ":")
+		line, err := strconv.Atoi(number)
+		if !ok || err != nil {
+			t.Fatal(site.mini)
+		}
+		data, err := os.ReadFile(filepath.Join("..", "internal", "thirdparty", "dd-trace-go", "civisibility", filepath.FromSlash(name)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(string(data), "\n")
+		if line < 1 || line > len(lines) || strings.TrimSpace(lines[line-1]) != call {
+			t.Fatalf("%s no longer points to %s", site.mini, call)
+		}
+	}
 }
 
 func canonicalMiniCallSite(function, location string) string {
@@ -179,12 +209,12 @@ func canonicalMiniAssertionLocation(location string) string {
 
 func TestCanonicalMiniStackMapsOnlyAdaptedCallSite(t *testing.T) {
 	sdk := "github.com/DataDog/dd-trace-go/v2/internal/civisibility/integrations/gotesting.(*M).executeInternalTest.func1\n\t/sdk/internal/civisibility/integrations/gotesting/testing.go:838\nexample.com/app.TestFailure\n\t/work/app_test.go:17"
-	mini := "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.(*M).executeInternalTest.func1\n\t/poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/testing.go:866\nexample.com/app.TestFailure\n\t/work/app_test.go:17"
+	mini := "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.(*M).executeInternalTest.func1\n\t/poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/testing.go:867\nexample.com/app.TestFailure\n\t/work/app_test.go:17"
 	want := canonicalMiniStack(sdk)
 	if canonicalMiniStack(mini) != want {
 		t.Fatal("adapted call site was not mapped to the pinned SDK")
 	}
-	for _, changed := range []string{strings.ReplaceAll(mini, "testing.go:866", "testing.go:867"), strings.ReplaceAll(mini, "app_test.go:17", "app_test.go:18"), strings.ReplaceAll(mini, "executeInternalTest.func1", "executeInternalTest.func2")} {
+	for _, changed := range []string{strings.ReplaceAll(mini, "testing.go:867", "testing.go:868"), strings.ReplaceAll(mini, "app_test.go:17", "app_test.go:18"), strings.ReplaceAll(mini, "executeInternalTest.func1", "executeInternalTest.func2")} {
 		if canonicalMiniStack(changed) == want {
 			t.Fatal("canonicalization hid a different location or function")
 		}
@@ -358,8 +388,8 @@ func TestCanonicalMiniCallSitesRetainOtherLocations(t *testing.T) {
 		function  string
 		mini, sdk int
 	}{
-		{"instrumentTestingTFuncWithSourceOptions.func1.1", 426, 319},
-		{"instrumentTestingTFuncWithSourceOptions.func1", 432, 325},
+		{"instrumentTestingTFuncWithSourceOptions.func1.1", 427, 319},
+		{"instrumentTestingTFuncWithSourceOptions.func1", 433, 325},
 	} {
 		function := "integrations/gotesting." + site.function
 		location := fmt.Sprintf("integrations/gotesting/instrumentation_orchestrion.go:%d", site.mini)
@@ -393,23 +423,23 @@ func TestTestifyMovedCallSitesInFormattedDiagnostics(t *testing.T) {
 	file := "integrations/gotesting/instrumentation_orchestrion.go:"
 	sdk := "test panicked: fixture\n    goroutine 12 [running]:\n    github.com/DataDog/dd-trace-go/v2/internal/civisibility/integrations/gotesting.instrumentTestingTFunc.func1(0x123)\n    \t" + sdkPrefix + file + "325 +0x123\n"
 	mini := strings.ReplaceAll(sdk, "github.com/DataDog/dd-trace-go/v2/internal/civisibility/", "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/")
-	mini = strings.ReplaceAll(strings.ReplaceAll(mini, sdkPrefix, miniPrefix), file+"325", file+"432")
+	mini = strings.ReplaceAll(strings.ReplaceAll(mini, sdkPrefix, miniPrefix), file+"325", file+"433")
 	mini = strings.ReplaceAll(mini, "instrumentTestingTFunc.func1", "instrumentTestingTFuncWithSourceOptions.func1")
 	if canonicalTestifyDiagnostic(sdk) != canonicalTestifyDiagnostic(mini) {
 		t.Error("indented stack mapping lost")
 	}
 	sdk = "\n\tError Trace:\t/work/app_test.go:18\n\t            \t\t\t\t" + sdkPrefix + file + "325\n\tError:      \tfixture failed"
-	mini = strings.ReplaceAll(strings.ReplaceAll(sdk, sdkPrefix, miniPrefix), file+"325", file+"432")
+	mini = strings.ReplaceAll(strings.ReplaceAll(sdk, sdkPrefix, miniPrefix), file+"325", file+"433")
 	if canonicalTestifyDiagnostic(sdk) != canonicalTestifyDiagnostic(mini) {
 		t.Error("formatted assertion source mapping lost")
 	}
-	for _, changed := range []string{strings.ReplaceAll(mini, file+"432", file+"433"), strings.ReplaceAll(mini, "app_test.go:18", "app_test.go:19"), strings.ReplaceAll(mini, "fixture failed", "different failure")} {
+	for _, changed := range []string{strings.ReplaceAll(mini, file+"433", file+"434"), strings.ReplaceAll(mini, "app_test.go:18", "app_test.go:19"), strings.ReplaceAll(mini, "fixture failed", "different failure")} {
 		if canonicalTestifyDiagnostic(sdk) == canonicalTestifyDiagnostic(changed) {
 			t.Error("formatted assertion erased a real difference")
 		}
 	}
-	text := "message references " + miniPrefix + file + "432"
-	if !strings.Contains(canonicalTestifyDiagnostic(text), file+"432") {
+	text := "message references " + miniPrefix + file + "433"
+	if !strings.Contains(canonicalTestifyDiagnostic(text), file+"433") {
 		t.Error("rewrote arbitrary message text")
 	}
 }

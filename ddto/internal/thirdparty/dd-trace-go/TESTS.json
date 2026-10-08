@@ -701,5 +701,11 @@
     "boundaries": "civisibility/utils/codeownership/codeowners_test.go: immutable results, concurrent readers, missing files, bounded matching, large tokens/headers/lines, duplicate compaction, encodings and line endings",
     "discovery": "civisibility/utils/codeownership/locator_test.go: host locations, repository/worktree roots, workspace rebasing, traversal rejection, read errors and stable decisions",
     "integration": "integration/codeowners_service_test.go: actual owner/service payloads, normal/deferred delivery, compiled binaries, coverage, race, trimpath, Testify and goleak"
+  },
+  "local_sdk_mirror_checks": {
+    "native_context": "gotesting/native_context_test.go: SDK-free context identity and zero allocations",
+    "ownership": "internal/minitracer/sdk_mirror_test.go: cancellation, scope isolation, detach, immutable copied maps and concurrent capture",
+    "compiler": "internal/instrument/sdk_mirror_test.go: SDK API drift and lock lifetime validation",
+    "wire": "integration/sdk_mirror_test.go: original APM IDs, parents and propagation, final CI fields, parallel/retry isolation, pooling, Testify, fuzz seeds, benchmarks, coverage, race, Orchestrion and normal/deferred agent/agentless delivery"
   }
 }

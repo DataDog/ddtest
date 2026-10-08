@@ -560,6 +560,18 @@ func TestFuzzExampleFixtureProvenance(t *testing.T) {
 	}
 }
 
+func TestFuzzExamplePrintedDuration(t *testing.T) {
+	for _, backend := range []string{"sdk", "mini"} {
+		t.Run(backend, func(t *testing.T) {
+			fixture := prepareFuzzExampleFixture(t, backend, "manual")
+			out, stderr, code := command(t, fixture.dir, testEnv("GOFLAGS=", "GOWORK=off", "DD_CIVISIBILITY_ENABLED=false"), "go", "test", "-count=1", "-run=^TestPrintedDuration", "./internal/fuzzfixture")
+			if code != 0 {
+				t.Fatalf("%s duration parser: %s\n%s", backend, out, stderr)
+			}
+		})
+	}
+}
+
 var fuzzCoverageScenarios = []string{"pass", "seed-lifecycle", "test-management", "active-fuzz", "skip-lifecycle", "parallel-duration", "filtered"}
 
 func TestFuzzExampleCoverageParity(t *testing.T) {

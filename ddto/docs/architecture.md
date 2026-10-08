@@ -114,6 +114,9 @@ the SDK's CI initialization and transport configuration through the same wrapper
 including builds without Orchestrion. APM remains available. Builds needing none
 of these features omit `-toolexec`; declaring an unused SDK dependency does not
 activate the guard.
+The same wrapper inserts [SDK span mirror hooks](sdk-span-mirror.md). The native
+test context carries Mini's identity, while SDK contexts retain APM parentage.
+Finalized SDK spans are copied into the existing CI queue under independent IDs.
 The suite fingerprint travels through `testing` export data; compiler and
 linker identities remain native, so unrelated packages share Go's cache. The
 selected version and API are checked before Go can reuse a cached suite. A

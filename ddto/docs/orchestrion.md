@@ -96,6 +96,11 @@ The guard also applies without Orchestrion when the selected test graph contains
 the SDK. It detects dependencies of test helpers during the existing graph query.
 Both `DD_CIVISIBILITY_ENABLED=parent` and `true` leave Mini as the sole CI reporter.
 
+[SDK span copies](sdk-span-mirror.md) associate application operations with a
+Mini test when the caller passes its context or a copied SDK parent's context.
+Orchestrion still weaves application spans. Their original APM IDs, parents and
+transport remain unchanged; Mini reports independent copies through CI intake.
+
 Mini's deferred delivery, retries and goleak shim continue to own Mini's data and
 goroutines. The goleak shim does not ignore arbitrary application or APM
 SDK goroutines. Applications that start an APM tracer should stop it or apply
@@ -112,9 +117,9 @@ adding a global compiler-version suffix. Bump the contract in
 change.
 
 The SDK guard validates private API signatures. When changing the supported SDK,
-check the CI environment reader and both configuration getters, their consumers,
-and the cache transition tests. The guards belong to the POC's build driver;
-they do not change the incorporated Mini runtime or its upstream manifest.
+check the CI environment reader, both configuration getters, span mirror anchors
+and their consumers. Keep the cache transition tests. The guards belong to the POC's build driver;
+the runtime's native context binding is recorded in the SDK adaptation manifest.
 
 Orchestrion retains its own configuration, pin checks and instrumentation
 behavior. Keep its configuration valid for the selected SDK. The POC does not

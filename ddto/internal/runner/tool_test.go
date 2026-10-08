@@ -26,6 +26,12 @@ func TestToolDispatch(t *testing.T) {
 		{"cover", "cover", "testing", false, true},
 		{"testify-cover", "cover", "testing", true, true},
 		{"testify-cover", "compile.exe", "github.com/stretchr/testify/suite", false, true},
+		{"mini-sdk", "compile", sdkTracerPackage, false, true},
+		{"mini-sdk", "compile", sdkTracerPackage, true, false},
+		{"mini-sdk-orchestrion", "compile", sdkTracerPackage, false, true},
+		{"mini-sdk", "link", sdkTracerPackage, false, false},
+		{"mini-sdk", "compile", "example.com/client", false, false},
+		{"testify", "compile", sdkTracerPackage, false, false},
 	} {
 		args := []string{filepath.Join("tools", tc.tool)}
 		if tc.probe {

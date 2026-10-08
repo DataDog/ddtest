@@ -863,6 +863,7 @@ func (ddm *M) executeInternalTest(testInfo *testingTInfo, wrapperOpts additional
 		// A masking capability fallback still runs the instrumentation shell so
 		// the event is emitted, but it must not admit the irreversible user body.
 		if !execMeta.suppressUserTestBody {
+			bindNativeTestContext(t, test)
 			testInfo.originalFunc(t)
 		}
 		bodyReturned = true
@@ -1087,6 +1088,7 @@ func (ddm *M) executeInternalBenchmark(benchmarkInfo *testingBInfo) func(*testin
 			// Restart the timer and execute the original benchmark function.
 			b.ResetTimer()
 			b.StartTimer()
+			bindNativeTestContext(b, test)
 			benchmarkInfo.originalFunc(b)
 		}
 
