@@ -205,6 +205,13 @@ architectures. Unix metadata changes need fixed-buffer, partial-read and
 formatting checks. Solaris's runtime trampoline needs special review when Go
 changes.
 
+Linux and AIX metadata use `syscall.Uname`. BSD targets use fixed-buffer
+numeric sysctl reads, retaining partial data on `ENOMEM`; their tests preserve
+buffer bounds and whitespace. Solaris has a small libc/runtime trampoline.
+Windows keeps selected Job Object, thread, timer and registry operations,
+including system-directory-only DLL loading. Review those runtime/ABI hooks
+when Go changes; a cross-link does not establish native platform equivalence.
+
 For a Go upgrade, inspect the transformer and private hook signatures, testing
 reflection offsets, retry-process handling and the runtime coverage emitter.
 Add the new toolchain to the compatibility matrix only after exercising it.
@@ -229,8 +236,8 @@ The final command should list only `github.com/tonyredondo/dd-ci-testing-poc`.
 Test-only dependencies in the root module are expected. Their presence in
 `go.mod` alone does not establish a runtime dependency, but Go's minimal version
 selection applies them to consumers' module graphs. Keep
-`github.com/stretchr/testify` at v1.7.5: the oldest release that builds the
-ported tests and requires a `yaml.v3` without CVE-2022-28948. A consumer with
+`github.com/stretchr/testify` at v1.7.5: the oldest release used by the
+ported tests and consumer dependency checks. A consumer with
 Testify v1.7.5 or newer keeps its version; one without Testify gains no
 requirement, only `go.sum` checksums for Testify's `go.mod`.
 `TestMiniConsumerAddsOnlyOwnModule` fails if the requirement is raised. Adapt a
@@ -244,17 +251,19 @@ Install the frozen Orchestrion reference used by the
 `.exe` suffix. Without this variable, the Orchestrion comparison is skipped.
 
 ```sh
-go test -count=1 -timeout=20m ./...
-go test -race -count=1 -timeout=20m ./...
+go test -count=1 -timeout=30m ./...
+PARITY_TEST_MODE=race PARITY_EXECUTION_ORDER=mini-first \
+  go test -race -count=1 -timeout=40m ./...
 go test -race -covermode=atomic \
   -coverpkg=./internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage \
   -run TestRuntimeCoverage -count=1 \
   ./internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage
 ```
 
-The workflow gives Windows 40 minutes instead of 20: without a restored Go
-cache its integration package takes longer than 20 minutes, and setup-go saves
-the cache only after a successful job.
+The workflow's test timeout is 30 minutes for normal Linux/macOS, 40 minutes
+for Linux race and 55 minutes for Windows. Job timeouts also include setup and
+reporting. Use the [workflow](../.github/workflows/compatibility.yml) as the
+source of truth when those limits change.
 
 The full compatibility suite exercises actual binaries, payloads, retry
 processes and failure paths. Its comparison preserves CI attributes and

@@ -1,144 +1,158 @@
 # Optimization backlog
 
-These optimizations were identified in the 2026-10-06 review of `main`. They are
-deliberately deferred: correctness work comes first, and each item below needs
-its own design and validation. Measurements used Linux, Go 1.27.0, a local fake
-Agent and a fixture of trivial subtests; see [how to measure](#how-to-measure).
+Each item is a separate experiment and change. The order balances likely CPU
+or allocation savings, frequency and implementation risk. Impact estimates
+are qualitative; validate them on the current revision before implementing.
+Use [performance and profiling](performance.md) for measurement and ownership
+rules, and [feature parity](ci-parity.md) for the behavior to preserve.
 
-## 1. Compute per-invocation data once in the CLI
+| Order | Change | Where it can help | Complexity |
+| --- | --- | --- | --- |
+| 1 | Represent span options as values | CPU and allocations on every event; clearer metadata-capacity estimates | Medium |
+| 2 | Cache common numeric CI options | Repeated option construction per span | Low to medium |
+| 3 | Reduce per-test metadata lookup | Contention and lookup work in large parallel suites | Medium to high |
+| 4 | Reduce remaining provisioning commands | Startup of CLI invocations that must provide the runtime | Low only if existing metadata is sufficient |
+| 5 | Supply coverage module identity from the CLI | A repeated subprocess at covered-binary startup | Medium |
+| 6 | Share Git metadata within one CLI invocation | Repeated serial Git queries across test packages | Medium |
+| 7 | Store small metric sets without a map | Allocations for metric-bearing events | Medium; measure lookup/encoding tradeoffs |
+| 8 | Collect coverage counters in memory | Profile I/O and parsing per covered test | High |
+| 9 | Share matching settings requests | Network startup for many small packages | High |
+| 10 | Coordinate telemetry startup/shutdown requests | Network round trips around tests | High; changes lifecycle ownership |
 
-Every test binary starts CI Visibility on its own. In `go test ./...` much of
-that work repeats once per package. Some inputs can differ across modules or
-services, so sharing must use the effective request configuration.
+## 1. Span options as values
 
-- **Git metadata.** Startup runs four `git` subprocesses in sequence:
-  `rev-parse --show-toplevel`, `ls-remote --get-url`,
-  `rev-parse --abbrev-ref HEAD` and `log -1`. They account for most of Mini's
-  startup overhead (about 12 ms per binary against 3 ms native; the SDK takes
-  about 49 ms). `ddtest` could run them once and pass the results to every
-  binary, for example through the `DD_GIT_*` variables the SDK already honors.
-  Check which fields still trigger a subprocess when those variables are set.
-- **Backend requests.** Each binary requests settings and, depending on the
-  enabled features, known tests, test management data and skippable tests. Each
-  costs one round trip; against the remote intake, this dominates small
-  packages. `ddtest` could fetch them once and point the binaries at the
-  incorporated manifest mode (the Bazel path), which reads these inputs from
-  files. Validate that the manifest data is identical for all packages of one
-  invocation and that results still upload through the network.
+`StartSpanOption` is a function. Options create closures and their count does
+not say how many local metadata entries they add. Try a value representation
+for timestamps, resource, type, tags and hierarchy fields, with explicit entry
+counts. The experimental public API can change before a release; retaining the
+closure shape is not a requirement.
 
-### Shared settings and initial telemetry
+Measure `BenchmarkSpanMetadata` with CI-shaped and text-heavy options, then
+`BenchmarkEventLifecycle` with and without gzip. Preserve option ordering,
+string/numeric transitions, errors, common snapshots, getters after `Finish`
+and identical decoded events. Record SDK bindings in `ADAPTATIONS.md`.
 
-Investigate having `ddtest` coordinate settings and initial feature requests
-before running package binaries. The same design could coordinate the initial
-telemetry `app-started` requests. This is a backlog item; the runtime currently
-owns those requests and its application lifecycle.
+## 2. Common numeric CI options
 
-A macOS/arm64 observation on Go 1.27.1 with two trivial test packages showed
-`app-started` taking 422–431 ms per binary. Settings initialization overlapped
-with that request and waited for it. This identifies startup network latency as
-a candidate, but one run does not establish a saving. Package starts also
-already overlap under `go test`.
+String tags use an immutable revisioned snapshot. Numeric CI metrics still
+construct fresh options for each call. Test whether a revisioned numeric base
+or prepared value options reduce that work.
 
-The experiment must preserve:
+Preserve explicit metric updates, direct sequential edits allowed by the SDK
+API, per-event overrides and Bazel filtering. Benchmark lookup plus complete
+span creation; a cache that scans a larger map can cost more than it saves.
 
-- Settings keys: repository URL, commit, service, environment and all effective
-  test configurations. Share only matching requests within one invocation;
-  keep independent invocations and different module configurations separate.
-- Feature responses, errors and fallback behavior for ITR, retries, EFD,
-  impacted tests and test management. Reusing manifest inputs must still allow
-  network delivery of events.
-- Telemetry runtime IDs and application lifecycle. One `app-started` per CLI
-  would change today's per-process identity; define how parent/child identity,
-  configurations, metrics, timestamps, request sequence and `app-closing` work
-  before reducing that count. Preserve child telemetry throughout the experiment.
-- Session, module, suite, test and span event counts and hierarchy. Shared
-  initialization does not combine their sessions.
-- Compile-only `go test -c` behavior: building must not start CI sessions or send
-  runtime telemetry. Standalone binaries, process retries and interrupted
-  parents must still initialize safely without a live CLI coordinator.
-- Deferred delivery and goleak admission: initial HTTP work must finish before
-  tests begin. Any shared state must have invocation-scoped ownership and
-  cleanup, without secrets in logs or persistent caches.
+## 3. Per-test metadata lookup
 
-Measure first-test admission and complete-command wall time across one and many
-packages, with both local and delayed HTTP receivers. Compare cold and cached
-builds separately. Check telemetry and feature parity before claiming a saving.
-Remote requests can dominate a trivial package, but sharing only helps the
-command's elapsed time when it removes work from its critical path.
+Execution metadata is tracked outside native testing objects. Profile its
+lookup and update path with serial tests, parallel subtests and retries before
+changing storage. A field added through the `testing` overlay could remove
+some shared-map operations, but introduces another private layout contract.
 
-## 2. Cache the provided runtime
+Preserve cleanup lifetime, native cancellation, Testify scopes, retry ownership,
+fuzz seeds and SDK-free tests. Validate offsets on every supported toolchain,
+cache invalidation and both delivery modes. Prefer a smaller change when the
+profile does not justify changing `testing.common`.
 
-When the module does not require the selected runtime, `ddtest` prepares a
-temporary `go.mod` and runs a second full `go list`. Mini uses local sources or
-its exact cached version when available. The SDK, uncached Mini versions and
-versioned client replacements use `go get`, whose metadata queries can still
-need the proxy even with cached downloads. The CLI streams that command's
-diagnostics to `stderr`.
+## 4. Runtime provisioning commands
 
-- Cache the resulting `go.mod`/`go.sum` in the user cache directory (outside the
-  repository), keyed by the module's `go.mod` and `go.sum` contents, the runtime,
-  its version and the Go version.
-- Provisioning queries `GOMOD`, `GOWORK` and `GOMODCACHE` together with `go env -json`.
-  Avoiding that remaining command would require obtaining both values from
-  information already collected during preparation.
-- List only the runtime package with the provided modfile instead of repeating
-  the full package list.
+Use build debug logs to count the remaining `go env` and `go mod` calls. A
+module-root Mini invocation can provision before its full package query; that
+path already resolves selected packages only once. Do not add another query
+or a persistent cache to improve it.
 
-## 3. Deeper per-test changes
+Investigate combining commands or reusing metadata already obtained. Keep Go
+responsible for parsing effective module files, overlays, replacements and
+workspaces. Compare Mini already declared, a local replacement, CLI-local
+provisioning and a missing published source. The common declared-runtime path
+must not become slower or modify client files.
 
-After the per-test allocation work in the SDK port, Mini adds about 44
-allocations per test to `testing`'s own 17.
+## 5. Coverage module identity
 
-- **Span options as values.** `StartSpanOption` is a closure, so every
-  `ResourceName`, `SpanType`, `StartTime` and `Tag` allocates. A value type
-  would save about five allocations per test.
-- **Metrics without a map.** Most events carry a few metrics; a small slice
-  instead of a map would save about two allocations per test. The MessagePack
-  encoding must stay identical.
-- **Per-test metadata in `testing.T`.** Instrumentation stores per-test metadata
-  in a global `sync.Map`, with one store and one delete per test. Under
-  `t.Parallel` this shows measurable contention. The `testing` overlay could add
-  a field to `testing.common` instead.
-- **CI metric options.** Numeric CI metrics build new options for every span by
-  design ("fresh per call"); caching them by revision needs the same decision.
+Coverage initialization discovers its module in each binary. Try supplying
+that identity during CLI preparation while retaining the runtime fallback for
+manual instrumentation and standalone binaries.
 
-## 4. Coverage per test
+Check workspaces, replacements, `-C`, `-trimpath`, package working directories,
+`TestMain` directory changes and retry children. Measure covered startup
+separately from profile collection. Do not replace Go's source-path resolution
+with a guessed module path.
 
-Per-test coverage writes and parses a complete coverage profile of the package
-for every test, and `InitializeCoverage` runs `go list` as a subprocess in every
-binary. The CLI could pass the module path and directory. In-memory counter
-snapshots would need a hook in a standard-library overlay; this is the largest
-remaining cost when per-test coverage is enabled.
+## 6. Per-invocation Git metadata
 
-## How to measure
+Multiple package binaries repeat repository, branch and commit queries. Try
+collecting reusable values once in the CLI and passing them through the
+existing Git overrides or an invocation-local record. Keep Git commands serial;
+parallelizing them is not part of this experiment.
 
-1. Build a fixture with one test that starts `N` trivial subtests (and a
-   parallel variant), and compile it with `ddtest test --runtime=mini -c`.
-2. Run it against a local HTTP receiver that answers settings with
-   `Content-Type: application/json` and accepts test-cycle payloads; add latency
-   to the test-cycle endpoint to emulate the remote intake.
-3. Compare wall time against the native binary, and use `-test.memprofile` with
-   `-test.memprofilerate=1` for exact allocation counts per subtest.
-4. For startup, run the binary with one subtest and count subprocesses by putting
-   logging wrappers for `git` and `go` first in `PATH`.
+Share only equivalent repository inputs. Check worktrees, nested modules,
+repository overrides, `-C`, CI-provider precedence and standalone binaries.
+Measure one-package and many-package commands; package starts already overlap.
 
-## Mini provisioning at module roots
+## 7. Small metric sets
 
-When the effective module file does not mention Mini, the CLI probes module
-selection using temporary module and checksum files. If Go reports that Mini
-is unknown, provisioning precedes the full package query. The query then uses
-the final module, so it observes dependency-version changes caused by adding
-the runtime. A declared Mini keeps the ordinary single-query path.
+Most CI events have few numeric metrics. Compare their map with a small value
+slice or inline representation, including text-heavy and custom-metric events.
+A linear lookup can regress larger sets, and converting back to a map during
+encoding would lose the allocation saving.
 
-The probe is conservative. Subdirectory runs without an explicit modfile,
-vendor mode, escaped module text and files that mention Mini use normal package
-resolution. Workspace and transitive selections remain Go's decision. `-mod=mod`
-also retains native package resolution before runtime provisioning, preserving
-Go's own authorized module edits. Review these guards before extending the
-optimization; a filename or missing direct `require` does not prove that the
-runtime is unavailable.
+Preserve numeric precision, replacement/removal, getter results, option ordering
+and the MessagePack map schema. Include parallel finish/capture and retry tests.
 
-Checks: `TestPreprovideMiniRespectsEffectiveModuleAndWorkspace`,
-`TestCLIDebugEarlyLocalProvisioning`, module-overlay and `-mod=mod` regressions.
-Compare Mini already required, a client replacement and CLI-local provisioning;
-preparation gains must not add queries to the common required-runtime path.
+## 8. Coverage counters in memory
+
+Per-test coverage emits and parses profiles around attempts. An in-memory
+counter path could reduce I/O and allocations, but depends on private runtime
+coverage data and synchronization.
+
+Prototype outside the main implementation first. Preserve cleanup-only code,
+parallel attribution, initial-attempt retry policy, impacted-test inputs,
+aggregate percentages, normal/deferred processing and shutdown on errors.
+Compare count and atomic modes, including `-race`, across supported toolchains.
+Measure profile bytes, CPU, allocations, temporary disk and peak memory.
+
+## 9. Shared settings requests
+
+The runtime owns settings and feature discovery per binary. Experiment with
+CLI-scoped sharing only for requests with identical repository, commit,
+service, environment and effective test configuration. CODEOWNERS services
+can make packages' request keys different.
+
+The manifest/read-cache path is a possible input mechanism; events must still
+upload normally. Preserve response/error fallbacks for ITR, retries, EFD,
+impacted tests and management, independent invocations and event hierarchy.
+Compile-only `-c` must send no runtime requests. Standalone binaries, retry
+children and interrupted parents need a safe fallback without a live CLI.
+
+Measure first-test admission and whole-command time with one and many packages,
+local and delayed receivers, cold and cached builds. Sharing helps wall time
+only when it removes work from the command's critical path.
+
+## 10. Telemetry requests
+
+Start with the two final `message-batch` sends: investigate whether compatible
+messages can share a request while preserving order, timestamps, retries and
+`app-closing`. Keep `app-started` separate under its existing mapper contract.
+
+CLI coordination of initial telemetry is a separate, larger step. One startup
+request per CLI would change per-process runtime identity. Define application
+and parent/child lifecycles before reducing that count; keep child metrics and
+configuration observable. Startup and shutdown must respect deferred admission
+and goleak checkpoints, including errors and cancellation.
+
+Use decoded telemetry and actual HTTP captures to check values and logical
+payload/attempt counts. Network waits need delayed-receiver experiments;
+CPU microbenchmarks cannot establish that saving.
+
+## Experiment record
+
+Keep the baseline and candidate SHAs, inputs, commands, raw repetitions and
+limits in a task-scoped artifact directory. Alternate execution order and
+retain slow or failed samples. Record CPU, allocations, complete wall time,
+wire bytes and peak memory when they apply. A hot function's profile share is
+not a predicted percentage saving.
+
+Before keeping a change, run the affected contract tests and the SDK comparison.
+Document runtime adaptations beside the incorporated SDK code so an upstream
+update can preserve their ownership rules. Compiled-code refactoring is outside
+this queue until its scope is agreed.

@@ -1,41 +1,37 @@
-# Maintainer guide
+# Documentation
 
-Start with [architecture](architecture.md). Its diagrams follow a test from CLI
-preparation to event delivery and show which package owns each step. Then choose
-the guide for the work you need to do:
+Start with the [README](../README.md) to install `ddtest`, configure delivery
+and run your first tests. These guides cover the current implementation.
+Measurement reports describe the exact revisions in their manifests.
 
-| You need to... | Read |
+## Using ddtest
+
+| Task | Guide |
 | --- | --- |
-| Follow a test from CLI invocation to CI event delivery | [Architecture and diagrams](architecture.md) |
-| Maintain Fuzz roots, seeds, executable examples and their native lifecycle | [Fuzz and Examples](fuzz-examples.md) |
-| Combine Mini test reporting with Orchestrion application tracing | [Orchestrion composition](orchestrion.md) |
-| Report SDK operations under a Mini test without changing APM parentage | [SDK span copies](sdk-span-mirror.md) |
-| Maintain Testify callers, supported versions or the coverage bridge | [Testify design and compatibility](testify.md) |
-| Use deferred delivery or maintain automatic goleak support | [Delivery checkpoints and goleak](delivery.md) |
-| Update the SDK, MessagePack codecs or platform subset | [Source updates and maintenance](maintenance.md) |
-| Diagnose CLI preparation, runtime provisioning or native build time | [CLI build diagnostics](cli-debug.md) |
-| Change allocations, batching, compression or build preparation | [Performance and ownership constraints](performance.md) |
-| Maintain CODEOWNERS parsing | [CODEOWNERS implementation](codeownership.md) |
-| Name package services from CODEOWNERS | [CODEOWNERS service configuration](codeowners-service.md) |
-| Configure Mini or use its public API | [Native runtime usage](mini-runtime.md) |
-| Compare CI features and policy combinations with the SDK | [Feature parity and event counts](ci-parity.md) |
-| Check what compatibility tests establish | [Validation contract](validation.md) |
-| Compare repeated execution of the complete CI matrix | [Whole-matrix timing](ci-parity.md#repeated-whole-matrix-timing) |
-| Understand Testify discovery and selective tool dispatch | [Testify design](testify.md) and [preparation constraints](performance.md) |
-| Repeat compile benchmarks or regenerate their tables | [Build benchmark runner and protocol](build-benchmarks.md) |
-| Compare build time, runtime and memory | [Latest benchmark comparison](benchmarks.md) |
-| Pick up deferred performance work | [Optimization backlog](optimization-backlog.md) |
+| Configure Mini, provide its runtime or use the Go API | [Runtime configuration and API](mini-runtime.md) |
+| Use Testify suites or a replacement fork | [Testify support](testify.md) |
+| Choose deferred delivery or understand goleak integration | [Delivery and leak checks](delivery.md) |
+| Report fuzz seeds and executable examples | [Fuzz and Examples](fuzz-examples.md) |
+| Build tests with Orchestrion | [Orchestrion composition](orchestrion.md) |
+| Associate SDK operations with a Mini test | [SDK span copies](sdk-span-mirror.md) |
+| Name package services from CODEOWNERS | [Service configuration](codeowners-service.md) |
+| Diagnose build or runtime delays | [CLI and runtime timings](cli-debug.md) |
 
-The source record lives beside each incorporated library in
-[`internal/thirdparty`](../internal/thirdparty/README.md). Its manifests identify
-the exact upstream revision, original paths, licenses and local changes.
-The code in `internal/minitracer`, `internal/citransport`, `internal/runner` and
-`internal/instrument` belongs to this POC.
+## Maintaining the code
 
-The guides describe the current implementation. Benchmark manifests record the
-exact inputs used for measurement; editing a guide does not rerun a benchmark.
+| Task | Guide |
+| --- | --- |
+| Follow the build, event and delivery lifetimes | [Architecture and diagrams](architecture.md) |
+| Update incorporated SDK, codec or platform sources | [Source maintenance](maintenance.md) |
+| Understand the SDK comparison and remaining gaps | [Feature parity](ci-parity.md) |
+| Choose checks for a change | [Validation contract](validation.md) |
+| Maintain ownership-rule parsing | [CODEOWNERS implementation](codeownership.md) |
+| Profile CPU, allocations or build time | [Performance and profiling](performance.md) |
+| Choose a focused performance change | [Optimization backlog](optimization-backlog.md) |
+| Read the retained measurements | [Build, runtime and memory comparison](benchmarks.md) |
+| Collect builds or regenerate tables | [Benchmark runner](build-benchmarks.md) |
 
-The [latest dataset](results/20261005-linux-go1.27.1/README.md) contains 6,224
-comparative builds, 1,200 measured runtime groups, memory peaks and twelve
-rounds of the 115-case parity comparison. Four Gin race cells have real runtime
-failures; their records remain explicit.
+[`internal/thirdparty`](../internal/thirdparty/README.md) records upstream
+repositories, commits, licenses and source hashes. SDK adaptations have a
+separate [maintenance record](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md).
+Keep those records and compatibility fixtures when replacing benchmark data.

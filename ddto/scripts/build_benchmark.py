@@ -184,13 +184,11 @@ def overview_lines(manifest, summary, link):
     """Keep the README short; comparison tables belong in the linked reports."""
     return "\n".join([
         "## Benchmarks", "",
-        "[Build time, runtime and memory comparisons](docs/benchmarks.md) cover",
-        "Native, Orchestrion, POC SDK and POC Mini at 4/32 CPUs, including Testify,",
-        "coverage, race and deferred delivery. The report also links the repeated",
-        "115-case CI parity comparison and records failed runtime combinations.", "",
-        f"The [compile-only dataset]({link}/README.md) contains",
+        "[Build, runtime and memory tables](docs/benchmarks.md) compare Native,",
+        "Orchestrion, POC SDK and Mini at 4/32 CPUs, with coverage and race cases.",
+        f"The [recorded dataset]({link}/README.md) contains",
         f"{summary['measured_observations']:,} comparative observations, measured at",
-        f"POC commit `{manifest['source_head']}`.", "",
+        f"commit `{manifest['source_head']}`. Use a new run to measure another revision.", "",
         "[Run benchmarks or regenerate the tables](docs/build-benchmarks.md).", "",
     ])
 

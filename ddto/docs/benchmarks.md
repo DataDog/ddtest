@@ -3,6 +3,8 @@
 
 This is the 2026-10-04/05 Linux run, measured at POC commit
 `9d4786fbd27f573bb68c5516bf23b336e8d7bdaa` with `go version go1.27.1 linux/amd64`.
+The measurements are tied to that revision. The
+[validation guide](validation.md) describes the current compatibility checks.
 The SDK is `v2.12.0-dev.3.0.20261002145613-96aedb31048c` (commit `96aedb31048c07e29e7a20a4333dc3b8d289c52d`);
 Orchestrion is `v1.13.2-0.20260917114356-5c24783fcd76`.
 The host is an AMD Ryzen 9 5950X: four CPUs bind four physical cores;

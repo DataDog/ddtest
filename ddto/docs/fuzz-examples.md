@@ -176,12 +176,10 @@ reads the cached typed fields under the native mutex. Reflection is still used
 to preserve arbitrary supported fuzz callback signatures; it is not used to
 look up private fields for each seed.
 
-Six one-CPU repetitions on Linux/Go 1.27.1 measured native result collection
-at about 600 ns and 336 B/6 allocations before the cached access, and 15 ns with
-zero allocations afterward. This isolates result collection and makes no claim
-about total campaign or build duration. The raw observations are in
-[fuzz-result-before.txt](results/fuzz-result-before.txt) and
-[fuzz-result-after.txt](results/fuzz-result-after.txt).
+Private-field lookup is outside the seed loop after offset initialization.
+Callback adaptation still needs reflection to retain each native function
+signature. Keep result collection and callback adaptation separate when
+profiling; a faster lookup does not establish a whole-campaign improvement.
 
 When updating the SDK, review [ADAPTATIONS.md](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md),
 the PR-specific `feature_ports` entry, the fixture hashes, both delivery modes

@@ -65,8 +65,9 @@ policy combinations and counts are exported by every workflow run.
 | Payload size, retries and failures | Native byte/count bounds, oversized rejection, failed-batch retention, gzip reuse, 403/429/5xx and cancellation tests | Verified Mini contracts; not an exhaustive SDK/Mini delivery stress comparison |
 | Bazel | Manifest/read cache plus test, coverage and telemetry payload files; no HTTP requests | Partial: file/offline contracts verified; actual Bazel invocation unverified |
 | Manual hierarchy API | Two modules/four suites/twelve tests; repeated lookup/close, statuses, error/custom tags/metrics, logs and child span | Verified internal API; no new public API added |
-| Additional CI spans | Two explicitly CI-marked spans attached to the active test context, including test → parent → child identity; manual hierarchy child span | Verified internal span API; automatic APM integration is outside Mini |
-| Context propagation | W3C and Datadog carriers, 128-bit identity, extraction by SDK propagator | Verified carrier compatibility; in-process APM shim not implemented |
+| Additional CI spans | Two explicitly CI-marked spans attached to the active test context, including test → parent → child identity; manual hierarchy child span | Verified internal span API; application weaving belongs to Orchestrion |
+| SDK span copies | Independent APM/CI captures; final fields, original propagation/parentage, pooled contexts, parallel/retry isolation, Testify, seeds, benchmarks, goleak, coverage and Orchestrion | Verified for the [supported SDK layouts and contexts](sdk-span-mirror.md); isolated retry children and active mutation workers have no local Mini identity |
+| Context propagation | W3C and Datadog carriers, 128-bit identity, extraction by SDK propagator | Verified carrier compatibility; Mini identity does not automatically reparent APM spans |
 | CI telemetry | Original CI instrumentation/unit assertions; wire fixture compares semantic CI count/rate metrics and validates request counters against actual HTTP requests | Partial: representative wire counts verified; distributions/policy cross-product unverified; failure counters have known differences |
 | Duplicate Testify methods | Two suite types under one parent, repeated invocations, nested children and ordinary siblings; covered library entry and race | Mini correction checked directly; the pinned SDK misattributes duplicate method names |
 | `testify/suite` | 26 Mini cases against full SDK/Orchestrion, plus a POC SDK pass/skip control; version fixtures v1.10.0/v1.11.1/v1.12.1, aliases, helpers, lifecycle, retries, management and race/coverage | Verified for local and external-module callers; method-level ITR retains the SDK limitation |
@@ -184,12 +185,13 @@ go install github.com/DataDog/orchestrion@v1.13.2-0.20260917114356-5c24783fcd76
 mkdir -p artifacts
 ORCHESTRION_BIN="$(go env GOPATH)/bin/orchestrion" \
   PARITY_REPORT_PATH="$PWD/artifacts/parity.json" \
-  go test -v -count=1 -timeout=20m ./...
+  go test -v -count=1 -timeout=30m ./...
 python scripts/parity_report.py artifacts/parity.json --output artifacts/parity.md
 ```
 
-On Windows set `ORCHESTRION_BIN` to `orchestrion.exe`. Linux race validation uses
-`go test -race` and a distinct `parity-race.json` prefix. The parallel/retry
+On Windows set `ORCHESTRION_BIN` to `orchestrion.exe` and use `-timeout=55m`.
+Linux race validation uses `PARITY_TEST_MODE=race`, `go test -race -timeout=40m`
+and a distinct `parity-race.json` prefix. The parallel/retry
 coverage test explicitly compiles the fixture with `-race -covermode=atomic`;
 the outer harness's `-race` alone would not make every child binary a race build.
 Windows Testify reference builds use `-work` with a fixture-owned
@@ -234,8 +236,10 @@ Builds that deliberately alter flags, sources, overlays, workspaces or library
 versions keep their independent fixtures. Do not add those variants to the
 shared sets without checking their inputs and cleanup ownership.
 
-The [latest repeated comparison](results/20261005-linux-go1.27.1/parity/README.md)
-runs all 115 scenarios using these shared fixtures. The per-round `harness.json`
+The [recorded repeated comparison](results/20261005-linux-go1.27.1/parity/README.md)
+ran 115 scenarios at its frozen source revision. The current schema-4 gate
+requires the 113 ordinary/deferred/Testify cases plus Fuzz/Examples and
+supplemental evidence. The per-round `harness.json`
 records total harness time, including fixture compilation and comparison;
 that clock does not measure either backend's runtime or GitHub CI duration.
 
@@ -273,7 +277,7 @@ enough context to separate host load, compilation and SDK work. The
 
 ### Repeated whole-matrix timing
 
-The [latest Linux comparison](results/20261005-linux-go1.27.1/parity/README.md)
+The [recorded Linux comparison](results/20261005-linux-go1.27.1/parity/README.md)
 keeps every input report, the run manifest and separate continuous clocks for
 the 65-case testing and 17-case deferred SDK/Mini blocks. It has six measured
 rounds at each CPU count, three in each execution order. The 26 Testify and seven
@@ -362,9 +366,9 @@ emits payload-size/event-count samples on each attempt; Mini encodes a batch onc
 and reuses it. Validate those samples against the actual serialization/send
 operations without removing that optimization.
 
-No sampling, heartbeat, security, remote configuration or other APM functionality
-is needed to close this CI telemetry work. Implementation differences and missing
-proof remain separate entries until their contracts and tests are resolved.
+This work concerns CI telemetry only. APM sampling, heartbeats, security and
+remote configuration remain outside its scope. Implementation differences and
+missing proof remain separate entries until their contracts and tests are resolved.
 
 When updating the SDK, follow [maintenance](maintenance.md#updating-the-sdk-base).
 Review the upstream testing YAML and CI production/test inventory as well as the

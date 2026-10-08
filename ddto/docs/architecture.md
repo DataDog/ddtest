@@ -21,7 +21,7 @@ does not need the CLI.
 flowchart TB
     subgraph build["Build time"]
         CLI["ddtest test: choose<br/>sdk or mini"] --> Plan["Resolve packages and<br/>prepare overlay"]
-        Plan --> Selection{"Testify, Mini goleak,<br/>coverage or Orchestrion?"}
+        Plan --> Selection{"Testify, goleak, SDK hooks,<br/>coverage or Orchestrion?"}
         Selection -->|Yes| Tools["Selective<br/>compiler/coverage<br/>wrapper"]
         Selection -->|No| Go["Native go test:<br/>compile and link"]
         Tools --> Go
@@ -45,9 +45,10 @@ Orchestrion owns the application instrumentation engine in combined builds.
 | --- | --- |
 | [`cmd/ddtest`](../cmd/ddtest/main.go) | CLI entry point, runtime selection, activation and interrupt handling |
 | [`internal/runner`](../internal/runner/run.go) | Go flags, package discovery, overlay merging, temporary files and child exit status |
-| [`internal/instrument`](../internal/instrument/transform.go) | Validation and source edits for native `testing` and the original Testify suite entry |
+| [`internal/instrument`](../internal/instrument/transform.go) | Validation and source edits for `testing`, Testify, goleak and SDK CI/span boundaries |
 | [Extracted `gotesting`](../internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting) | Test callbacks, parallel ownership, retries and CI policies |
 | [`internal/minitracer`](../internal/minitracer/README.md) | Event fields, identities, byte accounting and batching |
+| [`internal/cidelivery`](../internal/cidelivery/idle.go) | Test admission, idle delivery and leak-check coordination |
 | [`internal/citransport`](../internal/citransport/transport.go) | Test-cycle delivery, retries, compression and request-body lifetime |
 | [`propagation`](../propagation/context.go) and [`testopt`](../testopt/testopt.go) | Public context exchange and native-client API |
 | [`internal/thirdparty`](../internal/thirdparty/README.md) | Maintained SDK, codec and platform subsets with source provenance |
@@ -327,9 +328,11 @@ flowchart LR
 
 Inside the same process, another tracer must explicitly extract the Mini
 identity through its own API or through a header carrier. Its private
-`context.Context` value is different. A future dd-trace-go helper could expose that bridge;
-the current API provides context values and header carriers. Sampling priority is carried as propagation
-metadata; Mini has no APM sampling engine.
+`context.Context` value is different. The current API provides context values
+and header carriers.
+The [SDK mirror](sdk-span-mirror.md) instead associates independent CI copies
+with the test while preserving the original APM trace. Sampling priority is
+carried as propagation metadata; Mini has no APM sampling engine.
 
 ## Runtime scope
 

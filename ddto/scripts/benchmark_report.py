@@ -165,6 +165,8 @@ def render(directory):
 
 This is the 2026-10-04/05 Linux run, measured at POC commit
 `{manifest['source_head']}` with `{manifest['toolchain']}`.
+The measurements are tied to that revision. The
+[validation guide](validation.md) describes the current compatibility checks.
 The SDK is `{manifest['sdk_version']}` (commit `{manifest['sdk_commit']}`);
 Orchestrion is `{manifest['orchestrion_version']}`.
 The host is an AMD Ryzen 9 5950X: four CPUs bind four physical cores;

@@ -31,10 +31,10 @@ uninstrumented; its suite methods are still reported as ordinary subtests,
 without Testify suite metadata. Unreadable sources and reserved-name collisions
 remain errors.
 
-## DataDog fork replacement
+## Replacement forks
 
-Both runtimes support this replacement, including clients requiring upstream
-Testify v1.12.1:
+Both runtimes use the original module's version for forks with a different
+module path, then validate the selected runner's API. For example:
 
 ```go
 require github.com/stretchr/testify v1.12.1
@@ -64,8 +64,8 @@ entry produces a warning naming both the original version and the replacement.
 The prepared-source fingerprint continues to protect the compiler cache; no
 new subprocess, cache or runtime dependency is needed.
 
-`TestTestifyDataDogReplacement` reproduces the version rejection for Mini and
-SDK. `TestTestifyReplacementVersionPolicy` covers independent fork versions,
+`TestTestifyDataDogReplacement` checks this replacement for Mini and SDK.
+`TestTestifyReplacementVersionPolicy` covers independent fork versions,
 upstream upgrades and downgrades, local replacements, and unsupported original
 versions. `TestTestifyForkReplacementGuards` checks incompatible entries and
 overlays for both runtimes. The `DataDog-fork` case of
@@ -89,12 +89,13 @@ flowchart TD
     Found -->|Yes| Prepare["Validate version and API<br/>before cache lookup<br/>and prepare entry hooks"]
     Find --> Prepare
     Prepare --> Fingerprint["Add package cache<br/>fingerprints"]
-    Fingerprint --> Coverage{"Testify, Mini goleak or<br/>covered rewritten<br/>testing sources?"}
+    Fingerprint --> Coverage{"Testify, Mini goleak,<br/>SDK hooks, coverage<br/>or Orchestrion?"}
     Coverage -->|No| Native["go test with<br/>overlay; no toolexec"]
     Coverage -->|Yes| Tool["go test with one<br/>selective tool<br/>wrapper"]
     Tool --> Dispatch{"Tool and package"}
     Dispatch -->|compile: testify/suite| Entry["Substitute prepared<br/>source or edit<br/>covered Run entry"]
     Dispatch -->|compile goleak in Mini| Goleak["Prepare Find entry<br/>for CI leak checks"]
+    Dispatch -->|compile SDK in Mini| SDK["Guard SDK CI and<br/>copy associated spans"]
     Dispatch -->|cover: testing| Bridge["Read the overlay's<br/>effective testing<br/>sources"]
     Dispatch -->|Anything else| Bypass["Delegate without<br/>reading the plan"]
 ```
@@ -129,8 +130,10 @@ marker. See [delivery and goleak](delivery.md); the SDK backend does not add it.
 
 The private `tool-overlay` entrypoint dispatches before reading JSON, creating
 contexts or setting CI environment defaults. Compiler and linker version
-probes keep their native output. Unrelated tools and packages never read the
-plan. On Unix the wrapper uses `exec` to replace itself with the native tool;
+probes keep their native output. Other selected integrations, such as the Mini
+SDK guard or Orchestrion composition, can also require this wrapper. Unrelated
+tools and packages never read the plan. On Unix the wrapper uses `exec` to
+replace itself with the native tool;
 Windows requires a child process and preserves its streams and exit code.
 
 `-toolexec` is a build-wide hook: even a selective wrapper starts for unrelated

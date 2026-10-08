@@ -85,7 +85,8 @@ query cannot add it to the module's requirements.
 
 The [Testify contract](testify.md) selects `-toolexec` from actual reachability,
 not the presence of a module requirement. Plain tests and assert-only targets
-omit it unless Mini reaches goleak or coverage includes rewritten `testing`
+omit it unless another selected integration needs it: Mini goleak, SDK guards
+and span copies, Orchestrion composition or coverage of rewritten `testing`
 sources. Known library reachability without unknown test imports uses
 `go list -find`; unknown test imports use `-deps`
 so external helpers remain covered. The selected-version/API check stays in
@@ -126,17 +127,18 @@ cover this distinction, module overlays and the symlink case.
 
 Enqueueing takes only the client mutex: it never waits for the delivery token,
 creates no timer and performs no network I/O. Network work happens in up to eight
-background senders when batches fill, and at the end of the session. A test that
-finishes fewer events than one batch (1,000 by default) sees no delivery work
-concurrent with its tests.
+background senders when batches fill, and at the end of the session. A batch
+can seal below the event-count limit when it reaches the 2.5 MiB byte threshold.
+Coverage, logs and telemetry have separate writers, so an incomplete test-cycle
+batch does not establish that the process is free of background CI work.
 
 Mini's test-cycle gzip pool uses `gzip.BestSpeed`. Agentless payloads remain gzip
 and obey the same uncompressed intake limit. Coverage and diagnostic-log
 compressors retain their SDK settings. Compression ratio depends on payload
 shape; compare both CPU and wire size when changing the level.
 
-The optional deferred mode is intended for test isolation, not as a throughput
-claim. It delays delivery until idle and permits queue growth across parallel
+Deferred mode isolates delivery from admitted test groups. It delays delivery
+until idle and permits queue growth across parallel
 groups. The [delivery contract](delivery.md) describes that tradeoff.
 
 The source rewriter preserves comment bytes without constructing comment ASTs;
@@ -247,9 +249,8 @@ test checks that no event is lost.
 Deferred delivery can buffer more than one batch while tests are active. Its
 pending queue has no total size limit; each outgoing payload still obeys the
 intake bounds. Include peak memory when assessing that mode. Its checkpoints
-send up to eight payloads at once: one parent test with 100,000 trivial subtests
-delivers all 101 payloads after the parent finishes, which took 5.7 s one at a
-time and takes 0.8 s now against a 50 ms intake.
+send up to eight payloads at once and join them before the next test is admitted.
+Measure both throughput and memory with the payload size and intake delay fixed.
 
 Each background or checkpoint delivery of a sealed batch is bounded by
 `FlushTimeout` (10 seconds by default). Explicit `Flush` and `Close` use their
@@ -283,26 +284,16 @@ without comparing every string on every span. Explicit updates invalidate it.
 A caller that requests the mutable `GetCITags` map opts that map back into full
 content checks, preserving late sequential edits.
 
-`BenchmarkCITagsSnapshot` measures one lookup with 64 initialized tags. Three
-alternating before/after pairs on Linux, Go 1.27 and `GOMAXPROCS=4` gave:
-
-| Lookup | Before, median ns/op | Current, median ns/op | Allocation |
-| --- | ---: | ---: | ---: |
-| Internal read-only callers | 1,074 | 5.25 | 0 B/op, 0 allocs/op |
-| Mutable map exposed | 1,049 | 1,066 | 0 B/op, 0 allocs/op |
-
-The read-only lookup removes about 99.5% of this operation's time. The mutable
-path retains its scan; its observations overlap the baseline range. This is a
-serial microbenchmark, not a prediction of build or whole-suite speedup.
-[Raw observations and inputs](results/ci-tag-snapshot.json) retain all samples.
-Run it with:
+Exercise the read-only and mutable paths together:
 
 ```sh
 GOMAXPROCS=4 go test ./internal/thirdparty/dd-trace-go/civisibility/utils \
   -run='^$' -bench='^BenchmarkCITagsSnapshot$' -benchtime=300ms -count=3
 ```
 
-Update and concurrent-reader tests cover the cache's correctness separately.
+Update and concurrent-reader tests protect the snapshot's correctness. Keep
+raw samples with a specific optimization experiment; the repository's retained
+[comparison dataset](benchmarks.md) measures complete builds and test groups.
 
 ## Profiling the native event path
 
@@ -356,8 +347,10 @@ GOMAXPROCS=4 go test -p=4 -c -o ./out/orchestrion/ \
   -toolexec="/path/to/orchestrion toolexec" -ldflags=-w ./...
 ```
 
-The Mini fixture must require this POC module; the SDK fixtures must require the
-pinned SDK. Orchestrion must load the SDK's testing-only configuration. Match
+For a controlled comparison, give the Mini fixture an explicit POC requirement
+and the SDK fixtures the pinned SDK. This keeps provisioning out of the timed
+builds; ordinary CLI use can provide Mini automatically. Orchestrion must load
+the SDK's testing-only configuration. Match
 the native project's effective dependency inputs across variants and record
 any graph additions made for comparison tooling.
 
@@ -404,17 +397,19 @@ The [build benchmark guide](build-benchmarks.md) documents
 [`scripts/build_benchmark.py`](../scripts/build_benchmark.py), which runs all four
 variants across the five scenarios, assigns affinity, measures exclusive cgroups
 and qualifies the outputs. Its `report` command regenerates the
-[latest build tables](results/20261005-linux-go1.27.1/build/README.md)
+[recorded build tables](results/20261005-linux-go1.27.1/build/README.md)
 from every retained CSV observation, without Go or network access.
 
 ## Evidence and remaining work
 
-The [latest comparison](benchmarks.md) covers all four variants, Gin/Chi,
+The [recorded comparison](benchmarks.md) covers all four variants, Gin/Chi,
 direct and external Testify, race and coverage at 4/32 CPUs. It keeps raw
 durations, aggregate cgroup memory, variation and event counts, and separates
 the unused-constant diagnostic from the reachable test-body edit. All build
-cells qualified; four Gin race runtime cells contain real failures. The repeated
-115-case parity suite passes, which does not close those application races.
+cells qualified; four Gin race runtime cells contain real failures. The recorded
+115-case parity suite passed. Those observations retain the code and failure
+classifications measured at that revision; current regression checks live in
+[validation](validation.md).
 
 Further profiling can examine MessagePack encoding, tag construction, telemetry
 lookups and time spent waiting for `sendMu`. A proposed change needs before/after

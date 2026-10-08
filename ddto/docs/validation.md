@@ -22,8 +22,10 @@ build-cache lookup. A selective compiler wrapper transforms `testify/suite`
 and, in Mini, reachable `go.uber.org/goleak`; a coverage bridge handles rewritten
 `testing` sources when coverage includes them.
 [Combined Orchestrion builds](orchestrion.md) use the same selective wrapper
-to preserve application weaving and a single CI reporter. Other builds omit
-`-toolexec`. The POC has no configuration engine or build daemon. Selecting a
+to preserve application weaving and a single CI reporter. Mini also selects it
+when the test graph reaches the full SDK, to guard its
+CI reporter and install span-copy hooks. Builds needing none of these features
+omit `-toolexec`. The POC has no configuration engine or build daemon. Selecting a
 module-declared Orchestrion tool lets Go build/cache that tool before the test
 build; Orchestrion owns any additional builds it needs for application weaving.
 
@@ -97,7 +99,8 @@ The default Mini backend uses this module. The SDK backend requires the exact
 unreplaced SDK. Standard library test targets are unsupported; explicit Go file mode runs native `go test`
 without instrumentation. Testify callers in client and external modules use the original
 selected runner; dedicated version fixtures cover v1.10.0, v1.11.1 and v1.12.1.
-Other APM integrations remain outside the POC.
+Application weaving belongs to Orchestrion. Mini's SDK integration copies
+context-associated spans while retaining their APM behavior.
 The AST transformer validates hook presence and ambiguity and selected shape
 constraints; future Go source/ABI changes still require a new compatibility run.
 The [compatibility workflow](../.github/workflows/compatibility.yml) defines the
@@ -163,7 +166,7 @@ records Linux measurements separately from GitHub Actions.
 
 ## Selective-tool validation
 
-The [latest Linux Go 1.27.1 dataset](results/20261005-linux-go1.27.1/parity/README.md)
+The [recorded Linux Go 1.27.1 dataset](results/20261005-linux-go1.27.1/parity/README.md)
 repeats all 26 Testify cases and seven deferred Testify cases against the full
 SDK/Orchestrion reference, within the 115-case matrix. Six rounds pass at each
 of 4/32 CPUs. This is local protocol and runtime evidence; native macOS/Windows
