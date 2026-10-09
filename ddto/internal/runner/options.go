@@ -90,6 +90,7 @@ type options struct {
 	modfile              string
 	overlay              string
 	toolexec             string
+	exec                 string
 	coverage             bool
 	coverPatterns        []string
 	// workfile applies only to preparation children, never os.Setenv.
@@ -264,6 +265,8 @@ func (o *options) apply(name, value string) error {
 		o.overlay = value
 	case "toolexec":
 		o.toolexec = value
+	case "exec":
+		o.exec = value
 	case "cover":
 		enabled, err := strconv.ParseBool(value)
 		if err != nil {

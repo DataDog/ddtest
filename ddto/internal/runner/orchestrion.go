@@ -80,15 +80,22 @@ func RunOrchestrion(ctx context.Context, args []string, runtime Runtime, goTool 
 	return RunRuntime(ctx, args, runtime, stdin, stdout, stderr)
 }
 
+// quoteToolWords joins words for cmd/go's quoted.Split, which reads -exec,
+// -toolexec and GOFLAGS. A word with both quote characters stays unquoted,
+// which Split accepts unless it has spaces or starts with a quote; any word
+// that Split produced can therefore be passed on.
 func quoteToolWords(words []string) (string, error) {
 	quoted := make([]string, len(words))
 	for i, word := range words {
-		if !strings.Contains(word, "'") {
+		switch {
+		case !strings.Contains(word, "'"):
 			quoted[i] = "'" + word + "'"
-		} else if !strings.Contains(word, `"`) {
+		case !strings.Contains(word, `"`):
 			quoted[i] = `"` + word + `"`
-		} else {
-			return "", fmt.Errorf("cannot quote tool argument containing both quote characters: %s", word)
+		case !strings.ContainsAny(word, " \t\n\r") && word[0] != '\'' && word[0] != '"':
+			quoted[i] = word
+		default:
+			return "", fmt.Errorf("cannot quote tool argument containing spaces and both quote characters: %s", word)
 		}
 	}
 	return strings.Join(quoted, " "), nil

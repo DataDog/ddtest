@@ -122,7 +122,7 @@ func TestCoverToolForwardingAndErrors(t *testing.T) {
 }
 
 func TestCoverCommandQuoting(t *testing.T) {
-	for _, paths := range [][2]string{{"/path with spaces/ddtest", "/path/overlay.json"}, {`C:\Program Files\ddtest.exe`, `C:\build\overlay.json`}, {"/path/it's/ddtest", `/path/\"quoted\"/overlay.json`}} {
+	for _, paths := range [][2]string{{"/path with spaces/ddtest", "/path/overlay.json"}, {`C:\Program Files\ddtest.exe`, `C:\build\overlay.json`}, {"/path/it's/ddtest", `/path/\"quoted\"/overlay.json`}, {`/path'with"both/ddtest`, "/path/overlay.json"}} {
 		command, err := toolCommand(paths[0], paths[1], "cover")
 		if err != nil {
 			t.Fatal(err)
@@ -133,7 +133,7 @@ func TestCoverCommandQuoting(t *testing.T) {
 			t.Fatalf("quoted command=%q: %v, %v", command, got, err)
 		}
 	}
-	if _, err := toolCommand(`path'with"both`, "overlay", "cover"); err == nil {
+	if _, err := toolCommand(`path with'both"`, "overlay", "cover"); err == nil {
 		t.Fatal("ambiguous quoting accepted")
 	}
 }

@@ -1,6 +1,9 @@
 package runner
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 )
@@ -38,5 +41,43 @@ func TestWorkspaceModuleFlags(t *testing.T) {
 		if !slices.Equal(got, tc.want) {
 			t.Fatalf("workspace flags: %v", got)
 		}
+	}
+}
+
+// go test runs cross-compiled test binaries through go_$GOOS_$GOARCH_exec from
+// PATH when no -exec is given; ddtest must wrap that program too.
+func TestCrossExecHelperMatchesGoTest(t *testing.T) {
+	dir := t.TempDir()
+	name := "go_js_wasm_exec"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	cross := &goEnvironment{GOOS: "js", GOARCH: "wasm", GOHOSTOS: "linux", GOHOSTARCH: "amd64"}
+	if got := crossExecHelper(cross); got != filepath.Join(dir, name) {
+		t.Fatalf("cross helper=%q", got)
+	}
+	native := &goEnvironment{GOOS: "linux", GOARCH: "amd64", GOHOSTOS: "linux", GOHOSTARCH: "amd64"}
+	if got := crossExecHelper(native); got != "" {
+		t.Fatalf("native build selected %q", got)
+	}
+}
+
+// ddtest's -exec wrapper replaces the caller's -exec, in any position.
+func TestGoTestArgumentsReplaceExec(t *testing.T) {
+	opts, err := parseOptions([]string{"-exec", "user wrapper", "-v", "-exec=other", "."}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := goTestArguments(Plan{File: "plan.json", execWrapper: "'ddtest' 'test-exec' 'other'"}, opts, "")
+	want := []string{"test", "-overlay=plan.json", "-exec='ddtest' 'test-exec' 'other'", "-v", "."}
+	if !slices.Equal(got, want) {
+		t.Fatalf("arguments:\n%q\nwant:\n%q", got, want)
+	}
+	if opts.exec != "other" {
+		t.Fatalf("last -exec=%q", opts.exec)
 	}
 }

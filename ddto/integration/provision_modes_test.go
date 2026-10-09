@@ -89,27 +89,41 @@ func TestWorkspace(t *testing.T){if workhelper.Value!=7{t.Fatal("workspace helpe
 
 func TestMiniProvisionsVendorAndPreservesPatchedSources(t *testing.T) {
 	_, driver := prepareMiniFixture(t)
-	for _, mode := range []string{"", "-mod=vendor", "-modfile=alternate.mod"} {
-		t.Run(mode, func(t *testing.T) {
+	// Workspace mode rejects -modfile, so every spelling reaches ddtest's overlay.
+	for _, mode := range []struct {
+		name    string
+		args    []string
+		goflags string
+		modfile bool
+	}{
+		{name: "default"},
+		{name: "-mod=vendor", args: []string{"-mod=vendor"}},
+		{name: "-modfile=alternate.mod", args: []string{"-modfile=alternate.mod"}, modfile: true},
+		{name: "-modfile alternate.mod", args: []string{"-modfile", "alternate.mod"}, modfile: true},
+		{name: "GOFLAGS -modfile", goflags: "-buildvcs=false -modfile=alternate.mod", modfile: true},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
 			dir := t.TempDir()
 			helper := t.TempDir()
 			writeBuildFixture(t, helper, map[string]string{"go.mod": "module example.com/vendorhelper\ngo 1.21\n", "helper.go": "package vendorhelper\nconst Value=1\n"})
 			mod := fmt.Sprintf("module example.com/vendorclient\ngo 1.21\nrequire example.com/vendorhelper v0.0.0\nreplace example.com/vendorhelper => %q\n", filepath.ToSlash(helper))
-			if mode == "-modfile=alternate.mod" {
-				mod += "godebug default=go1.25\n"
-			}
 			writeBuildFixture(t, dir, map[string]string{
 				"go.mod":         mod,
-				"client_test.go": "package vendorclient\nimport(\"testing\";\"fmt\";\"time\";\"example.com/vendorhelper\")\nfunc TestVendor(t *testing.T){if vendorhelper.Value!=7{t.Fatal(\"vendored patch lost\")};timer:=time.NewTimer(time.Hour);defer timer.Stop();fmt.Printf(\"TIMER_CAP=%d\\n\",cap(timer.C))}\n",
+				"client_test.go": "package vendorclient\nimport(\"testing\";\"fmt\";\"time\";\"example.com/vendorhelper\")\nfunc TestVendor(t *testing.T){if vendorhelper.Value!=7{t.Fatal(\"vendored patch lost\")};timer:=time.NewTimer(time.Hour);defer timer.Stop();fmt.Printf(\"TIMER_CAP=%d\\n\",cap(timer.C));func(){defer func(){fmt.Printf(\"PANIC_NIL=%T\\n\",recover())}();panic(nil)}()}\n",
 			})
-			if mode == "-modfile=alternate.mod" {
-				if err := os.WriteFile(filepath.Join(dir, "alternate.mod"), []byte(mod), 0600); err != nil {
+			if mode.modfile {
+				// Only the selected modfile restores Go 1.20 defaults: if ddtest
+				// read go.mod instead, panic(nil) would recover differently.
+				if err := os.WriteFile(filepath.Join(dir, "alternate.mod"), []byte(mod+"godebug default=go1.20\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
-			env := testEnv("GOWORK=off", "GOPROXY=off", "DD_CIVISIBILITY_ENABLED=false")
+			env := append(testEnv("GOWORK=off", "GOPROXY=off", "DD_CIVISIBILITY_ENABLED=false"), userCacheEnv(t, t.TempDir())...)
 			if out, stderr, code := command(t, dir, env, "go", "mod", "vendor"); code != 0 {
 				t.Fatal(out, stderr)
+			}
+			if mode.goflags != "" {
+				env = append(env, "GOFLAGS="+mode.goflags)
 			}
 			patched := filepath.Join(dir, "vendor", "example.com", "vendorhelper", "helper.go")
 			if err := os.WriteFile(patched, []byte("package vendorhelper\nconst Value=7\n"), 0600); err != nil {
@@ -119,10 +133,7 @@ func TestMiniProvisionsVendorAndPreservesPatchedSources(t *testing.T) {
 			before, _ := os.ReadFile(manifest)
 			var nativeOutput string
 			for i, prefix := range [][]string{{"go", "test"}, {driver, "test"}} {
-				args := append(prefix[1:], "-v", "-count=1")
-				if mode != "" {
-					args = append(args, mode)
-				}
+				args := append(append(prefix[1:], "-v", "-count=1"), mode.args...)
 				out, stderr, code := command(t, dir, env, prefix[0], args...)
 				if code != 0 {
 					t.Fatalf("%v exit=%d\n%s%s", prefix, code, out, stderr)
@@ -131,6 +142,7 @@ func TestMiniProvisionsVendorAndPreservesPatchedSources(t *testing.T) {
 					nativeOutput = out
 				} else {
 					assertNativeTimerCapacity(t, nativeOutput, out)
+					assertNativeOutputLine(t, "PANIC_NIL=", nativeOutput, out)
 				}
 			}
 			if data, _ := os.ReadFile(manifest); string(data) != string(before) {

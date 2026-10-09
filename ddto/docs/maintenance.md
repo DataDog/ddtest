@@ -259,7 +259,26 @@ Each module keeps its language, and the workspace retains the caller's effective
 GODEBUG defaults. Native `-mod=mod` may update the client's own requirements;
 Mini's injected imports must never cause those updates. Alternate modfiles,
 overlays, workspaces and vendored patches participate in this contract.
-See [Go's GODEBUG contract](https://go.dev/doc/godebug).
+See [Go's GODEBUG contract](https://go.dev/doc/godebug). A missing `go`
+directive means Go 1.16 in `go.mod` and Go 1.18 in `go.work`; keep those
+defaults when a temporary workspace needs a newer `go` line.
+
+Temporary workspace settings belong to ddtest's `go test` command and the build
+tools it runs. List every Go environment variable that preparation replaces in
+`goenv.Settings`, and save it with `goenv.Save`. Only the test runtime may import
+`internal/goenv/restore`; the CLI and its tool helpers import `goenv`, which
+restores nothing on its own. Both packages must keep importing only `syscall`:
+their tests check that restoration initializes before `os` and before an earlier
+dependency. Vendor workspaces are content-addressed: bump
+`vendorWorkspaceLayout` in `internal/runner/vendor.go` whenever their stored
+files or links change. `goSelectsVendor` mirrors cmd/go's `setDefaultBuildMod`, and
+`vendorManifest.contents` its `canonicalizeReplacePath`; recheck both when Go
+changes vendoring. Never write a manifest path containing whitespace: cmd/go
+splits those lines on spaces, so such targets use `replacements/<n>` links.
+`declareAliases` relies on cmd/go's `replacementFrom` reading `go.work`
+replacements before any `go.mod` replacement. Reuse and pruning coordinate through `<key>.lock`; keep
+the lock beside the workspace so removal never deletes a file a waiting run
+opened inside it.
 
 Check Go 1.25, 1.26, 1.27 and tip after changing these paths. The frozen SDK
 requires Go 1.26, so the Go 1.25 job runs all local runtime packages and explicit

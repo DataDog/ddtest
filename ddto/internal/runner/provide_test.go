@@ -327,3 +327,37 @@ func TestPreprovideMiniPreservesTransitiveSelectionAndChecksums(t *testing.T) {
 		t.Fatalf("module probe created client checksums: %v", err)
 	}
 }
+
+// The early provision skips only a vendor directory that Go selects. Outside
+// workspace mode, Go ignores a go work vendor manifest, so Mini is provided.
+func TestPreprovideMiniFollowsGoVendorSelection(t *testing.T) {
+	t.Setenv("GOPROXY", "off")
+	t.Setenv("GOWORK", "off")
+	t.Setenv("GOFLAGS", "")
+	for _, tc := range []struct {
+		name, manifest string
+		provided       bool
+	}{
+		{"module-manifest", "", false},
+		{"workspace-manifest", "## workspace\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Mkdir(filepath.Join(dir, "vendor"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			for file, contents := range map[string]string{
+				filepath.Join(dir, "go.mod"):                "module example.com/vendored\ngo 1.25.0\n",
+				filepath.Join(dir, "vendor", "modules.txt"): tc.manifest,
+			} {
+				if err := os.WriteFile(file, []byte(contents), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			modfile, err := preprovideMini(t.Context(), dir, options{}, t.TempDir(), nil, nil)
+			if err != nil || (modfile != "") != tc.provided {
+				t.Fatalf("provided=%t want %t: %s %v", modfile != "", tc.provided, modfile, err)
+			}
+		})
+	}
+}

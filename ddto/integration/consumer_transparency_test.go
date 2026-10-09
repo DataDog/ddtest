@@ -56,14 +56,19 @@ func TestMiniModModeResolvesClientRequirements(t *testing.T) {
 
 func TestMiniPreservesConsumerLanguage(t *testing.T) {
 	driver := sharedDriver(t, "..")
-	for _, language := range []string{"1.21", "1.22", "1.25.0"} {
+	// A module without a go directive uses Go 1.16 semantics and defaults.
+	// Go 1.27 no longer selects timer channels from GODEBUG; panicnil remains.
+	for _, language := range []string{"1.21", "1.22", "1.25.0", "none"} {
 		t.Run(language, func(t *testing.T) {
 			dir := t.TempDir()
 			want := "0"
-			if language == "1.21" {
+			if language == "1.21" || language == "none" {
 				want = "3"
 			}
 			mod := "module example.com/looplanguage\n\ngo " + language + "\n"
+			if language == "none" {
+				mod = "module example.com/looplanguage\n"
+			}
 			writeBuildFixture(t, dir, map[string]string{
 				"go.mod": mod,
 				"loop_test.go": `package looplanguage
@@ -73,6 +78,7 @@ func TestLoopLanguage(t *testing.T) {
  for i:=0;i<3;i++ { fs=append(fs,func()int{return i}) }
  if got:=fs[0]();got!=` + want + ` { t.Fatalf("loop semantics changed: %d",got) }
  timer:=time.NewTimer(time.Hour);defer timer.Stop();fmt.Printf("TIMER_CAP=%d\n",cap(timer.C))
+ func(){defer func(){fmt.Printf("PANIC_NIL=%T\n",recover())}();panic(nil)}()
 }
 `,
 			})
@@ -86,6 +92,7 @@ func TestLoopLanguage(t *testing.T) {
 					nativeOutput = out
 				} else {
 					assertNativeTimerCapacity(t, nativeOutput, out)
+					assertNativeOutputLine(t, "PANIC_NIL=", nativeOutput, out)
 				}
 			}
 			if data, err := os.ReadFile(filepath.Join(dir, "go.mod")); err != nil || string(data) != mod {
@@ -174,16 +181,22 @@ func TestMiniContinuesAfterPackageSetupFailures(t *testing.T) {
 
 func assertNativeTimerCapacity(t *testing.T, native, instrumented string) {
 	t.Helper()
-	capacity := func(out string) string {
+	assertNativeOutputLine(t, "TIMER_CAP=", native, instrumented)
+}
+
+// assertNativeOutputLine compares the first line with prefix in both outputs.
+func assertNativeOutputLine(t *testing.T, prefix, native, instrumented string) {
+	t.Helper()
+	find := func(out string) string {
 		for _, line := range strings.Split(out, "\n") {
-			if strings.HasPrefix(line, "TIMER_CAP=") {
+			if strings.HasPrefix(line, prefix) {
 				return strings.TrimSpace(line)
 			}
 		}
 		return ""
 	}
-	want, got := capacity(native), capacity(instrumented)
+	want, got := find(native), find(instrumented)
 	if want == "" || got != want {
-		t.Fatalf("timer compatibility changed: native=%q instrumented=%q", want, got)
+		t.Fatalf("runtime compatibility changed: native=%q instrumented=%q", want, got)
 	}
 }

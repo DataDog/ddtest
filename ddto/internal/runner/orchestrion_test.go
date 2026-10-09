@@ -101,16 +101,21 @@ func TestOrchestrionToolModes(t *testing.T) {
 			t.Fatal("invalid mode", mode)
 		}
 	}
-	quoted, err := quoteToolWords([]string{"path with spaces/go", `C:\tools\orchestrion`})
+	// cmd/go reads an unquoted word with both quote characters, as in an -exec
+	// program's argument, so it must survive the wrapper.
+	original := []string{"path with spaces/go", `C:\tools\orchestrion`, `PAYLOAD={"s":"don't"}`}
+	quoted, err := quoteToolWords(original)
 	if err != nil {
 		t.Fatal(err)
 	}
 	words, err := splitFlags(quoted)
-	if err != nil || !reflect.DeepEqual(words, []string{"path with spaces/go", `C:\tools\orchestrion`}) {
+	if err != nil || !reflect.DeepEqual(words, original) {
 		t.Fatal(words, err)
 	}
-	if _, err := quoteToolWords([]string{`both'"quotes`}); err == nil || !strings.Contains(err.Error(), "quote") {
-		t.Fatal(err)
+	for _, word := range []string{`both 'quotes"`, `'starts"`} {
+		if _, err := quoteToolWords([]string{word}); err == nil || !strings.Contains(err.Error(), "quote") {
+			t.Fatal(word, err)
+		}
 	}
 }
 

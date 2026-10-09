@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/citransport"
+	// Restores the caller's Go settings before any package that imports os.
+	_ "github.com/tonyredondo/dd-ci-testing-poc/internal/goenv/restore"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"
 	infra "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting"
@@ -69,6 +71,15 @@ func RunM(m *testing.M) int {
 	registerTestPackage(1)
 	return gotesting.RunM(m)
 }
+
+// callerEnvironment holds ddtest's fingerprint of the caller's Go settings.
+var callerEnvironment string
+
+// RegisterTestEnvironment keeps ddtest's fingerprint of the caller's Go
+// settings in the test binary. Go keys cached test results on the binary and
+// on its own environment, which ddtest replaces with a temporary workspace;
+// the fingerprint makes cached results follow the caller's values instead.
+func RegisterTestEnvironment(fingerprint string) { callerEnvironment = fingerprint }
 
 // RegisterTestPackage records the caller's source directory for opt-in
 // CODEOWNERS services. ddtest calls it from its generated test-package init;

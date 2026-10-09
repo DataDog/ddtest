@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
@@ -63,10 +65,38 @@ type Plan struct {
 	testify           bool
 	goleak            bool
 	compilerCache     []string
+	// workspaceLock keeps a cached vendor workspace from being pruned.
+	workspaceLock *os.File
+	// execHelper is the cross-compilation program Go would run test binaries
+	// with; execWrapper restores the caller's Go settings before a -exec program.
+	execHelper  string
+	execWrapper string
+}
+
+// savedEnvironment records the caller's values of the Go settings that go test
+// receives from this plan instead.
+func (p Plan) savedEnvironment() []string {
+	if p.Workfile == "" {
+		return nil
+	}
+	saved := []string{goenv.Save("GOWORK")}
+	if p.moduleWorkspace {
+		saved = append(saved, goenv.Save("GOFLAGS"))
+	}
+	return saved
+}
+
+// Release lets other runs prune the plan's cached vendor workspace. Call it
+// after all go processes using the plan finish, before removing Dir.
+func (p Plan) Release() {
+	if p.workspaceLock != nil {
+		_ = p.workspaceLock.Close()
+	}
 }
 
 // Prepare creates a complete plan before native Go compilation starts. Callers
-// own the plan directory and must remove it after all compiler processes finish.
+// own the plan directory and must remove it, and call Release, after all
+// compiler processes finish.
 func Prepare(ctx context.Context, dir string, args []string) (Plan, error) {
 	return PrepareRuntime(ctx, dir, args, SDK)
 }
@@ -164,6 +194,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	plan.orchestrion = isOrchestrionToolexec(opts.toolexec)
 	defer func() {
 		if err != nil {
+			plan.Release()
 			_ = os.RemoveAll(temp)
 		}
 	}()
@@ -182,47 +213,47 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 				return plan, e
 			}
 
-			if opts.mod != "mod" && opts.mod != "readonly" {
-				vendor := filepath.Join(filepath.Dir(work), "vendor")
-				if _, err := os.Stat(filepath.Join(vendor, "modules.txt")); err == nil {
-					if e = snapshotVendor(vendor, filepath.Join(temp, "vendor"), replacements); e != nil {
-						return plan, e
-					}
+			// Use the vendor directory only where Go would: a go mod vendor tree
+			// next to go.work belongs to its module, not to the workspace.
+			vendor := filepath.Join(filepath.Dir(work), "vendor")
+			workData, _ := readModuleFile(work, replacements)
+			if goSelectsVendor(opts.mod, moduleDirective(workData, "go"), vendor, true, replacements) {
+				replaced, err := workspaceReplacedModules(ctx, dir, plan.Workfile)
+				if err != nil {
+					return plan, err
+				}
+				selected := vendorManifest{dir: vendor, base: filepath.Dir(work), workReplaced: replaced}
+				if plan.Workfile, plan.workspaceLock, e = vendorWorkspace(ctx, plan.Workfile, selected, replacements); e != nil {
+					return plan, e
 				}
 			}
 			opts.workfile = plan.Workfile
-		} else if opts.mod != "mod" && opts.mod != "readonly" {
-			root := moduleRoot(dir)
-			if root != "" {
-				vendor := filepath.Join(root, "vendor")
-				_, manifestErr := os.Stat(filepath.Join(vendor, "modules.txt"))
-				_, runtimeErr := os.Stat(filepath.Join(vendor, filepath.FromSlash(miniModule), "testopt"))
-				if manifestErr == nil && os.IsNotExist(runtimeErr) {
-					if opts.modfile != "" {
-						source := opts.modfile
-						if !filepath.IsAbs(source) {
-							source = filepath.Join(dir, source)
-						}
-						backing := filepath.Join(temp, "vendor-client.mod")
-						if e = copyModuleFile(source, backing, replacements); e != nil {
-							return plan, e
-						}
-						replacements[filepath.Join(root, "go.mod")] = backing
-						plan.modfileOverlay = true
-						flags := opts.buildFlags[:0]
-						for _, flag := range opts.buildFlags {
-							if !strings.HasPrefix(flag, "-modfile=") {
-								flags = append(flags, flag)
-							}
-						}
-						opts.buildFlags = flags
-					}
-					plan.Workfile, e = provideMiniVendorWorkspace(ctx, dir, root, temp, replacements)
-					if e != nil {
+		} else if root := moduleRoot(dir); root != "" {
+			vendor := filepath.Join(root, "vendor")
+			source := opts.modfile
+			if source == "" {
+				source = filepath.Join(root, "go.mod")
+			} else if !filepath.IsAbs(source) {
+				source = filepath.Join(dir, source)
+			}
+			data, _ := readModuleFile(source, replacements)
+			_, manifestErr := os.Stat(filepath.Join(vendor, "modules.txt"))
+			_, runtimeErr := os.Stat(filepath.Join(vendor, filepath.FromSlash(miniModule), "testopt"))
+			if manifestErr == nil && os.IsNotExist(runtimeErr) && goSelectsVendor(opts.mod, moduleDirective(data, "go"), vendor, false, replacements) {
+				if opts.modfile != "" {
+					if e = overlaySelectedModfile(source, root, temp, data, &plan, replacements); e != nil {
 						return plan, e
 					}
-					opts.workfile = plan.Workfile
 				}
+				// Workspace mode rejects -modfile in any spelling, including GOFLAGS.
+				if e = useModuleWorkspaceFlags(&opts, &plan); e != nil {
+					return plan, e
+				}
+				plan.Workfile, plan.workspaceLock, e = provideMiniVendorWorkspace(ctx, dir, root, temp, replacements)
+				if e != nil {
+					return plan, e
+				}
+				opts.workfile = plan.Workfile
 			}
 		}
 		if plan.Workfile == "" {
@@ -393,6 +424,17 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	if e = add(filepath.Join(native.Dir, "zz_dd_ci_visibility_hooks.go"), hooks); e != nil {
 		return plan, e
 	}
+	// Go keys cached test results on its own environment, which holds the
+	// temporary workspace, while tests see the caller's values. Keying the test
+	// binaries on those values keeps a cached result from outliving them.
+	if plan.Workfile != "" && opts.exec == "" {
+		plan.execHelper = crossExecHelper(opts.environment)
+	}
+	// Go caches by binary content, so the fingerprint must reach the binary.
+	callerEnvironment := ""
+	if saved := plan.savedEnvironment(); saved != nil {
+		callerEnvironment = fmt.Sprintf("func init() { __dd_ci_runtime.RegisterTestEnvironment(\"%x\") }\n", sha256.Sum256([]byte(strings.Join(saved, "\x00"))))
+	}
 	for _, p := range packages {
 		if p.ImportPath == "testing" || p.ImportPath == runtimePackage || len(p.TestGoFiles)+len(p.XTestGoFiles) == 0 {
 			continue
@@ -404,7 +446,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		if runtime == Mini {
 			// The caller's compiler path identifies this package without baking
 			// its directory into the source. Identical packages still share files.
-			content = "package " + p.Name + "_test\nimport __dd_ci_runtime " + fmt.Sprintf("%q", runtimePackage) + "\nfunc init() { __dd_ci_runtime.RegisterTestPackage() }\n"
+			content = "package " + p.Name + "_test\nimport __dd_ci_runtime " + fmt.Sprintf("%q", runtimePackage) + "\nfunc init() { __dd_ci_runtime.RegisterTestPackage() }\n" + callerEnvironment
 		}
 		if e = add(filepath.Join(p.Dir, "zz_dd_ci_visibility_test.go"), content); e != nil {
 			return plan, e
@@ -559,7 +601,10 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 	}
 	plan, interrupted, err := prepareInterruptibly(ctx, dir, opts, runtime, signals, stderr)
 	if err == nil {
-		defer os.RemoveAll(plan.Dir)
+		defer func() {
+			plan.Release()
+			_ = os.RemoveAll(plan.Dir)
+		}()
 	}
 	if interrupted != nil {
 		debug.printf("preparation interrupted")
@@ -596,9 +641,32 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 		}
 	}
 	debug.printf("tool selection testify=%t goleak=%t cover=%t user_toolexec=%t orchestrion=%t sdk_ci_gate=%t", plan.testify, plan.goleak, plan.coverOverlay, opts.toolexec != "", plan.orchestrion, plan.sdkCI)
+	// A -exec program, or Go's cross-compilation helper, starts before the test
+	// binary can restore the caller's Go settings. Go already disables result
+	// caching for those runs, so ddtest's wrapper restores them first.
+	if plan.Workfile != "" && (opts.exec != "" || plan.execHelper != "") {
+		words := []string{plan.execHelper}
+		if opts.exec != "" {
+			if words, err = splitFlags(opts.exec); err != nil {
+				fmt.Fprintln(stderr, version.BuildLogPrefix+" ERROR: invalid -exec:", err)
+				return 2
+			}
+		}
+		executable, e := os.Executable()
+		if e == nil {
+			plan.execWrapper, e = quoteToolWords(append([]string{executable, "test-exec"}, words...))
+		}
+		if e != nil {
+			fmt.Fprintln(stderr, version.BuildLogPrefix+" ERROR:", e)
+			return 2
+		}
+	}
 	forwarded := goTestArguments(plan, opts, tool)
 	if plan.Workfile != "" {
-		env = append(env, "GOWORK="+plan.Workfile)
+		// The temporary workspace belongs to the build, including chained tools.
+		// The test runtime's goenv/restore package gives test processes the
+		// caller's values before any client package can start a go command.
+		env = append(append(env, plan.savedEnvironment()...), "GOWORK="+plan.Workfile)
 		if plan.moduleWorkspace {
 			env = append(env, "GOFLAGS="+plan.workspaceGoFlags)
 		}
@@ -643,6 +711,9 @@ func goTestArguments(plan Plan, opts options, tool string) []string {
 	if tool != "" {
 		forwarded = append(forwarded, "-toolexec="+tool)
 	}
+	if plan.execWrapper != "" {
+		forwarded = append(forwarded, "-exec="+plan.execWrapper)
+	}
 	lastGcflags := -1
 	if len(plan.compilerCache) != 0 {
 		for i, argument := range opts.arguments {
@@ -655,7 +726,7 @@ func goTestArguments(plan Plan, opts options, tool string) []string {
 		}
 	}
 	for i, argument := range opts.arguments {
-		if argument.flag == "overlay" || argument.flag == "toolexec" && tool != "" || argument.flag == "modfile" && (plan.Modfile != "" || plan.modfileOverlay) {
+		if argument.flag == "overlay" || argument.flag == "toolexec" && tool != "" || argument.flag == "exec" && plan.execWrapper != "" || argument.flag == "modfile" && (plan.Modfile != "" || plan.modfileOverlay) {
 			continue
 		}
 		if plan.moduleWorkspace && argument.flag == "mod" {

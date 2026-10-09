@@ -245,6 +245,10 @@ envelope overhead conservatively; repeated values can shrink the actual payload
 without bypassing its uncompressed limit. Projection never mutates a sealed
 event, including on delivery failure and retry.
 
+This placement is an accepted change from the SDK, which repeats these strings
+on every event. It was requested for Mini and is part of its wire contract, not
+a deviation to remove.
+
 Loopback and Bazel tests compare effective values against the frozen SDK while
 also retaining raw payloads to check placement. Their comparator resolves only
 these declared shared fields and rejects numeric/default collisions. Deployed

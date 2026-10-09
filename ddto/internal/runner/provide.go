@@ -28,15 +28,6 @@ func preprovideMini(ctx context.Context, dir string, opts options, temp string, 
 	if opts.mod == "vendor" {
 		return "", nil
 	}
-	if opts.mod == "" {
-		vendor := filepath.Join(dir, "vendor", "modules.txt")
-		if _, overlaid := replacements[vendor]; overlaid {
-			return "", nil
-		}
-		if _, err := os.Stat(vendor); !errors.Is(err, os.ErrNotExist) {
-			return "", nil
-		}
-	}
 	source := opts.modfile
 	if source == "" {
 		source = filepath.Join(dir, "go.mod")
@@ -46,6 +37,17 @@ func preprovideMini(ctx context.Context, dir string, opts options, temp string, 
 	data, err := readModuleFile(source, replacements)
 	if err != nil || bytes.Contains(data, []byte(miniModule)) || bytes.ContainsRune(data, '\\') {
 		return "", nil
+	}
+	if opts.mod == "" {
+		// A vendor directory that Go selects cannot receive Mini this way. An
+		// overlaid manifest is left to ordinary package resolution.
+		vendor := filepath.Join(dir, "vendor")
+		if _, overlaid := replacements[filepath.Join(vendor, "modules.txt")]; overlaid {
+			return "", nil
+		}
+		if goSelectsVendor(opts.mod, moduleDirective(data, "go"), vendor, false, replacements) {
+			return "", nil
+		}
 	}
 	// -mod=readonly still permits Go to write checksums. Probe against a
 	// temporary copy so discovering a transitive runtime cannot edit the client.
@@ -106,8 +108,10 @@ func provideRuntime(ctx context.Context, dir string, opts options, selected Runt
 	if environment.GOWORK != "" && environment.GOWORK != "off" {
 		return "", errors.New("in workspace mode, add the runtime module to go.work or require it in the module")
 	}
-	vendored := filepath.Join(filepath.Dir(environment.GOMOD), "vendor", "modules.txt")
-	if _, err := os.Stat(vendored); err == nil && opts.mod != "mod" && opts.mod != "readonly" {
+	// Only a vendor directory that Go selects for this module blocks provision;
+	// a workspace manifest is ignored outside workspace mode, as with go test.
+	data, _ := readModuleFile(source, replacements)
+	if goSelectsVendor(opts.mod, moduleDirective(data, "go"), filepath.Join(filepath.Dir(environment.GOMOD), "vendor"), false, replacements) {
 		return "", errors.New("the module vendors its dependencies: require the runtime with a tools file and run go mod vendor")
 	}
 	modfile := filepath.Join(temp, "go.mod")

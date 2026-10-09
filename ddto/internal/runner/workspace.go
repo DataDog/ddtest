@@ -116,21 +116,9 @@ func provideOlderModuleWorkspace(ctx context.Context, dir string, opts *options,
 		}
 	}
 	if opts.modfile != "" {
-		backing := filepath.Join(plan.Dir, "client-input.mod")
-		if err := os.WriteFile(backing, data, 0600); err != nil {
+		if err := overlaySelectedModfile(source, root, plan.Dir, data, plan, replacements); err != nil {
 			return err
 		}
-		replacements[filepath.Join(root, "go.mod")] = backing
-		backingSum := filepath.Join(plan.Dir, "client-input.sum")
-		if err := copyModuleFile(strings.TrimSuffix(source, ".mod")+".sum", backingSum, replacements); err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-			replacements[filepath.Join(root, "go.sum")] = ""
-		} else {
-			replacements[filepath.Join(root, "go.sum")] = backingSum
-		}
-		plan.modfileOverlay = true
 	}
 	input, err := moduleWorkspaceInput(ctx, dir, root, plan.Dir, replacements)
 	if err != nil {
@@ -140,16 +128,67 @@ func provideOlderModuleWorkspace(ctx context.Context, dir string, opts *options,
 	if err != nil {
 		return err
 	}
-	plan.moduleWorkspace = true
 	opts.workfile = plan.Workfile
-	opts.buildFlags = workspaceModuleFlags(opts.buildFlags)
+	return useModuleWorkspaceFlags(opts, plan)
+}
+
+// overlaySelectedModfile supplies the caller's -modfile, and its checksum file,
+// as the module's go.mod and go.sum: workspace mode rejects -modfile itself.
+func overlaySelectedModfile(source, root, temp string, data []byte, plan *Plan, replacements map[string]string) error {
+	backing := filepath.Join(temp, "client-input.mod")
+	if err := os.WriteFile(backing, data, 0600); err != nil {
+		return err
+	}
+	replacements[filepath.Join(root, "go.mod")] = backing
+	backingSum := filepath.Join(temp, "client-input.sum")
+	if err := copyModuleFile(strings.TrimSuffix(source, ".mod")+".sum", backingSum, replacements); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		replacements[filepath.Join(root, "go.sum")] = ""
+	} else {
+		replacements[filepath.Join(root, "go.sum")] = backingSum
+	}
+	plan.modfileOverlay = true
+	return nil
+}
+
+// useModuleWorkspaceFlags adapts the caller's module-mode flags, from both the
+// command line and GOFLAGS, for a temporary workspace.
+func useModuleWorkspaceFlags(opts *options, plan *Plan) error {
 	flags, err := splitFlags(os.Getenv("GOFLAGS"))
 	if err != nil {
 		return err
 	}
-	plan.workspaceGoFlags, err = quoteToolWords(workspaceModuleFlags(flags))
+	if plan.workspaceGoFlags, err = quoteToolWords(workspaceModuleFlags(flags)); err != nil {
+		return err
+	}
+	plan.moduleWorkspace = true
+	opts.buildFlags = workspaceModuleFlags(opts.buildFlags)
 	opts.workspaceGoFlags = &plan.workspaceGoFlags
-	return err
+	return nil
+}
+
+// workspaceReplacedModules lists the module versions that a go.work file
+// replaces; an empty version replaces every version of that module.
+func workspaceReplacedModules(ctx context.Context, dir, work string) (map[moduleVersion]bool, error) {
+	out, err := goTool(ctx, dir, nil, "work", "edit", "-json", work)
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Replace []struct {
+			Old struct{ Path, Version string }
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		return nil, fmt.Errorf("parse workspace edit JSON (%d bytes): %w", len(out), err)
+	}
+	replaced := map[moduleVersion]bool{}
+	for _, replace := range parsed.Replace {
+		replaced[moduleVersion{replace.Old.Path, replace.Old.Version}] = true
+	}
+	return replaced, nil
 }
 
 // workspaceModuleFlags adapts only flags that Go forbids in workspace mode.
@@ -353,7 +392,11 @@ func provideMiniWorkspace(ctx context.Context, dir, work, temp string, replaceme
 	if err != nil {
 		return "", err
 	}
-	if required := moduleDirective(miniData, "go"); compareGoVersion(required, parsed.Go) > 0 {
+	nativeGo := parsed.Go
+	if nativeGo == "" {
+		nativeGo = defaultGoWorkVersion
+	}
+	if required := moduleDirective(miniData, "go"); compareGoVersion(required, nativeGo) > 0 {
 		args = append(args, "-go="+required)
 		// A workspace's go directive also controls program compatibility defaults.
 		// Preserve those defaults if a selected runtime needs a newer workspace.
@@ -361,11 +404,8 @@ func provideMiniWorkspace(ctx context.Context, dir, work, temp string, replaceme
 		for _, setting := range parsed.GoDebug {
 			hasDefault = hasDefault || setting.Key == "default"
 		}
-		if !hasDefault && parsed.Go != "" {
-			parts := strings.Split(parsed.Go, ".")
-			if len(parts) >= 2 {
-				args = append(args, "-godebug=default=go"+strings.Join(parts[:2], "."))
-			}
+		if value := goDebugDefault(nativeGo); !hasDefault && value != "" {
+			args = append(args, "-godebug=default="+value)
 		}
 	}
 	args = append(args, "-use="+miniRoot, target)

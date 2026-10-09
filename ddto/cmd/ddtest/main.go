@@ -10,6 +10,10 @@ import (
 )
 
 func main() {
+	// go test -exec entrypoint: restore the caller's Go settings first.
+	if len(os.Args) >= 2 && os.Args[1] == "test-exec" {
+		os.Exit(runner.ExecWithCallerEnvironment(os.Args[2:]))
+	}
 	if len(os.Args) >= 5 && os.Args[1] == "tool-overlay" {
 		mode, plan, args := os.Args[2], os.Args[3], os.Args[4:]
 		if !runner.ValidToolMode(mode) {

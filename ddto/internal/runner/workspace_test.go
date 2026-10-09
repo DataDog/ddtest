@@ -175,7 +175,7 @@ func TestVendorSnapshotPreservesSourceOverlaysAndSymlinkFiles(t *testing.T) {
 	}
 	virtual := filepath.Join(source, "virtual.go")
 	replacements := map[string]string{virtual: original}
-	if err := snapshotVendor(source, target, replacements); err != nil {
+	if err := snapshotVendor(source, target, []byte("## workspace\n"), replacements); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := os.ReadFile(filepath.Join(target, "linked.go")); err != nil || string(got) != "package fixture\n" {
@@ -193,6 +193,17 @@ func TestVendorSnapshotPreservesSourceOverlaysAndSymlinkFiles(t *testing.T) {
 }
 
 func TestWorkspaceNewerRuntimePreservesProgramDefaults(t *testing.T) {
+	// A go.work without a go directive means Go 1.18 to the go command. Subtest
+	// names stay out of the expected text: they appear in temporary paths.
+	for _, tc := range []struct{ name, directive, client, want string }{
+		{"declared", "go 1.21\n", "1.21", "godebug default=go1.21\n"},
+		{"missing", "", "1.18", "godebug default=go1.18\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) { testWorkspaceProgramDefaults(t, tc.directive, tc.client, tc.want) })
+	}
+}
+
+func testWorkspaceProgramDefaults(t *testing.T, directive, clientGo, want string) {
 	t.Setenv("GOPROXY", "off")
 	root := t.TempDir()
 	client := filepath.Join(root, "client")
@@ -204,10 +215,11 @@ func TestWorkspaceNewerRuntimePreservesProgramDefaults(t *testing.T) {
 	}
 	work := filepath.Join(root, "go.work")
 	for path, data := range map[string]string{
-		work:                                 "go 1.21\nuse ./client\nreplace " + miniModule + " => ./mini\n",
-		filepath.Join(client, "go.mod"):      "module example.com/client\ngo 1.21\n",
-		filepath.Join(client, "main.go"):     "package main\nimport(\"fmt\";\"time\")\nfunc main(){timer:=time.NewTimer(time.Hour);defer timer.Stop();fmt.Println(cap(timer.C))}\n",
-		filepath.Join(runtimeRoot, "go.mod"): "module " + miniModule + "\ngo 1.25.0\n",
+		work:                            directive + "use ./client\nreplace " + miniModule + " => ./mini\n",
+		filepath.Join(client, "go.mod"): "module example.com/client\ngo " + clientGo + "\n",
+		// Go 1.27 no longer selects timer channels from GODEBUG; panicnil remains.
+		filepath.Join(client, "main.go"):                    "package main\nimport(\"fmt\";\"time\")\nfunc main(){timer:=time.NewTimer(time.Hour);defer timer.Stop();fmt.Println(cap(timer.C));defer func(){fmt.Printf(\"%T\\n\",recover())}();panic(nil)}\n",
+		filepath.Join(runtimeRoot, "go.mod"):                "module " + miniModule + "\ngo 1.25.0\n",
 		filepath.Join(runtimeRoot, "testopt", "testopt.go"): "package testopt\n",
 	} {
 		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
@@ -236,7 +248,7 @@ func TestWorkspaceNewerRuntimePreservesProgramDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "go 1.25.0") || !strings.Contains(string(data), "default=go1.21") {
+	if !strings.Contains(string(data), "go 1.25.0") || !strings.Contains(string(data), want) {
 		t.Fatalf("workspace does not preserve defaults: %s", data)
 	}
 }
@@ -266,9 +278,12 @@ func TestVendorWorkspaceKeepsNativeModuleRoot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	work, err := provideMiniVendorWorkspace(t.Context(), root, root, t.TempDir(), nil)
+	work, lock, err := provideMiniVendorWorkspace(t.Context(), root, root, t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if lock != nil {
+		defer lock.Close()
 	}
 	out, err := goTool(t.Context(), root, nil, "work", "edit", "-json", work)
 	if err != nil {
