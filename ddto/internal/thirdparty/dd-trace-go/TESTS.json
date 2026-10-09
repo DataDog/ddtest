@@ -1,6 +1,6 @@
 {
   "sdk": "github.com/DataDog/dd-trace-go/v2@v2.12.0-dev.3.0.20261008222249-870449702d0a",
-  "full_file_count": 61,
+  "full_file_count": 60,
   "full_ci_test_file_count": 59,
   "selected_test_or_helper_files": 8,
   "assertion_policy": "Preserve upstream assertions and synthetic input semantics; adapt repository/namespace and replace APM mock bootstrap for the native runtime. End-to-end wire tests verify actual delivery separately. Documented correctness adaptations use independent source oracles; named source starts are checked against AST declaration lines. Assert/require calls use equivalent standard-library-only internal test helpers; the port uses native Go 1.25 APIs, with two helpers for Go 1.26 calls; temporary workspaces preserve each consumer module language.",
@@ -425,17 +425,17 @@
       "source": "internal/telemetry/telemetrytest/globalclient_test.go",
       "destination": "internal/thirdparty/dd-trace-go/telemetry/telemetrytest/globalclient_test.go",
       "source_sha256": "e4c1e59233c3ef6ad52c7da53be3e84038591c453181ad9d9616564a2ecdc416",
-      "adapted_sha256": "6ae496316d4d21cc5d348ece4a0583ecb3dc52855ab024359fdfaa6d7160e5d6",
-      "kind": "full",
-      "adaptation": "If the enclosing suite disables telemetry, run all original recorder assertions in a fresh local test process with telemetry enabled before initialization; standard-library assertion helpers"
+      "adapted_sha256": "173caaea0274270dd2ceb0851b00235556e6debf213e9bd52c7f520cb1d58295",
+      "kind": "adapted",
+      "adaptation": "If the enclosing suite disables telemetry, run the original recorder assertions in a fresh local test process with telemetry enabled before initialization; product-stop, integration, gauge and rate subtests removed with those APM telemetry APIs; standard-library assertion helpers"
     },
     {
       "source": "internal/telemetry/telemetrytest/record.go",
       "destination": "internal/thirdparty/dd-trace-go/telemetry/telemetrytest/record.go",
       "source_sha256": "888b312dba9690a42c0082720a536da540be91532748357dbd1f7b802ff9dfc6",
-      "adapted_sha256": "257886bb4fb1b5a66da171418c90eae7ccf6c8f9f5de49523067421983e40a67",
+      "adapted_sha256": "c65cfa369a5b0e0d7e2d5fe12b308ff8abfbae9f5a3a7c76c6072ebe05418e67",
       "kind": "adapted",
-      "adaptation": "Internal import relocation and removal of the retired APM dependency loader or endpoint-inventory API. CI recording assertions retained."
+      "adaptation": "Internal import relocation and removal of the retired APM dependency loader, endpoint-inventory, integration, product-stop, gauge, rate and flush-ticker APIs. CI recording assertions retained."
     },
     {
       "source": "internal/civisibility/integrations/manual_api_sourcecache_adjacent_literal_fixture_test.go",
@@ -595,7 +595,7 @@
   "local_performance_tests": [
     {
       "path": "telemetry/concurrency_test.go",
-      "purpose": "Canonical registration, startup replay, swaps and test resets; coherent count/gauge/rate points and collection under concurrent submission."
+      "purpose": "Canonical registration, startup replay, swaps and test resets; coherent count points and collection under concurrent submission."
     },
     {
       "path": "civisibility/utils/telemetry/telemetry_test.go",

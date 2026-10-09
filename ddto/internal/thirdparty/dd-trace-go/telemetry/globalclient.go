@@ -159,20 +159,6 @@ func Count(namespace Namespace, name string, tags []string) MetricHandle {
 	return globalClientNewMetric(namespace, transport.CountMetric, name, tags)
 }
 
-// Rate creates a new metric handle for the given parameters that can be used to submit values.
-// Rate will always return a [MetricHandle], even if telemetry is disabled or the client has yet to start.
-// The [MetricHandle] is then swapped with the actual [MetricHandle] once the client is started.
-func Rate(namespace Namespace, name string, tags []string) MetricHandle {
-	return globalClientNewMetric(namespace, transport.RateMetric, name, tags)
-}
-
-// Gauge creates a new metric handle for the given parameters that can be used to submit values.
-// Gauge will always return a [MetricHandle], even if telemetry is disabled or the client has yet to start.
-// The [MetricHandle] is then swapped with the actual [MetricHandle] once the client is started.
-func Gauge(namespace Namespace, name string, tags []string) MetricHandle {
-	return globalClientNewMetric(namespace, transport.GaugeMetric, name, tags)
-}
-
 // Distribution creates a new metric handle for the given parameters that can be used to submit values.
 // Distribution will always return a [MetricHandle], even if telemetry is disabled or the client has yet to start.
 // The [MetricHandle] is then swapped with the actual [MetricHandle] once the client is started.
@@ -215,22 +201,6 @@ func ProductStarted(product Namespace) {
 	})
 }
 
-// ProductStopped declares a product to have being stopped by the customer. If telemetry is disabled, it will do nothing.
-// If the telemetry client has not started yet, it will record the action and replay it once the client is started.
-func ProductStopped(product Namespace) {
-	globalClientCall(func(client Client) {
-		client.ProductStopped(product)
-	})
-}
-
-// ProductStartError declares that a product could not start because of the following error. If telemetry is disabled, it will do nothing.
-// If the telemetry client has not started yet, it will record the action and replay it once the client is started.
-func ProductStartError(product Namespace, err error) {
-	globalClientCall(func(client Client) {
-		client.ProductStartError(product, err)
-	})
-}
-
 // RegisterAppConfig adds a key value pair to the app configuration and send the change to telemetry
 // value has to be json serializable and the origin is the source of the change. If telemetry is disabled, it will do nothing.
 // If the telemetry client has not started yet, it will record the action and replay it once the client is started.
@@ -246,31 +216,6 @@ func RegisterAppConfig(key string, value any, origin Origin) {
 func RegisterAppConfigs(kvs ...Configuration) {
 	globalClientCall(func(client Client) {
 		client.RegisterAppConfigs(kvs...)
-	})
-}
-
-// MarkIntegrationAsLoaded marks an integration as loaded in the telemetry. If telemetry is disabled
-// or the client has not started yet it will record the action and replay it once the client is started.
-func MarkIntegrationAsLoaded(integration Integration) {
-	globalClientCall(func(client Client) {
-		client.MarkIntegrationAsLoaded(integration)
-	})
-}
-
-// LoadIntegration marks an integration as loaded in the telemetry client. If telemetry is disabled, it will do nothing.
-// If the telemetry client has not started yet, it will record the action and replay it once the client is started.
-func LoadIntegration(integration string) {
-	globalClientCall(func(client Client) {
-		client.MarkIntegrationAsLoaded(Integration{
-			Name: integration,
-		})
-	})
-}
-
-// AddFlushTicker adds a function that is called at each telemetry Flush. By default, every minute
-func AddFlushTicker(ticker func(Client)) {
-	globalClientCall(func(client Client) {
-		client.AddFlushTicker(ticker)
 	})
 }
 
@@ -325,10 +270,6 @@ func globalClientNewMetric(namespace Namespace, kind transport.MetricType, name 
 			switch kind {
 			case transport.CountMetric:
 				return client.Count(namespace, name, tags)
-			case transport.RateMetric:
-				return client.Rate(namespace, name, tags)
-			case transport.GaugeMetric:
-				return client.Gauge(namespace, name, tags)
 			case transport.DistMetric:
 				return client.Distribution(namespace, name, tags)
 			}

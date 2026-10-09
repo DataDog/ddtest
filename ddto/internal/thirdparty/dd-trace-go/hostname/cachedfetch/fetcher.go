@@ -77,10 +77,3 @@ func (f *Fetcher) Fetch(ctx context.Context) (string, error) {
 
 	return lastValue.(string), nil
 }
-
-// Reset resets the cached value (used for testing)
-func (f *Fetcher) Reset() {
-	f.Lock()
-	f.lastValue = nil
-	f.Unlock()
-}

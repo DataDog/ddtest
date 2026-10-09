@@ -23,7 +23,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "a6ea7942ed6b0c1bf334012aa22cd110d7b9855463aeab299f06b9fb34d1ce89",
+      "sha256": "a531c56f87e8113d187197c0b5de9fd44925b862a69bb76b98f0719b511d71a1",
       "role": "local"
     },
     {
@@ -303,34 +303,6 @@
       "role": "adapted",
       "source_path": "msgp/read_test.go",
       "source_sha256": "1eeedb76a6bf0b25c5cf0c161d2e9d80d70fa57fcc1eaecee96a3f064a3ef6dd"
-    },
-    {
-      "path": "msgp/setof/_gen/main.go",
-      "sha256": "5708df109430440fa2b0010afcab80016f6570612e473dd232586c3ebe163c3d",
-      "role": "adapted",
-      "source_path": "msgp/setof/_gen/main.go",
-      "source_sha256": "f2b88d40745ba93babbd648287f99ccb5152498f0b35a78fc0336640b8f3ddc3"
-    },
-    {
-      "path": "msgp/setof/generated.go",
-      "sha256": "baa17121c4c17feb463d8333e1d7c11390be013f8f63e7a5d7e1f273ff27753f",
-      "role": "adapted",
-      "source_path": "msgp/setof/generated.go",
-      "source_sha256": "d001a89a7ef3eb2f010588243b27bf8a07d0babe0b5c3496c8d3a4d00478029b"
-    },
-    {
-      "path": "msgp/setof/generated_test.go",
-      "sha256": "80f0e31dad6a6a6b96148713ae0958fdb24ece5cbf053f57bb20781533eebe13",
-      "role": "adapted",
-      "source_path": "msgp/setof/generated_test.go",
-      "source_sha256": "4aba19e86906e7f6ff66152fa15a64fad51555ceef134988c800267d6112577d"
-    },
-    {
-      "path": "msgp/setof/setof.go",
-      "sha256": "1edfcba8e73b0177d8996a384a3a0673a5f9f1fdcbb719d8c72c6c4fbe2a3392",
-      "role": "adapted",
-      "source_path": "msgp/setof/setof.go",
-      "source_sha256": "1edfcba8e73b0177d8996a384a3a0673a5f9f1fdcbb719d8c72c6c4fbe2a3392"
     },
     {
       "path": "msgp/size.go",

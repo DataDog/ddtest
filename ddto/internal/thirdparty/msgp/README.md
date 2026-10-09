@@ -6,7 +6,8 @@
 - Original license: [LICENSE](LICENSE).
 - File/source hashes and local adaptations: [SOURCE.json](SOURCE.json).
 
-The runtime and tests keep the upstream `msgp/` subtree. Its buffered I/O uses
+The runtime and tests keep the upstream `msgp/` subtree, except `msgp/setof`,
+which nothing imports; `scripts/vendor-msgpack` skips it. Its buffered I/O uses
 the adjacent internal `fwd` copy. Mini imports these sources without requiring
 either external runtime module.
 

@@ -64,7 +64,6 @@ func newClient(tracerConfig internal.TracerConfig, config ClientConfig) (*client
 	client.flushMapper = mapper.NewDefaultMapper()
 
 	client.dataSources = append(client.dataSources,
-		&client.integrations,
 		&client.products,
 		&client.configuration,
 	)
@@ -93,7 +92,6 @@ type client struct {
 
 	// Data sources
 	dataSources   []dataSource
-	integrations  integrations
 	products      products
 	configuration configuration
 	backend       *loggerBackend
@@ -114,10 +112,6 @@ type client struct {
 
 	// payloadQueue is used when we cannot flush previously built payload for multiple reasons.
 	payloadQueue *internal.RingQueue[transport.Payload]
-
-	// flushTickerFuncs are functions that are called just before flushing the data to the backend.
-	flushTickerFuncs   []func(Client)
-	flushTickerFuncsMu sync.Mutex
 }
 
 func (c *client) Log(record Record, options ...LogOption) {
@@ -128,29 +122,11 @@ func (c *client) Log(record Record, options ...LogOption) {
 	c.backend.Add(record, options...)
 }
 
-func (c *client) MarkIntegrationAsLoaded(integration Integration) {
-	c.integrations.Add(integration)
-}
-
 func (c *client) Count(namespace Namespace, name string, tags []string) MetricHandle {
 	if !c.clientConfig.MetricsEnabled {
 		return noopMetricHandle{}
 	}
 	return c.metrics.LoadOrStore(namespace, transport.CountMetric, name, tags)
-}
-
-func (c *client) Rate(namespace Namespace, name string, tags []string) MetricHandle {
-	if !c.clientConfig.MetricsEnabled {
-		return noopMetricHandle{}
-	}
-	return c.metrics.LoadOrStore(namespace, transport.RateMetric, name, tags)
-}
-
-func (c *client) Gauge(namespace Namespace, name string, tags []string) MetricHandle {
-	if !c.clientConfig.MetricsEnabled {
-		return noopMetricHandle{}
-	}
-	return c.metrics.LoadOrStore(namespace, transport.GaugeMetric, name, tags)
 }
 
 func (c *client) Distribution(namespace Namespace, name string, tags []string) MetricHandle {
@@ -164,14 +140,6 @@ func (c *client) ProductStarted(product Namespace) {
 	c.products.Add(product, true, nil)
 }
 
-func (c *client) ProductStopped(product Namespace) {
-	c.products.Add(product, false, nil)
-}
-
-func (c *client) ProductStartError(product Namespace, err error) {
-	c.products.Add(product, false, err)
-}
-
 func (c *client) RegisterAppConfig(key string, value any, origin Origin) {
 	c.configuration.Add(Configuration{Name: key, Value: value, Origin: origin})
 }
@@ -179,21 +147,6 @@ func (c *client) RegisterAppConfig(key string, value any, origin Origin) {
 func (c *client) RegisterAppConfigs(kvs ...Configuration) {
 	for _, value := range kvs {
 		c.configuration.Add(value)
-	}
-}
-
-func (c *client) AddFlushTicker(f func(Client)) {
-	c.flushTickerFuncsMu.Lock()
-	defer c.flushTickerFuncsMu.Unlock()
-	c.flushTickerFuncs = append(c.flushTickerFuncs, f)
-}
-
-func (c *client) callFlushTickerFuncs() {
-	c.flushTickerFuncsMu.Lock()
-	defer c.flushTickerFuncsMu.Unlock()
-
-	for _, f := range c.flushTickerFuncs {
-		f(c)
 	}
 }
 
@@ -226,9 +179,6 @@ func (c *client) flushData(limit int) {
 			SwapClient(nil)
 		}
 	}()
-
-	// We call the flushTickerFuncs before flushing the data for data sources
-	c.callFlushTickerFuncs()
 
 	payloads := make([]transport.Payload, 0, 8)
 	for _, ds := range c.dataSources {

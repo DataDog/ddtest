@@ -249,30 +249,6 @@ func hasNumericComponent(name, prefix string) bool {
 	return true
 }
 
-// Capture create a new stack trace from the current call stack
-func Capture() StackTrace {
-	return SkipAndCaptureWithDepth(defaultMaxDepth, 1)
-}
-
-// SkipAndCapture creates a new stack trace from the current call stack, skipping the first `skip` frames
-func SkipAndCapture(skip int) StackTrace {
-	return SkipAndCaptureWithDepth(defaultMaxDepth, skip+1)
-}
-
-// SkipAndCaptureWithDepth creates a new stack trace from the current call stack,
-// skipping the first skip frames and capturing at most depth frames. A
-// non-positive depth uses the default depth.
-func SkipAndCaptureWithDepth(depth, skip int) StackTrace {
-	if depth <= 0 {
-		depth = defaultMaxDepth
-	}
-	return iterator(skip+1, depth, frameOptions{
-		skipInternalFrames:      true,
-		redactCustomerFrames:    false,
-		internalPackagePrefixes: internalSymbolPrefixes,
-	}).capture()
-}
-
 // SkipAndCaptureWithInternalFrames creates a new stack trace from the current call stack without filtering internal frames.
 // This is useful for tracer span error stacktraces where we want to capture all frames.
 func SkipAndCaptureWithInternalFrames(depth int, skip int) StackTrace {
@@ -297,32 +273,6 @@ func CaptureRaw(skip int) RawStackTrace {
 	return RawStackTrace{
 		PCs: pcs[:n],
 	}
-}
-
-// CaptureWithRedaction creates a stack trace with customer code redaction but keeps internal Datadog frames
-// This is designed for telemetry logging where we want to see internal frames for debugging
-// but need to redact customer code for security
-func CaptureWithRedaction(skip int) StackTrace {
-	return iterator(skip+1, defaultMaxDepth, frameOptions{
-		skipInternalFrames:      false, // Keep DD internal frames
-		redactCustomerFrames:    true,  // Redact customer code
-		internalPackagePrefixes: internalSymbolPrefixes,
-	}).capture()
-}
-
-// Symbolicate converts raw PCs to a full StackTrace with symbolication,
-// applying the default skipping and redaction rules (skips internal frames,
-// no customer code redaction).
-func (r RawStackTrace) Symbolicate() StackTrace {
-	if len(r.PCs) == 0 {
-		return nil
-	}
-
-	return iteratorFromRaw(r.PCs, frameOptions{
-		skipInternalFrames:      true,
-		redactCustomerFrames:    false,
-		internalPackagePrefixes: internalSymbolPrefixes,
-	}).capture()
 }
 
 // SymbolicateWithRedaction converts raw PCs to a StackTrace with

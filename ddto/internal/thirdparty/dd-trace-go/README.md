@@ -25,7 +25,12 @@ exact original path for every upstream file, including generated sources.
 This is a CI-only port. Calls to the general tracer target our native client;
 metadata access is explicit; APM security/profiling/mock hooks, YAML/Fleet,
 telemetry heartbeats, SCA/endpoint inventories and process enrichment are
-excluded. Concurrent telemetry registries use the standard library. Native
+excluded. So are APM span tags, the URL sanitizer, tracer log files, AppSec
+stack capture and telemetry rate/gauge metrics, integrations and flush tickers.
+Environment variables are read directly, without the SDK's generated
+configuration registry. [ADAPTATIONS.md](ADAPTATIONS.md#removed-apm-code)
+lists what each reduced package keeps and how to merge upstream changes into
+it. Concurrent telemetry registries use the standard library. Native
 platform calls use the adjacent `xsys` subset. Our runtime version is owned by
 `internal/version`, independently of the SDK base. The MessagePack schema,
 mini client and HTTP transport are owned outside this origin.

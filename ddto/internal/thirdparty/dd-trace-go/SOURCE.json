@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "5f341efc57d1ce2014b9ee5846cd6dee2661878b962ef41adf40ece8a225582f",
+      "sha256": "ecf7ab8b87e2fbde8d9535c3b5e45600d9628b11e7cc7650b3dcc1f70e2c89f5",
       "role": "local"
     },
     {
@@ -30,12 +30,12 @@
     },
     {
       "path": "README.md",
-      "sha256": "00c7199b784bd8827df82610fde9b96698eb29df8ddbfa6c35fd4780ef59caf9",
+      "sha256": "09e694830f7dcf4b70f1641e5f76d1d2c00c6213256f28f91c2d060b3f2068de",
       "role": "local"
     },
     {
       "path": "TESTS.json",
-      "sha256": "8ac93de05c64e2d0d67fdd02a7356fa07f8d81b2458480422539e5f1e9a211e5",
+      "sha256": "c40ac151059464663cfc8fda51b1979b5a31d5ebc42d20268983cac39fd1a625",
       "role": "local"
     },
     {
@@ -1476,128 +1476,25 @@
       "source_sha256": "8cd028315e412b98d0625e0aab5a063c14620c17894aceca74da44460116e318"
     },
     {
-      "path": "ddtrace/ext/app_types.go",
-      "sha256": "86890c6b36f25ac17adb25a8d961a01582041ddf967ab954143f46f441681e33",
-      "role": "adapted",
-      "source_path": "ddtrace/ext/app_types.go",
-      "source_sha256": "201d7422ea9d619d6d589397dc91eb97ad186800931e615a6688536b7e756237"
-    },
-    {
-      "path": "ddtrace/ext/aws.go",
-      "sha256": "9a69158893bd25797d72db855529c25efb3f1b0b7a986a3d03e6926d2879aa6c",
-      "role": "adapted",
-      "source_path": "ddtrace/ext/aws.go",
-      "source_sha256": "9a69158893bd25797d72db855529c25efb3f1b0b7a986a3d03e6926d2879aa6c"
-    },
-    {
-      "path": "ddtrace/ext/db.go",
-      "sha256": "9a44baf2ac9b01f5c1e81773050c23b958b3235965ebaffa504c8d0b949c80b0",
-      "role": "adapted",
-      "source_path": "ddtrace/ext/db.go",
-      "source_sha256": "9a44baf2ac9b01f5c1e81773050c23b958b3235965ebaffa504c8d0b949c80b0"
-    },
-    {
-      "path": "ddtrace/ext/gcp.go",
-      "sha256": "358bf8e18cbb3a98463e47d4272c2296ba2489e119b1019353e8ede9a6c03004",
-      "role": "adapted",
-      "source_path": "ddtrace/ext/gcp.go",
-      "source_sha256": "358bf8e18cbb3a98463e47d4272c2296ba2489e119b1019353e8ede9a6c03004"
-    },
-    {
-      "path": "ddtrace/ext/graphql.go",
-      "sha256": "df79e5b969d562ae572d83fc70328674cba7478fb078a8ab5628197918ec4dda",
-      "role": "adapted",
-      "source_path": "ddtrace/ext/graphql.go",
-      "source_sha256": "df79e5b969d562ae572d83fc70328674cba7478fb078a8ab5628197918ec4dda"
-    },
-    {
-      "path": "ddtrace/ext/log_key.go",
-      "sha256": "6b39e166e5eaa89d2946e347b8cb98740c977b3ee7c802268fc0956e40ae3b2d",
-      "role": "adapted",
-      "source_path": "ddtrace/ext/log_key.go",
-      "source_sha256": "6b39e166e5eaa89d2946e347b8cb98740c977b3ee7c802268fc0956e40ae3b2d"
-    },
-    {
-      "path": "ddtrace/ext/messaging.go",
-      "sha256": "ab8c431af632c57f3bd93bdbaf866b8426b84f689eef3344a7213fd58296e752",
-      "role": "adapted",
-      "source_path": "ddtrace/ext/messaging.go",
-      "source_sha256": "ab8c431af632c57f3bd93bdbaf866b8426b84f689eef3344a7213fd58296e752"
-    },
-    {
-      "path": "ddtrace/ext/peer.go",
-      "sha256": "3a023f98d7a298b118b31fd65f303e16aa71abd4bc736c1842dcd0acb0dfe0b7",
-      "role": "adapted",
-      "source_path": "ddtrace/ext/peer.go",
-      "source_sha256": "3a023f98d7a298b118b31fd65f303e16aa71abd4bc736c1842dcd0acb0dfe0b7"
-    },
-    {
-      "path": "ddtrace/ext/priority.go",
-      "sha256": "598d3499f6b9a8558f24e0e41fb8c6a0c235a872978f2f88a1f0d34b3c0a9251",
-      "role": "adapted",
-      "source_path": "ddtrace/ext/priority.go",
-      "source_sha256": "598d3499f6b9a8558f24e0e41fb8c6a0c235a872978f2f88a1f0d34b3c0a9251"
-    },
-    {
-      "path": "ddtrace/ext/rpc.go",
-      "sha256": "4d0d4897141d9b261d15e4c4b4bf10c072087dad77c081b083cc290a1b3a1b61",
-      "role": "adapted",
-      "source_path": "ddtrace/ext/rpc.go",
-      "source_sha256": "4d0d4897141d9b261d15e4c4b4bf10c072087dad77c081b083cc290a1b3a1b61"
-    },
-    {
-      "path": "ddtrace/ext/span_kind.go",
-      "sha256": "accb1e49a6bd53dba2052b6d3b1f9626d207419cea3b1171f395064b58371a85",
-      "role": "adapted",
-      "source_path": "ddtrace/ext/span_kind.go",
-      "source_sha256": "accb1e49a6bd53dba2052b6d3b1f9626d207419cea3b1171f395064b58371a85"
-    },
-    {
-      "path": "ddtrace/ext/system.go",
-      "sha256": "aa537913ae76b59b883c4984c81f02de4498b9d82133a35b424e3c4dcd01cf03",
-      "role": "adapted",
-      "source_path": "ddtrace/ext/system.go",
-      "source_sha256": "aa537913ae76b59b883c4984c81f02de4498b9d82133a35b424e3c4dcd01cf03"
-    },
-    {
       "path": "ddtrace/ext/tags.go",
-      "sha256": "432bb906c7f590c41e847d71e5e2b7856ca258ef4a0cf5429a55154a82dccd88",
+      "sha256": "dee1eadf4c0db7dea958dd27b19973295a3630554ef1941b00ee48e751428753",
       "role": "adapted",
       "source_path": "ddtrace/ext/tags.go",
       "source_sha256": "432bb906c7f590c41e847d71e5e2b7856ca258ef4a0cf5429a55154a82dccd88"
     },
     {
       "path": "env.go",
-      "sha256": "903e322b4ac21e7aa34b3ef1ab719e3e141ed9858961e545619c8343e9ccd88f",
+      "sha256": "7f01d62298ce2f44dfc085d0eeff53c47b43aaba7bfea66c22fc19fb9f7f326c",
       "role": "adapted",
       "source_path": "internal/env.go",
       "source_sha256": "a25103c602ceed1385180637f00c17f3ecaafc9b2738d872296c098e515b207b"
     },
     {
-      "path": "env/ci_service.go",
-      "sha256": "cb058b36aadfcb91f0c2611bd0d76905b1536d49f5508b6386aa0f41512e2457",
-      "role": "local"
-    },
-    {
       "path": "env/env.go",
-      "sha256": "b45a93a28a50c6ba481ad2ff213b3ede8ddfed22daa1838558861b0bcec0e518",
+      "sha256": "9ca513cf95f82f9563f3dd8f19309540a66ebc6c2b8ce9695196d30699b0b2fa",
       "role": "adapted",
       "source_path": "internal/env/env.go",
       "source_sha256": "93d14bb3b2962716639ac356bae4e494f9af22cb112cce63542d8c847ace302b"
-    },
-    {
-      "path": "env/supported_configurations.gen.go",
-      "sha256": "11b818f38d8e2236f9c3843eeb75d6d3370538b6bead03e50b8bb08fdba23087",
-      "role": "adapted",
-      "source_path": "internal/env/supported_configurations.gen.go",
-      "source_sha256": "11b818f38d8e2236f9c3843eeb75d6d3370538b6bead03e50b8bb08fdba23087"
-    },
-    {
-      "path": "env/supported_configurations.go",
-      "sha256": "cf503a35b07db69fce811c5bf18ae9cfdbc0f70d5b8f60af5bf1233e3f37c392",
-      "role": "adapted",
-      "source_path": "internal/env/supported_configurations.go",
-      "source_sha256": "7bd2b32aa93e6e9b8d3e741e0a044ee392adf0e4416a06f5f9dfaff1a9b01a34"
     },
     {
       "path": "globalconfig/globalconfig.go",
@@ -1615,14 +1512,14 @@
     },
     {
       "path": "hostname/azure/azure.go",
-      "sha256": "b9816df3c2f576c14c737414cec53802af3ed3fc29ec655751dbdd8437ceda46",
+      "sha256": "383b5fd3d8609ba77d3a1523d014b568516193e2419cad34b8d5aa0681007d96",
       "role": "adapted",
       "source_path": "internal/hostname/azure/azure.go",
       "source_sha256": "fb4bbedbc92dc7c74b33acbdf931e0333e50f96602555555b28d280ce4006d62"
     },
     {
       "path": "hostname/cachedfetch/fetcher.go",
-      "sha256": "8fe9f4e65a505ed08d7acaccd6320675fc63ca608e499e80e80f66e8ab98cc82",
+      "sha256": "8f03b560fa301080ac25c137eaa01038ea6400fbb44ddaf9ded494e8f765ebd1",
       "role": "adapted",
       "source_path": "internal/hostname/cachedfetch/fetcher.go",
       "source_sha256": "8718504b2c0674d86d20253c0fa682a316e7d1b330de9ae73746ba162ee153cb"
@@ -1692,7 +1589,7 @@
     },
     {
       "path": "log/log.go",
-      "sha256": "4d01b782c480666d63c2300f084e8ad9492b03588adc914594bdc4cc29ace11e",
+      "sha256": "917617c4b60f5d56a41ceea5232f2e8712afeafa2ea977b6a3f59f26a0c4c482",
       "role": "adapted",
       "source_path": "internal/log/log.go",
       "source_sha256": "021fafa9f8f8b154356fdf3a80a099cd949fecd9eba8d212946ee61597600e74"
@@ -1737,35 +1634,35 @@
     },
     {
       "path": "stacktrace/stacktrace.go",
-      "sha256": "a97add4af73279f50924590ec67e94004e31504b4e087987b6d1c2d435a50b9a",
+      "sha256": "aba5f7e2645b90fc315f732b086aedcdc425d6bed58224f22e12a51ca13938b4",
       "role": "adapted",
       "source_path": "internal/stacktrace/stacktrace.go",
       "source_sha256": "360529c3bbbc04fda98b12026ef2ecfa23278927cf63ce1652be6a020896c0a7"
     },
     {
       "path": "stacktrace/trie.go",
-      "sha256": "c4571d0dcfddc53891096903ef7086de354e7880c8c0135abb84e10718555743",
+      "sha256": "0f40de28693efaa557f4d1a95e13d6691a2765f77ed5d8eaa783c4b2e92ce77f",
       "role": "adapted",
       "source_path": "internal/stacktrace/trie.go",
       "source_sha256": "16de3b053c3021530b5c91f7e0312e7a919eeb178d9e1a4707f5c083269889d5"
     },
     {
       "path": "telemetry/api.go",
-      "sha256": "6cb5e406c0555e087e12229213a079662fdf2f5deee2e8676dcf1a2b3a6e2b4a",
+      "sha256": "63f5255a15d6bdcaa25d8a5617c5216151404ec68da514dd87f8c51170225d05",
       "role": "adapted",
       "source_path": "internal/telemetry/api.go",
       "source_sha256": "26bc270f03ca66bf5aebb9a274f0717fbc4d50e964cb9557f8984f7275a5022f"
     },
     {
       "path": "telemetry/backend.go",
-      "sha256": "5ccac5ea22165dc4419ea86f22a79d86fc3d83fa0bd97fe2c1a071356b603760",
+      "sha256": "e0c31ef0388734739570711d598c4d07e4a4ed81f4754b47b550af3df8c8be67",
       "role": "adapted",
       "source_path": "internal/telemetry/backend.go",
       "source_sha256": "37e5b6778108c77f68ab628562c436ea26b07f5c88ea3d080b6d200f39047835"
     },
     {
       "path": "telemetry/client.go",
-      "sha256": "e252296edc7727ac148268344ff1ed86434298db7c50b9f3bce2d12943e502ee",
+      "sha256": "e477f93df9787adacb259cbd5c3a0db4644df778cd2dcb14a60fee0de1d8310b",
       "role": "adapted",
       "source_path": "internal/telemetry/client.go",
       "source_sha256": "98c09ac5c1927c95161fdb0959c173364366dc6edcecfcedef907ecf4a125fc6"
@@ -1779,12 +1676,12 @@
     },
     {
       "path": "telemetry/concurrency_test.go",
-      "sha256": "56d8f6249af6501903a8802ff2d760abb4657c922fea2d6e590f4fb32a2317a9",
+      "sha256": "439cba3b910d287cd2424a3d08217f7fb9a9ad104d4ce3ae7910cd5b6ccfeffe",
       "role": "local"
     },
     {
       "path": "telemetry/configuration.go",
-      "sha256": "c247070f002d4de2052e0d24345b3e6cbea6b9497fe9ed3621e3e49be6b136c7",
+      "sha256": "237b06ba4a27dd99023f6938992a1c94247e8ad33862d75273958c6c92669d8f",
       "role": "adapted",
       "source_path": "internal/telemetry/configuration.go",
       "source_sha256": "20b7d48e7b9e13640739393b281997143e5deb2a90c126d92fd64e77adefd638"
@@ -1798,17 +1695,10 @@
     },
     {
       "path": "telemetry/globalclient.go",
-      "sha256": "593607ae85ea3ad7bf4a85f492a29d831dbde602c9272628459b0b1438d4f73f",
+      "sha256": "03676a204ea7b78e233447d264672f46760f96d1d1af7c7be9100fcb1ff60928",
       "role": "adapted",
       "source_path": "internal/telemetry/globalclient.go",
       "source_sha256": "87bbf0ba701f4310d520cfdc44d212e9069bf15974de95f10e53403100899d86"
-    },
-    {
-      "path": "telemetry/integration.go",
-      "sha256": "af0390ab34dc6a52b178028c7a701f9b07e9b9fff43e3495239687fa13cce853",
-      "role": "adapted",
-      "source_path": "internal/telemetry/integration.go",
-      "source_sha256": "ced06fe559f18e0a98749990b2c0d0fd0e63717491003aa72ac4b3825f78276e"
     },
     {
       "path": "telemetry/internal/knownmetrics/known_metric.golang.go",
@@ -1826,7 +1716,7 @@
     },
     {
       "path": "telemetry/internal/knownmetrics/known_metrics.go",
-      "sha256": "9389dda59fc74955625bac368065e533b2f2d2a886e356e7665a9bff4faf121c",
+      "sha256": "a11e2e1b8dcf87e9558f30a13c6f2604653c6f460082bf9cc7e7051753319de5",
       "role": "adapted",
       "source_path": "internal/telemetry/internal/knownmetrics/known_metrics.go",
       "source_sha256": "1c080c28092ad977c7b13c97b14df18695b60e0aa8523516704ebe4845078877"
@@ -1926,13 +1816,6 @@
       "source_sha256": "1505939a0f906da77be8af8edfdace6daab6a7fef17d23ebbf63a070c4b609c6"
     },
     {
-      "path": "telemetry/internal/transport/app_integration_change.go",
-      "sha256": "4b258ea7b24dac49432ee776c60702874ef5df7b4aa41bd3cefa5a70dd8f10b6",
-      "role": "adapted",
-      "source_path": "internal/telemetry/internal/transport/app_integration_change.go",
-      "source_sha256": "4b258ea7b24dac49432ee776c60702874ef5df7b4aa41bd3cefa5a70dd8f10b6"
-    },
-    {
       "path": "telemetry/internal/transport/app_product_change.go",
       "sha256": "39827e8a2ec1b52c7f3c6e7eb74d8f0ce56081ba56ba74ba362f690b056e94ee",
       "role": "adapted",
@@ -1948,7 +1831,7 @@
     },
     {
       "path": "telemetry/internal/transport/body.go",
-      "sha256": "11435e13a0ddb799999beb6e5faa2440505b69945d42e57d988885bd8183874e",
+      "sha256": "cd1310fec20f3b1a569f1dd9e7737893edd183bdf3dc7ac81c2cab32077026fe",
       "role": "adapted",
       "source_path": "internal/telemetry/internal/transport/body.go",
       "source_sha256": "f10f830b8e8a7d7fda6affc96f1fcaec05aa04fa43f7b08249f292a8508cdf80"
@@ -2018,7 +1901,7 @@
     },
     {
       "path": "telemetry/internal/transport/requesttype.go",
-      "sha256": "3a0f5d0f1e849fec8e4e6e1d7e0b764d98d1ca54b2eb08fc2bfc23b58668dbee",
+      "sha256": "6424ac545816215f61b26d84275fa409c84230b13d662c0db6364cd28dda0f63",
       "role": "adapted",
       "source_path": "internal/telemetry/internal/transport/requesttype.go",
       "source_sha256": "48f43afed11b53f2f72f4a3b4c4238b281f185c074b004a31b14bbc4d163486f"
@@ -2044,14 +1927,14 @@
     },
     {
       "path": "telemetry/metrics.go",
-      "sha256": "6a5620f4076197676d4ff0837c53791294204f36ea7ac332b6e3a71a2582c897",
+      "sha256": "6540e70d394f793727ba06648c90cbd440e502a672e3d19f6eebf09cfb53b264",
       "role": "adapted",
       "source_path": "internal/telemetry/metrics.go",
       "source_sha256": "5e1664994afaef8f356e2985a6718ae1f4505cc823094f3af0e19844b9c90b9d"
     },
     {
       "path": "telemetry/options.go",
-      "sha256": "24521902cefc67f42e62e752ecf7c0924555e77b6abaaa7605f6cd536c8876a7",
+      "sha256": "51cbca2afa4fe17f753d3ed391a865274d36ea1c8db98bd45629950554bf9edd",
       "role": "adapted",
       "source_path": "internal/telemetry/options.go",
       "source_sha256": "e08dfaa8592f80173571c7b2ecbb46ca07f95654e0456e63fcdab7b3aa26c03e"
@@ -2077,7 +1960,7 @@
     },
     {
       "path": "telemetry/startup_lifecycle_test.go",
-      "sha256": "ead1ff9db2350142237f15b623b54333b71fac609f0156f41840fab01a693889",
+      "sha256": "245cddf2f07b436ba5731c9c34a7416d71e06d531bbb2a8786d02f0f937d52c6",
       "role": "local"
     },
     {
@@ -2096,14 +1979,14 @@
     },
     {
       "path": "telemetry/telemetrytest/globalclient_test.go",
-      "sha256": "6ae496316d4d21cc5d348ece4a0583ecb3dc52855ab024359fdfaa6d7160e5d6",
+      "sha256": "173caaea0274270dd2ceb0851b00235556e6debf213e9bd52c7f520cb1d58295",
       "role": "adapted",
       "source_path": "internal/telemetry/telemetrytest/globalclient_test.go",
       "source_sha256": "e4c1e59233c3ef6ad52c7da53be3e84038591c453181ad9d9616564a2ecdc416"
     },
     {
       "path": "telemetry/telemetrytest/record.go",
-      "sha256": "257886bb4fb1b5a66da171418c90eae7ccf6c8f9f5de49523067421983e40a67",
+      "sha256": "c65cfa369a5b0e0d7e2d5fe12b308ff8abfbae9f5a3a7c76c6072ebe05418e67",
       "role": "adapted",
       "source_path": "internal/telemetry/telemetrytest/record.go",
       "source_sha256": "888b312dba9690a42c0082720a536da540be91532748357dbd1f7b802ff9dfc6"
@@ -2116,15 +1999,8 @@
       "source_sha256": "eced174f860fee92ea66397f3d769ecdf600af31f86f5eee513275c5e2189e72"
     },
     {
-      "path": "urlsanitizer/sanitizer.go",
-      "sha256": "88b1954c55daa2a0d4fc2f7d8115d708c3f6d144ef2f1b6e6c86e49ab37bac71",
-      "role": "adapted",
-      "source_path": "internal/urlsanitizer/sanitizer.go",
-      "source_sha256": "88b1954c55daa2a0d4fc2f7d8115d708c3f6d144ef2f1b6e6c86e49ab37bac71"
-    },
-    {
       "path": "utils.go",
-      "sha256": "e017933dfa5f794cb5c46eb787ba8ce01f2f17c7dfa358751d8044eba3710cae",
+      "sha256": "47fa466f826a5452adb6292c824d44292bb4143acc36efc9c85e7ed220753f8b",
       "role": "adapted",
       "source_path": "internal/utils.go",
       "source_sha256": "7b2caa9a9040c85c0d47c7512cb9280fe376cbbc9b62034210f368db94fc6353"
@@ -2151,7 +2027,11 @@
     "YAML/Fleet configuration",
     "telemetry heartbeats",
     "dependency/endpoint inventories",
-    "APM process enrichment"
+    "APM process enrichment",
+    "APM span tag constants and URL sanitizer",
+    "supported-configuration registry",
+    "telemetry rate/gauge metrics, integrations, product stop/error reports and flush tickers",
+    "tracer log files and AppSec stack capture APIs"
   ],
   "additional_sources": [
     {

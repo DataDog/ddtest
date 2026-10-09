@@ -6,7 +6,6 @@
 package telemetrytest
 
 import (
-	"math"
 	"os"
 	"os/exec"
 	"strings"
@@ -77,34 +76,6 @@ func TestGlobalClient(t *testing.T) {
 		assert.True(t, recorder.Products[telemetry.NamespaceAppSec])
 	})
 
-	t.Run("product-stopped", func(t *testing.T) {
-		recorder := new(RecordClient)
-		defer telemetry.MockClient(recorder)()
-
-		telemetry.ProductStopped(telemetry.NamespaceAppSec)
-		assert.Len(t, recorder.Products, 1)
-		assert.False(t, recorder.Products[telemetry.NamespaceAppSec])
-	})
-
-	t.Run("integration-loaded", func(t *testing.T) {
-		recorder := new(RecordClient)
-		defer telemetry.MockClient(recorder)()
-
-		telemetry.LoadIntegration("test-integration")
-		assert.Len(t, recorder.Integrations, 1)
-		assert.Equal(t, "test-integration", recorder.Integrations[0].Name)
-	})
-
-	t.Run("mark-integration-as-loaded", func(t *testing.T) {
-		recorder := new(RecordClient)
-		defer telemetry.MockClient(recorder)()
-
-		telemetry.MarkIntegrationAsLoaded(telemetry.Integration{Name: "test-integration", Version: "1.0.0"})
-		assert.Len(t, recorder.Integrations, 1)
-		assert.Equal(t, "test-integration", recorder.Integrations[0].Name)
-		assert.Equal(t, "1.0.0", recorder.Integrations[0].Version)
-	})
-
 	t.Run("count", func(t *testing.T) {
 		recorder := new(RecordClient)
 		recorder.knownMetrics = true
@@ -114,29 +85,6 @@ func TestGlobalClient(t *testing.T) {
 		assert.Len(t, recorder.Metrics, 1)
 		require.Contains(t, recorder.Metrics, MetricKey{Name: "init_time", Namespace: telemetry.NamespaceTracers, Kind: string(transport.CountMetric)})
 		assert.Equal(t, 1.0, recorder.Metrics[MetricKey{Name: "init_time", Namespace: telemetry.NamespaceTracers, Kind: string(transport.CountMetric)}].Get())
-	})
-
-	t.Run("gauge", func(t *testing.T) {
-		recorder := new(RecordClient)
-		recorder.knownMetrics = true
-		defer telemetry.MockClient(recorder)()
-
-		telemetry.Gauge(telemetry.NamespaceTracers, "init_time", nil).Submit(1)
-		assert.Len(t, recorder.Metrics, 1)
-		require.Contains(t, recorder.Metrics, MetricKey{Name: "init_time", Namespace: telemetry.NamespaceTracers, Kind: string(transport.GaugeMetric)})
-		assert.Equal(t, 1.0, recorder.Metrics[MetricKey{Name: "init_time", Namespace: telemetry.NamespaceTracers, Kind: string(transport.GaugeMetric)}].Get())
-	})
-
-	t.Run("rate", func(t *testing.T) {
-		recorder := new(RecordClient)
-		recorder.knownMetrics = true
-		defer telemetry.MockClient(recorder)()
-
-		telemetry.Rate(telemetry.NamespaceTracers, "init_time", nil).Submit(1)
-
-		assert.Len(t, recorder.Metrics, 1)
-		require.Contains(t, recorder.Metrics, MetricKey{Name: "init_time", Namespace: telemetry.NamespaceTracers, Kind: string(transport.RateMetric)})
-		assert.False(t, math.IsNaN(recorder.Metrics[MetricKey{Name: "init_time", Namespace: telemetry.NamespaceTracers, Kind: string(transport.RateMetric)}].Get()))
 	})
 
 	t.Run("distribution", func(t *testing.T) {

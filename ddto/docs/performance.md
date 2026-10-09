@@ -176,7 +176,7 @@ invocation.
 | Bounded buffer retention | Long-lived oversized buffers after large payloads | Payload and gzip capacities above 2.5 MiB are discarded |
 | Standard-library telemetry maps | An external concurrent-map module | Preserve registration, startup replay and log counts under concurrency |
 | Bound ordinary CI counters | Repeated tag slices, key joining and registry lookup | Preserve startup replay, client swaps, disabled telemetry and feature-tag fallback |
-| Inline metric points | A heap allocation on every count/gauge submission | Collect each value/timestamp together; retain zero, NaN, reset and rate semantics |
+| Inline metric points | A heap allocation on every count submission | Collect each value/timestamp together; retain zero, NaN and reset semantics |
 | Completed coverage workers | A worker blocked on an unbuffered shutdown notification per covered test | Close the completion channel after processing, including profile errors; shutdown still waits for outstanding work |
 | Coverage duration clock | A wall-clock read from background serialization | Use monotonic elapsed durations; retain event and metric wall timestamps |
 | Literal Testify prefix check | Compiling `^Test` for each suite method | Match exactly the same method names |
@@ -215,7 +215,7 @@ tag combinations. Events with retry, EFD, quarantine or other extra tags use the
 general registry path. `MockClient` resets invalidate a binding; normal client
 swaps retain the existing swappable handle.
 
-Counts and gauges keep their value/timestamp inline under a short mutex. A flush
+Counts keep their value/timestamp inline under a short mutex. A flush
 detaches the whole point under that mutex, then encodes it after releasing the
 lock. This removes per-submission snapshots while preserving collection boundaries.
 

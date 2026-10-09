@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
@@ -67,7 +66,7 @@ func newMetricKey(namespace Namespace, kind transport.MetricType, name string, t
 	return metricKey{namespace: namespace, kind: kind, name: name, tags: strings.Join(tags, ",")}
 }
 
-// metricsHandle is the internal equivalent of MetricHandle for Count/Rate/Gauge metrics that are sent via the payload [transport.GenerateMetrics].
+// metricsHandle is the internal equivalent of MetricHandle for Count metrics that are sent via the payload [transport.GenerateMetrics].
 type metricHandle interface {
 	MetricHandle
 	Payload() transport.MetricData
@@ -95,13 +94,6 @@ func (m *metrics) LoadOrStore(namespace Namespace, kind transport.MetricType, na
 		switch kind {
 		case transport.CountMetric:
 			handle = &count{metric: metric{key: key}}
-		case transport.GaugeMetric:
-			handle = &gauge{metric: metric{key: key}}
-		case transport.RateMetric:
-			rate := &rate{count: count{metric: metric{key: key}}}
-			now := time.Now()
-			rate.intervalStart.Store(&now)
-			handle = rate
 		default:
 			m.initMu.Unlock()
 			log.Warn("telemetry: unknown metric type %q", kind)
@@ -203,61 +195,4 @@ func (m *count) Submit(newValue float64) {
 	m.point.time = now
 	m.present = true
 	m.mu.Unlock()
-}
-
-// gauge is a metric that represents a single value at a point in time that is not incremental
-type gauge struct {
-	metric
-}
-
-func (g *gauge) Submit(value float64) {
-	now := time.Now()
-	g.mu.Lock()
-	g.point = metricPoint{value: value, time: now}
-	g.present = true
-	g.mu.Unlock()
-}
-
-// rate is like a count metric but the value sent is divided by an interval of time that is also sent/
-type rate struct {
-	count
-	intervalStart atomic.Pointer[time.Time]
-}
-
-func (r *rate) Get() float64 {
-	sum := r.count.Get()
-	intervalStart := r.intervalStart.Load()
-	if intervalStart == nil {
-		return math.NaN()
-	}
-
-	intervalSeconds := time.Since(*intervalStart).Seconds()
-	if int64(intervalSeconds) == 0 { // Interval for rate is too small, we prefer not sending data over sending something wrong
-		return math.NaN()
-	}
-
-	return sum / intervalSeconds
-}
-
-func (r *rate) Payload() transport.MetricData {
-	now := time.Now()
-	intervalStart := r.intervalStart.Swap(&now)
-	if intervalStart == nil {
-		return transport.MetricData{}
-	}
-
-	intervalSeconds := time.Since(*intervalStart).Seconds()
-	if int64(intervalSeconds) == 0 { // Interval for rate is too small, we prefer not sending data over sending something wrong
-		return transport.MetricData{}
-	}
-
-	point, present := r.takePoint()
-	if !present {
-		return transport.MetricData{}
-	}
-
-	point.value /= intervalSeconds
-	payload := r.metric.payload(point)
-	payload.Interval = int64(intervalSeconds)
-	return payload
 }

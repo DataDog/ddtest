@@ -7,34 +7,30 @@ package env
 
 import (
 	"os"
-	"strings"
-	"testing"
-
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
+	"slices"
 )
 
-// Get is a wrapper around env.Get that validates the environment variable
-// against a list of supported environment variables.
-//
-// If the environment variable has aliases, the function will also check the aliases
-// and return the value of the first alias that is set.
-//
-// When a environment variable is not supported because it is not
-// listed in the list of supported environment variables, the function will log an error
-// and behave as if the environment variable was not set.
-//
-// In testing mode, the reader will automatically add the environment variable
-// to the configuration file.
-func Get(name string) string {
-	if !verifySupportedConfiguration(name) {
-		return ""
-	}
+// keyAliases maps canonical configuration keys to their known aliases. Only
+// the aliases of keys read by the CI runtime are retained.
+var keyAliases = map[string][]string{
+	"DD_API_KEY": {"DD-API-KEY"},
+}
 
+// sensitiveConfigurations is the set of configuration keys whose value must not
+// be reported in configuration telemetry.
+var sensitiveConfigurations = map[string]struct{}{
+	"DD_API_KEY": {},
+	"DD_APP_KEY": {},
+}
+
+// Get returns the value of the environment variable. If it is empty, the value
+// of the first non-empty alias is returned.
+func Get(name string) string {
 	if v := os.Getenv(name); v != "" {
 		return v
 	}
 
-	for _, alias := range KeyAliases[name] {
+	for _, alias := range keyAliases[name] {
 		if v := os.Getenv(alias); v != "" {
 			return v
 		}
@@ -43,28 +39,14 @@ func Get(name string) string {
 	return ""
 }
 
-// Lookup is a wrapper around os.LookupEnv that validates the environment variable
-// against a list of supported environment variables.
-//
-// If the environment variable has aliases, the function will also check the aliases.
-// and return the value of the first alias that is set.
-//
-// When a environment variable is not supported because it is not
-// listed in the list of supported environment variables, the function will log an error
-// and behave as if the environment variable was not set.
-//
-// In testing mode, the reader will automatically add the environment variable
-// to the configuration file.
+// Lookup is a wrapper around os.LookupEnv. If the environment variable is not
+// set, the first alias that is set is returned.
 func Lookup(name string) (string, bool) {
-	if !verifySupportedConfiguration(name) {
-		return "", false
-	}
-
 	if v, ok := os.LookupEnv(name); ok {
 		return v, true
 	}
 
-	for _, alias := range KeyAliases[name] {
+	for _, alias := range keyAliases[name] {
 		if v, ok := os.LookupEnv(alias); ok {
 			return v, true
 		}
@@ -73,18 +55,20 @@ func Lookup(name string) (string, bool) {
 	return "", false
 }
 
-func verifySupportedConfiguration(name string) bool {
-	if strings.HasPrefix(name, "DD_") || strings.HasPrefix(name, "OTEL_") {
-		if _, ok := SupportedConfigurations[name]; !ok {
-			if testing.Testing() {
-				addSupportedConfigurationToFile(name)
-			}
-
-			log.Error("config: usage of a unlisted environment variable: %s", name)
-
-			return false
+// IsSensitive reports whether the given configuration name must not have its value
+// reported in configuration telemetry. A name is sensitive if it is listed in
+// sensitiveConfigurations, or if it is an alias of such a key.
+func IsSensitive(name string) bool {
+	if _, ok := sensitiveConfigurations[name]; ok {
+		return true
+	}
+	for key, aliases := range keyAliases {
+		if _, ok := sensitiveConfigurations[key]; !ok {
+			continue
+		}
+		if slices.Contains(aliases, name) {
+			return true
 		}
 	}
-
-	return true
+	return false
 }

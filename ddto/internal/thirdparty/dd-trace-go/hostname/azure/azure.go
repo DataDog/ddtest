@@ -20,9 +20,6 @@ import (
 var (
 	metadataURL = "http://169.254.169.254"
 	timeout     = 300 * time.Millisecond
-
-	// CloudProviderName contains the inventory name of for Azure
-	CloudProviderName = "Azure"
 )
 
 func getResponse(ctx context.Context, url string) (string, error) {

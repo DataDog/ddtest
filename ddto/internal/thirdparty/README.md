@@ -48,10 +48,13 @@ new snapshots; review their diff; apply it with a three-way comparison to our
 adapted sources; review newly added CI files/tests; then update the manifest's
 commit, upstream hashes, local hashes, and local-extension classifications.
 Retain the original licenses and notice files. Do not reintroduce removed APM
-features or dependencies. Generated files must be regenerated using their
-checked-in directives. Run the provenance audit, runtime/dependency checks,
-full SDK differential suite, coverage/race tests, and platform checks. Update
-performance claims only after measuring the changed implementation.
+features or dependencies: the SDK manifest's `excluded_features` and its
+[removed APM code](dd-trace-go/ADAPTATIONS.md#removed-apm-code) list them, and
+the msgp README names its skipped directory. Generated files must be
+regenerated using their checked-in directives. Run the provenance audit,
+runtime/dependency checks, full SDK differential suite, coverage/race tests,
+and platform checks. Update performance claims only after measuring the
+changed implementation.
 
 The manifests identify the source base used by this implementation. The
 [benchmark inputs](../../docs/results/20261005-linux-go1.27.1/build/manifest.json)

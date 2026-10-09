@@ -122,8 +122,6 @@ func unmarshalPayload(bytes json.RawMessage, requestType RequestType) (Payload, 
 		payload = new(AppClientConfigurationChange)
 	case RequestTypeAppProductChange:
 		payload = new(AppProductChange)
-	case RequestTypeAppIntegrationsChange:
-		payload = new(AppIntegrationChange)
 	case RequestTypeAppStarted:
 		payload = new(AppStarted)
 	case RequestTypeAppClosing:

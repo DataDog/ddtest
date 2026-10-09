@@ -87,14 +87,12 @@ whole point under the same lock, then constructs the wire payload after release.
 
 Every concurrent increment belongs to exactly one collection. `Get` returns
 `NaN` until a submission and after collection, while a submitted zero is a real
-point. Fractional/negative values and gauge replacement keep their semantics.
+point. Fractional/negative values keep their semantics.
 Timestamps are captured before competing for the lock. They need not be
 monotonic between concurrent callers.
 
-Rate metrics retain their existing atomic interval start and short-interval
-rule. A short interval does not consume the accumulated count; an eligible
-collection detaches the count and divides it by that interval. Distributions,
-wire fields and interval calculation have not been redesigned.
+CI telemetry emits only counts and distributions; the SDK's gauge and rate
+metrics are not ported. Distributions and wire fields have not been redesigned.
 
 Checks: `TestMetricPointLifecycle`,
 `TestConcurrentMetricCollectionPreservesValues`, telemetry HTTP parity and
@@ -524,6 +522,57 @@ failure. `internal/citransport/compression.go` pools `gzip.BestSpeed` writers;
 this changes compression ratio, not content or protocol. The source rewriter
 omits comment AST construction while preserving original comment bytes.
 
+## Removed APM code
+
+The port keeps only what CI Visibility and Mini reach. Code that the general
+tracer, AppSec, profiling or other products use was removed after a
+reachability check over every entry point, including the `//go:linkname`
+hooks that instrumented packages call. `excluded_features` in
+[`SOURCE.json`](SOURCE.json) lists the removed areas. Removed files have no
+manifest record, so `scripts/upstream.py diff` no longer reports their upstream
+changes. Skip them during an update unless retained CI code starts to call one.
+
+What each reduced package keeps, and how to merge upstream changes into it:
+
+- `ddtrace/ext/tags.go` keeps the tags Mini sets: span name/type, service,
+  resource, the error tags and manual keep. The other `ext` files are gone.
+  Add a constant only when retained code uses it; do not restore whole files.
+- `env` reads the environment directly. `Get` and `Lookup` keep one alias
+  (`DD-API-KEY` for `DD_API_KEY`), and `IsSensitive` keeps `DD_API_KEY` and
+  `DD_APP_KEY`. Do not copy the SDK's generated configuration registry
+  (`supported_configurations.gen.go`, `supported_configurations.json`) or its
+  test-mode writer. The registry made `env.Get` return `""` for any `DD_` or
+  `OTEL_` key missing from it, and inside a test binary, which includes every
+  user test run with Mini, it tried to write the JSON file beside its source.
+  New keys need no registration. Port a new upstream alias or sensitive key only
+  for a key the CI runtime reads or reports.
+- `telemetry` keeps counts, distributions, logs, product start, app
+  configuration and the app lifecycle. Rate and gauge metrics, integration
+  reports, product stop/error reports, flush tickers and synchronous stack
+  capture (`WithCaptureStacktraceNow`) are removed, together with their
+  `Client` methods, payload types and `telemetrytest` recorder methods. Skip
+  upstream changes to them. If upstream CI code calls one, port only that
+  method and its test, and record it in `TESTS.json`.
+  `TestStartupTelemetrySendsBeforeTests` injects its startup panic through a
+  data source, in the flush step that used to run the flush tickers.
+- `log` has no tracer log file. `stacktrace` keeps `SkipAndCaptureWithInternalFrames`,
+  `CaptureRaw`, `SymbolicateWithRedaction` and `Format`; the AppSec capture
+  APIs are removed. The contrib classification table stays, because telemetry
+  log redaction uses it.
+- Root `env.go` and `utils.go` keep the boolean/integer readers and tag parsing.
+  `urlsanitizer` is removed.
+
+Reachable APM-shaped code stays because it affects CI output: hostname cloud
+probes (telemetry and CI log host), the known-metrics table (the `common`
+flag) and the contrib classification table. SDK CI Visibility code that Mini
+does not call, such as the manual `GetTest`/`GetBenchmark` wrappers, is also
+kept for now to stay close to upstream.
+
+Checks: `go vet ./...` with `GOOS` set to `linux`, `darwin` and `windows`,
+`python3 scripts/upstream.py verify`, the full suite, and the reachability
+procedure in the [maintenance guide](../../../docs/maintenance.md#removing-unused-upstream-code)
+when an update adds or removes code paths.
+
 ## Update checklist
 
 1. Produce `scripts/upstream.py patch` against the recorded SDK snapshot and
@@ -536,6 +585,9 @@ omits comment AST construction while preserving original comment bytes.
 4. Refresh `TESTS.json` for adapted assertions and `SOURCE.json` using the shared
    [maintenance procedure](../../../docs/maintenance.md). Rerun comparable
    benchmarks if upstream changes a hot path.
+5. Keep the [removed APM code](#removed-apm-code) out: skip upstream changes to
+   removed files and APIs, and port a removed API only when retained CI code
+   needs it. Remove any new APM-only code the update brings in.
 
 ## Source ranges and runtime identity
 
@@ -637,8 +689,8 @@ describes the contracts and Go tests to keep during an SDK update.
 
 The CI bootstrap and `civisibility/utils/net/client.go` share the selected
 service. Preserve that binding during SDK updates: settings and telemetry must
-not name a different service from events or logs. The new environment keys are
-registered in local `env/ci_service.go`, without editing the generated SDK map.
+not name a different service from events or logs. The port reads environment
+variables directly, so the new keys need no registration.
 The SDK base remains independently pinned.
 
 Checks: `TestGitHubRules`, `TestGitLabRules`, `TestRepositoryExamples`,

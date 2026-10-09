@@ -124,35 +124,3 @@ func (t *segmentPrefixTrie) InsertAll(prefixes []string) {
 		node.isEnd = true
 	}
 }
-
-// Size returns the number of prefixes stored in the segment trie.
-// Safe for concurrent use after initialization.
-func (t *segmentPrefixTrie) Size() int {
-	return t.countSegmentPrefixes(t.root)
-}
-
-// countSegmentPrefixes recursively counts the number of complete prefixes in the segment trie
-func (t *segmentPrefixTrie) countSegmentPrefixes(node *segmentTrieNode) int {
-	if node == nil {
-		return 0
-	}
-
-	count := 0
-	if node.isEnd {
-		count = 1
-	}
-
-	for _, child := range node.children {
-		count += t.countSegmentPrefixes(child)
-	}
-
-	return count
-}
-
-// Clear removes all prefixes from the segment trie.
-// This method should only be called during initialization before any concurrent access.
-func (t *segmentPrefixTrie) Clear() {
-	t.root = &segmentTrieNode{
-		children: make(map[string]*segmentTrieNode),
-	}
-}

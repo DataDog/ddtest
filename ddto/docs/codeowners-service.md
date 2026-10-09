@@ -83,8 +83,8 @@ service in a runtime debug message.
   file selection and both kinds of queries.
 - The CI bootstrap applies the selected name to the tracer. CI clients reuse
   it for settings, telemetry and logs; explicit client names retain priority.
-- The two local configuration keys are registered in `env/ci_service.go`.
-  The generated upstream registry is not edited.
+- The two local configuration keys are read directly from the environment;
+  the port has no generated configuration registry.
 
 These SDK adaptations and their update checks are recorded in
 [ADAPTATIONS.md](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md#codeowners-derived-services).

@@ -80,49 +80,6 @@ func WithStacktrace() LogOption {
 	}
 }
 
-// withCaptureStacktraceNowSkip skips WithCaptureStacktraceNow's own frame, landing the
-// capture on whatever function called it (e.g. ReportError) — the same
-// "keep telemetry call-chain frames, only skip pure capture machinery"
-// convention as telemetryStackSkip in backend.go.
-const withCaptureStacktraceNowSkip = 1
-
-// WithCaptureStacktraceNow returns a LogOption that captures the stack trace
-// synchronously, at the caller's own call site, right now — instead of
-// deferring capture to whenever the backend actually processes the record
-// (see [WithStacktrace]). Use this at any call site whose Log call may be
-// queued and replayed later (e.g. before telemetry.StartApp runs), so the
-// stack reflects where the call was actually made, not the replay machinery
-// that eventually delivers it.
-//
-// When telemetry is disabled ([Disabled] is true), this returns the same
-// no-capture-yet option as WithStacktrace instead of paying the capture cost:
-// every call through the package-level Log function is a no-op in that case,
-// so there's nothing to preserve accuracy for.
-//
-// Entries sent with this option are deduplicated separately from entries
-// without it: the backend's dedup key carries a flag set here, so a report
-// can never merge into a plain, stackless log entry that happens to share
-// the same message, level, and tags — a merge would drop the report's
-// stack trace and error attributes.
-func WithCaptureStacktraceNow() LogOption {
-	if Disabled() {
-		return WithStacktrace()
-	}
-	raw := stacktrace.CaptureRaw(withCaptureStacktraceNowSkip)
-	return func(key *loggerKey, value *loggerValue) {
-		if key != nil {
-			key.captureStackNow = true
-			return
-		}
-		if value == nil {
-			return
-		}
-		value.captureStacktrace = true
-		value.stacktraceCaptured = true
-		value.rawStack = raw
-	}
-}
-
 // withRawStacktrace attaches a stack trace captured earlier — before the
 // global telemetry client existed — instead of leaving loggerBackend.add to
 // capture one when the queued [Log] call is eventually replayed. Without

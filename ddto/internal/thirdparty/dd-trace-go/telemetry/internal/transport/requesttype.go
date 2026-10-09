@@ -31,10 +31,6 @@ const (
 	// RequestTypeAppProductChange is sent when products are enabled/disabled
 	RequestTypeAppProductChange RequestType = "app-product-change"
 
-	// RequestTypeAppIntegrationsChange is sent when the telemetry client starts
-	// with info on which integrations are used.
-	RequestTypeAppIntegrationsChange RequestType = "app-integrations-change"
-
 	// RequestTypeMessageBatch is a wrapper over a list of payloads
 	RequestTypeMessageBatch RequestType = "message-batch"
 

@@ -83,7 +83,8 @@ func TestStartupTelemetrySendsBeforeTests(t *testing.T) {
 	}
 	var panicCalls int
 	if scenario == "panic" {
-		next.AddFlushTicker(func(Client) { panicCalls++; panic("startup callback") })
+		c := next.(*client)
+		c.dataSources = append(c.dataSources, panickingDataSource{&panicCalls})
 	}
 	next.RegisterAppConfig("startup-config", "initial", OriginEnvVar)
 	started := make(chan struct{})
@@ -233,4 +234,13 @@ func TestStartupFlushRetainsMetricsUntilNextFlush(t *testing.T) {
 			}
 		})
 	}
+}
+
+// panickingDataSource fails inside the startup flush, where the removed
+// AddFlushTicker callbacks used to run.
+type panickingDataSource struct{ calls *int }
+
+func (p panickingDataSource) Payload() transport.Payload {
+	*p.calls++
+	panic("startup data source")
 }

@@ -18,6 +18,10 @@ import (
 
 type entry struct{ Source, Destination, SHA256, AdaptedSHA256 string }
 
+// excludedSubtrees are upstream directories that no runtime or test code
+// imports. Keep them out of a recopy instead of removing them afterwards.
+var excludedSubtrees = map[string]bool{"internal/thirdparty/msgp/msgp/setof": true}
+
 func main() {
 	cache, err := exec.Command("go", "env", "GOMODCACHE").Output()
 	must(err)
@@ -30,12 +34,15 @@ func main() {
 			if err != nil {
 				return err
 			}
-			if d.IsDir() {
-				return nil
-			}
 			rel, err := filepath.Rel(base, path)
 			if err != nil {
 				return err
+			}
+			if d.IsDir() {
+				if excludedSubtrees[filepath.ToSlash(filepath.Join(p.dest, rel))] {
+					return filepath.SkipDir
+				}
+				return nil
 			}
 			if !strings.HasSuffix(rel, ".go") && !strings.HasSuffix(rel, ".s") && !strings.Contains(rel, "testdata") {
 				return nil
