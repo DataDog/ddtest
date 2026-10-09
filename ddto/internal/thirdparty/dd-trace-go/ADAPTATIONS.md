@@ -147,6 +147,27 @@ ordinary/deferred delivery and telemetry off/on. Its Mini process changes the
 global local zone; the SDK reference runs the same application paths without
 that mutation because its background clocks are not safe under it.
 
+## Coverage module identity
+
+Upstream `InitializeCoverage` in
+[`civisibility/integrations/gotesting/coverage/test_coverage.go`](civisibility/integrations/gotesting/coverage/test_coverage.go)
+runs `go list -f {{.Module.Path}};{{.Module.Dir}}` in every binary built with
+coverage, even when settings disable per-test coverage. Only per-test coverage,
+the LCOV report and profile backfill read the result. Here initialization
+records the working directory, environment and `go` executable instead, and
+the first reader runs `go list` with them, so a later directory or environment
+change in `TestMain` or a test does not alter the module. A run that reads no
+module identity starts no `go` process.
+
+Per-test coverage still resolves the module during initialization. Its worker
+runs while tests do, and starting a process reads state that tests may change:
+`os.StartProcess` reads `time.Local`, which `TestMiniCoverageWithGlobalTimeChanges`
+changes under `-race`. The ITR backfill preflight runs before the tests, and
+the LCOV report and backfill finalization after them.
+
+Checks: `TestModuleInfoResolvesOnFirstUseFromInitialization` and
+`TestMiniCoverageWithGlobalTimeChanges`.
+
 ## Telemetry startup and HTTP completion
 
 [`telemetry/globalclient.go`](telemetry/globalclient.go) runs the flush in
@@ -288,8 +309,18 @@ directory. `git rev-parse --git-common-dir` runs without command telemetry, so
 git metrics match the SDK. A failed attempt or an empty result removes its
 directory, and `RemovePackFiles` removes the directory after the upload.
 
+Before the first attempt, `packObjectsFolders` compares the filesystems of the
+temporary directory and the git directory: device numbers on Unix, volume names
+on Windows. When they differ, git could not move its pack, so it packs once, in
+the git directory, instead of repeating the whole pack after a failure. The
+failed attempt also left git's temporary `tmp_idx_*` and `tmp_rev_*` files in
+the repository's `objects/pack` directory on every run. Where the filesystems
+cannot be compared, the temporary directory is still tried first. The git directory is now looked up before every packing, which adds one
+`git rev-parse` when the temporary directory works.
+
 Checks: `TestRemovePackFilesRemovesTemporaryDirectory`,
-`TestPackFilesFallBackToGitDirectory`, `TestFailedPackFilesLeaveNoDirectory`
+`TestPackFilesFallBackToGitDirectory`, `TestFailedPackFilesLeaveNoDirectory`,
+`TestPackObjectsSkipsTemporaryDirectoryOnAnotherFilesystem`
 and the git upload parity case, where Mini must leave its temporary directory
 empty. The fake git in these tests and in `TestCreatePackFilesMissingPackFile`
 skips the options before the command, which cmd also splits at `=` for

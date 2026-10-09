@@ -140,6 +140,7 @@ func lcovSourceFilePath(profileFile string) string {
 // lcovModuleSourceFilePath converts module-relative or absolute profile paths
 // into repository-relative source paths when they belong to the current module.
 func lcovModuleSourceFilePath(profileFile string) string {
+	resolveModuleInfo()
 	moduleRepoPrefix := moduleRepositoryRelativePrefix(modulePath)
 	normalizedProfileFile := cleanLCOVSourcePath(profileFile)
 	normalizedModulePath := strings.TrimSuffix(cleanLCOVSourcePath(modulePath), "/")

@@ -102,12 +102,12 @@ func moduleWorkspaceInput(ctx context.Context, dir, root, temp string, replaceme
 	return source, nil
 }
 
-func provideMiniVendorWorkspace(ctx context.Context, dir, root, temp string, replacements map[string]string) (string, *os.File, error) {
+func provideMiniVendorWorkspace(ctx context.Context, dir, root, temp, moduleCache string, replacements map[string]string) (string, *os.File, error) {
 	source, err := moduleWorkspaceInput(ctx, dir, root, temp, replacements)
 	if err != nil {
 		return "", nil, err
 	}
-	work, err := provideMiniWorkspace(ctx, dir, source, temp, replacements)
+	work, err := provideMiniWorkspace(ctx, dir, source, temp, moduleCache, replacements)
 	if err != nil {
 		return "", nil, err
 	}

@@ -138,6 +138,19 @@ var (
 	modulePath string
 	// moduleDir is the module directory.
 	moduleDir string
+	// moduleInfoSource records where coverage initialized. Resolving the
+	// module starts a go command that most runs never need: only per-test
+	// coverage, LCOV reports and profile backfill read modulePath and
+	// moduleDir, through resolveModuleInfo. Per-test coverage resolves it
+	// during initialization; backfill and LCOV readers run before or after
+	// the tests.
+	moduleInfoSource struct {
+		locking.Mutex
+		pending bool
+		dir     string
+		env     []string
+		goPath  string
+	}
 )
 
 // InitializeCoverage initializes the runtime coverage.
@@ -168,12 +181,16 @@ func InitializeCoverage(m *testing.M, uploadEnabled bool) {
 	backfillFinalized = false
 	backfillResult = BackfillResult{}
 
-	initializeModuleInfo()
+	deferModuleInfo()
 
 	// if we cannot collect we bailout early
 	if !CanCollectPerTestCoverage() {
 		return
 	}
+	// Per-test coverage reads the module from a worker while tests run, and
+	// starting go there reads process state that tests may change, such as
+	// time.Local. Resolve it before the tests start.
+	resolveModuleInfo()
 
 	// initializing coverage writer
 	covWriter = newCoverageWriter()
@@ -194,17 +211,48 @@ func InitializeCoverage(m *testing.M, uploadEnabled bool) {
 
 }
 
-func initializeModuleInfo() {
-	stdOut, err := exec.Command("go", "list", "-f", "{{.Module.Path}};{{.Module.Dir}}").CombinedOutput()
+// deferModuleInfo captures the directory, environment and go command that
+// resolving the module used at initialization, so a later TestMain chdir or
+// environment change does not alter the result.
+func deferModuleInfo() {
+	dir, _ := os.Getwd()
+	goPath, err := exec.LookPath("go")
+	if err != nil {
+		goPath = "go"
+	}
+	moduleInfoSource.Lock()
+	defer moduleInfoSource.Unlock()
+	moduleInfoSource.pending = true
+	moduleInfoSource.dir, moduleInfoSource.env, moduleInfoSource.goPath = dir, os.Environ(), goPath
+}
+
+// resolveModuleInfo sets modulePath and moduleDir on first use after
+// initialization. Readers call it before reading them.
+func resolveModuleInfo() {
+	moduleInfoSource.Lock()
+	defer moduleInfoSource.Unlock()
+	if !moduleInfoSource.pending {
+		return
+	}
+	moduleInfoSource.pending = false
+	modulePath, moduleDir = listModuleInfo(moduleInfoSource.dir, moduleInfoSource.env, moduleInfoSource.goPath)
+}
+
+// listModuleInfo returns the module path and directory that go list reports
+// for the package in dir. Tests replace it.
+var listModuleInfo = func(dir string, env []string, goPath string) (path, directory string) {
+	cmd := exec.Command(goPath, "list", "-f", "{{.Module.Path}};{{.Module.Dir}}")
+	cmd.Dir, cmd.Env = dir, env
+	stdOut, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Debug("civisibility.cov: error getting module path and module dir: %s", err.Error())
-	} else {
-		parts := strings.Split(string(stdOut), ";")
-		if len(parts) == 2 {
-			modulePath = strings.TrimSpace(parts[0])
-			moduleDir = strings.TrimSpace(parts[1])
-		}
+		return "", ""
 	}
+	parts := strings.Split(string(stdOut), ";")
+	if len(parts) != 2 {
+		return "", ""
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
 }
 
 // CanCollect returns whether coverage can be collected.
@@ -458,6 +506,9 @@ func ResetForTesting() {
 	temporaryDir = ""
 	modulePath = ""
 	moduleDir = ""
+	moduleInfoSource.Lock()
+	moduleInfoSource.pending = false
+	moduleInfoSource.Unlock()
 }
 
 // NewTestCoverage creates a new test coverage.
@@ -748,6 +799,7 @@ func getFilesCovered(testFile string, before, after map[string][]coverageBlock) 
 // getRelativePathFromCITagsSourceRootForCoverage returns the relative path from the CI tags source root for coverage
 // by converting a module path to a module directory.
 func getRelativePathFromCITagsSourceRootForCoverage(filePath string) string {
+	resolveModuleInfo()
 	return utils.GetRelativePathFromCITagsSourceRoot(strings.ReplaceAll(filePath, modulePath, moduleDir))
 }
 

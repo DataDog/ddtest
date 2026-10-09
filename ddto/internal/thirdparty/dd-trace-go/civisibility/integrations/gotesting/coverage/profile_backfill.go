@@ -234,6 +234,7 @@ func backendCoverageSourceFileExists(backendFile string) bool {
 }
 
 func backendCoverageSourceFileCandidates(backendFile string) []string {
+	resolveModuleInfo()
 	candidates := make([]string, 0, 3)
 	addCandidate := func(value string) {
 		if value == "" || slices.Contains(candidates, value) {
@@ -257,6 +258,7 @@ func backendCoverageSourceFileCandidates(backendFile string) []string {
 }
 
 func repositoryRootFromModuleInfo() string {
+	resolveModuleInfo()
 	if moduleDir == "" {
 		return ""
 	}
@@ -279,6 +281,7 @@ func backfillBitmapForProfileFile(profileFile string, backendCoverage map[string
 }
 
 func coveragePathCandidates(profileFile string) []string {
+	resolveModuleInfo()
 	candidates := make([]string, 0, 4)
 	addCandidate := func(value string) {
 		value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))

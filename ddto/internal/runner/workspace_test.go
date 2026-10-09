@@ -31,7 +31,7 @@ func TestWorkspaceProvisionResolvesExistingMainModules(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	work, err := provideMiniWorkspace(t.Context(), filepath.Join(root, "client"), filepath.Join(root, "go.work"), t.TempDir(), nil)
+	work, err := provideMiniWorkspace(t.Context(), filepath.Join(root, "client"), filepath.Join(root, "go.work"), t.TempDir(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestWorkspaceProvisionKeepsSelectedRuntime(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			target, err := provideMiniWorkspace(t.Context(), client, original, t.TempDir(), nil)
+			target, err := provideMiniWorkspace(t.Context(), client, original, t.TempDir(), "", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -237,7 +237,7 @@ func testWorkspaceProgramDefaults(t *testing.T, directive, clientGo, want string
 		return string(out)
 	}
 	native := run(work)
-	supplied, err := provideMiniWorkspace(t.Context(), client, work, t.TempDir(), nil)
+	supplied, err := provideMiniWorkspace(t.Context(), client, work, t.TempDir(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestVendorWorkspaceKeepsNativeModuleRoot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	work, lock, err := provideMiniVendorWorkspace(t.Context(), root, root, t.TempDir(), nil)
+	work, lock, err := provideMiniVendorWorkspace(t.Context(), root, root, t.TempDir(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

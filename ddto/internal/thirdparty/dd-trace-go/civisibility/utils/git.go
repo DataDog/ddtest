@@ -711,8 +711,7 @@ func CreatePackFiles(commitsToInclude []string, commitsToExclude []string) []str
 	// to handle this edge case, we first try with a temp folder and if we fail then we try in the git directory, which
 	// shares a device with the objects and keeps the working tree free of temporary files. A directory that ends
 	// without pack files is removed; RemovePackFiles removes the rest after the upload.
-	for _, folderFor := range []func() string{os.TempDir, gitCommonDir} {
-		folder := folderFor()
+	for _, folder := range packObjectsFolders() {
 		if folder == "" {
 			continue
 		}
@@ -755,6 +754,17 @@ func CreatePackFiles(commitsToInclude []string, commitsToExclude []string) []str
 		_ = os.RemoveAll(temporaryPath)
 	}
 	return packFiles
+}
+
+// packObjectsFolders lists where pack-objects may write, in order. Git moves
+// each pack out of the objects directory, so a temporary directory known to be
+// on another filesystem than the git directory would only fail first.
+func packObjectsFolders() []string {
+	temporary, gitDir := os.TempDir(), gitCommonDir()
+	if gitDir != "" && differentFilesystems(temporary, gitDir) {
+		return []string{gitDir}
+	}
+	return []string{temporary, gitDir}
 }
 
 // RemovePackFiles deletes pack files from CreatePackFiles together with their

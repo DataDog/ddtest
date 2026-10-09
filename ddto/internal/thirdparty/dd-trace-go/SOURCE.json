@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "8231dee7405631f34f45e8c92383744bb98b03844f1372d0eddd27055194028a",
+      "sha256": "5f341efc57d1ce2014b9ee5846cd6dee2661878b962ef41adf40ece8a225582f",
       "role": "local"
     },
     {
@@ -35,7 +35,7 @@
     },
     {
       "path": "TESTS.json",
-      "sha256": "4173f0dab3a1281c8dbbd6ae9bc7c894df2a01881b105769695be59698ae047a",
+      "sha256": "8ac93de05c64e2d0d67fdd02a7356fa07f8d81b2458480422539e5f1e9a211e5",
       "role": "local"
     },
     {
@@ -339,7 +339,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/coverage/lcov_report.go",
-      "sha256": "050937557e04bd7d1a4472dfda344a2fe044ece0cc381906e0d3a95bbdf2c42c",
+      "sha256": "3cf35e842d2df388a73050a103e870fb3fb142d163ae7066bdbc6d7575bdfff7",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/coverage/lcov_report.go",
       "source_sha256": "6096d74ce03f20c81f65fa8872a92f15215da21809d9620c71faa9aa36344049"
@@ -350,6 +350,11 @@
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/coverage/lcov_report_test.go",
       "source_sha256": "c524a44acc49c08a288f387aa4157879369ac8798711f1e142d4c6a9f9495d33"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/module_info_test.go",
+      "sha256": "fca320bfe90876bc1c594920d80a525a73b42381c29b9fefd99a0db310b5172c",
+      "role": "local"
     },
     {
       "path": "civisibility/integrations/gotesting/coverage/process_coverage.go",
@@ -367,7 +372,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/coverage/profile_backfill.go",
-      "sha256": "356fe9b165266deb2c105f95e83e8c4680015c53ae02a0218193be0644f7b50b",
+      "sha256": "a7afef38e44e391759dbae67f3392fa250290dff8b2911253837226839dbd5a4",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/coverage/profile_backfill.go",
       "source_sha256": "1d60703d0fbf43cda87751312c7ec9c64f434c369ef2d4ac3fb9e75914c0d1fc"
@@ -395,7 +400,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/coverage/test_coverage.go",
-      "sha256": "4574fa00fa99e7039a66f876db135c8ca8d464a3c669bf6bdcadd25cbe9fc920",
+      "sha256": "5cca7863735b2f7ee4b2c5f230ab66646e6fe5b6e89680eae82b2c474efb86b9",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/coverage/test_coverage.go",
       "source_sha256": "90f437bef02e1c4eca6e220f13d128ce8da64109359b66b98db6b5bb3bb5c352"
@@ -1017,14 +1022,29 @@
     },
     {
       "path": "civisibility/utils/git.go",
-      "sha256": "56c3904c5d8e5460e5d83203415e0166b9818de5a3b8d3a88b69eebae7395d48",
+      "sha256": "e7d55a19954153becc2b3ba782fd93a4a0409cfc01bb325128792d3065e9dd66",
       "role": "adapted",
       "source_path": "internal/civisibility/utils/git.go",
       "source_sha256": "f146aed5bbd7a350309021e1546a931128db8a46bf637dee0b4407bcd78c08ab"
     },
     {
       "path": "civisibility/utils/git_packfiles_test.go",
-      "sha256": "67022eee45481a25a939b66e416de6b8766fe84b89062b2ef9551088ac06a137",
+      "sha256": "2a92d55803d10e6e416441aeedb73ed3c1e67da6915cf018d4415164d9b43437",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/utils/filesystem_other.go",
+      "sha256": "e0f1b78fcaa531fa92d48b41a6325f826c4104fbeb96a22cc0812295379fa1aa",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/utils/filesystem_unix.go",
+      "sha256": "14c35d5d02dc1ac313949e4d23528321ae760df279b691319243fe2e3878df45",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/utils/filesystem_windows.go",
+      "sha256": "77b9a3d2bc143cc5bd203a8d6137738c46f5caef5cc8f07bb577603b168c0d14",
       "role": "local"
     },
     {

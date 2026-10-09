@@ -208,7 +208,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	debug.printf("toolchain=%q", opts.environment.GOVERSION)
 	if runtime == Mini {
 		if work := workspaceFile(dir); work != "" {
-			plan.Workfile, e = provideMiniWorkspace(ctx, dir, work, temp, replacements)
+			plan.Workfile, e = provideMiniWorkspace(ctx, dir, work, temp, opts.environment.GOMODCACHE, replacements)
 			if e != nil {
 				return plan, e
 			}
@@ -249,7 +249,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 				if e = useModuleWorkspaceFlags(&opts, &plan); e != nil {
 					return plan, e
 				}
-				plan.Workfile, plan.workspaceLock, e = provideMiniVendorWorkspace(ctx, dir, root, temp, replacements)
+				plan.Workfile, plan.workspaceLock, e = provideMiniVendorWorkspace(ctx, dir, root, temp, opts.environment.GOMODCACHE, replacements)
 				if e != nil {
 					return plan, e
 				}

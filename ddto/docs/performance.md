@@ -69,9 +69,10 @@ discovery can still grow with package count.
 This sharing ends when the plan is removed. The POC uses Go's caches and has no
 persistent cache of instrumented binaries or prepared overlays.
 
-Preparation uses one `go env -json GOMOD GOWORK GOMODCACHE GOVERSION` call
-to check the toolchain and obtain the module, workspace and cache paths. Runtime
-provisioning reuses that result. Local Mini provisioning reads
+Preparation uses one `go env -json` call to check the toolchain and obtain the
+module, workspace and cache paths, and the platforms that select Go's exec
+helper. Runtime provisioning, including the temporary workspace, reuses that
+result. Local Mini provisioning reads
 the selected runtime's Go requirement without changing the client's language
 version. Older client languages use a temporary workspace, keeping Mini's
 Go 1.25 source separate from the client's source. Temporary module

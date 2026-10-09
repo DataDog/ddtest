@@ -608,12 +608,16 @@
     {
       "path": "civisibility/integrations/gotesting/testify_lookup_test.go",
       "purpose": "Offset-based Testify lookup resolves the same suite method as reflection for methods, nested subtests, unmatched siblings and ordinary tests."
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/module_info_test.go",
+      "purpose": "Coverage initialization starts no go list; the first module reader resolves it once, from the initialization directory and environment."
     }
   ],
   "local_compatibility_checks": [
     {
       "path": "civisibility/utils/git_packfiles_test.go",
-      "purpose": "Pack files fall back to the git directory instead of the working tree, and every attempt, empty result and upload removes its temporary directory."
+      "purpose": "Pack files fall back to the git directory instead of the working tree, are written there directly when the temporary directory is on another filesystem, and every attempt, empty result and upload removes its temporary directory."
     },
     {
       "path": "civisibility/integrations/gotesting/retry_attempt_parallel_stop_test.go",

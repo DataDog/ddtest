@@ -124,7 +124,7 @@ func provideOlderModuleWorkspace(ctx context.Context, dir string, opts *options,
 	if err != nil {
 		return err
 	}
-	plan.Workfile, err = provideMiniWorkspace(ctx, dir, input, plan.Dir, replacements)
+	plan.Workfile, err = provideMiniWorkspace(ctx, dir, input, plan.Dir, opts.environment.GOMODCACHE, replacements)
 	if err != nil {
 		return err
 	}
@@ -224,8 +224,9 @@ func workspaceModuleFlags(flags []string) []string {
 
 // provideMiniWorkspace preserves every use/replace directive and each module's
 // own language version. Mini is a main module in the temporary workspace, so
-// importing it adds no requirements to any client module.
-func provideMiniWorkspace(ctx context.Context, dir, work, temp string, replacements map[string]string) (string, error) {
+// importing it adds no requirements to any client module. moduleCache is
+// GOMODCACHE from the environment that preparation already read.
+func provideMiniWorkspace(ctx context.Context, dir, work, temp, moduleCache string, replacements map[string]string) (string, error) {
 	if !filepath.IsAbs(work) {
 		return "", fmt.Errorf("GOWORK must name an absolute path: %s", work)
 	}
@@ -372,12 +373,8 @@ func provideMiniWorkspace(ctx context.Context, dir, work, temp string, replaceme
 		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Path == miniModule && publishedVersion(info.Main.Version) {
 			cliVersion = info.Main.Version
 		}
-		cache, err := goTool(ctx, dir, nil, "env", "GOMODCACHE")
-		if err != nil {
-			return "", err
-		}
 		_, source, _, _ := runtime.Caller(0)
-		miniRoot = miniSourceRoot(source, strings.TrimSpace(cache), cliVersion)
+		miniRoot = miniSourceRoot(source, moduleCache, cliVersion)
 		if miniRoot == "" && cliVersion != "" {
 			miniRoot, err = workspaceReplacementRoot(ctx, dir, base, miniModule, cliVersion)
 			if err != nil {

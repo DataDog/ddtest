@@ -3,6 +3,7 @@ package utils
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -161,4 +162,27 @@ func TestFailedPackFilesLeaveNoDirectory(t *testing.T) {
 	assert.Equal(t, 2, fakeGitCommands(t, log)["pack-objects"], "both attempts must run")
 	assert.Empty(t, packDirectories(t, tmp))
 	assert.Empty(t, packDirectories(t, gitDir))
+}
+
+// pack-objects moves each pack out of the git objects directory. A temporary
+// directory on another filesystem would fail first and repeat the whole pack,
+// so the git directory is used directly.
+func TestPackObjectsSkipsTemporaryDirectoryOnAnotherFilesystem(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("needs two filesystems; /proc is one on Linux")
+	}
+	useLocalGitFixture(t)
+	repo, err := os.Getwd()
+	require.NoError(t, err)
+	gitDir := filepath.Join(repo, ".git")
+
+	useTempDir(t, t.TempDir())
+	folders := packObjectsFolders()
+	require.Len(t, folders, 2)
+	assert.True(t, sameDirectory(t, gitDir, folders[1]))
+
+	useTempDir(t, "/proc")
+	folders = packObjectsFolders()
+	require.Len(t, folders, 1)
+	assert.True(t, sameDirectory(t, gitDir, folders[0]))
 }
