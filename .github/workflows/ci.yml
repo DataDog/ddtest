@@ -92,6 +92,74 @@ jobs:
           format: go-coverprofile
           version: v5.19.0
 
+  # Dogfooding: runs the `test` suite with ddto and its Mini runtime
+  # (https://github.com/tonyredondo/dd-ci-testing-poc) instead of Orchestrion.
+  test-ddto-mini:
+    runs-on: ubuntu-latest
+    env:
+      DATADOG_API_KEY_CONFIGURED: ${{ secrets.DATADOG_API_KEY != '' }}
+      DDTO_VERSION: 44c7fd8ac54f75f4ea77db9fea97270a234b9d12
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js for project environment regression tests
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Install Yarn for the Plug'n'Play regression fixture
+        run: npm install --global yarn@1.22.22
+
+      - name: Set up Ruby for project environment regression tests
+        uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1
+        with:
+          ruby-version: "3.4"
+
+      - name: Cache Go modules
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-ddto-${{ env.DDTO_VERSION }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-ddto-${{ env.DDTO_VERSION }}-${{ hashFiles('go.mod') }}-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Install Python test dependencies
+        run: python -m pip install "ddtrace>=4.11.0" pytest
+
+      - name: Install ddto
+        run: go install "github.com/tonyredondo/dd-ci-testing-poc/cmd/ddto@${DDTO_VERSION}"
+
+      - name: Run tests
+        run: ddto test -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
+        env:
+          DD_CIVISIBILITY_ENABLED: ${{ env.DATADOG_API_KEY_CONFIGURED == 'true' && 'parent' || 'false' }}
+          DD_CIVISIBILITY_AGENTLESS_ENABLED: "true"
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+          DD_SITE: datadoghq.com
+          DD_SERVICE: ddtest
+          DD_ENV: ci
+          JOB_CHECK_RUN_ID: ${{ job.check_run_id }}
+          DDTEST_REQUIRE_PROJECT_RUNTIMES: "1"
+
   rspec-compatibility:
     runs-on: ubuntu-latest
     strategy:
