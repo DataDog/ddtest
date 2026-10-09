@@ -15,7 +15,7 @@ import (
 )
 
 func TestPackageListHelperProcess(t *testing.T) {
-	if os.Getenv("DDTEST_PACKAGE_LIST_HELPER") != "1" {
+	if os.Getenv("DDTO_PACKAGE_LIST_HELPER") != "1" {
 		return
 	}
 	switch os.Args[len(os.Args)-1] {
@@ -46,7 +46,7 @@ func TestPackageListHelperProcess(t *testing.T) {
 		}
 		time.Sleep(10 * time.Second)
 	case "hold-stdout":
-		control := os.Getenv("DDTEST_PACKAGE_LIST_CONTROL")
+		control := os.Getenv("DDTO_PACKAGE_LIST_CONTROL")
 		if err := os.WriteFile(filepath.Join(control, "ready"), nil, 0600); err != nil {
 			panic(err)
 		}
@@ -71,7 +71,7 @@ func TestReadPackages(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPackageListHelperProcess$", "--", mode)
-			cmd.Env = append(os.Environ(), "DDTEST_PACKAGE_LIST_HELPER=1")
+			cmd.Env = append(os.Environ(), "DDTO_PACKAGE_LIST_HELPER=1")
 			packages, err := readPackages(ctx, cmd, "resolve fixture")
 			if mode == "success" {
 				if err != nil || len(packages) != 2 || packages[0].ImportPath != "example.com/one" || packages[1].ImportPath != "example.com/two" || !slices.Equal(packages[0].Deps, []string{"fmt"}) {
@@ -108,7 +108,7 @@ func TestReadPackagesCancelsAnInheritedStdout(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPackageListHelperProcess$", "--", "descendant")
-	cmd.Env = append(os.Environ(), "DDTEST_PACKAGE_LIST_HELPER=1", "DDTEST_PACKAGE_LIST_CONTROL="+control)
+	cmd.Env = append(os.Environ(), "DDTO_PACKAGE_LIST_HELPER=1", "DDTO_PACKAGE_LIST_CONTROL="+control)
 	result := make(chan error, 1)
 	go func() { _, err := readPackages(ctx, cmd, "resolve descendant"); result <- err }()
 	deadline := time.Now().Add(8 * time.Second)

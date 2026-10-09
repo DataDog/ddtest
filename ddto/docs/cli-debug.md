@@ -1,19 +1,19 @@
 # CLI build diagnostics
 
-Set `DD_TRACE_DEBUG=true` to see what `ddtest` does before the test runtime
+Set `DD_TRACE_DEBUG=true` to see what `ddto` does before the test runtime
 starts. The CLI writes diagnostics to `stderr` with the prefix
 `TestOptimization.build v0.0.0`. Mini runtime logs use
 `TestOptimization.run  v0.0.0`. Both prefixes use the version in
 `internal/version`; the SDK backend keeps its own logger and SDK version.
 
 ```sh
-DD_TRACE_DEBUG=true ddtest test -count=1 ./...
+DD_TRACE_DEBUG=true ddto test -count=1 ./...
 ```
 
 For a build-only investigation, compile the test binary without running it:
 
 ```sh
-DD_TRACE_DEBUG=true ddtest test -c -o ./tests.bin .
+DD_TRACE_DEBUG=true ddto test -c -o ./tests.bin .
 ```
 
 `DD_TRACE_DEBUG` accepts Go's `strconv.ParseBool` values, including `true`, `1`

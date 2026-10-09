@@ -499,7 +499,7 @@
       "source_sha256": "c1673bff20eea826b440682e29a4678a8aab3d49e83776bc84e4ff425edddc47",
       "adapted_sha256": "81496ac997c95339d6273451840fe6fe13d529f56ce685964f477607346dd2bc",
       "kind": "full",
-      "adaptation": "internal import relocation; helper assertions invoked by native policy test entrypoint; the allocation check measures like testing.AllocsPerRun without its parallel-test guard, because this package's retry tests run without ddtest's testing overlay and leave testing counting a parallel test"
+      "adaptation": "internal import relocation; helper assertions invoked by native policy test entrypoint; the allocation check measures like testing.AllocsPerRun without its parallel-test guard, because this package's retry tests run without ddto's testing overlay and leave testing counting a parallel test"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/itr_state_test.go",
@@ -621,7 +621,7 @@
     },
     {
       "path": "integration/mini_retry_parallel_test.go",
-      "purpose": "TestMiniInProcessRetryKeepsAllocsPerRun builds with ddtest's testing overlay and checks that testing.AllocsPerRun works after parallel tests passed at once or retried in process."
+      "purpose": "TestMiniInProcessRetryKeepsAllocsPerRun builds with ddto's testing overlay and checks that testing.AllocsPerRun works after parallel tests passed at once or retried in process."
     },
     {
       "path": "integration/cli_source_test.go",

@@ -153,7 +153,7 @@ func TestEventCountersKeepCanonicalAndFeatureTagsAcrossClients(t *testing.T) {
 }
 
 func TestEventCountersDisabled(t *testing.T) {
-	if os.Getenv("DDTEST_DISABLED_COUNTER_HELPER") == "1" {
+	if os.Getenv("DDTO_DISABLED_COUNTER_HELPER") == "1" {
 		client := &telemetrytest.RecordClient{}
 		defer globaltelemetry.MockClient(client)()
 		EventCreated("golang.org/pkg/testing", TestEventType)
@@ -169,7 +169,7 @@ func TestEventCountersDisabled(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestEventCountersDisabled$")
-	cmd.Env = append(os.Environ(), "DDTEST_DISABLED_COUNTER_HELPER=1", "DD_INSTRUMENTATION_TELEMETRY_ENABLED=false")
+	cmd.Env = append(os.Environ(), "DDTO_DISABLED_COUNTER_HELPER=1", "DD_INSTRUMENTATION_TELEMETRY_ENABLED=false")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("disabled counter check: %v\n%s", err, out)
 	}

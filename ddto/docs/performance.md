@@ -9,7 +9,7 @@ Measure those paths separately.
 
 ```mermaid
 flowchart TB
-    Start["ddtest invocation"] --> Prepare["Front-end<br/>preparation"]
+    Start["ddto invocation"] --> Prepare["Front-end<br/>preparation"]
     Prepare --> Compile["Native compilation<br/>and linking"]
     Compile --> Run["Test execution,<br/>unless -c"]
     Run --> Finish["Event creation and<br/>finalization"]
@@ -354,8 +354,8 @@ For example, after preparing each target module and output directory:
 
 ```sh
 GOMAXPROCS=4 go test -p=4 -c -o ./out/native/ -ldflags=-w ./...
-GOMAXPROCS=4 /path/to/ddtest test --runtime=sdk -p=4 -c -o ./out/sdk/ -ldflags=-w ./...
-GOMAXPROCS=4 /path/to/ddtest test --runtime=mini -p=4 -c -o ./out/mini/ -ldflags=-w ./...
+GOMAXPROCS=4 /path/to/ddto test --runtime=sdk -p=4 -c -o ./out/sdk/ -ldflags=-w ./...
+GOMAXPROCS=4 /path/to/ddto test --runtime=mini -p=4 -c -o ./out/mini/ -ldflags=-w ./...
 GOMAXPROCS=4 go test -p=4 -c -o ./out/orchestrion/ \
   -toolexec="/path/to/orchestrion toolexec" -ldflags=-w ./...
 ```

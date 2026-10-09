@@ -1,6 +1,6 @@
 # SDK spans under Mini tests
 
-When `ddtest` builds a Mini test binary that uses `dd-trace-go/v2`, SDK spans
+When `ddto` builds a Mini test binary that uses `dd-trace-go/v2`, SDK spans
 can also appear beneath the test in CI Visibility. Each copy gets a new Mini
 span ID. The SDK span keeps its original trace ID, parent, sampling and APM
 delivery. This works with manual SDK calls and
@@ -95,7 +95,7 @@ goleak policy.
 anchors. The matcher follows each variable's role in the AST. Renaming a
 receiver, parameter or local variable does not change the hook. Both short
 declarations and `var` declarations can construct the returned SDK context.
-Comments and strings containing `__ddtest` are allowed; identifiers with that
+Comments and strings containing `__ddto` are allowed; identifiers with that
 prefix are reserved for generated code.
 
 Each operation needs one anchor. Duplicate constructors, snapshot builders or

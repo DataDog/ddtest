@@ -98,7 +98,7 @@ func ExampleValue(){fmt.Println(Value())
 // event identities. This suite can run on the minimum without the full SDK.
 func TestMiniFuzzExampleLifecycle(t *testing.T) {
 	// The shared fixture calls its build-hook mode "orchestrion". With Mini,
-	// that mode compiles through ddtest; it does not invoke Orchestrion.
+	// that mode compiles through ddto; it does not invoke Orchestrion.
 	for _, mode := range []string{"manual", "orchestrion"} {
 		fixture := prepareFuzzExampleFixture(t, "mini", mode)
 		for _, scenario := range fuzzExampleScenarios {

@@ -28,7 +28,7 @@ func TestSDKMirrorCosmeticChanges(t *testing.T) {
 		"context_parameters":   renameSDKLocal(renameSDKLocal(sdkMirrorSource, "ContextWithSpan", "ctx", "base"), "ContextWithSpan", "s", "value"),
 		"context_locals":       renameSDKLocal(renameSDKLocal(sdkMirrorSource, "ContextWithSpan", "snapshot", "saved"), "ContextWithSpan", "newCtx", "result"),
 		"context_declaration":  strings.Replace(sdkMirrorSource, "newCtx :=", "var newCtx =", 1),
-		"reserved_comment":     sdkMirrorSource + "\n// A __ddtest integration comment.\nvar diagnostic = \"__ddtest is text\"\n",
+		"reserved_comment":     sdkMirrorSource + "\n// A __ddto integration comment.\nvar diagnostic = \"__ddto is text\"\n",
 		"deferred_tail":        strings.Replace(strings.Replace(sdkMirrorSource, `s.resource = "final"`, `s.resource = "intermediate"`, 1), "s.context.finish(s)", "s.context.finish(s); defer func(){ s.resource=\"final\" }()", 1),
 		"context_import_alias": strings.NewReplacer(`"context"`, `gocontext "context"`, "context.Context", "gocontext.Context").Replace(sdkMirrorSource),
 	}
@@ -121,7 +121,7 @@ func TestSDKMirrorAPIDrift(t *testing.T) {
 		"snapshot_ignored":    {"snapshot: snapshot", "snapshot: nil"},
 		"context_ignored":     {"Context: ctx", "Context: context.Background()"},
 		"span_ignored":        {"span: s", "span: nil"},
-		"reserved_identifier": {"type SpanContext struct{", "type SpanContext struct{ __ddtestCollision any;"},
+		"reserved_identifier": {"type SpanContext struct{", "type SpanContext struct{ __ddtoCollision any;"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			source := strings.Replace(sdkMirrorSource, mutation[0], mutation[1], 1)

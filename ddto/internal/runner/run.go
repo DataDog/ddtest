@@ -203,7 +203,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		return plan, e
 	}
 	if !supportsGoToolchain(opts.environment.GOVERSION) {
-		return plan, fmt.Errorf("ddtest requires Go 1.25 or newer; selected toolchain is %q", opts.environment.GOVERSION)
+		return plan, fmt.Errorf("ddto requires Go 1.25 or newer; selected toolchain is %q", opts.environment.GOVERSION)
 	}
 	debug.printf("toolchain=%q", opts.environment.GOVERSION)
 	if runtime == Mini {
@@ -317,7 +317,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			// The module does not require the runtime: provide it through a
 			// temporary go.mod instead of failing or editing the module.
 			if plan.Modfile, e = provideRuntime(ctx, dir, opts, runtime, temp, replacements, progress); e != nil {
-				return plan, fmt.Errorf("%s: %s\nddtest could not provide it: %w", p.ImportPath, p.Error.Err, e)
+				return plan, fmt.Errorf("%s: %s\nddto could not provide it: %w", p.ImportPath, p.Error.Err, e)
 			}
 			opts.buildFlags = append(opts.buildFlags, "-modfile="+plan.Modfile)
 			if packages, e = list(patterns...); e != nil {
@@ -557,7 +557,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 // RunRuntime compiles and executes tests using one explicitly selected runtime.
 // Interrupt and termination signals are forwarded to go test instead of ending
-// ddtest first: the plan is removed only after Go exits, and the result keeps
+// ddto first: the plan is removed only after Go exits, and the result keeps
 // go test's exit status. A signal during preparation stops it and cleans up.
 func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Reader, stdout, stderr io.Writer) (exitCode int) {
 	ctx = withCLIDebug(ctx, stderr)
@@ -565,14 +565,14 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 	if debug != nil {
 		stderr = debug.writer
 	}
-	started := debug.start("ddtest")
+	started := debug.start("ddto")
 	defer func() {
 		var err error
 		if exitCode != 0 {
 			err = errors.New("command failed")
 		}
 		started.finish(err)
-		debug.printf("ddtest exit_code=%d", exitCode)
+		debug.printf("ddto exit_code=%d", exitCode)
 	}()
 	debug.printf("runtime=%s", runtime)
 	signals := make(chan os.Signal, 4)
@@ -643,7 +643,7 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 	debug.printf("tool selection testify=%t goleak=%t cover=%t user_toolexec=%t orchestrion=%t sdk_ci_gate=%t", plan.testify, plan.goleak, plan.coverOverlay, opts.toolexec != "", plan.orchestrion, plan.sdkCI)
 	// A -exec program, or Go's cross-compilation helper, starts before the test
 	// binary can restore the caller's Go settings. Go already disables result
-	// caching for those runs, so ddtest's wrapper restores them first.
+	// caching for those runs, so ddto's wrapper restores them first.
 	if plan.Workfile != "" && (opts.exec != "" || plan.execHelper != "") {
 		words := []string{plan.execHelper}
 		if opts.exec != "" {

@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "d7f82fb6903a0b8b2fa580d97031170693e3197f71154b7f061ab67e5b6bae6e",
+      "sha256": "8231dee7405631f34f45e8c92383744bb98b03844f1372d0eddd27055194028a",
       "role": "local"
     },
     {
@@ -35,7 +35,7 @@
     },
     {
       "path": "TESTS.json",
-      "sha256": "50c2ba54462c43e95961a26d2563f71b0261801121ff827b902648653029f6ad",
+      "sha256": "4173f0dab3a1281c8dbbd6ae9bc7c894df2a01881b105769695be59698ae047a",
       "role": "local"
     },
     {
@@ -299,7 +299,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/coverage/coverage_lifecycle_test.go",
-      "sha256": "3055a798fa5ac0c9f4b85e9f0a575b985a94700f99bfe6790df5afec6ed5c561",
+      "sha256": "4b742e17b5ddd6fc8b224d55096aed650393b939e2c241a212c1d8dcc30b467c",
       "role": "local"
     },
     {
@@ -474,7 +474,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/instrumentation_selector_test.go",
-      "sha256": "81496ac997c95339d6273451840fe6fe13d529f56ce685964f477607346dd2bc",
+      "sha256": "fd20f0374a1a7840b102883c019bbd227acf4b82679388ab1e90447dd25fc9a5",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/instrumentation_selector_test.go",
       "source_sha256": "c1673bff20eea826b440682e29a4678a8aab3d49e83776bc84e4ff425edddc47"
@@ -579,7 +579,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/retry_attempt_parallel_stop.go",
-      "sha256": "b563803c681491cbbb35e63fd2cd47af13ed94d84d5b363fd2959f497a511e08",
+      "sha256": "82d7e57446ff6398b1e822fa7d8e27831cf599c09e55522e7a075a2f46614984",
       "role": "local"
     },
     {
@@ -1312,7 +1312,7 @@
     },
     {
       "path": "civisibility/utils/telemetry/telemetry_test.go",
-      "sha256": "558d0da6f86543ec0c5d0efcc582842bbdd59d85d7a835c503099722f2998af0",
+      "sha256": "bdc466080129991af0e54c35f287528dbf24eb13ec3856714d16ddd1ae916b85",
       "role": "adapted",
       "source_path": "internal/civisibility/utils/telemetry/telemetry_test.go",
       "source_sha256": "4f82821b0c6d1e7c933c92ba17ff19d31a05520c9a5aa187346420cd5b307145"
@@ -2057,7 +2057,7 @@
     },
     {
       "path": "telemetry/startup_lifecycle_test.go",
-      "sha256": "0a5ac478f5cfcb1bf37e40d2e6e47942c3a477701c557c40c9bbf8a23ddc191c",
+      "sha256": "ead1ff9db2350142237f15b623b54333b71fac609f0156f41840fab01a693889",
       "role": "local"
     },
     {

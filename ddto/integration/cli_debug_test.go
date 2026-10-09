@@ -39,7 +39,7 @@ func TestCLIDebugBuildTransparency(t *testing.T) {
 					t.Fatalf("disabled logs: %s", logs)
 				}
 				if i == 1 {
-					for _, want := range []string{"runtime=" + runtime, "runtime module_version=", "resolve packages finished duration=", "instrument testing finished duration=", "resolve test libraries finished duration=", "plan ready", "tool selection", "go test finished duration=", "go test exit_code=0", "ddtest exit_code=0"} {
+					for _, want := range []string{"runtime=" + runtime, "runtime module_version=", "resolve packages finished duration=", "instrument testing finished duration=", "resolve test libraries finished duration=", "plan ready", "tool selection", "go test finished duration=", "go test exit_code=0", "ddto exit_code=0"} {
 						if !strings.Contains(logs, want) {
 							t.Errorf("missing %q:\n%s", want, logs)
 						}

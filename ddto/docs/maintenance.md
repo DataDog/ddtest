@@ -236,7 +236,7 @@ python3 -B -m unittest discover -s scripts -p 'test_upstream.py'
 go vet ./...
 go mod verify
 (cd testdata/fixture && go mod verify)
-go list -deps -f '{{if and (not .Standard) .Module}}{{.Module.Path}}{{end}}' ./testopt ./cmd/ddtest | sort -u
+go list -deps -f '{{if and (not .Standard) .Module}}{{.Module.Path}}{{end}}' ./testopt ./cmd/ddto | sort -u
 ```
 
 The final command should list only `github.com/tonyredondo/dd-ci-testing-poc`.
@@ -263,7 +263,7 @@ See [Go's GODEBUG contract](https://go.dev/doc/godebug). A missing `go`
 directive means Go 1.16 in `go.mod` and Go 1.18 in `go.work`; keep those
 defaults when a temporary workspace needs a newer `go` line.
 
-Temporary workspace settings belong to ddtest's `go test` command and the build
+Temporary workspace settings belong to ddto's `go test` command and the build
 tools it runs. List every Go environment variable that preparation replaces in
 `goenv.Settings`, and save it with `goenv.Save`. Only the test runtime may import
 `internal/goenv/restore`; the CLI and its tool helpers import `goenv`, which
@@ -387,7 +387,7 @@ original assertions, local deferred admission and precise goleak filters.
 
 ## Mini and Orchestrion in one build
 
-[Orchestrion composition](orchestrion.md) assigns testing hooks to ddtest and
+[Orchestrion composition](orchestrion.md) assigns testing hooks to ddto and
 application weaving to Orchestrion. Keep version probes chained through the
 original tool, even for packages whose compilation bypasses Orchestrion.
 

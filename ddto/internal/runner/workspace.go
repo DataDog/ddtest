@@ -481,7 +481,7 @@ func workspaceReplacementRoot(ctx context.Context, dir, base, path, version stri
 	}
 	// Download outside all client modules and workspaces. Explicit module
 	// queries populate only GOMODCACHE, without writing caller checksum files.
-	scratch, err := os.MkdirTemp("", "ddtest-module-download-")
+	scratch, err := os.MkdirTemp("", "ddto-module-download-")
 	if err != nil {
 		return "", err
 	}

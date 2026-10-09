@@ -17,14 +17,14 @@ func TestGoleakCacheFlagPreservesEffectiveCompilerFlags(t *testing.T) {
 		want     string
 		selected bool
 	}{
-		{"", []string{"."}, "-I=ddtest-goleak-hash", false},
-		{"-gcflags=all=-N", []string{"-gcflags=go.uber.org/goleak=-l", "."}, "-l -I=ddtest-goleak-hash", false},
-		{"'-gcflags=all=-N -l'", []string{"-gcflags=example.com/...=-B", "."}, "-N -l -I=ddtest-goleak-hash", false},
-		{"-gcflags=-N", []string{"."}, "-I=ddtest-goleak-hash", false},
-		{"", []string{"-gcflags=-N", "go.uber.org/goleak"}, "-N -I=ddtest-goleak-hash", true},
-		{"", []string{"-gcflags=-N -l", pkg.Dir}, "-N -l -I=ddtest-goleak-hash", true},
-		{"", []string{"-gcflags=./...=-N", "."}, "-I=ddtest-goleak-hash", false},
-		{"", []string{"-gcflags=./vendor/go.uber.org/...=-N", "."}, "-N -I=ddtest-goleak-hash", false},
+		{"", []string{"."}, "-I=ddto-goleak-hash", false},
+		{"-gcflags=all=-N", []string{"-gcflags=go.uber.org/goleak=-l", "."}, "-l -I=ddto-goleak-hash", false},
+		{"'-gcflags=all=-N -l'", []string{"-gcflags=example.com/...=-B", "."}, "-N -l -I=ddto-goleak-hash", false},
+		{"-gcflags=-N", []string{"."}, "-I=ddto-goleak-hash", false},
+		{"", []string{"-gcflags=-N", "go.uber.org/goleak"}, "-N -I=ddto-goleak-hash", true},
+		{"", []string{"-gcflags=-N -l", pkg.Dir}, "-N -l -I=ddto-goleak-hash", true},
+		{"", []string{"-gcflags=./...=-N", "."}, "-I=ddto-goleak-hash", false},
+		{"", []string{"-gcflags=./vendor/go.uber.org/...=-N", "."}, "-N -I=ddto-goleak-hash", false},
 	} {
 		pkg.commandLine = tc.selected
 		t.Setenv("GOFLAGS", tc.env)
@@ -63,7 +63,7 @@ func TestGoleakCacheFlagIgnoresRelativePatternsOutsideTheTree(t *testing.T) {
 			t.Fatal(err)
 		}
 		flag, err := goleakCacheFlag(dir, opts, pkg, "hash")
-		if err != nil || flag != "-gcflags=go.uber.org/goleak=-I=ddtest-goleak-hash" {
+		if err != nil || flag != "-gcflags=go.uber.org/goleak=-I=ddto-goleak-hash" {
 			t.Fatalf("%v: %q, %v", args, flag, err)
 		}
 	}
@@ -71,7 +71,7 @@ func TestGoleakCacheFlagIgnoresRelativePatternsOutsideTheTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if flag, err := goleakCacheFlag(dir, opts, pkg, "hash"); err != nil || flag != "-gcflags=go.uber.org/goleak='-N' '-l' -I=ddtest-goleak-hash" && flag != "-gcflags=go.uber.org/goleak=-N -l -I=ddtest-goleak-hash" {
+	if flag, err := goleakCacheFlag(dir, opts, pkg, "hash"); err != nil || flag != "-gcflags=go.uber.org/goleak='-N' '-l' -I=ddto-goleak-hash" && flag != "-gcflags=go.uber.org/goleak=-N -l -I=ddto-goleak-hash" {
 		t.Fatalf("import pattern lost: %q, %v", flag, err)
 	}
 }

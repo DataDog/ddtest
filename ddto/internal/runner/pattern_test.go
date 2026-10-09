@@ -138,7 +138,7 @@ func TestPackagePatternsMatchGoBuildFlags(t *testing.T) {
 		}
 		probed := map[string]bool{}
 		for _, match := range compileLine.FindAllStringSubmatch(string(output), -1) {
-			probed[match[1]] = strings.Contains(match[0], "-ddtestprobe")
+			probed[match[1]] = strings.Contains(match[0], "-ddtoprobe")
 		}
 		for _, required := range []string{"example.com/m/sub", "testing"} {
 			if _, ok := probed[required]; !ok {
@@ -168,7 +168,7 @@ func TestPackagePatternsMatchGoBuildFlags(t *testing.T) {
 	for _, pattern := range patterns {
 		t.Run("qualified "+pattern, func(t *testing.T) {
 			t.Parallel()
-			probed := selected(t, "-gcflags="+pattern+"=-ddtestprobe", "./...")
+			probed := selected(t, "-gcflags="+pattern+"=-ddtoprobe", "./...")
 			compare(t, probed, func(p *goPackage) bool { return matchPackagePattern(pattern, dir, p) })
 		})
 	}
@@ -176,7 +176,7 @@ func TestPackagePatternsMatchGoBuildFlags(t *testing.T) {
 	for _, target := range []string{"./...", "./sub", "."} {
 		t.Run("unqualified "+target, func(t *testing.T) {
 			t.Parallel()
-			probed := selected(t, "-gcflags=-ddtestprobe", target)
+			probed := selected(t, "-gcflags=-ddtoprobe", target)
 			compare(t, probed, func(p *goPackage) bool { return matchPackagePattern(target, dir, p) })
 		})
 	}

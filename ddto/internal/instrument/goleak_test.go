@@ -18,7 +18,7 @@ func TestGoleakEntryKeepsFindAndOptions(t *testing.T) {
 		if _, err := parser.ParseFile(token.NewFileSet(), "rewritten.go", got, parser.AllErrors); err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Contains(got, []byte("return original(options...)")) || !bytes.Contains(got, []byte("defer __ddtestResume()")) {
+		if !bytes.Contains(got, []byte("return original(options...)")) || !bytes.Contains(got, []byte("defer __ddtoResume()")) {
 			t.Fatal("lost original runner or resumption")
 		}
 		if bytes.Contains(got, []byte("IgnoreCurrent")) || bytes.Contains(got, []byte("net/http")) {

@@ -17,15 +17,15 @@ type copyState struct {
 
 var copies []*copyState
 
-func __ddtestMirrorStart(ctx context.Context, parent any, name string) any {
+func __ddtoMirrorStart(ctx context.Context, parent any, name string) any {
 	state := &copyState{ctx: ctx, operation: name, parent: parent}
 	copies = append(copies, state)
 	return state
 }
-func __ddtestMirrorContext(ctx context.Context, state any) context.Context {
+func __ddtoMirrorContext(ctx context.Context, state any) context.Context {
 	return context.WithValue(ctx, "mirror", state)
 }
-func __ddtestMirrorCapture(state any, name, service, resource, kind string, start, duration int64, err int32, meta func(func(string, string) bool), metrics map[string]float64, trace [16]byte, id uint64) any {
+func __ddtoMirrorCapture(state any, name, service, resource, kind string, start, duration int64, err int32, meta func(func(string, string) bool), metrics map[string]float64, trace [16]byte, id uint64) any {
 	copy := state.(*copyState)
 	if !copy.owner.mu.held.Load() {
 		panic("capture outside SDK lock")
@@ -40,7 +40,7 @@ func __ddtestMirrorCapture(state any, name, service, resource, kind string, star
 	}
 	return copy
 }
-func __ddtestMirrorDeliver(state any) {
+func __ddtoMirrorDeliver(state any) {
 	if state == nil {
 		return
 	}

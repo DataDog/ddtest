@@ -167,7 +167,7 @@ func exerciseAdditionalFeaturePathSelection(t *testing.T) {
 }
 
 // allocsPerRun measures like testing.AllocsPerRun. This package's tests run
-// fresh retry attempts that call Parallel without ddtest's testing overlay,
+// fresh retry attempts that call Parallel without ddto's testing overlay,
 // which balances testing's parallel-test accounting, so with -count above one
 // testing.AllocsPerRun would report a parallel test still running.
 func allocsPerRun(runs int, f func()) float64 {

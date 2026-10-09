@@ -15,7 +15,7 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
-// RunCoverTool handles Go's cover tool for ddtest's private -toolexec
+// RunCoverTool handles Go's cover tool for ddto's private -toolexec
 // entrypoint. Unlike the compiler, cover opens logical source paths directly, so
 // overlay-backed inputs are translated to their backing files. Compiler and
 // linker identities stay native; cover's identity includes our contract.
@@ -49,7 +49,7 @@ func RunCoverTool(ctx context.Context, overlay string, args []string, stdin io.R
 
 // Bump this whenever cover translation semantics change without changing the
 // rewritten client sources. Otherwise Go could reuse stale coverage objects.
-const coverContractVersion = "ddtest-cover-v1"
+const coverContractVersion = "ddto-cover-v1"
 
 func coverFingerprint() string {
 	hash := sha256.Sum256([]byte(coverContractVersion))
@@ -60,9 +60,9 @@ func appendCoverIdentity(native, fingerprint string) string {
 	native = strings.TrimSpace(native)
 	if strings.Contains(native, " buildID=") {
 		// Development toolchains use only the last buildID content component.
-		return native + "-ddtest-cover-" + fingerprint + "\n"
+		return native + "-ddto-cover-" + fingerprint + "\n"
 	}
-	return native + " ddtest-cover=" + fingerprint + "\n"
+	return native + " ddto-cover=" + fingerprint + "\n"
 }
 
 func runCoverVersion(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {

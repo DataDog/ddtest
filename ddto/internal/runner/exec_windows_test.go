@@ -13,12 +13,12 @@ import (
 // program leaves running in TestExecWrapperEndsProgramWithItself.
 func TestExecHelperProcess(t *testing.T) {
 	self := []string{os.Args[0], "-test.run=^TestExecHelperProcess$"}
-	switch os.Getenv("DDTEST_EXEC_HELPER") {
+	switch os.Getenv("DDTO_EXEC_HELPER") {
 	case "wrapper":
-		os.Setenv("DDTEST_EXEC_HELPER", os.Getenv("DDTEST_EXEC_PROGRAM"))
+		os.Setenv("DDTO_EXEC_HELPER", os.Getenv("DDTO_EXEC_PROGRAM"))
 		os.Exit(ExecWithCallerEnvironment(self))
 	case "sleep":
-		path := os.Getenv("DDTEST_EXEC_PID")
+		path := os.Getenv("DDTO_EXEC_PID")
 		if err := os.WriteFile(path+".tmp", []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 			os.Exit(3)
 		}
@@ -29,7 +29,7 @@ func TestExecHelperProcess(t *testing.T) {
 		os.Exit(0)
 	case "spawn":
 		cmd := exec.Command(self[0], self[1:]...)
-		cmd.Env = append(os.Environ(), "DDTEST_EXEC_HELPER=sleep")
+		cmd.Env = append(os.Environ(), "DDTO_EXEC_HELPER=sleep")
 		if err := cmd.Start(); err != nil {
 			os.Exit(3)
 		}
@@ -38,14 +38,14 @@ func TestExecHelperProcess(t *testing.T) {
 }
 
 // Native go test ends a timed-out -exec program by terminating it. Terminating
-// ddtest's wrapper must end the program as well, while a process that the
+// ddto's wrapper must end the program as well, while a process that the
 // program leaves running after it exits outlives the wrapper, as it outlives
 // native go test.
 func TestExecWrapperEndsProgramWithItself(t *testing.T) {
 	start := func(t *testing.T, program string) (*exec.Cmd, string) {
 		pid := filepath.Join(t.TempDir(), "pid")
 		wrapper := exec.Command(os.Args[0], "-test.run=^TestExecHelperProcess$")
-		wrapper.Env = append(os.Environ(), "DDTEST_EXEC_HELPER=wrapper", "DDTEST_EXEC_PROGRAM="+program, "DDTEST_EXEC_PID="+pid)
+		wrapper.Env = append(os.Environ(), "DDTO_EXEC_HELPER=wrapper", "DDTO_EXEC_PROGRAM="+program, "DDTO_EXEC_PID="+pid)
 		if err := wrapper.Start(); err != nil {
 			t.Fatal(err)
 		}

@@ -16,7 +16,7 @@ import (
 
 // ExecWithCallerEnvironment restores the caller's Go settings, then runs args
 // with the native streams and exit status: a go test -exec program sees what
-// native go test gives it, rather than ddtest's temporary workspace.
+// native go test gives it, rather than ddto's temporary workspace.
 //
 // Native go test ends a timed-out program by terminating it, which here ends
 // only this wrapper. The program therefore runs in a job that kills it when

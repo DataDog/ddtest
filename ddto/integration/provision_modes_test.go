@@ -89,7 +89,7 @@ func TestWorkspace(t *testing.T){if workhelper.Value!=7{t.Fatal("workspace helpe
 
 func TestMiniProvisionsVendorAndPreservesPatchedSources(t *testing.T) {
 	_, driver := prepareMiniFixture(t)
-	// Workspace mode rejects -modfile, so every spelling reaches ddtest's overlay.
+	// Workspace mode rejects -modfile, so every spelling reaches ddto's overlay.
 	for _, mode := range []struct {
 		name    string
 		args    []string
@@ -112,7 +112,7 @@ func TestMiniProvisionsVendorAndPreservesPatchedSources(t *testing.T) {
 				"client_test.go": "package vendorclient\nimport(\"testing\";\"fmt\";\"time\";\"example.com/vendorhelper\")\nfunc TestVendor(t *testing.T){if vendorhelper.Value!=7{t.Fatal(\"vendored patch lost\")};timer:=time.NewTimer(time.Hour);defer timer.Stop();fmt.Printf(\"TIMER_CAP=%d\\n\",cap(timer.C));func(){defer func(){fmt.Printf(\"PANIC_NIL=%T\\n\",recover())}();panic(nil)}()}\n",
 			})
 			if mode.modfile {
-				// Only the selected modfile restores Go 1.20 defaults: if ddtest
+				// Only the selected modfile restores Go 1.20 defaults: if ddto
 				// read go.mod instead, panic(nil) would recover differently.
 				if err := os.WriteFile(filepath.Join(dir, "alternate.mod"), []byte(mod+"godebug default=go1.20\n"), 0600); err != nil {
 					t.Fatal(err)

@@ -16,7 +16,7 @@ import (
 )
 
 // go mod tidy removes the runtime requirement: nothing in the module imports it,
-// because ddtest injects that import at build time. ddtest must still work, and
+// because ddto injects that import at build time. ddto must still work, and
 // must leave go.mod and go.sum exactly as they were.
 func TestMiniRuntimeWithoutRequirementLeavesModuleUntouched(t *testing.T) {
 	dir, driver := prepareMiniFixture(t)
@@ -30,7 +30,7 @@ func TestMiniRuntimeWithoutRequirementLeavesModuleUntouched(t *testing.T) {
 	}
 	for _, edit := range []string{
 		"-droprequire=github.com/tonyredondo/dd-ci-testing-poc", // As after go mod tidy.
-		"-dropreplace=github.com/tonyredondo/dd-ci-testing-poc", // The checkout that built ddtest provides it.
+		"-dropreplace=github.com/tonyredondo/dd-ci-testing-poc", // The checkout that built ddto provides it.
 	} {
 		if out, stderr, code := command(t, dir, testEnv(), "go", "mod", "edit", edit); code != 0 {
 			t.Fatal(out, stderr)
@@ -41,7 +41,7 @@ func TestMiniRuntimeWithoutRequirementLeavesModuleUntouched(t *testing.T) {
 			t.Fatalf("%s: exit=%d\n%s\n%s", edit, code, out, stderr)
 		}
 		if !bytes.Equal(before, read()) {
-			t.Fatalf("%s: ddtest modified go.mod or go.sum", edit)
+			t.Fatalf("%s: ddto modified go.mod or go.sum", edit)
 		}
 	}
 }

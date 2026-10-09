@@ -14,7 +14,7 @@ import (
 
 // ExecWithCallerEnvironment restores the caller's Go settings, then replaces
 // this process with args: a go test -exec program sees what native go test
-// gives it, rather than ddtest's temporary workspace.
+// gives it, rather than ddto's temporary workspace.
 func ExecWithCallerEnvironment(args []string) int {
 	goenv.Restore()
 	if len(args) == 0 {

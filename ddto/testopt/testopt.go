@@ -58,7 +58,7 @@ func StartTime(v time.Time) StartSpanOption { return minitracer.StartTime(v) }
 // FinishTime sets the event's end timestamp.
 func FinishTime(v time.Time) FinishOption { return minitracer.FinishTime(v) }
 
-// F adapts testing.F for manual fuzz instrumentation. With ddtest's automatic
+// F adapts testing.F for manual fuzz instrumentation. With ddto's automatic
 // hooks, the adapter delegates to them and does not produce duplicate events.
 type F = gotesting.F
 
@@ -66,23 +66,23 @@ type F = gotesting.F
 func GetFuzz(f *testing.F) *F { return gotesting.GetFuzz(f) }
 
 // RunM instruments a TestMain entrypoint without the CLI. Tests retain Go's
-// exit code; ddtest's automatic M.Run hook owns instrumented builds.
+// exit code; ddto's automatic M.Run hook owns instrumented builds.
 func RunM(m *testing.M) int {
 	registerTestPackage(1)
 	return gotesting.RunM(m)
 }
 
-// callerEnvironment holds ddtest's fingerprint of the caller's Go settings.
+// callerEnvironment holds ddto's fingerprint of the caller's Go settings.
 var callerEnvironment string
 
-// RegisterTestEnvironment keeps ddtest's fingerprint of the caller's Go
+// RegisterTestEnvironment keeps ddto's fingerprint of the caller's Go
 // settings in the test binary. Go keys cached test results on the binary and
-// on its own environment, which ddtest replaces with a temporary workspace;
+// on its own environment, which ddto replaces with a temporary workspace;
 // the fingerprint makes cached results follow the caller's values instead.
 func RegisterTestEnvironment(fingerprint string) { callerEnvironment = fingerprint }
 
 // RegisterTestPackage records the caller's source directory for opt-in
-// CODEOWNERS services. ddtest calls it from its generated test-package init;
+// CODEOWNERS services. ddto calls it from its generated test-package init;
 // ordinary imports and disabled configuration perform no source lookup.
 func RegisterTestPackage() { registerTestPackage(1) }
 

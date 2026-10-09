@@ -27,7 +27,7 @@ type startupEnvelope struct {
 // there, in both delivery modes, so no test waits for or overlaps startup HTTP.
 // Each subprocess owns a fresh global client and enabled flag.
 func TestStartupTelemetrySendsBeforeTests(t *testing.T) {
-	const helperEnv = "DDTEST_TELEMETRY_STARTUP_HELPER"
+	const helperEnv = "DDTO_TELEMETRY_STARTUP_HELPER"
 	if os.Getenv(helperEnv) == "" {
 		for _, mode := range []string{"false", "true"} {
 			for _, scenario := range []string{"startup", "retry", "concurrent-close", "panic"} {

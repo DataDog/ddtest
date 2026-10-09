@@ -16,7 +16,7 @@ service is `service-payments`. To use a repository prefix:
 unset DD_SERVICE
 DD_CIVISIBILITY_SERVICE_FROM_CODEOWNERS=true \
 DD_CIVISIBILITY_SERVICE_FROM_CODEOWNERS_FORMAT='dd-go-$(owner)' \
-ddtest test -count=1 ./...
+ddto test -count=1 ./...
 ```
 
 Quote the format with single quotes. Your shell must pass `$(owner)` literally;
@@ -59,7 +59,7 @@ flowchart TD
     Format --> Clients["Use one service for events and CI clients"]
 ```
 
-`ddtest` records the generated test package's source location during `init`,
+`ddto` records the generated test package's source location during `init`,
 before `TestMain` can change directories. The registration reads no source or
 CODEOWNERS when disabled. Generated files remain identical for packages with
 the same Go name, so preparation can keep sharing their backing file. Source

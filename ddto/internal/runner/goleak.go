@@ -45,7 +45,7 @@ func prepareGoleak(pkg *goPackage, replacements map[string]string, temp string) 
 func prepareGoleakEntry(pkg *goPackage, replacements map[string]string, temp string) (*LibraryEntry, error) {
 	tool := &LibraryEntry{Package: instrument.GoleakImport, Sources: map[string]string{}, HookFile: filepath.Join(temp, "goleak-hook.go")}
 	hash := sha256.New()
-	hash.Write([]byte("ddtest-goleak-find-v1"))
+	hash.Write([]byte("ddto-goleak-find-v1"))
 	hook := instrument.GoleakEntryHook()
 	hash.Write([]byte(hook))
 	names := append([]string(nil), pkg.GoFiles...)
@@ -101,13 +101,13 @@ func supportedGoleakVersion(version string) bool {
 // before invoking the compiler; user include paths remain intact.
 // Go supplies every import through -importcfg; the sentinel is never read.
 func goleakCacheFlag(dir string, opts options, pkg *goPackage, fingerprint string) (string, error) {
-	return packageCompilerCacheFlag(dir, opts, pkg, "-I=ddtest-goleak-"+fingerprint)
+	return packageCompilerCacheFlag(dir, opts, pkg, "-I=ddto-goleak-"+fingerprint)
 }
 
 // removeGoleakCacheMarker filters an owned argument slice. Go has already
 // included the marker in the cache key; it is not a compiler include path.
 func removeGoleakCacheMarker(args []string, fingerprint string) []string {
-	return removeCompilerCacheMarker(args, "-I=ddtest-goleak-"+fingerprint)
+	return removeCompilerCacheMarker(args, "-I=ddto-goleak-"+fingerprint)
 }
 
 // removeCompilerCacheMarker filters an owned argument slice.

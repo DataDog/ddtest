@@ -1,6 +1,6 @@
 # Testify suite instrumentation
 
-`ddtest` registers a Testify suite at the entry of the client's original
+`ddto` registers a Testify suite at the entry of the client's original
 `suite.Run`. All callers reach that entry, including helpers in other modules.
 Testify still owns its runner, assertions, lifecycle hooks and `WithStats`.
 The SDK backend calls its original registration hook. Mini registers a scope
@@ -10,7 +10,7 @@ its descendants and cleanup. This keeps `TestShared#01` attached to the second
 suite when two suites expose `TestShared`. An ordinary sibling after
 `suite.Run` gets no stale suite metadata.
 
-Use `ddtest` and the Mini runtime from the same revision: the scoped hook is
+Use `ddto` and the Mini runtime from the same revision: the scoped hook is
 an internal linkname contract.
 
 The scope follows Testify's serial method runner. It does not add support for
@@ -26,7 +26,7 @@ selected version and the actual `Run` signature, including versioned and local
 replacements. A v2 module needs a separate review.
 
 An older or newer major version, an unknown version, or an unrecognized `Run`
-entry does not stop the build. `ddtest` prints a warning and leaves Testify
+entry does not stop the build. `ddto` prints a warning and leaves Testify
 uninstrumented; its suite methods are still reported as ordinary subtests,
 without Testify suite metadata. Unreadable sources and reserved-name collisions
 remain errors.
@@ -143,7 +143,7 @@ selected transform avoid that cost entirely.
 
 Go includes compiler identity in every package's build key. Changing
 `compile -V=full` would split the cache for every package. Instead, the
-instrumented `testing` package exports `DDTestTestifyContract`, a constant
+instrumented `testing` package exports `DDToTestifyContract`, a constant
 containing a hash of the prepared suite edit, runtime hook and transformation
 contract. Testify imports `testing`, so its dependency content ID carries the
 hash into its native build key. An exported constant survives in export data;
@@ -158,7 +158,7 @@ not maintain a separate cache.
 A plan and its selective tool command belong together. Building a prepared
 Testify plan manually without its tool wrapper is outside this contract: it
 could store an uninstrumented object under the prepared dependency identity.
-`ddtest` always supplies both.
+`ddto` always supplies both.
 
 ## Coverage
 
@@ -176,7 +176,7 @@ coverage denominator stay intact. This supports coverage patterns that include
 ```mermaid
 sequenceDiagram
     participant Go as go test
-    participant Tool as ddtest tool-overlay
+    participant Tool as ddto tool-overlay
     participant Cover as go tool cover
     participant Compile as go tool compile
     Go->>Cover: Original Testify sources, when selected for coverage

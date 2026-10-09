@@ -23,7 +23,7 @@ func TestSaveDistinguishesEmptyAndUnset(t *testing.T) {
 }
 
 func TestRestoreAppliesAndRemovesSavedValues(t *testing.T) {
-	t.Setenv("GOWORK", "/tmp/ddtest/go.work")
+	t.Setenv("GOWORK", "/tmp/ddto/go.work")
 	t.Setenv("GOFLAGS", "'-mod=readonly'")
 	t.Setenv(SavedPrefix+"GOWORK", "")
 	t.Setenv(SavedPrefix+"GOFLAGS", "=-tags=a b")
@@ -60,14 +60,14 @@ func TestRestoreImportsNoPackageThatCanStartCommands(t *testing.T) {
 }
 
 // The CLI's build-tool helpers import goenv to save values. The tools they run
-// belong to the build, so importing goenv must keep ddtest's settings.
+// belong to the build, so importing goenv must keep ddto's settings.
 func TestImportingGoenvKeepsBuildSettings(t *testing.T) {
-	if os.Getenv("DDTEST_GOENV_HELPER") != "" {
+	if os.Getenv("DDTO_GOENV_HELPER") != "" {
 		fmt.Printf("GOWORK=%s\n", os.Getenv("GOWORK"))
 		return
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestImportingGoenvKeepsBuildSettings$")
-	cmd.Env = append(os.Environ(), "DDTEST_GOENV_HELPER=1", "GOWORK=build.work", SavedPrefix+"GOWORK==caller.work")
+	cmd.Env = append(os.Environ(), "DDTO_GOENV_HELPER=1", "GOWORK=build.work", SavedPrefix+"GOWORK==caller.work")
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatal(err)

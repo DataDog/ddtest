@@ -13,7 +13,7 @@ import (
 // Real subprocesses exercise testing's cleanup and Fatal/Goexit behavior. The
 // builder is small so these ownership checks do not compile another SDK binary.
 func TestSharedParityFixtureLifetime(t *testing.T) {
-	if os.Getenv("DDTEST_SHARED_FIXTURE_PROBE") == "lifetime" {
+	if os.Getenv("DDTO_SHARED_FIXTURE_PROBE") == "lifetime" {
 		var fixture sharedParityFixture
 		build := func(t *testing.T, tempDir func() string) *parityFixture {
 			dir := tempDir()
@@ -32,13 +32,13 @@ func TestSharedParityFixtureLifetime(t *testing.T) {
 				t.Fatal("first consumer removed the shared inputs:", err)
 			}
 		})
-		if err := os.WriteFile(os.Getenv("DDTEST_SHARED_FIXTURE_PATH"), []byte(sharedParityRoot), 0600); err != nil {
+		if err := os.WriteFile(os.Getenv("DDTO_SHARED_FIXTURE_PATH"), []byte(sharedParityRoot), 0600); err != nil {
 			t.Fatal(err)
 		}
 		return
 	}
 	path := filepath.Join(t.TempDir(), "workspace.txt")
-	code, out := runSharedFixtureProbe(t, "lifetime", t.Name(), "DDTEST_SHARED_FIXTURE_PATH="+path)
+	code, out := runSharedFixtureProbe(t, "lifetime", t.Name(), "DDTO_SHARED_FIXTURE_PATH="+path)
 	if code != 0 {
 		t.Fatal(out)
 	}
@@ -52,7 +52,7 @@ func TestSharedParityFixtureLifetime(t *testing.T) {
 }
 
 func TestSharedParityFixtureFailedBuild(t *testing.T) {
-	if os.Getenv("DDTEST_SHARED_FIXTURE_PROBE") == "failure" {
+	if os.Getenv("DDTO_SHARED_FIXTURE_PROBE") == "failure" {
 		var fixture sharedParityFixture
 		build := func(t *testing.T, _ func() string) *parityFixture {
 			t.Fatal("intentional fixture build failure")
@@ -73,7 +73,7 @@ func runSharedFixtureProbe(t *testing.T, mode, name string, extra ...string) (in
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.v", "-test.run=^"+name+"$")
-	cmd.Env = testEnv(append([]string{"DDTEST_SHARED_FIXTURE_PROBE=" + mode}, extra...)...)
+	cmd.Env = testEnv(append([]string{"DDTO_SHARED_FIXTURE_PROBE=" + mode}, extra...)...)
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
 		t.Fatal(ctx.Err())

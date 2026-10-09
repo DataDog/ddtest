@@ -10,7 +10,7 @@ import (
 )
 
 const GoleakImport = "go.uber.org/goleak"
-const GoleakHookName = "__ddtestPrepareLeakCheck"
+const GoleakHookName = "__ddtoPrepareLeakCheck"
 
 // TransformGoleakEntry keeps Find's options, retries and error reporting. The
 // exact filters apply after the caller's options, which can replace filters.
@@ -26,7 +26,7 @@ func TransformGoleakEntry(name string, src []byte) ([]byte, bool, error) {
 		if !ok || fn.Recv != nil || fn.Name.Name != "Find" {
 			continue
 		}
-		if bytes.Contains(src, []byte("__ddtest")) {
+		if bytes.Contains(src, []byte("__ddto")) {
 			return nil, false, fmt.Errorf("%s: reserved goleak hook name", name)
 		}
 		if fn.Body == nil || fn.Type.Params == nil || len(fn.Type.Params.List) != 1 || len(fn.Type.Params.List[0].Names) != 1 || fn.Type.Results == nil || len(fn.Type.Results.List) != 1 {
@@ -66,7 +66,7 @@ func TransformGoleakEntry(name string, src []byte) ([]byte, bool, error) {
 		options := arg.Names[0].Name
 		// Find also accepts a caller-owned variadic slice with spare capacity.
 		// Keep its backing storage intact while reserving space for our filters.
-		code := fmt.Sprintf("__ddtestResume := %s(); defer __ddtestResume(); __ddtestOptions := make([]Option, len(%s), len(%s)+%d); copy(__ddtestOptions, %s); %s = append(__ddtestOptions", GoleakHookName, options, options, len(filters), options, options)
+		code := fmt.Sprintf("__ddtoResume := %s(); defer __ddtoResume(); __ddtoOptions := make([]Option, len(%s), len(%s)+%d); copy(__ddtoOptions, %s); %s = append(__ddtoOptions", GoleakHookName, options, options, len(filters), options, options)
 		for _, filter := range filters {
 			code += fmt.Sprintf(", IgnoreAnyFunction(%q)", filter)
 		}

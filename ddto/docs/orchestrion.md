@@ -1,48 +1,48 @@
 # Mini with Orchestrion
 
 Use both instruments when a test binary needs application tracing and CI
-Visibility. `ddtest` inserts the testing hooks and Mini runtime. Orchestrion
+Visibility. `ddto` inserts the testing hooks and Mini runtime. Orchestrion
 instruments the application and its dependencies using the client's existing
 configuration. The resulting binary reports tests through Mini and application
 spans through the full SDK.
 
 Both instruments run during compilation. An existing binary must be rebuilt to
-add Mini; `ddtest` does not modify executable files.
+add Mini; `ddto` does not modify executable files.
 
 ## Build and run
 
 Run these commands from the client module, with its usual Orchestrion pin and
 configuration. Install Orchestrion separately; it is not a dependency of the
-`ddtest` driver.
+`ddto` driver.
 
 ```sh
 # Orchestrion installed on PATH:
-ddtest orchestrion go test -count=1 ./...
+ddto orchestrion go test -count=1 ./...
 
 # Orchestrion declared as a Go tool in the client module:
-ddtest go tool orchestrion go test -count=1 ./...
+ddto go tool orchestrion go test -count=1 ./...
 
 # Existing compiler-wrapper configuration:
-ddtest test -toolexec="orchestrion toolexec" -count=1 ./...
-GOFLAGS='"-toolexec=orchestrion toolexec"' ddtest test -count=1 ./...
+ddto test -toolexec="orchestrion toolexec" -count=1 ./...
+GOFLAGS='"-toolexec=orchestrion toolexec"' ddto test -count=1 ./...
 ```
 
 Mini remains the default. `--runtime=sdk` still selects the pinned full SDK as the
-CI reporter. SDK builds bypass only the testing integrations owned by ddtest;
+CI reporter. SDK builds bypass only the testing integrations owned by ddto;
 the SDK itself still passes through Orchestrion.
 
 To compile now and execute later:
 
 ```sh
 mkdir -p test-binaries
-ddtest orchestrion go test -c -o "$PWD/test-binaries/" ./...
+ddto orchestrion go test -c -o "$PWD/test-binaries/" ./...
 
 # Execute from the working directory expected by the package's tests.
 DD_CIVISIBILITY_ENABLED=parent ./test-binaries/example.test \
   -test.count=1 -test.timeout=10m -test.v
 ```
 
-The executable contains both instruments and can run without `ddtest` or
+The executable contains both instruments and can run without `ddto` or
 Orchestrion. Mini starts its CI runtime. APM uses the application's usual SDK
 lifecycle; tests that need an active APM tracer can start and stop it in their
 `TestMain` or fixture. Set the normal agent or agentless CI Visibility configuration in
@@ -68,16 +68,16 @@ go -C testdata/orchestrion build -mod=readonly -o "$(go env GOPATH)/bin/orchestr
 For a client using `go tool orchestrion`, update its tool dependency graph with
 `go get golang.org/x/tools@v0.50.0` before building with Go 1.27.2. Go then builds
 the declared tool with the active toolchain. For an installed executable, rebuild
-it with those dependencies and that toolchain. ddtest uses the client's selected
+it with those dependencies and that toolchain. ddto uses the client's selected
 tool and dependencies; it does not replace them during instrumentation.
 
 ## One owner for each integration
 
 ```mermaid
 flowchart TD
-    CLI["ddtest prepares testing overlay"] --> Tools["Go compiler wrapper"]
+    CLI["ddto prepares testing overlay"] --> Tools["Go compiler wrapper"]
     Tools --> Owned["testing, Testify and Mini sources"]
-    Owned --> Native["Native compiler with ddtest hooks"]
+    Owned --> Native["Native compiler with ddto hooks"]
     Tools --> SDK["SDK CI enablement boundaries"]
     SDK --> Guard["Mini disables SDK CI only"]
     Tools --> App["Application and other dependencies"]
@@ -90,7 +90,7 @@ flowchart TD
 ```
 
 Applying the SDK's testing advice twice creates duplicate hook declarations in
-`testing`. The selective wrapper therefore passes ddtest-owned packages directly
+`testing`. The selective wrapper therefore passes ddto-owned packages directly
 to the native tool. Application packages and APM integrations still pass through
 Orchestrion. Version probes also pass through Orchestrion, so Go retains its
 instrumented compiler identity.
@@ -128,7 +128,7 @@ their usual leak-test policy.
 
 ## Cache and maintenance
 
-The testing overlay carries `DDTestMiniSDKCIContract` whenever Mini guards the
+The testing overlay carries `DDToMiniSDKCIContract` whenever Mini guards the
 SDK. The SDK's dependency on `testing` propagates this contract into its
 compilation inputs. Builds that guard SDK CI have distinct cache inputs from
 native and SDK-owned builds, without

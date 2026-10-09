@@ -15,7 +15,7 @@ import (
 const minimumTestifyVersion = "v1.4.0"
 
 // Bump when compiler-side edits change without changing prepared inputs.
-const testifyContractVersion = "ddtest-testify-entry-v2"
+const testifyContractVersion = "ddto-testify-entry-v2"
 
 // LibraryEntry contains the inputs for one selected library entry. Other packages never
 // need to read the tool plan. Covered sources are transformed after go cover.
@@ -206,7 +206,7 @@ func prepareLibraryCompile(plan *LibraryEntry, args []string) ([]string, func(),
 		if !found {
 			continue
 		}
-		file, err := os.CreateTemp(filepath.Dir(args[i]), "ddtest-suite-*.go")
+		file, err := os.CreateTemp(filepath.Dir(args[i]), "ddto-suite-*.go")
 		if err != nil {
 			cleanup()
 			return nil, nil, err

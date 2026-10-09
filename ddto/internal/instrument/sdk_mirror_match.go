@@ -70,7 +70,7 @@ func rewriteSDKSpanStart(fn *ast.FuncDecl, insert func(token.Pos, string)) error
 	if selected == "" || selected == "_" || ambiguous {
 		return sdkMirrorError("SDK selected context missing or ambiguous")
 	}
-	insert(anchor.End(), fmt.Sprintf("\nvar __ddtestParent any; if %[1]s != nil { __ddtestParent = %[1]s.__ddtestMirror }; %[2]s.context.__ddtestMirror = __ddtestMirrorStart(%[3]s, __ddtestParent, %[4]s)\n", parent.Name, span.Name, selected, operation.Names[0].Name))
+	insert(anchor.End(), fmt.Sprintf("\nvar __ddtoParent any; if %[1]s != nil { __ddtoParent = %[1]s.__ddtoMirror }; %[2]s.context.__ddtoMirror = __ddtoMirrorStart(%[3]s, __ddtoParent, %[4]s)\n", parent.Name, span.Name, selected, operation.Names[0].Name))
 	return nil
 }
 
@@ -150,9 +150,9 @@ func rewriteSDKFinish(fn *ast.FuncDecl, insert func(token.Pos, string)) error {
 	// Defers run in reverse registration order: capture -> SDK unlock -> delivery.
 	// Set the marker only after bookkeeping completes, so early returns or a
 	// panic before completion never turn an unfinished SDK span into a CI copy.
-	insert(fn.Body.Lbrace+1, "\nvar __ddtestDelivery any; var __ddtestFinished bool; defer func(){ __ddtestMirrorDeliver(__ddtestDelivery) }()\n")
-	insert(unlock.End(), fmt.Sprintf("\ndefer func(){ if __ddtestFinished && %[1]s.context.__ddtestMirror != nil { __ddtestDelivery = __ddtestMirrorCapture(%[1]s.context.__ddtestMirror,%[1]s.name,%[1]s.service,%[1]s.resource,%[1]s.spanType,%[1]s.start,%[1]s.duration,%[1]s.error,%[1]s.meta.All(),%[1]s.metrics,%[1]s.context.TraceIDBytes(),%[1]s.spanID) } }()\n", receiver))
-	insert(anchor.End(), "\n__ddtestFinished = true\n")
+	insert(fn.Body.Lbrace+1, "\nvar __ddtoDelivery any; var __ddtoFinished bool; defer func(){ __ddtoMirrorDeliver(__ddtoDelivery) }()\n")
+	insert(unlock.End(), fmt.Sprintf("\ndefer func(){ if __ddtoFinished && %[1]s.context.__ddtoMirror != nil { __ddtoDelivery = __ddtoMirrorCapture(%[1]s.context.__ddtoMirror,%[1]s.name,%[1]s.service,%[1]s.resource,%[1]s.spanType,%[1]s.start,%[1]s.duration,%[1]s.error,%[1]s.meta.All(),%[1]s.metrics,%[1]s.context.TraceIDBytes(),%[1]s.spanID) } }()\n", receiver))
+	insert(anchor.End(), "\n__ddtoFinished = true\n")
 	return nil
 }
 
@@ -216,7 +216,7 @@ func rewriteSDKContext(file *ast.File, fn *ast.FuncDecl, insert func(token.Pos, 
 	if !sdkSnapshot(fn, snapshot, span, anchor.Pos()) {
 		return sdkMirrorError("SDK context snapshot changed")
 	}
-	insert(anchor.Pos(), fmt.Sprintf("var __ddtestState any; if %[1]s != nil { __ddtestState = %[1]s.__ddtestMirror }; %[2]s = __ddtestMirrorContext(%[2]s,__ddtestState)\n", snapshot, ctx))
+	insert(anchor.Pos(), fmt.Sprintf("var __ddtoState any; if %[1]s != nil { __ddtoState = %[1]s.__ddtoMirror }; %[2]s = __ddtoMirrorContext(%[2]s,__ddtoState)\n", snapshot, ctx))
 	return nil
 }
 

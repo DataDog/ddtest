@@ -15,7 +15,7 @@ ORCHESTRION_VERSION = "v1.13.2-0.20260917114356-5c24783fcd76"
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--orchestrion", required=True)
-    parser.add_argument("--ddtest", required=True)
+    parser.add_argument("--ddto", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--cold-repeats", type=int, default=2)
     parser.add_argument("--warm-repeats", type=int, default=5)
@@ -53,7 +53,7 @@ def main():
         target.parent.mkdir()
     commands = {
         "native": ["go", "test", "-c", "-o", str(targets["native"]), "."],
-        "overlay": [str(pathlib.Path(args.ddtest).resolve()), "test", "-c", "-o", str(targets["overlay"]), "."],
+        "overlay": [str(pathlib.Path(args.ddto).resolve()), "test", "-c", "-o", str(targets["overlay"]), "."],
         "orchestrion": ["go", "test", "-toolexec=" + str(pathlib.Path(args.orchestrion).resolve())
                         + " toolexec", "-c", "-o", str(targets["orchestrion"]), "."],
     }

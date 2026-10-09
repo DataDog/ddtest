@@ -1,6 +1,6 @@
 # Mini runtime configuration and API
 
-Mini is the default CI Visibility runtime used by `ddtest`. It retains the
+Mini is the default CI Visibility runtime used by `ddto`. It retains the
 SDK's testing policies and writes native CI events without importing the APM
 tracer. Use the [README](../README.md) for installation and common commands.
 
@@ -12,7 +12,7 @@ associate operations without changing APM parentage.
 
 ## Configuration
 
-Set these variables in the environment of `ddtest`, or of a compiled test binary:
+Set these variables in the environment of `ddto`, or of a compiled test binary:
 
 | Variable | Behavior |
 | --- | --- |
@@ -45,7 +45,7 @@ failures are logged without replacing the Go command's result.
 ## Runtime provisioning
 
 For an ordinary module, no persistent runtime requirement is needed. If the
-runtime is absent, `ddtest` provides it through temporary copies of the effective
+runtime is absent, `ddto` provides it through temporary copies of the effective
 `go.mod` and `go.sum`, passed to Go with `-modfile`. Explicit modfiles and their
 overlays are respected. Runtime provisioning does not edit the client's files;
 `-mod=mod` can still permit Go's native package query to make its own edits.
@@ -74,7 +74,7 @@ unchanged except for updates its own `-mod=mod` imports would require under
 native Go.
 
 The temporary `go.work`, and the `GOFLAGS` adapted for it, apply only to the
-`go test` command that `ddtest` starts, including the build tools it runs or
+`go test` command that `ddto` starts, including the build tools it runs or
 chains, such as a user's `-toolexec`. In the test process, Mini's
 `internal/goenv/restore` package restores the caller's `GOWORK` and `GOFLAGS`.
 It imports only `syscall` through `goenv`, and its path sorts before `os`, so Go
@@ -84,8 +84,8 @@ those dependencies, see the same module, workspace and flags as under native
 `go test`.
 
 A `go test -exec` program, or the `go_$GOOS_$GOARCH_exec` helper that Go uses
-when cross-compiling, starts before the test binary. `ddtest` runs it through
-`ddtest test-exec`, which restores the caller's values first; Go already
+when cross-compiling, starts before the test binary. `ddto` runs it through
+`ddto test-exec`, which restores the caller's values first; Go already
 disables result caching for such runs. Arguments reach the program as Go parsed
 them, including an unquoted argument with both quote characters. On Windows,
 where the wrapper cannot replace itself, the program runs in a job that ends it
@@ -98,7 +98,7 @@ for the same caller environment.
 Known limitation: a dependency that imports `syscall` but not `os` can
 initialize before the restore package when its import path sorts first. If it
 reads `GOWORK` or `GOFLAGS` through `syscall` during initialization, it sees
-`ddtest`'s values. Ordinary code reads them through `os`, and starts commands
+`ddto`'s values. Ordinary code reads them through `os`, and starts commands
 through `os/exec`, after the restore.
 
 Mini uses native Go 1.25 APIs. `internal/compat` contains only `AsType` and
@@ -122,7 +122,7 @@ workspace. Existing requirements and local or remote replacements retain their
 selected sources; absent runtimes use the CLI sources or its exact published
 version. The original workspace, checksums and module files stay unchanged.
 
-`ddtest` uses a vendor directory only where Go would: with `-mod=vendor`, or by
+`ddto` uses a vendor directory only where Go would: with `-mod=vendor`, or by
 default when the `go` directive is at least 1.14 and `modules.txt` was written
 for the same mode. A `go mod vendor` tree beside `go.work` belongs to its module,
 so workspace builds ignore it, and a `go work vendor` tree is ignored with
@@ -149,13 +149,13 @@ the client's file, so no contents are copied and edits in place stay live. Go
 sees regular files, as `//go:embed` requires: it rejects symbolic links. Real
 directories keep vendored packages visible to wildcard patterns such as
 `example.com/helper/...`; Go ignores linked directories there. Links inside the
-client's vendor tree stay links. Like Go, `ddtest` follows a `vendor` directory
+client's vendor tree stay links. Like Go, `ddto` follows a `vendor` directory
 that is itself a link. Where hard links fail, as when the user cache is on
 another filesystem, files are copied with their times. Linking updates the
 client file's change time, so Git may check its contents once. Alternate
 modfiles keep working in any spelling, including `GOFLAGS`.
 
-The workspace lives in the user cache, under `ddtest/vendor-workspaces`, at a
+The workspace lives in the user cache, under `ddto/vendor-workspaces`, at a
 path derived from its `go.work`, manifest, and the names, sizes and times of the
 vendored files, which each run reads without reading file contents. Go's build
 cache keys include each package directory, so this stable path lets unchanged
@@ -170,7 +170,7 @@ entries unused for 14 days are removed, but only while their lock can be taken
 exclusively without waiting; a workspace in use is never removed. A run that
 waited while another removed its workspace rebuilds it. Removing a workspace
 deletes only its own links and copies, and deleting the directory by hand is
-safe when no `ddtest` run is active. Without a usable user cache, the links live
+safe when no `ddto` run is active. Without a usable user cache, the links live
 in the run's temporary directory. Where the client's own links cannot be
 recreated, as on Windows without the symbolic-link privilege, the files they
 point to are hard-linked or copied there instead. The original vendor tree is

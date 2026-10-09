@@ -111,7 +111,7 @@ func TestCLIDebugCanceledPreparation(t *testing.T) {
 	if code := RunRuntime(ctx, []string{"."}, Mini, nil, io.Discard, &stderr); code != 2 {
 		t.Fatalf("canceled preparation exit=%d", code)
 	}
-	for _, want := range []string{"go env finished duration=", "prepare finished duration=", "status=error", "ddtest exit_code=2"} {
+	for _, want := range []string{"go env finished duration=", "prepare finished duration=", "status=error", "ddto exit_code=2"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("missing %q: %s", want, &stderr)
 		}

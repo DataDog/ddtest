@@ -18,7 +18,7 @@ func TestMain(m *testing.M) {
 		cacheErr error
 	)
 	userCacheDir = func() (string, error) {
-		once.Do(func() { cache, cacheErr = os.MkdirTemp("", "ddtest-runner-cache-") })
+		once.Do(func() { cache, cacheErr = os.MkdirTemp("", "ddto-runner-cache-") })
 		return cache, cacheErr
 	}
 	code := m.Run()
@@ -36,7 +36,7 @@ func TestMain(m *testing.M) {
 func TestHelperProcessesLeaveNoTemporaryFiles(t *testing.T) {
 	temp := t.TempDir()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestPackageListHelperProcess$", "--", "success")
-	cmd.Env = append(os.Environ(), "DDTEST_PACKAGE_LIST_HELPER=1", "TMPDIR="+temp, "TMP="+temp, "TEMP="+temp)
+	cmd.Env = append(os.Environ(), "DDTO_PACKAGE_LIST_HELPER=1", "TMPDIR="+temp, "TMP="+temp, "TEMP="+temp)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatal(err, string(out))
 	}

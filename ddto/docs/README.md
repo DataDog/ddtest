@@ -1,10 +1,10 @@
 # Documentation
 
-Start with the [README](../README.md) to install `ddtest`, configure delivery
+Start with the [README](../README.md) to install `ddto`, configure delivery
 and run your first tests. These guides cover the current implementation.
 Measurement reports describe the exact revisions in their manifests.
 
-## Using ddtest
+## Using ddto
 
 | Task | Guide |
 | --- | --- |

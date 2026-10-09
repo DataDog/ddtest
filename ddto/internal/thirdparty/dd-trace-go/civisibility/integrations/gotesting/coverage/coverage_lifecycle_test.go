@@ -17,7 +17,7 @@ import (
 // Run the global-zone mutation in a separate process so it cannot race with
 // another package test's clock or HTTP receiver.
 func TestCoveragePayloadConcurrentLocalChange(t *testing.T) {
-	const helperEnv = "DDTEST_COVERAGE_CLOCK_HELPER"
+	const helperEnv = "DDTO_COVERAGE_CLOCK_HELPER"
 	if os.Getenv(helperEnv) == "1" {
 		previous := time.Local
 		defer func() { time.Local = previous }()

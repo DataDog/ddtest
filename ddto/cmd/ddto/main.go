@@ -38,7 +38,7 @@ func main() {
 		goTool = true
 		args = args[5:]
 	default:
-		fmt.Fprintln(os.Stderr, "usage: ddtest [orchestrion go | go tool orchestrion go] test [--runtime=mini|sdk] [go test flags] [packages] (default: mini)")
+		fmt.Fprintln(os.Stderr, "usage: ddto [orchestrion go | go tool orchestrion go] test [--runtime=mini|sdk] [go test flags] [packages] (default: mini)")
 		os.Exit(2)
 	}
 	runtime, args, err := runner.ParseRuntimeArgs(args)

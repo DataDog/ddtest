@@ -15,9 +15,9 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
-// userToolexecEnv carries the user's -toolexec after ddtest's input transformation.
-// Orchestrion skips packages that ddtest owns; unrelated wrappers run every tool.
-const userToolexecEnv = "DDTEST_USER_TOOLEXEC"
+// userToolexecEnv carries the user's -toolexec after ddto's input transformation.
+// Orchestrion skips packages that ddto owns; unrelated wrappers run every tool.
+const userToolexecEnv = "DDTO_USER_TOOLEXEC"
 
 func chainUserToolexec(args []string) ([]string, error) {
 	chain := os.Getenv(userToolexecEnv)
@@ -26,7 +26,7 @@ func chainUserToolexec(args []string) ([]string, error) {
 	}
 	words, err := splitFlags(chain)
 	if err != nil {
-		return nil, fmt.Errorf("ddtest: invalid -toolexec %q: %w", chain, err)
+		return nil, fmt.Errorf("ddto: invalid -toolexec %q: %w", chain, err)
 	}
 	return append(words, args...), nil
 }

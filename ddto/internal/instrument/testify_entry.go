@@ -118,5 +118,5 @@ func TestifyEntryHook(hook string, scoped bool) string {
 // change export data. suite's testing dependency then makes the transformation
 // part of Go's native action key while the compiler's identity stays native.
 func TestifyCacheMarker(fingerprint string) string {
-	return "\n// DDTestTestifyContract identifies the suite transformation for Go's build cache.\nconst DDTestTestifyContract = " + strconv.Quote(fingerprint) + "\n"
+	return "\n// DDToTestifyContract identifies the suite transformation for Go's build cache.\nconst DDToTestifyContract = " + strconv.Quote(fingerprint) + "\n"
 }

@@ -94,7 +94,7 @@ clock tests check the exact wait subtraction independently of that formatting.
 
 The matrix has 16 scenarios, manual/automatic entrypoints, and Mini normal/deferred
 delivery: **64 comparisons**. Automatic SDK means the frozen Orchestrion binary
-and the exact PR's advice. Automatic Mini means this checkout's `ddtest`.
+and the exact PR's advice. Automatic Mini means this checkout's `ddto`.
 Counts below are sessions/modules/suites/tests/spans. Manual and automatic
 instrumentation can differ because automatic hooks see nested `T.Run` calls.
 Mini is compared with the matching SDK mode.

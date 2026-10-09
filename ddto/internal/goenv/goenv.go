@@ -1,8 +1,8 @@
-// Package goenv saves and restores Go command settings that ddtest replaces
+// Package goenv saves and restores Go command settings that ddto replaces
 // only for its own go test command, such as a temporary GOWORK.
 //
 // Importing this package changes nothing. The CLI and its build-tool helpers
-// use it to save values; those helpers must keep ddtest's settings because the
+// use it to save values; those helpers must keep ddto's settings because the
 // tools they run belong to the build. Only the test runtime imports
 // goenv/restore, which restores the saved values while initializing.
 package goenv
@@ -10,9 +10,9 @@ package goenv
 import "syscall"
 
 // SavedPrefix names the variables that carry a caller's original settings.
-const SavedPrefix = "DDTEST_ORIGINAL_"
+const SavedPrefix = "DDTO_ORIGINAL_"
 
-// Settings are the variables that ddtest may replace for go test.
+// Settings are the variables that ddto may replace for go test.
 var Settings = [...]string{"GOWORK", "GOFLAGS"}
 
 // Save returns the environment entry that records name's current value:
@@ -25,7 +25,7 @@ func Save(name string) string {
 }
 
 // Restore applies and removes every saved setting. Without saved values, as in
-// a binary started outside ddtest, it changes nothing.
+// a binary started outside ddto, it changes nothing.
 func Restore() {
 	for _, name := range Settings {
 		key := SavedPrefix + name

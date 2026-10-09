@@ -380,8 +380,8 @@ class Runner:
         sdk = read_json_string(self.setup([str(self.go), "mod", "download", "-json",
                                           SDK_MODULE + "@" + self.config["sdk_version"]], ROOT))
         yaml = Path(sdk["Dir"]) / "internal/civisibility/integrations/gotesting/orchestrion.yml"
-        self.ddtest = self.output / "ddtest"
-        self.setup([str(self.go), "build", "-mod=readonly", "-o", str(self.ddtest), "./cmd/ddtest"], ROOT)
+        self.ddto = self.output / "ddto"
+        self.setup([str(self.go), "build", "-mod=readonly", "-o", str(self.ddto), "./cmd/ddto"], ROOT)
         for name in dict.fromkeys(case["subject"] for case in self.cases):
             spec = self.config["subjects"][name]
             target = self.output / "subjects" / name
@@ -422,7 +422,7 @@ class Runner:
         runtime_files = [ROOT / f for f in files if f and (f.endswith(".go") or f in ("go.mod", "go.sum"))]
         self.frozen = {str(path): digest(path) for path in runtime_files}
         self.frozen.update({str(self.go): digest(self.go), str(self.orchestrion): digest(self.orchestrion),
-                            str(self.ddtest): digest(self.ddtest), str(Path(__file__).resolve()): digest(Path(__file__).resolve()),
+                            str(self.ddto): digest(self.ddto), str(Path(__file__).resolve()): digest(Path(__file__).resolve()),
                             str(CONFIG): digest(CONFIG)})
         for target in self.subjects.values():
             self.frozen.update(self.snapshot(target))
@@ -442,8 +442,8 @@ class Runner:
     def command(self, case, cpus, variant, extra):
         prefixes = {"native": [str(self.go), "test"],
                     "orchestrion": [str(self.go), "test", f"-toolexec={self.orchestrion} toolexec"],
-                    "sdk": [str(self.ddtest), "test", "--runtime=sdk"],
-                    "mini": [str(self.ddtest), "test", "--runtime=mini"]}
+                    "sdk": [str(self.ddto), "test", "--runtime=sdk"],
+                    "mini": [str(self.ddto), "test", "--runtime=mini"]}
         ldflags = ["-w"] + [flag.removeprefix("-ldflags=") for flag in extra if flag.startswith("-ldflags=")]
         rest = [flag for flag in extra if not flag.startswith("-ldflags=")]
         return prefixes[variant] + [f"-p={cpus}", "-mod=readonly", "-c", "-o",

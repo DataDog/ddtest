@@ -45,7 +45,7 @@ func TestWorkspaceModuleFlags(t *testing.T) {
 }
 
 // go test runs cross-compiled test binaries through go_$GOOS_$GOARCH_exec from
-// PATH when no -exec is given; ddtest must wrap that program too.
+// PATH when no -exec is given; ddto must wrap that program too.
 func TestCrossExecHelperMatchesGoTest(t *testing.T) {
 	dir := t.TempDir()
 	name := "go_js_wasm_exec"
@@ -66,14 +66,14 @@ func TestCrossExecHelperMatchesGoTest(t *testing.T) {
 	}
 }
 
-// ddtest's -exec wrapper replaces the caller's -exec, in any position.
+// ddto's -exec wrapper replaces the caller's -exec, in any position.
 func TestGoTestArgumentsReplaceExec(t *testing.T) {
 	opts, err := parseOptions([]string{"-exec", "user wrapper", "-v", "-exec=other", "."}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := goTestArguments(Plan{File: "plan.json", execWrapper: "'ddtest' 'test-exec' 'other'"}, opts, "")
-	want := []string{"test", "-overlay=plan.json", "-exec='ddtest' 'test-exec' 'other'", "-v", "."}
+	got := goTestArguments(Plan{File: "plan.json", execWrapper: "'ddto' 'test-exec' 'other'"}, opts, "")
+	want := []string{"test", "-overlay=plan.json", "-exec='ddto' 'test-exec' 'other'", "-v", "."}
 	if !slices.Equal(got, want) {
 		t.Fatalf("arguments:\n%q\nwant:\n%q", got, want)
 	}

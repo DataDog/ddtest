@@ -1,5 +1,5 @@
 // Package restore applies goenv.Restore while a test process initializes.
-// Only the test runtime imports it; ddtest's build-tool helpers must not.
+// Only the test runtime imports it; ddto's build-tool helpers must not.
 //
 // Go initializes ready packages in import-path order. This package and goenv
 // import only syscall, and this path sorts before "os", so it initializes

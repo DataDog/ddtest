@@ -61,7 +61,7 @@ func TestOrchestrionPackageOwnershipAndProbes(t *testing.T) {
 	for _, pkg := range []string{"testing", "github.com/stretchr/testify/suite"} {
 		t.Setenv("TOOLEXEC_IMPORTPATH", pkg)
 		if !bypassOrchestrionPackage([]string{"compile", "input.go"}) {
-			t.Fatal("ddtest-owned package was woven twice", pkg)
+			t.Fatal("ddto-owned package was woven twice", pkg)
 		}
 	}
 	t.Setenv(orchestrionBypassEnv, "")

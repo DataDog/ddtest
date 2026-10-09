@@ -72,7 +72,7 @@ func TestMiniCLIWithoutSDK(t *testing.T) {
 	if code != 0 || strings.Contains(out, "github.com/DataDog/") {
 		t.Fatalf("SDK dependency leaked: %d %s %s", code, out, stderr)
 	}
-	out, stderr, code = command(t, root, testEnv(), "go", "list", "-deps", "-f", "{{if not .Standard}}{{.ImportPath}}{{end}}", "./cmd/ddtest")
+	out, stderr, code = command(t, root, testEnv(), "go", "list", "-deps", "-f", "{{if not .Standard}}{{.ImportPath}}{{end}}", "./cmd/ddto")
 	if code != 0 {
 		t.Fatal(stderr)
 	}

@@ -308,7 +308,7 @@ later parallel attempts, so after a retried parallel test testing still counts
 a parallel test as running, and `testing.AllocsPerRun` panics in every later
 test of the binary.
 
-Mini records those ends. ddtest's testing overlay adds `ParallelStopHook` from
+Mini records those ends. ddto's testing overlay adds `ParallelStopHook` from
 `internal/instrument/hooks.go`, only for Mini and only when testing declares
 `parallelStop atomic.Int64`; the linker allows no other access to the counter.
 The hook registers a function in

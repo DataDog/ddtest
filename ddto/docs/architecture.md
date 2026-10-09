@@ -20,7 +20,7 @@ does not need the CLI.
 ```mermaid
 flowchart TB
     subgraph build["Build time"]
-        CLI["ddtest test: choose<br/>sdk or mini"] --> Plan["Resolve packages and<br/>prepare overlay"]
+        CLI["ddto test: choose<br/>sdk or mini"] --> Plan["Resolve packages and<br/>prepare overlay"]
         Plan --> Selection{"Testify, goleak, SDK hooks,<br/>coverage or Orchestrion?"}
         Selection -->|Yes| Tools["Selective<br/>compiler/coverage<br/>wrapper"]
         Selection -->|No| Go["Native go test:<br/>compile and link"]
@@ -43,7 +43,7 @@ Orchestrion owns the application instrumentation engine in combined builds.
 
 | Code | Owns |
 | --- | --- |
-| [`cmd/ddtest`](../cmd/ddtest/main.go) | CLI entry point, runtime selection, activation and interrupt handling |
+| [`cmd/ddto`](../cmd/ddto/main.go) | CLI entry point, runtime selection, activation and interrupt handling |
 | [`internal/runner`](../internal/runner/run.go) | Go flags, package discovery, overlay merging, temporary files and child exit status |
 | [`internal/instrument`](../internal/instrument/transform.go) | Validation and source edits for `testing`, Testify, goleak and SDK CI/span boundaries |
 | [Extracted `gotesting`](../internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting) | Test callbacks, parallel ownership, retries and CI policies |
@@ -61,7 +61,7 @@ toolchain directories.
 
 ```mermaid
 sequenceDiagram
-    participant CLI as ddtest / runner
+    participant CLI as ddto / runner
     participant Go as Go tool
     participant AST as Transformer
     participant Plan as Overlay files
@@ -140,8 +140,8 @@ file within that plan. Go still owns its build cache and test-result cache; use
 the instrumented binary and leaves execution to the caller. `-work` preserves
 Go's work directory, but the CLI still removes its own overlay plan.
 Interrupt, termination and hangup signals are forwarded to Go instead of
-ending the CLI first. The plan is removed after Go exits, and `ddtest` exits
-with Go's status; if a signal terminated Go, `ddtest` re-raises it.
+ending the CLI first. The plan is removed after Go exits, and `ddto` exits
+with Go's status; if a signal terminated Go, `ddto` re-raises it.
 
 ## The testing boundary
 

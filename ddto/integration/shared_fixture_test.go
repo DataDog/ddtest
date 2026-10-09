@@ -34,7 +34,7 @@ var (
 	}
 )
 
-// sharedDriver builds ddtest once per test process. The driver is an
+// sharedDriver builds ddto once per test process. The driver is an
 // immutable build of this checkout that tests only execute, so every fixture
 // can share it instead of linking it again. TestMain owns its directory.
 func sharedDriver(t *testing.T, root string) string {
@@ -45,9 +45,9 @@ func sharedDriver(t *testing.T, root string) string {
 			sharedDriverBuild.err = err.Error()
 			return
 		}
-		bin := filepath.Join(dir, executableName("ddtest"))
-		// Like a user's build, ddtest keeps the checkout's VCS information.
-		out, stderr, code, _, err := runCommand(root, testEnv("GOFLAGS="), "go", "build", "-o", bin, "./cmd/ddtest")
+		bin := filepath.Join(dir, executableName("ddto"))
+		// Like a user's build, ddto keeps the checkout's VCS information.
+		out, stderr, code, _, err := runCommand(root, testEnv("GOFLAGS="), "go", "build", "-o", bin, "./cmd/ddto")
 		switch {
 		case err != nil:
 			sharedDriverBuild.err = err.Error()
@@ -68,7 +68,7 @@ func sharedDriver(t *testing.T, root string) string {
 // repetitions. A filtered deferred-only invocation initializes its own build.
 func TestMain(m *testing.M) {
 	var err error
-	sharedParityRoot, err = os.MkdirTemp("", "ddtest-parity-")
+	sharedParityRoot, err = os.MkdirTemp("", "ddto-parity-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "create shared parity workspace:", err)
 		os.Exit(1)

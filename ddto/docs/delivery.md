@@ -8,7 +8,7 @@ delivery behavior. Neither feature adds a runtime module dependency.
 Set `DD_CIVISIBILITY_DEFERRED_DELIVERY=true` before running the test binary:
 
 ```sh
-DD_CIVISIBILITY_DEFERRED_DELIVERY=true ddtest test --runtime=mini -count=1 ./...
+DD_CIVISIBILITY_DEFERRED_DELIVERY=true ddto test --runtime=mini -count=1 ./...
 ```
 
 The default is ordinary delivery: finishing an event never performs network
@@ -105,13 +105,13 @@ sends. Canceling either wait starts no request and leaves no waiter goroutine.
 
 `Client.Close` returns a final delivery error, including a failed background
 payload that was already in flight when closing started. Rejected payloads are
-counted once. The runtime logs this error and any dropped events; `ddtest`
+counted once. The runtime logs this error and any dropped events; `ddto`
 returns the `go` command's exit code. A later empty `Close` does not report an
 older failure again.
 
 ## Automatic goleak integration
 
-When the selected Mini test graph reaches `go.uber.org/goleak`, `ddtest` prepares
+When the selected Mini test graph reaches `go.uber.org/goleak`, `ddto` prepares
 its `Find` entry. This is automatic in both ordinary and deferred delivery.
 Calling `VerifyNone`, `VerifyTestMain` or a helper in another module reaches that
 same entry. An unused requirement in `go.mod` does not activate the integration.

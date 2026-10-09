@@ -24,7 +24,7 @@ func TestMiniStartupOverlapsSettingsAndTelemetry(t *testing.T) {
 	dir, driver := prepareMiniFixture(t)
 	writeBuildFixture(t, dir, map[string]string{"sample_test.go": `package fixture_test
 import ("os"; "testing")
-func TestStarted(t *testing.T) { if err := os.WriteFile(os.Getenv("DDTEST_STARTED_FILE"), []byte("started"), 0600); err != nil { t.Fatal(err) } }
+func TestStarted(t *testing.T) { if err := os.WriteFile(os.Getenv("DDTO_STARTED_FILE"), []byte("started"), 0600); err != nil { t.Fatal(err) } }
 `})
 	binary := filepath.Join(t.TempDir(), "startup.test")
 	if out, stderr, code := command(t, dir, testEnv(), driver, "test", "--runtime=mini", "-race", "-c", "-o", binary); code != 0 {
@@ -91,7 +91,7 @@ func TestStarted(t *testing.T) { if err := os.WriteFile(os.Getenv("DDTEST_STARTE
 				marker := filepath.Join(t.TempDir(), "started")
 				cmd := exec.CommandContext(ctx, binary, "-test.run=^TestStarted$", "-test.count=1")
 				cmd.Dir = dir
-				cmd.Env = testEnv("DD_TRACE_DEBUG=true", "DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=false", "DD_TRACE_AGENT_URL="+server.URL, "DD_INSTRUMENTATION_TELEMETRY_ENABLED=true", fmt.Sprintf("DD_CIVISIBILITY_DEFERRED_DELIVERY=%t", deferred), "DDTEST_STARTED_FILE="+marker, "XDG_CACHE_HOME="+t.TempDir())
+				cmd.Env = testEnv("DD_TRACE_DEBUG=true", "DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=false", "DD_TRACE_AGENT_URL="+server.URL, "DD_INSTRUMENTATION_TELEMETRY_ENABLED=true", fmt.Sprintf("DD_CIVISIBILITY_DEFERRED_DELIVERY=%t", deferred), "DDTO_STARTED_FILE="+marker, "XDG_CACHE_HOME="+t.TempDir())
 				var stdout, stderr bytes.Buffer
 				cmd.Stdout = &stdout
 				cmd.Stderr = &stderr

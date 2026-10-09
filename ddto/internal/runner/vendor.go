@@ -385,7 +385,7 @@ func isDirectoryPath(path string) bool {
 var userCacheDir = os.UserCacheDir
 
 // vendorWorkspaceLayout changes every cache key when the stored layout changes.
-const vendorWorkspaceLayout = "ddtest-vendor-workspace-v4"
+const vendorWorkspaceLayout = "ddto-vendor-workspace-v4"
 
 // vendorWorkspaceRetention bounds unused workspaces. Each one holds go.work,
 // modules.txt and links, or copies across filesystems, and every vendor change
@@ -487,7 +487,7 @@ func stableVendorWorkspace(ctx context.Context, work string, vendor vendorManife
 		}
 	}
 	key := hex.EncodeToString(hash.Sum(nil))[:32]
-	parent := filepath.Join(cache, "ddtest", "vendor-workspaces")
+	parent := filepath.Join(cache, "ddto", "vendor-workspaces")
 	root := filepath.Join(parent, key)
 	manifest := vendor.contents(original, root)
 	if err := os.MkdirAll(parent, 0700); err != nil {

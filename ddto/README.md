@@ -1,6 +1,6 @@
-# ddtest
+# ddto
 
-`ddtest` instruments Go tests and reports them to Datadog Test Optimization
+`ddto` instruments Go tests and reports them to Datadog Test Optimization
 (CI Visibility). Run it in place of `go test`; it prepares temporary build
 overlays, then lets Go compile and execute the tests.
 
@@ -18,16 +18,16 @@ variables with PowerShell; locally built executables can use a `.exe` suffix.
 Use an installed Go 1.25 or newer toolchain:
 
 ```sh
-go install github.com/tonyredondo/dd-ci-testing-poc/cmd/ddtest@main
+go install github.com/tonyredondo/dd-ci-testing-poc/cmd/ddto@main
 ```
 
-Go places `ddtest` in `GOBIN`, or `$(go env GOPATH)/bin` when `GOBIN` is unset.
+Go places `ddto` in `GOBIN`, or `$(go env GOPATH)/bin` when `GOBIN` is unset.
 Add that directory to `PATH`. To build from a local checkout:
 
 ```sh
 git clone https://github.com/tonyredondo/dd-ci-testing-poc.git
 cd dd-ci-testing-poc
-go build -o bin/ddtest ./cmd/ddtest
+go build -o bin/ddto ./cmd/ddto
 ```
 
 Run the resulting binary from the module you want to test. The toolchain must
@@ -40,7 +40,7 @@ mode, workspaces and local replacements.
 With a Datadog Agent that accepts CI Visibility requests, run from your project:
 
 ```sh
-DD_SERVICE=my-tests DD_ENV=ci ddtest test -count=1 ./...
+DD_SERVICE=my-tests DD_ENV=ci ddto test -count=1 ./...
 ```
 
 Set `DD_TRACE_AGENT_URL` to select an Agent address. Without an override, Mini
@@ -50,7 +50,7 @@ configuration and select your Datadog site:
 
 ```sh
 DD_CIVISIBILITY_AGENTLESS_ENABLED=true DD_SITE=datadoghq.com \
-  ddtest test -count=1 ./...
+  ddto test -count=1 ./...
 ```
 
 Git metadata normally comes from the checkout and CI environment. Repository
@@ -69,24 +69,24 @@ your sources unchanged. Explicit `-mod=mod` still permits Go's own module edits.
 
 ```sh
 # Select tests and keep Go's normal output.
-ddtest test -count=1 -run '^TestRequest$' -v ./...
+ddto test -count=1 -run '^TestRequest$' -v ./...
 
 # Race detection and atomic coverage of client packages.
-ddtest test -count=1 -race -covermode=atomic -coverpkg=./... ./...
+ddto test -count=1 -race -covermode=atomic -coverpkg=./... ./...
 
 # JSON output; CLI diagnostics stay on stderr.
-ddtest test -count=1 -json ./...
+ddto test -count=1 -json ./...
 
 # Compile test binaries without running tests or sending runtime events.
 mkdir -p test-binaries
-ddtest test -c -o "$PWD/test-binaries/" ./...
+ddto test -c -o "$PWD/test-binaries/" ./...
 
 # Execute one compiled binary from the package's expected working directory.
 DD_CIVISIBILITY_ENABLED=parent ./test-binaries/example.test \
   -test.count=1 -test.timeout=10m -test.v
 
 # Compare with the pinned, unmodified full SDK runtime.
-ddtest test --runtime=sdk -count=1 ./...
+ddto test --runtime=sdk -count=1 ./...
 ```
 
 Mini is selected when `--runtime` is omitted. Both `--runtime=mini` and
@@ -109,7 +109,7 @@ The SDK backend requires the exact version pinned in
 | Bazel | Offline manifest and payload-file contracts; a real Bazel toolchain invocation is not part of the validation. [Details](docs/mini-runtime.md#delivery-and-offline-output) |
 | Platforms | Linux with Go 1.25/1.26/1.27 and tip, macOS and Windows with Go 1.27; Linux also runs stable versions with `-race`. [CI matrix](docs/validation.md#compatibility-workflow) |
 
-When using `ddtest`, a client's `go.mod` can declare Go 1.21 or newer; the
+When using `ddto`, a client's `go.mod` can declare Go 1.21 or newer; the
 installed toolchain must meet Mini's Go 1.25 minimum. Older toolchains are
 rejected before module provisioning. Instrumentation preserves the client's
 language version, including its loop-variable behavior. A direct `testopt`
@@ -121,7 +121,7 @@ checks from live intake, UI and downstream-project validation.
 
 ## Environment variables
 
-Set these variables before invoking `ddtest` or a compiled test binary. The
+Set these variables before invoking `ddto` or a compiled test binary. The
 tables describe the default Mini runtime; `--runtime=sdk` uses the pinned SDK's
 configuration. Boolean settings accept `true` and `false`. CI-provider variables
 are detected automatically. Internal retry and compiler-wrapper variables are
@@ -211,7 +211,7 @@ including manifest credentials and validation limits.
 ## Debug and maintain
 
 ```sh
-DD_TRACE_DEBUG=true ddtest test -count=1 -v ./...
+DD_TRACE_DEBUG=true ddto test -count=1 -v ./...
 ```
 
 Build logs use `TestOptimization.build`; Mini logs use `TestOptimization.run`.

@@ -66,7 +66,7 @@ The archived matrix used Go 1.27.1 on Linux/amd64. macOS and Windows can regener
 its tables; this runner does not measure builds on those platforms.
 
 Build tools and dependency setup are outside the timed commands. The runner
-builds `ddtest` from the checkout it is launched from and records the HEAD,
+builds `ddto` from the checkout it is launched from and records the HEAD,
 working-tree status, source hashes and executable hashes. Keep that checkout
 unchanged during a run. The prepared subjects are copies in a new artifact
 directory; their source repositories, GOROOT and incorporated SDK stay untouched.

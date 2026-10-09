@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// userCacheEnv points os.UserCacheDir at dir for ddtest's persistent vendor
+// userCacheEnv points os.UserCacheDir at dir for ddto's persistent vendor
 // workspaces. Go's own build cache and module path stay where they were.
 func userCacheEnv(t *testing.T, dir string) []string {
 	t.Helper()
@@ -33,7 +33,7 @@ func userCacheEnv(t *testing.T, dir string) []string {
 	return append(env, "XDG_CACHE_HOME="+dir)
 }
 
-// vendorWorkspaceDirs lists the persistent workspace directories ddtest stored
+// vendorWorkspaceDirs lists the persistent workspace directories ddto stored
 // below dir.
 func vendorWorkspaceDirs(t *testing.T, dir string) []string {
 	t.Helper()
@@ -68,7 +68,7 @@ func symlinksAvailable(t *testing.T) bool {
 	return os.Symlink(dir, filepath.Join(dir, "link")) == nil
 }
 
-// A temporary workspace belongs to ddtest's build. Tests, dependencies that
+// A temporary workspace belongs to ddto's build. Tests, dependencies that
 // initialize before testing, and the go commands they start must see the
 // caller's GOWORK and GOFLAGS, as with native go test.
 func TestMiniTemporaryWorkspaceRestoresGoEnvironment(t *testing.T) {
@@ -97,7 +97,7 @@ func init() { out, _ := exec.Command("go", "list", "-m").Output(); InitMain = st
 import ("fmt";"os";"os/exec";"strings";"testing";"example.com/environmenthelper")
 func TestEnvironment(t *testing.T) {
  fmt.Printf("ENV INIT_MAIN=%q\n", environmenthelper.InitMain)
- for _, name := range []string{"GOWORK", "GOFLAGS", "DDTEST_ORIGINAL_GOWORK", "DDTEST_ORIGINAL_GOFLAGS"} {
+ for _, name := range []string{"GOWORK", "GOFLAGS", "DDTO_ORIGINAL_GOWORK", "DDTO_ORIGINAL_GOFLAGS"} {
   value, ok := os.LookupEnv(name)
   fmt.Printf("ENV %s=%t:%q\n", name, ok, value)
  }
@@ -137,13 +137,13 @@ func TestEnvironment(t *testing.T) {
 				t.Fatalf("exit=%d\n%s%s", code, out, stderr)
 			}
 			if want, got := lines(native), lines(out); len(want) != 7 || !slices.Equal(got, want) {
-				t.Fatalf("test environment changed:\nnative: %q\nddtest: %q", want, got)
+				t.Fatalf("test environment changed:\nnative: %q\nddto: %q", want, got)
 			}
 		})
 	}
 }
 
-// Tools that ddtest chains belong to the build: unlike test processes, a user
+// Tools that ddto chains belong to the build: unlike test processes, a user
 // -toolexec must keep the temporary workspace that makes Mini resolvable.
 func TestMiniTemporaryWorkspaceKeepsBuildToolEnvironment(t *testing.T) {
 	driver := sharedDriver(t, "..")
@@ -184,7 +184,7 @@ func main() {
 		t.Fatal(out, stderr)
 	}
 	marker := filepath.Join(root, "marker")
-	// Covering testing makes ddtest's selective tool chain the user's wrapper.
+	// Covering testing makes ddto's selective tool chain the user's wrapper.
 	args := []string{"test", "-count=1", "-coverpkg=testing", "-toolexec=" + quoteToolArgument(t, binary), "."}
 	out, stderr, code := command(t, client, append(env, "TOOL_MARKER="+marker), driver, args...)
 	if code != 0 {
@@ -270,7 +270,7 @@ func hardLinksAvailable(t *testing.T, from, to string) bool {
 	return os.Link(file, link) == nil
 }
 
-// ddtest must use the vendored sources that go test uses. Go selects a vendor
+// ddto must use the vendored sources that go test uses. Go selects a vendor
 // directory by mode: a go mod vendor tree beside go.work, or a go work vendor
 // tree under GOWORK=off, is ignored. Relative local replacements, including a
 // go.work replacement of one version, must survive the move to a temporary
@@ -419,7 +419,7 @@ func TestMiniVendorSelectionMatchesGo(t *testing.T) {
 				t.Fatalf("exit=%d\n%s%s", code, out, stderr)
 			}
 			if want, got := values(native), values(out); want == "" || got != want {
-				t.Fatalf("selected sources differ: native=%q ddtest=%q", want, got)
+				t.Fatalf("selected sources differ: native=%q ddto=%q", want, got)
 			}
 		})
 	}
@@ -474,11 +474,11 @@ func TestMiniVendorTreeMatchesGo(t *testing.T) {
 	out, stderr, code := command(t, client, env, driver, args...)
 	if want, got := results(native), results(out); code != nativeCode || !slices.Equal(got, want) || !slices.Contains(want, "FAIL example.com/patternhelper") ||
 		!slices.Contains(want, `EMBED="embedded file","embedded directory",<nil>`) {
-		t.Fatalf("native exit=%d %q\n%s%s\nddtest exit=%d %q\n%s%s", nativeCode, want, native, nativeErr, code, got, out, stderr)
+		t.Fatalf("native exit=%d %q\n%s%s\nddto exit=%d %q\n%s%s", nativeCode, want, native, nativeErr, code, got, out, stderr)
 	}
 }
 
-// Go keys cached results on its own environment, which holds ddtest's stable
+// Go keys cached results on its own environment, which holds ddto's stable
 // vendor workspace, while tests see the caller's values. A result cached under
 // GOWORK=off must not pass for a caller without GOWORK; an unchanged caller
 // still reuses its cached result.
@@ -517,7 +517,7 @@ func TestMiniTestCacheFollowsCallerEnvironment(t *testing.T) {
 }
 
 // A go test -exec program starts before the test binary can restore anything.
-// ddtest wraps it so the program sees the caller's Go settings, as natively.
+// ddto wraps it so the program sees the caller's Go settings, as natively.
 func TestMiniExecWrapperSeesCallerEnvironment(t *testing.T) {
 	driver := sharedDriver(t, "..")
 	root := t.TempDir()
@@ -532,7 +532,7 @@ func TestMiniExecWrapperSeesCallerEnvironment(t *testing.T) {
 		"main.go": `package main
 import ("fmt";"os";"os/exec")
 func main() {
- for _, name := range []string{"GOWORK", "GOFLAGS", "DDTEST_ORIGINAL_GOWORK", "DDTEST_ORIGINAL_GOFLAGS"} {
+ for _, name := range []string{"GOWORK", "GOFLAGS", "DDTO_ORIGINAL_GOWORK", "DDTO_ORIGINAL_GOFLAGS"} {
   value, ok := os.LookupEnv(name)
   fmt.Printf("WRAPPER %s=%t:%q\n", name, ok, value)
  }
@@ -566,6 +566,6 @@ func main() {
 	native, nativeErr, nativeCode := command(t, client, env, "go", args...)
 	out, stderr, code := command(t, client, env, driver, args...)
 	if want, got := lines(native), lines(out); nativeCode != 0 || code != 0 || len(want) != 5 || !slices.Equal(got, want) {
-		t.Fatalf("native exit=%d %q\n%s%s\nddtest exit=%d %q\n%s%s", nativeCode, want, native, nativeErr, code, got, out, stderr)
+		t.Fatalf("native exit=%d %q\n%s%s\nddto exit=%d %q\n%s%s", nativeCode, want, native, nativeErr, code, got, out, stderr)
 	}
 }

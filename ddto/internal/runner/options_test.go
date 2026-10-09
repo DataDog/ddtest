@@ -106,8 +106,8 @@ func TestGoTestArgumentsReplaceUserOverlayAndToolexec(t *testing.T) {
 		},
 		{
 			[]string{"-gcflags=all=-N", "-toolexec", "user tool", "./...", "-gcflags", "-l", "-run", "X"},
-			"ddtest tool-overlay goleak plan",
-			[]string{"test", "-overlay=/plan/overlay.json", "-toolexec=ddtest tool-overlay goleak plan", "-gcflags=all=-N", "./...", "-gcflags", "-l", "-gcflags=go.uber.org/goleak=-I=marker", "-run", "X"},
+			"ddto tool-overlay goleak plan",
+			[]string{"test", "-overlay=/plan/overlay.json", "-toolexec=ddto tool-overlay goleak plan", "-gcflags=all=-N", "./...", "-gcflags", "-l", "-gcflags=go.uber.org/goleak=-I=marker", "-run", "X"},
 		},
 		{
 			[]string{"-toolexec=user", "./..."},

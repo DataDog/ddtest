@@ -111,18 +111,18 @@ func TestCoverToolForwardingAndErrors(t *testing.T) {
 		t.Fatalf("missing overlay exit=%d", code)
 	}
 	// A forwarded tool failure must retain its native exit status.
-	err = exec.Command(cover, "-invalid-ddtest-flag").Run()
+	err = exec.Command(cover, "-invalid-ddto-flag").Run()
 	native, ok := err.(*exec.ExitError)
 	if !ok {
 		t.Fatalf("expected native failure: %v", err)
 	}
-	if got := RunCoverTool(context.Background(), overlay, []string{cover, "-invalid-ddtest-flag"}, nil, &stdout, &stderr); got != native.ExitCode() {
+	if got := RunCoverTool(context.Background(), overlay, []string{cover, "-invalid-ddto-flag"}, nil, &stdout, &stderr); got != native.ExitCode() {
 		t.Fatalf("exit=%d, native=%d", got, native.ExitCode())
 	}
 }
 
 func TestCoverCommandQuoting(t *testing.T) {
-	for _, paths := range [][2]string{{"/path with spaces/ddtest", "/path/overlay.json"}, {`C:\Program Files\ddtest.exe`, `C:\build\overlay.json`}, {"/path/it's/ddtest", `/path/\"quoted\"/overlay.json`}, {`/path'with"both/ddtest`, "/path/overlay.json"}} {
+	for _, paths := range [][2]string{{"/path with spaces/ddto", "/path/overlay.json"}, {`C:\Program Files\ddto.exe`, `C:\build\overlay.json`}, {"/path/it's/ddto", `/path/\"quoted\"/overlay.json`}, {`/path'with"both/ddto`, "/path/overlay.json"}} {
 		command, err := toolCommand(paths[0], paths[1], "cover")
 		if err != nil {
 			t.Fatal(err)

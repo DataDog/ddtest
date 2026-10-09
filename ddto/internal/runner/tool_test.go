@@ -88,14 +88,14 @@ func TestPreparedSuiteCompilerInputs(t *testing.T) {
 func TestGoleakCompilerRemovesOnlyItsOwnCacheMarker(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "leaks.go")
 	plan := &LibraryEntry{Package: "go.uber.org/goleak", Fingerprint: "abc", Sources: map[string]string{source: "prepared.go"}, HookFile: "hook.go"}
-	args := []string{"compile", "-importcfg", "imports", "-I=ddtest-goleak-abc", "-I=client-path", "-N", "-l", source}
+	args := []string{"compile", "-importcfg", "imports", "-I=ddto-goleak-abc", "-I=client-path", "-N", "-l", source}
 	got, cleanup, err := prepareLibraryCompile(plan, args)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cleanup()
 	want := []string{"compile", "-importcfg", "imports", "-I=client-path", "-N", "-l", "prepared.go", "hook.go"}
-	if !reflect.DeepEqual(got, want) || args[3] != "-I=ddtest-goleak-abc" {
+	if !reflect.DeepEqual(got, want) || args[3] != "-I=ddto-goleak-abc" {
 		t.Fatalf("compiler arguments changed: %v / %v", got, args)
 	}
 }

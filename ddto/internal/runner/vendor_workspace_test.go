@@ -105,7 +105,7 @@ func TestVendorWorkspaceLinksAndReusesCachedDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(got, filepath.Join(cache, "ddtest", "vendor-workspaces")+string(filepath.Separator)) {
+	if !strings.HasPrefix(got, filepath.Join(cache, "ddto", "vendor-workspaces")+string(filepath.Separator)) {
 		t.Fatalf("workspace outside the user cache: %s", got)
 	}
 	vendor := filepath.Join(filepath.Dir(got), "vendor")
@@ -260,7 +260,7 @@ func TestVendorWorkspaceNeverReusesUnexpectedContents(t *testing.T) {
 	}
 }
 
-// Like cmd/go, ddtest follows a vendor directory that is itself a link, but
+// Like cmd/go, ddto follows a vendor directory that is itself a link, but
 // no link below it.
 func TestVendorWorkspaceFollowsLinkedVendorDirectory(t *testing.T) {
 	requireSymlinks(t)

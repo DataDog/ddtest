@@ -32,6 +32,10 @@ No slow observations were removed.
 | [Agent delivery control](results/20261005-linux-go1.27.1/agent/README.md) | Gin with local EVP delivery and CI telemetry enabled |
 | [Data and provenance](results/20261005-linux-go1.27.1/README.md) | Original and validated compressed records, input hashes and collection limits |
 
+These runs predate the CLI's rename from `ddtest` to `ddto`. The recorded
+commands, paths and traces keep the original name, so they still match their
+input hashes.
+
 ## Compilation
 
 Commands use `go test -c -o <directory>/ -ldflags=-w ./...`; no test executable

@@ -18,7 +18,7 @@ func TransformSDKMirror(name string, source []byte) ([]byte, uint8, error) {
 	}
 	reserved := false
 	ast.Inspect(file, func(node ast.Node) bool {
-		if id, ok := node.(*ast.Ident); ok && strings.HasPrefix(id.Name, "__ddtest") {
+		if id, ok := node.(*ast.Ident); ok && strings.HasPrefix(id.Name, "__ddto") {
 			reserved = true
 		}
 		return !reserved
@@ -41,7 +41,7 @@ func TransformSDKMirror(name string, source []byte) ([]byte, uint8, error) {
 					if !ok || typ.Assign.IsValid() || found&1 != 0 {
 						return nil, 0, sdkMirrorError("SDK SpanContext changed")
 					}
-					insert(structure.Fields.Opening+1, "\n__ddtestMirror any\n")
+					insert(structure.Fields.Opening+1, "\n__ddtoMirror any\n")
 					found |= 1
 				}
 			}
@@ -105,15 +105,15 @@ import (
  "context"
  _ "unsafe"
 )
-//go:linkname __ddtestMirrorEnable github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer.sdkMirrorEnable
-func __ddtestMirrorEnable()
-func init(){ __ddtestMirrorEnable() }
-//go:linkname __ddtestMirrorStart github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer.sdkMirrorStart
-func __ddtestMirrorStart(context.Context,any,string) any
-//go:linkname __ddtestMirrorContext github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer.sdkMirrorContext
-func __ddtestMirrorContext(context.Context,any) context.Context
-//go:linkname __ddtestMirrorCapture github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer.sdkMirrorCapture
-func __ddtestMirrorCapture(any,string,string,string,string,int64,int64,int32,func(func(string,string)bool),map[string]float64,[16]byte,uint64) any
-//go:linkname __ddtestMirrorDeliver github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer.sdkMirrorDeliver
-func __ddtestMirrorDeliver(any)
+//go:linkname __ddtoMirrorEnable github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer.sdkMirrorEnable
+func __ddtoMirrorEnable()
+func init(){ __ddtoMirrorEnable() }
+//go:linkname __ddtoMirrorStart github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer.sdkMirrorStart
+func __ddtoMirrorStart(context.Context,any,string) any
+//go:linkname __ddtoMirrorContext github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer.sdkMirrorContext
+func __ddtoMirrorContext(context.Context,any) context.Context
+//go:linkname __ddtoMirrorCapture github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer.sdkMirrorCapture
+func __ddtoMirrorCapture(any,string,string,string,string,int64,int64,int32,func(func(string,string)bool),map[string]float64,[16]byte,uint64) any
+//go:linkname __ddtoMirrorDeliver github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer.sdkMirrorDeliver
+func __ddtoMirrorDeliver(any)
 `

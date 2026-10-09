@@ -42,7 +42,7 @@ def main():
     root = Path(__file__).resolve().parent.parent
     module = json.loads(subprocess.check_output(["go", "mod", "edit", "-json"], cwd=root, text=True, encoding="utf-8"))
     graph = subprocess.check_output(
-        ["go", "list", "-deps", "-json=ImportPath,Standard,Module", "./cmd/ddtest", "./testopt", "./propagation"],
+        ["go", "list", "-deps", "-json=ImportPath,Standard,Module", "./cmd/ddto", "./testopt", "./propagation"],
         cwd=root, text=True, encoding="utf-8",
     )
     errors = violations(module, packages_from_json(graph))

@@ -39,7 +39,7 @@ func TestClockLocal(t *testing.T) {
 }
 
 func changeGlobalZone() {
-	if os.Getenv("DDTEST_CHANGE_LOCAL") != "true" {
+	if os.Getenv("DDTO_CHANGE_LOCAL") != "true" {
 		return
 	}
 	previous := time.Local
@@ -75,7 +75,7 @@ func TestMiniCoverageWithGlobalTimeChanges(t *testing.T) {
 				t.Run(fmt.Sprintf("cpus=%d/deferred=%t/telemetry=%t", cpus, deferred, telemetry), func(t *testing.T) {
 					got, mini := runParityCase(t, dir, bins[1], parityCase{
 						Args: args, Policy: policySettings{Coverage: true}, Coverage: true,
-						Env: []string{"DDTEST_CHANGE_LOCAL=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=false", fmt.Sprintf("GOMAXPROCS=%d", cpus), fmt.Sprintf("DD_CIVISIBILITY_DEFERRED_DELIVERY=%t", deferred), fmt.Sprintf("DD_INSTRUMENTATION_TELEMETRY_ENABLED=%t", telemetry)},
+						Env: []string{"DDTO_CHANGE_LOCAL=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=false", fmt.Sprintf("GOMAXPROCS=%d", cpus), fmt.Sprintf("DD_CIVISIBILITY_DEFERRED_DELIVERY=%t", deferred), fmt.Sprintf("DD_INSTRUMENTATION_TELEMETRY_ENABLED=%t", telemetry)},
 					})
 					if mini.code != 0 {
 						t.Fatalf("Mini coverage: exit %d\n%s\n%s", mini.code, mini.out, mini.stderr)

@@ -13,7 +13,7 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
 )
 
-const orchestrionBypassEnv = "DDTEST_ORCHESTRION_BYPASS"
+const orchestrionBypassEnv = "DDTO_ORCHESTRION_BYPASS"
 
 // Recognize the actual tool command, not package names or arbitrary arguments.
 // A different user wrapper remains fully transparent.
@@ -38,7 +38,7 @@ func orchestrionLauncher(command string) (goLauncher, bool) {
 	return goLauncher{}, false
 }
 
-// ddtest owns testing and Testify. Applying testing advice twice redeclares
+// ddto owns testing and Testify. Applying testing advice twice redeclares
 // linkname hooks; weaving Mini itself can also trace delivery.
 // Version probes and application packages still go through Orchestrion.
 func bypassOrchestrionPackage(args []string) bool {
@@ -188,7 +188,7 @@ func resolveOrchestrionExecutable(ctx context.Context, dir string, opts options,
 	cmd := exec.CommandContext(ctx, launcher.command[0], "tool", "-n", "orchestrion")
 	cmd.Dir = dir
 	// Only module selection belongs to the tool bootstrap. Client compile/test
-	// flags, ddtest's overlay and a toolexec command could instrument the tool itself.
+	// flags, ddto's overlay and a toolexec command could instrument the tool itself.
 	flags := []string{"-toolexec="}
 	if opts.mod != "" {
 		flags = append(flags, "-mod="+opts.mod)

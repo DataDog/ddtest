@@ -113,8 +113,8 @@ func TestToolBypassHasNativeIdentityAndExit(t *testing.T) {
 		}
 	}
 	tool := filepath.Join(tools, executableName("compile"))
-	want, werr, wcode := command(t, dir, testEnv(), tool, "-ddtest-invalid")
-	got, gerr, gcode := command(t, dir, testEnv("TOOLEXEC_IMPORTPATH=example.com/unrelated", "DD_TRACE_DEBUG=true"), driver, "tool-overlay", "testify", "missing-plan", tool, "-ddtest-invalid")
+	want, werr, wcode := command(t, dir, testEnv(), tool, "-ddto-invalid")
+	got, gerr, gcode := command(t, dir, testEnv("TOOLEXEC_IMPORTPATH=example.com/unrelated", "DD_TRACE_DEBUG=true"), driver, "tool-overlay", "testify", "missing-plan", tool, "-ddto-invalid")
 	if got != want || gerr != werr || gcode != wcode {
 		t.Fatalf("native failure differs: %d/%d %s %s", gcode, wcode, got, gerr)
 	}
