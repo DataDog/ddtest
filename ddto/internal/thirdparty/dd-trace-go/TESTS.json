@@ -1,8 +1,8 @@
 {
-  "sdk": "github.com/DataDog/dd-trace-go/v2@v2.12.0-dev.3.0.20261002145613-96aedb31048c",
+  "sdk": "github.com/DataDog/dd-trace-go/v2@v2.12.0-dev.3.0.20261008222249-870449702d0a",
   "full_file_count": 61,
   "full_ci_test_file_count": 59,
-  "selected_test_or_helper_files": 7,
+  "selected_test_or_helper_files": 8,
   "assertion_policy": "Preserve upstream assertions and synthetic input semantics; adapt repository/namespace and replace APM mock bootstrap for the native runtime. End-to-end wire tests verify actual delivery separately. Documented correctness adaptations use independent source oracles; named source starts are checked against AST declaration lines. Assert/require calls use equivalent standard-library-only internal test helpers; the port uses native Go 1.25 APIs, with two helpers for Go 1.26 calls; temporary workspaces preserve each consumer module language.",
   "files": [
     {
@@ -72,10 +72,10 @@
     {
       "source": "internal/civisibility/utils/codeowners_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/codeowners_discovery_test.go",
-      "source_sha256": "017d81ee71314d617983dbdeb6e1f373efa6ddb53c041e1805ab6c078a9b8219",
+      "source_sha256": "511b5a161ab3e368acb72ed960e009dbec106048a9dd0bfb55f13fba43935bf2",
       "adapted_sha256": "7ae825d9daea7ddb32e9b6ac5a51d5919f8913e706aab8143112497c04adab61",
       "kind": "selected",
-      "adaptation": "Discovery/cache assertions retained through the new resolver. Parser expectations move to codeownership tests, using native Go rule tables and examples. Correct GitHub interior slash anchoring, host location priority, comments, GitLab defaults/exclusions and valid long-line handling. Mutable Entry/Section tests are replaced by immutable ownership tests."
+      "adaptation": "Discovery/cache assertions retained through the new resolver. Parser expectations move to codeownership tests, using native Go rule tables and examples. Correct GitHub interior slash anchoring, host location priority, comments, GitLab defaults/exclusions and valid long-line handling. Mutable Entry/Section tests are replaced by immutable ownership tests. Upstream rooted filename-prefix and precedence cases are retained in codeownership/github_test.go; existing general glob support is preserved."
     },
     {
       "source": "internal/civisibility/utils/environmentTags_test.go",
@@ -512,10 +512,18 @@
     {
       "source": "internal/civisibility/integrations/gotesting/retry_process_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/ci_policy_helpers_test.go",
-      "source_sha256": "e6b80942c6218282fbf896b741e54ce4a33886de522e7134457a27485db06d6b",
+      "source_sha256": "5dd1b08003bd3dca0ca07de93f462ff225a9002b549b38dc1147ebc981f3d64f",
       "adapted_sha256": "3d0f38e45c9f1fbf60d6a85b3c3019182baf88301bd46c1d154c07835b840e4f",
       "kind": "helpers",
       "adaptation": "extracted only recording CI event/session/module/suite/test helpers; no APM tracer mocks; standard-library assertion helpers"
+    },
+    {
+      "source": "internal/civisibility/integrations/gotesting/retry_process_test.go",
+      "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/retry_process_launch_gate_test.go",
+      "source_sha256": "5dd1b08003bd3dca0ca07de93f462ff225a9002b549b38dc1147ebc981f3d64f",
+      "adapted_sha256": "b4e14411d37c7440cc2a2d01c7a4cd3586c3d2739350f16ec024be55f76c2b92",
+      "kind": "selected",
+      "adaptation": "Port TestRunProcessRetryAttemptRechecksCancellationAfterLaunchGateWait and its launch-gate, limiter, timer and context helpers; preserve both deterministic cancellation/deadline cases and all assertions; internal import relocation and standard-library assertion helpers. No child process is started."
     },
     {
       "source": "internal/civisibility/integrations/civisibility_parent_test.go",
@@ -583,7 +591,7 @@
   ],
   "not_fully_ported_scope": "APM mock/span-count tests, Orchestrion-specific fixtures, subprocess control and platform cases are not represented as a complete upstream suite. POC-owned SDK/Orchestrion differential tests separately cover native testing and Testify lifecycle, retries, EFD, ITR, quarantine, attempt-to-fix, coverage and deferred delivery; they do not turn this inventory into a full upstream-suite port.",
   "ci_only_cleanup": "The retired APM endpoint test is explicitly marked replacement; reduced telemetry helpers are marked adapted. Full CI test-file count is unchanged. The unused telemetrytest MockClient helper is not incorporated, so tests need no testify/mock.",
-  "base_commit": "96aedb31048c07e29e7a20a4333dc3b8d289c52d",
+  "base_commit": "870449702d0a0cea26a6223eefe2f0a198069d79",
   "local_performance_tests": [
     {
       "path": "telemetry/concurrency_test.go",
@@ -692,7 +700,8 @@
       ],
       "fixtures_manifest": "testdata/fuzzexamples/SOURCE.json",
       "scenarios": 16,
-      "additional_combinations": "Manual/automatic entrypoints and normal/deferred delivery; additional goleak/coverage cases are local regressions"
+      "additional_combinations": "Manual/automatic entrypoints and normal/deferred delivery; additional goleak/coverage cases are local regressions",
+      "integrated_commit": "870449702d0a0cea26a6223eefe2f0a198069d79"
     }
   ],
   "local_codeownership_checks": {
@@ -700,7 +709,8 @@
     "go_examples": "civisibility/utils/codeownership/example_test.go and testdata: public API example, Go package ownership, rune-based wildcards, Go Unicode casing and email owners",
     "boundaries": "civisibility/utils/codeownership/codeowners_test.go: immutable results, concurrent readers, missing files, bounded matching, large tokens/headers/lines, duplicate compaction, encodings and line endings",
     "discovery": "civisibility/utils/codeownership/locator_test.go: host locations, repository/worktree roots, workspace rebasing, traversal rejection, read errors and stable decisions",
-    "integration": "integration/codeowners_service_test.go: actual owner/service payloads, normal/deferred delivery, compiled binaries, coverage, race, trimpath, Testify and goleak"
+    "integration": "integration/codeowners_service_test.go: actual owner/service payloads, normal/deferred delivery, compiled binaries, coverage, race, trimpath, Testify and goleak",
+    "upstream_prefix": "civisibility/utils/codeownership/github_test.go: rooted filename-prefix matches, directory descendants, root/case boundaries and last-rule precedence from the SDK regression"
   },
   "local_sdk_mirror_checks": {
     "native_context": "gotesting/native_context_test.go: SDK-free context identity and zero allocations",

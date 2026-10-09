@@ -240,11 +240,6 @@ func canonicalTestifyDiagnostic(text string) string {
 				} else if stack && i > 0 {
 					function := strings.TrimSpace(lines[i-1])
 					function = strings.TrimSuffix(strings.TrimPrefix(function, sourcePrefix), "()")
-					for _, site := range adaptedMiniCallSites {
-						if function == site.function && location == site.mini {
-							lines[i-1] = strings.Replace(lines[i-1], site.function, site.sdkFunction, 1)
-						}
-					}
 					location = canonicalMiniCallSite(function, location)
 				}
 				line = line[:start] + sourcePrefix + location

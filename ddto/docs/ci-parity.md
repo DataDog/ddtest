@@ -15,7 +15,7 @@ race, covered library inputs and deliberate test/HTTP leaks. See
 [delivery and goleak](delivery.md) for its contract.
 
 The SDK reference is `dd-trace-go/main` at
-[`96aedb31048c07e29e7a20a4333dc3b8d289c52d`](https://github.com/DataDog/dd-trace-go/tree/96aedb31048c07e29e7a20a4333dc3b8d289c52d),
+[`870449702d0a0cea26a6223eefe2f0a198069d79`](https://github.com/DataDog/dd-trace-go/tree/870449702d0a0cea26a6223eefe2f0a198069d79),
 also the base of our incorporated CI source. The exact module version is owned by
 [`internal/version`](../internal/version/version.go). Orchestrion is pinned to
 `v1.13.2-0.20260917114356-5c24783fcd76`; the fixture loads `gotesting/orchestrion.yml`
@@ -138,14 +138,14 @@ Only declared differences are normalized:
 
 | Mini location | SDK location | Internal function |
 | --- | --- | --- |
-| `testing.go:866` | `testing.go:838` | `(*M).executeInternalTest.func1` |
-| `instrumentation_orchestrion.go:426` | `instrumentation_orchestrion.go:319` | Source-options wrapper `.func1.1` maps to the original test wrapper `.func1.1` |
-| `instrumentation_orchestrion.go:432` | `instrumentation_orchestrion.go:325` | Source-options wrapper `.func1` maps to the original test wrapper `.func1` |
-| `instrumentation.go:775` | `instrumentation.go:728` | `applyAdditionalFeaturesToTestFunc.func2` |
-| `instrumentation.go:1011` | `instrumentation.go:964` | `runTestWithRetry` |
-| `instrumentation.go:1138` | `instrumentation.go:1091` | `runRetryAttemptCapabilityFallback` |
+| `testing.go:867` | `testing.go:864` | `(*M).executeInternalTest.func1` |
+| `instrumentation_orchestrion.go:427` | `instrumentation_orchestrion.go:424` | `instrumentTestingTFuncWithSourceOptions.func1.1` |
+| `instrumentation_orchestrion.go:433` | `instrumentation_orchestrion.go:430` | `instrumentTestingTFuncWithSourceOptions.func1` |
+| `instrumentation.go:775` | `instrumentation.go:775` | `applyAdditionalFeaturesToTestFunc.func2` |
+| `instrumentation.go:1011` | `instrumentation.go:1011` | `runTestWithRetry` |
+| `instrumentation.go:1138` | `instrumentation.go:1138` | `runRetryAttemptCapabilityFallback` |
 
-The PR-specific [Fuzz/Examples comparator](fuzz-examples.md) keeps application
+The [Fuzz/Examples comparator](fuzz-examples.md) keeps application
 frames strict and canonicalizes incorporated source lines separately. Go 1.26
 can number Mini's root and deferred closures `.func2`/`.func2.1`; the comparator
 maps only those known F-root owners to `.func1`/`.func1.1` in `testingF.go`.
@@ -181,7 +181,7 @@ missing test attributes in the comparator.
 Run from this checkout with the frozen reference available:
 
 ```sh
-go install github.com/DataDog/orchestrion@v1.13.2-0.20260917114356-5c24783fcd76
+go -C testdata/orchestrion build -mod=readonly -o "$(go env GOPATH)/bin/orchestrion" github.com/DataDog/orchestrion
 mkdir -p artifacts
 ORCHESTRION_BIN="$(go env GOPATH)/bin/orchestrion" \
   PARITY_REPORT_PATH="$PWD/artifacts/parity.json" \

@@ -1,6 +1,6 @@
 # Runtime adaptations to the SDK port
 
-Base: [`96aedb31048c07e29e7a20a4333dc3b8d289c52d`](https://github.com/DataDog/dd-trace-go/commit/96aedb31048c07e29e7a20a4333dc3b8d289c52d).
+Base: [`870449702d0a0cea26a6223eefe2f0a198069d79`](https://github.com/DataDog/dd-trace-go/commit/870449702d0a0cea26a6223eefe2f0a198069d79).
 `SOURCE.json` retains each original path/hash alongside the local hash. This
 record explains changes that an upstream synchronization must review manually.
 
@@ -530,12 +530,19 @@ the incorporated logger. The original SDK's logger is unchanged.
 
 ## Fuzz and executable Examples
 
-The feature port is SDK PR #5442 at
-`7b32e1812cb5c1fb807a63cc5042750f3d3cd672`; it has its own source hashes,
-separate from the general SDK base. `testingF.go`, `testingExample.go` and
+SDK PR #5442 is integrated in the recorded `main` base. `feature_ports` keeps
+the original feature revision for source history; ordinary file records and
+differential fixtures now use the SDK base. `testingF.go`, `testingExample.go` and
 `fuzz_events.go` retain the native lifecycle and original test assertions.
 `instrumentation.go`, `instrumentation_orchestrion.go` and `testing.go` merge
 that delta while preserving this port's coverage-aware shutdown.
+
+The SDK installs a CI-only flush handler before publishing its tracer. Mini
+owns its queue and flush contract, so that APM worker implementation is not
+copied here. The compiler's SDK CI gates remain disabled when Mini is selected;
+the SDK's lifecycle installer then follows its original APM path. Verify one CI
+reporter and unchanged APM delivery with the SDK mirror and Orchestrion tests
+after changing either side.
 
 Tracer flushes route to `minitracer.Flush`. F roots hold deferred admission
 through seeds and cleanups; examples hold it through output capture and event

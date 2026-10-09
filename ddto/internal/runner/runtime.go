@@ -18,12 +18,11 @@ const (
 // declares the counter Mini's in-process retries must balance.
 func hooksForRuntime(runtime Runtime, parallelStop bool) string {
 	if runtime == Mini {
-		hooks := strings.ReplaceAll(instrument.Hooks, "github.com/DataDog/dd-trace-go/v2/internal/civisibility/", "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/")
-		hooks += instrument.FuzzHook
+		hooks := strings.ReplaceAll(instrument.Hooks+instrument.FuzzHook, "github.com/DataDog/dd-trace-go/v2/internal/civisibility/", "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/")
 		if parallelStop {
 			hooks += instrument.ParallelStopHook
 		}
 		return hooks
 	}
-	return instrument.Hooks
+	return instrument.Hooks + instrument.FuzzHook
 }

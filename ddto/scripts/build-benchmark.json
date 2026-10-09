@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "sdk_version": "v2.12.0-dev.3.0.20261002145613-96aedb31048c",
-  "sdk_commit": "96aedb31048c07e29e7a20a4333dc3b8d289c52d",
+  "sdk_version": "v2.12.0-dev.3.0.20261008222249-870449702d0a",
+  "sdk_commit": "870449702d0a0cea26a6223eefe2f0a198069d79",
   "orchestrion_version": "v1.13.2-0.20260917114356-5c24783fcd76",
   "testify_version": "v1.12.1",
   "cpus": [

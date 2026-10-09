@@ -47,6 +47,9 @@ Windows separators. Paths are case-sensitive. GitHub patterns with an interior
 slash are rooted; GitLab patterns without a leading slash can match at any depth.
 `**` is a globstar only as a whole path segment. GitLab's terminal `**` matches
 one segment, while `**/` can match nested directories.
+GitHub's rooted filename prefixes also cover matching directories: `/src/ci_*`
+owns `src/ci_new.go` and `src/ci_group/nested.go`, while `/src/*` selects only
+immediate files.
 
 `MatchDirectory` selects ownership for a package without guessing a filename.
 A trailing slash includes the directory itself; terminal `/*` selects direct

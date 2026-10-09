@@ -2,7 +2,7 @@ module example.com/dd-ci-testing-fixture
 
 go 1.26.0
 
-require github.com/DataDog/dd-trace-go/v2 v2.12.0-dev.3.0.20261002145613-96aedb31048c
+require github.com/DataDog/dd-trace-go/v2 v2.12.0-dev.3.0.20261008222249-870449702d0a
 
 require (
 	github.com/DataDog/datadog-agent/comp/core/tagger/origindetection v0.82.0 // indirect

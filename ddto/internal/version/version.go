@@ -14,5 +14,5 @@ const BuildLogPrefix = "TestOptimization.build " + Tag
 const RunLogPrefix = "TestOptimization.run  " + Tag
 
 // SDKVersion and SDKCommit pin the extraction and differential reference together.
-const SDKVersion = "v2.12.0-dev.3.0.20261002145613-96aedb31048c"
-const SDKCommit = "96aedb31048c07e29e7a20a4333dc3b8d289c52d"
+const SDKVersion = "v2.12.0-dev.3.0.20261008222249-870449702d0a"
+const SDKCommit = "870449702d0a0cea26a6223eefe2f0a198069d79"

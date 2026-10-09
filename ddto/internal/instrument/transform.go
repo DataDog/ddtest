@@ -1,4 +1,4 @@
-// The hook advice follows dd-trace-go main@96aedb31048c07e29e7a20a4333dc3b8d289c52d, Apache-2.0.
+// The hook advice follows dd-trace-go main@870449702d0a0cea26a6223eefe2f0a198069d79, Apache-2.0.
 package instrument
 
 import (
@@ -30,8 +30,7 @@ func Transform(files map[string][]byte) (TestingSources, error) {
 	return transform(files, false)
 }
 
-// TransformWithFuzz adds the F.Fuzz hook supported by the native runtime.
-// The older frozen SDK reference retains its own hook set.
+// TransformWithFuzz adds the F.Fuzz hook supported by both selected runtimes.
 func TransformWithFuzz(files map[string][]byte) (TestingSources, error) {
 	return transform(files, true)
 }

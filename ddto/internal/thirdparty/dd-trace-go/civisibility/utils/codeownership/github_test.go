@@ -4,6 +4,51 @@ package codeownership
 
 import "testing"
 
+func TestGitHubAnchoredFilenamePrefix(t *testing.T) {
+	// The SDK's /dir/prefix* ownership rules include matching directories.
+	// Keep the parser's general glob rules as well as this upstream regression.
+	checkRules(t, GitHub, []ruleTest{
+		{
+			name:  "anchored prefix",
+			rules: "/src/ci_* @owner\n",
+			files: []fileTest{
+				{"/src/ci_new.go", []string{"@owner"}},
+				{"/src/ci_new_test.go", []string{"@owner"}},
+				{"/src/ci_", []string{"@owner"}},
+				{"/src/ci_group/nested.go", []string{"@owner"}},
+				{"/src/app.go", nil},
+				{"/src/ci.go", nil},
+				{"/src/CI_new.go", nil},
+				{"/src/nested/ci_new.go", nil},
+				{"/other/src/ci_new.go", nil},
+			},
+		},
+		{
+			name:  "root prefix",
+			rules: "/ci_* @owner\n",
+			files: []fileTest{
+				{"/ci_root.go", []string{"@owner"}},
+				{"/src/ci_root.go", nil},
+			},
+		},
+		{
+			name:  "last exact rule wins",
+			rules: "/src/ @directory\n/src/ci_* @prefix\n/src/ci_exact.go @exact\n",
+			files: []fileTest{{"/src/ci_exact.go", []string{"@exact"}}},
+		},
+		{
+			name:  "last prefix rule wins",
+			rules: "/src/ @directory\n/src/ci_exact.go @exact\n/src/ci_* @prefix\n",
+			files: []fileTest{{"/src/ci_exact.go", []string{"@prefix"}}},
+		},
+		{
+			name:  "last directory rule wins",
+			rules: "/src/ci_* @prefix\n/src/ @directory\n",
+			files: []fileTest{{"/src/ci_exact.go", []string{"@directory"}}},
+		},
+	})
+}
+
 func TestGitHubRules(t *testing.T) {
 	cases := []ruleTest{
 		{

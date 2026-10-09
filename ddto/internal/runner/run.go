@@ -328,7 +328,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	if !foundRuntime || native == nil {
 		return plan, fmt.Errorf("missing testing or selected CI runtime package")
 	}
-	rewritten, e := transformTesting(native, replacements, runtime, debug)
+	rewritten, e := transformTesting(native, replacements, debug)
 	if e != nil {
 		return plan, e
 	}
@@ -482,7 +482,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	return plan, nil
 }
 
-func transformTesting(native *goPackage, replacements map[string]string, runtime Runtime, debug *cliDebug) (result instrument.TestingSources, err error) {
+func transformTesting(native *goPackage, replacements map[string]string, debug *cliDebug) (result instrument.TestingSources, err error) {
 	phase := debug.start("instrument testing")
 	defer func() { phase.finish(err) }()
 	files := map[string][]byte{}
@@ -498,15 +498,12 @@ func transformTesting(native *goPackage, replacements map[string]string, runtime
 		}
 		files[path] = src
 	}
-	transform := instrument.Transform
-	if runtime == Mini {
-		transform = instrument.TransformWithFuzz
-	}
-	result, err = transform(files)
+	// Both Mini and the pinned SDK support fuzz seeds through this hook.
+	result, err = instrument.TransformWithFuzz(files)
 	if err != nil {
 		return result, err
 	}
-	debug.printf("testing sources=%d rewritten=%d fuzz=%t parallel_stop=%t", len(files), len(result.Files), runtime == Mini, result.ParallelStop)
+	debug.printf("testing sources=%d rewritten=%d fuzz=true parallel_stop=%t", len(files), len(result.Files), result.ParallelStop)
 	return result, nil
 }
 

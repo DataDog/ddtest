@@ -1,8 +1,8 @@
 # Go Fuzz and executable Examples
 
-Mini ports [dd-trace-go PR #5442](https://github.com/DataDog/dd-trace-go/pull/5442)
-at `7b32e1812cb5c1fb807a63cc5042750f3d3cd672`. The SDK base for other CI
-features is recorded separately in [SOURCE.json](../internal/thirdparty/dd-trace-go/SOURCE.json).
+Mini uses the Fuzz/Examples support from [dd-trace-go PR #5442](https://github.com/DataDog/dd-trace-go/pull/5442),
+integrated in `main` at `870449702d0a0cea26a6223eefe2f0a198069d79`. All CI features
+and differential tests use this [SDK base](../internal/thirdparty/dd-trace-go/SOURCE.json).
 This feature adds no external runtime dependency.
 
 ## What gets reported
@@ -129,7 +129,7 @@ regression gate, not evidence of every long-running fuzz workload or acceptance
 by a real Datadog intake.
 
 ```sh
-go install github.com/DataDog/orchestrion@v1.13.2-0.20260917114356-5c24783fcd76
+go -C testdata/orchestrion build -mod=readonly -o "$(go env GOPATH)/bin/orchestrion" github.com/DataDog/orchestrion
 ORCHESTRION_BIN="$(go env GOPATH)/bin/orchestrion" \
   PARITY_REPORT_PATH="$PWD/artifacts/parity.json" \
   go test -v -count=1 -timeout=30m ./integration
@@ -184,12 +184,12 @@ signature. Keep result collection and callback adaptation separate when
 profiling; a faster lookup does not establish a whole-campaign improvement.
 
 When updating the SDK, review [ADAPTATIONS.md](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md),
-the PR-specific `feature_ports` entry, the fixture hashes, both delivery modes
+the historical `feature_ports` entry, the current fixture hashes, both delivery modes
 and the goleak filters. Run the layout-drift tests and the fatal-duration race
-test before the full differential matrix. Use the exact feature SHA to generate
-its adaptation patch:
+test before the full differential matrix. Generate the adaptation patch against
+the recorded SDK base:
 
 ```sh
 python scripts/upstream.py patch --library dd-trace-go --source /path/to/sdk \
-  --source-commit 7b32e1812cb5c1fb807a63cc5042750f3d3cd672 > fuzz-examples.patch
+  --source-commit 870449702d0a0cea26a6223eefe2f0a198069d79 > fuzz-examples.patch
 ```

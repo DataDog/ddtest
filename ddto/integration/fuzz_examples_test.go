@@ -17,10 +17,11 @@ import (
 	"time"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
-const fuzzExampleSDKVersion = "v2.12.0-dev.3.0.20261001212005-7b32e1812cb5"
-const fuzzExampleSDKCommit = "7b32e1812cb5c1fb807a63cc5042750f3d3cd672"
+const fuzzExampleSDKVersion = version.SDKVersion
+const fuzzExampleSDKCommit = version.SDKCommit
 const fuzzFixtureSuffix = "civisibility/integrations/gotesting/fixtures/fuzzexamplesport"
 
 // These are the SDK PR's complete fixture scenarios, including its own fatal,

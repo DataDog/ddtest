@@ -36,14 +36,17 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: ${{ matrix.go }}
-          cache-dependency-path: testdata/fixture/go.sum
-      - name: Install frozen Orchestrion reference
+          cache-dependency-path: |
+            testdata/fixture/go.sum
+            testdata/orchestrion/go.sum
+      - name: Build frozen Orchestrion reference
         if: matrix.shard != 'units'
         shell: bash
         run: |
-          go install github.com/DataDog/orchestrion@v1.13.2-0.20260917114356-5c24783fcd76
           reference="$(go env GOPATH)/bin/orchestrion"
           if [[ "$RUNNER_OS" == "Windows" ]]; then reference="$reference.exe"; fi
+          go -C testdata/orchestrion build -mod=readonly -o "$reference" github.com/DataDog/orchestrion
+          go version -m "$reference"
           echo "ORCHESTRION_BIN=$reference" >> "$GITHUB_ENV"
       - name: Verify fixture modules
         shell: bash

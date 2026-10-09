@@ -403,7 +403,7 @@ func TestMiniOrchestrionClientPinnedTool(t *testing.T) {
 		t.Skip("ORCHESTRION_BIN not configured")
 	}
 	dir, driver := prepareMiniFixture(t)
-	out, stderr, code := command(t, dir, testEnv(), "go", "get", "github.com/DataDog/orchestrion@v1.6.1", "github.com/DataDog/dd-trace-go/v2@v2.11.0-rc.2")
+	out, stderr, code := command(t, dir, testEnv(), "go", "get", "github.com/DataDog/orchestrion@v1.6.1", "github.com/DataDog/dd-trace-go/v2@v2.11.0-rc.2", "golang.org/x/tools@"+orchestrionToolsVersion)
 	if code != 0 {
 		t.Fatal(out, stderr)
 	}

@@ -2,13 +2,13 @@
 
 - Repository: https://github.com/DataDog/dd-trace-go
 - Default branch: `main`
-- Base commit: `96aedb31048c07e29e7a20a4333dc3b8d289c52d`
-- Go module version: `v2.12.0-dev.3.0.20261002145613-96aedb31048c`
+- Base commit: `870449702d0a0cea26a6223eefe2f0a198069d79`
+- Go module version: `v2.12.0-dev.3.0.20261008222249-870449702d0a`
 - License: original Apache-2.0 text in [LICENSE](LICENSE).
 - Files and hashes: [SOURCE.json](SOURCE.json).
 - Ported test inventory and adaptations: [TESTS.json](TESTS.json).
-- Fuzz/Examples feature port: [PR #5442](https://github.com/DataDog/dd-trace-go/pull/5442),
-  `7b32e1812cb5c1fb807a63cc5042750f3d3cd672`, recorded separately in `feature_ports`.
+- Fuzz/Examples: [PR #5442](https://github.com/DataDog/dd-trace-go/pull/5442),
+  integrated in this base. `feature_ports` retains the original source reference.
 
 The [CODEOWNERS package](../../../docs/codeownership.md) is maintained here
 with the SDK's CI Visibility code. It is registered as local SDK additions

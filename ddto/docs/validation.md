@@ -2,10 +2,15 @@
 
 Mini is the default runtime. Explicit `--runtime=sdk` selects the unchanged
 public dd-trace-go SDK, pinned to
-[main at 96aedb31048c](https://github.com/DataDog/dd-trace-go/tree/96aedb31048c07e29e7a20a4333dc3b8d289c52d).
+[main at 870449702d0a](https://github.com/DataDog/dd-trace-go/tree/870449702d0a0cea26a6223eefe2f0a198069d79).
 The reference is Orchestrion commit
 [5c24783fcd76](https://github.com/DataDog/orchestrion/commit/5c24783fcd76f00cd1ff21c418a6662785d6c811),
-installed as `v1.13.2-0.20260917114356-5c24783fcd76`.
+built as `v1.13.2-0.20260917114356-5c24783fcd76` from the locked
+[test tool module](../testdata/orchestrion/go.mod), with `x/tools v0.50.0`.
+CI uses the same Go toolchain for the reference build and the test build.
+That pairing lets both the standard-library importer and x/tools read the V5
+export format introduced by Go 1.27.2. The SDK reference and Orchestrion source
+revision stay pinned; the root module retains zero external dependencies.
 
 ## Architecture and dependency boundary
 
@@ -29,7 +34,7 @@ omit `-toolexec`. The POC has no configuration engine or build daemon. Selecting
 module-declared Orchestrion tool lets Go build/cache that tool before the test
 build; Orchestrion owns any additional builds it needs for application weaving.
 
-The nine SDK aspects are retained: M.Run, T.Run, B.Run, Fail, FailNow, formatted
+The ten SDK aspects are retained: M.Run, T.Run, F.Fuzz, B.Run, Fail, FailNow, formatted
 errors, formatted skips, SkipNow and Parallel. Formatting wraps the already
 formatted result, so String methods run once. The SDK's ownership marker retains
 its existing name. Runtime retries, skip policies and finalization are owned by

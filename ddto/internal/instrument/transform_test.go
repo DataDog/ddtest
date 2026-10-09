@@ -68,7 +68,7 @@ func TestFuzzHookIsSelectiveAndPreservesInputs(t *testing.T) {
 		t.Fatal("Mini must instrument F.Fuzz exactly once")
 	}
 	if bytes.Contains(sdk.Files[fuzzPath], hook) {
-		t.Fatal("changed the frozen SDK hook set")
+		t.Fatal("base transform unexpectedly requested the optional F.Fuzz hook")
 	}
 	if !bytes.Equal(sources[fuzzPath], original) {
 		t.Fatal("mutated caller sources")
@@ -78,6 +78,6 @@ func TestFuzzHookIsSelectiveAndPreservesInputs(t *testing.T) {
 		t.Fatal("missing F.Fuzz must fail before compilation")
 	}
 	if _, err := Transform(sources); err != nil {
-		t.Fatalf("F.Fuzz is optional for SDK reference: %v", err)
+		t.Fatalf("F.Fuzz is optional for the base transform: %v", err)
 	}
 }

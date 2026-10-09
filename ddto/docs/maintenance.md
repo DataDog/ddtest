@@ -27,6 +27,11 @@ directory and use forward slashes.
 | `feature_ports` | Separately frozen feature PRs, original paths/hashes and local destinations; select their SHA with `--source-commit` |
 | `additional_sources` | Upstream inputs used for an extraction or schema outside a direct file copy |
 
+When a feature PR lands in the selected base, its ordinary file records use that
+base. Keep its original `feature_ports` revision for comparison history and record
+the merge under `integrated_commit`. Advance the feature's differential fixture
+to the same SDK version; do not apply the feature delta a second time.
+
 The SDK's [test inventory](../internal/thirdparty/dd-trace-go/TESTS.json) records
 ported assertions and adaptations. The platform
 [extraction inventory](../internal/thirdparty/xsys/EXTRACTION.json) identifies
@@ -154,6 +159,8 @@ flowchart TB
    version, and review transitive module changes there. The CLI, differential
    tests and fixture must agree. The fixture's full SDK dependencies belong to
    comparison tests; they must not become Mini runtime imports.
+   Review testing advice and CLI hook declarations too: the SDK runtime must
+   receive any newly supported hook, linked to its own implementation.
 
 6. Regenerate affected code, then use `rehash` against `NEW_SDK` after the
    original-hash records have been updated. Refresh per-origin READMEs,

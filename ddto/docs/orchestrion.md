@@ -51,6 +51,26 @@ its execution environment. The CLI defaults `DD_CIVISIBILITY_ENABLED` to
 Use `-count=1` when each invocation must report fresh results instead of using
 Go's test-result cache.
 
+## Toolchain compatibility
+
+Orchestrion must understand the compiled package format of the Go toolchain
+running the build. Go 1.27.2 writes V5 export data. Our pinned Orchestrion source
+needs `golang.org/x/tools v0.50.0` to read it, and its binary must also be compiled
+with a Go toolchain whose standard-library importer understands V5.
+
+The [validation tool module](../testdata/orchestrion/go.mod) locks that dependency
+for repository tests. Build the reference with the same Go used for the tests:
+
+```sh
+go -C testdata/orchestrion build -mod=readonly -o "$(go env GOPATH)/bin/orchestrion" github.com/DataDog/orchestrion
+```
+
+For a client using `go tool orchestrion`, update its tool dependency graph with
+`go get golang.org/x/tools@v0.50.0` before building with Go 1.27.2. Go then builds
+the declared tool with the active toolchain. For an installed executable, rebuild
+it with those dependencies and that toolchain. ddtest uses the client's selected
+tool and dependencies; it does not replace them during instrumentation.
+
 ## One owner for each integration
 
 ```mermaid

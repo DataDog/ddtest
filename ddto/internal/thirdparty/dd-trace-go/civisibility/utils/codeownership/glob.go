@@ -60,7 +60,11 @@ func compileGlobs(pattern string, dialect Dialect) (globPattern, globPattern, bo
 	for i := range directory.segments {
 		directory.segments[i].requiresSegment = false
 	}
-	if trailing || dialect == GitHub && literalLastSegment(pattern) {
+	// A rooted literal prefix also owns files below a matching directory.
+	// Terminal /* keeps its existing immediate-child rule.
+	anchoredFilenamePrefix := strings.HasPrefix(pattern, "/") && strings.HasSuffix(pattern, "*") &&
+		!strings.HasSuffix(pattern, "/*") && !strings.ContainsAny(pattern[:len(pattern)-1], "*?[]\\")
+	if trailing || dialect == GitHub && (literalLastSegment(pattern) || anchoredFilenamePrefix) {
 		file.addGlobstar(trailing)
 	}
 	if strings.Trim(pattern, "/") == "*" {

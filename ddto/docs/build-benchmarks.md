@@ -74,7 +74,7 @@ directory; their source repositories, GOROOT and incorporated SDK stay untouched
 Install the frozen Orchestrion reference before running the benchmark:
 
 ```sh
-go install github.com/DataDog/orchestrion@v1.13.2-0.20260917114356-5c24783fcd76
+go -C testdata/orchestrion build -mod=readonly -o "$(go env GOPATH)/bin/orchestrion" github.com/DataDog/orchestrion
 ```
 
 [`build-benchmark.json`](../scripts/build-benchmark.json) records project

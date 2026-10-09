@@ -30,6 +30,9 @@ const sdkVersion = runner.SDKVersion
 
 const orchestrionVersion = "v1.13.2-0.20260917114356-5c24783fcd76"
 
+// x/tools v0.50.0 decodes the V5 export format emitted by Go 1.27.2.
+const orchestrionToolsVersion = "v0.50.0"
+
 // orchestrionPinChecked is what orchestrion go sets for its toolexec children
 // after checking that go.mod requires this Orchestrion version.
 const orchestrionPinChecked = "DD_ORCHESTRION_IS_GOMOD_VERSION"
@@ -488,7 +491,7 @@ func configureReferenceFixture(t *testing.T, dir string) {
 	t.Helper()
 	// Both compilers use this SAME temporary module graph, including any MVS
 	// upgrades introduced by the reference tool. The SDK version stays fixed.
-	if out, e, code := command(t, dir, testEnv(), "go", "get", "github.com/DataDog/orchestrion@"+orchestrionVersion); code != 0 {
+	if out, e, code := command(t, dir, testEnv(), "go", "get", "github.com/DataDog/orchestrion@"+orchestrionVersion, "golang.org/x/tools@"+orchestrionToolsVersion); code != 0 {
 		t.Fatalf("prepare common graph: %s\n%s", out, e)
 	}
 	out, e, code := command(t, dir, testEnv(), "go", "list", "-m", "-json", "github.com/DataDog/dd-trace-go/v2")

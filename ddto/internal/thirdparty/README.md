@@ -7,7 +7,7 @@ licenses, and a `SOURCE.json` manifest with upstream and local SHA-256 hashes.
 
 | Origin | Local directory | Source base |
 | --- | --- | --- |
-| DataDog/dd-trace-go | `dd-trace-go/` | main at `96aedb31048c07e29e7a20a4333dc3b8d289c52d` |
+| DataDog/dd-trace-go | `dd-trace-go/` | main at `870449702d0a0cea26a6223eefe2f0a198069d79` |
 | tinylib/msgp | `msgp/` | v1.6.4 at `6f99c863451752e6aa9c7aacde4215a471a64242` |
 | philhofer/fwd | `fwd/` | v1.2.0 at `20a13a1f6b7cb47a126dcb75152e21e1383bbaba` |
 | golang/sys | `xsys/` | v0.47.0 at `9e7e939dcafac07e8ab4cffa6e5fc74908413f00` |
