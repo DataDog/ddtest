@@ -121,8 +121,9 @@ Mini is compared with the matching SDK mode.
 Seven additional scenarios compare atomic coverage, real production counters,
 session percentages and coverage upload bitmaps in both delivery modes. Goleak
 runs against a race-enabled covered consumer, including negative leaks. Linux
-normal/race differential jobs cover Go 1.26 and 1.27; macOS and Windows jobs
-cover Go 1.27. Go 1.25 and tip run the native Mini lifecycle fixtures. The full
+differential jobs cover Go 1.26 and 1.27, and Go 1.27 also with `-race`; macOS
+and Windows jobs cover Go 1.27. Go 1.25 and the nightly tip job run the native Mini
+lifecycle fixtures. The full
 SDK requires Go 1.26, and the frozen Orchestrion reference fails on tip.
 Inspect the current PR's checks for platform proof. A bounded campaign is a
 regression gate, not evidence of every long-running fuzz workload or acceptance

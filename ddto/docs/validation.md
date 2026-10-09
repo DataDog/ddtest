@@ -176,13 +176,15 @@ The [workflow](../.github/workflows/compatibility.yml) checks three stable Go fa
 | Platform | Go | Suite |
 | --- | --- | --- |
 | Linux | 1.25 | Native Mini suite in normal and `-race` modes; `GOTOOLCHAIN=local` prevents an upgrade |
-| Linux | 1.26, 1.27 | Complete SDK differential suite in normal and `-race` modes |
-| Linux | tip | Native Mini suite and manual SDK span-copy cases; source commit recorded before building Go |
+| Linux | 1.26 | Complete SDK differential suite |
+| Linux | 1.27 | Complete SDK differential suite in normal and `-race` modes |
+| Linux | tip | Native Mini suite and manual SDK span-copy cases; source commit recorded before building Go. Nightly and on manual dispatch |
 | macOS | 1.27 | Normal suite |
 | Windows | 1.27 | Normal suite |
 
-The unit group for each configuration audits incorporated sources and licenses,
-checks the dependency boundary and runs `go vet`. Go 1.25 and tip execute all local runtime packages, plus native Mini
+One job audits incorporated sources and licenses, checks the dependency boundary
+and runs the script tests. The unit group of each configuration runs `go vet` and
+the local packages. Go 1.25 and tip execute all local runtime packages, plus native Mini
 fixtures for compiler/coverage hooks, Testify, goleak, fuzz/examples, delivery and
 consumer transparency. Tip also checks the manual SDK mirror, its compatibility
 fallback and native builds before and after Mini. The full SDK reference requires
@@ -191,24 +193,14 @@ suite runs on Go 1.26/1.27. Its report step
 requires the independent Orchestrion reference and exports feature outcomes,
 counts and timings. Logs and JSON reports are uploaded even when a test fails.
 
+Pull requests, pushes to `main`, a nightly schedule and manual dispatch start the
+workflow. Changes limited to `docs/` or `README.md` do not. A new push to a pull
+request cancels its previous run. A push to `main` whose tree already passed a
+complete run of a branch in this repository, typically the squash merge of an
+up-to-date pull request, reuses that run instead of repeating the matrix. Go tip
+changes independently of this repository, so it runs nightly and on demand.
+
 ### Parallel test groups
-
-Each differential configuration runs six jobs: local unit/runtime packages, CLI,
-CI parity and Testify, fuzz/examples, Orchestrion composition/cache, and SDK span
-copies. Go 1.25 and tip each run three groups: local packages, native integration,
-and native fuzz/examples. The workflow has 45 test jobs. Three support jobs
-prepare their matrices, build one shared tip toolchain, and collect the evidence.
-
-```mermaid
-flowchart LR
-    Plan[Group matrix] --> Differential[36 differential groups]
-    Plan --> Mini[6 Go 1.25 groups]
-    Plan --> Tip[3 tip groups]
-    Toolchain[Build shared Go tip] --> Tip
-    Differential --> Evidence[Complete compatibility evidence]
-    Mini --> Evidence
-    Tip --> Evidence
-```
 
 [`ci_shards.json`](../scripts/ci_shards.json) assigns integration tests to groups,
 including the Unix socket and Windows file-lock cases. Add a new test there when
@@ -218,16 +210,58 @@ fail CI. It also checks that each selected test produces a terminal result.
 Only the two existing Windows symlink cases may skip if symlinks are unavailable.
 Go's package skips for directories without test files remain valid.
 
-Normal and deferred cases stay together so they can share fixtures. Tests run
-sequentially within their group; jobs have independent workspaces and run in
-parallel. Tip is built once from a recorded source SHA. All three tip groups
-download that toolchain, check its revision, and disable automatic upgrades.
+The differential suite has nine groups: local unit/runtime packages, CLI, native
+`go test` transparency, CI parity, Testify parity, fuzz/examples, Orchestrion
+composition/cache, SDK span copies and SDK span copies under Orchestrion. Go 1.25
+and tip run three groups: local packages, native integration, and native
+fuzz/examples. The `jobs` entry of `ci_shards.json` packs the groups of each
+platform and mode into jobs from measured durations, so slower platforms get more
+jobs. Every configuration must run each of its groups in exactly one job.
+
+```mermaid
+flowchart LR
+    Plan[Group matrix] --> Audit[Source and dependency audit]
+    Plan --> Differential[Differential jobs]
+    Plan --> Mini[Go 1.25 jobs]
+    Plan -. nightly .-> Tip[Tip jobs]
+    Toolchain[Build shared Go tip] -.-> Tip
+    Audit --> Evidence[Complete compatibility evidence]
+    Differential --> Evidence
+    Mini --> Evidence
+    Tip -.-> Evidence
+```
+
+Normal and deferred cases stay together so they can share fixtures. A job lists the
+integration tests once, then runs each of its groups as a separate `go test`
+invocation. When the job restored a Go cache, it runs two groups at a time
+(`--parallel 2`); the console prefixes each line with its group, and each group
+keeps its own logs and manifest. With a cold module cache it runs one group at a
+time: in a cold run with two concurrent groups, a fixture's `go.sum` lacked a
+Testify entry after both groups fetched the same modules. Jobs have independent workspaces and run in parallel.
+
+The jobs of one configuration restore a shared Go build and module cache. Most
+fixtures compile the same SDK, Orchestrion and dependency packages, so this cache
+shortens most groups. A job's cache takes 0.7 to 1.5 GB compressed, so one cache
+per configuration is what fits the repository's 10 GB limit. The first job of each
+layout saves it when its key is new: the Go version and every `go.sum` are part of
+the key. Pull requests save only when nothing was restored, so `main` and nightly
+runs own the caches. The frozen Orchestrion binary is cached per platform and Go
+version. Module downloads outside tests retry with a five-minute deadline per
+attempt, because a proxy fetch can stall for several minutes. Tip is built once
+from a recorded source SHA. All tip groups download that toolchain, check its
+revision, and disable automatic upgrades.
+
+The runner sets `GORACE=atexit_sleep_ms=0` unless the caller already chose that
+option, and the harness passes `GORACE` to fixtures. A race-enabled program
+otherwise sleeps one second before it exits, and fuzz fixtures start many such
+processes. Race unit groups add `-short`, which shortens a vendored msgp loop over
+2^31 values; normal unit groups run it completely.
 
 Every group uploads `tests.log`, `tests.jsonl`, a manifest recording its checkout,
-toolchain, selection and command, and any parity JSON it produced. The final job
-requires all 45 manifests from the same checkout, rejects conflicting report
+toolchain, selection, job and command, and any parity JSON it produced. The final job
+requires every group's manifest from the same checkout, rejects conflicting report
 files and invokes the existing complete parity validator for every differential
-configuration. Its `compatibility-evidence` artifact contains the six rendered
+configuration. Its `compatibility-evidence` artifact contains the five rendered
 reports, their JSON and the group manifests. `summary.md` records each group's
 test-command duration, including compilation during that invocation. It excludes
 setup, the inventory query and artifact transfer; GitHub records full job times.
@@ -237,10 +271,12 @@ To reproduce one group on Linux with Go 1.27 and the pinned Orchestrion installe
 ```sh
 ORCHESTRION_BIN="$(go env GOPATH)/bin/orchestrion" \
   python scripts/ci_shards.py run --suite differential --os ubuntu-latest \
-  --go 1.27.x --mode normal --shard sdk --output artifacts/sdk
+  --go 1.27.x --mode normal --shard sdk --output artifacts
 ```
 
-Choose a fresh output directory for each run. Replace `sdk` with another group,
+Choose a fresh output directory for each run; each group writes a subdirectory.
+Replace `sdk` with another group or a comma-separated list such as `cli,parity`
+(add `--parallel 2` to run two of them at a time),
 or select `--suite mini --go 1.25.x --shard native` for the minimum toolchain's
 native integration. `--mode race` enables the race detector in the group and its
 fixtures. These are correctness checks; their durations are not benchmark results.

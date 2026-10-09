@@ -2,12 +2,14 @@
 """Run disjoint CI groups and collect complete, revision-matched parity evidence."""
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import threading
 import time
 
 import parity_report
@@ -17,7 +19,6 @@ ROOT = Path(__file__).resolve().parents[1]
 INTEGRATION = "github.com/tonyredondo/dd-ci-testing-poc/integration"
 CONFIGURATIONS = (
     ("differential", "ubuntu-latest", "1.26.x", "normal"),
-    ("differential", "ubuntu-latest", "1.26.x", "race"),
     ("differential", "ubuntu-latest", "1.27.x", "normal"),
     ("differential", "ubuntu-latest", "1.27.x", "race"),
     ("differential", "macos-latest", "1.27.x", "normal"),
@@ -27,11 +28,19 @@ CONFIGURATIONS = (
     ("mini", "ubuntu-latest", "tip", "normal"),
 )
 SHARDS = {
-    "differential": ("units", "cli", "parity", "fuzz", "orchestrion", "sdk"),
+    "differential": ("units", "cli", "transparency", "parity", "testify", "fuzz", "orchestrion", "sdk", "sdk-orchestrion"),
     "mini": ("units", "native", "fuzz"),
 }
 TEST_NAME = re.compile(r"^(?:Test|Fuzz|Example)\w*$")
 PLATFORMS = {"ubuntu-latest": "linux", "macos-latest": "darwin", "windows-latest": "windows"}
+# A race-enabled program sleeps for one second before exiting so that other
+# goroutines can finish their reports. Fixtures start thousands of programs.
+RACE_OPTIONS = "atexit_sleep_ms=0"
+
+
+def job_key(config):
+    suite, platform, _, mode = config
+    return f"{suite}/{platform}/{mode}"
 
 
 def read_groups(path=ROOT / "scripts/ci_shards.json"):
@@ -60,6 +69,14 @@ def read_groups(path=ROOT / "scripts/ci_shards.json"):
                  for name in selected_tests(groups, "mini", "tip", shard, "ubuntu-latest")]
     if len(tip_names) != len(set(tip_names)):
         raise ValueError("duplicated tip test assignment")
+    # Every configuration runs each of its groups in exactly one job.
+    keys = {job_key(config) for config in CONFIGURATIONS}
+    if set(groups["jobs"]) != keys:
+        raise ValueError("job layouts must match the configurations")
+    for key, jobs in groups["jobs"].items():
+        packed = [shard for job in jobs for shard in job]
+        if any(not job for job in jobs) or sorted(packed) != sorted(SHARDS[key.split("/")[0]]):
+            raise ValueError(f"job layout for {key} must run every group once")
     return groups
 
 
@@ -82,11 +99,21 @@ def validate_inventory(groups, discovered, platform):
                          f"not found={sorted(assigned - set(discovered))}")
 
 
-def matrix(suite, tip=False):
-    return {"include": [dict(suite=s, os=os_name, go=go_version, mode=mode, shard=shard)
-                        for s, os_name, go_version, mode in CONFIGURATIONS
-                        if s == suite and (go_version == "tip") == tip
-                        for shard in SHARDS[s]]}
+def configurations(tip):
+    return tuple(config for config in CONFIGURATIONS if tip or config[2] != "tip")
+
+
+def matrix(groups, suite, tip=False):
+    include = []
+    for config in CONFIGURATIONS:
+        s, os_name, go_version, mode = config
+        if s != suite or (go_version == "tip") != tip:
+            continue
+        for index, shards in enumerate(groups["jobs"][job_key(config)]):
+            # Jobs of one configuration share a Go cache; the first job saves it.
+            include.append(dict(suite=s, os=os_name, go=go_version, mode=mode,
+                                shards=",".join(shards), job="-".join(shards), owner=index == 0))
+    return {"include": include}
 
 
 def capture(*command):
@@ -121,12 +148,28 @@ def validate_tip_version(version, source_sha):
         raise ValueError(f"Go tip source revision {source_sha!r} differs from toolchain {version!r}")
 
 
-def stream_tests(command, output, units):
+def race_options(current):
+    if "atexit_sleep_ms" in current:
+        return current
+    return (current + " " + RACE_OPTIONS).strip()
+
+
+PRINT_LOCK = threading.Lock()
+
+
+def show(text, prefix):
+    if prefix:
+        text = "".join(prefix + line for line in text.splitlines(keepends=True))
+    with PRINT_LOCK:
+        print(text, end="", flush=True)
+
+
+def stream_tests(command, output, units, env=None, prefix=""):
     """Keep native output readable while retaining Go's complete JSON event stream."""
     results = {}
     with (output / "tests.jsonl").open("w", encoding="utf-8") as events, \
             (output / "tests.log").open("w", encoding="utf-8") as log:
-        with subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        with subprocess.Popen(command, cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True, encoding="utf-8", errors="replace") as process:
             for line in process.stdout:
                 try:
@@ -134,12 +177,12 @@ def stream_tests(command, output, units):
                 except json.JSONDecodeError:
                     # Download/build diagnostics may appear outside the test JSON.
                     log.write(line)
-                    print(line, end="", flush=True)
+                    show(line, prefix)
                     continue
                 events.write(line)
                 text = event.get("Output", "")
                 log.write(text)
-                print(text, end="", flush=True)
+                show(text, prefix)
                 name = event.get("Test")
                 if units:
                     name = event.get("Package") if not name else None
@@ -151,10 +194,52 @@ def stream_tests(command, output, units):
     return code, results
 
 
+def run_group(args, groups, shard, base, environment, shards):
+    """Run one group into its own directory, so jobs can hold several groups."""
+    output = args.output / shard
+    output.mkdir()
+    flags = ["-race"] if args.mode == "race" else []
+    units = shard == "units"
+    if units:
+        selected = sorted(package for package in capture("go", "list", "./...").splitlines()
+                          if package != INTEGRATION)
+        targets = selected
+        # TestConv64 alone walks 2^31 floats; under the race detector that takes
+        # four minutes. Normal-mode unit groups still run the complete loop.
+        run_flags = ["-short"] if args.mode == "race" else []
+    else:
+        selected = selected_tests(groups, args.suite, args.go, shard, args.os)
+        targets = ["./integration"]
+        run_flags = ["-run=^(" + "|".join(selected) + ")$"]
+    if not selected:
+        raise ValueError("empty CI selection")
+    report = "parity-race" if args.mode == "race" else "parity"
+    env = dict(base, PARITY_REPORT_PATH=str(output.resolve() / (report + ".json")))
+    command = ["go", "test", *flags, "-json", "-count=1", "-timeout=" + args.timeout, *run_flags, *targets]
+    manifest = dict(schema=1, suite=args.suite, os=args.os, go=args.go, mode=args.mode, shard=shard,
+                    revision=capture("git", "rev-parse", "HEAD"), tree=capture("git", "rev-parse", "HEAD^{tree}"),
+                    toolchain=environment, tip_sha=os.environ.get("GO_TIP_SHA", ""),
+                    selected=selected, command=command, job=shards, parallel=args.parallel, status="running")
+    path = output / "manifest.json"
+    path.write_text(json.dumps(manifest, indent=2) + "\n")
+    started = time.monotonic()
+    prefix = f"[{shard}] " if args.parallel > 1 and len(shards) > 1 else ""
+    code, results = stream_tests(command, output, units, env, prefix)
+    manifest.update(duration_seconds=time.monotonic() - started, exit_code=code, results=results, status="failed")
+    path.write_text(json.dumps(manifest, indent=2) + "\n")
+    if code:
+        raise ValueError(f"go test exited {code}; see {output / 'tests.log'}")
+    check_results(selected, results, allowed_skips(args.os, shard))
+    manifest["status"] = "passed"
+    path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+
 def run(args):
     groups = read_groups()
     config = (args.suite, args.os, args.go, args.mode)
-    if config not in CONFIGURATIONS or args.shard not in SHARDS[args.suite]:
+    shards = args.shard.split(",")
+    if config not in CONFIGURATIONS or not shards or len(shards) != len(set(shards)) \
+            or any(shard not in SHARDS[args.suite] for shard in shards) or args.parallel < 1:
         raise ValueError("unsupported CI configuration")
     if args.output.exists():
         raise ValueError("output directory already exists; choose a fresh directory")
@@ -168,47 +253,54 @@ def run(args):
     expected_os = PLATFORMS[args.os]
     if environment["GOOS"] != expected_os:
         raise ValueError("selected CI platform differs from go env GOOS")
-    flags = ["-race"] if args.mode == "race" else []
-    units = args.shard == "units"
-    if units:
-        selected = sorted(package for package in capture("go", "list", "./...").splitlines()
-                          if package != INTEGRATION)
-        targets = selected
-        run_flags = []
-    else:
+    if any(shard != "units" for shard in shards):
+        # One listing checks the complete assignment for every group in the job.
+        flags = ["-race"] if args.mode == "race" else []
         listing = capture("go", "test", *flags, "-list=^(Test|Fuzz|Example)", "./integration")
         validate_inventory(groups, [line for line in listing.splitlines() if TEST_NAME.fullmatch(line)], args.os)
-        selected = selected_tests(groups, args.suite, args.go, args.shard, args.os)
-        targets = ["./integration"]
-        run_flags = ["-run=^(" + "|".join(selected) + ")$"]
-    if not selected:
-        raise ValueError("empty CI selection")
-    os.environ["PARITY_TEST_MODE"] = args.mode
-    os.environ["PARITY_EXECUTION_ORDER"] = "mini-first" if args.mode == "race" else "sdk-first"
-    report = "parity-race" if args.mode == "race" else "parity"
-    os.environ["PARITY_REPORT_PATH"] = str(args.output.resolve() / (report + ".json"))
-    command = ["go", "test", *flags, "-json", "-count=1", "-timeout=" + args.timeout, *run_flags, *targets]
-    manifest = dict(schema=1, suite=args.suite, os=args.os, go=args.go, mode=args.mode, shard=args.shard,
-                    revision=capture("git", "rev-parse", "HEAD"), tree=capture("git", "rev-parse", "HEAD^{tree}"),
-                    toolchain=environment, tip_sha=os.environ.get("GO_TIP_SHA", ""),
-                    selected=selected, command=command, status="running")
-    path = args.output / "manifest.json"
-    path.write_text(json.dumps(manifest, indent=2) + "\n")
-    started = time.monotonic()
-    code, results = stream_tests(command, args.output, units)
-    manifest.update(duration_seconds=time.monotonic() - started, exit_code=code, results=results, status="failed")
-    path.write_text(json.dumps(manifest, indent=2) + "\n")
-    if code:
-        raise ValueError(f"go test exited {code}; see {args.output / 'tests.log'}")
-    check_results(selected, results, allowed_skips(args.os, args.shard))
-    manifest["status"] = "passed"
-    path.write_text(json.dumps(manifest, indent=2) + "\n")
+    base = dict(os.environ, PARITY_TEST_MODE=args.mode,
+                PARITY_EXECUTION_ORDER="mini-first" if args.mode == "race" else "sdk-first",
+                GORACE=race_options(os.environ.get("GORACE", "")))
+    failures = []
+
+    def attempt(shard):
+        try:
+            run_group(args, groups, shard, base, environment, shards)
+        except (ValueError, OSError, subprocess.CalledProcessError) as error:
+            failures.append(f"{shard}: {error}")
+
+    if args.parallel == 1:
+        for shard in shards:
+            attempt(shard)
+    else:
+        with ThreadPoolExecutor(max_workers=args.parallel) as pool:
+            list(pool.map(attempt, shards))
+    if failures:
+        raise ValueError("; ".join(sorted(failures)))
 
 
-def collect_manifests(source, groups, revision, tree):
-    expected = {(*config, shard) for config in CONFIGURATIONS for shard in SHARDS[config[0]]}
+def retry(args, sleep=time.sleep):
+    """Run a network step again when it fails or stalls; a module fetch can hang for minutes."""
+    command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+    if not command or args.attempts < 1:
+        raise ValueError("retry requires a command and at least one attempt")
+    for attempt in range(1, args.attempts + 1):
+        try:
+            if subprocess.run(command, cwd=ROOT, timeout=args.timeout).returncode == 0:
+                return
+            reason = "failed"
+        except subprocess.TimeoutExpired:
+            reason = f"did not finish within {args.timeout} seconds"
+        print(f"::warning::attempt {attempt} of {' '.join(command)} {reason}", flush=True)
+        if attempt < args.attempts:
+            sleep(15 * attempt)
+    raise ValueError(f"{' '.join(command)} failed after {args.attempts} attempts")
+
+
+def collect_manifests(source, groups, revision, tree, expected_configurations=CONFIGURATIONS):
+    expected = {(*config, shard) for config in expected_configurations for shard in SHARDS[config[0]]}
     manifests = {}
-    for path in sorted(source.glob("*/manifest.json")):
+    for path in sorted(source.rglob("manifest.json")):
         item = json.loads(path.read_text())
         identity = tuple(item[key] for key in ("suite", "os", "go", "mode", "shard"))
         if identity not in expected or identity in manifests:
@@ -223,7 +315,7 @@ def collect_manifests(source, groups, revision, tree):
         manifests[identity] = (path, item)
     if set(manifests) != expected:
         raise ValueError(f"missing shards: {sorted(expected - set(manifests))}")
-    for config in CONFIGURATIONS:
+    for config in expected_configurations:
         items = [manifests[(*config, shard)][1] for shard in SHARDS[config[0]]]
         if any(item["toolchain"] != items[0]["toolchain"] or item["tip_sha"] != items[0]["tip_sha"] for item in items):
             raise ValueError(f"shards used different toolchains: {config}")
@@ -239,21 +331,24 @@ def copy_reports(source, destination):
 
 
 def aggregate(args):
+    expected = configurations(args.with_tip)
     manifests = collect_manifests(args.input, read_groups(), capture("git", "rev-parse", "HEAD"),
-                                 capture("git", "rev-parse", "HEAD^{tree}"))
+                                  capture("git", "rev-parse", "HEAD^{tree}"), expected)
     args.output.mkdir(parents=True, exist_ok=False)
     summary = ["# Compatibility shards", "", "All selected tests and runtime packages completed. "
-               "Durations below cover each `go test` invocation, including compilation.", "",
-               "| Suite | Platform | Go | Mode | Group | Seconds | Passed | Skipped |",
-               "| --- | --- | --- | --- | --- | ---: | ---: | ---: |"]
-    for config in CONFIGURATIONS:
+               "Durations below cover each `go test` invocation, including compilation. "
+               "Groups that share a job may run at the same time.", "",
+               "| Suite | Platform | Go | Mode | Group | Job | Seconds | Passed | Skipped |",
+               "| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: |"]
+    for config in expected:
         suite, platform, version, mode = config
         destination = args.output / f"{suite}-{platform}-go-{version}-{mode}"
         destination.mkdir()
         for shard in SHARDS[suite]:
             path, item = manifests[(*config, shard)]
             counts = list(item["results"].values())
-            summary.append(f"| {suite} | {platform} | {version} | {mode} | {shard} | "
+            job = "+".join(item.get("job", [shard]))
+            summary.append(f"| {suite} | {platform} | {version} | {mode} | {shard} | {job} | "
                            f"{item['duration_seconds']:.2f} | {counts.count('pass')} | {counts.count('skip')} |")
             shutil.copyfile(path, destination / f"manifest-{shard}.json")
             copy_reports(path.parent, destination)
@@ -266,29 +361,42 @@ def aggregate(args):
                 raise ValueError(f"parity report used a different toolchain: {config}")
             (destination / "parity.md").write_text(parity_report.render(report))
             summary += ["", f"[{platform}, Go {version}, {mode} parity]({destination.name}/parity.md)", ""]
+    if not args.with_tip:
+        summary += ["", "Go tip runs in the scheduled and manually dispatched workflow.", ""]
     (args.output / "summary.md").write_text("\n".join(summary) + "\n")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("matrix")
+    matrix_parser = commands.add_parser("matrix")
+    matrix_parser.add_argument("--with-tip", action="store_true")
     run_parser = commands.add_parser("run")
-    for name in ("suite", "os", "go", "mode", "shard"):
+    for name in ("suite", "os", "go", "mode"):
         run_parser.add_argument("--" + name, required=True)
+    run_parser.add_argument("--shard", required=True, help="comma-separated groups to run in this job")
+    run_parser.add_argument("--parallel", type=int, default=1, help="groups to run at the same time")
     run_parser.add_argument("--timeout", default="20m")
     run_parser.add_argument("--output", type=Path, required=True)
     aggregate_parser = commands.add_parser("aggregate")
     aggregate_parser.add_argument("--input", type=Path, required=True)
     aggregate_parser.add_argument("--output", type=Path, required=True)
+    aggregate_parser.add_argument("--with-tip", action="store_true")
+    retry_parser = commands.add_parser("retry")
+    retry_parser.add_argument("--attempts", type=int, default=3)
+    retry_parser.add_argument("--timeout", type=float, default=300, help="seconds per attempt")
+    retry_parser.add_argument("argv", nargs=argparse.REMAINDER, metavar="command")
     args = parser.parse_args()
     try:
         if args.command == "matrix":
-            read_groups()
+            groups = read_groups()
             for name, suite, tip in (("differential", "differential", False), ("mini", "mini", False), ("tip", "mini", True)):
-                print(name + "=" + json.dumps(matrix(suite, tip), separators=(",", ":")))
+                value = matrix(groups, suite, tip) if not tip or args.with_tip else {"include": []}
+                print(name + "=" + json.dumps(value, separators=(",", ":")))
         elif args.command == "run":
             run(args)
+        elif args.command == "retry":
+            retry(args)
         else:
             aggregate(args)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:

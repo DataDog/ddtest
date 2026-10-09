@@ -287,7 +287,8 @@ version and cover Testify, goleak, coverage, fuzz/examples and deferred delivery
 Go 1.26 and 1.27 run the complete SDK differential suite. Tip runs the native
 Mini fixtures and manual SDK span-copy cases; the frozen Orchestrion reference
 cannot currently serve as a tip oracle. Check Orchestrion separately before
-extending the tip job to those comparisons.
+extending the tip job to those comparisons. Pull requests do not run tip; start
+the workflow manually to check tip before the nightly run.
 
 Run `python scripts/dependency_boundary.py` before publication. The compatibility
 workflow runs it too. It fails on any external requirement or nonstandard runtime
@@ -309,10 +310,19 @@ go test -race -covermode=atomic \
   ./internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage
 ```
 
-The workflow's test timeout is 30 minutes for normal Linux/macOS, 40 minutes
-for Linux race and 55 minutes for Windows. Job timeouts also include setup and
-reporting. Use the [workflow](../.github/workflows/compatibility.yml) as the
-source of truth when those limits change.
+The workflow's `go test` timeout for each group is 20 minutes for normal Linux,
+25 minutes for Linux race and macOS, and 35 minutes for Windows. Job timeouts
+also include setup, every group in the job and reporting. Use the
+[workflow](../.github/workflows/compatibility.yml) as the source of truth when
+those limits change.
+
+When a group's duration changes noticeably, rebalance the `jobs` layout in
+[`ci_shards.json`](../scripts/ci_shards.json) with the per-group times in the
+`compatibility-evidence` summary. The account runs at most 20 jobs at a time,
+five of them on macOS, so fewer, balanced jobs finish sooner than many short ones.
+Keep the CLI group in the first job of each layout. That job saves the shared Go
+cache, and a cache built by the CLI and parity groups shortened the other jobs'
+groups by up to 78% in measured runs.
 
 The full compatibility suite exercises actual binaries, payloads, retry
 processes and failure paths. Its comparison preserves CI attributes and

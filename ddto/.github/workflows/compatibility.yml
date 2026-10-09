@@ -2,10 +2,19 @@ name: Compatibility
 on:
   push:
     branches: [main]
+    paths-ignore: ['docs/**', 'README.md']
   pull_request:
+    paths-ignore: ['docs/**', 'README.md']
+  schedule:
+    - cron: '17 3 * * *'
   workflow_dispatch:
 permissions:
   contents: read
+# A new push to a pull request replaces its running matrix. Other events never
+# share a group, so main and scheduled runs always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: true
 env:
   PYTHONDONTWRITEBYTECODE: '1'
   PYTHONIOENCODING: utf-8
@@ -14,73 +23,183 @@ jobs:
     name: Test groups
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     outputs:
       differential: ${{ steps.matrix.outputs.differential }}
       mini: ${{ steps.matrix.outputs.mini }}
       tip: ${{ steps.matrix.outputs.tip }}
+      tip-enabled: ${{ steps.matrix.outputs.tip-enabled }}
+      skip: ${{ steps.verified.outputs.skip }}
+      verified-run: ${{ steps.verified.outputs.run }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - id: matrix
-        run: python scripts/ci_shards.py matrix >> "$GITHUB_OUTPUT"
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          # Go tip changes daily, independently of the change under test.
+          if [[ "$EVENT" == schedule || "$EVENT" == workflow_dispatch ]]; then
+            python scripts/ci_shards.py matrix --with-tip >> "$GITHUB_OUTPUT"
+            echo "tip-enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            python scripts/ci_shards.py matrix >> "$GITHUB_OUTPUT"
+            echo "tip-enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+      # Squash-merging an up-to-date pull request produces the tree that its
+      # last run verified. Only runs of branches in this repository count.
+      - id: verified
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=verified-tree-$tree&per_page=100" \
+            --jq '[.artifacts[] | select(.expired | not)
+                   | select(.workflow_run.head_repository_id == .workflow_run.repository_id)
+                   | .workflow_run.id] | first // empty')" || run=""
+          if [[ -n "$run" ]]; then
+            echo "Tree $tree passed every group in run $run."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "run=$run" >> "$GITHUB_OUTPUT"
+          fi
 
-  differential:
-    name: differential (${{ matrix.os }}, ${{ matrix.go }}, ${{ matrix.mode }}, ${{ matrix.shard }})
+  lint:
+    name: Sources, dependency boundary and scripts
     needs: plan
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.differential) }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || matrix.os == 'macos-latest' && 25 || matrix.mode == 'race' && 25 || 20 }}
+    if: needs.plan.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: ${{ matrix.go }}
-          cache-dependency-path: |
-            testdata/fixture/go.sum
-            testdata/orchestrion/go.sum
-      - name: Build frozen Orchestrion reference
-        if: matrix.shard != 'units'
-        shell: bash
-        run: |
-          reference="$(go env GOPATH)/bin/orchestrion"
-          if [[ "$RUNNER_OS" == "Windows" ]]; then reference="$reference.exe"; fi
-          go -C testdata/orchestrion build -mod=readonly -o "$reference" github.com/DataDog/orchestrion
-          go version -m "$reference"
-          echo "ORCHESTRION_BIN=$reference" >> "$GITHUB_ENV"
-      - name: Verify fixture modules
-        shell: bash
-        run: (cd testdata/fixture && go mod download && go mod verify)
-      - name: Audit sources, dependency boundary and vet
-        if: matrix.shard == 'units'
+          go-version: '1.27.x'
+          cache: false
+      - name: Audit sources, dependency boundary and scripts
         shell: bash
         run: |
           python scripts/upstream.py verify
           python -m unittest discover -s scripts -p "test_*.py"
           python scripts/dependency_boundary.py
-          go vet ./...
-      - name: Run test group
+
+  differential:
+    name: differential (${{ matrix.os }}, ${{ matrix.go }}, ${{ matrix.mode }}, ${{ matrix.job }})
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.differential) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 35 }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Exclude build directories from Windows Defender
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $paths = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:TEMP, $env:RUNNER_TOOL_CACHE,
+                     "$env:LOCALAPPDATA\go-build", "$env:USERPROFILE\go")
+          try {
+            Add-MpPreference -ExclusionPath $paths -ErrorAction Stop
+            Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction Stop
+          } catch {
+            Write-Warning "Windows Defender settings unchanged: $_"
+          }
+          Get-MpComputerStatus -ErrorAction SilentlyContinue | Format-List RealTimeProtectionEnabled
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        id: go
+        with:
+          go-version: ${{ matrix.go }}
+          cache: false
+      - name: Locate Go caches
+        id: paths
+        shell: bash
+        run: |
+          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+      # The jobs of a configuration share one Go cache. It holds the SDK, Orchestrion
+      # and dependency builds that most fixtures reuse, and the modules they need.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: cache
+        with:
+          path: |
+            ${{ steps.paths.outputs.build }}
+            ${{ steps.paths.outputs.modules }}
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-differential-${{ matrix.mode }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-differential-${{ matrix.mode }}-
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/orchestrion-reference
+          key: orchestrion-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('testdata/orchestrion/go.mod', 'testdata/orchestrion/go.sum') }}
+      # A module fetch from the proxy can fail or stall for minutes. Download
+      # explicitly with a deadline and retries, then build without the network.
+      - name: Build frozen Orchestrion reference
+        shell: bash
+        run: |
+          reference="$RUNNER_TEMP/orchestrion-reference/orchestrion"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then reference="$reference.exe"; fi
+          if [[ ! -x "$reference" ]]; then
+            python scripts/ci_shards.py retry -- go -C testdata/orchestrion mod download
+            go -C testdata/orchestrion build -mod=readonly -o "$reference" github.com/DataDog/orchestrion
+          fi
+          go version -m "$reference"
+          echo "ORCHESTRION_BIN=$reference" >> "$GITHUB_ENV"
+      - name: Verify fixture modules
+        shell: bash
+        run: |
+          python scripts/ci_shards.py retry -- go -C testdata/fixture mod download
+          go -C testdata/fixture mod verify
+      - name: Vet
+        if: contains(format(',{0},', matrix.shards), ',units,')
+        shell: bash
+        run: go vet ./...
+      - name: Run test groups
         shell: bash
         env:
-          CI_SUITE: ${{ matrix.suite }}
           CI_PLATFORM: ${{ matrix.os }}
           CI_GO: ${{ matrix.go }}
           CI_MODE: ${{ matrix.mode }}
-          CI_SHARD: ${{ matrix.shard }}
-          GO_TEST_TIMEOUT: ${{ matrix.shard == 'units' && '10m' || matrix.os == 'windows-latest' && '35m' || matrix.os == 'macos-latest' && '20m' || matrix.mode == 'race' && '20m' || '15m' }}
+          CI_SHARDS: ${{ matrix.shards }}
+          # Two groups at a time keep the runner busy while fixtures start processes.
+          # In a cold run with two concurrent groups, a fixture's go.sum lacked a
+          # Testify entry, so groups without a restored cache run one at a time.
+          CI_PARALLEL: ${{ steps.cache.outputs.cache-matched-key != '' && 2 || 1 }}
+          GO_TEST_TIMEOUT: ${{ matrix.os == 'windows-latest' && '35m' || matrix.os == 'macos-latest' && '25m' || matrix.mode == 'race' && '25m' || '20m' }}
         run: |
-          python scripts/ci_shards.py run --suite "$CI_SUITE" --os "$CI_PLATFORM" \
-            --go "$CI_GO" --mode "$CI_MODE" --shard "$CI_SHARD" \
+          python scripts/ci_shards.py run --suite differential --os "$CI_PLATFORM" \
+            --go "$CI_GO" --mode "$CI_MODE" --shard "$CI_SHARDS" --parallel "$CI_PARALLEL" \
             --timeout "$GO_TEST_TIMEOUT" --output artifacts
+      - name: Report Go cache sizes
+        if: always()
+        shell: bash
+        run: du -sh "${{ steps.paths.outputs.build }}" "${{ steps.paths.outputs.modules }}" || true
+      # One cache per configuration fits the repository's 10 GB cache budget. Pull
+      # requests save only when nothing was restored; main and nightly runs keep it.
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: >-
+          success() && matrix.owner && steps.cache.outputs.cache-hit != 'true' &&
+          (github.event_name != 'pull_request' || steps.cache.outputs.cache-matched-key == '')
+        with:
+          path: |
+            ${{ steps.paths.outputs.build }}
+            ${{ steps.paths.outputs.modules }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: ci-shard-differential-${{ matrix.os }}-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.shard }}
+          name: ci-shard-differential-${{ matrix.os }}-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.job }}
           path: artifacts/
           retention-days: 7
 
   go-tip:
     name: Build shared Go tip
+    needs: plan
+    if: needs.plan.outputs.tip-enabled == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -110,8 +229,9 @@ jobs:
           retention-days: 1
 
   mini:
-    name: mini (Linux, ${{ matrix.go }}, ${{ matrix.mode }}, ${{ matrix.shard }})
+    name: mini (Linux, ${{ matrix.go }}, ${{ matrix.mode }}, ${{ matrix.job }})
     needs: plan
+    if: needs.plan.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.mini) }}
@@ -120,40 +240,68 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        id: go
         with:
           go-version: ${{ matrix.go }}
-          cache-dependency-path: testdata/fixture/go.sum
-      - name: Audit sources, dependency boundary and vet
-        if: matrix.shard == 'units'
+          cache: false
+      - name: Locate Go caches
+        id: paths
+        shell: bash
+        run: |
+          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: cache
+        with:
+          path: |
+            ${{ steps.paths.outputs.build }}
+            ${{ steps.paths.outputs.modules }}
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-mini-${{ matrix.mode }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-mini-${{ matrix.mode }}-
+      - name: Vet
+        if: contains(format(',{0},', matrix.shards), ',units,')
         shell: bash
         env:
           GOTOOLCHAIN: local
-        run: |
-          python scripts/upstream.py verify
-          python -m unittest discover -s scripts -p "test_*.py"
-          python scripts/dependency_boundary.py
-          go vet ./...
-      - name: Run native Mini group
+        run: go vet ./...
+      - name: Run native Mini groups
         shell: bash
         env:
           GOTOOLCHAIN: local
           CI_GO: ${{ matrix.go }}
           CI_MODE: ${{ matrix.mode }}
-          CI_SHARD: ${{ matrix.shard }}
+          CI_SHARDS: ${{ matrix.shards }}
         run: |
           python scripts/ci_shards.py run --suite mini --os ubuntu-latest \
-            --go "$CI_GO" --mode "$CI_MODE" --shard "$CI_SHARD" \
+            --go "$CI_GO" --mode "$CI_MODE" --shard "$CI_SHARDS" \
             --timeout 20m --output artifacts
+      - name: Report Go cache sizes
+        if: always()
+        shell: bash
+        run: du -sh "${{ steps.paths.outputs.build }}" "${{ steps.paths.outputs.modules }}" || true
+      # One cache per configuration fits the repository's 10 GB cache budget. Pull
+      # requests save only when nothing was restored; main and nightly runs keep it.
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: >-
+          success() && matrix.owner && steps.cache.outputs.cache-hit != 'true' &&
+          (github.event_name != 'pull_request' || steps.cache.outputs.cache-matched-key == '')
+        with:
+          path: |
+            ${{ steps.paths.outputs.build }}
+            ${{ steps.paths.outputs.modules }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: ci-shard-mini-ubuntu-latest-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.shard }}
+          name: ci-shard-mini-ubuntu-latest-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.job }}
           path: artifacts/
           retention-days: 7
 
   tip:
-    name: mini (Linux, tip, normal, ${{ matrix.shard }})
+    name: mini (Linux, tip, normal)
     needs: [plan, go-tip]
+    if: needs.plan.outputs.tip-enabled == 'true'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.tip) }}
@@ -164,7 +312,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.27.x'
-          cache-dependency-path: testdata/fixture/go.sum
+          cache: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: go-tip-toolchain
@@ -179,48 +327,71 @@ jobs:
           echo "$RUNNER_TEMP/go-tip/bin" >> "$GITHUB_PATH"
           echo "GOTOOLCHAIN=local" >> "$GITHUB_ENV"
           echo "GO_TIP_SHA=$GO_TIP_SHA" >> "$GITHUB_ENV"
-      - name: Audit sources, dependency boundary and vet
-        if: matrix.shard == 'units'
+      - name: Vet
+        if: contains(format(',{0},', matrix.shards), ',units,')
         shell: bash
-        run: |
-          python scripts/upstream.py verify
-          python -m unittest discover -s scripts -p "test_*.py"
-          python scripts/dependency_boundary.py
-          go vet ./...
-      - name: Run native Mini group on tip
+        run: go vet ./...
+      - name: Run native Mini groups on tip
         shell: bash
         env:
-          CI_SHARD: ${{ matrix.shard }}
+          CI_SHARDS: ${{ matrix.shards }}
         run: |
           python scripts/ci_shards.py run --suite mini --os ubuntu-latest \
-            --go tip --mode normal --shard "$CI_SHARD" --timeout 20m --output artifacts
+            --go tip --mode normal --shard "$CI_SHARDS" --timeout 20m --output artifacts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: ci-shard-mini-ubuntu-latest-go-tip-normal-${{ matrix.shard }}
+          name: ci-shard-mini-ubuntu-latest-go-tip-normal-${{ matrix.job }}
           path: artifacts/
           retention-days: 7
 
   evidence:
     name: Complete compatibility evidence
-    if: always()
-    needs: [plan, differential, mini, go-tip, tip]
+    if: ${{ !cancelled() }}
+    needs: [plan, lint, differential, mini, go-tip, tip]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Reuse the verification of this tree
+        if: needs.plan.outputs.skip == 'true'
+        shell: bash
+        env:
+          RUN: ${{ needs.plan.outputs.verified-run }}
+        run: |
+          echo "This tree passed every group in run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN." >> "$GITHUB_STEP_SUMMARY"
+      - name: Require the source audit
+        if: needs.plan.outputs.skip != 'true' && needs.lint.result != 'success'
+        run: exit 1
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        if: needs.plan.outputs.skip != 'true'
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.plan.outputs.skip != 'true'
         with:
           pattern: ci-shard-*
           path: shards/
       - name: Verify all groups and render full parity
+        id: aggregate
+        if: needs.plan.outputs.skip != 'true'
+        shell: bash
+        env:
+          TIP: ${{ needs.plan.outputs.tip-enabled }}
         run: |
-          python scripts/ci_shards.py aggregate --input shards --output reports
+          flags=()
+          if [[ "$TIP" == true ]]; then flags+=(--with-tip); fi
+          python scripts/ci_shards.py aggregate --input shards --output reports "${flags[@]}"
           cat reports/summary.md >> "$GITHUB_STEP_SUMMARY"
           for report in reports/*/parity.md; do cat "$report" >> "$GITHUB_STEP_SUMMARY"; done
+          echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
+        if: always() && needs.plan.outputs.skip != 'true'
         with:
           name: compatibility-evidence
           path: reports/
+          retention-days: 7
+      # Lets a push of this exact tree to main reuse this run.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: success() && needs.plan.outputs.skip != 'true'
+        with:
+          name: verified-tree-${{ steps.aggregate.outputs.tree }}
+          path: reports/summary.md
           retention-days: 7

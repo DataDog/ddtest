@@ -211,16 +211,17 @@ including Testify, but the report renderer rejects a full parity report without
 the independent Orchestrion reference.
 
 [`compatibility.yml`](../.github/workflows/compatibility.yml) runs the suite on
-Linux Go 1.26/1.27 and macOS/Windows Go 1.27. Linux normal and race suites run
-as separate jobs, with SDK-first and Mini-first execution respectively. Each
-differential job runs the complete suite once. Two Go 1.25 jobs run native Mini
-in normal/race modes. A third native job builds a recorded Go tip revision and
+Linux Go 1.26/1.27 and macOS/Windows Go 1.27. The Linux Go 1.27 race suite runs
+Mini first; the normal suites run the SDK first. Each differential configuration
+runs the complete suite once, split into test groups. Go 1.25 runs native Mini
+in normal/race modes. A nightly native job builds a recorded Go tip revision and
 also checks manual SDK span copies. The frozen Orchestrion reference fails on
-tip, so this job does not establish Orchestrion parity. The nine-job matrix runs on pull requests,
-pushes to `main` and manual dispatch; feature branch pushes use the pull request
-run instead of launching a second matrix. Artifact names include the mode.
-Each job uploads JSON counts, supplemental evidence, logs and a Markdown table;
-the table also appears in the GitHub job summary. Artifacts are retained for seven
+tip, so this job does not establish Orchestrion parity. The matrix runs on pull requests,
+pushes to `main`, the nightly schedule and manual dispatch; feature branch pushes use the pull request
+run instead of launching a second matrix, and [validation](validation.md#compatibility-workflow)
+describes when a run is skipped. Artifact names include the mode.
+Each group uploads JSON counts, supplemental evidence and logs; the final job
+renders a Markdown table per configuration, which also appears in the GitHub job summary. Artifacts are retained for seven
 days; download them before expiry to keep a run beyond that period. Missing
 evidence, a failed comparison or an omitted reference fails the report step. The Testify fixture
 requires every Testify policy case, timing and count comparison to pass. Reports

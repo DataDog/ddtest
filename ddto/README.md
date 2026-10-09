@@ -107,7 +107,7 @@ The SDK backend requires the exact version pinned in
 | Goleak | Automatic Mini integration for v1.3.0 and newer v1 releases, including compatible forks; real test leaks remain visible. [Details](docs/delivery.md#automatic-goleak-integration) |
 | Orchestrion and APM | Combined builds and independent SDK span copies under context-associated Mini tests. [Build commands](docs/orchestrion.md), [span association](docs/sdk-span-mirror.md) |
 | Bazel | Offline manifest and payload-file contracts; a real Bazel toolchain invocation is not part of the validation. [Details](docs/mini-runtime.md#delivery-and-offline-output) |
-| Platforms | Linux with Go 1.25/1.26/1.27 and tip, macOS and Windows with Go 1.27; Linux also runs stable versions with `-race`. [CI matrix](docs/validation.md#compatibility-workflow) |
+| Platforms | Linux with Go 1.25/1.26/1.27 and nightly tip, macOS and Windows with Go 1.27; Linux also runs Go 1.25 and 1.27 with `-race`. [CI matrix](docs/validation.md#compatibility-workflow) |
 
 When using `ddto`, a client's `go.mod` can declare Go 1.21 or newer; the
 installed toolchain must meet Mini's Go 1.25 minimum. Older toolchains are
