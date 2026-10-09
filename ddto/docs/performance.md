@@ -199,11 +199,11 @@ changing this scheduling during an upstream update.
 
 Copying a codec into the repository does not itself make its encoder faster.
 The dependency reduction comes from changing the runtime graph; the allocation
-changes come from event ownership and buffer reuse. Test-only `testify` (v1.7.5)
-and its dependencies remain in the repository without entering Mini's runtime
-imports.
+changes come from event ownership and buffer reuse. Mini's runtime module has
+no external requirements; compatibility fixtures declare their dependencies
+in separate modules.
 
-The [runtime comparison](benchmarks.md#runtime-of-the-prebuilt-test-binaries)
+The [runtime comparison](benchmarks.md#runtime-of-the-original-test-binaries)
 includes startup, test execution and delivery. Its detailed report records
 event counts and wire bytes. It measures the complete implementation. Use focused
 profiles and controlled comparisons to attribute a change to one optimization.
@@ -408,21 +408,23 @@ unrounded medians. A negative first value means the POC took less time than
 Orchestrion; a positive second value means it took more time than native.
 
 The [build benchmark guide](build-benchmarks.md) documents
-[`scripts/build_benchmark.py`](../scripts/build_benchmark.py), which runs all four
-variants across the five scenarios, assigns affinity, measures exclusive cgroups
+[`scripts/build_benchmark.py`](../scripts/build_benchmark.py), which runs Native, Orchestrion and Mini
+across the five scenarios, assigns affinity, measures exclusive cgroups
 and qualifies the outputs. Its `report` command regenerates the
-[recorded build tables](results/20261005-linux-go1.27.1/build/README.md)
+[recorded build tables](results/20261009-linux-go1.27.1/build/README.md)
 from every retained CSV observation, without Go or network access.
 
 ## Evidence and remaining work
 
-The [recorded comparison](benchmarks.md) covers all four variants, Gin/Chi,
-direct and external Testify, race and coverage at 4/32 CPUs. It keeps raw
+The [recorded comparison](benchmarks.md) covers Native, Orchestrion and Mini,
+Gin/Chi, direct and external Testify, race and coverage at 4/32 CPUs. It keeps raw
 durations, aggregate cgroup memory, variation and event counts, and separates
-the unused-constant diagnostic from the reachable test-body edit. All build
-cells qualified; four Gin race runtime cells contain real failures. The recorded
-115-case parity suite passed. Those observations retain the code and failure
-classifications measured at that revision; current regression checks live in
+the unused-constant diagnostic from the reachable test-body edit. Mini has new
+measurements; Native and Orchestrion retain their recorded values and dates.
+All build cells qualified. The runtime report distinguishes execution failures
+from missing SDK event references and keeps both kinds of observations.
+The 115-case parity data retains its own revision and date; this performance
+refresh does not repeat that suite. Current regression checks live in
 [validation](validation.md).
 
 Further profiling can examine MessagePack encoding, tag construction, telemetry

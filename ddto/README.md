@@ -225,10 +225,11 @@ diagrams, compatibility tests and source-update procedures.
 ## Benchmarks
 
 [Build, runtime and memory tables](docs/benchmarks.md) compare Native,
-Orchestrion, POC SDK and Mini at 4/32 CPUs, with coverage and race cases.
-The [recorded dataset](docs/results/20261005-linux-go1.27.1/build/README.md) contains
-6,224 comparative observations, measured at
-commit `9d4786fbd27f573bb68c5516bf23b336e8d7bdaa`. Use a new run to measure another revision.
+Orchestrion and POC Mini at 4/32 CPUs, with coverage and race cases.
+The [recorded build data](docs/results/20261009-linux-go1.27.1/build/README.md) contains
+4,668 comparative observations.
+Mini was measured on 2026-10-09 at `20caa458420f567c65a15ca5124696a09714556a`.
+Native and Orchestrion retain their 2026-10-04 observations.
 
 [Run benchmarks or regenerate the tables](docs/build-benchmarks.md).
 <!-- build-benchmark-summary:end -->

@@ -1,0 +1,29 @@
+{
+  "head": "20caa458420f567c65a15ca5124696a09714556a",
+  "measurement_origins": {
+    "native": {
+      "source_head": "9d4786fbd27f573bb68c5516bf23b336e8d7bdaa",
+      "started_at": "2026-10-04T19:58:40.049683+00:00",
+      "retained": true
+    },
+    "orchestrion": {
+      "source_head": "9d4786fbd27f573bb68c5516bf23b336e8d7bdaa",
+      "started_at": "2026-10-04T19:58:40.049683+00:00",
+      "retained": true
+    },
+    "mini": {
+      "source_head": "20caa458420f567c65a15ca5124696a09714556a",
+      "started_at": "2026-10-09T17:42:52.969642+00:00",
+      "retained": false
+    }
+  },
+  "retained_build_rows_unchanged": true,
+  "runtime_complete_cells": 48,
+  "runtime_verified_cells": 44,
+  "raw_runtime_groups": 1152,
+  "measured_runtime_groups": 960,
+  "mini_build_observations": 1556,
+  "mini_runtime_groups": 576,
+  "mini_agent_groups": 8,
+  "parity_refreshed": false
+}

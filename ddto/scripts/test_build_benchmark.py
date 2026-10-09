@@ -43,7 +43,7 @@ class ReportTests(unittest.TestCase):
 
     def test_medians_keep_outliers_and_report_actual_positive_changes(self):
         report, summary = benchmark.render(self.directory)
-        expected = "| Fixture | `none` | 4 | 20.000 s | 30.000 s | 15.000 s (-50.0%; -25.0%) | 40.000 s (+33.3%; +100.0%) |"
+        expected = "| Fixture | `none` | 4 | 20.000 s | 30.000 s (+50.0%) | 15.000 s (-50.0%; -25.0%) | 40.000 s (+33.3%; +100.0%) |"
         self.assertEqual(report.count(expected), 5)
         mini = summary["statistics"]["fixture/4/cold"]["mini"]["wall_s"]
         self.assertEqual((mini["n"], mini["median"], mini["min"], mini["max"]), (3, 40, 20, 100))
@@ -59,6 +59,30 @@ class ReportTests(unittest.TestCase):
         self.assertIn("60 comparative observations", excerpt)
         self.assertNotIn("|", excerpt)
         self.assertNotIn("40.000 s", excerpt)
+
+    def test_selected_variants_need_only_their_own_complete_observations(self):
+        self.manifest["variants"] = ["mini"]
+        (self.directory / "manifest.json").write_text(json.dumps(self.manifest))
+        self.rows = [r for r in self.rows if r["variant"] == "mini"]
+        self.save_rows()
+        report, summary = benchmark.render(self.directory)
+        self.assertIn("| Project | Flags | CPUs | POC Mini |", report)
+        self.assertNotIn("POC SDK", report)
+        self.assertEqual(summary["measured_observations"], 15)
+        self.rows.pop()
+        self.save_rows()
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            benchmark.render(self.directory)
+
+    def test_three_variant_comparison_preserves_both_references(self):
+        self.manifest["variants"] = ["native", "orchestrion", "mini"]
+        (self.directory / "manifest.json").write_text(json.dumps(self.manifest))
+        self.rows = [r for r in self.rows if r["variant"] != "sdk"]
+        self.save_rows()
+        report, summary = benchmark.render(self.directory)
+        self.assertNotIn("POC SDK", report)
+        self.assertIn("40.000 s (+33.3%; +100.0%)", report)
+        self.assertEqual(summary["measured_observations"], 45)
 
     def test_controls_do_not_enter_comparative_medians(self):
         row = dict(self.rows[0], scenario="control-link", validation_only=True, wall_s=1000)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile-only four-variant benchmarks and offline Markdown table generation.
+"""Compile-only Native, Orchestrion and Mini benchmarks and offline Markdown table generation.
 
 The run command requires Linux, cgroup v2 and a systemd user manager. Every
 build gets an exclusive scope so detached Orchestrion daemons are accounted
@@ -27,7 +27,13 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "scripts/build-benchmark.json"
 INPUTS = ROOT / "scripts/testdata/build-benchmark"
-VARIANTS = ("native", "orchestrion", "sdk", "mini")
+VARIANTS = ("native", "orchestrion", "mini")
+LEGACY_VARIANTS = ("native", "orchestrion", "sdk", "mini")
+LABELS = {"native": "Native", "orchestrion": "Orchestrion", "sdk": "POC SDK", "mini": "POC Mini"}
+
+
+def variants(manifest):
+    return tuple(manifest.get("variants", LEGACY_VARIANTS))
 SCENARIOS = {
     "cold": "Cold compilation",
     "cached": "Cached compilation — unchanged output reused",
@@ -97,7 +103,7 @@ def observations(directory, manifest):
         case = cases.get(row["project"])
         if case is None or row["series"] != case["series"]:
             raise ValueError("unknown case or changed series")
-        if row["scenario"] not in SCENARIOS or row["variant"] not in VARIANTS:
+        if row["scenario"] not in SCENARIOS or row["variant"] not in variants(manifest):
             raise ValueError("unknown scenario or variant")
         cpus = int(row["cpus"])
         if cpus not in manifest["cpus"]:
@@ -109,7 +115,7 @@ def observations(directory, manifest):
         for cpus in manifest["cpus"]:
             for scenario in SCENARIOS:
                 count = manifest["repetitions"][case["series"]][scenario]
-                for variant in VARIANTS:
+                for variant in variants(manifest):
                     key = (case["id"], cpus, scenario, variant)
                     current = grouped.get(key, [])
                     if sorted(int(r["iteration"]) for r in current) != list(range(count)):
@@ -143,16 +149,19 @@ def table_lines(manifest, summary, scenarios=None, cases=None):
     lines = []
     for scenario in scenarios or SCENARIOS:
         lines += ["## " + SCENARIOS[scenario], "",
-                  "| Project | Flags | CPUs | Native | Orchestrion | POC SDK | POC Mini |",
-                  "| --- | --- | ---: | ---: | ---: | ---: | ---: |"]
+                  "| Project | Flags | CPUs | " + " | ".join(LABELS[v] for v in variants(manifest)) + " |",
+                  "| --- | --- | ---: |" + " ---: |" * len(variants(manifest))]
         for case in cases or manifest["cases"]:
             for cpus in manifest["cpus"]:
                 cell = summary[f"{case['id']}/{cpus}/{scenario}"]
                 values = []
-                for variant in VARIANTS:
+                for variant in variants(manifest):
                     median = cell[variant]["wall_s"]["median"]
                     text = f"{median:.3f} s"
-                    if variant in ("sdk", "mini"):
+                    if variant == "orchestrion" and "native" in cell:
+                        native = cell["native"]["wall_s"]["median"]
+                        text += f" ({100 * (median / native - 1):+.1f}%)"
+                    elif variant in ("sdk", "mini") and "native" in cell and "orchestrion" in cell:
                         reference = cell["orchestrion"]["wall_s"]["median"]
                         native = cell["native"]["wall_s"]["median"]
                         text += f" ({100 * (median / reference - 1):+.1f}%; {100 * (median / native - 1):+.1f}%)"
@@ -182,13 +191,20 @@ def render(directory):
 
 def overview_lines(manifest, summary, link):
     """Keep the README short; comparison tables belong in the linked reports."""
+    if "measurement_origins" in manifest:
+        mini = manifest["measurement_origins"]["mini"]
+        reference = manifest["measurement_origins"]["native"]
+        provenance = [f"Mini was measured on {mini['started_at'][:10]} at `{mini['source_head']}`.",
+                      f"Native and Orchestrion retain their {reference['started_at'][:10]} observations."]
+    else:
+        provenance = [f"Measured at commit `{manifest['source_head']}`."]
     return "\n".join([
         "## Benchmarks", "",
         "[Build, runtime and memory tables](docs/benchmarks.md) compare Native,",
-        "Orchestrion, POC SDK and Mini at 4/32 CPUs, with coverage and race cases.",
-        f"The [recorded dataset]({link}/README.md) contains",
-        f"{summary['measured_observations']:,} comparative observations, measured at",
-        f"commit `{manifest['source_head']}`. Use a new run to measure another revision.", "",
+        "Orchestrion and POC Mini at 4/32 CPUs, with coverage and race cases.",
+        f"The [recorded build data]({link}/README.md) contains",
+        f"{summary['measured_observations']:,} comparative observations.",
+        *provenance, "",
         "[Run benchmarks or regenerate the tables](docs/build-benchmarks.md).", "",
     ])
 
@@ -286,6 +302,18 @@ class Runner:
         self.args = args
         self.started = time.monotonic()
         self.config = read_json(CONFIG)
+        self.variants = tuple(getattr(args, "variant", None) or VARIANTS)
+        self.baseline = args.baseline.resolve() if getattr(args, "baseline", None) else None
+        if self.baseline:
+            previous = read_json(self.baseline / "build/manifest.json")
+            if self.variants != ("mini",):
+                raise ValueError("--baseline requires --variant mini")
+            for key in ("sdk_version", "sdk_commit", "orchestrion_version", "cases", "cpus", "repetitions"):
+                self.config[key] = previous[key]
+            input_head = previous.get("input_source_head", previous["source_head"])
+            original = json.loads(subprocess.check_output(
+                ["git", "show", input_head + ":scripts/build-benchmark.json"], cwd=ROOT, text=True))
+            self.config["subjects"] = original["subjects"]
         self.output = args.output.resolve()
         if self.output.exists() or self.output == Path("/tmp") or Path("/tmp") in self.output.parents:
             raise ValueError("use a new output directory outside /tmp")
@@ -332,7 +360,7 @@ class Runner:
                          "toolchain": self.setup([str(self.go), "version"], ROOT).strip(),
                          "sdk_version": self.config["sdk_version"], "sdk_commit": self.config["sdk_commit"],
                          "orchestrion_version": self.config["orchestrion_version"],
-                         "cpus": args.cpus, "affinity": self.affinity, "cases": self.cases,
+                         "cpus": args.cpus, "affinity": self.affinity, "cases": self.cases, "variants": self.variants,
                          "repetitions": self.config["repetitions"], "tests_executed": False,
                          "limits": {"seconds": args.max_seconds, "bytes": int(args.max_gib * 1024 ** 3),
                                     "commands": args.max_commands, "command_seconds": args.command_seconds},
@@ -372,8 +400,31 @@ class Runner:
 
     def prepare(self):
         source = read_json(ROOT / "internal/thirdparty/dd-trace-go/SOURCE.json")
-        if source["version"] != self.config["sdk_version"] or source["commit"] != self.config["sdk_commit"]:
+        if not self.baseline and (source["version"] != self.config["sdk_version"] or source["commit"] != self.config["sdk_commit"]):
             raise ValueError("SDK pin changed; update benchmark inputs before measuring")
+        self.manifest["mini_sdk_commit"] = source["commit"]
+        inputs = INPUTS
+        if self.baseline:
+            previous = read_json(self.baseline / "build/manifest.json")
+            if self.manifest["toolchain"] != previous["toolchain"] or self.affinity != {int(k): v for k, v in previous["affinity"].items() if int(k) in self.args.cpus}:
+                raise ValueError("refresh must use the baseline toolchain and CPU affinity")
+            archived_go = [value for name, value in previous["source_and_tool_sha256"].items()
+                           if name.endswith("/bin/go")]
+            if archived_go != [digest(self.go)]:
+                raise ValueError("refresh must use the archived Go executable")
+            input_head = previous.get("input_source_head", previous["source_head"])
+            self.manifest["input_source_head"] = input_head
+            self.manifest["baseline"] = {"directory": str(self.baseline), "source_head": previous["source_head"], "manifest_sha256": digest(self.baseline / "build/manifest.json")}
+            inputs = self.output / "baseline-inputs"
+            prefix = "scripts/testdata/build-benchmark/"
+            files = self.setup(["git", "ls-tree", "-r", "--name-only", input_head, "--", prefix], ROOT).splitlines()
+            for name in files:
+                target = inputs / name.removeprefix(prefix)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                content = subprocess.check_output(["git", "show", input_head + ":" + name], cwd=ROOT)
+                target.write_bytes(content)
+            if not files:
+                raise ValueError("baseline input sources unavailable")
         version = self.setup([str(self.orchestrion), "version"], ROOT)
         if self.config["orchestrion_version"] not in version:
             raise ValueError("Orchestrion executable does not match the configured version")
@@ -386,7 +437,7 @@ class Runner:
             spec = self.config["subjects"][name]
             target = self.output / "subjects" / name
             if spec.get("fixture"):
-                shutil.copytree(INPUTS / name, target)
+                shutil.copytree(inputs / name, target)
                 (target / "go.mod.template").unlink()
             else:
                 module = read_json_string(self.setup([str(self.go), "mod", "download", "-json",
@@ -398,9 +449,9 @@ class Runner:
                 target.chmod(0o755)
                 for path in target.rglob("*"):
                     path.chmod(0o755 if path.is_dir() else 0o644)
-            module_text = (INPUTS / name / "go.mod.template").read_text().replace("@POC_ROOT@", json.dumps(str(ROOT)))
+            module_text = (inputs / name / "go.mod.template").read_text().replace("@POC_ROOT@", json.dumps(str(ROOT)))
             (target / "go.mod").write_text(module_text)
-            shutil.copyfile(INPUTS / name / "go.sum", target / "go.sum")
+            shutil.copyfile(inputs / name / "go.sum", target / "go.sum")
             (target / "orchestrion.yml").write_bytes(yaml.read_bytes())
             (target / "orchestrion.tool.go").write_text(
                 '//go:build tools\n\npackage ' + spec["package"] + '\nimport _ "github.com/DataDog/orchestrion"\n')
@@ -442,7 +493,6 @@ class Runner:
     def command(self, case, cpus, variant, extra):
         prefixes = {"native": [str(self.go), "test"],
                     "orchestrion": [str(self.go), "test", f"-toolexec={self.orchestrion} toolexec"],
-                    "sdk": [str(self.ddto), "test", "--runtime=sdk"],
                     "mini": [str(self.ddto), "test", "--runtime=mini"]}
         ldflags = ["-w"] + [flag.removeprefix("-ldflags=") for flag in extra if flag.startswith("-ldflags=")]
         rest = [flag for flag in extra if not flag.startswith("-ldflags=")]
@@ -525,7 +575,7 @@ class Runner:
 
     def validate(self, case, cpus, caches):
         traces = []
-        for variant in VARIANTS:
+        for variant in self.variants:
             self.measure(case, cpus, variant, "trace-prime", 0, caches[variant], validation=True)
             checks = [("trace-cached", []), ("trace-link", [f"-ldflags=-buildid=trace-{case['id']}-{cpus}"]),
                       ("trace-body", self.edit(case, 999, True))]
@@ -553,12 +603,12 @@ class Runner:
             sdk = SDK_MODULE + "/internal/"
             mini = POC_MODULE + "/internal/thirdparty/dd-trace-go/"
             suffix = "civisibility/integrations/gotesting.instrumentTestingMWithControl"
-            if ((sdk + suffix in symbols) != (variant in ("orchestrion", "sdk")) or
+            if ((sdk + suffix in symbols) != (variant == "orchestrion") or
                     (mini + suffix in symbols) != (variant == "mini")):
                 raise ValueError("testing instrumentation hook mismatch")
             if case["subject"].startswith("testify"):
                 suffix = "civisibility/integrations/gotesting.instrumentTestifySuiteRun"
-                if ((sdk + suffix in symbols) != (variant in ("orchestrion", "sdk")) or
+                if ((sdk + suffix in symbols) != (variant == "orchestrion") or
                         (mini + suffix in symbols) != (variant == "mini")):
                     raise ValueError("Testify instrumentation hook mismatch")
             sections = self.setup(["readelf", "-SW", str(binary)], ROOT)
@@ -614,7 +664,7 @@ class Runner:
                     reps = self.manifest["repetitions"][case["series"]]
                     caches = {}
                     for i in range(reps["cold"]):
-                        for variant in rotated(i + int(cpus == max(self.args.cpus))):
+                        for variant in rotated(i + int(cpus == max(self.args.cpus)), self.variants):
                             if variant in caches:
                                 self.remove_cache(caches[variant])
                             cache = self.output / "caches" / f"{case['id']}-cpu{cpus}-{variant}-{i}"
@@ -629,7 +679,7 @@ class Runner:
                                 extra = [f"-ldflags=-buildid=link-{case['id']}-{cpus}-{i}"]
                             elif scenario in ("edited", "test-body-edit"):
                                 extra = self.edit(case, i, scenario == "test-body-edit")
-                            for variant in rotated(i):
+                            for variant in rotated(i, self.variants):
                                 self.measure(case, cpus, variant, scenario, i, caches[variant], extra)
                     self.validate(case, cpus, caches)
                     self.check_frozen()
@@ -655,10 +705,10 @@ class Runner:
 
     def write_methodology(self):
         m = self.manifest
-        lines = ["# Compile-only comparison: Native, Orchestrion, POC SDK and POC Mini", "",
+        lines = ["# Compile-only measurements: " + ", ".join(LABELS[v] for v in self.variants), "",
                  f"POC `{m['source_head']}`; `{m['toolchain']}`; SDK `{m['sdk_version']}`; Orchestrion `{m['orchestrion_version']}`.", "",
-                 "Values are medians in seconds. POC percentages show the signed change against total Orchestrion wall time first, then against Native; both use unrounded medians.", "",
-                 "All variants compile with `go test -c -o <directory>/ -ldflags=-w ./...`. Test binaries are never run. The same prepared source and module graph is used for all four variants. Orchestrion loads only the pinned SDK's testing aspects.", "",
+                 "Values are medians in seconds. Orchestrion's percentage compares time against Native. POC percentages compare Orchestrion first, then Native; all use unrounded medians.", "",
+                 "All variants compile with `go test -c -o <directory>/ -ldflags=-w ./...`. Test binaries are never run. The selected variants use the same prepared source and module graph. Orchestrion loads only the pinned SDK's testing aspects.", "",
                  "Builds run serially in rotating order. Each cold run has an empty Go build cache and no existing output. Downloads are disabled during timing; modules and OS page cache stay warm. Affinity, `GOMAXPROCS` and `-p` match the selected CPU count; manifest.json records logical CPU IDs and physical core topology.", "",
                  "Unchanged output reuse, forced linking and reachable edits are checked with tool traces. Final binaries are checked for the expected testing/Testify hooks and absence of DWARF. CPU and memory include daemons and nested builds through exclusive cgroups. Wall time ends at the top-level command's exit; drain wait is recorded separately.", "",
                  f"{m['completed_commands']} completed build commands, {m['qualified_binaries']} qualified binaries. Native control repetitions: {self.args.control_repeats}. A skipped control in a smoke run provides no stability evidence.", "",
@@ -673,9 +723,9 @@ def read_json_string(text):
     return value
 
 
-def rotated(index):
-    offset = index % len(VARIANTS)
-    return VARIANTS[offset:] + VARIANTS[:offset]
+def rotated(index, selected=VARIANTS):
+    offset = index % len(selected)
+    return selected[offset:] + selected[:offset]
 
 
 def positive(value):
@@ -708,6 +758,8 @@ def main():
     report.add_argument("--update-readme", action="store_true", help="also regenerate the marked README summary; input must be inside this repository")
     run = sub.add_parser("run", help="prepare targets and execute a bounded compile-only matrix")
     run.add_argument("--go", default="go")
+    run.add_argument("--variant", action="append", choices=VARIANTS, help="select variants; default: native, orchestrion and mini")
+    run.add_argument("--baseline", type=Path, help="reuse the archived inputs when refreshing only Mini")
     run.add_argument("--orchestrion", type=Path, required=True)
     run.add_argument("--output", type=Path, required=True)
     run.add_argument("--cpus", type=cpu_counts, default=[4, 32])

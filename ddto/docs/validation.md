@@ -289,7 +289,7 @@ records Linux measurements separately from GitHub Actions.
 
 ## Selective-tool validation
 
-The [recorded Linux Go 1.27.1 dataset](results/20261005-linux-go1.27.1/parity/README.md)
+The [recorded Linux Go 1.27.1 dataset](results/20261009-linux-go1.27.1/parity/README.md)
 repeats all 26 Testify cases and seven deferred Testify cases against the full
 SDK/Orchestrion reference, within the 115-case matrix. Six rounds pass at each
 of 4/32 CPUs. This is local protocol and runtime evidence; native macOS/Windows

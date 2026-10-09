@@ -1,0 +1,51 @@
+{
+  "scope": "prebuilt original package binaries; receiver setup and decoding excluded",
+  "telemetry_enabled": false,
+  "repetitions": 5,
+  "warmups": 1,
+  "variants": [
+    "native",
+    "orchestrion",
+    "mini",
+    "mini-deferred"
+  ],
+  "measurement_origins": {
+    "native": {
+      "source_head": "9d4786fbd27f573bb68c5516bf23b336e8d7bdaa",
+      "started_at": "2026-10-04T19:58:40.049683+00:00",
+      "retained": true
+    },
+    "orchestrion": {
+      "source_head": "9d4786fbd27f573bb68c5516bf23b336e8d7bdaa",
+      "started_at": "2026-10-04T19:58:40.049683+00:00",
+      "retained": true
+    },
+    "mini": {
+      "source_head": "20caa458420f567c65a15ca5124696a09714556a",
+      "started_at": "2026-10-09T17:42:52.969642+00:00",
+      "retained": false
+    }
+  },
+  "mini_collection": {
+    "source_head": "20caa458420f567c65a15ca5124696a09714556a",
+    "toolchain": "go version go1.27.1 linux/amd64",
+    "variants": [
+      "mini",
+      "mini-deferred"
+    ],
+    "repetitions": 5,
+    "warmups": 1,
+    "status": "partial",
+    "baseline": "docs/results/20261005-linux-go1.27.1",
+    "started_at": "2026-10-09T18:46:57.138760+00:00",
+    "helper_sha256": {
+      "/var/tmp/dd-ci-mini-benchmark-20261009/worktree/scripts/runtime_benchmark.py": "725d85bf14e66fabd52c0fb569f0abfc53dfeb37e2a405d79ab4ba4a5cb1628e",
+      "/var/tmp/dd-ci-mini-benchmark-20261009/worktree/scripts/benchmark_receiver.py": "10593202418a78a961ba4b2520218bc44010b7c2249ef7721ff6e6cfaf79e742",
+      "/var/tmp/dd-ci-mini-benchmark-20261009/worktree/scripts/benchmark_runtime_measure.py": "6b5fe6d7237054cb43f05bdaad09a77bc18df9e2aa92a411aab49222a4a60281",
+      "/var/tmp/dd-ci-mini-benchmark-20261009/runtime/decode": "1f0e1bb3f5d585d67341d958eaaae8cc441c94ee1b20743a0f782ece9d41bd6f"
+    },
+    "baseline_sha256": "4422b298a70b4904758e3e421b6b27ba559ac8326dcc2198ccaa07dbc214e431",
+    "commands": 576,
+    "elapsed_seconds": 4550.320039503975
+  }
+}

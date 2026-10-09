@@ -1,0 +1,137 @@
+[
+  {
+    "variant": "native",
+    "scenario": "trace-cached",
+    "tools": {
+      "compile": [],
+      "link": [],
+      "cover": []
+    }
+  },
+  {
+    "variant": "native",
+    "scenario": "trace-link",
+    "tools": {
+      "compile": [
+        "/var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/compile -o $WORK/b205/_pkg_.a -trimpath \"$WORK/b205=>\" -p main -lang=go1.26 -complete -installsuffix race -buildid jHqQ3rA4ymdZTdMhmKaQ/jHqQ3rA4ymdZTdMhmKaQ -goversion go1.27.1 -coveragecfg=$WORK/b205/coveragecfg -c=4 -race -nolocalimports -importcfg $WORK/b205/importcfg -pack $WORK/b205/covervars.go $WORK/b205/_testmain.cover.go",
+        "/var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/compile -o $WORK/b243/_pkg_.a -trimpath \"$WORK/b243=>\" -p main -lang=go1.26 -complete -installsuffix race -buildid -GUPou4VlIROT2nIigW3/-GUPou4VlIROT2nIigW3 -goversion go1.27.1 -coveragecfg=$WORK/b243/coveragecfg -c=4 -race -nolocalimports -importcfg $WORK/b243/importcfg -pack $WORK/b243/covervars.go $WORK/b243/_testmain.cover.go"
+      ],
+      "link": [
+        "GOROOT='/var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1' /var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/link -o $WORK/b205/chi.test -importcfg $WORK/b205/importcfg.link -installsuffix race -X=runtime.godebugDefault=tracebacklabels=0,x509sslcertoverrideplatform=0 -buildmode=exe -buildid=Vhj4Seb-HVeRTPynpJtU/jHqQ3rA4ymdZTdMhmKaQ/RJQyS9JtcOBQw3HKreJA/Vhj4Seb-HVeRTPynpJtU -race -w -buildid=trace-chi--race-cover-client-4 -X testing.testBinary=1 -extld=gcc $WORK/b205/_pkg_.a",
+        "GOROOT='/var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1' /var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/link -o $WORK/b243/middleware.test -importcfg $WORK/b243/importcfg.link -installsuffix race -X=runtime.godebugDefault=tracebacklabels=0,x509sslcertoverrideplatform=0 -buildmode=exe -buildid=XcST8-eOt78a2l1fDe-2/-GUPou4VlIROT2nIigW3/rknDABE-HrWEGlKUAxF7/XcST8-eOt78a2l1fDe-2 -race -w -buildid=trace-chi--race-cover-client-4 -X testing.testBinary=1 -extld=gcc $WORK/b243/_pkg_.a"
+      ],
+      "cover": [
+        "/var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/cover -pkgcfg $WORK/b205/pkgcfg.txt -mode testmain -var goCover_3c34b4c23d20_ -outfilelist $WORK/b205/coveroutfiles.txt $WORK/b205/_testmain.go",
+        "/var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/cover -pkgcfg $WORK/b243/pkgcfg.txt -mode testmain -var goCover_056ae5d3efd1_ -outfilelist $WORK/b243/coveroutfiles.txt $WORK/b243/_testmain.go"
+      ]
+    }
+  },
+  {
+    "variant": "native",
+    "scenario": "trace-body",
+    "tools": {
+      "compile": [
+        "/var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/compile -o $WORK/b002/_pkg_.a -trimpath \"/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/edits/chi--race-cover-client-True-999.go=>/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/subjects/chi/mux_test.go;/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/edits/chi--race-cover-client-True-999.go=>/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/subjects/chi/mux_test.go;$WORK/b002=>\" -p github.com/go-chi/chi/v5 -lang=go1.26 -complete -installsuffix race -buildid pqEHjYpKuAelT-4d-K-1/pqEHjYpKuAelT-4d-K-1 -goversion go1.27.1 -coveragecfg=$WORK/b002/coveragecfg -c=4 -race -nolocalimports -importcfg $WORK/b002/importcfg -pack $WORK/b002/covervars.go $WORK/b002/chain.cover.go $WORK/b002/chi.cover.go $WORK/b002/context.cover.go $WORK/b002/mux.cover.go $WORK/b002/tree.cover.go ./context_test.go /var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/edits/chi--race-cover-client-True-999.go ./path_value_test.go ./pattern_test.go ./tree_test.go",
+        "/var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/compile -o $WORK/b205/_pkg_.a -trimpath \"$WORK/b205=>\" -p main -lang=go1.26 -complete -installsuffix race -buildid oJdP2axHLyyoQYzGG0vo/oJdP2axHLyyoQYzGG0vo -goversion go1.27.1 -coveragecfg=$WORK/b205/coveragecfg -c=4 -race -nolocalimports -importcfg $WORK/b205/importcfg -pack $WORK/b205/covervars.go $WORK/b205/_testmain.cover.go"
+      ],
+      "link": [
+        "GOROOT='/var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1' /var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/link -o $WORK/b243/middleware.test -importcfg $WORK/b243/importcfg.link -installsuffix race -X=runtime.godebugDefault=tracebacklabels=0,x509sslcertoverrideplatform=0 -buildmode=exe -buildid=gNfWD6ky7LWt83yEiO9k/KoDpntOQ3hoLvNleEQlV/rknDABE-HrWEGlKUAxF7/gNfWD6ky7LWt83yEiO9k -race -w -X testing.testBinary=1 -extld=gcc /var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/caches/chi--race-cover-client-cpu4-native-2/7a/7a2fecfa054a7feea94a1125b5f0e68089c3a2771fb6fec8b6da7ed7e5fe2529-d",
+        "GOROOT='/var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1' /var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/link -o $WORK/b205/chi.test -importcfg $WORK/b205/importcfg.link -installsuffix race -X=runtime.godebugDefault=tracebacklabels=0,x509sslcertoverrideplatform=0 -buildmode=exe -buildid=13JclkV0s57AOc-zepF2/oJdP2axHLyyoQYzGG0vo/bAIps4ad3IzWXOVnWjAI/13JclkV0s57AOc-zepF2 -race -w -X testing.testBinary=1 -extld=gcc $WORK/b205/_pkg_.a"
+      ],
+      "cover": [
+        "/var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/cover -pkgcfg $WORK/b002/pkgcfg.txt -mode atomic -var goCover_51dfb57cd7d8_ -outfilelist $WORK/b002/coveroutfiles.txt /var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/subjects/chi/chain.go /var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/subjects/chi/chi.go /var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/subjects/chi/context.go /var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/subjects/chi/mux.go /var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/subjects/chi/tree.go",
+        "/var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/cover -pkgcfg $WORK/b205/pkgcfg.txt -mode testmain -var goCover_3c34b4c23d20_ -outfilelist $WORK/b205/coveroutfiles.txt $WORK/b205/_testmain.go"
+      ]
+    }
+  },
+  {
+    "variant": "orchestrion",
+    "scenario": "trace-cached",
+    "tools": {
+      "compile": [],
+      "link": [],
+      "cover": []
+    }
+  },
+  {
+    "variant": "orchestrion",
+    "scenario": "trace-link",
+    "tools": {
+      "compile": [
+        "/var/tmp/dd-ci-testing-poc-20260930/bin/orchestrion toolexec /var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/compile -o $WORK/b205/_pkg_.a -trimpath \"$WORK/b205=>\" -p main -lang=go1.26 -complete -installsuffix race -buildid esDVzCY0yUlzfPWGs6Mr/esDVzCY0yUlzfPWGs6Mr -goversion go1.27.1 -coveragecfg=$WORK/b205/coveragecfg -c=4 -race -nolocalimports -importcfg $WORK/b205/importcfg -pack $WORK/b205/covervars.go $WORK/b205/_testmain.cover.go",
+        "/var/tmp/dd-ci-testing-poc-20260930/bin/orchestrion toolexec /var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/compile -o $WORK/b243/_pkg_.a -trimpath \"$WORK/b243=>\" -p main -lang=go1.26 -complete -installsuffix race -buildid R9trufZbQGT1XJcYvfP2/R9trufZbQGT1XJcYvfP2 -goversion go1.27.1 -coveragecfg=$WORK/b243/coveragecfg -c=4 -race -nolocalimports -importcfg $WORK/b243/importcfg -pack $WORK/b243/covervars.go $WORK/b243/_testmain.cover.go"
+      ],
+      "link": [
+        "GOROOT='/var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1' /var/tmp/dd-ci-testing-poc-20260930/bin/orchestrion toolexec /var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/link -o $WORK/b205/chi.test -importcfg $WORK/b205/importcfg.link -installsuffix race -X=runtime.godebugDefault=tracebacklabels=0,x509sslcertoverrideplatform=0 -buildmode=exe -buildid=fR_jDN8DAhIdsDVfayi0/esDVzCY0yUlzfPWGs6Mr/QDGXPDGQH3QjvrchA5gs/fR_jDN8DAhIdsDVfayi0 -race -w -buildid=trace-chi--race-cover-client-4 -X testing.testBinary=1 -extld=gcc $WORK/b205/_pkg_.a",
+        "GOROOT='/var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1' /var/tmp/dd-ci-testing-poc-20260930/bin/orchestrion toolexec /var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/link -o $WORK/b243/middleware.test -importcfg $WORK/b243/importcfg.link -installsuffix race -X=runtime.godebugDefault=tracebacklabels=0,x509sslcertoverrideplatform=0 -buildmode=exe -buildid=ZvIRC5N4MufzsP3QtUNN/R9trufZbQGT1XJcYvfP2/hzjgLTf5KqzSsME1V2oL/ZvIRC5N4MufzsP3QtUNN -race -w -buildid=trace-chi--race-cover-client-4 -X testing.testBinary=1 -extld=gcc $WORK/b243/_pkg_.a"
+      ],
+      "cover": [
+        "/var/tmp/dd-ci-testing-poc-20260930/bin/orchestrion toolexec /var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/cover -pkgcfg $WORK/b205/pkgcfg.txt -mode testmain -var goCover_3c34b4c23d20_ -outfilelist $WORK/b205/coveroutfiles.txt $WORK/b205/_testmain.go",
+        "/var/tmp/dd-ci-testing-poc-20260930/bin/orchestrion toolexec /var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/cover -pkgcfg $WORK/b243/pkgcfg.txt -mode testmain -var goCover_056ae5d3efd1_ -outfilelist $WORK/b243/coveroutfiles.txt $WORK/b243/_testmain.go"
+      ]
+    }
+  },
+  {
+    "variant": "orchestrion",
+    "scenario": "trace-body",
+    "tools": {
+      "compile": [
+        "/var/tmp/dd-ci-testing-poc-20260930/bin/orchestrion toolexec /var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/compile -o $WORK/b002/_pkg_.a -trimpath \"/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/edits/chi--race-cover-client-True-999.go=>/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/subjects/chi/mux_test.go;/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/edits/chi--race-cover-client-True-999.go=>/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/subjects/chi/mux_test.go;$WORK/b002=>\" -p github.com/go-chi/chi/v5 -lang=go1.26 -complete -installsuffix race -buildid XH0etd-oxENxyc1z1W4r/XH0etd-oxENxyc1z1W4r -goversion go1.27.1 -coveragecfg=$WORK/b002/coveragecfg -c=4 -race -nolocalimports -importcfg $WORK/b002/importcfg -pack $WORK/b002/covervars.go $WORK/b002/chain.cover.go $WORK/b002/chi.cover.go $WORK/b002/context.cover.go $WORK/b002/mux.cover.go $WORK/b002/tree.cover.go ./context_test.go /var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/edits/chi--race-cover-client-True-999.go ./path_value_test.go ./pattern_test.go ./tree_test.go",
+        "/var/tmp/dd-ci-testing-poc-20260930/bin/orchestrion toolexec /var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/compile -o $WORK/b205/_pkg_.a -trimpath \"$WORK/b205=>\" -p main -lang=go1.26 -complete -installsuffix race -buildid HjfL0898CQ3mGRZo8vAr/HjfL0898CQ3mGRZo8vAr -goversion go1.27.1 -coveragecfg=$WORK/b205/coveragecfg -c=4 -race -nolocalimports -importcfg $WORK/b205/importcfg -pack $WORK/b205/covervars.go $WORK/b205/_testmain.cover.go"
+      ],
+      "link": [
+        "GOROOT='/var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1' /var/tmp/dd-ci-testing-poc-20260930/bin/orchestrion toolexec /var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/link -o $WORK/b243/middleware.test -importcfg $WORK/b243/importcfg.link -installsuffix race -X=runtime.godebugDefault=tracebacklabels=0,x509sslcertoverrideplatform=0 -buildmode=exe -buildid=kFuK6Cv3HecMUJdigmux/KvUcftfSX0UlFyrwSJRC/hzjgLTf5KqzSsME1V2oL/kFuK6Cv3HecMUJdigmux -race -w -X testing.testBinary=1 -extld=gcc /var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/caches/chi--race-cover-client-cpu4-orchestrion-2/bc/bc47e5417e3e1c45578ac69c5f4aca4231f26921d503f1234903469bec5f3005-d",
+        "GOROOT='/var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1' /var/tmp/dd-ci-testing-poc-20260930/bin/orchestrion toolexec /var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/link -o $WORK/b205/chi.test -importcfg $WORK/b205/importcfg.link -installsuffix race -X=runtime.godebugDefault=tracebacklabels=0,x509sslcertoverrideplatform=0 -buildmode=exe -buildid=ob7OmcTOiUFUZxVSWLVW/HjfL0898CQ3mGRZo8vAr/NxsMpNsc0bk2j3mjmbhf/ob7OmcTOiUFUZxVSWLVW -race -w -X testing.testBinary=1 -extld=gcc $WORK/b205/_pkg_.a"
+      ],
+      "cover": [
+        "/var/tmp/dd-ci-testing-poc-20260930/bin/orchestrion toolexec /var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/cover -pkgcfg $WORK/b002/pkgcfg.txt -mode atomic -var goCover_51dfb57cd7d8_ -outfilelist $WORK/b002/coveroutfiles.txt /var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/subjects/chi/chain.go /var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/subjects/chi/chi.go /var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/subjects/chi/context.go /var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/subjects/chi/mux.go /var/tmp/dd-ci-benchmark-20261004.s81k5i3w/build-stable/subjects/chi/tree.go",
+        "/var/tmp/dd-ci-testing-poc-20260930/bin/orchestrion toolexec /var/tmp/dd-ci-testing-poc-20261001/minitracer/go1.27.1/pkg/tool/linux_amd64/cover -pkgcfg $WORK/b205/pkgcfg.txt -mode testmain -var goCover_3c34b4c23d20_ -outfilelist $WORK/b205/coveroutfiles.txt $WORK/b205/_testmain.go"
+      ]
+    }
+  },
+  {
+    "variant": "mini",
+    "scenario": "trace-cached",
+    "tools": {
+      "compile": [],
+      "link": [],
+      "cover": []
+    }
+  },
+  {
+    "variant": "mini",
+    "scenario": "trace-link",
+    "tools": {
+      "compile": [
+        "/var/tmp/dd-ci-mini-benchmark-20261009/tools/go/pkg/tool/linux_amd64/compile -o $WORK/b205/_pkg_.a -trimpath \"$WORK/b205=>\" -p main -lang=go1.26 -complete -installsuffix race -buildid HMi90aiZrnNe0AsLKPlo/HMi90aiZrnNe0AsLKPlo -goversion go1.27.1 -coveragecfg=$WORK/b205/coveragecfg -c=4 -race -nolocalimports -importcfg $WORK/b205/importcfg -pack $WORK/b205/covervars.go $WORK/b205/_testmain.cover.go",
+        "/var/tmp/dd-ci-mini-benchmark-20261009/tools/go/pkg/tool/linux_amd64/compile -o $WORK/b294/_pkg_.a -trimpath \"$WORK/b294=>\" -p main -lang=go1.26 -complete -installsuffix race -buildid qWvHOq6ATzUn04_7zXmE/qWvHOq6ATzUn04_7zXmE -goversion go1.27.1 -coveragecfg=$WORK/b294/coveragecfg -c=4 -race -nolocalimports -importcfg $WORK/b294/importcfg -pack $WORK/b294/covervars.go $WORK/b294/_testmain.cover.go"
+      ],
+      "link": [
+        "GOROOT='/var/tmp/dd-ci-mini-benchmark-20261009/tools/go' /var/tmp/dd-ci-mini-benchmark-20261009/tools/go/pkg/tool/linux_amd64/link -o $WORK/b205/chi.test -importcfg $WORK/b205/importcfg.link -installsuffix race -X=runtime.godebugDefault=tracebacklabels=0,x509sslcertoverrideplatform=0 -buildmode=exe -buildid=QYFkX-JF6NrrX8spt6PT/HMi90aiZrnNe0AsLKPlo/b-9fBVxwjTEntoTUDtuB/QYFkX-JF6NrrX8spt6PT -race -w -buildid=trace-chi--race-cover-client-4 -X testing.testBinary=1 -extld=gcc $WORK/b205/_pkg_.a",
+        "GOROOT='/var/tmp/dd-ci-mini-benchmark-20261009/tools/go' /var/tmp/dd-ci-mini-benchmark-20261009/tools/go/pkg/tool/linux_amd64/link -o $WORK/b294/middleware.test -importcfg $WORK/b294/importcfg.link -installsuffix race -X=runtime.godebugDefault=tracebacklabels=0,x509sslcertoverrideplatform=0 -buildmode=exe -buildid=x12e8TtWbSsUoW4jdPvY/qWvHOq6ATzUn04_7zXmE/EUC_zZJrsTo2gdyYawRb/x12e8TtWbSsUoW4jdPvY -race -w -buildid=trace-chi--race-cover-client-4 -X testing.testBinary=1 -extld=gcc $WORK/b294/_pkg_.a"
+      ],
+      "cover": [
+        "/var/tmp/dd-ci-mini-benchmark-20261009/tools/go/pkg/tool/linux_amd64/cover -pkgcfg $WORK/b205/pkgcfg.txt -mode testmain -var goCover_3c34b4c23d20_ -outfilelist $WORK/b205/coveroutfiles.txt $WORK/b205/_testmain.go",
+        "/var/tmp/dd-ci-mini-benchmark-20261009/tools/go/pkg/tool/linux_amd64/cover -pkgcfg $WORK/b294/pkgcfg.txt -mode testmain -var goCover_056ae5d3efd1_ -outfilelist $WORK/b294/coveroutfiles.txt $WORK/b294/_testmain.go"
+      ]
+    }
+  },
+  {
+    "variant": "mini",
+    "scenario": "trace-body",
+    "tools": {
+      "compile": [
+        "/var/tmp/dd-ci-mini-benchmark-20261009/tools/go/pkg/tool/linux_amd64/compile -o $WORK/b002/_pkg_.a -trimpath \"/var/tmp/dd-ci-mini-benchmark-20261009/build/edits/chi--race-cover-client-True-999.go=>/var/tmp/dd-ci-mini-benchmark-20261009/build/subjects/chi/mux_test.go;/var/tmp/dd-ci-mini-benchmark-20261009/build/edits/chi--race-cover-client-True-999.go=>/var/tmp/dd-ci-mini-benchmark-20261009/build/subjects/chi/mux_test.go;/var/tmp/dd-ci-mini-benchmark-20261009/build/tmp/dd-ci-testing-poc-3392589860/generated-5.go=>/var/tmp/dd-ci-mini-benchmark-20261009/build/subjects/chi/zz_dd_ci_visibility_test.go;$WORK/b002=>\" -p github.com/go-chi/chi/v5 -lang=go1.26 -complete -installsuffix race -buildid pgEMh6BVWP2mEaVgFp9F/pgEMh6BVWP2mEaVgFp9F -goversion go1.27.1 -coveragecfg=$WORK/b002/coveragecfg -c=4 -race -nolocalimports -importcfg $WORK/b002/importcfg -pack $WORK/b002/covervars.go $WORK/b002/chain.cover.go $WORK/b002/chi.cover.go $WORK/b002/context.cover.go $WORK/b002/mux.cover.go $WORK/b002/tree.cover.go ./context_test.go /var/tmp/dd-ci-mini-benchmark-20261009/build/edits/chi--race-cover-client-True-999.go ./path_value_test.go ./pattern_test.go ./tree_test.go",
+        "/var/tmp/dd-ci-mini-benchmark-20261009/tools/go/pkg/tool/linux_amd64/compile -o $WORK/b205/_pkg_.a -trimpath \"$WORK/b205=>\" -p main -lang=go1.26 -complete -installsuffix race -buildid NoTzJjJXyT8TnBCdU3wf/NoTzJjJXyT8TnBCdU3wf -goversion go1.27.1 -coveragecfg=$WORK/b205/coveragecfg -c=4 -race -nolocalimports -importcfg $WORK/b205/importcfg -pack $WORK/b205/covervars.go $WORK/b205/_testmain.cover.go"
+      ],
+      "link": [
+        "GOROOT='/var/tmp/dd-ci-mini-benchmark-20261009/tools/go' /var/tmp/dd-ci-mini-benchmark-20261009/tools/go/pkg/tool/linux_amd64/link -o $WORK/b294/middleware.test -importcfg $WORK/b294/importcfg.link -installsuffix race -X=runtime.godebugDefault=tracebacklabels=0,x509sslcertoverrideplatform=0 -buildmode=exe -buildid=tBLibX96PFSehVqj5b80/dJ8rAJtZfcMTWuU26USg/EUC_zZJrsTo2gdyYawRb/tBLibX96PFSehVqj5b80 -race -w -X testing.testBinary=1 -extld=gcc /var/tmp/dd-ci-mini-benchmark-20261009/build/caches/chi--race-cover-client-cpu4-mini-2/3f/3f97e413dcc2a2b8325d306d16c02691f57bd2ad891273a92313890af1877972-d",
+        "GOROOT='/var/tmp/dd-ci-mini-benchmark-20261009/tools/go' /var/tmp/dd-ci-mini-benchmark-20261009/tools/go/pkg/tool/linux_amd64/link -o $WORK/b205/chi.test -importcfg $WORK/b205/importcfg.link -installsuffix race -X=runtime.godebugDefault=tracebacklabels=0,x509sslcertoverrideplatform=0 -buildmode=exe -buildid=AwsxfbYWKXhRdM9utVE_/NoTzJjJXyT8TnBCdU3wf/-bapBTN5cG9_SMWSGIcX/AwsxfbYWKXhRdM9utVE_ -race -w -X testing.testBinary=1 -extld=gcc $WORK/b205/_pkg_.a"
+      ],
+      "cover": [
+        "/var/tmp/dd-ci-mini-benchmark-20261009/tools/go/pkg/tool/linux_amd64/cover -pkgcfg $WORK/b002/pkgcfg.txt -mode atomic -var goCover_51dfb57cd7d8_ -outfilelist $WORK/b002/coveroutfiles.txt /var/tmp/dd-ci-mini-benchmark-20261009/build/subjects/chi/chain.go /var/tmp/dd-ci-mini-benchmark-20261009/build/subjects/chi/chi.go /var/tmp/dd-ci-mini-benchmark-20261009/build/subjects/chi/context.go /var/tmp/dd-ci-mini-benchmark-20261009/build/subjects/chi/mux.go /var/tmp/dd-ci-mini-benchmark-20261009/build/subjects/chi/tree.go",
+        "/var/tmp/dd-ci-mini-benchmark-20261009/tools/go/pkg/tool/linux_amd64/cover -pkgcfg $WORK/b205/pkgcfg.txt -mode testmain -var goCover_3c34b4c23d20_ -outfilelist $WORK/b205/coveroutfiles.txt $WORK/b205/_testmain.go"
+      ]
+    }
+  }
+]
