@@ -488,13 +488,28 @@ func TestTestingCompatibility(t *testing.T) {
 	})
 }
 
+// goGet runs go get in the module at dir and completes its go.sum. go get
+// leaves a module's checksum out of go.sum when another go command is
+// downloading that module: it waits for that download, finds the zip in place
+// and records nothing. CI test groups share a module cache, so an upgraded
+// module's checksum can go missing and later builds fail. Loading the module's
+// packages and tests with -mod=mod adds the checksums they need. Unlike go mod
+// tidy, it never drops requirements that a test adds code for later.
+func goGet(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	if out, e, code := command(t, dir, testEnv(), "go", append([]string{"get"}, args...)...); code != 0 {
+		t.Fatalf("go get %s: %s\n%s", strings.Join(args, " "), out, e)
+	}
+	if out, e, code := command(t, dir, testEnv(), "go", "list", "-mod=mod", "-deps", "-test", "./..."); code != 0 {
+		t.Fatalf("complete go.sum: %s\n%s", out, e)
+	}
+}
+
 func configureReferenceFixture(t *testing.T, dir string) {
 	t.Helper()
 	// Both compilers use this SAME temporary module graph, including any MVS
 	// upgrades introduced by the reference tool. The SDK version stays fixed.
-	if out, e, code := command(t, dir, testEnv(), "go", "get", "github.com/DataDog/orchestrion@"+orchestrionVersion, "golang.org/x/tools@"+orchestrionToolsVersion); code != 0 {
-		t.Fatalf("prepare common graph: %s\n%s", out, e)
-	}
+	goGet(t, dir, "github.com/DataDog/orchestrion@"+orchestrionVersion, "golang.org/x/tools@"+orchestrionToolsVersion)
 	out, e, code := command(t, dir, testEnv(), "go", "list", "-m", "-json", "github.com/DataDog/dd-trace-go/v2")
 	if code != 0 {
 		t.Fatalf("SDK: %s", e)

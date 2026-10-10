@@ -127,10 +127,7 @@ func TestComposedRealLeak(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "composed_goleak_test.go"), []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}
-	out, stderr, code := command(t, dir, testEnv(), "go", "get", "go.uber.org/goleak@v1.3.0")
-	if code != 0 {
-		t.Fatal(out, stderr)
-	}
+	goGet(t, dir, "go.uber.org/goleak@v1.3.0")
 	variants := []struct {
 		name  string
 		flags []string
@@ -403,14 +400,11 @@ func TestMiniOrchestrionClientPinnedTool(t *testing.T) {
 		t.Skip("ORCHESTRION_BIN not configured")
 	}
 	dir, driver := prepareMiniFixture(t)
-	out, stderr, code := command(t, dir, testEnv(), "go", "get", "github.com/DataDog/orchestrion@v1.6.1", "github.com/DataDog/dd-trace-go/v2@v2.11.0-rc.2", "golang.org/x/tools@"+orchestrionToolsVersion)
-	if code != 0 {
-		t.Fatal(out, stderr)
-	}
+	goGet(t, dir, "github.com/DataDog/orchestrion@v1.6.1", "github.com/DataDog/dd-trace-go/v2@v2.11.0-rc.2", "golang.org/x/tools@"+orchestrionToolsVersion)
 	installComposedAPM(t, dir)
 	// An ordinary client only declares Orchestrion and the SDK. Mini is supplied
 	// through a temporary modfile, including when -C changes the working directory.
-	out, stderr, code = command(t, dir, testEnv(), "go", "mod", "edit", "-droprequire=github.com/tonyredondo/dd-ci-testing-poc", "-dropreplace=github.com/tonyredondo/dd-ci-testing-poc")
+	out, stderr, code := command(t, dir, testEnv(), "go", "mod", "edit", "-droprequire=github.com/tonyredondo/dd-ci-testing-poc", "-dropreplace=github.com/tonyredondo/dd-ci-testing-poc")
 	if code != 0 {
 		t.Fatal(out, stderr)
 	}
