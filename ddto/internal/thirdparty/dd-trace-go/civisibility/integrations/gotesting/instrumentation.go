@@ -249,11 +249,11 @@ var (
 	// instrumentationMapMutex is a read-write mutex for synchronizing access to instrumentationMap.
 	instrumentationMapMutex sync.RWMutex
 
-	// ciVisibilityTests holds a map of *testing.T or *testing.B to execution metadata for tracking tests.
-	ciVisibilityTestMetadata = map[unsafe.Pointer]*testExecutionMetadata{}
-
-	// ciVisibilityTestMetadataMutex is a read-write mutex for synchronizing access to ciVisibilityTestMetadata.
-	ciVisibilityTestMetadataMutex sync.RWMutex
+	// ciVisibilityTestMetadata maps the unsafe.Pointer of a *testing.T or
+	// *testing.B to its execution metadata (*testExecutionMetadata). Every test
+	// adds and removes an entry while hooks read it: sync.Map serves those
+	// lookups without one process-wide lock.
+	ciVisibilityTestMetadata sync.Map
 )
 
 const (
@@ -328,10 +328,10 @@ func setInstrumentationMetadata(fn *runtime.Func, metadata *instrumentationMetad
 
 // createTestMetadata creates the CI visibility test metadata associated with a given *testing.T, *testing.B, *testing.common
 func createTestMetadata(tb testing.TB, originalTest *testing.T) *testExecutionMetadata {
-	ciVisibilityTestMetadataMutex.Lock()
-	defer ciVisibilityTestMetadataMutex.Unlock()
+	// The pointer is the key, as in the SDK's map. Store replaces an earlier
+	// entry for the same test, like the map assignment did.
 	execMetadata := &testExecutionMetadata{originalTest: originalTest}
-	ciVisibilityTestMetadata[reflect.ValueOf(tb).UnsafePointer()] = execMetadata
+	ciVisibilityTestMetadata.Store(reflect.ValueOf(tb).UnsafePointer(), execMetadata)
 	return execMetadata
 }
 
@@ -342,19 +342,19 @@ func getTestMetadata(tb testing.TB) *testExecutionMetadata {
 
 // getTestMetadataFromPointer retrieves the CI visibility test metadata associated with a given *testing.T, *testing.B, *testing.common using a pointer
 func getTestMetadataFromPointer(ptr unsafe.Pointer) *testExecutionMetadata {
-	ciVisibilityTestMetadataMutex.RLock()
-	defer ciVisibilityTestMetadataMutex.RUnlock()
-	if v, ok := ciVisibilityTestMetadata[ptr]; ok {
-		return v
+	// Only createTestMetadata stores values, always of this type.
+	v, ok := ciVisibilityTestMetadata.Load(ptr)
+	if ok {
+		return v.(*testExecutionMetadata)
 	}
 	return nil
 }
 
 // deleteTestMetadata delete the CI visibility test metadata associated with a given *testing.T, *testing.B, *testing.common
 func deleteTestMetadata(tb testing.TB) {
-	ciVisibilityTestMetadataMutex.Lock()
-	defer ciVisibilityTestMetadataMutex.Unlock()
-	delete(ciVisibilityTestMetadata, reflect.ValueOf(tb).UnsafePointer())
+	// Deleting an absent entry is a no-op, as deleting from the map was.
+	// The creator of an entry owns its removal.
+	ciVisibilityTestMetadata.Delete(reflect.ValueOf(tb).UnsafePointer())
 }
 
 // checkIfCIVisibilityExitIsRequiredByPanic checks the additional features settings to decide if we allow individual tests to panic or not

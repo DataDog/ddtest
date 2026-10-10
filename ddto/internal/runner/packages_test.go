@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,7 +21,7 @@ func TestPackageListHelperProcess(t *testing.T) {
 	}
 	switch os.Args[len(os.Args)-1] {
 	case "success":
-		for _, part := range []string{`{"Import`, `Path":"example.com/one","Deps":["fmt"]}`, "\n", `{"ImportPath":"example.com/two"}`} {
+		for _, part := range []string{`{"Import`, `Path":"example.com/one","Imports":["fmt"]}`, "\n", `{"ImportPath":"example.com/two"}`} {
 			fmt.Fprint(os.Stdout, part)
 		}
 	case "partial":
@@ -74,7 +75,7 @@ func TestReadPackages(t *testing.T) {
 			cmd.Env = append(os.Environ(), "DDTO_PACKAGE_LIST_HELPER=1")
 			packages, err := readPackages(ctx, cmd, "resolve fixture")
 			if mode == "success" {
-				if err != nil || len(packages) != 2 || packages[0].ImportPath != "example.com/one" || packages[1].ImportPath != "example.com/two" || !slices.Equal(packages[0].Deps, []string{"fmt"}) {
+				if err != nil || len(packages) != 2 || packages[0].ImportPath != "example.com/one" || packages[1].ImportPath != "example.com/two" || !slices.Equal(packages[0].Imports, []string{"fmt"}) {
 					t.Fatalf("decoded packages = %+v, error = %v", packages, err)
 				}
 				return
@@ -136,23 +137,68 @@ func TestReadPackagesCancelsAnInheritedStdout(t *testing.T) {
 
 func TestTestifyDependencyImports(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		packages []goPackage
-		want     []string
-		suite    bool
+		name          string
+		packages, dep []goPackage
+		want          []string
+		suite         bool
 	}{
-		{"known production closure", []goPackage{{ImportPath: "testing", Deps: []string{"fmt"}}, {ImportPath: "example.com/client", Deps: []string{"example.com/helper", "fmt"}, TestImports: []string{"testing", "fmt", "example.com/helper", "example.com/client"}}}, nil, false},
-		{"unknown external helper", []goPackage{{ImportPath: "example.com/client", TestImports: []string{"example.com/testkit"}, XTestImports: []string{"example.com/testkit"}}}, []string{"example.com/testkit"}, false},
-		{"test-only standard import", []goPackage{{ImportPath: "testing", Deps: []string{"fmt"}}, {ImportPath: "example.com/client", TestImports: []string{"net/http/httptest"}}}, []string{"net/http/httptest"}, false},
-		{"suite before pruning", []goPackage{{ImportPath: "example.com/client", Deps: []string{"github.com/stretchr/testify/suite"}, XTestImports: []string{"github.com/stretchr/testify/suite"}}}, nil, true},
-		{"direct suite", []goPackage{{ImportPath: "example.com/client", TestImports: []string{"github.com/stretchr/testify/suite"}}}, []string{"github.com/stretchr/testify/suite"}, true},
-		{"runtime closure is unrelated", []goPackage{{ImportPath: miniPackage, Deps: []string{"example.com/testkit", "github.com/stretchr/testify/suite"}}, {ImportPath: sdkPackage, Deps: []string{"example.com/other"}}, {ImportPath: "example.com/client", TestImports: []string{"example.com/testkit", "example.com/other"}}}, []string{"example.com/other", "example.com/testkit"}, false},
-		{"assert-only", []goPackage{{ImportPath: "example.com/client", TestImports: []string{"github.com/stretchr/testify/assert"}}}, []string{"github.com/stretchr/testify/assert"}, false},
+		{"known production closure", []goPackage{{ImportPath: "testing", Imports: []string{"fmt"}}, {ImportPath: "example.com/client", Imports: []string{"example.com/helper", "fmt"}, TestImports: []string{"testing", "fmt", "example.com/helper", "example.com/client"}}}, []goPackage{{ImportPath: "fmt"}, {ImportPath: "example.com/helper"}}, nil, false},
+		{"transitive production closure", []goPackage{{ImportPath: "example.com/client", Imports: []string{"example.com/helper"}, TestImports: []string{"example.com/deep"}}}, []goPackage{{ImportPath: "example.com/helper", Imports: []string{"example.com/deep"}}, {ImportPath: "example.com/deep"}}, nil, false},
+		{"unknown external helper", []goPackage{{ImportPath: "example.com/client", TestImports: []string{"example.com/testkit"}, XTestImports: []string{"example.com/testkit"}}}, nil, []string{"example.com/testkit"}, false},
+		{"test-only standard import", []goPackage{{ImportPath: "testing", Imports: []string{"fmt"}}, {ImportPath: "example.com/client", TestImports: []string{"net/http/httptest"}}}, []goPackage{{ImportPath: "fmt"}}, []string{"net/http/httptest"}, false},
+		{"suite before pruning", []goPackage{{ImportPath: "example.com/client", Imports: []string{"github.com/stretchr/testify/suite"}, XTestImports: []string{"github.com/stretchr/testify/suite"}}}, []goPackage{{ImportPath: "github.com/stretchr/testify/suite"}}, nil, true},
+		{"direct suite", []goPackage{{ImportPath: "example.com/client", TestImports: []string{"github.com/stretchr/testify/suite"}}}, nil, []string{"github.com/stretchr/testify/suite"}, true},
+		{"runtime closure is unrelated", []goPackage{{ImportPath: miniPackage, Imports: []string{"example.com/testkit", "github.com/stretchr/testify/suite"}}, {ImportPath: sdkPackage, Imports: []string{"example.com/other"}}, {ImportPath: "example.com/client", TestImports: []string{"example.com/testkit", "example.com/other"}}}, []goPackage{{ImportPath: "example.com/testkit"}, {ImportPath: "example.com/other"}, {ImportPath: "github.com/stretchr/testify/suite"}}, []string{"example.com/other", "example.com/testkit"}, false},
+		{"assert-only", []goPackage{{ImportPath: "example.com/client", TestImports: []string{"github.com/stretchr/testify/assert"}}}, nil, []string{"github.com/stretchr/testify/assert"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			paths, suite := testifyDependencyImports(tc.packages)
+			graph := newPackageGraph(append(slices.Clone(tc.packages), tc.dep...))
+			paths, suite := testifyDependencyImports(tc.packages, clientImports(tc.packages, graph))
 			if !slices.Equal(paths, tc.want) || suite != tc.suite {
 				t.Fatalf("imports = %v, suite = %v; want %v, %v", paths, suite, tc.want, tc.suite)
+			}
+		})
+	}
+}
+
+// The graph closure equals the union of the Deps that go list computes for
+// each package, which the package query no longer requests.
+func TestPackageGraphMatchesDeps(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	patterns := []string{"./internal/runner", "./testopt", "os/user", "net/http", "testing"}
+	// Linux with cgo adds the implicit imports of net and os/user, which other
+	// platforms build without cgo; go list needs no C compiler for them.
+	for _, env := range [][]string{nil, {"GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=1"}} {
+		t.Run(strings.Join(append([]string{"host"}, env...), ","), func(t *testing.T) {
+			goList := func(args ...string) *exec.Cmd {
+				cmd := exec.Command("go", append(args, patterns...)...)
+				cmd.Dir = root
+				cmd.Env = append(os.Environ(), env...)
+				return cmd
+			}
+			listed, err := readPackages(t.Context(), goList("list", "-e", "-deps", "-json=ImportPath,DepOnly,Imports"), "graph")
+			if err != nil {
+				t.Fatal(err)
+			}
+			graph := newPackageGraph(listed)
+			out, err := goList("list", "-e", "-f", "{{.ImportPath}} {{join .Deps \" \"}}").Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				fields := strings.Fields(line)
+				p := graph[fields[0]]
+				if p == nil || p.DepOnly {
+					t.Fatalf("%s is not a named package of the graph", fields[0])
+				}
+				got := slices.Sorted(maps.Keys(graph.imported(p)))
+				want := slices.Sorted(slices.Values(fields[1:]))
+				if !slices.Equal(got, want) {
+					t.Fatalf("%s: graph closure differs from Deps\n%v\n%v", fields[0], got, want)
+				}
 			}
 		})
 	}

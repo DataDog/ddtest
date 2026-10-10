@@ -136,9 +136,7 @@ func sdkMirrorCapture(state any, name, service, resource, kind string, start, du
 	s.setMeta("apm.span_id", strconv.FormatUint(originalSpan, 10))
 	s.content.TraceID = binary.BigEndian.Uint64(s.identity.TraceID[8:])
 	event := &ciEvent{Type: "span", Version: 1, Content: s.content, common: s.common}
-	event.Content.SessionID, _ = strconv.ParseUint(s.hierarchy[0], 10, 64)
-	event.Content.ModuleID, _ = strconv.ParseUint(s.hierarchy[1], 10, 64)
-	event.Content.SuiteID, _ = strconv.ParseUint(s.hierarchy[2], 10, 64)
+	s.sealHierarchy(&event.Content)
 	return &sdkMirrorDelivery{client: s.client, event: event}
 }
 

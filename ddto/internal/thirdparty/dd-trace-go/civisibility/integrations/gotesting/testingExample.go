@@ -57,8 +57,10 @@ func (ddm *M) instrumentInternalExamples(examples *[]testing.InternalExample, cl
 	for idx, example := range *examples {
 		fn := runtime.FuncForPC(reflect.ValueOf(example.F).Pointer())
 		moduleName, suiteName := utils.GetModuleAndSuiteName(fn.Entry())
-		addModulesCounters(moduleName, 1)
-		addSuitesCounters(suiteName, 1)
+		if claim.selectionOrAll().selects(example.Name) {
+			addModulesCounters(moduleName, 1)
+			addSuitesCounters(moduleName, suiteName, 1)
+		}
 		info := &testingExampleInfo{
 			originalFunc: example.F,
 			output:       example.Output,

@@ -14,7 +14,8 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/xsys/windows/registry"
 )
 
-func init() {
+// detect fills the OS metadata. Upstream runs it as the package's init.
+func detect() {
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows NT\CurrentVersion`, registry.QUERY_VALUE)
 	if err != nil {
 		return

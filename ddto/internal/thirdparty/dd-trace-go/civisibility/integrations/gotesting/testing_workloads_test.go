@@ -42,29 +42,29 @@ func TestFuzzAndExampleDescriptorsReserveWorkloadCounters(t *testing.T) {
 
 	type counterDelta struct {
 		modules map[string]int
-		suites  map[string]int
+		suites  map[testSuiteCounterKey]int
 	}
-	want := counterDelta{modules: map[string]int{}, suites: map[string]int{}}
+	want := counterDelta{modules: map[string]int{}, suites: map[testSuiteCounterKey]int{}}
 	for _, fn := range []any{fuzzFunc, exampleFunc} {
 		function := runtime.FuncForPC(reflect.ValueOf(fn).Pointer())
 		moduleName, suiteName := utils.GetModuleAndSuiteName(function.Entry())
 		want.modules[moduleName]++
-		want.suites[suiteName]++
+		want.suites[testSuiteCounterKey{moduleName: moduleName, suiteName: suiteName}]++
 	}
 	moduleCountersBefore := make(map[string]int, len(want.modules))
 	for name := range want.modules {
 		moduleCountersBefore[name] = addModulesCounters(name, 0)
 	}
-	suiteCountersBefore := make(map[string]int, len(want.suites))
-	for name := range want.suites {
-		suiteCountersBefore[name] = addSuitesCounters(name, 0)
+	suiteCountersBefore := make(map[testSuiteCounterKey]int, len(want.suites))
+	for key := range want.suites {
+		suiteCountersBefore[key] = addSuitesCounters(key.moduleName, key.suiteName, 0)
 	}
 	t.Cleanup(func() {
 		for name, delta := range want.modules {
 			addModulesCounters(name, -delta)
 		}
-		for name, delta := range want.suites {
-			addSuitesCounters(name, -delta)
+		for key, delta := range want.suites {
+			addSuitesCounters(key.moduleName, key.suiteName, -delta)
 		}
 	})
 
@@ -75,8 +75,8 @@ func TestFuzzAndExampleDescriptorsReserveWorkloadCounters(t *testing.T) {
 	for name, delta := range want.modules {
 		require.Equal(t, moduleCountersBefore[name]+delta, addModulesCounters(name, 0))
 	}
-	for name, delta := range want.suites {
-		require.Equal(t, suiteCountersBefore[name]+delta, addSuitesCounters(name, 0))
+	for key, delta := range want.suites {
+		require.Equal(t, suiteCountersBefore[key]+delta, addSuitesCounters(key.moduleName, key.suiteName, 0))
 	}
 }
 

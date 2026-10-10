@@ -19,6 +19,26 @@ func isSDKCIPackage(pkg string) bool {
 	return pkg == sdkCIEnvironmentPackage || pkg == sdkCIConfigPackage
 }
 
+// sdkCompilePackage returns the guarded SDK package whose compiler cache
+// marker a compile receives. Go applies a package's gcflags to its internal
+// test variant, "pkg [pkg.test]", and also to its external test package and
+// test main, so all of them carry the marker. own reports whether the inputs
+// are the package's sources, which the guards rewrite; the external test and
+// the test main only need the marker removed, as for goleak.
+func sdkCompilePackage(importPath string) (pkg string, own bool) {
+	path, _, _ := strings.Cut(importPath, " [")
+	own = true
+	if base, ok := strings.CutSuffix(path, "_test"); ok {
+		path, own = base, false
+	} else if base, ok := strings.CutSuffix(path, ".test"); ok {
+		path, own = base, false
+	}
+	if isSDKCIPackage(path) || path == sdkTracerPackage {
+		return path, own
+	}
+	return "", false
+}
+
 // Direct package keys are needed because transitive testing export data can
 // stay unchanged even when a toolchain rebuilds testing with different hooks.
 // Bump these contracts when the corresponding compiler edits change.

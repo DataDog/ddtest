@@ -145,6 +145,48 @@ ordinary/deferred delivery and telemetry off/on. Its Mini process changes the
 global local zone; the SDK reference runs the same application paths without
 that mutation because its background clocks are not safe under it.
 
+## Per-test profile subtraction
+
+`readCoverProfile` and `coveredFilesBetween` in
+[`civisibility/integrations/gotesting/coverage/test_coverage.go`](civisibility/integrations/gotesting/coverage/test_coverage.go)
+replace upstream `parseCoverProfile` and `getFilesCovered`. Upstream split
+each profile line into strings, keyed every block of both profiles with
+`fmt.Sprintf`, resolved the relative path of every covered block and regrew a
+file's bitmap whenever a block ended further down.
+
+- The profile is read at once and each line is parsed in place. Only a file
+  name that differs from the previous line's is copied. The read is sized with
+  `Seek`, not `Stat` as in `os.ReadFile`: `Stat` converts timestamps with
+  `time.Local`, which coverage workers must not read while a test may change it. The parser accepts and
+  skips the same lines as `strings.Fields`, `strings.Split` and
+  `strconv.Atoi` did: signs, extra fields and separators, Unicode whitespace,
+  invalid UTF-8, `\r\n` and the scanner's maximum line length.
+- Blocks keep their order. testing writes a binary's profiles with the same
+  blocks in the same order, each file in one run sorted by position. When both
+  profiles have that layout, block `i` is compared with block `i`. Otherwise,
+  for example with a repeated position, blocks are matched by a struct key with
+  upstream's rules: the last duplicate before block wins, and an after block
+  without a match counts when its count is positive.
+- Each file name is resolved to its relative name once, still only when one of
+  its blocks is covered. Files with the same relative name share a bitmap,
+  allocated once at the largest covered end line.
+
+Results are identical: the test file first, then sorted names with the same
+bitmap bytes. Upstream panicked on a covered block that started below line 1;
+lines below 1 are now skipped. With 5,000 blocks, half of them covered,
+reading both profiles and subtracting them takes about 2.4 ms instead of
+4.9–8 ms on a loaded darwin/arm64 host (one CPU, medians), 367 allocations
+instead of 81,140, and 1.35 MB instead of 4.58 MB. File reads dominate what
+remains.
+
+Checks: `TestReadCoverProfileMatchesSDKParser` and
+`TestCoveredFilesMatchesSDK` compare generated and hand-written profiles with a
+copy of the upstream functions, covering both comparison paths, merged names,
+repeated and reordered blocks and odd ranges; the ported `test_coverage_test.go`
+assertions run unchanged through adapters. `BenchmarkCoverageProfileDiff`
+measures both algorithms. Integration: `TestMiniParallelAndRetryCoverageAttribution`,
+`TestMiniCoverageWithGlobalTimeChanges` and the coverage parity cases.
+
 ## Coverage module identity
 
 Upstream `InitializeCoverage` in
@@ -258,6 +300,223 @@ Checks: transport diagnostics cover ordinary/agentless delivery, gzip, retries,
 phases, four hierarchy events and successful process exit with real HTTP and
 `-race`, including normal/deferred delivery and startup failures. See
 [debug timing boundaries](../../../docs/cli-debug.md#runtime-timing).
+
+## CI HTTP retries
+
+Upstream `RequestHandler.SendRequest` in
+[`civisibility/utils/net/http.go`](civisibility/utils/net/http.go) makes
+`MaxRetries + 1` attempts and backs off after every failed attempt, including
+the last, before returning "max retries exceeded". With the default three
+retries and 100 ms backoff, an unreachable agent or intake held each request
+for 1.5 s, 800 ms of it after the final attempt. The settings request runs
+before the first test, so every binary paid that wait at startup, and again in
+the repository upload that a close action waits for.
+
+Here `retryBackoff` and the rate-limit wait run only when another attempt
+follows. Attempt counts, delays between attempts, response handling and
+errors are unchanged. The debug summary's `retry` field now reports whether
+another attempt follows. `retrySleep` performs every wait so tests can record
+the delays.
+
+A 429 response's `x-ratelimit-reset` header, a Unix timestamp or a number of
+seconds, set the wait before the next attempt without any bound, so a distant
+reset could hold settings, and the first test, indefinitely. The wait is now
+honored only up to 60 seconds, the bound the test-cycle client applies to
+`Retry-After`; a later reset uses the ordinary exponential backoff, as an
+absent or invalid header does. Telemetry has no rate-limit wait.
+
+Checks: `TestSendRequestWaitsOnlyBetweenAttempts` covers network errors, 5xx,
+429 without a reset header and unexpected response formats;
+`TestSendRequestBoundsRateLimitResetWait` covers resets within and beyond the
+bound, as seconds and as a timestamp;
+`TestSendRequestRateLimitResetWaitsOnlyBetweenAttempts` covers the
+`x-ratelimit-reset` wait. The ported `TestRateLimitHandlingWithRetries`,
+`TestRateLimitHandlingWithoutResetHeader` and
+`TestSendRequestWithMaxRetriesExceeded` keep their lower bounds for the waits
+between attempts and now also bound the total from above.
+
+## Final tracer delivery at exit
+
+Upstream `exitCiVisibility` in
+[`civisibility/integrations/civisibility.go`](civisibility/integrations/civisibility.go)
+calls `tracer.Flush()` and then `tracer.Stop()`, after the session close has
+already flushed. Mini's `Stop` closes the process-wide client, and
+`Client.Close` in [`internal/minitracer/batch.go`](../../minitracer/batch.go)
+seals the open batch and delivers every queued batch directly, in both delivery
+modes, before it abandons what still fails. The separate `Flush` delivered the
+same queue: on success it found nothing to send, and after a failure it
+repeated the retries and the `FlushTimeout` bound that `Close` then repeated
+again. Exit now calls only `Stop`, so events finished after the session closed
+are still delivered, once.
+
+With an agent that refused connections, the exit's two delivery cycles took
+about 303 ms each; against a blackholed intake each is bounded by the
+10-second `FlushTimeout`. The session close's own flush and its diagnostics are
+unchanged.
+
+Checks: `TestExitCiVisibilityDeliversRemainingEventsOnce` delivers an event
+finished after session close and sees three attempts, not six, against a
+failing intake; `integration/TestMiniDeliveryFailurePreservesGoExit` keeps the
+flush and close error diagnostics.
+
+## Base-branch discovery
+
+Upstream `GetBaseBranchSha` in [`civisibility/utils/git.go`](civisibility/utils/git.go)
+runs when impacted-test detection is enabled and no pull-request base commit is
+known. Without a pull-request base branch, `checkAndFetchBranch` checks each of
+the seven `possibleBaseBranches` in turn: `git show-ref` for its
+remote-tracking ref and, when that is missing, `git ls-remote --heads <remote>
+<branch>`, a network round trip, before a `git fetch --depth 1` of a branch the
+remote has. Branches that never exist, such as `preprod` or `trunk`, were listed
+again in every test binary, before its first test.
+
+`checkAndFetchBranches` keeps the `show-ref` checks, then lists every missing
+branch with one `ls-remote` and fetches, in candidate order, the branches it
+returned. Fetching one named branch updates only that branch's remote-tracking
+ref, so checking all branches first sees the refs that the per-branch order
+saw. The pull-request base branch uses the same function with one branch.
+
+Patterns and output use exact `refs/heads/<name>` refs. An `ls-remote` pattern
+matches the tail of a ref, so upstream's `master` also matched
+`refs/heads/feature/master`, and the combined output could contain a warning;
+either made upstream try a fetch that git rejects. Those failing fetches no
+longer run. Successful fetches, their order, the remote-tracking refs and the
+candidates that `findBestBranch` compares are unchanged. The CI telemetry
+`git.command` count for `ls_remote_heads` is now one per discovery instead of
+one per missing branch, and the rejected `fetch` commands are not counted.
+
+Measured against GitHub over SSH, one package with impacted tests enabled and
+`refs/remotes/origin/main` present, 5 alternating runs: 6 `ls-remote` calls
+(about 0.55 s each) became 1, and the test binary's duration fell from 4.60 s
+to 1.49 s (medians).
+
+Checks: `TestCheckAndFetchBranchesListsMissingBranchesOnce`,
+`TestCheckAndFetchBranchesMatchesPerBranchAlgorithm` (an upstream-algorithm
+oracle on a second clone of the same remote must leave the same refs and base
+SHA) and `TestCheckAndFetchBranchFetchesPullRequestBase` run real git against
+a `file://` remote. `TestGitRecorderHelperProcess` records the commands.
+
+## Pull-request head commit
+
+Upstream `fetchCommitData` in [`civisibility/utils/git.go`](civisibility/utils/git.go)
+reads the pull-request head commit that the CI provider names, for example
+GitHub's `pull_request.head.sha` or GitLab's merge-request source SHA. In a
+shallow checkout it first looks up the remote and runs `git fetch
+--update-shallow` of that commit, synchronously during bootstrap. Nothing
+checked whether the commit was already present, and a shallow checkout stays
+shallow after the fetch, so every test binary repeated the network fetch.
+
+After the existing shallow and Git-version checks, `commitObjectExists` runs
+`git cat-file -e <sha>^{commit}`. When it succeeds, the remote lookup and fetch
+are skipped and `git show` reads the commit as before. A missing commit is
+fetched exactly as upstream does. The `cat-file` command records no command
+telemetry; the skipped remote lookup and `fetch` are no longer counted. In a
+partial clone, git may fetch a missing object while resolving `^{commit}`.
+
+Parallel binaries that both miss the commit still fetch concurrently and can
+contend for `.git/shallow.lock`; the upstream tests already tolerate that
+error. The check removes the fetch from every binary that starts after one
+succeeded.
+
+Measured with a depth-1 GitHub clone over SSH, a GitHub pull-request event
+whose head commit is present and one package, 5 alternating runs: bootstrap
+807 ms -> 186 ms and test binary duration 1.34 s -> 0.81 s (medians); the
+fetch alone took 616-1024 ms.
+
+Checks: `TestFetchCommitDataFetchesOnlyMissingCommits` reads a present head
+commit without a fetch and still fetches a missing one, with real git.
+
+## OS metadata
+
+Upstream [`osinfo`](osinfo/osinfo_unix.go) detects OS metadata in its package
+`init`: `uname`, `/etc/os-release` and, on macOS, a `sw_vers -productVersion`
+process. Every test binary and process-retry child paid for that process,
+including those that never report OS metadata.
+
+Here the platform's `detect` runs on the first accessor call, once, under a
+`sync.Once`. In a CI test binary that is the tag bootstrap, before any test.
+On macOS, [`osinfo_darwin.go`](osinfo/osinfo_darwin.go) reads the same value
+from the `kern.osproductversion` sysctl. `SYSTEM_VERSION_COMPAT` can change
+`sw_vers`' answer, so a process with that variable set still runs `sw_vers`, as
+does a failed or empty sysctl. A failed `sw_vers` still skips the kernel
+metadata, as upstream does. Windows' registry read is also deferred to first
+use. Should a first use happen in a test, only the macOS fallback starts a
+process.
+
+Measured on macOS 26.6.2, the osinfo test binary running the kernel metadata
+test, 30 alternating runs: 29.4 ms -> 16.2 ms (medians).
+
+Checks: `TestOSMetadataLoadsOnFirstUse` proves that a fresh process detected
+nothing during initialization; `TestMacOSProductVersionSources` covers the
+sysctl, compatibility, error and empty cases; `TestMacOSProductVersionMatchesSWVers`
+compares the sysctl with `sw_vers` on the host.
+
+## CI log hostname
+
+Upstream `logs.Initialize` in
+[`civisibility/integrations/logs/logs.go`](civisibility/integrations/logs/logs.go)
+sets the log entries' hostname from `hostname.Get()` and falls back to
+`os.Hostname()` when it is empty. Nothing in the CI runtime fills that cache
+first, so the call returns an empty string and starts `updateHostname` in a
+goroutine: GCE, Azure and EC2 metadata requests and `/bin/hostname -f`, with
+timeouts of up to a second each. Their result was never read, and the
+goroutine, which the goleak shim does not filter, could still be running when a
+test checked for leaks.
+
+Here `Initialize` reads `os.Hostname()` directly, the value upstream's first
+initialization used. A second initialization in the same process, after
+`Stop`, also keeps that value instead of a probed name the earlier goroutine
+might have cached. Telemetry still uses `hostname.Get()` only when
+`os.Hostname()` fails.
+
+Checks: `TestInitializeUsesOSHostnameWithoutProbes` initializes logs in a fresh
+process, requires the OS hostname and finds no hostname-discovery goroutine.
+
+## Git safe.directory for linked checkouts
+
+Upstream `execGit` in [`civisibility/utils/git.go`](civisibility/utils/git.go)
+passes `-c safe.directory=<root>` so git accepts a checkout owned by another
+user, which is common in CI containers. `getParentGitFolder` found that root
+only through a `.git` directory. A linked worktree or a submodule has a `.git`
+file instead: a worktree got no `safe.directory`, and a submodule got its
+superproject's root. When ownership differed, git refused with "dubious
+ownership" and the Git metadata was lost.
+
+Here a regular `.git` file also identifies the checkout root, as
+`codeownership.findGitRoot` already accepts. The root of a worktree or
+submodule is the directory git names in its `safe.directory` advice.
+
+Checks: `TestSafeDirectoryConfigAcceptsGitFiles` resolves the root from a
+nested directory of a repository, a linked worktree and a submodule.
+
+## Test command
+
+Upstream `createCITagsMap` in
+[`civisibility/utils/environmentTags.go`](civisibility/utils/environmentTags.go)
+joins the binary name and arguments with a trailing space and removes
+`(?si)-test.gocoverdir=(.*)\s`, `-test.v=(.*)\s` and `-test.testlogfile=(.*)\s`
+matches "to make the command more stable". The greedy `.*` runs to the last
+whitespace, so every argument after the first such flag was removed too. `go
+test` passes `-test.testlogfile` first for a cacheable run, which reduced
+`test.command`, the session resource that contains it and the automatic
+`test_session.name` to the binary name.
+
+`testCommand` removes only arguments that set those flags, in `-name=value` or
+`--name=value` form and without regard to case, as the patterns matched. It
+also removes the other paths that `go test` injects and that change between
+runs or machines: `-test.coverprofile`, rewritten to a file in the work
+directory, the absolute `-test.outputdir` and `-test.fuzzcachedir`. Upstream
+never kept them, because they follow `-test.gocoverdir` or
+`-test.testlogfile`, or are only added with fuzzing or profiles. Other
+arguments keep their order. Commands without such a flag, or with one only as
+the last argument, are unchanged. This is a deliberate difference from the
+pinned SDK, recorded in the [parity contract](../../../docs/ci-parity.md#comparison-contract);
+dd-trace-go main at `d27b94332308` still has the greedy patterns.
+
+Checks: `TestTestCommandRemovesOnlyVolatileFlags` compares both filters on
+`go test` argument lists; `integration/TestAlignMiniTestCommandsRequiresMiniForm`
+covers the Fuzz/Examples comparator's alignment of Mini's commands with the
+SDK's.
 
 ## Source metadata parsing
 
@@ -390,6 +649,141 @@ metrics remain fresh per call. Checks: `TestTestifyLookupMatchesReflection`,
 syncing, keep new per-test debug logs guarded without moving any line that can
 appear in an error stack, and re-measure allocations per test with a
 many-subtest fixture.
+
+## Test execution metadata store
+
+[`civisibility/integrations/gotesting/instrumentation.go`](civisibility/integrations/gotesting/instrumentation.go)
+keeps each test's execution metadata in a `sync.Map` keyed by the
+`*testing.T` or `*testing.B` pointer. Upstream uses one map behind a
+process-wide `RWMutex`. Every test creates and deletes an entry, and every hook
+(`T.Run`, `Error`, `Skip`, `Fail`) reads one, so in parallel suites each create
+or delete held back the readers of all running tests. A mutex profile of 200
+parallel tests with 50 parallel subtests each attributed most of Mini's lock
+delay to this map.
+
+The semantics are the map's: the pointer is the key, a second create replaces
+the entry, deleting an absent key does nothing and only
+`*testExecutionMetadata` values are stored. If per-test state later moves into
+`testing`'s own structures, this keyed store remains the fallback for builds
+without that overlay.
+
+Measured on darwin/arm64 with 18 threads, medians of alternating runs: the
+parallel fixture (10,200 tests, `-count=10`) went from 0.81–0.89 s to
+0.66–0.71 s; a serial fixture of the same size stayed at 1.26–1.27 s. One
+create, three lookups and a delete take 161 ns instead of 372 ns with 18
+goroutines, and about 150 ns either way with one. `sync.Map` adds one 48-byte
+entry per create. A 64-shard `RWMutex` map measured the same wall time.
+
+Checks: `TestTestMetadataStoreKeepsMapSemantics`,
+`TestTestMetadataStoreConcurrentTests` under `-race`,
+`BenchmarkTestMetadataLifecycleParallel`, and the parity, retry and Testify
+integration groups.
+
+## Known-test lookups
+
+Upstream `isKnownTest` in
+[`civisibility/integrations/gotesting/testing.go`](civisibility/integrations/gotesting/testing.go)
+scans the suite's list of known names, which includes subtests, for every
+top-level test and benchmark while `M.Run` wraps them, before any test starts.
+Wrapping a test asks twice: once for the known-test tag and again for Early
+Flake Detection. A file with 1,000 tests and 10,000 known names compared about
+20 million strings.
+
+`matchKnownTest` keeps the scan for lists of up to 32 names. Longer lists are
+indexed once into a set, keyed by the list's backing array and length; a
+response is never changed after decoding, and a new response has new arrays.
+`commonInfo` keeps the result, so the second question reuses it. Results are
+unchanged, including the known-data flag: present but empty data, a missing
+module or a missing suite still report data without a match.
+
+Measured on darwin/arm64, looking up a new test: 0.93–0.97 µs with 1,000
+names and 7.5–8.8 µs with 10,000 become 41–48 ns and 28–29 ns; lists of ten
+names stay at about 25 ns. Building a 10,000-name set happens once per suite.
+
+Checks: `TestMatchKnownTestKeepsSDKResults` compares the upstream function,
+`TestMatchKnownTestIndexFollowsNewResponse`, `TestLookupKnownTestReusesResult`,
+`TestMatchKnownTestConcurrentIndex` under `-race`, `BenchmarkMatchKnownTest`,
+and the EFD and known-test parity cases.
+
+## Error stacks captured once
+
+Only a test's first formatted error is kept, but upstream built its stack
+before the compare-and-swap that keeps it. Every `Error`, `Errorf`, `Fatal` or
+`Fatalf` call walked and formatted the stack, and `instrumentSetErrorInfo`
+captured another one that it then replaced with the formatted error's stack.
+A failing test with many assertions paid for a stack per assertion.
+
+`instrumentCaptureFormattedError` in
+[`civisibility/integrations/gotesting/instrumentation_orchestrion.go`](civisibility/integrations/gotesting/instrumentation_orchestrion.go)
+and `recordProcessRetryChildErrorInfo` in
+[`civisibility/integrations/gotesting/retry_process.go`](civisibility/integrations/gotesting/retry_process.go)
+now load the recorded error first and build a stack only when none is
+recorded. The compare-and-swap still decides between concurrent first errors.
+`instrumentSetErrorInfo` captures a stack only when no formatted error exists.
+Stacks are still captured in the same functions, so their skipped frames do
+not change, and no line moves in `instrumentation_orchestrion.go`, whose
+closures appear in compared error stacks.
+
+At 16 frames, a second or later formatted error took 5.4 µs, 15.5 KB and 40
+allocations; it now takes 27 ns and none (darwin/arm64). The first failure of a
+test saves one such capture in `instrumentSetErrorInfo`, and a process-retry
+child saves one per error call.
+
+Checks: `TestCaptureFormattedErrorKeepsFirstError`,
+`TestCaptureFormattedErrorConcurrentFirstWins` under `-race`,
+`TestRecordProcessRetryChildErrorInfoKeepsFirstError`,
+`TestSetErrorInfoCapturesStackOnlyWithoutFormattedError`,
+`BenchmarkCaptureFormattedErrorRepeated`, and the parity groups' error-stack
+comparisons.
+
+## Suites and modules of filtered tests
+
+Each suite and module counts the workloads that have not finished, and closes
+when its count returns to zero. Upstream counts every test, example and fuzz
+target when `M.Run` starts, including those that `-test.run` or `-test.skip`
+excludes. Those never start, so their suites and modules stayed open until the
+close actions at exit, which run after the session closes: their end times were
+the end of the process.
+
+[`civisibility/integrations/gotesting/test_selection.go`](civisibility/integrations/gotesting/test_selection.go)
+ports testing's matcher (`splitRegexp`, `rewrite`, simple and alternation
+matches) and applies it as `matcher.fullName` does to top-level names: the
+filter must match, and a skip pattern excludes a name only when it matches
+completely, so `-test.skip=TestA/sub` still starts `TestA`. Slashes and bars
+inside brackets or parentheses do not split. `instrumentInternalTests` and
+`instrumentInternalExamples` count only selected names; fuzz targets are
+counted when `-test.run` selects their seeds or whenever `-test.fuzz` is set.
+Benchmarks are unchanged.
+
+The flags are read at the start of `M.Run`, before it parses them: parsed
+values are used when `TestMain` already called `flag.Parse`; otherwise the
+arguments are parsed into copies of every registered flag, so no flag changes
+and nothing is printed. Everything is counted, as upstream does, when the
+binary does not match names with `testing/internal/testdeps`, a flag is
+missing, the arguments do not parse or a pattern does not compile. In those
+cases testing either matches differently or exits before running tests.
+Everything is also counted when `-test.count` is not 1 or `-test.cpu` lists
+several values. Tests then run in several rounds but are counted once, so
+suites and modules close after the first round and upstream starts new suites
+for later rounds; counting only the selected tests would change those
+repeated-run events. Suites with filtered tests still stay open until exit in
+such runs.
+
+Checks: `TestTestingSelectionMatchesTestingBinary` compiles a fixture and
+compares the selection with the tests, examples and fuzz seeds a real binary
+runs for 27 `-test.run`/`-test.skip` pairs; `TestTestingFlagValuesMatchFlagParse`
+compares the copies with `flag.Parse`; `TestMiniFilteredTestsFinishSuiteBeforeSession`
+checks that a suite with filtered tests ends before the session. Re-check
+testing's `match.go` when Go changes.
+
+The suite counters themselves are keyed by module and suite
+(`testSuiteCounterKey` in
+[`civisibility/integrations/gotesting/testing.go`](civisibility/integrations/gotesting/testing.go)).
+Upstream keys them by suite name only, which is a file's base name: two modules
+of one binary with a file of the same name, such as subtest closures in helper
+packages, shared a counter, so one of those suites closed only at exit.
+`TestSuiteCountersAreKeyedByModule` closes two same-named suites of different
+modules independently; the ported workload test counts by the same key.
 
 ## Lazy stack classification
 

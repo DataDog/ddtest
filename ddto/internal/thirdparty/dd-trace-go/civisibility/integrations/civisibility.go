@@ -384,7 +384,8 @@ func exitCiVisibility(stopSignalHandler bool) {
 			log.Debug("civisibility: logger stop finished duration=%s", time.Since(stageStarted))
 		}
 		log.Debug("civisibility: flushing and stopping tracer")
-		tracer.Flush()
+		// Stop closes the client, and Close performs the final flush. A separate
+		// Flush first would only repeat a failed delivery's retries and timeout.
 		tracer.Stop()
 		if debug {
 			stageStarted = time.Now()

@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/cidelivery"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go"
@@ -58,8 +59,8 @@ var (
 	// suitesCountersMutex is a mutex to protect access to the suitesCounters map.
 	suitesCountersMutex sync.Mutex
 
-	// suitesCounters keeps track of the number of tests per suite.
-	suitesCounters = map[string]int{}
+	// suitesCounters keeps track of the number of tests per module and suite.
+	suitesCounters = map[testSuiteCounterKey]int{}
 
 	// numOfTestsSkipped keeps track of the number of tests skipped by ITR.
 	numOfTestsSkipped atomic.Uint64
@@ -110,6 +111,8 @@ type (
 		stickyExitCode       int
 		deferredFailure      bool
 		failfastLatched      bool
+		// selection is the workloads M.Run will start; nil selects all.
+		selection *testingSelection
 	}
 
 	// testIdentity represents the fully-qualified identity of a Go test or subtest.
@@ -132,6 +135,8 @@ type (
 		testName   string
 		identity   *testIdentity
 		sourceFunc *runtime.Func
+		// Known-test lookup, reused by later callers. Set while instrumenting.
+		knownTestChecked, knownTest, knownTestData bool
 	}
 
 	// testingTInfo holds information specific to tests.
@@ -388,6 +393,7 @@ func instrumentTestingMWithOptions(m *testing.M, wrapperOpts additionalFeatureWr
 	}
 
 	ddm := (*M)(m)
+	claim.selection = newTestingSelection(m)
 
 	// Instrument the internal tests for CI visibility.
 	ddm.instrumentInternalTests(getInternalTestArray(m), wrapperOpts, claim)
@@ -644,11 +650,12 @@ func (ddm *M) instrumentInternalTests(internalTests *[]testing.InternalTest, wra
 			},
 		}
 
-		// Increment the test count in the module.
-		addModulesCounters(moduleName, 1)
-
-		// Increment the test count in the suite.
-		addSuitesCounters(suiteName, 1)
+		// Count only the tests that -test.run and -test.skip let M.Run start: the
+		// suite and module close when their counts return to zero.
+		if claim.selectionOrAll().selects(test.Name) {
+			addModulesCounters(moduleName, 1)
+			addSuitesCounters(moduleName, suiteName, 1)
+		}
 
 		testInfos[idx] = testInfo
 	}
@@ -908,7 +915,7 @@ func (ddm *M) instrumentInternalBenchmarks(internalBenchmarks *[]testing.Interna
 		addModulesCounters(moduleName, 1)
 
 		// Increment the test count in the suite.
-		addSuitesCounters(suiteName, 1)
+		addSuitesCounters(moduleName, suiteName, 1)
 
 		benchmarkInfos[idx] = benchmarkInfo
 	}
@@ -1162,7 +1169,7 @@ func RunM(m *testing.M) int {
 // checkModuleAndSuite checks and closes the modules and suites if all tests are executed.
 func checkModuleAndSuite(module integrations.TestModule, suite integrations.TestSuite) {
 	// If all tests in a suite has been executed we can close the suite
-	if addSuitesCounters(suite.Name(), -1) <= 0 {
+	if addSuitesCounters(module.Name(), suite.Name(), -1) <= 0 {
 		suite.Close()
 	}
 
@@ -1172,12 +1179,19 @@ func checkModuleAndSuite(module integrations.TestModule, suite integrations.Test
 	}
 }
 
-// addSuitesCounters increments the suite counters for a given suite name.
-func addSuitesCounters(suiteName string, delta int) int {
+// testSuiteCounterKey identifies a suite within its module. Suite names are
+// file names, which several modules of one binary can share.
+type testSuiteCounterKey struct {
+	moduleName, suiteName string
+}
+
+// addSuitesCounters increments the counter of a module's suite.
+func addSuitesCounters(moduleName, suiteName string, delta int) int {
 	suitesCountersMutex.Lock()
 	defer suitesCountersMutex.Unlock()
-	nValue := suitesCounters[suiteName] + delta
-	suitesCounters[suiteName] = nValue
+	key := testSuiteCounterKey{moduleName: moduleName, suiteName: suiteName}
+	nValue := suitesCounters[key] + delta
+	suitesCounters[key] = nValue
 	return nValue
 }
 
@@ -1190,14 +1204,34 @@ func addModulesCounters(moduleName string, delta int) int {
 	return nValue
 }
 
-// isKnownTest checks if a test is a known test or a new one
+// isKnownTest checks if a test is a known test or a new one. The result is
+// kept in testInfo: wrapping a test asks once for the known-test tag and again
+// for Early Flake Detection.
 func isKnownTest(testInfo *commonInfo) (isKnown bool, hasKnownData bool) {
-	knownTestsData := integrations.GetKnownTests()
+	return testInfo.lookupKnownTest(integrations.GetKnownTests)
+}
+
+func (c *commonInfo) lookupKnownTest(knownTests func() *net.KnownTestsResponseData) (isKnown bool, hasKnownData bool) {
+	if !c.knownTestChecked {
+		c.knownTest, c.knownTestData = matchKnownTest(knownTests(), c.moduleName, c.suiteName, c.testName)
+		c.knownTestChecked = true
+	}
+	return c.knownTest, c.knownTestData
+}
+
+// matchKnownTest reports whether name is listed for its module and suite, and
+// whether there is any known-test data. The SDK scanned the suite's list for
+// every test; long lists are indexed once instead.
+func matchKnownTest(knownTestsData *net.KnownTestsResponseData, moduleName, suiteName, name string) (isKnown bool, hasKnownData bool) {
 	if knownTestsData != nil && len(knownTestsData.Tests) > 0 {
 		// Check if the test is a known test or a new one
-		if knownSuites, ok := knownTestsData.Tests[testInfo.moduleName]; ok {
-			if knownTests, ok := knownSuites[testInfo.suiteName]; ok {
-				return slices.Contains(knownTests, testInfo.testName), true
+		if knownSuites, ok := knownTestsData.Tests[moduleName]; ok {
+			if knownTests, ok := knownSuites[suiteName]; ok {
+				if len(knownTests) <= knownTestScanLimit {
+					return slices.Contains(knownTests, name), true
+				}
+				_, isKnown = knownTestSet(knownTests)[name]
+				return isKnown, true
 			}
 		}
 
@@ -1205,6 +1239,40 @@ func isKnownTest(testInfo *commonInfo) (isKnown bool, hasKnownData bool) {
 	}
 
 	return false, false
+}
+
+// knownTestScanLimit is the list length up to which a scan is cheaper than
+// building a set.
+const knownTestScanLimit = 32
+
+// knownTestSets indexes known-test lists by their backing array, which the
+// response never changes after decoding. A new response has new arrays.
+var knownTestSets sync.Map // knownTestListKey -> *knownTestNames
+
+type knownTestListKey struct {
+	first  *string
+	length int
+}
+
+type knownTestNames struct {
+	once  sync.Once
+	names map[string]struct{}
+}
+
+func knownTestSet(list []string) map[string]struct{} {
+	key := knownTestListKey{first: unsafe.SliceData(list), length: len(list)}
+	value, ok := knownTestSets.Load(key)
+	if !ok {
+		value, _ = knownTestSets.LoadOrStore(key, &knownTestNames{})
+	}
+	set := value.(*knownTestNames)
+	set.once.Do(func() {
+		set.names = make(map[string]struct{}, len(list))
+		for _, name := range list {
+			set.names[name] = struct{}{}
+		}
+	})
+	return set.names
 }
 
 // getTestManagementData retrieves the test management data for a test identity.

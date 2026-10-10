@@ -66,11 +66,13 @@ sequenceDiagram
     participant AST as Transformer
     participant Plan as Overlay files
     CLI->>CLI: Parse flags and apply activation default
-    CLI->>Go: Targeted go list for testing, runtime and client packages
-    Go-->>CLI: Package metadata and test imports
-    opt Library reachable or unknown test imports need resolution
-        CLI->>Go: go list -find for known libraries, otherwise -deps
-        Go-->>CLI: Testify and Mini goleak source and module metadata
+    CLI->>Go: go list -deps for testing, runtime and client packages
+    Go-->>CLI: Each package once: metadata, imports and test imports
+    opt Unknown test imports, or libraries outside that graph
+        CLI->>Go: go list -deps for test-only imports, otherwise -find
+        Go-->>CLI: Testify, Mini goleak and SDK source and module metadata
+    end
+    opt Library reachable
         CLI->>AST: Validate versions and APIs
         CLI->>AST: Prepare library entry hooks
         AST-->>CLI: Source edits, hooks and content fingerprints
@@ -90,8 +92,15 @@ line directives. A generated file declares the private SDK hooks with
 `go:linkname`. For Mini, when testing declares its parallel-test counter, the
 file also registers the function that in-process retries use to record the end
 of a parallel attempt; nothing outside testing can reach that counter. Each
-selected package with tests receives a virtual external test file that
-blank-imports the chosen runtime.
+selected package with tests receives a virtual test file that imports the
+chosen runtime. It joins the package's internal tests when the package has no
+external test package, so Go compiles and vets no additional package. An
+external test package receives it instead, as does a package that the runtime
+itself imports, because only an external test package may import an importer
+of the package under test. With the internal placement, the runtime and its
+dependencies initialize before the package under test; the generated `init`
+follows the package's other files, and Mini's import name, `__dd_ci_runtime`,
+joins that package's scope.
 
 Existing overlays are merged before transformation, and every user `-overlay`
 spelling is replaced by the merged plan. Generated-path collisions, missing or
@@ -131,7 +140,9 @@ and source ownership are described in [Testify instrumentation](testify.md).
 Each rewritten SDK package has its own compiler marker. A transitive marker
 through `testing` is insufficient when Go reuses unchanged dependency export data.
 The wrapper removes these markers before invoking the compiler; user flags stay
-intact. Goleak's package-only cache marker, delivery pause and exact worker filters are
+intact. Go applies a package's flags to its test variants too: the internal
+test variant compiles the package's sources, which receive the same edits, and
+its external test package and test main only lose the marker. Goleak's package-only cache marker, delivery pause and exact worker filters are
 described in [delivery and goleak](delivery.md).
 
 The plan lives for one invocation. Identical generated content shares a backing
@@ -178,8 +189,10 @@ flowchart TB
 
 Distributed trace identity is separate: the propagation package carries a
 128-bit trace ID and active span ID. Test-cycle serialization writes hierarchy
-IDs as native fields, with the SDK's event-specific ID rules. End events identify
-their session, module or suite; test events retain their own trace identity.
+IDs as native fields, with the SDK's event-specific ID rules. A hierarchy tag
+that is not an unsigned decimal number stays in meta, as the SDK leaves it. End
+events identify their session, module or suite; test events retain their own
+trace identity.
 Retries and parallel-test ownership are managed by the extracted testing hooks,
 which also control when a session closes and flushes.
 

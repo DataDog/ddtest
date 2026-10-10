@@ -43,7 +43,7 @@ func instrumentCaptureFormattedError(tb testing.TB, errType, message string, ski
 	if !isCiVisibilityEnabled() {
 		return formatted
 	}
-	if execMeta := getTestMetadata(tb); execMeta != nil {
+	if execMeta := getTestMetadata(tb); execMeta != nil && execMeta.processRetryError.Load() == nil { // only the first error is kept
 		execMeta.processRetryError.CompareAndSwap(nil, &processRetryErrorInfo{
 			Type:    errType,
 			Message: message,
@@ -270,7 +270,7 @@ func instrumentTestingTFuncWithSourceOptions(
 			}
 
 			addModulesCounters(moduleName, 1)
-			addSuitesCounters(suiteName, 1)
+			addSuitesCounters(moduleName, suiteName, 1)
 			if log.DebugEnabled() {
 				log.Debug("instrumentTestingTFunc: creating test span for %s", currentT.Name())
 			}
@@ -460,11 +460,11 @@ func instrumentSetErrorInfo(tb testing.TB, errType string, errMessage string, sk
 	// Get the CI Visibility span and check if we can set the error type, message and stack
 	ciTestItem := getTestMetadata(tb)
 	if ciTestItem != nil && ciTestItem.test != nil && ciTestItem.error.CompareAndSwap(0, 1) {
-		stack := utils.GetStacktrace(2 + skip)
+		var stack string // a formatted error already recorded its caller's stack
 		if formatted := ciTestItem.processRetryError.Load(); formatted != nil {
-			errType = formatted.Type
-			errMessage = formatted.Message
-			stack = formatted.Stack
+			errType, errMessage, stack = formatted.Type, formatted.Message, formatted.Stack
+		} else {
+			stack = utils.GetStacktrace(2 + skip)
 		}
 		log.Debug("instrumentSetErrorInfo: setting error info [name: %q, type: %q, message: %q]", ciTestItem.test.Name(), errType, errMessage)
 		ciTestItem.test.SetError(integrations.WithErrorInfo(errType, errMessage, stack))
@@ -599,7 +599,7 @@ func instrumentTestingBFunc(pb *testing.B, name string, f func(*testing.B)) (str
 		addModulesCounters(moduleName, 1)
 
 		// Increment the test count in the suite.
-		addSuitesCounters(suiteName, 1)
+		addSuitesCounters(moduleName, suiteName, 1)
 
 		// Decrement level.
 		bpf := getBenchmarkPrivateFields(b)

@@ -70,6 +70,7 @@ type Client struct {
 	deferUntilIdle         bool
 	removeIdleFlush        func()
 	removeConnectionCloser func()
+	releaseMode            func() // Set by Start for the runtime client.
 }
 
 func New(c Config) (*Client, error) {

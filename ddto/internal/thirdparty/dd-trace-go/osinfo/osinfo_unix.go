@@ -9,10 +9,8 @@ package osinfo
 
 import (
 	"bufio"
-	"bytes"
 	"io"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 
@@ -20,7 +18,8 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/xsys/unix"
 )
 
-func init() {
+// detect fills the OS metadata. Upstream runs it as the package's init.
+func detect() {
 	// Change the default values for backwards compatibility on scenarios
 	if runtime.GOOS == "linux" {
 		osName = "Linux (Unknown Distribution)"
@@ -29,12 +28,12 @@ func init() {
 
 	if runtime.GOOS == "darwin" {
 		kernelName = "Darwin"
-		out, err := exec.Command("sw_vers", "-productVersion").Output()
-		if err != nil {
+		version, ok := macOSProductVersion()
+		if !ok {
 			return
 		}
 
-		osVersion = string(bytes.Trim(out, "\n"))
+		osVersion = version
 	}
 
 	if info, err := unix.ReadKernelInfo(); err == nil {

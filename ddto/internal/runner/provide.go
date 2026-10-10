@@ -35,7 +35,7 @@ func preprovideMini(ctx context.Context, dir string, opts options, temp string, 
 		source = filepath.Join(dir, source)
 	}
 	data, err := readModuleFile(source, replacements)
-	if err != nil || bytes.Contains(data, []byte(miniModule)) || bytes.ContainsRune(data, '\\') {
+	if err != nil || mayMentionMini(data) {
 		return "", nil
 	}
 	if opts.mod == "" {
@@ -79,6 +79,12 @@ func preprovideMini(ctx context.Context, dir string, opts options, temp string, 
 		return "", nil
 	}
 	return provideRuntime(ctx, dir, opts, Mini, temp, replacements, progress)
+}
+
+// mayMentionMini reports whether a module or workspace file can name Mini.
+// Quoted module paths can spell it with escapes, so a backslash counts too.
+func mayMentionMini(data []byte) bool {
+	return bytes.Contains(data, []byte(miniModule)) || bytes.ContainsRune(data, '\\')
 }
 
 // provideRuntime makes the selected runtime resolvable when the module does not

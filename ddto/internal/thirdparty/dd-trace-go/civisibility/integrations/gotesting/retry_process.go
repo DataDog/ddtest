@@ -3511,7 +3511,7 @@ func processRetryChildOwnerMetadata(execMeta *testExecutionMetadata) *testExecut
 }
 
 func recordProcessRetryChildErrorInfo(tb testing.TB, errType, errMessage string, stackSkip int) {
-	if execMeta := processRetryChildOwnerMetadata(getTestMetadata(tb)); execMeta != nil {
+	if execMeta := processRetryChildOwnerMetadata(getTestMetadata(tb)); execMeta != nil && execMeta.processRetryError.Load() == nil { // only the first error is kept
 		execMeta.processRetryError.CompareAndSwap(nil, &processRetryErrorInfo{
 			Type:    truncateProcessRetryErrorType(errType),
 			Message: truncateProcessRetryStructuredErrorMessage(errMessage),

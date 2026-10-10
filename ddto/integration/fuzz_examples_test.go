@@ -227,6 +227,12 @@ func buildFuzzExampleFixture(t *testing.T, backend, mode string, covered bool) f
 	return fuzzExampleFixture{dir: dir, binary: filepath.Join(dir, executableName("fixture.test")), runtime: backend, mode: mode}
 }
 
+// fuzzExampleInvocation is the fixture binary's name and arguments, as the
+// runtimes see them in os.Args.
+func fuzzExampleInvocation(fixture fuzzExampleFixture, scenario string) []string {
+	return append([]string{filepath.Base(fixture.binary)}, fuzzExampleArgs(scenario)...)
+}
+
 func fuzzExampleArgs(scenario string) []string {
 	args := []string{"-test.count=1", "-test.timeout=2m"}
 	switch scenario {
@@ -478,7 +484,8 @@ func TestFuzzExampleParity(t *testing.T) {
 				for _, deferred := range []bool{false, true} {
 					t.Run(fmt.Sprintf("deferred=%t", deferred), func(t *testing.T) {
 						actual, miniWall := runFuzzExampleScenario(t, mini, scenario, deferred)
-						a, b := normalizeFuzzExampleEvents(expected, sdk), normalizeFuzzExampleEvents(actual, mini)
+						a := normalizeFuzzExampleEvents(expected, sdk)
+						b := alignMiniTestCommands(a, normalizeFuzzExampleEvents(actual, mini), fuzzExampleInvocation(mini, scenario))
 						ac, err := countCIEvents(a)
 						if err != nil {
 							t.Fatal(err)
@@ -592,7 +599,8 @@ func TestFuzzExampleCoverageParity(t *testing.T) {
 			for _, deferred := range []bool{false, true} {
 				t.Run(fmt.Sprint(deferred), func(t *testing.T) {
 					actual, miniCoverage, miniWall := runFuzzExampleWithCoverage(t, mini, scenario, deferred, true)
-					a, b := normalizeFuzzExampleEvents(expected, sdk), normalizeFuzzExampleEvents(actual, mini)
+					a := normalizeFuzzExampleEvents(expected, sdk)
+					b := alignMiniTestCommands(a, normalizeFuzzExampleEvents(actual, mini), fuzzExampleInvocation(mini, scenario))
 					if !reflect.DeepEqual(ciWireEvents(a), ciWireEvents(b)) {
 						t.Fatalf("covered wire differs\nSDK %v\nMini %v", ciWireEvents(a), ciWireEvents(b))
 					}

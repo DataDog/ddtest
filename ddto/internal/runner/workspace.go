@@ -13,6 +13,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -322,6 +323,16 @@ func provideMiniWorkspace(ctx context.Context, dir, work, temp, moduleCache stri
 		}
 		args = append(args, "-dropreplace="+old)
 	}
+	// A use module before Mini's own can replace Mini. Go's parser reads those
+	// replacements; module files that cannot spell Mini's path are skipped.
+	type useModule struct {
+		index int
+		root  string
+		data  []byte
+		edit  string // go mod edit -json
+		err   error
+	}
+	var modules []*useModule
 	for i, use := range parsed.Use {
 		root := use.DiskPath
 		if !filepath.IsAbs(root) {
@@ -333,32 +344,46 @@ func provideMiniWorkspace(ctx context.Context, dir, work, temp, moduleCache stri
 		}
 		if modulePath(moduleData) == miniModule {
 			miniRoot = root
+			modules = nil
 			break
 		}
-		if workspaceReplacement || selected {
-			continue
+		if !workspaceReplacement && !selected && mayMentionMini(moduleData) {
+			modules = append(modules, &useModule{index: i, root: root, data: moduleData})
 		}
-		copy := filepath.Join(temp, fmt.Sprintf("client-%d.mod", i))
-		if err := os.WriteFile(copy, moduleData, 0600); err != nil {
-			return "", err
-		}
-		jsonData, e := goTool(ctx, root, nil, "mod", "edit", "-json", "-modfile="+copy)
-		if e != nil {
-			return "", e
+	}
+	debugFromContext(ctx).printf("workspace use_modules=%d replacement_queries=%d", len(parsed.Use), len(modules))
+	// Each query reads its own copy, so they run concurrently. Results apply in
+	// workspace order, including the first failure and downloads before it.
+	var wg sync.WaitGroup
+	limit := make(chan struct{}, runtime.GOMAXPROCS(0))
+	for _, module := range modules {
+		wg.Go(func() {
+			limit <- struct{}{}
+			defer func() { <-limit }()
+			copy := filepath.Join(temp, fmt.Sprintf("client-%d.mod", module.index))
+			if module.err = os.WriteFile(copy, module.data, 0600); module.err == nil {
+				module.edit, module.err = goTool(ctx, module.root, nil, "mod", "edit", "-json", "-modfile="+copy)
+			}
+		})
+	}
+	wg.Wait()
+	for _, module := range modules {
+		if module.err != nil {
+			return "", module.err
 		}
 		var client struct {
 			Replace []struct {
 				Old, New struct{ Path, Version string }
 			}
 		}
-		if err := json.Unmarshal([]byte(jsonData), &client); err != nil {
-			return "", fmt.Errorf("parse client edit JSON (%d bytes): %w", len(jsonData), err)
+		if err := json.Unmarshal([]byte(module.edit), &client); err != nil {
+			return "", fmt.Errorf("parse client edit JSON (%d bytes): %w", len(module.edit), err)
 		}
 		for _, replace := range client.Replace {
 			if replace.Old.Path != miniModule {
 				continue
 			}
-			candidate, err := workspaceReplacementRoot(ctx, dir, root, replace.New.Path, replace.New.Version)
+			candidate, err := workspaceReplacementRoot(ctx, dir, module.root, replace.New.Path, replace.New.Version)
 			if err != nil {
 				return "", err
 			}

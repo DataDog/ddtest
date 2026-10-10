@@ -103,8 +103,10 @@ func (ddm *M) instrumentInternalFuzzTargets(targets *[]testing.InternalFuzzTarge
 	for idx, target := range *targets {
 		fn := runtime.FuncForPC(reflect.ValueOf(target.Fn).Pointer())
 		moduleName, suiteName := utils.GetModuleAndSuiteName(fn.Entry())
-		addModulesCounters(moduleName, 1)
-		addSuitesCounters(suiteName, 1)
+		if claim.selectionOrAll().selectsFuzzTarget(target.Name) {
+			addModulesCounters(moduleName, 1)
+			addSuitesCounters(moduleName, suiteName, 1)
+		}
 		info := &testingFInfo{
 			originalFunc: target.Fn,
 			commonInfo: commonInfo{

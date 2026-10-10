@@ -11,6 +11,10 @@ Set `DD_CIVISIBILITY_DEFERRED_DELIVERY=true` before running the test binary:
 DD_CIVISIBILITY_DEFERRED_DELIVERY=true ddto test --runtime=mini -count=1 ./...
 ```
 
+The runtime reads the variable once, when its CI client starts. Changing it
+later in the same process, for example with `t.Setenv` in a test, does not move
+test admission, coverage processing or the other CI writers to another mode.
+
 The default is ordinary delivery: finishing an event never performs network
 I/O, and up to eight background senders deliver full batches. When delivery falls
 behind, a finishing test waits for a sender rather than losing events; after a

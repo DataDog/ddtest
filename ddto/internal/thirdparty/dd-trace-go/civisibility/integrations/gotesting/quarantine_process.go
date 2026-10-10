@@ -1617,7 +1617,7 @@ func failQuarantinedRaceIsolation(t *testing.T, testInfo *commonInfo, execMeta *
 	}
 	if len(testInfo.identity.Segments) > 1 {
 		addModulesCounters(testInfo.moduleName, 1)
-		addSuitesCounters(testInfo.suiteName, 1)
+		addSuitesCounters(testInfo.moduleName, testInfo.suiteName, 1)
 	}
 	finishProcessRetryTestEvent(testInfo, execMeta, attempt, nil, nil)
 	module := session.GetOrCreateModule(testInfo.moduleName)
@@ -1846,7 +1846,7 @@ func replayQuarantinedRaceEvent(
 		// matching checkModuleAndSuite call after replay.
 		if len(identity.Segments) > 1 {
 			addModulesCounters(moduleName, 1)
-			addSuitesCounters(suiteName, 1)
+			addSuitesCounters(moduleName, suiteName, 1)
 		}
 		counted[identityKey] = identity
 	}

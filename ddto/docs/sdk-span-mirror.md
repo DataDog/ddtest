@@ -119,6 +119,10 @@ change. Go does not hash wrapper-generated source into its original build
 action, so an unchanged marker can reuse an incompatible SDK archive.
 CI guards and span copies have separate package-scoped compiler markers.
 Disabled mirrors omit the tracer marker. Native/SDK builds use neither marker.
+When the SDK's own packages are tested, Go also passes a marker to their test
+variants. The internal test variant, which compiles the package's sources,
+receives the same edits; the external test package and test main only lose
+the marker, as with goleak.
 
 The runtime uses cached typed `testing` offsets to bind the native context
 before the test body runs. It preserves `cancelCtx`. SDK-free Mini binaries

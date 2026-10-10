@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/citransport"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
 )
 
 func TestFinishedSpanSharesSealedMaps(t *testing.T) {
@@ -84,6 +85,57 @@ func TestFinishedSpanSharesSealedMaps(t *testing.T) {
 	}
 	if err := client.Close(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A hierarchy tag that is not an unsigned decimal cannot be a native ID field.
+// dd-trace-go then leaves the value in meta; it must not leave the wire while
+// the getter still returns it. Numeric IDs stay native fields only.
+func TestNonNumericHierarchyTagsStayInMeta(t *testing.T) {
+	var payload testCycleBatch
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := msgp.Decode(r.Body, &payload); err != nil {
+			t.Error(err)
+		}
+		w.WriteHeader(202)
+	}))
+	defer server.Close()
+	client, err := New(Config{Transport: citransport.Config{Endpoint: server.URL}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]string{"test_session_id": "session-a", "test_module_id": "42", "test_suite_id": ""}
+	var spans []*Span
+	for _, kind := range []string{"test", "span"} {
+		span, _ := client.StartSpan(context.Background(), kind, SpanType(kind))
+		for key, value := range values {
+			span.SetTag(key, value)
+		}
+		span.Finish()
+		spans = append(spans, span)
+	}
+	if err := client.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Events) != len(spans) {
+		t.Fatalf("delivered %d events", len(payload.Events))
+	}
+	for i, event := range payload.Events {
+		content := event.Content
+		if session, ok := content.Meta["test_session_id"]; !ok || session != "session-a" || content.SessionID != 0 {
+			t.Fatalf("%s: session meta=%q native=%d", event.Type, session, content.SessionID)
+		}
+		if suite, ok := content.Meta["test_suite_id"]; !ok || suite != "" || content.SuiteID != 0 {
+			t.Fatalf("%s: empty suite meta=%q/%t native=%d", event.Type, suite, ok, content.SuiteID)
+		}
+		if _, alias := content.Meta["test_module_id"]; alias || content.ModuleID != 42 {
+			t.Fatalf("%s: numeric module ID meta=%v native=%d", event.Type, content.Meta, content.ModuleID)
+		}
+		for key, want := range values {
+			if got, ok := spans[i].Meta(key); !ok || got != want {
+				t.Fatalf("%s: getter %s=%q/%t", event.Type, key, got, ok)
+			}
+		}
 	}
 }
 

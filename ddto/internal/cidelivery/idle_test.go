@@ -1,6 +1,7 @@
 package cidelivery
 
 import (
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -78,5 +79,40 @@ func TestConcurrentActivityRetainsQueuedWork(t *testing.T) {
 	parent()
 	if delivered.Load() != 100 {
 		t.Fatal("lost queued work", delivered.Load())
+	}
+}
+
+// The runtime client's mode wins over later environment changes until it closes.
+func TestFixedModeIgnoresLaterEnvironmentChanges(t *testing.T) {
+	for _, deferred := range []bool{false, true} {
+		t.Setenv(DeferredEnv, strconv.FormatBool(deferred))
+		if Enabled() != deferred {
+			t.Fatalf("environment %t not read before the client starts", deferred)
+		}
+		release := FixMode(deferred)
+		t.Setenv(DeferredEnv, strconv.FormatBool(!deferred))
+		if Enabled() != deferred || EnvironmentEnabled() != !deferred {
+			t.Fatalf("mode %t changed with the environment", deferred)
+		}
+		release()
+		if Enabled() != !deferred {
+			t.Fatalf("released mode did not read the environment")
+		}
+	}
+}
+
+// A client that closes after another has started leaves the newer mode fixed.
+func TestLateReleaseKeepsNewerMode(t *testing.T) {
+	t.Setenv(DeferredEnv, "false")
+	releaseOld := FixMode(false)
+	releaseNew := FixMode(true)
+	releaseOld()
+	if !Enabled() {
+		t.Fatal("an earlier client's release replaced the newer client's mode")
+	}
+	releaseNew()
+	releaseNew()
+	if Enabled() {
+		t.Fatal("released mode did not read the environment")
 	}
 }

@@ -1,9 +1,13 @@
 package runner
 
 import (
+	"bytes"
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -25,6 +29,90 @@ func TestSDKCIGateDispatch(t *testing.T) {
 	}
 	if ToolNeedsPlan("mini-sdk", []string{"compile", "env.go"}, sdkCIEnvironmentPackage+"-other") {
 		t.Fatal("wrong package gated")
+	}
+	// Go applies a package's gcflags, and so the cache marker, to its test
+	// variants: each must reach the wrapper, which removes the marker.
+	for _, pkg := range []string{sdkCIEnvironmentPackage, sdkCIConfigPackage, sdkTracerPackage} {
+		for _, variant := range []string{pkg + " [" + pkg + ".test]", pkg + "_test [" + pkg + ".test]", pkg + ".test"} {
+			if !ToolNeedsPlan("mini-sdk", []string{"compile", "file.go"}, variant) {
+				t.Fatal("test variant bypassed:", variant)
+			}
+			if ToolNeedsPlan("mini-sdk", []string{"compile", "-V=full"}, variant) || ToolNeedsPlan("testify", []string{"compile", "file.go"}, variant) {
+				t.Fatal("test variant selected without the SDK guard:", variant)
+			}
+			if got := ToolNeedsPlan("mini-sdk-nomirror", []string{"compile", "file.go"}, variant); got != (pkg != sdkTracerPackage) {
+				t.Fatalf("%s without span copies: %v", variant, got)
+			}
+		}
+	}
+	for _, other := range []string{"example.com/client [" + sdkCIEnvironmentPackage + ".test]", sdkCIEnvironmentPackage + "/inner", sdkCIEnvironmentPackage + "_test/inner"} {
+		if ToolNeedsPlan("mini-sdk", []string{"compile", "file.go"}, other) {
+			t.Fatal("unrelated package gated:", other)
+		}
+	}
+}
+
+func TestSDKToolHelperProcess(t *testing.T) {
+	if os.Getenv("DDTO_SDK_TOOL_HELPER") != "1" {
+		return
+	}
+	args := os.Args[slices.Index(os.Args, "--")+1:]
+	for _, arg := range args {
+		fmt.Println(arg)
+		if strings.HasSuffix(arg, ".go") {
+			if data, err := os.ReadFile(arg); err == nil && strings.Contains(string(data), "return EnabledModeDisabled, false") {
+				fmt.Println("gated")
+			}
+		}
+	}
+	os.Exit(0)
+}
+
+// Test variants of a guarded SDK package receive its compiler cache marker.
+// The internal test variant compiles the package's own sources, which the
+// guard rewrites as for the package itself; the external test package and the
+// test main only lose the marker. None of them reaches the compiler with it.
+func TestSDKCITestVariantsRemoveCompilerCacheMarker(t *testing.T) {
+	t.Setenv("DDTO_SDK_TOOL_HELPER", "1")
+	t.Setenv(userToolexecEnv, "")
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	t.Setenv("TMP", dir)
+	t.Setenv("TEMP", dir)
+	source := filepath.Join(dir, "env.go")
+	if err := os.WriteFile(source, []byte("package envconfig\ntype EnabledMode int\nconst EnabledModeDisabled=0\nfunc FromEnv()(EnabledMode,bool){return 1,true}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	test := filepath.Join(dir, "env_test.go")
+	if err := os.WriteFile(test, []byte("package envconfig\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	marker := sdkCompilerCacheMarker(sdkCIEnvironmentPackage)
+	tool := []string{os.Args[0], "-test.run=^TestSDKToolHelperProcess$", "--", "-I=client-path", marker}
+	for _, tc := range []struct {
+		importPath string
+		inputs     []string
+		gated      bool
+	}{
+		{sdkCIEnvironmentPackage + " [" + sdkCIEnvironmentPackage + ".test]", []string{source, test}, true},
+		{sdkCIEnvironmentPackage + "_test [" + sdkCIEnvironmentPackage + ".test]", []string{test}, false},
+		{sdkCIEnvironmentPackage + ".test", []string{test}, false},
+	} {
+		t.Setenv("TOOLEXEC_IMPORTPATH", tc.importPath)
+		var stdout, stderr bytes.Buffer
+		if code := RunTool(context.Background(), "missing-overlay", append(slices.Clone(tool), tc.inputs...), nil, &stdout, &stderr); code != 0 {
+			t.Fatalf("%s: exit=%d %s", tc.importPath, code, stderr.String())
+		}
+		got := strings.Fields(stdout.String())
+		if slices.Contains(got, marker) || !slices.Contains(got, "-I=client-path") {
+			t.Fatalf("%s: compiler arguments %q", tc.importPath, got)
+		}
+		if slices.Contains(got, "gated") != tc.gated || tc.gated && slices.Contains(got, source) || !slices.Contains(got, test) {
+			t.Fatalf("%s: gated=%t, compiler arguments %q", tc.importPath, tc.gated, got)
+		}
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 2 {
+		t.Fatal("temporary compiler sources remain", entries, err)
 	}
 }
 

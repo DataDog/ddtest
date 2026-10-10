@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type miniWireCapture struct {
@@ -135,6 +136,57 @@ func runMiniWire(t *testing.T, dir, bin string, agentless, coverage bool) *miniW
 	}
 	return c
 }
+
+// runMiniWire selects only TestPass and TestSkip of sample_test.go. The other
+// tests of that suite never start, so they must not keep the suite or module
+// open until the session ends.
+func TestMiniFilteredTestsFinishSuiteBeforeSession(t *testing.T) {
+	dir, driver := prepareMiniFixture(t)
+	bins := compileMiniPair(t, dir, driver)
+	got := runMiniWire(t, dir, bins[1], true, false)
+	end := func(content map[string]any) int64 {
+		var total int64
+		for _, key := range []string{"start", "duration"} {
+			switch value := content[key].(type) {
+			case int64:
+				total += value
+			case uint64:
+				total += int64(value)
+			default:
+				t.Fatalf("event %s %T", key, content[key])
+			}
+		}
+		return total
+	}
+	var sessionEnd int64
+	var containers []string
+	ends := map[string]int64{}
+	for _, e := range got.events {
+		content := e["content"].(map[string]any)
+		meta, _ := content["meta"].(map[string]any)
+		switch e["type"] {
+		case "test_session_end":
+			sessionEnd = end(content)
+		case "test_module_end":
+			name := fmt.Sprint("module ", meta["test.module"])
+			containers = append(containers, name)
+			ends[name] = end(content)
+		case "test_suite_end":
+			name := fmt.Sprint("suite ", meta["test.suite"])
+			containers = append(containers, name)
+			ends[name] = end(content)
+		}
+	}
+	if sessionEnd == 0 || ends["suite sample_test.go"] == 0 {
+		t.Fatalf("missing session or sample_test.go suite: %v", containers)
+	}
+	for _, name := range containers {
+		if ends[name] > sessionEnd {
+			t.Errorf("%s ended %v after the session", name, time.Duration(ends[name]-sessionEnd))
+		}
+	}
+}
+
 func validateMiniHierarchy(t *testing.T, c *miniWireCapture) {
 	t.Helper()
 	if len(c.payloads) == 0 {

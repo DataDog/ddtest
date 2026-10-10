@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"net/http"
+	"sync"
 	"testing"
 )
 
@@ -148,4 +149,94 @@ func TestGeneratedSpanIDsUse63Bits(t *testing.T) {
 	if !high {
 		t.Fatal("63-bit range not exercised")
 	}
+}
+
+// Parallel tests create identities concurrently; each must still be unique.
+func TestConcurrentIdentitiesAreUnique(t *testing.T) {
+	const goroutines, perGoroutine = 8, 2000
+	var mu sync.Mutex
+	seen := make(map[uint64]bool, goroutines*perGoroutine*2)
+	traces := make(map[[16]byte]bool, goroutines*perGoroutine)
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Go(func() {
+			local := make([]Context, 0, 2*perGoroutine)
+			for i := 0; i < perGoroutine; i++ {
+				root, err := New()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				child, err := root.Child()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if child.SpanID == root.SpanID || child.TraceID != root.TraceID {
+					t.Errorf("invalid child %+v of %+v", child, root)
+				}
+				local = append(local, root, child)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			for i, c := range local {
+				if !c.Valid() || seen[c.SpanID] {
+					t.Errorf("invalid or repeated span ID %x", c.SpanID)
+				}
+				seen[c.SpanID] = true
+				if i%2 == 0 {
+					if traces[c.TraceID] {
+						t.Errorf("repeated trace ID %x", c.TraceID)
+					}
+					traces[c.TraceID] = true
+				}
+			}
+		})
+	}
+	wg.Wait()
+}
+
+var benchmarkIdentity Context
+
+// Every CI event starts a root or child identity, serially or from parallel tests.
+func BenchmarkNew(b *testing.B) {
+	b.Run("serial", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			benchmarkIdentity, _ = New()
+		}
+	})
+	b.Run("parallel", func(b *testing.B) {
+		b.ReportAllocs()
+		b.RunParallel(func(pb *testing.PB) {
+			var c Context
+			for pb.Next() {
+				c, _ = New()
+			}
+			_ = c
+		})
+	})
+}
+
+func BenchmarkChild(b *testing.B) {
+	root, err := New()
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Run("serial", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			benchmarkIdentity, _ = root.Child()
+		}
+	})
+	b.Run("parallel", func(b *testing.B) {
+		b.ReportAllocs()
+		b.RunParallel(func(pb *testing.PB) {
+			var c Context
+			for pb.Next() {
+				c, _ = root.Child()
+			}
+			_ = c
+		})
+	})
 }

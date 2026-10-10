@@ -133,6 +133,16 @@ Only declared differences are normalized:
   numeric values remain required. CI request counters are checked against each
   sender's requests because batching can differ. All other captured CI semantic
   counters compare exactly.
+- `test.command` keeps the arguments after `-test.v=`, `-test.gocoverdir=` and
+  `-test.testlogfile=` in Mini. Mini removes those flags and the other paths
+  that `go test` injects: `-test.coverprofile=`, `-test.outputdir=` and
+  `-test.fuzzcachedir=`. The Fuzz/Examples
+  comparator replaces a Mini command that is absent from the SDK capture, in
+  `test.command` and the session resource, by the longest SDK command that is
+  its whole-argument prefix. That covers the fixture's child processes. For the
+  fixture's own invocation it requires Mini's exact form, derived from the known
+  arguments; a Mini command that keeps a volatile flag, or has no such prefix,
+  stays different and fails.
 - Relocated SDK library stack paths are canonicalized. The exact internal
   function/line pairs below account for inserted hooks and helpers. Testify's
   embedded panic stack uses the same mappings; its `Error Trace` lists only
@@ -142,7 +152,7 @@ Only declared differences are normalized:
 
 | Mini location | SDK location | Internal function |
 | --- | --- | --- |
-| `testing.go:867` | `testing.go:864` | `(*M).executeInternalTest.func1` |
+| `testing.go:874` | `testing.go:864` | `(*M).executeInternalTest.func1` |
 | `instrumentation_orchestrion.go:427` | `instrumentation_orchestrion.go:424` | `instrumentTestingTFuncWithSourceOptions.func1.1` |
 | `instrumentation_orchestrion.go:433` | `instrumentation_orchestrion.go:430` | `instrumentTestingTFuncWithSourceOptions.func1` |
 | `instrumentation.go:775` | `instrumentation.go:775` | `applyAdditionalFeaturesToTestFunc.func2` |
@@ -160,6 +170,26 @@ client suite and source location. `TestMiniCoverageIncludesCleanup` and
 `TestMiniTestifyDuplicateIdentity` assert those expected payloads directly;
 the differential comparator does not hide either difference. They run with the
 complete suite on every CI platform.
+
+The SDK filters `test.command` with greedy patterns such as
+`(?si)-test.v=(.*)\s`, which also remove every argument after the first
+volatile flag. `go test` passes `-test.testlogfile` first for a cacheable run,
+so the SDK's command, and the automatic session name built from it, is then
+only the binary name. Mini removes only the volatile flags, so its command, the
+session resource built from it and the automatic session name keep the other
+arguments, such as `-test.paniconexit0 -test.timeout=10m0s`. An explicit
+`DD_TEST_SESSION_NAME` is unaffected. `TestTestCommandRemovesOnlyVolatileFlags`
+checks both filters; the dd-trace-go main branch at `d27b94332308` still has
+the SDK's patterns.
+
+Mini counts only the tests, examples and fuzz seeds that `-test.run` and
+`-test.skip` let `M.Run` start. A suite or module whose other workloads are
+filtered out ends after its last selected workload. The SDK counts every
+workload, so such suites and modules end only at exit, after the session.
+The comparator ignores timestamps; `TestMiniFilteredTestsFinishSuiteBeforeSession`
+asserts the order directly. With `-test.count` above 1 or several `-test.cpu`
+values, Mini counts every workload like the SDK, so repeated-run scenarios
+keep the SDK's suite and module events.
 
 Mini also reports the declaration start of a confirmed named function, even
 when its optimized entry PC points at the closing brace. The constant-sum
@@ -356,6 +386,15 @@ difference remains before a complete telemetry-parity claim:
 - SDK `ciVisibilityTransport.send` returns network failures before incrementing
   `endpoint_payload.requests_errors`; Mini records them with `error_type:network`.
   The fixture must expose this difference rather than discard it as an APM metric.
+
+Git command counters also differ where Mini avoids repeated work. Base-branch
+discovery for impacted tests lists every missing candidate branch with one
+`git ls-remote`, so `git.command` with `command:ls_remote_heads` counts one per
+discovery instead of one per missing branch, and fetches that git would reject
+are not run or counted. A shallow checkout that already has the provider's
+pull-request head commit reads it without the remote lookup and `fetch`, so
+those commands are not counted either. The parity fixtures supply the
+pull-request base commit and no head commit, so they run neither path.
 
 SDK and Mini increment `endpoint_payload.dropped` once per abandoned batch.
 Mini keeps a failed `Flush` batch for recovery while open; final `Close` failure

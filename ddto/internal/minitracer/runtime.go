@@ -51,7 +51,7 @@ func Start(options ...StartOption) {
 	}
 	clientConfig.Endpoint = endpoint
 	config := Config{Service: env.Get("DD_SERVICE"), Env: env.Get("DD_ENV"), ServiceVersion: env.Get("DD_VERSION"), Transport: clientConfig, Tags: infra.ParseTagString(env.Get("DD_TAGS"))}
-	config.DeferUntilIdle = cidelivery.Enabled()
+	config.DeferUntilIdle = cidelivery.EnvironmentEnabled()
 	for _, option := range options {
 		option(&config)
 	}
@@ -69,6 +69,9 @@ func Start(options ...StartOption) {
 		log.Error("CI mini tracer could not start: %s", err.Error())
 		return
 	}
+	// Test admission and the other CI writers follow this client's mode, even
+	// if a test changes the environment variable later.
+	client.releaseMode = cidelivery.FixMode(config.DeferUntilIdle)
 	active.Store(client)
 }
 func StartSpanFromContext(ctx context.Context, name string, options ...StartSpanOption) (*Span, context.Context) {
@@ -110,6 +113,9 @@ func Stop() {
 		}
 		if dropped := c.DroppedEvents(); dropped != 0 {
 			log.Error("CI mini tracer lost %d events", dropped)
+		}
+		if c.releaseMode != nil {
+			c.releaseMode()
 		}
 	}
 	log.Flush()

@@ -13,7 +13,6 @@ import (
 	"time"
 
 	infra "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/hostname"
 )
 
 const (
@@ -84,10 +83,11 @@ func Initialize(serviceName string) {
 	}
 
 	servName = serviceName
-	host = hostname.Get()
-	if host == "" {
-		host, _ = os.Hostname()
-	}
+	// Upstream asks hostname.Get first, but its cache is empty here: that
+	// call returns "" and starts cloud-metadata and hostname -f probes in a
+	// goroutine whose result nothing reads. Reading the OS hostname directly
+	// gives the value upstream falls back to, without those probes.
+	host, _ = os.Hostname()
 	logsWriterInstance = newLogsWriter()
 }
 

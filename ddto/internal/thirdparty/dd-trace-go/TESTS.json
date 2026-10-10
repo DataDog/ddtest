@@ -185,9 +185,9 @@
       "source": "internal/civisibility/utils/net/http_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/net/http_test.go",
       "source_sha256": "4c280d018a3d9acef0c767aa30d15dd424cb2c49b3f95a044eb5013bda7985cd",
-      "adapted_sha256": "f7294863947456dae5ffe1931b32a2e0e034909de1d016845630313389e0a0eb",
+      "adapted_sha256": "45fcecbb4cd46a841c6645f7a9ffee32ddade859a04cf89487df9e62ba15eb74",
       "kind": "full",
-      "adaptation": "Internal import relocation only; standard-library assertion helpers"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers; the three retry-timing tests expect no wait after the final attempt and bound the total from above"
     },
     {
       "source": "internal/civisibility/utils/net/known_tests_api_test.go",
@@ -612,6 +612,42 @@
     {
       "path": "civisibility/integrations/gotesting/coverage/module_info_test.go",
       "purpose": "Coverage initialization starts no go list; the first module reader resolves it once, from the initialization directory and environment."
+    },
+    {
+      "path": "civisibility/utils/net/http_retry_test.go",
+      "purpose": "Each failure kind keeps its attempt count and waits only between attempts: none follows the final attempt, including the x-ratelimit-reset wait, which is honored only up to 60 seconds."
+    },
+    {
+      "path": "civisibility/utils/git_base_branch_test.go",
+      "purpose": "Base-branch discovery lists every missing candidate with one exact refs/heads ls-remote and fetches only existing branches in order; a per-branch upstream oracle on a second clone leaves the same remote-tracking refs and base SHA."
+    },
+    {
+      "path": "civisibility/utils/git_head_commit_test.go",
+      "purpose": "A shallow checkout reads a present pull-request head commit without a remote lookup or fetch and still fetches a missing one, with real git."
+    },
+    {
+      "path": "osinfo/osinfo_lazy_test.go",
+      "purpose": "Package initialization detects no OS metadata; the first accessor does."
+    },
+    {
+      "path": "osinfo/osinfo_darwin_test.go",
+      "purpose": "macOS reads kern.osproductversion, matches sw_vers on the host and keeps sw_vers with SYSTEM_VERSION_COMPAT or a failed or empty sysctl."
+    },
+    {
+      "path": "civisibility/integrations/gotesting/test_metadata_store_test.go",
+      "purpose": "The concurrent execution-metadata store keeps map semantics: pointer keys, replacement on a second create, isolated deletes; concurrent create/read/replace/delete under -race."
+    },
+    {
+      "path": "civisibility/integrations/gotesting/coverage/profile_diff_test.go",
+      "purpose": "Ordered profile parsing and index/key subtraction return the upstream algorithm's blocks, covered files and bitmaps for generated and hand-written profiles; adapters run the ported coverage assertions unchanged."
+    },
+    {
+      "path": "civisibility/integrations/gotesting/known_tests_test.go",
+      "purpose": "Indexed known-test lookups return the upstream results, including the known-data flag; a new response gets a new index; one lookup per wrapped test is reused; concurrent indexing under -race."
+    },
+    {
+      "path": "civisibility/integrations/gotesting/error_capture_test.go",
+      "purpose": "The first formatted error keeps its caller's stack, including concurrent first errors and process-retry owners; later errors and instrumentSetErrorInfo after a formatted error capture no stack."
     }
   ],
   "local_compatibility_checks": [
@@ -630,6 +666,34 @@
     {
       "path": "integration/cli_source_test.go",
       "purpose": "The optimized sum fixture must report lines 5-10 with normal, unoptimized and race builds. CLI checks verify Mini selection, runtime flag consumption, log identity and errors before Go starts."
+    },
+    {
+      "path": "civisibility/integrations/logs/logs_hostname_test.go",
+      "purpose": "Logs initialization in a fresh process uses os.Hostname and starts no hostname-discovery goroutine for goleak to report."
+    },
+    {
+      "path": "civisibility/utils/git_safe_directory_test.go",
+      "purpose": "safe.directory names the checkout root of a repository, a linked worktree or a submodule, whose .git is a file."
+    },
+    {
+      "path": "civisibility/utils/environmentTags_command_test.go",
+      "purpose": "test.command removes only -test.gocoverdir, -test.v and -test.testlogfile arguments; the pinned SDK's greedy filters, kept as an oracle, also remove every later argument."
+    },
+    {
+      "path": "integration/test_command_test.go",
+      "purpose": "The Fuzz/Examples comparator aligns a Mini test.command with the longest SDK command that is its argument prefix, requires Mini's exact form for the fixture invocation and rejects retained volatile flags."
+    },
+    {
+      "path": "civisibility/integrations/gotesting/test_selection_test.go",
+      "purpose": "The -test.run/-test.skip selection agrees with the top-level tests, examples and fuzz seeds a compiled fixture binary runs for 27 pattern pairs; flag copies read the values flag.Parse sets without changing flags."
+    },
+    {
+      "path": "integration/mini_wire_test.go",
+      "purpose": "TestMiniFilteredTestsFinishSuiteBeforeSession: with tests excluded by -test.run, the selected tests' suite and module end before the session."
+    },
+    {
+      "path": "civisibility/integrations/gotesting/suite_counters_test.go",
+      "purpose": "Two modules' suites with the same file name keep separate counters and close independently."
     }
   ],
   "local_delivery_checks": [
@@ -648,6 +712,16 @@
     {
       "path": "integration/mini_test.go",
       "purpose": "Map only Mini executeInternalTest.func1 testing.go:844 to SDK testing.go:838; other library locations and application frames stay strict."
+    },
+    {
+      "path": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_exit_flush_test.go",
+      "purpose": "Exit delivers an event finished after session close through Stop alone, with one delivery's attempts against a failing intake."
+    },
+    {
+      "purpose": "Map only Mini executeInternalTest.func1 testing.go:870 to SDK testing.go:864; other library locations and application frames stay strict."
+    },
+    {
+      "purpose": "Map only Mini executeInternalTest.func1 testing.go:874 to SDK testing.go:864; other library locations and application frames stay strict."
     }
   ],
   "local_common_metadata_checks": [
@@ -699,7 +773,7 @@
           "source": "internal/civisibility/integrations/gotesting/testing_workloads_test.go",
           "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/testing_workloads_test.go",
           "source_sha256": "143475d3970c0ded6bbe602dc79906669a4538e312d159e318348bc374b72791",
-          "adaptation": "Import relocation only; original assertions retained"
+          "adaptation": "Import relocation; suite counters are read and restored by module and suite (testSuiteCounterKey); original assertions retained"
         }
       ],
       "fixtures_manifest": "testdata/fuzzexamples/SOURCE.json",

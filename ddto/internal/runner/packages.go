@@ -6,9 +6,65 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 )
+
+// packageGraph indexes a go list -deps result, which lists each package once.
+type packageGraph map[string]*goPackage
+
+func newPackageGraph(packages []goPackage) packageGraph {
+	graph := make(packageGraph, len(packages))
+	for i := range packages {
+		graph[packages[i].ImportPath] = &packages[i]
+	}
+	return graph
+}
+
+// imported returns every listed package that roots import, directly or
+// indirectly: the union of their Deps. A root is included only when another
+// root imports it.
+func (g packageGraph) imported(roots ...*goPackage) map[string]bool {
+	reached := map[string]bool{}
+	var pending []string
+	for _, root := range roots {
+		pending = appendImports(pending, root)
+	}
+	for len(pending) != 0 {
+		path := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		// Imports also name "C", which is not a package and is not listed.
+		if p := g[path]; p != nil && !reached[path] {
+			reached[path] = true
+			pending = appendImports(pending, p)
+		}
+	}
+	return reached
+}
+
+// appendImports appends the packages that p imports. Deps also contains the
+// imports that cgo adds to a package importing "C", which Imports omits, such
+// as runtime/cgo for net on Linux; cmd/go's load package adds them with these
+// exceptions. SWIG, SIMD and a main package's linker dependencies add only
+// standard packages too, which cannot reach the libraries this graph answers
+// for, and are not repeated here.
+func appendImports(pending []string, p *goPackage) []string {
+	pending = append(pending, p.Imports...)
+	if !slices.Contains(p.Imports, "C") {
+		return pending
+	}
+	pending = append(pending, "unsafe")
+	if p.ImportPath != "runtime/cgo" {
+		pending = append(pending, "runtime/cgo")
+	}
+	switch p.ImportPath {
+	case "runtime/cgo", "runtime/race", "runtime/msan", "runtime/asan":
+	default:
+		pending = append(pending, "syscall")
+	}
+	return pending
+}
 
 // readPackages decodes go list output as it arrives instead of retaining a
 // second, complete JSON copy. It always drains stdout and waits for the command,

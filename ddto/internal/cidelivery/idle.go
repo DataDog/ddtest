@@ -8,13 +8,62 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 )
 
 const DeferredEnv = "DD_CIVISIBILITY_DEFERRED_DELIVERY"
 
+// Delivery modes in fixedMode's low bits. modeEnvironment reads DeferredEnv.
+const (
+	modeEnvironment uint64 = iota
+	modeOrdinary
+	modeDeferred
+	modeMask uint64 = 3
+)
+
+// fixedMode holds the runtime client's delivery mode while that client is
+// active. The client reads DeferredEnv once, at startup; test admission,
+// coverage processing and the other CI writers must keep agreeing with it even
+// if a test changes the variable later, for example with t.Setenv. The bits
+// above modeMask count FixMode calls, so that a client closing late cannot
+// release the mode of a client started after it.
+var fixedMode atomic.Uint64
+
+// Enabled reports whether deferred delivery is selected: the runtime client's
+// mode while it is active, otherwise the current value of DeferredEnv.
 func Enabled() bool {
+	switch fixedMode.Load() & modeMask {
+	case modeOrdinary:
+		return false
+	case modeDeferred:
+		return true
+	}
+	return EnvironmentEnabled()
+}
+
+// EnvironmentEnabled reports the current value of DeferredEnv, whatever mode
+// a runtime client has fixed. A starting runtime client reads it.
+func EnvironmentEnabled() bool {
 	v, _ := strconv.ParseBool(os.Getenv(DeferredEnv))
 	return v
+}
+
+// FixMode makes Enabled report the runtime client's mode until the returned
+// release runs, after that client has closed. A release has no effect once a
+// later FixMode has replaced the mode. Explicit clients do not call it; they
+// own their delivery independently.
+func FixMode(deferred bool) (release func()) {
+	mode := modeOrdinary
+	if deferred {
+		mode = modeDeferred
+	}
+	for {
+		previous := fixedMode.Load()
+		fixed := previous&^modeMask + modeMask + 1 | mode
+		if fixedMode.CompareAndSwap(previous, fixed) {
+			return func() { fixedMode.CompareAndSwap(fixed, fixed&^modeMask) }
+		}
+	}
 }
 
 // Coordinator keeps delivery outside test bodies and their cleanup callbacks.

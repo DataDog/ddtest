@@ -277,16 +277,39 @@ func (s *Span) setTextTag(key, value string) {
 	delete(s.content.Metrics, key)
 }
 
+var hierarchyKeys = [3]string{"test_session_id", "test_module_id", "test_suite_id"}
+
 func hierarchyIndex(key string) int {
 	switch key {
-	case "test_session_id":
+	case hierarchyKeys[0]:
 		return 0
-	case "test_module_id":
+	case hierarchyKeys[1]:
 		return 1
-	case "test_suite_id":
+	case hierarchyKeys[2]:
 		return 2
 	}
 	return -1
+}
+
+// sealHierarchy runs under mu while Finish seals the span. An unsigned decimal
+// ID becomes its native field. Any other value stays in meta, as dd-trace-go
+// leaves it, instead of leaving the wire while getters still return it. Unset
+// IDs are skipped, so they cost no parse error.
+func (s *Span) sealHierarchy(content *eventContent) {
+	ids := [3]*uint64{&content.SessionID, &content.ModuleID, &content.SuiteID}
+	for i, id := range ids {
+		if s.hierarchySet&(1<<i) == 0 {
+			continue
+		}
+		if value, err := strconv.ParseUint(s.hierarchy[i], 10, 64); err == nil {
+			*id = value
+			continue
+		}
+		if content.Meta == nil {
+			content.Meta = make(map[string]string, 1)
+		}
+		content.Meta[hierarchyKeys[i]] = s.hierarchy[i]
+	}
 }
 func (s *Span) setMeta(key, value string) {
 	switch key {
@@ -361,9 +384,7 @@ func (s *Span) Finish(options ...FinishOption) {
 		content.Duration = 0
 	}
 	event := &ciEvent{Type: content.Type, Version: 1, Content: content, common: s.common}
-	event.Content.SessionID, _ = strconv.ParseUint(s.hierarchy[0], 10, 64)
-	event.Content.ModuleID, _ = strconv.ParseUint(s.hierarchy[1], 10, 64)
-	event.Content.SuiteID, _ = strconv.ParseUint(s.hierarchy[2], 10, 64)
+	s.sealHierarchy(&event.Content)
 	switch content.Type {
 	case "test":
 		// dd-trace-go copies meta before it moves the correlation to this

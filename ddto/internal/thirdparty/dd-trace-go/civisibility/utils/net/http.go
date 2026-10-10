@@ -225,7 +225,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 			path = parsed.EscapedPath()
 		}
 		defer func() {
-			log.Debug("ciVisibilityHttpClient: request finished path=%s attempt=%d duration=%s status_code=%d retry=%t", path, attempt, time.Since(started).Round(time.Microsecond), statusCode, !stopRetries)
+			log.Debug("ciVisibilityHttpClient: request finished path=%s attempt=%d duration=%s status_code=%d retry=%t", path, attempt, time.Since(started).Round(time.Microsecond), statusCode, !stopRetries && hasNextAttempt(config, attempt))
 		}()
 	}
 	var req *http.Request
@@ -320,7 +320,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 	if err != nil {
 		log.Debug("ciVisibilityHttpClient: error = %s", err.Error())
 		// Retry if there's an error
-		exponentialBackoff(attempt, config.Backoff)
+		retryBackoff(config, attempt)
 		return false, nil, nil
 	}
 	// Close response body
@@ -344,15 +344,20 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 					// Assume it's a duration in seconds
 					waitDuration = time.Duration(resetTime) * time.Second
 				}
-				if waitDuration > 0 {
-					time.Sleep(waitDuration)
+				// Like the test-cycle client's Retry-After, a reset more than a
+				// minute away falls back to the exponential backoff below.
+				if waitDuration <= maxRateLimitResetWait {
+					if waitDuration > 0 && hasNextAttempt(config, attempt) {
+						retrySleep(waitDuration)
+					}
+					return false, nil, nil
 				}
-				return false, nil, nil
+				log.Debug("ciVisibilityHttpClient: ignoring rate limit reset %s beyond %s", waitDuration.Round(time.Second), maxRateLimitResetWait)
 			}
 		}
 
 		// Fallback to exponential backoff if header is missing or invalid
-		exponentialBackoff(attempt, config.Backoff)
+		retryBackoff(config, attempt)
 		return false, nil, nil
 	}
 
@@ -360,14 +365,14 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 	if statusCode >= 406 {
 		// Retry if the status code is >= 406
 		log.Debug("ciVisibilityHttpClient: response status code = %d", resp.StatusCode)
-		exponentialBackoff(attempt, config.Backoff)
+		retryBackoff(config, attempt)
 		return false, nil, nil
 	}
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Debug("ciVisibilityHttpClient: error reading response body = %s", err.Error())
-		exponentialBackoff(attempt, config.Backoff)
+		retryBackoff(config, attempt)
 		return false, nil, nil
 	}
 
@@ -378,7 +383,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 		responseBody, err = decompressData(responseBody)
 		if err != nil {
 			log.Debug("ciVisibilityHttpClient: error decompressing response body = %s", err.Error())
-			exponentialBackoff(attempt, config.Backoff)
+			retryBackoff(config, attempt)
 			return false, nil, nil
 		}
 	}
@@ -400,7 +405,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 	if config.ExpectJSONResponse && responseFormat == "unknown" && statusCode >= 200 && statusCode < 300 {
 		log.Debug("ciVisibilityHttpClient: expected JSON response but got format %q [method: %s, url: %s, status_code: %d]; retrying",
 			responseFormat, config.Method, config.URL, statusCode)
-		exponentialBackoff(attempt, config.Backoff)
+		retryBackoff(config, attempt)
 		return false, nil, nil
 	}
 
@@ -472,10 +477,30 @@ func decompressData(data []byte) ([]byte, error) {
 	return decompressedData, nil
 }
 
+// maxRateLimitResetWait bounds the wait for an x-ratelimit-reset header,
+// matching the 60 seconds that the test-cycle client accepts for Retry-After.
+const maxRateLimitResetWait = 60 * time.Second
+
+// hasNextAttempt reports whether SendRequest makes another attempt after this one.
+func hasNextAttempt(config *RequestConfig, attempt int) bool {
+	return attempt < config.MaxRetries
+}
+
+// retryBackoff waits before the next attempt. SendRequest returns its error
+// right after the final attempt, so waiting there would only delay the caller.
+func retryBackoff(config *RequestConfig, attempt int) {
+	if hasNextAttempt(config, attempt) {
+		exponentialBackoff(attempt, config.Backoff)
+	}
+}
+
 // exponentialBackoff performs an exponential backoff with retries.
 func exponentialBackoff(retryCount int, initialDelay time.Duration) {
-	time.Sleep(getExponentialBackoffDuration(retryCount, initialDelay))
+	retrySleep(getExponentialBackoffDuration(retryCount, initialDelay))
 }
+
+// retrySleep performs every wait between attempts; tests record the waits.
+var retrySleep = time.Sleep
 
 // getExponentialBackoffDuration calculates the backoff duration based on the retry count and initial delay.
 func getExponentialBackoffDuration(retryCount int, initialDelay time.Duration) time.Duration {

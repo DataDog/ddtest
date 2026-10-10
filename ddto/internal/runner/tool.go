@@ -73,8 +73,10 @@ func ToolNeedsPlan(mode string, args []string, importPath string) bool {
 		pkg, _, _ := strings.Cut(importPath, " [")
 		return pkg == "testing"
 	}
-	if tool == "compile" && (mode == "mini-sdk" || strings.HasPrefix(mode, "mini-sdk-")) && (isSDKCIPackage(importPath) || importPath == sdkTracerPackage && !strings.Contains(mode, "nomirror")) && !(len(args) == 2 && args[1] == "-V=full") {
-		return true
+	if tool == "compile" && (mode == "mini-sdk" || strings.HasPrefix(mode, "mini-sdk-")) && !(len(args) == 2 && args[1] == "-V=full") {
+		if pkg, _ := sdkCompilePackage(importPath); pkg != "" && (pkg != sdkTracerPackage || !strings.Contains(mode, "nomirror")) {
+			return true
+		}
 	}
 	if tool != "compile" || !strings.Contains(mode, "testify") && !strings.Contains(mode, "goleak") {
 		return false
@@ -96,8 +98,13 @@ func RunTool(ctx context.Context, overlay string, args []string, stdin io.Reader
 	if tool := strings.TrimSuffix(filepath.Base(args[0]), ".exe"); tool == "cover" {
 		return RunCoverTool(ctx, overlay, args, stdin, stdout, stderr)
 	}
-	if pkg := os.Getenv("TOOLEXEC_IMPORTPATH"); isSDKCIPackage(pkg) || pkg == sdkTracerPackage {
-		forwarded, cleanup, err := prepareSDKCICompile(args, os.Getenv("TOOLEXEC_IMPORTPATH"))
+	if pkg, own := sdkCompilePackage(os.Getenv("TOOLEXEC_IMPORTPATH")); pkg != "" {
+		if !own {
+			// External tests and the test main have no SDK sources to guard.
+			forwarded := removeCompilerCacheMarker(append([]string(nil), args...), sdkCompilerCacheMarker(pkg))
+			return runChainedTool(ctx, forwarded, stdin, stdout, stderr)
+		}
+		forwarded, cleanup, err := prepareSDKCICompile(args, pkg)
 		if err != nil {
 			if pkg == sdkTracerPackage && errors.Is(err, instrument.ErrUnsupportedAPI) {
 				// Orchestrion can introduce a tracer after package resolution.

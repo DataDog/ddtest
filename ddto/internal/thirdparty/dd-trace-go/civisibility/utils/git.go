@@ -398,30 +398,36 @@ func fetchCommitData(commitSha string) (localCommitData, error) {
 			return commitData, nil
 		}
 
-		// let's get the remote name
-		remoteName, err := getRemoteName()
-		if err != nil {
-			return commitData, fmt.Errorf("civisibility.fetchCommitData: error getting the remote name: %s\n%s", err, remoteName)
-		}
-		if remoteName == "" {
-			// if the origin name is empty, we fallback to "origin"
-			remoteName = "origin"
-		}
-		log.Debug("civisibility.fetchCommitData: remote name: %s", remoteName)
+		// A commit that is already present needs no fetch. In a shallow
+		// checkout, the first test binary of a command usually fetched it.
+		if commitObjectExists(commitSha) {
+			log.Debug("civisibility.fetchCommitData: commit %s is already present, skipping the fetch", commitSha)
+		} else {
+			// let's get the remote name
+			remoteName, err := getRemoteName()
+			if err != nil {
+				return commitData, fmt.Errorf("civisibility.fetchCommitData: error getting the remote name: %s\n%s", err, remoteName)
+			}
+			if remoteName == "" {
+				// if the origin name is empty, we fallback to "origin"
+				remoteName = "origin"
+			}
+			log.Debug("civisibility.fetchCommitData: remote name: %s", remoteName)
 
-		// let's fetch the missing commits and trees from a commit sha
-		// git fetch --update-shallow --filter="blob:none" --recurse-submodules=no --no-write-fetch-head <remoteName> <commitSha>
-		log.Debug("civisibility.fetchCommitData: fetching the missing commits and trees from the last month")
-		if fetchOutput, fetchErr := execGitString(
-			telemetry.FetchCommandType,
-			"fetch",
-			"--update-shallow",
-			"--filter=blob:none",
-			"--recurse-submodules=no",
-			"--no-write-fetch-head",
-			remoteName,
-			commitSha); fetchErr != nil {
-			return commitData, fmt.Errorf("civisibility.fetchCommitData: error: %s\n%s", fetchErr, fetchOutput)
+			// let's fetch the missing commits and trees from a commit sha
+			// git fetch --update-shallow --filter="blob:none" --recurse-submodules=no --no-write-fetch-head <remoteName> <commitSha>
+			log.Debug("civisibility.fetchCommitData: fetching the missing commits and trees from the last month")
+			if fetchOutput, fetchErr := execGitString(
+				telemetry.FetchCommandType,
+				"fetch",
+				"--update-shallow",
+				"--filter=blob:none",
+				"--recurse-submodules=no",
+				"--no-write-fetch-head",
+				remoteName,
+				commitSha); fetchErr != nil {
+				return commitData, fmt.Errorf("civisibility.fetchCommitData: error: %s\n%s", fetchErr, fetchOutput)
+			}
 		}
 	}
 
@@ -454,6 +460,14 @@ func fetchCommitData(commitSha string) (localCommitData, error) {
 
 	log.Debug("civisibility.fetchCommitData: was completed successfully")
 	return commitData, nil
+}
+
+// commitObjectExists reports whether the repository already has commitSha's
+// commit object. It records no command telemetry, so git metrics count only
+// the SDK's commands.
+func commitObjectExists(commitSha string) bool {
+	_, err := execGit(telemetry.NotSpecifiedCommandsType, "cat-file", "-e", commitSha+"^{commit}")
+	return err == nil
 }
 
 // GetLastLocalGitCommitShas retrieves the commit SHAs of the last 1000 commits in the local Git repository.
@@ -797,7 +811,9 @@ func gitCommonDir() string {
 	return dir
 }
 
-// getParentGitFolder searches from the given directory upwards to find the nearest .git directory.
+// getParentGitFolder searches from the given directory upwards to find the nearest .git entry.
+// A linked worktree or submodule has a .git file that points to its git directory;
+// like codeownership.findGitRoot, accept it so the checkout root is still found.
 func getParentGitFolder(innerFolder string) (string, error) {
 	if innerFolder == "" {
 		return "", nil
@@ -807,7 +823,7 @@ func getParentGitFolder(innerFolder string) (string, error) {
 	for {
 		gitDirPath := filepath.Join(dir, ".git")
 		info, err := os.Stat(gitDirPath)
-		if err == nil && info.IsDir() {
+		if err == nil && (info.IsDir() || info.Mode().IsRegular()) {
 			return gitDirPath, nil
 		}
 		if err != nil && !os.IsNotExist(err) {
@@ -916,9 +932,7 @@ func GetBaseBranchSha(defaultBranch string) (string, error) {
 	} else {
 		// Step 2a - we don't have git.pull_request.base_branch
 		// Fetch all possible base branches from remote
-		for _, branch := range possibleBaseBranches {
-			checkAndFetchBranch(branch, remoteName)
-		}
+		checkAndFetchBranches(possibleBaseBranches, remoteName)
 
 		// Get the list of remote branches present in local repo and see which ones are base-like
 		remoteBranches, err := getRemoteBranches(remoteName)
@@ -1008,22 +1022,56 @@ func removeRemotePrefix(branchName, remoteName string) string {
 
 // checkAndFetchBranch checks if a branch exists and fetches it if needed
 func checkAndFetchBranch(branch, remoteName string) {
-	// Check if branch exists locally (as remote ref)
-	_, err := execGitString(telemetry.ShowRefCommandType, "show-ref", "--verify", "--quiet", "refs/remotes/"+remoteName+"/"+branch)
-	if err == nil {
-		return // branch exists locally
+	checkAndFetchBranches([]string{branch}, remoteName)
+}
+
+// checkAndFetchBranches fetches, in order, each branch that has no local
+// remote-tracking ref but exists on the remote. One ls-remote lists all of the
+// missing branches instead of one network round trip per branch. Its patterns
+// and output are matched as exact refs/heads/<name> refs: an ls-remote pattern
+// also matches longer names such as refs/heads/feature/main, and its combined
+// output can contain warnings. Fetching one named branch updates only that
+// branch's remote-tracking ref, so checking every branch before fetching sees
+// the same refs as checking each one before its own fetch.
+func checkAndFetchBranches(branches []string, remoteName string) {
+	var missing []string
+	for _, branch := range branches {
+		// Check if branch exists locally (as remote ref)
+		_, err := execGitString(telemetry.ShowRefCommandType, "show-ref", "--verify", "--quiet", "refs/remotes/"+remoteName+"/"+branch)
+		if err != nil {
+			missing = append(missing, branch)
+		}
+	}
+	if len(missing) == 0 {
+		return // every branch exists locally
 	}
 
-	// Check if branch exists in remote
-	remoteHeads, err := execGitString(telemetry.LsRemoteHeadsCommandType, "ls-remote", "--heads", remoteName, branch)
+	// Check which branches exist in remote
+	args := make([]string, 0, len(missing)+3)
+	args = append(args, "ls-remote", "--heads", remoteName)
+	for _, branch := range missing {
+		args = append(args, "refs/heads/"+branch)
+	}
+	remoteHeads, err := execGitString(telemetry.LsRemoteHeadsCommandType, args...)
 	if err != nil || remoteHeads == "" {
-		return // branch doesn't exist in remote
+		return // no branch exists in remote
+	}
+	remoteRefs := make(map[string]bool, len(missing))
+	for line := range strings.SplitSeq(remoteHeads, "\n") {
+		if _, ref, found := strings.Cut(strings.TrimSpace(line), "\t"); found {
+			remoteRefs[strings.TrimSpace(ref)] = true
+		}
 	}
 
-	// Fetch the latest commit for this branch from remote (without creating local branch)
-	_, err = execGitString(telemetry.FetchCommandType, "fetch", "--depth", "1", remoteName, branch)
-	if err != nil {
-		log.Debug("civisibility.git: failed to fetch branch %s: %v", branch, err.Error())
+	for _, branch := range missing {
+		if !remoteRefs["refs/heads/"+branch] {
+			continue // branch doesn't exist in remote
+		}
+		// Fetch the latest commit for this branch from remote (without creating local branch)
+		_, err = execGitString(telemetry.FetchCommandType, "fetch", "--depth", "1", remoteName, branch)
+		if err != nil {
+			log.Debug("civisibility.git: failed to fetch branch %s: %v", branch, err.Error())
+		}
 	}
 }
 

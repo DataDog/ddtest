@@ -120,21 +120,16 @@ func prepareTestifyEntry(suite *goPackage, replacements map[string]string, runti
 // testifyDependencyImports walks only test imports whose dependency closures
 // were not already inspected by the first go list. Unknown imports remain in
 // the query: a helper in another module may call suite.Run on the client's behalf.
-func testifyDependencyImports(packages []goPackage) ([]string, bool) {
+// imported holds what the named packages, other than the runtime, import.
+func testifyDependencyImports(packages []goPackage, imported map[string]bool) ([]string, bool) {
 	known := map[string]bool{"testing": true}
-	hasSuite := false
+	hasSuite := imported[instrument.TestifySuiteImport]
 	for _, p := range packages {
 		if p.ImportPath == sdkPackage || p.ImportPath == miniPackage {
 			// The runtime's graph says nothing about the client's test helpers.
 			continue
 		}
 		known[p.ImportPath] = true
-		for _, path := range p.Deps {
-			known[path] = true
-			if p.ImportPath != "testing" && path == instrument.TestifySuiteImport {
-				hasSuite = true
-			}
-		}
 	}
 	requests := map[string]bool{}
 	for _, p := range packages {
@@ -148,7 +143,7 @@ func testifyDependencyImports(packages []goPackage) ([]string, bool) {
 				if path == instrument.TestifySuiteImport {
 					hasSuite = true
 				}
-				if !known[path] {
+				if !known[path] && !imported[path] {
 					requests[path] = true
 				}
 			}

@@ -23,7 +23,7 @@ Set these variables in the environment of `ddto`, or of a compiled test binary:
 | `DD_TRACE_AGENT_URL` | Explicit Agent address, including supported Unix socket URLs. Without an override, host/port settings take precedence over the default socket, then `http://localhost:8126`. [Agent settings](../README.md#reporting-and-delivery) |
 | `DD_SERVICE` | Explicit test service. A nonempty value takes precedence over automatic naming. |
 | `DD_ENV`, `DD_VERSION`, `DD_TAGS` | Environment, service version and custom tags on CI events. |
-| `DD_TEST_SESSION_NAME` | Explicit session name, including an explicitly empty value. Otherwise use the CI job name plus test command, or the command alone. |
+| `DD_TEST_SESSION_NAME` | Explicit session name, including an explicitly empty value. Otherwise use the CI job name plus test command, or the command alone. The test command is the binary name and its arguments without `-test.v` and the paths that `go test` injects (`-test.gocoverdir`, `-test.testlogfile`, `-test.coverprofile`, `-test.outputdir` and `-test.fuzzcachedir`); see the [difference from the SDK](ci-parity.md#comparison-contract). |
 | `DD_GIT_REPOSITORY_URL`, `DD_GIT_COMMIT_SHA` | Override Git identity. Both are needed to fetch settings when the checkout/CI environment cannot supply them. |
 | `DD_TRACE_DEBUG` | Build and runtime diagnostics with phase and request timings. [Log guide](cli-debug.md) |
 | `DD_CIVISIBILITY_LOGS_ENABLED` | Enable CI log delivery. |
@@ -121,6 +121,10 @@ replacement paths. The effective Mini sources become a main module in that
 workspace. Existing requirements and local or remote replacements retain their
 selected sources; absent runtimes use the CLI sources or its exact published
 version. The original workspace, checksums and module files stay unchanged.
+When the workspace does not select Mini, a `use` module's own replacement of
+Mini is read with `go mod edit -json`. Only module files that mention Mini's
+path, or contain a backslash that could escape it, need that command; those
+commands run concurrently, and their results apply in workspace order.
 
 `ddto` uses a vendor directory only where Go would: with `-mod=vendor`, or by
 default when the `go` directive is at least 1.14 and `modules.txt` was written
@@ -211,8 +215,9 @@ func TestRequest(t *testing.T) {
 ```
 
 W3C `traceparent`/`tracestate` and Datadog headers carry the full 128-bit trace ID
-and active span ID. Generated span IDs use 63 bits, as in the SDK. Sampling
-priority is propagation metadata; Mini records every CI event.
+and active span ID. Generated span IDs use 63 bits and come from `math/rand/v2`,
+as in the SDK: they are unique, not secret. Sampling priority is propagation
+metadata; Mini records every CI event.
 
 For a receiving APM tracer to use that identity, extract the carrier with its
 own API. Its private context value differs from Mini's. In a combined binary,

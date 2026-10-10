@@ -82,7 +82,7 @@ flowchart TD
     Resolve["Existing package<br/>query and test<br/>imports"] --> Unknown{"Unknown test<br/>imports to resolve?"}
     Unknown -->|Yes| Deps["go list -deps:<br/>include external<br/>helpers"]
     Unknown -->|No| Known{"Library already<br/>reachable?"}
-    Known -->|Yes| Find["go list -find:<br/>selected library<br/>metadata"]
+    Known -->|Yes| Find["Package query:<br/>selected library<br/>metadata"]
     Known -->|No| Coverage
     Deps --> Found{"Library found?"}
     Found -->|No| Coverage
@@ -107,9 +107,10 @@ external helpers participate in that check. Known standard-library imports are
 excluded from the extra lookup.
 
 Testify and goleak share this discovery query. When reachability is known and
-no unknown test imports remain, preparation uses `go list -find` to read only
-selected library metadata. Unknown test imports require `-deps`, including when
-the suite is already known, so a helper's goleak import remains visible.
+no unknown test imports remain, the package query, `go list -deps`, has already
+listed the selected library with its metadata, and no other query runs. Unknown
+test imports require `-deps`, including when the suite is already known, so a
+helper's goleak import remains visible.
 This keeps version and API validation before
 the build, including when Go can recover the suite from cache. Moving that
 validation into the compile wrapper would miss warm-cache version changes.

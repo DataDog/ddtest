@@ -536,11 +536,12 @@ func TestRateLimitHandlingWithRetries(t *testing.T) {
 	response, err := handler.SendRequest(config)
 	elapsed := time.Since(start)
 
-	// Since the rate limit is set to reset after 2 seconds, and we retry twice,
-	// the minimum elapsed time should be at least 4 seconds (2s for each retry).
+	// The rate limit resets after 2 seconds. The two attempts are separated by
+	// one rate-limit wait; the final attempt returns without waiting.
 	assert.Error(t, err)
 	assert.Nil(t, response)
-	assert.True(t, elapsed >= 4*time.Second, "Expected at least 4 seconds due to rate limit retry delay")
+	assert.True(t, elapsed >= 2*time.Second, "Expected at least 2 seconds due to rate limit retry delay")
+	assert.True(t, elapsed < 4*time.Second, "Expected no rate limit wait after the final attempt")
 }
 
 func TestGzipDecompressionError(t *testing.T) {
@@ -602,10 +603,12 @@ func TestRateLimitHandlingWithoutResetHeader(t *testing.T) {
 	response, err := handler.SendRequest(config)
 	elapsed := time.Since(start)
 
-	// With exponential backoff fallback, the minimum elapsed time should be at least 3 seconds (1s + 2s)
+	// With exponential backoff fallback, the two attempts are separated by 1s;
+	// the final attempt returns without its 2s backoff.
 	assert.Error(t, err)
 	assert.Nil(t, response)
-	assert.True(t, elapsed >= 3*time.Second, "Expected at least 3 seconds due to exponential backoff delay")
+	assert.True(t, elapsed >= 1*time.Second, "Expected at least 1 second due to exponential backoff delay")
+	assert.True(t, elapsed < 3*time.Second, "Expected no backoff after the final attempt")
 }
 
 func TestSendRequestWithInvalidURL(t *testing.T) {
@@ -797,10 +800,12 @@ func TestSendRequestWithMaxRetriesExceeded(t *testing.T) {
 	response, err := handler.SendRequest(config)
 	elapsed := time.Since(start)
 
-	// Ensure retries were attempted
+	// Ensure retries were attempted: one 500ms backoff separates the two
+	// attempts, and the final attempt returns without its 1s backoff.
 	assert.Error(t, err)
 	assert.Nil(t, response)
-	assert.True(t, elapsed >= 1*time.Second, "Expected at least 1 second due to retry delay")
+	assert.True(t, elapsed >= 500*time.Millisecond, "Expected at least 500 milliseconds due to retry delay")
+	assert.True(t, elapsed < 1500*time.Millisecond, "Expected no backoff after the final attempt")
 }
 
 func TestGzipResponseDecompressionHandling(t *testing.T) {

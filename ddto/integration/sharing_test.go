@@ -81,7 +81,8 @@ func TestSharedGeneratedFiles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := fmt.Sprintf("package %s_test\nimport _ %q\n", name, "github.com/DataDog/dd-trace-go/v2/civisibility")
+		// These packages have only internal tests, which receive the import.
+		want := fmt.Sprintf("package %s\nimport _ %q\n", name, "github.com/DataDog/dd-trace-go/v2/civisibility")
 		if string(data) != want || filepath.Dir(path) != plan.Dir {
 			t.Fatalf("backing content/ownership: %s: %q", path, data)
 		}
@@ -132,8 +133,12 @@ func TestSharedBackingCompatibility(t *testing.T) {
 			if reference != "" {
 				referenceArgs := append([]string{"go", "test"}, args[1:]...)
 				want := execute(t, dir, reference, referenceArgs, true, false)
-				if got.code != want.code || got.out != want.out || !reflect.DeepEqual(got.events, want.events) {
-					t.Fatalf("shared backing differs from Orchestrion: %d/%d\n%s\n%s\n%v\n%v\n%s", got.code, want.code, got.out, want.out, got.events, want.events, want.stderr)
+				// With -cover, go test passes -test.gocoverdir early: the SDK's
+				// session resource then ends there, and Mini's keeps the later
+				// arguments, a declared difference.
+				events := normalizedEvents(alignMiniTestCommands(want.wireEvents, got.wireEvents, nil))
+				if got.code != want.code || got.out != want.out || !reflect.DeepEqual(events, want.events) {
+					t.Fatalf("shared backing differs from Orchestrion: %d/%d\n%s\n%s\n%v\n%v\n%s", got.code, want.code, got.out, want.out, events, want.events, want.stderr)
 				}
 			}
 		})

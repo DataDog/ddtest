@@ -89,6 +89,7 @@
       "TestCIVisibilityTelemetryInventory",
       "TestDeferredDeliveryParityMatrix",
       "TestMiniCIConfigurationWireParity",
+      "TestMiniFilteredTestsFinishSuiteBeforeSession",
       "TestMiniParallelAndRetryCoverageAttribution",
       "TestMiniWireHierarchyAgentAndCoverage",
       "TestOracleStackComparisonRetainsApplication",
@@ -107,6 +108,7 @@
       "TestTestifyUserOverlay"
     ],
     "fuzz": [
+      "TestAlignMiniTestCommandsRequiresMiniForm",
       "TestCIVisibilityFuzzCampaign",
       "TestFuzzExampleCoverageParity",
       "TestFuzzExampleFixtureProvenance",

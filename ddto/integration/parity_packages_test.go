@@ -123,7 +123,8 @@ func TestCIVisibilityFuzzCampaign(t *testing.T) {
 	miniFixture := prepareFuzzExampleFixture(t, "mini", "orchestrion")
 	expected, sdkWall := runFuzzExampleScenario(t, sdkFixture, "active-fuzz", false)
 	actual, miniWall := runFuzzExampleScenario(t, miniFixture, "active-fuzz", false)
-	a, b := normalizeFuzzExampleEvents(expected, sdkFixture), normalizeFuzzExampleEvents(actual, miniFixture)
+	a := normalizeFuzzExampleEvents(expected, sdkFixture)
+	b := alignMiniTestCommands(a, normalizeFuzzExampleEvents(actual, miniFixture), fuzzExampleInvocation(miniFixture, "active-fuzz"))
 	if !reflect.DeepEqual(ciWireEvents(a), ciWireEvents(b)) {
 		t.Fatal("active fuzz wire parity differs")
 	}

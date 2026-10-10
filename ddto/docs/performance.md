@@ -49,7 +49,14 @@ The same AST identifies `testing.parallelStop` for the optional shutdown hook;
 hook selection does not parse the sources again.
 
 [`PrepareRuntime`](../internal/runner/run.go) requests only the package fields
-it needs from a targeted `go list`. Testify discovery can add one metadata or
+it needs from a targeted `go list -deps`, which lists the named packages and
+each of their dependencies once. Reachability follows `Imports` through that
+graph. Go's per-package `Deps` field would repeat a package's complete closure
+for every named package: in a 2000-package fixture whose packages import 990
+others on average, that output was 56 MB, and dropping it reduced preparation
+from 2.65 to 2.08 s, peak memory from 175 to 88 MB and CPU from 2.55 to 1.60 s
+(medians of seven). A small module lists more records instead: about 7 ms more
+for 61 packages. Testify discovery can add one metadata or
 dependency query, as described below. Both queries decode JSON directly from
 Go's stdout. The front-end retains decoded package records without a second
 complete JSON buffer. It drains and waits for the subprocess even after malformed
@@ -62,6 +69,11 @@ inputs have different bytes and receive their own validation.
 
 Generated files are immutable and shared by identical content within one plan.
 Many packages with the same package name can share an import-only backing file.
+That file joins the package's internal tests when it has no external test
+package, as is usual. An external test package of its own would be one more
+compile and vet per test package whenever Go cannot reuse it, for example with
+an empty build cache. Building 61 test packages, 59 of them with only internal
+tests, took 180 compiles and 120 vets that way, and 121 and 61 now.
 The logical overlay entry still exists for every selected package, so metadata
 and conflict checks remain correct. Memory, overlay entries and package
 discovery can still grow with package count.
@@ -90,15 +102,16 @@ The [Testify contract](testify.md) selects `-toolexec` from actual reachability,
 not the presence of a module requirement. Plain tests and assert-only targets
 omit it unless another selected integration needs it: Mini goleak, SDK guards
 and span copies, Orchestrion composition or coverage of rewritten `testing`
-sources. Known library reachability without unknown test imports uses
-`go list -find`; unknown test imports use `-deps`
-so external helpers remain covered. The selected-version/API check stays in
+sources. Libraries that the named packages import already appear in the
+package query, with their metadata; unknown test imports use `-deps`
+so external helpers remain covered. Only libraries absent from both, such as
+SDK packages that Orchestrion can add while compiling, use `go list -find`. The selected-version/API check stays in
 preparation, before a warm cache can skip the compiler. The dependency query
 excludes selected packages and dependency closures already inspected by the
 first query. Unknown test-only imports stay in the query, including standard
 packages outside those known closures and helpers in other modules. Runtime
 dependencies are not evidence of a client's test-helper graph. Suite reachability
-is checked before pruning, so a known suite still receives its metadata query
+is checked before pruning, so a known suite still receives its metadata
 and version validation.
 
 Unrelated tools dispatch without opening the plan. On Unix the CLI replaces
@@ -182,6 +195,7 @@ invocation.
 | Literal Testify prefix check | Compiling `^Test` for each suite method | Match exactly the same method names |
 | Source parser without object resolution | Unused identifier objects in metadata lookup | Retain ITR comments, function ranges and parse errors |
 | Direct high trace-ID hex encoding | General-purpose integer formatting | Retain 16 lowercase hex digits, including leading zeros |
+| `math/rand/v2` trace and span IDs | A `crypto/rand` read, a system call on some platforms, for every event; parallel tests serialized on it | Unique nonzero 63-bit span IDs; a root span ID is the trace ID's low half; a child differs from its parent |
 | Lazy classification tries | Eager construction of stack-prefix tables | Preserve internal filtering, third-party matching and redaction; publish immutable tries once |
 | Internal codec/platform subsets | External runtime module requirements | Preserve original semantics, licenses and source provenance |
 

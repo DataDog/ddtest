@@ -93,6 +93,36 @@ func TestCommonTagsWireOverridesAndGetters(t *testing.T) {
 	}
 }
 
+// Only CI/Git/system strings are shared. Test attributes, capabilities and
+// hierarchy IDs keep their own fields even when a caller passes them.
+func TestCommonTagsKeepOnlySharedKeys(t *testing.T) {
+	want := map[string]string{"ci.job.name": "job", "git.branch": "main", "os.platform": "linux", "runtime.name": "go", "_dd.ci.env_vars": "{}"}
+	input := maps.Clone(want)
+	maps.Copy(input, map[string]string{"test.command": "go test", "test_session_id": "7", "_dd.library_capabilities.early_flake_detection": "1", "language": "go"})
+	common := NewCommonTags(input)
+	if !maps.Equal(common.values, want) {
+		t.Fatalf("shared snapshot: %v", common.values)
+	}
+	size := 0
+	for key, value := range want {
+		size += 2*msgp.StringPrefixSize + len(key) + len(value)
+	}
+	if common.bytes != size {
+		t.Fatalf("accounted %d bytes, want %d", common.bytes, size)
+	}
+	span, _ := newSpan(nil, context.Background(), "test", SpanType("test"), common.Option())
+	for _, key := range []string{"test.command", "test_session_id", "_dd.library_capabilities.early_flake_detection", "language"} {
+		if value, ok := span.Meta(key); ok {
+			t.Fatalf("snapshot exposed %s=%q", key, value)
+		}
+	}
+	span.Finish()
+	metadata, _ := prepareCommonMetadata(nil, ciEvents{{Type: "test", Content: span.content, common: common}})
+	if !maps.Equal(metadata["test"], want) {
+		t.Fatalf("lifted metadata: %v", metadata["test"])
+	}
+}
+
 func TestCommonMetadataMixedSnapshotsAndSealedMaps(t *testing.T) {
 	one := NewCommonTags(map[string]string{"git.commit.sha": "one", "ci.job.name": "job"})
 	two := NewCommonTags(map[string]string{"git.commit.sha": "two"})

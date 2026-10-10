@@ -268,7 +268,8 @@ including system-directory-only DLL loading. Review those runtime/ABI hooks
 when Go changes; a cross-link does not establish native platform equivalence.
 
 For a Go upgrade, inspect the transformer and private hook signatures, testing
-reflection offsets, retry-process handling and the runtime coverage emitter.
+reflection offsets, retry-process handling, the runtime coverage emitter and
+testing's `-test.run` matcher, which `gotesting/test_selection.go` ports.
 Add the new toolchain to the compatibility matrix only after exercising it.
 Keep the oldest tested toolchain until a compatibility change is explicitly
 accepted.

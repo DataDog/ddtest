@@ -7,10 +7,14 @@ package coverage
 
 import (
 	"bufio"
+	"bytes"
+	"cmp"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"maps"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +22,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/cidelivery"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations"
@@ -69,6 +75,25 @@ type (
 		endCol    int
 		numStmt   int
 		count     int
+	}
+
+	// coverProfileBlock is one block of a text coverage profile and its file.
+	coverProfileBlock struct {
+		fileName string
+		coverageBlock
+	}
+
+	// coverProfile keeps a text profile's blocks in file order.
+	coverProfile struct {
+		blocks []coverProfileBlock
+	}
+
+	// coverageBlockKey is a block's position within its file.
+	coverageBlockKey struct {
+		startLine int
+		startCol  int
+		endLine   int
+		endCol    int
 	}
 
 	coveredFile struct {
@@ -622,20 +647,20 @@ func (t *testCoverage) loadCoverageData() bool {
 		telemetry.CodeCoverageErrors()
 		return false
 	}
-	preCoverage, err := parseCoverProfile(t.preCoverageFilename)
+	preCoverage, err := readCoverProfile(t.preCoverageFilename)
 	if err != nil {
 		log.Debug("civisibility.cov: error parsing pre-coverage file: %s", err.Error())
 		telemetry.CodeCoverageErrors()
 		return false
 	}
-	postCoverage, err := parseCoverProfile(t.postCoverageFilename)
+	postCoverage, err := readCoverProfile(t.postCoverageFilename)
 	if err != nil {
 		log.Debug("civisibility.cov: error parsing post-coverage file: %s", err.Error())
 		telemetry.CodeCoverageErrors()
 		return false
 	}
 
-	t.filesCovered = getFilesCovered(t.testFile, preCoverage, postCoverage)
+	t.filesCovered = coveredFilesBetween(t.testFile, preCoverage, postCoverage)
 	return true
 }
 
@@ -660,138 +685,333 @@ func (t *testCoverage) removeCoverageFiles() {
 	}
 }
 
-// parseCoverProfile parses the coverage profile data and returns the coverage data for each file
-func parseCoverProfile(filename string) (map[string][]coverageBlock, error) {
+// readCoverProfile parses a text coverage profile and keeps its blocks in
+// file order. The file is read at once and lines are parsed in place; only a
+// file name that differs from the previous line's is copied. Accepted and
+// skipped lines are the same as with the SDK's string-splitting parser, and
+// the scanner keeps its line splitting and maximum line length.
+func readCoverProfile(filename string) (coverProfile, error) {
+	data, err := readCoverProfileFile(filename)
+	if err != nil {
+		return coverProfile{}, err
+	}
+	profile := coverProfile{blocks: make([]coverProfileBlock, 0, bytes.Count(data, []byte{'\n'})+1)}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	fileName := ""
+	for scanner.Scan() {
+		name, block, ok := parseCoverProfileLine(scanner.Bytes())
+		if !ok {
+			continue
+		}
+		if string(name) != fileName {
+			fileName = string(name)
+		}
+		profile.blocks = append(profile.blocks, coverProfileBlock{fileName: fileName, coverageBlock: block})
+	}
+	return profile, scanner.Err()
+}
+
+// readCoverProfileFile reads a whole file like os.ReadFile, but sizes the
+// buffer with Seek: os.ReadFile's Stat converts timestamps with time.Local,
+// which coverage workers must not read while tests may change it.
+func readCoverProfileFile(filename string) ([]byte, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
-
-	coverageData := make(map[string][]coverageBlock)
-	scanner := bufio.NewScanner(file)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// Skip the header
-		if strings.HasPrefix(line, "mode:") {
-			continue
-		}
-
-		fileName, blockInfo, err := splitCoverageProfileLine(line)
-		if err != nil {
-			continue
-		}
-
-		// Split the block info by space
-		infoParts := strings.Fields(blockInfo)
-		if len(infoParts) < 3 {
-			continue
-		}
-
-		// Extract start and end positions (line.column)
-		startEnd := strings.Split(infoParts[0], ",")
-		if len(startEnd) < 2 {
-			continue
-		}
-
-		startPos := strings.Split(startEnd[0], ".")
-		endPos := strings.Split(startEnd[1], ".")
-
-		if len(startPos) < 2 || len(endPos) < 2 {
-			continue
-		}
-
-		// Convert to integers
-		startLine, err1 := strconv.Atoi(startPos[0])
-		startCol, err2 := strconv.Atoi(startPos[1])
-		endLine, err3 := strconv.Atoi(endPos[0])
-		endCol, err4 := strconv.Atoi(endPos[1])
-		numStmt, err5 := strconv.Atoi(infoParts[1])
-		count, err6 := strconv.Atoi(infoParts[2])
-
-		if err1 != nil || err2 != nil || err3 != nil || err4 != nil || err5 != nil || err6 != nil {
-			continue
-		}
-
-		block := coverageBlock{
-			startLine: startLine,
-			startCol:  startCol,
-			endLine:   endLine,
-			endCol:    endCol,
-			numStmt:   numStmt,
-			count:     count,
-		}
-
-		coverageData[fileName] = append(coverageData[fileName], block)
+	size, err := file.Seek(0, io.SeekEnd)
+	if err != nil {
+		return nil, err
 	}
-
-	return coverageData, scanner.Err()
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	data := make([]byte, 0, size+1) // one more byte to see EOF without growing
+	for {
+		n, err := file.Read(data[len(data):cap(data)])
+		data = data[:len(data)+n]
+		if err == io.EOF {
+			return data, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(data) == cap(data) {
+			data = append(data, 0)[:len(data)]
+		}
+	}
 }
 
-// getFilesCovered subtracts the before profile from the after profile and returns the files covered.
-func getFilesCovered(testFile string, before, after map[string][]coverageBlock) []coveredFile {
-	coveredByName := map[string]*filebitmap.FileBitmap{}
-
-	addCoveredRange := func(fileName string, block coverageBlock) {
-		name := getRelativePathFromCITagsSourceRootForCoverage(fileName)
-		bitmap := coveredByName[name]
-		if bitmap == nil || bitmap.BitCount() < block.endLine {
-			next := filebitmap.FromLineCount(block.endLine)
-			if bitmap != nil {
-				next = filebitmap.Or(next, bitmap, true)
-			}
-			bitmap = next
-			coveredByName[name] = bitmap
-		}
-		for line := block.startLine; line <= block.endLine; line++ {
-			bitmap.Set(line)
-		}
+// parseCoverProfileLine parses one "file:startLine.startCol,endLine.endCol
+// numStmt count" line. It skips the same lines as the SDK parser, which split
+// with strings.Fields and strings.Split and converted with strconv.Atoi:
+// extra fields and separators are ignored, signs are accepted and Unicode
+// whitespace separates fields.
+func parseCoverProfileLine(line []byte) ([]byte, coverageBlock, bool) {
+	if bytes.HasPrefix(line, []byte("mode:")) {
+		return nil, coverageBlock{}, false
 	}
+	separator := bytes.LastIndexByte(line, ':')
+	if separator <= 0 || len(bytes.TrimSpace(line[:separator])) == 0 {
+		return nil, coverageBlock{}, false
+	}
+	fields, count := coverProfileFields(line[separator+1:])
+	if count < 3 {
+		return nil, coverageBlock{}, false
+	}
+	start, end, ok := cutCoverProfileSeparator(fields[0], ',')
+	if !ok {
+		return nil, coverageBlock{}, false
+	}
+	startLine, startCol, okStart := cutCoverProfileSeparator(start, '.')
+	endLine, endCol, okEnd := cutCoverProfileSeparator(end, '.')
+	if !okStart || !okEnd {
+		return nil, coverageBlock{}, false
+	}
+	var block coverageBlock
+	var valid [6]bool
+	block.startLine, valid[0] = atoiCoverProfile(startLine)
+	block.startCol, valid[1] = atoiCoverProfile(startCol)
+	block.endLine, valid[2] = atoiCoverProfile(endLine)
+	block.endCol, valid[3] = atoiCoverProfile(endCol)
+	block.numStmt, valid[4] = atoiCoverProfile(fields[1])
+	block.count, valid[5] = atoiCoverProfile(fields[2])
+	if valid != [6]bool{true, true, true, true, true, true} {
+		return nil, coverageBlock{}, false
+	}
+	return line[:separator], block, true
+}
 
-	for fileName, afterBlocks := range after {
-		if beforeBlocks, found := before[fileName]; found {
-			// Create a map for quick lookup by (startLine, startCol, endLine, endCol)
-			beforeMap := make(map[string]coverageBlock)
-			for _, block := range beforeBlocks {
-				key := fmt.Sprintf("%d.%d-%d.%d", block.startLine, block.startCol, block.endLine, block.endCol)
-				beforeMap[key] = block
-			}
-
-			// Subtract each block in after from the corresponding block in before
-			for _, afterBlock := range afterBlocks {
-				key := fmt.Sprintf("%d.%d-%d.%d", afterBlock.startLine, afterBlock.startCol, afterBlock.endLine, afterBlock.endCol)
-				if beforeBlock, found := beforeMap[key]; found {
-					// Subtract hit counts
-					diffCount := afterBlock.count - beforeBlock.count
-					if diffCount > 0 {
-						addCoveredRange(fileName, afterBlock)
-					}
-				} else if afterBlock.count > 0 {
-					// If there's no matching block in before, add the whole block from after
-					addCoveredRange(fileName, afterBlock)
+// coverProfileFields returns the first three fields of s and how many fields
+// there are, counting at most three, with strings.Fields' rules.
+func coverProfileFields(s []byte) (fields [3][]byte, count int) {
+	start := -1
+	for i := 0; i < len(s); {
+		r, size := rune(s[i]), 1
+		if r >= utf8.RuneSelf {
+			r, size = utf8.DecodeRune(s[i:])
+		}
+		if unicode.IsSpace(r) {
+			if start >= 0 {
+				fields[count] = s[start:i]
+				if count++; count == len(fields) {
+					return fields, count
 				}
+				start = -1
 			}
-		} else {
-			// If there's no before profile for this file, add the entire after profile
-			for _, afterBlock := range afterBlocks {
-				if afterBlock.count > 0 {
-					addCoveredRange(fileName, afterBlock)
+		} else if start < 0 {
+			start = i
+		}
+		i += size
+	}
+	if start >= 0 {
+		fields[count] = s[start:]
+		count++
+	}
+	return fields, count
+}
+
+// cutCoverProfileSeparator returns the first two elements of
+// strings.Split(s, separator), and false when there is only one.
+func cutCoverProfileSeparator(s []byte, separator byte) ([]byte, []byte, bool) {
+	first, rest, found := bytes.Cut(s, []byte{separator})
+	if !found {
+		return nil, nil, false
+	}
+	if second, _, more := bytes.Cut(rest, []byte{separator}); more {
+		return first, second, true
+	}
+	return first, rest, true
+}
+
+// atoiCoverProfile is strconv.Atoi without converting s to a string on its
+// fast path, which accepts the same inputs: an optional sign and decimal digits
+// short enough not to overflow. Longer inputs use strconv.Atoi itself.
+func atoiCoverProfile(s []byte) (int, bool) {
+	const intSize = 32 << (^uint(0) >> 63)
+	if n := len(s); n == 0 || intSize == 32 && n >= 10 || intSize == 64 && n >= 19 {
+		value, err := strconv.Atoi(string(s))
+		return value, err == nil
+	}
+	digits := s
+	if s[0] == '-' || s[0] == '+' {
+		if digits = s[1:]; len(digits) == 0 {
+			return 0, false
+		}
+	}
+	value := 0
+	for _, ch := range digits {
+		ch -= '0'
+		if ch > 9 {
+			return 0, false
+		}
+		value = value*10 + int(ch)
+	}
+	if s[0] == '-' {
+		value = -value
+	}
+	return value, true
+}
+
+// coveredFilesBetween subtracts the before profile from the after profile and
+// returns the test file followed by every file with a block whose count grew,
+// sorted by name.
+//
+// The SDK keyed every block of both profiles with fmt.Sprintf. Two profiles of
+// one binary list the same blocks in the same order, so they are compared by
+// index when every file name and position matches and no file repeats a
+// position. Otherwise blocks are matched by a struct key with the SDK's rules:
+// the last duplicate before block wins, and an after block without a before
+// block counts when its count is positive.
+func coveredFilesBetween(testFile string, before, after coverProfile) []coveredFile {
+	var covered coveredLines
+	if sameCoverProfileLayout(before, after) {
+		for i := range after.blocks {
+			if block := &after.blocks[i]; block.count-before.blocks[i].count > 0 {
+				covered.add(block)
+			}
+		}
+	} else {
+		beforeCounts := make(map[string]map[coverageBlockKey]int)
+		for i := range before.blocks {
+			block := &before.blocks[i]
+			counts := beforeCounts[block.fileName]
+			if counts == nil {
+				counts = make(map[coverageBlockKey]int)
+				beforeCounts[block.fileName] = counts
+			}
+			counts[block.key()] = block.count
+		}
+		for i := range after.blocks {
+			block := &after.blocks[i]
+			if count, found := beforeCounts[block.fileName][block.key()]; found {
+				if block.count-count > 0 {
+					covered.add(block)
 				}
+			} else if block.count > 0 {
+				covered.add(block)
 			}
 		}
 	}
+	return covered.files(testFile)
+}
 
-	names := make([]string, 0, len(coveredByName))
-	for name := range coveredByName {
-		names = append(names, name)
+// sameCoverProfileLayout reports whether two profiles list the same blocks in
+// the same order, each file in one run of strictly ordered positions.
+// testing's text profiles sort blocks this way, and that order rules out a
+// position appearing twice in one file.
+func sameCoverProfileLayout(before, after coverProfile) bool {
+	if len(before.blocks) != len(after.blocks) {
+		return false
 	}
-	slices.Sort(names)
-	result := make([]coveredFile, 0, 1+len(names))
+	var files map[string]struct{}
+	for i := range after.blocks {
+		block, previous := &after.blocks[i], &before.blocks[i]
+		if block.fileName != previous.fileName || block.key() != previous.key() {
+			return false
+		}
+		if i > 0 && after.blocks[i-1].fileName == block.fileName {
+			if !after.blocks[i-1].key().before(block.key()) {
+				return false
+			}
+			continue
+		}
+		if files == nil {
+			files = make(map[string]struct{})
+		}
+		if _, repeated := files[block.fileName]; repeated {
+			return false
+		}
+		files[block.fileName] = struct{}{}
+	}
+	return true
+}
+
+// key returns the block's position.
+func (b *coverProfileBlock) key() coverageBlockKey {
+	return coverageBlockKey{startLine: b.startLine, startCol: b.startCol, endLine: b.endLine, endCol: b.endCol}
+}
+
+// before orders positions as testing sorts profile blocks within a file.
+func (k coverageBlockKey) before(other coverageBlockKey) bool {
+	return cmp.Or(
+		cmp.Compare(k.startLine, other.startLine),
+		cmp.Compare(k.endLine, other.endLine),
+		cmp.Compare(k.startCol, other.startCol),
+		cmp.Compare(k.endCol, other.endCol),
+	) < 0
+}
+
+// coveredLines collects covered blocks by relative file name. Each file name is
+// resolved once, and each bitmap is allocated once at its largest end line.
+type coveredLines struct {
+	lastFile  string
+	lastEntry int
+	byFile    map[string]int
+	byName    map[string]int
+	entries   []coveredLinesEntry
+	ranges    []coveredLinesRange
+}
+
+type coveredLinesEntry struct {
+	name       string
+	maxEndLine int
+}
+
+type coveredLinesRange struct {
+	entry, startLine, endLine int
+}
+
+func (c *coveredLines) add(block *coverProfileBlock) {
+	if c.byFile == nil || block.fileName != c.lastFile {
+		c.lastFile, c.lastEntry = block.fileName, c.entry(block.fileName)
+	}
+	entry := &c.entries[c.lastEntry]
+	entry.maxEndLine = max(entry.maxEndLine, block.endLine)
+	c.ranges = append(c.ranges, coveredLinesRange{entry: c.lastEntry, startLine: block.startLine, endLine: block.endLine})
+}
+
+func (c *coveredLines) entry(fileName string) int {
+	if index, ok := c.byFile[fileName]; ok {
+		return index
+	}
+	if c.byFile == nil {
+		c.byFile, c.byName = make(map[string]int), make(map[string]int)
+	}
+	name := getRelativePathFromCITagsSourceRootForCoverage(fileName)
+	index, ok := c.byName[name]
+	if !ok {
+		index = len(c.entries)
+		c.entries = append(c.entries, coveredLinesEntry{name: name, maxEndLine: math.MinInt})
+		c.byName[name] = index
+	}
+	c.byFile[fileName] = index
+	return index
+}
+
+func (c *coveredLines) files(testFile string) []coveredFile {
+	bitmaps := make([]*filebitmap.FileBitmap, len(c.entries))
+	for i, entry := range c.entries {
+		// A bitmap the size of its largest end line, as the SDK reached by
+		// growing it block by block.
+		bitmaps[i] = filebitmap.FromLineCount(max(entry.maxEndLine, 0))
+	}
+	for _, covered := range c.ranges {
+		// The SDK panicked on a covered line below 1; it is skipped instead.
+		for line := max(covered.startLine, 1); line <= covered.endLine; line++ {
+			bitmaps[covered.entry].Set(line)
+		}
+	}
+	order := make([]int, len(c.entries))
+	for i := range order {
+		order[i] = i
+	}
+	slices.SortFunc(order, func(a, b int) int { return strings.Compare(c.entries[a].name, c.entries[b].name) })
+	result := make([]coveredFile, 0, 1+len(order))
 	result = append(result, coveredFile{name: testFile})
-	for _, name := range names {
-		result = append(result, coveredFile{name: name, bitmap: coveredByName[name].ToArray()})
+	for _, i := range order {
+		result = append(result, coveredFile{name: c.entries[i].name, bitmap: bitmaps[i].GetBuffer()})
 	}
 	return result
 }

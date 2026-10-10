@@ -17,12 +17,14 @@ revision stay pinned; the root module retains zero external dependencies.
 The driver imports only the Go standard library and its own packages. A targeted
 `go list` supplies native `testing`, runtime and selected client-package metadata.
 Preparation parses `testing` with `go/parser` and writes an overlay containing
-changed sources, private hook declarations and an external runtime import for
-each selected test package. Native Go performs the build.
+changed sources, private hook declarations and a runtime import for each
+selected test package, in its internal tests unless it has an external test
+package. Native Go performs the build.
 
-Testify and goleak share library discovery. Known reachability without unknown
-test imports uses `go list -find`; unknown imports require `-deps` to discover
-libraries through helpers. Version and API validation happen before the native
+Testify and goleak share library discovery. The package query already lists
+libraries that the named packages import; unknown test imports require `-deps`
+to discover libraries through helpers, and only libraries outside both use
+`go list -find`. Version and API validation happen before the native
 build-cache lookup. A selective compiler wrapper transforms `testify/suite`
 and, in Mini, reachable `go.uber.org/goleak`; a coverage bridge handles rewritten
 `testing` sources when coverage includes them.
@@ -40,7 +42,7 @@ formatted result, so String methods run once. The SDK's ownership marker retains
 its existing name. Runtime retries, skip policies and finalization are owned by
 the selected runtime. This POC depends on its private hook ABI and is intentionally version-pinned.
 
-Virtual external test files anchor the public SDK import without editing project
+Virtual test files anchor the runtime import without editing project
 sources. Temporary plans are invocation-local and removed after Go exits. There
 is no additional persistent instrumentation cache. Test-result caching remains
 Go's choice: explicitly select packages for result caching, and use `-count=1`
@@ -132,6 +134,7 @@ the oracle; fewer APM fields is intentional.
 | Bazel output and offline mode | `TestMiniBazelOfflineAndPayloadFiles`: real manifest/cache, test/coverage/telemetry JSON files versus SDK, zero HTTP requests; native file writer error propagation tested separately |
 | Parallel and retry coverage attribution | `TestMiniParallelAndRetryCoverageAttribution`: both runtimes compiled with `-race -covermode=atomic`, exact distinct-function bitmaps and initial-attempt-only retry policy |
 | Coverage and global local-zone changes | `TestMiniCoverageWithGlobalTimeChanges`: Mini mutates `time.Local` under race/atomic coverage at 4/32 CPUs, ordinary/deferred delivery and telemetry off/on; exact bitmaps and CI attributes compared with a safe SDK run |
+| Suites with filtered tests | `TestMiniFilteredTestsFinishSuiteBeforeSession`: in single-round runs, tests, examples and fuzz seeds that `-test.run` and `-test.skip` exclude are not counted, so the selected tests' suite and module end before the session; `TestTestingSelectionMatchesTestingBinary` compares the selection with what a real test binary runs |
 | Coverage processing lifetime | `TestCoverageProcessingFinishesBeforeShutdown` and deferred group/error checks: profiles captured at test boundaries, processing outside active deferred groups, completion also on profile errors |
 | Telemetry startup and response lifetime | `TestStartupTelemetrySendsBeforeTests` and `TestWriterFlushWaitsForResponseCompletion`: `StartApp` returns only after its startup request; configuration, retry, concurrent close and failed initialization checked in both modes; response EOF handshake joined for 200/503 responses |
 | CI product metadata | Expanded pass/error/policy comparison retains capability tags and ITR correlation; delayed session enrichment is checked |

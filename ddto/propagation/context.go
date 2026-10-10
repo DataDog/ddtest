@@ -3,11 +3,12 @@ package propagation
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
+	"math/rand/v2"
 	"strconv"
 	"strings"
 )
@@ -31,16 +32,18 @@ func (c Context) Valid() bool { return c.TraceID != [16]byte{} && c.SpanID != 0 
 // Generated span IDs use 63 bits, like dd-trace-go, so consumers that read IDs
 // as signed 64-bit integers stay positive. As in the SDK, the root span ID is
 // the low half of the trace ID.
+//
+// Identifiers must be unique, not secret. Like dd-trace-go, they come from
+// math/rand/v2, whose per-thread generator the runtime seeds from the operating
+// system: no system call per span, and no lock shared by parallel tests.
+// Generation cannot fail; the error result is kept for compatibility.
 func New() (Context, error) {
 	var c Context
-	if _, err := rand.Read(c.TraceID[:]); err != nil {
-		return c, err
-	}
-	c.TraceID[8] &= 0x7f
-	c.SpanID = binary.BigEndian.Uint64(c.TraceID[8:])
-	if !c.Valid() {
-		return New()
-	}
+	high := rand.Uint64()
+	low := randomSpanID()
+	binary.BigEndian.PutUint64(c.TraceID[:8], high)
+	binary.BigEndian.PutUint64(c.TraceID[8:], low)
+	c.SpanID = low
 	c.Sampled = true
 	c.Priority = 2
 	c.Origin = "ciapp-test"
@@ -52,15 +55,21 @@ func (c Context) Child() (Context, error) {
 	if !c.Valid() {
 		return Context{}, errors.New("invalid parent trace context")
 	}
-	var id [8]byte
-	for binary.BigEndian.Uint64(id[:]) == 0 || binary.BigEndian.Uint64(id[:]) == c.SpanID {
-		if _, err := rand.Read(id[:]); err != nil {
-			return Context{}, err
-		}
-		id[0] &= 0x7f // 63 bits, like dd-trace-go span IDs.
+	id := randomSpanID()
+	for id == c.SpanID {
+		id = randomSpanID()
 	}
-	c.SpanID = binary.BigEndian.Uint64(id[:])
+	c.SpanID = id
 	return c, nil
+}
+
+// randomSpanID returns a nonzero 63-bit identifier, like dd-trace-go span IDs.
+func randomSpanID() uint64 {
+	for {
+		if id := rand.Uint64() & math.MaxInt64; id != 0 {
+			return id
+		}
+	}
 }
 
 type contextKey struct{}

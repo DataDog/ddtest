@@ -89,7 +89,7 @@ Mini records these additional durations under the same debug setting:
 | --- | --- |
 | `runtime bootstrap finished` | CI tags, tracer setup and other synchronous bootstrap work |
 | `settings initialization finished` | Settings setup and its join with initial telemetry, including error paths |
-| `ciVisibilityHttpClient: request finished` | One attempt, serialization, response consumption and any retry backoff |
+| `ciVisibilityHttpClient: request finished` | One attempt, serialization, response consumption and the backoff before the next attempt; a final attempt has no backoff and reports `retry=false` |
 | `telemetry: request finished` | One endpoint attempt through response EOF and close |
 | `test-cycle: request finished` | One HTTP attempt through bounded response consumption and close, before retry backoff |
 | `test-cycle: send finished` | One payload delivery, including admission pauses, compression, HTTP attempts, backoff and request-body/connection cleanup; in Bazel file mode, conversion and file writing |
@@ -109,7 +109,8 @@ endpoint path or telemetry request type, status and retry information without
 adding headers, query strings or bodies.
 
 A session closes before `civisibility: exiting`, so its flush can explain a gap
-between `PASS` and that line. Test-cycle summaries report a sanitized host/path,
+between `PASS` and that line. Shutdown then closes the tracer once; its `close`
+summary includes the final delivery of events queued after the session closed. Test-cycle summaries report a sanitized host/path,
 one-based attempt number, HTTP status (`0` without a response), network-error
 flag, planned retry, request body bytes and gzip use. The payload summary reports
 uncompressed bytes and the actual attempt count. `retry=true` means another

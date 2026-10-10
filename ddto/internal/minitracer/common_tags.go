@@ -21,11 +21,17 @@ func IsSharedCITag(key string) bool {
 		strings.HasPrefix(key, "os.") || strings.HasPrefix(key, "runtime.") || key == "_dd.ci.env_vars"
 }
 
-// NewCommonTags copies the CI/Git/system values selected by IsSharedCITag.
-// Callers may reuse or mutate their input after construction.
+// NewCommonTags copies the CI/Git/system values selected by IsSharedCITag and
+// ignores other keys: those keep their own tag semantics, and delivery would
+// otherwise lift them into event-kind metadata. Callers may reuse or mutate
+// their input after construction.
 func NewCommonTags(values map[string]string) *CommonTags {
-	common := &CommonTags{values: maps.Clone(values)}
-	for key, value := range common.values {
+	common := &CommonTags{values: make(map[string]string, len(values))}
+	for key, value := range values {
+		if !IsSharedCITag(key) {
+			continue
+		}
+		common.values[key] = value
 		common.bytes += 2*msgp.StringPrefixSize + len(key) + len(value)
 	}
 	return common
