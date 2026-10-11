@@ -41,6 +41,29 @@ func TestRestoreAppliesAndRemovesSavedValues(t *testing.T) {
 	}
 }
 
+func TestReceiveRemovesHandedValues(t *testing.T) {
+	t.Setenv(GitHubJobIDHandoff, "4242")
+	Receive()
+	t.Cleanup(Receive)
+	if value, ok := os.LookupEnv(GitHubJobIDHandoff); ok {
+		t.Fatalf("handed job ID remains visible: %q", value)
+	}
+	if id, ok := GitHubJobID(); !ok || id != "4242" {
+		t.Fatalf("job ID %q, %t", id, ok)
+	}
+	// An empty value is handed too: the diagnostics name no job.
+	t.Setenv(GitHubJobIDHandoff, "")
+	Receive()
+	if id, ok := GitHubJobID(); !ok || id != "" {
+		t.Fatalf("empty job ID %q, %t", id, ok)
+	}
+	// A process that ddto did not start has none.
+	Receive()
+	if id, ok := GitHubJobID(); ok {
+		t.Fatalf("job ID %q without a handoff", id)
+	}
+}
+
 // Initialization order is the contract: anything that imports os, directly or
 // through os/exec, initializes after the restore package.
 func TestRestoreImportsNoPackageThatCanStartCommands(t *testing.T) {

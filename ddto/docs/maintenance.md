@@ -316,9 +316,20 @@ Temporary workspace settings belong to ddto's `go test` command and the build
 tools it runs. List every Go environment variable that preparation replaces in
 `goenv.Settings`, and save it with `goenv.Save`. Only the test runtime may import
 `internal/goenv/restore`; the CLI and its tool helpers import `goenv`, which
-restores nothing on its own. Both packages must keep importing only `syscall`:
-their tests check that restoration initializes before `os` and before an earlier
-dependency. Vendor workspaces are content-addressed: bump
+restores nothing on its own. Values that the CLI computes once for test
+processes, such as `GitHubJobIDHandoff`, are removed by `goenv.Receive`, which
+only the restore package calls: `ddto test-exec` must pass them on. Both
+packages must keep importing only `syscall`: their tests check that restoration
+initializes before `os` and before an earlier dependency.
+
+With `-race`, `noraceOverlay` in `internal/runner/norace.go` gives a client's
+build copies of Mini's sources that mark each function `//go:norace`. The
+copies must keep every token and position of their sources:
+`TestNoraceSourcePreservesPositions` checks each Mini runtime file, and
+`TestMiniRaceInstrumentsClientOnly` checks a built binary. Clients that import
+Mini keep it instrumented (`TestMiniRaceKeepsMiniInstrumentedForAPIClients`). Because `ddto test
+-race` no longer race-checks Mini's own code, keep running Mini's unit tests
+with `go test -race`. Vendor workspaces are content-addressed: bump
 `vendorWorkspaceLayout` in `internal/runner/vendor.go` whenever their stored
 files or links change. `goSelectsVendor` mirrors cmd/go's `setDefaultBuildMod`, and
 `vendorManifest.contents` its `canonicalizeReplacePath`; recheck both when Go

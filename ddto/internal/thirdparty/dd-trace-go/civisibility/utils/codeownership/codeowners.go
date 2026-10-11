@@ -14,6 +14,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 )
 
 // Dialect selects the repository host's CODEOWNERS rules.
@@ -29,19 +30,16 @@ const (
 const GitHubMaximumFileSize = 3 * 1024 * 1024
 
 // Ownership is immutable. Callers can obtain a defensive owner list, the first
-// owner for a service identity, or the preformatted test.codeowners value.
+// owner for a service identity, or the test.codeowners value.
 type Ownership struct {
 	owners []string
-	tag    string
+	// tag is the encoded owner list, built on first use: a file holds many
+	// rules, and only those that match a test's file need it.
+	tag atomic.Pointer[string]
 }
 
 func newOwnership(owners []string) *Ownership {
-	o := &Ownership{owners: owners}
-	if len(owners) > 0 {
-		data, _ := json.Marshal(owners)
-		o.tag = string(data)
-	}
-	return o
+	return &Ownership{owners: owners}
 }
 
 // Owners returns a copy; modifying it cannot change subsequent matches.
@@ -62,10 +60,17 @@ func (o *Ownership) FirstOwner() string {
 
 // Tag returns the JSON owner array used by test.codeowners, or an empty string.
 func (o *Ownership) Tag() string {
-	if o == nil {
+	if o == nil || len(o.owners) == 0 {
 		return ""
 	}
-	return o.tag
+	if tag := o.tag.Load(); tag != nil {
+		return *tag
+	}
+	data, _ := json.Marshal(o.owners)
+	tag := string(data)
+	// Concurrent first readers encode the same value; one is kept.
+	o.tag.CompareAndSwap(nil, &tag)
+	return *o.tag.Load()
 }
 
 // CodeOwners holds compiled rules. Matching is safe for concurrent readers.

@@ -65,7 +65,7 @@
       "source": "internal/civisibility/utils/ci_providers_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/ci_providers_test.go",
       "source_sha256": "39195586239cc50133355bce01a908ccb75bc1618c282487cf7d1454e6c8c6db",
-      "adapted_sha256": "4c8ede94e9fe8cffd9afe30f7c0f88cf49c6faec332c861c38dbedb36134e6e8",
+      "adapted_sha256": "37b8daa3b16faf9504d7b17632f27b369464c8dc2ed624115771d071ac0e3975",
       "kind": "full",
       "adaptation": "Internal import relocation only"
     },
@@ -121,7 +121,7 @@
       "source": "internal/civisibility/utils/source_paths_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/source_paths_test.go",
       "source_sha256": "2c0986a51c21f3ba4523df13ca66ffb1caf72fa9dcd7fec6bb024af826b3a3bc",
-      "adapted_sha256": "b67f60d42215735cd71adecc1caba65b7142ac089bc8a367a32102b6c157e9dc",
+      "adapted_sha256": "41354cfc304990889dcf34622e58cc1f588aeb511fd5f25b9fe82d88675387ef",
       "kind": "full",
       "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },

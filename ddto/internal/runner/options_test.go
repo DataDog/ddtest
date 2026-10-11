@@ -165,3 +165,26 @@ func TestFlagTableMatchesToolchain(t *testing.T) {
 		}
 	}
 }
+
+// As in go test, GOFLAGS apply first and the last -race wins. go test reports
+// an invalid value itself.
+func TestRaceOption(t *testing.T) {
+	for _, c := range []struct {
+		args    []string
+		goflags string
+		race    bool
+	}{
+		{[]string{"-race", "."}, "", true},
+		{[]string{"--race=true", "."}, "", true},
+		{[]string{"."}, "-race", true},
+		{[]string{"-race=false", "."}, "-race", false},
+		{[]string{"-race", "-race=0", "."}, "", false},
+		{[]string{"-race=maybe", "."}, "-race", true},
+		{[]string{".", "-args", "-race"}, "", false},
+	} {
+		opts, err := parseOptions(c.args, c.goflags)
+		if err != nil || opts.race != c.race {
+			t.Errorf("%v with GOFLAGS=%q: race %t, %v", c.args, c.goflags, opts.race, err)
+		}
+	}
+}

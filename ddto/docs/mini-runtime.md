@@ -83,6 +83,17 @@ commands through `os/exec`, including dependencies that do not import `testing`.
 those dependencies, see the same module, workspace and flags as under native
 `go test`.
 
+On GitHub Actions, without a numeric `JOB_CHECK_RUN_ID`, each test process
+would read the runner's `Worker_*.log` files to find the job ID. `ddto` reads
+them once, while it prepares the build, and hands the result to Mini's test
+processes in `DDTO_GITHUB_JOB_ID`. The same restore package removes that
+variable as it restores `GOWORK` and `GOFLAGS`, before `os` initializes, so
+client code that reads the environment through `os` never sees it; an empty
+value means the files name no job, so the process does not read them again. With a `-exec` program or
+a cross-compilation helper, which would see the variable before the test
+binary, `ddto` hands nothing and each process reads the files itself, as it
+does when the scan is still running a second after preparation.
+
 A `go test -exec` program, or the `go_$GOOS_$GOARCH_exec` helper that Go uses
 when cross-compiling, starts before the test binary. `ddto` runs it through
 `ddto test-exec`, which restores the caller's values first; Go already
@@ -279,6 +290,22 @@ Mini reports 5–10. Regression tests check original source lines directly.
 Cleanup-only coverage and duplicate Testify method identity also have direct
 Mini regression tests. The [comparison contract](ci-parity.md#comparison-contract)
 records these deliberate differences and its normalization rules.
+
+With `-race`, `ddto` overlays Mini's sources with copies that mark each
+function declaration `//go:norace`, so the race detector does not instrument
+Mini's own memory accesses: with 2,000 empty tests, about 22 µs less per test.
+Client code and `testing` stay instrumented, and Mini's locks, channels and
+atomics still order client accesses, so client races are reported as before.
+Races inside Mini's functions are not; function literals cannot be annotated
+and stay instrumented. Mini packages that `-coverpkg` covers also stay
+instrumented, because Go's cover tool reads their original sources. When
+client code imports Mini's packages, as tests that use `testopt` do, directly
+or through a helper package, Mini keeps full instrumentation: memory that the client passes to Mini's API, such as a
+pointer tag value, stays checked as under `go test -race`. Mini's own tests keep full instrumentation, with
+`go test -race` or when the named packages belong to Mini. A `/*line*/`
+directive keeps every source position. Compiling Mini with `-race=false` would
+remove more, but the compiler would then make Mini's atomics invisible to the
+detector, which would report races that do not exist.
 
 The [validation guide](validation.md) lists loopback wire checks, imported SDK
 assertions, concurrency and platform coverage. Current workflow results are

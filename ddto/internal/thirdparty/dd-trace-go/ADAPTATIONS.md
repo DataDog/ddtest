@@ -529,6 +529,45 @@ If upstream adds semantic identifier inspection, reassess this flag. Preserve
 the source-cache tests for named functions, adjacent literals, missing/invalid
 files and ITR comments, and the CI matrix's source/coverage comparisons.
 
+## Build information read once
+
+[`civisibility/utils/source_paths.go`](civisibility/utils/source_paths.go)
+reads the binary's main module path once, with `sync.OnceValue`. The SDK called
+`debug.ReadBuildInfo` for every distinct test function, including those with
+absolute source paths, and each call parses the binary's whole dependency list.
+Build information cannot change while the process runs. Check:
+`TestBuildInfoMainModulePathReadOnce` requires the same path, read without
+allocating.
+
+## GitHub Actions job ID from ddto
+
+Without a numeric `JOB_CHECK_RUN_ID`, the SDK scans the runner's
+`Worker_*.log` files in every process that reports GitHub Actions metadata. It
+reads the newest file whole, up to 10 MB, then tries JSON and a regular
+expression. [`civisibility/utils/githubjob`](civisibility/utils/githubjob/githubjob.go)
+holds that scan, moved from `ci_providers.go` with exported names and a
+debug-function parameter, so that ddto can run it once per invocation without
+the CI metadata packages. ddto hands the result to Mini's test processes in
+`DDTO_GITHUB_JOB_ID`, and `goenv/restore` removes the variable before `os`
+initializes, as it restores the caller's Go settings. With a `-exec` program or a cross-compilation helper, which
+would see the variable first, ddto hands nothing; it also stops waiting for a
+scan that is still running a second after preparation. The scan now skips
+Worker logs that are not regular files: reading a FIFO could block.
+
+`getGithubActionsJobID` still reads `JOB_CHECK_RUN_ID` first. A handed value
+is the diagnostics result: an empty one means none, so the process does not
+scan again, and tests that disable the scan ignore it too. Processes that ddto
+did not start, the SDK runtime and binaries run outside `ddto test` scan as
+before. With a 2 MB Worker log, the scan took 0.44 ms and allocated 2.1 MB per
+process, and 0.62 ms with 31 logs; a handed value takes 31 ns. When upstream
+changes the scan, update `githubjob` and keep the precedence above.
+
+Checks: `TestGithubActionsJobIDFromDDTO`, `TestGithubActionsJobIDFromDiagnostics`,
+`TestFromDiagnosticsSkipsNonRegularFiles`, `TestHandGitHubJobID`,
+`TestHandGitHubJobIDDoesNotWaitForAStalledScan`,
+`TestReceiveRemovesHandedValues`, `TestMiniGitHubJobIDHandoff` and
+`TestMiniGitHubJobIDNotHandedThroughExec`.
+
 ## Testify method names
 
 [`civisibility/integrations/gotesting/testify.go`](civisibility/integrations/gotesting/testify.go)
@@ -1067,8 +1106,11 @@ SDK; the package does not carry Unicode compatibility tables. Pattern and
 matching limits apply per segment. File decoding accepts BOMs and common line
 endings separately from the UTF-8 parser.
 
-Results have private immutable state. Owner lists are deduplicated once and
-tags are prepared with each result. File and directory patterns share compiled
+Results have private immutable state. Owner lists are deduplicated once. A
+result encodes its tag on first use, because most rules never match a test's
+file: this took about 30% of parsing time, and 2,000 rules now parse in 1.35 ms
+instead of 2.09 ms (`BenchmarkParse`). `TestOwnershipTagOnFirstUse` checks the
+laziness and concurrent first readers. File and directory patterns share compiled
 tokens, ASCII literals use string equality, and rooted literal prefixes are
 checked once before wildcard matching. A section without exclusions stops at
 its winning rule. Sections with exclusions retain the scan needed for sticky

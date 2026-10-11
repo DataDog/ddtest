@@ -151,6 +151,39 @@ func TestOwnershipIsImmutableAndStable(t *testing.T) {
 	workers.Wait()
 }
 
+// Rules encode their owners only when a match first needs the tag. Readers
+// of a shared result that need it at the same time all see one value.
+func TestOwnershipTagOnFirstUse(t *testing.T) {
+	c, err := Parse(strings.NewReader("* @first @second\n/other/ @other"), GitHub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range c.rules {
+		if r.ownership.tag.Load() != nil {
+			t.Fatalf("tag for %v encoded while parsing", r.ownership.owners)
+		}
+	}
+	shared, _ := c.Match("/a.go")
+	tags := make([]string, 32)
+	var workers sync.WaitGroup
+	for i := range tags {
+		workers.Go(func() { tags[i] = shared.Tag() })
+	}
+	workers.Wait()
+	for _, tag := range tags {
+		if tag != `["@first","@second"]` {
+			t.Fatalf("tags: %q", tags)
+		}
+	}
+	other, _ := c.Match("/other/a.go")
+	if other.tag.Load() != nil || other.Tag() != `["@other"]` {
+		t.Fatal("tag of a rule that no test needed was encoded")
+	}
+	if empty := newOwnership(nil); empty.Tag() != "" || empty.tag.Load() != nil {
+		t.Fatal("ownerless rule has a tag")
+	}
+}
+
 type failingReader struct{}
 
 func (failingReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }

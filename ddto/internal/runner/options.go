@@ -93,6 +93,7 @@ type options struct {
 	exec                 string
 	coverage             bool
 	coverPatterns        []string
+	race                 bool
 	// workfile applies only to preparation children, never os.Setenv.
 	workfile         string
 	environment      *goEnvironment
@@ -273,6 +274,11 @@ func (o *options) apply(name, value string) error {
 			return fmt.Errorf("invalid boolean value %q for -cover", value)
 		}
 		o.coverage = enabled
+	case "race":
+		// go test reports an invalid value itself.
+		if enabled, err := strconv.ParseBool(value); err == nil {
+			o.race = enabled
+		}
 	case "covermode", "coverprofile":
 		o.coverage = true
 	case "coverpkg":

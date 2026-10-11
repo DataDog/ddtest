@@ -21,8 +21,9 @@ runs. Their line numbers refer to `2d0059a`.
 
 Implemented items are removed from this list; the pull requests that
 implemented them record their results, for example
-[#25](https://github.com/tonyredondo/dd-ci-testing-poc/pull/25) and
-[#29](https://github.com/tonyredondo/dd-ci-testing-poc/pull/29). Item numbers
+[#25](https://github.com/tonyredondo/dd-ci-testing-poc/pull/25),
+[#29](https://github.com/tonyredondo/dd-ci-testing-poc/pull/29) and
+[#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31). Item numbers
 do not change, so a missing number is a completed item.
 
 In items 11–58, `civisibility/`, `hostname/`, `osinfo/` and `telemetry/` paths
@@ -50,8 +51,9 @@ also need an entry in
 
 Items 5, 6 and 9 move work that every test binary repeats into the CLI, which
 runs once per invocation. The CLI does the work and hands the results to the
-binaries through the environment and files they already read. Items 42, 51 and
-part of 53 are smaller steps in the same direction.
+binaries through the environment and files they already read. Items 42 and 51
+are smaller steps in the same direction; [#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31) took one for the
+GitHub Actions job ID.
 
 ### CLI and build path
 
@@ -92,14 +94,13 @@ SDK's manual API objects.
 
 | Order | Change | Where it can help | Complexity |
 | --- | --- | --- | --- |
-| 54 | Compile Mini without race instrumentation in `-race` builds | About 35 µs per test with `-race` | Low to medium |
-| 55 | Resolve test source locations in the CLI; extends 39 and 53 | About 6 µs per test, a parse per test file and 7 ms per link | Medium |
 | 32 | Scope retry subtest-name cleanup to the attempt | Binary-wide scans under `testing`'s matcher lock | Medium to high |
 | 35 | Stop rewriting the instrumentation map on every `T.Run` | A global write lock per subtest | Low |
 | 36 | Return the hook lease without allocating | One allocation per hook call | Low |
 | 37 | Look up modules and suites before building options | 5–6 allocations and two exclusive locks per test | Low |
 | 38 | Match test identity and management data by slicing | Splits and joins per subtest | Low |
 | 39 | Parse selected sources concurrently at startup | Serial parsing before the first test | Medium |
+| 55 | Parse test sources once, with a persistent cache; extends 39 | About 7.5 ms per run of Gin's root package, after the first run | Medium; needs a cache location |
 | 40 | Resolve module and suite counters once | Four mutex-protected map updates per subtest | Low to medium |
 | 41 | Stop the Testify parent walk when no suite is active; extends 3 | Lock-protected walks on every `T.Run` after any suite | Low |
 | 58 | Drop the per-test `t.Helper()` in the wrapper | 0.7 µs and 185 bytes per test | Low |
@@ -117,7 +118,6 @@ package.
 | 49 | Stream read-cache expiry fields | Full JSON decoding before a cache miss's request | Low |
 | 50 | Keep idle connections during deferred startup | TLS handshakes on the startup critical path | Low to medium |
 | 51 | Store known tests per module in the read cache | Decoding and retaining the whole repository's tests | Medium to high |
-| 53 | Remove small bootstrap costs | Log scans, CODEOWNERS serialization and build-info reads | Low |
 
 ## 1. Span options as values
 
@@ -716,72 +716,33 @@ less per binary in a repository with 100,000 tests, and nothing measurable in
 small repositories. SDK binaries share the cache directory, so the index needs
 its own key or version.
 
-## 53. Small bootstrap costs
-
-- GitHub Actions job ID: each binary scans the runner's `Worker_*.log` files
-  (`civisibility/utils/ci_providers.go:65-79`, `:130-169`): up to 10 MB read, a
-  JSON attempt, a regular expression and a sort that stats files inside its
-  comparator. The CLI could resolve the ID once and hand it to the binaries in a
-  private variable that the runtime removes before client code runs. Exporting
-  `JOB_CHECK_RUN_ID`, which already takes precedence, would change the
-  environment that tests see. Estimated 1–5 ms per binary.
-- CODEOWNERS: parsing costs 1.5 ms per 2,000 rules, and `newOwnership`'s
-  `json.Marshal` is about 28% of that CPU; compute it on first use. The preload
-  at `civisibility/integrations/civisibility.go:124` could overlap the settings
-  round trip when the service name does not come from CODEOWNERS.
-- Build information: `ResolveSourceFilePathFromCITags`
-  (`civisibility/utils/source_paths.go:34-35`) calls `debug.ReadBuildInfo()` for
-  every distinct test function, even for absolute paths: 14 µs with 200
-  dependencies. Memoize it with `sync.OnceValue`. On Linux it took about 2 µs
-  per test and was 12% of the bytes Mini allocated in a 2,000-test package.
-
-## 54. Mini without race instrumentation
-
-With `-race`, cmd/go compiles every package with race instrumentation,
-Mini's included, so each memory access on Mini's per-test path calls the race
-runtime. A package of 2,000 empty tests took 58–61 ms natively, 300–307 ms
-with Mini and 236 ms with Mini's packages compiled by
-`-gcflags=github.com/tonyredondo/dd-ci-testing-poc/...=-race=false`, with
-`GORACE=atexit_sleep_ms=0`: about 35 µs less per test, 29% of the time Mini
-adds. Without `-race`, Mini adds about 37 µs per test; with it, about 120 µs.
-Gin's root package, 425 tests, took 408 ms natively, 537 ms with Mini and
-508 ms without Mini's instrumentation; CPU was 568, 807 and 750 ms.
-
-When the user passes `-race`, compile Mini's packages without
-instrumentation: add a `-gcflags` entry for Mini's import paths that repeats
-the user's flags for those packages and adds `-race=false`. When a package
-matches several `-gcflags` patterns, cmd/go uses the last one, so the entry
-must come after the user's. Marking Mini's hot functions `//go:norace` also
-works outside the runtime, but covers only the annotated functions. User code
-stays instrumented, and the race runtime still tracks synchronization through
-`sync` and channels. The detector then no
-longer reports races inside Mini's code, including a user goroutine racing
-with Mini's reads of `testing` state. Mini's own CI keeps running its tests
-with `-race`. Build cache keys change only for `-race` builds.
-
 ## 55. Test source locations from the CLI
 
-This extends items 39 and 53. The first run of each test function resolves its
-source file and line range at run time: `SetTestFunc` calls
-`loadSourceFunctionMetadata`, which parses the test file with `go/parser`, and
-`ResolveSourceFilePathFromCITags` calls `debug.ReadBuildInfo()` for every
-distinct test. In a single pass over 2,000 empty tests this took about 6 µs per
-test. `debug.ParseBuildInfo` was 12% of the bytes Mini allocated, about 1.2 KB
-per test. In Gin's root package, source resolution took about 10 ms of CPU per
-run, about a fifth of the 56 ms of CPU Mini adds. `go/parser` also adds about
-7 ms to every test binary's link.
+This extends item 39. The first run of each test function resolves its source
+file and line range: `SetTestFunc` calls `loadSourceFunctionMetadata`, which
+parses the function's file with `go/parser` once per process. In Gin's root
+package, 21 test files and 10,700 lines, the parse took about 7.5 ms of CPU per
+run, on the first test of each file, and the rest of the resolution about
+2.5 ms. [#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31) removed the build-information read of every distinct
+test, about 2 µs per test. The rest costs about 1–1.5 µs per test, much of it
+stack growth that a test goroutine pays at its first deep call anyway.
 
-The CLI already lists every test package's `TestGoFiles` and `XTestGoFiles`.
-It could parse those files once per invocation, in parallel, and write each
-package's table of test functions (name, file, first and last line) into the
-generated file it already adds to the package. The runtime would look a test
-up in that table and parse only on a miss: Testify suite methods, manual
-`testopt.RunM` use and binaries built without the table. Keep the source-root,
-CODEOWNERS and source-range tags identical, including for generics, `//line`
-directives and build-tagged files. The table must also carry the
-`//dd:test.unskippable` and `//dd:suite.unskippable` directives, which make
-ITR run a test that the backend lists as skippable. Removing `go/parser` from
-the binary also needs a build without that fallback.
+The CLI could parse each test package's `TestGoFiles` and `XTestGoFiles` and
+write a table of its test functions into the generated file. Without a
+persistent cache, this only moves work: each test file is parsed once per run
+either way, by its own package's binary, and the CLI would also parse the files
+of every package whose result Go takes from its test cache. An incremental run
+of a large repository would parse all of its test files to run a few packages.
+A cache keyed by each file's path, size and modification time removes that
+cost after the first run, but an ephemeral CI runner starts with it empty unless
+it is saved with the Go build cache: choose where it lives before implementing.
+The runtime keeps the parser for misses, such as methods of suites defined
+outside test files and binaries built without the table, so its link cost of
+about 7 ms per binary stays. Keep the source-root, CODEOWNERS and source-range
+tags identical, including for generics, `//line` directives and build-tagged
+files. The table must also carry the `//dd:test.unskippable` and
+`//dd:suite.unskippable` directives, which make ITR run a test that the backend
+lists as skippable.
 
 ## 56. Preparation plan reused between invocations
 
@@ -877,7 +838,23 @@ The 2026-10-11 review added these, measured on Linux:
   `go vet`.
 - Per-test allocations: Mini allocates about 8.5 KB and 72 objects more per
   test than native `testing`, mostly in span creation, the payload buffer and
-  build information. Items 1, 7, 22–24, 27, 38 and 53 cover those sites.
+  build information. Items 1, 7, 22–24, 27 and 38 cover the others;
+  [#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31) removed the build-information reads.
+
+Implementing items 53 and 54 in [#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31) also checked these:
+
+- Compiling Mini's packages with `-race=false` saves more than marking their
+  functions `//go:norace`: 33 instead of 22 µs per test with 2,000 empty tests.
+  But the compiler then turns Mini's `sync/atomic` calls into plain
+  instructions, while the race runtime still checks map accesses, so a map
+  published through an atomic pointer is reported as a race and fails the
+  client's test.
+- Overlapping the CODEOWNERS preload with the rest of startup: in Gin, the
+  session reads the result 0.16–0.24 ms after the preload, and 2,000 rules now
+  parse in 1.35 ms. Most of the preload's 7–8 ms is the CI tags it computes
+  first.
+- A cache of each file's resolved source path: about 0.75 µs of CPU per test
+  with 2,000 tests, within the noise of wall time.
 
 ## Experiment record
 

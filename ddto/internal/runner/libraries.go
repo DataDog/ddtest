@@ -11,7 +11,8 @@ import (
 // Optional integrations and SDK CI ownership share the test-import graph query.
 // Known dependency closures are not queried again; external helpers remain.
 // packages are the named packages; graph also holds their dependencies.
-func resolveTestLibraries(ctx context.Context, dir string, opts options, packages []goPackage, graph packageGraph) (selected map[string]*goPackage, sdkCI bool, err error) {
+// testsUseMini reports that a test import outside graph reaches Mini.
+func resolveTestLibraries(ctx context.Context, dir string, opts options, packages []goPackage, graph packageGraph) (selected map[string]*goPackage, sdkCI, testsUseMini bool, err error) {
 	debug := debugFromContext(ctx)
 	phase := debug.start("resolve test libraries")
 	defer func() { phase.finish(err) }()
@@ -76,7 +77,7 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 	}
 	debug.printf("test-library query pending_imports=%d known_libraries=%d", len(requests), len(selected))
 	if len(requests) == 0 {
-		return selected, sdkCI, nil
+		return selected, sdkCI, false, nil
 	}
 	paths = paths[:0]
 	for path := range requests {
@@ -96,17 +97,18 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 	}
 	dependencies, err := readPackages(ctx, cmd, "resolve optional test-library dependencies")
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
 	debug.printf("test-library query resolved=%d", len(dependencies))
 	for _, p := range dependencies {
 		sdkCI = sdkCI || isSDKCIPackage(p.ImportPath)
+		testsUseMini = testsUseMini || p.Module != nil && p.Module.Path == miniModule
 		if selected[p.ImportPath] == nil && isTestLibrary(p.ImportPath) {
 			copy := p
 			selected[p.ImportPath] = &copy
 		}
 	}
-	return selected, sdkCI, nil
+	return selected, sdkCI, testsUseMini, nil
 }
 
 // clientImports returns what the named packages other than a runtime import.

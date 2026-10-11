@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 )
@@ -216,13 +217,15 @@ func IsSemanticImportVersionSegment(segment string) bool {
 }
 
 // buildInfoMainModulePath returns the main module path embedded in the current binary, if available.
-func buildInfoMainModulePath() string {
+// Build information cannot change while the process runs, and reading it
+// parses the binary's whole dependency list, so it is read once.
+var buildInfoMainModulePath = sync.OnceValue(func() string {
 	buildInfo, ok := debug.ReadBuildInfo()
 	if !ok {
 		return ""
 	}
 	return buildInfo.Main.Path
-}
+})
 
 // parseSCPStyleRepositoryURL parses Git scp-like remotes such as git@github.com:org/repo.git.
 func parseSCPStyleRepositoryURL(repositoryURL string) (host string, repositoryPath string, ok bool) {

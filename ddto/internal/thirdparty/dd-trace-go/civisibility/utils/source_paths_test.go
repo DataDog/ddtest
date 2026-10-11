@@ -10,6 +10,7 @@ package utils
 import (
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"testing"
 
 	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
@@ -358,6 +359,17 @@ func TestResolveSourceFilePathFromCITags(t *testing.T) {
 	assert.Equal(t, "pkg/foo_test.go", result.RelativePath)
 	assert.Equal(t, filepath.Clean("/ci/workspace/pkg/foo_test.go"), filepath.Clean(result.FilesystemPath))
 	assert.True(t, result.FilesystemKnown)
+}
+
+// Build information is read once: resolving each test's source path must not
+// parse the binary's dependency list again.
+func TestBuildInfoMainModulePathReadOnce(t *testing.T) {
+	want := ""
+	if buildInfo, ok := debug.ReadBuildInfo(); ok {
+		want = buildInfo.Main.Path
+	}
+	assert.Equal(t, want, buildInfoMainModulePath())
+	assert.Zero(t, testing.AllocsPerRun(100, func() { _ = buildInfoMainModulePath() }))
 }
 
 func TestResolvedTrimpathSourceFileMatchesCodeOwners(t *testing.T) {

@@ -69,8 +69,9 @@ a matching limit yields a non-match and leaves other rules eligible.
 
 `CodeOwners` and `Ownership` have private, immutable fields and support
 concurrent readers. `Owners` returns a copy, `FirstOwner` returns the first
-owner, and `Tag` returns the prepared JSON array for `test.codeowners`. A matching
-ownerless GitHub rule returns `true` and an empty ownership result.
+owner, and `Tag` returns the JSON array for `test.codeowners`, encoded on its
+first call: most rules never match a test's file. A matching ownerless GitHub
+rule returns `true` and an empty ownership result.
 
 Owners keep declaration order. GitLab combines sections in first-declared order
 and deduplicates owners without changing their order. This makes first-owner
@@ -90,6 +91,7 @@ Keep the matching costs low:
 - Keep ASCII literal and rooted-prefix matching free of allocations.
 - Stop at the winning GitLab rule only in sections without exclusions.
 - Reuse immutable ownership results; create a section union only for new owners.
+- Encode an owner list only when its tag is first requested.
 - Preserve stable owner order when large unions switch from slices to maps.
 
 ## Tests

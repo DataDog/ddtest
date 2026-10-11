@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 )
 
@@ -216,6 +217,49 @@ func TestIsNumericJobID(t *testing.T) {
 				t.Errorf("isNumericJobID(%q) = %v, want %v", tt.input, got, tt.expected)
 			}
 		})
+	}
+}
+
+// ddto hands its test processes the job ID that it read once from the
+// diagnostics; JOB_CHECK_RUN_ID still takes precedence.
+func TestGithubActionsJobIDFromDDTO(t *testing.T) {
+	diagDir := t.TempDir()
+	workerLog := `{"job":{"d":[{"k":"check_run_id","v":999}]}}`
+	if err := os.WriteFile(filepath.Join(diagDir, "Worker_20240101.log"), []byte(workerLog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	originalDirs, originalEnabled := githubActionsDiagDirs, githubActionsDiagnosticsEnabled
+	githubActionsDiagDirs = func() []string { return []string{diagDir} }
+	githubActionsDiagnosticsEnabled = true
+	t.Cleanup(func() { githubActionsDiagDirs, githubActionsDiagnosticsEnabled = originalDirs, originalEnabled })
+	t.Setenv(githubJobCheckRunIDEnv, "")
+	t.Cleanup(goenv.Receive)
+	for _, c := range []struct {
+		handed, override, want string
+		handoff                bool
+	}{
+		{want: "999"},
+		{handoff: true, handed: "4242", want: "4242"},
+		{handoff: true, handed: "4242", override: "77", want: "77"},
+		// The CLI found no ID: the process does not scan again.
+		{handoff: true, want: ""},
+		{handoff: true, handed: "not-a-number", want: ""},
+	} {
+		t.Setenv(githubJobCheckRunIDEnv, c.override)
+		os.Unsetenv(goenv.GitHubJobIDHandoff)
+		if c.handoff {
+			t.Setenv(goenv.GitHubJobIDHandoff, c.handed)
+		}
+		goenv.Receive()
+		if got := getGithubActionsJobID(); got != c.want {
+			t.Errorf("%+v: job ID %q", c, got)
+		}
+	}
+	githubActionsDiagnosticsEnabled = false
+	t.Setenv(goenv.GitHubJobIDHandoff, "4242")
+	goenv.Receive()
+	if got := getGithubActionsJobID(); got != "" {
+		t.Errorf("disabled diagnostics returned %q", got)
 	}
 }
 

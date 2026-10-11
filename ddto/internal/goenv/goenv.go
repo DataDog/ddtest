@@ -1,10 +1,12 @@
 // Package goenv saves and restores Go command settings that ddto replaces
-// only for its own go test command, such as a temporary GOWORK.
+// only for its own go test command, such as a temporary GOWORK, and hands test
+// processes values that ddto computes once per invocation.
 //
 // Importing this package changes nothing. The CLI and its build-tool helpers
 // use it to save values; those helpers must keep ddto's settings because the
 // tools they run belong to the build. Only the test runtime imports
-// goenv/restore, which restores the saved values while initializing.
+// goenv/restore, which restores the saved values and receives the handed ones
+// while initializing.
 package goenv
 
 import "syscall"
@@ -41,3 +43,28 @@ func Restore() {
 		}
 	}
 }
+
+// GitHubJobIDHandoff carries the GitHub Actions job ID that ddto reads once
+// from the runner's diagnostics for every test process. An empty value means
+// that the diagnostics name none.
+const GitHubJobIDHandoff = "DDTO_GITHUB_JOB_ID"
+
+var gitHubJobID struct {
+	value  string
+	handed bool
+}
+
+// Receive removes the values that ddto hands to test processes from the
+// environment and keeps them for the test runtime. Only goenv/restore calls
+// it, so it runs before os initializes, like Restore; helpers such as
+// test-exec pass the values on to the test process.
+func Receive() {
+	gitHubJobID.value, gitHubJobID.handed = syscall.Getenv(GitHubJobIDHandoff)
+	if gitHubJobID.handed {
+		_ = syscall.Unsetenv(GitHubJobIDHandoff)
+	}
+}
+
+// GitHubJobID returns the job ID that ddto handed to this process, and
+// whether it handed one.
+func GitHubJobID() (string, bool) { return gitHubJobID.value, gitHubJobID.handed }

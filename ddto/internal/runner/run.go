@@ -71,6 +71,9 @@ type Plan struct {
 	// with; execWrapper restores the caller's Go settings before a -exec program.
 	execHelper  string
 	execWrapper string
+	// testLauncher reports that a -exec program or Go's cross-compilation
+	// helper starts the test binaries, and so sees their environment first.
+	testLauncher bool
 }
 
 // savedEnvironment records the caller's values of the Go settings that go test
@@ -205,6 +208,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	if !supportsGoToolchain(opts.environment.GOVERSION) {
 		return plan, fmt.Errorf("ddto requires Go 1.25 or newer; selected toolchain is %q", opts.environment.GOVERSION)
 	}
+	plan.testLauncher = opts.exec != "" || opts.environment.GOOS != opts.environment.GOHOSTOS || opts.environment.GOARCH != opts.environment.GOHOSTARCH
 	debug.printf("toolchain=%q", opts.environment.GOVERSION)
 	if runtime == Mini {
 		if work := workspaceFile(dir); work != "" {
@@ -403,7 +407,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		}
 		replacements[logical] = backing
 	}
-	libraries, sdkCI, e := resolveTestLibraries(ctx, dir, opts, packages, graph)
+	libraries, sdkCI, testsUseMini, e := resolveTestLibraries(ctx, dir, opts, packages, graph)
 	if e != nil {
 		return plan, e
 	}
@@ -525,6 +529,14 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			plan.compilerCache = append(plan.compilerCache, flag)
 		}
 	}
+	// Tests that import Mini through a helper outside the package graph keep
+	// it instrumented, as noraceOverlay does for the packages in the graph.
+	if plan.mini && opts.race && !testsUseMini {
+		racePhase := debug.start("race annotations")
+		files := noraceOverlay(listed, replacements, temp)
+		racePhase.finish(nil)
+		debug.printf("race annotations files=%d", files)
+	}
 	plan.coverOverlay = needsCoverOverlay(dir, opts, packages, []goPackage{*native})
 	plan.File = filepath.Join(temp, "overlay.json")
 	plan.InstrumentedFiles = len(rewritten.Files)
@@ -621,6 +633,7 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 		// Native go test handles -C, help and file mode itself.
 		return runGo(ctx, cwd, append([]string{"test"}, args...), nil, signals, stdin, stdout, stderr)
 	}
+	gitHubJobID := handGitHubJobID(runtime, debug)
 	plan, interrupted, err := prepareInterruptibly(ctx, dir, opts, runtime, signals, stderr)
 	if err == nil {
 		defer func() {
@@ -692,6 +705,12 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 		if plan.moduleWorkspace {
 			env = append(env, "GOFLAGS="+plan.workspaceGoFlags)
 		}
+	}
+	// A launcher would see the handed value before the test binary removes
+	// it; with one, each test process scans for itself.
+	if handoff := gitHubJobID(); handoff != nil && !plan.testLauncher {
+		env = append(env, handoff...)
+		debug.printf("github job id handed found=%t", !strings.HasSuffix(handoff[0], "="))
 	}
 	if plan.launcher != nil {
 		ctx = context.WithValue(ctx, goLauncherKey{}, *plan.launcher)
