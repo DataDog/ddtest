@@ -154,6 +154,8 @@ jobs:
         run: |
           python scripts/ci_shards.py retry -- go -C testdata/fixture mod download
           go -C testdata/fixture mod verify
+          python scripts/ci_shards.py retry -- go -C testdata/toolchain mod download
+          go -C testdata/toolchain mod verify
       - name: Vet
         if: contains(format(',{0},', matrix.shards), ',units,')
         shell: bash
@@ -259,6 +261,15 @@ jobs:
           key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-mini-${{ matrix.mode }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-mini-${{ matrix.mode }}-
+      # The tests' consumer module needs Testify and goleak: download them with
+      # retries, as the differential jobs do, so no test waits on the network.
+      - name: Verify test modules
+        shell: bash
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          python scripts/ci_shards.py retry -- go -C testdata/toolchain mod download
+          go -C testdata/toolchain mod verify
       - name: Vet
         if: contains(format(',{0},', matrix.shards), ',units,')
         shell: bash
@@ -327,6 +338,11 @@ jobs:
           echo "$RUNNER_TEMP/go-tip/bin" >> "$GITHUB_PATH"
           echo "GOTOOLCHAIN=local" >> "$GITHUB_ENV"
           echo "GO_TIP_SHA=$GO_TIP_SHA" >> "$GITHUB_ENV"
+      - name: Verify test modules
+        shell: bash
+        run: |
+          python scripts/ci_shards.py retry -- go -C testdata/toolchain mod download
+          go -C testdata/toolchain mod verify
       - name: Vet
         if: contains(format(',{0},', matrix.shards), ',units,')
         shell: bash

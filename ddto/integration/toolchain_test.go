@@ -16,8 +16,20 @@ import (
 func TestMiniToolchainFeatures(t *testing.T) {
 	driver := sharedDriver(t, "..")
 	dir := t.TempDir()
+	// The module and its checksums come from testdata/toolchain, whose
+	// modules CI downloads with retries before the tests: the test itself
+	// then needs no network.
+	mod, err := os.ReadFile(filepath.Join("..", "testdata", "toolchain", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum, err := os.ReadFile(filepath.Join("..", "testdata", "toolchain", "go.sum"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	writeBuildFixture(t, dir, map[string]string{
-		"go.mod":   "module example.com/toolchain\ngo 1.25.0\nrequire (\ngithub.com/stretchr/testify v1.10.0\ngo.uber.org/goleak v1.3.0\ngithub.com/kr/text v0.2.0\n)\n",
+		"go.mod":   string(mod),
+		"go.sum":   string(sum),
 		"value.go": "package toolchain\nfunc Value()int{return 42}\n",
 		"value_test.go": `package toolchain
 import("fmt";"runtime";"testing";"github.com/stretchr/testify/suite";"go.uber.org/goleak")
@@ -30,13 +42,6 @@ func ExampleValue(){fmt.Println(Value())
 }
 `,
 	})
-	// YAML dependency tests import kr/text without a module requirement. Pin
-	// that existing fixture input so tidy works with an offline module cache.
-	if out, stderr, code := command(t, dir, testEnv("GOTOOLCHAIN=local", "GOWORK=off"), "go", "mod", "tidy"); code != 0 {
-		t.Fatal(out, stderr)
-	}
-	mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
-	sum, _ := os.ReadFile(filepath.Join(dir, "go.sum"))
 	for _, covered := range []bool{false, true} {
 		bin := filepath.Join(t.TempDir(), executableName("features.test"))
 		args := []string{"test", "-c", "-o", bin, "-mod=readonly"}
