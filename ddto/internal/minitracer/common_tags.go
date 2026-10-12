@@ -68,15 +68,17 @@ func (c *CommonTags) Option() StartSpanOption {
 
 // Account for effective event strings and the potential envelope overhead.
 // Replaced defaults consume no bytes: projection puts such keys on peer events
-// instead of adding an unused (possibly large) value to the envelope.
-func eventSize(event *ciEvent) int {
-	size := event.Msgsize()
+// instead of adding an unused (possibly large) value to the envelope. This
+// worst case charges the whole snapshot to the event; overrides reports that
+// the event replaces one of its defaults.
+func eventSize(event *ciEvent) (size int, overrides bool) {
+	size = event.Msgsize()
 	if event.common != nil {
-		// A new event-kind metadata entry also needs its key and map headers.
-		size += event.common.bytes + msgp.StringPrefixSize + len(event.Type) + 2*msgp.MapHeaderSize
+		size += event.common.entrySize(event.Type)
 		for key := range event.Content.Meta {
 			if value, replaced := event.common.values[key]; replaced {
 				size -= 2*msgp.StringPrefixSize + len(key) + len(value)
+				overrides = true
 			}
 		}
 		for key := range event.Content.Metrics {
@@ -85,10 +87,18 @@ func eventSize(event *ciEvent) int {
 			}
 			if value, replaced := event.common.values[key]; replaced {
 				size -= 2*msgp.StringPrefixSize + len(key) + len(value)
+				overrides = true
 			}
 		}
 	}
-	return size
+	return size, overrides
+}
+
+// entrySize bounds the snapshot as an event-kind metadata entry: its strings,
+// and the entry's key and map headers. Projected onto an event, the strings
+// take no more.
+func (c *CommonTags) entrySize(kind string) int {
+	return c.bytes + msgp.StringPrefixSize + len(kind) + 2*msgp.MapHeaderSize
 }
 
 // prepareCommonMetadata leaves sealed spans untouched. A homogeneous event kind
@@ -179,9 +189,20 @@ func prepareCommonMetadata(base map[string]map[string]string, events ciEvents) (
 }
 
 func isCIEventKind(kind string) bool {
+	return ciEventKindIndex(kind) >= 0
+}
+
+// ciEventKindIndex numbers the test-event kinds, or returns -1.
+func ciEventKindIndex(kind string) int {
 	switch kind {
-	case "test", "test_session_end", "test_module_end", "test_suite_end":
-		return true
+	case "test":
+		return 0
+	case "test_session_end":
+		return 1
+	case "test_module_end":
+		return 2
+	case "test_suite_end":
+		return 3
 	}
-	return false
+	return -1
 }

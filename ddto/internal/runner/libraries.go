@@ -18,7 +18,7 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 	defer func() { phase.finish(err) }()
 	selected = map[string]*goPackage{}
 	reached := clientImports(packages, graph)
-	paths, suite := testifyDependencyImports(packages, reached)
+	paths, suite, standard := testifyDependencyImports(packages, reached)
 	wanted := map[string]bool{}
 	if suite {
 		wanted[instrument.TestifySuiteImport] = true
@@ -75,7 +75,7 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 			requests[path] = true
 		}
 	}
-	debug.printf("test-library query pending_imports=%d known_libraries=%d", len(requests), len(selected))
+	debug.printf("test-library query pending_imports=%d known_libraries=%d standard_imports=%d", len(requests), len(selected), standard)
 	if len(requests) == 0 {
 		return selected, sdkCI, false, nil
 	}

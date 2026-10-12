@@ -18,7 +18,10 @@ test admission, coverage processing or the other CI writers to another mode.
 The default is ordinary delivery: finishing an event never performs network
 I/O, and up to eight background senders deliver full batches. When delivery falls
 behind, a finishing test waits for a sender rather than losing events; after a
-failed delivery it drops events beyond the queue bound instead. With the variable
+failed delivery it drops events beyond the queue bound instead. `Close` stops
+the senders and sends the remaining payloads up to eight at once, counting
+deliveries still in flight, within its deadline. As with the background
+senders, payloads sent together can arrive in any order. With the variable
 enabled, delivery runs between completed test groups, and remaining data is sent
 at session close. Sequential tests can have a delivery checkpoint after each
 test. Parallel tests continue together until the whole group finishes; the next
@@ -244,10 +247,16 @@ synchronized update APIs.
 
 Bazel payload-file mode applies its CI/Git/OS/runtime filter before a shared base
 is created. Numeric metrics, hierarchy IDs, capabilities and test-specific tags
-keep their existing fields. Byte accounting includes the shared strings and
-envelope overhead conservatively; repeated values can shrink the actual payload
-without bypassing its uncompressed limit. Projection never mutates a sealed
-event, including on delivery failure and retry.
+keep their existing fields. Byte accounting bounds the payload that projection
+produces. While every test/session/module/suite event of a kind in the open
+batch has the same snapshot and none overrides it, the snapshot counts once, as
+the envelope writes it. An event that would break that ends the shared count
+for the batch: each event then counts its whole snapshot, as if it carried it,
+and the batch is sealed first if that would cross the 2.5 MiB threshold. Other
+event kinds always count their snapshot. A large snapshot therefore no longer
+seals homogeneous batches below the event count limit, and the uncompressed
+limit holds under any mix of events. Projection never mutates a sealed event,
+including on delivery failure and retry.
 
 This placement is an accepted change from the SDK, which repeats these strings
 on every event. It was requested for Mini and is part of its wire contract, not
@@ -310,7 +319,9 @@ in both modes.
 
 `TestCommonTagsWireOverridesAndGetters` checks real decoded requests in both
 delivery modes. Mixed-snapshot, concurrent sealed-map and byte-accounting checks
-live in `internal/minitracer/common_tags_test.go`. The SDK-port tests cover late
+live in `internal/minitracer/common_tags_test.go`. `common_batch_test.go` checks
+the accounting against the encoded payload for random mixes of kinds,
+snapshots and overrides, and the batches that a client seals. The SDK-port tests cover late
 updates, direct cached-map edits, Unicode truncation and Bazel filtering.
 The [latest runtime comparison](benchmarks.md#runtime-of-the-prebuilt-test-binaries)
 records complete test execution, delivery, memory peaks and wire sizes.

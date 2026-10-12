@@ -10,6 +10,7 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/cidelivery"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/citransport"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
 )
 
@@ -40,6 +41,76 @@ type readyBatch struct {
 	bytes  int
 }
 
+// batchBytes accounts for the open batch twice. worst charges each event its
+// whole snapshot, which bounds any mix of events. shared charges each
+// test-event kind's snapshot once, as prepareCommonMetadata writes it while all
+// events of that kind have the same snapshot and none overrides it. Once an
+// event breaks that, only worst applies until the batch is sealed.
+//
+// worst stops at maxWorstBytes. While shared applies it can grow far beyond
+// any payload limit, which it then only has to exceed: an event that ends
+// sharing seals the batch first. The cap keeps a 32-bit int from overflowing.
+type batchBytes struct {
+	worst, shared int
+	snapshots     [4]*CommonTags // Of each test-event kind, by ciEventKindIndex,
+	seen          [4]bool        // when the batch holds that kind.
+	unshared      bool
+}
+
+// maxWorstBytes caps batchBytes.worst far above the payload limits, and far
+// enough below 2^31 to add another event of up to the 5 MiB limit.
+const maxWorstBytes = 1 << 30
+
+// total is the batch's accounted size.
+func (b *batchBytes) total() int {
+	if b.unshared {
+		return b.worst
+	}
+	return b.shared
+}
+
+// with returns the batch's accounted size with event added. size and
+// overrides come from eventSize.
+func (b *batchBytes) with(event *ciEvent, size int, overrides bool) int {
+	if shared, ok := b.sharedWith(event, size, overrides); ok {
+		return shared
+	}
+	return b.worst + size
+}
+
+// sharedWith returns the shared total with event added, unless it no longer
+// applies. Other kinds always carry their snapshot on the event, and so does
+// the first event of a kind, which pays for the envelope entry.
+func (b *batchBytes) sharedWith(event *ciEvent, size int, overrides bool) (int, bool) {
+	if b.unshared {
+		return 0, false
+	}
+	kind := ciEventKindIndex(event.Type)
+	if kind < 0 {
+		return b.shared + size, true
+	}
+	switch seen := b.seen[kind]; {
+	case overrides || seen && b.snapshots[kind] != event.common:
+		return 0, false
+	case seen && event.common != nil:
+		return b.shared + size - event.common.entrySize(event.Type), true
+	}
+	return b.shared + size, true
+}
+
+func (b *batchBytes) add(event *ciEvent, size int, overrides bool) {
+	shared, ok := b.sharedWith(event, size, overrides)
+	b.worst = min(b.worst+size, maxWorstBytes)
+	b.shared, b.unshared = shared, !ok
+	if kind := ciEventKindIndex(event.Type); kind >= 0 {
+		b.snapshots[kind], b.seen[kind] = event.common, true
+	}
+}
+
+func (b *batchBytes) reset() {
+	*b = batchBytes{}
+}
+
 // add never performs network I/O. A full batch is sealed for the background
 // senders in ordinary mode, or for the next idle checkpoint in deferred mode.
 //
@@ -50,7 +121,7 @@ type readyBatch struct {
 // cannot stall tests. Deferred delivery never waits; its batches stay queued
 // until an idle checkpoint.
 func (c *Client) add(event *ciEvent) {
-	size := eventSize(event)
+	size, overrides := eventSize(event)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.closed && size+c.envelopeBytes > citransport.TestCycleMaxPayloadBytes {
@@ -62,7 +133,7 @@ func (c *Client) add(event *ciEvent) {
 			c.rejectLocked(errClientClosed)
 			return
 		}
-		if !c.openBatchFullLocked(size) || c.sealLocked() {
+		if !c.openBatchFullLocked(event, size, overrides) || c.sealLocked() {
 			break
 		}
 		c.startSendersLocked()
@@ -74,15 +145,15 @@ func (c *Client) add(event *ciEvent) {
 	}
 	telemetry.EventsEnqueueForSerialization()
 	c.events = append(c.events, event)
-	c.queuedBytes += size
-	if len(c.events) >= c.maxEvents || c.queuedBytes+c.envelopeBytes >= citransport.TestCycleFlushBytes {
+	c.queued.add(event, size, overrides)
+	if len(c.events) >= c.maxEvents || c.queued.total()+c.envelopeBytes >= citransport.TestCycleFlushBytes {
 		c.sealLocked()
 	}
 	c.startSendersLocked()
 }
 
-func (c *Client) openBatchFullLocked(size int) bool {
-	return len(c.events) > 0 && (len(c.events) >= c.maxEvents || c.queuedBytes+size+c.envelopeBytes > citransport.TestCycleFlushBytes)
+func (c *Client) openBatchFullLocked(event *ciEvent, size int, overrides bool) bool {
+	return len(c.events) > 0 && (len(c.events) >= c.maxEvents || c.queued.with(event, size, overrides)+c.envelopeBytes > citransport.TestCycleFlushBytes)
 }
 
 // sealLocked moves the open batch to the ready queue. Ordinary mode keeps that
@@ -104,9 +175,9 @@ func (c *Client) sealAllLocked() {
 	if len(c.events) == 0 {
 		return
 	}
-	c.ready = append(c.ready, readyBatch{events: c.events, bytes: c.queuedBytes})
+	c.ready = append(c.ready, readyBatch{events: c.events, bytes: c.queued.total()})
 	c.events, c.spare = c.spare, nil
-	c.queuedBytes = 0
+	c.queued.reset()
 }
 
 // startSendersLocked starts ordinary-mode senders for sealed batches that no
@@ -168,6 +239,10 @@ func (c *Client) completeLocked(batch readyBatch, err error) {
 	if c.inflight == 0 && c.inflightDone != nil {
 		close(c.inflightDone)
 		c.inflightDone = nil
+	}
+	if c.slotFreed != nil {
+		close(c.slotFreed)
+		c.slotFreed = nil
 	}
 	if err != nil {
 		c.lastErr = err
@@ -233,29 +308,53 @@ type drain struct {
 // its own flush timeout. No batch starts after the first failure, which is
 // returned.
 //
-// Deferred mode has no background senders, so the caller sends together with
-// up to maxConcurrentSends-1 drainWorker goroutines, all finished before it
-// returns: no delivery goroutine outlives a checkpoint, Flush or Close.
-// Payloads sent together can arrive in any order.
+// Without background senders, in deferred mode and once Close has stopped
+// them in ordinary mode, the caller sends together with drainWorker
+// goroutines, up to maxConcurrentSends deliveries with those still in flight;
+// with no free slot it first waits for a delivery to complete. They all finish
+// before it returns: no delivery goroutine outlives a checkpoint, Flush or
+// Close. Payloads sent together can arrive in any order.
 func (c *Client) drainLocked(ctx context.Context, perBatchTimeout bool) error {
 	d := &drain{ctx: ctx, perBatchTimeout: perBatchTimeout}
 	var workers sync.WaitGroup
-	if c.deferUntilIdle {
-		c.mu.Lock()
-		extra := min(len(c.ready), maxConcurrentSends) - 1
-		c.mu.Unlock()
-		for i := 0; i < extra; i++ {
-			workers.Add(1)
-			go c.drainWorker(d, &workers)
+	c.mu.Lock()
+	senders := 1
+	for c.deferUntilIdle || c.closed {
+		senders = min(len(c.ready), maxConcurrentSends-c.inflight)
+		if senders > 0 || len(c.ready) == 0 {
+			break
 		}
+		if c.slotFreed == nil {
+			c.slotFreed = make(chan struct{})
+		}
+		freed := c.slotFreed
+		c.mu.Unlock()
+		select {
+		case <-freed:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		c.mu.Lock()
+	}
+	ready, inflight, closed := len(c.ready), c.inflight, c.closed
+	c.mu.Unlock()
+	if closed && log.DebugEnabled() {
+		log.Debug("ci mini tracer: final drain batches=%d in_flight=%d senders=%d", ready, inflight, max(senders, 0))
+	}
+	if senders <= 0 {
+		return nil
+	}
+	for i := 1; i < senders; i++ {
+		workers.Add(1)
+		go c.drainWorker(d, &workers)
 	}
 	c.drainBatches(d, &c.payload)
 	workers.Wait()
 	return d.err
 }
 
-// drainWorker is an additional deferred-mode sender of one drain, with its own
-// encoding buffer. The goleak shim recognizes this frame.
+// drainWorker is an additional sender of one drain, with its own encoding
+// buffer. The goleak shim recognizes this frame.
 func (c *Client) drainWorker(d *drain, done *sync.WaitGroup) {
 	defer done.Done()
 	c.mu.Lock()
@@ -321,6 +420,9 @@ func (c *Client) sendBatch(ctx context.Context, payload *bytes.Buffer, batch rea
 	payload.Grow(batch.bytes + c.envelopeBytes)
 	metadata, wireEvents := prepareCommonMetadata(c.metadata, batch.events)
 	err := msgp.Encode(payload, &testCycleBatch{Version: 1, Metadata: metadata, Events: wireEvents})
+	if err == nil && log.DebugEnabled() {
+		log.Debug("ci mini tracer: batch encoded events=%d accounted_bytes=%d payload_bytes=%d", len(batch.events), batch.bytes+c.envelopeBytes, payload.Len())
+	}
 	if err == nil {
 		telemetry.EndpointPayloadEventsCount(telemetry.TestCycleEndpointType, float64(len(batch.events)))
 		telemetry.EndpointPayloadBytes(telemetry.TestCycleEndpointType, float64(payload.Len()))
@@ -433,7 +535,8 @@ func (c *Client) Close(ctx context.Context) error {
 		for _, batch := range c.ready {
 			c.discardBatchLocked(batch.events)
 		}
-		c.ready, c.events, c.queuedBytes = nil, nil, 0
+		c.ready, c.events = nil, nil
+		c.queued.reset()
 		c.lastErr = err
 		c.mu.Unlock()
 	}

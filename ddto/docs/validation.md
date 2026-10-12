@@ -22,9 +22,9 @@ selected test package, in its internal tests unless it has an external test
 package. Native Go performs the build.
 
 Testify and goleak share library discovery. The package query already lists
-libraries that the named packages import; unknown test imports require `-deps`
-to discover libraries through helpers, and only libraries outside both use
-`go list -find`. Version and API validation happen before the native
+libraries that the named packages import; unknown test imports outside the
+standard library require `-deps` to discover libraries through helpers, and
+only libraries outside both use `go list -find`. Version and API validation happen before the native
 build-cache lookup. A selective compiler wrapper transforms `testify/suite`
 and, in Mini, reachable `go.uber.org/goleak`; a coverage bridge handles rewritten
 `testing` sources when coverage includes them.

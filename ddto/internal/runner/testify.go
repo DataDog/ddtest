@@ -120,18 +120,24 @@ func prepareTestifyEntry(suite *goPackage, replacements map[string]string, runti
 // testifyDependencyImports walks only test imports whose dependency closures
 // were not already inspected by the first go list. Unknown imports remain in
 // the query: a helper in another module may call suite.Run on the client's behalf.
-// imported holds what the named packages, other than the runtime, import.
-func testifyDependencyImports(packages []goPackage, imported map[string]bool) ([]string, bool) {
+// Standard-library imports do not: their closures cannot reach Testify, goleak
+// or the SDK; the last result counts those left out. imported holds what the
+// named packages, other than the runtime, import.
+func testifyDependencyImports(packages []goPackage, imported map[string]bool) ([]string, bool, int) {
 	known := map[string]bool{"testing": true}
 	hasSuite := imported[instrument.TestifySuiteImport]
+	gorootSrc := ""
 	for _, p := range packages {
+		if p.ImportPath == "testing" && p.Dir != "" {
+			gorootSrc = filepath.Dir(p.Dir)
+		}
 		if p.ImportPath == sdkPackage || p.ImportPath == miniPackage {
 			// The runtime's graph says nothing about the client's test helpers.
 			continue
 		}
 		known[p.ImportPath] = true
 	}
-	requests := map[string]bool{}
+	requests, standard := map[string]bool{}, map[string]bool{}
 	for _, p := range packages {
 		if p.ImportPath == "testing" || p.ImportPath == sdkPackage || p.ImportPath == miniPackage {
 			continue
@@ -143,7 +149,12 @@ func testifyDependencyImports(packages []goPackage, imported map[string]bool) ([
 				if path == instrument.TestifySuiteImport {
 					hasSuite = true
 				}
-				if !known[path] && !imported[path] {
+				if known[path] || imported[path] || requests[path] || standard[path] {
+					continue
+				}
+				if standardLibraryImport(path, gorootSrc) {
+					standard[path] = true
+				} else {
 					requests[path] = true
 				}
 			}
@@ -154,7 +165,31 @@ func testifyDependencyImports(packages []goPackage, imported map[string]bool) ([
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
-	return paths, hasSuite
+	return paths, hasSuite, len(standard)
+}
+
+// standardLibraryImport reports whether path names a standard-library package,
+// by Go's rule: its first element has no dot, and its directory in gorootSrc,
+// $GOROOT/src, holds a .go file. A directory without one, such as archive,
+// lets a module provide the package. Without gorootSrc it reports false, which
+// keeps path in the query.
+func standardLibraryImport(path, gorootSrc string) bool {
+	if gorootSrc == "" {
+		return false
+	}
+	if first, _, _ := strings.Cut(path, "/"); strings.Contains(first, ".") {
+		return false
+	}
+	entries, err := os.ReadDir(filepath.Join(gorootSrc, filepath.FromSlash(path)))
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".go") {
+			return true
+		}
+	}
+	return false
 }
 
 func prepareLibraryCompile(plan *LibraryEntry, args []string) ([]string, func(), error) {

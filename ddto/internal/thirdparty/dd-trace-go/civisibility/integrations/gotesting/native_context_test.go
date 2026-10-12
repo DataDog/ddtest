@@ -6,7 +6,7 @@ import (
 
 func TestNativeContextWithoutSDK(t *testing.T) {
 	ctx := t.Context()
-	if allocs := testing.AllocsPerRun(100, func() { bindNativeTestContext(t, nil) }); allocs != 0 {
+	if allocs := allocsPerRun(100, func() { bindNativeTestContext(t, nil) }); allocs != 0 {
 		t.Fatalf("SDK-free binding allocated %g objects", allocs)
 	}
 	if t.Context() != ctx {

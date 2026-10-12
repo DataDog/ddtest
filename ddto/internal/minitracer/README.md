@@ -20,7 +20,8 @@ payload buffer. `mu` protects queue/error state. In ordinary delivery, a failed
 flush keeps its batch and rejects work that would exceed queue bounds. Deferred
 delivery can buffer multiple batches until idle; it bounds each outgoing payload
 but not the pending queue's total size. `Close` prevents new events before the
-final flush. Readers are sealed by `citransport` before buffers or compressors are
+final flush, which sends up to `maxConcurrentSends` payloads at once in both
+modes. Readers are sealed by `citransport` before buffers or compressors are
 reused. Keep these rules together when changing synchronization or pooling.
 
 The SDK port binds common CI/Git/system strings once per snapshot revision.
@@ -28,6 +29,8 @@ Spans retain that read-only base and their own overrides. Getters check local
 text/metrics first; delivery lifts compatible defaults without mutating either
 map. An overridden key falls back to local strings for peers, so a masked value
 cannot consume the event's byte budget. Mixed snapshots fall back per event kind.
+Batch accounting counts a kind's shared snapshot once until an event of that
+kind would fall back, and then counts every event's snapshot.
 Generic child spans receive no CI defaults. See
 [the metadata contract](../../docs/delivery.md#payload-level-common-metadata).
 

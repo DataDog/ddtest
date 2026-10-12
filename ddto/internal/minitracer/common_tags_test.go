@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -165,7 +166,7 @@ func TestCommonMetadataConcurrentProjectionAndBounds(t *testing.T) {
 				if err := msgp.Encode(&raw, &payload); err != nil {
 					t.Error(err)
 				}
-				if raw.Len() > eventSize(event)+(&testCyclePayload{Version: 1}).Msgsize()+msgp.ArrayHeaderSize {
+				if size, _ := eventSize(event); raw.Len() > size+(&testCyclePayload{Version: 1}).Msgsize()+msgp.ArrayHeaderSize {
 					t.Error("shared metadata escaped byte accounting")
 				}
 				span.SetTag("git.commit.sha", "changed")
@@ -179,9 +180,12 @@ func TestCommonMetadataConcurrentProjectionAndBounds(t *testing.T) {
 }
 
 func TestCommonMetadataFailureRetainsOriginalSnapshot(t *testing.T) {
+	var mu sync.Mutex // Close sends both payloads together.
 	var attempts int
 	var delivered []testCycleBatch
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
 		attempts++
 		if attempts == 1 {
 			w.WriteHeader(401)
@@ -211,15 +215,16 @@ func TestCommonMetadataFailureRetainsOriginalSnapshot(t *testing.T) {
 	if err := client.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	// The retried batch keeps its own payload; the later event follows it.
-	var got []string
+	// The retried batch keeps its own payload, and each event arrives once.
+	// Close sends the two payloads together, so they can arrive in any order.
+	got := map[string][]string{}
 	for i := range delivered {
 		for _, event := range delivered[i].Events {
-			got = append(got, effectiveCommonMeta(&delivered[i], event)["git.commit.sha"])
+			got[event.Content.Name] = append(got[event.Content.Name], effectiveCommonMeta(&delivered[i], event)["git.commit.sha"])
 		}
 	}
-	if strings.Join(got, ",") != "old,new" || client.DroppedEvents() != 0 {
-		t.Fatalf("retry lost, duplicated or reordered events: %v", got)
+	if want := map[string][]string{"first": {"old"}, "second": {"new"}}; !maps.EqualFunc(got, want, slices.Equal) || client.DroppedEvents() != 0 {
+		t.Fatalf("retry lost, duplicated or changed events: %v", got)
 	}
 	if got, _ := first.Meta("git.commit.sha"); got != "old" {
 		t.Fatal("retry changed sealed getter")

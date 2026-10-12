@@ -47,7 +47,8 @@ The log records:
   their module's Go directive.
 - The `testing` transformation, its source and rewritten-file counts, and the
   Fuzz and parallel-stop hooks selected for that runtime.
-- Optional library discovery, including how many imports still need a query.
+- Optional library discovery, including how many imports still need a query
+  and how many standard-library imports it left out.
   Testify and goleak each report detection, instrumentation and warnings.
 - User-overlay loading, final-overlay writing, test-package counts and whether
   a temporary modfile or coverage bridge is needed. `generated_backing_files`
@@ -99,6 +100,8 @@ Mini records these additional durations under the same debug setting:
 | `test-cycle: send finished` | One payload delivery, including admission pauses, compression, HTTP attempts, backoff and request-body/connection cleanup; in Bazel file mode, conversion and file writing |
 | `ci mini tracer: flush finished` | The process-wide client's flush, including waiting for other sends and serializing/delivering queued events |
 | `ci mini tracer: close finished` | The process-wide client's terminal close and final delivery |
+| `ci mini tracer: final drain` | The batches left for `Close`, the deliveries still in flight and how many senders send them; with all eight slots in flight, `Close` first waits for one to free |
+| `ci mini tracer: batch encoded` | A test-cycle payload's events, the size its batch accounted for and its encoded size, before the send |
 | `civisibility: session close finished` | Waiting for the session lock, closing modules, finishing the session event and flushing the tracer |
 | `civisibility: shutdown barriers finished` | Deferred-delivery drain and all pre-close barriers |
 | `civisibility: close actions finished` | Registered close actions, in their existing order |
@@ -190,7 +193,9 @@ Test processes, in their output, and the worker:
 | --- | --- |
 | `civisibility.read_cache: invocation scope [directory:cli/… ttl:1h0m0s]` | The process shares ddto's invocation's cache |
 | `civisibility.read_cache: hit [endpoint:… key:… scope:cli]` | The response was there, usually from the worker |
-| `civisibility.read_cache: hit after wait [… waited:…]` | Another process was requesting it; this one waited for its response |
+| `civisibility.read_cache: hit after wait [… waited:…]` | Another process was requesting it; this one waited for its response, for up to 2 s, or up to two minutes while that process runs |
+| `civisibility.read_cache: owner gone, taking over [… waited:…]` | The process that held the key's lock ended without releasing it; this one took the lock, requested and stored the response |
+| `civisibility.read_cache: waiter fallback [… waited:…]` | The owner released its lock without a response, or the wait ran out; this process requested for itself, without storing the response |
 | `civisibility.read_cache: miss [… duration:… cacheable:… error:…]` | This process requested it itself. `cacheable` says whether the response may be stored; a store that fails logs its own line, such as `temp write failed` or `rename failed`. In a test process with `scope:cli`, the worker's request differed, had not started, failed, or was not stored |
 | `civisibility.coverage: module from ddto's test description` or `… from go list [… duration:…]` | Where per-test coverage found the test package's module |
 

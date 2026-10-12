@@ -134,7 +134,7 @@ func TestLargeBatchFailureRetainedAndOversizedEventRejected(t *testing.T) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.queuedBytes != 0 || len(c.ready) != 0 {
+	if c.queued.total() != 0 || len(c.ready) != 0 {
 		t.Fatal("byte count not reset")
 	}
 }

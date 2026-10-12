@@ -946,6 +946,62 @@ duration. None of these lines holds a credential or a request body.
 `integration/TestMiniCLIStateDebugLog` and
 `integration/TestMiniCLIStateGivesModuleToCoverage` check them.
 
+## Read-cache waiters
+
+Upstream, a process that finds another one's lock on a read-cache key polls
+for its entry after 20, 40, 80 and then every 100 ms, and after 2 s sends the
+request itself, without the lock, and writes no entry. When the owner's
+request takes longer, as a large paginated known-tests response or a slow
+backend can make it, every waiting process pays the wait and a duplicate
+request. A lock whose owner was killed blocks its key for an hour.
+
+`waitForReadCacheEntry` (`utils/net/read_cache.go`) now:
+
+- polls every 5, 10 and then 20 ms (`readCacheWaiterInitialBackoff`,
+  `readCacheWaiterMaxBackoff`): a poll reads the small lock file and tries the
+  entry, and the owner's response reaches its waiters up to 80 ms sooner;
+- waits past `readCacheWaiterTimeout` while the lock's owner still runs and
+  the lock is younger than `readCacheWaiterLiveOwnerTimeout`, two minutes,
+  but never longer than that from its own start, so new owners that keep
+  replacing the lock cannot extend it. Two minutes exceed a paginated
+  response, so a slow owner serves its waiters; an owner slower than that
+  costs them the wait and their own request. The waiter keeps the 2 s rule
+  when it cannot tell whether the owner runs, and for a lock that is older or
+  from the future, as after a clock change;
+- returns `readCacheWaitOwnerGone` when the owner's process ended without
+  releasing its lock. `readThroughShortLivedCache` then takes the lock and
+  requests as its owner, writing the entry for the others.
+
+`readCacheLockIsStale` also takes a lock whose owner's process ended for
+stale, so a process that finds one takes it at once. `processAlive`
+(`read_cache_process_unix.go`, `read_cache_process_windows.go`,
+`read_cache_process_other.go`) checks the lock's PID: a signal 0 on Unix, and
+on Windows a zero wait on the process handle, which does not depend on the
+exit code; it reports unknown where it cannot tell. A zombie, which ended but
+which its parent has not reaped, accepts a signal 0: on Linux,
+`processEnded` (`read_cache_process_linux.go`) reads its state in
+`/proc/<pid>/stat`; on other Unix systems a zombie owner costs its waiters
+the wait for a running one. A PID that another process reused looks alive,
+which costs at most the wait up to the bound. Replacing a dead owner's lock has the
+non-atomic replacement race described above: two processes can both own the
+key, which costs a duplicate request, never wrong data.
+
+A waiter whose owner released its lock without an entry still requests
+without the lock at once, as upstream: that owner failed or got a response
+that the cache does not keep, and taking the lock in turn would serialize the
+waiters' failures. The lock and entry formats are unchanged, so SDK binaries
+that share the cache directory interoperate.
+
+`SetReadCacheHooksForTesting` sets whether an owner runs to unknown, because
+test PIDs name no real process: existing tests keep the upstream behavior.
+`setReadCacheProcessAliveForTesting` overrides it.
+`TestReadCacheWaiterWaitsForLiveOwner`,
+`TestReadCacheWaiterBoundsTheWaitForLiveOwner`,
+`TestReadCacheTakesOverDeadOwnersLock`, `TestProcessAlive`
+(`utils/net/read_cache_waiter_test.go`) and `TestProcessAliveZombie`
+(`read_cache_process_linux_test.go`) check these rules, including a 40 s
+owner, replaced locks and a lock from the future.
+
 ## Testify method names
 
 [`civisibility/integrations/gotesting/testify.go`](civisibility/integrations/gotesting/testify.go)
@@ -1028,8 +1084,12 @@ Checks: `TestSharedParallelLeaseAttemptsRecordTheirEnd`,
 `TestSequentialAttemptsRecordNoParallelEnd`, `TestParallelStopHookOnlyForMini`,
 `TestToolchainTestingDeclaresParallelStop` and
 `TestMiniInProcessRetryKeepsAllocsPerRun`. This package's own tests run without
-the overlay, so `TestAdditionalFeatureSelectorDoesNotAllocate` measures
-allocations without `testing.AllocsPerRun`.
+the overlay, so `TestSharedParallelLeaseAttemptsRecordTheirEnd` and
+`TestProcessRetryParityFreshRunnerSharesRootParallelLeaseAcrossSequentialAttempts`
+leave the accounting unbalanced for the rest of the binary. The package's
+allocation checks therefore use its `allocsPerRun` helper instead of
+`testing.AllocsPerRun`, which would panic with `-count` above one or with
+`-shuffle`. `TestPackageTestsMeasureAllocationsWithHelper` keeps it that way.
 
 ## Per-test allocations
 

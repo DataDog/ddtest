@@ -153,11 +153,55 @@ func TestTestifyDependencyImports(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			graph := newPackageGraph(append(slices.Clone(tc.packages), tc.dep...))
-			paths, suite := testifyDependencyImports(tc.packages, clientImports(tc.packages, graph))
+			paths, suite, _ := testifyDependencyImports(tc.packages, clientImports(tc.packages, graph))
 			if !slices.Equal(paths, tc.want) || suite != tc.suite {
 				t.Fatalf("imports = %v, suite = %v; want %v, %v", paths, suite, tc.want, tc.suite)
 			}
 		})
+	}
+}
+
+// A standard-library test import, which cannot reach Testify, goleak or the
+// SDK, needs no library query: only the other unknown imports remain. Those
+// include dotless paths whose $GOROOT/src directory is missing or holds no .go
+// file, such as archive, which a module can then provide, and paths with a dot
+// in their first element, which are never standard.
+func TestTestifyDependencyImportsLeaveOutStandardLibrary(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "src")
+	for _, file := range []string{"testing/testing.go", "net/http/httptest/server.go", "testing/fstest/mapfs.go", "example.com/testkit/kit.go", "archive/tar/tar.go", "localkit/helper", "localkit/doc/README"} {
+		path := filepath.Join(src, filepath.FromSlash(file))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	packages := []goPackage{
+		{ImportPath: "testing", Dir: filepath.Join(src, "testing")},
+		{ImportPath: "example.com/client", TestImports: []string{"net/http/httptest", "example.com/testkit", "archive", "localkit/helper", "localkit/doc", "localkit/other"}, XTestImports: []string{"testing/fstest"}},
+	}
+	query := func() []string {
+		paths, _, _ := testifyDependencyImports(packages, clientImports(packages, newPackageGraph(packages)))
+		return paths
+	}
+	if paths, want := query(), []string{"archive", "example.com/testkit", "localkit/doc", "localkit/helper", "localkit/other"}; !slices.Equal(paths, want) {
+		t.Fatalf("imports = %v; want %v", paths, want)
+	}
+	if _, _, standard := testifyDependencyImports(packages, clientImports(packages, newPackageGraph(packages))); standard != 2 {
+		t.Fatalf("standard imports = %d; want 2", standard)
+	}
+	// Only standard-library imports: no query at all.
+	packages[1].TestImports = []string{"net/http/httptest"}
+	if paths := query(); len(paths) != 0 {
+		t.Fatalf("imports = %v; want none", paths)
+	}
+	// Without the directory of testing, nothing locates $GOROOT/src, not even
+	// the working directory: the import stays in the query.
+	t.Chdir(src)
+	packages[0].Dir = ""
+	if paths, want := query(), []string{"net/http/httptest", "testing/fstest"}; !slices.Equal(paths, want) {
+		t.Fatalf("imports = %v; want %v", paths, want)
 	}
 }
 

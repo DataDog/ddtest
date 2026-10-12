@@ -18,8 +18,9 @@ whose pull request records its results, such as
 [#25](https://github.com/tonyredondo/dd-ci-testing-poc/pull/25),
 [#29](https://github.com/tonyredondo/dd-ci-testing-poc/pull/29),
 [#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31),
-[#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32) and
-[#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34), or an item
+[#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32),
+[#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34) and
+[#38](https://github.com/tonyredondo/dd-ci-testing-poc/pull/38), or an item
 listed under [Evaluated and dropped](#evaluated-and-dropped).
 
 In the items, `civisibility/`, `hostname/`, `osinfo/` and `telemetry/` paths
@@ -60,16 +61,11 @@ Ordered by the expected effect on a `ddto test` run's wall time, then by cost.
 
 | Order | Change | Where it can help | Complexity |
 | --- | --- | --- | --- |
-| 10 | Remove a round trip from each test process's exit | About 100 ms of a run with 100 ms requests | Medium |
-| 56 | Reuse the preparation plan between unchanged invocations | About 90 ms of a cached Gin run's 184 ms | Medium to high |
-| 48 | Let read-cache waiters wait for a slow owner | 2 s and a duplicate request per binary when the worker's request is slow | Medium |
-| 23 | Charge the shared common snapshot once per batch | Up to about 60% more test-cycle requests per binary | Medium to high |
-| 14 | Leave standard-library imports out of library discovery | Part of a 28–80 ms query in most invocations | Low |
 | 15 | Overlap the Orchestrion tool lookup with preparation | 0.5–2 s in Orchestrion modes of large modules | Low to medium |
 | 39 | Parse selected sources concurrently at startup | Parsing the files of every known test with EFD and impacted tests | Medium |
 | 51 | Store known tests per module in the read cache | 10–25 ms of CPU and megabytes per binary with 100,000 tests | Medium to high |
 | 32 | Scope retry subtest-name cleanup to the attempt | Up to 9 ms per retry group with 100,000 subtests, blocking `T.Run` | Medium to high |
-| 28 | Drain the final backlog in parallel | Events dropped behind a slow intake at close | Low to medium |
+| 28 | Skip the final retries after a failed session-close flush | About 0.3 s at exit with a refused connection | Low |
 | 49 | Stream read-cache expiry fields | 5–15 ms per cache miss when a test process requests itself | Low |
 | 50 | Keep idle connections during deferred startup | One to four TLS handshakes at startup in deferred mode | Low to medium |
 | 8 | Collect coverage counters in memory | Profile I/O and parsing per covered test; measure first | High |
@@ -79,7 +75,9 @@ Ordered by the expected effect on a `ddto test` run's wall time, then by cost.
 
 | Item | Change | Decision |
 | --- | --- | --- |
+| 10 | Remove a round trip from each test process's exit; about 100 ms of a run with 100 ms requests | Not now (2026-10-12) |
 | 55 | Test source locations from the CLI; extends 39 | Parked on 2026-10-11: it needs a cache location |
+| 56 | Reuse the preparation plan between unchanged invocations; about 90 ms of a cached Gin run's 184 ms | Not yet (2026-10-12) |
 | 57 | Deliver events through the CLI; extends 10 | Not now (2026-10-11) |
 
 ### Evaluated and dropped
@@ -194,29 +192,6 @@ combining compatible messages at exit would address them. Those binaries run
 alone or, under `ddto test`, with a `-exec` launcher, which keeps ddto from
 handing them the worker's state.
 
-## 14. Standard-library imports in library discovery
-
-Any test import missing from the selected packages' dependencies becomes a
-request in `internal/runner/testify.go:139-155` and switches the second query
-in `libraries.go:46-75` to `-deps`. That includes standard-library packages,
-whose closure can never reach Testify, goleak or the SDK. A fixture whose tests
-import only `net/http/httptest` resolves 197 standard packages in 51–81 ms;
-preparation took 132–148 ms, against about 56 ms without the query. In an
-83-module workspace any `go list` costs at least 0.24 s, and this query took
-367 ms.
-
-In Gin at `b7d8275`, the query had six pending imports, resolved 250 packages
-and took 28–31 ms of a 93 ms preparation. Testify's packages among those
-imports still need it, so measure what leaving out the standard library saves
-there.
-
-Leave standard-library paths out of the request, using Go's rule: the first
-path element has no dot and `$GOROOT/src/<path>` exists, where `$GOROOT/src` is
-the parent of `testing`'s directory. External helpers and unknown imports
-from other modules stay in the query. Merging the query into the main one with
-`-test` is not a general improvement: dd-go took 23.7 s merged, against 17.1 s
-plus 0.83 s with separate queries.
-
 ## 15. Orchestrion tool lookup in parallel
 
 With `ddto go tool orchestrion go test`, or a `go tool orchestrion toolexec`
@@ -233,43 +208,14 @@ Preserve progress streaming and error precedence: report preparation errors
 first, then cancel the lookup. The shorter of the two steps disappears from the
 critical path, an estimated 0.5–2 s in a dd-go-sized module.
 
-## 23. Shared snapshot charged once
+## 28. Final retries after a failed session close
 
-Each event's accounted size includes the whole common snapshot
-(`internal/minitracer/common_tags.go:66-70`, `batch.go:78` and `:321`), although
-a homogeneous batch writes it once. With a snapshot of 40 values of 80 bytes,
-batches sealed at 486.6 events instead of 1,000, about twice the requests,
-while the real payload was about 280 KB against the 2.5 MiB threshold. A
-GitHub-like environment without commit fields produced a 908-byte snapshot;
-long commit messages or environments push typical CI past the event-count cap,
-for an estimated 0–60% more requests. `payload.Grow(batch.bytes+envelope)` also
-reserves up to 2.5 MiB for small payloads, and a buffer that grows past that
-threshold is discarded and allocated again.
-
-Keep two totals: today's worst case and a shared total that charges each
-kind's snapshot once. Use the shared total while the open batch is safe to
-project: one snapshot per kind and no overrides. `eventSize` already looks up
-each common key, so it can record on the event, in a `msg:"-"` field, whether
-it overrides one.
-Preserve the 5 MiB limit under any mix of events. [Delivery](delivery.md)
-describes the current accounting as deliberately conservative; update it with
-the change.
-
-## 28. Final drain in parallel
-
-After `Close` sets `closed` (`internal/minitracer/batch.go:422`), background
-senders exit (`:137`) and `drainLocked` (`:243-252`) sends the remaining batches one at a
-time within one 10 s context. Only deferred mode uses parallel `drainWorker`s.
-The runtime flushes before it stops, while senders still help, so this mainly
-affects explicit clients and recovery after a failure backoff. With a slow
-intake, the serial drain can exceed its budget and drop events. Use the
-`drainWorker` fan-out in both modes.
-
-With a refused connection, the session-close flush and the final delivery at
-exit each spend a retry cycle of about 0.3 s on the same payload. Once the
-session-close flush has failed with a network error, the final delivery could
-skip its retries; a black-holed intake would then also wait for one flush
-timeout instead of two.
+[#38](https://github.com/tonyredondo/dd-ci-testing-poc/pull/38) made the final
+drain parallel in ordinary mode too. What remains: with a refused connection,
+the session-close flush and the final delivery at exit each spend a retry cycle
+of about 0.3 s on the same payload. Once the session-close flush has failed
+with a network error, the final delivery could skip its retries; a black-holed
+intake would then also wait for one flush timeout instead of two.
 
 ## 32. Retry name cleanup scoped to the attempt
 
@@ -299,27 +245,6 @@ excluded by `-run`, which CI test splitting relies on. Otherwise the first test
 of each file pays for its parse: 1.08 ms for 2,300 lines and 4.5 ms for 8,300.
 Prefetch the files of selected tests with a bounded worker pool, or restrict
 the modified-test check to selected tests.
-
-## 48. Read-cache waiters
-
-A binary waiting for another binary's request
-(`civisibility/utils/net/read_cache.go:58-63`, `:349-358`, `:646-675`) polls
-after 20, 40, 80 and then every 100 ms. After 2 s it sends the request itself,
-without the lock, and never writes the result. When the owner takes longer, as
-with large paginated known-test or skippable responses or a slow backend,
-every binary of the first wave pays 2 s plus a duplicate request.
-
-Wait while the lock's process is alive and the lock is younger than the
-request bound, try to acquire the lock again before falling back, and cap the
-poll interval at 10–20 ms: a poll is one stat and a failed open. Expect 0–100 ms
-less per wait normally and 2 s less per waiter when the owner is slow. The
-cache format is shared with dd-trace-go binaries, so keep it compatible. In
-`ddto test`, [#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34) starts these requests in the Git
-worker while `go test` builds, or when it links a test binary, so a binary
-waits only for the rest of a request that is already under way. A binary
-that has waited 2 s without an entry still sends its own: when the request
-outlasts the build or link by more than 2 s, as a large paginated known-tests
-response can, the binaries that started first do.
 
 ## 49. Read-cache expiry fields
 

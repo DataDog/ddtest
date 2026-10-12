@@ -125,7 +125,7 @@ func TestSetErrorInfoCapturesStackOnlyWithoutFormattedError(t *testing.T) {
 	enableCIVisibilityForTest(t)
 	run := func(formatted bool) float64 {
 		stub := &errorCaptureStubTest{}
-		allocs := testing.AllocsPerRun(50, func() {
+		allocs := allocsPerRun(50, func() {
 			tb := &testing.T{}
 			execMeta := createTestMetadata(tb, nil)
 			execMeta.test = stub

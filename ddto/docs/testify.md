@@ -103,8 +103,10 @@ flowchart TD
 A requirement in `go.mod` does not enable `-toolexec`. Importing `testify/assert`
 alone does not enable it either. The selected build tags and reachable test
 imports decide whether `testify/suite` is part of this build. Dependencies of
-external helpers participate in that check. Known standard-library imports are
-excluded from the extra lookup.
+external helpers participate in that check. Standard-library imports are
+excluded from the extra lookup: by Go's rule, their first path element has no
+dot and their directory in `$GOROOT/src`, the parent of `testing`'s directory,
+holds a `.go` file.
 
 Testify and goleak share this discovery query. When reachability is known and
 no unknown test imports remain, the package query, `go list -deps`, has already
