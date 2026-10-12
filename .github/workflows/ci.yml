@@ -72,6 +72,9 @@ jobs:
         uses: datadog/test-visibility-github-action@1abae93083b69778facd7ee11f89184306c999e6 # v3.2.0
         with:
           languages: go
+          # Pin upstream Go 1.27 compatibility fixes until they reach a stable
+          # Orchestrion release.
+          go-tracer-version: 5df280060f05cbf2863d43748667fcf9cd18c448
           api_key: ${{ secrets.DATADOG_API_KEY }}
           site: datadoghq.com
           service: ddtest
