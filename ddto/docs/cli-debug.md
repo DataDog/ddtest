@@ -52,8 +52,10 @@ The log records:
   a temporary modfile or coverage bridge is needed. `generated_backing_files`
   counts the distinct generated hook/import files; rewritten standard-library
   files are counted separately.
-- The selective tool decision for Testify, goleak and coverage, plus whether
-  the client supplied its own `toolexec`.
+- The selective tool decision for Testify, goleak, coverage and the Git
+  worker's link signal, plus whether the client supplied its own `toolexec`.
+- When the Git worker requests for the test processes, and why: see
+  [Requests ahead](#requests-ahead).
 - Native `go test` duration and exit code, followed by the whole CLI duration
   and exit code. Interrupt forwarding and context cancellation are recorded.
 
@@ -69,7 +71,7 @@ illustrate the format; they are not benchmark results:
 2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +31ms mini source=cli-local
 2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +36ms provide runtime finished duration=11.9ms status=ok
 2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +58ms plan ready testing_files=3 test_packages=1 overlay_entries=5 generated_backing_files=2 temporary_modfile=true cover_bridge=false
-2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +59ms tool selection testify=false goleak=false cover=false user_toolexec=false
+2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +59ms tool selection testify=false goleak=false cover=false user_toolexec=false orchestrion=false sdk_ci_gate=false link_signal=false
 2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +60ms go test started
 2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +410ms go test finished duration=350ms status=ok
 2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +410.1ms go test exit_code=0
@@ -150,6 +152,58 @@ entry, individual compiler/linker durations, CPU time or memory. A normal
 `go test` duration includes both building and executing tests; use `-c` for a
 build-only observation.
 
+## Requests ahead
+
+ddto's Git worker requests the settings, known tests, skippable tests and test
+management data for the test processes, which then find the responses in the
+invocation's read cache. With `DD_TRACE_DEBUG=true`, each side logs its part.
+Add `--keep-ci-state` to keep the worker's log, `worker.log`.
+
+`ddto`, on `stderr`:
+
+| Line | Meaning |
+| --- | --- |
+| `test runtime version=… source=go_env\|go_tool_compile` | The Go version that the worker requests with, as the test binaries report it; `go_tool_compile` when `GOEXPERIMENT` adds experiments |
+| `git worker test description packages=… goarch=… runs_every_test=… go_version=…` | What ddto handed the worker in `tests.json` |
+| `git worker requests_ahead=while_building reason=…` | go test takes no result from its cache, so the worker requests while it builds. The reason is the first one: `local directory mode`, `test binary flag -count`, `… in GOFLAGS`, an unknown flag, or test binary arguments after the packages, `-args` or `--`. It never shows a value |
+| `git worker requests_ahead=at_link` | Results may come from Go's cache: the worker requests when go test links a test binary, which ddto's tool marks as `linking` |
+| `git worker requests_ahead=at_first_test reason="-o …"` | `-o` or `-a` link even cached results, so the worker waits for a test process |
+| `git worker read cache removed left_directories_removed=…` | The invocation's cache entries went with it; the count is of directories that earlier, killed invocations left |
+
+The worker, in `worker.log`:
+
+| Line | Meaning |
+| --- | --- |
+| `civisibility: CLI test description [packages:… goarch:… runs_every_test:…]` | The description it read |
+| `civisibility: CLI requests ahead started [trigger:… go_version:… clients:… after:…]` | It started requesting: `runs_every_test` while go test builds, `linking` when go test linked a test binary, `used` when a test process started first. `clients` counts the services it requests for; `after` is the time since it started waiting |
+| `civisibility: CLI requests ahead finished [client:… known_tests:… skippable:… test_management:… duration:…]` | One client's requests, with the features that the settings enabled |
+| `civisibility: CLI request ahead settings failed`, `… known tests failed`, … | A request failed; test processes request it again themselves. The error hides a URL's user and password |
+| `civisibility: CLI requests ahead stop: the settings require Git` | The settings change after the upload, so test processes request after it |
+| `civisibility: CLI requests ahead not needed: …` | go test exited before any test process used the state, as when every result came from its cache; `started` tells whether requests had begun and were cancelled |
+| `civisibility: CLI requests ahead stopped: ddto stopped the worker [reason:…]` | ddto stopped the worker first, for a `signal` or `timeout` |
+
+Test processes, in their output, and the worker:
+
+| Line | Meaning |
+| --- | --- |
+| `civisibility.read_cache: invocation scope [directory:cli/… ttl:1h0m0s]` | The process shares ddto's invocation's cache |
+| `civisibility.read_cache: hit [endpoint:… key:… scope:cli]` | The response was there, usually from the worker |
+| `civisibility.read_cache: hit after wait [… waited:…]` | Another process was requesting it; this one waited for its response |
+| `civisibility.read_cache: miss [… duration:… cacheable:… error:…]` | This process requested it itself. `cacheable` says whether the response may be stored; a store that fails logs its own line, such as `temp write failed` or `rename failed`. In a test process with `scope:cli`, the worker's request differed, had not started, failed, or was not stored |
+| `civisibility.coverage: module from ddto's test description` or `… from go list [… duration:…]` | Where per-test coverage found the test package's module |
+
+A test process prints its output only with `-v` or when a test fails.
+
+For example, a `-count=1` run:
+
+```text
+… TestOptimization.build v0.0.0 DEBUG: +58ms git worker test description packages=2 goarch=amd64 runs_every_test=true go_version=go1.27.0
+… TestOptimization.build v0.0.0 DEBUG: +58ms git worker requests_ahead=while_building reason="test binary flag -count"
+… TestOptimization.run  v0.0.0 DEBUG: civisibility: CLI requests ahead started [trigger:runs_every_test go_version:go1.27.0 clients:1 after:12µs]
+… TestOptimization.run  v0.0.0 DEBUG: civisibility: CLI requests ahead finished [client:0 known_tests:true skippable:true test_management:true duration:4.1ms]
+… TestOptimization.run  v0.0.0 DEBUG: civisibility.read_cache: hit [endpoint:settings key:… scope:cli]
+```
+
 ## Keeping the CI state
 
 With the Mini runtime and CI Visibility enabled, `ddto test` starts a Git
@@ -167,9 +221,11 @@ ddto test --keep-ci-state=ci-state.zip ./...    # prints: INFO: archived the CI 
 | `git.json` | The checkout's Git metadata that the worker read once, and the upload wait that test processes use |
 | `telemetry.json` | The invocation's telemetry application: runtime ID, application and host |
 | `seq/` | One file per telemetry request number taken, by the worker or a test process |
+| `linking` | Present when `go test` linked a test binary in a run whose results could come from its cache; `ddto`'s tool writes it |
 | `used` | Present when a test process used the state |
 | `upload.json` | The repository upload's result, or why it failed or stopped |
 | `impacted.json` | The impacted-tests base commit and modified files, or why they were not computed |
+| `tests.json` | `ddto`'s description of the test processes: their architecture, whether `go test` runs every test package without its result cache, and each test package's directory and module |
 | `telemetry-failure-*` | Telemetry requests that a test process could not deliver |
 | `worker.log` | The worker's own log; add `DD_TRACE_DEBUG=true` for its debug lines |
 | `ddto.json` | `ddto`'s view: whether it handed the state over and why, the upload timeout, how the worker ended (`exited`, `stopped` or `killed`), the stop reason and how long `ddto` waited after `go test` |

@@ -99,9 +99,9 @@ func goleakPackage(t *testing.T, version, source string) *goPackage {
 	}
 	pkg := &goPackage{Dir: dir, ImportPath: "go.uber.org/goleak", GoFiles: []string{"leaks.go"}}
 	pkg.Module = &struct {
-		Path, Version string
-		Main          bool
-		Replace       *struct{ Path, Dir, Version string }
+		Path, Version, Dir string
+		Main               bool
+		Replace            *struct{ Path, Dir, Version string }
 	}{Path: "go.uber.org/goleak", Version: version}
 	return pkg
 }

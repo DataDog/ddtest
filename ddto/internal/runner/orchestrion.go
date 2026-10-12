@@ -118,6 +118,11 @@ func applyGoLauncher(ctx context.Context, opts *options) {
 
 // ValidToolMode validates the CLI private tool entrypoint before dispatch.
 func ValidToolMode(mode string) bool {
+	// The link signal combines with any mode.
+	if mode == "link" {
+		return true
+	}
+	mode = strings.TrimSuffix(mode, "-link")
 	if strings.HasPrefix(mode, "mini-") {
 		if mode == "mini-sdk" || mode == "mini-sdk-nomirror" {
 			return true

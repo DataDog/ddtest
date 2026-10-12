@@ -17,6 +17,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +54,15 @@ type client interface {
 	GetSettings() (*net.SettingsResponseData, error)
 }
 
+// featureClient requests the settings and the data that they enable, as a
+// test process does before its first test.
+type featureClient interface {
+	GetSettings() (*net.SettingsResponseData, error)
+	GetKnownTests() (*net.KnownTestsResponseData, error)
+	GetSkippableTests() (*net.SkippableTestsResponse, error)
+	GetTestManagementTests() (*net.TestManagementTestsResponseDataModules, error)
+}
+
 // appTelemetry is the invocation's telemetry application, which the worker
 // owns: see net.CLITelemetry.
 type appTelemetry interface {
@@ -75,13 +85,14 @@ var newClient = func(ctx context.Context, dir, runtimeID string) (client, appTel
 }
 
 // Run writes the checkout's Git record to dir, then waits for the CLI. Once
-// told to proceed, it compares the local commits with the backend's while go
-// test builds, a read-only request. Once a test process uses the state, it
-// starts the invocation's telemetry application, which the test processes
-// that use the state report under, and uploads the missing commits, as each
-// test process would, and records the end of the upload; meanwhile it
-// requests the settings, and if they enable impacted tests it records the
-// base commit and modified files. It closes results once it has written them,
+// told to proceed, while go test builds, it compares the local commits with
+// the backend's and requests what the test processes described in dir request
+// before their first test, as they would, all read-only requests. Once a test
+// process uses the state, it starts the invocation's telemetry application,
+// which the test processes that use the state report under, and uploads the
+// missing commits, as each test process would, and records the end of the
+// upload; if the settings enable impacted tests it then records the base
+// commit and modified files. It closes results once it has written them,
 // or failed to, so that ddto records any missing result for the test
 // processes waiting for it. It closes the telemetry application after go test
 // exits. When go test exits without running a test process that uses the
@@ -117,16 +128,58 @@ func Run(dir, runtimeID string, uploadWait time.Duration, input io.Reader, resul
 	if !ok {
 		return nil
 	}
+	tests := utils.HandedCLITests()
+	c = asTestProcesses(c, goVersion, tests)
 	uploadEnabled := infra.BoolEnv(constants.CIVisibilityGitUploadEnabledEnvironmentVariable, true)
-	search := searchAhead(c, uploadEnabled)
+	var search func() (*gitupload.SearchCommitsResponse, error)
+	var requests func()
+	started := time.Now()
+	requestNow := func(trigger string) {
+		clients := testProcessClients(c, goVersion, tests)
+		log.Debug("civisibility: CLI requests ahead started [trigger:%s go_version:%s clients:%d after:%s]", trigger, goVersion, len(clients), time.Since(started).Round(time.Microsecond))
+		search = searchAhead(c, uploadEnabled)
+		requests = requestAhead(clients)
+	}
+	// While go test builds, the worker requests for the test processes if
+	// every one of them runs. Otherwise it waits until go test links a test
+	// binary, which it does only for a result that is not in its cache, or a
+	// test process starts: a run whose results all come from Go's test cache
+	// sends no request.
+	switch {
+	case tests != nil && tests.RunsEveryTest:
+		requestNow("runs_every_test")
+	case tests == nil:
+		log.Debug("civisibility: CLI requests ahead wait for a test process: no test description")
+		fallthrough
+	default:
+		if waitFor(ctx, dir, cli.exited, utils.CLIGitLinkingFile, utils.CLIGitUsedFile) {
+			trigger := utils.CLIGitUsedFile
+			if _, err := os.Stat(filepath.Join(dir, utils.CLIGitLinkingFile)); err == nil {
+				trigger = utils.CLIGitLinkingFile
+			}
+			requestNow(trigger)
+		}
+	}
 	if !waitUsed(ctx, dir, cli.exited) {
-		// No test process needs the search any more. Its git commands end,
-		// interrupted or killed, only while this process runs.
+		// No test process needs the search or the requests any more. The
+		// search's git commands end, interrupted or killed, only while this
+		// process runs.
+		if ctx.Err() != nil {
+			log.Debug("civisibility: CLI requests ahead stopped: ddto stopped the worker [reason:%s started:%t]", cli.stopReason(), requests != nil)
+		} else {
+			log.Debug("civisibility: CLI requests ahead not needed: go test exited before a test process used the state [started:%t]", requests != nil)
+		}
 		cancel()
 		if search != nil {
 			_, _ = search()
 		}
+		if requests != nil {
+			requests()
+		}
 		return nil
+	}
+	if requests == nil {
+		requestNow(utils.CLIGitUsedFile)
 	}
 	utils.FetchCLIHeadCommit()
 	if app != nil {
@@ -141,7 +194,14 @@ func Run(dir, runtimeID string, uploadWait time.Duration, input io.Reader, resul
 			app.Stop()
 		}()
 	}
-	// Test processes request the settings while they upload.
+	// The requests made ahead end before the application closes, with their
+	// metrics; they ended long before, unless go test was quicker.
+	defer func() {
+		cancel()
+		requests()
+	}()
+	// Test processes request the settings while they upload; the read cache
+	// usually has them from the requests made ahead.
 	settings := make(chan settingsResult, 1)
 	if c != nil {
 		go func() {
@@ -302,6 +362,109 @@ type settingsResult struct {
 	err      error
 }
 
+// asTestProcesses returns c requesting as the test processes do, with their
+// Go version and architecture, so that its settings request is theirs; tests
+// replace it.
+var asTestProcesses = func(c client, goVersion string, tests *utils.CLITests) client {
+	nc, ok := c.(net.Client)
+	if !ok {
+		return c
+	}
+	goarch := ""
+	if tests != nil {
+		goarch = tests.GOARCH
+	}
+	if clients := net.CLITestProcessClients(nc, goVersion, goarch, nil); len(clients) == 1 {
+		if tc, ok := clients[0].(client); ok {
+			return tc
+		}
+	}
+	return c
+}
+
+// testProcessClients returns clients that request as the test processes of
+// tests' packages do, one per service that they report; tests replace it.
+var testProcessClients = func(c client, goVersion string, tests *utils.CLITests) []featureClient {
+	nc, ok := c.(net.Client)
+	if !ok {
+		return nil
+	}
+	goarch, dirs := "", []string(nil)
+	if tests != nil {
+		goarch = tests.GOARCH
+		for _, p := range tests.Packages {
+			dirs = append(dirs, p.Dir)
+		}
+	}
+	var clients []featureClient
+	for _, tc := range net.CLITestProcessClients(nc, goVersion, goarch, dirs) {
+		clients = append(clients, tc)
+	}
+	return clients
+}
+
+// requestAhead requests, while go test builds, what the test processes request
+// before their first test: the settings, and the known tests, skippable tests
+// and test management data that the settings enable. The read cache shares
+// the responses with the test processes; one whose request differs requests
+// for itself, as before. The returned function waits for the requests.
+func requestAhead(clients []featureClient) func() {
+	var wg sync.WaitGroup
+	for i, c := range clients {
+		wg.Go(func() { requestFeatures(i, c) })
+	}
+	return wg.Wait
+}
+
+// requestFeatures requests what one test process would, deciding as
+// ensureAdditionalFeaturesInitialization does. Test processes request again,
+// and report, what fails here.
+func requestFeatures(client int, c featureClient) {
+	started := time.Now()
+	settings, err := c.GetSettings()
+	switch {
+	case err != nil:
+		log.Debug("civisibility: CLI request ahead settings failed [client:%d duration:%s error:%s]", client, time.Since(started).Round(time.Microsecond), redactError(err))
+		return
+	case settings == nil:
+		log.Debug("civisibility: CLI request ahead settings empty [client:%d]", client)
+		return
+	case settings.RequireGit:
+		// Settings that require Git change after the upload, which waits
+		// for a test process.
+		log.Debug("civisibility: CLI requests ahead stop: the settings require Git [client:%d]", client)
+		return
+	}
+	testManagement := settings.TestManagement.Enabled && infra.BoolEnv(constants.CIVisibilityTestManagementEnabledEnvironmentVariable, true)
+	var wg sync.WaitGroup
+	result := func(name string, err error) {
+		if err != nil {
+			log.Debug("civisibility: CLI request ahead %s failed [client:%d error:%s]", name, client, redactError(err))
+		}
+	}
+	if settings.KnownTestsEnabled {
+		wg.Go(func() { _, err := c.GetKnownTests(); result("known tests", err) })
+	}
+	if settings.TestsSkipping {
+		wg.Go(func() { _, err := c.GetSkippableTests(); result("skippable tests", err) })
+	}
+	if testManagement {
+		wg.Go(func() { _, err := c.GetTestManagementTests(); result("test management", err) })
+	}
+	wg.Wait()
+	log.Debug("civisibility: CLI requests ahead finished [client:%d known_tests:%t skippable:%t test_management:%t duration:%s]", client, settings.KnownTestsEnabled, settings.TestsSkipping, testManagement, time.Since(started).Round(time.Microsecond))
+}
+
+// urlUserinfo matches the user and password of a URL, which an error such as
+// url.Error repeats: as Go's URL parser, everything in the authority up to its
+// last @.
+var urlUserinfo = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.-]*://)[^/?#\s]*@`)
+
+// redactError returns err's message without the credentials of a URL in it.
+func redactError(err error) string {
+	return urlUserinfo.ReplaceAllString(err.Error(), "${1}[redacted]@")
+}
+
 // searchAhead starts the upload's first commit search; the returned function
 // waits for it.
 func searchAhead(c client, uploadEnabled bool) func() (*gitupload.SearchCommitsResponse, error) {
@@ -399,16 +562,28 @@ func impacted(ctx context.Context, c client, uploaded utils.CLIGitUpload, settin
 // waitUsed waits until a test process marks the state as used, or go test
 // exits, or the CLI stops the worker.
 func waitUsed(ctx context.Context, dir string, exited <-chan struct{}) bool {
-	used := filepath.Join(dir, utils.CLIGitUsedFile)
+	return waitFor(ctx, dir, exited, utils.CLIGitUsedFile)
+}
+
+// waitFor waits until one of the named files exists in dir, or go test exits,
+// or the CLI stops the worker; it reports whether one exists.
+func waitFor(ctx context.Context, dir string, exited <-chan struct{}, names ...string) bool {
+	exists := func() bool {
+		for _, name := range names {
+			if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+				return true
+			}
+		}
+		return false
+	}
 	delay := time.Millisecond
 	for {
-		if _, err := os.Stat(used); err == nil {
+		if exists() {
 			return true
 		}
 		select {
 		case <-exited:
-			_, err := os.Stat(used)
-			return err == nil && ctx.Err() == nil
+			return exists() && ctx.Err() == nil
 		case <-ctx.Done():
 			return false
 		case <-time.After(delay):

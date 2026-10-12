@@ -127,8 +127,10 @@ the same graph lookup and wrapper serve both libraries. That lookup also detects
 the full SDK in production dependencies and test-only helpers. Mini then guards
 the SDK's CI initialization and transport configuration through the same wrapper,
 including builds without Orchestrion. APM remains available. Builds needing none
-of these features omit `-toolexec`; declaring an unused SDK dependency does not
-activate the guard.
+of these features omit `-toolexec`, unless go test may take results from its
+cache while ddto's Git worker requests for the test processes: then the same
+wrapper, in its `link` mode, tells the worker when go test links a test binary.
+Declaring an unused SDK dependency does not activate the guard.
 The same wrapper inserts [SDK span mirror hooks](sdk-span-mirror.md). The native
 test context carries Mini's identity, while SDK contexts retain APM parentage.
 Finalized SDK spans are copied into the existing CI queue under independent IDs.

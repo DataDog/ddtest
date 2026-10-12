@@ -41,6 +41,10 @@ func TestCLIGitWorkerFetchesHeadOnlyAfterUse(t *testing.T) {
 	shallow := filepath.Join(t.TempDir(), "shallow")
 	git(t, origin, "clone", "--depth=1", "file://"+filepath.ToSlash(origin), shallow)
 	t.Chdir(shallow)
+	// Whether the repository is shallow is read once per process: earlier
+	// tests read it in other repositories.
+	isAShallowCloneRepositoryOnce.Store(nil)
+	t.Cleanup(func() { isAShallowCloneRepositoryOnce.Store(nil) })
 
 	original := getProviderTagsFunc
 	t.Cleanup(func() { getProviderTagsFunc = original })

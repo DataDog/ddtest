@@ -16,9 +16,9 @@ func testifySuitePackage(t *testing.T, version, source string) *goPackage {
 	}
 	p := &goPackage{Dir: dir, ImportPath: "github.com/stretchr/testify/suite", GoFiles: []string{"suite.go"}}
 	p.Module = &struct {
-		Path, Version string
-		Main          bool
-		Replace       *struct{ Path, Dir, Version string }
+		Path, Version, Dir string
+		Main               bool
+		Replace            *struct{ Path, Dir, Version string }
 	}{Path: "github.com/stretchr/testify", Version: version}
 	return p
 }
@@ -63,9 +63,9 @@ func TestUnsupportedGoleakWarnsInsteadOfFailing(t *testing.T) {
 	}
 	pkg := &goPackage{Dir: dir, ImportPath: "go.uber.org/goleak", GoFiles: []string{"leaks.go"}}
 	pkg.Module = &struct {
-		Path, Version string
-		Main          bool
-		Replace       *struct{ Path, Dir, Version string }
+		Path, Version, Dir string
+		Main               bool
+		Replace            *struct{ Path, Dir, Version string }
 	}{Path: "go.uber.org/goleak", Version: "v1.2.1"}
 	entry, warning, err := prepareGoleak(pkg, map[string]string{}, t.TempDir())
 	if err != nil || entry != nil || !strings.Contains(warning, "goleak v1.2.1 is not instrumented") {

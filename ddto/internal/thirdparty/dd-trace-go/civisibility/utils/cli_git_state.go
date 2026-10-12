@@ -34,6 +34,10 @@ const (
 	// as when go test takes every result from its cache, the CLI does not
 	// wait for the worker's upload.
 	CLIGitUsedFile = "used"
+	// CLIGitLinkingFile marks that go test links a test binary, which it does
+	// only for a result that is not in its cache: a test process will use the
+	// state. ddto's tool creates it.
+	CLIGitLinkingFile = "linking"
 )
 
 // CLIGitUpload records the end of the CLI's repository upload. Error is set
@@ -290,6 +294,8 @@ func FetchCLIHeadCommit() {
 func ResetHandedCLIGitStateForTesting() {
 	cliGitStateOnce = sync.Once{}
 	cliGitStateDir, cliGitRecord, cliGitStateOwned = "", nil, false
+	cliTestsOnce = sync.Once{}
+	cliTests = nil
 }
 
 // SameCheckout reports whether dir lies in the checkout whose .git entry is

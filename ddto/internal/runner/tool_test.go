@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
 )
 
 func TestToolDispatch(t *testing.T) {
@@ -106,6 +108,53 @@ func BenchmarkToolBypassDispatch(b *testing.B) {
 	for b.Loop() {
 		if ToolNeedsPlan("testify-cover", args, "example.com/client") {
 			b.Fatal("unexpected transformation")
+		}
+	}
+}
+
+// ddto's tool, in a mode with the link signal, marks the Git worker's state
+// when go test links a test binary, and only then: not when cmd/go asks the
+// linker for its version, not for another binary, not without the signal or
+// the state.
+func TestNoteTestLink(t *testing.T) {
+	state := t.TempDir()
+	mark := filepath.Join(state, "linking")
+	for _, tc := range []struct {
+		mode  string
+		args  []string
+		state string
+		want  bool
+	}{
+		{"link", []string{"/go/pkg/tool/link", "-o", "/work/b001/pkg.test", "-importcfg", "cfg", "/work/b001/_pkg_.a"}, state, true},
+		{"testify-goleak-link", []string{"/go/pkg/tool/link.exe", "-o=/work/b001/pkg.test.exe", "/work/b001/_pkg_.a"}, state, true},
+		{"link", []string{"/go/pkg/tool/link", "-V=full"}, state, false},
+		{"link", []string{"/go/pkg/tool/link", "-o", "/work/b001/exe/a.out", "/work/b001/_pkg_.a"}, state, false},
+		{"link", []string{"/go/pkg/tool/compile", "-o", "/work/b001/pkg.test"}, state, false},
+		{"testify", []string{"/go/pkg/tool/link", "-o", "/work/b001/pkg.test"}, state, false},
+		{"link", []string{"/go/pkg/tool/link", "-o", "/work/b001/pkg.test"}, "", false},
+	} {
+		_ = os.Remove(mark)
+		t.Setenv(goenv.GitStateHandoff, tc.state)
+		NoteTestLink(tc.mode, tc.args)
+		if _, err := os.Stat(mark); (err == nil) != tc.want {
+			t.Errorf("%s %v with state %q: marked %t, want %t", tc.mode, tc.args, tc.state, err == nil, tc.want)
+		}
+	}
+}
+
+// The link signal joins whatever transform ddto's tool already runs.
+func TestToolModeWithLinkSignal(t *testing.T) {
+	for _, tc := range []struct {
+		plan Plan
+		want string
+	}{
+		{Plan{linkSignal: true}, "link"},
+		{Plan{testify: true, coverOverlay: true, linkSignal: true}, "testify-cover-link"},
+		{Plan{sdkCI: true, linkSignal: true}, "mini-sdk-link"},
+		{Plan{testify: true}, "testify"},
+	} {
+		if got := tc.plan.toolMode(); got != tc.want || !ValidToolMode(got) {
+			t.Errorf("toolMode %q (valid %t), want %q", got, ValidToolMode(got), tc.want)
 		}
 	}
 }

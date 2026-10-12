@@ -32,7 +32,8 @@ and, in Mini, reachable `go.uber.org/goleak`; a coverage bridge handles rewritte
 to preserve application weaving and a single CI reporter. Mini also selects it
 when the test graph reaches the full SDK, to guard its
 CI reporter and install span-copy hooks. Builds needing none of these features
-omit `-toolexec`. The POC has no configuration engine or build daemon. Selecting a
+omit `-toolexec`, except for the Git worker's link signal when results may
+come from Go's test cache. The POC has no configuration engine or build daemon. Selecting a
 module-declared Orchestrion tool lets Go build/cache that tool before the test
 build; Orchestrion owns any additional builds it needs for application weaving.
 

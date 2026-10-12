@@ -29,6 +29,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" ERROR: invalid tool mode")
 			os.Exit(2)
 		}
+		runner.NoteTestLink(mode, args)
 		if !runner.ToolNeedsPlan(mode, args, os.Getenv("TOOLEXEC_IMPORTPATH")) {
 			os.Exit(runner.ExecNativeTool(args))
 		}

@@ -138,15 +138,7 @@ func newClientWithServiceNameAndSubdomain(serviceName, subdomain string) (Client
 			serviceName = utils.ServiceFromCodeOwners()
 		}
 		if serviceName == "" {
-			if repoURL, ok := ciTags[constants.GitRepositoryURL]; ok {
-				// regex to sanitize the repository url to be used as a service name
-				repoRegex := regexp.MustCompile(`(?m)/([a-zA-Z0-9\-_.]*)$`)
-				matches := repoRegex.FindStringSubmatch(repoURL)
-				if len(matches) > 1 {
-					repoURL = strings.TrimSuffix(matches[1], ".git")
-				}
-				serviceName = repoURL
-			}
+			serviceName = repositoryServiceName(ciTags[constants.GitRepositoryURL])
 		}
 	}
 
@@ -171,6 +163,8 @@ func newClientWithServiceNameAndSubdomain(serviceName, subdomain string) (Client
 	var requestHandler *RequestHandler
 	var agentURL *url.URL
 	var apiKeyValue string
+	// socket is the Agent's Unix socket, which baseURL names only lossily.
+	var socket string
 
 	agentlessEnabled := internal.BoolEnv(constants.CIVisibilityAgentlessEnabledEnvironmentVariable, false)
 	if agentlessEnabled {
@@ -208,6 +202,7 @@ func newClientWithServiceNameAndSubdomain(serviceName, subdomain string) (Client
 			// If we're connecting over UDS we can just rely on the agent to provide the hostname
 			log.Debug("connecting to agent over unix, do not set hostname on any traces")
 			requestHandler = NewRequestHandlerWithClient(internal.UDSClient(agentURL.Path, 10*time.Second))
+			socket = agentURL.Path
 			agentURL = internal.UnixDataSocketURL(agentURL.Path)
 		} else {
 			requestHandler = NewRequestHandler()
@@ -299,10 +294,88 @@ func newClientWithServiceNameAndSubdomain(serviceName, subdomain string) (Client
 			RuntimeVersion: ciTags[constants.RuntimeVersion],
 			Custom:         customConfiguration,
 		},
-		readCacheScopeIdentity: newReadCacheScopeIdentity(ciTags),
+		readCacheScopeIdentity: cliReadCacheScopeIdentity(newReadCacheScopeIdentity(ciTags), cliStateDir(), apiKeyValue, socket),
 		headers:                defaultHeaders,
 		handler:                requestHandler,
 	}, startTelemetry
+}
+
+// requestContext returns the context that stops c's requests.
+func (c *client) requestContext() context.Context {
+	if c.handler == nil {
+		return context.Background()
+	}
+	return c.handler.context()
+}
+
+// repositoryServiceName returns the service named after the repository, the
+// last resort for a test process's service.
+func repositoryServiceName(repoURL string) string {
+	// regex to sanitize the repository url to be used as a service name
+	repoRegex := regexp.MustCompile(`(?m)/([a-zA-Z0-9\-_.]*)$`)
+	matches := repoRegex.FindStringSubmatch(repoURL)
+	if len(matches) > 1 {
+		repoURL = strings.TrimSuffix(matches[1], ".git")
+	}
+	return repoURL
+}
+
+// CLITestProcessClients returns copies of c, the client of ddto's Git worker,
+// that request as the test processes of the packages in dirs do: with their
+// Go version and architecture, and one copy per service that they report.
+// Their requests then share the read cache's entries with the test
+// processes'. Without dirs, the one copy keeps c's service.
+func CLITestProcessClients(c Client, goVersion, goarch string, dirs []string) []Client {
+	cc, ok := c.(*client)
+	if !ok {
+		return nil
+	}
+	copyFor := func(service string) Client {
+		copied := *cc
+		if goVersion != "" {
+			copied.testConfigurations.RuntimeVersion = goVersion
+		}
+		if goarch != "" {
+			copied.testConfigurations.OsArchitecture = goarch
+		}
+		copied.serviceName = service
+		return &copied
+	}
+	if len(dirs) == 0 {
+		return []Client{copyFor(cc.serviceName)}
+	}
+	var clients []Client
+	services := map[string]bool{}
+	for _, dir := range dirs {
+		service := testProcessServiceName(cc.repositoryURL, dir)
+		if !services[service] {
+			services[service] = true
+			clients = append(clients, copyFor(service))
+		}
+	}
+	return clients
+}
+
+// testProcessServiceName returns the service that a test process of the
+// package in dir selects in newClientWithServiceNameAndSubdomain.
+func testProcessServiceName(repoURL, dir string) string {
+	if service := env.Get("DD_SERVICE"); service != "" {
+		return service
+	}
+	if service := utils.ServiceFromCodeOwnersForDirectory(dir); service != "" {
+		return service
+	}
+	return repositoryServiceName(repoURL)
+}
+
+// cliStateDir returns the directory of ddto's state when this process is the
+// invocation's Git worker or a test process that uses its state.
+func cliStateDir() string {
+	dir, record := utils.HandedCLIGitState()
+	if record == nil {
+		return ""
+	}
+	return dir
 }
 
 // cliTelemetryOwner is the telemetry application that ddto's Git worker

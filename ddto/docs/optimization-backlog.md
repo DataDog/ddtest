@@ -23,8 +23,9 @@ Implemented items are removed from this list; the pull requests that
 implemented them record their results, for example
 [#25](https://github.com/tonyredondo/dd-ci-testing-poc/pull/25),
 [#29](https://github.com/tonyredondo/dd-ci-testing-poc/pull/29),
-[#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31) and
-[#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32). Item numbers
+[#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31),
+[#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32) and
+[#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34). Item numbers
 do not change, so a missing number is a completed item.
 
 In items 11–58, `civisibility/`, `hostname/`, `osinfo/` and `telemetry/` paths
@@ -45,16 +46,18 @@ also need an entry in
 | 4 | Reduce remaining provisioning commands | Startup of CLI invocations that must provide the runtime | Low only if existing metadata is sufficient |
 | 7 | Store small metric sets without a map | Allocations for metric-bearing events | Medium; measure lookup/encoding tradeoffs |
 | 8 | Collect coverage counters in memory | Profile I/O and parsing per covered test | High |
-| 9 | Fetch settings in the CLI | The first request on the critical path; requests outside the read cache | High |
 | 10 | Reduce telemetry requests at exit | A round trip at each test process's exit | Medium |
 
-Item 9 moves work that every test binary repeats into the CLI, which runs once
-per invocation. The CLI does the work and hands the results to the binaries
-through the environment and files they already read. [#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32) did this
+The CLI runs once per invocation, so it can do the work that every test
+binary repeats and hand the results to the binaries through the environment
+and files they already read. [#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32) did this
 for the Git metadata, the repository upload and the base-branch discovery,
-through a Git worker that the CLI starts once, and
+through a Git worker that the CLI starts once,
 [#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31) for the GitHub
-Actions job ID. Item 51 is a smaller step in the same direction.
+Actions job ID, and [#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34) for the settings, known tests,
+skippable tests and test management data, requested while `go test` builds
+when it runs every test package, and each package's module for coverage. Item 51 is a smaller step in the same
+direction.
 
 ### CLI and build path
 
@@ -212,32 +215,6 @@ parallel attribution, initial-attempt retry policy, impacted-test inputs,
 aggregate percentages, normal/deferred processing and shutdown on errors.
 Compare count and atomic modes, including `-race`, across supported toolchains.
 Measure profile bytes, CPU, allocations, temporary disk and peak memory.
-
-## 9. Settings from the CLI
-
-The SDK's short-lived read cache already shares identical settings, known-tests
-and skippable-tests responses between binaries: by parent process locally and
-by CI job in CI. One `ddto test ./...` sends one settings request. The first
-binary still waits for it after compilation, and requests outside the cache's
-scope repeat, such as packages with different CODEOWNERS services. ddto's Git
-worker ([#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32)) already requests the settings once per invocation, while it
-uploads, to decide whether to compute the impacted-tests state; in CI the read
-cache shares that response with the binaries, but locally its scope is the
-worker's parent process.
-
-Move the requests to the CLI: send them during compilation and write the files
-that the test binaries read, such as the manifest or read-cache entries, so no
-binary waits on the network. The same files can carry each package's module
-path and directory, which per-test coverage, LCOV reports and backfill
-otherwise resolve with `go list` in each binary. Events must still upload
-normally. Preserve response/error fallbacks for ITR, retries, EFD, impacted
-tests and management, independent invocations and event hierarchy. Compile-only
-`-c` must send no runtime requests. Standalone binaries, retry children and
-interrupted parents need a safe fallback without a live CLI.
-
-Measure first-test admission and whole-command time with one and many packages,
-local and delayed receivers, cold and cached builds. Sharing helps wall time
-only when it removes work from the command's critical path.
 
 ## 10. Telemetry requests
 
@@ -631,8 +608,10 @@ Wait while the lock's process is alive and the lock is younger than the
 request bound, try to acquire the lock again before falling back, and cap the
 poll interval at 10–20 ms: a poll is one stat and a failed open. Expect 0–100 ms
 less per wait normally and 2 s less per waiter when the owner is slow. The
-cache format is shared with dd-trace-go binaries, so keep it compatible. This
-relates to item 9, which would remove the waits.
+cache format is shared with dd-trace-go binaries, so keep it compatible. In
+`ddto test`, [#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34) starts these requests in the Git
+worker, while `go test` builds when it runs every test package, so a binary
+waits only for the rest of a request that is already under way.
 
 ## 49. Read-cache expiry fields
 
@@ -726,7 +705,7 @@ provisioning commands; this cache needs its own decision.
 
 ## 57. Events through the CLI
 
-This extends items 9 and 10. Every test binary links Mini's HTTP and TLS
+This extends [#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34) and item 10. Every test binary links Mini's HTTP and TLS
 delivery. A one-test binary grows from 4.8 to 16.7 MB, and its link from 106 to
 289 ms, medians of 12. A probe binary that references only
 `http.DefaultClient.Do` and `tls.Client` links in 210 ms and is 5.6 MB larger,
@@ -744,7 +723,8 @@ For `ddto test` runs, test binaries could hand encoded batches to the CLI
 through an inherited pipe or a local socket. The CLI would deliver them over
 HTTP with one connection pool, batching across packages. The binary drops
 `net/http` and `crypto/tls` only when settings, known tests and telemetry also
-come from the CLI (items 9 and 10), so this is the transport those items need.
+come from the CLI with no request of its own as a fallback; [#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34) and item 10
+still keep that fallback, so this is the transport they need.
 [#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32) already gave the CLI the SDK's HTTP client, in its Git worker. Builds with `-c` and standalone binaries keep today's
 delivery through a different generated import. The CLI then owns retries and
 the final flush, and must keep each binary's event order, back-pressure,

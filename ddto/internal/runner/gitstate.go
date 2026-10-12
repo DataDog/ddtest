@@ -21,6 +21,7 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/envconfig"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/impactedtests"
+	civisibilitynet "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/net"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/globalconfig"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
@@ -223,14 +224,14 @@ func (w *gitWorker) stoppedAt() time.Time {
 // Otherwise the worker stops and each test process reads Git, and reports
 // its telemetry, as before. goVersion is the test processes' Go version,
 // which the worker's telemetry application reports.
-func (w *gitWorker) handOff(testDirs []string, launcher bool, goVersion string) []string {
+func (w *gitWorker) handOff(tests utils.CLITests, launcher bool, goVersion string) []string {
 	if w == nil {
 		return nil
 	}
 	record, ready := w.record(gitRecordWait)
 	matched := false
-	for _, dir := range testDirs {
-		if ready && utils.SameCheckout(dir, record.GitFolder) {
+	for _, p := range tests.Packages {
+		if ready && utils.SameCheckout(p.Dir, record.GitFolder) {
 			matched = true
 			break
 		}
@@ -240,6 +241,13 @@ func (w *gitWorker) handOff(testDirs []string, launcher bool, goVersion string) 
 	if !matched || launcher {
 		w.closeInput()
 		return nil
+	}
+	// The worker requests for the test processes, and they find their
+	// modules, with this description; without it, they work as before.
+	if err := utils.WriteCLIGitStateFile(w.state, utils.CLITestsFile, tests); err != nil {
+		w.debug.printf("git worker test description not written: %v", err)
+	} else {
+		w.debug.printf("git worker test description packages=%d goarch=%s runs_every_test=%t go_version=%s", len(tests.Packages), tests.GOARCH, tests.RunsEveryTest, goVersion)
 	}
 	w.proceeded.Store(true)
 	if err := w.send(cligit.Proceed + " " + goVersion); err != nil {
@@ -371,6 +379,13 @@ func maxTime(a, b time.Time) time.Time {
 func (w *gitWorker) release() {
 	if w.log != nil {
 		_ = w.log.Close()
+	}
+	// The invocation's read-cache entries, which the worker requested ahead,
+	// serve no later invocation.
+	if removed, err := civisibilitynet.RemoveCLIReadCache(w.state); err != nil {
+		w.debug.printf("git worker read cache not removed: %v", err)
+	} else {
+		w.debug.printf("git worker read cache removed left_directories_removed=%d", removed)
 	}
 	if !w.keep {
 		_ = os.RemoveAll(w.state)

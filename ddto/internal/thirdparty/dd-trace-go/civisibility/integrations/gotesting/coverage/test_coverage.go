@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -260,8 +261,20 @@ func resolveModuleInfo() {
 		return
 	}
 	moduleInfoSource.pending = false
+	// ddto's state describes the module of each test package that it runs.
+	if path, dir, ok := cliModuleInfo(moduleInfoSource.dir); ok {
+		modulePath, moduleDir = path, dir
+		log.Debug("civisibility.coverage: module from ddto's test description [module:%s]", modulePath)
+		return
+	}
+	started := time.Now()
 	modulePath, moduleDir = listModuleInfo(moduleInfoSource.dir, moduleInfoSource.env, moduleInfoSource.goPath)
+	log.Debug("civisibility.coverage: module from go list [module:%s duration:%s]", modulePath, time.Since(started).Round(time.Microsecond))
 }
+
+// cliModuleInfo returns the module of the test package in dir from ddto's
+// state; tests replace it.
+var cliModuleInfo = utils.CLITestPackageModule
 
 // listModuleInfo returns the module path and directory that go list reports
 // for the package in dir. Tests replace it.

@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
@@ -51,7 +53,35 @@ func (p Plan) toolMode() string {
 	if p.coverOverlay {
 		modes = append(modes, "cover")
 	}
+	if p.linkSignal {
+		modes = append(modes, "link")
+	}
 	return strings.Join(modes, "-")
+}
+
+// NoteTestLink tells ddto's Git worker, through its state, that go test links
+// a test binary. go test links one only when the binary's result is not in its
+// cache, so a test process will run, and the worker can request for it while
+// the binary links.
+func NoteTestLink(mode string, args []string) {
+	if mode != "link" && !strings.HasSuffix(mode, "-link") || len(args) < 2 || strings.TrimSuffix(filepath.Base(args[0]), ".exe") != "link" {
+		return
+	}
+	output := ""
+	for i, arg := range args[1:] {
+		if value, ok := strings.CutPrefix(arg, "-o="); ok {
+			output = value
+		} else if arg == "-o" && i+2 < len(args) {
+			output = args[i+2]
+		}
+	}
+	state := os.Getenv(goenv.GitStateHandoff)
+	if state == "" || !strings.HasSuffix(strings.TrimSuffix(output, ".exe"), ".test") {
+		return
+	}
+	if mark, err := os.OpenFile(filepath.Join(state, utils.CLIGitLinkingFile), os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+		_ = mark.Close()
+	}
 }
 
 // ToolNeedsPlan is the allocation-free dispatch before any plan I/O. Go probes

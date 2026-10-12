@@ -205,8 +205,18 @@ runs while tests do, and starting a process reads state that tests may change:
 changes under `-race`. The ITR backfill preflight runs before the tests, and
 the LCOV report and backfill finalization after them.
 
-Checks: `TestModuleInfoResolvesOnFirstUseFromInitialization` and
-`TestMiniCoverageWithGlobalTimeChanges`.
+A test process that ddto hands its state takes the module from the state's
+`tests.json` instead (`cliModuleInfo`, which is
+`utils.CLITestPackageModule`; see
+[Requests from ddto's CLI](#requests-from-ddtos-cli)), and starts no `go`
+process. ddto writes each test package's module from its own package query.
+A directory that the state does not describe, or a module without a
+directory, still runs `go list`.
+
+Checks: `TestModuleInfoResolvesOnFirstUseFromInitialization`,
+`TestMiniCoverageWithGlobalTimeChanges`, `TestModuleInfoFromCLIState`,
+`TestCLITestPackageModule` and
+`integration/TestMiniCLIStateGivesModuleToCoverage`.
 
 ## Telemetry startup and HTTP completion
 
@@ -620,14 +630,19 @@ initializes.
   (`computeAnalyzer`).
 
 The worker writes the record before ddto starts go test. It searches the
-backend's commits while go test builds, a read-only request, but unshallows,
-packs and uploads only after a test process marks the state `used`, and then
-requests the settings as test processes do, concurrently with the upload.
-When go test takes every result from its cache, no process uses the state and
-the worker cancels its commit search, waits for it and exits without changing
-the repository. The worker closes its
-standard output once it has written its results, or failed to, and ddto then
-writes any missing result, so no process waits for its timeouts.
+backend's commits, a read-only request, and requests what test processes
+request before their first test (see
+[Requests from ddto's CLI](#requests-from-ddtos-cli)): while go test builds
+when go test runs every test package, otherwise once a test process marks the
+state `used`, so that a run whose results all come from Go's test cache sends
+no request. It unshallows, packs and uploads only after a test process marks
+the state `used`. Its settings
+decide the impacted-tests state after the upload. When go test takes every
+result from its cache, no process uses the state and the worker cancels its
+commit search and requests, waits for them and exits without changing the
+repository. The worker closes its standard output once it has written its
+results, or failed to, and ddto then writes any missing result, so no process
+waits for its timeouts.
 
 ddto writes `exited` to the worker once `go test` exits and waits for it at
 most `--git-upload-timeout` (default one minute), which also bounds the test
@@ -767,6 +782,169 @@ Checks: `TestSharedAppReportsOwnerIdentity`, `TestSharedAppRequiresSequence`,
 `TestRunOwnsTelemetryApplication` and `integration/TestMiniCLITelemetry`, which
 checks one application, sequential `seq_id`s, the worker's Git metrics, no
 telemetry from a cached run, reported failures and a binary run alone.
+
+## Requests from ddto's CLI
+
+Before its first test, each test process requests the settings and, as they
+enable them, the known tests, skippable tests and test management data. The
+read cache shared those responses between test processes, but the first one
+waited for them after compilation, and the Git worker's own settings request,
+made with ddto's toolchain and parent, matched no test process's. ddto's Git
+worker now makes these requests while go test builds, as the test processes
+will, and the read cache hands the responses to them.
+
+- ddto writes `tests.json`
+  ([`civisibility/utils/cli_tests_state.go`](civisibility/utils/cli_tests_state.go))
+  before it tells the worker to proceed: the test binaries' `GOARCH`, from its
+  `go env`, whether go test runs every test package (`RunsEveryTest`, below),
+  and each test package's directory, module path and module directory, from
+  its package query. `HandedCLITests` reads it in the worker
+  and in test processes; `ResetHandedCLIGitStateForTesting` also forgets it.
+- `cliReadCacheScopeIdentity` (`utils/net/read_cache.go`) gives the worker,
+  and test processes that use its state, the scope of ddto's invocation, kind
+  `cli`, identified by the state directory, a digest of the client's API key
+  and its Agent's Unix socket, instead of their parent process. They keep a
+  response that one credential or Agent received from another client; the
+  cache never stores the key, and the base URL names a socket only lossily,
+  `/` and `_` alike (`UnixDataSocketURL`). CI scopes,
+  which both already share, stay. The entries must outlast a build
+  of minutes, so the scope's TTL is an hour, and they live in the scope's own
+  directory, `cli/<hash>` of the state directory alone, in the shared one
+  (`readCacheSubdirectory`,
+  `readCachePathsIn`), which ddto removes once the worker has exited
+  (`RemoveCLIReadCache`); the shared directory's cleanup skips directories.
+  A kill or a reboot leaves an invocation's directory, so
+  `RemoveCLIReadCache` also applies the shared directory's cleanup, which
+  removes only expired entries, stale locks and old temporary files, to a
+  bounded number of `cli/` directories (`removeExpiredCLIReadCaches`), and
+  removes those that it emptied. A left directory's entries expire within the
+  TTL, so it hides the others only for that long; a running invocation's
+  entries do not expire. A process holds a lock file in the directory while it
+  writes, so the directory cannot go under it, and `tryCreateReadCacheLock`
+  creates the directory again if the cleanup removed it, empty, after the
+  process computed its paths. The cleanup now removes an expired entry under
+  its key's lock (`removeExpiredReadCacheEntry`, through
+  `acquireReadCacheLock`, which replaces a stale lock), which writers hold
+  while they publish, and removes it only while it still holds the lock, as
+  `writeReadCacheEntry` checks before it publishes; it leaves the entry when
+  a writer holds the lock. Upstream, a
+  cleanup could remove an entry that a writer had just renewed, which this
+  change would otherwise extend to other invocations' directories. One race
+  remains in the SDK's own lock protocol, unchanged here: replacing a stale
+  lock, which a process killed more than an hour earlier left, is not
+  atomic, so two processes can both own the lock, and a cleanup that passed
+  its owner check can still remove a fresh entry before the other replaces
+  its lock. It costs a cache entry and a request, never wrong data; fixing it
+  means changing the protocol upstream, for example stealing locks by rename.
+  They stay in the user's cache directory, not the state directory: test
+  processes may read them while Go's test log is active, and the state
+  directory can lie in the module.
+- `waitForReadCacheEntry` stops waiting for another process's request when the
+  client's request context is done (`requestContext`), so a stopped worker
+  does not wait up to two seconds; other clients have no context.
+- `CLITestProcessClients` (`utils/net/client.go`) copies the worker's client
+  with the test processes' Go version, from `proceed`, and architecture, and
+  with the service that each test package reports: `DD_SERVICE`,
+  `utils.ServiceFromCodeOwnersForDirectory`, or the repository's name
+  (`repositoryServiceName`, extracted from the constructor). The copies' read
+  cache keys and requests are the test processes'.
+  [`civisibility/utils/service_name.go`](civisibility/utils/service_name.go)
+  extracted the owner lookup into `codeOwnersServiceFor`, which
+  `ServiceFromCodeOwners` and `ServiceFromCodeOwnersForDirectory` share.
+- After `proceed`, the worker uses the copy for its own service
+  (`asTestProcesses`), so its settings request for the impacted-tests state is
+  the test processes' too, and `requestAhead` requests, for each service, the
+  settings and then what `ensureAdditionalFeaturesInitialization` would:
+  known tests with `known_tests_enabled`, skippable tests with
+  `tests_skipping`, and test management with `test_management.enabled` unless
+  `DD_TEST_MANAGEMENT_ENABLED` disables it. Settings that require Git are not
+  cached and change after the upload, so the worker leaves the rest to the
+  test processes. The requests run alongside the commit search and stop with
+  it; the worker joins them before `app-closing`, so their metrics leave in it.
+  Test processes request, and report, whatever is missing.
+
+The test processes report `runtime.Version()`, which includes the experiments
+that `GOEXPERIMENT` sets. ddto's `go env` reports the go command's own version,
+with the toolchain's default experiments, and the raw setting; when they
+differ, ddto takes the canonical list from `go tool compile -V`, about 6 ms, and
+appends it as the linker does (`testRuntimeVersion` in
+`internal/runner/environment.go`).
+
+A run whose results all come from Go's test cache sends no request. ddto
+parses go test's arguments as go test does (`internal/runner/options.go`) and
+records in `tests.json` whether go test runs every test package
+(`RunsEveryTest`): in local directory mode, or when a test binary gets an
+argument outside go test's cacheable flags, from the command line or
+`GOFLAGS`: a flag such as `-count=1`, an unknown flag, an argument after the
+package list, `--`, which go test hands on itself, or after `-args` anything
+but `-test.<cacheable flag>=<value>`, as go test checks the arguments that it
+hands on as they are (`noteTestArgument`). Only then does the worker search
+the commits and request while go test builds. Otherwise ddto adds its tool to
+go test in its `link` mode (`plan.linkSignal`), and the tool marks the state
+`linking` (`utils.CLIGitLinkingFile`, `runner.NoteTestLink`) when go test
+links a test binary: go test checks its cache just before the link and links
+only for a result outside it. The worker does both once that mark, or the
+`used` one, appears (`waitFor`), so the requests run while the binary links,
+and a run whose results all come from the cache sends none. go test checks its
+cache again after the link, by the binary's content, so a link does not always
+mean a test process: `-o`, which saves the binary, and `-a`, which rebuilds
+everything, link even for cached results, so ddto adds no signal with them
+(`linksCachedResults`) and the worker waits for a test process. A change that
+leaves a test binary identical, such as a comment, still makes go test relink
+it and take its result from the cache: the worker then requests although no
+test process runs, an accepted cost of the earlier requests. The tool, which
+lets every tool through after its fast check, keeps Go's cache keys: cmd/go
+takes each tool's identity from its `-V=full` output through the wrapper. The cacheable flags are the
+newest supported Go's: Go has only added to them, so a flag outside them
+disables the cache in every version. Test processes outside the worker's
+checkout, binaries run outside `ddto test` and the SDK runtime keep their own
+requests and scopes.
+
+Checks: `TestCLIReadCacheScopeIdentity`, `TestCLITestProcessClients`,
+`TestCLIReadCacheLastsTheInvocation`,
+`TestRemoveCLIReadCacheRemovesExpiredEntries`,
+`TestRemoveCLIReadCacheReachesEveryDirectory`,
+`TestReadCacheLockRecreatesRemovedDirectory`,
+`TestReadCacheCleanupLeavesAnEntryBeingRenewed`,
+`TestReadCacheCleanupReplacesStaleLocks`,
+`TestReadCacheCleanupRemovesOnlyAsLockOwner`,
+`TestReadCacheWaiterStopsWithContext`,
+`TestTestRuntimeVersionMatchesBinaries`, which builds a binary under each
+`GOEXPERIMENT` case, `TestExperimentSeparator`,
+`TestCodeOwnersPackageService`, `TestCLITestPackageModule`,
+`TestRunRequestsAheadForTestProcesses`, `TestRunWaitsForItsStoppedRequests`,
+`TestRunRequestsNothingWhileResultsMayBeCached`, `TestRunsEveryTest`,
+`TestRunRequestsWhenGoTestLinks`, `TestNoteTestLink`, `TestLinksCachedResults`,
+`TestToolModeWithLinkSignal`,
+`TestWorkerRequestsAsTestProcesses`,
+`integration/TestMiniCLIStateRequestsAhead`, which runs the worker and then
+a test process that makes no request of its own, also with services from
+CODEOWNERS, and `integration/TestMiniCLIStateSharedRequests`, which checks one
+request per endpoint, or per service, in a `ddto test` run that runs every
+test, also with `GOEXPERIMENT`, none in a run whose results all come from the
+cache, also with cacheable flags after `-args` and with `-o`, a `linking` mark
+only in a run with a result outside the cache, ddto's `tests.json` and the removed cache
+directory.
+
+With `DD_TRACE_DEBUG`, the worker, the read cache and test processes log
+these decisions. In `worker.log`, `cligit.Run` logs what started the requests
+ahead (`trigger:runs_every_test`, `linking` or `used`), with the test
+processes' Go version and the number of clients, or that go test exited
+before a test process used the state, or that ddto stopped the worker, with
+the stop reason. `requestFeatures` logs, per client, a failed or
+Git-requiring settings response, each failed feature request and the features
+it requested with the duration; `redactError` hides a URL's user and password
+in those errors, which `url.Error` repeats. `HandedCLITests` logs the test
+description it read. The read cache logs the invocation's scope
+(`cliReadCacheScopeIdentity`), each hit with the scope's kind, a hit after
+waiting for another process's request with the wait, and a miss with the
+request's duration and whether its response may be stored; a failed store
+already logs its own line. `RemoveCLIReadCache` returns how
+many left directories it removed, for ddto's log. Coverage logs whether the
+module came from ddto's description or `go list`, with the latter's
+duration. None of these lines holds a credential or a request body.
+`integration/TestMiniCLIStateDebugLog` and
+`integration/TestMiniCLIStateGivesModuleToCoverage` check them.
 
 ## Testify method names
 

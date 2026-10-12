@@ -50,3 +50,38 @@ func TestModuleInfoResolvesOnFirstUseFromInitialization(t *testing.T) {
 		t.Fatalf("module resolved %d times", calls)
 	}
 }
+
+// A test process that ddto describes takes its module from ddto's state and
+// starts no go list; a directory that the state does not describe still asks
+// go list.
+func TestModuleInfoFromCLIState(t *testing.T) {
+	ResetForTesting()
+	t.Cleanup(ResetForTesting)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	calls := 0
+	previous, previousCLI := listModuleInfo, cliModuleInfo
+	listModuleInfo = func(string, []string, string) (string, string) {
+		calls++
+		return "example.com/listed", "/listed"
+	}
+	described := map[string][2]string{dir: {"example.com/described", "/described"}}
+	cliModuleInfo = func(d string) (string, string, bool) {
+		m, ok := described[d]
+		return m[0], m[1], ok
+	}
+	t.Cleanup(func() { listModuleInfo, cliModuleInfo = previous, previousCLI })
+
+	deferModuleInfo()
+	resolveModuleInfo()
+	if calls != 0 || modulePath != "example.com/described" || moduleDir != "/described" {
+		t.Fatalf("calls=%d module=%q dir=%q", calls, modulePath, moduleDir)
+	}
+
+	delete(described, dir)
+	deferModuleInfo()
+	resolveModuleInfo()
+	if calls != 1 || modulePath != "example.com/listed" || moduleDir != "/listed" {
+		t.Fatalf("calls=%d module=%q dir=%q", calls, modulePath, moduleDir)
+	}
+}

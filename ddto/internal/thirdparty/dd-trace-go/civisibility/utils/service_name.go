@@ -58,31 +58,56 @@ func ServiceFromCodeOwners() string {
 		if !ok {
 			return
 		}
-		owners := GetCodeOwners()
-		if owners == nil {
-			return
-		}
-		owner := "not-owned"
-		if entry, found := owners.MatchDirectory(path.Clean("/" + directory)); found && entry.FirstOwner() != "" {
-			owner = entry.FirstOwner()
-			if strings.HasPrefix(owner, "@") {
-				owner = strings.TrimLeft(owner, "@")
-				if slash := strings.LastIndexByte(owner, '/'); slash >= 0 {
-					owner = owner[slash+1:]
-				}
-			}
-			if owner == "" {
-				owner = "not-owned"
-			}
-		}
-		format := env.Get(ServiceFromCodeOwnersFormatEnv)
-		if format == "" {
-			format = defaultCodeOwnersServiceFormat
-		}
-		codeOwnersService = strings.ReplaceAll(format, "$(owner)", owner)
-		log.Debug("civisibility: service from CODEOWNERS package=%q owner=%q service=%q", directory, owner, codeOwnersService)
+		codeOwnersService = codeOwnersServiceFor(directory)
 	})
 	return codeOwnersService
+}
+
+// ServiceFromCodeOwnersForDirectory returns the service that
+// ServiceFromCodeOwners returns in a test process of the package in the
+// absolute directory, for ddto's Git worker, which requests for each one.
+func ServiceFromCodeOwnersForDirectory(directory string) string {
+	if env.Get("DD_SERVICE") != "" || !infra.BoolEnv(ServiceFromCodeOwnersEnv, false) {
+		return ""
+	}
+	workspace := GetCITagsReadOnly()[constants.CIWorkspacePath]
+	if workspace == "" {
+		return ""
+	}
+	relative, ok := relativePathInsideWorkspace(canonicalServiceDirectory(workspace), canonicalServiceDirectory(directory))
+	if !ok {
+		return ""
+	}
+	return codeOwnersServiceFor(filepath.ToSlash(relative))
+}
+
+// codeOwnersServiceFor returns the service of the package in directory,
+// relative to the workspace, or "" without a CODEOWNERS file.
+func codeOwnersServiceFor(directory string) string {
+	owners := GetCodeOwners()
+	if owners == nil {
+		return ""
+	}
+	owner := "not-owned"
+	if entry, found := owners.MatchDirectory(path.Clean("/" + directory)); found && entry.FirstOwner() != "" {
+		owner = entry.FirstOwner()
+		if strings.HasPrefix(owner, "@") {
+			owner = strings.TrimLeft(owner, "@")
+			if slash := strings.LastIndexByte(owner, '/'); slash >= 0 {
+				owner = owner[slash+1:]
+			}
+		}
+		if owner == "" {
+			owner = "not-owned"
+		}
+	}
+	format := env.Get(ServiceFromCodeOwnersFormatEnv)
+	if format == "" {
+		format = defaultCodeOwnersServiceFormat
+	}
+	service := strings.ReplaceAll(format, "$(owner)", owner)
+	log.Debug("civisibility: service from CODEOWNERS package=%q owner=%q service=%q", directory, owner, service)
+	return service
 }
 
 func canonicalServiceDirectory(directory string) string {

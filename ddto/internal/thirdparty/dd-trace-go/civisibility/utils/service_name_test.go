@@ -60,6 +60,10 @@ func TestCodeOwnersPackageService(t *testing.T) {
 			if got := ServiceFromCodeOwners(); got != tc.want {
 				t.Fatalf("service=%q, want %q", got, tc.want)
 			}
+			// ddto's Git worker finds the same service for the package.
+			if got := ServiceFromCodeOwnersForDirectory(filepath.Join(root, tc.directory)); got != tc.want {
+				t.Fatalf("service for the directory=%q, want %q", got, tc.want)
+			}
 			if got := os.Getenv("DD_SERVICE"); got != tc.service {
 				t.Fatalf("DD_SERVICE was changed to %q", got)
 			}

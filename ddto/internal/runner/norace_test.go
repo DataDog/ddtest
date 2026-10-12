@@ -211,9 +211,9 @@ func TestNoraceOverlay(t *testing.T) {
 	client := write("client.go", "package c\n\nfunc main() {}\n")
 	runtimeFile := write("runtime.go", "package testopt\n\nfunc Run() {}\n")
 	mini := &struct {
-		Path, Version string
-		Main          bool
-		Replace       *struct{ Path, Dir, Version string }
+		Path, Version, Dir string
+		Main               bool
+		Replace            *struct{ Path, Dir, Version string }
 	}{Path: miniModule, Main: true}
 	listed := []goPackage{
 		{ImportPath: "client", Dir: dir, GoFiles: []string{"client.go"}},

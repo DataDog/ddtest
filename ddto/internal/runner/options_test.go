@@ -188,3 +188,111 @@ func TestRaceOption(t *testing.T) {
 		}
 	}
 }
+
+// go test takes no result from its cache in local directory mode, or when its
+// test binaries get an argument outside the cacheable flags, from the command
+// line or GOFLAGS. Only then does the Git worker request for the test
+// processes before one starts.
+func TestRunsEveryTest(t *testing.T) {
+	for _, tc := range []struct {
+		args    []string
+		goflags string
+		want    bool
+	}{
+		{[]string{"./..."}, "", false},
+		{nil, "", true},
+		{[]string{"-v", "-run", "^TestA$", "-race", "-json", "-coverprofile=c.out", "-timeout=1m", "./..."}, "", false},
+		{[]string{"-count=1", "./..."}, "", true},
+		{[]string{"-test.count=2", "./..."}, "", true},
+		{[]string{"-test.run=X", "./..."}, "", false},
+		{[]string{"-bench=.", "./..."}, "", true},
+		{[]string{"-shuffle=on", "./..."}, "", true},
+		{[]string{"-custom", "./..."}, "", true},
+		{[]string{"./...", "-custom"}, "", true},
+		{[]string{"./...", "-args", "value"}, "", true},
+		{[]string{"./...", "-args"}, "", false},
+		{[]string{"./...", "-args", "-test.run=^TestA$", "-test.v=true"}, "", false},
+		{[]string{"./...", "--args", "-test.run=^TestA$"}, "", false},
+		{[]string{"./...", "-args", "-test.count=1"}, "", true},
+		{[]string{"./...", "-args", "-test.run"}, "", true},
+		{[]string{"./...", "-args", "-run=^TestA$"}, "", true},
+		{[]string{"./...", "--", "value"}, "", true},
+		{[]string{"./...", "--"}, "", true},
+		{[]string{"./...", "-v", "value"}, "", true},
+		{[]string{"./..."}, "-count=1", true},
+		{[]string{"./..."}, "-v -race", false},
+	} {
+		opts, err := parseOptions(tc.args, tc.goflags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if opts.runsEveryTest != tc.want {
+			t.Errorf("go test %v with GOFLAGS=%q: runsEveryTest = %t, want %t", tc.args, tc.goflags, opts.runsEveryTest, tc.want)
+		}
+	}
+}
+
+// The debug log says why go test takes no result from its cache, without a
+// value from the command line, and which flag links cached results.
+func TestCacheRuleReasons(t *testing.T) {
+	for _, tc := range []struct {
+		args          []string
+		goflags, want string
+	}{
+		{[]string{"./..."}, "", ""},
+		{nil, "", "local directory mode"},
+		{[]string{"-count=1", "-shuffle=on", "./..."}, "", "test binary flag -count"},
+		{[]string{"./..."}, "-count=1", "test binary flag -count in GOFLAGS"},
+		{[]string{"-secret=value", "./..."}, "", "an unknown flag, which the test binary gets"},
+		{[]string{"./...", "-v", "secret"}, "", "test binary arguments after the packages"},
+		{[]string{"./...", "-args", "secret"}, "", "a test binary argument after -args"},
+		{[]string{"./...", "--", "secret"}, "", "test binary arguments after --"},
+	} {
+		opts, err := parseOptions(tc.args, tc.goflags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if opts.cacheRule != tc.want || opts.runsEveryTest != (tc.want != "") {
+			t.Errorf("go test %v with GOFLAGS=%q: cacheRule %q, runsEveryTest %t; want %q", tc.args, tc.goflags, opts.cacheRule, opts.runsEveryTest, tc.want)
+		}
+	}
+	for args, want := range map[string]string{"-o=x.test ./...": "-o", "-a ./...": "-a", "-a -o=x.test ./...": "-o", "./...": ""} {
+		opts, err := parseOptions(strings.Fields(args), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := opts.linkRule(); got != want {
+			t.Errorf("go test %s: linkRule %q, want %q", args, got, want)
+		}
+	}
+}
+
+// -o and -a make go test link test binaries even for results in its cache, so
+// a link no longer tells that a test process will run.
+func TestLinksCachedResults(t *testing.T) {
+	for _, tc := range []struct {
+		args    []string
+		goflags string
+		want    bool
+	}{
+		{[]string{"./..."}, "", false},
+		{[]string{"-o", "pkg.test", "./pkg"}, "", true},
+		{[]string{"-o=pkg.test", "./pkg"}, "", true},
+		{[]string{"-a", "./..."}, "", true},
+		{[]string{"-a=false", "./..."}, "", false},
+		{[]string{"./..."}, "-a", true},
+		{[]string{"-race", "-v", "./..."}, "", false},
+		// The last value wins, as in go test, GOFLAGS first.
+		{[]string{"-a=false", "./..."}, "-a", false},
+		{[]string{"-o=first.test", "-o=", "./pkg"}, "", false},
+		{[]string{"-a=false", "-a", "./..."}, "", true},
+	} {
+		opts, err := parseOptions(tc.args, tc.goflags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if opts.linksCachedResults() != tc.want {
+			t.Errorf("go test %v with GOFLAGS=%q: linksCachedResults = %t, want %t", tc.args, tc.goflags, opts.linksCachedResults(), tc.want)
+		}
+	}
+}

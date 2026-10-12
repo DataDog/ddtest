@@ -16,6 +16,7 @@ import (
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
@@ -31,9 +32,9 @@ type goPackage struct {
 	GoFiles, TestGoFiles, XTestGoFiles []string
 	Imports, TestImports, XTestImports []string
 	Module                             *struct {
-		Path, Version string
-		Main          bool
-		Replace       *struct{ Path, Dir, Version string }
+		Path, Version, Dir string
+		Main               bool
+		Replace            *struct{ Path, Dir, Version string }
 	}
 	Error *struct{ Err string }
 }
@@ -74,10 +75,15 @@ type Plan struct {
 	// testLauncher reports that a -exec program or Go's cross-compilation
 	// helper starts the test binaries, and so sees their environment first.
 	testLauncher bool
-	// testDirs are the directories of the packages that have tests.
-	testDirs []string
-	// goVersion is the selected toolchain's version, as go env reports it.
-	goVersion string
+	// tests describes the test binaries and the packages that have tests,
+	// with their modules, for the Git worker and the test processes.
+	tests utils.CLITests
+	// linkSignal makes ddto's tool tell the Git worker when go test links a
+	// test binary.
+	linkSignal bool
+	// goVersion is the selected toolchain's version, as go env reports it,
+	// and goExperiment its GOEXPERIMENT setting.
+	goVersion, goExperiment string
 }
 
 // savedEnvironment records the caller's values of the Go settings that go test
@@ -213,7 +219,8 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		return plan, fmt.Errorf("ddto requires Go 1.25 or newer; selected toolchain is %q", opts.environment.GOVERSION)
 	}
 	plan.testLauncher = opts.exec != "" || opts.environment.GOOS != opts.environment.GOHOSTOS || opts.environment.GOARCH != opts.environment.GOHOSTARCH
-	plan.goVersion = opts.environment.GOVERSION
+	plan.goVersion, plan.goExperiment = opts.environment.GOVERSION, opts.environment.GOEXPERIMENT
+	plan.tests.GOARCH, plan.tests.RunsEveryTest = opts.environment.GOARCH, opts.runsEveryTest
 	debug.printf("toolchain=%q", opts.environment.GOVERSION)
 	if runtime == Mini {
 		if work := workspaceFile(dir); work != "" {
@@ -483,7 +490,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			return plan, e
 		}
 		plan.TestPackages++
-		plan.testDirs = append(plan.testDirs, p.Dir)
+		plan.tests.Packages = append(plan.tests.Packages, utils.CLITestPackage{Dir: p.Dir, ModulePath: p.Module.Path, ModuleDir: p.Module.Dir})
 	}
 	debug.printf("runtime imports internal_test_packages=%d external_test_packages=%d", internalImports, plan.TestPackages-internalImports)
 	testifyPhase := debug.start("instrument testify")
@@ -666,9 +673,29 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	for _, warning := range plan.Warnings {
 		fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN:", warning)
 	}
+	if gitWorker != nil {
+		// The worker requests, and reports its telemetry, as the test
+		// processes, whose version includes their experiments.
+		plan.goVersion = testRuntimeVersion(ctx, dir, plan.goVersion, plan.goExperiment)
+	}
+	handoff := gitWorker.handOff(plan.tests, plan.testLauncher, plan.goVersion)
+	// When go test may take every result from its cache, the worker requests
+	// for the test processes once go test links a test binary, which it does
+	// only for a result that is not in its cache, unless -o or -a makes it
+	// link anyway: then the worker waits for a test process.
+	plan.linkSignal = len(handoff) != 0 && !plan.tests.RunsEveryTest && !opts.linksCachedResults()
+	switch {
+	case len(handoff) == 0:
+	case plan.tests.RunsEveryTest:
+		debug.printf("git worker requests_ahead=while_building reason=%q", opts.cacheRule)
+	case opts.linksCachedResults():
+		debug.printf("git worker requests_ahead=at_first_test reason=%q", opts.linkRule()+" links test binaries even for cached results")
+	default:
+		debug.printf("git worker requests_ahead=at_link reason=%q", "go test may take results from its cache")
+	}
 	var tool string
 	var env []string
-	if plan.coverOverlay || plan.testify || plan.goleak || plan.orchestrion || plan.sdkCI {
+	if plan.coverOverlay || plan.testify || plan.goleak || plan.orchestrion || plan.sdkCI || plan.linkSignal {
 		executable, e := os.Executable()
 		if e != nil {
 			fmt.Fprintln(stderr, e)
@@ -689,7 +716,7 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 			env[1] = orchestrionBypassEnv + "=" + string(runtime)
 		}
 	}
-	debug.printf("tool selection testify=%t goleak=%t cover=%t user_toolexec=%t orchestrion=%t sdk_ci_gate=%t", plan.testify, plan.goleak, plan.coverOverlay, opts.toolexec != "", plan.orchestrion, plan.sdkCI)
+	debug.printf("tool selection testify=%t goleak=%t cover=%t user_toolexec=%t orchestrion=%t sdk_ci_gate=%t link_signal=%t", plan.testify, plan.goleak, plan.coverOverlay, opts.toolexec != "", plan.orchestrion, plan.sdkCI, plan.linkSignal)
 	// A -exec program, or Go's cross-compilation helper, starts before the test
 	// binary can restore the caller's Go settings. Go already disables result
 	// caching for those runs, so ddto's wrapper restores them first.
@@ -726,7 +753,7 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 		env = append(env, handoff...)
 		debug.printf("github job id handed found=%t", !strings.HasSuffix(handoff[0], "="))
 	}
-	env = append(env, gitWorker.handOff(plan.testDirs, plan.testLauncher, plan.goVersion)...)
+	env = append(env, handoff...)
 	if plan.launcher != nil {
 		ctx = context.WithValue(ctx, goLauncherKey{}, *plan.launcher)
 	}

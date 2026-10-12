@@ -6,6 +6,7 @@
 package net
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -45,6 +46,15 @@ const (
 	readCacheScopeCIMedium = "ci_medium"
 	// readCacheScopeCIStrong scopes CI runs by provider and stable job id.
 	readCacheScopeCIStrong = "ci_strong"
+	// readCacheScopeCLI scopes unidentified local runs by ddto's invocation,
+	// whose Git worker and test processes have different parents.
+	readCacheScopeCLI = "cli"
+	// readCacheCLIDirectory holds, in the shared directory, one directory of
+	// entries per ddto invocation.
+	readCacheCLIDirectory = "cli"
+	// readCacheCLICleanupMaxDirectories bounds the invocation directories that
+	// one cleanup examines.
+	readCacheCLICleanupMaxDirectories = 8
 
 	// readCacheEndpointSettings names the settings cache endpoint.
 	readCacheEndpointSettings = "settings"
@@ -93,6 +103,9 @@ type (
 		Source []string
 		Hash   string
 		TTL    time.Duration
+		// directory names the cli scope's entries' directory, which only the
+		// state directory identifies.
+		directory string
 	}
 
 	// readCacheEndpointScope identifies the cacheable endpoint and semantic request payload.
@@ -233,6 +246,94 @@ func newReadCacheScopeIdentity(ciTags map[string]string) readCacheScopeIdentity 
 	return newReadCacheScopeIdentityFromValues(readCacheScopeLocal, time.Minute, values)
 }
 
+// cliReadCacheScopeIdentity returns, for a local run, the scope of ddto's
+// invocation whose state is in dir: its Git worker requests ahead for the test
+// processes, which have another parent. CI scopes already include both. The
+// entries last as long as the invocation, whose build can take minutes: they
+// live in its own directory, which ddto removes (RemoveCLIReadCache).
+//
+// The scope also holds a digest of the process's credential and its Agent's
+// socket, whose path the base URL does not keep whole: a test process whose
+// API key or Agent differs from the worker's, as one that TestMain changed,
+// makes its own requests. The upstream scopes leave both out.
+func cliReadCacheScopeIdentity(identity readCacheScopeIdentity, dir, credential, socket string) readCacheScopeIdentity {
+	if identity.Kind != readCacheScopeLocal || dir == "" {
+		return identity
+	}
+	values := []readCacheIdentityValue{
+		{Name: "cli_state", Value: dir},
+		{Name: "credential", Value: readCacheHashString(credential)},
+		{Name: "socket", Value: socket},
+	}
+	scoped := newReadCacheScopeIdentityFromValues(readCacheScopeCLI, time.Hour, values)
+	scoped.directory = cliReadCacheDirectoryName(dir)
+	log.Debug("civisibility.read_cache: invocation scope [directory:%s ttl:%s]", filepath.Join(readCacheCLIDirectory, scoped.directory), scoped.TTL)
+	return scoped
+}
+
+// cliReadCacheDirectoryName names the directory of the entries of ddto's
+// invocation whose state is in dir.
+func cliReadCacheDirectoryName(dir string) string {
+	return readCacheHashString(dir)
+}
+
+// readCacheSubdirectory returns the directory, in the shared one, of the
+// identity's entries: each ddto invocation keeps its own.
+func readCacheSubdirectory(identity readCacheScopeIdentity) string {
+	if identity.Kind != readCacheScopeCLI {
+		return ""
+	}
+	return filepath.Join(readCacheCLIDirectory, identity.directory)
+}
+
+// RemoveCLIReadCache removes the read-cache entries of ddto's invocation
+// whose state is in stateDir, once its Git worker and test processes exited.
+// It also removes the expired entries of invocations that ended without
+// removing theirs, and returns how many of their directories it removed.
+func RemoveCLIReadCache(stateDir string) (int, error) {
+	if stateDir == "" {
+		return 0, nil
+	}
+	dir, err := readCacheDirectory(filepath.Join(readCacheCLIDirectory, cliReadCacheDirectoryName(stateDir)))
+	if err != nil {
+		return 0, err
+	}
+	err = os.RemoveAll(dir)
+	return removeExpiredCLIReadCaches(filepath.Dir(dir)), err
+}
+
+// removeExpiredCLIReadCaches applies, to a bounded number of the invocation
+// directories in root, the shared directory's cleanup, which removes only
+// expired entries, stale locks and old temporary files, and then removes the
+// directories that are empty. A kill or a reboot leaves an invocation's
+// directory; its entries expire within the TTL, so it empties and goes, and
+// hides the others only for that long. A running invocation's entries do not
+// expire, and its process holds a lock file in the directory while it writes,
+// so the directory cannot go under it. It returns how many it removed.
+func removeExpiredCLIReadCaches(root string) int {
+	dirFile, err := os.Open(root)
+	if err != nil {
+		return 0
+	}
+	entries, _ := dirFile.ReadDir(readCacheCLICleanupMaxDirectories)
+	_ = dirFile.Close()
+	start := readCacheNow()
+	removed := 0
+	for _, entry := range entries {
+		if readCacheNow().Sub(start) > readCacheGlobalCleanupMaxDuration {
+			return removed
+		}
+		if entry.IsDir() {
+			dir := filepath.Join(root, entry.Name())
+			readCacheGlobalCleanup(dir)
+			if os.Remove(dir) == nil {
+				removed++
+			}
+		}
+	}
+	return removed
+}
+
 func newReadCacheScopeIdentityFromValues(kind string, ttl time.Duration, values []readCacheIdentityValue) readCacheScopeIdentity {
 	return readCacheScopeIdentity{
 		Kind:   kind,
@@ -309,15 +410,16 @@ func readThroughShortLivedCache[T any](
 		return readCacheLiveValue(live)
 	}
 
-	paths, err := readCachePathsForKey(cacheKey)
+	paths, err := readCachePathsIn(readCacheSubdirectory(c.readCacheScopeIdentity), cacheKey)
 	if err != nil {
 		log.Debug("civisibility.read_cache: cache path unavailable [endpoint:%s key:%s error:%s]", endpoint, cacheKey, err.Error())
 		return readCacheLiveValue(live)
 	}
 	readCacheCleanupCurrentKey(paths)
 
+	scope := c.readCacheScopeIdentity.Kind
 	if value, ok := readFreshReadCacheEntry[T](paths, cacheKey, baseScope, endpointScope, c.readCacheScopeIdentity.TTL); ok {
-		log.Debug("civisibility.read_cache: hit [endpoint:%s key:%s]", endpoint, cacheKey)
+		log.Debug("civisibility.read_cache: hit [endpoint:%s key:%s scope:%s]", endpoint, cacheKey, scope)
 		if onCacheHit != nil {
 			onCacheHit(value)
 		}
@@ -331,14 +433,16 @@ func readThroughShortLivedCache[T any](
 		readCacheGlobalCleanup(paths.Dir)
 
 		if value, ok := readFreshReadCacheEntry[T](paths, cacheKey, baseScope, endpointScope, c.readCacheScopeIdentity.TTL); ok {
-			log.Debug("civisibility.read_cache: hit [endpoint:%s key:%s]", endpoint, cacheKey)
+			log.Debug("civisibility.read_cache: hit [endpoint:%s key:%s scope:%s]", endpoint, cacheKey, scope)
 			if onCacheHit != nil {
 				onCacheHit(value)
 			}
 			return value, nil
 		}
 
+		started := time.Now()
 		result, err := live()
+		log.Debug("civisibility.read_cache: miss [endpoint:%s key:%s scope:%s duration:%s cacheable:%t error:%t]", endpoint, cacheKey, scope, time.Since(started).Round(time.Microsecond), err == nil && result.Cacheable, err != nil)
 		if err != nil {
 			return zero, err
 		}
@@ -347,14 +451,15 @@ func readThroughShortLivedCache[T any](
 		}
 		return result.Value, nil
 	case readCacheLockActive:
-		if value, ok := waitForReadCacheEntry[T](paths, cacheKey, baseScope, endpointScope, c.readCacheScopeIdentity.TTL); ok {
-			log.Debug("civisibility.read_cache: hit [endpoint:%s key:%s]", endpoint, cacheKey)
+		started := time.Now()
+		if value, ok := waitForReadCacheEntry[T](c.requestContext(), paths, cacheKey, baseScope, endpointScope, c.readCacheScopeIdentity.TTL); ok {
+			log.Debug("civisibility.read_cache: hit after wait [endpoint:%s key:%s scope:%s waited:%s]", endpoint, cacheKey, scope, time.Since(started).Round(time.Microsecond))
 			if onCacheHit != nil {
 				onCacheHit(value)
 			}
 			return value, nil
 		}
-		log.Debug("civisibility.read_cache: waiter fallback [endpoint:%s key:%s]", endpoint, cacheKey)
+		log.Debug("civisibility.read_cache: waiter fallback [endpoint:%s key:%s scope:%s waited:%s]", endpoint, cacheKey, scope, time.Since(started).Round(time.Microsecond))
 		return readCacheLiveValue(live)
 	default:
 		log.Debug("civisibility.read_cache: lock bypass [endpoint:%s key:%s]", endpoint, cacheKey)
@@ -423,11 +528,16 @@ func readCacheSanitizeBaseURL(raw string) string {
 }
 
 func readCachePathsForKey(cacheKey string) (readCachePaths, error) {
-	root, err := readCacheBaseRoot()
+	return readCachePathsIn("", cacheKey)
+}
+
+// readCachePathsIn returns the paths of cacheKey's files in subdir of the
+// shared cache directory, or in that directory itself.
+func readCachePathsIn(subdir, cacheKey string) (readCachePaths, error) {
+	dir, err := readCacheDirectory(subdir)
 	if err != nil {
 		return readCachePaths{}, err
 	}
-	dir := filepath.Join(root, "dd-trace-go", "civisibility-read-cache")
 	if err := ensureReadCacheDir(dir); err != nil {
 		return readCachePaths{}, err
 	}
@@ -437,6 +547,16 @@ func readCachePathsForKey(cacheKey string) (readCachePaths, error) {
 		LockFile:  filepath.Join(dir, cacheKey+".lock"),
 		TmpGlob:   filepath.Join(dir, cacheKey+".tmp.*"),
 	}, nil
+}
+
+// readCacheDirectory returns subdir of the shared cache directory, or that
+// directory itself.
+func readCacheDirectory(subdir string) (string, error) {
+	root, err := readCacheBaseRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "dd-trace-go", "civisibility-read-cache", subdir), nil
 }
 
 func readCacheBaseRoot() (string, error) {
@@ -622,6 +742,13 @@ func tryCreateReadCacheLock(owner *readCacheLockOwner) readCacheLockAcquireStatu
 		return readCacheLockBypass
 	}
 	file, err := os.OpenFile(owner.Path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if os.IsNotExist(err) {
+		// The cleanup removed the empty directory of an invocation's entries
+		// after this process created it.
+		if err = ensureReadCacheDir(filepath.Dir(owner.Path)); err == nil {
+			file, err = os.OpenFile(owner.Path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		}
+	}
 	if err != nil {
 		if os.IsExist(err) {
 			return readCacheLockActive
@@ -643,7 +770,9 @@ func tryCreateReadCacheLock(owner *readCacheLockOwner) readCacheLockAcquireStatu
 	return readCacheLockAcquired
 }
 
-func waitForReadCacheEntry[T any](paths readCachePaths, cacheKey string, baseScope readCacheScope, endpointScope readCacheEndpointScope, ttl time.Duration) (T, bool) {
+// waitForReadCacheEntry waits for the lock owner's entry. It stops when ctx is
+// done: ddto's Git worker, which stopped, does not wait for another process.
+func waitForReadCacheEntry[T any](ctx context.Context, paths readCachePaths, cacheKey string, baseScope readCacheScope, endpointScope readCacheEndpointScope, ttl time.Duration) (T, bool) {
 	var zero T
 
 	if value, ok := readFreshReadCacheEntry[T](paths, cacheKey, baseScope, endpointScope, ttl); ok {
@@ -653,6 +782,9 @@ func waitForReadCacheEntry[T any](paths readCachePaths, cacheKey string, baseSco
 	deadline := readCacheNow().Add(readCacheWaiterTimeout)
 	backoff := readCacheWaiterInitialBackoff
 	for readCacheNow().Before(deadline) {
+		if ctx.Err() != nil {
+			return zero, false
+		}
 		if _, err := os.Stat(paths.LockFile); os.IsNotExist(err) {
 			if value, ok := readFreshReadCacheEntry[T](paths, cacheKey, baseScope, endpointScope, ttl); ok {
 				return value, true
@@ -758,7 +890,7 @@ func readCacheGlobalCleanup(dir string) {
 		switch {
 		case strings.HasSuffix(entry.Name(), ".json"):
 			if readCacheJSONFileExpired(path) {
-				removeReadCacheFile(path)
+				removeExpiredReadCacheEntry(path)
 			}
 		case strings.HasSuffix(entry.Name(), ".lock"):
 			if stale, _ := readCacheLockIsStale(path); stale {
@@ -769,6 +901,32 @@ func readCacheGlobalCleanup(dir string) {
 				removeReadCacheFile(path)
 			}
 		}
+	}
+}
+
+// removeExpiredReadCacheEntry removes the expired entry at path under its
+// key's lock, which a writer holds while it publishes the entry, so that it
+// does not remove an entry that a writer has just renewed. With the lock
+// taken by a writer, it leaves the entry; a stale lock, which a killed process
+// left, it replaces, as a request does.
+func removeExpiredReadCacheEntry(path string) {
+	cacheKey := strings.TrimSuffix(filepath.Base(path), ".json")
+	base := strings.TrimSuffix(path, ".json")
+	paths := readCachePaths{Dir: filepath.Dir(path), CacheFile: path, LockFile: base + ".lock", TmpGlob: base + ".tmp.*"}
+	owner, status := acquireReadCacheLock(paths, cacheKey)
+	if status != readCacheLockAcquired {
+		return
+	}
+	defer releaseReadCacheLock(owner)
+	removeExpiredEntryAsOwner(owner, path)
+}
+
+// removeExpiredEntryAsOwner removes the expired entry at path if owner still
+// holds its key's lock, as writeReadCacheEntry checks before it publishes:
+// another process may have replaced the lock as stale.
+func removeExpiredEntryAsOwner(owner *readCacheLockOwner, path string) {
+	if readCacheJSONFileExpired(path) && readCacheLockOwnerStillValid(owner) {
+		removeReadCacheFile(path)
 	}
 }
 
