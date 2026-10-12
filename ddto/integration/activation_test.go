@@ -2,7 +2,6 @@ package integration
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"testing"
 )
@@ -38,7 +37,7 @@ func testCLIActivation(t *testing.T, mini bool) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			receiver := &capture{}
-			server := httptest.NewServer(http.HandlerFunc(receiver.handler))
+			server := newServer(http.HandlerFunc(receiver.handler))
 			defer server.Close()
 			env := testEnv("DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL, "DD_TRACE_AGENT_URL="+server.URL, "DD_API_KEY=poc-not-a-real-key", "POC_EXPECT_CIVISIBILITY="+tc.wantEnvironment)
 			if tc.defined {
@@ -67,7 +66,7 @@ func testCLIActivation(t *testing.T, mini bool) {
 
 	t.Run("managed-retry", func(t *testing.T) {
 		receiver := &capture{retry: true}
-		server := httptest.NewServer(http.HandlerFunc(receiver.handler))
+		server := newServer(http.HandlerFunc(receiver.handler))
 		defer server.Close()
 		env := testEnv("DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL, "DD_TRACE_AGENT_URL="+server.URL, "DD_API_KEY=poc-not-a-real-key", "POC_RETRY_COUNTER="+filepath.Join(t.TempDir(), "retry-counter"), "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=true", "DD_CIVISIBILITY_FLAKY_RETRY_COUNT=1", "DD_CIVISIBILITY_TOTAL_FLAKY_RETRY_COUNT=2", "DD_CIVISIBILITY_RETRY_EXECUTION_MODE=process")
 		out, stderr, code := run(env, "-count=1", "-run=^TestRetry$", ".", "-args", "-mode=retry")

@@ -30,7 +30,21 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
-func newBody(config TracerConfig, debugMode bool) *transport.Body {
+func newBody(config TracerConfig, debugMode bool, shared *SharedApp) *transport.Body {
+	if shared != nil {
+		application := shared.Application
+		if application.LanguageVersion == "" {
+			application.LanguageVersion = runtime.Version()
+		}
+		return &transport.Body{
+			APIVersion:  "v2",
+			RuntimeID:   shared.RuntimeID,
+			Debug:       debugMode,
+			Application: application,
+			Host:        shared.Host,
+		}
+	}
+
 	osHostname, err := os.Hostname()
 	if err != nil {
 		osHostname = hostname.Get()
@@ -93,6 +107,7 @@ type writer struct {
 	bodyMu     sync.Mutex
 	httpClient *http.Client
 	endpoints  []*http.Request
+	nextSeqID  func() int64
 }
 
 type WriterConfig struct {
@@ -105,6 +120,10 @@ type WriterConfig struct {
 	HTTPClient *http.Client
 	// Debug is a flag that indicates whether the telemetry client is in debug mode (defaults to false)
 	Debug bool
+	// Shared, if set, is the application that the requests report instead of this process.
+	Shared *SharedApp
+	// NextSeqID, if set, numbers each request instead of the writer's own counter.
+	NextSeqID func() int64
 }
 
 func NewWriter(config WriterConfig) (Writer, error) {
@@ -124,16 +143,21 @@ func NewWriter(config WriterConfig) (Writer, error) {
 		config.HTTPClient.Timeout = 5 * time.Second
 	}
 
-	body := newBody(config.TracerConfig, config.Debug)
+	body := newBody(config.TracerConfig, config.Debug, config.Shared)
+	sessionID, rootSessionID := globalconfig.RuntimeID(), globalconfig.RootSessionID()
+	if config.Shared != nil {
+		sessionID, rootSessionID = config.Shared.RuntimeID, config.Shared.RootSessionID
+	}
 	endpoints := make([]*http.Request, len(config.Endpoints))
 	for i, endpoint := range config.Endpoints {
-		endpoints[i] = preBakeRequest(body, endpoint)
+		endpoints[i] = preBakeRequest(body, endpoint, sessionID, rootSessionID)
 	}
 
 	return &writer{
 		body:       body,
 		httpClient: config.HTTPClient,
 		endpoints:  endpoints,
+		nextSeqID:  config.NextSeqID,
 	}, nil
 }
 
@@ -141,14 +165,11 @@ func NewWriter(config WriterConfig) (Writer, error) {
 // This is useful to avoid querying too many things at the time of the request.
 // Headers necessary are described here:
 // https://github.com/DataDog/instrumentation-telemetry-api-docs/blob/cf17b41a30fbf31d54e2cfbfc983875d58b02fe1/GeneratedDocumentation/ApiDocs/v2/overview.md#required-http-headers
-func preBakeRequest(body *transport.Body, endpoint *http.Request) *http.Request {
+func preBakeRequest(body *transport.Body, endpoint *http.Request, sessionID, rootSessionID string) *http.Request {
 	clonedEndpoint := endpoint.Clone(context.Background())
 	if clonedEndpoint.Header == nil {
 		clonedEndpoint.Header = make(http.Header, 11)
 	}
-
-	sessionID := globalconfig.RuntimeID()
-	rootSessionID := globalconfig.RootSessionID()
 
 	headers := map[string]string{
 		"Content-Type":               "application/json",
@@ -189,7 +210,11 @@ func preBakeRequest(body *transport.Body, endpoint *http.Request) *http.Request 
 func (w *writer) setPayloadToBody(payload transport.Payload) {
 	w.bodyMu.Lock()
 	defer w.bodyMu.Unlock()
-	w.body.SeqID++
+	if w.nextSeqID != nil {
+		w.body.SeqID = w.nextSeqID()
+	} else {
+		w.body.SeqID++
+	}
 	w.body.TracerTime = time.Now().Unix()
 	w.body.RequestType = payload.RequestType()
 	w.body.Payload = payload

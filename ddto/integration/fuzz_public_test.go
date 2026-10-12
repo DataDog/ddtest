@@ -3,7 +3,6 @@ package integration
 import (
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,7 +60,7 @@ func ExamplePublic(){fmt.Println("public")
 	for _, deferred := range []bool{false, true} {
 		t.Run(fmt.Sprint(deferred), func(t *testing.T) {
 			receiver := &parityReceiver{side: map[string][][]byte{}, requests: map[string]int{}}
-			server := httptest.NewServer(http.HandlerFunc(receiver.handler))
+			server := newServer(http.HandlerFunc(receiver.handler))
 			defer server.Close()
 			env := testEnv("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL, "DD_TRACE_AGENT_URL="+server.URL, "DD_API_KEY=fixture", "DD_SERVICE=mini-public-fuzz", "XDG_CACHE_HOME="+t.TempDir(), fmt.Sprintf("DD_CIVISIBILITY_DEFERRED_DELIVERY=%t", deferred))
 			out, stderr, code := command(t, dir, env, bin, "-test.count=1")

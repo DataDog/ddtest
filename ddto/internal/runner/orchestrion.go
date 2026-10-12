@@ -64,7 +64,7 @@ type goLauncher struct {
 
 // RunOrchestrion wraps orchestrion go test, or go tool orchestrion go test.
 // Orchestrion receives the final overlay/modfile and retains its pin checks.
-func RunOrchestrion(ctx context.Context, args []string, runtime Runtime, goTool bool, stdin io.Reader, stdout, stderr io.Writer) int {
+func RunOrchestrion(ctx context.Context, args []string, cli CLIOptions, goTool bool, stdin io.Reader, stdout, stderr io.Writer) int {
 	command := []string{"orchestrion", "go"}
 	tool := []string{"orchestrion", "toolexec"}
 	if goTool {
@@ -77,7 +77,7 @@ func RunOrchestrion(ctx context.Context, args []string, runtime Runtime, goTool 
 		return 2
 	}
 	ctx = context.WithValue(ctx, goLauncherKey{}, goLauncher{command, quoted})
-	return RunRuntime(ctx, args, runtime, stdin, stdout, stderr)
+	return RunRuntime(ctx, args, cli, stdin, stdout, stderr)
 }
 
 // quoteToolWords joins words for cmd/go's quoted.Split, which reads -exec,

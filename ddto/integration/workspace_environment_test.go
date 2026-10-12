@@ -532,7 +532,7 @@ func TestMiniExecWrapperSeesCallerEnvironment(t *testing.T) {
 		"main.go": `package main
 import ("fmt";"os";"os/exec")
 func main() {
- for _, name := range []string{"GOWORK", "GOFLAGS", "DDTO_ORIGINAL_GOWORK", "DDTO_ORIGINAL_GOFLAGS"} {
+ for _, name := range []string{"GOWORK", "GOFLAGS", "DDTO_ORIGINAL_GOWORK", "DDTO_ORIGINAL_GOFLAGS", "_DD_ROOT_GO_SESSION_ID"} {
   value, ok := os.LookupEnv(name)
   fmt.Printf("WRAPPER %s=%t:%q\n", name, ok, value)
  }
@@ -563,9 +563,14 @@ func main() {
 	}
 	// cmd/go accepts both quote characters inside an unquoted argument.
 	args := []string{"test", "-v", "-count=1", "-exec=" + quoteToolArgument(t, binary) + ` PAYLOAD={"s":"don't"}`, "."}
-	native, nativeErr, nativeCode := command(t, client, env, "go", args...)
-	out, stderr, code := command(t, client, env, driver, args...)
-	if want, got := lines(native), lines(out); nativeCode != 0 || code != 0 || len(want) != 5 || !slices.Equal(got, want) {
-		t.Fatalf("native exit=%d %q\n%s%s\nddto exit=%d %q\n%s%s", nativeCode, want, native, nativeErr, code, got, out, stderr)
+	// The SDK's process identity, linked into ddto, sets the root session for
+	// child processes; ddto restores the caller's value, absent, empty or set.
+	for _, root := range [][]string{nil, {"_DD_ROOT_GO_SESSION_ID="}, {"_DD_ROOT_GO_SESSION_ID=caller-root"}} {
+		env := append(slices.Clone(env), root...)
+		native, nativeErr, nativeCode := command(t, client, env, "go", args...)
+		out, stderr, code := command(t, client, env, driver, args...)
+		if want, got := lines(native), lines(out); nativeCode != 0 || code != 0 || len(want) != 6 || !slices.Equal(got, want) {
+			t.Fatalf("%v: native exit=%d %q\n%s%s\nddto exit=%d %q\n%s%s", root, nativeCode, want, native, nativeErr, code, got, out, stderr)
+		}
 	}
 }

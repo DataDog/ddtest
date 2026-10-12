@@ -1,8 +1,10 @@
 package runner
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestParseRuntimeArgs(t *testing.T) {
@@ -29,7 +31,8 @@ func TestParseRuntimeArgs(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			before := append([]string(nil), tc.args...)
-			gotRuntime, got, err := ParseRuntimeArgs(tc.args)
+			options, got, err := ParseCLIArgs(tc.args)
+			gotRuntime := options.Runtime
 			if err != nil || gotRuntime != tc.runtime || !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got %q %q %v; want %q %q", gotRuntime, got, err, tc.runtime, tc.want)
 			}
@@ -45,7 +48,43 @@ func TestParseRuntimeArgsRejectsInvalidValues(t *testing.T) {
 		{"--runtime"}, {"--runtime="}, {"--runtime=unknown"},
 		{"-count", "1", "--runtime", "unknown"}, {"--runtime", "-count=1"},
 	} {
-		if _, _, err := ParseRuntimeArgs(args); err == nil {
+		if _, _, err := ParseCLIArgs(args); err == nil {
+			t.Errorf("accepted %q", args)
+		}
+	}
+}
+
+func TestParseCLIArgsUploadTimeoutAndCIState(t *testing.T) {
+	zip, err := filepath.Abs("state.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name       string
+		args, want []string
+		options    CLIOptions
+	}{
+		{"defaults", []string{"./..."}, []string{"./..."}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute}},
+		{"timeout", []string{"--git-upload-timeout=2m30s", "-count=1"}, []string{"-count=1"}, CLIOptions{Runtime: Mini, GitUploadTimeout: 150 * time.Second}},
+		{"separate timeout", []string{"-race", "--git-upload-timeout", "0", "."}, []string{"-race", "."}, CLIOptions{Runtime: Mini}},
+		{"keep", []string{"--keep-ci-state", "./..."}, []string{"./..."}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute, KeepCIState: true}},
+		{"keep zip", []string{"-count=1", "--keep-ci-state=state.zip"}, []string{"-count=1"}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute, KeepCIState: true, KeepCIStateZip: zip}},
+		{"all", []string{"--runtime=sdk", "--keep-ci-state", "--git-upload-timeout=5s"}, []string{}, CLIOptions{Runtime: SDK, GitUploadTimeout: 5 * time.Second, KeepCIState: true}},
+		{"test flag value", []string{"-run", "--keep-ci-state", "."}, []string{"-run", "--keep-ci-state", "."}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute}},
+		{"args", []string{"-args", "--git-upload-timeout=1s"}, []string{"-args", "--git-upload-timeout=1s"}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			options, got, err := ParseCLIArgs(tc.args)
+			if err != nil || options != tc.options || !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("got %+v %q %v; want %+v %q", options, got, err, tc.options, tc.want)
+			}
+		})
+	}
+	for _, args := range [][]string{
+		{"--git-upload-timeout"}, {"--git-upload-timeout=soon"}, {"--git-upload-timeout=-1s"},
+		{"--keep-ci-state=state.tar"}, {"--keep-ci-state="},
+	} {
+		if _, _, err := ParseCLIArgs(args); err == nil {
 			t.Errorf("accepted %q", args)
 		}
 	}

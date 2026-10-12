@@ -112,8 +112,9 @@ func (q *fuzzEventQueue) drain(nativeFinished bool) {
 
 // nativeResult reads Go's stored result, never Failed's process-wide race check.
 // Fatal shutdown can read an active root's already-propagated seed failure, but
-// must not read duration: Go writes it without holding common.mu.
-func (e *fuzzTestEvent) nativeResult(nativeFinished bool) (failed, skipped bool, duration time.Duration) {
+// must not read duration: Go writes it without holding common.mu. timed reports
+// whether duration is Go's.
+func (e *fuzzTestEvent) nativeResult(nativeFinished bool) (failed, skipped bool, duration time.Duration, timed bool) {
 	var t *testing.T
 	switch native := e.native.(type) {
 	case *testing.T:
@@ -139,7 +140,7 @@ func (e *fuzzTestEvent) nativeResult(nativeFinished bool) (failed, skipped bool,
 		// common.duration is written without mu. Only M.Run's completion barrier
 		// permits this read; fatal drains keep the independently captured finish time.
 		if nativeFinished {
-			duration = *fieldPtr[time.Duration](base, layout.common.duration)
+			duration, timed = *fieldPtr[time.Duration](base, layout.common.duration), true
 		}
 		runtime.KeepAlive(e.native)
 		return
@@ -163,26 +164,33 @@ func (e *fuzzTestEvent) nativeResult(nativeFinished bool) (failed, skipped bool,
 			log.Debug("civisibility: native fuzz duration field unavailable; retaining captured finish time")
 			return
 		}
-		duration = *(*time.Duration)(durationPtr)
+		duration, timed = *(*time.Duration)(durationPtr), true
 	}
 	return
 }
 
 func (e *fuzzTestEvent) finish(nativeFinished bool) {
-	failed, skipped, duration := e.nativeResult(nativeFinished)
+	failed, skipped, duration, timed := e.nativeResult(nativeFinished)
 	failed = failed || e.failed
 	// A managed pass/failure is changed to native skip by design. That skip
 	// must not replace the raw event status captured before masking.
 	skipped = e.skipped || skipped && !e.metadata.isQuarantined && !e.metadata.isDisabled
-	finishTime := e.finishTime
-	if finishTime.IsZero() {
-		// A seed panic aborts its root before the root wrapper can complete.
-		finishTime = time.Now()
+	finishFuzzTestEvent(failed, skipped, e.metadata, e.test, e.suite, e.module, fuzzFinishTime(e.test.StartTime(), e.finishTime, duration, timed))
+}
+
+// fuzzFinishTime ends an event at its start plus the duration that Go
+// printed, when Go's duration is known, even if it is zero; Go measures it on
+// its own clock and excludes the wait for parallel seeds. Otherwise it keeps
+// the finish time captured by the wrapper, or now when a seed panic aborted
+// its root before the wrapper completed.
+func fuzzFinishTime(start, captured time.Time, duration time.Duration, timed bool) time.Time {
+	if timed {
+		return start.Add(max(duration, 0))
 	}
-	if duration > 0 {
-		finishTime = e.test.StartTime().Add(duration)
+	if captured.IsZero() {
+		return time.Now()
 	}
-	finishFuzzTestEvent(failed, skipped, e.metadata, e.test, e.suite, e.module, finishTime)
+	return captured
 }
 
 func finishFuzzTestEvent(failed, skipped bool, execMeta *testExecutionMetadata, test integrations.Test, suite integrations.TestSuite, module integrations.TestModule, finishTime time.Time) {

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -17,7 +16,7 @@ func TestCIVisibilityMultiplePackages(t *testing.T) {
 	var wallNS []int64
 	for _, backend := range []string{"sdk", "mini"} {
 		receiver := &parityReceiver{side: map[string][][]byte{}, requests: map[string]int{}}
-		server := httptest.NewServer(http.HandlerFunc(receiver.handler))
+		server := newServer(http.HandlerFunc(receiver.handler))
 		scratch := t.TempDir()
 		env := testEnv("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL, "DD_TRACE_AGENT_URL="+server.URL, "DD_API_KEY=fixture", "TMPDIR="+scratch, "TMP="+scratch, "TEMP="+scratch, "XDG_CACHE_HOME="+scratch)
 		out, stderr, code, wall := commandWithTiming(t, dir, env, driver, "test", "--runtime="+backend, "-count=1", "-run=^Test(Pass|Other)$", "./...")

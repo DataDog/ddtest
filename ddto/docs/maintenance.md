@@ -295,6 +295,14 @@ SDK assertions use [`internal/testassert`](../internal/testassert/assert.go) and
 its fatal `require` wrappers. Preserve the assertion inputs and results when
 updating SDK tests; extend the helpers with standard-library code when needed.
 
+Integration tests start fake intakes with `newServer`
+([`integration/server_test.go`](../integration/server_test.go)), not
+`httptest.NewServer`. Test binaries share the SDK's short-lived read cache by
+intake URL, and binaries run directly by the test process share its scope. A
+server on a port that an earlier server used could otherwise see settings from
+that cache instead of being asked, as `TestMiniCodeOwnersCompiledServices` once
+did on CI. `newServer` never reuses an address within the process.
+
 The module declares Go 1.25 and uses that release's standard library APIs.
 `internal/compat` has only two Go 1.26 equivalents: `AsType` and `Pointer`.
 Keep native error matching and value ownership when changing them. Version
@@ -327,9 +335,25 @@ see what a test process sees: start it with the test processes' environment,
 and keep each piece of work in the order a test process does it. The upload
 precedes the base-branch discovery, which needs the fetched history. Nothing
 that changes the repository may run before a test process marks the state
-`used`. Every result file that test processes wait for must be written, by the
-worker or by `recordMissingResults`, before `go test` can exit. The worker
-links the SDK's HTTP client into `ddto`.
+`used`, including fetching a CI head commit. Every result file that test
+processes wait for must be written, by the worker or by `recordMissingResults`
+once the worker closes its standard output, before `go test` can exit. Test
+processes open the state's files with `openUnlogged`, outside Go's test log.
+The worker links the SDK's HTTP client into `ddto`, and with it `globalconfig`,
+whose root-session variable `ddto` removes from its own environment at start.
+`ddto` stops the worker, on a signal or after `--git-upload-timeout`, with a
+`stop` line: the worker's Git commands receive SIGTERM (killed after
+`gitStopDelay`), its requests stop through `RequestHandler.Context`, and the
+upload removes its pack files and records the stop. Keep every Git command of
+the worker on `newGitCommand` and every request on the handler, or a stopped
+worker would wait for them; `ddto` kills a worker that has not exited after
+`gitWorkerStopWait`.
+
+The worker owns the invocation's telemetry application. It must write
+`telemetry.json` before its Git record, send `app-started` only once a test
+process uses the state, and send `app-closing` only after `go test` exits, so
+that no test process sends after it. Every process that reports the
+application takes its `seq_id` from `seq/`.
 
 With `-race`, `noraceOverlay` in `internal/runner/norace.go` gives a client's
 build copies of Mini's sources that mark each function `//go:norace`. The

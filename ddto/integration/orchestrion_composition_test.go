@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -263,7 +262,7 @@ func assertComposedAPMDeliveryMode(t *testing.T, dir, bin string, agentless, def
 	receiver := &parityReceiver{side: map[string][][]byte{}, requests: map[string]int{}}
 	var mu sync.Mutex
 	var apm []any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v0.4/traces" {
 			data, err := decodedRequestBody(r)
 			if err != nil {

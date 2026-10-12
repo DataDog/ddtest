@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -351,7 +350,7 @@ func execute(t *testing.T, dir, bin string, args []string, enabled, retry bool) 
 func executeProfile(t *testing.T, dir, bin string, args []string, enabled, retry bool, profile string) execution {
 	t.Helper()
 	receiver := &capture{retry: retry, profile: profile}
-	server := httptest.NewServer(http.HandlerFunc(receiver.handler))
+	server := newServer(http.HandlerFunc(receiver.handler))
 	defer server.Close()
 	executionDir := t.TempDir()
 	retryPath := filepath.Join(executionDir, "retry-counter")

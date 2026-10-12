@@ -108,7 +108,7 @@ func TestCLIDebugCanceledPreparation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 	var stderr bytes.Buffer
-	if code := RunRuntime(ctx, []string{"."}, Mini, nil, io.Discard, &stderr); code != 2 {
+	if code := RunRuntime(ctx, []string{"."}, DefaultCLIOptions(), nil, io.Discard, &stderr); code != 2 {
 		t.Fatalf("canceled preparation exit=%d", code)
 	}
 	for _, want := range []string{"go env finished duration=", "prepare finished duration=", "status=error", "ddto exit_code=2"} {

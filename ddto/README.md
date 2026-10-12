@@ -92,6 +92,15 @@ ddto test --runtime=sdk -count=1 ./...
 Mini is selected when `--runtime` is omitted. Both `--runtime=mini` and
 `--runtime mini` work among Go flags and package names. Put the option before
 custom test flags, `-args` or `--`, which begin the test binary's arguments.
+
+Two more options follow the same rule:
+- `--git-upload-timeout=2m` (default one minute) bounds every wait for the
+  repository upload of `ddto`'s Git worker. Test processes wait at most that
+  long for its result, and `ddto` waits at most that long after `go test`
+  exits, then stops the upload cleanly.
+- `--keep-ci-state` keeps the invocation's CI state and prints where;
+  `--keep-ci-state=state.zip` archives it. See
+  [Keeping the CI state](docs/cli-debug.md#keeping-the-ci-state).
 The SDK backend requires the exact version pinned in
 [`internal/version`](internal/version/version.go).
 

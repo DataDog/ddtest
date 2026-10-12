@@ -347,7 +347,9 @@ func createCITagsMap() map[string]string {
 			if cliRecord != nil {
 				headCommitData, handed, err = cliRecord.headCommitData(headCommitSha)
 			}
-			if !handed {
+			// ddto's Git worker fetches a missing head commit only once a
+			// test process uses its state (FetchCLIHeadCommit).
+			if !handed && !cliGitStateOwned {
 				headCommitData, err = fetchCommitDataFunc(headCommitSha)
 			}
 			if err != nil {

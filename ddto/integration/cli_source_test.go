@@ -2,7 +2,6 @@ package integration
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -44,7 +43,7 @@ func TestMiniCLIRuntimeSelectionAndSourceRange(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			receiver := &parityReceiver{side: map[string][][]byte{}, requests: map[string]int{}}
-			server := httptest.NewServer(http.HandlerFunc(receiver.handler))
+			server := newServer(http.HandlerFunc(receiver.handler))
 			defer server.Close()
 			env := testEnv("DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL,
 				"DD_TRACE_AGENT_URL="+server.URL, "DD_API_KEY=fixture", "DD_TRACE_DEBUG=true")

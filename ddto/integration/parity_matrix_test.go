@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -379,7 +378,7 @@ type parityResult struct {
 func runParityCase(t *testing.T, dir, bin string, tc parityCase) (*parityReceiver, execution) {
 	t.Helper()
 	receiver := &parityReceiver{policy: tc.Policy, side: map[string][][]byte{}, requests: map[string]int{}}
-	server := httptest.NewServer(http.HandlerFunc(receiver.handler))
+	server := newServer(http.HandlerFunc(receiver.handler))
 	defer server.Close()
 	// The temporary directory is separate from the cache and the retry counter,
 	// so a run's leftovers there can be checked.

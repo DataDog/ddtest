@@ -8,6 +8,7 @@ package net
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -96,6 +97,42 @@ func (r *Response) Unmarshal(target any) error {
 // RequestHandler handles HTTP requests with retries and different formats.
 type RequestHandler struct {
 	Client *http.Client
+	// Context, if set, cancels requests, their retries and the waits between
+	// them when it is done: ddto's Git worker stops its requests this way.
+	Context context.Context
+}
+
+// context returns the handler's context, or one that is never done.
+func (rh *RequestHandler) context() context.Context {
+	if rh.Context == nil {
+		return context.Background()
+	}
+	return rh.Context
+}
+
+// backoff waits before the next attempt, unless the handler's context is
+// done first. SendRequest returns its error right after the final attempt, so
+// waiting there would only delay the caller.
+func (rh *RequestHandler) backoff(config *RequestConfig, attempt int) {
+	if hasNextAttempt(config, attempt) {
+		rh.sleep(getExponentialBackoffDuration(attempt, config.Backoff))
+	}
+}
+
+// sleep waits between attempts with retrySleep, or until the handler's
+// context is done.
+func (rh *RequestHandler) sleep(duration time.Duration) {
+	ctx := rh.context()
+	if ctx.Done() == nil {
+		retrySleep(duration)
+		return
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
 }
 
 // CloseIdleConnections closes idle connections owned by the request handler's
@@ -207,6 +244,9 @@ func (rh *RequestHandler) SendRequest(config RequestConfig) (*Response, error) {
 	}
 
 	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
+		if err := rh.context().Err(); err != nil {
+			return nil, err
+		}
 		stopRetries, rs, err := rh.internalSendRequest(&config, attempt)
 		if stopRetries {
 			return rs, err
@@ -246,7 +286,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 			log.Debug("ciVisibilityHttpClient: new request with files [method: %s, url: %s, attempt: %d, maxRetries: %d] %s",
 				config.Method, config.URL, attempt, config.MaxRetries, fileNames)
 		}
-		req, err = http.NewRequest(config.Method, config.URL, bytes.NewBuffer(body))
+		req, err = http.NewRequestWithContext(rh.context(), config.Method, config.URL, bytes.NewBuffer(body))
 		if err != nil {
 			return true, nil, err
 		}
@@ -283,7 +323,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 				config.Method, config.URL, attempt, config.MaxRetries, config.Compressed, config.Format, len(serializedBody), strBody)
 		}
 
-		req, err = http.NewRequest(config.Method, config.URL, bytes.NewBuffer(serializedBody))
+		req, err = http.NewRequestWithContext(rh.context(), config.Method, config.URL, bytes.NewBuffer(serializedBody))
 		if err != nil {
 			return true, nil, err
 		}
@@ -299,7 +339,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 	} else {
 		// Handle requests without a body (e.g., GET requests)
 		var err error
-		req, err = http.NewRequest(config.Method, config.URL, nil)
+		req, err = http.NewRequestWithContext(rh.context(), config.Method, config.URL, nil)
 		if err != nil {
 			return true, nil, err
 		}
@@ -320,7 +360,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 	if err != nil {
 		log.Debug("ciVisibilityHttpClient: error = %s", err.Error())
 		// Retry if there's an error
-		retryBackoff(config, attempt)
+		rh.backoff(config, attempt)
 		return false, nil, nil
 	}
 	// Close response body
@@ -348,7 +388,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 				// minute away falls back to the exponential backoff below.
 				if waitDuration <= maxRateLimitResetWait {
 					if waitDuration > 0 && hasNextAttempt(config, attempt) {
-						retrySleep(waitDuration)
+						rh.sleep(waitDuration)
 					}
 					return false, nil, nil
 				}
@@ -357,7 +397,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 		}
 
 		// Fallback to exponential backoff if header is missing or invalid
-		retryBackoff(config, attempt)
+		rh.backoff(config, attempt)
 		return false, nil, nil
 	}
 
@@ -365,14 +405,14 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 	if statusCode >= 406 {
 		// Retry if the status code is >= 406
 		log.Debug("ciVisibilityHttpClient: response status code = %d", resp.StatusCode)
-		retryBackoff(config, attempt)
+		rh.backoff(config, attempt)
 		return false, nil, nil
 	}
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Debug("ciVisibilityHttpClient: error reading response body = %s", err.Error())
-		retryBackoff(config, attempt)
+		rh.backoff(config, attempt)
 		return false, nil, nil
 	}
 
@@ -383,7 +423,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 		responseBody, err = decompressData(responseBody)
 		if err != nil {
 			log.Debug("ciVisibilityHttpClient: error decompressing response body = %s", err.Error())
-			retryBackoff(config, attempt)
+			rh.backoff(config, attempt)
 			return false, nil, nil
 		}
 	}
@@ -405,7 +445,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 	if config.ExpectJSONResponse && responseFormat == "unknown" && statusCode >= 200 && statusCode < 300 {
 		log.Debug("ciVisibilityHttpClient: expected JSON response but got format %q [method: %s, url: %s, status_code: %d]; retrying",
 			responseFormat, config.Method, config.URL, statusCode)
-		retryBackoff(config, attempt)
+		rh.backoff(config, attempt)
 		return false, nil, nil
 	}
 
@@ -484,14 +524,6 @@ const maxRateLimitResetWait = 60 * time.Second
 // hasNextAttempt reports whether SendRequest makes another attempt after this one.
 func hasNextAttempt(config *RequestConfig, attempt int) bool {
 	return attempt < config.MaxRetries
-}
-
-// retryBackoff waits before the next attempt. SendRequest returns its error
-// right after the final attempt, so waiting there would only delay the caller.
-func retryBackoff(config *RequestConfig, attempt int) {
-	if hasNextAttempt(config, attempt) {
-		exponentialBackoff(attempt, config.Backoff)
-	}
 }
 
 // exponentialBackoff performs an exponential backoff with retries.

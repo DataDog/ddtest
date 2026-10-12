@@ -43,6 +43,21 @@ func TestCompleteFuzzParallelSeedsOffsetsNativeDurationOnce(t *testing.T) {
 		{name: "multiple seeds", waits: []time.Duration{3 * time.Millisecond, 7 * time.Millisecond}, wait: 7 * time.Millisecond},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// The wait is measured on virtual time; on Windows testing's own
+			// clock is QueryPerformanceCounter, which synctest does not fake.
+			original := startParallelWaitClock
+			clocks := 0
+			startParallelWaitClock = func() func() time.Duration {
+				clocks++
+				start := time.Now()
+				return func() time.Duration { return time.Since(start) }
+			}
+			t.Cleanup(func() {
+				startParallelWaitClock = original
+				if len(tc.waits) > 0 && clocks == 0 {
+					t.Error("the parallel wait was not measured on testing's clock")
+				}
+			})
 			synctest.Test(t, func(t *testing.T) {
 				f := &testing.F{}
 				fields := getTestPrivateFields((*testing.T)(unsafe.Pointer(f)))
@@ -64,11 +79,11 @@ func TestCompleteFuzzParallelSeedsOffsetsNativeDurationOnce(t *testing.T) {
 				completeFuzzParallelSeeds(f)
 
 				event := fuzzTestEvent{native: f}
-				_, _, duration := event.nativeResult(true)
+				_, _, duration, _ := event.nativeResult(true)
 				require.Equal(t, 20*time.Millisecond-tc.wait, duration, "exclude exactly the drained wait")
 				require.Empty(t, *fields.sub)
 				completeFuzzParallelSeeds(f)
-				_, _, repeated := event.nativeResult(true)
+				_, _, repeated, _ := event.nativeResult(true)
 				require.Equal(t, duration, repeated, "a second drain must not subtract the wait again")
 			})
 		})
@@ -186,5 +201,58 @@ func TestTestingFuzzWorkerRequested(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			require.Equal(t, tt.want, testingFuzzWorkerRequested(tt.args))
 		})
+	}
+}
+
+// A fuzz event ends at its start plus Go's printed duration whenever Go's
+// duration is known, including zero and a negative accumulator, which Go
+// prints as -0.00; only an unknown duration keeps the wrapper's own clock,
+// which includes the wait for parallel seeds.
+func TestFuzzFinishTimeUsesKnownNativeDuration(t *testing.T) {
+	start := time.Unix(1_000, 0)
+	captured := start.Add(10 * time.Millisecond)
+	for _, tc := range []struct {
+		name     string
+		duration time.Duration
+		timed    bool
+		want     time.Time
+	}{
+		{"go duration", 300 * time.Microsecond, true, start.Add(300 * time.Microsecond)},
+		{"zero go duration", 0, true, start},
+		{"negative go accumulator", -time.Millisecond, true, start},
+		{"unknown duration", 0, false, captured},
+	} {
+		if got := fuzzFinishTime(start, captured, tc.duration, tc.timed); !got.Equal(tc.want) {
+			t.Errorf("%s: finish %v, want %v", tc.name, got.Sub(start), tc.want.Sub(start))
+		}
+	}
+	if got := fuzzFinishTime(start, time.Time{}, 0, false); got.Before(captured) {
+		t.Errorf("a missing capture did not finish now: %v", got)
+	}
+}
+
+// The wait subtracted from a fuzz target's duration is measured on testing's
+// own clock: a wait measured inside a test never exceeds the duration that
+// testing measured for it. On Windows, the runtime's clock is coarser than
+// testing's QueryPerformanceCounter and overshoots it.
+func TestNativeClockNestsInTestingDuration(t *testing.T) {
+	layout := getTestingInternalsLayout()
+	for i := range 100 {
+		var measured time.Duration
+		var sub *testing.T
+		t.Run("probe", func(st *testing.T) {
+			sub = st
+			elapsed := startNativeClock()
+			for spin := time.Now(); time.Since(spin) < 50*time.Microsecond; {
+			}
+			measured = elapsed()
+		})
+		base := commonBaseForTest(sub, layout)
+		if base == nil || !layout.common.duration.available {
+			t.Skip("testing duration layout unavailable")
+		}
+		if native := *fieldPtr[time.Duration](base, layout.common.duration); measured > native {
+			t.Fatalf("probe %d: measured %v inside a test that testing timed at %v", i, measured, native)
+		}
 	}
 }

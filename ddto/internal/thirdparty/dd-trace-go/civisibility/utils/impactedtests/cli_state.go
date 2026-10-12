@@ -8,6 +8,7 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
 	logger "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry"
 )
 
 // CLIState is the analyzer's input that ddto's Git worker computes once for
@@ -56,6 +57,7 @@ func handedAnalyzer() (*ImpactedTestAnalyzer, bool) {
 	var state CLIState
 	if err := utils.WaitCLIGitStateFile(dir, utils.CLIGitImpactedFile, &state, cliStateWait); err != nil {
 		logger.Debug("civisibility.ImpactedTests: CLI state unavailable: %s", err.Error())
+		telemetry.Log(telemetry.NewRecord(telemetry.LogError, "civisibility: CLI impacted tests state unavailable"))
 		return nil, false
 	}
 	if !state.Computed {

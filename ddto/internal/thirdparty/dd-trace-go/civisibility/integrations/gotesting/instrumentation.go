@@ -1379,6 +1379,10 @@ func completeParallelSubtests(t *testing.T, localTPrivateFields *commonPrivateFi
 	)
 }
 
+// startParallelWaitClock measures the wait for parallel subtests; tests
+// replace it with the runtime's clock, which synctest makes virtual.
+var startParallelWaitClock = startNativeClock
+
 func completeParallelSubtestsWithState(
 	localTPrivateFields *commonPrivateFields,
 	testState *testingTestState,
@@ -1389,7 +1393,9 @@ func completeParallelSubtestsWithState(
 		return 0
 	}
 
-	waitStart := time.Now()
+	// A fuzz target subtracts this wait from the duration that testing
+	// accumulates, so it is measured on testing's clock.
+	elapsed := startParallelWaitClock()
 	subtests := *localTPrivateFields.sub
 	*localTPrivateFields.sub = nil
 	if testState != nil {
@@ -1414,7 +1420,7 @@ func completeParallelSubtestsWithState(
 		// scheduler slot twice.
 		*localTPrivateFields.isParallel = false
 	}
-	return time.Since(waitStart)
+	return elapsed()
 }
 
 // isParallelTest reports whether the active test has entered Go's parallel-test

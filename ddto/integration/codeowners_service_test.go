@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,7 +165,7 @@ func newCodeOwnersReceiver() *codeOwnersReceiver {
 func TestMiniCodeOwnersPackageServices(t *testing.T) {
 	dir, driver := prepareCodeOwnersFixture(t)
 	c := newCodeOwnersReceiver()
-	server := httptest.NewServer(http.HandlerFunc(c.handler))
+	server := newServer(http.HandlerFunc(c.handler))
 	out, stderr, code := command(t, dir, codeOwnersTestEnv(dir, server.URL), driver, "test", "--runtime=mini", "-mod=mod", "-count=1", "-run=^Test(Service|External)$", "./alpha", "./beta", "./unowned")
 	server.Close()
 	if code != 0 {
@@ -228,7 +227,7 @@ func TestMiniCodeOwnersCompiledServices(t *testing.T) {
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					c := newCodeOwnersReceiver()
-					server := httptest.NewServer(http.HandlerFunc(c.handler))
+					server := newServer(http.HandlerFunc(c.handler))
 					args := []string{"-test.count=1", "-test.run=^TestService$"}
 					if len(tc.args) != 0 {
 						args = append([]string{"-test.count=1"}, tc.args...)
@@ -287,7 +286,7 @@ func TestMiniCodeOwnersSpecificationOnWire(t *testing.T) {
 			for _, deferred := range []string{"false", "true"} {
 				t.Run("deferred="+deferred, func(t *testing.T) {
 					c := newCodeOwnersReceiver()
-					server := httptest.NewServer(http.HandlerFunc(c.handler))
+					server := newServer(http.HandlerFunc(c.handler))
 					extra := []string{"DD_CIVISIBILITY_DEFERRED_DELIVERY=" + deferred}
 					if dialect == "gitlab" {
 						extra = append(extra, "DD_GIT_REPOSITORY_URL=https://gitlab.com/example/repo.git")

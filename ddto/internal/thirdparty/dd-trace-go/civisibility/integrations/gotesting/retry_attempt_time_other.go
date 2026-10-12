@@ -13,6 +13,14 @@ import (
 	"unsafe"
 )
 
+// startNativeClock starts a measurement on the clock that testing uses for
+// test durations, the runtime's monotonic clock outside Windows. The returned
+// function reports the time elapsed since then.
+func startNativeClock() func() time.Duration {
+	start := time.Now()
+	return func() time.Duration { return time.Since(start) }
+}
+
 func initializeRetryAttemptStart(base unsafe.Pointer, field unsafeField) {
 	if base == nil || !field.available {
 		return

@@ -5,6 +5,7 @@ package utils
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry"
 )
 
 // ddto's CLI runs the Git work that every test process of a checkout would
@@ -68,6 +70,14 @@ type CLIGitRecord struct {
 	HeadCommit string       `json:"head_commit,omitempty"`
 	Head       CLIGitCommit `json:"head"`
 	HeadError  string       `json:"head_error,omitempty"`
+	// UploadWaitMs is how long test processes wait for upload.json: ddto's
+	// --git-upload-timeout, which also bounds its own wait after go test.
+	UploadWaitMs int64 `json:"upload_wait_ms"`
+}
+
+// UploadWait is how long a test process waits for the worker's upload.
+func (r *CLIGitRecord) UploadWait() time.Duration {
+	return time.Duration(r.UploadWaitMs) * time.Millisecond
 }
 
 func newCLIGitCommit(data localCommitData) CLIGitCommit {
@@ -86,9 +96,17 @@ func (c CLIGitCommit) commitData() localCommitData {
 	}
 }
 
+// localCommitDataFunc reads a commit's metadata without fetching it; tests
+// replace it.
+var localCommitDataFunc = func(commitSha string) (localCommitData, error) {
+	return readCommitData(commitSha, false)
+}
+
 // CollectCLIGitRecord reads the current directory's Git metadata with the
 // commands each test process runs while it creates its CI tags. A failed
-// local read leaves empty fields, as it does there.
+// local read leaves empty fields, as it does there. It changes nothing in the
+// repository: when the CI provider's head commit is missing from a shallow
+// clone, the record leaves it out, and test processes fetch it as before.
 func CollectCLIGitRecord() CLIGitRecord {
 	var record CLIGitRecord
 	if wd, err := os.Getwd(); err == nil {
@@ -100,11 +118,13 @@ func CollectCLIGitRecord() CLIGitRecord {
 	record.Branch = gitData.Branch
 	record.Commit = newCLIGitCommit(gitData.localCommitData)
 	if headCommitSha, ok := getProviderTagsFunc()[constants.GitHeadCommit]; ok {
-		record.HeadCommit = headCommitSha
-		if headCommitData, err := fetchCommitDataFunc(headCommitSha); err != nil {
-			record.HeadError = err.Error()
-		} else {
-			record.Head = newCLIGitCommit(headCommitData)
+		headCommitData, err := localCommitDataFunc(headCommitSha)
+		switch {
+		case errors.Is(err, errCommitNotFetched):
+		case err != nil:
+			record.HeadCommit, record.HeadError = headCommitSha, err.Error()
+		default:
+			record.HeadCommit, record.Head = headCommitSha, newCLIGitCommit(headCommitData)
 		}
 	}
 	return record
@@ -149,9 +169,17 @@ func WriteCLIGitStateFile(dir, name string, value any) error {
 	return err
 }
 
-// ReadCLIGitStateFile reads one state file into value.
+// ReadCLIGitStateFile reads one state file into value, without recording it
+// in Go's test log (see openUnlogged).
 func ReadCLIGitStateFile(dir, name string, value any) error {
-	data, err := os.ReadFile(filepath.Join(dir, name))
+	file, err := openUnlogged(filepath.Join(dir, name), os.O_RDONLY, 0)
+	if err != nil {
+		return err
+	}
+	data, err := io.ReadAll(file)
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
 	if err != nil {
 		return err
 	}
@@ -181,6 +209,9 @@ var (
 	cliGitStateOnce sync.Once
 	cliGitStateDir  string
 	cliGitRecord    *CLIGitRecord
+	// cliGitStateOwned is set in ddto's Git worker, which changes nothing in
+	// the repository before a test process uses its state.
+	cliGitStateOwned bool
 )
 
 // HandedCLIGitState returns the CLI's state directory and record when ddto
@@ -206,10 +237,19 @@ func HandedCLIGitState() (string, *CLIGitRecord) {
 			log.Debug("civisibility: CLI Git state belongs to another checkout: %s", record.GitFolder)
 			return
 		}
-		cliGitStateDir, cliGitRecord = dir, &record
-		if used, err := os.OpenFile(filepath.Join(dir, CLIGitUsedFile), os.O_CREATE|os.O_WRONLY, 0600); err == nil {
-			_ = used.Close()
+		// The worker uploads, and starts the telemetry application, only
+		// once a test process marks the state used: without the mark, this
+		// process does its own work.
+		used, err := openUnlogged(filepath.Join(dir, CLIGitUsedFile), os.O_CREATE|os.O_WRONLY, 0o600)
+		if err == nil {
+			err = used.Close()
 		}
+		if err != nil {
+			log.Debug("civisibility: CLI Git state not marked used: %s", err.Error())
+			telemetry.Log(telemetry.NewRecord(telemetry.LogError, "civisibility: CLI Git state not marked used"))
+			return
+		}
+		cliGitStateDir, cliGitRecord = dir, &record
 	})
 	return cliGitStateDir, cliGitRecord
 }
@@ -228,14 +268,28 @@ func sameFile(a, b string) bool {
 // calls it before creating its CI tags, so it reads Git only once.
 func UseCLIGitState(dir string, record CLIGitRecord) {
 	cliGitStateOnce.Do(func() {
-		cliGitStateDir, cliGitRecord = dir, &record
+		cliGitStateDir, cliGitRecord, cliGitStateOwned = dir, &record, true
 	})
+}
+
+// FetchCLIHeadCommit fetches the CI provider's head commit that the worker's
+// record left out because a shallow clone lacked it, as each test process
+// fetches it. The worker calls it once a test process uses its state, before
+// the upload and the impacted-tests diff, which needs that commit.
+func FetchCLIHeadCommit() {
+	headCommitSha, ok := getProviderTagsFunc()[constants.GitHeadCommit]
+	if !ok || cliGitRecord == nil || cliGitRecord.HeadCommit == headCommitSha {
+		return
+	}
+	if _, err := fetchCommitDataFunc(headCommitSha); err != nil {
+		log.Debug("civisibility: CLI head commit not fetched: %s", err.Error())
+	}
 }
 
 // ResetHandedCLIGitStateForTesting forgets the handed state; readers must stop.
 func ResetHandedCLIGitStateForTesting() {
 	cliGitStateOnce = sync.Once{}
-	cliGitStateDir, cliGitRecord = "", nil
+	cliGitStateDir, cliGitRecord, cliGitStateOwned = "", nil, false
 }
 
 // SameCheckout reports whether dir lies in the checkout whose .git entry is

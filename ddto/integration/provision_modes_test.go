@@ -3,7 +3,6 @@ package integration
 import (
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,7 +59,7 @@ func TestWorkspace(t *testing.T){if workhelper.Value!=7{t.Fatal("workspace helpe
 			beforeClient, _ := os.ReadFile(filepath.Join(client, "go.mod"))
 			beforeHelper, _ := os.ReadFile(filepath.Join(helper, "go.mod"))
 			capture := new(miniWireCapture)
-			server := httptest.NewServer(http.HandlerFunc(capture.handler))
+			server := newServer(http.HandlerFunc(capture.handler))
 			defer server.Close()
 			env := testEnv("GOWORK="+filepath.Join(root, "go.work"), "DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL, "DD_API_KEY=fixture")
 			native, nativeErr, nativeCode := command(t, client, env, "go", "test", "-v", "-count=1", ".")

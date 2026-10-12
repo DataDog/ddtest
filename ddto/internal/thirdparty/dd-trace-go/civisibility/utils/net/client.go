@@ -6,6 +6,7 @@
 package net
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"math"
@@ -99,7 +100,7 @@ var (
 func NewClientWithServiceNameAndSubdomain(serviceName, subdomain string) Client {
 	client, startTelemetry := newClientWithServiceNameAndSubdomain(serviceName, subdomain)
 	if startTelemetry != nil {
-		startTelemetry()
+		startTelemetry(nil)
 	}
 	return client
 }
@@ -116,12 +117,12 @@ func NewClientWithConcurrentTelemetry(serviceName string) (Client, func()) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		startTelemetry()
+		startTelemetry(nil)
 	}()
 	return client, func() { <-done }
 }
 
-func newClientWithServiceNameAndSubdomain(serviceName, subdomain string) (Client, func()) {
+func newClientWithServiceNameAndSubdomain(serviceName, subdomain string) (Client, func(*cliTelemetryOwner)) {
 	ciTags := utils.GetCITagsReadOnly()
 
 	// get the environment
@@ -223,26 +224,38 @@ func newClientWithServiceNameAndSubdomain(serviceName, subdomain string) (Client
 	log.Debug("ciVisibilityHttpClient: new client created [id: %s, agentless: %t, url: %s, env: %s, serviceName: %s, subdomain: %s]",
 		id, agentlessEnabled, baseURL, environment, serviceName, subdomain)
 
-	var startTelemetry func()
+	var startTelemetry func(owner *cliTelemetryOwner)
 	if !telemetry.Disabled() {
-		startTelemetry = func() {
+		startTelemetry = func(owner *cliTelemetryOwner) {
 			telemetryInit.Do(func() {
-				telemetry.ProductStarted(telemetry.NamespaceCIVisibility)
-				telemetry.RegisterAppConfigs(
-					telemetry.Configuration{Name: "service", Value: serviceName},
-					telemetry.Configuration{Name: "env", Value: environment},
-					telemetry.Configuration{Name: "agentless", Value: agentlessEnabled},
-					telemetry.Configuration{Name: "test_session_name", Value: ciTags[constants.TestSessionName]},
-				)
-				if telemetry.GlobalClient() != nil {
-					return
-				}
 				cfg := telemetry.ClientConfig{
 					HTTPClient: requestHandler.Client,
 					APIKey:     apiKeyValue,
 				}
 				if agentURL != nil {
 					cfg.AgentURL = agentURL.String()
+				}
+				// A test process that ddto handed its state reports the
+				// application of ddto's Git worker, which sends app-started,
+				// with its product and configuration, and app-closing.
+				handed := false
+				if owner != nil {
+					cfg.Shared, cfg.SharedOwner, cfg.SharedSeqID = &owner.app, true, owner.sequence.Next
+				} else if cli, ok := utils.HandedCLITelemetry(); ok {
+					cfg.Shared, cfg.SharedSeqID, cfg.SendFailed = &cli.App, cli.Sequence.Next, cli.Failed
+					handed = true
+				}
+				if !handed {
+					telemetry.ProductStarted(telemetry.NamespaceCIVisibility)
+					telemetry.RegisterAppConfigs(
+						telemetry.Configuration{Name: "service", Value: serviceName},
+						telemetry.Configuration{Name: "env", Value: environment},
+						telemetry.Configuration{Name: "agentless", Value: agentlessEnabled},
+						telemetry.Configuration{Name: "test_session_name", Value: ciTags[constants.TestSessionName]},
+					)
+				}
+				if telemetry.GlobalClient() != nil {
+					return
 				}
 				client, err := telemetry.NewClient(serviceName, environment, env.Get("DD_VERSION"), cfg)
 				if err != nil {
@@ -292,11 +305,64 @@ func newClientWithServiceNameAndSubdomain(serviceName, subdomain string) (Client
 	}, startTelemetry
 }
 
-// NewClientWithoutTelemetry creates a client that starts no telemetry: ddto's
-// Git worker uploads for test processes, each of which reports its own.
-func NewClientWithoutTelemetry(serviceName string) Client {
-	client, _ := newClientWithServiceNameAndSubdomain(serviceName, "api")
-	return client
+// cliTelemetryOwner is the telemetry application that ddto's Git worker
+// owns for an invocation.
+type cliTelemetryOwner struct {
+	app      telemetry.SharedApp
+	sequence *utils.CLITelemetrySequence
+}
+
+// CLITelemetry starts and stops the telemetry application that ddto's Git
+// worker owns for an invocation; test processes that use its state report
+// under it.
+type CLITelemetry struct {
+	owner cliTelemetryOwner
+	start func(*cliTelemetryOwner)
+}
+
+// NewCLIClient creates the client of ddto's Git worker, whose requests stop
+// when ctx is done. Unless telemetry is disabled, it also records the
+// invocation's telemetry application under runtimeID in the state directory
+// dir, before any test process starts; telemetry requests do not stop with ctx.
+func NewCLIClient(ctx context.Context, dir, runtimeID string) (Client, *CLITelemetry) {
+	c, start := newClientWithServiceNameAndSubdomain("", "api")
+	if c == nil {
+		return nil, nil
+	}
+	cc := c.(*client)
+	cc.handler = &RequestHandler{Client: cc.handler.Client, Context: ctx}
+	if start == nil || runtimeID == "" {
+		return c, nil
+	}
+	app := telemetry.NewSharedApp(runtimeID, cc.serviceName, cc.environment, env.Get("DD_VERSION"))
+	sequence, err := utils.WriteCLITelemetry(dir, app)
+	if err != nil {
+		log.Debug("civisibility: CLI telemetry application not recorded: %s", err.Error())
+		return c, nil
+	}
+	return c, &CLITelemetry{owner: cliTelemetryOwner{app: app, sequence: sequence}, start: start}
+}
+
+// Start sends app-started for the invocation, which reports languageVersion,
+// the Go version of its test processes, if not empty.
+func (t *CLITelemetry) Start(languageVersion string) {
+	if t == nil {
+		return
+	}
+	if languageVersion != "" {
+		t.owner.app.Application.LanguageVersion = languageVersion
+	}
+	t.start(&t.owner)
+}
+
+// Stop sends app-closing for the invocation, with the data not yet sent. It
+// takes the request's number first, so that a fallback's log leaves with it.
+func (t *CLITelemetry) Stop() {
+	if t == nil {
+		return
+	}
+	t.owner.sequence.Reserve()
+	telemetry.StopApp()
 }
 
 // NewClientWithServiceName creates a new client with the given service name.

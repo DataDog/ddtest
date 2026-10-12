@@ -46,7 +46,7 @@ also need an entry in
 | 7 | Store small metric sets without a map | Allocations for metric-bearing events | Medium; measure lookup/encoding tradeoffs |
 | 8 | Collect coverage counters in memory | Profile I/O and parsing per covered test | High |
 | 9 | Fetch settings in the CLI | The first request on the critical path; requests outside the read cache | High |
-| 10 | Coordinate telemetry startup/shutdown requests | Network round trips around tests | High; changes lifecycle ownership |
+| 10 | Reduce telemetry requests at exit | A round trip at each test process's exit | Medium |
 
 Item 9 moves work that every test binary repeats into the CLI, which runs once
 per invocation. The CLI does the work and hands the results to the binaries
@@ -113,7 +113,7 @@ package.
 
 | Order | Change | Where it can help | Complexity |
 | --- | --- | --- | --- |
-| 46 | Overlap telemetry round trips; extends 10 | One round trip at startup and one at exit | Medium |
+| 46 | Overlap telemetry round trips; extends 10 | One round trip at startup and one at exit for a binary that reports its own application | Medium |
 | 48 | Let read-cache waiters wait for a slow owner; relates to 9 | Two seconds and a duplicate request per waiter | Medium |
 | 49 | Stream read-cache expiry fields | Full JSON decoding before a cache miss's request | Low |
 | 50 | Keep idle connections during deferred startup | TLS handshakes on the startup critical path | Low to medium |
@@ -241,15 +241,22 @@ only when it removes work from the command's critical path.
 
 ## 10. Telemetry requests
 
-Start with the two final `message-batch` sends: investigate whether compatible
-messages can share a request while preserving order, timestamps, retries and
-`app-closing`. Keep `app-started` separate under its existing mapper contract.
+Under `ddto test`, ddto's Git worker owns one telemetry application per
+invocation ([#33](https://github.com/tonyredondo/dd-ci-testing-poc/pull/33)). Test processes that use its state send no
+`app-started` and one request at exit; the worker sends `app-started` and,
+after `go test` exits, `app-closing`. What remains:
 
-CLI coordination of initial telemetry is a separate, larger step. One startup
-request per CLI would change per-process runtime identity. Define application
-and parent/child lifecycles before reducing that count; keep child metrics and
-configuration observable. Startup and shutdown must respect deferred admission
-and goleak checkpoints, including errors and cancellation.
+- A test binary that reports its own application, run alone or without a
+  handoff, still makes two final `message-batch` sends: investigate whether
+  compatible messages can share a request while preserving order, timestamps,
+  retries and `app-closing`. Keep `app-started` separate under its existing
+  mapper contract.
+- Under `ddto test`, each test process still sends its telemetry at exit,
+  after its test cycle, and the worker's `app-closing` follows the last one.
+  Handing that data to the worker, which would send it with `app-closing`,
+  would remove a round trip from each test process's exit. Startup and
+  shutdown must respect deferred admission and goleak checkpoints, including
+  errors and cancellation.
 
 Use decoded telemetry and actual HTTP captures to check values and logical
 payload/attempt counts. Network waits need delayed-receiver experiments;
@@ -590,7 +597,10 @@ together with `app-started` and then known tests. Every binary made three
 serial round trips at exit: the test cycle, then two telemetry
 `message-batch` requests. Bootstrap took 37–95 ms, almost all of it four Git
 commands of 8–25 ms, which [#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32) removed from the test processes that
-ddto starts. Items 46–53 use that timeline as their baseline.
+ddto starts. Items 46–53 use that timeline as their baseline. [#33](https://github.com/tonyredondo/dd-ci-testing-poc/pull/33)
+removed, for the test processes that use the worker's state, the wait for
+`app-started` and one of the two telemetry requests at exit; the suggestions
+below remain for binaries that report their own application.
 
 This extends item 10. A binary served by the read cache spends its settings
 phase waiting for `app-started` (`civisibility/utils/net/client.go:226-255`,

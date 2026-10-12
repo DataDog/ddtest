@@ -583,20 +583,37 @@ initializes.
   defines the record (`git.json`), the upload and impacted-tests results
   (`upload.json`, `impacted.json`), the `used` mark and atomic writes.
   `HandedCLIGitState` accepts the state only when the process's `.git` entry,
-  found as `getParentGitFolder` finds it, is the same file as the worker's.
-  Commit dates are Unix seconds, so each process formats them in its own
-  location as after `git log`.
+  found as `getParentGitFolder` finds it, is the same file as the worker's,
+  and it can mark the state `used`. Commit dates are Unix seconds, so each
+  process formats them in its own location as after `git log`.
+  [`civisibility/utils/cli_state_files.go`](civisibility/utils/cli_state_files.go)
+  opens the state's files with `syscall.Open`, so that the reads and writes of
+  test processes stay out of Go's test log: with the state directory in the
+  module, as with `TMPDIR` inside it, `go test` would otherwise check files that
+  change on every run and cache no result. On Windows, it adds the long-path
+  prefix to an absolute path of 248 characters or more and keeps extended and
+  device paths, as `os` does (`extendedWindowsPath`).
+- `CollectCLIGitRecord` changes nothing in the repository: `fetchCommitData`
+  (`git.go`) became `readCommitData(sha, allowFetch)`, and without
+  `allowFetch` it reports a CI head commit missing from a shallow clone
+  instead of fetching it. The record then leaves the head commit out, and test
+  processes fetch it as before. The worker's own CI tags skip that fetch
+  (`environmentTags.go`), and `FetchCLIHeadCommit` fetches the commit once a
+  test process uses the state, before the upload and the impacted-tests diff,
+  which needs it.
 - `createCITagsMap` (`environmentTags.go`) takes `getLocalGitData`'s and,
   for the same head commit, `fetchCommitData`'s results from the record; the
   CI provider's tags keep their precedence.
 - The upload's steps moved from `integrations/civisibility_features.go` to
   [`civisibility/utils/gitupload`](civisibility/utils/gitupload/gitupload.go),
   unchanged except for exported names; `integrations` keeps thin wrappers and
-  its test seams. `net.NewClientWithoutTelemetry` creates the worker's client.
+  its test seams. `net.NewCLIClient` creates the worker's client.
 - `ensureSettingsInitialization` waits for `upload.json` instead of uploading
   when the state is handed, and closes the same upload channel, so the
-  `RequireGit` and impacted-tests waits are unchanged. It no longer waits for
-  the upload at exit: ddto waits for its worker before exiting.
+  `RequireGit` and impacted-tests waits are unchanged. Deferred delivery waits
+  before admitting tests, as for its own upload; ordinary mode waits in the
+  background. It no longer waits for the upload at exit: ddto waits for its
+  worker before exiting.
 - `NewImpactedTestAnalyzer` (`impactedtests`) builds the analyzer from
   `impacted.json` when the worker computed it for the process's current
   commit and pull-request base; otherwise it computes as before
@@ -607,22 +624,149 @@ backend's commits while go test builds, a read-only request, but unshallows,
 packs and uploads only after a test process marks the state `used`, and then
 requests the settings as test processes do, concurrently with the upload.
 When go test takes every result from its cache, no process uses the state and
-the worker exits without changing the repository. ddto writes the missing
-results if the worker exits early, so no process waits for its timeouts.
+the worker cancels its commit search, waits for it and exits without changing
+the repository. The worker closes its
+standard output once it has written its results, or failed to, and ddto then
+writes any missing result, so no process waits for its timeouts.
+
+ddto writes `exited` to the worker once `go test` exits and waits for it at
+most `--git-upload-timeout` (default one minute), which also bounds the test
+processes' wait for `upload.json` through the record's `upload_wait_ms`. Then,
+or on a signal, it writes `stop` and a reason. The worker cancels the context
+that `SetGitCommandContext` (`utils/git_stop.go`) gives its Git commands, which
+receive SIGTERM, so that Git removes its lock files, and SIGKILL after three
+seconds; later commands fail at once. The same context is the worker's
+`RequestHandler.Context` (`utils/net/http.go`), which stops a request in
+flight, its retries and the waits between them; `rh.backoff` replaced the
+package-level `retryBackoff`, and the requests use `NewRequestWithContext`.
+The upload returns, `RemovePackFiles` removes its pack files, `upload.json`
+records the stop, and the worker logs it as telemetry and still sends
+`app-closing`. ddto kills only a worker that has not exited ten seconds after
+`stop`. The worker reads its input from its start, before its first Git
+command: the input ending before `exited` stops it too, and `exited` before
+`proceed`, as when ddto's preparation fails, stops it at once, even during
+its first Git commands. The signals that
+ddto forwards to go test also reach the worker from the terminal, and the
+worker handles them as a `stop` with reason `signal`. Test processes, whose handler has no context and which never set the
+Git context, keep their behavior.
 Processes outside the worker's checkout, binaries run outside `ddto test`, the
 SDK runtime, Bazel's offline modes, `-c` and `-n`, and commands with a `-exec`
 program or a cross-compilation helper keep the per-process behavior.
 
-Telemetry differs: test processes that use the state no longer count the Git
-commands and repository requests that the worker made, and the worker reports
-no telemetry. With 8 packages against a local fake Agent, a `ddto test` run
-made one commit search and one upload instead of eight each, and took 0.47
-instead of 0.62 s; each test process's bootstrap dropped from 12 to 5 ms.
+Test processes that use the state no longer count the Git commands and
+repository requests that the worker made; the worker reports them, see
+[Telemetry from ddto's CLI](#telemetry-from-ddtos-cli). With 8 packages
+against a local fake Agent, a `ddto test` run made one commit search and one
+upload instead of eight each, and took 0.47 instead of 0.62 s; each test
+process's bootstrap dropped from 12 to 5 ms.
+
+`globalconfig.go` records whether a process started its root session, which
+it hands to child processes in `_DD_ROOT_GO_SESSION_ID`, and the variable as
+the process received it. Linking the worker gives ddto that package, so
+`ddto`'s `main` calls `KeepCallerEnvironment` to restore the variable, absent,
+empty or set, and hands its session only to the worker (`RootSessionEnv`): go
+test, `-exec` programs and test processes see the caller's environment.
 
 Checks: `TestMiniGitStateHandoff`, `TestMiniGitStateUploadsOnce`,
-`TestMiniGitStateImpactedTests`, `TestRunUploadsOnlyWhenTold`,
-`TestGitWorkerRecordsMissingResults` and `TestReceiveRemovesGitState`, with the
-existing upload and impacted-tests tests in `integrations` and `impactedtests`.
+`TestMiniGitStateImpactedTests`, `TestMiniGitStateDeferredWaitsForUpload`,
+`TestMiniGitStateCacheWithTemporaryDirectoryInModule`,
+`TestMiniExecWrapperSeesCallerEnvironment`, `TestRunUploadsOnlyWhenTold`,
+`TestRunClosesResultsOnWriteFailure`, `TestCLIGitWorkerFetchesHeadOnlyAfterUse`,
+`TestHandedCLIGitStateNeedsUsedMark`, `TestCLIStateFilesLongPath`,
+`TestExtendedWindowsPath`,
+`TestGitWorkerRecordsMissingResults`,
+`TestGitWorkerRecordsResultsWhenOutputCloses`, `TestRunStopsUploadOnRequest`,
+`TestGitCommandStopsWithInterrupt`, `TestRequestHandlerStopsWithContext`,
+`TestGitWorkerFinishStopsAfterUploadTimeout`,
+`TestGitWorkerFinishKillsAWorkerThatDoesNotStop`,
+`TestGitWorkerSignalStopsTheWorker`, `TestGitWorkerKeepsCIState`,
+`TestGitWorkerFinishBoundsAStopBySignal`, `TestZipDirectoryKeepsLinks`,
+`TestRunStopsDuringRecordCollection`, `TestRunWaitsForTheStoppedSearch`,
+`TestRunStopsOnInterrupt`, `TestRunEndsWhenGoTestExitsWithoutTheState`,
+`TestRunProceedsWhenGoTestExitedFirst`,
+`integration/TestMiniGitStateStopsUploadCleanly`,
+`integration/TestMiniGitWorkerStopsOnInterrupt` and `TestReceiveRemovesGitState`,
+with the existing upload and impacted-tests tests in `integrations` and
+`impactedtests`.
+
+## Telemetry from ddto's CLI
+
+ddto's Git worker owns the telemetry application of an invocation. The test
+processes that use its state report under that application instead of
+starting their own, so an invocation is one application, with ddto's runtime
+ID, one `app-started` and one `app-closing`.
+
+- [`telemetry/shared.go`](telemetry/shared.go) and
+  [`telemetry/internal/shared.go`](telemetry/internal/shared.go) define
+  `SharedApp`: the runtime ID, root session, application and host that a
+  request reports. With `ClientConfig.Shared`, the writer
+  (`telemetry/internal/writer.go`) puts them in the body and in the
+  `DD-Session-ID` and `DD-Root-Session-ID` headers, and `SharedSeqID` numbers
+  the requests instead of the writer's counter. A process that reports
+  another's application fills in its own Go version.
+- In `telemetry/client.go`, only the owner (`SharedOwner`) sends `app-started`
+  and `app-closing`. Another process's client registers no product or
+  configuration source, sends nothing at startup and adds no `app-closing`; it
+  sends its metrics and logs at its periodic and final flushes. The owner's
+  startup sends `app-started` alone and leaves its other data in its sources,
+  so that it leaves with `app-closing` in one request. `SendFailed` reports
+  each undelivered request.
+- [`civisibility/utils/cli_telemetry_state.go`](civisibility/utils/cli_telemetry_state.go)
+  records the application in `telemetry.json` and numbers the requests of all
+  its processes. A number is a file in `seq/` that one process creates
+  exclusively. Each process takes the number after the highest one that
+  exists, found by a galloping search, so the numbers are 1 to n without
+  repeats and a later request has a higher number. The owner reserves 1 for
+  `app-started`. If the directory cannot be used, a process continues its own
+  numbers. A test process records that fallback, and each undelivered
+  request, in a `telemetry-failure-*` file, which the owner reports even when
+  it happened in the test process's final request. The owner logs its own
+  fallback. It takes the number of its final flush's first request before
+  `StopApp` takes the final data, so that a fallback then is logged in that
+  request; a fallback for a later request of that flush, sent only when an
+  earlier request was undelivered, goes unreported. The sequence's files stay
+  out of Go's test log, like the Git state's.
+- In `civisibility/utils/net/client.go`, the telemetry start function takes
+  the owner, if any. A process whose state ddto handed reports the handed
+  application and registers no product or configuration: the owner's
+  `app-started` carries them. `NewCLIClient` creates the worker's client and
+  writes `telemetry.json` under ddto's runtime ID before the worker writes its
+  Git record, which ddto waits for before it hands the state over.
+- The worker ([`civisibility/cligit`](civisibility/cligit/cligit.go)) starts the
+  application when a test process marks the state `used`, with the Go version
+  that ddto read from `go env`. It closes it after `go test` exits, once it has
+  logged the test processes' undelivered requests. It also logs the failures
+  of its own work as telemetry: the upload, the settings request, the
+  impacted-tests state and writing a result. A failed write closes its results
+  at once, but `app-closing` still waits for `go test` to exit. Test processes
+  log a missing or invalid application, a state that they could not mark used,
+  and a missing upload or impacted-tests result. Messages are constant; tags
+  hold only a reason, a file name or a status code.
+
+Processes without a handoff, as for the Git state, report their own
+application as before. A fully cached run sends no telemetry, as before. The
+application's service and environment are the worker's, so test processes no
+longer report a service per package, as `DD_CIVISIBILITY_SERVICE_FROM_CODEOWNERS`
+selects for their events, in the telemetry configuration.
+
+With 8 packages against a local fake Agent, a run made 10 telemetry requests
+instead of 23: one per test process and two from the worker, instead of
+`app-started` and two requests at exit per test process. With 100 ms per
+request and `-p 2`, the run took 1.91 instead of 2.52 s; with all 8 test
+processes in parallel, the run took the same time, because the worker's
+`app-closing` follows the last test process.
+
+When updating `telemetry`, keep the shared identity in `newBody` and
+`preBakeRequest`, the external sequence in `setPayloadToBody`, and the
+`sharedChild` checks in `AppStart`, `AppStop`, `flushStartup` and the data
+sources.
+
+Checks: `TestSharedAppReportsOwnerIdentity`, `TestSharedAppRequiresSequence`,
+`TestCLITelemetrySequenceAcrossProcesses`, `TestCLITelemetrySequenceReserve`,
+`TestCLITelemetryStopReportsSequenceFallback`, `TestCLITelemetryFailures`,
+`TestRunOwnsTelemetryApplication` and `integration/TestMiniCLITelemetry`, which
+checks one application, sequential `seq_id`s, the worker's Git metrics, no
+telemetry from a cached run, reported failures and a binary run alone.
 
 ## Testify method names
 
@@ -1126,6 +1270,17 @@ remain failures. No sender/worker filters are widened to net/http or all testing
 validates common type/offset, F's own scheduler pointer and fuzzCalled bool.
 `nativeResult` reads cached failure/skip fields under common.mu. Only the
 post-M.Run drain reads duration; fatal drains use the captured finish time.
+When the drain read Go's duration, `fuzzFinishTime` uses it even when it is
+zero, clamping a negative accumulator to zero, so the event matches Go's
+printed time. The root subtracts the wait for parallel seeds, which it drains,
+from Go's accumulator; `completeParallelSubtestsWithState` measures that wait
+with `startNativeClock`, testing's own clock: QueryPerformanceCounter on
+Windows (`retry_attempt_time_windows.go`), the runtime's monotonic clock
+elsewhere. On Windows, the runtime's clock is coarser, so a wait measured on it
+could exceed the root's QPC-measured time and leave a zero or negative
+duration; the event then fell back to the wrapper's own clock, which includes
+the wait. `TestFuzzFinishTimeUsesKnownNativeDuration` and
+`TestNativeClockNestsInTestingDuration` check both.
 This removes the per-event private-field reflection and common wrapper allocation.
 Six repeated result-collection benchmarks are recorded in `docs/results`.
 

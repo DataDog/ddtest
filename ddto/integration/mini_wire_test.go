@@ -8,7 +8,6 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -120,7 +119,7 @@ func runMiniWire(t *testing.T, dir, bin string, agentless, coverage bool) *miniW
 	if coverage {
 		c.profile = "coverage"
 	}
-	server := httptest.NewServer(http.HandlerFunc(c.handler))
+	server := newServer(http.HandlerFunc(c.handler))
 	defer server.Close()
 	scratch := t.TempDir()
 	env := testEnv("DD_CIVISIBILITY_ENABLED=true", fmt.Sprintf("DD_CIVISIBILITY_AGENTLESS_ENABLED=%t", agentless), "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL, "DD_TRACE_AGENT_URL="+server.URL, "DD_API_KEY=fixture-key", "XDG_CACHE_HOME="+scratch, "TMPDIR="+scratch, "DD_CIVISIBILITY_CODE_COVERAGE_ENABLED=true")

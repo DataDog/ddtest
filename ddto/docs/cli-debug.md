@@ -150,6 +150,35 @@ entry, individual compiler/linker durations, CPU time or memory. A normal
 `go test` duration includes both building and executing tests; use `-c` for a
 build-only observation.
 
+## Keeping the CI state
+
+With the Mini runtime and CI Visibility enabled, `ddto test` starts a Git
+worker and shares state with the test processes in a temporary directory,
+`ddto-git-*` in the system's temporary directory. `ddto` removes it when the
+command ends. To keep it for debugging:
+
+```sh
+ddto test --keep-ci-state ./...                 # prints: INFO: kept the CI state in /tmp/ddto-git-…
+ddto test --keep-ci-state=ci-state.zip ./...    # prints: INFO: archived the CI state in /…/ci-state.zip
+```
+
+| File | Contents |
+| --- | --- |
+| `git.json` | The checkout's Git metadata that the worker read once, and the upload wait that test processes use |
+| `telemetry.json` | The invocation's telemetry application: runtime ID, application and host |
+| `seq/` | One file per telemetry request number taken, by the worker or a test process |
+| `used` | Present when a test process used the state |
+| `upload.json` | The repository upload's result, or why it failed or stopped |
+| `impacted.json` | The impacted-tests base commit and modified files, or why they were not computed |
+| `telemetry-failure-*` | Telemetry requests that a test process could not deliver |
+| `worker.log` | The worker's own log; add `DD_TRACE_DEBUG=true` for its debug lines |
+| `ddto.json` | `ddto`'s view: whether it handed the state over and why, the upload timeout, how the worker ended (`exited`, `stopped` or `killed`), the stop reason and how long `ddto` waited after `go test` |
+
+A command that starts no worker, such as the SDK runtime, `-c` or a disabled
+CI Visibility, prints that it has no CI state. The state holds repository
+metadata such as commit messages, author emails and the repository URL;
+review it before sharing.
+
 ## Output, cache and ownership
 
 The CLI's debug lines stay out of `stdout`, including `go test -json`. The CLI does not

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,7 +48,7 @@ func TestMiniRuntimeWithoutRequirementLeavesModuleUntouched(t *testing.T) {
 func TestMiniLocalProvisionAvoidsProxy(t *testing.T) {
 	driver := sharedDriver(t, "..")
 	var requests atomic.Int64
-	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	proxy := newServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		http.Error(w, "module lookup should not be necessary", http.StatusForbidden)
 	}))

@@ -2,7 +2,6 @@ package integration
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,7 +24,7 @@ func TestSDKCompatibility(t *testing.T){span,_:=tracer.StartSpanFromContext(t.Co
 	beforeMod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
 	beforeSum, _ := os.ReadFile(filepath.Join(dir, "go.sum"))
 	capture := new(miniWireCapture)
-	server := httptest.NewServer(http.HandlerFunc(capture.handler))
+	server := newServer(http.HandlerFunc(capture.handler))
 	defer server.Close()
 	env := testEnv("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL, "DD_API_KEY=fixture", "GOWORK=off")
 	for i := 0; i < 2; i++ {

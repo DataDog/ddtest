@@ -28,6 +28,27 @@ func retryAttemptPerformanceValue(proc *windows.LazyProc) (int64, bool) {
 	return value, ok != 0
 }
 
+// startNativeClock starts a measurement on the clock that testing uses for
+// test durations, QueryPerformanceCounter on Windows; the runtime's clock is
+// coarser there. The returned function reports the time elapsed since then.
+func startNativeClock() func() time.Duration {
+	started, startedOK := retryAttemptPerformanceValue(retryAttemptQueryPerformanceCounter)
+	frequency, frequencyOK := retryAttemptPerformanceValue(retryAttemptQueryPerformanceFrequency)
+	if !startedOK || !frequencyOK || frequency <= 0 {
+		start := time.Now()
+		return func() time.Duration { return time.Since(start) }
+	}
+	return func() time.Duration {
+		now, ok := retryAttemptPerformanceValue(retryAttemptQueryPerformanceCounter)
+		if !ok || now <= started {
+			return 0
+		}
+		hi, lo := bits.Mul64(uint64(now-started), uint64(time.Second)/uint64(time.Nanosecond))
+		elapsed, _ := bits.Div64(hi, lo, uint64(frequency))
+		return time.Duration(elapsed)
+	}
+}
+
 func initializeRetryAttemptStart(base unsafe.Pointer, field unsafeField) {
 	if base == nil || !field.available {
 		return

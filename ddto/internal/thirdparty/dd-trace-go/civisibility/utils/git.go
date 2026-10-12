@@ -211,7 +211,7 @@ func execGit(commandType telemetry.CommandType, args ...string) (val []byte, err
 	}
 
 	cmdArgs := append(append([]string(nil), gitExecutableArgs...), args...)
-	return exec.Command(gitExecutable, cmdArgs...).CombinedOutput()
+	return newGitCommand(cmdArgs).CombinedOutput()
 }
 
 // execGitString executes a Git command with the given arguments and returns the output as a string.
@@ -274,7 +274,7 @@ func execGitStringWithInput(commandType telemetry.CommandType, input string, arg
 	}
 
 	cmdArgs := append(append([]string(nil), gitExecutableArgs...), args...)
-	cmd := exec.Command(gitExecutable, cmdArgs...)
+	cmd := newGitCommand(cmdArgs)
 	cmd.Stdin = strings.NewReader(input)
 	out, err := cmd.CombinedOutput()
 	strOut := strings.TrimSpace(strings.Trim(string(out), "\n"))
@@ -375,6 +375,16 @@ func getLocalGitData() (localGitData, error) {
 
 // fetchCommitData retrieves commit data for a specific commit SHA in a shallow clone Git repository.
 func fetchCommitData(commitSha string) (localCommitData, error) {
+	return readCommitData(commitSha, true)
+}
+
+// errCommitNotFetched reports a commit that fetchCommitData would fetch.
+var errCommitNotFetched = errors.New("civisibility: the commit is missing from the shallow clone")
+
+// readCommitData is fetchCommitData. Without allowFetch, it changes nothing
+// in the repository: it returns errCommitNotFetched instead of fetching a
+// commit missing from a shallow clone.
+func readCommitData(commitSha string, allowFetch bool) (localCommitData, error) {
 	commitData := localCommitData{}
 
 	// let's do a first check to see if the repository is a shallow clone
@@ -402,6 +412,8 @@ func fetchCommitData(commitSha string) (localCommitData, error) {
 		// checkout, the first test binary of a command usually fetched it.
 		if commitObjectExists(commitSha) {
 			log.Debug("civisibility.fetchCommitData: commit %s is already present, skipping the fetch", commitSha)
+		} else if !allowFetch {
+			return commitData, errCommitNotFetched
 		} else {
 			// let's get the remote name
 			remoteName, err := getRemoteName()

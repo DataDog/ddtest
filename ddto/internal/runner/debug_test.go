@@ -107,7 +107,7 @@ func (failingDebugWriter) Write([]byte) (int, error) { return 0, errors.New("log
 
 func TestCLIDebugWriteFailure(t *testing.T) {
 	t.Setenv("DD_TRACE_DEBUG", "true")
-	if code := RunRuntime(t.Context(), []string{"-p"}, Mini, nil, io.Discard, failingDebugWriter{}); code != 2 {
+	if code := RunRuntime(t.Context(), []string{"-p"}, DefaultCLIOptions(), nil, io.Discard, failingDebugWriter{}); code != 2 {
 		t.Fatalf("broken debug writer changed parse-error exit=%d", code)
 	}
 }

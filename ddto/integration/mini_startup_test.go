@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,7 +40,7 @@ func TestStarted(t *testing.T) { if err := os.WriteFile(os.Getenv("DDTO_STARTED_
 				var mu sync.Mutex
 				var types []string
 				receiver := &capture{}
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				server := newServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if strings.Contains(r.URL.Path, "apmtelemetry") {
 						var reader io.Reader = r.Body
 						if r.Header.Get("Content-Encoding") == "gzip" {

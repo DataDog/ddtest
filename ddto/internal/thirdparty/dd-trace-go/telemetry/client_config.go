@@ -68,6 +68,22 @@ type ClientConfig struct {
 	// The default value is 1024.
 	MaxDistinctLogs int32
 
+	// Shared makes the client report this application instead of its own
+	// process. Only the application's owner, SharedOwner, sends app-started
+	// and app-closing; the other processes send their data alone.
+	Shared *SharedApp
+
+	// SharedOwner is set in the process that owns Shared.
+	SharedOwner bool
+
+	// SharedSeqID numbers the requests of every process that reports Shared,
+	// which requires it.
+	SharedSeqID func() int64
+
+	// SendFailed, if set, is called for each request that could not be
+	// delivered, with its last status code, or 0 for a network error.
+	SendFailed func(statusCode int)
+
 	// internalMetricsEnabled remains false: only CI metrics are collected.
 	internalMetricsEnabled bool
 }
@@ -134,6 +150,10 @@ func (config ClientConfig) validateConfig() error {
 
 	if !authorizedPayloadSize.Contains(config.EarlyFlushPayloadSize) {
 		return fmt.Errorf("EarlyFlushPayloadSize must be between 0 and 5MB, got %v", config.EarlyFlushPayloadSize)
+	}
+
+	if config.Shared != nil && config.SharedSeqID == nil {
+		return errors.New("a shared application requires SharedSeqID")
 	}
 
 	return nil
@@ -238,5 +258,7 @@ func newWriterConfig(config ClientConfig, tracerConfig internal.TracerConfig) (i
 		Endpoints:    endpoints,
 		HTTPClient:   config.HTTPClient,
 		Debug:        config.Debug,
+		Shared:       config.Shared,
+		NextSeqID:    config.SharedSeqID,
 	}, nil
 }

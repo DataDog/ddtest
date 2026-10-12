@@ -20,6 +20,7 @@
       "TestMiniBazelOfflineAndPayloadFiles",
       "TestMiniCLIActivation",
       "TestMiniCLIRuntimeSelectionAndSourceRange",
+      "TestMiniCLITelemetry",
       "TestMiniCLIWithoutSDK",
       "TestMiniChdirSymlinkWithUserTool",
       "TestMiniCodeOwnersCompiledServices",
@@ -32,8 +33,11 @@
       "TestMiniFixtureRuntimeImportLineEndings",
       "TestMiniGitHubJobIDHandoff",
       "TestMiniGitHubJobIDNotHandedThroughExec",
+      "TestMiniGitStateCacheWithTemporaryDirectoryInModule",
+      "TestMiniGitStateDeferredWaitsForUpload",
       "TestMiniGitStateHandoff",
       "TestMiniGitStateImpactedTests",
+      "TestMiniGitStateStopsUploadCleanly",
       "TestMiniGitStateUploadsOnce",
       "TestMiniGoleakAbsoluteTargetRetainsCompilerFlags",
       "TestMiniGoleakForkReplacement",
@@ -61,6 +65,7 @@
       "TestMiniVendorSelectionMatchesGo",
       "TestMiniVendorTreeMatchesGo",
       "TestMiniVendorWorkspaceLinksAndReusesBuildCache",
+      "TestNewServerSkipsUsedAddresses",
       "TestParallelNormalizationPreservesOutput",
       "TestResultCache",
       "TestSDKProvisionProgressUsesStderr",
@@ -189,11 +194,17 @@
   },
   "platform_tests": {
     "linux": {
+      "cli": [
+        "TestMiniGitWorkerStopsOnInterrupt"
+      ],
       "parity": [
         "TestCIVisibilityUnixAgent"
       ]
     },
     "darwin": {
+      "cli": [
+        "TestMiniGitWorkerStopsOnInterrupt"
+      ],
       "parity": [
         "TestCIVisibilityUnixAgent"
       ]

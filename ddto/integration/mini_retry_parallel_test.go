@@ -2,7 +2,6 @@ package integration
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +40,7 @@ func TestRetriedParallel(t *testing.T) {
 		t.Fatalf("compile: %s %s", out, stderr)
 	}
 	receiver := &parityReceiver{policy: policySettings{Retry: true}, side: map[string][][]byte{}, requests: map[string]int{}}
-	server := httptest.NewServer(http.HandlerFunc(receiver.handler))
+	server := newServer(http.HandlerFunc(receiver.handler))
 	defer server.Close()
 	env := testEnv("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=false", "DD_TRACE_AGENT_URL="+server.URL,
 		"DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=true", "DD_CIVISIBILITY_FLAKY_RETRY_COUNT=2", "DD_CIVISIBILITY_RETRY_EXECUTION_MODE=in_process")

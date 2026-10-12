@@ -69,7 +69,7 @@ func BenchmarkFuzzNativeResult(b *testing.B) {
 			event := fuzzTestEvent{native: native}
 			b.ReportAllocs()
 			for b.Loop() {
-				_, _, duration := event.nativeResult(true)
+				_, _, duration, _ := event.nativeResult(true)
 				if duration != 23*time.Millisecond {
 					b.Fatal(duration)
 				}
@@ -132,9 +132,9 @@ func TestFuzzFatalResultDoesNotReadActiveDuration(t *testing.T) {
 	})
 	event := fuzzTestEvent{native: native}
 	for i := 0; i < 10000; i++ {
-		failed, skipped, got := event.nativeResult(false)
-		if !failed || skipped || got != 0 {
-			t.Fatalf("fatal result=%t/%t/%s", failed, skipped, got)
+		failed, skipped, got, timed := event.nativeResult(false)
+		if !failed || skipped || got != 0 || timed {
+			t.Fatalf("fatal result=%t/%t/%s/%t", failed, skipped, got, timed)
 		}
 	}
 	wg.Wait()

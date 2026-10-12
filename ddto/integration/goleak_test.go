@@ -2,7 +2,6 @@ package integration
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -171,7 +170,7 @@ func TestParallelB(t *testing.T) {t.Parallel()}
 					receiver.policy.Quarantined = true
 					receiver.policy.ManagementTarget = tc.run
 				}
-				server := httptest.NewServer(http.HandlerFunc(receiver.handler))
+				server := newServer(http.HandlerFunc(receiver.handler))
 				env := envForGoleak("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=false", "DD_TRACE_AGENT_URL="+server.URL, "DD_INSTRUMENTATION_TELEMETRY_ENABLED=true", "DD_CIVISIBILITY_CODE_COVERAGE_ENABLED=true", "DD_CIVISIBILITY_DEFERRED_DELIVERY="+deferred)
 				out, stderr, code := command(t, dir, env, bin, "-test.v", "-test.run=^"+tc.run+"$", "-test.timeout=20s")
 				server.Close()

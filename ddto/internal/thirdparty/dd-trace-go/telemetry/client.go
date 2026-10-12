@@ -63,10 +63,14 @@ func newClient(tracerConfig internal.TracerConfig, config ClientConfig) (*client
 
 	client.flushMapper = mapper.NewDefaultMapper()
 
-	client.dataSources = append(client.dataSources,
-		&client.products,
-		&client.configuration,
-	)
+	// The owner of a shared application reports its products and
+	// configuration in app-started.
+	if !client.sharedChild() {
+		client.dataSources = append(client.dataSources,
+			&client.products,
+			&client.configuration,
+		)
+	}
 
 	if config.LogsEnabled {
 		client.dataSources = append(client.dataSources, client.backend)
@@ -157,13 +161,24 @@ func (c *client) Config() ClientConfig {
 // Flush sends all the data sources before calling flush
 // This function is called by the flushTicker so it should not panic, or it will crash the whole customer application.
 // If a panic occurs, we stop the telemetry and log the error.
-func (c *client) Flush() { c.flushData(0) }
+func (c *client) Flush() { c.flushData(c.dataSources, 0) }
 
 // flushStartup sends the standalone app-started request before tests. Remaining
-// snapshots stay in the existing queue until a regular flush or shutdown.
-func (c *client) flushStartup() { c.flushData(1) }
+// snapshots stay in the existing queue until a regular flush or shutdown. A
+// client that reports another process's application sends nothing then. The
+// owner of a shared application sends only app-started: its other data waits
+// in its sources, so that it leaves with app-closing in one request.
+func (c *client) flushStartup() {
+	switch {
+	case c.sharedChild():
+	case c.clientConfig.SharedOwner:
+		c.flushData([]dataSource{&c.products, &c.configuration}, 1)
+	default:
+		c.flushData(c.dataSources, 1)
+	}
+}
 
-func (c *client) flushData(limit int) {
+func (c *client) flushData(sources []dataSource, limit int) {
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -181,7 +196,7 @@ func (c *client) flushData(limit int) {
 	}()
 
 	payloads := make([]transport.Payload, 0, 8)
-	for _, ds := range c.dataSources {
+	for _, ds := range sources {
 		if payload := ds.Payload(); payload != nil {
 			payloads = append(payloads, payload)
 		}
@@ -239,6 +254,9 @@ func (c *client) flushPayloads(payloads []transport.Payload, limit int) (int, er
 		}
 		results, err := c.writer.Flush(payload)
 		c.computeFlushMetrics(results, err)
+		if err != nil && c.clientConfig.SendFailed != nil {
+			c.clientConfig.SendFailed(results[len(results)-1].StatusCode)
+		}
 		if err != nil {
 			// We stop flushing when we encounter a fatal error, put the bodies in the queue and return the error
 			if results[len(results)-1].StatusCode == 413 { // If the payload is too large we have no way to divide it, we can only skip it...
@@ -331,12 +349,18 @@ func (c *client) computeFlushMetrics(results []internal.EndpointRequestResult, r
 }
 
 func (c *client) AppStart() {
+	if c.sharedChild() {
+		return
+	}
 	c.flushMapperMu.Lock()
 	defer c.flushMapperMu.Unlock()
 	c.flushMapper = mapper.NewAppStartedMapper(c.flushMapper)
 }
 
 func (c *client) AppStop() {
+	if c.sharedChild() {
+		return
+	}
 	c.flushMapperMu.Lock()
 	defer c.flushMapperMu.Unlock()
 	c.flushMapper = mapper.NewAppClosingMapper(c.flushMapper)

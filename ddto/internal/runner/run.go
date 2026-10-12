@@ -76,6 +76,8 @@ type Plan struct {
 	testLauncher bool
 	// testDirs are the directories of the packages that have tests.
 	testDirs []string
+	// goVersion is the selected toolchain's version, as go env reports it.
+	goVersion string
 }
 
 // savedEnvironment records the caller's values of the Go settings that go test
@@ -211,6 +213,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		return plan, fmt.Errorf("ddto requires Go 1.25 or newer; selected toolchain is %q", opts.environment.GOVERSION)
 	}
 	plan.testLauncher = opts.exec != "" || opts.environment.GOOS != opts.environment.GOHOSTOS || opts.environment.GOARCH != opts.environment.GOHOSTARCH
+	plan.goVersion = opts.environment.GOVERSION
 	debug.printf("toolchain=%q", opts.environment.GOVERSION)
 	if runtime == Mini {
 		if work := workspaceFile(dir); work != "" {
@@ -589,14 +592,17 @@ func transformTesting(native *goPackage, replacements map[string]string, debug *
 // Run retains native test output, flags, working directory, and exit status.
 // It deliberately preserves the user's test-result caching choice.
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	return RunRuntime(ctx, args, SDK, stdin, stdout, stderr)
+	cli := DefaultCLIOptions()
+	cli.Runtime = SDK
+	return RunRuntime(ctx, args, cli, stdin, stdout, stderr)
 }
 
 // RunRuntime compiles and executes tests using one explicitly selected runtime.
 // Interrupt and termination signals are forwarded to go test instead of ending
 // ddto first: the plan is removed only after Go exits, and the result keeps
 // go test's exit status. A signal during preparation stops it and cleans up.
-func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Reader, stdout, stderr io.Writer) (exitCode int) {
+func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Reader, stdout, stderr io.Writer) (exitCode int) {
+	runtime := cli.Runtime
 	ctx = withCLIDebug(ctx, stderr)
 	debug := debugFromContext(ctx)
 	if debug != nil {
@@ -637,8 +643,11 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 		return runGo(ctx, cwd, append([]string{"test"}, args...), nil, signals, stdin, stdout, stderr)
 	}
 	gitHubJobID := handGitHubJobID(runtime, debug)
-	gitWorker := startGitWorker(runtime, opts, dir, debug, stderr)
-	defer gitWorker.finish(gitWorkerExitWait)
+	gitWorker := startGitWorker(cli, opts, dir, debug, stderr)
+	defer gitWorker.finish()
+	if gitWorker == nil && cli.KeepCIState {
+		fmt.Fprintln(stderr, version.BuildLogPrefix+" INFO: --keep-ci-state: this command starts no Git worker, so it has no CI state")
+	}
 	plan, interrupted, err := prepareInterruptibly(ctx, dir, opts, runtime, signals, stderr)
 	if err == nil {
 		defer func() {
@@ -717,7 +726,7 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 		env = append(env, handoff...)
 		debug.printf("github job id handed found=%t", !strings.HasSuffix(handoff[0], "="))
 	}
-	env = append(env, gitWorker.handOff(plan.testDirs, plan.testLauncher)...)
+	env = append(env, gitWorker.handOff(plan.testDirs, plan.testLauncher, plan.goVersion)...)
 	if plan.launcher != nil {
 		ctx = context.WithValue(ctx, goLauncherKey{}, *plan.launcher)
 	}

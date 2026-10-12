@@ -3,7 +3,6 @@ package integration
 import (
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -24,7 +23,7 @@ func TestFail(t *testing.T){t.Error("fixture failure")}
 			t.Run(fmt.Sprintf("%s/deferred=%t", tc.name, deferred), func(t *testing.T) {
 				var rejected atomic.Int32
 				receiver := &capture{}
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				server := newServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if strings.HasSuffix(r.URL.Path, "/citestcycle") {
 						rejected.Add(1)
 						http.Error(w, "fixture rejected payload", http.StatusUnauthorized)

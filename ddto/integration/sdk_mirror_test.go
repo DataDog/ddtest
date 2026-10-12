@@ -3,7 +3,6 @@ package integration
 import (
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -435,7 +434,7 @@ func runSDKMirror(t *testing.T, dir, bin, name string, deferred, agentless bool,
 	receiver := &parityReceiver{side: map[string][][]byte{}, requests: map[string]int{}}
 	var mu sync.Mutex
 	var apm []map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v0.4/traces" {
 			receiver.handler(w, r)
 			return

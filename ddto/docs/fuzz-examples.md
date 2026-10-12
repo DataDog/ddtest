@@ -91,6 +91,11 @@ Parallel-duration checks compare Go's printed time with the event at the same
 two-decimal precision. The shared SDK/Mini fixture treats Windows' `-0.00s`
 as rounded zero. Negative nonzero values and missing results still fail; virtual
 clock tests check the exact wait subtraction independently of that formatting.
+The wait that the root subtracts is measured on testing's own clock, which is
+QueryPerformanceCounter on Windows. A wait measured on the coarser runtime clock
+could exceed the root's time there; the root's event then fell back to the
+wrapper's own clock and differed from Go's printed `0.00`. A known native
+duration is now always used, clamped at zero.
 
 The matrix has 16 scenarios, manual/automatic entrypoints, and Mini normal/deferred
 delivery: **64 comparisons**. Automatic SDK means the frozen Orchestrion binary

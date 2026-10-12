@@ -19,6 +19,7 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/impactedtests"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/net"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry"
 )
 
 const (
@@ -102,11 +103,6 @@ var (
 
 	// sendObjectsPackFileFunc allows tests to inspect the upload request without creating or sending real pack files.
 	sendObjectsPackFileFunc = sendObjectsPackFile
-
-	// cliUploadWait bounds the wait for ddto's upload result. The CLI records a
-	// result even when its worker stops, so this only ends a wait that the
-	// settings and impacted-tests timeouts have already given up on.
-	cliUploadWait = 2 * time.Minute
 )
 
 // ensureSettingsInitialization performs the one-time settings bootstrap, including any git upload work required before a final settings read.
@@ -140,26 +136,37 @@ func ensureSettingsInitialization(serviceName string) {
 			testOptimizationMode.ManifestEnabled, testOptimizationMode.PayloadFilesEnabled, bazel.TestOptimizationPathForLog(testOptimizationMode.ManifestPath), testOptimizationMode.PayloadsRoot, gitUploadEnabled, uploadEnabled)
 		// ddto's Git worker uploads once for every test process of this
 		// checkout; the CLI waits for it before exiting.
-		cliUploadState := ""
+		cliUploadState, cliUploadWait := "", time.Duration(0)
 		if uploadEnabled {
 			if dir, record := utils.HandedCLIGitState(); record != nil {
-				cliUploadState = dir
+				// ddto's --git-upload-timeout bounds every wait for its upload.
+				cliUploadState, cliUploadWait = dir, record.UploadWait()
 			}
 		}
 		if cliUploadState != "" {
-			done := cidelivery.TrackBackground()
-			go func() {
-				defer done()
+			waitCLIUpload := func() {
 				defer close(uploadChannel)
 				var result utils.CLIGitUpload
 				if err := utils.WaitCLIGitStateFile(cliUploadState, utils.CLIGitUploadFile, &result, cliUploadWait); err != nil {
 					log.Debug("civisibility: CLI repository upload result unavailable: %s", err.Error())
+					telemetry.Log(telemetry.NewRecord(telemetry.LogError, "civisibility: CLI repository upload result unavailable"))
 				} else if result.Error != "" {
 					log.Debug("civisibility: CLI repository upload: %s", result.Error)
 				} else {
 					log.Debug("civisibility: CLI uploaded %d bytes in pack files", result.Bytes)
 				}
-			}()
+			}
+			// Deferred delivery waits for the upload before admitting tests,
+			// as it waits for its own upload.
+			if cidelivery.Enabled() {
+				waitCLIUpload()
+			} else {
+				done := cidelivery.TrackBackground()
+				go func() {
+					defer done()
+					waitCLIUpload()
+				}()
+			}
 		} else if uploadEnabled {
 			repositoryUpload := snapshotRepositoryUploadHooks()
 
