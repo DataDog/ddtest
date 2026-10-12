@@ -416,7 +416,7 @@ func processIsRunning(pid int) (bool, error) {
 	}
 
 	stat, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
 		return false, nil
 	}
 	if err != nil {
