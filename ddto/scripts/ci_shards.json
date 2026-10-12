@@ -19,6 +19,8 @@
       "TestInvalidRuntimeFailsBeforeGo",
       "TestMiniBazelOfflineAndPayloadFiles",
       "TestMiniCLIActivation",
+      "TestCLIGoTestIsTest",
+      "TestCLIPassesOtherCommandsThrough",
       "TestMiniCLIRuntimeSelectionAndSourceRange",
       "TestMiniCLIStateDebugLog",
       "TestMiniCLIStateRequestsAhead",
@@ -216,6 +218,8 @@
     },
     "windows": {
       "cli": [
+        "TestCLIPassesWindowsCommandLineThrough",
+        "TestCLIPassesWindowsEnvironmentThrough",
         "TestSharedParityWorkspaceRejectsPersistentLock",
         "TestSharedParityWorkspaceWaitsForOpenFile"
       ]

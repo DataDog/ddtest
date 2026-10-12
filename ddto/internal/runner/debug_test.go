@@ -111,3 +111,14 @@ func TestCLIDebugWriteFailure(t *testing.T) {
 		t.Fatalf("broken debug writer changed parse-error exit=%d", code)
 	}
 }
+
+// The invocation's debug log, which ddto's main starts to log the command
+// form, keeps its start time through RunRuntime.
+func TestCLIDebugKeepsTheInvocationLog(t *testing.T) {
+	t.Setenv("DD_TRACE_DEBUG", "true")
+	ctx := DebugCommand(context.Background(), "go test")
+	logger := debugFromContext(ctx)
+	if logger == nil || debugFromContext(withCLIDebug(ctx, io.Discard)) != logger {
+		t.Fatal("a second logger replaced the invocation's")
+	}
+}

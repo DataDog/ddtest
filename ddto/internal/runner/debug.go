@@ -23,11 +23,26 @@ type cliDebug struct {
 }
 
 func withCLIDebug(ctx context.Context, writer io.Writer) context.Context {
-	enabled, _ := strconv.ParseBool(os.Getenv("DD_TRACE_DEBUG"))
-	if !enabled || writer == nil {
+	// The invocation's logger, which main may have started, keeps its start.
+	if !cliDebugEnabled() || writer == nil || debugFromContext(ctx) != nil {
 		return ctx
 	}
 	return context.WithValue(ctx, cliDebugKey{}, &cliDebug{writer: &debugWriter{writer: writer}, started: time.Now()})
+}
+
+// cliDebugEnabled reports whether DD_TRACE_DEBUG enables the CLI's debug log.
+func cliDebugEnabled() bool {
+	enabled, _ := strconv.ParseBool(os.Getenv("DD_TRACE_DEBUG"))
+	return enabled
+}
+
+// DebugCommand starts the invocation's debug log, which RunRuntime continues
+// in ctx, and logs the form that names go test before ddto parses its own
+// options.
+func DebugCommand(ctx context.Context, name string) context.Context {
+	ctx = withCLIDebug(ctx, os.Stderr)
+	debugFromContext(ctx).printf("command=%q", name)
+	return ctx
 }
 
 func debugFromContext(ctx context.Context) *cliDebug {

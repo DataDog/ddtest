@@ -136,30 +136,40 @@ var (
 	erragg  = map[string]*errorReport{} // aggregated errors
 	errrate = time.Minute               // the rate at which errors are reported
 	erron   bool                        // true if errors are being aggregated
+
+	// loggingRateOnce applies DD_LOGGING_RATE when the first error is
+	// reported, rather than at initialization: ddto, which links this
+	// package, runs commands other than go test unchanged and prints nothing.
+	loggingRateOnce sync.Once
 )
 
-func init() {
-	// This cannot use env.Get because it would cause a cyclic import
-	if v := os.Getenv("DD_LOGGING_RATE"); v != "" {
-		setLoggingRate(v)
+// applyLoggingRate applies DD_LOGGING_RATE once. It warns about an invalid
+// value after loggingRateOnce, as a logger may report errors itself.
+func applyLoggingRate() {
+	var warning string
+	loggingRateOnce.Do(func() {
+		// This cannot use env.Get because it would cause a cyclic import
+		if v := os.Getenv("DD_LOGGING_RATE"); v != "" {
+			warning = setLoggingRate(v)
+		}
+	})
+	if warning != "" {
+		Warn("%s", warning)
 	}
-
-	// This is required because we really want to be able to log errors from dyngo
-	// but the log package depend on too much packages that we want to instrument.
-	// So we need to do this to avoid dependency cycles.
 }
 
-func setLoggingRate(v string) {
-	if sec, err := strconv.ParseInt(v, 10, 64); err != nil {
-		Warn("Invalid value for DD_LOGGING_RATE: %s", err.Error())
-	} else {
-		if sec < 0 {
-			Warn("Invalid value for DD_LOGGING_RATE: negative value")
-		} else {
-			// DD_LOGGING_RATE = 0 allows to log errors immediately.
-			errrate = time.Duration(sec) * time.Second
-		}
+// setLoggingRate applies v, or returns a warning if it is invalid.
+func setLoggingRate(v string) string {
+	sec, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return "Invalid value for DD_LOGGING_RATE: " + err.Error()
 	}
+	if sec < 0 {
+		return "Invalid value for DD_LOGGING_RATE: negative value"
+	}
+	// DD_LOGGING_RATE = 0 allows to log errors immediately.
+	errrate = time.Duration(sec) * time.Second
+	return ""
 }
 
 type errorReport struct {
@@ -171,6 +181,7 @@ type errorReport struct {
 // Error reports an error. Errors get aggregated and logged periodically. The
 // default is once per minute or once every DD_LOGGING_RATE number of seconds.
 func Error(format string, a ...any) {
+	applyLoggingRate()
 	key := format // format should 99.9% of the time be constant
 	if reachedLimit(key) {
 		// avoid too much lock contention on spammy errors

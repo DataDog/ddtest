@@ -43,6 +43,22 @@ With a Datadog Agent that accepts CI Visibility requests, run from your project:
 DD_SERVICE=my-tests DD_ENV=ci ddto test -count=1 ./...
 ```
 
+`ddto go test` is the same as `ddto test`, also with go's `-C dir` before
+`test`. Any other command runs unchanged, with its arguments, standard
+streams, environment and exit status: `ddto go build ./...` runs `go build
+./...`. As from `env`, a command that is not found exits with 127, and one
+that cannot run with 126. A CI script can put `ddto` in front of its go
+commands; only `go test` reports to CI Visibility. With `DD_TRACE_DEBUG=true`,
+ddto logs on `stderr` which program it started and how; see
+[CLI build diagnostics](docs/cli-debug.md#commands-other-than-go-test).
+
+ddto is a Go program, and a command starts with the process state that Go's
+runtime leaves. On Unix, some signals that the caller ignored or blocked,
+such as SIGTERM, reach the command with their default action, and a standard
+stream that the caller closed is open on `/dev/null`. On Windows, the
+command receives ddto's command line after `ddto` as written, and ddto waits
+for it in a job that ends it if ddto is terminated.
+
 Set `DD_TRACE_AGENT_URL` to select an Agent address. Without an override, Mini
 uses the default Agent Unix socket when present, then `http://localhost:8126`.
 For Agentless delivery, supply `DD_API_KEY` through your usual secret
@@ -59,8 +75,8 @@ Git checkout, supply `DD_GIT_REPOSITORY_URL` and `DD_GIT_COMMIT_SHA`.
 [Runtime configuration](docs/mini-runtime.md#configuration) lists the main
 settings and their defaults.
 
-The CLI sets `DD_CIVISIBILITY_ENABLED=parent` when it is absent and preserves
-explicit values. Use `-count=1` for fresh events: Go can otherwise reuse cached
+For `go test`, the CLI sets `DD_CIVISIBILITY_ENABLED=parent` when it is absent
+and preserves explicit values. Use `-count=1` for fresh events: Go can otherwise reuse cached
 test results. Delivery errors are logged; the command retains Go's exit code.
 The runtime is provided through temporary module files when needed, leaving
 your sources unchanged. Explicit `-mod=mod` still permits Go's own module edits.

@@ -361,14 +361,13 @@ func TestMiniOrchestrionInlineAndFailures(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, args := range [][]string{{"orchestrion", "go", "test", "--runtime=invalid"}, {"orchestrion", "go", "build"}, {"go", "tool", "orchestrion", "go"}} {
-		out, stderr, code := command(t, dir, testEnv(), driver, args...)
-		if code != 2 || strings.Contains(out, "PASS") || strings.Contains(out, "FAIL") || stderr == "" {
-			t.Fatal(args, code, out, stderr)
-		}
+	// Other Orchestrion commands run unchanged (TestCLIPassesOtherCommandsThrough).
+	out, stderr, code := command(t, dir, testEnv(), driver, "orchestrion", "go", "test", "--runtime=invalid")
+	if code != 2 || strings.Contains(out, "PASS") || strings.Contains(out, "FAIL") || stderr == "" {
+		t.Fatal(code, out, stderr)
 	}
 	missing := filepath.Join(t.TempDir(), executableName("orchestrion"))
-	out, stderr, code := command(t, dir, testEnv(), driver, "test", "-toolexec="+quoteToolArgument(t, missing)+" toolexec", "-c", "-o", filepath.Join(t.TempDir(), "fixture.test"), ".")
+	out, stderr, code = command(t, dir, testEnv(), driver, "test", "-toolexec="+quoteToolArgument(t, missing)+" toolexec", "-c", "-o", filepath.Join(t.TempDir(), "fixture.test"), ".")
 	// exec errors quote Windows paths with escaped backslashes. Accept the
 	// same filename in either native diagnostic representation.
 	if code != 2 || !(strings.Contains(stderr, missing) || strings.Contains(stderr, fmt.Sprintf("%q", missing))) {

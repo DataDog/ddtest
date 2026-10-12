@@ -89,3 +89,35 @@ func TestParseCLIArgsUploadTimeoutAndCIState(t *testing.T) {
 		}
 	}
 }
+
+// ddto go test is ddto test, also with -C dir before test, where go accepts it.
+func TestTestCommand(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want TestForm
+	}{
+		{[]string{"test", "-v"}, TestForm{Args: []string{"-v"}, Name: "test"}},
+		{[]string{"go", "test", "./..."}, TestForm{Args: []string{"./..."}, Name: "go test"}},
+		{[]string{"go", "-C", "sub", "test", "-v"}, TestForm{Args: []string{"-C", "sub", "-v"}, Name: "go -C test"}},
+		{[]string{"go", "--C", "sub", "test"}, TestForm{Args: []string{"--C", "sub"}, Name: "go -C test"}},
+		{[]string{"go", "-C=sub", "test", "."}, TestForm{Args: []string{"-C=sub", "."}, Name: "go -C test"}},
+		{[]string{"go", "--C=sub", "test"}, TestForm{Args: []string{"--C=sub"}, Name: "go -C test"}},
+		{[]string{"orchestrion", "go", "test", "-v"}, TestForm{Args: []string{"-v"}, Name: "orchestrion go test", Orchestrion: true}},
+		{[]string{"orchestrion", "go", "-C", "sub", "test"}, TestForm{Args: []string{"-C", "sub"}, Name: "orchestrion go -C test", Orchestrion: true}},
+		{[]string{"go", "tool", "orchestrion", "go", "test", "-v"}, TestForm{Args: []string{"-v"}, Name: "go tool orchestrion go test", Orchestrion: true, GoTool: true}},
+		{[]string{"go", "tool", "orchestrion", "go", "-C=sub", "test"}, TestForm{Args: []string{"-C=sub"}, Name: "go tool orchestrion go -C test", Orchestrion: true, GoTool: true}},
+	} {
+		if got, ok := TestCommand(tc.args); !ok || !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("TestCommand(%q) = %+v, %t; want %+v", tc.args, got, ok, tc.want)
+		}
+	}
+	for _, args := range [][]string{
+		nil, {"go"}, {"go", "build"}, {"go", "vet", "test"}, {"go", "-C"}, {"go", "-C", "test"},
+		{"go", "-C", "sub"}, {"-C", "sub", "test"}, {"go", "-x", "test"}, {"orchestrion", "go", "build"},
+		{"orchestrion", "test"}, {"go", "tool", "orchestrion", "go"}, {"make", "test"},
+	} {
+		if got, ok := TestCommand(args); ok {
+			t.Errorf("TestCommand(%q) = %+v; want another command", args, got)
+		}
+	}
+}

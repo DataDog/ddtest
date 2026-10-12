@@ -35,23 +35,24 @@ func main() {
 		}
 		os.Exit(runner.RunTool(context.Background(), plan, args, os.Stdin, os.Stdout, os.Stderr))
 	}
-	args := os.Args[1:]
-	orchestrion, goTool := false, false
+	// ddto go test is ddto test, as go test is.
+	form, isTest := runner.TestCommand(os.Args[1:])
 	switch {
-	case len(args) > 0 && args[0] == "test":
-		args = args[1:]
-	case len(args) >= 3 && args[0] == "orchestrion" && args[1] == "go" && args[2] == "test":
-		orchestrion = true
-		args = args[3:]
-	case len(args) >= 5 && args[0] == "go" && args[1] == "tool" && args[2] == "orchestrion" && args[3] == "go" && args[4] == "test":
-		orchestrion = true
-		goTool = true
-		args = args[5:]
+	case isTest:
+	case len(os.Args) == 1 || os.Args[1] == "-h" || os.Args[1] == "-help" || os.Args[1] == "--help":
+		fmt.Fprintln(os.Stderr, "usage: ddto [go | orchestrion go | go tool orchestrion go] test [--runtime=mini|sdk] [--git-upload-timeout=1m] [--keep-ci-state[=file.zip]] [go test flags] [packages] (default: mini)")
+		fmt.Fprintln(os.Stderr, "       ddto command [arguments]: runs any other command unchanged, such as ddto go build ./...")
+		if len(os.Args) == 1 {
+			os.Exit(2)
+		}
+		os.Exit(0)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: ddto [orchestrion go | go tool orchestrion go] test [--runtime=mini|sdk] [--git-upload-timeout=1m] [--keep-ci-state[=file.zip]] [go test flags] [packages] (default: mini)")
-		os.Exit(2)
+		// Any other command runs unchanged, before ddto sets anything: ddto
+		// in front of a go command, or any other, is transparent.
+		os.Exit(runner.ExecCommand(os.Args[1:]))
 	}
-	cli, args, err := runner.ParseCLIArgs(args)
+	ctx := runner.DebugCommand(context.Background(), form.Name)
+	cli, args, err := runner.ParseCLIArgs(form.Args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" ERROR:", err)
 		os.Exit(2)
@@ -63,9 +64,9 @@ func main() {
 			os.Exit(2)
 		}
 	}
-	if orchestrion {
-		runner.Exit(runner.RunOrchestrion(context.Background(), args, cli, goTool, os.Stdin, os.Stdout, os.Stderr))
+	if form.Orchestrion {
+		runner.Exit(runner.RunOrchestrion(ctx, args, cli, form.GoTool, os.Stdin, os.Stdout, os.Stderr))
 		return
 	}
-	runner.Exit(runner.RunRuntime(context.Background(), args, cli, os.Stdin, os.Stdout, os.Stderr))
+	runner.Exit(runner.RunRuntime(ctx, args, cli, os.Stdin, os.Stdout, os.Stderr))
 }
