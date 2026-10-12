@@ -292,6 +292,13 @@ func newClientWithServiceNameAndSubdomain(serviceName, subdomain string) (Client
 	}, startTelemetry
 }
 
+// NewClientWithoutTelemetry creates a client that starts no telemetry: ddto's
+// Git worker uploads for test processes, each of which reports its own.
+func NewClientWithoutTelemetry(serviceName string) Client {
+	client, _ := newClientWithServiceNameAndSubdomain(serviceName, "api")
+	return client
+}
+
 // NewClientWithServiceName creates a new client with the given service name.
 func NewClientWithServiceName(serviceName string) Client {
 	return NewClientWithServiceNameAndSubdomain(serviceName, "api")

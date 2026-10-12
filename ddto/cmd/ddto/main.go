@@ -14,6 +14,10 @@ func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "test-exec" {
 		os.Exit(runner.ExecWithCallerEnvironment(os.Args[2:]))
 	}
+	// The Git worker that ddto test starts once per invocation.
+	if len(os.Args) == 3 && os.Args[1] == "ci-git-worker" {
+		os.Exit(runner.RunGitWorker(context.Background(), os.Args[2], os.Stdin, os.Stderr))
+	}
 	if len(os.Args) >= 5 && os.Args[1] == "tool-overlay" {
 		mode, plan, args := os.Args[2], os.Args[3], os.Args[4:]
 		if !runner.ValidToolMode(mode) {

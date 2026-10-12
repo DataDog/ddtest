@@ -49,7 +49,15 @@ func Restore() {
 // that the diagnostics name none.
 const GitHubJobIDHandoff = "DDTO_GITHUB_JOB_ID"
 
-var gitHubJobID struct {
+// GitStateHandoff carries the directory where ddto writes the Git metadata,
+// repository upload and impacted-test state that it computes once for every
+// test process of the same checkout.
+const GitStateHandoff = "DDTO_GIT_STATE"
+
+// handoffs are the values that ddto hands to test processes.
+var handoffs = [...]string{GitHubJobIDHandoff, GitStateHandoff}
+
+var handed [len(handoffs)]struct {
 	value  string
 	handed bool
 }
@@ -59,12 +67,18 @@ var gitHubJobID struct {
 // it, so it runs before os initializes, like Restore; helpers such as
 // test-exec pass the values on to the test process.
 func Receive() {
-	gitHubJobID.value, gitHubJobID.handed = syscall.Getenv(GitHubJobIDHandoff)
-	if gitHubJobID.handed {
-		_ = syscall.Unsetenv(GitHubJobIDHandoff)
+	for i, name := range handoffs {
+		handed[i].value, handed[i].handed = syscall.Getenv(name)
+		if handed[i].handed {
+			_ = syscall.Unsetenv(name)
+		}
 	}
 }
 
 // GitHubJobID returns the job ID that ddto handed to this process, and
 // whether it handed one.
-func GitHubJobID() (string, bool) { return gitHubJobID.value, gitHubJobID.handed }
+func GitHubJobID() (string, bool) { return handed[0].value, handed[0].handed }
+
+// GitState returns the Git state directory that ddto handed to this process,
+// and whether it handed one.
+func GitState() (string, bool) { return handed[1].value, handed[1].handed }

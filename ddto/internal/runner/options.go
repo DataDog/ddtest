@@ -94,6 +94,9 @@ type options struct {
 	coverage             bool
 	coverPatterns        []string
 	race                 bool
+	// compileOnly and printOnly record -c and -n; with either, go test runs
+	// no test binary.
+	compileOnly, printOnly bool
 	// workfile applies only to preparation children, never os.Setenv.
 	workfile         string
 	environment      *goEnvironment
@@ -278,6 +281,14 @@ func (o *options) apply(name, value string) error {
 		// go test reports an invalid value itself.
 		if enabled, err := strconv.ParseBool(value); err == nil {
 			o.race = enabled
+		}
+	case "c", "n":
+		if enabled, err := strconv.ParseBool(value); err == nil {
+			if name == "c" {
+				o.compileOnly = enabled
+			} else {
+				o.printOnly = enabled
+			}
 		}
 	case "covermode", "coverprofile":
 		o.coverage = true

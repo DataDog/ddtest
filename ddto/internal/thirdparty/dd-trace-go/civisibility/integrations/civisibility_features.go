@@ -6,8 +6,6 @@
 package integrations
 
 import (
-	"fmt"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +15,7 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/bazel"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/gitupload"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/impactedtests"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/net"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
@@ -35,11 +34,8 @@ type (
 		RemainingTotalRetryCount int64
 	}
 
-	searchCommitsResponse struct {
-		LocalCommits  []string
-		RemoteCommits []string
-		IsOk          bool
-	}
+	// searchCommitsResponse compares the local commits with the backend's.
+	searchCommitsResponse = gitupload.SearchCommitsResponse
 
 	// repositoryUploadHooks captures repository upload test seams for a single upload attempt.
 	repositoryUploadHooks struct {
@@ -106,6 +102,11 @@ var (
 
 	// sendObjectsPackFileFunc allows tests to inspect the upload request without creating or sending real pack files.
 	sendObjectsPackFileFunc = sendObjectsPackFile
+
+	// cliUploadWait bounds the wait for ddto's upload result. The CLI records a
+	// result even when its worker stops, so this only ends a wait that the
+	// settings and impacted-tests timeouts have already given up on.
+	cliUploadWait = 2 * time.Minute
 )
 
 // ensureSettingsInitialization performs the one-time settings bootstrap, including any git upload work required before a final settings read.
@@ -137,7 +138,29 @@ func ensureSettingsInitialization(serviceName string) {
 		uploadEnabled := gitUploadEnabled && !testOptimizationMode.ManifestEnabled && !testOptimizationMode.PayloadFilesEnabled
 		log.Debug("civisibility: settings initialization mode [manifest:%t payload_files:%t manifest_file:%s payload_root:%s git_upload_enabled:%t repository_upload_enabled:%t]",
 			testOptimizationMode.ManifestEnabled, testOptimizationMode.PayloadFilesEnabled, bazel.TestOptimizationPathForLog(testOptimizationMode.ManifestPath), testOptimizationMode.PayloadsRoot, gitUploadEnabled, uploadEnabled)
+		// ddto's Git worker uploads once for every test process of this
+		// checkout; the CLI waits for it before exiting.
+		cliUploadState := ""
 		if uploadEnabled {
+			if dir, record := utils.HandedCLIGitState(); record != nil {
+				cliUploadState = dir
+			}
+		}
+		if cliUploadState != "" {
+			done := cidelivery.TrackBackground()
+			go func() {
+				defer done()
+				defer close(uploadChannel)
+				var result utils.CLIGitUpload
+				if err := utils.WaitCLIGitStateFile(cliUploadState, utils.CLIGitUploadFile, &result, cliUploadWait); err != nil {
+					log.Debug("civisibility: CLI repository upload result unavailable: %s", err.Error())
+				} else if result.Error != "" {
+					log.Debug("civisibility: CLI repository upload: %s", result.Error)
+				} else {
+					log.Debug("civisibility: CLI uploaded %d bytes in pack files", result.Bytes)
+				}
+			}()
+		} else if uploadEnabled {
 			repositoryUpload := snapshotRepositoryUploadHooks()
 
 			// upload the repository changes
@@ -192,7 +215,7 @@ func ensureSettingsInitialization(serviceName string) {
 		ciSettings, err := ciVisibilityClient.GetSettings()
 		if err != nil || ciSettings == nil {
 			logSettingsFetchError(err)
-			if uploadEnabled {
+			if uploadEnabled && cliUploadState == "" {
 				log.Debug("civisibility: no need to wait for the git upload to finish")
 				// Enqueue a close action to wait for the upload to finish before finishing the process
 				PushCiVisibilityCloseAction(waitUploadFactory(time.Minute))
@@ -275,7 +298,7 @@ func ensureSettingsInitialization(serviceName string) {
 			if ciSettings.ImpactedTestsEnabled {
 				log.Debug("civisibility: impacted tests is enabled we need to wait for the upload to finish (for the unshallow process)")
 				waitUpload(30 * time.Second)
-			} else {
+			} else if cliUploadState == "" {
 				log.Debug("civisibility: no need to wait for the git upload to finish")
 				// Enqueue a close action to wait for the upload to finish before finishing the process
 				PushCiVisibilityCloseAction(waitUploadFactory(time.Minute))
@@ -572,117 +595,24 @@ func uploadRepositoryChanges() (bytes int64, err error) {
 
 // uploadRepositoryChangesWithHooks runs the default git upload flow against a stable hook snapshot.
 func uploadRepositoryChangesWithHooks(hooks repositoryUploadHooks) (bytes int64, err error) {
-	// get the search commits response
-	initialCommitData, err := hooks.getSearchCommits()
-	if err != nil {
-		return 0, fmt.Errorf("civisibility: error getting the search commits response: %s", err)
-	}
-
-	// let's check if we could retrieve commit data
-	if !initialCommitData.IsOk {
-		return 0, nil
-	}
-
-	// if there are no commits then we don't need to do anything
-	if !initialCommitData.hasCommits() {
-		log.Debug("civisibility: no commits found")
-		return 0, nil
-	}
-
-	// Calculate the initial missing commits once and reuse the same ordered list if
-	// the repository cannot be unshallowed. missingCommits walks the local and
-	// remote commit lists, so calling it twice here would repeat identical work.
-	initialMissingCommits := initialCommitData.missingCommits()
-
-	// If there are not missing commits (backend has the total number of local commits already), then we are good to go
-	// with it, we don't need to check if we need to unshallow or anything and just go with that.
-	if len(initialMissingCommits) == 0 {
-		log.Debug("civisibility: initial commit data has everything already, we don't need to upload anything")
-		return 0, nil
-	}
-
-	// there's some missing commits on the backend, first we need to check if we need to unshallow before sending anything...
-	hasBeenUnshallowed, err := hooks.unshallowGitRepository()
-	if err != nil || !hasBeenUnshallowed {
-		if err != nil {
-			log.Warn("%s", err.Error())
-		}
-		// if unshallowing the repository failed or if there's nothing to unshallow then we try to upload the packfiles from
-		// the initial commit data
-
-		// send the pack file with the missing commits
-		return hooks.sendObjectsPackFile(initialCommitData.LocalCommits[0], initialMissingCommits, initialCommitData.RemoteCommits)
-	}
-
-	// after unshallowing the repository we need to get the search commits to calculate the missing commits again
-	commitsData, err := hooks.getSearchCommits()
-	if err != nil {
-		return 0, fmt.Errorf("civisibility: error getting the search commits response: %s", err)
-	}
-
-	// let's check if we could retrieve commit data
-	if !commitsData.IsOk {
-		return 0, nil
-	}
-
-	// send the pack file with the missing commits
-	return hooks.sendObjectsPackFile(commitsData.LocalCommits[0], commitsData.missingCommits(), commitsData.RemoteCommits)
+	return gitupload.Upload(gitupload.Hooks{
+		GetSearchCommits:       hooks.getSearchCommits,
+		UnshallowGitRepository: hooks.unshallowGitRepository,
+		SendObjectsPackFile:    hooks.sendObjectsPackFile,
+	})
 }
 
 // getSearchCommits gets the search commits response with the local and remote commits
 func getSearchCommits() (*searchCommitsResponse, error) {
-	localCommits := utils.GetLastLocalGitCommitShas()
-	if len(localCommits) == 0 {
-		log.Debug("civisibility: no local commits found")
-		return newSearchCommitsResponse(nil, nil, false), nil
-	}
-
-	log.Debug("civisibility: local commits found: %d", len(localCommits))
-	remoteCommits, err := ciVisibilityClient.GetCommits(localCommits)
-	return newSearchCommitsResponse(localCommits, remoteCommits, true), err
+	return gitupload.SearchCommits(ciVisibilityClient)
 }
 
 // newSearchCommitsResponse creates a new search commits response
 func newSearchCommitsResponse(localCommits []string, remoteCommits []string, isOk bool) *searchCommitsResponse {
-	return &searchCommitsResponse{
-		LocalCommits:  localCommits,
-		RemoteCommits: remoteCommits,
-		IsOk:          isOk,
-	}
-}
-
-// hasCommits returns true if the search commits response has commits
-func (r *searchCommitsResponse) hasCommits() bool {
-	return len(r.LocalCommits) > 0
-}
-
-// missingCommits returns the missing commits between the local and remote commits
-func (r *searchCommitsResponse) missingCommits() []string {
-	var missingCommits []string
-	for _, localCommit := range r.LocalCommits {
-		if !slices.Contains(r.RemoteCommits, localCommit) {
-			missingCommits = append(missingCommits, localCommit)
-		}
-	}
-
-	return missingCommits
+	return gitupload.NewSearchCommitsResponse(localCommits, remoteCommits, isOk)
 }
 
 // sendObjectsPackFile uploads one packfile chunk for the requested commit graph slice and reports the number of bytes sent.
 func sendObjectsPackFile(commitSha string, commitsToInclude []string, commitsToExclude []string) (bytes int64, err error) {
-	// get the pack files to send
-	packFiles := utils.CreatePackFiles(commitsToInclude, commitsToExclude)
-	if len(packFiles) == 0 {
-		log.Debug("civisibility: no pack files to send")
-		return 0, nil
-	}
-
-	// send the pack files
-	log.Debug("civisibility: sending pack file with missing commits. files: %v", packFiles) //nolint:gocritic // File list logging for debugging
-
-	// remove the pack files and their temporary directory after sending them
-	defer utils.RemovePackFiles(packFiles)
-
-	// send the pack files
-	return ciVisibilityClient.SendPackFiles(commitSha, packFiles)
+	return gitupload.SendObjectsPackFile(ciVisibilityClient, commitSha, commitsToInclude, commitsToExclude)
 }

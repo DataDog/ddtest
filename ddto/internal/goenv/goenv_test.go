@@ -64,6 +64,21 @@ func TestReceiveRemovesHandedValues(t *testing.T) {
 	}
 }
 
+func TestReceiveRemovesGitState(t *testing.T) {
+	t.Setenv(GitStateHandoff, "/tmp/ddto-git-state")
+	Receive()
+	t.Cleanup(Receive)
+	if value, ok := os.LookupEnv(GitStateHandoff); ok {
+		t.Fatalf("handed Git state remains visible: %q", value)
+	}
+	if dir, ok := GitState(); !ok || dir != "/tmp/ddto-git-state" {
+		t.Fatalf("Git state %q, %t", dir, ok)
+	}
+	if _, ok := GitHubJobID(); ok {
+		t.Fatal("job ID handed without a value")
+	}
+}
+
 // Initialization order is the contract: anything that imports os, directly or
 // through os/exec, initializes after the restore package.
 func TestRestoreImportsNoPackageThatCanStartCommands(t *testing.T) {

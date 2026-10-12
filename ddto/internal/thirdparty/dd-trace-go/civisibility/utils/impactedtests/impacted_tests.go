@@ -100,7 +100,17 @@ var diffHeaderRegex = regexp.MustCompile(`^diff --git a\/(?P<fileA>.+) b\/(?P<fi
 var lineChangeRegex = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @@`)
 
 // NewImpactedTestAnalyzer creates a new instance of ImpactedTestAnalyzer.
+// ddto's Git worker may have computed it once for every test process of this
+// checkout; see ComputeCLIState.
 func NewImpactedTestAnalyzer() (*ImpactedTestAnalyzer, error) {
+	if analyzer, ok := handedAnalyzer(); ok {
+		return analyzer, nil
+	}
+	return computeAnalyzer()
+}
+
+// computeAnalyzer computes the base commit and the modified files with Git.
+func computeAnalyzer() (*ImpactedTestAnalyzer, error) {
 	ciTags := utils.GetCITagsReadOnly()
 
 	// Get the current commit SHA

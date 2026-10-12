@@ -22,8 +22,9 @@ runs. Their line numbers refer to `2d0059a`.
 Implemented items are removed from this list; the pull requests that
 implemented them record their results, for example
 [#25](https://github.com/tonyredondo/dd-ci-testing-poc/pull/25),
-[#29](https://github.com/tonyredondo/dd-ci-testing-poc/pull/29) and
-[#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31). Item numbers
+[#29](https://github.com/tonyredondo/dd-ci-testing-poc/pull/29),
+[#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31) and
+[#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32). Item numbers
 do not change, so a missing number is a completed item.
 
 In items 11–58, `civisibility/`, `hostname/`, `osinfo/` and `telemetry/` paths
@@ -42,18 +43,18 @@ also need an entry in
 | 2 | Cache common numeric CI options | Repeated option construction per span | Low to medium |
 | 3 | Keep per-test state in `testing`'s structures | Map, lock and offset work on every test; field copies on retries | Medium to high |
 | 4 | Reduce remaining provisioning commands | Startup of CLI invocations that must provide the runtime | Low only if existing metadata is sufficient |
-| 5 | Upload repository data from the CLI | Git upload repeated, and waited for, at every test binary's exit | Medium to high |
-| 6 | Collect Git metadata in the CLI | Repeated serial Git queries across test packages | Medium |
 | 7 | Store small metric sets without a map | Allocations for metric-bearing events | Medium; measure lookup/encoding tradeoffs |
 | 8 | Collect coverage counters in memory | Profile I/O and parsing per covered test | High |
 | 9 | Fetch settings in the CLI | The first request on the critical path; requests outside the read cache | High |
 | 10 | Coordinate telemetry startup/shutdown requests | Network round trips around tests | High; changes lifecycle ownership |
 
-Items 5, 6 and 9 move work that every test binary repeats into the CLI, which
-runs once per invocation. The CLI does the work and hands the results to the
-binaries through the environment and files they already read. Items 42 and 51
-are smaller steps in the same direction; [#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31) took one for the
-GitHub Actions job ID.
+Item 9 moves work that every test binary repeats into the CLI, which runs once
+per invocation. The CLI does the work and hands the results to the binaries
+through the environment and files they already read. [#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32) did this
+for the Git metadata, the repository upload and the base-branch discovery,
+through a Git worker that the CLI starts once, and
+[#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31) for the GitHub
+Actions job ID. Item 51 is a smaller step in the same direction.
 
 ### CLI and build path
 
@@ -68,7 +69,7 @@ These costs occur once per `ddto` invocation or once per compiled package.
 | 17 | Start the package query alongside `go env` | One serial subprocess per invocation | Medium |
 | 18 | Parse fewer SDK sources, in parallel | Serial parsing when the SDK is reachable | Low |
 | 19 | Walk the vendor tree once | Two serial stat passes per vendored file | Medium |
-| 57 | Deliver events through the CLI; extends 5, 6, 9 and 10 | Up to about 100 ms of link and 5.6 MB per test binary that does not use HTTP or TLS itself | High |
+| 57 | Deliver events through the CLI; extends 9 and 10 | Up to about 100 ms of link and 5.6 MB per test binary that does not use HTTP or TLS itself | High |
 
 ### Mini event client
 
@@ -112,7 +113,6 @@ package.
 
 | Order | Change | Where it can help | Complexity |
 | --- | --- | --- | --- |
-| 42 | Share base-branch discovery between binaries; extends 5 | Repeated base-branch queries and fetches per binary | Medium to high |
 | 46 | Overlap telemetry round trips; extends 10 | One round trip at startup and one at exit | Medium |
 | 48 | Let read-cache waiters wait for a slow owner; relates to 9 | Two seconds and a duplicate request per waiter | Medium |
 | 49 | Stream read-cache expiry fields | Full JSON decoding before a cache miss's request | Low |
@@ -191,37 +191,6 @@ and workspaces. Compare Mini already declared, a local replacement, CLI-local
 provisioning, a temporary workspace and a missing published source. The common
 declared-runtime path must not become slower or modify client files.
 
-## 5. Repository upload from the CLI
-
-Each test binary uploads repository data when it closes: `search_commits`,
-`git log`, `rev-list` and `pack-objects`, then `packfile`, and it waits for the
-upload before exiting. Against a local agent that always reported missing
-commits, that took about 0.45 s of each binary's 0.6 to 0.8 s. With the real
-backend, binaries that start after an upload find its commits, but binaries
-started together, as for a new commit in CI, all upload the same data.
-
-Move the upload to the CLI: start it once per invocation, overlapping
-compilation and tests, and let the binaries skip it. The CLI must finish or
-abandon it before exiting, keep the SDK's commit search, unshallow and
-size limits, and keep Bazel payload-file mode and disabled upload untouched.
-Standalone binaries keep their own upload.
-
-## 6. Git metadata from the CLI
-
-Every test binary repeats the repository, branch and commit queries: four
-serial Git commands at startup, about 10 ms. On the Linux benchmark host on
-2026-10-11, a one-test binary's bootstrap took 6.1 ms, of which about 4.6 ms
-was waiting for Git subprocesses, also outside a Git repository; each command
-also looks `git` up in `PATH` again. Mini added 7.5 ms per binary in total,
-9.0 against 1.5 ms. Collect those values once in the
-CLI and pass them through the existing Git overrides or an invocation-local
-record. Keep Git commands serial; parallelizing them is not part of this
-experiment.
-
-Share only equivalent repository inputs. Check worktrees, nested modules,
-repository overrides, `-C`, CI-provider precedence and standalone binaries.
-Measure one-package and many-package commands; package starts already overlap.
-
 ## 7. Small metric sets
 
 Most CI events have few numeric metrics. Compare their map with a small value
@@ -250,7 +219,11 @@ The SDK's short-lived read cache already shares identical settings, known-tests
 and skippable-tests responses between binaries: by parent process locally and
 by CI job in CI. One `ddto test ./...` sends one settings request. The first
 binary still waits for it after compilation, and requests outside the cache's
-scope repeat, such as packages with different CODEOWNERS services.
+scope repeat, such as packages with different CODEOWNERS services. ddto's Git
+worker ([#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32)) already requests the settings once per invocation, while it
+uploads, to decide whether to compute the impacted-tests state; in CI the read
+cache shares that response with the binaries, but locally its scope is the
+worker's parent process.
 
 Move the requests to the CLI: send them during compilation and write the files
 that the test binaries read, such as the manifest or read-cache entries, so no
@@ -608,7 +581,7 @@ only narrow saving would bypass the attempt when no retry can be admitted,
 because the global budget is exhausted, but the path is chosen at `M.Run`
 before the budget is used. It is not listed as an item.
 
-## 42. Base-branch discovery
+## 46. Telemetry round trips
 
 Against a fake Agent that answered every request after 100 ms, a binary served
 by the read cache spent its whole 102 ms settings phase waiting for
@@ -616,34 +589,8 @@ by the read cache spent its whole 102 ms settings phase waiting for
 together with `app-started` and then known tests. Every binary made three
 serial round trips at exit: the test cycle, then two telemetry
 `message-batch` requests. Bootstrap took 37–95 ms, almost all of it four Git
-commands of 8–25 ms. Items 42–53 use that timeline as their baseline.
-
-This extends item 5. With impacted-test detection enabled and no
-`GitPrBaseCommit`, every binary computes the base branch
-(`civisibility/utils/git.go:914-921`, `civisibility/utils/impactedtests/impacted_tests.go:116-127`,
-`civisibility/integrations/civisibility_features.go:459-472`). That covers
-everything except GitLab merge-request pipelines and an explicit
-`DD_GIT_PULL_REQUEST_BASE_BRANCH_SHA`. Without a pull-request base branch, as
-in push builds and local runs, each of the seven `possibleBaseBranches`
-(`git.go:68`) gets a `show-ref`. Branches missing locally are checked with one
-`git ls-remote --heads` per binary, a network call, and existing ones may get a
-`fetch --depth 1` (`checkAndFetchBranch`). Branches that do not exist, such as
-`preprod`, `prod` or `dev`, are queried again in every binary of every run.
-GitHub pull requests check and fetch their base branch in every binary of the
-first wave. The additional-features wait group waits for all of it before the
-first test.
-
-`git ls-remote` to GitHub over SSH took 0.54–0.60 s per binary. With
-impacted tests, settings initialization also waits up to 30 s for the
-repository upload at startup (`civisibility_features.go:274-277`), not only at
-exit, which makes item 5 more valuable.
-
-Compute the base SHA and diff once per invocation, in the CLI or in a file
-keyed by repository and HEAD, through a private channel:
-`DD_GIT_PULL_REQUEST_BASE_BRANCH_SHA` would add a tag to events. Preserve the
-candidate order, `findBestBranch` tie-breaking and the fetch side effects.
-
-## 46. Telemetry round trips
+commands of 8–25 ms, which [#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32) removed from the test processes that
+ddto starts. Items 46–53 use that timeline as their baseline.
 
 This extends item 10. A binary served by the read cache spends its settings
 phase waiting for `app-started` (`civisibility/utils/net/client.go:226-255`,
@@ -769,7 +716,7 @@ provisioning commands; this cache needs its own decision.
 
 ## 57. Events through the CLI
 
-This extends items 5, 6, 9 and 10. Every test binary links Mini's HTTP and TLS
+This extends items 9 and 10. Every test binary links Mini's HTTP and TLS
 delivery. A one-test binary grows from 4.8 to 16.7 MB, and its link from 106 to
 289 ms, medians of 12. A probe binary that references only
 `http.DefaultClient.Do` and `tls.Client` links in 210 ms and is 5.6 MB larger,
@@ -787,8 +734,8 @@ For `ddto test` runs, test binaries could hand encoded batches to the CLI
 through an inherited pipe or a local socket. The CLI would deliver them over
 HTTP with one connection pool, batching across packages. The binary drops
 `net/http` and `crypto/tls` only when settings, known tests and telemetry also
-come from the CLI (items 9 and 10), so this is the transport those items and
-items 5 and 6 need. Builds with `-c` and standalone binaries keep today's
+come from the CLI (items 9 and 10), so this is the transport those items need.
+[#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32) already gave the CLI the SDK's HTTP client, in its Git worker. Builds with `-c` and standalone binaries keep today's
 delivery through a different generated import. The CLI then owns retries and
 the final flush, and must keep each binary's event order, back-pressure,
 deferred admission and goleak checkpoints, and not lose events when it is

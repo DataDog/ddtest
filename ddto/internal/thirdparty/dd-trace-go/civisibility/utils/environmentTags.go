@@ -292,8 +292,15 @@ func createCITagsMap() map[string]string {
 		applyEnvironmentalDataIfRequiredFunc(localTags)
 		log.Debug("civisibility: skipping local git enrichment in payload-file mode")
 	} else {
-		// Populate missing git data
-		gitData, _ := getLocalGitDataFunc()
+		// Populate missing git data. ddto's CLI may have read it once for every
+		// test process of this checkout.
+		_, cliRecord := HandedCLIGitState()
+		var gitData localGitData
+		if cliRecord != nil {
+			gitData = cliRecord.localGitData()
+		} else {
+			gitData, _ = getLocalGitDataFunc()
+		}
 
 		// Populate Git metadata from the local Git repository if not already present in localTags
 		if _, ok := localTags[constants.CIWorkspacePath]; !ok {
@@ -336,7 +343,14 @@ func createCITagsMap() map[string]string {
 
 		// If the head commit SHA is available, populate additional Git head metadata
 		if headCommitSha, ok := localTags[constants.GitHeadCommit]; ok {
-			if headCommitData, err := fetchCommitDataFunc(headCommitSha); err != nil {
+			headCommitData, handed, err := localCommitData{}, false, error(nil)
+			if cliRecord != nil {
+				headCommitData, handed, err = cliRecord.headCommitData(headCommitSha)
+			}
+			if !handed {
+				headCommitData, err = fetchCommitDataFunc(headCommitSha)
+			}
+			if err != nil {
 				log.Warn("civisibility: failed to fetch head commit data for %s: %s", headCommitSha, err.Error())
 			} else if headCommitSha == headCommitData.CommitSha {
 				localTags[constants.GitHeadAuthorDate] = headCommitData.AuthorDate.String()

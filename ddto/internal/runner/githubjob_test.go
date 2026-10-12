@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/impactedtests"
 )
 
 func TestHandGitHubJobID(t *testing.T) {
@@ -67,5 +69,33 @@ func TestHandGitHubJobIDDoesNotWaitForAStalledScan(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 5*time.Second {
 		t.Fatalf("waited %s", elapsed)
+	}
+}
+
+// A worker told to proceed that exits without an upload result leaves one
+// that ends the test processes' wait.
+func TestGitWorkerRecordsMissingResults(t *testing.T) {
+	state := t.TempDir()
+	w := &gitWorker{state: state}
+	w.recordMissingResults()
+	if _, err := os.Stat(filepath.Join(state, utils.CLIGitUploadFile)); !os.IsNotExist(err) {
+		t.Fatalf("result recorded for a worker that never proceeded: %v", err)
+	}
+	w.proceeded.Store(true)
+	w.recordMissingResults()
+	var upload utils.CLIGitUpload
+	if err := utils.ReadCLIGitStateFile(state, utils.CLIGitUploadFile, &upload); err != nil || upload.Error == "" {
+		t.Fatalf("upload %+v, %v", upload, err)
+	}
+	var impacted impactedtests.CLIState
+	if err := utils.ReadCLIGitStateFile(state, utils.CLIGitImpactedFile, &impacted); err != nil || impacted.Computed || impacted.Reason == "" {
+		t.Fatalf("impacted %+v, %v", impacted, err)
+	}
+	if err := utils.WriteCLIGitStateFile(state, utils.CLIGitUploadFile, utils.CLIGitUpload{Bytes: 7}); err != nil {
+		t.Fatal(err)
+	}
+	w.recordMissingResults()
+	if err := utils.ReadCLIGitStateFile(state, utils.CLIGitUploadFile, &upload); err != nil || upload.Bytes != 7 {
+		t.Fatalf("worker's result replaced: %+v, %v", upload, err)
 	}
 }

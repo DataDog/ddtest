@@ -38,7 +38,7 @@ func TestSearchCommitsResponseMissingCommitsPreservesLocalOrder(t *testing.T) {
 		true,
 	)
 
-	assert.Equal(t, []string{"local-1", "local-2", "local-3"}, response.missingCommits())
+	assert.Equal(t, []string{"local-1", "local-2", "local-3"}, response.MissingCommits())
 }
 
 func TestSearchCommitsResponseMissingCommitsKeepsMissingDuplicates(t *testing.T) {
@@ -48,7 +48,7 @@ func TestSearchCommitsResponseMissingCommitsKeepsMissingDuplicates(t *testing.T)
 		true,
 	)
 
-	assert.Equal(t, []string{"missing-1", "missing-1", "missing-2"}, response.missingCommits())
+	assert.Equal(t, []string{"missing-1", "missing-1", "missing-2"}, response.MissingCommits())
 }
 
 func TestSearchCommitsResponseMissingCommitsReturnsEmptyWhenAllLocalCommitsAreRemote(t *testing.T) {
@@ -58,7 +58,7 @@ func TestSearchCommitsResponseMissingCommitsReturnsEmptyWhenAllLocalCommitsAreRe
 		true,
 	)
 
-	assert.Empty(t, response.missingCommits())
+	assert.Empty(t, response.MissingCommits())
 }
 
 func TestUploadRepositoryChangesSkipsUploadWhenNoCommitsAreMissing(t *testing.T) {

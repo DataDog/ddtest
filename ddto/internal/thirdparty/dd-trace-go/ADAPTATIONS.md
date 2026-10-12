@@ -568,6 +568,62 @@ Checks: `TestGithubActionsJobIDFromDDTO`, `TestGithubActionsJobIDFromDiagnostics
 `TestReceiveRemovesHandedValues`, `TestMiniGitHubJobIDHandoff` and
 `TestMiniGitHubJobIDNotHandedThroughExec`.
 
+## Git work from ddto's CLI
+
+Every test process used to read the checkout's Git metadata (four commands),
+upload the repository's missing commits, and, with impacted tests, discover
+the base branch and compute the diff. ddto now runs that work once per
+invocation in a worker, [`civisibility/cligit`](civisibility/cligit/cligit.go),
+started in the invocation's directory with the test processes' environment.
+It writes its results to a state directory that ddto hands to Mini's test
+processes in `DDTO_GIT_STATE`, which `goenv/restore` removes before `os`
+initializes.
+
+- [`civisibility/utils/cli_git_state.go`](civisibility/utils/cli_git_state.go)
+  defines the record (`git.json`), the upload and impacted-tests results
+  (`upload.json`, `impacted.json`), the `used` mark and atomic writes.
+  `HandedCLIGitState` accepts the state only when the process's `.git` entry,
+  found as `getParentGitFolder` finds it, is the same file as the worker's.
+  Commit dates are Unix seconds, so each process formats them in its own
+  location as after `git log`.
+- `createCITagsMap` (`environmentTags.go`) takes `getLocalGitData`'s and,
+  for the same head commit, `fetchCommitData`'s results from the record; the
+  CI provider's tags keep their precedence.
+- The upload's steps moved from `integrations/civisibility_features.go` to
+  [`civisibility/utils/gitupload`](civisibility/utils/gitupload/gitupload.go),
+  unchanged except for exported names; `integrations` keeps thin wrappers and
+  its test seams. `net.NewClientWithoutTelemetry` creates the worker's client.
+- `ensureSettingsInitialization` waits for `upload.json` instead of uploading
+  when the state is handed, and closes the same upload channel, so the
+  `RequireGit` and impacted-tests waits are unchanged. It no longer waits for
+  the upload at exit: ddto waits for its worker before exiting.
+- `NewImpactedTestAnalyzer` (`impactedtests`) builds the analyzer from
+  `impacted.json` when the worker computed it for the process's current
+  commit and pull-request base; otherwise it computes as before
+  (`computeAnalyzer`).
+
+The worker writes the record before ddto starts go test. It searches the
+backend's commits while go test builds, a read-only request, but unshallows,
+packs and uploads only after a test process marks the state `used`, and then
+requests the settings as test processes do, concurrently with the upload.
+When go test takes every result from its cache, no process uses the state and
+the worker exits without changing the repository. ddto writes the missing
+results if the worker exits early, so no process waits for its timeouts.
+Processes outside the worker's checkout, binaries run outside `ddto test`, the
+SDK runtime, Bazel's offline modes, `-c` and `-n`, and commands with a `-exec`
+program or a cross-compilation helper keep the per-process behavior.
+
+Telemetry differs: test processes that use the state no longer count the Git
+commands and repository requests that the worker made, and the worker reports
+no telemetry. With 8 packages against a local fake Agent, a `ddto test` run
+made one commit search and one upload instead of eight each, and took 0.47
+instead of 0.62 s; each test process's bootstrap dropped from 12 to 5 ms.
+
+Checks: `TestMiniGitStateHandoff`, `TestMiniGitStateUploadsOnce`,
+`TestMiniGitStateImpactedTests`, `TestRunUploadsOnlyWhenTold`,
+`TestGitWorkerRecordsMissingResults` and `TestReceiveRemovesGitState`, with the
+existing upload and impacted-tests tests in `integrations` and `impactedtests`.
+
 ## Testify method names
 
 [`civisibility/integrations/gotesting/testify.go`](civisibility/integrations/gotesting/testify.go)

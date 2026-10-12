@@ -322,6 +322,15 @@ only the restore package calls: `ddto test-exec` must pass them on. Both
 packages must keep importing only `syscall`: their tests check that restoration
 initializes before `os` and before an earlier dependency.
 
+ddto's Git worker (`internal/runner/gitstate.go`, `civisibility/cligit`) must
+see what a test process sees: start it with the test processes' environment,
+and keep each piece of work in the order a test process does it. The upload
+precedes the base-branch discovery, which needs the fetched history. Nothing
+that changes the repository may run before a test process marks the state
+`used`. Every result file that test processes wait for must be written, by the
+worker or by `recordMissingResults`, before `go test` can exit. The worker
+links the SDK's HTTP client into `ddto`.
+
 With `-race`, `noraceOverlay` in `internal/runner/norace.go` gives a client's
 build copies of Mini's sources that mark each function `//go:norace`. The
 copies must keep every token and position of their sources:

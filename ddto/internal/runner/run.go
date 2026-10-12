@@ -74,6 +74,8 @@ type Plan struct {
 	// testLauncher reports that a -exec program or Go's cross-compilation
 	// helper starts the test binaries, and so sees their environment first.
 	testLauncher bool
+	// testDirs are the directories of the packages that have tests.
+	testDirs []string
 }
 
 // savedEnvironment records the caller's values of the Go settings that go test
@@ -478,6 +480,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			return plan, e
 		}
 		plan.TestPackages++
+		plan.testDirs = append(plan.testDirs, p.Dir)
 	}
 	debug.printf("runtime imports internal_test_packages=%d external_test_packages=%d", internalImports, plan.TestPackages-internalImports)
 	testifyPhase := debug.start("instrument testify")
@@ -634,6 +637,8 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 		return runGo(ctx, cwd, append([]string{"test"}, args...), nil, signals, stdin, stdout, stderr)
 	}
 	gitHubJobID := handGitHubJobID(runtime, debug)
+	gitWorker := startGitWorker(runtime, opts, dir, debug, stderr)
+	defer gitWorker.finish(gitWorkerExitWait)
 	plan, interrupted, err := prepareInterruptibly(ctx, dir, opts, runtime, signals, stderr)
 	if err == nil {
 		defer func() {
@@ -712,10 +717,11 @@ func RunRuntime(ctx context.Context, args []string, runtime Runtime, stdin io.Re
 		env = append(env, handoff...)
 		debug.printf("github job id handed found=%t", !strings.HasSuffix(handoff[0], "="))
 	}
+	env = append(env, gitWorker.handOff(plan.testDirs, plan.testLauncher)...)
 	if plan.launcher != nil {
 		ctx = context.WithValue(ctx, goLauncherKey{}, *plan.launcher)
 	}
-	return runGo(ctx, dir, forwarded, env, signals, stdin, stdout, stderr)
+	return runGo(ctx, dir, forwarded, env, gitWorker.relaySignals(signals), stdin, stdout, stderr)
 }
 
 // prepareInterruptibly cancels package resolution when a signal arrives. The

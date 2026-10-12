@@ -17,7 +17,7 @@
       "source": "internal/civisibility/integrations/civisibility_features_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_features_test.go",
       "source_sha256": "b305b518346a7916864815adf9b5dd0ab257ccc861bc8f4cff21d67a36e9d32e",
-      "adapted_sha256": "95d60e7ae18a2bf8b2ff19f3d2215403c653059b4ca9cc4e083cb896d418a963",
+      "adapted_sha256": "9c5bf66af78f1bbf5e86816c7ad03f7f578a49a085ef573a59beb2c062b36459",
       "kind": "full",
       "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },

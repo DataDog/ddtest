@@ -94,6 +94,23 @@ a cross-compilation helper, which would see the variable before the test
 binary, `ddto` hands nothing and each process reads the files itself, as it
 does when the scan is still running a second after preparation.
 
+Each test process also used to read the checkout's Git metadata, upload the
+repository's missing commits and, with impacted tests, discover the base
+branch and compute the diff. `ddto` starts a worker, `ddto ci-git-worker`, in
+the invocation's directory while it prepares the build. The worker reads the
+Git metadata before `go test` starts and hands it, through
+`DDTO_GIT_STATE`, to the test processes of the same checkout, which then run
+no Git command for it. While `go test` builds, the worker compares the local
+commits with the backend's, a read-only request. Once a test process starts,
+it uploads the missing commits once and, if the settings enable impacted
+tests, computes the base commit and the modified files once; test processes
+wait for those results where they used to wait for their own work. When every
+result comes from Go's test cache, no test process starts and the worker
+neither changes the repository nor uploads. `ddto` waits for the worker before
+it exits, as test processes waited for their own uploads. The same exceptions
+as for the job ID apply, and test processes outside the worker's checkout, or
+started outside `ddto test`, keep doing the work themselves.
+
 A `go test -exec` program, or the `go_$GOOS_$GOARCH_exec` helper that Go uses
 when cross-compiling, starts before the test binary. `ddto` runs it through
 `ddto test-exec`, which restores the caller's values first; Go already
