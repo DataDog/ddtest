@@ -22,7 +22,6 @@ func TestTestdriveUsesFrameworkCommand(t *testing.T) {
 	}{
 		{framework.NewJest(javascript), "npx", []string{"jest"}},
 		{framework.NewMocha(javascript), "npx", []string{"mocha"}},
-		{framework.NewVitest(javascript), "node", nil},
 		{framework.NewPlaywright(javascript), "npx", []string{"playwright", "test"}},
 		{framework.NewCucumber(javascript), "npx", []string{"cucumber-js"}},
 	} {

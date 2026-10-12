@@ -37,18 +37,37 @@ func TestMissingCoverageFindingRequiresTestEventsAndNoCoveragePayload(t *testing
 	require.False(t, facts.MissingCoverage) // Empty coverage has its own finding.
 }
 
-func TestTroubleshootCucumberWithoutNYC(t *testing.T) {
-	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"devDependencies":{"@cucumber/cucumber":"13.2.1"}}`), 0644))
-	facts := Facts{MissingCoverage: true}
+func TestTroubleshootFrameworkWithoutNYC(t *testing.T) {
+	for _, tc := range []struct {
+		framework, manifest, command string
+	}{
+		{"Cucumber", `{"devDependencies":{"@cucumber/cucumber":"13.2.1"}}`, "nyc cucumber-js"},
+		{"Mocha", `{"devDependencies":{"mocha":"11.7.6"}}`, "nyc mocha"},
+	} {
+		t.Run(tc.framework, func(t *testing.T) {
+			root := t.TempDir()
+			manifest := filepath.Join(root, "package.json")
+			require.NoError(t, os.WriteFile(manifest, []byte(tc.manifest), 0644))
+			facts := Facts{MissingCoverage: true}
 
-	advice := Troubleshoot(root, "Cucumber", facts)
-	require.Len(t, advice, 1)
-	require.Equal(t, MissingCoverageFinding, advice[0].Finding)
-	require.Contains(t, advice[0].Text, "npm install --save-dev nyc")
-	require.Empty(t, Troubleshoot(root, "Cucumber", Facts{}))
-	require.Empty(t, Troubleshoot(root, "Jest", facts))
+			advice := Troubleshoot(root, tc.framework, facts)
+			require.Len(t, advice, 1)
+			require.Equal(t, MissingCoverageFinding, advice[0].Finding)
+			require.Equal(t, tc.framework+" needs nyc for coverage", advice[0].Title)
+			require.Contains(t, advice[0].Text, "npm install --save-dev nyc")
+			require.Contains(t, advice[0].Text, tc.command)
+			require.Empty(t, Troubleshoot(root, tc.framework, Facts{}))
+			for _, framework := range []string{"Jest", "Vitest", "Cypress"} {
+				require.Empty(t, Troubleshoot(root, framework, facts))
+			}
 
-	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"devDependencies":{"@cucumber/cucumber":"13.2.1","nyc":"17.0.0"}}`), 0644))
-	require.Empty(t, Troubleshoot(root, "Cucumber", facts))
+			require.NoError(t, os.WriteFile(manifest, []byte(`{"devDependencies":{"nyc":"17.0.0"}}`), 0644))
+			require.Empty(t, Troubleshoot(root, tc.framework, facts))
+
+			require.NoError(t, os.WriteFile(manifest, []byte(tc.manifest), 0644))
+			require.NoError(t, os.MkdirAll(filepath.Join(root, "node_modules", ".bin"), 0755))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "node_modules", ".bin", "nyc"), nil, 0755))
+			require.Empty(t, Troubleshoot(root, tc.framework, facts))
+		})
+	}
 }

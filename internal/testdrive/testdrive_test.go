@@ -405,7 +405,7 @@ func TestRunStillReportsEventsWhenJestFails(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []string{`<details class="command-output">`, "Jest output", "npx jest", "Command failed: exit status 1", tc.output} {
+			for _, want := range []string{`<details class="command-output" open>`, "Jest command output", "npx jest", "Command failed: exit status 1", tc.output} {
 				if !strings.Contains(html.UnescapeString(string(report)), want) {
 					t.Errorf("report missing full command output or failure context %q", want)
 				}

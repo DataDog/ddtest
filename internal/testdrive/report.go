@@ -149,13 +149,16 @@ func newReportBuilder(repositoryRoot string) *reportBuilder {
 }
 
 func writeReport(repositoryRoot, sessionDirectory string, findings intake.Facts, commandFailed bool, runtime ...reportRuntime) (string, error) {
+	return writeReportModel(sessionDirectory, buildReport(repositoryRoot, findings, commandFailed, runtime...))
+}
+
+func writeReportModel(sessionDirectory string, model reportModel) (string, error) {
 	path := filepath.Join(sessionDirectory, reportFilename)
 	file, err := os.Create(path)
 	if err != nil {
 		return "", fmt.Errorf("create testdrive report: %w", err)
 	}
 
-	model := buildReport(repositoryRoot, findings, commandFailed, runtime...)
 	executeErr := testdriveReport.Execute(file, model)
 	closeErr := file.Close()
 	if err := errors.Join(executeErr, closeErr); err != nil {
@@ -210,9 +213,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	}
 	model.Suites = suites
 
-	if findings.TestEventCount == 0 {
-		model.Summary = "Check the instrumentation setup."
-	}
+	model.Cards = append(model.Cards, runFindingCards(findings, commandFailed, info)...)
 	if findings.EmptyCoverageEntryCount > 0 {
 		model.Cards = append(model.Cards, reportCard{
 			Kind:    "error",
@@ -266,14 +267,9 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 			Coverages: builder.reportCoverages(findings.BroadCoverage),
 		})
 	}
-	count := len(findings.ConfigurationErrors) + findings.EmptyCoverageEntryCount
-	if findings.MissingCoverage {
-		count++
-	}
-	for _, size := range []int{
-		len(findings.FailedTests), len(findings.FlakyTests), len(findings.SlowTests), len(findings.SlowSuites), len(findings.BroadCoverage),
-	} {
-		count += size
+	count := len(findings.ConfigurationErrors)
+	for _, card := range model.Cards {
+		count += card.Count
 	}
 	if count > 0 {
 		model.Summary = fmt.Sprintf("%d %s.", count, plural(count, "finding", "findings"))

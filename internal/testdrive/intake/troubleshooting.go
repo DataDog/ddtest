@@ -8,6 +8,7 @@ package intake
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,13 +26,25 @@ type Advice struct {
 
 // Troubleshoot returns advice only when the project provides evidence for it.
 func Troubleshoot(repositoryRoot, framework string, facts Facts) []Advice {
-	if !facts.MissingCoverage || !strings.EqualFold(framework, "cucumber") || !nycAbsent(repositoryRoot) {
+	if !facts.MissingCoverage {
+		return nil
+	}
+	var name, command string
+	switch strings.ToLower(framework) {
+	case "cucumber":
+		name, command = "Cucumber", "cucumber-js"
+	case "mocha":
+		name, command = "Mocha", "mocha"
+	default:
+		return nil
+	}
+	if !nycAbsent(repositoryRoot) {
 		return nil
 	}
 	return []Advice{{
 		Finding: MissingCoverageFinding,
-		Title:   "Cucumber needs nyc for coverage",
-		Text:    "This project does not declare or install nyc locally. Add it with npm install --save-dev nyc, then run cucumber-js through nyc (for example, nyc cucumber-js) and repeat the testdrive.",
+		Title:   name + " needs nyc for coverage",
+		Text:    fmt.Sprintf("This project does not declare or install nyc locally. Add it with npm install --save-dev nyc, then run %s through nyc (for example, nyc %s) and repeat the testdrive.", command, command),
 		URL:     "https://docs.datadoghq.com/tests/test_impact_analysis/setup/javascript/",
 	}}
 }
