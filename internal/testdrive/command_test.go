@@ -52,7 +52,7 @@ func TestTestdriveMinitestRequiresExecutableRailsBinstub(t *testing.T) {
 	t.Chdir(root)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "bin"), 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "bin", "rails"), []byte("#!/bin/sh\n"), 0644))
-	command, args := framework.NewMinitest().Command()
+	command, args := framework.NewMinitest(platform.NewRuby(settings.TestSkippingLevelTest)).Command()
 	require.Equal(t, "bundle", command)
 	require.Equal(t, []string{"exec", "rake", "test"}, args)
 }
