@@ -76,7 +76,7 @@ func currentNodeVersion() string {
 	return strings.TrimSpace(string(output))
 }
 
-func supportsNodeImport(version string) bool {
+func supportsNodeRegister(version string) bool {
 	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
 	parts := strings.Split(version, ".")
 	if len(parts) < 2 {
@@ -87,7 +87,8 @@ func supportsNodeImport(version string) bool {
 	if majorErr != nil || minorErr != nil {
 		return false
 	}
-	return major > 18 || major == 18 && minor >= 18
+	// dd-trace/register.js needs module.register, which arrived after --import.
+	return major > 20 || major == 20 && minor >= 6 || major == 18 && minor >= 19
 }
 
 func (t *Testdrive) javascriptEnvironment(path string) map[string]string {
@@ -97,7 +98,7 @@ func (t *Testdrive) javascriptEnvironment(path string) map[string]string {
 	if t.nodeVersion != nil {
 		version = t.nodeVersion()
 	}
-	if supportsNodeImport(version) {
+	if supportsNodeRegister(version) {
 		registerPath := filepath.Join(filepath.Dir(filepath.Dir(path)), "register.js")
 		if info, err := os.Stat(registerPath); err == nil && info.Mode().IsRegular() {
 			env["NODE_OPTIONS"] += " --import " + strconv.Quote(absoluteFileURL(registerPath))

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/settings"
@@ -87,16 +88,28 @@ func TestJavaScriptEnvironmentImportsExistingRegister(t *testing.T) {
 	require.NotContains(t, run.javascriptEnvironment(preload)["NODE_OPTIONS"], "--import")
 }
 
-func TestSupportsNodeImport(t *testing.T) {
+func TestSupportsNodeRegister(t *testing.T) {
+	t.Setenv("NODE_OPTIONS", "")
 	for version, want := range map[string]bool{
+		"v16.20.0": false,
 		"v18.17.1": false,
-		"v18.18.0": true,
-		"v20.0.0":  true,
+		"v18.18.0": false,
+		"v18.19.0": true,
+		"v19.9.0":  false,
+		"v20.0.0":  false,
+		"v20.5.0":  false,
+		"v20.6.0":  true,
+		"v22.0.0":  true,
+		"v24.0.0":  true,
 		"invalid":  false,
 	} {
-		if got := supportsNodeImport(version); got != want {
-			t.Errorf("supportsNodeImport(%q) = %v, want %v", version, got, want)
-		}
+		t.Run(version, func(t *testing.T) {
+			require.Equal(t, want, supportsNodeRegister(version))
+			root := t.TempDir()
+			requireWriteFile(t, filepath.Join(root, "register.js"), "")
+			run := &Testdrive{nodeVersion: func() string { return version }}
+			require.Equal(t, want, strings.Contains(run.javascriptEnvironment(filepath.Join(root, "ci", "init.js"))["NODE_OPTIONS"], " --import "))
+		})
 	}
 }
 
@@ -176,6 +189,19 @@ func TestCypressWrapperSupportsConfigFileFalseAndDefaultE2E(t *testing.T) {
 	require.Contains(t, string(wrapper), `const originalImport = {}`)
 }
 
+func TestCypressWrapperForwardsOptionsThroughAbsoluteNPM(t *testing.T) {
+	root := t.TempDir()
+	session := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"cypress run"}}`)
+	for _, command := range []string{"npm", "/opt/node/bin/npm", "/opt/node/bin/npm.cmd", "/opt/node/bin/npm.ps1"} {
+		t.Run(command, func(t *testing.T) {
+			args, err := prepareCypress(root, session, "/tracer/ci/init.js", command, []string{"test"})
+			require.NoError(t, err)
+			require.Equal(t, []string{"test", "--", "--config-file", filepath.Join(session, "cypress.config.ts")}, args)
+		})
+	}
+}
+
 func TestCypressWrapperPreservesProjectInitializationAndHooks(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is required to execute the Cypress wrapper")
@@ -217,7 +243,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import wrapped from './wrapper.mjs';
 const handlers = new Map();
-const config = await wrapped;
+const config = wrapped;
+assert.equal(typeof config.then, 'undefined', 'Cypress needs a synchronous config export');
 const result = await config.e2e.setupNodeEvents((name, handler) => {
   assert.equal(handlers.has(name), false, 'each event must be registered once');
   handlers.set(name, handler);

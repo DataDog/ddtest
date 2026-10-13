@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/kballard/go-shellquote"
@@ -86,6 +87,11 @@ func prepareCypress(root, directory, preload, command string, args []string) ([]
 	if err := os.WriteFile(path, []byte(wrapper), 0600); err != nil {
 		return nil, err
 	}
+	base := strings.ToLower(filepath.Base(command))
+	base = strings.TrimSuffix(strings.TrimSuffix(base, ".cmd"), ".ps1")
+	if base == "npm" && !slices.Contains(clean, "--") {
+		clean = append(clean, "--")
+	}
 	return append(clean, "--config-file", path), nil
 }
 
@@ -160,7 +166,7 @@ func cypressInspectionArgs(root, command string, args []string) []string {
 }
 
 const cypressWrapper = `
-export default (async () => {
+export default (() => {
   const original = originalImport.default || originalImport;
   const config = { ...original };
   const types = new Set(['e2e', 'component'].filter(type => original[type]));

@@ -14,7 +14,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -220,9 +219,6 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	env := t.environment(installation.Path, server.URL(), session.ID())
 	maps.Copy(env, installation.Env)
 	if t.framework.Name() == "cypress" {
-		if command == "npm" && !slices.Contains(args, "--") {
-			args = append(slices.Clone(args), "--")
-		}
 		args, err = prepareCypress(t.repositoryRoot, session.Directory(), installation.Path, command, args)
 		if err != nil {
 			return err
