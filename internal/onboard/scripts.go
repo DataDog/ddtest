@@ -42,7 +42,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if strings.TrimSpace(step.Run) == "" {
 		return commandResolution{}
 	}
-	if language != "javascript" || (framework != "jest" && framework != "vitest") {
+	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "playwright") {
 		return commandResolution{Matched: looksLikeTestJob(root, step.Run, language, framework, 0)}
 	}
 	directory := stepDirectory(workflow, job, step)
@@ -276,6 +276,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		if framework == "vitest" && len(words) > 1 && words[1] == "bench" {
 			return commandResolution{Benchmark: true, ReviewReason: "Vitest benchmark mode is not validated by the test adapter; do not add instrumentation based on ordinary test validation: " + command}
 		}
+		if framework == "playwright" && (len(words) < 2 || words[1] != "test") {
+			return commandResolution{ReviewReason: "Playwright setup/tool command is outside test execution: " + command}
+		}
 		canonicalRoot, _ := filepath.EvalSymlinks(root)
 		canonicalDirectory, _ := filepath.EvalSymlinks(directory)
 		relative, _ := filepath.Rel(canonicalRoot, canonicalDirectory)
@@ -322,6 +325,11 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			return reviewReleaseLifecycle(directory, command, framework, []string{"prepublishOnly", "prepack", "prepare", "postpack", "publish", "postpublish"})
 		}
 		return unresolvedCommand("Unknown publication command: " + command)
+	case "turbo":
+		if framework == "playwright" {
+			return reviewPlaywrightTurbo(root, directory, words, stack, remaining)
+		}
+		return unresolvedCommand("Cannot statically resolve command: " + command)
 	case "git":
 		if gitReleaseOperation(words) {
 			return commandResolution{ReviewReason: "Git release operation is outside " + framework + " validation; review separately, including any Git hooks: " + command}
@@ -420,6 +428,9 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	if !ok {
 		if name == "flow" && (strings.HasPrefix(command, "yarn flow") || strings.HasPrefix(command, "pnpm flow")) {
 			return resolveJestWords(root, directory, append([]string{"flow"}, args...), stack, remaining, frameworks...)
+		}
+		if len(frameworks) > 0 && frameworks[0] == "playwright" && name == "playwright" && (strings.HasPrefix(command, "pnpm playwright") || strings.HasPrefix(command, "yarn playwright")) {
+			return resolveJestWords(root, directory, append([]string{"playwright"}, args...), stack, remaining, frameworks...)
 		}
 		if len(frameworks) > 0 && frameworks[0] == "vitest" && name == "vitest" && (strings.HasPrefix(command, "pnpm vitest") || strings.HasPrefix(command, "yarn vitest")) {
 			return resolveJestWords(root, directory, append([]string{"vitest"}, args...), stack, remaining, frameworks...)

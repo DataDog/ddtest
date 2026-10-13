@@ -36,6 +36,7 @@ type jestPreflight struct {
 	Command             string                `json:"command"`
 	Node                string                `json:"node"`
 	Version             string                `json:"version"`
+	PlaywrightProjects  []playwrightProject   `json:"playwright_projects,omitempty"`
 	VitestProjects      []vitestProject       `json:"vitest_projects,omitempty"`
 	Projects            []jestProject         `json:"projects"`
 	Recommendation      *tracerRecommendation `json:"recommendation,omitempty"`

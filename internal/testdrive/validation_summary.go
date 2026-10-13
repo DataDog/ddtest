@@ -148,7 +148,7 @@ func summarizeValidation(result validationResult) validationSummary {
 			summary.BlockingChecks = append(summary.BlockingChecks, "compatibility "+result.Compatibility.Status)
 		}
 		for _, feature := range result.Features {
-			if feature.Status != "passed" {
+			if !featureSatisfied(result.Framework, feature) {
 				label := feature.Name
 				if feature.Project != "" {
 					label = feature.Project + "/" + label
@@ -225,7 +225,7 @@ func validationFacts(result validationResult) []string {
 	}
 	passed, total := 0, 0
 	for _, feature := range result.Features {
-		if feature.Name == "all" {
+		if feature.Name == "all" || feature.Status == "not supported" {
 			continue
 		}
 		total++

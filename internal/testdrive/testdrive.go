@@ -92,8 +92,8 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	if all && strings.TrimSpace(settings.GetCommand()) != "" {
 		return nil, fmt.Errorf("--all and --command are mutually exclusive")
 	}
-	if all && runner.Name() != "jest" && runner.Name() != "vitest" {
-		return nil, fmt.Errorf("--all currently validates Jest and Vitest only")
+	if all && runner.Name() != "jest" && runner.Name() != "vitest" && runner.Name() != "playwright" {
+		return nil, fmt.Errorf("--all currently validates Jest, Vitest and Playwright only")
 	}
 	if runner.Name() == "vitest" {
 		repositoryRoot, err = filepath.EvalSymlinks(repositoryRoot)
@@ -143,6 +143,19 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 		}
 		command, args = words[0], words[1:]
 	}
+	if runner.Name() == "playwright" && !all {
+		selected, err := onboard.PlaywrightValidationCommand(repositoryRoot, settings.GetCommand())
+		if err != nil {
+			return nil, err
+		}
+		if selected != "" {
+			words, err := shellquote.Split(selected)
+			if err != nil {
+				return nil, err
+			}
+			command, args = words[0], words[1:]
+		}
+	}
 	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 	session := planSession()
 	options := platform.TracerOptions{Directory: session.Directory(), Version: version, Command: command, Args: args}
@@ -170,6 +183,9 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	drive.preflight = drive.checkJestPreflight
 	if runner.Name() == "vitest" {
 		drive.preflight = drive.checkVitestPreflight
+	}
+	if runner.Name() == "playwright" {
+		drive.preflight = drive.checkPlaywrightPreflight
 	}
 	if js, ok := detectedPlatform.(*platform.JavaScript); ok {
 		drive.resolveJSTracer = js.ResolveRegistryTracer
@@ -217,22 +233,29 @@ func (t *Testdrive) Preview(output io.Writer) {
 		}
 		_, _ = fmt.Fprintf(output, "  - install %s: %s\n", t.tracerLabel, shellquote.Join(install...))
 	}
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" {
+	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" {
 		_, _ = fmt.Fprintln(output, "  - inspect the selected framework configuration and tracer compatibility before running tests")
 	}
 
 	_, _ = fmt.Fprintf(output, "  - run: %s\n", shellquote.Join(append([]string{command}, args...)...))
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" {
+	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" {
 		_, _ = fmt.Fprintln(output, "  - check GitHub Actions Node runtimes against the workflow-selected tracer using public action and npm metadata")
 		_, _ = fmt.Fprintln(output, "  - compare native JSON results without instrumentation and with reporting-only instrumentation")
 		_, _ = fmt.Fprintln(output, "  - repeat the pair if outcomes differ; timing and console order are ignored")
-		_, _ = fmt.Fprintln(output, "  - discover and remove a temporary probe test under the selected project configuration; check retries, EFD, skipping, quarantine, disabled tests, and attempt-to-fix per project; wait for completion before running other repository checks")
+		if t.framework.Name() == "playwright" {
+			_, _ = fmt.Fprintln(output, "  - run in a temporary repository copy; capture native results and clean owned server processes after every run")
+			_, _ = fmt.Fprintln(output, "  - check retries, EFD, quarantine, disabled tests and attempt-to-fix per Playwright project; TIA skipping/coverage are not supported")
+		} else {
+			_, _ = fmt.Fprintln(output, "  - discover and remove a temporary probe test under the selected project configuration; check retries, EFD, skipping, quarantine, disabled tests, and attempt-to-fix per project; wait for completion before running other repository checks")
+		}
 	} else {
 		_, _ = fmt.Fprintln(output, "  - collect reporting-only telemetry; compatibility and features remain unvalidated for this framework")
 	}
 	_, _ = fmt.Fprintf(output, "  - update the validation report at %s; retain the latest paired execution as historical evidence until another pair runs\n", reportPath)
 	_, _ = fmt.Fprintf(output, "  - save the instrumented suite findings in %s\n", htmlReportPath(""))
-	_, _ = fmt.Fprintln(output, "  - disable coverage thresholds only for isolated probes, preserving coverage collection and the original full-suite thresholds")
+	if t.framework.Name() != "playwright" {
+		_, _ = fmt.Fprintln(output, "  - disable coverage thresholds only for isolated probes, preserving coverage collection and the original full-suite thresholds")
+	}
 	_, _ = fmt.Fprintln(output, "  - keep the upstream HTML findings report and compact JSON validation report; remove temporary probes, tracer, traffic, and run files")
 	_, _ = fmt.Fprintln(output)
 	if t.language == "ruby" && t.projectTracer == "" {
@@ -273,11 +296,14 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 	}
 	var result validationResult
 	var runErr error
-	if t.framework.Name() == "vitest" && onboard.IsDDTestCommand(t.command) && !t.checkOnly {
+	if (t.framework.Name() == "vitest" && onboard.IsDDTestCommand(t.command) || t.framework.Name() == "playwright") && !t.checkOnly {
 		child := *t
 		var models []reportModel
 		child.reportModels = &models
 		child.preflight = child.checkVitestPreflight
+		if t.framework.Name() == "playwright" {
+			child.preflight = child.checkPlaywrightPreflight
+		}
 		result, runErr = child.runPreparedConfiguration(ctx, output, &configurationResult{})
 		if result.Preflight != nil {
 			result.Preflight.Command = shellquote.Join(append([]string{t.command}, t.args...)...)
@@ -290,7 +316,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 	} else {
 		result, runErr = t.run(ctx, output)
 	}
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" {
+	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" {
 		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
 		if err != nil {
 			runErr = errors.Join(runErr, err)
@@ -315,6 +341,10 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		Compatibility: verdict{Status: "inconclusive", Reason: "Validation did not complete."}}
 	defer func() {
 		cleanupErr := session.Close()
+		var processCleanup *playwrightCleanupError
+		if errors.As(runErr, &processCleanup) {
+			cleanupErr = errors.Join(cleanupErr, processCleanup)
+		}
 		result.Cleanup = &verdict{Status: "passed", Reason: "ddtest temporary session storage removed."}
 		if cleanupErr != nil {
 			result.Cleanup = &verdict{Status: "failed", Reason: reportText(cleanupErr.Error())}
@@ -325,7 +355,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		}
 	}()
 
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" {
+	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" {
 		check := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
 		result.CIRuntime = &check
 		if t.preflight != nil {
@@ -339,7 +369,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 			return result, nil
 		}
 	} else if t.checkOnly {
-		return result, fmt.Errorf("configuration preflight currently supports Jest and Vitest only")
+		return result, fmt.Errorf("configuration preflight currently supports Jest, Vitest and Playwright only")
 	}
 
 	_, _ = fmt.Fprintf(output, "\nPreparing %s in %s...\n", t.tracerLabel, session.Directory())
@@ -367,7 +397,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		result.Tracer = t.installedTracerLabel(t.projectTracer)
 		result.TracerSource = "project installation (reused; fallback selector ignored)"
 	}
-	if t.framework.Name() == "vitest" {
+	if t.framework.Name() == "vitest" || t.framework.Name() == "playwright" {
 		if err := verifyInstalledSelection(installation.Path, &result); err != nil {
 			return result, err
 		}

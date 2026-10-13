@@ -28,6 +28,7 @@ type jestTest struct {
 	Status  string `json:"status"`
 	Failure string `json:"failure,omitempty"`
 
+	Playwright    *playwrightIdentity `json:"playwright,omitempty"`
 	telemetryName *string
 }
 
@@ -269,7 +270,7 @@ func outcomeKeys(run validationRun) []string {
 	keys := []string{fmt.Sprintf("exit=%d", run.ExitCode), "result=" + run.ResultError}
 	keys = append(keys, run.SuiteErrors...)
 	for _, test := range run.Tests {
-		keys = append(keys, test.File+" › "+test.Name+": "+test.Status+"\n"+test.Failure)
+		keys = append(keys, test.File+" › "+test.Name+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test))
 	}
 	slices.Sort(keys)
 	return keys
@@ -313,6 +314,9 @@ func compareJest(baseline, instrumented validationRun) verdict {
 }
 
 func verifyJestTelemetry(run validationRun) verdict {
+	if run.framework == "playwright" {
+		return verifyPlaywrightTelemetry(run)
+	}
 	if run.Facts.TestEventCount == 0 {
 		return verdict{Status: "inconclusive", Reason: "The instrumented run sent no test events; matching test outcomes do not prove instrumentation worked."}
 	}
@@ -373,6 +377,9 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 	if t.framework.Name() == "vitest" {
 		run = t.runVitest
 	}
+	if t.framework.Name() == "playwright" {
+		run = t.runPlaywright
+	}
 	baseline, err := run(ctx, output, session, preload, "baseline", false, intake.Scenario{}, "", "")
 	result.Runs = append(result.Runs, baseline.summary())
 	if err != nil {
@@ -405,6 +412,9 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 	}
 	if t.framework.Name() == "vitest" {
 		return t.runVitestFeatures(ctx, output, session, preload, baseline, result)
+	}
+	if t.framework.Name() == "playwright" {
+		return t.runPlaywrightFeatures(ctx, output, session, preload, baseline, result)
 	}
 	if err := t.runJestFeatures(ctx, output, session, preload, result); err != nil {
 		return err

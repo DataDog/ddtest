@@ -21,6 +21,9 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			language := "js"
 			entry := name
 			files := map[string]string{"package.json": `{"scripts":{"test":"` + name + `"}}`}
+			if name == "playwright" {
+				entry += " test"
+			}
 			switch name {
 			case "pytest":
 				files = map[string]string{"pyproject.toml": "[tool.pytest.ini_options]\n"}

@@ -41,6 +41,9 @@ func recommendJavaScriptTracer(ctx context.Context, check jestPreflight, ci *onb
 		if framework == "vitest" {
 			support = checkVitestSupport
 		}
+		if framework == "playwright" {
+			support = checkPlaywrightSupport
+		}
 		if verdict := support(check, selected); verdict.Status != "compatible" {
 			continue
 		}

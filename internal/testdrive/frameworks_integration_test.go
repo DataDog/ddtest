@@ -82,7 +82,7 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 			onboard := integrationCommand(t, ctx, root, env, binary, "onboard")
 			require.Contains(t, onboard, "datadog/test-visibility-github-action@v3")
 			args := []string{"testdrive", "--yes"}
-			if fixture.name == "jest" {
+			if fixture.name == "jest" || fixture.name == "playwright" {
 				// The validation contract also requires instrumented CI configuration.
 				// Resolve once so local and CI metadata refer to the same release.
 				version := strings.TrimSpace(integrationCommand(t, ctx, root, env, "npm", "view", "dd-trace", "version"))
@@ -106,6 +106,16 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 				require.Contains(t, output, "reuse installed dd-trace@")
 				require.Contains(t, output, "no installation is needed")
 				require.NotContains(t, output, "npm install")
+				probes, err := filepath.Glob(filepath.Join(root, "ddtest*"))
+				require.NoError(t, err)
+				require.Empty(t, probes)
+			case "playwright":
+				require.NoError(t, runErr, output)
+				require.Contains(t, output, "No observed behavioral regression")
+				for _, feature := range []string{"auto-retries", "early-flake-detection", "quarantine", "disabled", "attempt-to-fix"} {
+					require.Contains(t, output, "Feature "+feature+": passed")
+				}
+				require.Contains(t, output, "Feature skipping: not supported")
 				probes, err := filepath.Glob(filepath.Join(root, "ddtest*"))
 				require.NoError(t, err)
 				require.Empty(t, probes)
@@ -147,7 +157,11 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 			contents, err := os.ReadFile(html[0])
 			require.NoError(t, err)
 			require.Contains(t, string(contents), `id="run-details"`)
-			require.Contains(t, output, "Open report:")
+			if fixture.name == "playwright" {
+				require.Contains(t, output, "[Open report](<")
+			} else {
+				require.Contains(t, output, "Open report:")
+			}
 			for name, contents := range before {
 				if (fixture.name == "rspec" || fixture.name == "minitest") && (name == "Gemfile" || name == "Gemfile.lock") {
 					continue // bundle add updates Ruby dependency files.
