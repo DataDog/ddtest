@@ -43,6 +43,10 @@ func prepareCypress(root, directory, preload, command string, args []string) ([]
 			_, config, _ = strings.Cut(args[i], "=")
 			continue
 		}
+		if value, found := strings.CutPrefix(args[i], "-C"); found {
+			config = value
+			continue
+		}
 		clean = append(clean, args[i])
 	}
 	if config == "" {
@@ -74,13 +78,13 @@ func prepareCypress(root, directory, preload, command string, args []string) ([]
 	if err := os.WriteFile(cwdPath, []byte("process.chdir("+string(encodedRoot)+");\n"), 0600); err != nil {
 		return nil, err
 	}
-	encodedCwd, _ := json.Marshal(cwdPath)
+	encodedCwd, _ := json.Marshal(absoluteFileURL(cwdPath))
 	configImport := "const originalImport = {};\n"
 	if config != "" {
-		encodedConfig, _ := json.Marshal(config)
+		encodedConfig, _ := json.Marshal(absoluteFileURL(config))
 		configImport = "import originalImport from " + string(encodedConfig) + ";\n"
 	}
-	encodedPlugin, _ := json.Marshal(filepath.Join(tracerRoot, "ci", "cypress", "plugin.js"))
+	encodedPlugin, _ := json.Marshal(absoluteFileURL(filepath.Join(tracerRoot, "ci", "cypress", "plugin.js")))
 	wrapper := "import fs from 'node:fs';\nimport path from 'node:path';\nimport " + string(encodedCwd) + ";\n" + configImport +
 		"import instrumentImport from " + string(encodedPlugin) + ";\nconst options = " + string(values) + ";\n" + cypressWrapper
 	path := filepath.Join(directory, "cypress.config.ts")
@@ -107,6 +111,12 @@ func optionValue(args []string, options ...string) string {
 			if candidate, found := strings.CutPrefix(args[index], option+"="); found {
 				value = candidate
 				break
+			}
+			if len(option) == 2 && strings.HasPrefix(option, "-") {
+				if candidate, found := strings.CutPrefix(args[index], option); found && candidate != "" {
+					value = candidate
+					break
+				}
 			}
 		}
 	}
@@ -175,11 +185,13 @@ export default (() => {
     const originalType = original[type] || {};
     const setup = originalType.setupNodeEvents;
     config[type] = { ...originalType, async setupNodeEvents(on, resolved) {
-      // Compose hooks so adding instrumentation cannot discard customer hooks.
+      // Cypress replaces project hooks and merges tasks. Compose instrumentation
+      // with only the final project hook for each event.
       const handlers = new Map();
+      let instrumenting = false;
       const collect = (event, handler) => {
         if (event === 'task') { handlers.set(event, { ...(handlers.get(event) || {}), ...handler }); return; }
-        const previous = handlers.get(event);
+        const previous = instrumenting ? handlers.get(event) : undefined;
         handlers.set(event, previous ? async (...args) => {
           const first = await previous(...args);
           const second = await handler(...args);
@@ -193,6 +205,7 @@ export default (() => {
       fs.writeFileSync(support, contents);
       resolved.supportFile = support;
       const instrument = instrumentImport.default || instrumentImport;
+      instrumenting = true;
       resolved = (await instrument(collect, resolved)) || resolved;
       for (const [event, handler] of handlers) on(event, handler);
       return resolved;
