@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"html"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -34,13 +35,19 @@ func TestRunSharesConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T) {
 		wantError    string
 		wantAdvice   bool
 		mocha        bool
+		browserInfo  bool
+		nycInstalled bool
+		nycDeclared  bool
 	}{
 		{name: "missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true},
 		{name: "Mocha missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, mocha: true},
+		{name: "Mocha with installed nyc missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, mocha: true, nycInstalled: true},
+		{name: "Cucumber with declared nyc missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, nycDeclared: true},
 		{name: "covered tests", facts: intake.Facts{TestEventCount: 1, TestCount: 1, CoveredTestCount: 1, CoverageLevel: "test", Tests: []intake.Test{passed}}},
 		{name: "covered suite", facts: intake.Facts{TestEventCount: 1, TestCount: 1, CoveredTestCount: 1, CoverageLevel: "suite", Tests: []intake.Test{passed}, SuiteCoverages: []intake.SuiteCoverage{{Suite: passed.Suite, CoveredTests: 1, Files: []string{"src/greet.js"}}}}},
 		{name: "failed command", facts: intake.Facts{TestEventCount: 1, TestCount: 1, Tests: []intake.Test{failed}, FailedTests: []intake.Test{failed}}, commandError: errors.New("exit status 1"), wantError: "failed after sending"},
 		{name: "no events", wantError: "sent no test events", wantAdvice: true},
+		{name: "browser coverage is information", facts: intake.Facts{TestEventCount: 1, TestCount: 1, BrowserCoverageUnavailable: true, Tests: []intake.Test{passed}}, wantAdvice: true, browserInfo: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			drive := preparedTestdrive(t)
@@ -53,6 +60,24 @@ func TestRunSharesConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T) {
 				drive.framework = framework.NewMocha(platform.NewJavaScript())
 				drive.args = []string{"mocha"}
 				frameworkLabel = "Mocha"
+			}
+			if tc.browserInfo {
+				drive.framework = framework.NewVitest(platform.NewJavaScript())
+				drive.command, drive.args = "node", []string{"vitest.mjs"}
+				frameworkLabel = "Vitest"
+			}
+			if tc.nycDeclared {
+				requireWriteFile(t, filepath.Join(drive.repositoryRoot, "package.json"), `{"devDependencies":{"nyc":"17.0.0"}}`)
+			}
+			if tc.nycInstalled {
+				bin := filepath.Join(drive.repositoryRoot, "node_modules", ".bin")
+				if err := os.MkdirAll(bin, 0755); err != nil {
+					t.Fatal(err)
+				}
+				requireWriteFile(t, filepath.Join(bin, "nyc"), "")
+				if err := os.Chmod(filepath.Join(bin, "nyc"), 0755); err != nil {
+					t.Fatal(err)
+				}
 			}
 			installer := &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
 			drive.platform = installer
@@ -77,7 +102,11 @@ func TestRunSharesConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T) {
 			if !reflect.DeepEqual(diagnostics.Facts, tc.facts) {
 				t.Fatalf("JSON did not preserve complete facts: %+v", diagnostics.Facts)
 			}
-			if diagnostics.RepositoryRoot != drive.repositoryRoot || diagnostics.Command != "npx "+drive.args[0] || diagnostics.Framework != frameworkLabel || diagnostics.DurationUnit != "nanoseconds" || diagnostics.CommandFailed != (tc.commandError != nil) {
+			wantCommand := drive.command + " " + drive.args[0]
+			if tc.mocha && tc.nycInstalled {
+				wantCommand = "node_modules/.bin/nyc -- npx mocha"
+			}
+			if diagnostics.RepositoryRoot != drive.repositoryRoot || diagnostics.Command != wantCommand || diagnostics.Framework != frameworkLabel || diagnostics.DurationUnit != "nanoseconds" || diagnostics.CommandFailed != (tc.commandError != nil) {
 				t.Fatalf("incorrect diagnostic context: %+v", diagnostics)
 			}
 			if tc.commandError != nil && diagnostics.CommandError != tc.commandError.Error() {
@@ -86,6 +115,12 @@ func TestRunSharesConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T) {
 			if tc.facts.CoverageLevel == "suite" && (!strings.Contains(output.String(), "Suites with coverage: 1 / 1") || strings.Contains(output.String(), "Tests with coverage:")) {
 				t.Fatal("console must report coverage at the active suite level")
 			}
+			if strings.Contains(output.String(), "1 finding.") {
+				t.Fatal("console must print the finding instead of a standalone total")
+			}
+			if tc.facts.MissingCoverage && !strings.Contains(output.String(), intake.MissingCoverageContext+"\n  Fix:") {
+				t.Fatalf("coverage guidance must immediately follow the concise finding:\n%s", output.String())
+			}
 			report, err := os.ReadFile(filepath.Join(installer.sessionDirectory, reportFilename))
 			if err != nil {
 				t.Fatal(err)
@@ -93,17 +128,39 @@ func TestRunSharesConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T) {
 			if !strings.Contains(string(report), `href="findings.json"`) {
 				t.Fatal("HTML report must link to structured findings")
 			}
+			if tc.browserInfo {
+				if diagnostics.RunFailed || len(diagnostics.Findings) != 1 || diagnostics.Findings[0].Severity != "info" || diagnostics.Findings[0].Kind != intake.BrowserCoverageFinding {
+					t.Fatalf("browser coverage must be an informational finding: %+v", diagnostics)
+				}
+				for _, text := range []string{`data-kind="browser-coverage-unavailable" data-severity="info"`, `<span class="info-label">Info</span>`, `class="fact info"`, "Unavailable (browser projects)"} {
+					if !strings.Contains(string(report), text) {
+						t.Fatalf("report lacks informational treatment %q", text)
+					}
+				}
+				if strings.Contains(string(report), `<article class="problem-card" data-kind="missing-coverage"`) || strings.Contains(output.String(), intake.MissingCoverageContext) {
+					t.Fatal("known browser limitation must not also appear as unexpected missing coverage")
+				}
+				if !strings.Contains(output.String(), "Info: "+intake.BrowserCoverageTitle) {
+					t.Fatal("console must identify the informational finding")
+				}
+			}
 			if tc.wantAdvice {
 				if len(diagnostics.Troubleshooting) != 1 {
 					t.Fatalf("missing troubleshooting: %+v", diagnostics)
 				}
 				advice := diagnostics.Troubleshooting[0]
+				if tc.nycInstalled && (advice.Title != "Check NYC coverage configuration" || !strings.Contains(advice.Text, "include/exclude") || strings.Contains(advice.Text, "./node_modules/.bin/nyc ddtest")) {
+					t.Fatalf("installed NYC still needs actionable coverage guidance: %+v", advice)
+				}
+				if tc.nycDeclared && advice.Title != "Install the declared nyc dependency" {
+					t.Fatalf("declared NYC executable is missing: %+v", advice)
+				}
 				for _, text := range []string{advice.Title, advice.Text, advice.URL} {
-					if !strings.Contains(output.String(), text) || !strings.Contains(string(report), text) {
+					if !strings.Contains(output.String(), strings.ReplaceAll(text, "\n", "\n    ")) || !strings.Contains(html.UnescapeString(string(report)), text) {
 						t.Fatalf("console and report must share advice %q", text)
 					}
 				}
-			} else if len(diagnostics.Troubleshooting) != 0 || strings.Contains(output.String(), "\nTroubleshooting:") {
+			} else if len(diagnostics.Troubleshooting) != 0 || strings.Contains(output.String(), "  Fix:") {
 				t.Fatal("must not invent troubleshooting without supporting evidence")
 			}
 			for _, filename := range []string{diagnosticsFilename, testOutputFilename, "intake"} {

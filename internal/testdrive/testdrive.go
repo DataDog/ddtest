@@ -120,7 +120,7 @@ func displayName(name string) string {
 
 // Preview describes the filesystem and process changes that Run will make.
 func (t *Testdrive) Preview(output io.Writer) {
-	command, args := t.command, t.args
+	command, args := t.executionCommand()
 	directory := t.session.Directory()
 	if relative, err := filepath.Rel(t.repositoryRoot, directory); err == nil {
 		directory = relative
@@ -206,7 +206,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		}
 	}()
 
-	command, args := t.command, t.args
+	command, args := t.executionCommand()
 	if t.framework.Name() == "vitest" {
 		if err := writeVitestEntrypoint(session.Directory()); err != nil {
 			return err
@@ -280,8 +280,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	} else {
 		_, _ = fmt.Fprintln(output, "No test events received.")
 	}
-	writeFindings(output, findings, runFindingCards(findings, testErr != nil, runtime)...)
-	writeTroubleshooting(output, model.Cards)
+	writeFindings(output, findings, model.Cards...)
 	_, _ = fmt.Fprintln(output, "\nRun details:")
 	_, _ = fmt.Fprintf(output, "  Test events: %d\n", findings.TestEventCount)
 	_, _ = fmt.Fprintf(output, "  Tests: %d · Suites: %d\n", findings.TestCount, len(model.Suites))
@@ -301,7 +300,9 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		_, _ = fmt.Fprintf(output, "  Coverage level: %s\n", findings.CoverageLevel)
 	}
 	if covered == 0 {
-		if findings.EmptyCoverageEntryCount > 0 {
+		if findings.BrowserCoverageUnavailable && !findings.MissingCoverage && findings.EmptyCoverageEntryCount == 0 {
+			_, _ = fmt.Fprintln(output, "  Coverage unavailable for runs containing Vitest browser projects.")
+		} else if findings.EmptyCoverageEntryCount > 0 {
 			_, _ = fmt.Fprintln(output, "  No valid coverage was reported by this run.")
 		} else {
 			_, _ = fmt.Fprintln(output, "  Coverage was not reported by this run.")
@@ -329,25 +330,36 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	return nil
 }
 
-func writeFindings(output io.Writer, findings intake.Facts, runFindings ...reportCard) {
+func writeFindings(output io.Writer, findings intake.Facts, cards ...reportCard) {
 	if len(findings.ConfigurationErrors) > 0 {
 		_, _ = fmt.Fprintf(output, "Tracer configuration errors: %s. Inspect the captured traffic and test output.\n", strings.Join(findings.ConfigurationErrors, ", "))
 	}
 	count := len(findings.ConfigurationErrors)
-	for _, finding := range runFindings {
+	for _, finding := range cards {
+		if finding.Kind != "command-failed" && finding.Kind != "no-test-events" {
+			continue
+		}
 		count += finding.Count
 		_, _ = fmt.Fprintf(output, "%s: %s\n", finding.Title, finding.Context)
+		writeTroubleshooting(output, cards, finding.Kind)
 	}
 	if findings.TestEventCount == 0 {
 		_, _ = fmt.Fprintln(output, "Test findings unavailable: no test events were received.")
 	}
 	if findings.MissingCoverage {
 		count++
-		_, _ = fmt.Fprintln(output, "Coverage not reported: test events arrived, but no code coverage was reported. Test Impact Analysis cannot map these tests to changed files.")
+		_, _ = fmt.Fprintln(output, intake.MissingCoverageContext)
+		writeTroubleshooting(output, cards, intake.MissingCoverageFinding)
+	}
+	if findings.BrowserCoverageUnavailable {
+		count++
+		_, _ = fmt.Fprintf(output, "Info: %s. %s\n", intake.BrowserCoverageTitle, intake.BrowserCoverageContext)
+		writeTroubleshooting(output, cards, intake.BrowserCoverageFinding)
 	}
 	if findings.EmptyCoverageEntryCount > 0 {
 		count += findings.EmptyCoverageEntryCount
 		_, _ = fmt.Fprintf(output, "Tracer error: received %d coverage entries with an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.\n", findings.EmptyCoverageEntryCount)
+		writeTroubleshooting(output, cards, "error")
 	}
 	for _, size := range []int{
 		len(findings.FailedTests), len(findings.FlakyTests), len(findings.SlowTests), len(findings.SlowSuites), len(findings.BroadCoverage),
@@ -362,9 +374,10 @@ func writeFindings(output io.Writer, findings intake.Facts, runFindings ...repor
 		return
 	}
 
-	_, _ = fmt.Fprintf(output, "%d %s.\n", count, plural(count, "finding", "findings"))
 	writeTestFindings(output, "Failed tests", findings.FailedTests)
+	writeTroubleshooting(output, cards, "failed")
 	writeTestFindings(output, "Flaky tests", findings.FlakyTests)
+	writeTroubleshooting(output, cards, "flaky")
 	if len(findings.SlowTests) > 0 {
 		_, _ = fmt.Fprintf(output, "\nTests slower than the others (%d):\n", len(findings.SlowTests))
 		_, _ = fmt.Fprintf(output, "  Median test time: %s\n", formatDuration(findings.TestDurationMedian))
@@ -395,6 +408,8 @@ func writeFindings(output io.Writer, findings intake.Facts, runFindings ...repor
 			writeSourceLocation(output, finding.SourceFile, finding.SourceStart, finding.SourceEnd)
 		}
 	}
+	writeTroubleshooting(output, cards, "slow")
+	writeTroubleshooting(output, cards, "coverage")
 }
 
 func writeTestFindings(output io.Writer, title string, findings []intake.Test) {

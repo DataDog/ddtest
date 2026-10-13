@@ -8,13 +8,13 @@ package intake
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
 const MissingCoverageFinding = "missing-coverage"
+const MissingCoverageContext = "No per-test code coverage collected. Test Impact Analysis is not set up correctly."
 
 // Advice explains a likely cause of a finding and a concrete next step.
 type Advice struct {
@@ -26,33 +26,74 @@ type Advice struct {
 
 // Troubleshoot returns advice only when the project provides evidence for it.
 func Troubleshoot(repositoryRoot, framework string, facts Facts) []Advice {
-	if !facts.MissingCoverage {
-		return nil
+	var advices []Advice
+	if facts.BrowserCoverageUnavailable {
+		advices = append(advices, Advice{
+			Finding: BrowserCoverageFinding,
+			Title:   "Run Node test projects separately for coverage",
+			Text:    "Use a Vitest configuration containing only Node test projects. Select it with --framework vitest --vitest-config <config> when running ddtest testdrive to collect Test Impact Analysis coverage for supported Node projects.",
+		})
 	}
-	var name, command string
+	if !facts.MissingCoverage {
+		return advices
+	}
+	var name string
 	switch strings.ToLower(framework) {
 	case "cucumber":
-		name, command = "Cucumber", "cucumber-js"
+		name = "Cucumber"
 	case "mocha":
-		name, command = "Mocha", "mocha"
+		return append(advices, troubleshootMochaCoverage(repositoryRoot))
 	default:
-		return nil
+		return advices
 	}
-	if !nycAbsent(repositoryRoot) {
-		return nil
-	}
-	return []Advice{{
+	advice := Advice{
 		Finding: MissingCoverageFinding,
-		Title:   name + " needs nyc for coverage",
-		Text:    fmt.Sprintf("This project does not declare or install nyc locally. Add it with npm install --save-dev nyc, then run %s through nyc (for example, nyc %s) and repeat the testdrive.", command, command),
+		Title:   "Run testdrive through nyc for coverage",
+		Text:    "From the project directory:\n./node_modules/.bin/nyc ddtest testdrive\nKeep your testdrive options. Still no coverage? Check NYC's include/exclude rules.",
 		URL:     "https://docs.datadoghq.com/tests/test_impact_analysis/setup/javascript/",
-	}}
+	}
+	nycPath := filepath.Join(repositoryRoot, "node_modules", ".bin", "nyc")
+	info, statErr := os.Stat(nycPath)
+	if statErr == nil && !info.IsDir() {
+		return append(advices, advice)
+	}
+	declared, known := nycDeclared(repositoryRoot)
+	if known && !declared && errors.Is(statErr, os.ErrNotExist) {
+		advice.Title = name + " needs nyc for coverage"
+		advice.Text = "From the project directory:\nnpm install --save-dev nyc\n./node_modules/.bin/nyc ddtest testdrive\nKeep your testdrive options."
+	} else if known && declared && errors.Is(statErr, os.ErrNotExist) {
+		advice.Title = "Install the declared nyc dependency"
+		advice.Text = "NYC executable missing. Install the project's dependencies, then run:\n./node_modules/.bin/nyc ddtest testdrive\nKeep your testdrive options."
+	} else {
+		advice.Text += "\nNYC missing? npm install --save-dev nyc"
+	}
+	return append(advices, advice)
 }
 
-func nycAbsent(repositoryRoot string) bool {
+func troubleshootMochaCoverage(repositoryRoot string) Advice {
+	advice := Advice{
+		Finding: MissingCoverageFinding,
+		Title:   "Check NYC coverage configuration",
+		Text:    "Testdrive uses NYC automatically. Check NYC's include/exclude rules and file extensions, then rerun ddtest testdrive with the same options.",
+		URL:     "https://docs.datadoghq.com/tests/test_impact_analysis/setup/javascript/",
+	}
+	info, err := os.Stat(filepath.Join(repositoryRoot, "node_modules", ".bin", "nyc"))
+	if err == nil && info.Mode().IsRegular() && info.Mode()&0111 != 0 {
+		return advice
+	}
+	advice.Title = "Install nyc for Mocha coverage"
+	advice.Text = "From the project directory:\nnpm install --save-dev nyc\nddtest testdrive\nTestdrive will use NYC automatically. Keep your testdrive options."
+	if declared, known := nycDeclared(repositoryRoot); known && declared {
+		advice.Title = "Install the declared nyc dependency"
+		advice.Text = "NYC executable missing. Install the project's dependencies, then rerun:\nddtest testdrive\nTestdrive will use NYC automatically. Keep your testdrive options."
+	}
+	return advice
+}
+
+func nycDeclared(repositoryRoot string) (declared, known bool) {
 	data, err := os.ReadFile(filepath.Join(repositoryRoot, "package.json"))
 	if err != nil {
-		return false
+		return false, false
 	}
 	var manifest struct {
 		Dependencies         map[string]json.RawMessage `json:"dependencies"`
@@ -61,15 +102,14 @@ func nycAbsent(repositoryRoot string) bool {
 		PeerDependencies     map[string]json.RawMessage `json:"peerDependencies"`
 	}
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return false
+		return false, false
 	}
 	for _, dependencies := range []map[string]json.RawMessage{
 		manifest.Dependencies, manifest.DevDependencies, manifest.OptionalDependencies, manifest.PeerDependencies,
 	} {
 		if _, exists := dependencies["nyc"]; exists {
-			return false
+			return true, true
 		}
 	}
-	_, err = os.Stat(filepath.Join(repositoryRoot, "node_modules", ".bin", "nyc"))
-	return errors.Is(err, os.ErrNotExist)
+	return false, true
 }

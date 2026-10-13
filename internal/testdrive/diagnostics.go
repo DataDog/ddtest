@@ -34,10 +34,11 @@ type runDiagnostics struct {
 }
 
 type diagnosticFinding struct {
-	Kind    string `json:"kind"`
-	Title   string `json:"title"`
-	Count   int    `json:"count"`
-	Context string `json:"context"`
+	Kind     string `json:"kind"`
+	Severity string `json:"severity"`
+	Title    string `json:"title"`
+	Count    int    `json:"count"`
+	Context  string `json:"context"`
 }
 
 func writeDiagnostics(repositoryRoot, sessionDirectory string, facts intake.Facts, model reportModel, commandFailed bool) (string, error) {
@@ -45,7 +46,7 @@ func writeDiagnostics(repositoryRoot, sessionDirectory string, facts intake.Fact
 	findings := make([]diagnosticFinding, 0, len(model.Cards))
 	for _, card := range model.Cards {
 		advices = append(advices, card.Advices...)
-		findings = append(findings, diagnosticFinding{Kind: card.Kind, Title: card.Title, Count: card.Count, Context: card.Context})
+		findings = append(findings, diagnosticFinding{Kind: card.Kind, Severity: card.Severity, Title: card.Title, Count: card.Count, Context: card.Context})
 	}
 	data, err := json.MarshalIndent(runDiagnostics{
 		RepositoryRoot: repositoryRoot, Framework: model.Runtime.Framework,
@@ -64,15 +65,13 @@ func writeDiagnostics(repositoryRoot, sessionDirectory string, facts intake.Fact
 	return path, nil
 }
 
-func writeTroubleshooting(output io.Writer, cards []reportCard) {
-	shown := false
+func writeTroubleshooting(output io.Writer, cards []reportCard, kind string) {
 	for _, card := range cards {
+		if card.Kind != kind {
+			continue
+		}
 		for _, advice := range card.Advices {
-			if !shown {
-				_, _ = fmt.Fprintln(output, "\nTroubleshooting:")
-				shown = true
-			}
-			_, _ = fmt.Fprintf(output, "  %s: %s\n", card.Title, advice.Title)
+			_, _ = fmt.Fprintf(output, "  Fix: %s\n", advice.Title)
 			_, _ = fmt.Fprintf(output, "    %s\n", strings.ReplaceAll(advice.Text, "\n", "\n    "))
 			if advice.URL != "" {
 				_, _ = fmt.Fprintf(output, "    Setup guide: %s\n", advice.URL)

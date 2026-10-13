@@ -148,6 +148,13 @@ THE SOFTWARE.
     />
   </svg>
 {{ end }}
+{{ define "icon-info-circle" }}
+  <svg aria-hidden="true" class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor">
+    <circle cx="8" cy="8" r="7" />
+    <path d="M8 7v5" stroke-width="1.5" />
+    <circle cx="8" cy="4.5" r=".7" fill="currentColor" stroke="none" />
+  </svg>
+{{ end }}
 {{ define "icon-exclamation-circle" }}
   <svg
     aria-hidden="true"
@@ -557,6 +564,16 @@ THE SOFTWARE.
       .problem-card[data-kind="missing-coverage"] {
         --card-accent: var(--amber);
       }
+      .problem-card[data-severity="info"] {
+        --card-accent: var(--purple);
+      }
+      .info-label, .fact.info dd {
+        color: var(--purple);
+      }
+      .info-label {
+        font-size: 12px;
+        font-weight: 600;
+      }
       .card-heading {
         display: flex;
         gap: 18px;
@@ -569,19 +586,19 @@ THE SOFTWARE.
       }
       .card-title {
         flex: 1;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: baseline;
       }
       .card-count {
-        display: block;
         color: var(--card-accent);
-        font-size: 24px;
-        font-weight: 750;
-        line-height: 1.1;
-      }
-      .card-name {
-        display: block;
         font-size: 16px;
         font-weight: 600;
-        margin-top: 4px;
+      }
+      .card-name {
+        font-size: 16px;
+        font-weight: 600;
       }
       .card-caption {
         display: block;
@@ -611,6 +628,7 @@ THE SOFTWARE.
       }
       .finding-advice p {
         margin: 8px 0 12px;
+        white-space: pre-line;
       }
       .finding-advice a {
         font-weight: 600;
@@ -1196,9 +1214,11 @@ THE SOFTWARE.
       {{ if .Cards }}
         <section class="findings" aria-label="Findings">
           {{ range .Cards }}
-            <article class="problem-card" data-kind="{{ .Kind }}">
+            <article class="problem-card" data-kind="{{ .Kind }}" data-severity="{{ .Severity }}">
                 <div class="card-heading"
-                  >{{ if eq .Kind "failed" }}
+                  >{{ if eq .Severity "info" }}
+                    {{ template "icon-info-circle" }}
+                  {{ else if eq .Kind "failed" }}
                     {{ template "icon-x-circle-fill" }}
                   {{ else if eq .Kind "flaky" }}
                     {{ template "icon-arrow-repeat" }}
@@ -1211,8 +1231,9 @@ THE SOFTWARE.
                   {{ else }}
                     {{ template "icon-file-earmark-text" }}
                   {{ end }}<div class="card-title"
-                    ><span class="card-count">{{ .Count }}</span
-                    ><h2 class="card-name">{{ .Title }}</h2></div
+                    ><h2 class="card-name">{{ .Title }}</h2>
+                    {{ if or .Tests .Suites .Coverages (gt .Count 1) }}<span class="card-count">({{ .Count }})</span>{{ end }}
+                    {{ if eq .Severity "info" }}<span class="info-label">Info</span>{{ end }}</div
                   ></div>
                 <p class="card-caption">{{ .Context }}</p>
             {{ range .Advices }}

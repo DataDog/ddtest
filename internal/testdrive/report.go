@@ -25,6 +25,7 @@ const reportFilename = "report.html"
 
 type reportCard struct {
 	Kind      string
+	Severity  string
 	Title     string
 	Count     int
 	Context   string
@@ -192,8 +193,12 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		}
 	}
 	coverageValue := fmt.Sprintf("%d / %d", covered, total)
+	coverageTone := factTone(total > 0 && covered == total)
 	if covered == 0 {
 		coverageValue = "Not reported"
+		if findings.BrowserCoverageUnavailable && !findings.MissingCoverage && findings.EmptyCoverageEntryCount == 0 {
+			coverageValue, coverageTone = "Unavailable (browser projects)", "info"
+		}
 	}
 	model := reportModel{
 		Summary:       "No findings.",
@@ -203,7 +208,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		Facts: []reportFact{
 			{Label: info.Framework, Value: status, Tone: factTone(!commandFailed && findings.TestEventCount > 0)},
 			{Label: "Datadog library", Value: info.Tracer, Tone: "good"},
-			{Label: coverageLabel, Value: coverageValue, Tone: factTone(total > 0 && covered == total)},
+			{Label: coverageLabel, Value: coverageValue, Tone: coverageTone},
 		},
 		Artifacts: []reportArtifact{
 			{Title: "JSON traffic", Href: "intake/"},
@@ -225,7 +230,13 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	if findings.MissingCoverage {
 		model.Cards = append(model.Cards, reportCard{
 			Kind: intake.MissingCoverageFinding, Title: "Coverage not reported", Count: 1,
-			Context: "Test events arrived, but no code coverage was reported. Test Impact Analysis cannot map these tests to changed files.",
+			Context: intake.MissingCoverageContext,
+		})
+	}
+	if findings.BrowserCoverageUnavailable {
+		model.Cards = append(model.Cards, reportCard{
+			Kind: intake.BrowserCoverageFinding, Severity: "info", Title: intake.BrowserCoverageTitle, Count: 1,
+			Context: intake.BrowserCoverageContext,
 		})
 	}
 	if len(findings.FailedTests) > 0 {
@@ -268,7 +279,14 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		})
 	}
 	count := len(findings.ConfigurationErrors)
-	for _, card := range model.Cards {
+	for i := range model.Cards {
+		card := &model.Cards[i]
+		if card.Severity == "" {
+			card.Severity = "warning"
+			if card.Kind == "error" || card.Kind == "failed" || card.Kind == "command-failed" || card.Kind == "no-test-events" {
+				card.Severity = "error"
+			}
+		}
 		count += card.Count
 	}
 	if count > 0 {

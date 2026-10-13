@@ -41,8 +41,8 @@ func TestReportCountsIndividualFindings(t *testing.T) {
 			}
 			var console bytes.Buffer
 			writeFindings(&console, tc.facts, runFindingCards(tc.facts, false, model.Runtime)...)
-			if !strings.Contains(console.String(), tc.want+"\n") {
-				t.Fatalf("report and terminal counts differ: report %q, terminal %q", model.Summary, console.String())
+			if strings.Contains(console.String(), tc.want+"\n") {
+				t.Fatalf("console must show findings instead of a standalone count: %q", console.String())
 			}
 			if len(tc.facts.ConfigurationErrors) > 0 && !strings.Contains(model.Summary, "Tracer configuration errors: skippable_tests.") {
 				t.Fatalf("summary hides configuration errors: %q", model.Summary)
@@ -83,6 +83,9 @@ func TestReportShowsCucumberCoverageTroubleshootingWithFinding(t *testing.T) {
 	if !found || !strings.Contains(card, `class="finding-advice"`) || !strings.Contains(card, "Cucumber needs nyc for coverage") {
 		t.Fatal("troubleshooting must be visible inside the finding card")
 	}
+	if strings.Contains(card, `class="card-count"`) {
+		t.Fatal("a run-level coverage finding must not show a redundant count")
+	}
 	for _, text := range []string{model.Cards[0].Title, model.Cards[0].Context} {
 		if count := strings.Count(report, text); count != 1 {
 			t.Fatalf("finding text %q appears %d times, want once", text, count)
@@ -92,6 +95,30 @@ func TestReportShowsCucumberCoverageTroubleshootingWithFinding(t *testing.T) {
 		if strings.Contains(report, control) {
 			t.Fatalf("finding must not be expandable: found %q", control)
 		}
+	}
+}
+
+func TestReportShowsAffectedTestCountBesideTitle(t *testing.T) {
+	path, err := writeReport(t.TempDir(), t.TempDir(), intake.Facts{
+		TestEventCount: 2,
+		FailedTests:    []intake.Test{{Name: "one"}, {Name: "two"}},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, card, found := strings.Cut(string(data), `<article class="problem-card"`)
+	if !found {
+		t.Fatal("missing finding card")
+	}
+	card, _, _ = strings.Cut(card, "</article>")
+	title := `<h2 class="card-name">Failed tests</h2>`
+	count := `<span class="card-count">(2)</span>`
+	if !strings.Contains(card, title) || !strings.Contains(card, count) || strings.Index(card, count) < strings.Index(card, title) {
+		t.Fatal("affected test count must follow the title")
 	}
 }
 
@@ -684,7 +711,7 @@ func TestSlowSuiteFindingShowsSuiteDetailsAndCounts(t *testing.T) {
 	}
 	var console bytes.Buffer
 	writeFindings(&console, facts)
-	for _, want := range []string{"1 finding.", "Suites slower than the others (1)", "Median suite time: 1s", "module › slow suite · 6s"} {
+	for _, want := range []string{"Suites slower than the others (1)", "Median suite time: 1s", "module › slow suite · 6s"} {
 		if !strings.Contains(console.String(), want) {
 			t.Errorf("console missing %q", want)
 		}

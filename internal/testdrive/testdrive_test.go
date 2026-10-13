@@ -258,7 +258,6 @@ func TestRunReportsCapturedTestsAndCoverage(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"Test events received.",
-		"1 finding.",
 		"Tests slower than the others (1):",
 		"Median test time: 1s",
 		"one.test.js › slow test · Pass · 2s",
@@ -444,7 +443,6 @@ func TestWriteFindingsIncludesOnlyPresentCategories(t *testing.T) {
 	})
 
 	for _, expected := range []string{
-		"3 findings.",
 		"Flaky tests (1):",
 		"flaky.test.js › sometimes works · Flaky · 5ms",
 		"Unusually broad coverage (1):",
@@ -463,11 +461,16 @@ func TestWriteFindingsIncludesOnlyPresentCategories(t *testing.T) {
 	}
 }
 
-func TestWriteFindingsCountsIndividualFindings(t *testing.T) {
+func TestWriteFindingsListsIndividualFindingsWithoutStandaloneCount(t *testing.T) {
 	var output bytes.Buffer
 	writeFindings(&output, intake.Facts{FailedTests: []intake.Test{{Name: "one"}, {Name: "two"}, {Name: "three"}}})
-	if !strings.Contains(output.String(), "3 findings.") {
-		t.Fatalf("writeFindings() did not count individual findings:\n%s", output.String())
+	for _, text := range []string{"Failed tests (3):", "one", "two", "three"} {
+		if !strings.Contains(output.String(), text) {
+			t.Fatalf("missing %q:\n%s", text, output.String())
+		}
+	}
+	if strings.Contains(output.String(), "3 findings.") {
+		t.Fatalf("standalone finding count:\n%s", output.String())
 	}
 }
 
@@ -750,7 +753,7 @@ func TestInstalledTracerLabel(t *testing.T) {
 func TestWriteFindingsConfigurationErrorIsAFinding(t *testing.T) {
 	var output bytes.Buffer
 	writeFindings(&output, intake.Facts{TestEventCount: 1, ConfigurationErrors: []string{"skippable_tests"}})
-	for _, want := range []string{"Tracer configuration errors: skippable_tests", "1 finding."} {
+	for _, want := range []string{"Tracer configuration errors: skippable_tests"} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("missing %q: %s", want, output.String())
 		}
