@@ -11,7 +11,9 @@ import (
 // Known dependency closures are not queried again; external helpers remain.
 // packages are the named packages; graph also holds their dependencies.
 // testsUseMini reports that a test import outside graph reaches Mini.
-func resolveTestLibraries(ctx context.Context, dir string, opts options, packages []goPackage, graph packageGraph) (selected map[string]*goPackage, sdkCI, testsUseMini bool, err error) {
+// It also reports whether package plugin is a dependency of test imports
+// outside graph.
+func resolveTestLibraries(ctx context.Context, dir string, opts options, packages []goPackage, graph packageGraph) (selected map[string]*goPackage, sdkCI, testsUseMini, plugin bool, err error) {
 	debug := debugFromContext(ctx)
 	phase := debug.start("resolve test libraries")
 	defer func() { phase.finish(err) }()
@@ -76,7 +78,7 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 	}
 	debug.printf("test-library query pending_imports=%d known_libraries=%d standard_imports=%d", len(requests), len(selected), standard)
 	if len(requests) == 0 {
-		return selected, sdkCI, false, nil
+		return selected, sdkCI, false, false, nil
 	}
 	paths = paths[:0]
 	for path := range requests {
@@ -95,18 +97,19 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 	}
 	dependencies, err := readPackages(ctx, cmd, "resolve optional test-library dependencies")
 	if err != nil {
-		return nil, false, false, err
+		return nil, false, false, false, err
 	}
 	debug.printf("test-library query resolved=%d", len(dependencies))
 	for _, p := range dependencies {
 		sdkCI = sdkCI || isSDKCIPackage(p.ImportPath)
 		testsUseMini = testsUseMini || p.Module != nil && p.Module.Path == miniModule
+		plugin = plugin || p.ImportPath == "plugin"
 		if selected[p.ImportPath] == nil && isTestLibrary(p.ImportPath) {
 			copy := p
 			selected[p.ImportPath] = &copy
 		}
 	}
-	return selected, sdkCI, testsUseMini, nil
+	return selected, sdkCI, testsUseMini, plugin, nil
 }
 
 // clientImports returns what the named packages other than a runtime import.

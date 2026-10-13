@@ -60,6 +60,8 @@ type (
 		preCoverageFilename  string
 		postCoverageFilename string
 		filesCovered         []coveredFile
+		// memory is the in-memory collector, or nil with text profiles.
+		memory *memoryCollector
 	}
 
 	// coverageData holds information about coverage data with their block
@@ -547,6 +549,7 @@ func ResetForTesting() {
 	moduleInfoSource.Lock()
 	moduleInfoSource.pending = false
 	moduleInfoSource.Unlock()
+	resetMemoryCoverageForTesting()
 }
 
 // NewTestCoverage creates a new test coverage.
@@ -576,10 +579,15 @@ func (t *testCoverage) CollectCoverageBeforeTestExecution() {
 }
 
 func (t *testCoverage) collectCoverageBeforeTestExecution() error {
+	memory, err := beginMemoryCoverage()
+	if memory != nil {
+		t.memory = memory
+		return err
+	}
 	if t.preCoverageFilename == "" {
 		t.preCoverageFilename = filepath.Join(temporaryDir, fmt.Sprintf("%d-%d-%d-pre.out", t.moduleID, t.suiteID, t.testID))
 	}
-	_, err := tearDown(t.preCoverageFilename, "")
+	_, err = tearDown(t.preCoverageFilename, "")
 	return err
 }
 
@@ -631,6 +639,14 @@ func (t *testCoverage) getCoverageData() error {
 }
 
 func (t *testCoverage) collectCoverageAfterTestExecution() error {
+	if t.memory != nil {
+		err := t.memory.finish()
+		if err != nil {
+			log.Debug("civisibility.cov: error getting coverage counters: %s", err.Error())
+			telemetry.CodeCoverageErrors()
+		}
+		return err
+	}
 	if t.postCoverageFilename == "" {
 		t.postCoverageFilename = filepath.Join(temporaryDir, fmt.Sprintf("%d-%d-%d-post.out", t.moduleID, t.suiteID, t.testID))
 	}
@@ -653,6 +669,11 @@ func (t *testCoverage) processCoverageData() {
 }
 
 func (t *testCoverage) loadCoverageData() bool {
+	if t.memory != nil {
+		t.filesCovered = t.memory.files(t.testFile)
+		t.memory.checkOracle(t.testFile, t.filesCovered)
+		return true
+	}
 	if t.preCoverageFilename == "" ||
 		t.postCoverageFilename == "" ||
 		t.preCoverageFilename == t.postCoverageFilename {
@@ -687,6 +708,9 @@ func (t *testCoverage) submitCoverageData() {
 }
 
 func (t *testCoverage) removeCoverageFiles() {
+	if t.memory != nil {
+		return
+	}
 	err := os.Remove(t.preCoverageFilename)
 	if err != nil {
 		log.Debug("civisibility.cov: error removing pre-coverage file: %s", err.Error())
@@ -708,6 +732,12 @@ func readCoverProfile(filename string) (coverProfile, error) {
 	if err != nil {
 		return coverProfile{}, err
 	}
+	return parseCoverProfileText(data)
+}
+
+// parseCoverProfileText parses a text coverage profile's content as
+// readCoverProfile does.
+func parseCoverProfileText(data []byte) (coverProfile, error) {
 	profile := coverProfile{blocks: make([]coverProfileBlock, 0, bytes.Count(data, []byte{'\n'})+1)}
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	fileName := ""

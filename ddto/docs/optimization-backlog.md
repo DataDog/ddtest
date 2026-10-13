@@ -19,8 +19,9 @@ whose pull request records its results, such as
 [#29](https://github.com/tonyredondo/dd-ci-testing-poc/pull/29),
 [#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31),
 [#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32),
-[#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34) and
-[#38](https://github.com/tonyredondo/dd-ci-testing-poc/pull/38), or an item
+[#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34),
+[#38](https://github.com/tonyredondo/dd-ci-testing-poc/pull/38) and
+[#42](https://github.com/tonyredondo/dd-ci-testing-poc/pull/42), or an item
 listed under [Evaluated and dropped](#evaluated-and-dropped).
 
 In the items, `civisibility/`, `hostname/`, `osinfo/` and `telemetry/` paths
@@ -68,7 +69,6 @@ Ordered by the expected effect on a `ddto test` run's wall time, then by cost.
 | 28 | Skip the final retries after a failed session-close flush | About 0.3 s at exit with a refused connection | Low |
 | 49 | Stream read-cache expiry fields | 5–15 ms per cache miss when a test process requests itself | Low |
 | 50 | Keep idle connections during deferred startup | One to four TLS handshakes at startup in deferred mode | Low to medium |
-| 8 | Collect coverage counters in memory | Profile I/O and parsing per covered test; measure first | High |
 | 3 | Keep per-test state in `testing`'s structures | About 1 µs per test; mainly removes offset and reflection code | Medium to high |
 
 ### Parked
@@ -143,18 +143,6 @@ the map path stays as the fallback. Preserve cleanup lifetime, native
 cancellation, Testify scopes, retry ownership, fuzz seeds and SDK-free tests.
 Validate every supported toolchain, including tip, cache invalidation and both
 delivery modes.
-
-## 8. Coverage counters in memory
-
-Per-test coverage emits and parses profiles around attempts. An in-memory
-counter path could reduce I/O and allocations, but depends on private runtime
-coverage data and synchronization.
-
-Prototype outside the main implementation first. Preserve cleanup-only code,
-parallel attribution, initial-attempt retry policy, impacted-test inputs,
-aggregate percentages, normal/deferred processing and shutdown on errors.
-Compare count and atomic modes, including `-race`, across supported toolchains.
-Measure profile bytes, CPU, allocations, temporary disk and peak memory.
 
 ## 10. A round trip at each test process's exit
 

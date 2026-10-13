@@ -206,6 +206,50 @@ under 0.5 s, with less time under the global mutex.
 - Every coverage cell in the benchmark improves or holds.
 - The fallback is tested on a toolchain without the hook.
 
+**Outcome.**
+- **Design.** As planned, with one change. The hook only exposes what the
+  toolchain's `internal/coverage` packages hold: the decoded meta-data, a copy
+  of the counter segments, and `cformat`'s rendering of such a copy. Mini
+  builds the text profile's layout from them once per process and checks it
+  against that rendering, so the layout code has unit tests. The
+  [adaptation record](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md#per-test-coverage-counters-in-memory)
+  lists when text profiles stay.
+- **Identical payloads.** Each in-memory collector's result, computed again
+  from `cformat` text profiles of the same counters, agreed for all 731
+  collectors of Gin, Chi and both Testify subjects. Every A/B run below
+  delivered the same tests and coverage items on both sides.
+- **Measured** with an interleaved A/B against `main` at 4 CPUs: medians of
+  5 rounds after a warm-up, on Go 1.25.14, 1.26.8, 1.27.2 and tip
+  (`go1.28-devel_0de83291`). Ranges are across Go versions. Gin's dependencies
+  need Go 1.26, so Go 1.25 has no Gin cells.
+
+  | Cell | Wall | CPU | Files written | Allocated |
+  | --- | --- | --- | --- | --- |
+  | Gin, atomic | 6.30–6.61 → 0.55–0.57 s | 13.2–13.8 → 1.50–1.56 s | 123–128 → 4.6–4.7 MiB | 1,020–1,081 → 118–121 MiB |
+  | Gin, count | 6.27–6.56 → 0.49–0.51 s | 13.1–13.7 → 1.32–1.39 s | 123–128 → 4.6–4.7 MiB | 1,033–1,209 → 116–123 MiB |
+  | Gin, race and atomic | 16.8–18.4 → 3.75–4.04 s | 36.7–39.9 → 9.7–10.5 s | 123–128 → 4.7 MiB | 1,133–1,149 → 130–159 MiB |
+  | Chi, atomic or count | −1.8 to −2.0% | −17 to −19% | 15–16 → 2.5–2.7 MiB | −1 to −5% |
+  | Chi, race and atomic | −4.2 to −4.6% | −3 to −5% | 15–16 → 2.6–2.7 MiB | −1 to −7% |
+  | Testify, both subjects | −0.1 to −6% | −1 to −9% | 0.2 → 0.1 MiB | Below the heap profile's resolution |
+
+  Most of Chi's wall time is its middleware tests' sleeps. The cells without
+  per-test coverage (`-cover`), and with `-coverpkg=testing,…`, which keeps
+  text profiles, hold within noise.
+- **Peak memory.** Without `-race`, peaks hold. With `-race`:
+  - Gin's peak rises from 161–166 to 273–277 MiB because its six test
+    processes now overlap: the root package's takes 3.7 s instead of 16.8 s.
+    Each process's own peak holds: 172 → 186 MB for the root package, the
+    others unchanged.
+  - Chi's root-package process peaks at 847 instead of 360 MB on Go 1.26.
+    Its `TestMuxContextIsThreadSafe` starts a million goroutines, and the race
+    runtime's memory for them depends on what the process did before. Run
+    alone, that test peaks at 841 MB on `main` too. Copying the counters
+    without race instrumentation, or collecting garbage more often, changed
+    nothing. Go 1.27.2's race runtime peaks at 2.5–3.0 GB on both sides.
+- **Visible change.** In-memory captures print no `coverage:` lines. Each
+  text-profile capture prints one, and `go test`'s `ok` line could show the
+  first capture's percentage.
+
 ## Phase 3: ddto's startup as the compiler wrapper
 
 **Evidence.**

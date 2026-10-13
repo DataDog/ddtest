@@ -92,6 +92,8 @@
       "TestGoTestFlagsAndVariants",
       "TestMiniCoverageIncludesCleanup",
       "TestMiniCoverageWithGlobalTimeChanges",
+      "TestMiniPerTestCoverageInMemory",
+      "TestMiniPerTestCoverageRefusesPlugins",
       "TestMiniRaceAndCoverage",
       "TestTestifyCoveredLibraryAndWorkspace",
       "TestTestingCompatibility"
@@ -171,6 +173,8 @@
       "TestMiniLocalProvisionAvoidsProxy",
       "TestMiniModModeLeavesModuleFiles",
       "TestMiniModModeResolvesClientRequirements",
+      "TestMiniPerTestCoverageInMemory",
+      "TestMiniPerTestCoverageRefusesPlugins",
       "TestMiniPreservesConsumerLanguage",
       "TestMiniPreservesOlderConsumerDependencies",
       "TestMiniProvisionsVendorAndPreservesPatchedSources",

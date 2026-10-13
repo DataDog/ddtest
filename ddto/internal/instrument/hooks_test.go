@@ -58,3 +58,15 @@ func TestToolchainTestingDeclaresParallelStop(t *testing.T) {
 		t.Fatal("testing no longer declares parallelStop as an atomic.Int64; review ParallelStopHook")
 	}
 }
+
+// The toolchain still declares everything that CoverageHook compiles against;
+// otherwise per-test coverage silently keeps the text profiles.
+func TestToolchainProvidesCoverageHook(t *testing.T) {
+	out, err := exec.Command("go", "env", "GOROOT").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CoverageHookToolchainError(strings.TrimSpace(string(out))); err != nil {
+		t.Fatalf("%v; review CoverageHook", err)
+	}
+}

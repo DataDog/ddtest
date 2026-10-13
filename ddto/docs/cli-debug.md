@@ -46,6 +46,10 @@ The log records:
   cannot reproduce how `go test` finds or starts it, `instrumentation bypass
   exec_program=unresolved`, `exec_program=unquotable` or `exec_helper=relative`
   follows the warning, and native `go test` runs.
+- With coverage, whether testing gets the in-memory per-test coverage hook:
+  `per-test coverage in_memory_hook=true`, or `false` with the reason. A test
+  process's own log says whether it uses the hook: `per-test coverage in
+  memory: true`.
 - An early `resolve runtime module` probe when Mini is absent from the effective
   module text. It uses a temporary module and checksum file. An unknown module
   is an expected result; Go still resolves every package after provisioning.

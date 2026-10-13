@@ -449,7 +449,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		}
 		replacements[logical] = backing
 	}
-	libraries, sdkCI, testsUseMini, e := resolveTestLibraries(ctx, dir, opts, packages, graph)
+	libraries, sdkCI, testsUseMini, testPlugin, e := resolveTestLibraries(ctx, dir, opts, packages, graph)
 	if e != nil {
 		return plan, e
 	}
@@ -480,6 +480,19 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	}
 	if e = add(filepath.Join(native.Dir, "zz_dd_ci_visibility_hooks.go"), hooks); e != nil {
 		return plan, e
+	}
+	if plan.mini && opts.coverage {
+		goroots := []string{opts.environment.GOROOT}
+		if plan.gorootMirror != nil {
+			goroots = []string{plan.gorootMirror.root, opts.environment.GOROOT}
+		}
+		refusal := coverageHookRefusal(dir, opts, runtimePackage, goroots, listed, testPlugin, replacements)
+		debug.printf("per-test coverage in_memory_hook=%t reason=%q", refusal == "", refusal)
+		if refusal == "" {
+			if e = add(filepath.Join(native.Dir, "zz_dd_ci_visibility_coverage.go"), instrument.CoverageHook); e != nil {
+				return plan, e
+			}
+		}
 	}
 	// Go keys cached test results on its own environment, which holds the
 	// temporary workspace, while tests see the caller's values. Keying the test

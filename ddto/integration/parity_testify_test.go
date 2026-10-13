@@ -161,7 +161,11 @@ func runCIVisibilityTestifyParity(t *testing.T, deferred bool) {
 			if tc.Coverage {
 				assertTestifyCoverageFilenames(t, &want.miniWireCapture, &got.miniWireCapture)
 			}
-			if !tc.Policy.Retry && !tc.Policy.EFD && !tc.Policy.Disabled && !tc.Policy.Quarantined && !tc.Policy.AttemptToFix && !tc.Policy.ITR && canonicalTestifyDiagnostic(sdk.out) != canonicalTestifyDiagnostic(mini.out) {
+			sdkOut, miniOut := sdk.out, mini.out
+			if tc.Coverage {
+				sdkOut, miniOut = withoutCoverageLines(sdkOut), withoutCoverageLines(miniOut)
+			}
+			if !tc.Policy.Retry && !tc.Policy.EFD && !tc.Policy.Disabled && !tc.Policy.Quarantined && !tc.Policy.AttemptToFix && !tc.Policy.ITR && canonicalTestifyDiagnostic(sdkOut) != canonicalTestifyDiagnostic(miniOut) {
 				t.Fatalf("native Testify output differs\nSDK %s\nMini %s", sdk.out, mini.out)
 			}
 			results = append(results, row)
@@ -195,6 +199,20 @@ func runCIVisibilityTestifyParity(t *testing.T, deferred bool) {
 // retain the application's panic text, function names, source lines and errors.
 var testifyGoroutineID = regexp.MustCompile(`goroutine [0-9]+`)
 var testifyProgramCounter = regexp.MustCompile(` \+0x[0-9a-f]+`)
+
+// withoutCoverageLines drops "coverage:" lines. The SDK's per-test coverage
+// prints one for each capture; Mini, reading the counters in memory, prints
+// only native go test's (TestMiniPerTestCoverageInMemory).
+func withoutCoverageLines(text string) string {
+	lines := strings.Split(text, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(line), "coverage: ") {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
 
 func canonicalTestifyDiagnostic(text string) string {
 	sdkPath := "/internal/civisibility/"
