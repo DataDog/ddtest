@@ -19,7 +19,10 @@ import (
 // prepareCypress wraps configuration inside the session; project config and
 // support files are neither edited nor replaced on disk.
 func prepareCypress(root, directory, preload, command string, args []string) ([]string, error) {
-	inspectionArgs := cypressInspectionArgs(root, command, args)
+	inspectionArgs, err := cypressInspectionArgs(root, command, args)
+	if err != nil {
+		return nil, err
+	}
 	projectRoot := root
 	if project := optionValue(inspectionArgs, "--project", "-P"); project != "" {
 		if filepath.IsAbs(project) {
@@ -30,9 +33,10 @@ func prepareCypress(root, directory, preload, command string, args []string) ([]
 	}
 	var config string
 	clean := make([]string, 0, len(args)+2)
-	for i := 0; i < len(args); i++ {
+	end := cypressArgumentEnd(command, args)
+	for i := 0; i < end; i++ {
 		if args[i] == "--config-file" || args[i] == "-C" {
-			if i+1 == len(args) {
+			if i+1 == end {
 				return nil, fmt.Errorf("--config-file requires a path")
 			}
 			i++
@@ -49,6 +53,7 @@ func prepareCypress(root, directory, preload, command string, args []string) ([]
 		}
 		clean = append(clean, args[i])
 	}
+	clean = append(clean, args[end:]...)
 	if config == "" {
 		config = optionValue(inspectionArgs, "--config-file", "-C")
 	}
@@ -106,7 +111,38 @@ func prepareCypress(root, directory, preload, command string, args []string) ([]
 	if base == "npm" && !slices.Contains(clean, "--") {
 		clean = append(clean, "--")
 	}
-	return append(clean, "--config-file", path), nil
+	return slices.Insert(clean, cypressArgumentEnd(command, clean), "--config-file", path), nil
+}
+
+// Skip forwarding separators owned by a package manager or a launcher before
+// locating Cypress's own end-of-options marker.
+func cypressArgumentEnd(command string, args []string) int {
+	name := func(value string) string {
+		base := strings.ToLower(filepath.Base(value))
+		for _, suffix := range []string{".cmd", ".ps1", ".js", ".mjs"} {
+			base = strings.TrimSuffix(base, suffix)
+		}
+		return base
+	}
+	start := 0
+	switch name(command) {
+	case "npm", "yarn", "bun":
+		if index := slices.Index(args, "--"); index >= 0 {
+			start = index + 1
+		}
+	case "cypress":
+	default:
+		for index, arg := range args {
+			if name(arg) == "cypress" && index+1 < len(args) && (args[index+1] == "run" || args[index+1] == "open") {
+				start = index + 1
+				break
+			}
+		}
+	}
+	if index := slices.Index(args[start:], "--"); index >= 0 {
+		return start + index
+	}
+	return len(args)
 }
 
 func cypressUsesESM(directory string) bool {
@@ -159,12 +195,13 @@ func optionPresent(args []string, option string) bool {
 	return false
 }
 
-func cypressInspectionArgs(root, command string, args []string) []string {
+func cypressInspectionArgs(root, command string, args []string) ([]string, error) {
+	args = args[:cypressArgumentEnd(command, args)]
 	base := strings.ToLower(filepath.Base(command))
 	base = strings.TrimSuffix(base, ".cmd")
 	base = strings.TrimSuffix(base, ".ps1")
 	if base != "npm" && base != "yarn" && base != "pnpm" && base != "bun" {
-		return args
+		return args, nil
 	}
 	script := ""
 	forwarded := 1
@@ -177,29 +214,32 @@ func cypressInspectionArgs(root, command string, args []string) []string {
 		script = args[0]
 	}
 	if script == "" {
-		return args
+		return args, nil
 	}
 	contents, err := os.ReadFile(filepath.Join(root, "package.json"))
 	if err != nil {
-		return args
+		return args, nil
 	}
 	var manifest struct {
 		Scripts map[string]string `json:"scripts"`
 	}
 	if json.Unmarshal(contents, &manifest) != nil {
-		return args
+		return args, nil
 	}
 	expanded, err := shellquote.Split(manifest.Scripts[script])
 	if err != nil {
-		return args
+		return args, nil
 	}
 	if manifest.Scripts[script] == "" {
-		return args
+		return args, nil
+	}
+	if len(expanded) > 0 && cypressArgumentEnd(expanded[0], expanded[1:]) < len(expanded)-1 {
+		return nil, fmt.Errorf("cypress script %q contains an end-of-options marker (--); use --command with a direct Cypress invocation so DDTest can insert its config option before the marker", script)
 	}
 	if forwarded < len(args) && args[forwarded] == "--" {
 		forwarded++
 	}
-	return append(expanded, args[forwarded:]...)
+	return append(expanded, args[forwarded:]...), nil
 }
 
 const cypressWrapper = `
@@ -226,9 +266,9 @@ export default (() => {
         } : handler);
       };
       if (setup) resolved = { ...resolved, ...((await setup(collect, resolved)) || {}) };
-      const support = path.join(options.directory, type + '-support.cjs');
-      let contents = 'require(' + JSON.stringify(path.join(options.tracer, 'ci/cypress/support')) + ');\n';
-      if (resolved.supportFile) contents += 'require(' + JSON.stringify(path.resolve(resolved.projectRoot || options.root, resolved.supportFile)) + ');\n';
+      const support = path.join(options.directory, type + '-support.mjs');
+      let contents = "import 'dd-trace/ci/cypress/support.js';\n";
+      if (resolved.supportFile) contents += 'import ' + JSON.stringify(path.resolve(resolved.projectRoot || options.root, resolved.supportFile)) + ';\n';
       fs.writeFileSync(support, contents);
       resolved.supportFile = support;
       const instrument = instrumentImport.default || instrumentImport;

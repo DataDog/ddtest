@@ -158,6 +158,9 @@ func TestCypressWrapperReadsPackageScriptProjectAndConfig(t *testing.T) {
 	requireWriteFile(t, filepath.Join(project, "custom.ts"), `export default {}`)
 	for _, command := range []string{"npm", "yarn", "pnpm", "bun"} {
 		for _, args := range [][]string{{"test", "--"}, {"run", "test:cypress", "--"}} {
+			if command == "pnpm" {
+				args = args[:len(args)-1] // pnpm forwards -- to the script.
+			}
 			t.Run(command+"/"+args[0], func(t *testing.T) {
 				got, err := prepareCypress(root, session, "/tracer/ci/init.js", command, args)
 				require.NoError(t, err)
@@ -170,7 +173,8 @@ func TestCypressWrapperReadsPackageScriptProjectAndConfig(t *testing.T) {
 		}
 	}
 	for _, command := range []string{"yarn", "pnpm", "bun"} {
-		args := cypressInspectionArgs(root, command, []string{"test:cypress", "--project", "override", "-C", "other.ts"})
+		args, err := cypressInspectionArgs(root, command, []string{"test:cypress", "--project", "override", "-C", "other.ts"})
+		require.NoError(t, err)
 		require.Equal(t, "override", optionValue(args, "--project", "-P"))
 		require.Equal(t, "other.ts", optionValue(args, "--config-file", "-C"))
 	}
@@ -223,13 +227,50 @@ func TestCypressWrapperForwardsOptionsThroughAbsoluteNPM(t *testing.T) {
 	}
 }
 
+func TestCypressWrapperInsertsOptionsBeforeFrameworkSeparator(t *testing.T) {
+	root := t.TempDir()
+	session := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"cypress run"}}`)
+	for _, tc := range []struct {
+		command string
+		args    []string
+		prefix  []string
+	}{
+		{"cypress", []string{"run", "--"}, []string{"run"}},
+		{"node", []string{"node_modules/cypress/bin/cypress", "run", "--"}, []string{"node_modules/cypress/bin/cypress", "run"}},
+		{"npx", []string{"--", "cypress", "run", "--"}, []string{"--", "cypress", "run"}},
+		{"npx", []string{"--package", "cypress", "--", "cypress", "run", "--"}, []string{"--package", "cypress", "--", "cypress", "run"}},
+		{"npm", []string{"exec", "--", "cypress", "run", "--"}, []string{"exec", "--", "cypress", "run"}},
+		{"npm", []string{"test", "--", "--"}, []string{"test", "--"}},
+		{"yarn", []string{"test", "--", "--"}, []string{"test", "--"}},
+		{"pnpm", []string{"test", "--"}, []string{"test"}},
+		{"bun", []string{"run", "test", "--", "--"}, []string{"run", "test", "--"}},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			// These tokens are positional after Cypress's separator, not options.
+			positional := []string{"--config-file", "ignored.cjs", "--project", "ignored", "--component"}
+			args, err := prepareCypress(root, session, "/tracer/ci/init.js", tc.command, append(tc.args, positional...))
+			require.NoError(t, err)
+			want := append(tc.prefix, "--config-file", filepath.Join(session, "cypress.config.ts"), "--")
+			require.Equal(t, append(want, positional...), args)
+			wrapper, err := os.ReadFile(filepath.Join(session, "cypress.config.ts"))
+			require.NoError(t, err)
+			require.NotContains(t, string(wrapper), "ignored")
+			require.Contains(t, string(wrapper), `"testingType":"e2e"`)
+		})
+	}
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"cypress run --"}}`)
+	_, err := prepareCypress(root, session, "/tracer/ci/init.js", "npm", []string{"test"})
+	require.ErrorContains(t, err, "use --command with a direct Cypress invocation")
+}
+
 func TestCypressWrapperPreservesProjectInitializationAndHooks(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is required to execute the Cypress wrapper")
 	}
 	root := t.TempDir()
 	session := t.TempDir()
-	tracer := t.TempDir()
+	tracer := filepath.Join(session, "node_modules", "dd-trace")
 	require.NoError(t, os.MkdirAll(filepath.Join(tracer, "ci", "cypress"), 0755))
 	requireWriteFile(t, filepath.Join(root, "marker.txt"), "project")
 	requireWriteFile(t, filepath.Join(root, "custom.cjs"), `
@@ -254,6 +295,8 @@ module.exports = async (on, config) => {
   on('after:run', async () => { assert.equal(require('node:fs').readFileSync('after-run.txt', 'utf8'), 'project'); });
   return config;
 };`)
+	requireWriteFile(t, filepath.Join(tracer, "ci", "cypress", "support.js"), `globalThis.supportOrder = ['instrumentation'];`)
+	requireWriteFile(t, filepath.Join(root, "support.cjs"), `globalThis.supportOrder.push('project');`)
 	for _, support := range []string{"support.cjs", ""} {
 		t.Run("support="+support, func(t *testing.T) {
 			_, err := prepareCypress(root, session, filepath.Join(tracer, "ci", "init.js"), "cypress", []string{"run", "-C", "custom.cjs"})
@@ -266,6 +309,7 @@ module.exports = async (on, config) => {
 			requireWriteFile(t, filepath.Join(session, "check.mjs"), `
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {pathToFileURL} from 'node:url';
 import wrapped from './wrapper.mjs';
 const handlers = new Map();
 const config = wrapped;
@@ -282,6 +326,9 @@ assert.equal(await handlers.get('before:run')(), 'last project-only hook');
 const support = fs.readFileSync(result.supportFile, 'utf8');
 assert.ok(support.includes('ci/cypress/support'));
 assert.equal(support.includes('support.cjs'), Boolean(process.argv[2]));
+fs.writeFileSync(result.supportFile + '.mjs', support);
+await import(pathToFileURL(result.supportFile + '.mjs').href);
+assert.deepEqual(globalThis.supportOrder, process.argv[2] ? ['instrumentation', 'project'] : ['instrumentation']);
 `)
 			command := exec.CommandContext(t.Context(), "node", filepath.Join(session, "check.mjs"), support)
 			command.Dir = session
