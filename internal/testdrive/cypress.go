@@ -78,13 +78,23 @@ func prepareCypress(root, directory, preload, command string, args []string) ([]
 	if err := os.WriteFile(cwdPath, []byte("process.chdir("+string(encodedRoot)+");\n"), 0600); err != nil {
 		return nil, err
 	}
-	encodedCwd, _ := json.Marshal(absoluteFileURL(cwdPath))
+	// Native ESM needs URL escaping; older Cypress TypeScript loaders compile
+	// imports to require(), which only accepts filesystem paths.
+	esm := cypressUsesESM(directory)
+	encodeImport := func(path string) []byte {
+		if esm {
+			path = absoluteFileURL(path)
+		}
+		encoded, _ := json.Marshal(path)
+		return encoded
+	}
+	encodedCwd := encodeImport(cwdPath)
 	configImport := "const originalImport = {};\n"
 	if config != "" {
-		encodedConfig, _ := json.Marshal(absoluteFileURL(config))
+		encodedConfig := encodeImport(config)
 		configImport = "import originalImport from " + string(encodedConfig) + ";\n"
 	}
-	encodedPlugin, _ := json.Marshal(absoluteFileURL(filepath.Join(tracerRoot, "ci", "cypress", "plugin.js")))
+	encodedPlugin := encodeImport(filepath.Join(tracerRoot, "ci", "cypress", "plugin.js"))
 	wrapper := "import fs from 'node:fs';\nimport path from 'node:path';\nimport " + string(encodedCwd) + ";\n" + configImport +
 		"import instrumentImport from " + string(encodedPlugin) + ";\nconst options = " + string(values) + ";\n" + cypressWrapper
 	path := filepath.Join(directory, "cypress.config.ts")
@@ -97,6 +107,23 @@ func prepareCypress(root, directory, preload, command string, args []string) ([]
 		clean = append(clean, "--")
 	}
 	return append(clean, "--config-file", path), nil
+}
+
+func cypressUsesESM(directory string) bool {
+	for {
+		contents, err := os.ReadFile(filepath.Join(directory, "package.json"))
+		if !os.IsNotExist(err) {
+			var manifest struct {
+				Type string `json:"type"`
+			}
+			return err == nil && json.Unmarshal(contents, &manifest) == nil && manifest.Type == "module"
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			return false
+		}
+		directory = parent
+	}
 }
 
 func optionValue(args []string, options ...string) string {

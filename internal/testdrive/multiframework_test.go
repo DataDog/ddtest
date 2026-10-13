@@ -305,6 +305,7 @@ func TestCypressWrapperImportsEscapedPaths(t *testing.T) {
 	for _, directory := range []string{root, session, filepath.Join(tracer, "ci", "cypress")} {
 		require.NoError(t, os.MkdirAll(directory, 0755))
 	}
+	requireWriteFile(t, filepath.Join(filepath.Dir(session), "package.json"), `{"type":"module"}`)
 	requireWriteFile(t, filepath.Join(root, "custom.cjs"), `module.exports = {e2e: {setupNodeEvents(on, config) {return {env: {project: true}};}}};`)
 	requireWriteFile(t, filepath.Join(tracer, "ci", "cypress", "plugin.js"), `module.exports = (on, config) => ({...config, env: {...config.env, instrumented: true}});`)
 	_, err := prepareCypress(root, session, filepath.Join(tracer, "ci", "init.js"), "cypress", []string{"run", "-C", "custom.cjs"})
@@ -321,5 +322,23 @@ assert.deepEqual(resolved.env, {project: true, instrumented: true});
 	command := exec.CommandContext(t.Context(), "node", filepath.Join(session, "check.mjs"))
 	command.Dir = session
 	output, err := command.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+
+	// Older Cypress versions compile TypeScript imports to require(). Those
+	// imports must remain filesystem paths in a CommonJS package scope.
+	requireWriteFile(t, filepath.Join(session, "package.json"), `{"type":"commonjs"}`)
+	_, err = prepareCypress(root, session, filepath.Join(tracer, "ci", "init.js"), "cypress", []string{"run", "-C", "custom.cjs"})
+	require.NoError(t, err)
+	requireWriteFile(t, filepath.Join(session, "check.cjs"), `
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const source = fs.readFileSync('cypress.config.ts', 'utf8');
+const imports = [...source.matchAll(/^import (?:.+ from )?(".+");$/gm)];
+assert.equal(imports.length, 3);
+for (const [, specifier] of imports) require(JSON.parse(specifier));
+`)
+	command = exec.CommandContext(t.Context(), "node", filepath.Join(session, "check.cjs"))
+	command.Dir = session
+	output, err = command.CombinedOutput()
 	require.NoError(t, err, "%s", output)
 }
