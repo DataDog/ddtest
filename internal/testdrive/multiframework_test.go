@@ -7,11 +7,12 @@ package testdrive
 
 import (
 	"bytes"
-	"github.com/DataDog/ddtest/internal/settings"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
 )
@@ -140,21 +141,32 @@ func TestCypressWrapperReadsPackageScriptProjectAndConfig(t *testing.T) {
 	session := t.TempDir()
 	project := filepath.Join(root, "apps", "web")
 	require.NoError(t, os.MkdirAll(project, 0755))
-	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"cypress run --project apps/web -C custom.ts"}}`)
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"cypress run --project apps/web -C custom.ts","test:cypress":"cypress run --project apps/web -C custom.ts"}}`)
 	requireWriteFile(t, filepath.Join(project, "custom.ts"), `export default {}`)
-
-	args, err := prepareCypress(root, session, "/tracer/ci/init.js", "npm", []string{"test", "--"})
-	require.NoError(t, err)
-	require.Equal(t, []string{"test", "--", "--config-file", filepath.Join(session, "cypress.config.ts")}, args)
-	wrapper, err := os.ReadFile(filepath.Join(session, "cypress.config.ts"))
-	require.NoError(t, err)
-	require.Contains(t, string(wrapper), filepath.Join(project, "custom.ts"))
-	require.Contains(t, string(wrapper), `"root":"`+project+`"`)
+	for _, command := range []string{"npm", "yarn", "pnpm", "bun"} {
+		for _, args := range [][]string{{"test", "--"}, {"run", "test:cypress", "--"}} {
+			t.Run(command+"/"+args[0], func(t *testing.T) {
+				got, err := prepareCypress(root, session, "/tracer/ci/init.js", command, args)
+				require.NoError(t, err)
+				require.Equal(t, append(args, "--config-file", filepath.Join(session, "cypress.config.ts")), got)
+				wrapper, err := os.ReadFile(filepath.Join(session, "cypress.config.ts"))
+				require.NoError(t, err)
+				require.Contains(t, string(wrapper), filepath.Join(project, "custom.ts"))
+				require.Contains(t, string(wrapper), `"root":"`+project+`"`)
+			})
+		}
+	}
+	for _, command := range []string{"yarn", "pnpm", "bun"} {
+		args := cypressInspectionArgs(root, command, []string{"test:cypress", "--project", "override", "-C", "other.ts"})
+		require.Equal(t, "override", optionValue(args, "--project", "-P"))
+		require.Equal(t, "other.ts", optionValue(args, "--config-file", "-C"))
+	}
 }
 
 func TestCypressWrapperSupportsConfigFileFalseAndDefaultE2E(t *testing.T) {
 	root := t.TempDir()
 	session := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "cypress.config.js"), `throw new Error('disabled config must not load')`)
 	args, err := prepareCypress(root, session, "/tracer/ci/init.js", "cypress", []string{"run", "-C", "false"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"run", "--config-file", filepath.Join(session, "cypress.config.ts")}, args)
@@ -162,4 +174,65 @@ func TestCypressWrapperSupportsConfigFileFalseAndDefaultE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(wrapper), `types.add(options.testingType)`)
 	require.Contains(t, string(wrapper), `const originalImport = {}`)
+}
+
+func TestCypressWrapperPreservesProjectInitializationAndHooks(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required to execute the Cypress wrapper")
+	}
+	root := t.TempDir()
+	session := t.TempDir()
+	tracer := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(tracer, "ci", "cypress"), 0755))
+	requireWriteFile(t, filepath.Join(root, "marker.txt"), "project")
+	requireWriteFile(t, filepath.Join(root, "custom.cjs"), `
+const assert = require('node:assert/strict');
+assert.equal(require('node:fs').readFileSync('marker.txt', 'utf8'), 'project');
+module.exports = {e2e: {async setupNodeEvents(on, config) {
+  on('task', {project: () => 'project'});
+  on('after:run', async () => { require('node:fs').writeFileSync('after-run.txt', 'project'); return 'project result'; });
+  return {env: {...config.env, project: true}};
+}}};`)
+	requireWriteFile(t, filepath.Join(tracer, "ci", "cypress", "plugin.js"), `
+const assert = require('node:assert/strict');
+module.exports = async (on, config) => {
+  assert.equal(config.projectRoot, process.cwd());
+  assert.equal(config.env.project, true);
+  assert.equal(config.env.original, true);
+  on('task', {datadog: () => 'datadog'});
+  on('after:run', async () => { assert.equal(require('node:fs').readFileSync('after-run.txt', 'utf8'), 'project'); });
+  return config;
+};`)
+	for _, support := range []string{"support.cjs", ""} {
+		t.Run("support="+support, func(t *testing.T) {
+			_, err := prepareCypress(root, session, filepath.Join(tracer, "ci", "init.js"), "cypress", []string{"run", "-C", "custom.cjs"})
+			require.NoError(t, err)
+			wrapper, err := os.ReadFile(filepath.Join(session, "cypress.config.ts"))
+			require.NoError(t, err)
+			// The generated wrapper is also valid JavaScript. Execute its imports
+			// and lifecycle with Node; real Cypress QA covers TypeScript loading.
+			requireWriteFile(t, filepath.Join(session, "wrapper.mjs"), string(wrapper))
+			requireWriteFile(t, filepath.Join(session, "check.mjs"), `
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import wrapped from './wrapper.mjs';
+const handlers = new Map();
+const config = await wrapped;
+const result = await config.e2e.setupNodeEvents((name, handler) => {
+  assert.equal(handlers.has(name), false, 'each event must be registered once');
+  handlers.set(name, handler);
+}, {projectRoot: process.cwd(), supportFile: process.argv[2] || false, env: {original: true}});
+assert.equal(handlers.get('task').project(), 'project');
+assert.equal(handlers.get('task').datadog(), 'datadog');
+assert.equal(await handlers.get('after:run')(), 'project result');
+const support = fs.readFileSync(result.supportFile, 'utf8');
+assert.ok(support.includes('ci/cypress/support'));
+assert.equal(support.includes('support.cjs'), Boolean(process.argv[2]));
+`)
+			command := exec.CommandContext(t.Context(), "node", filepath.Join(session, "check.mjs"), support)
+			command.Dir = session
+			output, err := command.CombinedOutput()
+			require.NoError(t, err, "%s", output)
+		})
+	}
 }

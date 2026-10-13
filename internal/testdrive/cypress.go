@@ -49,9 +49,8 @@ func prepareCypress(root, directory, preload, command string, args []string) ([]
 	}
 	if config == "false" {
 		config = ""
-	}
-	if config == "" {
-		for _, name := range []string{"cypress.config.ts", "cypress.config.js", "cypress.config.mjs", "cypress.config.cjs"} {
+	} else if config == "" {
+		for _, name := range []string{"cypress.config.js", "cypress.config.ts", "cypress.config.mjs", "cypress.config.cjs"} {
 			if _, err := os.Stat(filepath.Join(projectRoot, name)); err == nil {
 				config = name
 				break
@@ -67,13 +66,21 @@ func prepareCypress(root, directory, preload, command string, args []string) ([]
 	}
 	tracerRoot := filepath.Dir(filepath.Dir(preload))
 	values, _ := json.Marshal(map[string]string{"root": projectRoot, "directory": directory, "tracer": tracerRoot, "testingType": testingType})
+	// Static imports run before the wrapper body. Restore the project directory
+	// in a preceding import so config initialization also sees the correct cwd.
+	cwdPath := filepath.Join(directory, "cypress-cwd.cjs")
+	encodedRoot, _ := json.Marshal(projectRoot)
+	if err := os.WriteFile(cwdPath, []byte("process.chdir("+string(encodedRoot)+");\n"), 0600); err != nil {
+		return nil, err
+	}
+	encodedCwd, _ := json.Marshal(cwdPath)
 	configImport := "const originalImport = {};\n"
 	if config != "" {
 		encodedConfig, _ := json.Marshal(config)
 		configImport = "import originalImport from " + string(encodedConfig) + ";\n"
 	}
-	encodedPlugin, _ := json.Marshal(filepath.Join(tracerRoot, "ci", "cypress", "plugin"))
-	wrapper := "import fs from 'node:fs';\nimport path from 'node:path';\n" + configImport +
+	encodedPlugin, _ := json.Marshal(filepath.Join(tracerRoot, "ci", "cypress", "plugin.js"))
+	wrapper := "import fs from 'node:fs';\nimport path from 'node:path';\nimport " + string(encodedCwd) + ";\n" + configImport +
 		"import instrumentImport from " + string(encodedPlugin) + ";\nconst options = " + string(values) + ";\n" + cypressWrapper
 	path := filepath.Join(directory, "cypress.config.ts")
 	if err := os.WriteFile(path, []byte(wrapper), 0600); err != nil {
@@ -110,20 +117,21 @@ func optionPresent(args []string, option string) bool {
 }
 
 func cypressInspectionArgs(root, command string, args []string) []string {
-	for _, arg := range append([]string{command}, args...) {
-		if strings.Contains(strings.ToLower(filepath.Base(arg)), "cypress") {
-			return args
-		}
-	}
 	base := strings.ToLower(filepath.Base(command))
+	base = strings.TrimSuffix(base, ".cmd")
+	base = strings.TrimSuffix(base, ".ps1")
 	if base != "npm" && base != "yarn" && base != "pnpm" && base != "bun" {
 		return args
 	}
 	script := ""
+	forwarded := 1
 	if len(args) > 0 && args[0] == "test" {
 		script = "test"
 	} else if len(args) > 1 && (args[0] == "run" || args[0] == "run-script") {
 		script = args[1]
+		forwarded = 2
+	} else if len(args) > 0 && base != "npm" {
+		script = args[0]
 	}
 	if script == "" {
 		return args
@@ -142,25 +150,16 @@ func cypressInspectionArgs(root, command string, args []string) []string {
 	if err != nil {
 		return args
 	}
-	if separator := slicesIndex(args, "--"); separator >= 0 {
-		expanded = append(expanded, args[separator+1:]...)
+	if manifest.Scripts[script] == "" {
+		return args
 	}
-	return expanded
-}
-
-func slicesIndex(values []string, value string) int {
-	for index, candidate := range values {
-		if candidate == value {
-			return index
-		}
+	if forwarded < len(args) && args[forwarded] == "--" {
+		forwarded++
 	}
-	return -1
+	return append(expanded, args[forwarded:]...)
 }
 
 const cypressWrapper = `
-// Cypress starts the config process in the wrapper's directory. Keep relative
-// filesystem operations in the customer's config and hooks rooted in the project.
-process.chdir(options.root);
 export default (async () => {
   const original = originalImport.default || originalImport;
   const config = { ...original };

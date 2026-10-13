@@ -83,7 +83,7 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 			require.Len(t, reports, 1)
 			contents, err := os.ReadFile(reports[0])
 			require.NoError(t, err)
-			require.Contains(t, string(contents), "Test events received.")
+			require.Contains(t, string(contents), `id="run-details"`)
 			traffic, err := filepath.Glob(filepath.Join(filepath.Dir(reports[0]), "intake", "*citestcycle.json"))
 			require.NoError(t, err)
 			require.NotEmpty(t, traffic)
