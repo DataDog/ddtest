@@ -94,23 +94,3 @@ func writeSourceLocation(output io.Writer, file string, start, end int) {
 	}
 	_, _ = fmt.Fprintf(output, "    Source: %s\n", location)
 }
-
-func writeDiagnosticPaths(output io.Writer, repositoryRoot, findingsPath, testOutputPath, trafficPath string) {
-	relative := func(path string) string {
-		if label, err := filepath.Rel(repositoryRoot, path); err == nil {
-			return label
-		}
-		return path
-	}
-	_, _ = fmt.Fprintf(output, "\nSaved diagnostics (relative to %s):\n", repositoryRoot)
-	if findingsPath != "" {
-		_, _ = fmt.Fprintf(output, "  Findings and troubleshooting (JSON): %s\n", relative(findingsPath))
-		_, _ = fmt.Fprintln(output, "  JSON durations: nanoseconds · Source paths: repository-relative")
-	} else {
-		_, _ = fmt.Fprintln(output, "  Structured findings: unavailable (collection error)")
-	}
-	_, _ = fmt.Fprintf(output, "  Full test output: %s\n", relative(testOutputPath))
-	if trafficPath != "" {
-		_, _ = fmt.Fprintf(output, "  Captured tracer traffic (JSON): %s\n", filepath.Join(relative(trafficPath), "*.json"))
-	}
-}

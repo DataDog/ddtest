@@ -79,9 +79,9 @@ type SlowSuite struct {
 
 // Facts contains the facts shown in the testdrive report.
 type Facts struct {
-	SettingsRequests int
-	SkippableRequests int
-	Events []Event
+	SettingsRequests           int
+	SkippableRequests          int
+	Events                     []Event
 	ConfigurationErrors        []string
 	EmptyCoverageEntryCount    int
 	MissingCoverage            bool
