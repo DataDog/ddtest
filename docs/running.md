@@ -418,21 +418,36 @@ a configured Vitest `test.shard` additionally shards each assigned batch.
 
 ### Validating the existing CI command
 
-Vitest `testdrive` compares the customer's CLI command with and without dd-trace,
-then runs its feature probes. This is separate from the Node API adapter used by
-`plan` and `run`. Use `--all` to validate the discovered CI configurations, or
-select a command for a focused diagnostic:
+Vitest `testdrive` compares the execution path used by CI with and without
+dd-trace, then runs its feature probes. `--all` discovers both native Vitest
+commands and `ddtest run` commands. You can also select either path for a
+focused diagnostic:
 
 ```bash
 ddtest testdrive --framework vitest --command "pnpm exec vitest run --config vitest.ci.config.ts --coverage" --yes
+ddtest testdrive --framework vitest --command "ddtest run --framework vitest --vitest-config vitest.ci.config.ts --max-parallelism 2" --yes
 ```
 
 Preserve the original command's configuration, selection, and coverage options.
 Without `--all` or an explicit command, validation defaults to `npx vitest run`.
 `--vitest-config` is only for `plan`/`run`; `testdrive` rejects it so a requested
-configuration is never silently ignored. Keep `--config` inside `--command`.
-These checks validate the original test command; they do not certify execution
-through DDTest's Node API adapter.
+configuration is never silently ignored. Keep the config option inside the
+selected command: `--config` for Vitest, `--vitest-config` for `ddtest run`.
+
+Native commands validate the Vitest CLI. A `ddtest run` command validates the
+real planner and Node API workers in a disposable repository copy. Each worker
+must select exactly its assigned files, and its native JSON results must match;
+duplicated, missing, or unassigned files fail validation. Existing plans are
+preserved. Each scenario generates a fresh plan against the local mock backend.
+Reports identify the execution path and worker count. A pass on one path does
+not certify the other. Ordinary `plan`/`run` behavior is unchanged.
+
+Runner validation supports repository-relative config and file selections,
+discovery/exclusion patterns, and local parallelism and timing options. Separate
+saved plans, CI-node mode, custom worker environments, inherited runner settings,
+and other options remain explicitly unvalidated. Review those limitations
+without rewriting CI to a different execution path. Testdrive uses the current
+ddtest binary for bare `ddtest` commands; an explicit binary path is preserved.
 
 ### Tracing
 

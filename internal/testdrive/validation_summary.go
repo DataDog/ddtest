@@ -208,6 +208,9 @@ func validationFacts(result validationResult) []string {
 				exit = fmt.Sprint(*run.ExitCode)
 			}
 			facts = append(facts, fmt.Sprintf("%s%s: %d passed, %d failed, %d skipped; %d suite errors; exit %s.", label+configurationLabel(run.Configuration), run.Name, run.TestCounts.Passed, run.TestCounts.Failed, run.TestCounts.Skipped, run.SuiteErrorCount, exit))
+			if run.ExecutionPath != "" {
+				facts = append(facts, "Validated execution path: "+run.ExecutionPath+".")
+			}
 		}
 	}
 	appendRuns("", result.Runs)

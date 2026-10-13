@@ -24,6 +24,27 @@ func symbolicConditionValue(value any) bool {
 
 // Called only after an active JavaScript action. Resolve its known references,
 // never arbitrary environment values or commands. Scope overrides need review.
+func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, commands []TestCommand, frameworks ...string) string {
+	runnerOnly := len(commands) > 0 && len(frameworks) > 0 && frameworks[0] == "vitest"
+	for _, command := range commands {
+		words, err := shellquote.Split(command.Command)
+		runnerOnly = runnerOnly && err == nil && len(words) > 0 && IsDDTestCommand(words[0])
+	}
+	if runnerOnly {
+		// ddtest's platform initializes the Node API workers from these action
+		// exports. Requiring an explicit NODE_OPTIONS would reject valid CI.
+		for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
+			for _, key := range []string{"DD_TRACE_PACKAGE", "DD_TRACE_ESM_IMPORT", "DD_TRACE_ENABLED", "DD_CIVISIBILITY_ENABLED", "DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV"} {
+				if _, ok := env[key]; ok {
+					return "Custom ddtest worker instrumentation requires review: " + key
+				}
+			}
+		}
+		return ""
+	}
+	return checkJestBootstrap(workflow, job, step, row, frameworks...)
+}
+
 func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) string {
 	known := map[string]string{"DD_TRACE_PACKAGE": actionPreload, "DD_TRACE_ESM_IMPORT": "\x00DD_ACTION_IMPORT\x00"}
 	var options string

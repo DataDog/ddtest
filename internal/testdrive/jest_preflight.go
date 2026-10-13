@@ -31,6 +31,7 @@ type jestProject struct {
 }
 
 type jestPreflight struct {
+	ExecutionPath       string                `json:"execution_path,omitempty"`
 	Verdict             verdict               `json:"verdict"`
 	Command             string                `json:"command"`
 	Node                string                `json:"node"`

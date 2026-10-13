@@ -42,6 +42,8 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
+	isolated          bool
+	vitestRunner      bool
 	allConfigurations bool
 	reportModels      *[]reportModel
 	repositoryRoot    string
@@ -94,11 +96,15 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 		return nil, fmt.Errorf("--all currently validates Jest and Vitest only")
 	}
 	if runner.Name() == "vitest" {
-		if settings.GetVitestConfig() != "" {
-			return nil, fmt.Errorf("--vitest-config applies to Vitest plan/run; for testdrive use --all to validate CI configurations or --command 'vitest run --config <file>'")
+		repositoryRoot, err = filepath.EvalSymlinks(repositoryRoot)
+		if err != nil {
+			return nil, fmt.Errorf("resolve repository root: %w", err)
 		}
-		// Validation compares the customer's CLI invocation. The framework's
-		// Node API adapter is reserved for planning and executing assigned files.
+		if settings.GetVitestConfig() != "" {
+			return nil, fmt.Errorf("--vitest-config applies to Vitest plan/run; for testdrive use --all, --command 'vitest run --config <file>', or --command 'ddtest run --vitest-config <file>'")
+		}
+		// Preserve the execution path selected by the customer. ddtest run uses
+		// the framework's Node API; ordinary Vitest commands keep their CLI path.
 		command, args = "npx", []string{"vitest", "run"}
 		if override := strings.TrimSpace(settings.GetCommand()); override != "" {
 			words, err := shellquote.Split(override)
@@ -106,6 +112,11 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 				return nil, fmt.Errorf("invalid Vitest command: %s", override)
 			}
 			command, args = words[0], words[1:]
+		}
+		if onboard.IsDDTestCommand(command) {
+			if _, err := onboard.ParseVitestRunnerCommand(args); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if runner.Name() == "jest" && !all && strings.TrimSpace(settings.GetCommand()) == "" {
@@ -260,7 +271,25 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 	if t.allConfigurations {
 		return t.runAllConfigurations(ctx, output)
 	}
-	result, runErr := t.run(ctx, output)
+	var result validationResult
+	var runErr error
+	if t.framework.Name() == "vitest" && onboard.IsDDTestCommand(t.command) && !t.checkOnly {
+		child := *t
+		var models []reportModel
+		child.reportModels = &models
+		child.preflight = child.checkVitestPreflight
+		result, runErr = child.runPreparedConfiguration(ctx, output, &configurationResult{})
+		if result.Preflight != nil {
+			result.Preflight.Command = shellquote.Join(append([]string{t.command}, t.args...)...)
+		}
+		if len(models) > 0 {
+			err := writeConfigurationHTML(t.repositoryRoot, models)
+			runErr = errors.Join(runErr, err)
+			result.HTMLReportCurrent = err == nil
+		}
+	} else {
+		result, runErr = t.run(ctx, output)
+	}
 	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" {
 		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
 		if err != nil {

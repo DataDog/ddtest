@@ -17,6 +17,20 @@ process.env.TEST = 'true'
 process.env.VITEST = 'true'
 process.env.NODE_ENV ??= 'test'
 const config = { config: request.config, run: true, watch: false }
+// testdrive collects native results from the actual assigned-file adapter.
+// Ordinary plan/run invocations have no validation overrides.
+const validation = !request.discover && process.env.DDTEST_VITEST_VALIDATION
+  ? JSON.parse(process.env.DDTEST_VITEST_VALIDATION)
+  : undefined
+if (validation) {
+  config.reporters = ['default', 'json']
+  config.outputFile = resolve(validation.directory, `${process.pid}.results.json`)
+  config.coverage = { reportsDirectory: resolve(validation.directory, `${process.pid}.coverage`) }
+  if (validation.probe) {
+    config.testNamePattern = validation.probe
+    config.coverage.thresholds = { lines: 0, branches: 0, functions: 0, statements: 0 }
+  }
+}
 const context = major >= 5
   ? await createVitest(config)
   : await createVitest('test', config)
@@ -32,6 +46,12 @@ try {
     const canonicalPath = file => realpathSync(resolve(file))
     const selected = new Set(request.files.map(canonicalPath))
     const specs = discovered.filter(spec => selected.has(canonicalPath(runner.filePath(spec))))
+    if (validation) {
+      writeFileSync(resolve(validation.directory, `${process.pid}.assignment.json`), JSON.stringify({
+        assigned: [...selected],
+        selected: specs.map(spec => canonicalPath(runner.filePath(spec))),
+      }))
+    }
     if (specs.length === 0) {
       console.error('No assigned Vitest test files found')
       process.exitCode = context.config.passWithNoTests ? 0 : 1

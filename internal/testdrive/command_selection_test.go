@@ -47,6 +47,8 @@ func TestPrepareVitestKeepsValidationCommand(t *testing.T) {
 		args                                       []string
 	}{
 		{name: "default CLI", command: "npx", args: []string{"vitest", "run"}},
+		{name: "ddtest Node API", override: "ddtest run --framework vitest --vitest-config ci.ts --max-parallelism 2", command: "ddtest", args: []string{"run", "--framework", "vitest", "--vitest-config", "ci.ts", "--max-parallelism", "2"}},
+		{name: "unreproducible runner option", override: "ddtest run --ci-node 2", wantError: "requires separate validation"},
 		{name: "CI command", override: `pnpm exec vitest run --config "config with spaces.ts" --coverage`, command: "pnpm", args: []string{"exec", "vitest", "run", "--config", "config with spaces.ts", "--coverage"}},
 		{name: "direct node", override: "node node_modules/vitest/vitest.mjs run --pool forks", command: "node", args: []string{"node_modules/vitest/vitest.mjs", "run", "--pool", "forks"}},
 		{name: "invalid quoting", override: `vitest run --config "`, wantError: "invalid Vitest command"},
