@@ -18,7 +18,7 @@ Use a new artifact directory on disk, outside the repository and `/tmp`.
 
 ```sh
 BENCH_RUN=/var/tmp/dd-ci-mini-benchmark-new
-BASELINE=docs/results/20261009-linux-go1.27.1
+BASELINE=docs/results/20261013-linux-go1.27.1
 GO_BENCH=/path/to/go1.27.1/bin/go
 ORCHESTRION_BENCH=/path/to/orchestrion
 
