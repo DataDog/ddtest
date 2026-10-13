@@ -140,9 +140,6 @@ func (t *Testdrive) Preview(output io.Writer) {
 		_, _ = fmt.Fprintf(output, "  - install %s: %s\n", t.tracerLabel, shellquote.Join(install...))
 	}
 
-	if t.framework.Name() == "cypress" {
-		_, _ = fmt.Fprintf(output, "  - create Cypress config/support wrappers in %s and preserve existing hooks\n", directory)
-	}
 	_, _ = fmt.Fprintf(output, "  - run: %s\n", shellquote.Join(append([]string{command}, args...)...))
 	_, _ = fmt.Fprintln(output)
 	patterns := map[string][]string{
@@ -218,12 +215,6 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	_, _ = fmt.Fprintf(output, "Running %s...\n", shellquote.Join(append([]string{command}, args...)...))
 	env := t.environment(installation.Path, server.URL(), session.ID())
 	maps.Copy(env, installation.Env)
-	if t.framework.Name() == "cypress" {
-		args, err = prepareCypress(t.repositoryRoot, session.Directory(), installation.Path, command, args)
-		if err != nil {
-			return err
-		}
-	}
 
 	testOutput, testErr := t.executor.CombinedOutput(ctx, command, args, env)
 

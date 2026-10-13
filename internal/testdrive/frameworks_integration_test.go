@@ -87,6 +87,20 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 			traffic, err := filepath.Glob(filepath.Join(filepath.Dir(reports[0]), "intake", "*citestcycle.json"))
 			require.NoError(t, err)
 			require.NotEmpty(t, traffic)
+			if fixture.name == "cypress" {
+				// Reuse the isolated installation from outside the project. Browser
+				// instrumentation must come from this tracer too, without a local
+				// dd-trace dependency or a DDTest config/support wrapper.
+				externalModules := filepath.Join(t.TempDir(), "node_modules")
+				require.NoError(t, os.Rename(filepath.Join(filepath.Dir(reports[0]), "node_modules"), externalModules))
+				preload := filepath.Join(externalModules, "dd-trace", "ci", "init.js")
+				require.NoError(t, os.Remove(filepath.Join(root, "original-hook.txt")))
+				reused := integrationCommand(t, ctx, root, append(env, "DD_TRACE_PACKAGE="+preload), binary, "testdrive", "--yes")
+				require.Contains(t, reused, "reuse installed dd-trace")
+				require.Contains(t, reused, "Test events received.")
+				require.NotContains(t, reused, "Installing dd-trace")
+				t.Log(strings.TrimSpace(reused))
+			}
 			for name, contents := range before {
 				if (fixture.name == "rspec" || fixture.name == "minitest") && (name == "Gemfile" || name == "Gemfile.lock") {
 					continue // bundle add updates Ruby dependency files.
