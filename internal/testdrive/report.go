@@ -25,9 +25,11 @@ const reportFilename = "report.html"
 
 type reportCard struct {
 	Kind      string
+	Severity  string
 	Title     string
 	Count     int
 	Context   string
+	Advices   []intake.Advice
 	Tests     []reportTest
 	Suites    []reportSuite
 	Coverages []reportCoverage
@@ -148,13 +150,16 @@ func newReportBuilder(repositoryRoot string) *reportBuilder {
 }
 
 func writeReport(repositoryRoot, sessionDirectory string, findings intake.Facts, commandFailed bool, runtime ...reportRuntime) (string, error) {
+	return writeReportModel(sessionDirectory, buildReport(repositoryRoot, findings, commandFailed, runtime...))
+}
+
+func writeReportModel(sessionDirectory string, model reportModel) (string, error) {
 	path := filepath.Join(sessionDirectory, reportFilename)
 	file, err := os.Create(path)
 	if err != nil {
 		return "", fmt.Errorf("create testdrive report: %w", err)
 	}
 
-	model := buildReport(repositoryRoot, findings, commandFailed, runtime...)
 	executeErr := testdriveReport.Execute(file, model)
 	closeErr := file.Close()
 	if err := errors.Join(executeErr, closeErr); err != nil {
@@ -188,8 +193,12 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		}
 	}
 	coverageValue := fmt.Sprintf("%d / %d", covered, total)
+	coverageTone := factTone(total > 0 && covered == total)
 	if covered == 0 {
 		coverageValue = "Not reported"
+		if findings.BrowserCoverageUnavailable && !findings.MissingCoverage && findings.EmptyCoverageEntryCount == 0 {
+			coverageValue, coverageTone = "Unavailable (browser projects)", "info"
+		}
 	}
 	model := reportModel{
 		Summary:       "No findings.",
@@ -199,7 +208,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		Facts: []reportFact{
 			{Label: info.Framework, Value: status, Tone: factTone(!commandFailed && findings.TestEventCount > 0)},
 			{Label: "Datadog library", Value: info.Tracer, Tone: "good"},
-			{Label: coverageLabel, Value: coverageValue, Tone: factTone(total > 0 && covered == total)},
+			{Label: coverageLabel, Value: coverageValue, Tone: coverageTone},
 		},
 		Artifacts: []reportArtifact{
 			{Title: "JSON traffic", Href: "intake/"},
@@ -209,15 +218,25 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	}
 	model.Suites = suites
 
-	if findings.TestEventCount == 0 {
-		model.Summary = "Check the instrumentation setup."
-	}
+	model.Cards = append(model.Cards, runFindingCards(findings, commandFailed, info)...)
 	if findings.EmptyCoverageEntryCount > 0 {
 		model.Cards = append(model.Cards, reportCard{
 			Kind:    "error",
 			Title:   "Tracer error: empty coverage entries",
 			Count:   findings.EmptyCoverageEntryCount,
 			Context: fmt.Sprintf("%d coverage entries had an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.", findings.EmptyCoverageEntryCount),
+		})
+	}
+	if findings.MissingCoverage {
+		model.Cards = append(model.Cards, reportCard{
+			Kind: intake.MissingCoverageFinding, Title: "Coverage not reported", Count: 1,
+			Context: intake.MissingCoverageContext,
+		})
+	}
+	if findings.BrowserCoverageUnavailable {
+		model.Cards = append(model.Cards, reportCard{
+			Kind: intake.BrowserCoverageFinding, Severity: "info", Title: intake.BrowserCoverageTitle, Count: 1,
+			Context: intake.BrowserCoverageContext,
 		})
 	}
 	if len(findings.FailedTests) > 0 {
@@ -259,17 +278,29 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 			Coverages: builder.reportCoverages(findings.BroadCoverage),
 		})
 	}
-	count := len(findings.ConfigurationErrors) + findings.EmptyCoverageEntryCount
-	for _, size := range []int{
-		len(findings.FailedTests), len(findings.FlakyTests), len(findings.SlowTests), len(findings.SlowSuites), len(findings.BroadCoverage),
-	} {
-		count += size
+	count := len(findings.ConfigurationErrors)
+	for i := range model.Cards {
+		card := &model.Cards[i]
+		if card.Severity == "" {
+			card.Severity = "warning"
+			if card.Kind == "error" || card.Kind == "failed" || card.Kind == "command-failed" || card.Kind == "no-test-events" {
+				card.Severity = "error"
+			}
+		}
+		count += card.Count
 	}
 	if count > 0 {
 		model.Summary = fmt.Sprintf("%d %s.", count, plural(count, "finding", "findings"))
 	}
 	if len(findings.ConfigurationErrors) > 0 {
 		model.Summary += " Tracer configuration errors: " + strings.Join(findings.ConfigurationErrors, ", ") + ". Inspect the captured traffic and test output."
+	}
+	for _, advice := range intake.Troubleshoot(repositoryRoot, info.Framework, findings) {
+		for i := range model.Cards {
+			if model.Cards[i].Kind == advice.Finding {
+				model.Cards[i].Advices = append(model.Cards[i].Advices, advice)
+			}
+		}
 	}
 	return model
 }

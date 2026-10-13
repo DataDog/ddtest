@@ -54,6 +54,7 @@ type Testdrive struct {
 	installArgs    []string
 	executor       commandExecutor
 	startIntake    func(string) (localIntake, error)
+	nodeVersion    func() string
 }
 
 // Prepare detects the repository and probes the project tracer without writing files.
@@ -78,7 +79,7 @@ func Prepare(version string) (*Testdrive, error) {
 	}
 	language := detectedPlatform.Name()
 	switch runner.Name() {
-	case "jest":
+	case "jest", "mocha", "vitest", "playwright", "cucumber":
 	default:
 		return nil, fmt.Errorf("testdrive does not yet support %s", runner.Name())
 	}
@@ -86,6 +87,12 @@ func Prepare(version string) (*Testdrive, error) {
 	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 
 	session := planSession(repositoryRoot)
+	if runner.Name() == "vitest" {
+		command, args, err = vitestTestdriveCommand(session.Directory())
+		if err != nil {
+			return nil, err
+		}
+	}
 	options := platform.TracerOptions{Directory: session.Directory(), Version: version, Command: command, Args: args}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -103,7 +110,7 @@ func Prepare(version string) (*Testdrive, error) {
 	}
 
 	return &Testdrive{projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
-		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) }}, nil
+		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) }, nodeVersion: currentNodeVersion}, nil
 }
 
 func displayName(name string) string {
@@ -113,7 +120,7 @@ func displayName(name string) string {
 
 // Preview describes the filesystem and process changes that Run will make.
 func (t *Testdrive) Preview(output io.Writer) {
-	command, args := t.command, t.args
+	command, args := t.executionCommand()
 	directory := t.session.Directory()
 	if relative, err := filepath.Rel(t.repositoryRoot, directory); err == nil {
 		directory = relative
@@ -199,7 +206,12 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		}
 	}()
 
-	command, args := t.command, t.args
+	command, args := t.executionCommand()
+	if t.framework.Name() == "vitest" {
+		if err := writeVitestEntrypoint(session.Directory()); err != nil {
+			return err
+		}
+	}
 	_, _ = fmt.Fprintf(output, "Running %s...\n", shellquote.Join(append([]string{command}, args...)...))
 	env := t.environment(installation.Path, server.URL(), session.ID())
 	maps.Copy(env, installation.Env)
@@ -210,6 +222,10 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	if err := os.WriteFile(testOutputPath, testOutput, 0644); err != nil {
 		return fmt.Errorf("save test output: %w", err)
 	}
+	var diagnosticsPath string
+	defer func() {
+		writeDiagnosticPaths(output, t.repositoryRoot, diagnosticsPath, testOutputPath, filepath.Join(session.Directory(), "intake"))
+	}()
 	if testErr != nil {
 		_, _ = fmt.Fprintf(output, "\n%s command output:\n", displayName(t.framework.Name()))
 		captured := strings.TrimSpace(string(testOutput))
@@ -224,11 +240,6 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		default:
 			_, _ = fmt.Fprintln(output, captured)
 		}
-		outputLabel, err := filepath.Rel(t.repositoryRoot, testOutputPath)
-		if err != nil {
-			outputLabel = testOutputPath
-		}
-		_, _ = fmt.Fprintf(output, "\nFull test output: %s\n", outputLabel)
 	}
 
 	// Drain the intake before taking the snapshot used by the report.
@@ -248,7 +259,13 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	if testErr != nil {
 		runtime.Error = testErr.Error()
 	}
-	reportPath, err := writeReport(t.repositoryRoot, session.Directory(), findings, testErr != nil, runtime)
+	model := buildReport(t.repositoryRoot, findings, testErr != nil, runtime)
+	diagnosticsPath, err = writeDiagnostics(t.repositoryRoot, session.Directory(), findings, model, testErr != nil)
+	if err != nil {
+		return err
+	}
+	model.Artifacts = append(model.Artifacts, reportArtifact{Title: "Findings JSON", Href: diagnosticsFilename})
+	reportPath, err := writeReportModel(session.Directory(), model)
 	if err != nil {
 		return err
 	}
@@ -263,12 +280,29 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	} else {
 		_, _ = fmt.Fprintln(output, "No test events received.")
 	}
-	writeFindings(output, findings)
+	writeFindings(output, findings, model.Cards...)
 	_, _ = fmt.Fprintln(output, "\nRun details:")
 	_, _ = fmt.Fprintf(output, "  Test events: %d\n", findings.TestEventCount)
-	_, _ = fmt.Fprintf(output, "  Tests with coverage: %d / %d\n", findings.CoveredTestCount, findings.TestCount)
-	if findings.CoveredTestCount == 0 {
-		if findings.EmptyCoverageEntryCount > 0 {
+	_, _ = fmt.Fprintf(output, "  Tests: %d · Suites: %d\n", findings.TestCount, len(model.Suites))
+	coverageLabel := "Tests with coverage"
+	covered, total := findings.CoveredTestCount, findings.TestCount
+	if findings.CoverageLevel == "suite" {
+		coverageLabel = "Suites with coverage"
+		covered, total = 0, len(model.Suites)
+		for _, suite := range model.Suites {
+			if suite.CoveredCount > 0 {
+				covered++
+			}
+		}
+	}
+	_, _ = fmt.Fprintf(output, "  %s: %d / %d\n", coverageLabel, covered, total)
+	if findings.CoverageLevel != "" {
+		_, _ = fmt.Fprintf(output, "  Coverage level: %s\n", findings.CoverageLevel)
+	}
+	if covered == 0 {
+		if findings.BrowserCoverageUnavailable && !findings.MissingCoverage && findings.EmptyCoverageEntryCount == 0 {
+			_, _ = fmt.Fprintln(output, "  Coverage unavailable for runs containing Vitest browser projects.")
+		} else if findings.EmptyCoverageEntryCount > 0 {
 			_, _ = fmt.Fprintln(output, "  No valid coverage was reported by this run.")
 		} else {
 			_, _ = fmt.Fprintln(output, "  Coverage was not reported by this run.")
@@ -280,6 +314,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	}
 	_, _ = fmt.Fprintf(output, "  %s: %s\n", displayName(t.framework.Name()), status)
 	_, _ = fmt.Fprintf(output, "  Datadog library: %s\n", tracerLabel)
+	_, _ = fmt.Fprintf(output, "  Command: %s\n", runtime.Command)
 	reportLabel, err := filepath.Rel(t.repositoryRoot, reportPath)
 	if err != nil {
 		reportLabel = reportPath
@@ -295,14 +330,36 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	return nil
 }
 
-func writeFindings(output io.Writer, findings intake.Facts) {
+func writeFindings(output io.Writer, findings intake.Facts, cards ...reportCard) {
 	if len(findings.ConfigurationErrors) > 0 {
 		_, _ = fmt.Fprintf(output, "Tracer configuration errors: %s. Inspect the captured traffic and test output.\n", strings.Join(findings.ConfigurationErrors, ", "))
 	}
 	count := len(findings.ConfigurationErrors)
+	for _, finding := range cards {
+		if finding.Kind != "command-failed" && finding.Kind != "no-test-events" {
+			continue
+		}
+		count += finding.Count
+		_, _ = fmt.Fprintf(output, "%s: %s\n", finding.Title, finding.Context)
+		writeTroubleshooting(output, cards, finding.Kind)
+	}
+	if findings.TestEventCount == 0 {
+		_, _ = fmt.Fprintln(output, "Test findings unavailable: no test events were received.")
+	}
+	if findings.MissingCoverage {
+		count++
+		_, _ = fmt.Fprintln(output, intake.MissingCoverageContext)
+		writeTroubleshooting(output, cards, intake.MissingCoverageFinding)
+	}
+	if findings.BrowserCoverageUnavailable {
+		count++
+		_, _ = fmt.Fprintf(output, "Info: %s. %s\n", intake.BrowserCoverageTitle, intake.BrowserCoverageContext)
+		writeTroubleshooting(output, cards, intake.BrowserCoverageFinding)
+	}
 	if findings.EmptyCoverageEntryCount > 0 {
 		count += findings.EmptyCoverageEntryCount
 		_, _ = fmt.Fprintf(output, "Tracer error: received %d coverage entries with an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.\n", findings.EmptyCoverageEntryCount)
+		writeTroubleshooting(output, cards, "error")
 	}
 	for _, size := range []int{
 		len(findings.FailedTests), len(findings.FlakyTests), len(findings.SlowTests), len(findings.SlowSuites), len(findings.BroadCoverage),
@@ -311,16 +368,16 @@ func writeFindings(output io.Writer, findings intake.Facts) {
 	}
 	if count == 0 {
 		if findings.TestEventCount == 0 {
-			_, _ = fmt.Fprintln(output, "Test findings unavailable: no test events were received.")
 			return
 		}
 		_, _ = fmt.Fprintln(output, "No findings.")
 		return
 	}
 
-	_, _ = fmt.Fprintf(output, "%d %s.\n", count, plural(count, "finding", "findings"))
 	writeTestFindings(output, "Failed tests", findings.FailedTests)
+	writeTroubleshooting(output, cards, "failed")
 	writeTestFindings(output, "Flaky tests", findings.FlakyTests)
+	writeTroubleshooting(output, cards, "flaky")
 	if len(findings.SlowTests) > 0 {
 		_, _ = fmt.Fprintf(output, "\nTests slower than the others (%d):\n", len(findings.SlowTests))
 		_, _ = fmt.Fprintf(output, "  Median test time: %s\n", formatDuration(findings.TestDurationMedian))
@@ -348,8 +405,11 @@ func writeFindings(output io.Writer, findings intake.Facts) {
 				output, "  - %s · %d %s · %s level\n",
 				finding.Name, finding.FileCount, plural(finding.FileCount, "file", "files"), finding.Level,
 			)
+			writeSourceLocation(output, finding.SourceFile, finding.SourceStart, finding.SourceEnd)
 		}
 	}
+	writeTroubleshooting(output, cards, "slow")
+	writeTroubleshooting(output, cards, "coverage")
 }
 
 func writeTestFindings(output io.Writer, title string, findings []intake.Test) {
@@ -367,14 +427,46 @@ func writeTestFindingRows(output io.Writer, findings []intake.Test) {
 			output, "  - %s · %s · %s\n",
 			testFindingLabel(finding), status, formatDuration(findingDuration(finding)),
 		)
+		writeSourceLocation(output, finding.SourceFile, finding.SourceStart, finding.SourceEnd)
+		for index, attempt := range finding.Attempts {
+			kind := "Initial run"
+			if attempt.Retry {
+				kind = "Retry"
+				if attempt.RetryReason != "" {
+					kind += " · " + strings.ReplaceAll(attempt.RetryReason, "_", " ")
+				}
+			}
+			_, _ = fmt.Fprintf(output, "    Run %d · %s · %s · %s\n", index+1, kind, displayStatus(attempt.Status), formatDuration(attempt.Duration))
+			errorText := attempt.ErrorMessage
+			if attempt.ErrorType != "" {
+				if errorText != "" {
+					errorText = attempt.ErrorType + ": " + errorText
+				} else {
+					errorText = attempt.ErrorType
+				}
+			}
+			if errorText == "" && attempt.ErrorStack != "" {
+				errorText, _, _ = strings.Cut(attempt.ErrorStack, "\n")
+			}
+			if errorText != "" {
+				_, _ = fmt.Fprintf(output, "      %s\n", strings.ReplaceAll(errorText, "\n", "\n      "))
+			}
+		}
 	}
 }
 
 func testFindingLabel(finding intake.Test) string {
-	if finding.Suite == "" {
-		return finding.Name
+	name := finding.Name
+	if finding.Parameters != "" {
+		name += " " + finding.Parameters
 	}
-	return finding.Suite + " › " + finding.Name
+	if finding.Suite != "" {
+		name = finding.Suite + " › " + name
+	}
+	if finding.Module != "" {
+		name = finding.Module + " › " + name
+	}
+	return name
 }
 
 func testEnvironment(intakeURL, sessionID string) map[string]string {
@@ -403,8 +495,9 @@ func testEnvironment(intakeURL, sessionID string) map[string]string {
 
 func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]string {
 	env := testEnvironment(intakeURL, sessionID)
-	if t.language == "javascript" {
-		maps.Copy(env, javascriptEnvironment(path))
+	switch t.language {
+	case "javascript":
+		maps.Copy(env, t.javascriptEnvironment(path))
 	}
 	return env
 }

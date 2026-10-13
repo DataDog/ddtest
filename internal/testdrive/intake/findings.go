@@ -79,22 +79,24 @@ type SlowSuite struct {
 
 // Facts contains the facts shown in the testdrive report.
 type Facts struct {
-	ConfigurationErrors     []string
-	EmptyCoverageEntryCount int
-	TestCount               int
-	TestEventCount          int
-	CoveredTestCount        int
-	TestDurationMedian      time.Duration
-	SuiteDurationMedian     time.Duration
-	CoveredFilesMedian      int
-	CoverageLevel           string
-	SuiteCoverages          []SuiteCoverage
-	Tests                   []Test
-	FailedTests             []Test
-	FlakyTests              []Test
-	SlowTests               []Test
-	SlowSuites              []SlowSuite
-	BroadCoverage           []CoverageFact
+	ConfigurationErrors        []string
+	EmptyCoverageEntryCount    int
+	MissingCoverage            bool
+	BrowserCoverageUnavailable bool
+	TestCount                  int
+	TestEventCount             int
+	CoveredTestCount           int
+	TestDurationMedian         time.Duration
+	SuiteDurationMedian        time.Duration
+	CoveredFilesMedian         int
+	CoverageLevel              string
+	SuiteCoverages             []SuiteCoverage
+	Tests                      []Test
+	FailedTests                []Test
+	FlakyTests                 []Test
+	SlowTests                  []Test
+	SlowSuites                 []SlowSuite
+	BroadCoverage              []CoverageFact
 }
 
 // Facts analyzes the test and coverage events captured by the intake.
@@ -116,6 +118,13 @@ func (s *Server) Facts() (Facts, error) {
 	findings.SlowSuites, findings.SuiteDurationMedian = slowSuites(findings.Tests)
 	findings.TestCount = len(findings.Tests)
 	findings.CoveredTestCount = uniqueCoveredTestCount(tests, coverages)
+	findings.MissingCoverage = len(tests) > 0 && len(coverages) == 0 && emptyEntries == 0
+	var expectedMissingCoverage bool
+	findings.BrowserCoverageUnavailable, expectedMissingCoverage, err = s.browserCoverageStatus(tests)
+	if err != nil {
+		return Facts{}, err
+	}
+	findings.MissingCoverage = findings.MissingCoverage && !expectedMissingCoverage
 	findings.BroadCoverage, findings.CoveredFilesMedian = analyzeCoverage(tests, coverages, findings.CoverageLevel)
 	findings.ConfigurationErrors, err = s.configurationErrors()
 	return findings, err

@@ -24,9 +24,10 @@ func TestReportCountsIndividualFindings(t *testing.T) {
 		want  string
 	}{
 		{"single", intake.Facts{TestEventCount: 1, FailedTests: []intake.Test{{Name: "failed"}}}, "1 finding."},
+		{"missing coverage", intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true}, "1 finding."},
 		{"multiple in one card", intake.Facts{TestEventCount: 2, FailedTests: []intake.Test{{Name: "one"}, {Name: "two"}}}, "2 findings."},
-		{"empty coverage without events", intake.Facts{EmptyCoverageEntryCount: 2}, "2 findings."},
-		{"configuration error without events", intake.Facts{ConfigurationErrors: []string{"skippable_tests"}}, "1 finding."},
+		{"empty coverage without events", intake.Facts{EmptyCoverageEntryCount: 2}, "3 findings."},
+		{"configuration error without events", intake.Facts{ConfigurationErrors: []string{"skippable_tests"}}, "2 findings."},
 		{"combined", intake.Facts{
 			TestEventCount: 2, EmptyCoverageEntryCount: 2, ConfigurationErrors: []string{"skippable_tests"},
 			FailedTests: []intake.Test{{Name: "failed"}}, FlakyTests: []intake.Test{{Name: "flaky"}},
@@ -39,14 +40,85 @@ func TestReportCountsIndividualFindings(t *testing.T) {
 				t.Fatalf("summary = %q, want prefix %q", model.Summary, tc.want)
 			}
 			var console bytes.Buffer
-			writeFindings(&console, tc.facts)
-			if !strings.Contains(console.String(), tc.want+"\n") {
-				t.Fatalf("report and terminal counts differ: report %q, terminal %q", model.Summary, console.String())
+			writeFindings(&console, tc.facts, runFindingCards(tc.facts, false, model.Runtime)...)
+			if strings.Contains(console.String(), tc.want+"\n") {
+				t.Fatalf("console must show findings instead of a standalone count: %q", console.String())
 			}
 			if len(tc.facts.ConfigurationErrors) > 0 && !strings.Contains(model.Summary, "Tracer configuration errors: skippable_tests.") {
 				t.Fatalf("summary hides configuration errors: %q", model.Summary)
 			}
 		})
+	}
+}
+
+func TestReportShowsCucumberCoverageTroubleshootingWithFinding(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"devDependencies":{"@cucumber/cucumber":"13.2.1"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	facts := intake.Facts{TestEventCount: 2, TestCount: 2, MissingCoverage: true}
+	model := buildReport(root, facts, false, reportRuntime{Framework: "Cucumber"})
+	if model.Summary != "1 finding." || len(model.Cards) != 1 || len(model.Cards[0].Advices) != 1 {
+		t.Fatalf("missing coverage advice: summary=%q cards=%+v", model.Summary, model.Cards)
+	}
+	path, err := writeReport(root, t.TempDir(), facts, false, reportRuntime{Framework: "Cucumber"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"Coverage not reported", "Cucumber needs nyc for coverage", "npm install --save-dev nyc"} {
+		if !strings.Contains(string(data), expected) {
+			t.Fatalf("report does not show %q", expected)
+		}
+	}
+	report := string(data)
+	_, card, found := strings.Cut(report, `<article class="problem-card"`)
+	if !found {
+		t.Fatal("missing finding card")
+	}
+	card, _, found = strings.Cut(card, "</article>")
+	if !found || !strings.Contains(card, `class="finding-advice"`) || !strings.Contains(card, "Cucumber needs nyc for coverage") {
+		t.Fatal("troubleshooting must be visible inside the finding card")
+	}
+	if strings.Contains(card, `class="card-count"`) {
+		t.Fatal("a run-level coverage finding must not show a redundant count")
+	}
+	for _, text := range []string{model.Cards[0].Title, model.Cards[0].Context} {
+		if count := strings.Count(report, text); count != 1 {
+			t.Fatalf("finding text %q appears %d times, want once", text, count)
+		}
+	}
+	for _, control := range []string{"card-button", "finding-panel", "data-close-finding", `aria-controls="finding-`} {
+		if strings.Contains(report, control) {
+			t.Fatalf("finding must not be expandable: found %q", control)
+		}
+	}
+}
+
+func TestReportShowsAffectedTestCountBesideTitle(t *testing.T) {
+	path, err := writeReport(t.TempDir(), t.TempDir(), intake.Facts{
+		TestEventCount: 2,
+		FailedTests:    []intake.Test{{Name: "one"}, {Name: "two"}},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, card, found := strings.Cut(string(data), `<article class="problem-card"`)
+	if !found {
+		t.Fatal("missing finding card")
+	}
+	card, _, _ = strings.Cut(card, "</article>")
+	title := `<h2 class="card-name">Failed tests</h2>`
+	count := `<span class="card-count">(2)</span>`
+	if !strings.Contains(card, title) || !strings.Contains(card, count) || strings.Index(card, count) < strings.Index(card, title) {
+		t.Fatal("affected test count must follow the title")
 	}
 }
 
@@ -373,7 +445,7 @@ func TestBuildReportShowsNoEventsAndRollsUpUnknownSuite(t *testing.T) {
 		{Name: "failed", Status: "fail", Duration: 2 * time.Millisecond},
 	}
 	model := buildReport(t.TempDir(), intake.Facts{Tests: tests}, true)
-	if !model.NoTestEvents || model.Summary != "Check the instrumentation setup." {
+	if !model.NoTestEvents || model.Summary != "1 finding." {
 		t.Fatalf("no events = %v, summary = %q", model.NoTestEvents, model.Summary)
 	}
 	if len(model.Suites) != 1 || model.Suites[0].Name != "Unknown suite" || model.Suites[0].Status != "Failed" {
@@ -539,8 +611,11 @@ func TestReportRunDetailsAlwaysVisibleAfterFindings(t *testing.T) {
 		if strings.Contains(opening, "hidden") || strings.Contains(report, "run-toggle") {
 			t.Fatal("run details must be visible without a toggle")
 		}
-		if hasFindings && start < strings.Index(report, `id="finding-0"`) {
-			t.Fatal("run details must follow finding cards and their details")
+		if hasFindings {
+			end := strings.LastIndex(report, "</article>")
+			if end < 0 || start < end {
+				t.Fatal("run details must follow finding cards and their details")
+			}
 		}
 		if start > strings.Index(report, `<nav class="tabs"`) {
 			t.Fatal("run details must precede results")
@@ -619,10 +694,13 @@ func TestSlowSuiteFindingShowsSuiteDetailsAndCounts(t *testing.T) {
 		SuiteCoverages: []intake.SuiteCoverage{{Module: "module", Suite: "slow suite", Files: []string{"covered.go"}, CoveredTests: 2}},
 	}
 	report := renderTestReport(t, t.TempDir(), facts)
-	_, panel, _ := strings.Cut(report, `id="finding-0"`)
-	panel, _, _ = strings.Cut(panel, "</section>")
+	_, card, found := strings.Cut(report, `<article class="problem-card"`)
+	if !found {
+		t.Fatal("missing slow-suite finding card")
+	}
+	card, _, _ = strings.Cut(card, "</article>")
 	for _, want := range []string{"Slow suites", "module › slow suite", "6s", "first", "second", "Suite coverage", "covered.go"} {
-		if !strings.Contains(panel, want) {
+		if !strings.Contains(card, want) {
 			t.Errorf("suite finding missing %q", want)
 		}
 	}
@@ -633,7 +711,7 @@ func TestSlowSuiteFindingShowsSuiteDetailsAndCounts(t *testing.T) {
 	}
 	var console bytes.Buffer
 	writeFindings(&console, facts)
-	for _, want := range []string{"1 finding.", "Suites slower than the others (1)", "Median suite time: 1s", "module › slow suite · 6s"} {
+	for _, want := range []string{"Suites slower than the others (1)", "Median suite time: 1s", "module › slow suite · 6s"} {
 		if !strings.Contains(console.String(), want) {
 			t.Errorf("console missing %q", want)
 		}
@@ -779,8 +857,11 @@ func TestSuiteCoverageDistinguishesUnreportedFromEmpty(t *testing.T) {
 			t.Errorf("suite %d coverage details do not match reported data", index)
 		}
 	}
-	_, finding, _ := strings.Cut(report, `id="finding-0"`)
-	finding, _, _ = strings.Cut(finding, `id="run-details"`)
+	_, finding, found := strings.Cut(report, `<article class="problem-card"`)
+	if !found {
+		t.Fatal("missing slow-suite finding card")
+	}
+	finding, _, _ = strings.Cut(finding, "</article>")
 	if strings.Contains(finding, `<details class="coverage">`) {
 		t.Fatal("slow-suite finding must not invent coverage for an uncovered suite")
 	}

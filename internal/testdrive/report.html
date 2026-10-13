@@ -148,6 +148,13 @@ THE SOFTWARE.
     />
   </svg>
 {{ end }}
+{{ define "icon-info-circle" }}
+  <svg aria-hidden="true" class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor">
+    <circle cx="8" cy="8" r="7" />
+    <path d="M8 7v5" stroke-width="1.5" />
+    <circle cx="8" cy="4.5" r=".7" fill="currentColor" stroke="none" />
+  </svg>
+{{ end }}
 {{ define "icon-exclamation-circle" }}
   <svg
     aria-hidden="true"
@@ -533,37 +540,39 @@ THE SOFTWARE.
       }
       .findings {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(265px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
         gap: 18px;
         margin-bottom: 24px;
       }
       .problem-card {
         --card-accent: var(--purple);
         min-width: 0;
-      }
-      .problem-card[data-kind="failed"],
-      .problem-card[data-kind="error"] {
-        --card-accent: var(--red);
-      }
-      .problem-card[data-kind="flaky"],
-      .problem-card[data-kind="slow"] {
-        --card-accent: var(--amber);
-      }
-      .card-button {
-        width: 100%;
-        height: 100%;
-        min-height: 134px;
         border: 1px solid var(--line);
         border-left: 3px solid var(--card-accent);
         padding: 20px 22px;
-        text-align: left;
         background: var(--surface);
         border-radius: 8px;
       }
-      .card-button:hover,
-      .card-button[aria-expanded="true"] {
-        border-color: var(--card-accent);
-        background: var(--raised);
+      .problem-card[data-kind="failed"],
+      .problem-card[data-kind="error"],
+      .problem-card[data-kind="command-failed"],
+      .problem-card[data-kind="no-test-events"] {
+        --card-accent: var(--red);
+      }
+      .problem-card[data-kind="flaky"],
+      .problem-card[data-kind="slow"],
+      .problem-card[data-kind="missing-coverage"] {
+        --card-accent: var(--amber);
+      }
+      .problem-card[data-severity="info"] {
+        --card-accent: var(--purple);
+      }
+      .info-label, .fact.info dd {
+        color: var(--purple);
+      }
+      .info-label {
+        font-size: 12px;
+        font-weight: 600;
       }
       .card-heading {
         display: flex;
@@ -577,44 +586,54 @@ THE SOFTWARE.
       }
       .card-title {
         flex: 1;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: baseline;
       }
       .card-count {
-        display: block;
         color: var(--card-accent);
-        font-size: 24px;
-        font-weight: 750;
-        line-height: 1.1;
-      }
-      .card-name {
-        display: block;
         font-size: 16px;
         font-weight: 600;
-        margin-top: 4px;
+      }
+      .card-name {
+        font-size: 16px;
+        font-weight: 600;
       }
       .card-caption {
         display: block;
         color: var(--muted);
         font-size: 13px;
-        margin-top: 14px;
+        margin: 14px 0 0;
       }
-      .card-heading > .chevron {
-        color: var(--muted);
+      .finding-advice {
+        padding: 16px 20px;
+        margin-top: 18px;
+        border: 1px solid var(--purple);
+        border-left-width: 3px;
+        border-radius: 6px;
+        background: color-mix(in srgb, var(--purple) 9%, var(--surface));
       }
-      .card-button[aria-expanded="true"] .chevron {
-        transform: rotate(90deg);
+      .advice-label {
+        color: var(--purple);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
       }
-      .finding-panel {
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        margin: -4px 0 24px;
-        overflow: hidden;
+      .finding-advice h3 {
+        margin: 5px 0 0;
+        font-size: 16px;
+        font-weight: 650;
       }
-      .finding-panel > header {
-        padding: 14px 20px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        background: var(--surface);
+      .finding-advice p {
+        margin: 8px 0 12px;
+        white-space: pre-line;
+      }
+      .finding-advice a {
+        font-weight: 600;
+        text-decoration: underline;
+        text-underline-offset: 3px;
       }
       h2 {
         font-size: 16px;
@@ -626,14 +645,15 @@ THE SOFTWARE.
         font-weight: 500;
         margin: 0 0 10px;
       }
-      .finding-panel details.result {
+      .problem-card details.result {
         border-top: 1px solid var(--line);
+        margin-top: 14px;
       }
-      .finding-panel details.result > summary {
+      .problem-card details.result > summary {
         display: flex;
         justify-content: space-between;
         gap: 20px;
-        padding: 13px 20px;
+        padding: 13px 0;
       }
       .result-meta {
         color: var(--muted);
@@ -1141,8 +1161,7 @@ THE SOFTWARE.
         .findings {
           gap: 12px;
         }
-        .card-button {
-          min-height: 115px;
+        .problem-card {
           padding: 16px;
         }
         .detail-grid {
@@ -1194,46 +1213,37 @@ THE SOFTWARE.
     <main>
       {{ if .Cards }}
         <section class="findings" aria-label="Findings">
-          {{ range $i, $card := .Cards }}
-            <article class="problem-card" data-kind="{{ .Kind }}">
-              <button
-                class="card-button"
-                aria-expanded="false"
-                aria-controls="finding-{{ $i }}"
-              >
-                <span class="card-heading"
-                  >{{ if eq .Kind "failed" }}
+          {{ range .Cards }}
+            <article class="problem-card" data-kind="{{ .Kind }}" data-severity="{{ .Severity }}">
+                <div class="card-heading"
+                  >{{ if eq .Severity "info" }}
+                    {{ template "icon-info-circle" }}
+                  {{ else if eq .Kind "failed" }}
                     {{ template "icon-x-circle-fill" }}
                   {{ else if eq .Kind "flaky" }}
                     {{ template "icon-arrow-repeat" }}
                   {{ else if eq .Kind "slow" }}
                     {{ template "icon-stopwatch" }}
-                  {{ else if eq .Kind "error" }}
+                  {{ else if eq .Kind "missing-coverage" }}
+                    {{ template "icon-exclamation-circle" }}
+                  {{ else if or (eq .Kind "error") (eq .Kind "command-failed") (eq .Kind "no-test-events") }}
                     {{ template "icon-exclamation-circle" }}
                   {{ else }}
                     {{ template "icon-file-earmark-text" }}
-                  {{ end }}<span class="card-title"
-                    ><span class="card-count">{{ .Count }}</span
-                    ><span class="card-name">{{ .Title }}</span></span
-                  ><span class="chevron"
-                    >{{ template "icon-chevron-right" }}</span
-                  ></span
-                ><span class="card-caption">{{ .Context }}</span>
-              </button>
-            </article>
-          {{ end }}
-        </section>
-        {{ range $i, $card := .Cards }}
-          <section
-            id="finding-{{ $i }}"
-            class="finding-panel"
-            aria-label="{{ .Title }}"
-            hidden
-          >
-            <header>
-              <h2>{{ .Title }} · {{ .Count }}</h2>
-              <button data-close-finding="finding-{{ $i }}">Close</button>
-            </header>
+                  {{ end }}<div class="card-title"
+                    ><h2 class="card-name">{{ .Title }}</h2>
+                    {{ if or .Tests .Suites .Coverages (gt .Count 1) }}<span class="card-count">({{ .Count }})</span>{{ end }}
+                    {{ if eq .Severity "info" }}<span class="info-label">Info</span>{{ end }}</div
+                  ></div>
+                <p class="card-caption">{{ .Context }}</p>
+            {{ range .Advices }}
+              <aside class="finding-advice" aria-label="Troubleshooting advice">
+                <div class="advice-label">Troubleshooting</div>
+                <h3>{{ .Title }}</h3>
+                <p>{{ .Text }}</p>
+                {{ if .URL }}<a href="{{ .URL }}">Read the setup guide ↗</a>{{ end }}
+              </aside>
+            {{ end }}
             {{ range .Tests }}
               <details class="result">
                 <summary>
@@ -1269,11 +1279,10 @@ THE SOFTWARE.
                   {{ end }}
                 </div>
               </details>
-            {{ end }}{{ if eq .Kind "error" }}
-              <div class="expanded">{{ .Context }}</div>
             {{ end }}
-          </section>
-        {{ end }}
+            </article>
+          {{ end }}
+        </section>
       {{ else }}
         <div class="empty-findings">
           {{ if eq .Summary "No findings." }}
@@ -1300,8 +1309,8 @@ THE SOFTWARE.
             </div>
           {{ end }}
         </dl>
-        <details class="command-output">
-          <summary>{{ .Runtime.Framework }} output · expand logs</summary>
+        <details class="command-output"{{ if or .NoTestEvents .Runtime.Error }} open{{ end }}>
+          <summary>{{ .Runtime.Framework }} command output</summary>
           {{ if .Runtime.Command }}<p class="command-line"><code>{{ .Runtime.Command }}</code></p>{{ end }}
           {{ if .Runtime.Error }}<p class="command-error">Command failed: {{ .Runtime.Error }}</p>{{ end }}
           {{ if .Runtime.Output }}
@@ -1831,33 +1840,6 @@ THE SOFTWARE.
           });
           render();
         });
-        var cards = Array.from(document.querySelectorAll(".card-button"));
-        cards.forEach(function (button) {
-          button.addEventListener("click", function () {
-            var open = button.getAttribute("aria-expanded") !== "true";
-            cards.forEach(function (item) {
-              var selected = open && item === button;
-              item.setAttribute("aria-expanded", String(selected));
-              document.getElementById(
-                item.getAttribute("aria-controls"),
-              ).hidden = !selected;
-            });
-          });
-        });
-        document
-          .querySelectorAll("[data-close-finding]")
-          .forEach(function (button) {
-            button.addEventListener("click", function () {
-              var card = cards.find(function (item) {
-                return (
-                  item.getAttribute("aria-controls") ===
-                  button.dataset.closeFinding
-                );
-              });
-              card.click();
-              card.focus();
-            });
-          });
         document
           .querySelectorAll("ul[data-paginated]")
           .forEach(function (list) {
