@@ -201,7 +201,7 @@ replaces configured `spec` entries with each worker's assigned files:
 ddtest run --platform javascript --framework mocha --command "pnpm exec mocha --parallel"
 ```
 
-Vitest uses a direct Node API integration and does not accept `--command`.
+Vitest `plan` and `run` use a direct Node API integration and do not accept `--command`.
 Use `--vitest-config` to select a configuration file; see
 [Vitest integration](#vitest-integration) for migration instructions.
 
@@ -385,7 +385,7 @@ than falling back to a filesystem glob.
 
 ### Migrating from a Vitest command wrapper
 
-`--command` and `DD_TEST_OPTIMIZATION_RUNNER_COMMAND` are rejected for Vitest,
+`--command` and `DD_TEST_OPTIMIZATION_RUNNER_COMMAND` are rejected for Vitest `plan` and `run`,
 including direct `vitest`, `node .../vitest.mjs`, `npx`, `pnpm`, and npm-script
 invocations. Remove the command override and move Vitest options to its config:
 
@@ -415,6 +415,24 @@ CLI-only workflows. For snapshot updates, run Vitest with `--update`, or
 explicitly enable `test.update` in a dedicated config. Missing snapshots in CI
 still fail by default. Prefer DDTest's worker/CI-node settings for splitting;
 a configured Vitest `test.shard` additionally shards each assigned batch.
+
+### Validating the existing CI command
+
+Vitest `testdrive` compares the customer's CLI command with and without dd-trace,
+then runs its feature probes. This is separate from the Node API adapter used by
+`plan` and `run`. Use `--all` to validate the discovered CI configurations, or
+select a command for a focused diagnostic:
+
+```bash
+ddtest testdrive --framework vitest --command "pnpm exec vitest run --config vitest.ci.config.ts --coverage" --yes
+```
+
+Preserve the original command's configuration, selection, and coverage options.
+Without `--all` or an explicit command, validation defaults to `npx vitest run`.
+`--vitest-config` is only for `plan`/`run`; `testdrive` rejects it so a requested
+configuration is never silently ignored. Keep `--config` inside `--command`.
+These checks validate the original test command; they do not certify execution
+through DDTest's Node API adapter.
 
 ### Tracing
 

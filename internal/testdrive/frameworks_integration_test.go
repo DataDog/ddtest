@@ -7,6 +7,7 @@ package testdrive_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -121,6 +122,22 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 			reports, err := filepath.Glob(filepath.Join(root, ".testoptimization", "testdrive.json"))
 			require.NoError(t, err)
 			require.Len(t, reports, 1)
+			data, err := os.ReadFile(reports[0])
+			require.NoError(t, err)
+			var report struct {
+				Runs []struct {
+					Instrumented   bool `json:"instrumented"`
+					TestEventCount int  `json:"test_event_count"`
+				} `json:"runs"`
+			}
+			require.NoError(t, json.Unmarshal(data, &report))
+			events := 0
+			for _, run := range report.Runs {
+				if run.Instrumented {
+					events += run.TestEventCount
+				}
+			}
+			require.Positive(t, events, "instrumented runs must retain evidence of test events")
 			artifacts, err := os.ReadDir(filepath.Join(root, ".testoptimization"))
 			require.NoError(t, err)
 			require.Len(t, artifacts, 2, "only HTML and compact JSON reports should remain")
@@ -130,7 +147,6 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 			contents, err := os.ReadFile(html[0])
 			require.NoError(t, err)
 			require.Contains(t, string(contents), `id="run-details"`)
-			require.Contains(t, string(contents), "Test events received.")
 			require.Contains(t, output, "Open report:")
 			for name, contents := range before {
 				if (fixture.name == "rspec" || fixture.name == "minitest") && (name == "Gemfile" || name == "Gemfile.lock") {

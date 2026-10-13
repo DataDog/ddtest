@@ -93,6 +93,21 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	if all && runner.Name() != "jest" && runner.Name() != "vitest" {
 		return nil, fmt.Errorf("--all currently validates Jest and Vitest only")
 	}
+	if runner.Name() == "vitest" {
+		if settings.GetVitestConfig() != "" {
+			return nil, fmt.Errorf("--vitest-config applies to Vitest plan/run; for testdrive use --all to validate CI configurations or --command 'vitest run --config <file>'")
+		}
+		// Validation compares the customer's CLI invocation. The framework's
+		// Node API adapter is reserved for planning and executing assigned files.
+		command, args = "npx", []string{"vitest", "run"}
+		if override := strings.TrimSpace(settings.GetCommand()); override != "" {
+			words, err := shellquote.Split(override)
+			if err != nil || len(words) == 0 || words[0] == "" {
+				return nil, fmt.Errorf("invalid Vitest command: %s", override)
+			}
+			command, args = words[0], words[1:]
+		}
+	}
 	if runner.Name() == "jest" && !all && strings.TrimSpace(settings.GetCommand()) == "" {
 		selected, err := onboard.JestValidationCommand(repositoryRoot)
 		if err != nil {

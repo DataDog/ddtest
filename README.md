@@ -393,7 +393,7 @@ parallelism details, see [Running DDTest](docs/running.md).
 | --- | --- |
 | `--platform` | Language/platform. Currently supported: `ruby`, `python`, `javascript`. |
 | `--framework` | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cucumber`, `cypress`, `jest`, `mocha`, `playwright`, `vitest`. |
-| `--command` | Override the default base command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, and Playwright run/discovery. Vitest rejects this option; use `--vitest-config` and configure options in Vitest. |
+| `--command` | Override the default base command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, and Playwright run/discovery. Vitest `plan`/`run` reject this option; use `--vitest-config` instead. Vitest `testdrive` accepts it to validate the original test command. |
 | `--vitest-config` | Vitest config file used by both planning and execution; defaults to Vitest config discovery. See [migration instructions](docs/running.md#vitest-integration). |
 | `--min-parallelism` | Minimum CI node or worker count DDTest considers when planning. |
 | `--max-parallelism` | Maximum CI node or worker count DDTest considers when planning. |

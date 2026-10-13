@@ -41,6 +41,44 @@ func TestPrepareUsesCICommandWithoutLoadingJestConfig(t *testing.T) {
 	require.Equal(t, []string{"--config", "explicit.js"}, drive.args)
 }
 
+func TestPrepareVitestKeepsValidationCommand(t *testing.T) {
+	for _, tc := range []struct {
+		name, override, config, command, wantError string
+		args                                       []string
+	}{
+		{name: "default CLI", command: "npx", args: []string{"vitest", "run"}},
+		{name: "CI command", override: `pnpm exec vitest run --config "config with spaces.ts" --coverage`, command: "pnpm", args: []string{"exec", "vitest", "run", "--config", "config with spaces.ts", "--coverage"}},
+		{name: "direct node", override: "node node_modules/vitest/vitest.mjs run --pool forks", command: "node", args: []string{"node_modules/vitest/vitest.mjs", "run", "--pool", "forks"}},
+		{name: "invalid quoting", override: `vitest run --config "`, wantError: "invalid Vitest command"},
+		{name: "plan config flag", config: "vitest.ci.config.ts", wantError: "--vitest-config applies to Vitest plan/run"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previous := *settings.Get()
+			t.Cleanup(func() { *settings.Get() = previous })
+			settings.Get().Platform, settings.Get().Framework = "javascript", "vitest"
+			settings.Get().Command, settings.Get().VitestConfig = tc.override, tc.config
+			root := t.TempDir()
+			t.Chdir(root)
+			t.Setenv("PATH", t.TempDir()) // Preparing the command must not need a runtime or tracer.
+			requireWriteFile(t, filepath.Join(root, "package.json"), `{"devDependencies":{"vitest":"4.1.10"}}`)
+			requireWriteFile(t, filepath.Join(root, "vitest.config.ts"), "throw new Error('prepare must not execute config')")
+			drive, err := Prepare("latest")
+			if tc.wantError != "" {
+				require.ErrorContains(t, err, tc.wantError)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.command, drive.command)
+			require.Equal(t, tc.args, drive.args)
+			_, err = vitestArguments(drive.command, drive.args)
+			require.NoError(t, err, "prepared command must be usable by Vitest preflight")
+			var preview bytes.Buffer
+			drive.Preview(&preview)
+			require.Contains(t, preview.String(), "run: "+drive.command)
+		})
+	}
+}
+
 func TestJestCoverageOutputUsesSessionDirectory(t *testing.T) {
 	drive := preparedTestdrive(t)
 	executor := &fakeTestdriveExecutor{}
