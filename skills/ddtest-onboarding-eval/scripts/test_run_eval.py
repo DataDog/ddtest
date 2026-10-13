@@ -123,6 +123,16 @@ class RunnerTests(unittest.TestCase):
                 self.assertIn("observed.json", (self.args.output / "status.txt").read_text())
         self.assertNotEqual(*checkouts)
 
+    def test_framework_scope_reaches_agent_without_extra_instructions(self):
+        self.args.framework = "playwright"
+        code, manifest = self.trial()
+        self.assertEqual(code, 0)
+        checkout = Path(manifest["checkout"])
+        observed = json.loads((checkout / "observed.json").read_text())
+        self.assertEqual(observed["prompt"],
+                         f"Use ddtest in {checkout.parent / 'bin'} and onboard this repository to test-optimization for playwright only.")
+        self.assertEqual(manifest["framework_scope"], "playwright")
+
     def test_setup_failure_is_recorded_without_launching_agent(self):
         self.args.setup_command = [f"{shlex.quote(sys.executable)} -c 'import sys; sys.exit(7)'"]
         code, manifest = self.trial()

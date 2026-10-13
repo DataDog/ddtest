@@ -52,7 +52,7 @@ func configurationStatus(result validationResult) string {
 		return "incomplete"
 	}
 	for _, feature := range result.Features {
-		if feature.Status != "passed" {
+		if !featureSatisfied(result.Framework, feature) {
 			return "incomplete"
 		}
 	}
@@ -134,6 +134,9 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		child.preflight = child.checkJestPreflight
 		if t.framework.Name() == "vitest" {
 			child.preflight = child.checkVitestPreflight
+		}
+		if t.framework.Name() == "playwright" {
+			child.preflight = child.checkPlaywrightPreflight
 		}
 		before := len(models)
 		execution, childErr := child.runPreparedConfiguration(ctx, output, &item)

@@ -220,11 +220,14 @@ def run(args):
         directory.mkdir(parents=True, exist_ok=True)
         env[key] = str(directory)
     env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
-    prompt = f"Use ddtest in {bin_dir} and onboard this repository to test-optimization."
+    framework = getattr(args, "framework", None)
+    scope = f" for {framework} only" if framework else ""
+    prompt = f"Use ddtest in {bin_dir} and onboard this repository to test-optimization{scope}."
     manifest = {"repository": args.repo, "requested_ref": args.ref,
                 "trial_directory": str(trial), "checkout": str(checkout),
                 "ddtest_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
                 "agent": args.agent, "requested_model": args.model, "prompt": prompt,
+                "framework_scope": framework,
                 "started_at": time.time(), "commands": [], "status": "preparing",
                 "evaluation": "pending", "ci_execution": "not exercised"}
     activity = (output / "activity.jsonl").open("w")
@@ -360,6 +363,8 @@ def main():
     parser.add_argument("--ref", required=True, help="Commit SHA or ref; resolved SHA is recorded")
     parser.add_argument("--ddtest", type=Path, required=True, help="Already-built executable")
     parser.add_argument("--agent", choices=("codex", "claude"), required=True)
+    parser.add_argument("--framework", choices=("jest", "vitest", "playwright"),
+                        help="Optional scope for mixed-framework repositories; adds only the framework to the minimal prompt")
     parser.add_argument("--setup-command", action="append", default=[], help="Repeatable, no implicit shell")
     parser.add_argument("--output", type=Path, required=True, help="New directory for evaluator evidence")
     parser.add_argument("--model", help="Optional requested model; default is the CLI's configured model")

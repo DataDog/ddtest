@@ -1,11 +1,11 @@
 ---
 name: ddtest-onboarding-eval
-description: Evaluate ddtest onboarding on fresh open-source Jest or Vitest repositories using Codex or Claude CLI and a minimal customer prompt. Use for developer experiments and comparisons, not for onboarding a customer repository directly.
+description: Evaluate ddtest onboarding on fresh open-source Jest, Vitest or Playwright repositories using Codex or Claude CLI and a minimal customer prompt. Use for developer experiments and comparisons, not for onboarding a customer repository directly.
 ---
 
 # ddtest onboarding evaluation
 
-Measure what an uncoached coding agent accomplishes with a ddtest binary. Cover Jest and Vitest; grade unsupported versions or configurations as unvalidated. This skill belongs to the
+Measure what an uncoached coding agent accomplishes with a ddtest binary. Cover Jest, Vitest and Playwright; grade unsupported versions or configurations as unvalidated. This skill belongs to the
 **evaluator**, not the agent being tested. It is developer tooling in this repo;
 it is not embedded in the ddtest binary or installed in the target repository.
 
@@ -19,7 +19,7 @@ tested agent's global skill directories or target checkout.
 
 ## Prepare and run
 
-1. Select a public repository that actually runs Jest or Vitest. Read its CI, package
+1. Select a public repository that actually runs Jest, Vitest or Playwright. Read its CI, package
    scripts, lockfile, runtime requirements, and ordinary repository instructions.
    Choose a commit and dependency installation command. Record the intended test
    command and relevant Node, package-manager, and framework versions outside the
@@ -52,6 +52,10 @@ tested agent's global skill directories or target checkout.
    The tested agent receives exactly:
 
    > Use ddtest in /temporary/trial/bin and onboard this repository to test-optimization.
+
+   For a requested framework-only trial in a mixed repository, pass
+   `--framework playwright` (or `jest`/`vitest`). This adds only
+   “for playwright only” to the prompt and records the scope in `run.json`.
 
    No skill, grading rubric, feature list, runbook, previous results, extra system
    prompt, or follow-up coaching is supplied. Let ddtest's own output guide it.
@@ -115,6 +119,11 @@ claim of success, or one instrumented test run is insufficient.
 | Baseline versus instrumented execution | Both commands ran against the same suite and environment, with only instrumentation differing. Behavior-changing features must be disabled for this comparison. Compare discovered tests, results, failures, exit codes, and hangs/crashes. Matching pre-existing test failures can pass compatibility; unexplained differences fail. If missing setup prevents a meaningful comparison, mark blocked. |
 | Advanced features | Assess each separately: automatic test retries, early flake detection, test skipping, quarantine, disabled tests, and attempt-to-fix. Require an appropriate control and an observed change for a known test (attempt counts, execution/skip decisions, and expected failure/exit behavior). Enabling flags or receiving telemetry is insufficient. |
 | Agent verdict reporting | Compare the factual conclusion and overall claims with the latest report's `summary.status`, blockers, and `summary.final_response` (or `summary.onboarding_response` on older versions). Check whether counts and explanations match the latest report and whether any later claims contradict its verdict. Grade an upgraded verdict as a failure even if caveats appear later. Use `last_execution.current` and `configuration_check` when present to distinguish the last full execution from the latest configuration check. Historical passes do not certify changed inputs; a check-only final invocation still requires a full rerun before completion. |
+
+For Playwright, Test Impact Analysis skipping and per-test coverage are not
+supported by dd-trace-js. Record them as **not supported**, never passed; require
+the other five feature checks. Preserve the original Playwright projects, browser
+settings and web-server setup, and check that validation-owned servers stop.
 
 If the tested ddtest version lacks paired runs or controlled feature scenarios,
 mark the missing checks **not exercised** and identify the product gap. Do not

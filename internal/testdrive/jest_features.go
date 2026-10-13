@@ -191,6 +191,10 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 	}
 	identity := passControl.Facts.Tests[0]
 	for _, feature := range jestFeatures {
+		if passControl.framework == "playwright" && feature == "skipping" {
+			result.Features = append(result.Features, featureResult{Name: feature, Status: "not supported", Reason: playwrightSkippingReason})
+			continue
+		}
 		if feature == "skipping" && identity.SourceFile == "" {
 			result.Features = append(result.Features, evaluateFeature(feature, validationRun{}, identity))
 			continue
@@ -254,6 +258,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	}
 	passed, failed, retries := 0, 0, 0
 	quarantined, disabled, attemptToFix, skipped := false, false, false, false
+	omittedPlaywrightIdentity := false
 	for _, event := range run.Facts.Events {
 		tags := event.Tags
 		if isSkippedJestProbe(event, identity.Module, identity.Suite, identity.SourceFile) {
@@ -262,7 +267,14 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 		if tags["test.suite"] != identity.Suite {
 			continue
 		}
-		if event.Type != "test" || tags["test.name"] != identity.Name || tags["test.module"] != identity.Module {
+		moduleMatches := tags["test.module"] == identity.Module
+		if feature == "disabled" && run.framework == "playwright" {
+			if !moduleMatches && playwrightDisabledProbe(tags, identity, run) {
+				moduleMatches = true
+				omittedPlaywrightIdentity = true
+			}
+		}
+		if event.Type != "test" || tags["test.name"] != identity.Name || !moduleMatches {
 			continue
 		}
 		if tags["test.status"] == "pass" {
@@ -297,7 +309,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	}
 	// Vitest reports one final native result for retries; attempt telemetry must
 	// still prove that the probe ran multiple times for the expected reason.
-	nativeRepeated := nativePass >= 2 || (run.framework == "vitest" && nativePass == 1)
+	nativeRepeated := nativePass >= 2 || ((run.framework == "vitest" || run.framework == "playwright") && nativePass == 1)
 	success := false
 	switch feature {
 	case "auto-retries":
@@ -325,6 +337,14 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 			}
 		}
 	}
+	if !success && run.framework == "playwright" {
+		for _, event := range run.Facts.Events {
+			if event.Type == "test" {
+				result.Reason += fmt.Sprintf(" Observed test: module=%q suite=%q name=%q status=%q disabled=%q source=%q parameters=%q; control: module=%q suite=%q name=%q source=%q parameters=%q.", event.Tags["test.module"], event.Tags["test.suite"], event.Tags["test.name"], event.Tags["test.status"], event.Tags["test.test_management.is_test_disabled"], event.Tags["test.source.file"], event.Tags["test.parameters"], identity.Module, identity.Suite, identity.Name, identity.SourceFile, identity.Parameters)
+				break
+			}
+		}
+	}
 	if success {
 		result.Status = "passed"
 		result.Reason = map[string]string{
@@ -335,6 +355,9 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 			"disabled":              "The normally failing probe was reported disabled/skipped, with no executed test body and a successful command.",
 			"attempt-to-fix":        "The marked passing probe ran repeatedly with attempt_to_fix retry evidence and a successful command.",
 		}[feature]
+		if omittedPlaywrightIdentity {
+			result.Reason += " The tracer omitted module/browser identity on the disabled event; the unique probe source, suite and name were matched to its single native project/browser."
+		}
 		if feature == "skipping" && run.Skipping != nil && run.Skipping.SuiteNameChanged {
 			result.Reason += " The tracer reported a different test.suite for the skipped suite; both names are retained in the skipping diagnostics."
 		}
