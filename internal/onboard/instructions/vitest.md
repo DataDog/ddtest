@@ -1,5 +1,10 @@
 # Enable Datadog Test Optimization for Vitest on GitHub Actions
 
+Vitest `testdrive` validates the customer's CLI commands, including their config
+and coverage options. `plan` and `run` use a separate Node API adapter and reject
+`--command`; their `--vitest-config` option does not apply to `testdrive`. For
+validation, use `--all` or keep `--config` inside the explicit test command.
+
 Keep the existing tests, CI matrix, setup and coverage options. Work in this order:
 
 1. Review the required configurations and CI consumers printed above, including Release jobs and their build prerequisites. Use `ddtest testdrive --all --check-only --yes` to inspect every configuration. For a focused diagnostic only, select an explicit command:
