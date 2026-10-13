@@ -156,6 +156,19 @@ jobs:
           go -C testdata/fixture mod verify
           python scripts/ci_shards.py retry -- go -C testdata/toolchain mod download
           go -C testdata/toolchain mod verify
+      # TestMiniGOROOTMirrorToolchainSwitch needs a real GOTOOLCHAIN switch to a
+      # toolchain in a module cache. It gets its own module cache, outside the
+      # cached one.
+      - name: Download a toolchain to switch to
+        if: runner.os == 'Linux' && contains(format(',{0},', matrix.shards), ',cli,')
+        shell: bash
+        env:
+          GOMODCACHE: ${{ runner.temp }}/switch-modcache
+          GOTOOLCHAIN: go1.25.0
+        run: |
+          python scripts/ci_shards.py retry -- go version
+          echo "DDTO_TEST_SWITCH_TOOLCHAIN=go1.25.0" >> "$GITHUB_ENV"
+          echo "DDTO_TEST_SWITCH_GOMODCACHE=$GOMODCACHE" >> "$GITHUB_ENV"
       - name: Vet
         if: contains(format(',{0},', matrix.shards), ',units,')
         shell: bash

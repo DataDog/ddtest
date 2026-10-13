@@ -1,6 +1,7 @@
 // Package goenv saves and restores Go command settings that ddto replaces
-// only for its own go test command, such as a temporary GOWORK, and hands test
-// processes values that ddto computes once per invocation.
+// only for its own go test command, such as a temporary GOWORK, or the GOROOT
+// and PATH of a mirrored toolchain, and hands test processes values that ddto
+// computes once per invocation.
 //
 // Importing this package changes nothing. The CLI and its build-tool helpers
 // use it to save values; those helpers must keep ddto's settings because the
@@ -15,12 +16,19 @@ import "syscall"
 const SavedPrefix = "DDTO_ORIGINAL_"
 
 // Settings are the variables that ddto may replace for go test.
-var Settings = [...]string{"GOWORK", "GOFLAGS"}
+var Settings = [...]string{"GOWORK", "GOFLAGS", "GOROOT", "PATH"}
 
 // Save returns the environment entry that records name's current value:
 // "=value" when it is set, or an empty value when it is unset.
 func Save(name string) string {
-	if value, ok := syscall.Getenv(name); ok {
+	value, ok := syscall.Getenv(name)
+	return SaveValue(name, value, ok)
+}
+
+// SaveValue returns the environment entry that records value for name, or
+// that name is unset: the value a test process would see without ddto.
+func SaveValue(name, value string, set bool) string {
+	if set {
 		return SavedPrefix + name + "==" + value
 	}
 	return SavedPrefix + name + "="

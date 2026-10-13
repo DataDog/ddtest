@@ -16,17 +16,24 @@ import (
 )
 
 // ExecWithCallerEnvironment restores the caller's Go settings, then replaces
-// this process with args: a go test -exec program sees what native go test
-// gives it, rather than ddto's temporary workspace.
-func ExecWithCallerEnvironment(args []string) int {
+// this process with the program at path, given its arguments in args after
+// it: a go test -exec program sees what native go test gives it, rather than
+// ddto's temporary workspace. args[0] is the program as go test names it; an
+// empty path looks it up.
+func ExecWithCallerEnvironment(path string, args []string) int {
 	goenv.Restore()
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" ERROR: missing -exec program")
 		return 2
 	}
-	executable, err := exec.LookPath(args[0])
+	var err error
+	if path == "" {
+		path, err = exec.LookPath(args[0])
+	}
 	if err == nil {
-		err = syscall.Exec(executable, args, os.Environ())
+		err = syscall.Exec(path, args, os.Environ())
+		// As os.StartProcess reports it to go test.
+		err = &os.PathError{Op: "fork/exec", Path: path, Err: err}
 	}
 	fmt.Fprintln(os.Stderr, err)
 	return 2

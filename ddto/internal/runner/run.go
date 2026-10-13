@@ -68,8 +68,11 @@ type Plan struct {
 	compilerCache     []string
 	// workspaceLock keeps a cached vendor workspace from being pruned.
 	workspaceLock *os.File
+	// gorootMirror runs go from a mirror of a toolchain in GOMODCACHE.
+	gorootMirror *gorootMirror
 	// execHelper is the cross-compilation program Go would run test binaries
-	// with; execWrapper restores the caller's Go settings before a -exec program.
+	// with, without -exec; execWrapper restores the caller's Go settings before
+	// a -exec program.
 	execHelper  string
 	execWrapper string
 	// testLauncher reports that a -exec program or Go's cross-compilation
@@ -89,22 +92,38 @@ type Plan struct {
 // savedEnvironment records the caller's values of the Go settings that go test
 // receives from this plan instead.
 func (p Plan) savedEnvironment() []string {
-	if p.Workfile == "" {
-		return nil
+	var saved []string
+	if p.Workfile != "" {
+		saved = append(saved, goenv.Save("GOWORK"))
+		if p.moduleWorkspace {
+			saved = append(saved, goenv.Save("GOFLAGS"))
+		}
 	}
-	saved := []string{goenv.Save("GOWORK")}
-	if p.moduleWorkspace {
-		saved = append(saved, goenv.Save("GOFLAGS"))
+	// Only Mini's test runtime restores them; SDK tests see the mirror.
+	if p.gorootMirror != nil && p.mini {
+		saved = append(saved, p.gorootMirror.saved...)
 	}
 	return saved
 }
 
-// Release lets other runs prune the plan's cached vendor workspace. Call it
-// after all go processes using the plan finish, before removing Dir.
+// Release lets other runs prune the plan's cached vendor workspace and
+// toolchain mirror, and restores this process's environment. Call it after
+// all go processes using the plan finish, before removing Dir.
 func (p Plan) Release() {
 	if p.workspaceLock != nil {
 		_ = p.workspaceLock.Close()
 	}
+	p.gorootMirror.release()
+}
+
+// GoCommand returns the go command for builds that use this plan, and the
+// environment entries it needs: a mirrored toolchain's go and its GOROOT, or
+// go and none.
+func (p Plan) GoCommand() (name string, env []string) {
+	if p.gorootMirror == nil {
+		return "go", nil
+	}
+	return p.gorootMirror.toolchain.path, p.gorootMirror.toolchain.env[:1]
 }
 
 // Prepare creates a complete plan before native Go compilation starts. Callers
@@ -218,6 +237,15 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	if !supportsGoToolchain(opts.environment.GOVERSION) {
 		return plan, fmt.Errorf("ddto requires Go 1.25 or newer; selected toolchain is %q", opts.environment.GOVERSION)
 	}
+	if needsGOROOTMirror(opts.environment) {
+		// Go rejects overlays beneath GOMODCACHE, where GOTOOLCHAIN keeps
+		// downloaded toolchains: run go from a mirror of that GOROOT.
+		plan.gorootMirror, e = prepareGOROOTMirror(ctx, opts.environment, dir, debug)
+		if e != nil {
+			return plan, mirrorUnavailable(e)
+		}
+		ctx = withGoToolchain(ctx, plan.gorootMirror)
+	}
 	plan.testLauncher = opts.exec != "" || opts.environment.GOOS != opts.environment.GOHOSTOS || opts.environment.GOARCH != opts.environment.GOHOSTARCH
 	plan.goVersion, plan.goExperiment = opts.environment.GOVERSION, opts.environment.GOEXPERIMENT
 	plan.tests.GOARCH, plan.tests.RunsEveryTest = opts.environment.GOARCH, opts.runsEveryTest
@@ -295,11 +323,10 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		}()
 		listArgs := append([]string{"list", "-e", "-json=Dir,Name,ImportPath,Standard,DepOnly,GoFiles,TestGoFiles,XTestGoFiles,Imports,TestImports,XTestImports,Module,Error"}, opts.buildFlags...)
 		listArgs = append(listArgs, patterns...)
-		cmd := exec.CommandContext(ctx, "go", listArgs...)
-		// Keep Env nil: os/exec then sets PWD to dir, so go list reports
+		// Keep Env from os/exec, which sets PWD to dir, so go list reports
 		// package directories with the spelling of dir, even through symbolic
 		// links. Relative patterns are matched against that same spelling.
-		cmd.Dir = dir
+		cmd := goCommand(ctx, dir, listArgs...)
 		if opts.workfile != "" {
 			cmd.Env = append(cmd.Environ(), "GOWORK="+opts.workfile)
 			if plan.moduleWorkspace {
@@ -386,6 +413,9 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	if selectedRuntime == nil || native == nil {
 		return plan, fmt.Errorf("missing testing or selected CI runtime package")
 	}
+	if e := checkTestingGOROOT(native.Dir, opts.environment, plan.gorootMirror); e != nil {
+		return plan, e
+	}
 	rewritten, e := transformTesting(native, replacements, debug)
 	if e != nil {
 		return plan, e
@@ -454,8 +484,10 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	// Go keys cached test results on its own environment, which holds the
 	// temporary workspace, while tests see the caller's values. Keying the test
 	// binaries on those values keeps a cached result from outliving them.
-	if plan.Workfile != "" && opts.exec == "" {
-		plan.execHelper = crossExecHelper(opts.environment)
+	if len(plan.savedEnvironment()) != 0 && !opts.execSet && !opts.compileOnly && !opts.printOnly {
+		if plan.execHelper, e = crossExecHelper(opts.environment, dir); e != nil {
+			return plan, &nativeGoError{"exec_helper=relative", e}
+		}
 	}
 	// Go caches by binary content, so the fingerprint must reach the binary.
 	callerEnvironment := ""
@@ -661,15 +693,24 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 			plan.Release()
 			_ = os.RemoveAll(plan.Dir)
 		}()
+		err = wrapExecProgram(&plan, opts, dir)
 	}
 	if interrupted != nil {
 		debug.printf("preparation interrupted")
 		return interruptedStatus(interrupted)
 	}
+	var native *nativeGoError
+	if errors.As(err, &native) && fallsBackToNativeGo(ctx, err) {
+		// The toolchain is supported; only ddto's instrumentation is not.
+		fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN:", err, "- running go test without CI Visibility")
+		debug.printf("instrumentation bypass %s", native.bypass)
+		return runGo(ctx, cwd, append([]string{"test"}, args...), nil, signals, stdin, stdout, stderr)
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, version.BuildLogPrefix+" ERROR:", err)
 		return 2
 	}
+	ctx = withGoToolchain(ctx, plan.gorootMirror)
 	for _, warning := range plan.Warnings {
 		fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN:", warning)
 	}
@@ -717,32 +758,13 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 		}
 	}
 	debug.printf("tool selection testify=%t goleak=%t cover=%t user_toolexec=%t orchestrion=%t sdk_ci_gate=%t link_signal=%t", plan.testify, plan.goleak, plan.coverOverlay, opts.toolexec != "", plan.orchestrion, plan.sdkCI, plan.linkSignal)
-	// A -exec program, or Go's cross-compilation helper, starts before the test
-	// binary can restore the caller's Go settings. Go already disables result
-	// caching for those runs, so ddto's wrapper restores them first.
-	if plan.Workfile != "" && (opts.exec != "" || plan.execHelper != "") {
-		words := []string{plan.execHelper}
-		if opts.exec != "" {
-			if words, err = splitFlags(opts.exec); err != nil {
-				fmt.Fprintln(stderr, version.BuildLogPrefix+" ERROR: invalid -exec:", err)
-				return 2
-			}
-		}
-		executable, e := os.Executable()
-		if e == nil {
-			plan.execWrapper, e = quoteToolWords(append([]string{executable, "test-exec"}, words...))
-		}
-		if e != nil {
-			fmt.Fprintln(stderr, version.BuildLogPrefix+" ERROR:", e)
-			return 2
-		}
-	}
 	forwarded := goTestArguments(plan, opts, tool)
+	// The test runtime's goenv/restore package gives test processes the
+	// caller's values before any client package can start a go command.
+	env = append(env, plan.savedEnvironment()...)
 	if plan.Workfile != "" {
 		// The temporary workspace belongs to the build, including chained tools.
-		// The test runtime's goenv/restore package gives test processes the
-		// caller's values before any client package can start a go command.
-		env = append(append(env, plan.savedEnvironment()...), "GOWORK="+plan.Workfile)
+		env = append(env, "GOWORK="+plan.Workfile)
 		if plan.moduleWorkspace {
 			env = append(env, "GOFLAGS="+plan.workspaceGoFlags)
 		}
@@ -758,6 +780,103 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 		ctx = context.WithValue(ctx, goLauncherKey{}, *plan.launcher)
 	}
 	return runGo(ctx, dir, forwarded, env, gitWorker.relaySignals(signals), stdin, stdout, stderr)
+}
+
+// nativeGoError is a preparation failure after which ddto runs go test
+// natively, because it cannot reproduce what go test would do. bypass names
+// the reason in debug logs.
+type nativeGoError struct {
+	bypass string
+	err    error
+}
+
+func (e *nativeGoError) Error() string { return e.err.Error() }
+
+func (e *nativeGoError) Unwrap() error { return e.err }
+
+// fallsBackToNativeGo reports a failure after which go test runs natively.
+// Cancellation stops instead.
+func fallsBackToNativeGo(ctx context.Context, err error) bool {
+	var native *nativeGoError
+	return errors.As(err, &native) && ctx.Err() == nil &&
+		!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+}
+
+// wrapExecProgram sets the wrapper that replaces the plan's -exec program. A
+// -exec program, or Go's cross-compilation helper, starts before the test
+// binary can restore the caller's Go settings. Go already disables result
+// caching for those runs, so ddto's wrapper restores them first. A launcher
+// such as Orchestrion runs go with a mirror's bin first in PATH, where go
+// would look the program up, so the wrapper also starts the caller's program
+// by its path.
+func wrapExecProgram(plan *Plan, opts options, dir string) error {
+	restore := len(plan.savedEnvironment()) != 0
+	pin := plan.gorootMirror != nil && plan.launcher != nil
+	if !restore && !pin || opts.exec == "" && plan.execHelper == "" {
+		return nil
+	}
+	// Only runs that start test binaries start the program.
+	runs := !opts.compileOnly && !opts.printOnly
+	if !restore && !runs {
+		return nil
+	}
+	path, words := plan.execHelper, []string{plan.execHelper}
+	if opts.exec != "" {
+		var err error
+		if words, err = splitFlags(opts.exec); err != nil {
+			return fmt.Errorf("invalid -exec: %w", err)
+		}
+		// Without a program, go test starts test binaries itself.
+		if len(words) == 0 {
+			return nil
+		}
+		if runs {
+			if path, err = resolveExecProgram(dir, words); err != nil {
+				return &nativeGoError{"exec_program=unresolved", err}
+			}
+		}
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if plan.execWrapper, err = quoteToolWords(append([]string{executable, "test-exec", path}, words...)); err != nil {
+		return &nativeGoError{"exec_program=unquotable", err}
+	}
+	return nil
+}
+
+// errNoCommand is go test's error for an empty -exec program name.
+var errNoCommand = errors.New("exec: no command")
+
+// resolveExecProgram returns the path of the -exec program in words, looked up
+// as go test does: on the caller's PATH from dir, go test's working directory.
+// test-exec would look it up after restoring the toolchain's bin first in
+// PATH, from the package directory. A relative path, which go test starts
+// from the package directory, stays as given. It fails
+// for a program that go test cannot run, or would run relative to dir: only go
+// test itself reproduces those.
+func resolveExecProgram(dir string, words []string) (string, error) {
+	if words[0] == "" {
+		return "", errNoCommand
+	}
+	path := words[0]
+	// exec.Cmd finds a Windows path rooted on the current drive, or relative
+	// to a drive's current directory, from go test's process, and starts it
+	// from the package directory: only go test reproduces both. On Windows,
+	// \ alone is also its own base name.
+	if !filepath.IsAbs(path) && (filepath.VolumeName(path) != "" || os.IsPathSeparator(path[0])) {
+		return "", &exec.Error{Name: path, Err: errUnknownProgram}
+	}
+	if filepath.Base(path) == path {
+		// exec.LookPath takes a name with a slash, / alone, as a path that it
+		// checks itself.
+		if strings.ContainsRune(path, '/') {
+			return "", &exec.Error{Name: path, Err: errUnknownProgram}
+		}
+		return lookPathFrom(dir, path)
+	}
+	return path, nil
 }
 
 // prepareInterruptibly cancels package resolution when a signal arrives. The
@@ -841,6 +960,16 @@ func runGo(ctx context.Context, dir string, args, envOverrides []string, signals
 	command := []string{"go"}
 	if launcher, ok := ctx.Value(goLauncherKey{}).(goLauncher); ok {
 		command = launcher.command
+	}
+	if toolchain, ok := ctx.Value(goToolchainKey{}).(goToolchain); ok {
+		// A launcher finds go on PATH; go itself runs from the mirror. Test
+		// processes then get the mirror's bin first in PATH from go test.
+		mirrored := toolchain.env
+		if command[0] == "go" {
+			command = append([]string{toolchain.path}, command[1:]...)
+			mirrored = mirrored[:1]
+		}
+		envOverrides = append(append([]string(nil), mirrored...), envOverrides...)
 	}
 	argv := append(append([]string(nil), command[1:]...), args...)
 	cmd := exec.Command(command[0], argv...)

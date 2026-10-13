@@ -129,6 +129,25 @@ nothing; Gin with a switched toolchain against native.
 **Done.** `ddto test` works after a toolchain switch, with no visible
 difference from native, and the documented limitation is removed.
 
+**Outcome.**
+- **Chosen design.** A design audit showed that a mirror cannot hide its path
+  from `runtime.GOROOT()` or from linked standard-library paths. The
+  alternative, transforming `testing` in the compiler wrapper, measured +3.4%
+  on Gin and +5.1% on Chi cold builds where the wrapper is otherwise off, so
+  the mirror stayed.
+- **Copies and links.**
+  - Windows copies files, because deleting a read-only hard link clears the
+    module cache file's attribute.
+  - Copies write the bytes: a btrfs reflink stalled the next `go list` for
+    about 25 s.
+- **What tests see.** Mini restores the native `GOROOT` and `PATH`; the SDK
+  runtime and `runtime.GOROOT()` see the mirror.
+- **Measured,** with the audit fixes. Gin's `ddto test -count=1 ./...` takes
+  1.026 s with the mirror, against 1.024 s for a toolchain outside
+  `GOMODCACHE`; before the fixes, 1.020 s and 1.028 s, within noise. The first
+  run takes 3.4 s with links and 6.8 s with copies: creating the mirror plus
+  relinking, because link cache keys include GOROOT.
+
 ## Phase 2: per-test coverage in memory (item 8)
 
 **Evidence.**

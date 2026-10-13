@@ -73,6 +73,22 @@ func TestSpecialFlags(t *testing.T) {
 	if _, err := parseOptions(nil, "-C=dir"); err == nil {
 		t.Fatal("GOFLAGS -C accepted")
 	}
+	// An empty -exec, from GOFLAGS or the command line, turns off the
+	// cross-compilation helper.
+	for _, tc := range []struct {
+		args    []string
+		goflags string
+		set     bool
+	}{
+		{[]string{"-exec=", "."}, "", true},
+		{[]string{"."}, "-exec=", true},
+		{[]string{"-exec=", "."}, "-exec=wrapper", true},
+		{[]string{"."}, "", false},
+	} {
+		if opts, err := parseOptions(tc.args, tc.goflags); err != nil || opts.execSet != tc.set || opts.exec != "" {
+			t.Fatalf("%v with GOFLAGS %q: %+v, %v", tc.args, tc.goflags, opts, err)
+		}
+	}
 }
 
 func TestSplitFlagsMatchesQuotedSplit(t *testing.T) {

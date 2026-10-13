@@ -37,6 +37,15 @@ The log records:
   the effective working directory, including `-C`.
 - The effective toolchain version and package resolution, with the number of
   requested patterns and resolved packages.
+- For a toolchain in `GOMODCACHE`, the `goroot mirror` phase: whether its
+  mirror was created or reused, its source and location, and for a new one
+  whether files were linked or copied, how many, and how long it took. Without
+  a usable mirror, `instrumentation bypass goroot_mirror=unavailable` follows
+  the warning, and native `go test` runs.
+- When ddto must wrap a `-exec` program or the cross-compilation helper and
+  cannot reproduce how `go test` finds or starts it, `instrumentation bypass
+  exec_program=unresolved`, `exec_program=unquotable` or `exec_helper=relative`
+  follows the warning, and native `go test` runs.
 - An early `resolve runtime module` probe when Mini is absent from the effective
   module text. It uses a temporary module and checksum file. An unknown module
   is an expected result; Go still resolves every package after provisioning.

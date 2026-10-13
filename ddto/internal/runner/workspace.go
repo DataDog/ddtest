@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -106,8 +105,7 @@ func provideOlderModuleWorkspace(ctx context.Context, dir string, opts *options,
 		// before adding Mini, so only the client's imports can change its files.
 		args := append([]string{"list", "-e", "-test", "-json=ImportPath,Error"}, opts.buildFlags...)
 		args = append(args, opts.packages...)
-		cmd := exec.CommandContext(ctx, "go", args...)
-		cmd.Dir = dir
+		cmd := goCommand(ctx, dir, args...)
 		if _, err := readPackages(ctx, cmd, "resolve client requirements"); err != nil {
 			return err
 		}
@@ -453,9 +451,8 @@ func selectedWorkspaceMini(ctx context.Context, dir, work, temp string, replacem
 		args = append(args, "-overlay="+path)
 	}
 	args = append(args, miniModule)
-	cmd := exec.CommandContext(ctx, "go", args...)
+	cmd := goCommand(ctx, dir, args...)
 	cmd.WaitDelay = 5 * time.Second
-	cmd.Dir = dir
 	cmd.Env = append(cmd.Environ(), "GOWORK="+work, "GOFLAGS=")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -508,9 +505,8 @@ func workspaceReplacementRoot(ctx context.Context, dir, base, path, version stri
 		return "", err
 	}
 	defer os.RemoveAll(scratch)
-	cmd := exec.CommandContext(ctx, "go", "mod", "download", "-json", path+"@"+version)
+	cmd := goCommand(ctx, scratch, "mod", "download", "-json", path+"@"+version)
 	cmd.WaitDelay = 5 * time.Second
-	cmd.Dir = scratch
 	cmd.Env = append(cmd.Environ(), "GOWORK=off", "GOFLAGS=")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

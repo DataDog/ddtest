@@ -3,9 +3,13 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/version"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -19,16 +23,132 @@ const (
 )
 
 // crossExecHelper returns the go_$GOOS_$GOARCH_exec program that go test runs
-// test binaries with when it cross-compiles and no -exec is given.
-func crossExecHelper(environment *goEnvironment) string {
+// test binaries with when it cross-compiles and no -exec is given. go test
+// looks it up from dir, its working directory, and runs the binaries directly
+// without one that it would run. It fails for a helper that go test would run
+// through a path relative to dir, or that ddto cannot look up as go test does.
+func crossExecHelper(environment *goEnvironment, dir string) (string, error) {
 	if environment.GOOS == environment.GOHOSTOS && environment.GOARCH == environment.GOHOSTARCH {
-		return ""
+		return "", nil
 	}
-	path, err := exec.LookPath("go_" + environment.GOOS + "_" + environment.GOARCH + "_exec")
+	path, err := lookPathFrom(dir, "go_"+environment.GOOS+"_"+environment.GOARCH+"_exec")
+	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, exec.ErrDot) {
+		return "", nil
+	}
+	return path, err
+}
+
+// errRelativeProgram is a program that Go would run through a path relative
+// to its working directory, as GODEBUG=execerrdot=0 allows.
+var errRelativeProgram = errors.New("found relative to the current directory, which GODEBUG=execerrdot=0 allows")
+
+// errUnknownProgram is a lookup that ddto cannot reproduce: through a PATH
+// entry relative to another drive's current directory, or with an execerrdot
+// setting that GODEBUG limits to some call stacks.
+var errUnknownProgram = errors.New("looked up through a PATH entry or GODEBUG setting that ddto cannot reproduce")
+
+// lookPathFrom looks file up on PATH as exec.LookPath does with dir as the
+// current directory, where go test looks up -exec programs and the
+// cross-compilation helper after -C. It returns the absolute path of the file
+// that Go would run. A file that Go would refuse to run returns exec.ErrDot,
+// one that Go would run relative to dir returns errRelativeProgram, and a
+// lookup that ddto cannot reproduce returns errUnknownProgram.
+func lookPathFrom(dir, file string) (string, error) {
+	// Names that exec.LookPath rejects before it searches.
+	switch file {
+	case "", ".", "..":
+		return "", &exec.Error{Name: file, Err: exec.ErrNotFound}
+	}
+	windows := runtime.GOOS == "windows"
+	refuse, known := execErrDot()
+	// relativeMatch is the result for a match relative to dir that Go would
+	// not refuse.
+	relativeMatch := func() error {
+		if !known {
+			return &exec.Error{Name: file, Err: errUnknownProgram}
+		}
+		return &exec.Error{Name: file, Err: errRelativeProgram}
+	}
+	// pending is a match relative to dir, which Go refuses unless, on
+	// Windows, PATH later names the same file absolutely.
+	var pending string
+	if _, skip := os.LookupEnv("NoDefaultCurrentDirectoryInExePath"); windows && !skip {
+		// Windows searches the current directory first.
+		if f, err := exec.LookPath(filepath.Join(dir, file)); err == nil {
+			if !refuse || !known {
+				return "", relativeMatch()
+			}
+			pending = f
+		}
+	}
+	for _, entry := range filepath.SplitList(os.Getenv("PATH")) {
+		if entry == "" {
+			if windows {
+				continue
+			}
+			// An empty entry is the current directory on Unix.
+			entry = "."
+		}
+		relative := !filepath.IsAbs(entry)
+		candidate := filepath.Join(entry, file)
+		if relative {
+			switch volume := filepath.VolumeName(entry); {
+			case volume != "" && !strings.EqualFold(volume, filepath.VolumeName(dir)):
+				// Relative to that drive's own current directory.
+				return "", &exec.Error{Name: file, Err: errUnknownProgram}
+			case volume != "":
+				candidate = filepath.Join(dir, candidate[len(volume):])
+			case os.IsPathSeparator(entry[0]):
+				// Rooted on the current drive, on Windows.
+				candidate = filepath.VolumeName(dir) + candidate
+			default:
+				candidate = filepath.Join(dir, candidate)
+			}
+		}
+		f, err := exec.LookPath(candidate)
+		switch {
+		case err != nil:
+			continue
+		case pending != "" && !sameLink(pending, f):
+			return "", &exec.Error{Name: file, Err: exec.ErrDot}
+		case !relative:
+			return f, nil
+		case !refuse || !known:
+			return "", relativeMatch()
+		case !windows:
+			return "", &exec.Error{Name: file, Err: exec.ErrDot}
+		case pending == "":
+			pending = f
+		}
+	}
+	if pending != "" {
+		return "", &exec.Error{Name: file, Err: exec.ErrDot}
+	}
+	return "", &exec.Error{Name: file, Err: exec.ErrNotFound}
+}
+
+// execErrDot reports whether Go refuses programs found relative to the
+// current directory: unless GODEBUG's last execerrdot setting is 0. A setting
+// for the call stacks that a pattern selects, value#pattern, is not known.
+func execErrDot() (refuse, known bool) {
+	value := ""
+	for _, setting := range strings.Split(os.Getenv("GODEBUG"), ",") {
+		if name, v, ok := strings.Cut(setting, "="); ok && name == "execerrdot" {
+			value = v
+		}
+	}
+	return value != "0", !strings.Contains(value, "#")
+}
+
+// sameLink reports whether a and b name the same file, without following a
+// final symbolic link, as exec.LookPath compares them.
+func sameLink(a, b string) bool {
+	ai, err := os.Lstat(a)
 	if err != nil {
-		return ""
+		return false
 	}
-	return path
+	bi, err := os.Lstat(b)
+	return err == nil && os.SameFile(ai, bi)
 }
 
 // goDebugDefault returns the GODEBUG default=go1.N value for a Go version.
@@ -42,13 +162,14 @@ func goDebugDefault(version string) string {
 
 type goEnvironment struct {
 	GOMOD, GOWORK, GOMODCACHE, GOVERSION string
+	GOROOT                               string
 	GOOS, GOARCH, GOHOSTOS, GOHOSTARCH   string
 	// GOEXPERIMENT is the setting as go env reports it, not canonical.
 	GOEXPERIMENT string
 }
 
 func readGoEnvironment(ctx context.Context, dir string) (*goEnvironment, error) {
-	out, err := goTool(ctx, dir, nil, "env", "-json", "GOMOD", "GOWORK", "GOMODCACHE", "GOVERSION", "GOOS", "GOARCH", "GOHOSTOS", "GOHOSTARCH", "GOEXPERIMENT")
+	out, err := goTool(ctx, dir, nil, "env", "-json", "GOMOD", "GOWORK", "GOMODCACHE", "GOVERSION", "GOROOT", "GOOS", "GOARCH", "GOHOSTOS", "GOHOSTARCH", "GOEXPERIMENT")
 	if err != nil {
 		return nil, err
 	}
@@ -73,8 +194,7 @@ func testRuntimeVersion(ctx context.Context, dir, goVersion, goExperiment string
 		return goVersion
 	}
 	phase := debug.start("test runtime version")
-	cmd := exec.CommandContext(ctx, "go", "tool", "compile", "-V")
-	cmd.Dir = dir
+	cmd := goCommand(ctx, dir, "tool", "compile", "-V")
 	cmd.Env = append(cmd.Environ(), "GOFLAGS=", "GOEXPERIMENT="+goExperiment)
 	out, err := cmd.Output()
 	phase.finish(err)

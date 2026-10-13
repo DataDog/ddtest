@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -17,22 +19,89 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
-// ExecWithCallerEnvironment restores the caller's Go settings, then runs args
-// with the native streams and exit status: a go test -exec program sees what
-// native go test gives it, rather than ddto's temporary workspace.
+// ExecWithCallerEnvironment restores the caller's Go settings, then runs the
+// program at path, given its arguments in args after it, with the native
+// streams and exit status: a go test -exec program sees what native go test
+// gives it, rather than ddto's temporary workspace. args[0] is the program as
+// go test names it; an empty path looks it up.
 //
 // Native go test ends a timed-out program by terminating it, which here ends
 // only this wrapper. The program therefore runs in a job that kills it when
 // the wrapper's handle closes. Once the program exits, the job no longer kills
 // processes it left running: they outlive native go test as well. Console
 // interrupts reach the program directly, so the wrapper waits for its status.
-func ExecWithCallerEnvironment(args []string) int {
+func ExecWithCallerEnvironment(path string, args []string) int {
 	goenv.Restore()
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" ERROR: missing -exec program")
 		return 2
 	}
-	return runInJob(args, "", false, 2, nil)
+	// exec.Cmd adds a missing PATHEXT extension to a path before it starts it
+	// from the package directory, where this process runs.
+	dir, err := os.Getwd()
+	if err == nil {
+		if path == "" {
+			path, err = exec.LookPath(args[0])
+		} else {
+			path, err = lookExtensions(path, dir)
+		}
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	code, err := runInJob(path, args, "", false, nil)
+	if err != nil {
+		// As os.StartProcess reports it to go test.
+		fmt.Fprintln(os.Stderr, &os.PathError{Op: "fork/exec", Path: path, Err: err})
+		return 2
+	}
+	return code
+}
+
+// lookExtensions is exec.Cmd's resolution of path before it starts it from
+// dir: a path with a PATHEXT extension stays as given; otherwise the first
+// file that PATHEXT names, from dir for a relative path.
+func lookExtensions(path, dir string) (string, error) {
+	if filepath.Base(path) == path {
+		path = "." + string(filepath.Separator) + path
+	}
+	if ext := filepath.Ext(path); ext != "" {
+		for _, e := range pathExtensions() {
+			if strings.EqualFold(ext, e) {
+				return path, nil
+			}
+		}
+	}
+	if filepath.VolumeName(path) != "" || len(path) > 1 && os.IsPathSeparator(path[0]) {
+		return exec.LookPath(path)
+	}
+	joined := filepath.Join(dir, path)
+	found, err := exec.LookPath(joined)
+	if err != nil {
+		return "", err
+	}
+	return path + strings.TrimPrefix(found, joined), nil
+}
+
+// pathExtensions are the executable extensions that PATHEXT lists, as
+// os/exec reads them.
+func pathExtensions() []string {
+	list := os.Getenv("PATHEXT")
+	if list == "" {
+		return []string{".com", ".exe", ".bat", ".cmd"}
+	}
+	var exts []string
+	for _, e := range strings.Split(strings.ToLower(list), ";") {
+		if e == "" {
+			continue
+		}
+		if e[0] != '.' {
+			e = "." + e
+		}
+		exts = append(exts, e)
+	}
+	return exts
 }
 
 // ExecCommand runs args unchanged, with the native streams and exit status:
@@ -44,7 +113,8 @@ func ExecWithCallerEnvironment(args []string) int {
 func ExecCommand(args []string) int {
 	debug := debugFromContext(withCLIDebug(context.Background(), os.Stderr))
 	debug.printf("pass-through command=%q args=%d", args[0], len(args)-1)
-	if _, err := exec.LookPath(args[0]); err != nil {
+	path, err := exec.LookPath(args[0])
+	if err != nil {
 		fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" ERROR:", err)
 		return commandStatus(err)
 	}
@@ -53,7 +123,12 @@ func ExecCommand(args []string) int {
 		cmdline = commandLineTail(commandLine())
 	}
 	debug.printf("pass-through caller_command_line=%t", cmdline != "")
-	return runInJob(args, cmdline, true, 126, debug)
+	code, err := runInJob(path, args, cmdline, true, debug)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 126
+	}
+	return code
 }
 
 // commandLine is this process's command line.
@@ -66,19 +141,15 @@ func commandLine() string {
 	return syscall.UTF16ToString(unsafe.Slice(p, n))
 }
 
-// runInJob runs args, with cmdline as their command line if set, in a job that
+// runInJob runs the program at path with args, and cmdline as their command
+// line if set, in a job that
 // kills them if this wrapper ends first, and returns their exit status, or
 // failed if they do not start. With breakaway, the job lets them, and what
 // they leave running, start processes outside it (CREATE_BREAKAWAY_FROM_JOB).
 // They get this process's environment and standard streams as they are:
 // os/exec would add SYSTEMROOT and open NUL for a missing stream.
-func runInJob(args []string, cmdline string, breakaway bool, failed int, debug *cliDebug) int {
+func runInJob(path string, args []string, cmdline string, breakaway bool, debug *cliDebug) (int, error) {
 	signal.Notify(make(chan os.Signal, 1), os.Interrupt)
-	path, err := exec.LookPath(args[0])
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return failed
-	}
 	attr := &syscall.ProcAttr{
 		Env:   syscall.Environ(),
 		Files: []uintptr{stdHandle(os.Stdin), stdHandle(os.Stdout), stdHandle(os.Stderr)},
@@ -88,8 +159,7 @@ func runInJob(args []string, cmdline string, breakaway bool, failed int, debug *
 	process, job, err := startInJob(path, args, attr, breakaway, debug)
 	if err != nil {
 		debug.printf("pass-through start path=%q failed error=%q", path, err.Error())
-		fmt.Fprintln(os.Stderr, err)
-		return failed
+		return 0, err
 	}
 	debug.printf("pass-through started path=%q job=%t breakaway=%t", path, job != 0, breakaway && job != 0)
 	defer syscall.CloseHandle(process)
@@ -99,10 +169,10 @@ func runInJob(args []string, cmdline string, breakaway bool, failed int, debug *
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		return 2
+		return 2, nil
 	}
 	debug.printf("pass-through exited code=%d duration=%s", code, time.Since(started).Round(time.Microsecond))
-	return int(code)
+	return int(code), nil
 }
 
 // stdHandle is f's handle for a new process, or 0 for a stream that this

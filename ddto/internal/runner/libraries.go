@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"os/exec"
 	"sort"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
@@ -87,8 +86,7 @@ func resolveTestLibraries(ctx context.Context, dir string, opts options, package
 	args := []string{"list", "-e", mode, "-json=Dir,Name,ImportPath,Standard,GoFiles,Module,Error"}
 	args = append(args, opts.buildFlags...)
 	args = append(args, paths...)
-	cmd := exec.CommandContext(ctx, "go", args...)
-	cmd.Dir = dir
+	cmd := goCommand(ctx, dir, args...)
 	if opts.workfile != "" {
 		cmd.Env = append(cmd.Environ(), "GOWORK="+opts.workfile)
 		if opts.workspaceGoFlags != nil {

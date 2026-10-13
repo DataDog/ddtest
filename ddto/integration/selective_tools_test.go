@@ -63,6 +63,7 @@ import _ "github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
 				t.Fatal(err)
 			}
 			defer os.RemoveAll(plan.Dir)
+			defer plan.Release()
 			data, err := os.ReadFile(plan.File)
 			if err != nil {
 				t.Fatal(err)
@@ -159,6 +160,7 @@ func TestTestifyContractInvalidatesOnlyTestingDependents(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(plan.Dir)
+	defer plan.Release()
 	data, err := os.ReadFile(plan.File)
 	if err != nil {
 		t.Fatal(err)
@@ -173,8 +175,11 @@ func TestTestifyContractInvalidatesOnlyTestingDependents(t *testing.T) {
 	// Stable output prevents -o changes from forcing a link on every invocation.
 	output := filepath.Join(t.TempDir(), executableName("fixture.test"))
 	args := []string{"test", "-mod=mod", "-overlay=" + plan.File, "-toolexec=" + quoteToolArgument(t, driver) + " tool-overlay testify " + quoteToolArgument(t, plan.File), "-c", "-x", "-o", output, "."}
+	// The plan's overlay applies to its own toolchain, a mirror when go runs
+	// from GOMODCACHE.
+	goCommand, goEnv := plan.GoCommand()
 	run := func() string {
-		out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), "go", args...)
+		out, stderr, code := command(t, dir, append(testEnv("DD_CIVISIBILITY_ENABLED=false"), goEnv...), goCommand, args...)
 		if code != 0 {
 			t.Fatal(out, stderr)
 		}

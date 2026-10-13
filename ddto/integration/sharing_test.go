@@ -49,6 +49,7 @@ func TestSharedGeneratedFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() {
+			plan.Release()
 			if err := os.RemoveAll(plan.Dir); err != nil {
 				t.Error(err)
 			}

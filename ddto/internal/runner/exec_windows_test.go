@@ -37,7 +37,7 @@ func TestExecHelperProcess(t *testing.T) {
 	switch os.Getenv("DDTO_EXEC_HELPER") {
 	case "wrapper":
 		os.Setenv("DDTO_EXEC_HELPER", os.Getenv("DDTO_EXEC_PROGRAM"))
-		os.Exit(ExecWithCallerEnvironment(self))
+		os.Exit(ExecWithCallerEnvironment("", self))
 	case "command":
 		os.Setenv("DDTO_EXEC_HELPER", os.Getenv("DDTO_EXEC_PROGRAM"))
 		os.Exit(ExecCommand(self))
@@ -282,5 +282,28 @@ func TestExecCommandKeepsMissingStdin(t *testing.T) {
 	}
 	if h := stdHandle(nil); h != 0 {
 		t.Fatalf("stdHandle(nil) = %#x; want 0", h)
+	}
+}
+
+// test-exec adds the PATHEXT extension that a -exec path lacks, as exec.Cmd
+// does from the package directory, and keeps an extension that PATHEXT lists.
+func TestLookExtensions(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "prog.com"), nil, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATHEXT", ".COM;.EXE")
+	for _, tc := range []struct{ path, want string }{
+		{`.\prog`, `.\prog.com`},
+		{"prog", `.\prog.com`},
+		{filepath.Join(dir, "prog"), filepath.Join(dir, "prog.com")},
+		{`.\other.exe`, `.\other.exe`},
+	} {
+		if got, err := lookExtensions(tc.path, dir); err != nil || got != tc.want {
+			t.Errorf("lookExtensions(%q) = %q, %v; want %q", tc.path, got, err, tc.want)
+		}
+	}
+	if _, err := lookExtensions(`.\missing`, dir); err == nil {
+		t.Error("a missing program was found")
 	}
 }

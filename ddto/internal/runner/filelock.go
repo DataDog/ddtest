@@ -14,9 +14,14 @@ var errLockBusy = errors.New("file lock is held by another process")
 // kernel, so cancellation or an interrupt can stop preparation. Pruners hold
 // the exclusive lock only while they remove a workspace.
 func waitForSharedLock(ctx context.Context, file *os.File) error {
+	return waitForLock(ctx, file, false)
+}
+
+// waitForLock is waitForSharedLock for either kind of lock.
+func waitForLock(ctx context.Context, file *os.File, exclusive bool) error {
 	delay := time.Millisecond
 	for {
-		err := tryLockFile(file, false)
+		err := tryLockFile(file, exclusive)
 		if !errors.Is(err, errLockBusy) {
 			return err
 		}

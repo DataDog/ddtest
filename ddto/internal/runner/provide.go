@@ -9,7 +9,6 @@ import (
 	goversion "go/version"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -61,8 +60,7 @@ func preprovideMini(ctx context.Context, dir string, opts options, temp string, 
 	phase := debugFromContext(ctx).start("resolve runtime module")
 	args := append([]string{"list", "-m", "-e", "-json=Path,Error"}, opts.buildFlags...)
 	args = append(args, "-mod=readonly", "-modfile="+probe, miniModule)
-	cmd := exec.CommandContext(ctx, "go", args...)
-	cmd.Dir = dir
+	cmd := goCommand(ctx, dir, args...)
 	output, err := cmd.Output()
 	phase.finish(err)
 	if ctx.Err() != nil {
@@ -271,8 +269,7 @@ func goTool(ctx context.Context, dir string, progress io.Writer, args ...string)
 		phase = logger.start("go " + args[0])
 	}
 	defer func() { phase.finish(err) }()
-	cmd := exec.CommandContext(ctx, "go", args...)
-	cmd.Dir = dir
+	cmd := goCommand(ctx, dir, args...)
 	cmd.Env = append(cmd.Environ(), "GOFLAGS=")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

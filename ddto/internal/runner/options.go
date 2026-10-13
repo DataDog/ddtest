@@ -100,6 +100,9 @@ type options struct {
 	coverage             bool
 	coverPatterns        []string
 	race                 bool
+	// execSet records -exec, even empty: then go test uses no
+	// cross-compilation helper.
+	execSet bool
 	// compileOnly and printOnly record -c and -n; with either, go test runs
 	// no test binary.
 	compileOnly, printOnly bool
@@ -345,7 +348,7 @@ func (o *options) apply(name, value string) error {
 	case "toolexec":
 		o.toolexec = value
 	case "exec":
-		o.exec = value
+		o.exec, o.execSet = value, true
 	case "cover":
 		enabled, err := strconv.ParseBool(value)
 		if err != nil {

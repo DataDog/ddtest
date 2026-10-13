@@ -15,9 +15,10 @@ func main() {
 	// its root session to child processes through the environment at
 	// initialization. ddto passes its caller's environment unchanged.
 	globalconfig.KeepCallerEnvironment()
-	// go test -exec entrypoint: restore the caller's Go settings first.
-	if len(os.Args) >= 2 && os.Args[1] == "test-exec" {
-		os.Exit(runner.ExecWithCallerEnvironment(os.Args[2:]))
+	// go test -exec entrypoint: restore the caller's Go settings first. The
+	// program's path comes before its arguments.
+	if len(os.Args) >= 3 && os.Args[1] == "test-exec" {
+		os.Exit(runner.ExecWithCallerEnvironment(os.Args[2], os.Args[3:]))
 	}
 	// The Git worker that ddto test starts once per invocation.
 	if len(os.Args) >= 3 && len(os.Args) <= 5 && os.Args[1] == "ci-git-worker" {

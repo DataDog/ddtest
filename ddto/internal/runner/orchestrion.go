@@ -191,6 +191,9 @@ func resolveOrchestrionExecutable(ctx context.Context, dir string, opts options,
 	phase := debugFromContext(ctx).start("resolve Orchestrion executable")
 	var output bytes.Buffer
 	cmd := exec.CommandContext(ctx, launcher.command[0], "tool", "-n", "orchestrion")
+	if launcher.command[0] == "go" {
+		cmd = goCommand(ctx, dir, "tool", "-n", "orchestrion")
+	}
 	cmd.Dir = dir
 	// Only module selection belongs to the tool bootstrap. Client compile/test
 	// flags, ddto's overlay and a toolexec command could instrument the tool itself.

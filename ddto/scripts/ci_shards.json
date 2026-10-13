@@ -36,6 +36,9 @@
       "TestMiniDeliveryFailurePreservesGoExit",
       "TestMiniExecWrapperSeesCallerEnvironment",
       "TestMiniFixtureRuntimeImportLineEndings",
+      "TestMiniGOROOTMirrorDirectToolchain",
+      "TestMiniGOROOTMirrorUnavailableRunsGoTest",
+      "TestMiniGOROOTMirrorLaterToolchainRunsGoTest",
       "TestMiniGitHubJobIDHandoff",
       "TestMiniGitHubJobIDNotHandedThroughExec",
       "TestMiniGitStateCacheWithTemporaryDirectoryInModule",
@@ -201,6 +204,7 @@
     "linux": {
       "cli": [
         "TestMiniCLIStateGivesModuleToCoverage",
+        "TestMiniGOROOTMirrorToolchainSwitch",
         "TestMiniGitWorkerStopsOnInterrupt"
       ],
       "parity": [
