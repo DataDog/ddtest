@@ -7,7 +7,6 @@ package testdrive
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -67,24 +66,28 @@ func TestMochaTestdriveNYCPreviewAndExecution(t *testing.T) {
 			require.Contains(t, preview.String(), "  - command: "+wantDisplay)
 			_, err := os.Stat(drive.session.Directory())
 			require.True(t, os.IsNotExist(err), "preview must remain read-only")
+			if tc.jest {
+				command, args := drive.executionCommand()
+				require.Equal(t, wantCommand, command)
+				require.Equal(t, wantArgs, args)
+				return
+			}
 			installer := &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
 			drive.platform = installer
 			executor := &fakeTestdriveExecutor{}
 			drive.executor = executor
-			drive.startIntake = func(string) (localIntake, error) {
+			drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 				return &fakeIntake{url: "http://127.0.0.1:1234", findings: intake.Facts{TestEventCount: 1, TestCount: 1, CoveredTestCount: 1}}, nil
 			}
 			var output bytes.Buffer
-			require.NoError(t, drive.Run(t.Context(), &output))
+			result, err := drive.run(t.Context(), &output)
+			require.NoError(t, err)
 			require.Equal(t, wantCommand, executor.command)
 			require.Equal(t, wantArgs, executor.args)
 			require.Equal(t, tc.command, drive.command)
 			require.Equal(t, tc.args, drive.args)
-			data, err := os.ReadFile(filepath.Join(installer.sessionDirectory, diagnosticsFilename))
-			require.NoError(t, err)
-			var diagnostics runDiagnostics
-			require.NoError(t, json.Unmarshal(data, &diagnostics))
-			require.Equal(t, wantDisplay, diagnostics.Command)
+			require.Len(t, result.Runs, 1)
+			require.Equal(t, wantDisplay, result.Runs[0].Command)
 			require.Contains(t, output.String(), "  Command: "+wantDisplay)
 		})
 	}

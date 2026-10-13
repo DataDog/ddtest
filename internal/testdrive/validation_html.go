@@ -29,6 +29,9 @@ func (t *Testdrive) writeHTMLReport(output io.Writer, result *validationResult, 
 		runtime.Error = run.commandError.Error()
 	}
 	model := buildReport(t.repositoryRoot, run.Facts, run.ExitCode != 0, runtime)
+	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" {
+		writeFindings(output, run.Facts, model.Cards...)
+	}
 	if t.reportModels != nil {
 		*t.reportModels = append(*t.reportModels, model)
 		return nil
