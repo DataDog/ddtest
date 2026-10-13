@@ -1,9 +1,7 @@
 # Enable Datadog Test Optimization for Vitest on GitHub Actions
 
-Vitest `testdrive` validates the customer's CLI commands, including their config
-and coverage options. `plan` and `run` use a separate Node API adapter and reject
-`--command`; their `--vitest-config` option does not apply to `testdrive`. For
-validation, use `--all` or keep `--config` inside the explicit test command.
+Use `--all` to validate CI's native Vitest or `ddtest run` path. For diagnostics:
+`--command "ddtest run --vitest-config ci.ts"`. `plan`/`run` reject their own `--command`.
 
 Keep the existing tests, CI matrix, setup and coverage options. Work in this order:
 
@@ -38,6 +36,9 @@ Keep the existing tests, CI matrix, setup and coverage options. Work in this ord
 4. Finish with `ddtest testdrive --all --tracer-version <resolved-release> --yes`. Listed preparation runs in separate temporary copies; setup failure blocks that configuration. `--check-only` skips execution. All configurations share one HTML/JSON pair. Use `--command` only for focused diagnostics. Wait for completion before other commands. Further edits require a full rerun; do not finish with check-only or copy reports into separate folders.
 
 ## Validation scope
+
+Reports identify the path tested. Runner checks use disposable copies and exact
+assignments; unsupported options stay unvalidated.
 
 Version support follows the selected dd-trace release; ddtest does not impose a separate major-version allowlist. Known tracer incompatibilities are checked before execution. Configuration discovery, paired execution and controlled scenarios must still succeed; a preflight pass alone is not validation. This adapter currently handles one Node project using forks or threads, without Vitest typecheck mode. Multiple projects, browser mode and other pools remain explicitly unvalidated; do not change the customer's configuration merely to pass validation. If ddtest cannot inspect the configuration or read runner results, report that specific tool limitation.
 

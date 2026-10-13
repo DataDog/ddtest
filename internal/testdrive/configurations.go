@@ -125,6 +125,9 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			child.tracerVersion = result.Selection.Version
 		}
 		child.command = filepath.Join(t.repositoryRoot, "node_modules", ".bin", words[0])
+		if onboard.IsDDTestCommand(words[0]) {
+			child.command = words[0]
+		}
 		child.args = words[1:]
 		child.reportModels = &models
 		// Rebind method values to this command, rather than the original drive.

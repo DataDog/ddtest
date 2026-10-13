@@ -32,6 +32,19 @@ type vitestProject struct {
 // Start with direct CLI invocations. Do not silently discard package-script setup,
 // environment assignments, or wrapper flags while loading the effective config.
 func vitestArguments(command string, args []string) ([]string, error) {
+	if onboard.IsDDTestCommand(command) {
+		parsed, err := onboard.ParseVitestRunnerCommand(args)
+		if err != nil {
+			return nil, err
+		}
+		options := []string{"run"}
+		if parsed.Config != "" {
+			options = append(options, "--config", parsed.Config)
+		}
+		// This inspection only checks the configuration. File selection is
+		// verified against the real runner's plan and worker results.
+		return options, nil
+	}
 	base := filepath.Base(command)
 	switch base {
 	case "vitest", "vitest.mjs":
@@ -52,7 +65,11 @@ func vitestArguments(command string, args []string) ([]string, error) {
 }
 
 func (t *Testdrive) inspectVitest(ctx context.Context, directory string) (string, []vitestProject, []string, error) {
-	args, err := vitestArguments(t.command, t.args)
+	command := t.command
+	if t.usesVitestRunner() {
+		command = "ddtest"
+	}
+	args, err := vitestArguments(command, t.args)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -86,6 +103,16 @@ func (t *Testdrive) inspectVitest(ctx context.Context, directory string) (string
 func (t *Testdrive) checkVitestPreflight(ctx context.Context, output io.Writer, result *validationResult) error {
 	check := &jestPreflight{Node: t.nodeVersion(), Command: shellquote.Join(append([]string{t.command}, t.args...)...), Verdict: verdict{Status: "inconclusive", Reason: "Vitest configuration was not resolved."}}
 	result.Preflight = check
+	check.ExecutionPath = t.vitestExecutionPath()
+	if t.usesVitestRunner() {
+		for _, entry := range os.Environ() {
+			key, value, _ := strings.Cut(entry, "=")
+			if strings.HasPrefix(key, "DD_TEST_OPTIMIZATION_RUNNER_") && value != "" {
+				check.Verdict.Reason = "Inherited runner settings require separate validation; express the supported options in the selected command: " + key
+				return fmt.Errorf("%s", check.Verdict.Reason)
+			}
+		}
+	}
 	directory, err := os.MkdirTemp("", "ddtest-vitest-config-")
 	if err != nil {
 		return err
@@ -148,11 +175,15 @@ func checkVitestSupport(check jestPreflight, selection platform.JSSelection) ver
 	if known && major == 5 && tracerKnown && ((tracerMajor == 5 && tracerMinor < 125) || (tracerMajor == 6 && tracerMinor < 14)) {
 		return verdict{Status: "incompatible", Reason: fmt.Sprintf("dd-trace %s predates Vitest 5 support. Use dd-trace >=5.125.0 in major 5 or >=6.14.0 in major 6, aligning local and CI selections. An installed project tracer requires an explicit dependency upgrade; no dependency was changed.", selection.Version)}
 	}
+	if check.ExecutionPath == "ddtest-run-node-api" && tracerKnown && ((tracerMajor == 5 && tracerMinor < 125) || (tracerMajor == 6 && tracerMinor < 14)) {
+		return verdict{Status: "incompatible", Reason: "The ddtest Node API path requires createVitest instrumentation: dd-trace >=5.125.0 in major 5 or >=6.14.0 in major 6. Align the local and CI tracer selections."}
+	}
 	return verdict{Status: "compatible", Reason: "No known tracer/runtime incompatibility blocks this configuration. Paired execution and feature checks are still required."}
 }
 
 func (t *Testdrive) runVitest(ctx context.Context, output io.Writer, session *Session, preload, name string, instrumented bool, scenario intake.Scenario, probePath, probeMode string) (run validationRun, runErr error) {
 	run.framework = "vitest"
+	run.ExecutionPath = t.vitestExecutionPath()
 	run.Name, run.Instrumented, run.ProbeMode, run.root = name, instrumented, probeMode, t.repositoryRoot
 	directory := filepath.Join(session.Directory(), name)
 	if err := os.MkdirAll(directory, 0700); err != nil {
@@ -186,6 +217,12 @@ func (t *Testdrive) runVitest(ctx context.Context, output io.Writer, session *Se
 		run.ProbeCoverageThresholdsDisabled = true
 		env["DDTEST_PROBE_MODE"] = probeMode
 	}
+	if t.usesVitestRunner() {
+		args, err = t.vitestRunnerArgs(directory, preload, probePath, instrumented, env)
+		if err != nil {
+			return run, err
+		}
+	}
 	run.Command = shellquote.Join(append([]string{t.command}, args...)...)
 	_, _ = fmt.Fprintf(output, "Running %s...\n", name)
 	data, commandErr := t.executor.CombinedOutput(ctx, t.command, args, env)
@@ -206,7 +243,17 @@ func (t *Testdrive) runVitest(ctx context.Context, output io.Writer, session *Se
 	if err != nil {
 		return run, err
 	}
-	readRunnerResults(resultPath, "Vitest", &run)
+	if scenario.Feature == "skipping" {
+		run.Skipping = diagnoseSkipping(run, scenario)
+	}
+	if t.usesVitestRunner() {
+		run.PlannerSkipped = vitestPlannerSkippedProbe(directory, t.repositoryRoot, probePath, scenario, run)
+		if !run.PlannerSkipped {
+			readVitestWorkerResults(directory, t.repositoryRoot, &run)
+		}
+	} else {
+		readRunnerResults(resultPath, "Vitest", &run)
+	}
 	if scenario.Feature == "skipping" {
 		run.Skipping = diagnoseSkipping(run, scenario)
 	}
@@ -242,8 +289,15 @@ func (t *Testdrive) runVitestFeatures(ctx context.Context, output io.Writer, ses
 	}
 	defer func() { runErr = errors.Join(runErr, os.Remove(probePath)) }()
 	runner := *t
-	runner.args = append(slices.Clone(t.args), probePath)
+	if !t.usesVitestRunner() {
+		runner.args = append(slices.Clone(t.args), probePath)
+	}
 	_, projects, files, err := runner.inspectVitest(ctx, session.Directory())
+	if t.usesVitestRunner() {
+		// Native discovery checks inclusion; the actual plan/worker assertions
+		// below enforce exact selection without CLI substring filters.
+		files = slices.DeleteFunc(files, func(file string) bool { return filepath.Clean(file) != filepath.Clean(probePath) })
+	}
 	if err != nil || len(projects) != 1 || len(files) != 1 || filepath.Clean(files[0]) != filepath.Clean(probePath) {
 		unavailableFeatures(result, fmt.Sprintf("The temporary probe was not uniquely discovered under the original Vitest configuration: %v", err))
 		return nil

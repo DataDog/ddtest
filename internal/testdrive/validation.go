@@ -48,6 +48,9 @@ type validationRun struct {
 	framework                       string
 	Name                            string
 	Command                         string
+	ExecutionPath                   string
+	Workers                         int
+	PlannerSkipped                  bool
 	Instrumented                    bool
 	ProbeMode                       string
 	ProbeCoverageThresholdsDisabled bool
@@ -68,6 +71,9 @@ type testCounts struct {
 }
 
 type runSummary struct {
+	PlannerSkipped                  bool                `json:"probe_skipped_by_planner,omitempty"`
+	ExecutionPath                   string              `json:"execution_path,omitempty"`
+	Workers                         int                 `json:"workers,omitempty"`
 	Configuration                   string              `json:"configuration,omitempty"`
 	ProbeLintSkipped                bool                `json:"probe_lint_skipped,omitempty"`
 	Project                         string              `json:"project,omitempty"`
@@ -87,6 +93,7 @@ type runSummary struct {
 
 func (r validationRun) summary() runSummary {
 	summary := runSummary{Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
+		ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped,
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError),
 		ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic),
 		SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}

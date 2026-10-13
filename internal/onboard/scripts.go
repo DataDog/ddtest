@@ -282,6 +282,16 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		return commandResolution{Matched: true, SingleJest: true, Evidence: command,
 			Tests: []TestCommand{{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append(assignments, append([]string{framework}, words[1:]...)...)...)}}}
 	}
+	if framework == "vitest" && IsDDTestCommand(words[0]) {
+		if _, err := ParseVitestRunnerCommand(words[1:]); err != nil {
+			return unresolvedCommand(err.Error())
+		}
+		canonicalRoot, _ := filepath.EvalSymlinks(root)
+		canonicalDirectory, _ := filepath.EvalSymlinks(directory)
+		relative, _ := filepath.Rel(canonicalRoot, canonicalDirectory)
+		return commandResolution{Matched: true, SingleJest: true, Evidence: command,
+			Tests: []TestCommand{{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append(assignments, words...)...)}}}
+	}
 	if slices.Equal(words, []string{"corepack", "enable"}) {
 		return commandResolution{}
 	}

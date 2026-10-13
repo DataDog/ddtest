@@ -297,7 +297,7 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 			}
 			finding.Status, finding.Reason = CompareNodeRequirement(resolvedNode, requirement.Node)
 			if finding.Status == "compatible" {
-				if reason := checkJestBootstrap(workflow, job, step, row, frameworks...); reason != "" {
+				if reason := checkTestBootstrap(workflow, job, step, row, resolution.Tests, frameworks...); reason != "" {
 					finding.Status, finding.Reason = "inconclusive", reason
 					finding.Code = "unverified_initialization"
 				}

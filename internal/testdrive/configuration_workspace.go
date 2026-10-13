@@ -8,7 +8,10 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
+
+	"github.com/DataDog/ddtest/internal/onboard"
 )
 
 type configurationExecutor struct {
@@ -26,7 +29,7 @@ func (e configurationExecutor) CombinedOutput(ctx context.Context, name string, 
 // Commands still use the existing process executor. The temporary copy gives
 // every variant independent manifests, dependencies, test files and build output.
 func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writer, item *configurationResult) (result validationResult, runErr error) {
-	if len(item.Prerequisites) == 0 || t.checkOnly {
+	if len(item.Prerequisites) == 0 && !onboard.IsDDTestCommand(t.command) || t.checkOnly {
 		if err := t.runBuildPrerequisites(ctx, output, item); err != nil {
 			return result, err
 		}
@@ -34,6 +37,24 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 		return t.run(ctx, output)
 	}
 	original := t.repositoryRoot
+	if onboard.IsDDTestCommand(t.command) {
+		t.vitestRunner = true
+		// Resolve before changing directory. Never substitute a different binary.
+		var command string
+		var err error
+		if t.command == "ddtest" {
+			command, err = os.Executable()
+		} else {
+			command, err = exec.LookPath(t.command)
+		}
+		if err != nil {
+			return result, err
+		}
+		t.command, err = filepath.Abs(command)
+		if err != nil {
+			return result, err
+		}
+	}
 	workspace, err := os.MkdirTemp("", "ddtest-configuration-")
 	if err != nil {
 		return result, err
@@ -45,6 +66,10 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 		}
 		runErr = errors.Join(runErr, err)
 	}()
+	workspace, err = filepath.EvalSymlinks(workspace)
+	if err != nil {
+		return result, err
+	}
 	if err := copyConfiguration(ctx, original, workspace); err != nil {
 		return result, err
 	}
@@ -56,8 +81,11 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 		return result, err
 	}
 	defer func() { runErr = errors.Join(runErr, os.Chdir(cwd)) }()
-	t.command = filepath.Join(workspace, "node_modules", ".bin", filepath.Base(t.command))
+	if !t.vitestRunner {
+		t.command = filepath.Join(workspace, "node_modules", ".bin", filepath.Base(t.command))
+	}
 	t.repositoryRoot = workspace
+	t.isolated = true
 	if err := t.runBuildPrerequisites(ctx, output, item); err != nil {
 		result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration preparation failed; tests were not started."}
 		return result, err
