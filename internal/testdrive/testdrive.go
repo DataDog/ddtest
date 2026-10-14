@@ -44,6 +44,7 @@ type localIntake interface {
 type Testdrive struct {
 	isolated          bool
 	vitestRunner      bool
+	playwrightGuard   bool
 	allConfigurations bool
 	reportModels      *[]reportModel
 	repositoryRoot    string

@@ -33,7 +33,7 @@ func setSingleConfigurationScope(root string, result *validationResult, scope on
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Run testdrive --all after required setup to validate every discovered configuration."}}
 		for _, command := range selected {
-			if command.Command == entry.Command && command.Directory == entry.Directory && slices.EqualFunc(command.Prerequisites, entry.Prerequisites, onboard.EqualPreparation) && len(entry.UnvalidatedSetup) == 0 && maps.Equal(command.Environment, entry.Environment) {
+			if command.Command == entry.Command && command.Directory == entry.Directory && command.ExitOnFailure == entry.ExitOnFailure && slices.EqualFunc(command.Prerequisites, entry.Prerequisites, onboard.EqualPreparation) && len(entry.UnvalidatedSetup) == 0 && maps.Equal(command.Environment, entry.Environment) {
 				item.Compatibility = result.Compatibility
 				item.Preflight = result.Preflight
 				item.Error = result.Error
@@ -119,6 +119,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			label += " (" + key + "=" + entry.Environment[key] + ")"
 		}
 		child := *t
+		child.playwrightGuard = entry.ExitOnFailure
 		child.allConfigurations = false
 		child.session = planSession()
 		if result.Selection != nil && result.Selection.Version != "" {

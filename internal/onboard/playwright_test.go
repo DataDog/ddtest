@@ -75,3 +75,61 @@ func TestPlaywrightTurboPackageOverrideRemainsUnresolved(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, scope.Unresolved)
 }
+
+func TestPlaywrightCIFailureGuard(t *testing.T) {
+	root := newJestRepository(t, `jobs:
+  browser:
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '20'}
+      - uses: datadog/test-visibility-github-action@v3
+        with: {languages: js, js-tracer-version: '5.131.1'}
+      - run: pnpm test || exit 1
+        env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }}'}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: playwright-report, path: playwright-report/}
+`)
+	writeScripts(t, root, map[string]string{"test": "playwright test"})
+	scope, err := DiscoverValidationScope(root, "playwright")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Contains(t, scope.Review[0], "artifact upload is outside local Playwright execution")
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "playwright test", scope.Commands[0].Command)
+	require.True(t, scope.Commands[0].ExitOnFailure)
+	check := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+		return tracerRequirement{Version: "5.131.1", Node: ">=18"}, nil
+	}, "playwright")
+	require.Equal(t, "compatible", check.Status)
+	require.Len(t, check.Jobs, 1)
+	_, err = PlaywrightValidationCommand(root, "")
+	require.ErrorContains(t, err, "--all")
+	for _, command := range []string{"pnpm test || exit 0", "pnpm test || echo failed", "pnpm test || exit 2", "pnpm test || exit $STATUS", "pnpm test || exit 1 &", "pnpm test || exit 1; echo done", "pnpm test || exit 1 >out", "! pnpm test || exit 1", "pnpm build && pnpm test || exit 1"} {
+		t.Run(command, func(t *testing.T) {
+			require.Empty(t, ValidationCommands(root, command, "playwright"))
+		})
+	}
+	require.Empty(t, ValidationCommands(root, "pnpm test || exit 1", "jest"))
+	writeScripts(t, root, map[string]string{"test": "playwright test || exit 1"})
+	scope, err = DiscoverValidationScope(root, "playwright")
+	require.NoError(t, err)
+	require.NotEmpty(t, scope.Unresolved, "nested guards must not be silently flattened")
+	_, err = PlaywrightValidationCommand(root, "pnpm test")
+	require.Error(t, err, "a package alias containing a guard cannot forward added flags")
+}
+
+func TestPlaywrightPreservesBundlerAndAssetBuildPrerequisites(t *testing.T) {
+	for _, build := range []string{"bunchee && cp src/styles.css dist/styles.css", "pnpm type-check && bunchee && pnpm copy-assets"} {
+		t.Run(build, func(t *testing.T) {
+			root := newJestRepository(t, "jobs:\n  browser:\n    steps:\n      - run: pnpm build\n      - run: pnpm test || exit 1\n")
+			writeScripts(t, root, map[string]string{"build": build, "type-check": "tsc --noEmit", "copy-assets": "cp -r ./src/style.css ./style.css", "test": "playwright test"})
+			scope, err := DiscoverValidationScope(root, "playwright")
+			require.NoError(t, err)
+			require.Empty(t, scope.Unresolved)
+			require.Len(t, scope.Commands, 1)
+			require.Equal(t, []BuildCommand{{Directory: ".", Command: "pnpm build", Kind: "package-build"}}, scope.Commands[0].Prerequisites)
+			require.True(t, scope.Commands[0].ExitOnFailure)
+		})
+	}
+}

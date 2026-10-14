@@ -9,19 +9,31 @@ import (
 )
 
 func stopPlaywrightProcess(pid int) error {
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-		if errors.Is(err, syscall.ESRCH) {
+	return stopPlaywrightProcessWithSignal(pid, syscall.Kill)
+}
+
+func stopPlaywrightProcessWithSignal(pid int, signal func(int, syscall.Signal) error) error {
+	termErr := signal(pid, syscall.SIGTERM)
+	if termErr != nil {
+		if errors.Is(termErr, syscall.ESRCH) {
 			return nil
 		}
-		return err
+		if !errors.Is(termErr, syscall.EPERM) {
+			return termErr
+		}
 	}
 	for range 20 {
-		if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+		if errors.Is(signal(pid, 0), syscall.ESRCH) {
 			return nil
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	err := syscall.Kill(pid, syscall.SIGKILL)
+	// A process group may be finishing its own teardown. A denied signal is
+	// acceptable only when disappearance was observed, never merely on EPERM.
+	if termErr != nil {
+		return termErr
+	}
+	err := signal(pid, syscall.SIGKILL)
 	if errors.Is(err, syscall.ESRCH) {
 		return nil
 	}

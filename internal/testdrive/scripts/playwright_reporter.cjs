@@ -18,7 +18,7 @@ class ValidationReporter {
         failure: (result.errors || []).map(error => error.message || String(error)).join('\n')
       }))
       return { file: test.location.file, name, project: project.name,
-        browser: project.use.browserName || 'chromium', repeat: test.repeatEachIndex,
+        browser: project.use.browserName || project.use.defaultBrowserType || 'chromium', repeat: test.repeatEachIndex,
         expectedStatus: test.expectedStatus, attempts,
         status: attempts.length ? attempts[attempts.length - 1].status : 'skipped' }
     }) : []

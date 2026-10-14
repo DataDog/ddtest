@@ -137,6 +137,18 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 	if len(stack) >= 16 {
 		return unresolvedCommand("Package script nesting exceeds 16 levels")
 	}
+	if len(frameworks) > 0 && frameworks[0] == "playwright" {
+		if inner, ok := playwrightFailureGuard(command); ok {
+			result := resolveJestSequence(root, directory, inner, stack, remaining, frameworks...)
+			if result.Reason != "" || !result.SingleJest || len(result.Tests) != 1 || len(result.Builds) > 0 {
+				return unresolvedCommand("Playwright failure guard requires a single test invocation")
+			}
+			result.Tests[0].ExitOnFailure = true
+			// Package-manager arguments would be appended to exit, not Playwright.
+			result.SingleJest = false
+			return result
+		}
+	}
 	commands, err := discoverCommands(command)
 	if err != nil {
 		return unresolvedCommand(err.Error())
@@ -301,7 +313,10 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	switch words[0] {
 	case "echo", "printf", "true", "false", "eslint", "prettier", "oxlint", "oxfmt", "mkdir", "cp":
 		return commandResolution{}
-	case "unbuild", "rollup", "webpack", "tsup", "tsc", "tsgo":
+	case "unbuild", "rollup", "webpack", "tsup", "tsc", "tsgo", "bunchee":
+		if words[0] == "bunchee" && framework != "playwright" {
+			return commandResolution{Reason: "Cannot statically resolve command: " + command, UnknownExecutable: true}
+		}
 		if (words[0] == "tsc" || words[0] == "tsgo") && slices.Contains(words[1:], "--noEmit") {
 			return commandResolution{ReviewReason: "Type checking is outside " + framework + " validation: " + command}
 		}
@@ -447,6 +462,12 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		script += " " + shellquote.Join(args...)
 	}
 	result := resolveJestSequence(root, directory, script, append(slices.Clone(stack), key), remaining, frameworks...)
+	// Browser apps also need assets copied by their build script. Keep the
+	// validated package entry point instead of replaying only its bundler.
+	if len(frameworks) > 0 && frameworks[0] == "playwright" && name == "build" && lifecycle == "" && result.Reason == "" && !result.Matched && len(result.Builds) > 0 {
+		relative, _ := filepath.Rel(root, directory)
+		return commandResolution{Builds: []BuildCommand{{Directory: filepath.ToSlash(relative), Command: command, Kind: "package-build"}}}
+	}
 	// Preserve the package manager's build entry point, including its lifecycle
 	// and orchestration, when expansion cannot represent that build alone.
 	if name == "build" && !result.Matched && orchestratedBuild(root, directory, script, manifest.Scripts, stack, remaining, frameworks...) {

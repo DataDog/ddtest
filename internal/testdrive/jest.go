@@ -270,7 +270,7 @@ func outcomeKeys(run validationRun) []string {
 	keys := []string{fmt.Sprintf("exit=%d", run.ExitCode), "result=" + run.ResultError}
 	keys = append(keys, run.SuiteErrors...)
 	for _, test := range run.Tests {
-		keys = append(keys, test.File+" › "+test.Name+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test))
+		keys = append(keys, test.File+" › "+test.Name+playwrightLabel(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test))
 	}
 	slices.Sort(keys)
 	return keys

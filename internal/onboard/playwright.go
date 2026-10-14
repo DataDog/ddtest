@@ -9,7 +9,40 @@ import (
 
 	"github.com/kballard/go-shellquote"
 	"go.yaml.in/yaml/v3"
+	"mvdan.cc/sh/v3/syntax"
 )
+
+// Recognize only a literal terminal failure guard. Arbitrary fallback commands,
+// shell state changes and successful exits still need review.
+func playwrightFailureGuard(command string) (string, bool) {
+	if len(command) > 16384 {
+		return "", false
+	}
+	file, err := syntax.NewParser().Parse(strings.NewReader(command), "")
+	if err != nil || len(file.Stmts) != 1 {
+		return "", false
+	}
+	plain := func(stmt *syntax.Stmt) bool {
+		return !stmt.Background && !stmt.Negated && !stmt.Coprocess && !stmt.Disown && len(stmt.Redirs) == 0
+	}
+	stmt := file.Stmts[0]
+	binary, ok := stmt.Cmd.(*syntax.BinaryCmd)
+	if !ok || !plain(stmt) || binary.Op != syntax.OrStmt || !plain(binary.X) || !plain(binary.Y) {
+		return "", false
+	}
+	call, ok := binary.Y.Cmd.(*syntax.CallExpr)
+	if !ok || len(call.Assigns) != 0 || len(call.Args) != 2 || call.Args[0].Lit() != "exit" || call.Args[1].Lit() != "1" {
+		return "", false
+	}
+	if _, ok := binary.X.Cmd.(*syntax.CallExpr); !ok {
+		return "", false
+	}
+	var inner strings.Builder
+	if err := syntax.NewPrinter().Print(&inner, binary.X); err != nil {
+		return "", false
+	}
+	return inner.String(), true
+}
 
 // PlaywrightValidationCommand preserves a simple package alias and its options.
 // Only a single root invocation with safe argument forwarding is accepted.
@@ -20,6 +53,9 @@ func PlaywrightValidationCommand(root, command string) (string, error) {
 			return "", err
 		}
 		if len(scope.Commands) == 1 && filepath.Clean(scope.Commands[0].Directory) == "." && len(scope.Commands[0].Prerequisites) == 0 && len(scope.Commands[0].UnvalidatedSetup) == 0 && len(scope.Commands[0].Environment) == 0 {
+			if scope.Commands[0].ExitOnFailure {
+				return "", fmt.Errorf("playwright CI uses a failure guard; use --all to preserve its exit behavior")
+			}
 			words, err := shellquote.Split(scope.Commands[0].Command)
 			if err != nil {
 				return "", err

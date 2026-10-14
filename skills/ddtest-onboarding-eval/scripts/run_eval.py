@@ -214,7 +214,7 @@ def run(args):
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("DD_", "DATADOG_")) and key not in ("NODE_OPTIONS", "NODE_PATH")}
     for key, name in (("npm_config_cache", "npm"), ("YARN_CACHE_FOLDER", "yarn"),
-                      ("pnpm_config_store_dir", "pnpm-store"), ("pnpm_config_cache_dir", "pnpm"),
+                      ("npm_config_store_dir", "pnpm-store"), ("npm_config_cache_dir", "pnpm"),
                       ("TMPDIR", "tmp")):
         directory = trial / "caches" / name
         directory.mkdir(parents=True, exist_ok=True)
