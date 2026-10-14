@@ -407,6 +407,31 @@ on these findings.
 **Investigate first.** Phase timings with `DD_TRACE_DEBUG` on Gin, both Testify
 cases and a large module, then present the options with numbers.
 
+**Outcome.** On 2026-10-14 the user closed this phase without a code change,
+on these findings.
+- **Measurements.** Every result came from Go's caches, with Mini absent from
+  `go.mod`, as in a client's module. Medians of 10 runs of
+  `ddto test -run=^$ ./...` on Linux:
+
+  | | Native | ddto | Preparation | Package query | Library query | Runtime probe and provisioning | `go env` and `testing` |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+  | Gin | 80 ms | 165 ms | 79 ms | 39 ms | 21 ms | 12 ms | 6 ms |
+  | Testify Direct | 45 ms | 118 ms | 60 ms | 22 ms | 19 ms | 12 ms | 6 ms |
+
+  Every step runs in sequence. With Mini in `go.mod`, the runtime steps drop:
+  Gin prepares in 66 ms and Testify in 49–51 ms. dd-trace-go itself, 139
+  packages, takes three package queries of 110–150 ms each.
+- **Why no change.**
+  - The library query needs the test imports that the package query returns.
+    A light query for them alone still takes 37 ms. Starting the library query
+    earlier would mean finding test imports by parsing test files, beside
+    `go list`, to save about 20 ms.
+  - Item 56, reusing the plan, would save the 60–80 ms only in repeated local
+    runs: a CI job starts without the cache. It also carries the risk of a
+    stale plan.
+  - A run that builds or tests anything takes seconds, so this fixed cost is
+    small beside it. Item 56 stays parked.
+
 ## Phase 6: test binary startup and memory
 
 **Evidence.**
@@ -441,5 +466,4 @@ measurement shows a gain under `ddto test`.
 
 | Decision | Phase |
 | --- | --- |
-| Item 56, the preparation plan cache, parked on 2026-10-12 | 5 |
 | Same-day Native and Orchestrion remeasurement | 7 |
