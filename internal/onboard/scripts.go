@@ -53,7 +53,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 			shell = defaults.Shell
 		}
 	}
-	if shell != "" && shell != "bash" && shell != "sh" {
+	if !supportedCIShell(shell) {
 		return unresolvedCommand("Unsupported CI shell: " + shell)
 	}
 	if strings.ContainsAny(directory, "$`~") || (directory != "" && !filepath.IsLocal(directory)) {
@@ -67,6 +67,9 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	}
 	if strings.TrimSpace(step.Run) == "bash <(curl -s https://codecov.io/bash)" {
 		return commandResolution{Review: true, Reason: "Legacy Codecov upload is outside identified " + framework + " entry points; the downloaded script is not inspected or validated."}
+	}
+	if result, ok := resolveCIShell(root, workflow, job, step, framework); ok {
+		return result
 	}
 	remaining := 256
 	result := resolveJestSequence(root, filepath.Join(root, directory), step.Run, nil, &remaining, framework)

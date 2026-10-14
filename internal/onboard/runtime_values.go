@@ -144,6 +144,9 @@ func runtimeValue(value string, row map[string]any) (string, error) {
 	if match := matrixReference.FindStringSubmatch(strings.TrimSpace(value)); match != nil {
 		resolved, ok := row[match[1]]
 		if !ok {
+			if row != nil {
+				return "", nil
+			}
 			return "", fmt.Errorf("unknown matrix reference %s", value)
 		}
 		return fmt.Sprint(resolved), nil

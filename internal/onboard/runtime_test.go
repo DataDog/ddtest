@@ -194,8 +194,9 @@ func TestRuntimeMatrixAndConditions(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, tc.want, actual)
 	}
-	_, err = runtimeCondition("matrix.missing != '20'", map[string]any{"node": "22"})
-	require.Error(t, err)
+	value, err := runtimeCondition("matrix.missing != '20'", map[string]any{"node": "22"})
+	require.NoError(t, err)
+	require.True(t, value)
 	_, err = runtimeMatrix(map[string]any{"node": []any{"${{ inputs.node }}"}})
 	require.Error(t, err)
 	_, err = runtimeMatrix(map[string]any{"node": make([]any, 257)})

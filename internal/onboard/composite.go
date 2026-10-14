@@ -24,9 +24,9 @@ func stepNumber(step runtimeStep, index int) int {
 	return index + 1
 }
 
-func stepCondition(step runtimeStep, row map[string]any) (bool, error) {
+func stepCondition(step runtimeStep, row map[string]any, environments ...map[string]string) (bool, error) {
 	for _, condition := range append(slices.Clone(step.Parents), step.If) {
-		active, err := runtimeCondition(condition, row)
+		active, err := runtimeCondition(condition, row, environments...)
 		if err != nil || !active {
 			return active, err
 		}

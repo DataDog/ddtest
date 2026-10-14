@@ -77,3 +77,21 @@ func TestMochaCIInventorySurvivesChecksAndNewExecutions(t *testing.T) {
 	require.NoError(t, finishValidation(&bytes.Buffer{}, root, result))
 	require.Equal(t, "passed", readValidationReport(t, root).CIPreservation.Status)
 }
+
+func TestCIPreservationAllowsAddedMetadataButNotChangedCoverage(t *testing.T) {
+	original := `ci.yml / test / {"name":"Node 18","node":"18.14","os":"linux"}`
+	for _, tc := range []struct {
+		row  string
+		want bool
+	}{
+		{`ci.yml / test / {"name":"Node 18","node":"18.14","os":"linux","dd-instrument":true}`, true},
+		{`ci.yml / test / {"name":"Node 18","node":"22","os":"linux","dd-instrument":true}`, false},
+		{`ci.yml / test / {"name":"Node 18","node":"18.14","os":"windows"}`, false},
+		{`ci.yml / other / {"name":"Node 18","node":"18.14","os":"linux"}`, false},
+		{`ci.yml / test / {"name":"Node 18","node":"18.14"}`, false},
+		{`ci.yml / test / {"name":"Node 18","node":{},"os":"linux"}`, false},
+	} {
+		require.Equal(t, tc.want, preservedMatrixRow(original, []string{tc.row}), tc.row)
+	}
+	require.False(t, preservedMatrixRow(original, nil))
+}

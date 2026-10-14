@@ -46,14 +46,23 @@ func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 }
 
 func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) string {
-	known := map[string]string{"DD_TRACE_PACKAGE": actionPreload, "DD_TRACE_ESM_IMPORT": "\x00DD_ACTION_IMPORT\x00"}
+	known := map[string]string{"NODE_OPTIONS": "", "DD_TRACE_PACKAGE": actionPreload, "DD_TRACE_ESM_IMPORT": "\x00DD_ACTION_IMPORT\x00"}
 	var options string
 	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		if value, ok := env["NODE_OPTIONS"]; ok {
 			options = value
 		}
-		for key := range env {
+		for key, value := range env {
+			if key == "NODE_OPTIONS" {
+				if !strings.Contains(value, "${{") && !strings.ContainsRune(value, 0) {
+					known[key] = value
+				}
+				continue
+			}
 			delete(known, key)
+			if key != "DD_TRACE_PACKAGE" && key != "DD_TRACE_ESM_IMPORT" && !strings.Contains(value, "${{") && !strings.ContainsRune(value, 0) {
+				known[key] = value
+			}
 		}
 	}
 	options, err := bootstrapOptions(options, row, known)
