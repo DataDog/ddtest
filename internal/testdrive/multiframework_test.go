@@ -102,7 +102,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			require.Contains(t, preview.String(), displayName(name))
 			_, err = os.Stat(filepath.Join(root, ".testoptimization"))
 			require.True(t, os.IsNotExist(err), "preview must be read-only")
-			if name == "jest" || name == "vitest" || name == "playwright" {
+			if name == "mocha" || name == "jest" || name == "vitest" || name == "playwright" {
 				return
 			} // Browser wrapper has its own real-run test.
 			run.nodeVersion = func() string { return "v20.0.0" }

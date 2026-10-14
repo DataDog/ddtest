@@ -42,7 +42,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if strings.TrimSpace(step.Run) == "" {
 		return commandResolution{}
 	}
-	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "playwright") {
+	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "playwright" && framework != "mocha") {
 		return commandResolution{Matched: looksLikeTestJob(root, step.Run, language, framework, 0)}
 	}
 	directory := stepDirectory(workflow, job, step)
@@ -277,6 +277,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		} else {
 			words = words[2:]
 		}
+		if framework == "mocha" && len(words) > 0 && words[0] == "--no-install" {
+			words = words[1:]
+		}
 		if len(words) > 0 && words[0] == "--" {
 			words = words[1:]
 		}
@@ -296,6 +299,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		relative, _ := filepath.Rel(canonicalRoot, canonicalDirectory)
 		return commandResolution{Matched: true, SingleJest: true, Evidence: command,
 			Tests: []TestCommand{{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append(assignments, append([]string{framework}, words[1:]...)...)...)}}}
+	}
+	if framework == "mocha" && (filepath.Base(words[0]) == "c8" || filepath.Base(words[0]) == "nyc") {
+		return resolveMochaCoverage(root, directory, words, assignments, stack, remaining)
 	}
 	if framework == "vitest" && IsDDTestCommand(words[0]) {
 		if _, err := ParseVitestRunnerCommand(words[1:]); err != nil {
@@ -473,6 +479,10 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	if name == "build" && !result.Matched && orchestratedBuild(root, directory, script, manifest.Scripts, stack, remaining, frameworks...) {
 		relative, _ := filepath.Rel(root, directory)
 		return commandResolution{Builds: []BuildCommand{{Directory: filepath.ToSlash(relative), Command: command, Kind: "package-build"}}}
+	}
+	if len(frameworks) > 0 && frameworks[0] == "mocha" && lifecycle == "" && result.Reason == "" && result.SingleJest && len(result.Tests) == 1 && len(result.Builds) == 0 {
+		// Preserve package-manager behavior and existing coverage/reporters.
+		result.Tests[0].Command = command
 	}
 	if lifecycle != "" {
 		result.Reason = lifecycle

@@ -29,7 +29,7 @@ func (e configurationExecutor) CombinedOutput(ctx context.Context, name string, 
 // Commands still use the existing process executor. The temporary copy gives
 // every variant independent manifests, dependencies, test files and build output.
 func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writer, item *configurationResult) (result validationResult, runErr error) {
-	if len(item.Prerequisites) == 0 && !onboard.IsDDTestCommand(t.command) && t.framework.Name() != "playwright" || t.checkOnly {
+	if len(item.Prerequisites) == 0 && !onboard.IsDDTestCommand(t.command) && t.framework.Name() != "playwright" && t.framework.Name() != "mocha" || t.checkOnly {
 		if err := t.runBuildPrerequisites(ctx, output, item); err != nil {
 			return result, err
 		}
@@ -82,7 +82,10 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	}
 	defer func() { runErr = errors.Join(runErr, os.Chdir(cwd)) }()
 	if !t.vitestRunner && filepath.IsAbs(t.command) {
-		t.command = filepath.Join(workspace, "node_modules", ".bin", filepath.Base(t.command))
+		relative, err := filepath.Rel(original, t.command)
+		if err == nil && filepath.IsLocal(relative) {
+			t.command = filepath.Join(workspace, relative)
+		}
 	}
 	t.repositoryRoot = workspace
 	t.isolated = true

@@ -93,8 +93,8 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	if all && strings.TrimSpace(settings.GetCommand()) != "" {
 		return nil, fmt.Errorf("--all and --command are mutually exclusive")
 	}
-	if all && runner.Name() != "jest" && runner.Name() != "vitest" && runner.Name() != "playwright" {
-		return nil, fmt.Errorf("--all currently validates Jest, Vitest and Playwright only")
+	if all && runner.Name() != "jest" && runner.Name() != "vitest" && runner.Name() != "playwright" && runner.Name() != "mocha" {
+		return nil, fmt.Errorf("--all currently validates Jest, Vitest, Playwright and Mocha only")
 	}
 	if runner.Name() == "vitest" {
 		repositoryRoot, err = filepath.EvalSymlinks(repositoryRoot)
@@ -144,6 +144,19 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 		}
 		command, args = words[0], words[1:]
 	}
+	if runner.Name() == "mocha" && !all {
+		selected, err := onboard.MochaValidationCommand(repositoryRoot, settings.GetCommand())
+		if err != nil {
+			return nil, err
+		}
+		if selected != "" {
+			words, err := shellquote.Split(selected)
+			if err != nil {
+				return nil, err
+			}
+			command, args = words[0], words[1:]
+		}
+	}
 	if runner.Name() == "playwright" && !all {
 		selected, err := onboard.PlaywrightValidationCommand(repositoryRoot, settings.GetCommand())
 		if err != nil {
@@ -182,6 +195,9 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	drive.allConfigurations = all
 	drive.checkOnly = len(checkOnly) > 0 && checkOnly[0]
 	drive.preflight = drive.checkJestPreflight
+	if runner.Name() == "mocha" {
+		drive.preflight = drive.checkMochaPreflight
+	}
 	if runner.Name() == "vitest" {
 		drive.preflight = drive.checkVitestPreflight
 	}
@@ -234,12 +250,12 @@ func (t *Testdrive) Preview(output io.Writer) {
 		}
 		_, _ = fmt.Fprintf(output, "  - install %s: %s\n", t.tracerLabel, shellquote.Join(install...))
 	}
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" {
+	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" {
 		_, _ = fmt.Fprintln(output, "  - inspect the selected framework configuration and tracer compatibility before running tests")
 	}
 
 	_, _ = fmt.Fprintf(output, "  - run: %s\n", shellquote.Join(append([]string{command}, args...)...))
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" {
+	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" {
 		_, _ = fmt.Fprintln(output, "  - check GitHub Actions Node runtimes against the workflow-selected tracer using public action and npm metadata")
 		_, _ = fmt.Fprintln(output, "  - compare native JSON results without instrumentation and with reporting-only instrumentation")
 		_, _ = fmt.Fprintln(output, "  - repeat the pair if outcomes differ; timing and console order are ignored")
@@ -297,11 +313,14 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 	}
 	var result validationResult
 	var runErr error
-	if (t.framework.Name() == "vitest" && onboard.IsDDTestCommand(t.command) || t.framework.Name() == "playwright") && !t.checkOnly {
+	if (t.framework.Name() == "vitest" && onboard.IsDDTestCommand(t.command) || t.framework.Name() == "playwright" || t.framework.Name() == "mocha") && !t.checkOnly {
 		child := *t
 		var models []reportModel
 		child.reportModels = &models
 		child.preflight = child.checkVitestPreflight
+		if t.framework.Name() == "mocha" {
+			child.preflight = child.checkMochaPreflight
+		}
 		if t.framework.Name() == "playwright" {
 			child.preflight = child.checkPlaywrightPreflight
 		}
@@ -317,7 +336,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 	} else {
 		result, runErr = t.run(ctx, output)
 	}
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" {
+	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" {
 		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
 		if err != nil {
 			runErr = errors.Join(runErr, err)
@@ -356,7 +375,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		}
 	}()
 
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" {
+	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" {
 		check := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
 		result.CIRuntime = &check
 		if t.preflight != nil {
@@ -370,7 +389,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 			return result, nil
 		}
 	} else if t.checkOnly {
-		return result, fmt.Errorf("configuration preflight currently supports Jest, Vitest and Playwright only")
+		return result, fmt.Errorf("configuration preflight currently supports Jest, Vitest, Playwright and Mocha only")
 	}
 
 	_, _ = fmt.Fprintf(output, "\nPreparing %s in %s...\n", t.tracerLabel, session.Directory())
@@ -398,7 +417,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		result.Tracer = t.installedTracerLabel(t.projectTracer)
 		result.TracerSource = "project installation (reused; fallback selector ignored)"
 	}
-	if t.framework.Name() == "vitest" || t.framework.Name() == "playwright" {
+	if t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" {
 		if err := verifyInstalledSelection(installation.Path, &result); err != nil {
 			return result, err
 		}

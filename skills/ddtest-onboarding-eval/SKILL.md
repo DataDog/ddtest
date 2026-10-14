@@ -1,11 +1,11 @@
 ---
 name: ddtest-onboarding-eval
-description: Evaluate ddtest onboarding on fresh open-source Jest, Vitest or Playwright repositories using Codex or Claude CLI and a minimal customer prompt. Use for developer experiments and comparisons, not for onboarding a customer repository directly.
+description: Evaluate ddtest onboarding on fresh open-source Jest, Vitest, Playwright or Mocha repositories using Codex or Claude CLI and a minimal customer prompt. Use for developer experiments and comparisons, not for onboarding a customer repository directly.
 ---
 
 # ddtest onboarding evaluation
 
-Measure what an uncoached coding agent accomplishes with a ddtest binary. Cover Jest, Vitest and Playwright; grade unsupported versions or configurations as unvalidated. This skill belongs to the
+Measure what an uncoached coding agent accomplishes with a ddtest binary. Cover Jest, Vitest, Playwright and Mocha; grade unsupported versions or configurations as unvalidated. This skill belongs to the
 **evaluator**, not the agent being tested. It is developer tooling in this repo;
 it is not embedded in the ddtest binary or installed in the target repository.
 
@@ -19,7 +19,7 @@ tested agent's global skill directories or target checkout.
 
 ## Prepare and run
 
-1. Select a public repository that actually runs Jest, Vitest or Playwright. Read its CI, package
+1. Select a public repository that actually runs Jest, Vitest, Playwright or Mocha. Read its CI, package
    scripts, lockfile, runtime requirements, and ordinary repository instructions.
    Choose a commit and dependency installation command. Record the intended test
    command and relevant Node, package-manager, and framework versions outside the
@@ -54,7 +54,7 @@ tested agent's global skill directories or target checkout.
    > Use ddtest in /temporary/trial/bin and onboard this repository to test-optimization.
 
    For a requested framework-only trial in a mixed repository, pass
-   `--framework playwright` (or `jest`/`vitest`). This adds only
+   `--framework playwright` (or `jest`/`vitest`/`mocha`). This adds only
    “for playwright only” to the prompt and records the scope in `run.json`.
 
    No skill, grading rubric, feature list, runbook, previous results, extra system

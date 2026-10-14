@@ -221,7 +221,7 @@ func TestRunKeepsValidationReportWhenAnalysisOrReportFails(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			drive := preparedTestdrive(t)
-			drive.framework = framework.NewMocha(platform.NewJavaScript())
+			drive.framework = framework.NewCucumber(platform.NewJavaScript())
 			installer := &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
 			drive.platform = installer
 			drive.executor = &fakeTestdriveExecutor{output: []byte("saved output")}

@@ -12,6 +12,7 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
+	usesNYC          bool
 	Directory        string            `json:"directory"`
 	Command          string            `json:"command"`
 	ExitOnFailure    bool              `json:"exit_on_failure,omitempty"`

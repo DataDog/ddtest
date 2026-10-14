@@ -8,6 +8,9 @@ package testdrive
 import (
 	"os"
 	"path/filepath"
+
+	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/kballard/go-shellquote"
 )
 
 // executionCommand adds project-installed coverage instrumentation for Mocha.
@@ -18,6 +21,9 @@ func (t *Testdrive) executionCommand() (string, []string) {
 		return command, args
 	}
 	if base := filepath.Base(command); base == "nyc" || base == "nyc.js" {
+		return command, args
+	}
+	if onboard.MochaUsesNYC(t.repositoryRoot, shellquote.Join(append([]string{command}, args...)...)) {
 		return command, args
 	}
 	nyc := filepath.Join("node_modules", ".bin", "nyc")

@@ -311,7 +311,7 @@ func TestRunReportsProjectTracer(t *testing.T) {
 	}
 	installer := &fakeTracer{preloadPath: "/project/node_modules/dd-trace/ci/init.js", project: true}
 	drive.platform = installer
-	drive.framework = &framework.Mocha{}
+	drive.framework = &framework.Cucumber{}
 	executor := &fakeTestdriveExecutor{}
 	drive.executor = executor
 	drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
@@ -319,7 +319,7 @@ func TestRunReportsProjectTracer(t *testing.T) {
 	}
 	var output bytes.Buffer
 	if err := drive.Run(t.Context(), &output); err == nil {
-		t.Fatal("Mocha remains unvalidated")
+		t.Fatal("Cucumber remains unvalidated")
 	}
 	if installer.options.Version != "git:ignored-for-existing-tracer" || installer.options.Command != drive.command {
 		t.Fatal(installer.options)
@@ -422,7 +422,7 @@ func TestPreviewChoosesTracerBeforeConfirmation(t *testing.T) {
 				if !strings.Contains(preview, "reuse installed dd-trace") || strings.Contains(preview, "npm install") {
 					t.Fatal(preview)
 				}
-				drive.framework = &framework.Mocha{}
+				drive.framework = &framework.Cucumber{}
 				drive.platform = &fakeTracer{err: errors.New("must not install")}
 				drive.executor = &fakeTestdriveExecutor{}
 				drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
