@@ -352,6 +352,42 @@ that pooled its connection earlier did so under the pool's mutex, which the
 close then takes, ordering that read before the tests. The next request
 reconnects, which costs a TLS handshake for Agentless delivery.
 
+That close covers plain HTTP, as to a local Agent: closing a TCP connection
+reads no clock. A TLS dial that finishes late still reads it, in
+`tls.Conn.Close` and when it sets up an HTTP/2 connection, and net/http offers
+no way to wait for that dial. `createNewHTTPClient` in
+[`civisibility/utils/net/http.go`](civisibility/utils/net/http.go) therefore
+sends requests whose connection uses TLS, to an https destination or through an
+https proxy, through a transport with `MaxConnsPerHost: 1`. Concurrent requests
+share one HTTP/2 connection instead of each dialing its own, so no extra dial
+exists: five concurrent requests made one dial instead of five, in the same
+time. From Go 1.26, `HTTP2Config.StrictMaxConcurrentRequests` also makes a
+request that finds the connection's streams in use wait for one instead of
+dialing; Go 1.25 has no such setting, so a server that limits concurrent
+streams below the startup requests can still cause an extra dial there. Plain
+HTTP keeps concurrent connections, because HTTP/1.1 would serialize the
+requests. Two more cases remain. An HTTPS endpoint that answers only HTTP/1.1
+serializes its requests. With plain HTTP, a request that starts after
+the close, such as one from the repository upload that ordinary mode runs in
+the background, lets a late dial pool its connection again; in ordinary mode
+those background requests read the clock during tests anyway, which deferred
+mode avoids.
+
+One case remains open by decision. net/http detaches a dial from its request
+(`context.WithoutCancel`), so a startup request that gives up while its
+connection is still being established leaves that dial running; telemetry gives
+up after 5 seconds, while a TLS handshake may take 10. `CloseConnections`
+cancels the dial, but cannot wait for it: a dial that has just finished its
+handshake still sets up HTTP/2 or closes the connection afterwards, reading
+the clock while the first test may change `time.Local`. It happens only when
+a startup request expires before its connection is established, most likely on
+a slow or failing network, although a long pause of the process can cause it
+too; the race detector reports it only in a test that changes `time.Local`
+under `-race`. Aborting such dials ourselves would
+mean doing the TLS handshake in `DialTLSContext` and would not cover the
+handshake that follows a proxy's `CONNECT`; the user chose to document the case
+instead (2026-10-14).
+
 Checks: `TestStartupTelemetrySendsBeforeTests` blocks a real loopback startup
 response and checks that `StartApp` waits for it, initial configuration, retry,
 concurrent close and failed initialization in both modes.
@@ -370,8 +406,14 @@ handshake for successful and failed responses.
 `internal/cidelivery/TestCloseConnectionsKeepsLateDialsOutOfTheIdlePool` holds a
 dial whose request took another request's connection, and checks that closing
 the CI connections cancels it, or closes its connection when it had already
-connected. `TestMiniStartupOverlapsSettingsAndTelemetry` checks that the
-connections close before the first test.
+connected; it follows that connection by its address.
+`TestCITransportDialsOnceForConcurrentHTTPSRequests` sends concurrent requests
+to an HTTP/2 server and expects one dial;
+`TestCITransportWaitsForHTTP2Streams`, from Go 1.26, does it with a one-stream
+server; `TestCITransportRoutesTLSConnections` checks which requests use the
+limited transport.
+`TestMiniStartupOverlapsSettingsAndTelemetry` checks that the connections close
+before the first test.
 Run these with `-race`, plus the clock integration and HTTP telemetry parity.
 When synchronizing upstream, check response ownership and startup scheduling
 alongside the telemetry metrics; checking wire fields alone misses these races.

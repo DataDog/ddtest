@@ -165,9 +165,8 @@ func CloseIdleConnections() {
 
 // createNewHTTPClient creates a new HTTP client with custom transport settings.
 func createNewHTTPClient() *http.Client {
-	return &http.Client{
-		Timeout: 45 * time.Second,
-		Transport: &http.Transport{
+	newTransport := func() *http.Transport {
+		return &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				Timeout:   30 * time.Second,
@@ -178,8 +177,55 @@ func createNewHTTPClient() *http.Client {
 			IdleConnTimeout:       90 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
-		},
+		}
 	}
+	secure := newTransport()
+	secure.MaxConnsPerHost = 1
+	strictHTTP2Streams(secure)
+	return &http.Client{
+		Timeout:   45 * time.Second,
+		Transport: &ciTransport{plain: newTransport(), secure: secure},
+	}
+}
+
+// ciTransport sends HTTPS requests through a transport with one connection per
+// host. Concurrent requests without it each dial their own connection, and a
+// request that gets another request's connection first leaves its dial running.
+// Such a TLS dial finishes in the transport's own goroutine, which reads
+// time.Local while it sets up HTTP/2 or closes the unneeded connection, perhaps
+// while a test changes it. HTTP/2 multiplexes requests over the one connection.
+// HTTP/1.1 would serialize them, so plain HTTP, as to a local Agent, keeps its
+// concurrent connections; closing one does not read the clock.
+type ciTransport struct {
+	plain, secure *http.Transport
+}
+
+func (t *ciTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.usesTLS(req) {
+		return t.secure.RoundTrip(req)
+	}
+	return t.plain.RoundTrip(req)
+}
+
+// usesTLS reports a request whose connection uses TLS: an https destination,
+// or any destination through an https proxy. A proxy error is left to the
+// plain transport, which reports it.
+func (t *ciTransport) usesTLS(req *http.Request) bool {
+	if req.URL != nil && req.URL.Scheme == "https" {
+		return true
+	}
+	if t.plain.Proxy == nil {
+		return false
+	}
+	proxy, err := t.plain.Proxy(req)
+	return err == nil && proxy != nil && proxy.Scheme == "https"
+}
+
+// CloseIdleConnections closes both transports' idle connections and cancels
+// dials that no request waits for; http.Client forwards it here.
+func (t *ciTransport) CloseIdleConnections() {
+	t.plain.CloseIdleConnections()
+	t.secure.CloseIdleConnections()
 }
 
 // NewRequestHandler creates a new RequestHandler with a default HTTP client.

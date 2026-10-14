@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "bc9dc474a1cc0c6c59aa68f7ad9856609888744b5ede7d4a18102f0240c94f02",
+      "sha256": "44c8111674d56aaeac32b9b21680461663abad6f65f1c577530e3e13d4636751",
       "role": "local"
     },
     {
@@ -1192,7 +1192,7 @@
     },
     {
       "path": "civisibility/utils/net/http.go",
-      "sha256": "1ea860310712756cd915e55cc617b98ade731f3a929ab1470f9d24bafcd1af61",
+      "sha256": "212a2c32f1d2b6f04ffa1597e0e94ef3d18ccefa9e51f114c78b8f10c1bd2b32",
       "role": "adapted",
       "source_path": "internal/civisibility/utils/net/http.go",
       "source_sha256": "6a0ad6c1e3935019ce88e4d6931a091c562c3e9f96cc2e21474b716ac8cf8d09"
@@ -2278,6 +2278,26 @@
     {
       "path": "civisibility/integrations/gotesting/coverage/memory_coverage_test.go",
       "sha256": "600ed9932e8b4956a1c6569a11780fb56c17c74e76a51990fbfef966bfbf4bb4",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/utils/net/ci_transport_test.go",
+      "sha256": "2dad842abc7aa1a73272ca5dab86b3445f7703d4510378e135962f2d09b8f105",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/utils/net/ci_transport_go126_test.go",
+      "sha256": "ef8a95394f85944d713f9b7bd11e8dc3556a777c6f9af716ca262d6e49748309",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/utils/net/http_strict_go125.go",
+      "sha256": "2e8012460d2ce0fcd293373195f10d9d8f88ac31b0c5628ed67c2cf9ca8eb351",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/utils/net/http_strict_go126.go",
+      "sha256": "fe8d9db0ab669eb508ccd8ee02bc19b2ebd399a273e7379243142b9f1b42cee7",
       "role": "local"
     }
   ],

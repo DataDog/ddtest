@@ -47,6 +47,7 @@ func TestCloseConnectionsKeepsLateDialsOutOfTheIdlePool(t *testing.T) {
 			var dials sync.Mutex
 			dialCount := 0
 			var dialer net.Dialer
+			var lateAddress string // The late connection's client address.
 			transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 				dials.Lock()
 				dialCount++
@@ -59,6 +60,9 @@ func TestCloseConnectionsKeepsLateDialsOutOfTheIdlePool(t *testing.T) {
 				var err error
 				if connected {
 					conn, err = dialer.DialContext(ctx, network, address)
+					if err == nil {
+						lateAddress = conn.LocalAddr().String()
+					}
 					close(secondDialing)
 					<-releaseDial
 				} else {
@@ -114,23 +118,23 @@ func TestCloseConnectionsKeepsLateDialsOutOfTheIdlePool(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// The late connection must close instead of waiting in the pool.
+			// The late connection itself must close instead of waiting in the
+			// pool; the first connection closes as an idle one either way.
 			deadline := time.Now().Add(10 * time.Second)
 			for {
 				mu.Lock()
-				closed := 0
-				for _, s := range states {
-					if s[len(s)-1] == http.StateClosed {
-						closed++
+				var late []http.ConnState
+				for conn, s := range states {
+					if conn.RemoteAddr().String() == lateAddress {
+						late = s
 					}
 				}
-				count := len(states)
 				mu.Unlock()
-				if count == 2 && closed >= 1 {
+				if len(late) != 0 && late[len(late)-1] == http.StateClosed {
 					return
 				}
 				if time.Now().After(deadline) {
-					t.Fatalf("connections=%d closed=%d: the late connection stayed open in the idle pool", count, closed)
+					t.Fatalf("the late connection stayed open in the idle pool: states %v", late)
 				}
 				time.Sleep(10 * time.Millisecond)
 			}

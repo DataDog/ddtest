@@ -137,7 +137,10 @@ adding headers, query strings or bodies.
 
 `civisibility: start-up connections closed before the first test` marks the
 end of startup: the startup requests have returned, and Mini has closed the
-CI clients' idle connections so that no dial they started runs into a test.
+CI clients' idle connections and canceled the dials that no request waits for.
+The [adaptation record](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md#telemetry-startup-and-http-completion)
+lists the cases where such a dial can still finish after the first test
+starts.
 
 A session closes before `civisibility: exiting`, so its flush can explain a gap
 between `PASS` and that line. Shutdown then closes the tracer once; its `close`
