@@ -104,7 +104,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			require.True(t, os.IsNotExist(err), "preview must be read-only")
 			if name == "mocha" || name == "jest" || name == "vitest" || name == "playwright" {
 				return
-			} // Browser wrapper has its own real-run test.
+			} // Paired validation has separate real-run tests.
 			run.nodeVersion = func() string { return "v20.0.0" }
 			installer := &fakeTracer{preloadPath: filepath.Join(root, "isolated")}
 			run.platform = installer
@@ -238,11 +238,11 @@ func TestCypressTestdrivePreservesCommand(t *testing.T) {
 			run.nodeVersion = func() string { return "v20.20.0" }
 			executor := &fakeTestdriveExecutor{}
 			run.executor = executor
-			run.startIntake = func(string) (localIntake, error) {
+			run.startIntake = func(string, intake.Scenario) (localIntake, error) {
 				return &fakeIntake{findings: intake.Facts{TestEventCount: 1, TestCount: 1}}, nil
 			}
 			var output bytes.Buffer
-			require.NoError(t, run.Run(t.Context(), &output))
+			require.ErrorContains(t, run.Run(t.Context(), &output), "validation is incomplete")
 			require.Equal(t, command[0], executor.command)
 			require.Equal(t, command[1:], executor.args)
 			require.Contains(t, executor.env["NODE_OPTIONS"], run.projectTracer)

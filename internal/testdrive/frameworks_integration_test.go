@@ -180,6 +180,21 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 				require.True(t, os.IsNotExist(err), "project lockfile must not be created")
 			}
 			if fixture.name == "cypress" {
+				// Cleanup removes the fallback install; use an independent external
+				// install to verify reuse without project dependencies or wrappers.
+				external := t.TempDir()
+				integrationCommand(t, ctx, external, env, "npm", "install", "--no-save", "--package-lock=false", "--no-audit", "--no-fund", "dd-trace")
+				preload := filepath.Join(external, "node_modules", "dd-trace", "ci", "init.js")
+				require.NoError(t, os.Remove(filepath.Join(root, "original-hook.txt")))
+				command := exec.CommandContext(ctx, binary, "testdrive", "--yes")
+				command.Dir = root
+				command.Env = append(append(os.Environ(), env...), "DD_TRACE_PACKAGE="+preload)
+				reused, err := command.CombinedOutput()
+				require.Error(t, err, string(reused)) // Cypress compatibility remains unvalidated.
+				require.Contains(t, string(reused), "reuse installed dd-trace")
+				require.Contains(t, string(reused), "Test events received.")
+				require.Contains(t, string(reused), "unvalidated")
+				require.NotContains(t, string(reused), "Installing dd-trace")
 				hook, err := os.ReadFile(filepath.Join(root, "original-hook.txt"))
 				require.NoError(t, err)
 				require.Equal(t, "ran", string(hook))
