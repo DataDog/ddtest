@@ -80,11 +80,12 @@ func applyScopeVerdict(result *validationResult) {
 // paired comparison and feature controls, and shares only the final report pair.
 func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) error {
 	scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
-	if err != nil {
-		return err
+	if err == nil && len(scope.Commands) == 0 {
+		err = fmt.Errorf("no explicit %s CI invocations discovered; review discovery and use --command for local validation", t.framework.Name())
 	}
-	if len(scope.Commands) == 0 {
-		return fmt.Errorf("no explicit %s CI invocations discovered; review discovery and use --command for local validation", t.framework.Name())
+	if err != nil {
+		result := validationResult{Session: planSession().ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, Scope: &scope, Error: err.Error(), Compatibility: verdict{Status: "not exercised", Reason: "Discovery failed; no test commands were executed."}}
+		return errors.Join(err, finishValidation(output, t.repositoryRoot, result))
 	}
 	result := validationResult{Session: planSession().ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, Scope: &scope,
 		Compatibility: verdict{Status: "compatible", Reason: "Every discovered configuration passed its own paired comparison; configurations were not compared against each other."}, Cleanup: &verdict{Status: "passed", Reason: "Temporary sessions removed for all configurations."}}

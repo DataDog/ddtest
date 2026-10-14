@@ -260,6 +260,12 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 				continue
 			}
 		}
+		if len(frameworks) > 0 && frameworks[0] == "mocha" && mochaInstrumentationDisabled(workflow, job, step) {
+			finding.Status, finding.Code = "excluded", "excluded_runtime"
+			finding.Reason = "Mocha tests still run, but DD_CIVISIBILITY_ENABLED=false explicitly excludes this entry from instrumentation. This runtime was not validated with the tracer."
+			findings = append(findings, finding)
+			continue
+		}
 		if action == "" {
 			finding.Status = "incompatible"
 			finding.Code = "missing_instrumentation"
@@ -375,4 +381,16 @@ func fetchRuntimeMetadata(ctx context.Context, client *http.Client, address stri
 		return nil, fmt.Errorf("CI runtime metadata exceeds 1 MiB")
 	}
 	return data, nil
+}
+
+// An explicit legacy test step can precede the conditional Datadog action.
+// Honor effective literal overrides without inferring intent from a missing action.
+func mochaInstrumentationDisabled(workflow ciWorkflow, job runtimeJob, step runtimeStep) bool {
+	value := ""
+	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		if current, ok := env["DD_CIVISIBILITY_ENABLED"]; ok {
+			value = current
+		}
+	}
+	return value == "false"
 }

@@ -7,7 +7,9 @@ package onboard
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -49,6 +51,9 @@ func resolveMochaCoverage(root, directory string, words, assignments, stack []st
 	if result.Reason != "" || !result.SingleJest || len(result.Tests) != 1 || len(result.Builds) > 0 {
 		return unresolvedCommand("Coverage wrapper needs one statically resolved Mocha invocation: " + result.Reason)
 	}
+	if probe := result.Tests[0].mochaProbeCommand; probe != "" {
+		result.Tests[0].mochaProbeCommand = shellquote.Join(append(slices.Clone(assignments), words[:i]...)...) + " " + probe
+	}
 	result.Tests[0].usesNYC = result.Tests[0].usesNYC || filepath.Base(words[0]) == "nyc"
 	result.Tests[0].Command = shellquote.Join(append(slices.Clone(assignments), words...)...)
 	return result
@@ -86,4 +91,46 @@ func MochaUsesNYC(root, command string) bool {
 	remaining := 256
 	result := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
 	return result.Reason == "" && len(result.Tests) == 1 && result.Tests[0].usesNYC
+}
+
+// This is a discovery hint, not a JavaScript interpreter or proof of execution.
+// The native observer must subsequently see a complete Mocha run. Never execute
+// a script during discovery, and never replace its programmatic runner with CLI.
+var mochaImport = regexp.MustCompile(`(?m)(?:^|[;\n])\s*(?:(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*require\(\s*['"]mocha['"]\s*\)|import\s+[^;\n]+\s+from\s*['"]mocha['"])`)
+
+func resolveMochaNode(root, directory string, words, assignments []string) commandResolution {
+	if len(words) < 2 || !filepath.IsLocal(words[1]) || !slices.Contains([]string{".js", ".cjs", ".mjs"}, filepath.Ext(words[1])) {
+		return unresolvedCommand("Mocha Node entry point requires a literal repository script: " + shellquote.Join(words...))
+	}
+	path, err := filepath.EvalSymlinks(filepath.Join(directory, words[1]))
+	canonicalRoot, _ := filepath.EvalSymlinks(root)
+	relative, relErr := filepath.Rel(canonicalRoot, path)
+	if err != nil || relErr != nil || !filepath.IsLocal(relative) {
+		return unresolvedCommand("Cannot resolve repository Node script: " + words[1])
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return unresolvedCommand("Cannot inspect repository Node script: " + words[1])
+	}
+	source, err := os.ReadFile(path)
+	if err != nil {
+		return unresolvedCommand(err.Error())
+	}
+	command := shellquote.Join(append(slices.Clone(assignments), words...)...)
+	if !mochaImport.Match(source) {
+		return commandResolution{MochaAuxiliary: true}
+	}
+	directoryRelative, _ := filepath.Rel(root, directory)
+	return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{{Directory: filepath.ToSlash(directoryRelative), Command: command}}}
+}
+
+// MochaProbeCommand omits companion lint/assertion checks only for synthetic
+// probes. The paired real-suite runs always execute the entire original alias.
+func MochaProbeCommand(root, command string) string {
+	remaining := 256
+	result := resolveJestSequence(root, root, command, nil, &remaining, "mocha")
+	if result.Reason == "" && len(result.Tests) == 1 && result.Tests[0].mochaProbeCommand != "" {
+		return result.Tests[0].mochaProbeCommand
+	}
+	return command
 }

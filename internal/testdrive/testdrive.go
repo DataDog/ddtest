@@ -42,6 +42,7 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
+	preparationError  error
 	isolated          bool
 	vitestRunner      bool
 	playwrightGuard   bool
@@ -144,11 +145,10 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 		}
 		command, args = words[0], words[1:]
 	}
+	var preparationError error
 	if runner.Name() == "mocha" && !all {
 		selected, err := onboard.MochaValidationCommand(repositoryRoot, settings.GetCommand())
-		if err != nil {
-			return nil, err
-		}
+		preparationError = err
 		if selected != "" {
 			words, err := shellquote.Split(selected)
 			if err != nil {
@@ -192,6 +192,7 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 			return intake.StartScenario(directory, scenario)
 		},
 		nodeVersion: currentNodeVersion}
+	drive.preparationError = preparationError
 	drive.allConfigurations = all
 	drive.checkOnly = len(checkOnly) > 0 && checkOnly[0]
 	drive.preflight = drive.checkJestPreflight
@@ -217,6 +218,10 @@ func displayName(name string) string {
 
 // Preview describes the filesystem and process changes that Run will make.
 func (t *Testdrive) Preview(output io.Writer) {
+	if t.preparationError != nil {
+		_, _ = fmt.Fprintf(output, "Discovery failed: %s\nWith --yes, save an INCOMPLETE JSON report; no tests will execute.\n", t.preparationError)
+		return
+	}
 	if t.allConfigurations {
 		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
 		if err != nil {
@@ -308,6 +313,10 @@ func (t *Testdrive) Preview(output io.Writer) {
 
 // Run prepares the tracer and executes the detected test suite.
 func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
+	if t.preparationError != nil {
+		result := validationResult{Session: planSession().ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, Error: t.preparationError.Error(), Compatibility: verdict{Status: "not exercised", Reason: "Command resolution failed; no tests were executed."}}
+		return errors.Join(t.preparationError, finishValidation(output, t.repositoryRoot, result))
+	}
 	if t.allConfigurations {
 		return t.runAllConfigurations(ctx, output)
 	}
@@ -329,7 +338,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 			result.Preflight.Command = shellquote.Join(append([]string{t.command}, t.args...)...)
 		}
 		if len(models) > 0 {
-			err := writeConfigurationHTML(t.repositoryRoot, models)
+			err := writeConfigurationHTML(t.repositoryRoot, models[len(models)-1:])
 			runErr = errors.Join(runErr, err)
 			result.HTMLReportCurrent = err == nil
 		}

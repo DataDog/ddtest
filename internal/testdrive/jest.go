@@ -272,6 +272,9 @@ func outcomeKeys(run validationRun) []string {
 	for _, test := range run.Tests {
 		keys = append(keys, test.File+" › "+test.Name+playwrightLabel(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test))
 	}
+	for i := range keys {
+		keys[i] = normalizeOwnedTemporaryPath(run, keys[i])
+	}
 	slices.Sort(keys)
 	return keys
 }
@@ -426,4 +429,13 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 		return err
 	}
 	return nil
+}
+
+// Only the temporary directory created for this run is interchangeable. Keep
+// file suffixes and arbitrary customer paths/names intact, including failures.
+func normalizeOwnedTemporaryPath(run validationRun, value string) string {
+	if run.temporaryRoot == "" {
+		return value
+	}
+	return strings.ReplaceAll(value, run.temporaryRoot+string(filepath.Separator), "<ddtest-tmp>/")
 }

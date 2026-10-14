@@ -43,6 +43,24 @@ Runner.prototype.run = function (...args) {
 }
 
 if (process.env.DDTEST_MOCHA_PROBE) {
+  const Mocha = internal('mocha')
+  const selectProbe = mocha => {
+    if (!['bdd', 'tdd'].includes(mocha.options.ui || 'bdd')) throw new Error('ddtest Mocha probes currently require the bdd or tdd UI')
+    mocha.files = [process.env.DDTEST_MOCHA_PROBE]
+    mocha.options.grep = /^ddtest validation probe$/
+    mocha.options.invert = false
+    mocha.suite.retries(0)
+  }
+  // Programmatic users can load files explicitly or let run() load them.
+  // Preserve callbacks, requires, hooks, UI, reporter and execution options.
+  for (const name of ['loadFiles', 'loadFilesAsync', 'run']) {
+    const original = Mocha.prototype[name]
+    if (!original) continue
+    Mocha.prototype[name] = function (...args) {
+      selectProbe(this)
+      return original.apply(this, args)
+    }
+  }
   // Change only file/name selection for controlled probes; retain effective
   // config, UI, requires, hooks, parallel setting and ordinary runner options.
   const options = internal('cli/options')

@@ -11,7 +11,7 @@ CI changes, then validate them locally. `onboard` itself only prints guidance.
    version and Node compatibility checks to choose one exact published release
    for both CI and local validation. The action default can lag npm latest;
    explicitly set `js-tracer-version`. Prefer the recommended compatible major
-   before excluding existing CI runtimes. No hardcoded tracer patch is required.
+   before considering any runtime changes. Never remove matrix entries or test steps to satisfy tracer requirements. If the maintained tracer cannot cover old runtimes, preserve their runtime/test coverage in uninstrumented steps with `DD_CIVISIBILITY_ENABLED: 'false'`, instrument supported entries with conditions, and report the coverage limitation. Do not stop local validation for this CI limitation: run the full comparison and features on a supported local runtime using the same maintained release. No hardcoded tracer patch is required.
 3. Add `datadog/test-visibility-github-action@v3` before every Mocha test consumer,
    using `api_key: ${{ secrets.DD_API_KEY }}`, the intended Datadog site,
    `languages: js`, and the exact `js-tracer-version`. Initialize the tracer in
@@ -20,7 +20,7 @@ CI changes, then validate them locally. `onboard` itself only prints guidance.
    on a Node runtime supporting --import. Do not add secrets or contact a real backend locally.
 4. Mocha per-test coverage uses Istanbul/NYC; c8 alone does not provide that
    instrumentation. If NYC is absent, add it as a project dev dependency using
-   the existing package manager and lockfile convention. Wrap each original CI
+   the existing package manager and lockfile convention. First follow package aliases: if the test command already uses NYC, keep that wrapper and do not add another. Only wrap commands lacking NYC; wrap the original CI
    test command with `npx --no-install nyc -- <original command>` (or the package
    manager's local executable equivalent), preserving existing c8/reporters and
    thresholds. Testdrive also uses project-installed NYC for its paired runs.
@@ -31,7 +31,7 @@ CI changes, then validate them locally. `onboard` itself only prints guidance.
    reconciles telemetry, and runs pass/fail controls plus retries, early flake
    detection, skipping, quarantine, disabled tests, and attempt-to-fix. The
    original command/configuration is preserved; only controlled probes select
-   a temporary test file and relax full-suite coverage thresholds. Both full
+   a temporary test file and relax full-suite coverage thresholds. For a chained package script, probes use its resolved Mocha entry point; companion lint and auxiliary Node checks still execute in both full-suite runs. Both full
    runs keep the original thresholds. Matching existing test failures are
    acceptable; missing results or changed outcomes are not a pass.
 6. Address real setup or instrumentation failures and rerun the full command.
@@ -49,7 +49,7 @@ Use the latest full execution's `summary.final_response` verbatim for your final
 verdict and copy its absolute Markdown report links, each on its own line.
 Never claim completion if the report says INCOMPLETE. A final --check-only does
 not certify execution after edits; finish with a full run. State that CI was
-reviewed statically and real CI/Datadog backend processing was not exercised.
+reviewed statically and real CI/Datadog backend processing was not exercised. Reports describe inputs at execution time, not later edits. If you edit CI after a run, its verdict is stale: rerun the full validation before your final response.
 
 ## Ask a human to connect Datadog
 
