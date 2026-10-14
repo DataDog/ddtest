@@ -203,3 +203,27 @@ func TestVerdictStatesLocalRuntimeAndDeduplicatedCIScope(t *testing.T) {
 	require.Equal(t, []string{"lts/*"}, scope.Unverified)
 	require.NotContains(t, scope.Excluded, "lts/*")
 }
+
+func TestHandoffNamesUnexecutedMochaLifecycleConsumer(t *testing.T) {
+	result := validationResult{Framework: "mocha", Configurations: []configurationResult{{TestCommand: onboard.TestCommand{Command: "npm run build", Resolution: "npm run build -> npm run test-esm -> mocha test.mjs"}, Compatibility: verdict{Status: "not exercised"}, Error: "unresolved cloud credentials"}}, Features: []featureResult{{Name: "skipping", Status: "passed"}}}
+	result.Summary = summarizeValidation(result)
+	result.Summary.Facts = validationFacts(result)
+	response := validationHandoff(result)
+	require.Contains(t, response, "Mocha consumer NOT EXECUTED: npm run build -> npm run test-esm -> mocha test.mjs")
+	require.Contains(t, response, "unresolved cloud credentials")
+	require.Contains(t, response, "these passes do not cover them")
+}
+
+func TestHandoffIncludesActionableCIFindingAlongsideRealCoverage(t *testing.T) {
+	finding := onboard.RuntimeFinding{Workflow: ".github/workflows/ci.yml", Job: "build", Step: 5,
+		Status: "inconclusive", Reason: "Mocha CI command npm run build has no NYC wrapper. Testdrive adds NYC locally only; wrap the original CI command with npx --no-install nyc --."}
+	result := validationResult{Framework: "mocha", Compatibility: verdict{Status: "compatible"},
+		CIRuntime: &onboard.RuntimeCheck{Status: "inconclusive", Jobs: []onboard.RuntimeFinding{finding, finding}},
+		Runs:      []runSummary{{Name: "reporting-only", Coverage: &coverageSummary{Status: "not observed", TotalTests: 10}}}}
+	result.Summary = summarizeValidation(result)
+	result.Summary.Facts = validationFacts(result)
+	handoff := validationHandoff(result)
+	require.Contains(t, handoff, "Mocha real-suite coverage was not observed")
+	require.Contains(t, handoff, "CI .github/workflows/ci.yml / build / step 5: "+finding.Reason)
+	require.Equal(t, 1, strings.Count(handoff, finding.Reason), "matrix duplicates must not expand the handoff")
+}

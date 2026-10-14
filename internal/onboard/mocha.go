@@ -48,6 +48,9 @@ func resolveMochaCoverage(root, directory string, words, assignments, stack []st
 		return unresolvedCommand("Coverage wrapper has no test command")
 	}
 	result := resolveJestWords(root, directory, words[i:], stack, remaining, "mocha")
+	if result.Reason == "" && !result.Matched && result.ReviewReason != "" {
+		return result
+	}
 	if result.Reason != "" || !result.SingleJest || len(result.Tests) != 1 || len(result.Builds) > 0 {
 		return unresolvedCommand("Coverage wrapper needs one statically resolved Mocha invocation: " + result.Reason)
 	}
@@ -98,7 +101,14 @@ func MochaUsesNYC(root, command string) bool {
 // a script during discovery, and never replace its programmatic runner with CLI.
 var mochaImport = regexp.MustCompile(`(?m)(?:^|[;\n])\s*(?:(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*require\(\s*['"]mocha['"]\s*\)|import\s+[^;\n]+\s+from\s*['"]mocha['"])`)
 
+var browserRunnerImport = regexp.MustCompile(`(?m)(?:^|[;\n])\s*import\s+[^;\n]+\s+from\s*['"]puppeteer['"]`)
+
 func resolveMochaNode(root, directory string, words, assignments []string) commandResolution {
+	if len(words) == 3 && (words[1] == "-e" || words[1] == "--eval") {
+		// A literal inline helper is retained only inside a package command with
+		// an identified Mocha consumer; it is never itself proof of test scope.
+		return commandResolution{MochaAuxiliary: true}
+	}
 	if len(words) < 2 || !filepath.IsLocal(words[1]) || !slices.Contains([]string{".js", ".cjs", ".mjs"}, filepath.Ext(words[1])) {
 		return unresolvedCommand("Mocha Node entry point requires a literal repository script: " + shellquote.Join(words...))
 	}
@@ -118,6 +128,9 @@ func resolveMochaNode(root, directory string, words, assignments []string) comma
 	}
 	command := shellquote.Join(append(slices.Clone(assignments), words...)...)
 	if !mochaImport.Match(source) {
+		if browserRunnerImport.Match(source) {
+			return commandResolution{ReviewReason: "Puppeteer browser runner is outside Node Mocha validation: " + command}
+		}
 		return commandResolution{MochaAuxiliary: true}
 	}
 	directoryRelative, _ := filepath.Rel(root, directory)

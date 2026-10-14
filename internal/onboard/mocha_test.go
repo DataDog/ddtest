@@ -104,7 +104,7 @@ func TestMochaLegacyTestsBeforeActionAreExplicitlyExcluded(t *testing.T) {
         if: matrix.node >= 18
         env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }}'}
 `)
-	writeScripts(t, root, map[string]string{"test": "mocha"})
+	writeScripts(t, root, map[string]string{"test": "nyc -- mocha"})
 	resolve := func(context.Context, string, string) (tracerRequirement, error) {
 		return tracerRequirement{Version: "5.131.1", Node: ">=18"}, nil
 	}

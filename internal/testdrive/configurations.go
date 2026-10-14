@@ -48,7 +48,7 @@ func configurationStatus(result validationResult) string {
 	if result.CheckOnly {
 		return "not exercised"
 	}
-	if result.Error != "" || result.Compatibility.Status != "compatible" || len(result.Features) == 0 {
+	if result.Error != "" || result.Compatibility.Status != "compatible" || len(result.Features) == 0 || missingMochaCoverage(result) {
 		return "incomplete"
 	}
 	for _, feature := range result.Features {
@@ -109,7 +109,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		if parseErr != nil {
 			item.Error = reportText(parseErr.Error())
 			result.Compatibility = verdict{Status: "inconclusive", Reason: "At least one discovered configuration did not execute; see configurations."}
-			runErrors = append(runErrors, parseErr)
+			runErrors = append(runErrors, fmt.Errorf("%s: %w", entry.Command, parseErr))
 			result.Configurations = append(result.Configurations, item)
 			continue
 		}

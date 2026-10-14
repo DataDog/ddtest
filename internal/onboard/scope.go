@@ -12,6 +12,8 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
+	Resolution        string `json:"resolution,omitempty"`
+	CICoverageCommand string `json:"ci_coverage_command,omitempty"`
 	mochaProbeCommand string
 	usesNYC           bool
 	Directory         string            `json:"directory"`
@@ -67,7 +69,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				continue
 			}
 			for _, row := range rows {
-				active, err := runtimeCondition(job.If, row)
+				active, err := possibleJobCondition(job.If, row)
 				if err != nil {
 					scope.Unresolved = append(scope.Unresolved, workflow.Path+" / "+name+": "+err.Error())
 					continue
@@ -129,6 +131,12 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 						resolution.Builds[j].Environment = maps.Clone(env)
 					}
 					for _, entry := range resolution.Tests {
+						if framework == "mocha" && !entry.usesNYC {
+							parts, err := staticCommands(entry.Command)
+							if err == nil && len(parts) == 1 && len(parts[0]) > 0 && !strings.Contains(parts[0][0], "=") {
+								entry.CICoverageCommand = "npx --no-install nyc -- " + entry.Command
+							}
+						}
 						for j := range entry.Prerequisites {
 							entry.Prerequisites[j].Environment = maps.Clone(env)
 						}
@@ -176,6 +184,12 @@ func WriteValidationScope(output io.Writer, scope ValidationScope) {
 	_, _ = fmt.Fprintln(output, "\nRequired local validation configurations (every CI consumer must also be instrumented):")
 	for _, entry := range scope.Commands {
 		_, _ = fmt.Fprintf(output, "  - [%s] %s\n", entry.Directory, entry.Command)
+		if entry.Resolution != "" {
+			_, _ = fmt.Fprintf(output, "      Mocha consumer: %s\n", entry.Resolution)
+		}
+		if entry.CICoverageCommand != "" {
+			_, _ = fmt.Fprintf(output, "      CI coverage command: %s\n      Apply this wrapper in CI; testdrive adds NYC locally only. Real source coverage is a separate check.\n", entry.CICoverageCommand)
+		}
 		if entry.ExitOnFailure {
 			_, _ = fmt.Fprintln(output, "      Preserve CI failure guard: || exit 1")
 		}
