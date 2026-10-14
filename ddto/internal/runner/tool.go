@@ -11,26 +11,17 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
 // userToolexecEnv carries the user's -toolexec after ddto's input transformation.
 // Orchestrion skips packages that ddto owns; unrelated wrappers run every tool.
-const userToolexecEnv = "DDTO_USER_TOOLEXEC"
+const userToolexecEnv = toolwrap.UserToolexecEnv
 
 func chainUserToolexec(args []string) ([]string, error) {
-	chain := os.Getenv(userToolexecEnv)
-	if chain == "" || bypassOrchestrionPackage(args) {
-		return args, nil
-	}
-	words, err := splitFlags(chain)
-	if err != nil {
-		return nil, fmt.Errorf("ddto: invalid -toolexec %q: %w", chain, err)
-	}
-	return append(words, args...), nil
+	return toolwrap.ChainUserToolexec(args)
 }
 
 func (p Plan) toolMode() string {
@@ -64,58 +55,14 @@ func (p Plan) toolMode() string {
 // cache, so a test process will run, and the worker can request for it while
 // the binary links.
 func NoteTestLink(mode string, args []string) {
-	if mode != "link" && !strings.HasSuffix(mode, "-link") || len(args) < 2 || strings.TrimSuffix(filepath.Base(args[0]), ".exe") != "link" {
-		return
-	}
-	output := ""
-	for i, arg := range args[1:] {
-		if value, ok := strings.CutPrefix(arg, "-o="); ok {
-			output = value
-		} else if arg == "-o" && i+2 < len(args) {
-			output = args[i+2]
-		}
-	}
-	state := os.Getenv(goenv.GitStateHandoff)
-	if state == "" || !strings.HasSuffix(strings.TrimSuffix(output, ".exe"), ".test") {
-		return
-	}
-	if mark, err := os.OpenFile(filepath.Join(state, utils.CLIGitLinkingFile), os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
-		_ = mark.Close()
-	}
+	toolwrap.NoteTestLink(mode, args)
 }
 
 // ToolNeedsPlan is the allocation-free dispatch before any plan I/O. Go probes
 // compile/link versions without a package identity; those skip plan I/O and
 // still reach the selected user tool, including Orchestrion.
 func ToolNeedsPlan(mode string, args []string, importPath string) bool {
-	if len(args) == 0 {
-		return false
-	}
-	tool := filepath.Base(args[0])
-	tool = strings.TrimSuffix(tool, ".exe")
-	if tool == "cover" {
-		if !strings.Contains(mode, "cover") {
-			return false
-		}
-		if len(args) == 2 && args[1] == "-V=full" {
-			return true
-		}
-		pkg, _, _ := strings.Cut(importPath, " [")
-		return pkg == "testing"
-	}
-	if tool == "compile" && (mode == "mini-sdk" || strings.HasPrefix(mode, "mini-sdk-")) && !(len(args) == 2 && args[1] == "-V=full") {
-		if pkg, _ := sdkCompilePackage(importPath); pkg != "" && (pkg != sdkTracerPackage || !strings.Contains(mode, "nomirror")) {
-			return true
-		}
-	}
-	if tool != "compile" || !strings.Contains(mode, "testify") && !strings.Contains(mode, "goleak") {
-		return false
-	}
-	if len(args) == 2 && args[1] == "-V=full" {
-		return false
-	}
-	pkg, _, _ := strings.Cut(importPath, " [")
-	return pkg == instrument.TestifySuiteImport && strings.Contains(mode, "testify") || (pkg == instrument.GoleakImport || pkg == instrument.GoleakImport+"_test" || pkg == instrument.GoleakImport+".test") && strings.Contains(mode, "goleak")
+	return toolwrap.NeedsPlan(mode, args, importPath)
 }
 
 // RunTool handles only a selected transform. CLI bypasses unrelated tools

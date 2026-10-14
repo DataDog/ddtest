@@ -89,8 +89,8 @@ import _ "github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
 			if !strings.Contains(logs, fmt.Sprintf("sdk_ci_gate=%t", tc.wantSDK)) {
 				t.Fatalf("SDK CI gate does not follow the selected graph: %s", logs)
 			}
-			if strings.Contains(stderr, "tool-overlay") != tc.wantTool {
-				t.Fatalf("toolexec activation=%v, want %v: %s", strings.Contains(stderr, "tool-overlay"), tc.wantTool, stderr)
+			if ddtoToolexec(stderr) != tc.wantTool {
+				t.Fatalf("toolexec activation=%v, want %v: %s", ddtoToolexec(stderr), tc.wantTool, stderr)
 			}
 		})
 	}

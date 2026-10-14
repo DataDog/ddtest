@@ -157,18 +157,18 @@ func resolvedPath(path string) string {
 	}
 }
 
-// gorootMirrorLocation returns the cache directory for mirrors and this
-// toolchain's key. The directory must not lie within GOMODCACHE, the toolchain
-// itself or the module, which must stay unchanged.
-func gorootMirrorLocation(env *goEnvironment, dir string) (parent, key string, err error) {
+// ddtoCacheDir returns the directory name in ddto's user cache. It must not
+// lie within GOMODCACHE, the toolchain or the module, which must stay
+// unchanged.
+func ddtoCacheDir(env *goEnvironment, dir, name string) (string, error) {
 	cache, err := userCacheDir()
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	if !filepath.IsAbs(cache) {
-		return "", "", fmt.Errorf("user cache directory %q is not absolute", cache)
+		return "", fmt.Errorf("user cache directory %q is not absolute", cache)
 	}
-	parent = filepath.Join(cache, "ddto", "goroots")
+	parent := filepath.Join(cache, "ddto", name)
 	resolved := resolvedPath(parent)
 	protected := []string{env.GOMODCACHE, env.GOROOT, dir}
 	for _, file := range []string{env.GOMOD, env.GOWORK} {
@@ -182,8 +182,17 @@ func gorootMirrorLocation(env *goEnvironment, dir string) (parent, key string, e
 	}
 	for _, path := range protected {
 		if path != "" && filePathHasPrefix(resolved, resolvedPath(path)) {
-			return "", "", fmt.Errorf("user cache directory %s lies within %s", parent, path)
+			return "", fmt.Errorf("user cache directory %s lies within %s", parent, path)
 		}
+	}
+	return parent, nil
+}
+
+// gorootMirrorLocation returns the cache directory for mirrors and this
+// toolchain's key.
+func gorootMirrorLocation(env *goEnvironment, dir string) (parent, key string, err error) {
+	if parent, err = ddtoCacheDir(env, dir, "goroots"); err != nil {
+		return "", "", err
 	}
 	sum := sha256.Sum256([]byte(env.GOROOT + "\x00" + env.GOVERSION + "\x00" + env.GOHOSTOS + "_" + env.GOHOSTARCH))
 	name := strings.Map(func(r rune) rune {

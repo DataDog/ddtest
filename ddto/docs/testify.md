@@ -131,18 +131,36 @@ marker. See [delivery and goleak](delivery.md); the SDK backend does not add it.
 
 ## The bypass and cache contract
 
-The private `tool-overlay` entrypoint dispatches before reading JSON, creating
-contexts or setting CI environment defaults. Compiler and linker version
-probes keep their native output. Other selected integrations, such as the Mini
-SDK guard or Orchestrion composition, can also require this wrapper. Unrelated
-tools and packages never read the plan. On Unix the wrapper uses `exec` to
-replace itself with the native tool;
+The wrapper dispatches before reading JSON, creating contexts or setting CI
+environment defaults. Compiler and linker version probes keep their native
+output. Other selected integrations, such as the Mini SDK guard or Orchestrion
+composition, can also require this wrapper. Unrelated tools and packages never
+read the plan. On Unix the wrapper uses `exec` to replace itself with the
+native tool;
 Windows requires a child process and preserves its streams and exit code.
 
 `-toolexec` is a build-wide hook: even a selective wrapper starts for unrelated
 tool invocations that Go actually runs. The bypass removes the second process
 on Unix, but does not remove the wrapper's own startup. Builds without a
 selected transform avoid that cost entirely.
+
+The wrapper is therefore a small executable of its own,
+[`internal/toolwrap`](../internal/toolwrap), which imports only the standard
+library. It starts in about 1.2 ms on Linux, against 2.3 ms for ddto's own
+executable, and runs ddto's private `tool-overlay` entrypoint for the calls
+that need the plan.
+- ddto builds it from sources that it embeds, once per version and host, into
+  `ddto/toolwraps` in its user cache.
+- It follows the rules of the
+  [toolchain mirrors](mini-runtime.md#runtime-provisioning) beside it:
+  - a run holds the executable;
+  - one unused for 14 days is removed;
+  - a user cache within `GOMODCACHE`, the toolchain or the module is not used.
+- Before each `ddto test` uses it, the executable must print its key.
+- When it cannot be built or run, ddto itself is the wrapper, through
+  `tool-overlay`, with the same results.
+- Go keys its caches on each tool's `-V=full` output, not on the `-toolexec`
+  command, so either wrapper reuses the same cache entries.
 
 Go includes compiler identity in every package's build key. Changing
 `compile -V=full` would split the cache for every package. Instead, the

@@ -123,7 +123,7 @@ func TestCoverToolForwardingAndErrors(t *testing.T) {
 
 func TestCoverCommandQuoting(t *testing.T) {
 	for _, paths := range [][2]string{{"/path with spaces/ddto", "/path/overlay.json"}, {`C:\Program Files\ddto.exe`, `C:\build\overlay.json`}, {"/path/it's/ddto", `/path/\"quoted\"/overlay.json`}, {`/path'with"both/ddto`, "/path/overlay.json"}} {
-		command, err := toolCommand(paths[0], paths[1], "cover")
+		command, err := toolCommand(paths[0], "", paths[1], "cover")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -132,9 +132,23 @@ func TestCoverCommandQuoting(t *testing.T) {
 		if err != nil || !reflect.DeepEqual(got, want) {
 			t.Fatalf("quoted command=%q: %v, %v", command, got, err)
 		}
+		// The wrapper executable is given ddto's executable first.
+		wrapper := paths[0] + "-toolwrap"
+		command, err = toolCommand(paths[0], wrapper, paths[1], "cover")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err = splitFlags(command)
+		want = []string{wrapper, paths[0], "cover", paths[1]}
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("quoted wrapper command=%q: %v, %v", command, got, err)
+		}
 	}
-	if _, err := toolCommand(`path with'both"`, "overlay", "cover"); err == nil {
+	if _, err := toolCommand(`path with'both"`, "", "overlay", "cover"); err == nil {
 		t.Fatal("ambiguous quoting accepted")
+	}
+	if _, err := toolCommand("/ddto", `wrapper with'both"`, "overlay", "cover"); err == nil {
+		t.Fatal("ambiguous wrapper quoting accepted")
 	}
 }
 

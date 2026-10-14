@@ -69,6 +69,11 @@ The log records:
   files are counted separately.
 - The selective tool decision for Testify, goleak, coverage and the Git
   worker's link signal, plus whether the client supplied its own `toolexec`.
+- With a selective tool, its wrapper executable: `tool wrapper
+  state=created` with the build's duration, `reused`, or `unavailable` with the
+  error, when ddto itself is the wrapper. `state=stale` comes first when ddto
+  must rebuild it, and waits for runs that still use the old one; a signal ends
+  that wait. See [the bypass](testify.md#the-bypass-and-cache-contract).
 - When the Git worker requests for the test processes, and why: see
   [Requests ahead](#requests-ahead).
 - Native `go test` duration and exit code, followed by the whole CLI duration
@@ -309,7 +314,8 @@ subprocess output. Existing native output, download progress and errors pass
 through as before. The working directory is included to diagnose path issues.
 Logging failures do not replace the Go command's result.
 
-`tool-overlay` bypasses do not initialize logging or read `DD_TRACE_DEBUG`.
+The tool wrapper and `tool-overlay` do not initialize logging or read
+`DD_TRACE_DEBUG`.
 Unrelated tools and compiler/linker version probes keep their native output and
 fast dispatch. The parent logs which integrations required the tool wrapper.
 There is no per-tool debug stream or additional `toolexec` activation.

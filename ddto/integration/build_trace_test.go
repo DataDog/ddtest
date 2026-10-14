@@ -27,6 +27,7 @@ func TestCompilerTraceLines(t *testing.T) {
 		`/goroot/pkg/tool/linux_amd64/compile -o "$WORK/b001/_pkg_.a" -p testing`,
 		`"/Go tools/pkg/tool/darwin_arm64/compile" -o "$WORK/b001/_pkg_.a" -p testing`,
 		`"C:\\Program Files\\ddto.exe" tool-overlay testify "C:\\plan.json" "C:\\Go\\pkg\\tool\\windows_amd64\\compile.exe" -o "$WORK\\b135\\_pkg_.a" -p github.com/stretchr/testify/suite`,
+		`/cache/ddto/toolwraps/key/ddto-toolwrap /usr/bin/ddto testify /tmp/plan.json /goroot/pkg/tool/linux_amd64/compile -o "$WORK/b135/_pkg_.a" -p github.com/stretchr/testify/suite`,
 		`C:\Go\pkg\tool\windows_amd64\compile.exe -o archive -p testing`,
 	}
 	noise := []string{

@@ -85,6 +85,7 @@
       "TestTestifyMovedCallSitesInFormattedDiagnostics",
       "TestTestifyVersionGuardWithWarmVendoredSources",
       "TestToolBypassHasNativeIdentityAndExit",
+      "TestToolWrapperLifecycle",
       "TestToolBypassProcessReplacement",
       "TestWorkspaceCommandPreservesLogicalWorkingDirectory"
     ],
@@ -209,7 +210,8 @@
       "cli": [
         "TestMiniCLIStateGivesModuleToCoverage",
         "TestMiniGOROOTMirrorToolchainSwitch",
-        "TestMiniGitWorkerStopsOnInterrupt"
+        "TestMiniGitWorkerStopsOnInterrupt",
+        "TestToolWrapperWaitStopsOnSignal"
       ],
       "parity": [
         "TestCIVisibilityUnixAgent"
@@ -218,7 +220,8 @@
     "darwin": {
       "cli": [
         "TestMiniCLIStateGivesModuleToCoverage",
-        "TestMiniGitWorkerStopsOnInterrupt"
+        "TestMiniGitWorkerStopsOnInterrupt",
+        "TestToolWrapperWaitStopsOnSignal"
       ],
       "parity": [
         "TestCIVisibilityUnixAgent"

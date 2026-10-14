@@ -115,7 +115,28 @@ func translateCoverInputs(overlay string, args []string) ([]string, error) {
 	return result, nil
 }
 
-func toolCommand(executable, overlay, mode string) (string, error) {
+// selectToolCommand returns go's -toolexec value: the wrapper executable
+// when it can be quoted, whose lock the plan then keeps, or else ddto's
+// tool-overlay command.
+func selectToolCommand(plan *Plan, executable, wrapper string, lock *os.File, debug *cliDebug) (string, error) {
+	if wrapper != "" {
+		tool, err := toolCommand(executable, wrapper, plan.File, plan.toolMode())
+		if err == nil {
+			plan.toolWrapperLock = lock
+			return tool, nil
+		}
+		lock.Close()
+		debug.printf("tool wrapper state=unavailable error=%q", err.Error())
+	}
+	return toolCommand(executable, "", plan.File, plan.toolMode())
+}
+
+// toolCommand returns go's -toolexec value: the wrapper executable, given
+// ddto's executable, or else ddto's tool-overlay command.
+func toolCommand(executable, wrapper, overlay, mode string) (string, error) {
+	if wrapper != "" {
+		return quoteToolWords([]string{wrapper, executable, mode, overlay})
+	}
 	return quoteToolWords([]string{executable, "tool-overlay", mode, overlay})
 }
 

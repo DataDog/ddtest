@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
 )
 
 type flagKind uint8
@@ -127,28 +129,7 @@ type options struct {
 // splitFlags splits GOFLAGS and -toolexec values like cmd/go's quoted.Split:
 // a field may be wrapped in single or double quotes, without unescaping.
 func splitFlags(s string) ([]string, error) {
-	var out []string
-	for {
-		s = strings.TrimLeft(s, " \t\n\r")
-		if s == "" {
-			return out, nil
-		}
-		if quote := s[0]; quote == '\'' || quote == '"' {
-			end := strings.IndexByte(s[1:], quote)
-			if end < 0 {
-				return nil, fmt.Errorf("unterminated %c string", quote)
-			}
-			out = append(out, s[1:end+1])
-			s = s[end+2:]
-			continue
-		}
-		end := strings.IndexAny(s, " \t\n\r")
-		if end < 0 {
-			end = len(s)
-		}
-		out = append(out, s[:end])
-		s = s[end:]
-	}
+	return toolwrap.SplitFlags(s)
 }
 
 // parseOptions classifies arguments with go test's own algorithm: GOFLAGS apply

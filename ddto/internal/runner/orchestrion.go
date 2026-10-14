@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
 )
 
-const orchestrionBypassEnv = "DDTO_ORCHESTRION_BYPASS"
+const orchestrionBypassEnv = toolwrap.OrchestrionBypassEnv
 
 // Recognize the actual tool command, not package names or arbitrary arguments.
 // A different user wrapper remains fully transparent.
@@ -42,16 +42,7 @@ func orchestrionLauncher(command string) (goLauncher, bool) {
 // linkname hooks; weaving Mini itself can also trace delivery.
 // Version probes and application packages still go through Orchestrion.
 func bypassOrchestrionPackage(args []string) bool {
-	if len(args) == 2 && args[1] == "-V=full" {
-		return false
-	}
-	scope := os.Getenv(orchestrionBypassEnv)
-	if scope != string(Mini) && scope != string(SDK) {
-		return false
-	}
-	pkg, _, _ := strings.Cut(os.Getenv("TOOLEXEC_IMPORTPATH"), " [")
-	return pkg == "testing" || pkg == instrument.TestifySuiteImport ||
-		scope == string(Mini) && (isSDKCIPackage(pkg) || pkg == miniModule || strings.HasPrefix(pkg, miniModule+"/"))
+	return toolwrap.BypassOrchestrionPackage(args)
 }
 
 // Package discovery stays native. The selected Orchestrion executable owns
@@ -118,30 +109,7 @@ func applyGoLauncher(ctx context.Context, opts *options) {
 
 // ValidToolMode validates the CLI private tool entrypoint before dispatch.
 func ValidToolMode(mode string) bool {
-	// The link signal combines with any mode.
-	if mode == "link" {
-		return true
-	}
-	mode = strings.TrimSuffix(mode, "-link")
-	if strings.HasPrefix(mode, "mini-") {
-		if mode == "mini-sdk" || mode == "mini-sdk-nomirror" {
-			return true
-		}
-		if !strings.HasPrefix(mode, "mini-sdk-") {
-			return false
-		}
-		mode = strings.TrimPrefix(mode, "mini-sdk-")
-		mode = strings.TrimPrefix(mode, "nomirror-")
-	}
-	if mode == "orchestrion" {
-		return true
-	}
-	mode = strings.TrimPrefix(mode, "orchestrion-")
-	switch mode {
-	case "testify", "cover", "testify-cover", "goleak", "goleak-cover", "testify-goleak", "testify-goleak-cover":
-		return true
-	}
-	return false
+	return toolwrap.ValidMode(mode)
 }
 
 // Resolve module tools from the final module graph once, before any compiler

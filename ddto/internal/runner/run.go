@@ -70,6 +70,10 @@ type Plan struct {
 	workspaceLock *os.File
 	// gorootMirror runs go from a mirror of a toolchain in GOMODCACHE.
 	gorootMirror *gorootMirror
+	// environment is the go environment that preparation read.
+	environment *goEnvironment
+	// toolWrapperLock keeps the -toolexec wrapper executable from pruners.
+	toolWrapperLock *os.File
 	// execHelper is the cross-compilation program Go would run test binaries
 	// with, without -exec; execWrapper restores the caller's Go settings before
 	// a -exec program.
@@ -114,6 +118,9 @@ func (p Plan) Release() {
 		_ = p.workspaceLock.Close()
 	}
 	p.gorootMirror.release()
+	if p.toolWrapperLock != nil {
+		_ = p.toolWrapperLock.Close()
+	}
 }
 
 // GoCommand returns the go command for builds that use this plan, and the
@@ -231,6 +238,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		}
 	}()
 	opts.environment, e = readGoEnvironment(ctx, dir)
+	plan.environment = opts.environment
 	if e != nil {
 		return plan, e
 	}
@@ -755,7 +763,24 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 			fmt.Fprintln(stderr, e)
 			return 2
 		}
-		if tool, e = toolCommand(executable, plan.File, plan.toolMode()); e != nil {
+		// Building the wrapper, or waiting for another run to, is preparation:
+		// a signal stops it before go test starts.
+		var wrapper string
+		var lock *os.File
+		interrupted := interruptibly(ctx, signals, func(ctx context.Context) {
+			wrapper, lock, e = ensureToolWrapper(ctx, plan.environment, dir, debug)
+		})
+		if interrupted != nil {
+			if lock != nil {
+				lock.Close()
+			}
+			debug.printf("preparation interrupted")
+			return interruptedStatus(interrupted)
+		}
+		if e != nil {
+			debug.printf("tool wrapper state=unavailable error=%q", e.Error())
+		}
+		if tool, e = selectToolCommand(&plan, executable, wrapper, lock, debug); e != nil {
 			fmt.Fprintln(stderr, e)
 			return 2
 		}
@@ -894,7 +919,16 @@ func resolveExecProgram(dir string, words []string) (string, error) {
 
 // prepareInterruptibly cancels package resolution when a signal arrives. The
 // watcher has stopped before returning, so later signals reach go test.
-func prepareInterruptibly(ctx context.Context, dir string, opts options, runtime Runtime, signals <-chan os.Signal, progress io.Writer) (Plan, os.Signal, error) {
+func prepareInterruptibly(ctx context.Context, dir string, opts options, runtime Runtime, signals <-chan os.Signal, progress io.Writer) (plan Plan, interrupted os.Signal, err error) {
+	interrupted = interruptibly(ctx, signals, func(ctx context.Context) {
+		plan, err = prepare(ctx, dir, opts, runtime, progress)
+	})
+	return plan, interrupted, err
+}
+
+// interruptibly runs fn with a context that the first signal from signals
+// cancels, and returns that signal, or nil.
+func interruptibly(ctx context.Context, signals <-chan os.Signal, fn func(context.Context)) os.Signal {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var interrupted os.Signal
@@ -907,10 +941,10 @@ func prepareInterruptibly(ctx context.Context, dir string, opts options, runtime
 		case <-stop:
 		}
 	}()
-	plan, err := prepare(ctx, dir, opts, runtime, progress)
+	fn(ctx)
 	close(stop)
 	<-stopped
-	return plan, interrupted, err
+	return interrupted
 }
 
 // goTestArguments keeps the user's arguments in order. Our overlay already

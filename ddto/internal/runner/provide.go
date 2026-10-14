@@ -14,10 +14,11 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
 	pocversion "github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
-const miniModule = "github.com/tonyredondo/dd-ci-testing-poc"
+const miniModule = toolwrap.MiniModule
 
 // preprovideMini avoids a failed package-graph query when Mini is absent. A
 // literal mention of Mini keeps the ordinary one-query path. The module probe

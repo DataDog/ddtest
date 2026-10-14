@@ -70,7 +70,7 @@ func TestSuite(t *testing.T) {suite.Run(t, new(ExampleSuite))}
 		}
 	}
 	out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, args...)
-	if code != 0 || !strings.Contains(stderr, version.BuildLogPrefix+" WARN: Testify v1.3.0 is not instrumented") || strings.Contains(stderr, "tool-overlay") {
+	if code != 0 || !strings.Contains(stderr, version.BuildLogPrefix+" WARN: Testify v1.3.0 is not instrumented") || ddtoToolexec(stderr) {
 		t.Fatalf("cached unsupported vendor: exit=%d\n%s\n%s", code, out, stderr)
 	}
 }

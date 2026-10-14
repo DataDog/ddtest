@@ -286,6 +286,41 @@ environment.
 **Done.** A wrapper start at or below the 20caa45 level (1.4 ms), and the A/B
 regression gone.
 
+**Outcome.**
+- **Where the millisecond went.** A tool call that only runs the tool, measured
+  on Linux as the median of 600 interleaved starts:
+  - 1.40 ms at 20caa45, 2.37 ms on `main`, against 0.39 ms for `/usr/bin/true`;
+  - package initialization took 0.40 ms more: 0.30 ms in the incorporated SDK
+    (regular expressions, `globalconfig`, the cgroup read) and 0.10 ms in
+    `net/http` and `crypto`;
+  - the rest came with size: text from 4.1 to 9.4 MB, and 321 to 523 minor
+    page faults.
+
+  Lazy initialization, option (c), could recover only the 0.30 ms. On
+  2026-10-13 the user chose option (a).
+- **Chosen design.** The wrapper is
+  [`internal/toolwrap`](../internal/toolwrap), which imports only the standard
+  library.
+  - ddto builds it from embedded sources into its user cache, once per version
+    and host, under the toolchain mirrors' locks and pruning.
+  - It runs ddto's `tool-overlay` for the calls that need the plan.
+  - ddto itself remains the wrapper when the executable cannot be built or run.
+
+  See [the bypass](testify.md#the-bypass-and-cache-contract).
+- **Measured.**
+  - **Start-up.** The wrapper starts in 1.20 ms, with 271 page faults.
+  - **Builds.** `ddto test -c ./...`, interleaved at 4 CPUs on Go 1.27.1, 5 cold
+    and 10 cached rounds:
+    - Testify External: 11.36 → 11.08 s cold (−2.5%, CPU −2.6%), 0.399 →
+      0.387 s cached (−3.1%);
+    - Testify Direct: −1.9% cold (CPU −2.7%), −4.1% cached;
+    - Gin, which uses no wrapper: +0.2% cold, and its cached run within noise
+      (30 rounds: −5.2%, range 1.2–3.4 s, CPU −0.3%).
+
+    The regression is gone.
+  - **First build.** The executable takes about 80 ms to build with a warm Go
+    build cache, and 2 s with an empty one, once per version and host.
+
 ## Phase 4: Mini's package graph in builds
 
 **Evidence.**

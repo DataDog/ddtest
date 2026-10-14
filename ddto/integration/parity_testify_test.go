@@ -478,7 +478,7 @@ func TestTestifyCoverageCacheAndGOFLAGS(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed := run()
-	if !strings.Contains(changed, "tool-overlay testify") || !strings.Contains(changed, "helpers") {
+	if !ddtoToolexecMode(changed, "testify") || !strings.Contains(changed, "helpers") {
 		t.Fatalf("changed helper did not rebuild under cover: %s", changed)
 	}
 	profile := filepath.Join(t.TempDir(), "coverage.out")

@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
@@ -124,17 +125,5 @@ func execve(path string, args []string, debug *cliDebug) error {
 // ExecNativeTool replaces the wrapper: no second process, wait loop or plan I/O.
 // It is only for the CLI entrypoint, never an in-process library caller.
 func ExecNativeTool(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, version.BuildLogPrefix+" ERROR: missing tool executable")
-		return 2
-	}
-	args, err := chainUserToolexec(args)
-	if err == nil {
-		var executable string
-		if executable, err = exec.LookPath(args[0]); err == nil {
-			err = syscall.Exec(executable, args, os.Environ())
-		}
-	}
-	fmt.Fprintln(os.Stderr, err)
-	return 2
+	return toolwrap.ExecNative(args, version.BuildLogPrefix)
 }

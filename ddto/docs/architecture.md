@@ -122,7 +122,10 @@ import graph and prepares a registration call at its original `Run` entry.
 One private `-toolexec` hook substitutes compiler inputs for that package,
 including covered sources. It also bridges covered rewritten `testing` sources
 when needed. Unrelated calls bypass plan loading and replace the wrapper with
-the native tool on Unix. Mini also prepares a reachable goleak `Find` entry;
+the native tool on Unix. The wrapper is a small executable that ddto builds
+once per version in its user cache, so that each call starts without ddto's
+package graph; see [the bypass](testify.md#the-bypass-and-cache-contract).
+Mini also prepares a reachable goleak `Find` entry;
 the same graph lookup and wrapper serve both libraries. That lookup also detects
 the full SDK in production dependencies and test-only helpers. Mini then guards
 the SDK's CI initialization and transport configuration through the same wrapper,

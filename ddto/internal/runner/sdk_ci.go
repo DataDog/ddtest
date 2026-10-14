@@ -7,16 +7,17 @@ import (
 	"strings"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
 )
 
 const (
-	sdkCIConfigPackage      = "github.com/DataDog/dd-trace-go/v2/internal/config"
-	sdkCIEnvironmentPackage = "github.com/DataDog/dd-trace-go/v2/internal/civisibility/envconfig"
-	sdkTracerPackage        = "github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
+	sdkCIConfigPackage      = toolwrap.SDKCIConfigPackage
+	sdkCIEnvironmentPackage = toolwrap.SDKCIEnvironmentPackage
+	sdkTracerPackage        = toolwrap.SDKTracerPackage
 )
 
 func isSDKCIPackage(pkg string) bool {
-	return pkg == sdkCIEnvironmentPackage || pkg == sdkCIConfigPackage
+	return toolwrap.IsSDKCIPackage(pkg)
 }
 
 // sdkCompilePackage returns the guarded SDK package whose compiler cache
@@ -26,17 +27,7 @@ func isSDKCIPackage(pkg string) bool {
 // are the package's sources, which the guards rewrite; the external test and
 // the test main only need the marker removed, as for goleak.
 func sdkCompilePackage(importPath string) (pkg string, own bool) {
-	path, _, _ := strings.Cut(importPath, " [")
-	own = true
-	if base, ok := strings.CutSuffix(path, "_test"); ok {
-		path, own = base, false
-	} else if base, ok := strings.CutSuffix(path, ".test"); ok {
-		path, own = base, false
-	}
-	if isSDKCIPackage(path) || path == sdkTracerPackage {
-		return path, own
-	}
-	return "", false
+	return toolwrap.SDKCompilePackage(importPath)
 }
 
 // Direct package keys are needed because transitive testing export data can
