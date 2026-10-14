@@ -50,8 +50,9 @@ is intentionally version-pinned.
 
 Virtual test files anchor the runtime import without editing project
 sources. Temporary plans are invocation-local and removed after Go exits; ddto's
-user cache holds only the toolchain mirrors, vendor workspaces and tool wrapper
-described in [Mini runtime](mini-runtime.md#runtime-provisioning). Test-result
+user cache holds only the toolchain mirrors, vendor workspaces, tool wrapper
+and, for a release executable, runtime sources described in
+[Mini runtime](mini-runtime.md#runtime-provisioning). Test-result
 caching remains Go's choice: explicitly select packages for result caching, and
 use `-count=1` when fresh CI events are required. `-work` preserves Go's own
 work directory, but the POC overlay is still removed, so overlays cannot be

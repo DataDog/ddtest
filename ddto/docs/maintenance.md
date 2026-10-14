@@ -276,6 +276,51 @@ Add the new toolchain to the compatibility matrix only after exercising it.
 Keep the oldest tested toolchain until a compatibility change is explicitly
 accepted.
 
+## Releases
+
+Run the [release workflow](../.github/workflows/release.yml) from the
+Actions tab, on the branch to release, with a version such as `v0.1.0` or
+`v0.1.0-rc.1`. It:
+
+1. Writes that version as `Number` in
+   [`internal/version`](../internal/version/version.go) with
+   `go run ./scripts/release -version <version> -stamp`, commits it and tags
+   the commit. Only the tag points to that commit; the branch keeps `0.0.0`.
+   `go install ...@<version>` therefore builds the release's source and reports
+   its version too: `ddto --version`, logs, telemetry and test events.
+2. Builds the executables with `go run ./scripts/release -o dist`, checks that
+   `ddto --version` reports the version, and runs
+   [`install.sh`](../scripts/install.sh) against the built files.
+3. Pushes the tag and publishes the release with the executables, `install.sh`
+   and `SHA256SUMS`. A version with a suffix publishes a prerelease.
+
+`scripts/release` rejects a version that is not `vMAJOR.MINOR.PATCH` with an
+optional prerelease, and a release above `v1`: the module path has no `/vN`
+suffix, so `go install` could not resolve it. The workflow stops before
+building when the tag exists. Other builds from source report `0.0.0`. Without `-stamp`,
+`-version` sets the version through `-overlay` for a local build, without
+changing the checkout.
+
+[`scripts/release`](../scripts/release/main.go) builds `ddto-<os>-<arch>` for
+Linux, macOS and Windows on `amd64` and `arm64`. Each executable carries the
+two files of [`internal/bundle`](../internal/bundle/bundle.go): a zip of the
+runtime's sources, which are `go.mod`, `LICENSE`, `NOTICE` and the non-test
+sources and license texts of `internal`, `propagation` and `testopt`, and the
+tool wrapper built for its platform from the sources that ddto would build, so
+its key matches.
+`-overlay` supplies both with the `ddto_release` build tag, and the checkout is
+not modified. Other builds carry neither and behave as before.
+
+`TestRuntimeArchiveCoversEveryPlatform` checks that the zip holds every file Go
+compiles for a runtime package on each platform that `go tool dist list`
+names; a runtime package outside those directories needs a new entry in
+`runtimeDirs`. `TestReleaseExecutableIsSelfContained` builds the host's
+executable with a version and runs it with an empty user cache and module
+cache and a module proxy that refuses every request.
+`scripts/test_install.py` runs `install.sh` against a local server: a checked
+download, a checksum mismatch, the `go install` fallback, an installed
+executable of the same version and `GITHUB_PATH`.
+
 ## Verification before publication
 
 Use focused checks while developing. For an SDK, codec, platform or ownership

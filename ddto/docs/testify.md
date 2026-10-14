@@ -148,7 +148,8 @@ The wrapper is therefore a small executable of its own,
 library. It starts in about 1.2 ms on Linux, against 2.4 ms for ddto's own
 executable, and runs ddto's private `tool-overlay` entrypoint for the calls
 that need the plan. ddto builds it from sources that it embeds, once per
-version and host, into `ddto/toolwraps` in its user cache, and applies the
+version and host, into `ddto/toolwraps` in its user cache; a release executable
+writes the wrapper it carries, already built for its platform. ddto applies the
 rules of the [toolchain mirrors](mini-runtime.md#toolchains-in-the-module-cache)
 beside it: a run holds the executable, one unused for 14 days is removed, and
 a user cache within `GOMODCACHE`, the toolchain or the module is not used.

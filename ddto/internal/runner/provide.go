@@ -139,7 +139,7 @@ func provideRuntime(ctx context.Context, dir string, opts options, selected Runt
 		version = info.Main.Version
 	}
 	_, sourceFile, _, _ := runtime.Caller(0)
-	root := miniSourceRoot(sourceFile, environment.GOMODCACHE, version)
+	root := cliMiniRoot(ctx, sourceFile, environment.GOMODCACHE, version)
 	// Local replacements are relative to the module root, even when the user
 	// runs ddto from a subpackage or supplies a separate -modfile.
 	return modfile, requireMini(ctx, filepath.Dir(environment.GOMOD), modfile, root, version, progress)
@@ -209,6 +209,21 @@ func requireLocalMini(ctx context.Context, dir, modfile, root, selectedVersion, 
 	}
 	_, err = goTool(ctx, dir, nil, args...)
 	return err
+}
+
+// cliMiniRoot returns local sources of the runtime revision that built the
+// CLI: its checkout, the sources that a release build carries, or its exact
+// version in GOMODCACHE, in that order. It returns "" when none is available.
+func cliMiniRoot(ctx context.Context, sourceFile, moduleCache, version string) string {
+	if root := miniSourceRoot(sourceFile, "", ""); root != "" {
+		return root
+	}
+	if bundled := bundledMiniFrom(ctx); bundled != nil {
+		if root := bundled.sources(ctx); root != "" {
+			return root
+		}
+	}
+	return miniSourceRoot("", moduleCache, version)
 }
 
 // publishedVersion excludes development builds, whose version cannot be fetched.

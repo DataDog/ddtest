@@ -1,3 +1,4 @@
 /bin/
 /artifacts/
 *.test
+/dist/

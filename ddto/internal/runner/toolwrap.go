@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/bundle"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
@@ -125,34 +127,60 @@ func buildToolWrapper(ctx context.Context, env *goEnvironment, parent, key, root
 		return err
 	}
 	defer removeGOROOTMirror(staging)
-	src := filepath.Join(staging, "src")
-	for name, data := range files {
-		file := filepath.Join(src, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(file, data, 0600); err != nil {
-			return err
-		}
-	}
 	bin := filepath.Join(staging, "bin")
 	executable := filepath.Join(bin, toolWrapperName(env.GOHOSTOS))
-	// The wrapper runs on the host, whatever the build targets, and needs
-	// none of the caller's flags, workspace or toolchain selection.
-	cmd := goCommand(ctx, src, "build", "-buildvcs=false", "-ldflags=-s -w", "-o", executable, ".")
-	cmd.Env = append(cmd.Environ(), "GOOS="+env.GOHOSTOS, "GOARCH="+env.GOHOSTARCH,
-		"GOFLAGS=", "GOWORK=off", "GO111MODULE=on", "GOTOOLCHAIN=local")
-	cmd.Env = append(cmd.Env, toolWrapperBuildEnv...)
-	cmd.WaitDelay = toolWrapperWaitDelay
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("building the tool wrapper: %w: %s", err, bytes.TrimSpace(output))
-	}
-	if !validToolWrapper(ctx, executable, sum) {
-		return errors.New("the built tool wrapper does not run")
+	source := "bundle"
+	if !installBundledToolWrapper(ctx, env, executable, sum, debug) {
+		source = "build"
+		src := filepath.Join(staging, "src")
+		for name, data := range files {
+			file := filepath.Join(src, filepath.FromSlash(name))
+			if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
+				return err
+			}
+			if err := os.WriteFile(file, data, 0600); err != nil {
+				return err
+			}
+		}
+		// The wrapper runs on the host, whatever the build targets, and needs
+		// none of the caller's flags, workspace or toolchain selection.
+		cmd := goCommand(ctx, src, "build", "-buildvcs=false", "-ldflags=-s -w", "-o", executable, ".")
+		cmd.Env = append(cmd.Environ(), "GOOS="+env.GOHOSTOS, "GOARCH="+env.GOHOSTARCH,
+			"GOFLAGS=", "GOWORK=off", "GO111MODULE=on", "GOTOOLCHAIN=local")
+		cmd.Env = append(cmd.Env, toolWrapperBuildEnv...)
+		cmd.WaitDelay = toolWrapperWaitDelay
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("building the tool wrapper: %w: %s", err, bytes.TrimSpace(output))
+		}
+		if !validToolWrapper(ctx, executable, sum) {
+			return errors.New("the built tool wrapper does not run")
+		}
 	}
 	if err := os.Rename(bin, root); err != nil {
 		return err
 	}
-	debug.printf("tool wrapper state=created path=%q duration_ms=%d", filepath.Join(root, toolWrapperName(env.GOHOSTOS)), time.Since(started).Milliseconds())
+	debug.printf("tool wrapper state=created source=%s path=%q duration_ms=%d", source, filepath.Join(root, toolWrapperName(env.GOHOSTOS)), time.Since(started).Milliseconds())
 	return nil
+}
+
+// bundledToolWrapper is the wrapper executable that a release build carries
+// for the platform it was built for, or nil.
+var bundledToolWrapper = bundle.ToolWrapper()
+
+// installBundledToolWrapper writes the wrapper that a release build carries
+// when it was built for the host, and reports whether it runs with the
+// expected key. Otherwise ddto builds the wrapper from its sources.
+func installBundledToolWrapper(ctx context.Context, env *goEnvironment, executable, sum string, debug *cliDebug) bool {
+	if len(bundledToolWrapper) == 0 || env.GOHOSTOS != runtime.GOOS || env.GOHOSTARCH != runtime.GOARCH {
+		return false
+	}
+	if err := os.MkdirAll(filepath.Dir(executable), 0700); err != nil {
+		return false
+	}
+	if err := os.WriteFile(executable, bundledToolWrapper, 0700); err == nil && validToolWrapper(ctx, executable, sum) {
+		return true
+	}
+	debug.printf("tool wrapper bundled=unusable")
+	_ = os.Remove(executable)
+	return false
 }

@@ -397,7 +397,7 @@ func provideMiniWorkspace(ctx context.Context, dir, work, temp, moduleCache stri
 			cliVersion = info.Main.Version
 		}
 		_, source, _, _ := runtime.Caller(0)
-		miniRoot = miniSourceRoot(source, moduleCache, cliVersion)
+		miniRoot = cliMiniRoot(ctx, source, moduleCache, cliVersion)
 		if miniRoot == "" && cliVersion != "" {
 			miniRoot, err = workspaceReplacementRoot(ctx, dir, base, miniModule, cliVersion)
 			if err != nil {

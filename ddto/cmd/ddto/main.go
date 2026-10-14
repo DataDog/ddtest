@@ -40,9 +40,13 @@ func main() {
 	form, isTest := runner.TestCommand(os.Args[1:])
 	switch {
 	case isTest:
+	case len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-version"):
+		fmt.Println("ddto " + version.Tag)
+		os.Exit(0)
 	case len(os.Args) == 1 || os.Args[1] == "-h" || os.Args[1] == "-help" || os.Args[1] == "--help":
 		fmt.Fprintln(os.Stderr, "usage: ddto [go | orchestrion go | go tool orchestrion go] test [--runtime=mini|sdk] [--git-upload-timeout=1m] [--keep-ci-state[=file.zip]] [go test flags] [packages] (default: mini)")
 		fmt.Fprintln(os.Stderr, "       ddto command [arguments]: runs any other command unchanged, such as ddto go build ./...")
+		fmt.Fprintln(os.Stderr, "       ddto --version: prints the version")
 		if len(os.Args) == 1 {
 			os.Exit(2)
 		}

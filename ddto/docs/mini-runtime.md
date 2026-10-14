@@ -58,7 +58,15 @@ recorded when the CLI was built: a checkout or the exact cached module used by
 after building the CLI. Keep the CLI and runtime at the same revision because
 their private testing hooks must agree.
 
-With `-trimpath`, or when that source directory is missing, the CLI checks the
+A [release executable](maintenance.md#releases) carries the runtime's sources
+instead. It extracts them once per version into `ddto/runtimes` in its user
+cache and uses that directory as it would use a checkout. The rules of the
+[toolchain mirrors](#toolchains-in-the-module-cache) apply: a run holds the
+directory, one unused for 14 days is removed, and a copy that misses a file is
+extracted again. Without a usable user cache, such as one inside the project,
+the run's temporary directory holds them until `go test` ends.
+
+With `-trimpath`, or when no such source directory is usable, the CLI checks the
 module cache for its exact published version. It fetches that version only when
 no usable local copy exists. Required `go get` commands announce themselves and
 stream Go's diagnostics on `stderr`. The CLI never searches other checkouts or

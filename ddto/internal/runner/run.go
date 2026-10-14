@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/bundle"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
@@ -74,6 +75,9 @@ type Plan struct {
 	environment *goEnvironment
 	// toolWrapperLock keeps the -toolexec wrapper executable from pruners.
 	toolWrapperLock *os.File
+	// bundledMini holds the Mini sources that a release build carries, once
+	// provisioning extracts them.
+	bundledMini *bundledMini
 	// execHelper is the cross-compilation program Go would run test binaries
 	// with, without -exec; execWrapper restores the caller's Go settings before
 	// a -exec program.
@@ -121,6 +125,7 @@ func (p Plan) Release() {
 	if p.toolWrapperLock != nil {
 		_ = p.toolWrapperLock.Close()
 	}
+	p.bundledMini.release()
 }
 
 // GoCommand returns the go command for builds that use this plan, and the
@@ -253,6 +258,10 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			return plan, mirrorUnavailable(e)
 		}
 		ctx = withGoToolchain(ctx, plan.gorootMirror)
+	}
+	if archive := bundle.Runtime(); runtime == Mini && archive != nil {
+		plan.bundledMini = &bundledMini{env: opts.environment, dir: dir, archive: archive, temp: temp}
+		ctx = withBundledMini(ctx, plan.bundledMini)
 	}
 	plan.testLauncher = opts.exec != "" || opts.environment.GOOS != opts.environment.GOHOSTOS || opts.environment.GOARCH != opts.environment.GOHOSTARCH
 	plan.goVersion, plan.goExperiment = opts.environment.GOVERSION, opts.environment.GOEXPERIMENT

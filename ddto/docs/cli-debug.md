@@ -55,9 +55,16 @@ The log records:
   is an expected result; Go still resolves every package after provisioning.
 - Runtime provisioning and each `go env`, `go mod` or `go get` invocation.
   Mini reports whether it uses a client replacement, local CLI sources, or a
-  published version. Local CLI sources can be a checkout or its exact cached
-  module. Older client languages use a temporary workspace, without changing
-  their module's Go directive.
+  published version. Local CLI sources can be a checkout, the sources that a
+  release executable carries, or its exact cached module. Older client
+  languages use a temporary workspace, without changing their module's Go
+  directive.
+- For a release executable, the state of the runtime sources it carries:
+  `bundled runtime state=created` with the extraction's duration, `reused`, or
+  `unavailable` with the error. Without a usable user cache, `state=temporary`
+  follows: the run's temporary directory holds them. Otherwise ddto looks for
+  its version in the module cache. `state=stale` comes first when ddto
+  extracts them again.
 - The `testing` transformation, its source and rewritten-file counts, and the
   Fuzz and parallel-stop hooks selected for that runtime.
 - Optional library discovery, including how many imports still need a query
@@ -71,8 +78,11 @@ The log records:
   SDK's CI guard and the Git worker's link signal, plus whether the client
   supplied its own `toolexec`.
 - With a selective tool, the state of its wrapper executable:
-  `tool wrapper state=created` with the build's duration, `reused`, or
-  `unavailable` with the error, in which case ddto itself is the wrapper.
+  `tool wrapper state=created` with `source=build`, or `source=bundle` when a
+  release executable wrote the wrapper it carries, and the duration; `reused`;
+  or `unavailable` with the error, in which case ddto itself is the wrapper.
+  `tool wrapper bundled=unusable` means the carried wrapper did not run, and
+  ddto built one.
   `state=stale` comes first when ddto must rebuild it and waits for runs that
   still use the old one; a signal ends that wait. See
   [the bypass](testify.md#the-bypass-and-cache-contract).

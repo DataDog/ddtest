@@ -1,0 +1,69 @@
+name: Release
+# Run it from the branch to release with a version, such as v0.1.0 or
+# v0.1.0-rc.1. It commits that version to internal/version in a commit that
+# only the new tag points to, so that go install at the tag reports it too;
+# builds and checks the executables; then pushes the tag and publishes the
+# release with the executables, install.sh and SHA256SUMS. The branch keeps
+# its development version.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, such as v0.1.0 or v0.1.0-rc.1
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: release
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  release:
+    name: Release ${{ inputs.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.x'
+          cache: false
+      # scripts/release rejects a version that is not vMAJOR.MINOR.PATCH with
+      # an optional prerelease.
+      - name: Commit and tag the version
+        shell: bash
+        run: |
+          go run ./scripts/release -version "$VERSION" -stamp
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" > /dev/null; then
+            echo "::error::tag $VERSION already exists"
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -q -am "Release $VERSION"
+          git tag "$VERSION"
+      - name: Build
+        shell: bash
+        run: |
+          go run ./scripts/release -o dist
+          cp scripts/install.sh dist/
+          cd dist && sha256sum ddto-* install.sh > SHA256SUMS
+      - name: Check the executables and install.sh
+        shell: bash
+        run: |
+          test "$(dist/ddto-linux-amd64 --version)" = "ddto $VERSION"
+          DDTO_DOWNLOAD_URL="file://$PWD/dist" bash dist/install.sh --dir "$RUNNER_TEMP/bin"
+          cmp dist/ddto-linux-amd64 "$RUNNER_TEMP/bin/ddto"
+      - name: Publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git push origin "refs/tags/$VERSION"
+          flags=()
+          if [[ "$VERSION" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$VERSION" dist/* --verify-tag --title "$VERSION" --generate-notes "${flags[@]}"
