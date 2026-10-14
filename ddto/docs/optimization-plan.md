@@ -452,6 +452,41 @@ on these findings.
 **Done.** A profile-backed list of changes. Each is implemented only after
 measurement shows a gain under `ddto test`.
 
+**Outcome.** On 2026-10-14 the user closed this phase without a code change,
+on these findings. Measurements are medians on Linux against a local intake.
+- **Start, run directly.** These are the benchmark's conditions, and those of
+  a binary that `ddto test -c` builds and that runs elsewhere. A Testify binary
+  takes:
+  - 2.1 ms natively;
+  - 2.4 ms with Mini and CI Visibility off;
+  - 9.4 ms with it on, and 10.8 ms inside a Git checkout.
+
+  Mini's bootstrap takes 5.3–5.8 ms: four `git` commands and the CI tags.
+  Settings take 1.8 ms, with a 0.7 ms request; the test-cycle send and the
+  session close take about 0.75 ms each; package initialization takes 0.9 ms.
+  The SDK does the same work.
+- **Start under `ddto test`.** The Git worker already ran Git and made the
+  requests, so a test process's bootstrap takes 0.56 ms and its settings
+  0.4 ms. The test-cycle send remains.
+- **Memory.** Gin's root package binary, with about 400 tests, peaks at:
+  - 35.2 MiB natively;
+  - 35.0 MiB with CI Visibility off;
+  - 38.6 MiB with it on.
+
+  The extra 3.4 MiB is mostly finished spans awaiting a batch. Batches flush
+  at 1,000 events or half the maximum payload, so they do not grow with the
+  suite. The benchmark's 50.9 MiB was the sum of Gin's six binaries running
+  together.
+- **What remains under `ddto test`.** It lies in `go test` itself. With a
+  cached build, Testify's `-count=1` run takes 323 ms of `go test` against
+  243 ms natively:
+  - linking the larger binary takes about 65 ms more;
+  - checking the cache for Mini's packages takes about 60 ms more.
+
+  That is [phase 4](#phase-4-minis-package-graph-in-builds)'s graph.
+- **Not pursued.** Running the four `git` commands concurrently would save
+  2–3 ms per process, and only outside `ddto test`.
+
 ## Phase 7: refresh the benchmarks and the backlog
 
 - Refresh Mini's benchmarks after phases 1–6 land, following
