@@ -17,7 +17,7 @@ import (
 // A bounded subset of GitHub expressions, not a workflow interpreter. Unknown
 // contexts/functions stay inconclusive, even inside short-circuited expressions.
 // Scalar types matter: the string "false" is truthy; boolean false is not.
-func runtimeCondition(value string, row map[string]any) (bool, error) {
+func runtimeCondition(value string, row map[string]any, environments ...map[string]string) (bool, error) {
 	value = strings.TrimSpace(value)
 	if strings.HasPrefix(value, "${{") && strings.HasSuffix(value, "}}") {
 		value = strings.TrimSpace(value[3 : len(value)-2])
@@ -29,6 +29,9 @@ func runtimeCondition(value string, row map[string]any) (bool, error) {
 		return false, fmt.Errorf("CI condition exceeds 4096 characters or contains a NUL byte")
 	}
 	p := conditionParser{rest: value, row: row}
+	if len(environments) > 0 {
+		p.env = environments[0]
+	}
 	result, err := p.expression(0)
 	if err != nil || strings.TrimSpace(p.rest) != "" {
 		return false, fmt.Errorf("cannot statically resolve CI condition %q; unsupported syntax requires review, not a workflow rewrite", value)
@@ -286,6 +289,9 @@ func (p *conditionParser) atom() (any, error) {
 			}
 			return value, nil
 		}
+		if p.row != nil {
+			return "", nil
+		} // GitHub returns an empty string for a missing property in a known context.
 	}
 	if key, ok := strings.CutPrefix(token, "env."); ok {
 		if value, exists := p.env[key]; exists {
@@ -326,6 +332,18 @@ func conditionEqual(left, right any) (bool, error) {
 	if a, ok := left.(string); ok {
 		if b, ok := right.(string); ok {
 			return strings.EqualFold(a, b), nil
+		}
+	}
+	// A missing property in a known matrix is the empty string. GitHub's
+	// equality coercion maps that to zero and booleans to zero/one.
+	if left == "" {
+		if b, ok := right.(bool); ok {
+			return !b, nil
+		}
+	}
+	if right == "" {
+		if a, ok := left.(bool); ok {
+			return !a, nil
 		}
 	}
 	if a, ok := left.(bool); ok {

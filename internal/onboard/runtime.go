@@ -139,9 +139,12 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 			}
 			for _, row := range rows {
 				rowResolutions := slices.Clone(resolutions)
+				rowJob := job
+				rowJob.Steps = slices.Clone(job.Steps)
 				rowCandidate := false
 				for i, step := range job.Steps {
 					resolved, _, resolveErr := resolveVariantStep(workflow, job, step, row)
+					rowJob.Steps[i] = resolved
 					rowResolutions[i] = resolveTestStep(root, workflow, job, resolved, "javascript", framework)
 					if rowResolutions[i].Review {
 						rowResolutions[i] = commandResolution{}
@@ -153,7 +156,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 				if !rowCandidate {
 					continue
 				}
-				result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, workflow, name, job, rowResolutions, row, resolveNode, cachedResolve, framework)...)
+				result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, workflow, name, rowJob, rowResolutions, row, resolveNode, cachedResolve, framework)...)
 			}
 		}
 	}
@@ -190,7 +193,7 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 		finding.Reason = reason
 		return append(findings, finding)
 	}
-	active, err := runtimeCondition(job.If, nil)
+	active, err := runtimeCondition(job.If, row)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -205,14 +208,15 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 		uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 		resolution := resolutions[i]
 		test := resolution.Matched || resolution.Reason != ""
-		if uses != "actions/setup-node" && uses != githubAction && !test {
+		nvmNode := nvmRuntime(step.Run)
+		if uses != "actions/setup-node" && uses != githubAction && nvmNode == "" && !test {
 			continue
 		}
 		finding = RuntimeFinding{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Source: step.Source, Command: step.Run, Resolution: resolution.Evidence, Node: node, NodeSource: nodeSource, Status: "inconclusive"}
 		if uses == githubAction {
 			finding.Action = step.Uses
 		}
-		active, err := stepCondition(step, row)
+		active, err := stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
 		if err != nil {
 			return fail(err.Error())
 		}
@@ -221,6 +225,10 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 				skippedAction = true
 			}
 			continue
+		}
+		if nvmNode != "" {
+			node, nodeSource = nvmNode, step.Source
+			nodePlatform = nodeDistributionPlatform(job.RunsOn, "", row)
 		}
 		switch uses {
 		case "actions/setup-node":
@@ -260,7 +268,7 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 				continue
 			}
 		}
-		if len(frameworks) > 0 && frameworks[0] == "mocha" && mochaInstrumentationDisabled(workflow, job, step) {
+		if len(frameworks) > 0 && frameworks[0] == "mocha" && mochaInstrumentationDisabled(workflow, job, step, row) {
 			finding.Status, finding.Code = "excluded", "excluded_runtime"
 			finding.Reason = "Mocha tests still run, but DD_CIVISIBILITY_ENABLED=false explicitly excludes this entry from instrumentation. This runtime was not validated with the tracer."
 			findings = append(findings, finding)
@@ -385,12 +393,16 @@ func fetchRuntimeMetadata(ctx context.Context, client *http.Client, address stri
 
 // An explicit legacy test step can precede the conditional Datadog action.
 // Honor effective literal overrides without inferring intent from a missing action.
-func mochaInstrumentationDisabled(workflow ciWorkflow, job runtimeJob, step runtimeStep) bool {
+func mochaInstrumentationDisabled(workflow ciWorkflow, job runtimeJob, step runtimeStep, rows ...map[string]any) bool {
 	value := ""
 	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		if current, ok := env["DD_CIVISIBILITY_ENABLED"]; ok {
 			value = current
 		}
+	}
+	if len(rows) > 0 {
+		resolved, err := bootstrapOptions(value, rows[0], conditionEnvironment(workflow, job, step, rows[0]))
+		return err == nil && resolved == "false"
 	}
 	return value == "false"
 }

@@ -28,6 +28,7 @@ func TestStaticConditionTypesAndPrecedence(t *testing.T) {
 		{`contains(fromJSON('["18.x", "22.x"]'), matrix.node)`, false},
 		{`contains(fromJSON('["20.X"]'), matrix.node)`, true},
 		{`contains(fromJSON('[]'), matrix.node)`, false},
+		{"matrix.missing", false}, {"matrix.missing < 22", true}, {"matrix.missing != ''", false},
 		{"matrix.enabled", false}, {"matrix.text", true},
 		{"matrix.enabled == false", true}, {"matrix.number == 22", true},
 		{"startsWith(matrix.node, '20') && matrix.text != 'FALSE'", false},
@@ -48,11 +49,11 @@ func TestStaticConditionTypesAndPrecedence(t *testing.T) {
 			require.Equal(t, tc.want, got)
 		})
 	}
-	for _, expression := range []string{"matrix.enabled == 'false'", "matrix.number == '22'", "false && github.event_name == 'push'", "matrix.node == '20.x' ||", "(true", "true garbage", "matrix.missing"} {
+	for _, expression := range []string{"matrix.enabled == 'false'", "matrix.number == '22'", "false && github.event_name == 'push'", "matrix.node == '20.x' ||", "(true", "true garbage"} {
 		_, err := runtimeCondition(expression, row)
 		require.Error(t, err, expression)
 	}
-	for _, expression := range []string{"matrix.enabled < 22", "matrix.number >=", "matrix.number >= 22 || github.event_name == 'push'", "matrix.number >= 22 garbage", "matrix.missing < 22", `contains(fromJSON('[1]'), matrix.node)`, `fromJSON('{}')`, `fromJSON('null')`, `fromJSON('false')`, `fromJSON('oops')`, `contains(fromJSON(env.NODES), matrix.node)`, `contains(fromJSON('["20.x"]'), github.event_name)`, `contains(matrix.node, 20)`} {
+	for _, expression := range []string{"matrix.enabled < 22", "matrix.number >=", "matrix.number >= 22 || github.event_name == 'push'", "matrix.number >= 22 garbage", `contains(fromJSON('[1]'), matrix.node)`, `fromJSON('{}')`, `fromJSON('null')`, `fromJSON('false')`, `fromJSON('oops')`, `contains(fromJSON(env.NODES), matrix.node)`, `contains(fromJSON('["20.x"]'), github.event_name)`, `contains(matrix.node, 20)`} {
 		_, err := runtimeCondition(expression, row)
 		require.Error(t, err, expression)
 	}

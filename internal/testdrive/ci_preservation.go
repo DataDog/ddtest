@@ -6,7 +6,9 @@
 package testdrive
 
 import (
-	"slices"
+	"encoding/json"
+	"reflect"
+	"strings"
 
 	"github.com/DataDog/ddtest/internal/onboard"
 )
@@ -33,7 +35,7 @@ func checkCIPreservation(root string, result *validationResult) error {
 		if err == nil {
 			var missing []string
 			for _, row := range result.CIBaseline {
-				if !slices.Contains(current, row) {
+				if !preservedMatrixRow(row, current) {
 					missing = append(missing, row)
 				}
 			}
@@ -43,4 +45,36 @@ func checkCIPreservation(root string, result *validationResult) error {
 		}
 	}
 	return nil
+}
+
+// Added metadata does not remove coverage. Every original attribute must still
+// exist with its original value in the same workflow/job; changed values fail.
+func preservedMatrixRow(original string, current []string) bool {
+	prefix, raw, ok := strings.Cut(original, " / {")
+	if !ok {
+		return false
+	}
+	var before map[string]any
+	if json.Unmarshal([]byte("{"+raw), &before) != nil {
+		return false
+	}
+	for _, candidate := range current {
+		job, data, ok := strings.Cut(candidate, " / {")
+		if !ok || job != prefix {
+			continue
+		}
+		var after map[string]any
+		if json.Unmarshal([]byte("{"+data), &after) != nil {
+			continue
+		}
+		match := true
+		for key, value := range before {
+			actual, exists := after[key]
+			match = match && exists && reflect.DeepEqual(actual, value)
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }

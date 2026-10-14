@@ -15,6 +15,11 @@ import (
 // Resolve only declared scalar environment values and simple parameter reads.
 // Never evaluate a command substitution or inherit the evaluator's environment.
 func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) (runtimeStep, map[string]string, error) {
+	var err error
+	step.Run, err = interpolateMatrix(step.Run, row)
+	if err != nil {
+		return step, nil, err
+	}
 	env := map[string]string{}
 	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		maps.Copy(env, layer)

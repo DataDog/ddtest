@@ -81,11 +81,15 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				var commands []TestCommand
 				for i, step := range job.Steps {
 					uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
-					if framework == "playwright" && uses == "actions/upload-artifact" && step.Run == "" && step.ResolutionError == "" {
-						review = append(review, fmt.Sprintf("%s / %s / step %d: artifact upload is outside local Playwright execution; its CI condition is not evaluated", workflow.Path, name, stepNumber(step, i)))
+					if (framework == "playwright" && uses == "actions/upload-artifact" || framework == "mocha" && slices.Contains([]string{"actions/upload-artifact", "coverallsapp/github-action"}, uses)) && step.Run == "" && step.ResolutionError == "" {
+						reason := "artifact upload is outside local Playwright execution"
+						if framework == "mocha" {
+							reason = "artifact/coverage upload is outside local Mocha execution"
+						}
+						review = append(review, fmt.Sprintf("%s / %s / step %d: %s; its CI condition is not evaluated", workflow.Path, name, stepNumber(step, i), reason))
 						continue
 					}
-					active, conditionErr := stepCondition(step, row)
+					active, conditionErr := stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
 					if conditionErr == nil && !active {
 						continue
 					}
@@ -96,11 +100,14 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 					location := fmt.Sprintf("%s / %s / step %d (%s)", workflow.Path, jobLabel, stepNumber(step, i), step.Run)
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row)
 					resolution := resolveTestStep(root, workflow, job, resolved, "javascript", framework)
-					if conditionErr != nil {
+					if conditionErr != nil && resolved.Run != "" && resolution.Reason == "" && !resolution.Matched && len(resolution.Builds) == 0 {
+						resolution.Review, resolution.Reason = true, "Condition affects only a recognized non-test command; review separately: "+conditionErr.Error()
+					}
+					if conditionErr != nil && !resolution.Review {
 						pendingSetup = append(pendingSetup, conditionErr.Error())
 						resolution.Reason = conditionErr.Error()
 					}
-					if envErr != nil {
+					if envErr != nil && !resolution.Review {
 						pendingSetup = append(pendingSetup, envErr.Error())
 						resolution.Reason = envErr.Error()
 					}
@@ -154,6 +161,8 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 			}
 		}
 	}
+	scope.Unresolved = groupMatrixDiagnostics(scope.Unresolved)
+	scope.Review = groupMatrixDiagnostics(scope.Review)
 	return scope, nil
 }
 
@@ -204,4 +213,43 @@ func mutatesCIFiles(command string) bool {
 		}
 	}
 	return false
+}
+
+// Keep repeated setup/parse failures readable without hiding their affected
+// matrix scope. Per-test locations and runtime findings retain all consumers.
+func groupMatrixDiagnostics(messages []string) []string {
+	type group struct {
+		text string
+		rows []string
+	}
+	groups := []group{}
+	indexes := map[string]int{}
+	for _, message := range messages {
+		prefix, rest, matrix := strings.Cut(message, " map[")
+		row, suffix, end := strings.Cut(rest, "] / step ")
+		key := message
+		if matrix && end {
+			key = prefix + " / step " + suffix
+		} else {
+			row = ""
+		}
+		index, exists := indexes[key]
+		if !exists {
+			index = len(groups)
+			indexes[key] = index
+			groups = append(groups, group{text: key})
+		}
+		if row != "" && !slices.Contains(groups[index].rows, row) {
+			groups[index].rows = append(groups[index].rows, row)
+		}
+	}
+	result := make([]string, 0, len(groups))
+	for _, group := range groups {
+		text := group.text
+		if len(group.rows) > 0 {
+			text += fmt.Sprintf(" [affects %d matrix entries; e.g. %s]", len(group.rows), strings.Join(group.rows[:min(2, len(group.rows))], "; "))
+		}
+		result = append(result, text)
+	}
+	return result
 }
