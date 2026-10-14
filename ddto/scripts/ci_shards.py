@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 
@@ -114,6 +115,20 @@ def matrix(groups, suite, tip=False):
             include.append(dict(suite=s, os=os_name, go=go_version, mode=mode,
                                 shards=",".join(shards), job="-".join(shards), owner=index == 0))
     return {"include": include}
+
+
+def go_versions(releases):
+    """Map each Go version of the matrix, such as 1.26.x, to its newest release in go.dev's list."""
+    stable = [release["version"] for release in releases if release["stable"]]
+    chosen = {}
+    for spec in sorted({config[2] for config in CONFIGURATIONS if config[2] != "tip"}):
+        prefix = "go" + spec.removesuffix("x")
+        patches = [int(version.removeprefix(prefix)) for version in stable
+                   if version.startswith(prefix) and version.removeprefix(prefix).isdigit()]
+        if not patches:
+            raise ValueError(f"go.dev lists no release of Go {spec}")
+        chosen[spec] = spec.removesuffix("x") + str(max(patches))
+    return chosen
 
 
 def capture(*command):
@@ -371,6 +386,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     matrix_parser = commands.add_parser("matrix")
     matrix_parser.add_argument("--with-tip", action="store_true")
+    commands.add_parser("go-versions", help="read go.dev's release list on stdin; print the release each Go version installs")
     run_parser = commands.add_parser("run")
     for name in ("suite", "os", "go", "mode"):
         run_parser.add_argument("--" + name, required=True)
@@ -393,6 +409,8 @@ def main():
             for name, suite, tip in (("differential", "differential", False), ("mini", "mini", False), ("tip", "mini", True)):
                 value = matrix(groups, suite, tip) if not tip or args.with_tip else {"include": []}
                 print(name + "=" + json.dumps(value, separators=(",", ":")))
+        elif args.command == "go-versions":
+            print("go-versions=" + json.dumps(go_versions(json.load(sys.stdin)), separators=(",", ":")))
         elif args.command == "run":
             run(args)
         elif args.command == "retry":

@@ -97,6 +97,15 @@ class ShardTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "failed after 3 attempts"):
                 ci_shards.retry(args, sleep=sleeps.append)
 
+    def test_go_versions_choose_the_newest_release_of_each_version(self):
+        releases = [dict(version=version, stable=stable) for version, stable in (
+            ("go1.28rc1", False), ("go1.27.2", True), ("go1.27.0", True), ("go1.26.10", True), ("go1.26.9", True),
+            ("go1.25.15", False), ("go1.25.14", True))]
+        self.assertEqual({"1.25.x": "1.25.14", "1.26.x": "1.26.10", "1.27.x": "1.27.2"},
+                         ci_shards.go_versions(releases))
+        with self.assertRaisesRegex(ValueError, "no release of Go 1.25.x"):
+            ci_shards.go_versions(releases[:5])
+
     def test_tip_revision_accepts_git_abbreviations_and_checks_the_actual_commit(self):
         sha = "2557edd671b4ec84af8a5841a621a6abab39774b"
         for version in ("go1.28-devel_2557edd6 Thu Oct 8 11:55:37 2026 -0700",

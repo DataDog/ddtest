@@ -31,6 +31,7 @@ jobs:
       mini: ${{ steps.matrix.outputs.mini }}
       tip: ${{ steps.matrix.outputs.tip }}
       tip-enabled: ${{ steps.matrix.outputs.tip-enabled }}
+      go-versions: ${{ steps.matrix.outputs.go-versions }}
       skip: ${{ steps.verified.outputs.skip }}
       verified-run: ${{ steps.verified.outputs.run }}
     steps:
@@ -48,6 +49,11 @@ jobs:
             python scripts/ci_shards.py matrix >> "$GITHUB_OUTPUT"
             echo "tip-enabled=false" >> "$GITHUB_OUTPUT"
           fi
+          # Runner images carry different patch releases of a Go version while
+          # GitHub rolls out an update, and setup-go prefers the installed one.
+          # Every job of the run installs the newest release, chosen here.
+          curl -fsSL --retry 3 'https://go.dev/dl/?mode=json&include=all' |
+            python scripts/ci_shards.py go-versions >> "$GITHUB_OUTPUT"
       # Squash-merging an up-to-date pull request produces the tree that its
       # last run verified. Only runs of branches in this repository count.
       - id: verified
@@ -113,7 +119,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         id: go
         with:
-          go-version: ${{ matrix.go }}
+          go-version: ${{ fromJSON(needs.plan.outputs.go-versions)[matrix.go] }}
           cache: false
       - name: Locate Go caches
         id: paths
@@ -257,7 +263,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         id: go
         with:
-          go-version: ${{ matrix.go }}
+          go-version: ${{ fromJSON(needs.plan.outputs.go-versions)[matrix.go] }}
           cache: false
       - name: Locate Go caches
         id: paths
