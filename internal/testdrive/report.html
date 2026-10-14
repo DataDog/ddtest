@@ -673,8 +673,43 @@ THE SOFTWARE.
         margin: 14px 0 0;
       }
       .fact dt {
+        position: relative;
         color: var(--muted);
         font-size: 12px;
+      }
+      .fact-help {
+        display: inline-flex;
+        position: relative;
+        margin-left: 4px;
+        vertical-align: middle;
+      }
+      .fact-info {
+        display: inline-flex;
+        padding: 2px;
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        border-radius: 50%;
+      }
+      .fact-tooltip {
+        position: absolute;
+        z-index: 2;
+        right: 0;
+        top: 100%;
+        width: max-content;
+        max-width: min(280px, 75vw);
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--raised);
+        color: var(--ink);
+        font-weight: 400;
+        box-shadow: 0 4px 16px #0004;
+        visibility: hidden;
+      }
+      .fact-help:not([data-dismissed]):hover .fact-tooltip,
+      .fact-help:not([data-dismissed]):focus-within .fact-tooltip {
+        visibility: visible;
       }
       .fact dd {
         margin: 4px 0 0;
@@ -1139,6 +1174,13 @@ THE SOFTWARE.
         .facts {
           grid-template-columns: repeat(2, minmax(0, 1fr));
         }
+        .fact-help {
+          position: static;
+        }
+        .fact-tooltip {
+          left: 0;
+          right: auto;
+        }
         .search {
           flex: 1;
         }
@@ -1302,9 +1344,12 @@ THE SOFTWARE.
         <p class="run-totals">{{ len .Tests }} {{ plural (len .Tests) "test" "tests" }} · {{ len .Suites }} {{ plural (len .Suites) "suite" "suites" }}</p>
         {{ if .NoTestEvents }}<p class="no-test-events">No test events received.</p>{{ end }}
         <dl class="facts">
-          {{ range .Facts }}
+          {{ range $index, $fact := .Facts }}
             <div class="fact {{ .Tone }}">
-              <dt>{{ .Label }}</dt>
+              <dt>{{ .Label }}{{ if .Tooltip }}<span class="fact-help">
+                <button type="button" class="fact-info" aria-label="About {{ .Label }}" aria-describedby="fact-tooltip-{{ $index }}">{{ template "icon-info-circle" }}</button>
+                <span class="fact-tooltip" id="fact-tooltip-{{ $index }}" role="tooltip">{{ .Tooltip }}</span>
+              </span>{{ end }}</dt>
               <dd>{{ .Value }}</dd>
             </div>
           {{ end }}
@@ -1592,6 +1637,16 @@ THE SOFTWARE.
     <script>
       (function () {
         "use strict";
+        document.querySelectorAll(".fact-help").forEach(function (help) {
+          ["pointerenter", "focusin"].forEach(function (event) {
+            help.addEventListener(event, function () { delete help.dataset.dismissed; });
+          });
+        });
+        document.addEventListener("keydown", function (event) {
+          if (event.key === "Escape") {
+            document.querySelectorAll(".fact-help").forEach(function (help) { help.dataset.dismissed = ""; });
+          }
+        });
         var tabs = Array.from(document.querySelectorAll("[data-tab]"));
         var filters = Array.from(document.querySelectorAll("[data-filter]"));
         var search = document.getElementById("search");
