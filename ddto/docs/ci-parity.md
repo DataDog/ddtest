@@ -152,7 +152,7 @@ Only declared differences are normalized:
 
 | Mini location | SDK location | Internal function |
 | --- | --- | --- |
-| `testing.go:874` | `testing.go:864` | `(*M).executeInternalTest.func1` |
+| `testing.go:882` | `testing.go:864` | `(*M).executeInternalTest.func1` |
 | `instrumentation_orchestrion.go:427` | `instrumentation_orchestrion.go:424` | `instrumentTestingTFuncWithSourceOptions.func1.1` |
 | `instrumentation_orchestrion.go:433` | `instrumentation_orchestrion.go:430` | `instrumentTestingTFuncWithSourceOptions.func1` |
 | `instrumentation.go:775` | `instrumentation.go:775` | `applyAdditionalFeaturesToTestFunc.func2` |

@@ -409,6 +409,14 @@ func instrumentTestingMWithOptions(m *testing.M, wrapperOpts additionalFeatureWr
 		}
 	}
 
+	// Start-up requests have returned. One of them can take a connection that
+	// another released while its own dial still runs; net/http then pools that
+	// dial's connection from a goroutine of its own, reading time.Local while a
+	// test may change it. Closing the CI clients' connections cancels such dials
+	// and closes their late connections before the first test.
+	cidelivery.CloseConnections()
+	log.Debug("civisibility: start-up connections closed before the first test")
+
 	return true, func(exitCode int) int {
 		abnormalExit := exitCode == testingMAbnormalExitCode
 		if abnormalExit {

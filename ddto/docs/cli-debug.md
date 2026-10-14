@@ -133,6 +133,10 @@ therefore does not mean the runtime is ready to enter a test. Settings and
 endpoint path or telemetry request type, status and retry information without
 adding headers, query strings or bodies.
 
+`civisibility: start-up connections closed before the first test` marks the
+end of startup: the startup requests have returned, and Mini has closed the
+CI clients' idle connections so that no dial they started runs into a test.
+
 A session closes before `civisibility: exiting`, so its flush can explain a gap
 between `PASS` and that line. Shutdown then closes the tracer once; its `close`
 summary includes the final delivery of events queued after the session closed. Test-cycle summaries report a sanitized host/path,

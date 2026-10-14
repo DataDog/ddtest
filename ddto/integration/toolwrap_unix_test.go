@@ -65,24 +65,36 @@ func TestToolWrapperWaitStopsOnSignal(t *testing.T) {
 		t.Fatal(err)
 	}
 	waiting := make(chan struct{})
-	var log strings.Builder
+	scanned := make(chan string, 1)
 	go func() {
+		var log strings.Builder
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			log.WriteString(scanner.Text() + "\n")
 			if strings.Contains(scanner.Text(), "tool wrapper state=stale") {
 				close(waiting)
-				for scanner.Scan() {
-				}
-				return
+				break
 			}
 		}
+		// Drain the rest, so ddto never blocks on a full pipe.
+		for scanner.Scan() {
+		}
+		if err := scanner.Err(); err != nil {
+			log.WriteString("reading stderr: " + err.Error() + "\n")
+		}
+		scanned <- log.String()
 	}()
 	select {
 	case <-waiting:
 	case <-time.After(2 * time.Minute):
 		_ = cmd.Process.Kill()
-		t.Fatalf("ddto never waited for the stale wrapper:\n%s", log.String())
+		// Processes that ddto started can keep the pipe open.
+		select {
+		case log := <-scanned:
+			t.Fatalf("ddto never waited for the stale wrapper:\n%s", log)
+		case <-time.After(10 * time.Second):
+			t.Fatal("ddto never waited for the stale wrapper")
+		}
 	}
 	if err := cmd.Process.Signal(os.Interrupt); err != nil {
 		t.Fatal(err)

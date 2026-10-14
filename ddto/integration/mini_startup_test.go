@@ -135,6 +135,12 @@ func TestStarted(t *testing.T) { if err := os.WriteFile(os.Getenv("DDTO_STARTED_
 						t.Errorf("missing timing %q: %s", marker, &stderr)
 					}
 				}
+				// Start-up requests release their connections before any test runs.
+				closedAt := strings.Index(stderr.String(), "civisibility: start-up connections closed before the first test")
+				testAt := strings.Index(stderr.String(), "instrumentTestingTFunc: instrumenting test function")
+				if closedAt < 0 || testAt < 0 || closedAt > testAt {
+					t.Errorf("start-up connections were not closed before the test (at %d, test at %d): %s", closedAt, testAt, &stderr)
+				}
 				if _, err := os.Stat(marker); err != nil {
 					t.Fatalf("test never ran: %v", err)
 				}

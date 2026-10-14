@@ -166,6 +166,14 @@ func PrepareLeakCheck() func() {
 	// reported as a leak while it runs git or waits between requests.
 	waitForBackground(backgroundWaitLimit)
 	resume := pauseSends()
+	CloseConnections()
+	return resume
+}
+
+// CloseConnections closes the idle connections of every registered CI client.
+// net/http also cancels the dials that no request waits for, and closes, until
+// the next request, connections that become idle, instead of pooling them.
+func CloseConnections() {
 	connections.Lock()
 	closers := make([]func(), 0, len(connections.closers))
 	for entry := range connections.closers {
@@ -175,5 +183,4 @@ func PrepareLeakCheck() func() {
 	for _, close := range closers {
 		close()
 	}
-	return resume
 }

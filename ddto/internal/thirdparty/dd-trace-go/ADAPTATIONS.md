@@ -341,6 +341,24 @@ messages keep only their 256-byte prefix, and request duration retains its
 measurement at the response headers, before draining. Status classification,
 fallback and payload accounting retain their SDK rules.
 
+The startup requests can still leave work in Go's transport. They share the
+settings client's connection pool, and a request can take a connection that
+another one released while its own dial still runs. That dial then finishes in
+a goroutine of the transport, which adds the connection to the idle pool and
+calls `time.Now`, so it reads `time.Local` after the first test may have
+started. On 2026-10-14 the race detector caught it once in the clock
+integration, with ordinary delivery and telemetry. Deferred mode already closes
+the idle connections after every request. Ordinary mode now does it once:
+`instrumentTestingMWithOptions` in
+[`civisibility/integrations/gotesting/testing.go`](civisibility/integrations/gotesting/testing.go)
+calls `cidelivery.CloseConnections` after the last startup request and before
+the first test. `CloseIdleConnections` cancels dials that no request waits for,
+and a dial that completes afterwards finds the transport closing new idle
+connections, so it closes its connection without reading the clock. A dial
+that pooled its connection earlier did so under the pool's mutex, which the
+close then takes, ordering that read before the tests. The next request
+reconnects, which costs a TLS handshake for Agentless delivery.
+
 Checks: `TestStartupTelemetrySendsBeforeTests` blocks a real loopback startup
 response and checks that `StartApp` waits for it, initial configuration, retry,
 concurrent close and failed initialization in both modes.
@@ -356,6 +374,11 @@ updating the mapper or queue.
 `TestStoppedTickerCannotRestart` checks terminal close.
 `TestWriterFlushWaitsForResponseCompletion` holds the transport's return-to-idle
 handshake for successful and failed responses.
+`internal/cidelivery/TestCloseConnectionsKeepsLateDialsOutOfTheIdlePool` holds a
+dial whose request took another request's connection, and checks that closing
+the CI connections cancels it, or closes its connection when it had already
+connected. `TestMiniStartupOverlapsSettingsAndTelemetry` checks that the
+connections close before the first test.
 Run these with `-race`, plus the clock integration and HTTP telemetry parity.
 When synchronizing upstream, check response ownership and startup scheduling
 alongside the telemetry metrics; checking wire fields alone misses these races.
