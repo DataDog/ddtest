@@ -40,6 +40,7 @@ type featureResult struct {
 
 // Detailed results feed validation and the HTML findings report, not compact JSON.
 type validationRun struct {
+	temporaryRoot                   string
 	commandOutput                   string
 	commandError                    error
 	Project                         string
@@ -118,6 +119,8 @@ func (r validationRun) summary() runSummary {
 }
 
 type validationResult struct {
+	CIBaseline         []string                 `json:"ci_matrix_baseline"`
+	CIPreservation     *verdict                 `json:"ci_preservation,omitempty"`
 	Scope              *onboard.ValidationScope `json:"scope,omitempty"`
 	Configurations     []configurationResult    `json:"configurations,omitempty"`
 	Cleanup            *verdict                 `json:"cleanup,omitempty"`
@@ -167,6 +170,9 @@ func validationPath(repositoryRoot string) string {
 }
 
 func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {
+	if err := checkCIPreservation(repositoryRoot, &result); err != nil {
+		return err
+	}
 	prepareValidationResult(repositoryRoot, &result)
 	if err := retainExecution(repositoryRoot, &result); err != nil {
 		return err
@@ -209,6 +215,9 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		for _, entry := range result.CIRuntime.Review {
 			_, _ = fmt.Fprintf(output, "  - Review separately: %s / %s / step %d (%s): %s\n", entry.Workflow, entry.Job, entry.Step, entry.Command, entry.Reason)
 		}
+	}
+	if result.CIPreservation != nil {
+		_, _ = fmt.Fprintf(output, "\nCI matrix preservation: %s — %s\n", result.CIPreservation.Status, result.CIPreservation.Reason)
 	}
 	if result.CISelection != nil {
 		_, _ = fmt.Fprintf(output, "\nCI tracer agreement: %s — %s\n", result.CISelection.Status, result.CISelection.Reason)
@@ -335,6 +344,9 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	}
 	result.Success = result.LocalSuccess
 	result.ChecksPassed = result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
+	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
+		result.Success, result.ChecksPassed = false, false
+	}
 	if result.CISelection != nil {
 		result.Success = result.Success && result.CISelection.Status == "compatible"
 		result.ChecksPassed = result.ChecksPassed && result.CISelection.Status == "compatible"

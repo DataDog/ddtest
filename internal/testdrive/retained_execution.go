@@ -78,12 +78,34 @@ func retainExecution(root string, result *validationResult) error {
 	if hasPairedExecution(*result) {
 		return nil
 	}
-	file, err := os.Open(validationPath(root))
-	if errors.Is(err, os.ErrNotExist) {
+	previous, err := readPreviousValidation(root)
+	if err != nil {
+		return err
+	}
+	if previous == nil {
 		return nil
 	}
+	if !hasPairedExecution(*previous) {
+		if previous.Retained == nil || previous.Retained.Result == nil {
+			return nil
+		}
+		previous = previous.Retained.Result
+	}
+	if !hasPairedExecution(*previous) {
+		return nil
+	}
+	previous.Retained = nil
+	result.Retained = &retainedExecution{Status: "historical", Reason: "Earlier execution evidence only; not revalidated by this invocation. Rerun full validation after changes to the test command, configuration, source, dependencies, runtime, or tracer. Earlier failures remain unresolved until rechecked.", Result: previous}
+	return nil
+}
+
+func readPreviousValidation(root string) (*validationResult, error) {
+	file, err := os.Open(validationPath(root))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
-		return fmt.Errorf("preserve earlier execution report: %w", err)
+		return nil, fmt.Errorf("preserve earlier execution report: %w", err)
 	}
 	defer func() { _ = file.Close() }()
 	// Reports contain summaries, not raw events. Do not read an arbitrary-size
@@ -91,29 +113,14 @@ func retainExecution(root string, result *validationResult) error {
 	const limit = 8 << 20
 	data, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
-		return fmt.Errorf("preserve earlier execution report: %w", err)
+		return nil, fmt.Errorf("preserve earlier execution report: %w", err)
 	}
 	if len(data) > limit {
-		return fmt.Errorf("preserve earlier execution report: existing report exceeds %d bytes; left unchanged", limit)
+		return nil, fmt.Errorf("preserve earlier execution report: existing report exceeds %d bytes; left unchanged", limit)
 	}
 	var previous validationResult
 	if err := json.Unmarshal(data, &previous); err != nil {
-		return fmt.Errorf("preserve earlier execution report: existing report is unreadable; left unchanged: %w", err)
+		return nil, fmt.Errorf("preserve earlier execution report: existing report is unreadable; left unchanged: %w", err)
 	}
-	if !hasPairedExecution(previous) {
-		if previous.Retained == nil || previous.Retained.Result == nil {
-			return nil
-		}
-		previous = *previous.Retained.Result
-	}
-	if !hasPairedExecution(previous) {
-		return nil
-	}
-	previous.Retained = nil
-	result.Retained = &retainedExecution{
-		Status: "historical",
-		Reason: "Earlier execution evidence only; not revalidated by this invocation. Rerun full validation after changes to the test command, configuration, source, dependencies, runtime, or tracer. Earlier failures remain unresolved until rechecked.",
-		Result: &previous,
-	}
-	return nil
+	return &previous, nil
 }

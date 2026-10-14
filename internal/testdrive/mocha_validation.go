@@ -80,6 +80,7 @@ func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Ses
 	run.Name, run.Instrumented, run.ProbeMode = name, instrumented, probeMode
 	directory := filepath.Join(session.Directory(), name)
 	temporary := filepath.Join(directory, "tmp")
+	run.temporaryRoot = temporary
 	if err := os.MkdirAll(temporary, 0700); err != nil {
 		return run, err
 	}
@@ -107,6 +108,9 @@ func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Ses
 	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
 		env[key] = temporary
 	}
+	// Companion tools such as Standard use XDG caches outside the checkout.
+	// Keep their scratch inside the same disposable run as Mocha.
+	env["XDG_CACHE_HOME"] = filepath.Join(temporary, "cache")
 	if !instrumented {
 		env["NODE_OPTIONS"] = stripDatadogNodeOptions(os.Getenv("NODE_OPTIONS"))
 		env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
@@ -121,6 +125,19 @@ func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Ses
 		run.ProbeCoverageThresholdsDisabled = true
 	}
 	command, args := t.executionCommand()
+	if probePath != "" {
+		original := shellquote.Join(append([]string{command}, args...)...)
+		probeCommand := onboard.MochaProbeCommand(t.repositoryRoot, original)
+		if probeCommand != original {
+			words, err := shellquote.Split(probeCommand)
+			if err != nil || len(words) == 0 {
+				return run, fmt.Errorf("invalid Mocha probe command: %s", probeCommand)
+			}
+			command, args = words[0], words[1:]
+			run.ProbeLintSkipped = true
+			run.Diagnostic = "Synthetic probe uses the resolved Mocha entry point; companion lint and auxiliary checks ran only in the full-suite comparison."
+		}
+	}
 	if filepath.Base(command) == command {
 		local := filepath.Join(t.repositoryRoot, "node_modules", ".bin", command)
 		if info, err := os.Stat(local); err == nil && info.Mode().IsRegular() && info.Mode()&0111 != 0 {

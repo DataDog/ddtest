@@ -19,6 +19,7 @@ import (
 // A resolution can be unrelated, matched, or unresolved. A matched command with
 // an unresolved component is still inconclusive; it must not hide custom wrappers.
 type commandResolution struct {
+	MochaAuxiliary    bool
 	Tests             []TestCommand
 	Builds            []BuildCommand
 	Matched           bool
@@ -69,6 +70,13 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	}
 	remaining := 256
 	result := resolveJestSequence(root, filepath.Join(root, directory), step.Run, nil, &remaining, framework)
+	if result.MochaAuxiliary {
+		result.Reason = "Node script was not identified as Mocha and is not executed inside a resolved Mocha package command; its test scope requires review."
+		for i := range result.Tests {
+			result.Tests[i].UnvalidatedSetup = append(result.Tests[i].UnvalidatedSetup, result.Reason)
+		}
+	}
+
 	if _, err := staticCommands(step.Run); err != nil {
 		if metadata, ok := resolveMetadataStep(root, workflow, job, step, framework); ok {
 			return metadata
@@ -195,6 +203,7 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 			}
 		}
 		result.Tests = append(result.Tests, part.Tests...)
+		result.MochaAuxiliary = result.MochaAuxiliary || part.MochaAuxiliary
 		result.Builds = append(result.Builds, part.Builds...)
 		result.SingleJest = len(commands) == 1 && part.SingleJest
 		if part.ReviewReason != "" {
@@ -300,6 +309,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		return commandResolution{Matched: true, SingleJest: true, Evidence: command,
 			Tests: []TestCommand{{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append(assignments, append([]string{framework}, words[1:]...)...)...)}}}
 	}
+	if framework == "mocha" && words[0] == "node" {
+		return resolveMochaNode(root, directory, words, assignments)
+	}
 	if framework == "mocha" && (filepath.Base(words[0]) == "c8" || filepath.Base(words[0]) == "nyc") {
 		return resolveMochaCoverage(root, directory, words, assignments, stack, remaining)
 	}
@@ -317,7 +329,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		return commandResolution{}
 	}
 	switch words[0] {
-	case "echo", "printf", "true", "false", "eslint", "prettier", "oxlint", "oxfmt", "mkdir", "cp":
+	case "echo", "printf", "true", "false", "eslint", "standard", "prettier", "oxlint", "oxfmt", "mkdir", "cp":
 		return commandResolution{}
 	case "unbuild", "rollup", "webpack", "tsup", "tsc", "tsgo", "bunchee":
 		if words[0] == "bunchee" && framework != "playwright" {
@@ -480,8 +492,15 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		relative, _ := filepath.Rel(root, directory)
 		return commandResolution{Builds: []BuildCommand{{Directory: filepath.ToSlash(relative), Command: command, Kind: "package-build"}}}
 	}
-	if len(frameworks) > 0 && frameworks[0] == "mocha" && lifecycle == "" && result.Reason == "" && result.SingleJest && len(result.Tests) == 1 && len(result.Builds) == 0 {
-		// Preserve package-manager behavior and existing coverage/reporters.
+	if len(frameworks) > 0 && frameworks[0] == "mocha" && lifecycle == "" && result.Reason == "" && (result.SingleJest || len(args) == 0) && len(result.Tests) == 1 && len(result.Builds) == 0 {
+		// Keep surrounding lint/Node checks and their original ordering/exit behavior.
+		// No shell is synthesized: the package manager executes its own script.
+		if !result.SingleJest && result.Tests[0].mochaProbeCommand == "" {
+			result.Tests[0].mochaProbeCommand = result.Tests[0].Command
+		}
+		result.SingleJest = true
+		result.MochaAuxiliary = false
+		result.ReviewReason = ""
 		result.Tests[0].Command = command
 	}
 	if lifecycle != "" {

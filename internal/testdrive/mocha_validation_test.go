@@ -66,10 +66,16 @@ func TestMochaObserverUsesNativeEventsAndKeepsConfiguration(t *testing.T) {
 	requireWriteFile(t, filepath.Join(root, "node_modules/mocha/package.json"), `{"name":"mocha","version":"11.8.0"}`)
 	requireWriteFile(t, filepath.Join(root, "node_modules/mocha/lib/runner.js"), `const {EventEmitter}=require('node:events'); module.exports=class Runner extends EventEmitter { run(fn){fn(this);return this} }`)
 	requireWriteFile(t, filepath.Join(dir, "options.js"), `exports.loadOptions=()=>({_:['original.js'],spec:['another.js'],ui:'bdd',require:['setup.js'],reporter:'custom',timeout:1234,retries:3,parallel:true,grep:'original',invert:true})`)
+	requireWriteFile(t, filepath.Join(root, "node_modules/mocha/lib/mocha.js"), `module.exports=class Mocha { constructor(){this.options={ui:"bdd",timeout:1234,reporter:"custom"};this.files=["original.js"];this.suite={retries:n=>this.retryCount=n}} loadFiles(){return this.files} run(fn){fn(this);return this} }`)
 	observer := filepath.Join(root, "observer.cjs")
 	requireWriteFile(t, observer, mochaObserver)
 	requireWriteFile(t, filepath.Join(root, "run.cjs"), `
 const assert=require('node:assert/strict'); const Runner=require('mocha/lib/runner');
+const Mocha=require('mocha/lib/mocha'); const mocha=new Mocha();
+assert.deepEqual(mocha.loadFiles(),[process.env.DDTEST_MOCHA_PROBE]);
+assert.equal(mocha.retryCount,0); assert.equal(mocha.options.timeout,1234);
+assert.equal(mocha.options.reporter,'custom');
+let callback=false; assert.equal(mocha.run(m=>{callback=true;assert.equal(m,mocha)}),mocha); assert.ok(callback);
 const options=require('mocha/lib/cli/options').loadOptions();
 assert.deepEqual(options._,[process.env.DDTEST_MOCHA_PROBE]); assert.equal(options.spec,undefined);
 assert.deepEqual(options.require,['setup.js']); assert.equal(options.reporter,'custom');
@@ -97,6 +103,9 @@ type mochaScratchExecutor struct {
 
 func (e *mochaScratchExecutor) CombinedOutput(_ context.Context, _ string, _ []string, env map[string]string) ([]byte, error) {
 	e.temporary = env["TMPDIR"]
+	if env["XDG_CACHE_HOME"] != filepath.Join(e.temporary, "cache") {
+		return nil, errors.New("cache escapes owned temporary directory")
+	}
 	if env["TMP"] != e.temporary || env["TEMP"] != e.temporary {
 		return nil, errors.New("temporary directories disagree")
 	}

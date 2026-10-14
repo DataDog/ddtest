@@ -12,14 +12,15 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
-	usesNYC          bool
-	Directory        string            `json:"directory"`
-	Command          string            `json:"command"`
-	ExitOnFailure    bool              `json:"exit_on_failure,omitempty"`
-	Environment      map[string]string `json:"environment,omitempty"`
-	Locations        []string          `json:"locations,omitempty"`
-	Prerequisites    []BuildCommand    `json:"prerequisites,omitempty"`
-	UnvalidatedSetup []string          `json:"unvalidated_setup,omitempty"`
+	mochaProbeCommand string
+	usesNYC           bool
+	Directory         string            `json:"directory"`
+	Command           string            `json:"command"`
+	ExitOnFailure     bool              `json:"exit_on_failure,omitempty"`
+	Environment       map[string]string `json:"environment,omitempty"`
+	Locations         []string          `json:"locations,omitempty"`
+	Prerequisites     []BuildCommand    `json:"prerequisites,omitempty"`
+	UnvalidatedSetup  []string          `json:"unvalidated_setup,omitempty"`
 }
 
 // BuildCommand is a statically resolved build preceding a test in the same
