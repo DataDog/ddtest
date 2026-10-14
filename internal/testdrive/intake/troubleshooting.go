@@ -43,6 +43,13 @@ func Troubleshoot(repositoryRoot, framework string, facts Facts) []Advice {
 		name = "Cucumber"
 	case "mocha":
 		return append(advices, troubleshootMochaCoverage(repositoryRoot))
+	case "cypress":
+		return append(advices, Advice{
+			Finding: MissingCoverageFinding,
+			Title:   "Enable coverage collection for Cypress",
+			Text:    "Collect Test Impact Analysis data by enabling Istanbul coverage in your test build: add babel-plugin-istanbul to Babel plugins or vite-plugin-istanbul to Vite plugins. Restart the dev server and rerun ddtest testdrive. Verify that window.__coverage__ contains source files in the tested page or component.",
+			URL:     "https://docs.datadoghq.com/tests/test_impact_analysis/setup/javascript/#cypress",
+		})
 	default:
 		return advices
 	}

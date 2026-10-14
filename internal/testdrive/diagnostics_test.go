@@ -35,12 +35,15 @@ func TestRunSharesConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T) {
 		wantError    string
 		wantAdvice   bool
 		mocha        bool
+		cypress      bool
 		browserInfo  bool
 		nycInstalled bool
 		nycDeclared  bool
 	}{
 		{name: "missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true},
 		{name: "Mocha missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, mocha: true},
+		{name: "Cypress missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, cypress: true},
+		{name: "Cypress with coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, CoveredTestCount: 1, CoverageLevel: "test", Tests: []intake.Test{passed}}, cypress: true},
 		{name: "Mocha with installed nyc missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, mocha: true, nycInstalled: true},
 		{name: "Cucumber with declared nyc missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, nycDeclared: true},
 		{name: "covered tests", facts: intake.Facts{TestEventCount: 1, TestCount: 1, CoveredTestCount: 1, CoverageLevel: "test", Tests: []intake.Test{passed}}},
@@ -60,6 +63,11 @@ func TestRunSharesConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T) {
 				drive.framework = framework.NewMocha(platform.NewJavaScript())
 				drive.args = []string{"mocha"}
 				frameworkLabel = "Mocha"
+			}
+			if tc.cypress {
+				drive.framework = framework.NewCypress(platform.NewJavaScript())
+				drive.args = []string{"cypress"}
+				frameworkLabel = "Cypress"
 			}
 			if tc.browserInfo {
 				drive.framework = framework.NewVitest(platform.NewJavaScript())
@@ -149,6 +157,16 @@ func TestRunSharesConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T) {
 					t.Fatalf("missing troubleshooting: %+v", diagnostics)
 				}
 				advice := diagnostics.Troubleshooting[0]
+				if tc.cypress {
+					for _, text := range []string{"Test Impact Analysis data", "babel-plugin-istanbul", "vite-plugin-istanbul", "window.__coverage__"} {
+						if !strings.Contains(advice.Text, text) {
+							t.Fatalf("Cypress advice lacks setup instruction %q: %+v", text, advice)
+						}
+					}
+					if advice.Finding != intake.MissingCoverageFinding || !strings.HasSuffix(advice.URL, "#cypress") || strings.Contains(advice.Text, "nyc ddtest") {
+						t.Fatalf("Cypress needs browser instrumentation guidance: %+v", advice)
+					}
+				}
 				if tc.nycInstalled && (advice.Title != "Check NYC coverage configuration" || !strings.Contains(advice.Text, "include/exclude") || strings.Contains(advice.Text, "./node_modules/.bin/nyc ddtest")) {
 					t.Fatalf("installed NYC still needs actionable coverage guidance: %+v", advice)
 				}
