@@ -18,8 +18,8 @@ DD_TRACE_DEBUG=true ddto test -c -o ./tests.bin .
 
 `DD_TRACE_DEBUG` accepts Go's `strconv.ParseBool` values, including `true`, `1`
 and `TRUE`. An absent, empty, false or invalid value disables CLI debug logs.
-There is no new flag, dependency or log file. Without debug, the CLI keeps its
-usual warnings, errors and live `go get` progress.
+Debugging needs no extra flag and writes no log file. Without it, the CLI keeps
+its usual warnings, errors and live `go get` progress.
 
 ## Read the output
 
@@ -67,13 +67,15 @@ The log records:
   a temporary modfile or coverage bridge is needed. `generated_backing_files`
   counts the distinct generated hook/import files; rewritten standard-library
   files are counted separately.
-- The selective tool decision for Testify, goleak, coverage and the Git
-  worker's link signal, plus whether the client supplied its own `toolexec`.
-- With a selective tool, its wrapper executable: `tool wrapper
-  state=created` with the build's duration, `reused`, or `unavailable` with the
-  error, when ddto itself is the wrapper. `state=stale` comes first when ddto
-  must rebuild it, and waits for runs that still use the old one; a signal ends
-  that wait. See [the bypass](testify.md#the-bypass-and-cache-contract).
+- The selective tool decision for Testify, goleak, coverage, Orchestrion, the
+  SDK's CI guard and the Git worker's link signal, plus whether the client
+  supplied its own `toolexec`.
+- With a selective tool, the state of its wrapper executable:
+  `tool wrapper state=created` with the build's duration, `reused`, or
+  `unavailable` with the error, in which case ddto itself is the wrapper.
+  `state=stale` comes first when ddto must rebuild it and waits for runs that
+  still use the old one; a signal ends that wait. See
+  [the bypass](testify.md#the-bypass-and-cache-contract).
 - When the Git worker requests for the test processes, and why: see
   [Requests ahead](#requests-ahead).
 - Native `go test` duration and exit code, followed by the whole CLI duration
@@ -139,12 +141,14 @@ CI clients' idle connections so that no dial they started runs into a test.
 
 A session closes before `civisibility: exiting`, so its flush can explain a gap
 between `PASS` and that line. Shutdown then closes the tracer once; its `close`
-summary includes the final delivery of events queued after the session closed. Test-cycle summaries report a sanitized host/path,
-one-based attempt number, HTTP status (`0` without a response), network-error
-flag, planned retry, request body bytes and gzip use. The payload summary reports
-uncompressed bytes and the actual attempt count. `retry=true` means another
-attempt is permitted; cancellation can still prevent it. `mode=files` identifies
-Bazel output without an HTTP request.
+summary includes the final delivery of events queued after the session closed.
+
+Test-cycle summaries report a sanitized host/path, one-based attempt number,
+HTTP status (`0` without a response), network-error flag, planned retry,
+request body bytes and gzip use. The payload summary reports uncompressed bytes
+and the actual attempt count. `retry=true` means another attempt is permitted,
+although cancellation can still prevent it. `mode=files` identifies Bazel
+output without an HTTP request.
 
 For example, these illustrative runtime lines show a completed delivery:
 
@@ -159,8 +163,9 @@ the smaller shutdown phases. Do not add them together. `owner=false` on a shutdo
 summary means that call did not run the teardown: it either waited for its owner
 or found CI already inactive. `already_closed=true` identifies a repeated session
 close. Session `exit_code` is the test command's result; delivery errors are
-reported separately and do not change it. `status=ok` on a send or flush describes
-that operation, not acceptance by a remote backend beyond the HTTP response.
+reported separately and do not change it. `status=ok` on a send or flush
+describes that operation; past the HTTP response, it says nothing about whether
+the backend accepted the events.
 
 Mini writes to the test process's `stderr`; `go test` can include that stream
 in package output or JSON `Output` events. Go groups output by package, even
@@ -308,8 +313,8 @@ review it before sharing.
 
 ## Output, cache and ownership
 
-The CLI's debug lines stay out of `stdout`, including `go test -json`. The CLI does not
-change test arguments, generated sources, fingerprints, compiler identities or
+The CLI's debug lines stay out of `stdout`, including `go test -json`. The CLI
+does not change test arguments, generated sources, fingerprints, compiler identities or
 exit codes when logging is enabled. Go still decides cache reuse; environment
 variables read by a test can legitimately affect Go's test-result cache.
 
@@ -319,10 +324,10 @@ through as before. The working directory is included to diagnose path issues.
 Logging failures do not replace the Go command's result.
 
 The tool wrapper and `tool-overlay` do not initialize logging or read
-`DD_TRACE_DEBUG`.
-Unrelated tools and compiler/linker version probes keep their native output and
-fast dispatch. The parent logs which integrations required the tool wrapper.
-There is no per-tool debug stream or additional `toolexec` activation.
+`DD_TRACE_DEBUG`, so unrelated tools and compiler/linker version probes keep
+their native output and fast dispatch. The parent logs which integrations
+required the tool wrapper; there is no per-tool debug stream, and debugging
+never adds a `-toolexec`.
 
 The logger is invocation-local in `internal/runner/debug.go`. A context carries
 it through preparation and Go helpers; package APIs such as `PrepareRuntime`

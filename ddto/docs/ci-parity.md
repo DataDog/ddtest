@@ -1,14 +1,15 @@
 # CI Visibility feature parity
 
-Mini registers `testify/suite` at its original entry, including callers in external
-modules. A 26-case Testify comparison checks the original runner, lifecycle,
-policies and covered helpers. The native `testing` path has 64 scenarios against
-the unmodified SDK instrumented by Orchestrion. Together with 16 deferred testing
-and seven deferred Testify cases, these make 113 comparisons. Fuzz and executable
-Examples add 64 comparisons and 14 atomic-coverage combinations against SDK PR #5442. Additional
-fixtures check manual hierarchy calls, CI child spans, multiple package binaries,
-Unix sockets, a bounded fuzz campaign and CI telemetry.
-This evidence does not establish complete product parity.
+Mini registers `testify/suite` at its original entry, including callers in
+external modules. A 26-case Testify comparison checks the original runner,
+lifecycle, policies and covered helpers. The native `testing` path has 64
+scenarios against the unmodified SDK instrumented by Orchestrion. Together with
+16 deferred testing and seven deferred Testify cases, these make 113
+comparisons. Fuzz and executable Examples add 64 comparisons and 14
+atomic-coverage combinations against SDK PR #5442. Additional fixtures check
+manual hierarchy calls, CI child spans, multiple package binaries, Unix
+sockets, a bounded fuzz campaign and CI telemetry. None of this establishes
+complete product parity.
 
 The automatic goleak fixture checks both delivery modes, external helpers,
 race, covered library inputs and deliberate test/HTTP leaks. See
@@ -16,11 +17,12 @@ race, covered library inputs and deliberate test/HTTP leaks. See
 
 The SDK reference is `dd-trace-go/main` at
 [`870449702d0a0cea26a6223eefe2f0a198069d79`](https://github.com/DataDog/dd-trace-go/tree/870449702d0a0cea26a6223eefe2f0a198069d79),
-also the base of our incorporated CI source. The exact module version is owned by
-[`internal/version`](../internal/version/version.go). Orchestrion is pinned to
-`v1.13.2-0.20260917114356-5c24783fcd76`; the fixture loads `gotesting/orchestrion.yml`
-from that SDK checkout, including its Testify rule. Comparing only the POC's
-`sdk` and `mini` backends would hide a transformation missing from both.
+also the base of the incorporated CI source. The exact module version is owned
+by [`internal/version`](../internal/version/version.go). Orchestrion is pinned
+to `v1.13.2-0.20260917114356-5c24783fcd76`; the fixture loads
+`gotesting/orchestrion.yml` from that SDK checkout, including its Testify rule.
+Comparing only the POC's `sdk` and `mini` backends would hide a transformation
+missing from both.
 
 ```mermaid
 flowchart LR
@@ -75,9 +77,9 @@ policy combinations and counts are exported by every workflow run.
 The inventory follows the SDK's CI integrations, manual API, coverage, feature
 selection, Git/settings clients, telemetry and testing YAML. The source and test
 manifests identify the copied production files and which original tests were
-ported. A copied file is implementation evidence, not a substitute for runtime
-proof. A green run is a regression gate for this inventory, not a promise that
-all combinations or downstream applications have been tested.
+ported. A copied file shows the implementation, and runtime proof still needs
+a fixture. A green run is a regression gate for this inventory; it does not
+mean that every combination or downstream application has been tested.
 
 ## Event counts
 
@@ -98,21 +100,22 @@ a test event, while their module/suite/session are closed once by the controller
 | Test with CI parent/child spans | 1 | 1 | 1 | 1 | 2 | Equal |
 | Testify suite with pass/skip methods | 1 | 1 | 2 | 3 | 0 | Equal, including hierarchy and method source metadata |
 
-The 64 testing scenarios total **64 sessions, 62 modules, 63 suites and 142 test
-events** in each runtime, with no extra spans. Additional span fixtures deliberately
-create them. This aggregate is a fixture observation, not an expected count for
-an arbitrary build; per-scenario counts and ancestry checks prevent equal totals
-from hiding a missing or duplicated event.
+The 64 testing scenarios total 64 sessions, 62 modules, 63 suites and 142 test
+events in each runtime, with no extra spans; only the additional span fixtures
+create spans. These totals describe the fixtures, and an arbitrary build has
+its own. Per-scenario counts and ancestry checks keep equal totals from hiding
+a missing or duplicated event.
 
 ## Comparison contract
 
-The harness decodes actual MessagePack envelopes and preserves event kind/version,
-service/resource/type, errors, custom tags, CI metadata and CI metrics. It compares
-multiplicity and exit status. Every test resolves its session/module/suite; IDs
-are unique and ancestry is consistent. Additional spans retain their test and
-span parentage. Logs resolve their test IDs before random IDs are normalized.
-Coverage bitmaps resolve their events and compare exactly. The multipart report
-is decompressed and its full LCOV text and event JSON are compared.
+The harness decodes actual MessagePack envelopes and preserves event
+kind/version, service/resource/type, errors, custom tags, CI metadata and CI
+metrics. It compares multiplicity and exit status. Every test resolves its
+session/module/suite; IDs are unique and ancestry is consistent. Additional
+spans retain their test and span parentage. Logs resolve their test IDs before
+random IDs are normalized. Coverage bitmaps resolve their events and compare
+exactly. The multipart report is decompressed and its full LCOV text and event
+JSON are compared.
 
 Only declared differences are normalized:
 
@@ -122,7 +125,7 @@ Only declared differences are normalized:
   Git/hierarchy aliases are excluded. Aliases must agree with native CI fields
   when present. Unknown CI attributes and custom tags remain in the comparison.
 - Shared CI, Git, OS and runtime strings can come from event-kind envelope
-  metadata instead of each event. This is an accepted change from the SDK. The
+  metadata instead of each event, an accepted change from the SDK. The
   comparator expands only those declared keys, and raw-payload assertions check
   their placement and overrides.
 - Mini retains capabilities and ITR session metadata. Missing SDK session values
@@ -136,8 +139,8 @@ Only declared differences are normalized:
 - `test.command` keeps the arguments after `-test.v=`, `-test.gocoverdir=` and
   `-test.testlogfile=` in Mini. Mini removes those flags and the other paths
   that `go test` injects: `-test.coverprofile=`, `-test.outputdir=` and
-  `-test.fuzzcachedir=`. The Fuzz/Examples
-  comparator replaces a Mini command that is absent from the SDK capture, in
+  `-test.fuzzcachedir=`. The Fuzz/Examples comparator replaces a Mini command
+  that is absent from the SDK capture, in
   `test.command` and the session resource, by the longest SDK command that is
   its whole-argument prefix. That covers the fixture's child processes. For the
   fixture's own invocation it requires Mini's exact form, derived from the known
@@ -199,16 +202,16 @@ After checking both contracts and the exact end, that one SDK start is adjusted
 in a copy for comparison. Raw captures and all other source fields are retained.
 
 The span fixture explicitly marks both runtimes' spans as `ciapp-test`. Mini
-adds that origin automatically; SDK public span creation does not automatically
-copy it to each span. This is an intentional CI-only enrichment difference.
-The fixture does not stand in for an external APM integration.
+adds that origin automatically, while SDK public span creation does not copy it
+to each span: an intentional, CI-only enrichment difference. The fixture does
+not stand in for an external APM integration.
 
-The manual fixture waits through the SDK's existing `GetKnownTests` initialization
-barrier before creating modules and tests. Without it, the SDK can omit capability
-metadata from the entire hierarchy on fast runners. Mini deliberately has no
-barrier; a delayed settings response verifies its static capabilities are already
-available. This stabilizes the reference without changing the SDK or filling
-missing test attributes in the comparator.
+The manual fixture waits through the SDK's existing `GetKnownTests`
+initialization barrier before creating modules and tests. Without it, the SDK
+can omit capability metadata from the entire hierarchy on fast runners. Mini
+deliberately has no barrier, and a delayed settings response verifies that its
+static capabilities are already available. The wait stabilizes the reference
+without changing the SDK or filling missing test attributes in the comparator.
 
 ## Run and maintain the gate
 
@@ -225,44 +228,49 @@ python scripts/parity_report.py artifacts/parity.json --output artifacts/parity.
 
 On Windows set `ORCHESTRION_BIN` to `orchestrion.exe` and use `-timeout=55m`.
 Linux race validation uses `PARITY_TEST_MODE=race`, `go test -race -timeout=40m`
-and a distinct `parity-race.json` prefix. The parallel/retry
-coverage test explicitly compiles the fixture with `-race -covermode=atomic`;
-the outer harness's `-race` alone would not make every child binary a race build.
-Windows Testify reference builds use `-work` with a fixture-owned
-`GOTMPDIR`. The pinned Orchestrion job server can keep its stderr log open while
-Go tries to remove its build directory. Both the shared matrix and the independent
+and a distinct `parity-race.json` prefix. The parallel/retry coverage test
+explicitly compiles the fixture with `-race -covermode=atomic`, because the
+outer harness's `-race` alone would not make every child binary a race build.
+Without the Orchestrion variable, the matrix can run against the POC SDK
+backend, including Testify, but the report renderer rejects a full parity
+report without the independent Orchestrion reference.
+
+Windows Testify reference builds use `-work` with a fixture-owned `GOTMPDIR`,
+because the pinned Orchestrion job server can keep its stderr log open while Go
+tries to remove its build directory. The shared matrix and the independent
 plain-coverage case use the same build helper. The matrix retains the directory
-until both delivery modes finish and cleans it through `TestMain`; the independent
-case uses `testing.TempDir` cleanup after its assertions. Both owners retry
-transient Windows locks for up to two seconds. Compilation and persistent cleanup
-errors still fail; event comparisons and the SDK reference are unchanged.
-Without the Orchestrion variable, the matrix can run against the POC SDK backend,
-including Testify, but the report renderer rejects a full parity report without
-the independent Orchestrion reference.
+until both delivery modes finish and cleans it through `TestMain`; the
+independent case uses `testing.TempDir` cleanup after its assertions. Both
+owners retry transient Windows locks for up to two seconds. Compilation and
+persistent cleanup errors still fail, and event comparisons and the SDK
+reference are unchanged.
 
 [`compatibility.yml`](../.github/workflows/compatibility.yml) runs the suite on
 Linux Go 1.26/1.27 and macOS/Windows Go 1.27. The Linux Go 1.27 race suite runs
 Mini first; the normal suites run the SDK first. Each differential configuration
 runs the complete suite once, split into test groups. Go 1.25 runs native Mini
-in normal/race modes. A nightly native job builds a recorded Go tip revision and
-also checks manual SDK span copies. The frozen Orchestrion reference fails on
-tip, so this job does not establish Orchestrion parity. The matrix runs on pull requests,
-pushes to `main`, the nightly schedule and manual dispatch; feature branch pushes use the pull request
-run instead of launching a second matrix, and [validation](validation.md#compatibility-workflow)
-describes when a run is skipped. Artifact names include the mode.
-Each group uploads JSON counts, supplemental evidence and logs; the final job
-renders a Markdown table per configuration, which also appears in the GitHub job summary. Artifacts are retained for seven
-days; download them before expiry to keep a run beyond that period. Missing
-evidence, a failed comparison or an omitted reference fails the report step. The Testify fixture
-requires every Testify policy case, timing and count comparison to pass. Reports
-record their source revision and the inputs that were actually tested.
+in normal/race modes. A nightly native job builds Go tip, records its revision
+and also checks manual SDK span copies; the frozen Orchestrion reference fails
+on tip, so that job does not establish Orchestrion parity.
+
+The matrix runs on pull requests, pushes to `main`, the nightly schedule and
+manual dispatch. Feature branch pushes use the pull request run instead of
+launching a second matrix, and [validation](validation.md#compatibility-workflow)
+describes when a run is skipped. Each group uploads JSON counts, supplemental
+evidence and logs under artifact names that include the mode, and the final job
+renders a Markdown table per configuration, which also appears in the GitHub job
+summary. Artifacts are retained for seven days, so download them to keep a run
+longer. Missing evidence, a failed comparison or an omitted reference fails the
+report step, and the Testify fixture requires every Testify policy case, timing
+and count comparison to pass. Reports record their source revision and the
+inputs that were actually tested.
 
 The normal and deferred `testing` matrices share one covered set of SDK, Mini
 and Orchestrion binaries. Testify shares its own race/coverage set. Both sets
 keep their source directories through the test process, including `-count`
 repetitions, and `TestMain` removes them afterward. Selecting only a deferred
-test still builds the required set. A failed build also fails later consumers.
-This reuse ends with the process; it adds no persistent build cache.
+test still builds the required set, and a failed build also fails later
+consumers. The reuse ends with the process and adds no persistent build cache.
 On Windows, cleanup retries sharing violations and access-denied errors for up
 to two seconds, as `testing.TempDir` does. Removing the URL file requests
 Orchestrion shutdown; its log handles may close slightly later. A persistent
@@ -274,25 +282,26 @@ Builds that deliberately alter flags, sources, overlays, workspaces or library
 versions keep their independent fixtures. Do not add those variants to the
 shared sets without checking their inputs and cleanup ownership.
 
-The [recorded repeated comparison](results/20261013-linux-go1.27.1/parity/README.md)
+The [recorded repeated comparison](results/20261014-linux-go1.27.1/parity/README.md)
 ran 115 scenarios at its frozen source revision. The current schema-4 gate
 requires the 113 ordinary/deferred/Testify cases plus Fuzz/Examples and
-supplemental evidence. The per-round `harness.json`
-records total harness time, including fixture compilation and comparison;
-that clock does not measure either backend's runtime or GitHub CI duration.
+supplemental evidence. The per-round `harness.json` records total harness
+time, including fixture compilation and comparison; that clock measures neither
+backend's runtime nor GitHub CI duration.
 
 ### Per-case duration records
 
-The [recorded Linux Go 1.27.1 run](results/20261013-linux-go1.27.1/parity/README.md)
+The [recorded Linux Go 1.27.1 run](results/20261014-linux-go1.27.1/parity/README.md)
 includes six rounds at each of 4/32 CPUs. Its per-round JSON files retain
 scenario durations, event counts and supplemental fixtures; `manifest.json`
 records the execution order, reference versions and harness input hashes.
 The summary keeps medians and ranges without imposing a speed threshold.
 
-The current JSON report uses schema 4, which requires the complete Fuzz/Examples
-and coverage evidence as well as the ordinary testing matrix. Each scenario and additional fixture
-records `timing.sdk_wall_ns` and `timing.mini_wall_ns` as integer monotonic-clock
-nanoseconds. Markdown shows seconds and the signed change `(Mini / SDK - 1) * 100`.
+The current JSON report uses schema 4, which requires the complete
+Fuzz/Examples and coverage evidence as well as the ordinary testing matrix.
+Each scenario and additional fixture records `timing.sdk_wall_ns` and
+`timing.mini_wall_ns` as integer monotonic-clock nanoseconds. Markdown shows
+seconds and the signed change `(Mini / SDK - 1) * 100`.
 Missing or invalid timing observations fail report validation. `execution_block`
 and `execution_order` record continuous blocks separately from per-child clocks.
 
@@ -305,17 +314,17 @@ uses a 100 ms settings delay. Testify times the full Orchestrion reference again
 Mini for every Testify combination; the POC SDK pass/skip time is also kept in
 that JSON.
 
-Each invocation records one observation per variant. The default matrix runs SDK first
-and Mini second; Testify cases run the reference SDK, then Mini, with a separate
-POC SDK check for pass/skip.
-These are diagnostic durations from compatibility tests, with no speed threshold.
+Each invocation records one observation per variant. The default matrix runs
+SDK first and Mini second; Testify cases run the reference SDK, then Mini, with
+a separate POC SDK check for pass/skip. These are diagnostic durations from
+compatibility tests, with no speed threshold.
 A performance claim needs repeated, balanced runs with the same inputs and
 enough context to separate host load, compilation and SDK work. The
 [compile-only cold/incremental benchmarks](benchmarks.md) measure another contract.
 
 ### Repeated whole-matrix timing
 
-The [recorded Linux comparison](results/20261013-linux-go1.27.1/parity/README.md)
+The [recorded Linux comparison](results/20261014-linux-go1.27.1/parity/README.md)
 keeps every input report, the run manifest and separate continuous clocks for
 the 65-case testing and 17-case deferred SDK/Mini blocks. It has six measured
 rounds at each CPU count, three in each execution order. The 26 Testify and seven
@@ -325,12 +334,13 @@ The sum of the 115 individual case durations is not a continuous wall clock.
 
 Set `PARITY_EXECUTION_ORDER=sdk-first` or `mini-first` to use grouped execution.
 Each variant runs all matrix cases before their differential comparisons. The
-block timer includes receiver setup, child-process execution and shutdown/flush;
-it excludes compilation and comparison. This is a measured interval, not the
-sum of the individual child clocks. Schema 4 exports `execution_block` and
-`execution_order`. The normal job uses SDK first; Linux race validation uses
-Mini first so both paths are exercised by CI. Both commands use `-count=1` to
-regenerate their evidence instead of reusing a Go test-result cache entry.
+block timer includes receiver setup, child-process execution and shutdown/flush,
+and excludes compilation and comparison. It is one measured interval, which
+differs from the sum of the individual child clocks. Schema 4 exports
+`execution_block` and `execution_order`. The normal job uses SDK first; Linux
+race validation uses Mini first so both paths are exercised by CI. Both commands
+use `-count=1` to regenerate their evidence instead of reusing a Go test-result
+cache entry.
 
 For repeated timing, run an unmeasured warmup, then six fresh invocations with
 three in each order. Use the same Go version, build cache, flags, fixture and
@@ -365,9 +375,9 @@ retain their existing SDK-first order, except the separate Testify reference.
 The incorporated CI distribution helpers match all 24 definitions in the pinned
 SDK except their import path. Mini's native writer also calls the test-cycle
 size, event-count, serialization-time and request-time helpers. The current wire
-fixture reads only count/rate metrics; it does not prove distribution delivery
-or every policy/error interaction. Collection concurrency already has unit/race
-checks, which do not replace that differential wire evidence.
+fixture reads only count/rate metrics, so it proves neither distribution
+delivery nor every policy/error interaction. Collection concurrency already has
+unit/race checks, which do not replace that differential wire evidence.
 
 | Work | Required evidence |
 | --- | --- |
@@ -380,12 +390,12 @@ checks, which do not replace that differential wire evidence.
 | Offline output | Decode Bazel telemetry files with the same assertions and prove telemetry-disabled runs emit none. This covers the file contract; an actual Bazel invocation remains a separate gate. |
 | Regression gate | Export metric inventories/samples and outcomes per case. Fail on missing Mini metrics or changed CI kinds/tags; run on the existing Linux/macOS/Windows matrix and Linux race harness. |
 
-The payload-drop unit matches the SDK. One known production
-difference remains before a complete telemetry-parity claim:
-
-- SDK `ciVisibilityTransport.send` returns network failures before incrementing
-  `endpoint_payload.requests_errors`; Mini records them with `error_type:network`.
-  The fixture must expose this difference rather than discard it as an APM metric.
+The payload-drop unit matches the SDK. One known production difference
+remains before a complete telemetry-parity claim: the SDK's
+`ciVisibilityTransport.send` returns network failures before incrementing
+`endpoint_payload.requests_errors`, while Mini records them with
+`error_type:network`. The fixture must expose this difference instead of
+discarding it as an APM metric.
 
 Git command counters also differ where Mini avoids repeated work. Base-branch
 discovery for impacted tests lists every missing candidate branch with one
@@ -402,7 +412,7 @@ abandons it. HTTP attempts and the number of events do not multiply that count.
 Rejected or oversized individual events increment `DroppedEvents()` only. Tests
 cover retry exhaustion, later recovery, buffered and in-flight cancellation,
 concurrent repeated close/flush, post-close rejection and oversized rejection.
-This verifies the Mini contract and unit; the full differential failure-policy
+They verify the Mini contract and unit; the full differential failure-policy
 cross-product remains open.
 
 Both implementations increment `endpoint_payload.requests` once per logical
@@ -413,9 +423,10 @@ emits payload-size/event-count samples on each attempt; Mini encodes a batch onc
 and reuses it. Validate those samples against the actual serialization/send
 operations without removing that optimization.
 
-This work concerns CI telemetry only. APM sampling, heartbeats, security and
+This work concerns CI telemetry only; APM sampling, heartbeats, security and
 remote configuration remain outside its scope. Implementation differences and
-missing proof remain separate entries until their contracts and tests are resolved.
+missing proof stay separate entries until their contracts and tests are
+resolved.
 
 When updating the SDK, follow [maintenance](maintenance.md#updating-the-sdk-base).
 Review the upstream testing YAML and CI production/test inventory as well as the

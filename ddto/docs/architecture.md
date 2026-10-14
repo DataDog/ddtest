@@ -8,8 +8,10 @@ keeping the same testing entry points.
 The CLI defaults to `mini`, which links this module's CI runtime without
 external module imports. Explicit `--runtime=sdk` selects the exact, unreplaced
 SDK version in [`internal/version`](../internal/version/version.go). The
-module requires only Testify v1.7.5 for its own tests, deliberately old so a
-consumer's newer Testify never changes.
+module's `go.mod` requires nothing: the ported SDK tests assert through
+[`internal/testassert`](../internal/testassert/assert.go), which imports only
+the standard library, so a consumer's `go mod tidy` never gains a module from
+this one.
 
 ## Build time and runtime
 
@@ -21,7 +23,7 @@ does not need the CLI.
 flowchart TB
     subgraph build["Build time"]
         CLI["ddto test: choose<br/>sdk or mini"] --> Plan["Resolve packages and<br/>prepare overlay"]
-        Plan --> Selection{"Testify, goleak, SDK hooks,<br/>coverage or Orchestrion?"}
+        Plan --> Selection{"Testify, goleak, SDK hooks,<br/>coverage, Orchestrion<br/>or link signal?"}
         Selection -->|Yes| Tools["Selective<br/>compiler/coverage<br/>wrapper"]
         Selection -->|No| Go["Native go test:<br/>compile and link"]
         Tools --> Go
@@ -37,9 +39,9 @@ flowchart TB
 
 Orchestrion is the reference instrumenter in differential tests and can also
 [share a build with Mini](orchestrion.md) to instrument application code. The POC
-implements only the testing hooks. Its front-end prepares one overlay per
-invocation. Its compiler processes perform only selected source edits;
-Orchestrion owns the application instrumentation engine in combined builds.
+implements only the testing hooks: its front end prepares one overlay per
+invocation, and its compiler processes make only selected source edits. In
+combined builds, Orchestrion owns the application instrumentation engine.
 
 | Code | Owns |
 | --- | --- |
@@ -120,35 +122,41 @@ GODEBUG settings, alternate modfiles and overlays still control the test program
 [Testify preparation](testify.md) detects the suite package in the actual test
 import graph and prepares a registration call at its original `Run` entry.
 One private `-toolexec` hook substitutes compiler inputs for that package,
-including covered sources. It also bridges covered rewritten `testing` sources
-when needed. Unrelated calls bypass plan loading and replace the wrapper with
-the native tool on Unix. The wrapper is a small executable that ddto builds
-once per version in its user cache, so that each call starts without ddto's
+covered sources included, and bridges covered rewritten `testing` sources when
+needed. Calls for other packages skip plan loading, and on Unix the hook
+replaces itself with the native tool. The hook is a small executable that ddto
+builds once per version in its user cache, so each call starts without ddto's
 package graph; see [the bypass](testify.md#the-bypass-and-cache-contract).
-Mini also prepares a reachable goleak `Find` entry;
-the same graph lookup and wrapper serve both libraries. That lookup also detects
-the full SDK in production dependencies and test-only helpers. Mini then guards
-the SDK's CI initialization and transport configuration through the same wrapper,
-including builds without Orchestrion. APM remains available. Builds needing none
-of these features omit `-toolexec`, unless go test may take results from its
-cache while ddto's Git worker requests for the test processes: then the same
-wrapper, in its `link` mode, tells the worker when go test links a test binary.
-Declaring an unused SDK dependency does not activate the guard.
-The same wrapper inserts [SDK span mirror hooks](sdk-span-mirror.md). The native
-test context carries Mini's identity, while SDK contexts retain APM parentage.
-Finalized SDK spans are copied into the existing CI queue under independent IDs.
-The suite fingerprint travels through `testing` export data; compiler and
-linker identities remain native, so unrelated packages share Go's cache. The
-selected version and API are checked before Go can reuse a cached suite. A
-coverage bridge has its own version contract. Its dispatch, cache invalidation
-and source ownership are described in [Testify instrumentation](testify.md).
-Each rewritten SDK package has its own compiler marker. A transitive marker
-through `testing` is insufficient when Go reuses unchanged dependency export data.
-The wrapper removes these markers before invoking the compiler; user flags stay
-intact. Go applies a package's flags to its test variants too: the internal
-test variant compiles the package's sources, which receive the same edits, and
-its external test package and test main only lose the marker. Goleak's package-only cache marker, delivery pause and exact worker filters are
-described in [delivery and goleak](delivery.md).
+Mini prepares a reachable goleak `Find` entry with the same graph lookup and
+hook.
+
+That lookup also finds the full SDK in production dependencies and test-only
+helpers. Mini then guards the SDK's CI initialization and transport
+configuration through the same hook, with or without Orchestrion, and APM keeps
+working. An SDK requirement that no package imports does not activate the
+guard. The hook also inserts the [SDK span mirror hooks](sdk-span-mirror.md):
+the native test context carries Mini's identity, SDK contexts keep their APM
+parentage, and finished SDK spans are copied into Mini's CI queue under
+independent IDs.
+
+Builds that need none of these features run without `-toolexec`. The exception
+is a build where go test may take results from its cache while ddto's Git
+worker sends requests for the test processes: the hook then runs in its `link`
+mode and tells the worker when go test links a test binary.
+
+The suite fingerprint travels through `testing` export data, while compiler and
+linker identities stay native, so unrelated packages share Go's cache. The
+selected Testify version and API are checked before Go can reuse a cached
+suite, and the coverage bridge has its own version contract;
+[Testify instrumentation](testify.md) covers their dispatch, cache invalidation
+and source ownership. Each rewritten SDK package gets its own compiler marker,
+because a transitive marker through `testing` is not enough when Go reuses
+unchanged dependency export data. The hook removes these markers before invoking
+the compiler and leaves user flags alone. Go applies a package's flags to its
+test variants as well: the internal test variant compiles the package's sources,
+which receive the same edits, while the external test package and test main
+only lose the marker. [Delivery and goleak](delivery.md) describes goleak's
+package-only cache marker, delivery pause and exact worker filters.
 
 The plan lives for one invocation. Identical generated content shares a backing
 file within that plan. Go still owns its build cache and test-result cache; use
@@ -249,13 +257,14 @@ concurrently, like the SDK's concurrent flushes, each bounded by
 `FlushTimeout`. At most eight sealed batches, including those in flight, plus
 the open batch are retained. A finisher that reaches that bound waits for a
 sender while the intake accepts payloads, so a slow intake loses no events.
-After a failed delivery, until the next success, it is rejected and counted
-instead, so an unavailable intake cannot stall tests; a blackholed one can delay
-finishers at the bound until the first delivery fails, at most `FlushTimeout`
-(ten seconds by default). A failed
-batch returns to the front of the queue, and background retries back off from
-one to ten seconds; any successful delivery clears the backoff and the failure
-state. Deferred mode starts no background sender and never waits: idle
+After a failed delivery, and until the next success, an event that reaches the
+bound is rejected and counted instead, so an unavailable intake cannot stall
+tests. A blackholed intake can delay finishers at the bound until the first
+delivery fails, at most `FlushTimeout` (ten seconds by default). A failed batch
+returns to the front of the queue, and background retries back off from one to
+ten seconds; any successful delivery clears the backoff and the failure state.
+
+Deferred mode starts no background sender and never waits: idle
 checkpoints deliver sealed batches, up to eight at once, and finish every send
 before the next test starts; the open batch waits for `Close` or an explicit
 `Flush`. Its pending queue can exceed the bound, while each outgoing payload
@@ -352,13 +361,13 @@ flowchart LR
     Extract --> Span["Service span"]
 ```
 
-Inside the same process, another tracer must explicitly extract the Mini
-identity through its own API or through a header carrier. Its private
-`context.Context` value is different. The current API provides context values
-and header carriers.
-The [SDK mirror](sdk-span-mirror.md) instead associates independent CI copies
-with the test while preserving the original APM trace. Sampling priority is
-carried as propagation metadata; Mini has no APM sampling engine.
+Inside one process, another tracer keeps its span under its own private
+`context.Context` key, so it must extract Mini's identity explicitly, through
+its own API or a header carrier; Mini's API provides both context values and
+header carriers. The [SDK mirror](sdk-span-mirror.md) instead associates
+independent CI copies with the test while preserving the original APM trace.
+Sampling priority is carried as propagation metadata; Mini has no APM sampling
+engine.
 
 ## Runtime scope
 

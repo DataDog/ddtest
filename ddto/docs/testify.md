@@ -13,14 +13,14 @@ suite when two suites expose `TestShared`. An ordinary sibling after
 Use `ddto` and the Mini runtime from the same revision: the scoped hook is
 an internal linkname contract.
 
-The scope follows Testify's serial method runner. It does not add support for
-concurrent `suite.Run` calls sharing the same parent `*testing.T`; Testify's
-own suite state also assumes serial use.
+The scope follows Testify's serial method runner, so concurrent `suite.Run`
+calls sharing the same parent `*testing.T` are unsupported, as they are in
+Testify, whose own suite state assumes serial use.
 
-The minimum supported upstream version is **Testify v1.4.0**: from that release on,
-`Run(*testing.T, TestingSuite)` runs each suite method as `t.Run(method)`, which
-is all the registration needs. Releases v1.4.0 through v1.12.1 produced identical
-events for the same suite. The compatibility suite runs v1.10.0, v1.11.1 and
+The minimum supported upstream version is Testify v1.4.0: from that release
+on, `Run(*testing.T, TestingSuite)` runs each suite method as `t.Run(method)`,
+which is all the registration needs. Releases v1.4.0 through v1.12.1 produced
+identical events for the same suite. The compatibility suite runs v1.10.0, v1.11.1 and
 v1.12.1; its fixture itself needs v1.6.0 or later. Preparation checks the
 selected version and the actual `Run` signature, including versioned and local
 replacements. A v2 module needs a separate review.
@@ -56,8 +56,8 @@ Preparation uses the effective module metadata returned by `go list`:
 - For a local replacement, check the original module version.
 
 This policy supports forks without a module allowlist or a pinned revision.
-The original version is the client's declared compatibility contract; Go does
-not verify that a fork preserves it. Preparation therefore still validates
+The original version is the client's declared compatibility contract, but Go
+does not verify that a fork preserves it, so preparation still validates
 `Run(*testing.T, TestingSuite)` in the effective selected sources before the
 build can use its cache. Overlays participate in that check. An incompatible
 entry produces a warning naming both the original version and the replacement.
@@ -89,7 +89,7 @@ flowchart TD
     Found -->|Yes| Prepare["Validate version and API<br/>before cache lookup<br/>and prepare entry hooks"]
     Find --> Prepare
     Prepare --> Fingerprint["Add package cache<br/>fingerprints"]
-    Fingerprint --> Coverage{"Testify, Mini goleak,<br/>SDK hooks, coverage<br/>or Orchestrion?"}
+    Fingerprint --> Coverage{"Testify, Mini goleak,<br/>SDK hooks, coverage,<br/>Orchestrion or<br/>link signal?"}
     Coverage -->|No| Native["go test with<br/>overlay; no toolexec"]
     Coverage -->|Yes| Tool["go test with one<br/>selective tool<br/>wrapper"]
     Tool --> Dispatch{"Tool and package"}
@@ -97,7 +97,7 @@ flowchart TD
     Dispatch -->|compile goleak in Mini| Goleak["Prepare Find entry<br/>for CI leak checks"]
     Dispatch -->|compile SDK in Mini| SDK["Guard SDK CI and<br/>copy associated spans"]
     Dispatch -->|cover: testing| Bridge["Read the overlay's<br/>effective testing<br/>sources"]
-    Dispatch -->|Anything else| Bypass["Delegate without<br/>reading the plan"]
+    Dispatch -->|Anything else,<br/>link signal included| Bypass["Delegate without<br/>reading the plan"]
 ```
 
 A requirement in `go.mod` does not enable `-toolexec`. Importing `testify/assert`
@@ -112,19 +112,18 @@ Testify and goleak share this discovery query. When reachability is known and
 no unknown test imports remain, the package query, `go list -deps`, has already
 listed the selected library with its metadata, and no other query runs. Unknown
 test imports require `-deps`, including when the suite is already known, so a
-helper's goleak import remains visible.
-This keeps version and API validation before
-the build, including when Go can recover the suite from cache. Moving that
-validation into the compile wrapper would miss warm-cache version changes.
+helper's goleak import remains visible. Version and API validation therefore
+happens before the build, even when Go can recover the suite from its cache;
+in the compile wrapper, it would miss version changes on a warm cache.
 [`TestTestifyVersionGuardWithWarmVendoredSources`](../integration/vendor_cache_test.go)
 checks that warm-cache counterexample. The [performance guide](performance.md)
 records the discovery and cache constraints.
 
 Preparation reads only the selected Testify sources. It validates the entry,
-adds a registration call (with a deferred release for Mini) and prepares a linkname declaration for the selected
-CI runtime. The compiler receives temporary source paths; module-cache files
-and client files stay untouched. There are no wrappers in client packages,
-and no Testify source is incorporated into Mini.
+adds a registration call, with a deferred release for Mini, and prepares a
+linkname declaration for the selected CI runtime. The compiler receives
+temporary source paths, and module-cache and client files stay untouched.
+Client packages get no wrappers, and Mini incorporates no Testify source.
 
 Mini's goleak integration uses the same wrapper with a different package cache
 marker. See [delivery and goleak](delivery.md); the SDK backend does not add it.
@@ -133,48 +132,46 @@ marker. See [delivery and goleak](delivery.md); the SDK backend does not add it.
 
 The wrapper dispatches before reading JSON, creating contexts or setting CI
 environment defaults. Compiler and linker version probes keep their native
-output. Other selected integrations, such as the Mini SDK guard or Orchestrion
-composition, can also require this wrapper. Unrelated tools and packages never
-read the plan. On Unix the wrapper uses `exec` to replace itself with the
-native tool;
-Windows requires a child process and preserves its streams and exit code.
+output. Other selected integrations, such as the Mini SDK guard, Orchestrion
+composition or the Git worker's link signal, can also require this wrapper.
+Unrelated tools and packages never read the plan. On Unix the wrapper uses
+`exec` to replace itself with the native tool; Windows requires a child process
+and preserves its streams and exit code.
 
-`-toolexec` is a build-wide hook: even a selective wrapper starts for unrelated
-tool invocations that Go actually runs. The bypass removes the second process
-on Unix, but does not remove the wrapper's own startup. Builds without a
-selected transform avoid that cost entirely.
+`-toolexec` is a build-wide hook, so even a selective wrapper starts for
+unrelated tool invocations that Go actually runs. The bypass saves the second
+process on Unix but still pays the wrapper's own startup, which builds without
+a selected transform avoid entirely.
 
 The wrapper is therefore a small executable of its own,
 [`internal/toolwrap`](../internal/toolwrap), which imports only the standard
-library. It starts in about 1.2 ms on Linux, against 2.3 ms for ddto's own
+library. It starts in about 1.2 ms on Linux, against 2.4 ms for ddto's own
 executable, and runs ddto's private `tool-overlay` entrypoint for the calls
-that need the plan.
-- ddto builds it from sources that it embeds, once per version and host, into
-  `ddto/toolwraps` in its user cache.
-- It follows the rules of the
-  [toolchain mirrors](mini-runtime.md#runtime-provisioning) beside it:
-  - a run holds the executable;
-  - one unused for 14 days is removed;
-  - a user cache within `GOMODCACHE`, the toolchain or the module is not used.
-- Before each `ddto test` uses it, the executable must print its key.
-- When it cannot be built or run, ddto itself is the wrapper, through
-  `tool-overlay`, with the same results.
-- Go keys its caches on each tool's `-V=full` output, not on the `-toolexec`
-  command, so either wrapper reuses the same cache entries.
+that need the plan. ddto builds it from sources that it embeds, once per
+version and host, into `ddto/toolwraps` in its user cache, and applies the
+rules of the [toolchain mirrors](mini-runtime.md#toolchains-in-the-module-cache)
+beside it: a run holds the executable, one unused for 14 days is removed, and
+a user cache within `GOMODCACHE`, the toolchain or the module is not used.
 
-Go includes compiler identity in every package's build key. Changing
+Before each `ddto test` uses the executable, it must print its key. When it
+cannot be built or run, ddto itself is the wrapper, through `tool-overlay`,
+with the same results. Go keys its caches on each tool's `-V=full` output
+instead of the `-toolexec` command, so either wrapper reuses the same cache
+entries.
+
+Go includes compiler identity in every package's build key, so changing
 `compile -V=full` would split the cache for every package. Instead, the
 instrumented `testing` package exports `DDToTestifyContract`, a constant
 containing a hash of the prepared suite edit, runtime hook and transformation
 contract. Testify imports `testing`, so its dependency content ID carries the
-hash into its native build key. An exported constant survives in export data;
-an unused private marker would not provide that guarantee.
+hash into its native build key. An exported constant survives in export data,
+which an unused private marker would not guarantee.
 
-The fingerprint excludes temporary backing paths. A new preparation with the
-same inputs can reuse Go's cache. A source, runtime or contract change updates
-its key. The contract test checks actual compiler invocations: a changed marker
-rebuilds Testify while `strings`, `fmt` and `crypto/sha256` remain cached. We do
-not maintain a separate cache.
+The fingerprint excludes temporary backing paths, so a new preparation with
+the same inputs can reuse Go's cache, while a source, runtime or contract change
+updates its key. The contract test checks actual compiler invocations: a changed
+marker rebuilds Testify while `strings`, `fmt` and `crypto/sha256` remain
+cached. ddto keeps no build cache of its own.
 
 A plan and its selective tool command belong together. Building a prepared
 Testify plan manually without its tool wrapper is outside this contract: it
@@ -186,10 +183,10 @@ could store an uninstrumented object under the prepared dependency identity.
 Go's cover tool opens normal source paths directly. When coverage includes the
 rewritten standard-library `testing` sources, the private bridge translates its
 inputs to overlay backing files. Relative patterns such as `./...` stay within
-the selected directory tree; they must not accidentally select an unrelated
-GOROOT. Ordinary client coverage needs no bridge.
+the selected directory tree, so they never select an unrelated GOROOT by
+accident. Ordinary client coverage needs no bridge.
 
-For Testify itself, registration is inserted **after** Go has generated covered
+For Testify itself, registration is inserted after Go has generated covered
 source, just before compilation. Its existing counters, source mapping and
 coverage denominator stay intact. This supports coverage patterns that include
 `testify/suite`, and callers need no generated coverage exclusions.
@@ -210,15 +207,15 @@ sequenceDiagram
 ```
 
 The [latest benchmark comparison](benchmarks.md) includes direct and external
-Testify callers at 4/32 CPUs, with race, coverage and their combinations.
-It measures complete invocations, including preparation and selective tool startup.
+Testify callers at 4/32 CPUs, with race, coverage and their combinations. It
+measures complete invocations, including preparation and selective tool
+startup.
 
 ## Compatibility checks
 
 `TestCIVisibilityTestifyParity` compares actual events against the unmodified
 SDK instrumented by Orchestrion, with a separate pass/skip control for the POC
-SDK backend. Its child
-binaries use `-race -covermode=atomic -coverpkg=./...`.
+SDK backend. Its child binaries use `-race -covermode=atomic -coverpkg=./...`.
 
 | Area | Cases |
 | --- | --- |
@@ -242,14 +239,15 @@ source edits.
 The compatibility workflow discovers these tests on Linux Go 1.26/1.27 and
 macOS/Windows Go 1.27. Go 1.25 and tip run selected native Mini fixtures with
 Testify, coverage, goleak and deferred delivery. Linux also runs the stable
-toolchains with the race harness. Local Linux and
-cross-compilation proof cannot replace execution in the other platform jobs.
+toolchains with the race harness. Local Linux runs and cross-compilation
+cannot replace execution in the other platform jobs.
 
 ## Maintenance and remaining boundary
 
-Explicit `.go` file mode runs native `go test` without instrumentation. The pinned SDK applies ITR to
-the top-level `testing.M` entry, not individual Testify methods. The regression
-suite records that behavior; it does not claim method-level skipping works.
+Explicit `.go` file mode runs native `go test` without instrumentation. The
+pinned SDK applies ITR to the top-level `testing.M` entry and never to
+individual Testify methods; the regression suite records that behavior without
+claiming method-level skipping.
 
 When updating the SDK, review its Testify advice and
 `gotesting.instrumentTestifySuiteRun`, including the linkname signature. When

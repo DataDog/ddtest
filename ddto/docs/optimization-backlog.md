@@ -35,24 +35,26 @@ also need an entry in
 The backlog was evaluated on 2026-10-12 at `b7d8275`, on the benchmark host,
 with Gin v1.12.0: six test binaries and about 700 tests and subtests.
 `ddto test` adds about 0.1–0.2 s to a run without network latency, and its
-remaining costs come in three sizes:
+remaining costs come in three sizes.
 
-- **Round trips.** With 100 ms per request, `-count=1` took 1.16 s against
-  0.67 s natively. The worker's requests ahead overlap the build
-  ([#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34)), but each
-  test process still ends with two serial round trips, and ddto with the
-  worker's `app-closing`.
-- **Preparation.** Every invocation spends about 95 ms before `go test` starts,
-  and more in larger modules: a run whose results all came from Go's test cache
-  took 184 ms against 78 ms natively.
-- **Per-test and per-event work.** Mini adds about 35 µs per test: item 58
-  measured its `t.Helper()` at 0.7 µs, 2% of that cost, with 2,000 empty tests
-  at `2d0059a`. The dropped micro-optimizations save at most about a
-  microsecond per test or event each, about 3% of that estimate, and a few
-  milliseconds of CPU for Gin's 700 tests, spread across six binaries. A test
-  emits one test event; tests that create many SDK spans emit more, which is
-  where items 22 and 24 would count. Revisit them with a profile of such a
-  suite, or of one large enough for Mini's per-test cost to dominate.
+Round trips cost the most. With 100 ms per request, `-count=1` took 1.16 s
+against 0.67 s natively. The worker's requests ahead overlap the build
+([#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34)), but each
+test process still ends with two serial round trips, and ddto with the worker's
+`app-closing`.
+
+Preparation comes next. Every invocation spends about 95 ms before `go test`
+starts, and more in larger modules: a run whose results all came from Go's
+test cache took 184 ms against 78 ms natively.
+
+Per-test and per-event work is the smallest. Mini adds about 35 µs per test;
+item 58 measured its `t.Helper()` at 0.7 µs, 2% of that cost, with 2,000 empty
+tests at `2d0059a`. The dropped micro-optimizations save at most about a
+microsecond per test or event each, about 3% of that estimate, and a few
+milliseconds of CPU for Gin's 700 tests, spread across six binaries. A test
+emits one test event; tests that create many SDK spans emit more, which is
+where items 22 and 24 would count. Revisit them with a profile of such a
+suite, or of one large enough for Mini's per-test cost to dominate.
 
 ## Summary
 
@@ -147,14 +149,14 @@ delivery modes.
 ## 10. A round trip at each test process's exit
 
 Under `ddto test`, ddto's Git worker owns one telemetry application per
-invocation ([#33](https://github.com/tonyredondo/dd-ci-testing-poc/pull/33)). Test processes that use its state send no
-`app-started`, and at exit they send their test cycle and then one telemetry
-`message-batch`, one after the other. On Gin at `b7d8275`, with a fake Agent
-that answers each request after 100 ms, `ddto test -count=1 ./...` took
-1.16 s, the median of 10 runs. In a run with `DD_TRACE_DEBUG`, each test
-process's exit took 200 ms: the test-cycle send, then the telemetry request.
-ddto then waited about 100 ms after `go test` for the worker's `app-closing`.
-The last 300 ms of the run were these round trips.
+invocation ([#33](https://github.com/tonyredondo/dd-ci-testing-poc/pull/33)).
+Test processes that use its state send no `app-started`, and at exit they send
+their test cycle and then one telemetry `message-batch`, one after the other. On
+Gin at `b7d8275`, with a fake Agent that answers each request after 100 ms,
+`ddto test -count=1 ./...` took 1.16 s, the median of 10 runs. In a run with
+`DD_TRACE_DEBUG`, each test process's exit took 200 ms: the test-cycle send,
+then the telemetry request. ddto then waited about 100 ms after `go test` for
+the worker's `app-closing`. The last 300 ms of the run were these round trips.
 
 Hand the test process's telemetry to the worker, which sends it with
 `app-closing`: test processes then send no telemetry request, and each one's
@@ -163,8 +165,8 @@ its telemetry after its test cycle ends, so the data keeps the test cycle's
 own metrics: `EndpointPayloadRequestsMs` and `EndpointPayloadRequestsErrors`,
 which `internal/citransport/transport.go` records after the request returns.
 Sending the telemetry concurrently with the session-close flush would lose
-them. Keep `app-started` in its own
-request under its mapper contract, and keep the payload order. Startup and
+them. Keep `app-started` in its own request under its mapper contract, and keep
+the payload order. Startup and
 shutdown must respect deferred admission and goleak checkpoints, including
 errors and cancellation. Use decoded telemetry and actual HTTP captures to check
 values and logical payload/attempt counts. Network waits need delayed-receiver
@@ -291,8 +293,9 @@ file and line range: `SetTestFunc` calls `loadSourceFunctionMetadata`, which
 parses the function's file with `go/parser` once per process. In Gin's root
 package, 21 test files and 10,700 lines, the parse took about 7.5 ms of CPU per
 run, on the first test of each file, and the rest of the resolution about
-2.5 ms. [#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31) removed the build-information read of every distinct
-test, about 2 µs per test. The rest costs about 1–1.5 µs per test, much of it
+2.5 ms. [#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31)
+removed the build-information read of every distinct test, about 2 µs per
+test. The rest costs about 1–1.5 µs per test, much of it
 stack growth that a test goroutine pays at its first deep call anyway.
 
 The CLI could parse each test package's `TestGoFiles` and `XTestGoFiles` and
@@ -322,9 +325,10 @@ CPU), and `go env`, the runtime probe and two `go mod edit` calls the rest.
 
 At `b7d8275`, `ddto test` of Gin's five packages whose results all came from
 Go's test cache took 184 ms against 78 ms natively, medians of 10 runs. In a
-run with `DD_TRACE_DEBUG`, which took 197 ms, preparation took 93 ms: the package query 47 ms, the library query 28 ms, the runtime probe 5 ms,
-two `go mod` commands 6 ms, `go env` 3 ms and the `testing` transformation
-3 ms. `go test` itself took 102 ms.
+run with `DD_TRACE_DEBUG`, which took 197 ms, preparation took 93 ms: the
+package query 47 ms, the library query 28 ms, the runtime probe 5 ms, two
+`go mod` commands 6 ms, `go env` 3 ms and the `testing` transformation 3 ms.
+`go test` itself took 102 ms.
 
 Cache the plan in the user cache: overlay entries, generated files, tool
 selection and library decisions. Key it on everything the queries read: the Go
@@ -349,28 +353,31 @@ parked.
 
 ## 57. Events through the CLI
 
-This extends [#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34) and item 10. Every test binary links Mini's HTTP and TLS
-delivery. A one-test binary grows from 4.8 to 16.7 MB, and its link from 106 to
-289 ms, medians of 12. A probe binary that references only
-`http.DefaultClient.Do` and `tls.Client` links in 210 ms and is 5.6 MB larger,
-so the HTTP and TLS stack accounts for about 104 ms of the 183 ms Mini adds per
-link. `encoding/json`, `go/parser`, and `compress/gzip` with `log/slog` add
-7–12 ms each. These figures come from an empty fixture and a standalone probe:
-a binary whose own code already uses HTTP or TLS, such as tests with
-`httptest.NewTLSServer`, keeps that stack, so measure the marginal saving on
-representative binaries. Every edit rebuild and every cold build links each
-affected test binary again: in a cold Gin build, the six links took 2.24 s of
-CPU, against 1.78 s natively. The larger binary also starts about 0.9 ms
-slower.
+This extends [#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34) and
+item 10. Every test binary links Mini's HTTP and TLS delivery. A one-test binary
+grows from 4.8 to 16.7 MB, and its link from 106 to 289 ms, medians of 12. A
+probe binary that references only `http.DefaultClient.Do` and `tls.Client` links
+in 210 ms and is 5.6 MB larger, so the HTTP and TLS stack accounts for about 104
+ms of the 183 ms Mini adds per link. `encoding/json`, `go/parser`, and
+`compress/gzip` with `log/slog` add 7–12 ms each. These figures come from an
+empty fixture and a standalone probe: a binary whose own code already uses HTTP
+or TLS, such as tests with `httptest.NewTLSServer`, keeps that stack, so measure
+the marginal saving on representative binaries. Every edit rebuild and every
+cold build links each affected test binary again: in a cold Gin build, the six
+links took 2.24 s of CPU, against 1.78 s natively. The larger binary also starts
+about 0.9 ms slower.
 
 For `ddto test` runs, test binaries could hand encoded batches to the CLI
 through an inherited pipe or a local socket. The CLI would deliver them over
 HTTP with one connection pool, batching across packages. The binary drops
 `net/http` and `crypto/tls` only when settings, known tests and telemetry also
-come from the CLI with no request of its own as a fallback; [#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34) and item 10
+come from the CLI with no request of its own as a fallback;
+[#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34) and item 10
 still keep that fallback, so this is the transport they need.
-[#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32) already gave the CLI the SDK's HTTP client, in its Git worker. Builds with `-c` and standalone binaries keep today's
-delivery through a different generated import. The CLI then owns retries and
+[#32](https://github.com/tonyredondo/dd-ci-testing-poc/pull/32) already gave
+the CLI the SDK's HTTP client, in its Git worker. Builds with `-c` and
+standalone binaries keep today's delivery through a different generated
+import. The CLI then owns retries and
 the final flush, and must keep each binary's event order, back-pressure,
 deferred admission and goleak checkpoints, and not lose events when it is
 interrupted.
@@ -410,11 +417,14 @@ The 2026-10-11 review added these, measured on Linux:
   `go vet`.
 - Per-test allocations: Mini allocates about 8.5 KB and 72 objects more per
   test than native `testing`, mostly in span creation, the payload buffer and
-  build information. Items 1, 7, 22–24, 27 and 38 covered the others
-  and were dropped as too small;
-  [#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31) removed the build-information reads.
+  build information. Items 1, 7, 22–24, 27 and 38 covered the others and were
+  dropped as too small;
+  [#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31) removed the
+  build-information reads.
 
-Implementing items 53 and 54 in [#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31) also checked these:
+Implementing items 53 and 54 in
+[#31](https://github.com/tonyredondo/dd-ci-testing-poc/pull/31) also checked
+these:
 
 - Compiling Mini's packages with `-race=false` saves more than marking their
   functions `//go:norace`: 33 instead of 22 µs per test with 2,000 empty tests.
@@ -430,24 +440,24 @@ Implementing items 53 and 54 in [#31](https://github.com/tonyredondo/dd-ci-testi
   with 2,000 tests, within the noise of wall time.
 
 Phases 4–6 of the [optimization plan](optimization-plan.md) remeasured these
-costs on 2026-10-14 and changed nothing:
-- **[Mini's package graph](optimization-plan.md#phase-4-minis-package-graph-in-builds).**
-  The HTTPS transport takes 10.2 of the 16.3 s of CPU that Mini adds to a cold
-  build. Building in another order does not help, because builds are
-  CPU-bound.
-- **[Per-invocation preparation](optimization-plan.md#phase-5-preparation-per-invocation).**
-  Two sequential `go list` queries take most of 60–79 ms.
-- **[Test binary startup and memory](optimization-plan.md#phase-6-test-binary-startup-and-memory).**
-  Under `ddto test`, a test process's bootstrap takes 0.56 ms. Gin's root
-  binary uses 3.4 MiB more, mostly span batches bounded at 1,000 events.
+costs on 2026-10-14 and changed nothing. In
+[Mini's package graph](optimization-plan.md#phase-4-minis-package-graph-in-builds),
+the HTTPS transport took 10.2 of the 16.3 s of CPU that Mini adds to a cold
+build, and building in another order did not help, because builds are
+CPU-bound. In
+[per-invocation preparation](optimization-plan.md#phase-5-preparation-per-invocation),
+two sequential `go list` queries took most of the 60–79 ms. Under `ddto test`,
+[a test process](optimization-plan.md#phase-6-test-binary-startup-and-memory)
+bootstrapped in 0.56 ms, and Gin's root binary used 3.4 MiB more, mostly span
+batches bounded at 1,000 events.
 
 ## Experiment record
 
 Keep the baseline and candidate SHAs, inputs, commands, raw repetitions and
 limits in a task-scoped artifact directory. Alternate execution order and
 retain slow or failed samples. Record CPU, allocations, complete wall time,
-wire bytes and peak memory when they apply. A hot function's profile share is
-not a predicted percentage saving.
+wire bytes and peak memory when they apply. A hot function's profile share
+does not predict the percentage that a change will save.
 
 Two existing benchmarks need care:
 

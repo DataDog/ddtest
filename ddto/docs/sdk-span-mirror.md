@@ -52,13 +52,13 @@ flowchart TD
 | SDK not running or returning a no-op span | No copy |
 | Native build or explicit `--runtime=sdk` | No Mini mirror hooks |
 
-Process retries still report their test results through the controlling process.
-Copying SDK spans from those isolated children would require an additional
-cross-process event channel. The mirror does not introduce one.
-Examples have no `testing.T` context. Fuzz seeds and callbacks can use their
+Process retries still report their test results through the controlling
+process. Copying SDK spans from those isolated children would require a
+cross-process event channel, which the mirror does not add. Examples have no
+`testing.T` context. Fuzz seeds and callbacks can use their
 native `testing.T` context; contextless operations retain the rule above.
 
-SDK spans must finish while their owning Mini client is open. Keeping a test
+SDK spans must finish while their owning Mini client is open; keeping a test
 context after the test does not extend that client's lifetime. Copying local
 spans does not reparent spans produced by remote services.
 
@@ -92,7 +92,7 @@ goleak policy.
 
 `internal/instrument/sdk_mirror.go` dispatches the edits;
 `sdk_mirror_match.go` validates construction, context snapshots and finish/lock
-anchors. The matcher follows each variable's role in the AST. Renaming a
+anchors. The matcher follows each variable's role in the AST, so renaming a
 receiver, parameter or local variable does not change the hook. Both short
 declarations and `var` declarations can construct the returned SDK context.
 Comments and strings containing `__ddto` are allowed; identifiers with that
@@ -101,8 +101,7 @@ prefix are reserved for generated code.
 Each operation needs one anchor. Duplicate constructors, snapshot builders or
 finish calls disable the optional mirror with a warning. The snapshot must come
 from the supplied span under its nil guard and be used with that span and the
-incoming context.
-Finish needs a direct lock and deferred unlock. Extra mutex references,
+incoming context. Finish needs a direct lock and deferred unlock. Extra mutex references,
 receiver aliases or reassignment are rejected because the hook cannot prove
 that capture still owns the protected data. Moving these operations into new
 helpers requires an explicit matcher update and behavioral tests.
@@ -114,20 +113,20 @@ guards remain active to prevent duplicate test reporting. Preparation validates
 selected sources before compilation; late compiler inputs receive the same
 optional-mirror fallback. Other layouts need their own mirror validation.
 
-Bump the contracts in `sdkCompilerCacheMarker` whenever the compiler edits or generated hook
-change. Go does not hash wrapper-generated source into its original build
-action, so an unchanged marker can reuse an incompatible SDK archive.
-CI guards and span copies have separate package-scoped compiler markers.
-Disabled mirrors omit the tracer marker. Native/SDK builds use neither marker.
-When the SDK's own packages are tested, Go also passes a marker to their test
+Bump the contracts in `sdkCompilerCacheMarker` whenever the compiler edits or
+generated hook change. Go does not hash wrapper-generated source into its
+original build action, so an unchanged marker can reuse an incompatible SDK
+archive. CI guards and span copies have separate package-scoped compiler
+markers; a disabled mirror omits the tracer marker, and native and SDK builds
+use neither. When the SDK's own packages are tested, Go also passes a marker to their test
 variants. The internal test variant, which compiles the package's sources,
 receives the same edits; the external test package and test main only lose
 the marker, as with goleak.
 
 The runtime uses cached typed `testing` offsets to bind the native context
-before the test body runs. It preserves `cancelCtx`. SDK-free Mini binaries
-skip binding and allocate no mirror context. There is no span registry,
-per-span reflection or new worker goroutine.
+before the test body runs, and it preserves `cancelCtx`. SDK-free Mini binaries
+skip binding and allocate no mirror context. The mirror adds no span registry,
+per-span reflection or worker goroutine.
 
 `TestMiniSDKSpanMirror` checks final wire fields and independent propagation
 against real APM and CI HTTP receivers. `TestMiniSDKMirrorContextMatrix`

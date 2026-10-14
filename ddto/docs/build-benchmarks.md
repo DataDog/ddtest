@@ -18,7 +18,7 @@ Use a new artifact directory on disk, outside the repository and `/tmp`.
 
 ```sh
 BENCH_RUN=/var/tmp/dd-ci-mini-benchmark-new
-BASELINE=docs/results/20261013-linux-go1.27.1
+BASELINE=docs/results/20261014-linux-go1.27.1
 GO_BENCH=/path/to/go1.27.1/bin/go
 ORCHESTRION_BENCH=/path/to/orchestrion
 
@@ -46,11 +46,15 @@ python3 scripts/build_benchmark.py report \
 python3 scripts/benchmark_report.py --input docs/results/new-run
 ```
 
-Orchestrion is checked as a reference tool during setup; the Mini-only run does
-not execute its instrumentation. Its version must match the baseline. The Go
-binary must match the recorded toolchain. Public module downloads are disabled
-by default; add `--download` to the build command to allow them during setup.
-Downloads remain disabled during measured commands.
+Name the new dataset after its collection date, platform and Go version, as in
+`20261014-linux-go1.27.1`, instead of `new-run`. It replaces the previous
+dataset: remove the old directory and update the links that point to it.
+
+Orchestrion is checked as a reference tool during setup, although the
+Mini-only run does not execute its instrumentation; its version must match the
+baseline, and the Go binary must match the recorded toolchain. Public module
+downloads are disabled by default; add `--download` to the build command to
+allow them during setup. Downloads remain disabled during measured commands.
 
 Run a pilot first with `--case testify-external--cover-testing --cpus 4 --repeats 1`.
 Use another output directory for the full matrix. A pilot does not replace the
@@ -58,10 +62,11 @@ recorded repetitions or qualify the remaining cells.
 
 ## What is measured
 
-Build uses `go test -c -o <directory>/ -ldflags=-w ./...`; no test executable runs
-inside the compilation clock. The matrix covers Gin, Chi, direct Testify and an
-external Testify caller at 4/32 CPUs, with coverage and race combinations.
-`build-benchmark.json` records all 24 configurations and the repetition counts.
+Build uses `go test -c -o <directory>/ -ldflags=-w ./...`, so no test executable
+runs inside the compilation clock. The matrix covers Gin, Chi, direct Testify
+and an external Testify caller at 4/32 CPUs, with coverage and race
+combinations. `build-benchmark.json` records all 24 configurations and the
+repetition counts.
 
 Cold builds start with an empty Go build cache and removed output. Modules and
 the OS page cache remain warm. The remaining scenarios reuse output, force a
@@ -77,15 +82,16 @@ tests and final delivery; receiver startup and MessagePack decoding are excluded
 
 The receiver uses loopback HTTP with real gzip and MessagePack. Test names,
 statuses and multiplicities are checked against the retained Native inventory.
-The recorded SDK is an event oracle, not a POC SDK benchmark column. Native
-Examples added since that reference are identified from the executable and
-checked explicitly. Missing references and failed runs stay visible. Go's set
-coverage mode produces aggregate coverage; per-test uploads require count or
-atomic mode. The Agent control separately checks local EVP delivery with telemetry.
+The recorded SDK serves only as an event oracle and has no benchmark column.
+Native Examples added since that reference are identified from the executable
+and checked explicitly, and missing references and failed runs stay visible.
+Go's set coverage mode produces aggregate coverage; per-test uploads require
+count or atomic mode. The Agent control separately checks local EVP delivery
+with telemetry.
 
 Every command has an exclusive systemd user scope. Cgroup v2 `cpu.stat` and
 `memory.peak` include nested processes and detached daemons. Memory includes
-charged file-cache pages and kernel memory, not just the Go heap. The runtime
+charged file-cache pages and kernel memory as well as the Go heap. The runtime
 receiver runs outside that scope. CPU-seconds can exceed wall-clock seconds on
 multiple cores. Tables use median wall time in seconds and memory in MiB.
 
@@ -110,9 +116,9 @@ successful report. Large binaries, caches and full HTTP bodies belong in the
 local artifact directory; the repository keeps timings, hashes and summaries.
 
 Native and Orchestrion retained from another date provide fixed comparison
-points. Their old convergence control describes that collection, not the current
-host. Read the new ranges before attributing a small wall-time difference to
-code changes. The [validation guide](validation.md) covers feature compatibility
+points, and their old convergence control describes only that collection. Read
+the new ranges before attributing a small wall-time difference to code
+changes. The [validation guide](validation.md) covers feature compatibility
 and live-intake boundaries separately.
 
 ## Verify regeneration
@@ -127,4 +133,5 @@ python3 scripts/benchmark_report.py --input docs/results/new-run --check
 
 The scripts check file hashes, complete rounds and validation outcomes. The
 merger also verifies that every Native and Orchestrion build observation is
-unchanged. Regeneration changes presentation; it does not refresh a measurement.
+unchanged. Regeneration changes only the presentation and refreshes no
+measurement.

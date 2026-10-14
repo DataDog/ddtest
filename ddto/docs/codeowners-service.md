@@ -16,22 +16,22 @@ service is `service-payments`. To use a repository prefix:
 unset DD_SERVICE
 DD_CIVISIBILITY_SERVICE_FROM_CODEOWNERS=true \
 DD_CIVISIBILITY_SERVICE_FROM_CODEOWNERS_FORMAT='dd-go-$(owner)' \
-ddto test -count=1 ./...
+ddto test ./...
 ```
 
 Quote the format with single quotes. Your shell must pass `$(owner)` literally;
 Mini replaces that token and never executes a command. An empty format selects
 the default. A format without the token produces that literal service name.
 
-The selected rule follows the host-specific
-[CODEOWNERS parser](codeownership.md). It supports exact package paths,
-inherited directory rules, segment wildcards (`*`, `?`)
-and recursive wildcards (`**`), preserving rule precedence. A terminal `/*`
-selects direct children; a trailing `/` includes descendants. The first owner supplies the service name: `@organization/team`
-becomes `team`, `@username` becomes `username`, and email owners keep their full
-address. GitLab role owners such as `@@maintainer` become `maintainer`. Other
-owners remain available in the existing `test.codeowners` tag.
-A valid CODEOWNERS file with no matching owner uses `not-owned`, giving
+The selected rule follows the host-specific [CODEOWNERS
+parser](codeownership.md). It supports exact package paths, inherited directory
+rules, segment wildcards (`*`, `?`) and recursive wildcards (`**`), preserving
+rule precedence. A terminal `/*` selects direct children; a trailing `/`
+includes descendants. The first owner supplies the service name:
+`@organization/team` becomes `team`, `@username` becomes `username`, and email
+owners keep their full address. GitLab role owners such as `@@maintainer` become
+`maintainer`. Other owners remain available in the existing `test.codeowners`
+tag. A valid CODEOWNERS file with no matching owner uses `not-owned`, giving
 `service-not-owned` with the default format.
 
 Missing or unreadable CODEOWNERS, an unknown CI workspace, or a source package
@@ -79,8 +79,8 @@ service in a runtime debug message.
 - `internal/runner/run.go` emits the Mini registration call;
   `testopt/testopt.go` captures its caller once.
 - `civisibility/utils/service_name.go` owns selection and process caching.
-  `utils/codeowners_discovery.go` caches discovery; `utils/codeownership/` owns parsing,
-  file selection and both kinds of queries.
+  `utils/codeowners_discovery.go` caches discovery, and `utils/codeownership/`
+  owns parsing, file selection and both kinds of queries.
 - The CI bootstrap applies the selected name to the tracer. CI clients reuse
   it for settings, telemetry and logs; explicit client names retain priority.
 - The two local configuration keys are read directly from the environment;
@@ -96,7 +96,7 @@ missing inputs and concurrent readers. The integration tests compile and run
 multiple packages with identical names, external tests, Testify and goleak.
 They check standalone execution, `TestMain` directory changes, `-race`,
 `-trimpath`, coverage, deferred delivery, settings, telemetry and logs against
-HTTP receivers. They run in the existing compatibility workflow.
+HTTP receivers, in the existing compatibility workflow.
 
 For an integration that previously forced a global `DD_SERVICE`, remove that
 value from the Mini path before enabling this feature. Otherwise the explicit

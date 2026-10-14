@@ -16,20 +16,21 @@ later in the same process, for example with `t.Setenv` in a test, does not move
 test admission, coverage processing or the other CI writers to another mode.
 
 The default is ordinary delivery: finishing an event never performs network
-I/O, and up to eight background senders deliver full batches. When delivery falls
-behind, a finishing test waits for a sender rather than losing events; after a
-failed delivery it drops events beyond the queue bound instead. `Close` stops
-the senders and sends the remaining payloads up to eight at once, counting
-deliveries still in flight, within its deadline. As with the background
-senders, payloads sent together can arrive in any order. With the variable
-enabled, delivery runs between completed test groups, and remaining data is sent
-at session close. Sequential tests can have a delivery checkpoint after each
-test. Parallel tests continue together until the whole group finishes; the next
-group waits while delivery completes.
+I/O, and up to eight background senders deliver full batches. When delivery
+falls behind, a finishing test waits for a sender so that no event is lost;
+after a failed delivery, events beyond the queue bound are dropped instead.
+`Close` stops the senders and sends the remaining payloads up to eight at once,
+counting deliveries still in flight, within its deadline. As with the
+background senders, payloads sent together can arrive in any order.
+
+With the variable enabled, delivery runs between completed test groups, and
+remaining data is sent at session close. Sequential tests can have a delivery
+checkpoint after each test. Parallel tests continue together until the whole
+group finishes, and the next group waits while delivery completes.
 
 Deferred mode buffers test-cycle events, coverage and diagnostic logs while
-instrumented tests are active, and sends nothing concurrently with them. A test holds
-an activity lease through its body, cleanup callbacks and parallel descendants.
+instrumented tests are active, and sends nothing concurrently with them. A test
+holds an activity lease through its body, cleanup callbacks and parallel descendants.
 The lease is acquired inside the existing instrumented function, preserving the
 SDK's function-identity checks and retry accounting.
 
@@ -48,23 +49,24 @@ sequenceDiagram
     Idle-->>Test: Admit next test
 ```
 
-Nested tests and concurrent retry attempts use the same process-wide coordinator.
-Waiting for delivery inside an active group would deadlock the test scheduler.
-The coordinator starts no goroutines. Initial repository upload completes
-during initialization in this mode. In both modes, settings and telemetry
-startup run concurrently, and initialization waits for both before admitting
-the first test. This also applies to cached settings and request failures.
-`app-started` goes alone. Other initial telemetry payloads are snapshotted and
-queued for the next regular flush or shutdown, retaining their timestamps and
-order. A deferred flush runs at an idle checkpoint once its interval has
-elapsed; ordinary telemetry keeps its periodic worker. Final shutdown drains
-pending telemetry in both modes. `go test` does not count the joined settings
-and `app-started` requests in any test's duration.
+Nested tests and concurrent retry attempts use the same process-wide
+coordinator, because waiting for delivery inside an active group would deadlock
+the test scheduler. The coordinator starts no goroutines. In this mode, the
+initial repository upload completes during initialization.
+
+In both modes, settings and telemetry startup run concurrently, and
+initialization waits for both before admitting the first test, also with cached
+settings or failed requests. `app-started` goes alone. Other initial telemetry
+payloads are snapshotted and queued for the next regular flush or shutdown,
+retaining their timestamps and order. A deferred flush runs at an idle
+checkpoint once its interval has elapsed; ordinary telemetry keeps its periodic
+worker. Final shutdown drains pending telemetry in both modes. `go test` does
+not count the joined settings and `app-started` requests in any test's duration.
 
 A checkpoint delivers only full payloads: sealed test-cycle batches (the event
 count or 2.5 MiB threshold) and full coverage/log payloads. Partial payloads
 wait for the end of the session, so a serial suite sends one payload per full
-batch rather than one per test.
+batch instead of one per test.
 
 A checkpoint, deferred `Flush` or `Close` sends up to eight test-cycle payloads
 at once and finishes every request before it returns, so the next test starts
@@ -86,25 +88,25 @@ endpoint and queue rules. Startup creates no worker. Ordinary mode then permits
 periodic telemetry and CI sends during tests; use deferred delivery to keep all
 queued processing and sends outside admitted test groups.
 
-Each telemetry response is consumed and closed before its flush returns, including
-error responses before endpoint fallback. The configured client timeouts bound
-HTTP completion. This changes delivery timing, not the event contents or the
-settings needed to choose test features.
+Each telemetry response is consumed and closed before its flush returns,
+including error responses before endpoint fallback. The configured client
+timeouts bound HTTP completion. Deferred mode changes only delivery timing: the
+event contents and the settings that choose test features stay the same.
 
 This trades memory and delivery latency for isolation from test bodies. The
 pending queue can grow throughout a parallel group; its total memory is not
 bounded by `MaxEvents`. Each outgoing test-cycle payload still obeys the event
-count limit, 2.5 MiB flush threshold and 5 MiB uncompressed intake limit. A failed
-flush preserves unsent chunks in order. Successfully sent chunks are not retried.
-Final abandonment reports drops per payload, not per event.
+count limit, 2.5 MiB flush threshold and 5 MiB uncompressed intake limit. A
+failed flush preserves unsent chunks in order, and successfully sent chunks are
+not retried. Final abandonment reports one drop per payload.
 
 An explicit `Flush` during an active test returns without waiting for that test;
-the next checkpoint then also delivers the partial test-cycle batch. `Close` is terminal and flushes
-directly. Panic and signal shutdown force a checkpoint so writer shutdown can
-join pending batches. A user-created explicit client therefore remains responsible
-for its `Close` timing. Deferred mode is not a guarantee that no goroutine exists
-in the test process: CI still installs its signal handler, and tests may start
-their own workers.
+the next checkpoint then also delivers the partial test-cycle batch. `Close`
+is terminal and flushes directly, so a user-created explicit client stays
+responsible for its `Close` timing. Panic and signal shutdown force a
+checkpoint so writer shutdown can join pending batches. Deferred mode does not
+mean the test process runs no other goroutine: CI still installs its signal
+handler, and tests may start their own workers.
 
 `Flush` honors its context while waiting for deferred test admission and the
 send lock. HTTP delivery also honors cancellation while goleak has paused new
@@ -120,8 +122,8 @@ older failure again.
 
 When the selected Mini test graph reaches `go.uber.org/goleak`, `ddto` prepares
 its `Find` entry. This is automatic in both ordinary and deferred delivery.
-Calling `VerifyNone`, `VerifyTestMain` or a helper in another module reaches that
-same entry. An unused requirement in `go.mod` does not activate the integration.
+Calling `VerifyNone`, `VerifyTestMain` or a helper in another module reaches
+that same entry. An unused requirement in `go.mod` does not activate the integration.
 The minimum supported version is v1.3.0, the first with `IgnoreAnyFunction`;
 v2 needs a separate review. Preparation checks the selected version and entry
 signature before a warm cache can skip compilation. An unsupported version or
@@ -129,8 +131,8 @@ entry produces a warning and the build continues without the integration; its
 leak checks can then report CI workers.
 
 For a replacement with a different module path, the minimum-version check uses
-`go.uber.org/goleak`'s effective original version from `go list`. A fork can have
-an independent version scheme. For a versioned replacement within
+`go.uber.org/goleak`'s effective original version from `go list`, because a
+fork can have an independent version scheme. For a versioned replacement within
 `go.uber.org/goleak`, the replacement version applies; a downgrade below v1.3.0
 still warns. A local replacement uses the original version. This is the same
 policy used for Testify.
@@ -145,8 +147,9 @@ replace go.uber.org/goleak => github.com/tonyredondo/goleak v0.0.0-2026070207182
 
 Go hashes the goleak source fingerprint as a package-scoped compiler flag.
 The wrapper removes that exact marker before invoking the compiler, including
-goleak's external tests and generated test main. Client compiler flags remain
-intact. This also works with compilers that reject `-I` together with `-importcfg`.
+for goleak's external tests and generated test main, and leaves client compiler
+flags intact, so compilers that reject `-I` together with `-importcfg` work
+too.
 
 The original version is the client's compatibility contract. Preparation still
 checks `Find(options ...Option) error` in the actual replacement sources,
@@ -165,40 +168,43 @@ flowchart TD
 
 The shim adds exact function filters for the CI signal handler, telemetry ticker,
 blocked CI senders, Mini's background and checkpoint test-cycle senders,
-diagnostic log sender and coverage sender. It preserves the
-caller's options and goleak's original validation, retry loop and error result.
-Waiting for an active CI request can add its remaining HTTP/retry time before
-goleak starts that loop; the checkpoint waits for delivery rather than canceling it.
-It also waits, for up to one minute like the SDK's own end-of-session wait, for
+diagnostic log sender and coverage sender. It preserves the caller's options
+and goleak's original validation, retry loop and error result. The checkpoint
+waits for an active CI request to finish instead of canceling it, which can add
+the request's remaining HTTP and retry time before goleak starts that loop. It
+also waits, for up to one minute like the SDK's own end-of-session wait, for
 the asynchronous settings start-up and repository upload, including their git
 subprocesses, which would otherwise look like leaks.
-It does not use `IgnoreCurrent`, ignore `net/http` functions, or suppress arbitrary
-goroutine snapshots. Standard HTTP transports are cloned for Mini's ownership;
-closing them does not close the caller's default transport. Custom RoundTrippers
-are not closed by leak checkpoints; they retain their own lifecycle and may
-require caller-managed cleanup.
+
+The shim does not use `IgnoreCurrent`, ignore `net/http` functions, or suppress
+arbitrary goroutine snapshots. Mini clones standard HTTP transports for its own
+use, so closing them leaves the caller's default transport open. Leak
+checkpoints never close custom RoundTrippers; those keep their own lifecycle
+and may need cleanup by the caller.
 
 `VerifyNone` itself cannot assign other parallel tests' goroutines to their owners.
 Use `VerifyTestMain` for a parallel suite, following goleak's normal contract.
-This shim excludes CI workers; it does not change that limitation or forgive test
-leaks. Integration tests include a blocked test goroutine and a user-owned idle
+The shim only excludes CI workers: that limitation stays, and test leaks are
+still reported. Integration tests include a blocked test goroutine and a user-owned idle
 HTTP connection as negative controls.
 
 ## Tool dispatch and cache identity
 
-Go rejects overlays beneath `GOMODCACHE`, so goleak uses the existing selective
+Go rejects overlays beneath `GOMODCACHE`, so goleak uses the selective
 compiler wrapper. One shared graph query discovers Testify and goleak, including
-external helpers. Builds needing neither library nor the coverage bridge omit
-`-toolexec`. Unrelated tools bypass plan loading; compiler and linker version
-probes keep Go's native identity.
+external helpers. Builds that need none of the wrapper's features, listed in
+[the architecture](architecture.md#preparing-an-overlay), omit `-toolexec`.
+Unrelated tools bypass plan loading, and compiler and linker version probes
+keep Go's native identity.
 
 Testify's fingerprint travels through `testing` export data. Goleak does not
 import `testing`, so its prepared source and hook are hashed into a package-only
 `-gcflags=go.uber.org/goleak=...` sentinel import directory. Go supplies imports
-through `-importcfg`, so the sentinel is not read. Existing applicable user
-compiler flags are retained. Only goleak's action key needs this additional marker;
-there is no persistent POC cache. Covered goleak inputs are edited after Go's
-coverage generation, preserving the original coverage layout.
+through `-importcfg`, so the sentinel is never read. Existing applicable user
+compiler flags are retained. Only goleak's action key needs this extra marker,
+and ddto keeps no build cache of its own for it. Covered goleak inputs are
+edited after Go's coverage generation, preserving the original coverage
+layout.
 
 ## Payload-level common metadata
 
@@ -229,9 +235,9 @@ At delivery, homogeneous test/session/module/suite events use their event-kind
 metadata entry. CI fields stay out of `"*"`, so ordinary child spans do not gain
 CI tags. An override stays on its event and takes precedence. If any event
 overrides a common key with text or a metric, that key stays out of the new
-defaults for its kind in that batch. Peers carry the string locally instead.
-This avoids numeric inheritance and excludes an unused original string from the
-payload and its byte budget, even when the original value was very large.
+defaults for its kind in that batch, and peers carry the string locally
+instead. That avoids numeric inheritance and keeps an unused original string,
+however large, out of the payload and its byte budget.
 Different snapshots or an event with no shared base trigger the same local
 fallback for that event kind; other kinds can still share their defaults.
 
@@ -239,8 +245,8 @@ The SDK's tag API publishes updates through `AddCITags` and `AddCITagsMap`, and
 also exposes a mutable cached map. Internal readers use `GetCITagsReadOnly`,
 which reuses the immutable snapshot until an explicit update. Once `GetCITags`
 exposes the current mutable map, snapshot lookup checks its contents on every
-read so even later direct edits remain visible. A changed snapshot
-gets a new revision; cached, UTF-8-truncated options are rebuilt once. Existing
+read, so even later direct edits remain visible. A changed snapshot gets a new
+revision; cached, UTF-8-truncated options are rebuilt once. Existing
 spans keep their old values, including when later feature discovery changes tags.
 Concurrent direct writes to the exposed SDK map remain unsupported; use its
 synchronized update APIs.
@@ -259,8 +265,8 @@ limit holds under any mix of events. Projection never mutates a sealed event,
 including on delivery failure and retry.
 
 This placement is an accepted change from the SDK, which repeats these strings
-on every event. It was requested for Mini and is part of its wire contract, not
-a deviation to remove.
+on every event. It was requested for Mini and is part of its wire contract, so
+SDK updates must keep it.
 
 Loopback and Bazel tests compare effective values against the frozen SDK while
 also retaining raw payloads to check placement. Their comparator resolves only
@@ -301,11 +307,11 @@ Both integration tests run in the cross-platform compatibility workflow.
 `TestGoleakCacheAndWarmVersionGuard` checks unchanged cache reuse, a changed
 goleak source with unrelated standard packages still cached, and rejection of an
 unsupported version with unchanged cached source.
-`TestDeferredDeliveryParityMatrix` compares 17 CI feature combinations against
+`TestDeferredDeliveryParityMatrix` compares 16 CI feature combinations against
 the SDK/Orchestrion reference; `TestDeferredDeliveryTestifyParity` adds seven
 Testify combinations. Queue tests check order, payload limits, retained failures,
-concurrent admission and idempotent release. These are local protocol and behavior
-checks; deployed Agent/intake acceptance requires separate evidence.
+concurrent admission and idempotent release. These are local protocol and
+behavior checks; deployed Agent/intake acceptance requires separate evidence.
 
 `TestMiniCoverageWithGlobalTimeChanges` exercises atomic coverage while the test
 changes `time.Local`, with 4/32 CPUs and both telemetry/delivery settings. It
@@ -321,7 +327,8 @@ in both modes.
 delivery modes. Mixed-snapshot, concurrent sealed-map and byte-accounting checks
 live in `internal/minitracer/common_tags_test.go`. `common_batch_test.go` checks
 the accounting against the encoded payload for random mixes of kinds,
-snapshots and overrides, and the batches that a client seals. The SDK-port tests cover late
-updates, direct cached-map edits, Unicode truncation and Bazel filtering.
-The [latest runtime comparison](benchmarks.md#runtime-of-the-prebuilt-test-binaries)
+snapshots and overrides, and the batches that a client seals. The SDK-port
+tests cover late updates, direct cached-map edits, Unicode truncation and Bazel
+filtering.
+The [latest runtime comparison](benchmarks.md#runtime-of-the-original-test-binaries)
 records complete test execution, delivery, memory peaks and wire sizes.

@@ -1,7 +1,7 @@
 # CODEOWNERS implementation
 
-`internal/thirdparty/dd-trace-go/civisibility/utils/codeownership` is the SDK package
-that parses ownership rules. It has no dependency on CI initialization.
+`internal/thirdparty/dd-trace-go/civisibility/utils/codeownership` is the SDK
+package that parses ownership rules, independently of CI initialization.
 CI Visibility uses it for `test.codeowners` and, when enabled, for package
 service names. [Service configuration](codeowners-service.md) describes the
 environment variables and the priority of an explicit `DD_SERVICE`.
@@ -9,8 +9,9 @@ environment variables and the priority of an explicit `DD_SERVICE`.
 ## Discovery and matching
 
 `Discover` finds the repository root from the workspace, including Git
-worktrees whose `.git` is a file. It selects a dialect from the repository URL, then the CI provider. A lone
-`.gitlab/CODEOWNERS` file selects GitLab when neither identifies the host.
+worktrees whose `.git` is a file. It selects a dialect from the repository URL,
+then the CI provider. A lone `.gitlab/CODEOWNERS` file selects GitLab when
+neither identifies the host.
 
 | Dialect | File priority | Rule behavior |
 | --- | --- | --- |
@@ -19,9 +20,9 @@ worktrees whose `.git` is a file. It selects a dialect from the repository URL, 
 
 The resolver rebases paths to the repository root and rejects traversal outside
 it. The CI adapter in `utils/codeowners_discovery.go` caches both successful
-lookup and missing files for the process. A read error leaves the lookup eligible
-for a retry. A selected oversized GitHub file yields empty rules; it does not
-fall back to another file.
+lookup and missing files for the process. A read error leaves the lookup
+eligible for a retry. A selected oversized GitHub file yields empty rules
+instead of falling back to another file.
 
 ```mermaid
 flowchart LR
@@ -46,8 +47,8 @@ no file-size limit. Valid lines longer than 64 KiB are accepted.
 Windows separators. Paths are case-sensitive. GitHub patterns with an interior
 slash are rooted; GitLab patterns without a leading slash can match at any depth.
 `**` is a globstar only as a whole path segment. GitLab's terminal `**` matches
-one segment, while `**/` can match nested directories.
-GitHub's rooted filename prefixes also cover matching directories: `/src/ci_*`
+one segment, while `**/` can match nested directories. GitHub's rooted
+filename prefixes also cover matching directories: `/src/ci_*`
 owns `src/ci_new.go` and `src/ci_group/nested.go`, while `/src/*` selects only
 immediate files.
 
@@ -56,9 +57,9 @@ A trailing slash includes the directory itself; terminal `/*` selects direct
 children. Other directory patterns can be inherited by descendant packages.
 For example, `/pkg/**/mobile*` can own `pkg/mobile-tests/subpackage`.
 
-Matching uses Go runes and the Unicode tables from the Go toolchain. `?` matches
-one rune, including an emoji. A combining mark is a separate rune. Character
-class ranges also use runes. GitLab section names are keyed with
+Matching uses Go runes and the Unicode tables from the Go toolchain, so `?`
+matches one rune, including an emoji, a combining mark is a separate rune, and
+character class ranges also use runes. GitLab section names are keyed with
 `strings.ToUpper`; owner classification uses `unicode`. Role names are ASCII
 identifiers with ASCII case variants. No runtime-specific Unicode tables are
 stored in the package.
@@ -79,9 +80,9 @@ service selection deterministic.
 
 ## Maintenance
 
-This package is maintained with the CI Visibility SDK code. Its files are
-recorded as local SDK additions in `dd-trace-go/SOURCE.json`. When an SDK revision
-includes the package, update those entries to its original Go paths and hashes
+This package is maintained with the CI Visibility SDK code, and its files are
+recorded as local SDK additions in `dd-trace-go/SOURCE.json`. When an SDK
+revision includes the package, update those entries to its original Go paths and hashes
 using the [SDK update procedure](maintenance.md). Source attribution belongs in
 the repository `NOTICE`; the SDK's Apache-2.0 license covers the package.
 

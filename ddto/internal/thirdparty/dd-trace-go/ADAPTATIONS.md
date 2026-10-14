@@ -157,8 +157,8 @@ file's bitmap whenever a block ended further down.
 - The profile is read at once and each line is parsed in place. Only a file
   name that differs from the previous line's is copied. The read is sized with
   `Seek`, not `Stat` as in `os.ReadFile`: `Stat` converts timestamps with
-  `time.Local`, which coverage workers must not read while a test may change it. The parser accepts and
-  skips the same lines as `strings.Fields`, `strings.Split` and
+  `time.Local`, which coverage workers must not read while a test may change
+  it. The parser accepts and skips the same lines as `strings.Fields`, `strings.Split` and
   `strconv.Atoi` did: signs, extra fields and separators, Unicode whitespace,
   invalid UTF-8, `\r\n` and the scanner's maximum line length.
 - Blocks keep their order. testing writes a binary's profiles with the same
@@ -201,6 +201,7 @@ When ddto's `testing` overlay registers its hook (`instrument.CoverageHook`),
 reads the counters in memory instead. The hook compiles against the
 toolchain's own `internal/coverage` packages and registers through the pushed
 linkname `registerTestingCoverage`. It only exposes what those packages hold:
+
 - the decoded meta-data of every registered package: the counter segment
   offsets, each package's counter mode, granularity and path, and each
   function's name, file, literal flag and units;
@@ -208,63 +209,55 @@ linkname `registerTestingCoverage`. It only exposes what those packages hold:
   registered packages;
 - the toolchain's `cformat` rendering of such a copy as a text profile.
 
-- **Layout.** Once per process, before the first capture,
-  `buildCoverageLayout` lays out the text profile that the teardown would
-  write, as its `processPod` and `cformat` do:
-  - units with a parent are omitted;
-  - units with the same file, function, literal flag and position merge;
-  - packages are in import path order, and each package's blocks are sorted
-    by file and position.
+Once per process, before the first capture, `buildCoverageLayout` lays out the
+text profile that the teardown would write, as its `processPod` and `cformat`
+do: units with a parent are omitted, units with the same file, function,
+literal flag and position merge, and packages are in import path order, with
+each package's blocks sorted by file and position. Each capture then maps the
+counter segments to one count per layout entry, adding merged units without
+overflowing as `cformat` does. As `cfile` does, it skips a function without a
+positive counter before reading its IDs, because a function that starts
+running during the copy may have written only part of its header. A test's
+coverage is every entry whose count grew, mapped to files and line bitmaps by
+the same `coveredLines` code as the text path.
 
-  Each capture then maps the counter segments to one count per layout entry,
-  adding merged units without overflowing as `cformat` does. As `cfile` does,
-  it skips a function without a positive counter before reading its IDs: a
-  function that starts running during the copy may have written only part of
-  its header. A test's coverage is every entry whose count grew, mapped to files and line bitmaps by the same
-  `coveredLines` code as the text path.
-- **Validation before use.** The process keeps text profiles unless the
-  toolchain's rendering with every count at its maximum reads back through
-  `parseCoverProfileText` (the text path's own parser, split out of
-  `readCoverProfile`) as exactly the layout's blocks in order.
-- **When text profiles stay.** The process also keeps them on 32-bit targets,
-  when the counter mode is not count or atomic, and when the meta-data has:
-  - a counter mode or granularity clash;
-  - a file name with a line break;
-  - two blocks sharing a position in a file, where the text path's result
-    depends on map order;
-  - a malformed stream.
+The process keeps text profiles unless the toolchain's rendering with every
+count at its maximum reads back through `parseCoverProfileText` (the text
+path's own parser, split out of `readCoverProfile`) as exactly the layout's
+blocks in order. It also keeps them on 32-bit targets, when the counter mode is
+not count or atomic, and when the meta-data has a counter mode or granularity
+clash, a file name with a line break, two blocks sharing a position in a file
+(where the text path's result depends on map order), or a malformed stream. A
+capture whose package count or counter segments do not match the layout, as
+when meta-data is registered later, fails its collector and turns the
+in-memory path off for later baselines.
 
-  A capture whose package count or counter segments do not match the layout,
-  as when meta-data is registered later, fails its collector and turns the
-  in-memory path off for later baselines.
-- **Collectors.** `testCoverage`'s capture and load methods choose the backend
-  when the baseline is taken, so test, retry and process collectors share it.
-  In-memory baselines are limited to 64 MiB for the whole process. Above that,
-  collectors use text profiles, and each baseline's reservation is released by
-  its after-capture or failure. Session coverage, LCOV reports, backfill and
-  aggregate process profiles keep the teardown.
-- **Visible changes.** In-memory captures print no `coverage:` lines: test
-  processes print native go test's. Upstream's per-test lines also made
-  `go test`'s summary show the first capture's percentage.
-- **Overrides.** `DD_CIVISIBILITY_INTERNAL_COVERAGE_IN_MEMORY=false` keeps text
-  profiles. `DD_CIVISIBILITY_INTERNAL_COVERAGE_ORACLE=true` also computes each
-  in-memory collector's result from text profiles of the same counters,
-  rendered with the toolchain's `cformat`, and logs whether both agree.
+`testCoverage`'s capture and load methods choose the backend when the baseline
+is taken, so test, retry and process collectors share it. In-memory baselines
+are limited to 64 MiB for the whole process. Above that, collectors use text
+profiles, and each baseline's reservation is released by its after-capture or
+failure. Session coverage, LCOV reports, backfill and aggregate process
+profiles keep the teardown.
 
-Checks:
-- **Unit tests:** `TestBuildCoverageLayout`, `TestBuildCoverageLayoutOrder`,
-  `TestBuildCoverageLayoutRefusals`, `TestCoverageLayoutCounts`,
-  `TestMemoryCoverageMatchesTextProfiles`, `TestMemoryCoverageEmptyLayout`,
-  `TestMemoryCoverageRefusals`,
-  `TestMemoryCoverageBudget`, `TestMemoryCoverageCaptureFailure` and
-  `TestMemoryCoverageProcessSegments`.
-- **Integration:** `TestMiniPerTestCoverageInMemory` compares per-test coverage
-  with text profiles, and with the debug comparison, in count, atomic and race
-  builds, and checks a build that keeps text profiles.
-  `TestMiniPerTestCoverageRefusesPlugins` keeps them when a test imports
-  `plugin`. The coverage parity cases compare it with the SDK reference.
-- **Prototype:** the oracle agreed on all 731 collectors of Gin, Chi and both
-  Testify subjects.
+In-memory captures print no `coverage:` lines, so test processes print native
+go test's; upstream's per-test lines also made `go test`'s summary show the
+first capture's percentage. `DD_CIVISIBILITY_INTERNAL_COVERAGE_IN_MEMORY=false`
+keeps text profiles, and `DD_CIVISIBILITY_INTERNAL_COVERAGE_ORACLE=true` also
+computes each in-memory collector's result from text profiles of the same
+counters, rendered with the toolchain's `cformat`, and logs whether both agree.
+
+Checks: the unit tests `TestBuildCoverageLayout`,
+`TestBuildCoverageLayoutOrder`, `TestBuildCoverageLayoutRefusals`,
+`TestCoverageLayoutCounts`, `TestMemoryCoverageMatchesTextProfiles`,
+`TestMemoryCoverageEmptyLayout`, `TestMemoryCoverageRefusals`,
+`TestMemoryCoverageBudget`, `TestMemoryCoverageCaptureFailure` and
+`TestMemoryCoverageProcessSegments`. In integration,
+`TestMiniPerTestCoverageInMemory` compares per-test coverage with text
+profiles, and with the debug comparison, in count, atomic and race builds, and
+checks a build that keeps text profiles; `TestMiniPerTestCoverageRefusesPlugins`
+keeps them when a test imports `plugin`; and the coverage parity cases compare
+it with the SDK reference. During prototyping, the oracle agreed on all 731
+collectors of Gin, Chi and both Testify subjects.
 
 ## Coverage module identity
 
@@ -972,35 +965,35 @@ differ, ddto takes the canonical list from `go tool compile -V`, about 6 ms, and
 appends it as the linker does (`testRuntimeVersion` in
 `internal/runner/environment.go`).
 
-A run whose results all come from Go's test cache sends no request. ddto
-parses go test's arguments as go test does (`internal/runner/options.go`) and
-records in `tests.json` whether go test runs every test package
-(`RunsEveryTest`): in local directory mode, or when a test binary gets an
-argument outside go test's cacheable flags, from the command line or
-`GOFLAGS`: a flag such as `-count=1`, an unknown flag, an argument after the
-package list, `--`, which go test hands on itself, or after `-args` anything
-but `-test.<cacheable flag>=<value>`, as go test checks the arguments that it
-hands on as they are (`noteTestArgument`). Only then does the worker search
-the commits and request while go test builds. Otherwise ddto adds its tool to
-go test in its `link` mode (`plan.linkSignal`), and the tool marks the state
-`linking` (`utils.CLIGitLinkingFile`, `runner.NoteTestLink`) when go test
-links a test binary: go test checks its cache just before the link and links
-only for a result outside it. The worker does both once that mark, or the
-`used` one, appears (`waitFor`), so the requests run while the binary links,
-and a run whose results all come from the cache sends none. go test checks its
-cache again after the link, by the binary's content, so a link does not always
-mean a test process: `-o`, which saves the binary, and `-a`, which rebuilds
-everything, link even for cached results, so ddto adds no signal with them
-(`linksCachedResults`) and the worker waits for a test process. A change that
-leaves a test binary identical, such as a comment, still makes go test relink
-it and take its result from the cache: the worker then requests although no
-test process runs, an accepted cost of the earlier requests. The tool, which
-lets every tool through after its fast check, keeps Go's cache keys: cmd/go
-takes each tool's identity from its `-V=full` output through the wrapper. The cacheable flags are the
-newest supported Go's: Go has only added to them, so a flag outside them
-disables the cache in every version. Test processes outside the worker's
-checkout, binaries run outside `ddto test` and the SDK runtime keep their own
-requests and scopes.
+A run whose results all come from Go's test cache sends no request. ddto parses
+go test's arguments as go test does (`internal/runner/options.go`) and records
+in `tests.json` whether go test runs every test package (`RunsEveryTest`): in
+local directory mode, or when a test binary gets an argument outside go test's
+cacheable flags, from the command line or `GOFLAGS`: a flag such as `-count=1`,
+an unknown flag, an argument after the package list, `--`, which go test hands
+on itself, or after `-args` anything but `-test.<cacheable flag>=<value>`, as go
+test checks the arguments that it hands on as they are (`noteTestArgument`).
+Only then does the worker search the commits and request while go test builds.
+Otherwise ddto adds its tool to go test in its `link` mode (`plan.linkSignal`),
+and the tool marks the state `linking` (`utils.CLIGitLinkingFile`,
+`toolwrap.NoteTestLink`) when go test links a test binary: go test checks its
+cache just before the link and links only for a result outside it. The worker
+does both once that mark, or the `used` one, appears (`waitFor`), so the
+requests run while the binary links, and a run whose results all come from the
+cache sends none. go test checks its cache again after the link, by the binary's
+content, so a link does not always mean a test process: `-o`, which saves the
+binary, and `-a`, which rebuilds everything, link even for cached results, so
+ddto adds no signal with them (`linksCachedResults`) and the worker waits for a
+test process. A change that leaves a test binary identical, such as a comment,
+still makes go test relink it and take its result from the cache: the worker
+then requests although no test process runs, an accepted cost of the earlier
+requests. The tool is ddto's small wrapper executable, or ddto itself when that
+executable is unavailable; it runs every tool after its fast check and keeps
+Go's cache keys, because cmd/go takes each tool's identity from its `-V=full`
+output through the wrapper. The cacheable flags are the newest supported Go's:
+Go has only added to them, so a flag outside them disables the cache in every
+version. Test processes outside the worker's checkout, binaries run outside
+`ddto test` and the SDK runtime keep their own requests and scopes.
 
 Checks: `TestCLIReadCacheScopeIdentity`, `TestCLITestProcessClients`,
 `TestCLIReadCacheLastsTheInvocation`,

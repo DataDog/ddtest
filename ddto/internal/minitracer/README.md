@@ -16,13 +16,15 @@ Its original Apache-2.0 license and notices are retained there.
 
 `Finish` transfers ownership of the private metadata/metric maps once; setters
 cannot change them afterward. `sendMu` serializes delivery and owns the reusable
-payload buffer. `mu` protects queue/error state. In ordinary delivery, a failed
-flush keeps its batch and rejects work that would exceed queue bounds. Deferred
-delivery can buffer multiple batches until idle; it bounds each outgoing payload
-but not the pending queue's total size. `Close` prevents new events before the
-final flush, which sends up to `maxConcurrentSends` payloads at once in both
-modes. Readers are sealed by `citransport` before buffers or compressors are
-reused. Keep these rules together when changing synchronization or pooling.
+payload buffer. `mu` protects queue/error state. In ordinary delivery, a
+finisher at the queue bound waits for a sender while deliveries succeed; after a
+failed delivery, which keeps its batch, work beyond the bound is rejected.
+Deferred delivery can buffer multiple batches until idle; it bounds each
+outgoing payload but not the pending queue's total size. `Close` prevents new
+events before the final flush, which sends up to `maxConcurrentSends` payloads
+at once in both modes. Readers are sealed by `citransport` before buffers or
+compressors are reused. Keep these rules together when changing synchronization
+or pooling.
 
 The SDK port binds common CI/Git/system strings once per snapshot revision.
 Spans retain that read-only base and their own overrides. Getters check local
@@ -30,8 +32,8 @@ text/metrics first; delivery lifts compatible defaults without mutating either
 map. An overridden key falls back to local strings for peers, so a masked value
 cannot consume the event's byte budget. Mixed snapshots fall back per event kind.
 Batch accounting counts a kind's shared snapshot once until an event of that
-kind would fall back, and then counts every event's snapshot.
-Generic child spans receive no CI defaults. See
+kind would fall back, and then counts every event's snapshot. Generic child
+spans receive no CI defaults. See
 [the metadata contract](../../docs/delivery.md#payload-level-common-metadata).
 
 The [architecture guide](../../docs/architecture.md#native-event-ownership)

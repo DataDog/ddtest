@@ -1,7 +1,8 @@
 # Documentation
 
 Start with the [README](../README.md) to install `ddto`, configure delivery
-and run your first tests. These guides cover the current implementation.
+and run your first tests. Coding agents have their own guide in
+[AGENTS.md](../AGENTS.md). These guides cover the current implementation.
 Measurement reports describe the exact revisions in their manifests.
 
 ## Using ddto
@@ -28,6 +29,7 @@ Measurement reports describe the exact revisions in their manifests.
 | Maintain ownership-rule parsing | [CODEOWNERS implementation](codeownership.md) |
 | Profile CPU, allocations or build time | [Performance and profiling](performance.md) |
 | Choose a focused performance change | [Optimization backlog](optimization-backlog.md) |
+| See what the October 2026 optimization phases measured and changed | [Optimization plan](optimization-plan.md) |
 | Read the retained measurements | [Build, runtime and memory comparison](benchmarks.md) |
 | Collect builds or regenerate tables | [Benchmark runner](build-benchmarks.md) |
 

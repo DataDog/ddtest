@@ -34,8 +34,9 @@ use `go test -c`, which excludes test execution and event delivery.
 | Live heap / aggregate memory peak | Retained memory or simultaneous process memory, depending on the tool |
 
 Profile percentages describe where samples landed. Removing work in a function
-can change CPU consumption without producing the same wall-time reduction. Parallel workers can consume many CPU-seconds during one
-wall-clock second. Allocation totals are not resident memory. For Orchestrion,
+can change CPU consumption without producing the same wall-time reduction, and
+parallel workers can consume many CPU-seconds during one wall-clock second.
+Allocation totals are not resident memory. For Orchestrion,
 include its daemon and nested builds in CPU and memory accounting; direct-child
 process accounting can miss them.
 
@@ -56,11 +57,11 @@ for every named package: in a 2000-package fixture whose packages import 990
 others on average, that output was 56 MB, and dropping it reduced preparation
 from 2.65 to 2.08 s, peak memory from 175 to 88 MB and CPU from 2.55 to 1.60 s
 (medians of seven). A small module lists more records instead: about 7 ms more
-for 61 packages. Testify discovery can add one metadata or
-dependency query, as described below. Both queries decode JSON directly from
-Go's stdout. The front-end retains decoded package records without a second
-complete JSON buffer. It drains and waits for the subprocess even after malformed
-output; command failures and their stderr take precedence over partial JSON.
+for 61 packages. Testify discovery can add one metadata or dependency query, as
+described below. Both queries decode JSON directly from Go's stdout, and the
+front-end keeps decoded package records without a second complete JSON buffer.
+It drains and waits for the subprocess even after malformed output; command
+failures and their stderr take precedence over partial JSON.
 
 Rewritten-source buffers reserve the final size, including line directives and
 inserted advice. Testify preparation parses each selected library file once and
@@ -73,51 +74,57 @@ That file joins the package's internal tests when it has no external test
 package, as is usual. An external test package of its own would be one more
 compile and vet per test package whenever Go cannot reuse it, for example with
 an empty build cache. Building 61 test packages, 59 of them with only internal
-tests, took 180 compiles and 120 vets that way, and 121 and 61 now.
-The logical overlay entry still exists for every selected package, so metadata
-and conflict checks remain correct. Memory, overlay entries and package
-discovery can still grow with package count.
+tests, took 180 compiles and 120 vets that way, and takes 121 and 61 now. The
+logical overlay entry still exists for every selected package, so metadata and
+conflict checks remain correct, and memory, overlay entries and package
+discovery still grow with package count.
 
-This sharing ends when the plan is removed. The POC uses Go's caches and has no
-persistent cache of instrumented binaries or prepared overlays.
+This sharing ends when the plan is removed. The POC relies on Go's caches and
+keeps no persistent cache of instrumented binaries or prepared overlays.
 
 Preparation uses one `go env -json` call to check the toolchain and obtain the
 module, workspace and cache paths, and the platforms that select Go's exec
 helper. Runtime provisioning, including the temporary workspace, reuses that
-result. Local Mini provisioning reads
-the selected runtime's Go requirement without changing the client's language
-version. Older client languages use a temporary workspace, keeping Mini's
-Go 1.25 source separate from the client's source. Temporary module
-files read the user's effective overlay contents, including replacements or
-deletion of the sum file.
-This also applies to an explicit `-modfile`. Child commands derive `PWD` from
-their working directory before adding environment overrides, so `-C` through a
-symlink keeps the same paths during preparation and compilation. With
-`-mod=mod`, a separate read-only `go list` resolves the runtime, so the package
-query cannot add it to the module's requirements.
+result. Local Mini provisioning reads the selected runtime's Go requirement
+without changing the client's language version, and older client languages use
+a temporary workspace that keeps Mini's Go 1.25 source separate from the
+client's. Temporary module files read the user's effective overlay contents,
+including replacements or deletion of the sum file, also with an explicit
+`-modfile`.
+
+Child commands derive `PWD` from their working directory before adding
+environment overrides, so `-C` through a symlink keeps the same paths during
+preparation and compilation. With `-mod=mod`, a separate read-only `go list`
+resolves the runtime, so the package query cannot add it to the module's
+requirements.
 
 ## Testify discovery and tool overhead
 
-The [Testify contract](testify.md) selects `-toolexec` from actual reachability,
-not the presence of a module requirement. Plain tests and assert-only targets
-omit it unless another selected integration needs it: Mini goleak, SDK guards
-and span copies, Orchestrion composition or coverage of rewritten `testing`
-sources. Libraries that the named packages import already appear in the
-package query, with their metadata; unknown test imports use `-deps`
-so external helpers remain covered. Only libraries absent from both, such as
-SDK packages that Orchestrion can add while compiling, use `go list -find`. The selected-version/API check stays in
-preparation, before a warm cache can skip the compiler. The dependency query
-excludes selected packages and dependency closures already inspected by the
-first query. Unknown test-only imports stay in the query, including standard
-packages outside those known closures and helpers in other modules. Runtime
-dependencies are not evidence of a client's test-helper graph. Suite reachability
-is checked before pruning, so a known suite still receives its metadata
-and version validation.
+The [Testify contract](testify.md) selects `-toolexec` from actual
+reachability; a module requirement alone does not count. Plain tests and
+assert-only targets omit it unless another selected integration needs it: Mini
+goleak, SDK guards and span copies, Orchestrion composition, coverage of
+rewritten `testing` sources or the Git worker's link signal.
 
-Unrelated tools dispatch without opening the plan. On Unix the CLI replaces
-itself with the native tool; Windows delegates through a child. Process startup
-still has a cost even when dispatch does little work. The [latest build matrix](benchmarks.md)
-measures the complete invocation, including preparation and tool processes.
+Libraries that the named packages import already appear in the package query,
+with their metadata, and unknown test imports use `-deps` so external helpers
+remain covered. Only libraries absent from both, such as SDK packages that
+Orchestrion can add while compiling, use `go list -find`. The
+selected-version/API check stays in preparation, before a warm cache can skip
+the compiler. The dependency query excludes selected packages and dependency
+closures already inspected by the first query. Unknown test-only imports stay
+in the query, including standard packages outside those known closures and
+helpers in other modules, because runtime dependencies say nothing about a
+client's test-helper graph. Suite reachability is checked before pruning, so a
+known suite still receives its metadata and version validation.
+
+Unrelated tools dispatch without opening the plan. On Unix the wrapper replaces
+itself with the native tool, and Windows delegates through a child. The wrapper
+is a small executable that starts in about 1.2 ms, against 2.4 ms for ddto
+itself ([phase
+3](optimization-plan.md#phase-3-ddtos-startup-as-the-compiler-wrapper)). The
+[latest build matrix](benchmarks.md) measures the complete invocation, including
+preparation and tool processes.
 
 Vendor workspaces hard-link the client's files instead of copying them, at a
 stable path in the user cache. Go's compile cache keys include each package
@@ -141,14 +148,15 @@ in `testing` carries instrumentation inputs into Go's package keys. Go owns
 compiled-object and test-result caching. Coverage of rewritten `testing` sources
 has its own versioned bridge; ordinary client-only coverage needs no bridge.
 
-Goleak has a package-scoped compiler flag marker because it does not import
-`testing`. Its worker filters and connection checkpoint are described in
-[delivery and goleak](delivery.md).
-Unqualified `-gcflags` apply when Go resolved goleak as a command-line target,
-including an absolute directory argument. The marker retains those flags;
-package selection is not inferred with the pattern rules used by qualified
-compiler flags. The CLI regression tests in `integration/runner_transparency_test.go`
-cover this distinction, module overlays and the symlink case.
+Goleak, and each SDK package that Mini guards, gets a package-scoped compiler
+flag marker instead, because a marker carried through `testing` is not enough
+for them. Goleak's worker filters and connection checkpoint are described in
+[delivery and goleak](delivery.md). Unqualified `-gcflags` apply when Go
+resolved goleak as a command-line target, including an absolute directory
+argument. The marker keeps those flags, and package selection is not inferred
+with the pattern rules used by qualified compiler flags. The CLI regression
+tests in `integration/runner_transparency_test.go` cover this distinction,
+module overlays and the symlink case.
 
 ## Enqueue and delivery
 
@@ -164,9 +172,9 @@ and obey the same uncompressed intake limit. Coverage and diagnostic-log
 compressors retain their SDK settings. Compression ratio depends on payload
 shape; compare both CPU and wire size when changing the level.
 
-Deferred mode isolates delivery from admitted test groups. It delays delivery
-until idle and permits queue growth across parallel
-groups. The [delivery contract](delivery.md) describes that tradeoff.
+Deferred mode isolates delivery from admitted test groups: it delays delivery
+until idle and lets the queue grow across parallel groups. The
+[delivery contract](delivery.md) describes that tradeoff.
 
 The source rewriter preserves comment bytes without constructing comment ASTs;
 it handles line directives separately. Preparation runs sequentially. The
@@ -199,28 +207,29 @@ invocation.
 | Lazy classification tries | Eager construction of stack-prefix tables | Preserve internal filtering, third-party matching and redaction; publish immutable tries once |
 | Internal codec/platform subsets | External runtime module requirements | Preserve original semantics, licenses and source provenance |
 
-Clock isolation also has costs. Ordinary coverage processing is synchronous when
-telemetry or debug logging is enabled. Deferred mode retains captured profiles
-until its idle checkpoint, so parallel groups can use more temporary disk space.
-Startup telemetry overlaps the settings request in both modes. Initialization
-waits for both before the first test, including request failures and cached
-settings. A slow endpoint still delays admission; no test's duration includes
-it. The recorded build/runtime benchmark tables do not measure these scheduling
-changes. See
+Clock isolation also has costs. Ordinary coverage processing is synchronous
+when telemetry or debug logging is enabled. Deferred mode retains captured
+coverage until its idle checkpoint, so parallel groups can use more memory, or
+more temporary disk space where text profiles stay. Startup telemetry overlaps
+the settings request in both modes, and initialization waits for both before
+the first test, including request failures and cached settings. A slow endpoint
+still delays admission, although no test's duration includes it. The recorded
+build/runtime benchmark tables do not measure these scheduling changes. Read
 [delivery](delivery.md) and the SDK port's
 [adaptation record](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md) before
 changing this scheduling during an upstream update.
 
-Copying a codec into the repository does not itself make its encoder faster.
-The dependency reduction comes from changing the runtime graph; the allocation
+Copying a codec into the repository does not make its encoder faster. The
+dependency reduction comes from changing the runtime graph, and the allocation
 changes come from event ownership and buffer reuse. Mini's runtime module has
 no external requirements; compatibility fixtures declare their dependencies
 in separate modules.
 
 The [runtime comparison](benchmarks.md#runtime-of-the-original-test-binaries)
-includes startup, test execution and delivery. Its detailed report records
-event counts and wire bytes. It measures the complete implementation. Use focused
-profiles and controlled comparisons to attribute a change to one optimization.
+includes startup, test execution and delivery, and its detailed report records
+event counts and wire bytes. It measures the complete implementation, so use
+focused profiles and controlled comparisons to attribute a change to one
+optimization.
 
 The SDK-specific implementation rules are recorded in
 [ADAPTATIONS.md](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md). Common
@@ -231,7 +240,8 @@ swaps retain the existing swappable handle.
 
 Counts keep their value/timestamp inline under a short mutex. A flush
 detaches the whole point under that mutex, then encodes it after releasing the
-lock. This removes per-submission snapshots while preserving collection boundaries.
+lock, which removes per-submission snapshots while preserving collection
+boundaries.
 
 ### Checking metadata capacity
 
@@ -264,8 +274,8 @@ write the CI fields without deleting tags.
 Delivery owns one reusable payload buffer under `sendMu`. The transport borrows
 its bytes only for the duration of `Send`. In agentless mode it borrows a gzip
 compressor and buffer too. Request and replay readers must all become unable to
-read before either backing buffer is reusable. Calling `Close` on just the
-initial reader does not establish that boundary.
+read before either backing buffer is reusable; closing only the initial reader
+is not enough.
 
 In ordinary delivery, the queue is bounded: eight sealed batches, all of which
 can be in flight, plus the open batch, each limited by event count and byte
@@ -348,10 +358,10 @@ go tool pprof -top -sample_index=alloc_space \
 ```
 
 Repeat with `gzip=true` and different artifact names to isolate the compression
-path. This benchmark runs a serial loop. Raising `GOMAXPROCS` does not turn it
-into a parallel producer benchmark; concurrent finish behavior needs a workload
-that actually starts concurrent producers. The race/concurrency tests establish
-correctness, not throughput.
+path. This benchmark runs a serial loop, and raising `GOMAXPROCS` does not
+turn it into a parallel producer benchmark: concurrent finish behavior needs a
+workload that starts concurrent producers. The race and concurrency tests
+establish correctness only.
 
 A CPU profiler inside the test binary does not profile Go's compiler and linker.
 For build diagnosis, capture the Go subprocesses and their process tree, or use
@@ -378,9 +388,9 @@ GOMAXPROCS=4 go test -p=4 -c -o ./out/orchestrion/ \
 For a controlled comparison, give the Mini fixture an explicit POC requirement
 and the SDK fixtures the pinned SDK. This keeps provisioning out of the timed
 builds; ordinary CLI use can provide Mini automatically. Orchestrion must load
-the SDK's testing-only configuration. Match
-the native project's effective dependency inputs across variants and record
-any graph additions made for comparison tooling.
+the SDK's testing-only configuration. Match the native project's effective
+dependency inputs across variants and record any graph additions made for
+comparison tooling.
 
 Define the scenario before interpreting its result:
 
@@ -417,29 +427,30 @@ then the overhead relative to native:
 Example format: 1.20 s (-40.0% vs Orchestrion; +20.0% vs Native)
 ```
 
-The example is arithmetic, not a measurement. Compute percentages from
-unrounded medians. A negative first value means the POC took less time than
+The example only shows the arithmetic. Compute percentages from unrounded
+medians. A negative first value means the POC took less time than
 Orchestrion; a positive second value means it took more time than native.
 
 The [build benchmark guide](build-benchmarks.md) documents
-[`scripts/build_benchmark.py`](../scripts/build_benchmark.py), which runs Native, Orchestrion and Mini
-across the five scenarios, assigns affinity, measures exclusive cgroups
-and qualifies the outputs. Its `report` command regenerates the
-[recorded build tables](results/20261013-linux-go1.27.1/build/README.md)
+[`scripts/build_benchmark.py`](../scripts/build_benchmark.py), which runs
+Native, Orchestrion and Mini across the five scenarios, assigns affinity,
+measures exclusive cgroups and qualifies the outputs. Its `report` command regenerates the
+[recorded build tables](results/20261014-linux-go1.27.1/build/README.md)
 from every retained CSV observation, without Go or network access.
 
 ## Evidence and remaining work
 
 The [recorded comparison](benchmarks.md) covers Native, Orchestrion and Mini,
-Gin/Chi, direct and external Testify, race and coverage at 4/32 CPUs. It keeps raw
-durations, aggregate cgroup memory, variation and event counts, and separates
-the unused-constant diagnostic from the reachable test-body edit. Mini has new
-measurements; Native and Orchestrion retain their recorded values and dates.
-All build cells qualified. The runtime report distinguishes execution failures
-from missing SDK event references and keeps both kinds of observations.
-The 115-case parity data retains its own revision and date; this performance
-refresh does not repeat that suite. Current regression checks live in
-[validation](validation.md).
+Gin/Chi, direct and external Testify, race and coverage at 4/32 CPUs. It keeps
+raw durations, aggregate cgroup memory, variation and event counts, and
+separates the unused-constant diagnostic from the reachable test-body edit.
+Every build cell qualified: Mini was measured and qualified again on
+2026-10-14, and Native and Orchestrion keep their 2026-10-04 observations and
+qualification. The runtime report distinguishes
+execution failures from missing SDK event references and keeps both kinds of
+observations. The 115-case parity data keeps its own revision and date, since
+the performance refresh did not repeat that suite. Current regression checks
+live in [validation](validation.md).
 
 Further profiling can examine MessagePack encoding, tag construction, telemetry
 lookups and time spent waiting for `sendMu`. A proposed change needs before/after
