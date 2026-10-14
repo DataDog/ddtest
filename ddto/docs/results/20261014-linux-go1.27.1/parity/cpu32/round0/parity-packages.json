@@ -1,0 +1,23 @@
+{
+  "mini": {
+    "sessions": 2,
+    "modules": 2,
+    "suites": 2,
+    "tests": 2,
+    "spans": 0
+  },
+  "scope": "one session per package binary; packages without tests emit no events",
+  "sdk": {
+    "sessions": 2,
+    "modules": 2,
+    "suites": 2,
+    "tests": 2,
+    "spans": 0
+  },
+  "status": "passed",
+  "timing": {
+    "scope": "CLI: preparation, compilation, execution and shutdown/flush",
+    "sdk_wall_ns": 1088903414,
+    "mini_wall_ns": 399731570
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "identity": {
+    "sdk_commit": "96aedb31048c07e29e7a20a4333dc3b8d289c52d",
+    "sdk_version": "v2.12.0-dev.3.0.20261002145613-96aedb31048c",
+    "sdk_instrumentation": "orchestrion",
+    "go": "go1.27.1",
+    "os": "linux",
+    "architecture": "amd64"
+  },
+  "scenario_count": 65,
+  "samples": [
+    {
+      "report": "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/parity/cpu32/round0/parity.json",
+      "order": [
+        "sdk",
+        "mini"
+      ],
+      "scope": "65-scenario continuous block: receiver setup, process execution and shutdown/flush; excludes compilation and comparisons",
+      "sdk_wall_ns": 2238190923,
+      "mini_wall_ns": 1793594033
+    },
+    {
+      "report": "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/parity/cpu32/round1/parity.json",
+      "order": [
+        "mini",
+        "sdk"
+      ],
+      "scope": "65-scenario continuous block: receiver setup, process execution and shutdown/flush; excludes compilation and comparisons",
+      "sdk_wall_ns": 2235678476,
+      "mini_wall_ns": 1513281185
+    },
+    {
+      "report": "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/parity/cpu32/round2/parity.json",
+      "order": [
+        "sdk",
+        "mini"
+      ],
+      "scope": "65-scenario continuous block: receiver setup, process execution and shutdown/flush; excludes compilation and comparisons",
+      "sdk_wall_ns": 2281344668,
+      "mini_wall_ns": 1866465439
+    },
+    {
+      "report": "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/parity/cpu32/round3/parity.json",
+      "order": [
+        "mini",
+        "sdk"
+      ],
+      "scope": "65-scenario continuous block: receiver setup, process execution and shutdown/flush; excludes compilation and comparisons",
+      "sdk_wall_ns": 2496766206,
+      "mini_wall_ns": 2361194082
+    },
+    {
+      "report": "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/parity/cpu32/round4/parity.json",
+      "order": [
+        "sdk",
+        "mini"
+      ],
+      "scope": "65-scenario continuous block: receiver setup, process execution and shutdown/flush; excludes compilation and comparisons",
+      "sdk_wall_ns": 1931898041,
+      "mini_wall_ns": 1666889240
+    },
+    {
+      "report": "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/parity/cpu32/round5/parity.json",
+      "order": [
+        "mini",
+        "sdk"
+      ],
+      "scope": "65-scenario continuous block: receiver setup, process execution and shutdown/flush; excludes compilation and comparisons",
+      "sdk_wall_ns": 2080049669,
+      "mini_wall_ns": 1690248323
+    }
+  ],
+  "statistics": {
+    "sdk": {
+      "median_seconds": 2.2369346995,
+      "mean_seconds": 2.2106546638333335,
+      "min_seconds": 1.931898041,
+      "max_seconds": 2.496766206,
+      "cv_percent": 7.900126670329375
+    },
+    "mini": {
+      "median_seconds": 1.7419211780000001,
+      "mean_seconds": 1.815278717,
+      "min_seconds": 1.513281185,
+      "max_seconds": 2.361194082,
+      "cv_percent": 14.746852868700826
+    }
+  },
+  "median_delta_percent": -22.129100219628462,
+  "median_paired_delta_percent": -18.462866950993796
+}

@@ -1,0 +1,23 @@
+{
+  "mini": {
+    "sessions": 2,
+    "modules": 0,
+    "suites": 0,
+    "tests": 0,
+    "spans": 0
+  },
+  "scope": "one-iteration campaign; SDK does not emit seed/case test events",
+  "sdk": {
+    "sessions": 2,
+    "modules": 0,
+    "suites": 0,
+    "tests": 0,
+    "spans": 0
+  },
+  "status": "passed",
+  "timing": {
+    "scope": "prebuilt binary: startup, settings, execution and shutdown/flush",
+    "sdk_wall_ns": 28386753,
+    "mini_wall_ns": 20923637
+  }
+}

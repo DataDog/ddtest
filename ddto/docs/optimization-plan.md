@@ -497,8 +497,22 @@ on these findings. Measurements are medians on Linux against a local intake.
 - Update the [backlog](optimization-backlog.md): remove completed items, and
   record what each phase measured and dropped.
 
+**Outcome.**
+- **Refresh.** Mini was refreshed on 2026-10-14 at `97ec6e3`, in
+  [docs/results/20261014-linux-go1.27.1](results/20261014-linux-go1.27.1/README.md).
+  By the user's decision, Native and Orchestrion keep their 2026-10-04
+  observations.
+- **What moved.**
+  - Gin's `-coverpkg=./... -covermode=atomic` runtime went from 6.53 to 0.56 s
+    at 4 CPUs, against 0.25 s natively (phase 2).
+  - Chi with coverage went from +2.4% to +0.4% over Native, and with `-race`
+    and coverage from +5.5% to +0.6%.
+  - Other Mini cells moved by about ±5% from the 2026-10-13 data. Collection
+    days differ, so the phases' interleaved A/Bs remain the evidence for each
+    change.
+- **Backlog.** It records phase 3's wrapper, phases 4–6's findings and item
+  56, which stays parked.
+
 ## Decisions pending
 
-| Decision | Phase |
-| --- | --- |
-| Same-day Native and Orchestrion remeasurement | 7 |
+None: the user settled every decision by 2026-10-14.

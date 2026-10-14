@@ -1,0 +1,23 @@
+{
+  "mini": {
+    "sessions": 1,
+    "modules": 2,
+    "suites": 4,
+    "tests": 12,
+    "spans": 1
+  },
+  "scope": "internal hierarchy API: repeated lookup/close, statuses, custom tags/metrics, errors, logs and child span",
+  "sdk": {
+    "sessions": 1,
+    "modules": 2,
+    "suites": 4,
+    "tests": 12,
+    "spans": 1
+  },
+  "status": "passed",
+  "timing": {
+    "scope": "prebuilt binary: startup, settings, execution and shutdown/flush",
+    "sdk_wall_ns": 113234032,
+    "mini_wall_ns": 10777904
+  }
+}

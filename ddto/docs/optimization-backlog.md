@@ -77,7 +77,7 @@ Ordered by the expected effect on a `ddto test` run's wall time, then by cost.
 | --- | --- | --- |
 | 10 | Remove a round trip from each test process's exit; about 100 ms of a run with 100 ms requests | Not now (2026-10-12) |
 | 55 | Test source locations from the CLI; extends 39 | Parked on 2026-10-11: it needs a cache location |
-| 56 | Reuse the preparation plan between unchanged invocations; about 90 ms of a cached Gin run's 184 ms | Not yet (2026-10-12) |
+| 56 | Reuse the preparation plan between unchanged invocations; about 90 ms of a cached Gin run's 184 ms | Not yet (2026-10-12); kept parked on 2026-10-14 after [phase 5](optimization-plan.md#phase-5-preparation-per-invocation) |
 | 57 | Deliver events through the CLI; extends 10 | Not now (2026-10-11) |
 
 ### Evaluated and dropped
@@ -341,6 +341,12 @@ reuse a wrong plan, so validate the key with a debug mode that also runs the
 queries and compares their results. Item 4, since dropped, ruled out a persistent
 cache for provisioning commands; this cache needs its own decision.
 
+On 2026-10-14, [phase 5](optimization-plan.md#phase-5-preparation-per-invocation)
+of the optimization plan measured Gin at 165 ms against 80 ms natively, with
+Mini absent from `go.mod` and 79 ms of preparation. The cache would save
+60–80 ms only in repeated local runs: CI jobs start without it. The item stays
+parked.
+
 ## 57. Events through the CLI
 
 This extends [#34](https://github.com/tonyredondo/dd-ci-testing-poc/pull/34) and item 10. Every test binary links Mini's HTTP and TLS
@@ -377,7 +383,10 @@ The 2026-10-10 review also checked these costs and found nothing worth changing:
 - Running a tool through `tool-overlay` costs about 3.5 ms more than
   `/usr/bin/true` on macOS, about 0.7 s of CPU per 240 tool calls in an edit
   build. That cost comes with `-toolexec`, and overlays cannot replace
-  module-cache sources.
+  module-cache sources. Since
+  [#43](https://github.com/tonyredondo/dd-ci-testing-poc/pull/43), go runs a
+  small wrapper executable instead. On Linux it starts in 1.2 ms against
+  ddto's 2.4 ms.
 - The plan JSON is decoded only for suite, goleak and covered `testing`
   compilations.
 - Marshaling and writing the overlay take 0.2–0.36 ms; the `testing`
@@ -419,6 +428,18 @@ Implementing items 53 and 54 in [#31](https://github.com/tonyredondo/dd-ci-testi
   first.
 - A cache of each file's resolved source path: about 0.75 µs of CPU per test
   with 2,000 tests, within the noise of wall time.
+
+Phases 4–6 of the [optimization plan](optimization-plan.md) remeasured these
+costs on 2026-10-14 and changed nothing:
+- **[Mini's package graph](optimization-plan.md#phase-4-minis-package-graph-in-builds).**
+  The HTTPS transport takes 10.2 of the 16.3 s of CPU that Mini adds to a cold
+  build. Building in another order does not help, because builds are
+  CPU-bound.
+- **[Per-invocation preparation](optimization-plan.md#phase-5-preparation-per-invocation).**
+  Two sequential `go list` queries take most of 60–79 ms.
+- **[Test binary startup and memory](optimization-plan.md#phase-6-test-binary-startup-and-memory).**
+  Under `ddto test`, a test process's bootstrap takes 0.56 ms. Gin's root
+  binary uses 3.4 MiB more, mostly span batches bounded at 1,000 events.
 
 ## Experiment record
 

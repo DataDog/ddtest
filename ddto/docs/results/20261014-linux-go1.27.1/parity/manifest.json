@@ -1,0 +1,91 @@
+{
+  "source_head": "9d4786fbd27f573bb68c5516bf23b336e8d7bdaa",
+  "sdk_commit": "96aedb31048c07e29e7a20a4333dc3b8d289c52d",
+  "toolchain": "go version go1.27.1 linux/amd64",
+  "status": "verified",
+  "rounds_per_cpu": 6,
+  "cases_per_round": 115,
+  "cpus": [
+    4,
+    32
+  ],
+  "inputs_sha256": {
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/tools/run_build.py": "fb6a53ea36e801f6c4a7374bb2992a25c5e2f525047f51447895f0ec8ce62de0",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/tools/run_build_stable.py": "f2d0394bd7ef1afcd02656dbe11ebd8cbeab251a22f35516267e1f853b96be5a",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/tools/receiver.py": "fe00c0f7a6193e654c4e709d88443c04a3c5ff9c8f9875f3b245fb1175f620b2",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/tools/measure_runtime.py": "6b5fe6d7237054cb43f05bdaad09a77bc18df9e2aa92a411aab49222a4a60281",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/tools/run_runtime.py": "37e43c47f2a80d35d8423512488ce24d52547ad1816e8b317e1f3c89ee4b0fe0",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/tools/run_parity.py": "4bb0f72882c1acd50525b09f8b01ea02b750e245ca0ac71cd63b08025855e78d",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/tools/generate_report.py": "a56cde0bb0750d64b556d8e278bbae1dd000f09a8c9baa991dad089e09734676",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/tools/smoke_runtime.py": "35736183eb94662e677015b931678ed089339132e3293ea7132f11c86019cbf4",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/tools/run_agent_runtime.py": "064641e8235b1ca61a2c6ac7ed90401c6fa9b2a1db83ea3759dc525763ec34c7",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/tools/run_remaining.py": "ca1d53ac0751d16f94b8bd57185cef7433eaf48b2b714eb2fd0663a0b79ee42d",
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/parity/integration.test": "9fc096c2b5e8bdd92b62986dedc7062ff4c684a227087fb29aeffa463cd6f039"
+  },
+  "run_filter": "^Test(CIVisibility|DeferredDelivery|MiniGoleakIntegration)",
+  "timing_scope": "repository child clocks and true continuous 65/17-case blocks; full harness includes fixture compilation and comparisons",
+  "order_control": "65 testing and 17 deferred cases: 3 SDK-first and 3 Mini-first; Testify cases retain repository SDK-first paired order",
+  "verified_rounds": [
+    {
+      "cpus": 4,
+      "iteration": 0,
+      "order": "sdk-first"
+    },
+    {
+      "cpus": 4,
+      "iteration": 1,
+      "order": "mini-first"
+    },
+    {
+      "cpus": 4,
+      "iteration": 2,
+      "order": "sdk-first"
+    },
+    {
+      "cpus": 4,
+      "iteration": 3,
+      "order": "mini-first"
+    },
+    {
+      "cpus": 4,
+      "iteration": 4,
+      "order": "sdk-first"
+    },
+    {
+      "cpus": 4,
+      "iteration": 5,
+      "order": "mini-first"
+    },
+    {
+      "cpus": 32,
+      "iteration": 0,
+      "order": "sdk-first"
+    },
+    {
+      "cpus": 32,
+      "iteration": 1,
+      "order": "mini-first"
+    },
+    {
+      "cpus": 32,
+      "iteration": 2,
+      "order": "sdk-first"
+    },
+    {
+      "cpus": 32,
+      "iteration": 3,
+      "order": "mini-first"
+    },
+    {
+      "cpus": 32,
+      "iteration": 4,
+      "order": "sdk-first"
+    },
+    {
+      "cpus": 32,
+      "iteration": 5,
+      "order": "mini-first"
+    }
+  ],
+  "complete_rounds": 12
+}

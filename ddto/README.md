@@ -251,9 +251,9 @@ diagrams, compatibility tests and source-update procedures.
 
 [Build, runtime and memory tables](docs/benchmarks.md) compare Native,
 Orchestrion and POC Mini at 4/32 CPUs, with coverage and race cases.
-The [recorded build data](docs/results/20261013-linux-go1.27.1/build/README.md) contains
+The [recorded build data](docs/results/20261014-linux-go1.27.1/build/README.md) contains
 4,668 comparative observations.
-Mini was measured on 2026-10-13 at `137a9126dfdf002d50f750c3d63f87e23617c8cc`.
+Mini was measured on 2026-10-14 at `97ec6e32f98856c7af982e76410b12f440cf2fd1`.
 Native and Orchestrion retain their 2026-10-04 observations.
 
 [Run benchmarks or regenerate the tables](docs/build-benchmarks.md).

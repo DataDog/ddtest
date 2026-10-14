@@ -1,0 +1,25 @@
+{
+  "command": [
+    "/var/tmp/dd-ci-benchmark-20261004.s81k5i3w/parity/integration.test",
+    "-test.v",
+    "-test.count=1",
+    "-test.timeout=9m",
+    "-test.run=^Test(CIVisibility|DeferredDelivery|MiniGoleakIntegration)"
+  ],
+  "returncode": 0,
+  "wall_s": 102.58555816696025,
+  "cpu_s": 40.035914,
+  "user_s": 28.656784,
+  "system_s": 11.37913,
+  "peak_bytes": 615530496,
+  "post_exit_wait_s": 0.0004078310448676348,
+  "process_tree_drained": true,
+  "surviving_pids": [],
+  "timeout": false,
+  "affinity": [
+    0,
+    1,
+    2,
+    3
+  ]
+}
