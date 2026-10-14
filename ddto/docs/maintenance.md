@@ -279,13 +279,14 @@ accepted.
 ## Releases
 
 Run the [release workflow](../.github/workflows/release.yml) from the
-Actions tab, on the branch to release, with a version such as `v0.1.0` or
-`v0.1.0-rc.1`. It:
+Actions tab, on `main`, with a version such as `v0.1.0` or `v0.1.0-rc.1`. It
+refuses other branches. It:
 
 1. Writes that version as `Number` in
    [`internal/version`](../internal/version/version.go) with
    `go run ./scripts/release -version <version> -stamp`, commits it and tags
-   the commit. Only the tag points to that commit; the branch keeps `0.0.0`.
+   the commit. Only the tag points to that commit; `main` keeps its
+   development version.
    `go install ...@<version>` therefore builds the release's source and reports
    its version too: `ddto --version`, logs, telemetry and test events.
 2. Builds the executables with `go run ./scripts/release -o dist`, checks that
@@ -293,11 +294,18 @@ Actions tab, on the branch to release, with a version such as `v0.1.0` or
    [`install.sh`](../scripts/install.sh) against the built files.
 3. Pushes the tag and publishes the release with the executables, `install.sh`
    and `SHA256SUMS`. A version with a suffix publishes a prerelease.
+4. After a release without a suffix, a second job opens a pull request that
+   sets `main`'s version to the release's with `-dev`, such as `0.1.0-dev`.
+   GitHub runs the workflows of a pull request that a workflow opens only
+   after a user with write access approves them, so approve them there, then
+   merge it like any other. If that job fails, rerun it alone: it reuses the
+   branch and its pull request.
 
 `scripts/release` rejects a version that is not `vMAJOR.MINOR.PATCH` with an
 optional prerelease, and a release above `v1`: the module path has no `/vN`
 suffix, so `go install` could not resolve it. The workflow stops before
-building when the tag exists. Other builds from source report `0.0.0`. Without `-stamp`,
+building when the tag exists. Builds from `main` report the last release
+with `-dev`, or `0.0.0-dev` before the first one. Without `-stamp`,
 `-version` sets the version through `-overlay` for a local build, without
 changing the checkout.
 

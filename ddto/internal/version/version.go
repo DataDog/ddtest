@@ -2,7 +2,10 @@
 package version
 
 // Number identifies this experimental CI runtime, independently of its source SDK.
-const Number = "0.0.0"
+// On main it is the last published release with a -dev suffix. The release
+// workflow sets the release's version in the commit that the release tag
+// points to, then opens a pull request that sets the new -dev value here.
+const Number = "0.0.0-dev"
 
 // Tag is the version reported by the extracted diagnostics and telemetry.
 const Tag = "v" + Number

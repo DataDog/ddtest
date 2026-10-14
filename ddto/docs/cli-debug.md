@@ -2,8 +2,8 @@
 
 Set `DD_TRACE_DEBUG=true` to see what `ddto` does before the test runtime
 starts. The CLI writes diagnostics to `stderr` with the prefix
-`TestOptimization.build v0.0.0`. Mini runtime logs use
-`TestOptimization.run  v0.0.0`. Both prefixes use the version in
+`TestOptimization.build v0.0.0-dev`. Mini runtime logs use
+`TestOptimization.run  v0.0.0-dev`. Both prefixes use the version in
 `internal/version`; the SDK backend keeps its own logger and SDK version.
 
 ```sh
@@ -95,19 +95,19 @@ For example, these abbreviated lines explain a local Mini build. The times
 illustrate the format; they are not benchmark results:
 
 ```text
-2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +5µs command="test"
-2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +120µs runtime=mini
-2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +200µs prepare started
-2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +400µs resolve packages started
-2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +24ms resolve packages finished duration=23.6ms status=ok
-2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +24.1ms provide runtime started
-2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +31ms mini source=cli-local
-2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +36ms provide runtime finished duration=11.9ms status=ok
-2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +58ms plan ready testing_files=3 test_packages=1 overlay_entries=5 generated_backing_files=2 temporary_modfile=true cover_bridge=false
-2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +59ms tool selection testify=false goleak=false cover=false user_toolexec=false orchestrion=false sdk_ci_gate=false link_signal=false
-2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +60ms go test started
-2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +410ms go test finished duration=350ms status=ok
-2026/10/07 10:00:00 TestOptimization.build v0.0.0 DEBUG: +410.1ms go test exit_code=0
+2026/10/07 10:00:00 TestOptimization.build v0.0.0-dev DEBUG: +5µs command="test"
+2026/10/07 10:00:00 TestOptimization.build v0.0.0-dev DEBUG: +120µs runtime=mini
+2026/10/07 10:00:00 TestOptimization.build v0.0.0-dev DEBUG: +200µs prepare started
+2026/10/07 10:00:00 TestOptimization.build v0.0.0-dev DEBUG: +400µs resolve packages started
+2026/10/07 10:00:00 TestOptimization.build v0.0.0-dev DEBUG: +24ms resolve packages finished duration=23.6ms status=ok
+2026/10/07 10:00:00 TestOptimization.build v0.0.0-dev DEBUG: +24.1ms provide runtime started
+2026/10/07 10:00:00 TestOptimization.build v0.0.0-dev DEBUG: +31ms mini source=cli-local
+2026/10/07 10:00:00 TestOptimization.build v0.0.0-dev DEBUG: +36ms provide runtime finished duration=11.9ms status=ok
+2026/10/07 10:00:00 TestOptimization.build v0.0.0-dev DEBUG: +58ms plan ready testing_files=3 test_packages=1 overlay_entries=5 generated_backing_files=2 temporary_modfile=true cover_bridge=false
+2026/10/07 10:00:00 TestOptimization.build v0.0.0-dev DEBUG: +59ms tool selection testify=false goleak=false cover=false user_toolexec=false orchestrion=false sdk_ci_gate=false link_signal=false
+2026/10/07 10:00:00 TestOptimization.build v0.0.0-dev DEBUG: +60ms go test started
+2026/10/07 10:00:00 TestOptimization.build v0.0.0-dev DEBUG: +410ms go test finished duration=350ms status=ok
+2026/10/07 10:00:00 TestOptimization.build v0.0.0-dev DEBUG: +410.1ms go test exit_code=0
 ```
 
 Preparation contains the smaller preparation phases. Whole-CLI time contains
@@ -166,9 +166,9 @@ output without an HTTP request.
 For example, these illustrative runtime lines show a completed delivery:
 
 ```text
-2026/10/07 10:00:00 TestOptimization.run  v0.0.0 DEBUG: test-cycle: request finished host=localhost:8126 path=/evp_proxy/v2/api/v2/citestcycle attempt=1 duration=15ms status_code=202 network_error=false retry=false body_bytes=2048 gzip=false
-2026/10/07 10:00:00 TestOptimization.run  v0.0.0 DEBUG: test-cycle: send finished duration=16ms mode=agent payload_bytes=2048 attempts=1 status=ok
-2026/10/07 10:00:00 TestOptimization.run  v0.0.0 DEBUG: civisibility: session close finished duration=17ms exit_code=0 already_closed=false
+2026/10/07 10:00:00 TestOptimization.run  v0.0.0-dev DEBUG: test-cycle: request finished host=localhost:8126 path=/evp_proxy/v2/api/v2/citestcycle attempt=1 duration=15ms status_code=202 network_error=false retry=false body_bytes=2048 gzip=false
+2026/10/07 10:00:00 TestOptimization.run  v0.0.0-dev DEBUG: test-cycle: send finished duration=16ms mode=agent payload_bytes=2048 attempts=1 status=ok
+2026/10/07 10:00:00 TestOptimization.run  v0.0.0-dev DEBUG: civisibility: session close finished duration=17ms exit_code=0 already_closed=false
 ```
 
 Session close, flush, send and request timings overlap. Complete shutdown contains
@@ -244,11 +244,11 @@ A test process prints its output only with `-v` or when a test fails.
 For example, a `-count=1` run:
 
 ```text
-… TestOptimization.build v0.0.0 DEBUG: +58ms git worker test description packages=2 goarch=amd64 runs_every_test=true go_version=go1.27.0
-… TestOptimization.build v0.0.0 DEBUG: +58ms git worker requests_ahead=while_building reason="test binary flag -count"
-… TestOptimization.run  v0.0.0 DEBUG: civisibility: CLI requests ahead started [trigger:runs_every_test go_version:go1.27.0 clients:1 after:12µs]
-… TestOptimization.run  v0.0.0 DEBUG: civisibility: CLI requests ahead finished [client:0 known_tests:true skippable:true test_management:true duration:4.1ms]
-… TestOptimization.run  v0.0.0 DEBUG: civisibility.read_cache: hit [endpoint:settings key:… scope:cli]
+… TestOptimization.build v0.0.0-dev DEBUG: +58ms git worker test description packages=2 goarch=amd64 runs_every_test=true go_version=go1.27.0
+… TestOptimization.build v0.0.0-dev DEBUG: +58ms git worker requests_ahead=while_building reason="test binary flag -count"
+… TestOptimization.run  v0.0.0-dev DEBUG: civisibility: CLI requests ahead started [trigger:runs_every_test go_version:go1.27.0 clients:1 after:12µs]
+… TestOptimization.run  v0.0.0-dev DEBUG: civisibility: CLI requests ahead finished [client:0 known_tests:true skippable:true test_management:true duration:4.1ms]
+… TestOptimization.run  v0.0.0-dev DEBUG: civisibility.read_cache: hit [endpoint:settings key:… scope:cli]
 ```
 
 ## Commands other than go test
@@ -264,11 +264,11 @@ go to a duplicate of `stderr`, so a reader that already closed it does not
 end ddto before the program starts:
 
 ```text
-… TestOptimization.build v0.0.0 DEBUG: +40µs pass-through command="go" args=2
-… TestOptimization.build v0.0.0 DEBUG: +52µs pass-through search path_entries=4 default_path=false
-… TestOptimization.build v0.0.0 DEBUG: +55µs pass-through exec path="/home/user/bin/go"
-… TestOptimization.build v0.0.0 DEBUG: +61µs pass-through exec path="/home/user/bin/go" failed error="no such file or directory"
-… TestOptimization.build v0.0.0 DEBUG: +63µs pass-through exec path="/usr/local/go/bin/go"
+… TestOptimization.build v0.0.0-dev DEBUG: +40µs pass-through command="go" args=2
+… TestOptimization.build v0.0.0-dev DEBUG: +52µs pass-through search path_entries=4 default_path=false
+… TestOptimization.build v0.0.0-dev DEBUG: +55µs pass-through exec path="/home/user/bin/go"
+… TestOptimization.build v0.0.0-dev DEBUG: +61µs pass-through exec path="/home/user/bin/go" failed error="no such file or directory"
+… TestOptimization.build v0.0.0-dev DEBUG: +63µs pass-through exec path="/usr/local/go/bin/go"
 ```
 
 Each `exec path` line is a candidate, and a `failed` line follows each
@@ -281,10 +281,10 @@ libc, which it does not search.
 On Windows, ddto starts the program in a job and waits for it:
 
 ```text
-… TestOptimization.build v0.0.0 DEBUG: +40µs pass-through command="build.cmd" args=1
-… TestOptimization.build v0.0.0 DEBUG: +45µs pass-through caller_command_line=true
-… TestOptimization.build v0.0.0 DEBUG: +2.1ms pass-through started path="C:\\tools\\build.cmd" job=true breakaway=true
-… TestOptimization.build v0.0.0 DEBUG: +1.2s pass-through exited code=0 duration=1.2s
+… TestOptimization.build v0.0.0-dev DEBUG: +40µs pass-through command="build.cmd" args=1
+… TestOptimization.build v0.0.0-dev DEBUG: +45µs pass-through caller_command_line=true
+… TestOptimization.build v0.0.0-dev DEBUG: +2.1ms pass-through started path="C:\\tools\\build.cmd" job=true breakaway=true
+… TestOptimization.build v0.0.0-dev DEBUG: +1.2s pass-through exited code=0 duration=1.2s
 ```
 
 `caller_command_line=true` means the program received ddto's command line
