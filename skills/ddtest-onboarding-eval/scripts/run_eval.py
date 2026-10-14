@@ -172,6 +172,18 @@ def execute(command, cwd, env, timeout, on_line, prompt=None):
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            # A finishing process group may briefly reject signals on macOS.
+            # Accept cleanup only after observing that the group is gone.
+            for _ in range(20):
+                try:
+                    os.killpg(process.pid, 0)
+                except ProcessLookupError:
+                    return
+                except PermissionError:
+                    pass
+                time.sleep(0.05)
+            raise
 
     def expire():
         timed_out.set()
@@ -191,10 +203,12 @@ def execute(command, cwd, env, timeout, on_line, prompt=None):
         return process.returncode
     finally:
         timer.cancel()
-        kill_group()
-        process.wait()
-        process.stdout.close()
-        process.stdin.close()
+        try:
+            kill_group()
+            process.wait()
+        finally:
+            process.stdout.close()
+            process.stdin.close()
 
 
 def run(args):
@@ -363,7 +377,7 @@ def main():
     parser.add_argument("--ref", required=True, help="Commit SHA or ref; resolved SHA is recorded")
     parser.add_argument("--ddtest", type=Path, required=True, help="Already-built executable")
     parser.add_argument("--agent", choices=("codex", "claude"), required=True)
-    parser.add_argument("--framework", choices=("jest", "vitest", "playwright"),
+    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha"),
                         help="Optional scope for mixed-framework repositories; adds only the framework to the minimal prompt")
     parser.add_argument("--setup-command", action="append", default=[], help="Repeatable, no implicit shell")
     parser.add_argument("--output", type=Path, required=True, help="New directory for evaluator evidence")

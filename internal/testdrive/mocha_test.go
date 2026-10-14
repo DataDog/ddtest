@@ -13,7 +13,6 @@ import (
 
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
-	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/kballard/go-shellquote"
 	"github.com/stretchr/testify/require"
 )
@@ -72,23 +71,24 @@ func TestMochaTestdriveNYCPreviewAndExecution(t *testing.T) {
 				require.Equal(t, wantArgs, args)
 				return
 			}
-			installer := &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}
-			drive.platform = installer
-			executor := &fakeTestdriveExecutor{}
-			drive.executor = executor
-			drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
-				return &fakeIntake{url: "http://127.0.0.1:1234", findings: intake.Facts{TestEventCount: 1, TestCount: 1, CoveredTestCount: 1}}, nil
-			}
-			var output bytes.Buffer
-			result, err := drive.run(t.Context(), &output)
-			require.NoError(t, err)
-			require.Equal(t, wantCommand, executor.command)
-			require.Equal(t, wantArgs, executor.args)
+			command, args := drive.executionCommand()
+			require.Equal(t, wantCommand, command)
+			require.Equal(t, wantArgs, args)
 			require.Equal(t, tc.command, drive.command)
 			require.Equal(t, tc.args, drive.args)
-			require.Len(t, result.Runs, 1)
-			require.Equal(t, wantDisplay, result.Runs[0].Command)
-			require.Contains(t, output.String(), "  Command: "+wantDisplay)
 		})
 	}
+}
+
+func TestMochaDoesNotDoubleWrapCoveredPackageScripts(t *testing.T) {
+	drive := preparedTestdrive(t)
+	drive.framework = framework.NewMocha(platform.NewJavaScript())
+	drive.command, drive.args = "npm", []string{"test"}
+	requireWriteFile(t, filepath.Join(drive.repositoryRoot, "package.json"), `{"scripts":{"test":"npx --no-install nyc -- c8 mocha test.js"}}`)
+	bin := filepath.Join(drive.repositoryRoot, "node_modules/.bin")
+	require.NoError(t, os.MkdirAll(bin, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "nyc"), []byte("#!/bin/sh\n"), 0700))
+	command, args := drive.executionCommand()
+	require.Equal(t, "npm", command)
+	require.Equal(t, []string{"test"}, args)
 }

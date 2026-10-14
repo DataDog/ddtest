@@ -63,7 +63,7 @@ func TestCheckOnlyPreservesPreviousHTML(t *testing.T) {
 
 func TestHTMLWriteFailureStillKeepsJSONAndCleansSession(t *testing.T) {
 	run := preparedTestdrive(t)
-	run.framework = &framework.Mocha{}
+	run.framework = &framework.Cucumber{}
 	installer := &fakeTracer{preloadPath: "/trace/ci/init.js"}
 	run.platform = installer
 	run.executor = &fakeTestdriveExecutor{}

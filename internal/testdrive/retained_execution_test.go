@@ -88,12 +88,12 @@ func TestPairedEvidenceSurvivesOtherFrameworkAndFailedPreflight(t *testing.T) {
 	root := run.repositoryRoot
 	require.Error(t, finishValidation(&bytes.Buffer{}, root, pairedReport("original", "failed")))
 	original := readValidationReport(t, root)
-	// Reproduce Claude's full Jest -> unsupported Mocha check ->
-	// reporting-only Mocha -> final Jest check sequence.
-	run.framework = &framework.Mocha{}
+	// Reproduce Claude's full Jest -> unsupported Cucumber check ->
+	// reporting-only Cucumber -> final Jest check sequence.
+	run.framework = &framework.Cucumber{}
 	run.checkOnly = true
-	require.ErrorContains(t, run.Run(t.Context(), &bytes.Buffer{}), "preflight currently supports Jest, Vitest and Playwright only")
-	require.Error(t, finishValidation(&bytes.Buffer{}, root, validationResult{Framework: "mocha",
+	require.ErrorContains(t, run.Run(t.Context(), &bytes.Buffer{}), "preflight currently supports Jest, Vitest, Playwright and Mocha only")
+	require.Error(t, finishValidation(&bytes.Buffer{}, root, validationResult{Framework: "cucumber",
 		Compatibility: verdict{Status: "unvalidated"}, Runs: []runSummary{
 			(validationRun{Name: "reporting-only", Command: "pnpm e2e", Instrumented: true}).summary(),
 		}}))

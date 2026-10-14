@@ -137,6 +137,30 @@ class RunnerTests(unittest.TestCase):
                          f"Use ddtest in {checkout.parent / 'bin'} and onboard this repository to test-optimization for playwright only.")
         self.assertEqual(manifest["framework_scope"], "playwright")
 
+    def test_cleanup_permission_error_requires_observed_process_group_exit(self):
+        for disappears in (True, False):
+            with self.subTest(disappears=disappears):
+                signals = []
+
+                def killpg(pid, signal):
+                    signals.append(signal)
+                    if disappears and len(signals) == 3:
+                        raise ProcessLookupError()
+                    raise PermissionError("group cleanup denied")
+
+                lines = []
+                with patch.object(run_eval.os, "killpg", side_effect=killpg), patch.object(run_eval.time, "sleep"):
+                    command = [sys.executable, "-c", "print('version probe completed')"]
+                    if disappears:
+                        self.assertEqual(run_eval.execute(command, self.root, os.environ.copy(), 5, lines.append), 0)
+                    else:
+                        with self.assertRaisesRegex(PermissionError, "group cleanup denied"):
+                            run_eval.execute(command, self.root, os.environ.copy(), 5, lines.append)
+                self.assertEqual(lines, ["version probe completed"])
+                self.assertEqual(signals[0], run_eval.signal.SIGKILL)
+                self.assertGreater(len(signals), 1)
+                self.assertTrue(all(value == 0 for value in signals[1:]))
+
     def test_setup_failure_is_recorded_without_launching_agent(self):
         self.args.setup_command = [f"{shlex.quote(sys.executable)} -c 'import sys; sys.exit(7)'"]
         code, manifest = self.trial()

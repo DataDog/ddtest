@@ -1,0 +1,133 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2026 Datadog, Inc.
+
+package testdrive
+
+import (
+	"context"
+	"errors"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+
+	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/stretchr/testify/require"
+)
+
+func TestMochaNativeResultsPreserveDuplicatesAndErrors(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, data string) {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(data), 0600))
+	}
+	write("1.json", `{"complete":true,"tests":[{"file":"/repo/test.js","name":"same","status":"passed"},{"file":"/repo/test.js","name":"same","status":"passed"}],"errors":[]}`)
+	write("2.json", `{"complete":true,"tests":[{"file":"/repo/esm.mjs","name":"failure","status":"failed","failure":"expected 1 to equal 2\n at file.js"}],"errors":["before hook: setup failed"]}`)
+	var run validationRun
+	readMochaResults(dir, &run)
+	require.Empty(t, run.ResultError)
+	require.Len(t, run.Tests, 3)
+	require.Equal(t, "expected 1 to equal 2", run.Tests[2].Failure)
+	require.Equal(t, []string{"before hook: setup failed"}, run.SuiteErrors)
+	for _, content := range []string{`{"complete":false,"tests":[]}`, `{"complete":true}`, `{"complete":true,"tests":null}`, `invalid`} {
+		write("3.json", content)
+		run = validationRun{}
+		readMochaResults(dir, &run)
+		require.NotEmpty(t, run.ResultError)
+	}
+	run = validationRun{}
+	readMochaResults(t.TempDir(), &run)
+	require.NotEmpty(t, run.ResultError)
+}
+
+func TestMochaSupportUsesTracerBoundaries(t *testing.T) {
+	for _, tc := range []struct{ mocha, tracer, node, want string }{
+		{"5.1.0", "5.130.0", ">=18", "incompatible"},
+		{"5.2.0", "5.130.0", ">=18", "compatible"},
+		{"7.0.0", "6.20.0", ">=22", "incompatible"},
+		{"8.0.0", "6.20.0", ">=22", "compatible"},
+		{"12.0.0", "6.20.0", ">=22", "compatible"},
+		{"99.0.0", "6.20.0", ">=26", "incompatible"},
+	} {
+		require.Equal(t, tc.want, checkMochaSupport(jestPreflight{Version: tc.mocha, Node: "24.14.1"}, platform.JSSelection{Version: tc.tracer, Node: tc.node}).Status)
+	}
+}
+
+func TestMochaObserverUsesNativeEventsAndKeepsConfiguration(t *testing.T) {
+	node, err := exec.LookPath("node")
+	require.NoError(t, err)
+	root := t.TempDir()
+	dir := filepath.Join(root, "node_modules/mocha/lib/cli")
+	require.NoError(t, os.MkdirAll(dir, 0700))
+	requireWriteFile(t, filepath.Join(root, "node_modules/mocha/package.json"), `{"name":"mocha","version":"11.8.0"}`)
+	requireWriteFile(t, filepath.Join(root, "node_modules/mocha/lib/runner.js"), `const {EventEmitter}=require('node:events'); module.exports=class Runner extends EventEmitter { run(fn){fn(this);return this} }`)
+	requireWriteFile(t, filepath.Join(dir, "options.js"), `exports.loadOptions=()=>({_:['original.js'],spec:['another.js'],ui:'bdd',require:['setup.js'],reporter:'custom',timeout:1234,retries:3,parallel:true,grep:'original',invert:true})`)
+	observer := filepath.Join(root, "observer.cjs")
+	requireWriteFile(t, observer, mochaObserver)
+	requireWriteFile(t, filepath.Join(root, "run.cjs"), `
+const assert=require('node:assert/strict'); const Runner=require('mocha/lib/runner');
+const options=require('mocha/lib/cli/options').loadOptions();
+assert.deepEqual(options._,[process.env.DDTEST_MOCHA_PROBE]); assert.equal(options.spec,undefined);
+assert.deepEqual(options.require,['setup.js']); assert.equal(options.reporter,'custom');
+assert.equal(options.timeout,1234); assert.equal(options.parallel,true); assert.equal(options.invert,false);
+const test={type:'test',file:'test.js',fullTitle:()=> 'same'};
+new Runner().run(r=>{r.emit('pass',test);r.emit('pass',test);r.emit('pending',{...test,fullTitle:()=> 'pending'});r.emit('fail',{...test,type:'hook',fullTitle:()=> 'before hook'},new Error('setup'));r.emit('end')});
+`)
+	command := exec.CommandContext(t.Context(), node, "--require", observer, "run.cjs")
+	command.Dir = root
+	command.Env = append(os.Environ(), "NODE_OPTIONS=", "DDTEST_MOCHA_RESULTS="+root, "DDTEST_MOCHA_PROBE=/repo/probe.js")
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+	var run validationRun
+	readMochaResults(root, &run)
+	require.Empty(t, run.ResultError)
+	require.Len(t, run.Tests, 3)
+	require.Equal(t, "pending", run.Tests[2].Status)
+	require.Equal(t, []string{"before hook: setup"}, run.SuiteErrors)
+}
+
+type mochaScratchExecutor struct {
+	temporary  string
+	commandErr error
+}
+
+func (e *mochaScratchExecutor) CombinedOutput(_ context.Context, _ string, _ []string, env map[string]string) ([]byte, error) {
+	e.temporary = env["TMPDIR"]
+	if env["TMP"] != e.temporary || env["TEMP"] != e.temporary {
+		return nil, errors.New("temporary directories disagree")
+	}
+	if err := os.WriteFile(filepath.Join(e.temporary, "tracer-cache.json"), []byte("{}"), 0600); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(env["DDTEST_MOCHA_RESULTS"], "native.json"), []byte(`{"complete":true,"tests":[]}`), 0600); err != nil {
+		return nil, err
+	}
+	return []byte("runner output"), e.commandErr
+}
+func TestMochaChildScratchIsOwnedBySession(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		drive := preparedTestdrive(t)
+		drive.framework = framework.NewMocha(platform.NewJavaScript())
+		executor := &mochaScratchExecutor{}
+		if fail {
+			executor.commandErr = errors.New("runner failed")
+		}
+		drive.executor = executor
+		drive.startIntake = func(string, intake.Scenario) (localIntake, error) { return &fakeIntake{}, nil }
+		session, err := NewSession()
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, session.Close()) })
+		_, err = drive.runMocha(t.Context(), io.Discard, session, "/trace/ci/init.js", "reporting-only", true, intake.Scenario{}, "", "")
+		require.NoError(t, err)
+		relative, err := filepath.Rel(session.Directory(), executor.temporary)
+		require.NoError(t, err)
+		require.True(t, filepath.IsLocal(relative))
+		require.FileExists(t, filepath.Join(executor.temporary, "tracer-cache.json"))
+		require.NoError(t, session.Close())
+		require.NoDirExists(t, executor.temporary)
+	}
+}
