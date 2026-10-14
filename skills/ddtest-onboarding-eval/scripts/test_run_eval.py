@@ -27,6 +27,7 @@ pathlib.Path("observed.json").write_text(json.dumps({
     "prompt": prompt, "argv": sys.argv[1:],
     "agent_environment": {key: os.environ.get(key) for key in ("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS")},
     "dd_env": [key for key in os.environ if key.startswith(("DD_", "DATADOG_"))],
+    "pnpm_caches": {key: os.environ.get(key) for key in ("npm_config_store_dir", "npm_config_cache_dir")},
 }))
 with pathlib.Path("README.md").open("a") as stream:
     stream.write("\\nFake agent changed this tracked file.\\n")
@@ -107,6 +108,9 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(manifest["ci_execution"], "not exercised")
                 self.assertEqual(observed["prompt"], manifest["prompt"])
                 self.assertEqual(observed["dd_env"], [])
+                for directory in observed["pnpm_caches"].values():
+                    self.assertTrue(Path(directory).is_relative_to(checkout.parent / "caches"))
+                    self.assertTrue(Path(directory).is_dir())
                 if agent == "claude":
                     self.assertEqual(observed["agent_environment"], manifest["agent_environment"])
                     self.assertEqual(observed["agent_environment"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1")

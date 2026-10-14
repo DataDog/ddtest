@@ -4,7 +4,7 @@ Validate Playwright only. Keep other test frameworks and their workflows unchang
 
 ## Configure and validate
 
-1. Review the Playwright CI commands and configurations listed above. Install the repository's dependencies and required Playwright browsers using its normal setup. Preserve the original Playwright config, browser projects, tests, CI matrix and test commands. Run `ddtest testdrive --all --check-only --yes`. Preflight lists tests without executing them and checks the local and CI runtimes against current tracer metadata. Resolve network/metadata failures rather than guessing a tracer version.
+1. Review the Playwright CI commands and configurations listed above. Install the repository's dependencies and required Playwright browsers using its normal setup. Preserve the original Playwright config, browser projects, tests, CI matrix and test commands. Record existing build outputs before any manual build. Run `ddtest testdrive --all --check-only --yes`. Preflight lists tests without executing them and checks the local and CI runtimes against current tracer metadata. If discovery imports an unbuilt package, run its required build and record the new output paths for cleanup. The full `--all` run replays recognized CI build prerequisites in a temporary copy. Resolve network/metadata failures rather than guessing a tracer version.
 2. Add the action after dependency/browser setup and before the Playwright test step in each identified job:
 
    ```yaml
@@ -39,9 +39,11 @@ Controlled probes check automatic retries, early flake detection, quarantine, di
 
 The temporary copy, probes, fallback tracer, browser artifacts and tracked server process groups are removed after validation. Existing files and reused customer servers are preserved. Do not install dd-trace in package.json just for local validation. Remove only outputs created by your own extra commands; use private temporary directories for scratch work.
 
+Before the final response, check ignored files as well as `git status`. Remove the build outputs you recorded creating for preflight (for example, a new `dist/` directory), generated Next.js files, extra Playwright reports, your package archives, and your scratch caches. A clean Git diff does not prove cleanup: ignored build files still exist. Preserve any output that existed before onboarding. Verify that only the report pair remains from this validation, apart from the repository's installed dependencies and required browsers.
+
 Keep `.testoptimization/report.html` and `.testoptimization/testdrive.json`, including after failures, and verify their Git/package exclusions. The HTML describes the instrumented customer suite; JSON records commands, counts, comparisons and each feature verdict. No raw telemetry archive is needed.
 
-Start the final response with `summary.final_response` from the latest JSON verbatim, including its absolute Markdown report links. Then describe workflow edits and cleanup. Preserve INCOMPLETE and all blockers; do not claim that receiving events proves compatibility. Report unsupported skipping explicitly. Complete any edits before the final full validation; a later check-only invocation or changed input requires a full rerun before claiming current success. Actual CI execution and Datadog backend processing remain not exercised locally.
+Start the final response with `summary.final_response` from the latest JSON verbatim, including its absolute Markdown report links. Then describe workflow edits and cleanup. Preserve INCOMPLETE and all blockers; do not claim that receiving events proves compatibility. An inconclusive comparison does not establish a cause or rule out instrumentation, even when no differences recur in both pairs. Report unsupported skipping explicitly. Complete any edits before the final full validation; a later check-only invocation or changed input requires a full rerun before claiming current success. Actual CI execution and Datadog backend processing remain not exercised locally.
 
 ## Ask a human to connect Datadog
 

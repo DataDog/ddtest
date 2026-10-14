@@ -9,11 +9,37 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestPlaywrightCleanupDeniedSignalRequiresObservedExit(t *testing.T) {
+	for _, disappears := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disappears=%t", disappears), func(t *testing.T) {
+			probes := 0
+			err := stopPlaywrightProcessWithSignal(-42, func(pid int, signal syscall.Signal) error {
+				require.Equal(t, -42, pid)
+				if signal == syscall.SIGTERM {
+					return syscall.EPERM
+				}
+				require.Zero(t, signal, "must not escalate a denied signal to SIGKILL")
+				probes++
+				if disappears && probes == 2 {
+					return syscall.ESRCH
+				}
+				return syscall.EPERM
+			})
+			if disappears {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, syscall.EPERM)
+			}
+		})
+	}
+}
 
 func TestPlaywrightCleanupStopsOnlyRecordedDescendants(t *testing.T) {
 	node, err := exec.LookPath("node")

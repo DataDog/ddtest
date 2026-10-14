@@ -6,6 +6,7 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
+	"strings"
 )
 
 // TestCommand identifies an explicit framework invocation, not the surrounding
@@ -13,6 +14,7 @@ import (
 type TestCommand struct {
 	Directory        string            `json:"directory"`
 	Command          string            `json:"command"`
+	ExitOnFailure    bool              `json:"exit_on_failure,omitempty"`
 	Environment      map[string]string `json:"environment,omitempty"`
 	Locations        []string          `json:"locations,omitempty"`
 	Prerequisites    []BuildCommand    `json:"prerequisites,omitempty"`
@@ -76,6 +78,11 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				var unresolved, review []string
 				var commands []TestCommand
 				for i, step := range job.Steps {
+					uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
+					if framework == "playwright" && uses == "actions/upload-artifact" && step.Run == "" && step.ResolutionError == "" {
+						review = append(review, fmt.Sprintf("%s / %s / step %d: artifact upload is outside local Playwright execution; its CI condition is not evaluated", workflow.Path, name, stepNumber(step, i)))
+						continue
+					}
 					active, conditionErr := stepCondition(step, row)
 					if conditionErr == nil && !active {
 						continue
@@ -134,7 +141,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				scope.Review = append(scope.Review, review...)
 				for _, entry := range commands {
 					index := slices.IndexFunc(scope.Commands, func(previous TestCommand) bool {
-						return previous.Directory == entry.Directory && previous.Command == entry.Command && slices.EqualFunc(previous.Prerequisites, entry.Prerequisites, EqualPreparation) && slices.Equal(previous.UnvalidatedSetup, entry.UnvalidatedSetup) && maps.Equal(previous.Environment, entry.Environment)
+						return previous.Directory == entry.Directory && previous.Command == entry.Command && previous.ExitOnFailure == entry.ExitOnFailure && slices.EqualFunc(previous.Prerequisites, entry.Prerequisites, EqualPreparation) && slices.Equal(previous.UnvalidatedSetup, entry.UnvalidatedSetup) && maps.Equal(previous.Environment, entry.Environment)
 					})
 					if index < 0 {
 						scope.Commands = append(scope.Commands, entry)
@@ -158,6 +165,9 @@ func WriteValidationScope(output io.Writer, scope ValidationScope) {
 	_, _ = fmt.Fprintln(output, "\nRequired local validation configurations (every CI consumer must also be instrumented):")
 	for _, entry := range scope.Commands {
 		_, _ = fmt.Fprintf(output, "  - [%s] %s\n", entry.Directory, entry.Command)
+		if entry.ExitOnFailure {
+			_, _ = fmt.Fprintln(output, "      Preserve CI failure guard: || exit 1")
+		}
 		for _, build := range entry.Prerequisites {
 			_, _ = fmt.Fprintf(output, "      Preparation: [%s] %s\n", build.Directory, build.Command)
 		}

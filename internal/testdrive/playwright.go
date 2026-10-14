@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -61,12 +62,40 @@ type playwrightResults struct {
 	Errors []string `json:"errors"`
 }
 
+var playwrightLaunchNoise = []struct {
+	pattern     *regexp.Regexp
+	replacement string
+}{
+	{regexp.MustCompile(`\bpid=\d+\b`), "pid=<process>"},
+	{regexp.MustCompile(`playwright_[a-z]+_profile-[a-zA-Z0-9]+`), "playwright_browser_profile-<temporary>"},
+	{regexp.MustCompile(`\[0x[0-9a-fA-F]+\]`), "[<address>]"},
+}
+
+func playwrightFailureSignature(message string) string {
+	message = failureSignature(message)
+	if strings.Contains(message, "browserType.launch:") {
+		// Browser launch errors contain per-process IDs, temporary profiles and
+		// unsymbolized ASLR addresses. Keep the actual signal and error text.
+		for _, noise := range playwrightLaunchNoise {
+			message = noise.pattern.ReplaceAllString(message, noise.replacement)
+		}
+	}
+	return message
+}
+
 func playwrightOutcome(test jestTest) string {
 	if test.Playwright == nil {
 		return ""
 	}
 	data, _ := json.Marshal(test.Playwright)
 	return "\n" + string(data)
+}
+
+func playwrightLabel(test jestTest) string {
+	if test.Playwright == nil {
+		return ""
+	}
+	return fmt.Sprintf(" [project=%q browser=%q repeat=%d]", test.Playwright.Project, test.Playwright.Browser, test.Playwright.Repeat)
 }
 
 func readPlaywrightResults(path string, run *validationRun) (playwrightResults, error) {
@@ -82,7 +111,7 @@ func readPlaywrightResults(path string, run *validationRun) (playwrightResults, 
 	for _, item := range result.Tests {
 		identity := item.playwrightIdentity
 		for i := range identity.Attempts {
-			identity.Attempts[i].Failure = failureSignature(identity.Attempts[i].Failure)
+			identity.Attempts[i].Failure = playwrightFailureSignature(identity.Attempts[i].Failure)
 		}
 		status := item.Status
 		if status == "timedOut" || status == "interrupted" {
@@ -109,6 +138,14 @@ func playwrightArgs(command string, args []string, additions ...string) []string
 	return append(result, additions...)
 }
 
+func (t *Testdrive) playwrightInvocation(args []string) (string, []string) {
+	if t.playwrightGuard {
+		// Pass arguments positionally; never interpret customer arguments as shell code.
+		return "sh", append([]string{"-c", `"$@" || exit 1`, "ddtest-playwright", t.command}, args...)
+	}
+	return t.command, args
+}
+
 func (t *Testdrive) inspectPlaywright(ctx context.Context, directory, probe, project string) (playwrightResults, error) {
 	reporter := filepath.Join(directory, "playwright-reporter.cjs")
 	if err := os.WriteFile(reporter, []byte(playwrightReporter), 0600); err != nil {
@@ -123,7 +160,8 @@ func (t *Testdrive) inspectPlaywright(ctx context.Context, directory, probe, pro
 	if probe != "" {
 		args = append(args, probe, "--grep="+probeName+"$", "--project="+project)
 	}
-	data, err := t.executor.CombinedOutput(ctx, t.command, args, env)
+	command, args := t.playwrightInvocation(args)
+	data, err := t.executor.CombinedOutput(ctx, command, args, env)
 	if err != nil {
 		return playwrightResults{}, fmt.Errorf("inspect Playwright: %w: %s", err, commandDiagnostic(data))
 	}
@@ -256,9 +294,10 @@ func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session
 		args = append(args, probePath, "--grep="+probeName+"$", "--retries=0")
 		env["DDTEST_PROBE_MODE"] = probeMode
 	}
-	run.Command = shellquote.Join(append([]string{t.command}, args...)...)
+	command, args := t.playwrightInvocation(args)
+	run.Command = shellquote.Join(append([]string{command}, args...)...)
 	_, _ = fmt.Fprintf(output, "Running %s...\n", name)
-	data, commandErr := t.executor.CombinedOutput(ctx, t.command, args, env)
+	data, commandErr := t.executor.CombinedOutput(ctx, command, args, env)
 	run.commandOutput, run.commandError, run.ExitCode = string(data), commandErr, commandExitCode(commandErr)
 	err = server.Close()
 	closed = true
@@ -277,12 +316,40 @@ func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session
 	run.Facts.MissingCoverage = false
 	_, _ = readPlaywrightResults(env["DDTEST_PLAYWRIGHT_REPORT"], &run)
 	if run.ExitCode != 0 || run.ResultError != "" || len(run.SuiteErrors) > 0 {
-		run.Diagnostic = commandDiagnostic(data)
+		run.Diagnostic = playwrightDiagnostic(run, data)
 	}
 	if commandErr != nil && probePath == "" {
 		writeCommandFailure(output, "Playwright "+name, data)
 	}
 	return run, nil
+}
+
+func playwrightDiagnostic(run validationRun, output []byte) string {
+	// Playwright's final output may list hundreds of failed titles without their
+	// causes. Keep one native error before the bounded command-output tail.
+	first := ""
+	if len(run.SuiteErrors) > 0 {
+		first = "Playwright error: " + run.SuiteErrors[0]
+	} else {
+		for _, test := range run.Tests {
+			if test.Failure != "" {
+				cause := test.Failure
+				if strings.Contains(cause, "browserType.launch:") {
+					header, _, _ := strings.Cut(cause, "\n")
+					for _, line := range strings.Split(cause, "\n") {
+						if strings.Contains(line, "Received signal") {
+							header += "\n" + line
+							break
+						}
+					}
+					cause = header + "\n" + cause
+				}
+				first = "First failed test: " + test.Name + "\n" + cause
+				break
+			}
+		}
+	}
+	return reportText(strings.TrimSpace(first + "\n" + commandDiagnostic(output)))
 }
 
 func verifyPlaywrightTelemetry(run validationRun) verdict {
