@@ -65,15 +65,20 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if jsonPackagingStep(step.Run) {
 		return commandResolution{Review: true, Reason: "JSON packaging transformation is outside " + framework + " validation; review separately if its output is used by tests."}
 	}
-	if strings.TrimSpace(step.Run) == "bash <(curl -s https://codecov.io/bash)" {
+	if legacyCodecovUpload(step.Run) {
 		return commandResolution{Review: true, Reason: "Legacy Codecov upload is outside identified " + framework + " entry points; the downloaded script is not inspected or validated."}
 	}
 	if result, ok := resolveCIShell(root, workflow, job, step, framework); ok {
 		return result
 	}
+	if framework == "mocha" {
+		if result, ok := reviewMochaBrowserStep(root, filepath.Join(root, directory), step.Run); ok {
+			return result
+		}
+	}
 	remaining := 256
 	result := resolveJestSequence(root, filepath.Join(root, directory), step.Run, nil, &remaining, framework)
-	if result.MochaAuxiliary {
+	if result.MochaAuxiliary && (result.ReviewReason == "" || result.Matched) {
 		result.Reason = "Node script was not identified as Mocha and is not executed inside a resolved Mocha package command; its test scope requires review."
 		for i := range result.Tests {
 			result.Tests[i].UnvalidatedSetup = append(result.Tests[i].UnvalidatedSetup, result.Reason)
@@ -312,6 +317,12 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		return commandResolution{Matched: true, SingleJest: true, Evidence: command,
 			Tests: []TestCommand{{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append(assignments, append([]string{framework}, words[1:]...)...)...)}}}
 	}
+	if framework == "mocha" && mochaBrowserShell(root, directory, words[0]) {
+		return commandResolution{ReviewReason: "Mochify browser tests are outside Node Mocha validation: " + command}
+	}
+	if framework == "mocha" && words[0] == "mochify" {
+		return commandResolution{ReviewReason: "Mochify browser tests are outside Node Mocha validation: " + command}
+	}
 	if framework == "mocha" && words[0] == "node" {
 		return resolveMochaNode(root, directory, words, assignments)
 	}
@@ -332,7 +343,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		return commandResolution{}
 	}
 	switch words[0] {
-	case "echo", "printf", "true", "false", "eslint", "standard", "prettier", "oxlint", "oxfmt", "mkdir", "cp":
+	case "echo", "printf", "true", "false", "eslint", "standard", "prettier", "oxlint", "oxfmt", "mkdir", "cp", "knip":
 		return commandResolution{}
 	case "unbuild", "rollup", "webpack", "tsup", "tsc", "tsgo", "bunchee":
 		if words[0] == "bunchee" && framework != "playwright" {
@@ -350,9 +361,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			result.ReviewReason = "Build/tool command is outside " + framework + " validation; review its configuration separately if it also runs tests: " + command
 		}
 		return result
-	case "jest", "playwright", "vitest", "mocha", "cypress":
+	case "jest", "playwright", "vitest", "mocha", "cypress", "tap", "mochify":
 		return commandResolution{ReviewReason: "Other test framework is outside " + framework + " validation: " + command}
-	case "flow", "bundlewatch", "api-extractor", "docusaurus", "documentation", "automd", "codecov":
+	case "flow", "bundlewatch", "api-extractor", "docusaurus", "documentation", "automd", "codecov", "vitepress":
 		return commandResolution{ReviewReason: "Build/tool command is outside " + framework + " validation; review its configuration separately if it also runs tests: " + command}
 	case "clean-publish":
 		return reviewReleaseLifecycle(directory, command, framework, []string{"prepublishOnly", "prepack", "prepare", "postpack", "publish", "postpublish"})
@@ -374,6 +385,18 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			return commandResolution{ReviewReason: "Git content comparison is outside " + framework + " validation; review separately, including configured diff helpers."}
 		}
 		return unresolvedCommand("Unsupported git command requires review: " + command)
+	case "run-s":
+		if framework != "mocha" || len(words) < 2 {
+			return unresolvedCommand("Unsupported script orchestration: " + command)
+		}
+		var scripts []string
+		for _, name := range words[1:] {
+			if strings.ContainsAny(name, "*?[]{} ") || strings.HasPrefix(name, "-") {
+				return unresolvedCommand("Script orchestration needs literal script names: " + command)
+			}
+			scripts = append(scripts, shellquote.Join("npm", "run", name))
+		}
+		return resolveJestSequence(root, directory, strings.Join(scripts, " && "), stack, remaining, framework)
 	case "npm", "yarn", "pnpm", "bun":
 		// Yarn without a subcommand installs dependencies. npm accepts global
 		// options before its install subcommand. Neither is a Jest entry point.
@@ -482,7 +505,26 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	if len(args) > 0 {
 		script += " " + shellquote.Join(args...)
 	}
+	mocha := len(frameworks) > 0 && frameworks[0] == "mocha"
+	// npm executes hooks without forwarding the main script's arguments. Keep
+	// their order, discover hidden test consumers, and retain the original alias.
+	if mocha && strings.HasPrefix(command, "npm ") {
+		parts := []string{}
+		if pre := manifest.Scripts["pre"+name]; pre != "" {
+			parts = append(parts, pre)
+		}
+		parts = append(parts, script)
+		if post := manifest.Scripts["post"+name]; post != "" {
+			parts = append(parts, post)
+		}
+		script = strings.Join(parts, " && ")
+		lifecycle = ""
+	}
 	result := resolveJestSequence(root, directory, script, append(slices.Clone(stack), key), remaining, frameworks...)
+	if mocha && lifecycle == "" && result.Reason == "" && !result.Matched && result.MochaAuxiliary && (name == "build" || name == "build-artifacts") {
+		relative, _ := filepath.Rel(root, directory)
+		return commandResolution{Builds: []BuildCommand{{Directory: filepath.ToSlash(relative), Command: command, Kind: "package-build"}}}
+	}
 	// Browser apps also need assets copied by their build script. Keep the
 	// validated package entry point instead of replaying only its bundler.
 	if len(frameworks) > 0 && frameworks[0] == "playwright" && name == "build" && lifecycle == "" && result.Reason == "" && !result.Matched && len(result.Builds) > 0 {
@@ -495,7 +537,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		relative, _ := filepath.Rel(root, directory)
 		return commandResolution{Builds: []BuildCommand{{Directory: filepath.ToSlash(relative), Command: command, Kind: "package-build"}}}
 	}
-	if len(frameworks) > 0 && frameworks[0] == "mocha" && lifecycle == "" && result.Reason == "" && (result.SingleJest || len(args) == 0) && len(result.Tests) == 1 && len(result.Builds) == 0 {
+	if mocha && lifecycle == "" && result.Reason == "" && len(result.Tests) == 1 {
 		// Keep surrounding lint/Node checks and their original ordering/exit behavior.
 		// No shell is synthesized: the package manager executes its own script.
 		if !result.SingleJest && result.Tests[0].mochaProbeCommand == "" {
@@ -504,7 +546,10 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		result.SingleJest = true
 		result.MochaAuxiliary = false
 		result.ReviewReason = ""
+		result.Tests[0].Resolution = command + " -> " + result.Evidence
 		result.Tests[0].Command = command
+		result.Tests[0].Prerequisites = nil // Already executed by the retained alias.
+		result.Builds = nil
 	}
 	if lifecycle != "" {
 		result.Reason = lifecycle

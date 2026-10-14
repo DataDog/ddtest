@@ -174,3 +174,24 @@ func TestSeparateCIReviewDoesNotChangeJestTracerAgreement(t *testing.T) {
 	require.Contains(t, output.String(), "Review separately")
 	require.Contains(t, output.String(), "Keep this JSON report and the HTML findings report after cleanup")
 }
+
+func TestMochaSyntheticSkippingDoesNotCertifyRealCoverage(t *testing.T) {
+	for _, covered := range []int{0, 2} {
+		run := validationRun{framework: "mocha", Name: "reporting-only", Command: "npm test", Instrumented: true, Facts: intake.Facts{TestCount: 10, CoveredTestCount: covered, CoverageLevel: "suite"}}
+		result := validationResult{Framework: "mocha", Compatibility: verdict{Status: "compatible"}, Features: []featureResult{{Name: "skipping", Status: "passed"}}, Runs: []runSummary{run.summary()}}
+		prepareValidationResult(t.TempDir(), &result)
+		require.Equal(t, covered > 0, result.LocalSuccess)
+		require.Equal(t, covered, result.Runs[0].Coverage.CoveredTests)
+		require.Equal(t, 10, result.Runs[0].Coverage.TotalTests)
+		result.Summary = summarizeValidation(result)
+		result.Summary.Facts = validationFacts(result)
+		response := validationHandoff(result)
+		require.Contains(t, response, "Real-suite coverage:")
+		if covered == 0 {
+			require.Contains(t, response, "coverage was not observed")
+			require.Equal(t, "incomplete", configurationStatus(result))
+		}
+		run.Name, run.ProbeMode = "skipping", "pass"
+		require.Nil(t, run.summary().Coverage)
+	}
+}

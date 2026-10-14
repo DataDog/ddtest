@@ -28,7 +28,7 @@ func CIMatrixRows(root string) ([]string, error) {
 				return nil, err
 			}
 			for _, row := range matrix {
-				active, err := runtimeCondition(job.If, row)
+				active, err := possibleJobCondition(job.If, row)
 				if err != nil {
 					return nil, err
 				}

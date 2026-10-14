@@ -49,6 +49,16 @@ func validationHandoff(result validationResult) string {
 		}
 		fmt.Fprintf(&block, "\nConfigurations: %d/%d paired comparisons compatible; %d/%d fully validated.\n", compared, len(result.Configurations), passed, len(result.Configurations))
 	}
+	unexecuted := 0
+	for _, configuration := range result.Configurations {
+		if configuration.Compatibility.Status != "not exercised" || configuration.Resolution == "" {
+			continue
+		}
+		unexecuted++
+		if unexecuted <= 3 {
+			fmt.Fprintf(&block, "\n- Mocha consumer NOT EXECUTED: %s. %s\n", briefValidationText(configuration.Resolution), briefValidationText(configuration.Error))
+		}
+	}
 	if len(result.Configurations) > 3 {
 		for _, name := range []string{"baseline", "reporting-only"} {
 			var passed, failed, skipped, count int
@@ -66,7 +76,7 @@ func validationHandoff(result validationResult) string {
 		}
 	}
 	for _, fact := range summary.Facts {
-		if strings.HasPrefix(fact, "Features:") || len(result.Configurations) <= 3 && (strings.HasPrefix(fact, "baseline") || strings.HasPrefix(fact, "reporting-only")) {
+		if strings.HasPrefix(fact, "Features:") || strings.HasPrefix(fact, "Real-suite coverage:") || strings.HasPrefix(fact, "CI ") || len(result.Configurations) <= 3 && (strings.HasPrefix(fact, "baseline") || strings.HasPrefix(fact, "reporting-only")) {
 			block.WriteString("\n- " + fact)
 		}
 	}
@@ -144,6 +154,9 @@ func summarizeValidation(result validationResult) validationSummary {
 		summary.BlockingChecks = append(summary.BlockingChecks, "preflight "+result.Preflight.Verdict.Status)
 	}
 	if !result.CheckOnly {
+		if missingMochaCoverage(result) {
+			summary.BlockingChecks = append(summary.BlockingChecks, "Mocha real-suite coverage was not observed. Synthetic skipping probes do not validate coverage of the customer's source. Check NYC instrument/include settings and ESM instrumentation; preserve existing coverage thresholds.")
+		}
 		if result.Compatibility.Status != "compatible" {
 			summary.BlockingChecks = append(summary.BlockingChecks, "compatibility "+result.Compatibility.Status)
 		}
@@ -212,6 +225,9 @@ func validationFacts(result validationResult) []string {
 				exit = fmt.Sprint(*run.ExitCode)
 			}
 			facts = append(facts, fmt.Sprintf("%s%s: %d passed, %d failed, %d skipped; %d suite errors; exit %s.", label+configurationLabel(run.Configuration), run.Name, run.TestCounts.Passed, run.TestCounts.Failed, run.TestCounts.Skipped, run.SuiteErrorCount, exit))
+			if run.Coverage != nil {
+				facts = append(facts, fmt.Sprintf("Real-suite coverage: %s%s — %s; %d/%d reported tests linked to covered source. Synthetic feature probes are separate evidence.", label+configurationLabel(run.Configuration), run.Name, run.Coverage.Status, run.Coverage.CoveredTests, run.Coverage.TotalTests))
+			}
 			if run.ExecutionPath != "" {
 				facts = append(facts, "Validated execution path: "+run.ExecutionPath+".")
 			}
@@ -240,7 +256,17 @@ func validationFacts(result validationResult) []string {
 	if total == 0 {
 		facts = append(facts, "Features: not exercised.")
 	} else {
-		facts = append(facts, fmt.Sprintf("Features: %d/%d project-feature checks passed.", passed, total))
+		fact := fmt.Sprintf("Features: %d/%d project-feature checks passed.", passed, total)
+		unexecuted := 0
+		for _, configuration := range result.Configurations {
+			if configuration.Compatibility.Status == "not exercised" {
+				unexecuted++
+			}
+		}
+		if unexecuted > 0 {
+			fact += fmt.Sprintf(" %d configuration(s) were not exercised; these passes do not cover them.", unexecuted)
+		}
+		facts = append(facts, fact)
 	}
 	if result.CIRuntime != nil {
 		seen := map[string]bool{}

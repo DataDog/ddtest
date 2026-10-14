@@ -42,7 +42,17 @@ func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		}
 		return ""
 	}
-	return checkJestBootstrap(workflow, job, step, row, frameworks...)
+	if reason := checkJestBootstrap(workflow, job, step, row, frameworks...); reason != "" {
+		return reason
+	}
+	if len(frameworks) > 0 && frameworks[0] == "mocha" {
+		for _, command := range commands {
+			if !command.usesNYC {
+				return "Cannot verify Istanbul coverage setup for Mocha CI command: " + command.Command + ". Testdrive adds NYC locally only. Wrap this original CI command with npx --no-install nyc -- (or review custom Istanbul instrumentation), preserving its hooks and thresholds. A wrapper alone does not prove real-suite coverage."
+			}
+		}
+	}
+	return ""
 }
 
 func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) string {

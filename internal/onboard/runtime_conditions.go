@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
@@ -368,4 +369,21 @@ func conditionEqual(left, right any) (bool, error) {
 		return a == b, nil
 	}
 	return false, fmt.Errorf("mixed-type comparison requires review")
+}
+
+// A job-level branch guard applies equally to installation and all consumers.
+// Enumerate that job as a possible CI path; do not assume the current branch.
+// Step-level guards still require full evaluation so a conditional install
+// cannot incorrectly certify an unconditionally executed test.
+var branchJobGuard = regexp.MustCompile(`^github\.ref\s*(?:==|!=)\s*'refs/(?:heads|tags)/[^'\s]+'$`)
+
+func possibleJobCondition(value string, row map[string]any) (bool, error) {
+	condition := strings.TrimSpace(value)
+	if strings.HasPrefix(condition, "${{") && strings.HasSuffix(condition, "}}") {
+		condition = strings.TrimSpace(condition[3 : len(condition)-2])
+	}
+	if branchJobGuard.MatchString(condition) {
+		return true, nil
+	}
+	return runtimeCondition(value, row)
 }

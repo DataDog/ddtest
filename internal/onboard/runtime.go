@@ -193,7 +193,7 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 		finding.Reason = reason
 		return append(findings, finding)
 	}
-	active, err := runtimeCondition(job.If, row)
+	active, err := possibleJobCondition(job.If, row)
 	if err != nil {
 		return fail(err.Error())
 	}

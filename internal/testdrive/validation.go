@@ -71,7 +71,15 @@ type testCounts struct {
 	Other   int `json:"other"`
 }
 
+type coverageSummary struct {
+	Status       string `json:"status"`
+	CoveredTests int    `json:"covered_tests"`
+	TotalTests   int    `json:"total_tests"`
+	Level        string `json:"level,omitempty"`
+}
+
 type runSummary struct {
+	Coverage                        *coverageSummary    `json:"coverage,omitempty"`
 	PlannerSkipped                  bool                `json:"probe_skipped_by_planner,omitempty"`
 	ExecutionPath                   string              `json:"execution_path,omitempty"`
 	Workers                         int                 `json:"workers,omitempty"`
@@ -98,6 +106,13 @@ func (r validationRun) summary() runSummary {
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError),
 		ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic),
 		SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
+	if r.framework == "mocha" && r.Instrumented && r.ProbeMode == "" && strings.HasPrefix(r.Name, "reporting-only") && r.Facts.TestCount > 0 {
+		status := "observed"
+		if r.Facts.CoveredTestCount == 0 {
+			status = "not observed"
+		}
+		summary.Coverage = &coverageSummary{Status: status, CoveredTests: r.Facts.CoveredTestCount, TotalTests: r.Facts.TestCount, Level: r.Facts.CoverageLevel}
+	}
 	// A setup failure before execution must not look like a successful command.
 	if r.Command != "" {
 		exitCode := r.ExitCode
@@ -342,6 +357,7 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	for _, feature := range result.Features {
 		result.LocalSuccess = result.LocalSuccess && featureSatisfied(result.Framework, feature)
 	}
+	result.LocalSuccess = result.LocalSuccess && !missingMochaCoverage(*result)
 	result.Success = result.LocalSuccess
 	result.ChecksPassed = result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
 	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
@@ -387,4 +403,13 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	}
 
 	applyScopeVerdict(result)
+}
+
+func missingMochaCoverage(result validationResult) bool {
+	for _, run := range result.Runs {
+		if run.Coverage != nil && run.Coverage.Status == "not observed" {
+			return true
+		}
+	}
+	return false
 }

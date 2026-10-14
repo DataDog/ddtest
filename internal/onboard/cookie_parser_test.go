@@ -74,17 +74,21 @@ func TestCookieParserOnboardedCI(t *testing.T) {
 			result := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
 				return tracerRequirement{Version: "5.131.1", Node: ">=18"}, nil
 			}, "mocha")
-			require.Equal(t, "compatible", result.Status, result.Jobs)
-			compatible, excluded := 0, 0
+			// The fallback npm test branch has no NYC wrapper. Runtime selection
+			// and exclusions still work, but its CI coverage setup needs review.
+			require.Equal(t, "inconclusive", result.Status, result.Jobs)
+			inconclusive, excluded := 0, 0
 			for _, job := range result.Jobs {
-				if job.Status == "compatible" {
-					compatible++
+				if job.Status == "inconclusive" {
+					require.Contains(t, job.Reason, "NYC")
+					require.Contains(t, job.Reason, "npm test")
+					inconclusive++
 				}
 				if job.Status == "excluded" {
 					excluded++
 				}
 			}
-			require.Equal(t, 5, compatible)
+			require.Equal(t, 5, inconclusive)
 			require.Equal(t, 20, excluded)
 		})
 	}
