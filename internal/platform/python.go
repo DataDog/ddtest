@@ -38,7 +38,7 @@ const (
 	requiredPackageName    = "ddtrace"
 	requiredPackageVersion = "4.11.0"
 	pytestAddOptsEnvVar    = "PYTEST_ADDOPTS"
-	pytestDefaultAddOpts   = "--ddtrace"
+	pytestDefaultAddOpts   = "-p ddtrace --ddtrace"
 )
 
 type Python struct {
@@ -96,11 +96,11 @@ func (p *Python) TestSkippingLevel() settings.TestSkippingLevel {
 }
 
 // baseEnv returns environment variables required for Python commands.
-// It appends --ddtrace to PYTEST_ADDOPTS to load the ddtrace pytest plugin.
+// It explicitly loads ddtrace even when pytest plugin autoloading is disabled.
 func (p *Python) baseEnv() map[string]string {
 	envMap := make(map[string]string)
 
-	// Get existing PYTEST_ADDOPTS if set, then append --ddtrace
+	// Preserve existing options, including plugin autoload settings.
 	existingOpts := os.Getenv(pytestAddOptsEnvVar)
 	if existingOpts != "" {
 		envMap[pytestAddOptsEnvVar] = existingOpts + " " + pytestDefaultAddOpts

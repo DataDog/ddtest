@@ -130,11 +130,13 @@ func TestPrepareRequiresSelectionForMultipleFrameworks(t *testing.T) {
 
 func TestLanguageEnvironmentsPreserveCustomerOptions(t *testing.T) {
 	t.Setenv("PYTHONPATH", "/customer/modules")
-	t.Setenv("PYTEST_ADDOPTS", "-q")
+	t.Setenv("PYTEST_ADDOPTS", "-q --disable-plugin-autoload")
+	t.Setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 	t.Setenv("RUBYOPT", "-W0")
 	python := (&Testdrive{language: "python"}).environment("/session/python", "http://127.0.0.1:1234", "session")
 	require.Equal(t, "/session/python"+string(os.PathListSeparator)+"/customer/modules", python["PYTHONPATH"])
-	require.Equal(t, "-q --ddtrace", python["PYTEST_ADDOPTS"])
+	require.Equal(t, "-q --disable-plugin-autoload -p ddtrace --ddtrace", python["PYTEST_ADDOPTS"])
+	require.NotContains(t, python, "PYTEST_DISABLE_PLUGIN_AUTOLOAD")
 }
 
 func TestCypressTestdrivePreservesCommand(t *testing.T) {
@@ -178,7 +180,7 @@ func TestPythonProjectTracerPreservesImportEnvironment(t *testing.T) {
 	if _, changed := env["PYTHONPATH"]; changed {
 		t.Fatal("project PYTHONPATH overridden", env)
 	}
-	if env["PYTEST_ADDOPTS"] != "-v --ddtrace" {
+	if env["PYTEST_ADDOPTS"] != "-v -p ddtrace --ddtrace" {
 		t.Fatal(env)
 	}
 }
