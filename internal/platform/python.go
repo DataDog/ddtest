@@ -237,7 +237,16 @@ func (p *Python) InstallTestdriveTracer(ctx context.Context, options TracerOptio
 		return TracerInstallation{}, fmt.Errorf("create Python tracer bootstrap: %w", err)
 	}
 	encodedTarget, _ := json.Marshal(target)
-	contents := "import sys\nsys.path.append(" + string(encodedTarget) + ")\n"
+	// Append isolated packages after project paths, and preserve its startup hook.
+	contents := `import importlib.machinery, importlib.util, os, sys
+paths = [path for path in sys.path if os.path.abspath(path) != os.path.dirname(__file__)]
+spec = importlib.machinery.PathFinder.find_spec("sitecustomize", paths)
+sys.path.append(` + string(encodedTarget) + `)
+if spec is not None:
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["sitecustomize"] = module
+    spec.loader.exec_module(module)
+`
 	if err := os.WriteFile(filepath.Join(bootstrap, "sitecustomize.py"), []byte(contents), 0600); err != nil {
 		return TracerInstallation{}, fmt.Errorf("write Python tracer bootstrap: %w", err)
 	}

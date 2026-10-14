@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -511,6 +512,37 @@ func TestPythonInstallUsesSelectedInterpreterAndIsolatedTarget(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(contents), filepath.Join(directory, "python-packages"))
 	require.Contains(t, string(contents), "sys.path.append(")
+	// Exercise the generated bootstrap without installing external packages.
+	python, err := exec.LookPath("python3")
+	if err == nil {
+		packages := filepath.Join(directory, "python-packages")
+		require.NoError(t, os.MkdirAll(packages, 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(packages, "fallback_only.py"), []byte("value = 'fallback'\n"), 0600))
+		require.NoError(t, os.WriteFile(filepath.Join(packages, "project_dependency.py"), []byte("value = 'fallback'\n"), 0600))
+		for name, hook := range map[string]bool{"without startup hook": false, "with startup hook": true} {
+			t.Run(name, func(t *testing.T) {
+				project := t.TempDir()
+				require.NoError(t, os.WriteFile(filepath.Join(project, "project_dependency.py"), []byte("value = 'project'\n"), 0600))
+				if hook {
+					encodedProject, _ := json.Marshal(project)
+					script := "import os, sys\nassert 'DDTEST_STARTUP_HOOK' not in os.environ\nos.environ['DDTEST_STARTUP_HOOK'] = 'loaded'\nsys.path.insert(0, " + string(encodedProject) + ")\n"
+					require.NoError(t, os.WriteFile(filepath.Join(project, "sitecustomize.py"), []byte(script), 0600))
+				}
+				cmd := exec.CommandContext(t.Context(), python, "-c", "import fallback_only, project_dependency, os; print(fallback_only.value, project_dependency.value, os.getenv('DDTEST_STARTUP_HOOK', 'absent'))")
+				cmd.Env = slices.DeleteFunc(os.Environ(), func(value string) bool {
+					return strings.HasPrefix(value, "DDTEST_STARTUP_HOOK=") || strings.HasPrefix(value, "PYTHONPATH=")
+				})
+				cmd.Env = append(cmd.Env, "PYTHONPATH="+path.Path+string(os.PathListSeparator)+project)
+				output, err := cmd.CombinedOutput()
+				require.NoError(t, err, string(output))
+				want := "fallback project absent"
+				if hook {
+					want = "fallback project loaded"
+				}
+				require.Equal(t, want, strings.TrimSpace(string(output)))
+			})
+		}
+	}
 	executor = &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {output: []byte("pip unavailable"), err: errors.New("exit 1")}}}
 	installer.executor = executor
 	_, err = installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: directory, Command: "/customer/venv/bin/python"})
