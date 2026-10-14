@@ -7,17 +7,18 @@ package testdrive
 
 import (
 	"bytes"
-	"github.com/DataDog/ddtest/internal/settings"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPrepareAllSupportedFrameworks(t *testing.T) {
-	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber"} {
+	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			switch name {
@@ -36,9 +37,6 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			require.Contains(t, preview.String(), displayName(name))
 			_, err = os.Stat(filepath.Join(root, ".testoptimization"))
 			require.True(t, os.IsNotExist(err), "preview must be read-only")
-			if name == "cypress" {
-				return
-			} // Browser wrapper has its own real-run test.
 			run.nodeVersion = func() string { return "v20.0.0" }
 			installer := &fakeTracer{preloadPath: filepath.Join(root, "isolated")}
 			run.platform = installer
@@ -86,16 +84,28 @@ func TestJavaScriptEnvironmentImportsExistingRegister(t *testing.T) {
 	require.NotContains(t, run.javascriptEnvironment(preload)["NODE_OPTIONS"], "--import")
 }
 
-func TestSupportsNodeImport(t *testing.T) {
+func TestSupportsNodeRegister(t *testing.T) {
+	t.Setenv("NODE_OPTIONS", "")
 	for version, want := range map[string]bool{
+		"v16.20.0": false,
 		"v18.17.1": false,
-		"v18.18.0": true,
-		"v20.0.0":  true,
+		"v18.18.0": false,
+		"v18.19.0": true,
+		"v19.9.0":  false,
+		"v20.0.0":  false,
+		"v20.5.0":  false,
+		"v20.6.0":  true,
+		"v22.0.0":  true,
+		"v24.0.0":  true,
 		"invalid":  false,
 	} {
-		if got := supportsNodeImport(version); got != want {
-			t.Errorf("supportsNodeImport(%q) = %v, want %v", version, got, want)
-		}
+		t.Run(version, func(t *testing.T) {
+			require.Equal(t, want, supportsNodeRegister(version))
+			root := t.TempDir()
+			requireWriteFile(t, filepath.Join(root, "register.js"), "")
+			run := &Testdrive{nodeVersion: func() string { return version }}
+			require.Equal(t, want, strings.Contains(run.javascriptEnvironment(filepath.Join(root, "ci", "init.js"))["NODE_OPTIONS"], " --import "))
+		})
 	}
 }
 
@@ -115,4 +125,37 @@ func TestPrepareRequiresSelectionForMultipleFrameworks(t *testing.T) {
 	settings.Get().Framework = "unsupported"
 	_, err = Prepare("latest")
 	require.ErrorContains(t, err, "unsupported framework")
+}
+
+func TestCypressTestdrivePreservesCommand(t *testing.T) {
+	t.Setenv("NODE_OPTIONS", "--conditions=development")
+	for _, command := range [][]string{
+		{"npx", "cypress", "run", "-Papps/web", "-Ccustom.ts", "--"},
+		{"npm", "run", "test:cypress", "--", "--component"},
+		{"node", "-C", "development", "node_modules/cypress/bin/cypress", "run"},
+	} {
+		t.Run(command[0], func(t *testing.T) {
+			root := t.TempDir()
+			requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"cypress run"}}`)
+			t.Chdir(root)
+			run, err := Prepare("latest")
+			require.NoError(t, err)
+			run.command, run.args = command[0], command[1:]
+			// The selected tracer can live outside the project's module tree.
+			run.projectTracer = filepath.Join(t.TempDir(), "dd-trace", "ci", "init.js")
+			run.nodeVersion = func() string { return "v20.20.0" }
+			executor := &fakeTestdriveExecutor{}
+			run.executor = executor
+			run.startIntake = func(string) (localIntake, error) {
+				return &fakeIntake{findings: intake.Facts{TestEventCount: 1, TestCount: 1}}, nil
+			}
+			var output bytes.Buffer
+			require.NoError(t, run.Run(t.Context(), &output))
+			require.Equal(t, command[0], executor.command)
+			require.Equal(t, command[1:], executor.args)
+			require.Contains(t, executor.env["NODE_OPTIONS"], run.projectTracer)
+			require.Contains(t, executor.env["NODE_OPTIONS"], "--conditions=development")
+			require.NoFileExists(t, filepath.Join(run.session.Directory(), "cypress.config.ts"))
+		})
+	}
 }

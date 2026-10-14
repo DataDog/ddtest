@@ -101,9 +101,10 @@ type reportSuiteTest struct {
 }
 
 type reportFact struct {
-	Label string
-	Value string
-	Tone  string
+	Label   string
+	Value   string
+	Tone    string
+	Tooltip string
 }
 
 type reportArtifact struct {
@@ -200,6 +201,12 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 			coverageValue, coverageTone = "Unavailable (browser projects)", "info"
 		}
 	}
+	coverageTooltip := ""
+	if findings.BrowserCoverageUnavailable {
+		coverageTooltip = intake.BrowserCoverageContext
+	} else if strings.EqualFold(info.Framework, "cypress") && covered < total {
+		coverageTooltip = "Cypress collects Test Impact Analysis coverage from instrumented code in the browser. API-only tests that do not load that code may have no coverage."
+	}
 	model := reportModel{
 		Summary:       "No findings.",
 		NoTestEvents:  findings.TestEventCount == 0,
@@ -208,7 +215,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		Facts: []reportFact{
 			{Label: info.Framework, Value: status, Tone: factTone(!commandFailed && findings.TestEventCount > 0)},
 			{Label: "Datadog library", Value: info.Tracer, Tone: "good"},
-			{Label: coverageLabel, Value: coverageValue, Tone: coverageTone},
+			{Label: coverageLabel, Value: coverageValue, Tone: coverageTone, Tooltip: coverageTooltip},
 		},
 		Artifacts: []reportArtifact{
 			{Title: "JSON traffic", Href: "intake/"},

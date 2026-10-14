@@ -686,6 +686,58 @@ func TestReportCoverageSummaryCountsTheReportedLevel(t *testing.T) {
 	}
 }
 
+func TestReportExplainsBrowserCoverageBesideTheCount(t *testing.T) {
+	for _, tc := range []struct {
+		name, framework, explanation string
+		facts                        intake.Facts
+	}{
+		{
+			name: "partial Cypress coverage", framework: "Cypress",
+			facts:       intake.Facts{TestCount: 111, CoveredTestCount: 60, CoverageLevel: "test"},
+			explanation: "API-only tests that do not load that code may have no coverage.",
+		},
+		{
+			name: "missing Cypress coverage", framework: "Cypress",
+			facts:       intake.Facts{TestCount: 1, MissingCoverage: true},
+			explanation: "Cypress collects Test Impact Analysis coverage from instrumented code in the browser.",
+		},
+		{
+			name: "confirmed Vitest browser limitation", framework: "Vitest",
+			facts:       intake.Facts{TestCount: 2, CoveredTestCount: 1, BrowserCoverageUnavailable: true},
+			explanation: intake.BrowserCoverageContext,
+		},
+		{name: "fully covered Cypress", framework: "Cypress", facts: intake.Facts{TestCount: 1, CoveredTestCount: 1}},
+		{name: "Cypress without test events", framework: "Cypress"},
+		{name: "Vitest without browser evidence", framework: "Vitest", facts: intake.Facts{TestCount: 2, CoveredTestCount: 1}},
+		{name: "other framework", framework: "Jest", facts: intake.Facts{TestCount: 2, CoveredTestCount: 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := buildReport(t.TempDir(), tc.facts, false, reportRuntime{Framework: tc.framework})
+			var output bytes.Buffer
+			if err := testdriveReport.Execute(&output, model); err != nil {
+				t.Fatal(err)
+			}
+			report := output.String()
+			_, details, _ := strings.Cut(report, `<dl class="facts">`)
+			details, _, _ = strings.Cut(details, "</dl>")
+			if tc.explanation == "" {
+				if strings.Contains(details, `role="tooltip"`) {
+					t.Fatal("report explains a browser coverage gap without evidence")
+				}
+				return
+			}
+			for _, want := range []string{tc.explanation, `aria-label="About Tests with coverage"`, `aria-describedby="fact-tooltip-2"`, `id="fact-tooltip-2" role="tooltip"`} {
+				if !strings.Contains(details, want) {
+					t.Errorf("coverage summary lacks %q", want)
+				}
+			}
+			if tc.framework == "Cypress" && strings.Contains(details, intake.BrowserCoverageContext) {
+				t.Fatal("Cypress must not inherit the Vitest coverage limitation")
+			}
+		})
+	}
+}
+
 func TestSlowSuiteFindingShowsSuiteDetailsAndCounts(t *testing.T) {
 	facts := intake.Facts{
 		TestEventCount: 2, CoverageLevel: "suite", SuiteDurationMedian: time.Second,

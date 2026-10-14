@@ -79,7 +79,7 @@ func Prepare(version string) (*Testdrive, error) {
 	}
 	language := detectedPlatform.Name()
 	switch runner.Name() {
-	case "jest", "mocha", "vitest", "playwright", "cucumber":
+	case "jest", "mocha", "vitest", "playwright", "cucumber", "cypress":
 	default:
 		return nil, fmt.Errorf("testdrive does not yet support %s", runner.Name())
 	}

@@ -64,7 +64,7 @@ func TestTroubleshootFrameworkWithoutNYC(t *testing.T) {
 			require.Contains(t, advice[0].Text, "ddtest testdrive")
 			require.NotContains(t, advice[0].Text, "--command")
 			require.Empty(t, Troubleshoot(root, tc.framework, Facts{}))
-			for _, framework := range []string{"Jest", "Vitest", "Cypress"} {
+			for _, framework := range []string{"Jest", "Vitest"} {
 				require.Empty(t, Troubleshoot(root, framework, facts))
 			}
 
