@@ -350,6 +350,40 @@ present. Removed or replaced SDK code goes into `ADAPTATIONS.md`.
 **Done.** Each removal or replacement is measured on the cold and forced-link
 cells, with no change in parity tests.
 
+**Outcome.** On 2026-10-14 the user closed this phase without a code change,
+on these findings.
+- **Where a cold build goes.** A module with one empty test, with an empty
+  build cache, at 4 CPUs on Go 1.27: `go test -c` takes 2.8 s and
+  `ddto test -c` 6.4 s. From `go test -debug-trace`, Mini's graph adds 16.3 s
+  of CPU:
+
+  | Part | CPU |
+  | --- | ---: |
+  | `crypto/...`: TLS, x509 and their algorithms | 4.2 s |
+  | `net`, `net/http` and the vendored `golang.org/x/net` | 3.6 s |
+  | cgo, because `net` builds with cgo when `CGO_ENABLED=1` | 2.45 s |
+  | Mini's own 49 packages, compile and vet | 3.8 s |
+  | Other standard packages: `encoding/json`, `regexp`, `compress`, `mime`, `log/slog` and others | 2.3 s |
+
+  The first three are Mini's HTTPS transport, which a binary that
+  `ddto test -c` builds needs wherever it runs. Projects that already use
+  `net/http`, such as Gin and Chi, pay for them anyway.
+- **Build order does not help.** Each internal test package imports the
+  runtime, so its compile waits for Mini's whole graph. A prototype moved that
+  import into external test packages. Cold builds held within noise:
+  - at 4 CPUs: Gin +0.3%, Chi +0.1%, Testify External −0.3%;
+  - at 32 CPUs: Gin −0.3%, Testify External −1.3%.
+
+  The builds are CPU-bound, so the extra work costs the same in any order.
+- **The separable pieces are small.**
+  - The cloud hostname providers take 0.2 s and telemetry's `log/slog` 0.24 s
+    of CPU: about 0.1 s of wall time at 4 CPUs, against a parity risk, since
+    the telemetry host changes on cloud machines.
+  - A transport without `net/http` would save 3–4 s of CPU only in projects
+    that do not use it, at the cost of rewriting much of the incorporated SDK.
+- **Links.** The test binary grows from 4.8 to 16.8 MB, and its link from 0.11
+  to 0.31 s.
+
 ## Phase 5: preparation per invocation
 
 **Evidence.**
@@ -407,7 +441,5 @@ measurement shows a gain under `ddto test`.
 
 | Decision | Phase |
 | --- | --- |
-| Merge [#39](https://github.com/tonyredondo/dd-ci-testing-poc/pull/39), the refreshed data this plan uses | Before 1 |
-| An extra executable or cache entry for the wrapper or the Git worker, if measurements choose option (a) or (b) | 3 |
 | Item 56, the preparation plan cache, parked on 2026-10-12 | 5 |
 | Same-day Native and Orchestrion remeasurement | 7 |
