@@ -23,13 +23,13 @@ import (
 
 const reportFilename = "report.html"
 
-type findingScope string
+type findingScope uint8
 
 const (
-	runFindingScope      findingScope = "run"
-	testFindingScope     findingScope = "test"
-	suiteFindingScope    findingScope = "suite"
-	coverageFindingScope findingScope = "coverage"
+	runFindingScope findingScope = iota
+	testFindingScope
+	suiteFindingScope
+	coverageFindingScope
 )
 
 type reportCard struct {
