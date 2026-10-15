@@ -44,10 +44,20 @@ func conditionEnvironment(workflow ciWorkflow, job runtimeJob, step runtimeStep,
 	}
 	for key, value := range values {
 		resolved, err := runtimeValue(value, row)
+		if err != nil {
+			if contextual, known := job.Context[strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(value), "${{"), "}}"))]; known {
+				resolved, err = contextual, nil
+			}
+		}
 		if err != nil || strings.ContainsRune(resolved, 0) {
 			delete(values, key)
 		} else {
 			values[key] = resolved
+		}
+	}
+	for key, value := range job.Context {
+		if strings.Contains(key, ".") {
+			values["\x00"+key] = value
 		}
 	}
 	return values

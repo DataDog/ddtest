@@ -8,6 +8,7 @@ import (
 	"io"
 	"maps"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -48,7 +49,7 @@ func configurationStatus(result validationResult) string {
 	if result.CheckOnly {
 		return "not exercised"
 	}
-	if result.Error != "" || result.Compatibility.Status != "compatible" || len(result.Features) == 0 || missingMochaCoverage(result) {
+	if result.Error != "" || result.Compatibility.Status != "compatible" || len(result.Features) == 0 || missingRealCoverage(result) {
 		return "incomplete"
 	}
 	for _, feature := range result.Features {
@@ -93,7 +94,16 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 	var runErrors []error
 	for _, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Configuration did not execute."}}
+		if entry.Cypress != nil && entry.Cypress.Platform == "windows" && runtime.GOOS != "windows" {
+			item.Error = "Windows Cypress configuration was not executed on this " + runtime.GOOS + " host. Use a matching runner; the browser/OS variant has not been validated."
+			result.Configurations = append(result.Configurations, item)
+			continue
+		}
 		words, parseErr := shellquote.Split(entry.Command)
+		if entry.Cypress != nil {
+			words = []string{"node"}
+			parseErr = nil
+		}
 		if filepath.Clean(entry.Directory) != "." {
 			parseErr = fmt.Errorf("configuration in %s needs validation from that package directory; --all currently executes root-package commands only", entry.Directory)
 		}
@@ -120,6 +130,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			label += " (" + key + "=" + entry.Environment[key] + ")"
 		}
 		child := *t
+		child.cypress, child.cypressCommand = entry.Cypress, entry.Command
 		child.playwrightGuard = entry.ExitOnFailure
 		child.allConfigurations = false
 		child.session = planSession()
@@ -127,13 +138,16 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			child.tracerVersion = result.Selection.Version
 		}
 		child.command = filepath.Join(t.repositoryRoot, "node_modules", ".bin", words[0])
-		if onboard.IsDDTestCommand(words[0]) || (t.framework.Name() == "mocha" && slices.Contains([]string{"npm", "pnpm", "yarn", "node", "npx"}, words[0])) {
+		if onboard.IsDDTestCommand(words[0]) || ((t.framework.Name() == "mocha" || t.framework.Name() == "cypress") && slices.Contains([]string{"npm", "pnpm", "yarn", "node", "npx"}, words[0])) {
 			child.command = words[0]
 		}
 		child.args = words[1:]
 		child.reportModels = &models
 		// Rebind method values to this command, rather than the original drive.
 		child.preflight = child.checkJestPreflight
+		if t.framework.Name() == "cypress" {
+			child.preflight = child.checkCypressPreflight
+		}
 		if t.framework.Name() == "mocha" {
 			child.preflight = child.checkMochaPreflight
 		}
@@ -147,7 +161,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		execution, childErr := child.runPreparedConfiguration(ctx, output, &item)
 		prepareValidationResult(t.repositoryRoot, &execution)
 		item.Status = configurationStatus(execution)
-		if execution.Preflight == nil && childErr != nil {
+		if childErr != nil && (execution.Preflight == nil || t.framework.Name() == "cypress" && len(execution.Runs) == 0) {
 			item.Status = "blocked"
 		}
 		item.Compatibility = execution.Compatibility
@@ -171,7 +185,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			result.Tracer = execution.Tracer
 			result.TracerSource = execution.TracerSource
 		}
-		if result.Tracer != execution.Tracer {
+		if execution.Tracer != "" && result.Tracer != execution.Tracer {
 			runErrors = append(runErrors, fmt.Errorf("tracer selection changed between configurations; select an exact --tracer-version"))
 		}
 		result.CIRuntime = execution.CIRuntime

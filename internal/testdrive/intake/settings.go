@@ -7,6 +7,8 @@ package intake
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -115,10 +117,30 @@ func handleKnownTests(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func handleSkippableTests(w http.ResponseWriter, _ *http.Request, scenario Scenario) {
+func handleSkippableTests(w http.ResponseWriter, r *http.Request, scenario Scenario) {
+	var request struct {
+		Data struct {
+			Attributes struct {
+				TestLevel string `json:"test_level"`
+			}
+		}
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "invalid skippable request", http.StatusBadRequest)
+		return
+	}
+	level := request.Data.Attributes.TestLevel
+	if level != "" && level != "suite" && level != "test" {
+		http.Error(w, "unsupported skipping level", http.StatusBadRequest)
+		return
+	}
 	data := []any{}
 	if scenario.Feature == "skipping" && scenario.SourceFile != "" {
-		data = append(data, map[string]any{"type": "suite", "attributes": map[string]any{"suite": scenario.SourceFile}})
+		if level == "test" && scenario.Suite != "" && scenario.Test != "" {
+			data = append(data, map[string]any{"type": "test", "attributes": map[string]any{"suite": scenario.Suite, "name": scenario.Test}})
+		} else if level != "test" {
+			data = append(data, map[string]any{"type": "suite", "attributes": map[string]any{"suite": scenario.SourceFile}})
+		}
 	}
 	writeJSON(w, map[string]any{
 		"data": data,

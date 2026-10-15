@@ -35,6 +35,11 @@ func diagnoseSkipping(run validationRun, scenario intake.Scenario) *skippingDiag
 	}
 	for _, event := range run.Facts.Events {
 		tags := event.Tags
+		if run.framework == "cypress" && isSkippedCypressProbe(event, intake.Test{Module: scenario.Module, Suite: scenario.Suite, Name: scenario.Test, SourceFile: scenario.SourceFile}) {
+			d.SkippedByITR = true
+			d.Expected = "Mock returns the control's reported suite and test name at test level; ITR reports that test skipped, no probe body executes, and exit code is 0."
+			d.ReturnedSuite = reportText(scenario.Suite)
+		}
 		if event.Type == "test" && tags["test.name"] == scenario.Test && tags["test.module"] == scenario.Module {
 			d.ObservedSuite = reportText(tags["test.suite"])
 			d.ObservedSourceFile = reportText(tags["test.source.file"])

@@ -102,7 +102,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			require.Contains(t, preview.String(), displayName(name))
 			_, err = os.Stat(filepath.Join(root, ".testoptimization"))
 			require.True(t, os.IsNotExist(err), "preview must be read-only")
-			if name == "mocha" || name == "jest" || name == "vitest" || name == "playwright" {
+			if name == "mocha" || name == "jest" || name == "vitest" || name == "playwright" || name == "cypress" {
 				return
 			} // Paired validation has separate real-run tests.
 			run.nodeVersion = func() string { return "v20.0.0" }
@@ -242,7 +242,9 @@ func TestCypressTestdrivePreservesCommand(t *testing.T) {
 				return &fakeIntake{findings: intake.Facts{TestEventCount: 1, TestCount: 1}}, nil
 			}
 			var output bytes.Buffer
-			require.ErrorContains(t, run.Run(t.Context(), &output), "validation is incomplete")
+			_, err = run.runCypress(t.Context(), &output, run.session, run.projectTracer, "reporting-only", true, intake.Scenario{}, "", "")
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, run.session.Close()) })
 			require.Equal(t, command[0], executor.command)
 			require.Equal(t, command[1:], executor.args)
 			require.Contains(t, executor.env["NODE_OPTIONS"], run.projectTracer)

@@ -148,3 +148,19 @@ func TestSkippingWithoutSourceDoesNotReturnTheSuiteIdentity(t *testing.T) {
 	require.Contains(t, response.Body.String(), `"data":[]`)
 	require.NotContains(t, response.Body.String(), "probe.test.js")
 }
+
+func TestSkippingUsesTheRequestedProtocolLevel(t *testing.T) {
+	handler := scenarioHandler(Scenario{Feature: "skipping", Suite: "../../reported/probe.cy.js", SourceFile: "cypress/probe.cy.js", Test: "ddtest validation probe"})
+	for _, tc := range []struct{ request, want string }{
+		{"{\"data\":{\"attributes\":{\"test_level\":\"test\"}}}", "{\"type\":\"test\",\"attributes\":{\"suite\":\"../../reported/probe.cy.js\",\"name\":\"ddtest validation probe\"}}"},
+		{"{\"data\":{\"attributes\":{\"test_level\":\"suite\"}}}", "{\"type\":\"suite\",\"attributes\":{\"suite\":\"cypress/probe.cy.js\"}}"},
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, constants.SkippableTestsURLPath, bytes.NewBufferString(tc.request)))
+		require.Equal(t, http.StatusOK, response.Code)
+		var result struct{ Data []json.RawMessage }
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+		require.Len(t, result.Data, 1)
+		require.JSONEq(t, tc.want, string(result.Data[0]))
+	}
+}

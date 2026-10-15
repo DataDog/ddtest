@@ -37,13 +37,23 @@ func unresolvedCommand(reason string) commandResolution {
 }
 
 func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, language, framework string) commandResolution {
+	if language == "javascript" && framework == "cypress" && strings.TrimSpace(step.Run) == "exit 1" {
+		return commandResolution{Review: true, Reason: "CI status gate is outside Cypress test execution"}
+	}
+	uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
+	if language == "javascript" && uses == "cypress-io/github-action" {
+		if framework == "cypress" {
+			return resolveCypressAction(root, workflow, job, step)
+		}
+		return commandResolution{Review: true, Reason: "Cypress GitHub Action is outside " + framework + " validation"}
+	}
 	if step.ResolutionError != "" {
 		return unresolvedCommand(step.ResolutionError)
 	}
 	if strings.TrimSpace(step.Run) == "" {
 		return commandResolution{}
 	}
-	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "playwright" && framework != "mocha") {
+	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "playwright" && framework != "mocha" && framework != "cypress") {
 		return commandResolution{Matched: looksLikeTestJob(root, step.Run, language, framework, 0)}
 	}
 	directory := stepDirectory(workflow, job, step)
@@ -55,6 +65,14 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	}
 	if !supportedCIShell(shell) {
 		return unresolvedCommand("Unsupported CI shell: " + shell)
+	}
+	if framework == "cypress" {
+		if plan, ok := cypressBackgroundPlan(root, workflow, job, step); ok {
+			return plan
+		}
+	}
+	if framework == "cypress" && cypressEnvironmentDiagnostic(step.Run) {
+		return commandResolution{Review: true, Reason: "Environment-printing diagnostic and its global utility installation require separate CI review; they are outside the identified Cypress command and are not executed locally."}
 	}
 	if strings.ContainsAny(directory, "$`~") || (directory != "" && !filepath.IsLocal(directory)) {
 		return unresolvedCommand("Cannot statically resolve repository working-directory: " + directory)
@@ -294,7 +312,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		} else {
 			words = words[2:]
 		}
-		if framework == "mocha" && len(words) > 0 && words[0] == "--no-install" {
+		if (framework == "mocha" || framework == "cypress") && len(words) > 0 && words[0] == "--no-install" {
 			words = words[1:]
 		}
 		if len(words) > 0 && words[0] == "--" {
@@ -307,6 +325,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	if words[0] == framework || words[0] == "./node_modules/.bin/"+framework || words[0] == "node_modules/.bin/"+framework || words[0] == filepath.Join(directory, "node_modules", ".bin", framework) {
 		if framework == "vitest" && len(words) > 1 && words[1] == "bench" {
 			return commandResolution{Benchmark: true, ReviewReason: "Vitest benchmark mode is not validated by the test adapter; do not add instrumentation based on ordinary test validation: " + command}
+		}
+		if framework == "cypress" && (len(words) < 2 || words[1] != "run") {
+			return commandResolution{ReviewReason: "Cypress setup/interactive command is outside headless validation: " + command}
 		}
 		if framework == "playwright" && (len(words) < 2 || words[1] != "test") {
 			return commandResolution{ReviewReason: "Playwright setup/tool command is outside test execution: " + command}
@@ -325,6 +346,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	}
 	if framework == "mocha" && words[0] == "node" {
 		return resolveMochaNode(root, directory, words, assignments)
+	}
+	if framework == "cypress" && words[0] == "node" {
+		return resolveCypressNode(root, directory, words, assignments)
 	}
 	if framework == "mocha" && (filepath.Base(words[0]) == "c8" || filepath.Base(words[0]) == "nyc") {
 		return resolveMochaCoverage(root, directory, words, assignments, stack, remaining)
@@ -385,6 +409,11 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			return commandResolution{ReviewReason: "Git content comparison is outside " + framework + " validation; review separately, including configured diff helpers."}
 		}
 		return unresolvedCommand("Unsupported git command requires review: " + command)
+	case "start-test", "start-server-and-test", "run-p":
+		if framework == "cypress" {
+			return resolveCypressOrchestration(root, directory, words, stack, remaining)
+		}
+		return unresolvedCommand("Unsupported script orchestration: " + command)
 	case "run-s":
 		if framework != "mocha" || len(words) < 2 {
 			return unresolvedCommand("Unsupported script orchestration: " + command)
@@ -506,9 +535,10 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		script += " " + shellquote.Join(args...)
 	}
 	mocha := len(frameworks) > 0 && frameworks[0] == "mocha"
+	cypress := len(frameworks) > 0 && frameworks[0] == "cypress"
 	// npm executes hooks without forwarding the main script's arguments. Keep
 	// their order, discover hidden test consumers, and retain the original alias.
-	if mocha && strings.HasPrefix(command, "npm ") {
+	if (mocha || cypress) && strings.HasPrefix(command, "npm ") {
 		parts := []string{}
 		if pre := manifest.Scripts["pre"+name]; pre != "" {
 			parts = append(parts, pre)
@@ -537,7 +567,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		relative, _ := filepath.Rel(root, directory)
 		return commandResolution{Builds: []BuildCommand{{Directory: filepath.ToSlash(relative), Command: command, Kind: "package-build"}}}
 	}
-	if mocha && lifecycle == "" && result.Reason == "" && len(result.Tests) == 1 {
+	if (mocha || cypress) && lifecycle == "" && result.Reason == "" && len(result.Tests) == 1 {
 		// Keep surrounding lint/Node checks and their original ordering/exit behavior.
 		// No shell is synthesized: the package manager executes its own script.
 		if !result.SingleJest && result.Tests[0].mochaProbeCommand == "" {

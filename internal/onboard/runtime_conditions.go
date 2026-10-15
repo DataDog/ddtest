@@ -299,6 +299,11 @@ func (p *conditionParser) atom() (any, error) {
 			return value, nil
 		}
 	}
+	if strings.HasPrefix(token, "github.") || strings.HasPrefix(token, "steps.") || strings.HasPrefix(token, "secrets.") {
+		if value, exists := p.env["\x00"+token]; exists {
+			return value, nil
+		}
+	}
 	if number, err := strconv.ParseFloat(token, 64); err == nil {
 		return number, nil
 	}
@@ -377,6 +382,8 @@ func conditionEqual(left, right any) (bool, error) {
 // cannot incorrectly certify an unconditionally executed test.
 var branchJobGuard = regexp.MustCompile(`^github\.ref\s*(?:==|!=)\s*'refs/(?:heads|tags)/[^'\s]+'$`)
 
+var forkJobOwner = regexp.MustCompile("^[A-Za-z0-9-]+$")
+
 func possibleJobCondition(value string, row map[string]any) (bool, error) {
 	condition := strings.TrimSpace(value)
 	if strings.HasPrefix(condition, "${{") && strings.HasSuffix(condition, "}}") {
@@ -384,6 +391,15 @@ func possibleJobCondition(value string, row map[string]any) (bool, error) {
 	}
 	if branchJobGuard.MatchString(condition) {
 		return true, nil
+	}
+	// This common fork guard admits an upstream push. It does not exclude any
+	// matrix row; step conditions and instrumentation checks remain strict.
+	if rest, ok := strings.CutPrefix(condition, "github.repository_owner == '"); ok {
+		owner, tail, found := strings.Cut(rest, "'")
+		if found && forkJobOwner.MatchString(owner) &&
+			tail == " && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)" {
+			return true, nil
+		}
 	}
 	return runtimeCondition(value, row)
 }
