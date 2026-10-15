@@ -64,7 +64,7 @@ func TestMochaTestdriveNYCPreviewAndExecution(t *testing.T) {
 			var preview bytes.Buffer
 			drive.Preview(&preview)
 			wantDisplay := shellquote.Join(append([]string{wantCommand}, wantArgs...)...)
-			require.Contains(t, preview.String(), "  - run: "+wantDisplay)
+			require.Contains(t, preview.String(), "  - command: "+wantDisplay)
 			_, err := os.Stat(drive.session.Directory())
 			require.True(t, os.IsNotExist(err), "preview must remain read-only")
 			installer := &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}

@@ -1350,9 +1350,9 @@ THE SOFTWARE.
           {{ end }}
         </dl>
         <details class="command-output"{{ if or .NoTestEvents .Runtime.Error }} open{{ end }}>
-          <summary>{{ .Runtime.Framework }} command output</summary>
+          <summary>{{ if .Runtime.SetupFailure }}Environment check{{ else }}{{ .Runtime.Framework }} command output{{ end }}</summary>
           {{ if .Runtime.Command }}<p class="command-line"><code>{{ .Runtime.Command }}</code></p>{{ end }}
-          {{ if .Runtime.Error }}<p class="command-error">Command failed: {{ .Runtime.Error }}</p>{{ end }}
+          {{ if .Runtime.Error }}<p class="command-error">{{ if .Runtime.SetupFailure }}Tests were not run:{{ else }}Command failed:{{ end }} {{ .Runtime.Error }}</p>{{ end }}
           {{ if .Runtime.Output }}
             <pre class="command-log" tabindex="0" aria-label="{{ .Runtime.Framework }} command output">{{ .Runtime.Output }}</pre>
           {{ else }}

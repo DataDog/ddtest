@@ -37,6 +37,8 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			require.Contains(t, preview.String(), displayName(name))
 			_, err = os.Stat(filepath.Join(root, ".testoptimization"))
 			require.True(t, os.IsNotExist(err), "preview must be read-only")
+			// Execution below is simulated; environment prerequisite checks have their own tests.
+			run.preflight = nil
 			run.nodeVersion = func() string { return "v20.0.0" }
 			installer := &fakeTracer{preloadPath: filepath.Join(root, "isolated")}
 			run.platform = installer

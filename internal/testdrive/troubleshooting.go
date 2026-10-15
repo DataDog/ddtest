@@ -17,6 +17,9 @@ import (
 // Run failures need findings even when the tracer sent no failed-test events.
 // An ordinary test failure already explained by FailedTests gets no extra card.
 func runFindingCards(facts intake.Facts, commandFailed bool, runtime reportRuntime) []reportCard {
+	if runtime.SetupFailure != nil {
+		return []reportCard{*runtime.SetupFailure}
+	}
 	noEvents := facts.TestEventCount == 0
 	if !noEvents && (!commandFailed || len(facts.FailedTests) > 0) {
 		return nil

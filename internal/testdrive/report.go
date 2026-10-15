@@ -134,7 +134,11 @@ type reportModel struct {
 	Tests         []reportTest
 }
 
-type reportRuntime struct{ Framework, Tracer, Command, Output, Error string }
+type reportRuntime struct {
+	Framework, Tracer, Command, Output, Error string
+	Environment                               environmentInfo
+	SetupFailure                              *reportCard
+}
 
 type reportSourceFile struct {
 	lines []string
@@ -189,6 +193,9 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	if findings.TestEventCount == 0 {
 		status = "No test results received"
 	}
+	if info.SetupFailure != nil {
+		status = "Not run (environment check failed)"
+	}
 	showTestCoverage := findings.CoverageLevel == "test"
 	showSuiteCoverage := findings.CoverageLevel == "suite"
 	suites := builder.reportSuites(findings.Tests, findings.SuiteCoverages, showSuiteCoverage)
@@ -232,6 +239,15 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 			{Title: "Test output", Href: testOutputFilename},
 		},
 		Tests: builder.reportTests(findings.Tests, showTestCoverage),
+	}
+	if info.SetupFailure != nil {
+		model.Artifacts = []reportArtifact{{Title: "Environment check output", Href: testOutputFilename}}
+	}
+	if info.Environment.Source != "" {
+		model.Facts = append(model.Facts, reportFact{Label: "Environment", Value: info.Environment.Source})
+		if info.Environment.Executable != "" {
+			model.Facts = append(model.Facts, reportFact{Label: info.Environment.Runtime + " " + info.Environment.Version, Value: info.Environment.Executable})
+		}
 	}
 	model.Suites = suites
 

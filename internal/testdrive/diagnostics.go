@@ -19,6 +19,7 @@ import (
 const diagnosticsFilename = "findings.json"
 
 type runDiagnostics struct {
+	Environment     environmentInfo     `json:"environment"`
 	RepositoryRoot  string              `json:"repository_root"`
 	Framework       string              `json:"framework"`
 	Command         string              `json:"command"`
@@ -49,7 +50,7 @@ func writeDiagnostics(repositoryRoot, sessionDirectory string, facts intake.Fact
 		findings = append(findings, diagnosticFinding{Kind: card.Kind, Severity: card.Severity, Title: card.Title, Count: card.Count, Context: card.Context})
 	}
 	data, err := json.MarshalIndent(runDiagnostics{
-		RepositoryRoot: repositoryRoot, Framework: model.Runtime.Framework,
+		Environment: model.Runtime.Environment, RepositoryRoot: repositoryRoot, Framework: model.Runtime.Framework,
 		Command: model.Runtime.Command, Tracer: model.Runtime.Tracer,
 		CommandFailed: commandFailed, CommandError: model.Runtime.Error,
 		RunFailed: commandFailed || facts.TestEventCount == 0, Findings: findings,
@@ -109,5 +110,7 @@ func writeDiagnosticPaths(output io.Writer, repositoryRoot, findingsPath, testOu
 		_, _ = fmt.Fprintln(output, "  Structured findings: unavailable (collection error)")
 	}
 	_, _ = fmt.Fprintf(output, "  Full test output: %s\n", relative(testOutputPath))
-	_, _ = fmt.Fprintf(output, "  Captured tracer traffic (JSON): %s\n", filepath.Join(relative(trafficPath), "*.json"))
+	if trafficPath != "" {
+		_, _ = fmt.Fprintf(output, "  Captured tracer traffic (JSON): %s\n", filepath.Join(relative(trafficPath), "*.json"))
+	}
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 )
 
@@ -40,21 +41,23 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
-	repositoryRoot string
-	framework      framework.Framework
-	language       string
-	command        string
-	args           []string
-	tracerLabel    string
-	platform       platform.Platform
-	tracerVersion  string
-	projectTracer  string
-	session        *Session
-	installCommand string
-	installArgs    []string
-	executor       commandExecutor
-	startIntake    func(string) (localIntake, error)
-	nodeVersion    func() string
+	repositoryRoot  string
+	framework       framework.Framework
+	language        string
+	command         string
+	args            []string
+	tracerLabel     string
+	platform        platform.Platform
+	tracerVersion   string
+	projectTracer   string
+	session         *Session
+	installCommand  string
+	installArgs     []string
+	executor        commandExecutor
+	startIntake     func(string) (localIntake, error)
+	nodeVersion     func() string
+	environmentInfo environmentInfo
+	preflight       *reportCard
 }
 
 // Prepare detects the repository and probes the project tracer without writing files.
@@ -93,12 +96,25 @@ func Prepare(version string) (*Testdrive, error) {
 			return nil, err
 		}
 	}
-	options := platform.TracerOptions{Directory: session.Directory(), Version: version, Command: command, Args: args}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	projectTracer, probeErr := detectedPlatform.DetectTracer(ctx, options)
-	if probeErr != nil {
-		projectTracer = ""
+	var environment environmentInfo
+	var preflight *reportCard
+	switch language {
+	case "python":
+		var source string
+		command, args, source = pythonTestdriveCommand(ctx, repositoryRoot, command, args, strings.TrimSpace(settings.GetCommand()) != "")
+		environment, preflight = pythonEnvironmentInfo(ctx, command, args, source)
+	case "javascript":
+		environment = nodeEnvironmentInfo(ctx, command)
+	}
+	options := platform.TracerOptions{Directory: session.Directory(), Version: version, Command: command, Args: args}
+	if language == "python" && environment.Executable != "" {
+		options.Command, options.Args = environment.Executable, nil
+	}
+	var projectTracer string
+	if preflight == nil {
+		projectTracer, _ = detectedPlatform.DetectTracer(ctx, options)
 	}
 	var installCommand string
 	var installArgs []string
@@ -110,7 +126,7 @@ func Prepare(version string) (*Testdrive, error) {
 	}
 
 	return &Testdrive{projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
-		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) }, nodeVersion: currentNodeVersion}, nil
+		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) }, nodeVersion: currentNodeVersion, environmentInfo: environment, preflight: preflight}, nil
 }
 
 func displayName(name string) string {
@@ -128,9 +144,12 @@ func (t *Testdrive) Preview(output io.Writer) {
 
 	_, _ = fmt.Fprintf(output, "DDTest found %s and %s.\n", displayName(t.language), displayName(t.framework.Name()))
 	_, _ = fmt.Fprintln(output)
-	_, _ = fmt.Fprintln(output, "It will:")
+	t.environmentInfo.write(output)
+	_, _ = fmt.Fprintln(output, "\nRun:")
 	_, _ = fmt.Fprintf(output, "  - create an output folder: %s\n", directory)
-	if t.projectTracer != "" {
+	if t.preflight != nil {
+		_, _ = fmt.Fprintf(output, "  - save findings and troubleshooting; tests will not run: %s\n", t.preflight.Title)
+	} else if t.projectTracer != "" {
 		_, _ = fmt.Fprintf(output, "  - reuse installed %s; no installation is needed\n", t.installedTracerLabel(t.projectTracer))
 	} else if t.language == "python" {
 		_, _ = fmt.Fprintf(output, "  - install %s in a temporary Python environment; remove it after the run\n", t.tracerLabel)
@@ -142,7 +161,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 		_, _ = fmt.Fprintf(output, "  - install %s: %s\n", t.tracerLabel, shellquote.Join(install...))
 	}
 
-	_, _ = fmt.Fprintf(output, "  - run: %s\n", shellquote.Join(append([]string{command}, args...)...))
+	_, _ = fmt.Fprintf(output, "  - command: %s\n", shellquote.Join(append([]string{command}, args...)...))
 	_, _ = fmt.Fprintln(output)
 	patterns := map[string][]string{
 		"javascript": {"package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb"},
@@ -180,6 +199,9 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	if err := session.create(); err != nil {
 		return err
 	}
+	if t.preflight != nil {
+		return t.finishRun(output, session, intake.Facts{}, []byte(t.preflight.Context), errors.New(t.preflight.Title), nil, "Not installed")
+	}
 	installation := platform.TracerInstallation{Project: t.projectTracer != ""}
 	if t.language == "javascript" {
 		installation.Path = t.projectTracer
@@ -199,7 +221,11 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 				}
 			}()
 		}
-		installation, err = t.platform.InstallTestdriveTracer(ctx, platform.TracerOptions{Directory: directory, Version: t.tracerVersion, Command: t.command, Args: t.args})
+		options := platform.TracerOptions{Directory: directory, Version: t.tracerVersion, Command: t.command, Args: t.args}
+		if t.language == "python" && t.environmentInfo.Executable != "" {
+			options.Command, options.Args = t.environmentInfo.Executable, nil
+		}
+		installation, err = t.platform.InstallTestdriveTracer(ctx, options)
 		if err != nil {
 			return err
 		}
@@ -232,16 +258,36 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 
 	testOutput, testErr := t.executor.CombinedOutput(ctx, command, args, env)
 
+	// Drain the intake before taking the snapshot used by the report.
+	closeErr := server.Close()
+	intakeClosed = true
+	var findings intake.Facts
+	if closeErr == nil {
+		findings, closeErr = server.Facts()
+	}
+	return t.finishRun(output, session, findings, testOutput, testErr, closeErr, tracerLabel)
+}
+
+func (t *Testdrive) finishRun(output io.Writer, session *Session, findings intake.Facts, testOutput []byte, testErr, analysisErr error, tracerLabel string) error {
+	command, args := t.executionCommand()
 	testOutputPath := filepath.Join(session.Directory(), testOutputFilename)
 	if err := os.WriteFile(testOutputPath, testOutput, 0644); err != nil {
 		return fmt.Errorf("save test output: %w", err)
 	}
 	var diagnosticsPath string
 	defer func() {
-		writeDiagnosticPaths(output, t.repositoryRoot, diagnosticsPath, testOutputPath, filepath.Join(session.Directory(), "intake"))
+		trafficPath := ""
+		if t.preflight == nil {
+			trafficPath = filepath.Join(session.Directory(), "intake")
+		}
+		writeDiagnosticPaths(output, t.repositoryRoot, diagnosticsPath, testOutputPath, trafficPath)
 	}()
 	if testErr != nil {
-		_, _ = fmt.Fprintf(output, "\n%s command output:\n", displayName(t.framework.Name()))
+		if t.preflight != nil {
+			_, _ = fmt.Fprintln(output, "\nEnvironment check:")
+		} else {
+			_, _ = fmt.Fprintf(output, "\n%s command output:\n", displayName(t.framework.Name()))
+		}
 		captured := strings.TrimSpace(string(testOutput))
 		lines := strings.Split(captured, "\n")
 		switch {
@@ -256,25 +302,20 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		}
 	}
 
-	// Drain the intake before taking the snapshot used by the report.
-	closeErr := server.Close()
-	intakeClosed = true
-	if closeErr != nil {
-		return closeErr
-	}
-	findings, err := server.Facts()
-	if err != nil {
-		return err
+	if analysisErr != nil {
+		return analysisErr
 	}
 	runtime := reportRuntime{
-		Framework: displayName(t.framework.Name()), Tracer: tracerLabel,
+		Framework: displayName(t.framework.Name()), Tracer: tracerLabel, Environment: t.environmentInfo, SetupFailure: t.preflight,
 		Command: shellquote.Join(append([]string{command}, args...)...), Output: string(testOutput),
 	}
 	if testErr != nil {
 		runtime.Error = testErr.Error()
 	}
-	model := buildReport(t.repositoryRoot, findings, testErr != nil, runtime)
-	diagnosticsPath, err = writeDiagnostics(t.repositoryRoot, session.Directory(), findings, model, testErr != nil)
+	commandFailed := testErr != nil && t.preflight == nil
+	model := buildReport(t.repositoryRoot, findings, commandFailed, runtime)
+	var err error
+	diagnosticsPath, err = writeDiagnostics(t.repositoryRoot, session.Directory(), findings, model, commandFailed)
 	if err != nil {
 		return err
 	}
@@ -295,6 +336,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		_, _ = fmt.Fprintln(output, "No test events received.")
 	}
 	writeFindings(output, findings, model.Cards...)
+	t.environmentInfo.write(output)
 	_, _ = fmt.Fprintln(output, "\nRun details:")
 	_, _ = fmt.Fprintf(output, "  Test events: %d\n", findings.TestEventCount)
 	_, _ = fmt.Fprintf(output, "  Tests: %d · Suites: %d\n", findings.TestCount, len(model.Suites))
@@ -326,6 +368,9 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	if findings.TestEventCount == 0 {
 		status = "No test results received"
 	}
+	if t.preflight != nil {
+		status = "Not run (environment check failed)"
+	}
 	_, _ = fmt.Fprintf(output, "  %s: %s\n", displayName(t.framework.Name()), status)
 	_, _ = fmt.Fprintf(output, "  Datadog library: %s\n", tracerLabel)
 	_, _ = fmt.Fprintf(output, "  Command: %s\n", runtime.Command)
@@ -335,6 +380,9 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	}
 	_, _ = fmt.Fprintf(output, "\nOpen report: %s\n", terminalLink(reportURL, reportLabel))
 
+	if t.preflight != nil {
+		return testErr
+	}
 	if testErr != nil {
 		return fmt.Errorf("%s failed after sending %d test event(s): %w", t.framework.Name(), findings.TestEventCount, testErr)
 	}
