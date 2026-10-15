@@ -3,10 +3,10 @@ name: Release
 # that version to internal/version in a commit that only the new tag points to,
 # so that go install at the tag reports it too; builds and checks the
 # executables; then pushes the tag and publishes the release with the
-# executables, install.sh and SHA256SUMS. After a release without a prerelease
-# suffix, a second job opens a pull request that sets main's version to the
-# release's with a -dev suffix, such as 0.1.0-dev; rerunning that job alone
-# retries it.
+# executables, install.sh, install.ps1 and SHA256SUMS. After a release without
+# a prerelease suffix, a second job opens a pull request that sets main's
+# version to the release's with a -dev suffix, such as 0.1.0-dev; rerunning
+# that job alone retries it.
 on:
   workflow_dispatch:
     inputs:
@@ -62,14 +62,16 @@ jobs:
         shell: bash
         run: |
           go run ./scripts/release -o dist
-          cp scripts/install.sh dist/
-          cd dist && sha256sum ddto-* install.sh > SHA256SUMS
-      - name: Check the executables and install.sh
+          cp scripts/install.sh scripts/install.ps1 dist/
+          cd dist && sha256sum ddto-* install.sh install.ps1 > SHA256SUMS
+      - name: Check the executables and the install scripts
         shell: bash
         run: |
           test "$(dist/ddto-linux-amd64 --version)" = "ddto $VERSION"
           DDTO_DOWNLOAD_URL="file://$PWD/dist" bash dist/install.sh --dir "$RUNNER_TEMP/bin"
           cmp dist/ddto-linux-amd64 "$RUNNER_TEMP/bin/ddto"
+          DDTO_DOWNLOAD_URL="file://$PWD/dist" pwsh -NoProfile -NonInteractive -File dist/install.ps1 -Dir "$RUNNER_TEMP/bin-pwsh"
+          cmp dist/ddto-linux-amd64 "$RUNNER_TEMP/bin-pwsh/ddto"
       - name: Publish
         shell: bash
         env:

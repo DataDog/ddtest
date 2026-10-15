@@ -1,4 +1,4 @@
-"""Runs install.sh against release files served from a local directory."""
+"""Runs install.sh and install.ps1 against release files served from a local directory."""
 
 import functools
 import hashlib
@@ -12,7 +12,7 @@ import tempfile
 import threading
 import unittest
 
-SCRIPT = Path(__file__).resolve().parent / "install.sh"
+SCRIPTS = Path(__file__).resolve().parent
 MODULE = "github.com/tonyredondo/dd-ci-testing-poc"
 OS = {"Linux": "linux", "Darwin": "darwin"}.get(platform.system())
 ARCH = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine().lower())
@@ -61,7 +61,10 @@ class InstallTests(unittest.TestCase):
         env.update(DDTO_DOWNLOAD_URL=self.url, DDTO_INSTALL_DIR=str(self.dir), PATH=path or os.environ["PATH"], **extra)
         if github_path:
             env["GITHUB_PATH"] = str(github_path)
-        return subprocess.run(["bash", str(SCRIPT), *args], env=env, capture_output=True, text=True, timeout=60)
+        return subprocess.run(self.command(*args), env=env, capture_output=True, text=True, timeout=120)
+
+    def command(self, *args):
+        return ["bash", str(SCRIPTS / "install.sh"), *args]
 
     def fake_go(self):
         """Returns a PATH whose go records its arguments and installs a fake ddto in GOBIN."""
@@ -141,6 +144,18 @@ class InstallTests(unittest.TestCase):
         result = self.install(github_path=github_path)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(github_path.read_text().split(), [str(self.dir.resolve())])
+
+
+
+# GitHub's runners have pwsh, so CI runs these; elsewhere they need it on PATH.
+@unittest.skipUnless(shutil.which("pwsh") or os.environ.get("GITHUB_ACTIONS") == "true", "pwsh is not installed")
+class PowerShellInstallTests(InstallTests):
+    """The same cases for install.ps1, whose parameters are -Version and -Dir."""
+
+    def command(self, *args):
+        names = {"--version": "-Version", "--dir": "-Dir"}
+        return ["pwsh", "-NoProfile", "-NonInteractive", "-File", str(SCRIPTS / "install.ps1"),
+                *(names.get(arg, arg) for arg in args)]
 
 
 if __name__ == "__main__":

@@ -22,17 +22,29 @@ Tests need an installed Go 1.25 or newer toolchain. Install `ddto` from the
 curl -fsSL https://github.com/tonyredondo/dd-ci-testing-poc/releases/latest/download/install.sh | bash
 ```
 
-The script downloads the executable for your platform into `~/.local/bin`
-and checks it against the release's `SHA256SUMS`. `--version v1.2.3` picks a
-release and `--dir` another directory. It keeps an installed executable of the
-same version, so a persistent runner downloads nothing for a requested
-version and only `SHA256SUMS` for the latest. Without an executable for the
-platform, it builds `ddto` with `go install`, and in GitHub Actions it adds the
-directory to `PATH`. `ddto --version` prints the installed version. Releases have `ddto-<os>-<arch>` for Linux, macOS
-(`darwin`) and Windows on `amd64` and `arm64`, with `.exe` on Windows. Each
-executable carries the Mini runtime's sources and its tool wrapper, so a CI job
-builds neither `ddto` nor its wrapper and downloads no runtime module; it
-compiles only what goes into the test binaries.
+In PowerShell, on Windows or elsewhere:
+
+```powershell
+irm https://github.com/tonyredondo/dd-ci-testing-poc/releases/latest/download/install.ps1 | iex
+```
+
+The scripts download the executable for your platform into `~/.local/bin`
+and check it against the release's `SHA256SUMS`. `--version v1.2.3` picks a
+release and `--dir` another directory; in PowerShell, set `$env:DDTO_VERSION`
+and `$env:DDTO_INSTALL_DIR` first, or run
+`& ([scriptblock]::Create((irm <url>/install.ps1))) -Version v1.2.3 -Dir C:\tools`.
+They keep an installed executable of the same version, so a persistent runner
+downloads nothing for a requested version and only `SHA256SUMS` for the latest.
+Without an executable for the platform, they build `ddto` with `go install`.
+In GitHub Actions they add the directory to `PATH` for later steps;
+`install.ps1` also adds it to the current session. `ddto --version` prints the
+installed version.
+
+Releases have `ddto-<os>-<arch>` for Linux, macOS (`darwin`) and Windows on
+`amd64` and `arm64`, with `.exe` on Windows. Each executable carries the Mini
+runtime's sources and its tool wrapper, so a CI job builds neither `ddto` nor
+its wrapper and downloads no runtime module; it compiles only what goes into
+the test binaries.
 
 To build `ddto` from source instead:
 

@@ -31,8 +31,17 @@ curl -fsSL https://github.com/tonyredondo/dd-ci-testing-poc/releases/latest/down
 ddto --version                # prints the installed version
 ```
 
+In PowerShell, including Windows runners, use `install.ps1`, which behaves the
+same and also adds the directory to the current session's `PATH`:
+
+```powershell
+irm https://github.com/tonyredondo/dd-ci-testing-poc/releases/latest/download/install.ps1 | iex
+ddto --version
+```
+
 Pass options after `bash -s --`: `--version v1.2.3` for a release, `--dir` for
-another directory on `PATH`. In GitHub Actions the script adds the directory to
+another directory on `PATH`. In PowerShell, set `$env:DDTO_VERSION` and
+`$env:DDTO_INSTALL_DIR` before `iex`. In GitHub Actions the script adds the directory to
 `PATH` for later steps. An installed executable of the same version stays.
 Without an executable for the platform, it builds `ddto` with `go install`; a
 checksum mismatch stops it. To use another

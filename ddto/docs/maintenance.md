@@ -291,9 +291,11 @@ refuses other branches. It:
    its version too: `ddto --version`, logs, telemetry and test events.
 2. Builds the executables with `go run ./scripts/release -o dist`, checks that
    `ddto --version` reports the version, and runs
-   [`install.sh`](../scripts/install.sh) against the built files.
-3. Pushes the tag and publishes the release with the executables, `install.sh`
-   and `SHA256SUMS`. A version with a suffix publishes a prerelease.
+   [`install.sh`](../scripts/install.sh) and
+   [`install.ps1`](../scripts/install.ps1) against the built files.
+3. Pushes the tag and publishes the release with the executables, `install.sh`,
+   `install.ps1` and `SHA256SUMS`. A version with a suffix publishes a
+   prerelease.
 4. After a release without a suffix, a second job opens a pull request that
    sets `main`'s version to the release's with `-dev`, such as `0.1.0-dev`.
    GitHub runs the workflows of a pull request that a workflow opens only
@@ -325,9 +327,12 @@ names; a runtime package outside those directories needs a new entry in
 `runtimeDirs`. `TestReleaseExecutableIsSelfContained` builds the host's
 executable with a version and runs it with an empty user cache and module
 cache and a module proxy that refuses every request.
-`scripts/test_install.py` runs `install.sh` against a local server: a checked
-download, a checksum mismatch, the `go install` fallback, an installed
-executable of the same version and `GITHUB_PATH`.
+`scripts/test_install.py` runs `install.sh` and, with `pwsh`, `install.ps1`
+against a local server: a checked download, a checksum mismatch, the
+`go install` fallback, an installed executable of the same version and
+`GITHUB_PATH`. `TestInstallScriptsInstallTheReleaseExecutable` installs the
+host's release executable with each script that the platform has, PowerShell
+on Windows included.
 
 ## Verification before publication
 
