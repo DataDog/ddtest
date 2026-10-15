@@ -29,7 +29,7 @@ func (e configurationExecutor) CombinedOutput(ctx context.Context, name string, 
 // Commands still use the existing process executor. The temporary copy gives
 // every variant independent manifests, dependencies, test files and build output.
 func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writer, item *configurationResult) (result validationResult, runErr error) {
-	if len(item.Prerequisites) == 0 && !onboard.IsDDTestCommand(t.command) && t.framework.Name() != "playwright" && t.framework.Name() != "mocha" && t.framework.Name() != "cypress" && t.framework.Name() != "cucumber" || t.checkOnly {
+	if len(item.Prerequisites) == 0 && !onboard.IsDDTestCommand(t.command) && t.framework.Name() != "playwright" && t.framework.Name() != "mocha" && t.framework.Name() != "cypress" && t.framework.Name() != "cucumber" && t.framework.Name() != "webdriverio" || t.checkOnly {
 		if err := t.runBuildPrerequisites(ctx, output, item); err != nil {
 			return result, err
 		}

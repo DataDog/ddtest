@@ -44,6 +44,9 @@ var mochaInstructions string
 //go:embed instructions/cucumber.md
 var cucumberInstructions string
 
+//go:embed instructions/webdriverio.md
+var webdriverIOInstructions string
+
 // Run detects the first supported onboarding path and prints its instructions.
 func Run(output io.Writer) error {
 	repositoryRoot, err := os.Getwd()
@@ -79,13 +82,23 @@ func Run(output io.Writer) error {
 	for _, workflow := range workflows {
 		_, _ = fmt.Fprintf(output, "  - %s\n", workflow)
 	}
-	if name == "jest" || name == "vitest" || name == "playwright" || name == "mocha" || name == "cucumber" {
+	if name == "jest" || name == "vitest" || name == "playwright" || name == "mocha" || name == "cucumber" || name == "webdriverio" {
 		scope, err := DiscoverValidationScope(repositoryRoot, name)
 		if err != nil {
 			return err
 		}
+		if name == "webdriverio" {
+			_, _ = fmt.Fprintln(output, "\n"+strings.TrimSpace(instructions(language, name)))
+		}
 		WriteValidationScope(output, scope)
-		_, _ = fmt.Fprintf(output, "Run `ddtest testdrive --framework %s --all --check-only --yes`, then finish edits and review separate setup, and run `ddtest testdrive --framework %s --all --tracer-version <resolved-release> --yes`. This aggregates every discovered configuration in one report pair. A --command run validates only its selected configuration.\n", name, name)
+		if name == "webdriverio" {
+			_, _ = fmt.Fprintln(output, "First inspect all configurations with `ddtest testdrive --framework webdriverio --all --check-only --yes`. Then follow the focused validation instructions below. Do not automatically execute unavailable browsers or the complete example matrix.")
+			if len(scope.Commands) > 0 {
+				_, _ = fmt.Fprintf(output, "First focused command: `ddtest testdrive --framework webdriverio --command %q --tracer-version <resolved-release> --yes`. This validates only that configuration; other variants stay unvalidated.\n", scope.Commands[0].Command)
+			}
+		} else {
+			_, _ = fmt.Fprintf(output, "Run `ddtest testdrive --framework %s --all --check-only --yes`, then finish edits and review separate setup, and run `ddtest testdrive --framework %s --all --tracer-version <resolved-release> --yes`. This aggregates every discovered configuration in one report pair. A --command run validates only its selected configuration.\n", name, name)
+		}
 	}
 	if name == "jest" {
 		command, err := JestValidationCommand(repositoryRoot)
@@ -116,13 +129,15 @@ func Run(output io.Writer) error {
 		_, _ = fmt.Fprintf(output, "This is configuration detection, not completed onboarding. Run `ddtest testdrive --framework %s` to validate locally. Jest, Vitest, Playwright, Mocha, Cypress and Cucumber projects also check CI runtime compatibility; configurations without a validation adapter remain unvalidated.\n", name)
 		_, _ = fmt.Fprintln(output, "After it finishes, share the validation verdict, CI runtime compatibility and feature results using the final response block printed by testdrive. Copy its absolute Markdown report links verbatim, each on its own line; do not shorten them to relative paths or replace them with file:// URLs.")
 		_, _ = fmt.Fprintln(output, "Keep .testoptimization/report.html and .testoptimization/testdrive.json after cleanup, even on failure. Do not declare validation complete while any required check is failed or inconclusive.")
-		if name != "vitest" && name != "playwright" && name != "mocha" && name != "cucumber" {
+		if name != "vitest" && name != "playwright" && name != "mocha" && name != "cucumber" && name != "webdriverio" {
 			return nil
 		}
 	}
 
-	_, _ = fmt.Fprintln(output)
-	_, _ = fmt.Fprintln(output, strings.TrimSpace(instructions(language, name)))
+	if name != "webdriverio" {
+		_, _ = fmt.Fprintln(output)
+		_, _ = fmt.Fprintln(output, strings.TrimSpace(instructions(language, name)))
+	}
 	return nil
 }
 
@@ -186,6 +201,9 @@ func findWorkflows(root, language, name string) (workflowDiscovery, error) {
 	if err != nil {
 		return result, err
 	}
+	if name == "webdriverio" {
+		return findWebdriverIOWorkflows(root, workflows)
+	}
 	actionLanguage := language
 	if language == "javascript" {
 		actionLanguage = "js"
@@ -194,6 +212,9 @@ func findWorkflows(root, language, name string) (workflowDiscovery, error) {
 		found, configured := false, true
 		for _, jobName := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[jobName]
+			if name == "webdriverio" && !webdriverIOJobCandidate(root, workflow, job) {
+				continue
+			}
 			hasAction := false
 			for i, step := range job.Steps {
 				condition := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(step.If), "${{"), "}}"))
@@ -429,6 +450,9 @@ func toxRunsTests(root string, args []string, name string) bool {
 }
 
 func instructions(language, name string) string {
+	if language == "javascript" && name == "webdriverio" {
+		return strings.ReplaceAll(webdriverIOInstructions, "ddtest testdrive", "ddtest testdrive --framework webdriverio")
+	}
 	if language == "javascript" && name == "cucumber" {
 		return strings.ReplaceAll(cucumberInstructions, "ddtest testdrive", "ddtest testdrive --framework cucumber")
 	}

@@ -191,8 +191,8 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 	}
 	identity := passControl.Facts.Tests[0]
 	for _, feature := range jestFeatures {
-		if passControl.framework == "playwright" && feature == "skipping" {
-			result.Features = append(result.Features, featureResult{Name: feature, Status: "not supported", Reason: playwrightSkippingReason})
+		if (passControl.framework == "playwright" || passControl.framework == "webdriverio") && feature == "skipping" {
+			result.Features = append(result.Features, featureResult{Name: feature, Status: "not supported", Reason: browserSkippingReason(passControl.framework)})
 			continue
 		}
 		if feature == "skipping" && identity.SourceFile == "" {
@@ -218,7 +218,7 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 }
 
 func validProbeControl(run validationRun, status string) bool {
-	if (run.framework == "cypress" || run.framework == "cucumber") && (run.ProbeExecutions == nil || *run.ProbeExecutions != 1) {
+	if (run.framework == "cypress" || run.framework == "cucumber" || run.framework == "webdriverio") && (run.ProbeExecutions == nil || *run.ProbeExecutions != 1) {
 		return false
 	}
 	expectedExit := (status == "passed" && run.ExitCode == 0) || (status == "failed" && run.ExitCode > 0)
@@ -316,7 +316,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	// Vitest reports one final native result for retries; attempt telemetry must
 	// still prove that the probe ran multiple times for the expected reason.
 	nativeRepeated := nativePass >= 2 || ((run.framework == "vitest" || run.framework == "playwright") && nativePass == 1) ||
-		((run.framework == "cypress" || run.framework == "cucumber") && nativePass == 1 && run.ProbeExecutions != nil && *run.ProbeExecutions >= 2)
+		((run.framework == "cypress" || run.framework == "cucumber" || run.framework == "webdriverio") && nativePass == 1 && run.ProbeExecutions != nil && *run.ProbeExecutions >= 2)
 	success := false
 	switch feature {
 	case "auto-retries":
@@ -337,7 +337,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	case "attempt-to-fix":
 		success = attemptToFix && passed >= 2 && failed == 0 && retries > 0 && nativeRepeated && nativeFail == 0
 	}
-	if run.framework == "cypress" || run.framework == "cucumber" {
+	if run.framework == "cypress" || run.framework == "cucumber" || run.framework == "webdriverio" {
 		success = success && run.ProbeExecutions != nil && *run.ProbeExecutions == passed+failed
 	}
 	if !success {

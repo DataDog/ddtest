@@ -56,7 +56,7 @@ func executionStatus(result *validationResult) string {
 }
 
 func hasPairedExecution(result validationResult) bool {
-	if result.CheckOnly || (result.Framework != "jest" && result.Framework != "vitest" && result.Framework != "mocha" && result.Framework != "cypress" && result.Framework != "cucumber") {
+	if result.CheckOnly || (result.Framework != "jest" && result.Framework != "vitest" && result.Framework != "mocha" && result.Framework != "cypress" && result.Framework != "cucumber" && result.Framework != "webdriverio") {
 		return false
 	}
 	baseline, instrumented := false, false

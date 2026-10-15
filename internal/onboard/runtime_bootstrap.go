@@ -28,6 +28,9 @@ func checkTestBootstrap(root string, workflow ciWorkflow, job runtimeJob, step r
 	if len(frameworks) > 0 && frameworks[0] == "cucumber" {
 		return checkCucumberBootstrap(root, workflow, job, step, row, commands)
 	}
+	if len(frameworks) > 0 && frameworks[0] == "webdriverio" {
+		return checkWebdriverIOBootstrap(root, workflow, job, step, row)
+	}
 	runnerOnly := len(commands) > 0 && len(frameworks) > 0 && frameworks[0] == "vitest"
 	for _, command := range commands {
 		words, err := shellquote.Split(command.Command)
@@ -96,7 +99,7 @@ func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 					importFound = true
 				}
 			}
-			if requireFound && (len(frameworks) == 0 || frameworks[0] != "vitest" || importFound) {
+			if requireFound && (len(frameworks) == 0 || (frameworks[0] != "vitest" && frameworks[0] != "webdriverio") || importFound) {
 				return ""
 			}
 		}

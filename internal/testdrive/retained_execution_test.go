@@ -92,7 +92,7 @@ func TestPairedEvidenceSurvivesOtherFrameworkAndFailedPreflight(t *testing.T) {
 	// reporting-only framework -> final Jest check sequence.
 	run.framework = &telemetryOnlyFramework{}
 	run.checkOnly = true
-	require.ErrorContains(t, run.Run(t.Context(), &bytes.Buffer{}), "preflight currently supports Jest, Vitest, Playwright, Mocha, Cypress and Cucumber only")
+	require.ErrorContains(t, run.Run(t.Context(), &bytes.Buffer{}), "preflight currently supports Jest, Vitest, Playwright, Mocha, Cypress, Cucumber and WebdriverIO only")
 	require.Error(t, finishValidation(&bytes.Buffer{}, root, validationResult{Framework: "unvalidated",
 		Compatibility: verdict{Status: "unvalidated"}, Runs: []runSummary{
 			(validationRun{Name: "reporting-only", Command: "pnpm e2e", Instrumented: true}).summary(),

@@ -16,7 +16,7 @@ import (
 // The first local check is the baseline, including any pre-existing user edits.
 // Keep it inside the report rather than adding another customer-repo artifact.
 func checkCIPreservation(root string, result *validationResult) error {
-	if result.Framework != "mocha" && result.Framework != "cucumber" {
+	if result.Framework != "mocha" && result.Framework != "cucumber" && result.Framework != "webdriverio" {
 		return nil
 	}
 	previous, err := readPreviousValidation(root)

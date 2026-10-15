@@ -42,34 +42,35 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
-	environmentInfo    environmentInfo
-	environmentFailure *reportCard
-	cypress            *onboard.CypressCommand
-	cypressCommand     string
-	preparationError   error
-	isolated           bool
-	vitestRunner       bool
-	playwrightGuard    bool
-	allConfigurations  bool
-	reportModels       *[]reportModel
-	repositoryRoot     string
-	framework          framework.Framework
-	language           string
-	command            string
-	args               []string
-	tracerLabel        string
-	platform           platform.Platform
-	tracerVersion      string
-	projectTracer      string
-	session            *Session
-	installCommand     string
-	installArgs        []string
-	checkOnly          bool
-	preflight          func(context.Context, io.Writer, *validationResult) error
-	executor           commandExecutor
-	startIntake        func(string, intake.Scenario) (localIntake, error)
-	nodeVersion        func() string
-	resolveJSTracer    func(context.Context, string) (platform.JSSelection, error)
+	webdriverIOCapability *int
+	environmentInfo       environmentInfo
+	environmentFailure    *reportCard
+	cypress               *onboard.CypressCommand
+	cypressCommand        string
+	preparationError      error
+	isolated              bool
+	vitestRunner          bool
+	playwrightGuard       bool
+	allConfigurations     bool
+	reportModels          *[]reportModel
+	repositoryRoot        string
+	framework             framework.Framework
+	language              string
+	command               string
+	args                  []string
+	tracerLabel           string
+	platform              platform.Platform
+	tracerVersion         string
+	projectTracer         string
+	session               *Session
+	installCommand        string
+	installArgs           []string
+	checkOnly             bool
+	preflight             func(context.Context, io.Writer, *validationResult) error
+	executor              commandExecutor
+	startIntake           func(string, intake.Scenario) (localIntake, error)
+	nodeVersion           func() string
+	resolveJSTracer       func(context.Context, string) (platform.JSSelection, error)
 }
 
 // Prepare detects the repository and probes the project tracer without writing files.
@@ -98,8 +99,8 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	if all && strings.TrimSpace(settings.GetCommand()) != "" {
 		return nil, fmt.Errorf("--all and --command are mutually exclusive")
 	}
-	if all && runner.Name() != "jest" && runner.Name() != "vitest" && runner.Name() != "playwright" && runner.Name() != "mocha" && runner.Name() != "cypress" && runner.Name() != "cucumber" {
-		return nil, fmt.Errorf("--all currently validates Jest, Vitest, Playwright, Mocha, Cypress and Cucumber only")
+	if all && runner.Name() != "jest" && runner.Name() != "vitest" && runner.Name() != "playwright" && runner.Name() != "mocha" && runner.Name() != "cypress" && runner.Name() != "cucumber" && runner.Name() != "webdriverio" {
+		return nil, fmt.Errorf("--all currently validates Jest, Vitest, Playwright, Mocha, Cypress, Cucumber and WebdriverIO only")
 	}
 	if runner.Name() == "vitest" {
 		repositoryRoot, err = filepath.EvalSymlinks(repositoryRoot)
@@ -150,11 +151,13 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 		command, args = words[0], words[1:]
 	}
 	var preparationError error
-	if (runner.Name() == "mocha" || runner.Name() == "cypress" || runner.Name() == "cucumber") && !all {
+	if (runner.Name() == "mocha" || runner.Name() == "cypress" || runner.Name() == "cucumber" || runner.Name() == "webdriverio") && !all {
 		var selected string
 		var err error
 		if runner.Name() == "cypress" {
 			selected, err = onboard.CypressValidationCommand(repositoryRoot, settings.GetCommand())
+		} else if runner.Name() == "webdriverio" {
+			selected, err = onboard.WebdriverIOValidationCommand(repositoryRoot, settings.GetCommand())
 		} else if runner.Name() == "cucumber" {
 			selected, err = onboard.CucumberValidationCommand(repositoryRoot, settings.GetCommand())
 		} else {
@@ -229,6 +232,9 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	}
 	drive.checkOnly = len(checkOnly) > 0 && checkOnly[0]
 	drive.preflight = drive.checkJestPreflight
+	if runner.Name() == "webdriverio" {
+		drive.preflight = drive.checkWebdriverIOPreflight
+	}
 	if runner.Name() == "cucumber" {
 		drive.preflight = drive.checkCucumberPreflight
 	}
@@ -251,7 +257,7 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 }
 
 func displayName(name string) string {
-	names := map[string]string{"javascript": "JavaScript", "python": "Python", "ruby": "Ruby", "jest": "Jest", "mocha": "Mocha", "cypress": "Cypress", "playwright": "Playwright", "cucumber": "Cucumber", "vitest": "Vitest", "pytest": "pytest", "rspec": "RSpec", "minitest": "Minitest"}
+	names := map[string]string{"javascript": "JavaScript", "webdriverio": "WebdriverIO", "python": "Python", "ruby": "Ruby", "jest": "Jest", "mocha": "Mocha", "cypress": "Cypress", "playwright": "Playwright", "cucumber": "Cucumber", "vitest": "Vitest", "pytest": "pytest", "rspec": "RSpec", "minitest": "Minitest"}
 	if label := names[name]; label != "" {
 		return label
 	}
@@ -302,7 +308,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 		}
 		_, _ = fmt.Fprintf(output, "  - install %s: %s\n", t.tracerLabel, shellquote.Join(install...))
 	}
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" {
+	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio" {
 		_, _ = fmt.Fprintln(output, "  - inspect the selected framework configuration and tracer compatibility before running tests")
 	}
 
@@ -311,11 +317,14 @@ func (t *Testdrive) Preview(output io.Writer) {
 	} else {
 		_, _ = fmt.Fprintf(output, "  - command: %s\n", shellquote.Join(append([]string{command}, args...)...))
 	}
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" {
+	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio" {
 		_, _ = fmt.Fprintln(output, "  - check GitHub Actions Node runtimes against the workflow-selected tracer using public action and npm metadata")
 		_, _ = fmt.Fprintln(output, "  - compare native JSON results without instrumentation and with reporting-only instrumentation")
 		_, _ = fmt.Fprintln(output, "  - repeat the pair if outcomes differ; timing and console order are ignored")
-		if t.framework.Name() == "playwright" {
+		if t.framework.Name() == "webdriverio" {
+			_, _ = fmt.Fprintln(output, "  - preserve WDIO services, capabilities and reporters in a temporary copy; clean owned server/browser processes")
+			_, _ = fmt.Fprintln(output, "  - check five supported features per capability; TIA skipping and code coverage are not supported")
+		} else if t.framework.Name() == "playwright" {
 			_, _ = fmt.Fprintln(output, "  - run in a temporary repository copy; capture native results and clean owned server processes after every run")
 			_, _ = fmt.Fprintln(output, "  - check retries, EFD, quarantine, disabled tests and attempt-to-fix per Playwright project; TIA skipping/coverage are not supported")
 		} else {
@@ -326,7 +335,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	}
 	_, _ = fmt.Fprintf(output, "  - update the validation report at %s; retain the latest paired execution as historical evidence until another pair runs\n", reportPath)
 	_, _ = fmt.Fprintf(output, "  - save the instrumented suite findings in %s\n", htmlReportPath(""))
-	if t.framework.Name() != "playwright" {
+	if t.framework.Name() != "playwright" && t.framework.Name() != "webdriverio" {
 		_, _ = fmt.Fprintln(output, "  - disable coverage thresholds only for isolated probes, preserving coverage collection and the original full-suite thresholds")
 	}
 	_, _ = fmt.Fprintln(output, "  - keep the upstream HTML findings report and compact JSON validation report; remove temporary probes, tracer, traffic, and run files")
@@ -373,11 +382,14 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 	}
 	var result validationResult
 	var runErr error
-	if (t.framework.Name() == "vitest" && onboard.IsDDTestCommand(t.command) || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber") && !t.checkOnly {
+	if (t.framework.Name() == "vitest" && onboard.IsDDTestCommand(t.command) || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") && !t.checkOnly {
 		child := *t
 		var models []reportModel
 		child.reportModels = &models
 		child.preflight = child.checkVitestPreflight
+		if t.framework.Name() == "webdriverio" {
+			child.preflight = child.checkWebdriverIOPreflight
+		}
 		if t.framework.Name() == "cucumber" {
 			child.preflight = child.checkCucumberPreflight
 		}
@@ -402,7 +414,8 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 	} else {
 		result, runErr = t.run(ctx, output)
 	}
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" {
+	result.FocusedCommand = t.framework.Name() == "webdriverio" && strings.TrimSpace(settings.GetCommand()) != ""
+	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio" {
 		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
 		if err != nil {
 			runErr = errors.Join(runErr, err)
@@ -451,7 +464,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		return result, errors.New(t.environmentFailure.Title)
 	}
 
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" {
+	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio" {
 		check := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
 		result.CIRuntime = &check
 		if t.preflight != nil {
@@ -465,7 +478,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 			return result, nil
 		}
 	} else if t.checkOnly {
-		return result, fmt.Errorf("configuration preflight currently supports Jest, Vitest, Playwright, Mocha, Cypress and Cucumber only")
+		return result, fmt.Errorf("configuration preflight currently supports Jest, Vitest, Playwright, Mocha, Cypress, Cucumber and WebdriverIO only")
 	}
 
 	_, _ = fmt.Fprintf(output, "\nPreparing %s in %s...\n", t.tracerLabel, session.Directory())
@@ -509,7 +522,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		result.Tracer = t.installedTracerLabel(t.projectTracer)
 		result.TracerSource = "project installation (reused; fallback selector ignored)"
 	}
-	if t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" {
+	if t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio" {
 		if err := verifyInstalledSelection(installation.Path, &result); err != nil {
 			return result, err
 		}

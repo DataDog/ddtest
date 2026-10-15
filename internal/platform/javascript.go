@@ -54,7 +54,10 @@ func (j *JavaScript) Detect(repositoryRoot string) (bool, error) {
 func (j *JavaScript) DetectFramework() (framework.Framework, error) {
 	root := "."
 	hint := settings.GetFramework()
-	candidates := []framework.Framework{framework.NewJest(j), framework.NewMocha(j), framework.NewCypress(j), framework.NewPlaywright(j), framework.NewCucumber(j), framework.NewVitest(j)}
+	if hint == "wdio" {
+		hint = "webdriverio"
+	}
+	candidates := []framework.Framework{framework.NewJest(j), framework.NewWebdriverIO(j), framework.NewMocha(j), framework.NewCypress(j), framework.NewPlaywright(j), framework.NewCucumber(j), framework.NewVitest(j)}
 	if hint == "" {
 		manifest, found, err := readPackageManifest(root)
 		if err != nil {
@@ -66,6 +69,8 @@ func (j *JavaScript) DetectFramework() (framework.Framework, error) {
 			candidates = slices.DeleteFunc(candidates, func(f framework.Framework) bool {
 				names := []string{f.Name()}
 				switch f.Name() {
+				case "webdriverio":
+					names = append(names, "@wdio/cli", "wdio")
 				case "playwright":
 					names = append(names, "@playwright/test")
 				case "cucumber":
