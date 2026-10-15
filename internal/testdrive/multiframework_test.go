@@ -105,6 +105,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			if name == "mocha" || name == "jest" || name == "vitest" || name == "playwright" || name == "cypress" {
 				return
 			} // Paired validation has separate real-run tests.
+			run.environmentFailure = nil
 			run.nodeVersion = func() string { return "v20.0.0" }
 			installer := &fakeTracer{preloadPath: filepath.Join(root, "isolated")}
 			run.platform = installer
@@ -235,6 +236,7 @@ func TestCypressTestdrivePreservesCommand(t *testing.T) {
 			run.command, run.args = command[0], command[1:]
 			// The selected tracer can live outside the project's module tree.
 			run.projectTracer = filepath.Join(t.TempDir(), "dd-trace", "ci", "init.js")
+			run.environmentFailure = nil
 			run.nodeVersion = func() string { return "v20.20.0" }
 			executor := &fakeTestdriveExecutor{}
 			run.executor = executor

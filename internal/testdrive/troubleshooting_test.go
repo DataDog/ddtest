@@ -40,7 +40,9 @@ func TestRunFailureFindingsAcrossReportConsoleAndJSON(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root, session := t.TempDir(), t.TempDir()
 			runtime := reportRuntime{Framework: "Vitest", Command: tc.command, Output: tc.log}
-			if tc.framework == "pytest" { runtime.Framework = "pytest" }
+			if tc.framework == "pytest" {
+				runtime.Framework = "pytest"
+			}
 			if tc.err != nil {
 				runtime.Error = tc.err.Error()
 			}

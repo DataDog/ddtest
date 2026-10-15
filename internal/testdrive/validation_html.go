@@ -22,6 +22,7 @@ func htmlReportPath(root string) string {
 // cleanup, and publish the real instrumented suite, never synthetic probes.
 func (t *Testdrive) writeHTMLReport(output io.Writer, result *validationResult, run validationRun) error {
 	runtime := reportRuntime{
+		Environment: t.environmentInfo, SetupFailure: t.environmentFailure,
 		Framework: displayName(t.framework.Name()), Tracer: result.Tracer + " · " + result.TracerSource,
 		Command: run.Command, Output: run.commandOutput,
 	}
