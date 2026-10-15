@@ -42,32 +42,34 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
-	cypress           *onboard.CypressCommand
-	cypressCommand    string
-	preparationError  error
-	isolated          bool
-	vitestRunner      bool
-	playwrightGuard   bool
-	allConfigurations bool
-	reportModels      *[]reportModel
-	repositoryRoot    string
-	framework         framework.Framework
-	language          string
-	command           string
-	args              []string
-	tracerLabel       string
-	platform          platform.Platform
-	tracerVersion     string
-	projectTracer     string
-	session           *Session
-	installCommand    string
-	installArgs       []string
-	checkOnly         bool
-	preflight         func(context.Context, io.Writer, *validationResult) error
-	executor          commandExecutor
-	startIntake       func(string, intake.Scenario) (localIntake, error)
-	nodeVersion       func() string
-	resolveJSTracer   func(context.Context, string) (platform.JSSelection, error)
+	environmentInfo    environmentInfo
+	environmentFailure *reportCard
+	cypress            *onboard.CypressCommand
+	cypressCommand     string
+	preparationError   error
+	isolated           bool
+	vitestRunner       bool
+	playwrightGuard    bool
+	allConfigurations  bool
+	reportModels       *[]reportModel
+	repositoryRoot     string
+	framework          framework.Framework
+	language           string
+	command            string
+	args               []string
+	tracerLabel        string
+	platform           platform.Platform
+	tracerVersion      string
+	projectTracer      string
+	session            *Session
+	installCommand     string
+	installArgs        []string
+	checkOnly          bool
+	preflight          func(context.Context, io.Writer, *validationResult) error
+	executor           commandExecutor
+	startIntake        func(string, intake.Scenario) (localIntake, error)
+	nodeVersion        func() string
+	resolveJSTracer    func(context.Context, string) (platform.JSSelection, error)
 }
 
 // Prepare detects the repository and probes the project tracer without writing files.
@@ -180,12 +182,25 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	}
 	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 	session := planSession()
-	options := platform.TracerOptions{Directory: session.Directory(), Version: version, Command: command, Args: args}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	projectTracer, probeErr := detectedPlatform.DetectTracer(ctx, options)
-	if probeErr != nil {
-		projectTracer = ""
+	var environment environmentInfo
+	var environmentFailure *reportCard
+	switch language {
+	case "python":
+		var source string
+		command, args, source = pythonTestdriveCommand(repositoryRoot, command, args, strings.TrimSpace(settings.GetCommand()) != "")
+		environment, environmentFailure = pythonEnvironmentInfo(ctx, command, args, source)
+	case "javascript":
+		environment = nodeEnvironmentInfo(ctx, command)
+	}
+	options := platform.TracerOptions{Directory: session.Directory(), Version: version, Command: command, Args: args}
+	if language == "python" && environment.Executable != "" {
+		options.Command, options.Args = environment.Executable, nil
+	}
+	var projectTracer string
+	if environmentFailure == nil {
+		projectTracer, _ = detectedPlatform.DetectTracer(ctx, options)
 	}
 	var installCommand string
 	var installArgs []string
@@ -200,6 +215,7 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 			return intake.StartScenario(directory, scenario)
 		},
 		nodeVersion: currentNodeVersion}
+	drive.environmentInfo, drive.environmentFailure = environment, environmentFailure
 	drive.preparationError = preparationError
 	drive.allConfigurations = all
 	if runner.Name() == "cypress" && !all && strings.TrimSpace(settings.GetCommand()) == "" {
@@ -258,14 +274,19 @@ func (t *Testdrive) Preview(output io.Writer) {
 
 	_, _ = fmt.Fprintf(output, "DDTest found %s and %s.\n", displayName(t.language), displayName(t.framework.Name()))
 	_, _ = fmt.Fprintln(output)
+	t.environmentInfo.write(output)
 	_, _ = fmt.Fprintln(output, "It will:")
 	directory := t.session.Directory()
 	if relative, err := filepath.Rel(t.repositoryRoot, directory); err == nil {
 		directory = relative
 	}
 	_, _ = fmt.Fprintf(output, "  - create a private temporary directory outside the repository: %s\n", directory)
-	if t.projectTracer != "" {
+	if t.environmentFailure != nil {
+		_, _ = fmt.Fprintf(output, "  - save findings and troubleshooting; tests will not run: %s\n", t.environmentFailure.Title)
+	} else if t.projectTracer != "" {
 		_, _ = fmt.Fprintf(output, "  - reuse installed %s; no installation is needed\n", t.installedTracerLabel(t.projectTracer))
+	} else if t.language == "python" {
+		_, _ = fmt.Fprintf(output, "  - install %s in a temporary Python environment; remove it after the run\n", t.tracerLabel)
 	} else {
 		install := append([]string{t.installCommand}, t.installArgs...)
 		for i, arg := range install {
@@ -280,7 +301,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	if t.allConfigurations && t.framework.Name() == "cypress" {
 		_, _ = fmt.Fprintln(output, "  - run each listed Cypress configuration through its preserved API or CLI path")
 	} else {
-		_, _ = fmt.Fprintf(output, "  - run: %s\n", shellquote.Join(append([]string{command}, args...)...))
+		_, _ = fmt.Fprintf(output, "  - command: %s\n", shellquote.Join(append([]string{command}, args...)...))
 	}
 	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" {
 		_, _ = fmt.Fprintln(output, "  - check GitHub Actions Node runtimes against the workflow-selected tracer using public action and npm metadata")
@@ -409,6 +430,16 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		}
 	}()
 
+	if t.environmentFailure != nil {
+		result.Compatibility = verdict{Status: "not exercised", Reason: t.environmentFailure.Title}
+		_, _ = fmt.Fprintf(output, "\nEnvironment check: %s\n%s\n", t.environmentFailure.Title, t.environmentFailure.Context)
+		execution := validationRun{Command: shellquote.Join(append([]string{t.command}, t.args...)...), commandOutput: t.environmentFailure.Context}
+		if err := t.writeHTMLReport(output, &result, execution); err != nil {
+			return result, err
+		}
+		return result, errors.New(t.environmentFailure.Title)
+	}
+
 	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" {
 		check := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
 		result.CIRuntime = &check
@@ -437,7 +468,23 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	}
 	if t.projectTracer == "" {
 		var err error
-		installation, err = t.platform.InstallTestdriveTracer(ctx, platform.TracerOptions{Directory: session.Directory(), Version: version, Command: t.command, Args: t.args})
+		directory := session.Directory()
+		if t.language == "python" {
+			directory, err = os.MkdirTemp("", "ddtest-python-*")
+			if err != nil {
+				return result, err
+			}
+			defer func() {
+				if err := os.RemoveAll(directory); err != nil {
+					runErr = errors.Join(runErr, err)
+				}
+			}()
+		}
+		options := platform.TracerOptions{Directory: directory, Version: version, Command: t.command, Args: t.args}
+		if t.language == "python" && t.environmentInfo.Executable != "" {
+			options.Command, options.Args = t.environmentInfo.Executable, nil
+		}
+		installation, err = t.platform.InstallTestdriveTracer(ctx, options)
 		if err != nil {
 			return result, err
 		}
@@ -511,7 +558,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	if err != nil {
 		return result, err
 	}
-	runtime := reportRuntime{Framework: displayName(t.framework.Name()), Tracer: result.Tracer + " · " + result.TracerSource, Command: execution.Command, Output: string(testOutput)}
+	runtime := reportRuntime{Environment: t.environmentInfo, SetupFailure: t.environmentFailure, Framework: displayName(t.framework.Name()), Tracer: result.Tracer + " · " + result.TracerSource, Command: execution.Command, Output: string(testOutput)}
 	if testErr != nil {
 		runtime.Error = testErr.Error()
 	}
@@ -591,7 +638,7 @@ func writeFindings(output io.Writer, findings intake.Facts, cards ...reportCard)
 	}
 	count := len(findings.ConfigurationErrors)
 	for _, finding := range cards {
-		if finding.Kind != "command-failed" && finding.Kind != "no-test-events" {
+		if finding.Scope != runFindingScope {
 			continue
 		}
 		count += finding.Count

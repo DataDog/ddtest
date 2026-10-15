@@ -33,7 +33,7 @@ func TestPrepareUsesCICommandWithoutLoadingJestConfig(t *testing.T) {
 	require.Equal(t, []string{"run", "test:ci"}, drive.args)
 	var output bytes.Buffer
 	drive.Preview(&output)
-	require.Contains(t, output.String(), "run: npm run test:ci")
+	require.Contains(t, output.String(), "command: npm run test:ci")
 	settings.Get().Command = "node_modules/.bin/jest --config explicit.js"
 	drive, err = Prepare("latest")
 	require.NoError(t, err)
@@ -76,7 +76,7 @@ func TestPrepareVitestKeepsValidationCommand(t *testing.T) {
 			require.NoError(t, err, "prepared command must be usable by Vitest preflight")
 			var preview bytes.Buffer
 			drive.Preview(&preview)
-			require.Contains(t, preview.String(), "run: "+drive.command)
+			require.Contains(t, preview.String(), "command: "+drive.command)
 		})
 	}
 }
