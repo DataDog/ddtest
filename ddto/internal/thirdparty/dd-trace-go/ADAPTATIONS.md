@@ -1248,10 +1248,9 @@ both cases, and the process ends as under go test.
 Upstream registers SIGINT and SIGTERM with `signal.Notify` when CI Visibility
 starts and, on either signal, closes CI Visibility and calls `os.Exit(1)`. Go
 delivers a signal to every channel that wants it, so that handler also ends a
-process whose test handles the signal itself: a server test that sends itself
-SIGTERM to check its graceful shutdown, or fuzzing's coordinator, which stops
-on SIGINT. The process exits with status 1 between two tests, and go test
-prints no reason. A signal that nothing handles also ends it with status 1
+process whose test handles the signal itself, such as a server test that
+sends itself SIGTERM to check its graceful shutdown. The process exits with
+status 1 between two tests, and go test prints no reason. A signal that nothing handles also ends it with status 1
 instead of the signal, so go test does not print `signal: terminated`.
 
 Go has no API that tells whether another channel wants a signal, and its

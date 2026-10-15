@@ -295,7 +295,10 @@ refuses other branches. It:
    [`install.ps1`](../scripts/install.ps1) against the built files.
 3. Pushes the tag and publishes the release with the executables, `install.sh`,
    `install.ps1` and `SHA256SUMS`. A version with a suffix publishes a
-   prerelease.
+   prerelease. GitHub generates the notes from the pull requests merged since
+   the previous final release, which the workflow passes as the start tag:
+   the previous tag points to its own release commit, outside the new tag's
+   history, so GitHub would otherwise list every pull request.
 4. After a release without a suffix, a second job opens a pull request that
    sets `main`'s version to the release's with `-dev`, such as `0.1.0-dev`.
    GitHub runs the workflows of a pull request that a workflow opens only

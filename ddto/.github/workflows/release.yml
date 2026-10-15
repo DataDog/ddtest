@@ -3,7 +3,8 @@ name: Release
 # that version to internal/version in a commit that only the new tag points to,
 # so that go install at the tag reports it too; builds and checks the
 # executables; then pushes the tag and publishes the release with the
-# executables, install.sh, install.ps1 and SHA256SUMS. After a release without
+# executables, install.sh, install.ps1 and SHA256SUMS, with notes generated
+# from the pull requests since the previous final release. After a release without
 # a prerelease suffix, a second job opens a pull request that sets main's
 # version to the release's with a -dev suffix, such as 0.1.0-dev; rerunning
 # that job alone retries it.
@@ -77,9 +78,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git push origin "refs/tags/$VERSION"
           flags=()
           if [[ "$VERSION" == *-* ]]; then flags+=(--prerelease); fi
+          # Notes list what changed since the previous final release. Each tag
+          # points to its own release commit, which main never contains, so
+          # GitHub finds no earlier tag in the new tag's history and would list
+          # every pull request. The first release has no previous one. Looked
+          # up before the push, so that a failure leaves no tag behind.
+          previous=$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')
+          if [[ -n "$previous" ]]; then flags+=(--notes-start-tag "$previous"); fi
+          echo "release notes since: ${previous:-the first commit}"
+          git push origin "refs/tags/$VERSION"
           gh release create "$VERSION" dist/* --verify-tag --title "$VERSION" --generate-notes "${flags[@]}"
 
   dev-version:
