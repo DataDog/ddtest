@@ -553,15 +553,10 @@ THE SOFTWARE.
         background: var(--surface);
         border-radius: 8px;
       }
-      .problem-card[data-kind="failed"],
-      .problem-card[data-kind="error"],
-      .problem-card[data-kind="command-failed"],
-      .problem-card[data-kind="no-test-events"] {
+      .problem-card[data-severity="error"] {
         --card-accent: var(--red);
       }
-      .problem-card[data-kind="flaky"],
-      .problem-card[data-kind="slow"],
-      .problem-card[data-kind="missing-coverage"] {
+      .problem-card[data-severity="warning"] {
         --card-accent: var(--amber);
       }
       .problem-card[data-severity="info"] {
@@ -1268,7 +1263,7 @@ THE SOFTWARE.
                     {{ template "icon-stopwatch" }}
                   {{ else if eq .Kind "missing-coverage" }}
                     {{ template "icon-exclamation-circle" }}
-                  {{ else if or (eq .Kind "error") (eq .Kind "command-failed") (eq .Kind "no-test-events") }}
+                  {{ else if eq .Severity "error" }}
                     {{ template "icon-exclamation-circle" }}
                   {{ else }}
                     {{ template "icon-file-earmark-text" }}
@@ -1355,9 +1350,9 @@ THE SOFTWARE.
           {{ end }}
         </dl>
         <details class="command-output"{{ if or .NoTestEvents .Runtime.Error }} open{{ end }}>
-          <summary>{{ .Runtime.Framework }} command output</summary>
+          <summary>{{ if .Runtime.SetupFailure }}Environment check{{ else }}{{ .Runtime.Framework }} command output{{ end }}</summary>
           {{ if .Runtime.Command }}<p class="command-line"><code>{{ .Runtime.Command }}</code></p>{{ end }}
-          {{ if .Runtime.Error }}<p class="command-error">Command failed: {{ .Runtime.Error }}</p>{{ end }}
+          {{ if .Runtime.Error }}<p class="command-error">{{ if .Runtime.SetupFailure }}Tests were not run:{{ else }}Command failed:{{ end }} {{ .Runtime.Error }}</p>{{ end }}
           {{ if .Runtime.Output }}
             <pre class="command-log" tabindex="0" aria-label="{{ .Runtime.Framework }} command output">{{ .Runtime.Output }}</pre>
           {{ else }}

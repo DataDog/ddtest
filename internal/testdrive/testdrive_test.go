@@ -529,6 +529,69 @@ func TestRunReportsSetupAndCollectionErrors(t *testing.T) {
 	})
 }
 
+func TestPythonTemporaryEnvironmentCleanup(t *testing.T) {
+	for _, outcome := range []string{"success", "install failure", "intake failure", "test failure", "canceled"} {
+		t.Run(outcome, func(t *testing.T) {
+			root := t.TempDir()
+			installer := &fakeTracer{}
+			executor := &fakeTestdriveExecutor{}
+			drive := &Testdrive{
+				repositoryRoot: root, language: "python", framework: framework.NewPytest(platform.NewPython()),
+				command: "python", args: []string{"-m", "pytest"}, platform: installer, executor: executor,
+				session: planSession(root),
+			}
+			if outcome == "install failure" {
+				installer.err = errors.New("installation failed")
+			}
+			if outcome == "test failure" {
+				executor.err = errors.New("tests failed")
+			}
+			if outcome == "canceled" {
+				executor.err = context.Canceled
+			}
+			drive.startIntake = func(string) (localIntake, error) {
+				// Stand in for files installed in the temporary environment.
+				requireWriteFile(t, filepath.Join(installer.options.Directory, "installed-package"), "package")
+				if outcome == "intake failure" {
+					return nil, errors.New("listener failed")
+				}
+				return &fakeIntake{findings: intake.Facts{TestEventCount: 1}}, nil
+			}
+			err := drive.Run(t.Context(), &bytes.Buffer{})
+			if (err == nil) != (outcome == "success") {
+				t.Fatalf("Run() error = %v", err)
+			}
+			directory := installer.options.Directory
+			if directory == "" || filepath.Dir(directory) != filepath.Clean(os.TempDir()) || !strings.HasPrefix(filepath.Base(directory), "ddtest-python-") {
+				t.Fatalf("installation directory is not a private temporary directory: %q", directory)
+			}
+			if _, err := os.Stat(directory); !os.IsNotExist(err) {
+				t.Fatalf("temporary environment remains after %s: %v", outcome, err)
+			}
+			if outcome != "install failure" && outcome != "intake failure" {
+				for _, file := range []string{"findings.json", "report.html", testOutputFilename} {
+					if _, err := os.Stat(filepath.Join(drive.session.Directory(), file)); err != nil {
+						t.Fatalf("report artifact %s removed: %v", file, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestPythonPreviewDescribesTemporaryInstallation(t *testing.T) {
+	root := t.TempDir()
+	drive := &Testdrive{repositoryRoot: root, language: "python", framework: framework.NewPytest(platform.NewPython()), session: planSession(root), tracerLabel: "ddtrace@latest"}
+	var output bytes.Buffer
+	drive.Preview(&output)
+	if !strings.Contains(output.String(), "install ddtrace@latest in a temporary Python environment; remove it after the run") {
+		t.Fatal(output.String())
+	}
+	if _, err := os.Stat(drive.session.Directory()); !os.IsNotExist(err) {
+		t.Fatalf("preview created an output directory: %v", err)
+	}
+}
+
 func TestRunReportsPassingSuiteWithoutEvents(t *testing.T) {
 	testdrive := preparedTestdrive(t)
 	testdrive.platform = &fakeTracer{preloadPath: "/tmp/dd-trace/ci/init.js"}

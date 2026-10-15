@@ -18,7 +18,7 @@ import (
 )
 
 func TestPrepareAllSupportedFrameworks(t *testing.T) {
-	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress"} {
+	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			switch name {
@@ -37,9 +37,12 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			require.Contains(t, preview.String(), displayName(name))
 			_, err = os.Stat(filepath.Join(root, ".testoptimization"))
 			require.True(t, os.IsNotExist(err), "preview must be read-only")
+			// Execution below is simulated; environment prerequisite checks have their own tests.
+			run.preflight = nil
 			run.nodeVersion = func() string { return "v20.0.0" }
 			installer := &fakeTracer{preloadPath: filepath.Join(root, "isolated")}
 			run.platform = installer
+			run.projectTracer = ""
 			executor := &fakeTestdriveExecutor{}
 			run.executor = executor
 			run.startIntake = func(string) (localIntake, error) {
@@ -127,6 +130,17 @@ func TestPrepareRequiresSelectionForMultipleFrameworks(t *testing.T) {
 	require.ErrorContains(t, err, "unsupported framework")
 }
 
+func TestLanguageEnvironmentsPreserveCustomerOptions(t *testing.T) {
+	t.Setenv("PYTHONPATH", "/customer/modules")
+	t.Setenv("PYTEST_ADDOPTS", "-q --disable-plugin-autoload")
+	t.Setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+	t.Setenv("RUBYOPT", "-W0")
+	python := (&Testdrive{language: "python"}).environment("/session/python", "http://127.0.0.1:1234", "session")
+	require.Equal(t, "/session/python"+string(os.PathListSeparator)+"/customer/modules", python["PYTHONPATH"])
+	require.Equal(t, "--ddtrace -q --disable-plugin-autoload", python["PYTEST_ADDOPTS"])
+	require.NotContains(t, python, "PYTEST_DISABLE_PLUGIN_AUTOLOAD")
+}
+
 func TestCypressTestdrivePreservesCommand(t *testing.T) {
 	t.Setenv("NODE_OPTIONS", "--conditions=development")
 	for _, command := range [][]string{
@@ -157,5 +171,19 @@ func TestCypressTestdrivePreservesCommand(t *testing.T) {
 			require.Contains(t, executor.env["NODE_OPTIONS"], "--conditions=development")
 			require.NoFileExists(t, filepath.Join(run.session.Directory(), "cypress.config.ts"))
 		})
+	}
+}
+
+func TestPythonProjectTracerPreservesImportEnvironment(t *testing.T) {
+	t.Setenv("PYTHONPATH", "/project/helpers")
+	t.Setenv("PYTEST_ADDOPTS", "-v -p ddtrace.testing.internal.pytest.entry_point")
+	t.Setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+	drive := &Testdrive{language: "python"}
+	env := drive.environment("", "http://127.0.0.1:1234", "session")
+	if _, changed := env["PYTHONPATH"]; changed {
+		t.Fatal("project PYTHONPATH overridden", env)
+	}
+	if env["PYTEST_ADDOPTS"] != "--ddtrace -v -p ddtrace.testing.internal.pytest.entry_point" {
+		t.Fatal(env)
 	}
 }

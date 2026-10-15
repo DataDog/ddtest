@@ -23,8 +23,18 @@ import (
 
 const reportFilename = "report.html"
 
+type findingScope uint8
+
+const (
+	runFindingScope findingScope = iota
+	testFindingScope
+	suiteFindingScope
+	coverageFindingScope
+)
+
 type reportCard struct {
 	Kind      string
+	Scope     findingScope
 	Severity  string
 	Title     string
 	Count     int
@@ -124,7 +134,11 @@ type reportModel struct {
 	Tests         []reportTest
 }
 
-type reportRuntime struct{ Framework, Tracer, Command, Output, Error string }
+type reportRuntime struct {
+	Framework, Tracer, Command, Output, Error string
+	Environment                               environmentInfo
+	SetupFailure                              *reportCard
+}
 
 type reportSourceFile struct {
 	lines []string
@@ -179,6 +193,9 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	if findings.TestEventCount == 0 {
 		status = "No test results received"
 	}
+	if info.SetupFailure != nil {
+		status = "Not run (environment check failed)"
+	}
 	showTestCoverage := findings.CoverageLevel == "test"
 	showSuiteCoverage := findings.CoverageLevel == "suite"
 	suites := builder.reportSuites(findings.Tests, findings.SuiteCoverages, showSuiteCoverage)
@@ -223,44 +240,55 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		},
 		Tests: builder.reportTests(findings.Tests, showTestCoverage),
 	}
+	if info.SetupFailure != nil {
+		model.Artifacts = []reportArtifact{{Title: "Environment check output", Href: testOutputFilename}}
+	}
+	if info.Environment.Source != "" {
+		model.Facts = append(model.Facts, reportFact{Label: "Environment", Value: info.Environment.Source})
+		if info.Environment.Executable != "" {
+			model.Facts = append(model.Facts, reportFact{Label: info.Environment.Runtime + " " + info.Environment.Version, Value: info.Environment.Executable})
+		}
+	}
 	model.Suites = suites
 
 	model.Cards = append(model.Cards, runFindingCards(findings, commandFailed, info)...)
 	if findings.EmptyCoverageEntryCount > 0 {
 		model.Cards = append(model.Cards, reportCard{
-			Kind:    "error",
-			Title:   "Tracer error: empty coverage entries",
-			Count:   findings.EmptyCoverageEntryCount,
-			Context: fmt.Sprintf("%d coverage entries had an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.", findings.EmptyCoverageEntryCount),
+			Kind:     "error",
+			Scope:    coverageFindingScope,
+			Severity: "error",
+			Title:    "Tracer error: empty coverage entries",
+			Count:    findings.EmptyCoverageEntryCount,
+			Context:  fmt.Sprintf("%d coverage entries had an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.", findings.EmptyCoverageEntryCount),
 		})
 	}
 	if findings.MissingCoverage {
 		model.Cards = append(model.Cards, reportCard{
-			Kind: intake.MissingCoverageFinding, Title: "Coverage not reported", Count: 1,
+			Kind: intake.MissingCoverageFinding, Scope: coverageFindingScope, Severity: "warning", Title: "Coverage not reported", Count: 1,
 			Context: intake.MissingCoverageContext,
 		})
 	}
 	if findings.BrowserCoverageUnavailable {
 		model.Cards = append(model.Cards, reportCard{
-			Kind: intake.BrowserCoverageFinding, Severity: "info", Title: intake.BrowserCoverageTitle, Count: 1,
+			Kind: intake.BrowserCoverageFinding, Scope: coverageFindingScope, Severity: "info", Title: intake.BrowserCoverageTitle, Count: 1,
 			Context: intake.BrowserCoverageContext,
 		})
 	}
 	if len(findings.FailedTests) > 0 {
 		model.Cards = append(model.Cards, reportCard{
-			Kind: "failed", Title: "Failed tests", Context: "Inspect the errors and source behind each failure.", Count: len(findings.FailedTests),
+			Kind: "failed", Scope: testFindingScope, Severity: "error", Title: "Failed tests", Context: "Inspect the errors and source behind each failure.", Count: len(findings.FailedTests),
 			Tests: builder.reportTests(findings.FailedTests, showTestCoverage),
 		})
 	}
 	if len(findings.FlakyTests) > 0 {
 		model.Cards = append(model.Cards, reportCard{
-			Kind: "flaky", Title: "Flaky tests", Context: "These tests both passed and failed across attempts.", Count: len(findings.FlakyTests),
+			Kind: "flaky", Scope: testFindingScope, Severity: "warning", Title: "Flaky tests", Context: "These tests both passed and failed across attempts.", Count: len(findings.FlakyTests),
 			Tests: builder.reportTests(findings.FlakyTests, showTestCoverage),
 		})
 	}
 	if len(findings.SlowTests) > 0 {
 		model.Cards = append(model.Cards, reportCard{
-			Kind: "slow", Title: "Slow tests", Count: len(findings.SlowTests),
+			Kind: "slow", Scope: testFindingScope, Severity: "warning", Title: "Slow tests", Count: len(findings.SlowTests),
 			Context: "Median test time · " + formatDuration(findings.TestDurationMedian),
 			Tests:   builder.reportTests(findings.SlowTests, showTestCoverage),
 		})
@@ -270,7 +298,7 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 		for _, suite := range model.Suites {
 			byKey[suite.Key] = suite
 		}
-		card := reportCard{Kind: "slow", Title: "Slow suites", Count: len(findings.SlowSuites), Context: "Median suite time · " + formatDuration(findings.SuiteDurationMedian)}
+		card := reportCard{Kind: "slow", Scope: suiteFindingScope, Severity: "warning", Title: "Slow suites", Count: len(findings.SlowSuites), Context: "Median suite time · " + formatDuration(findings.SuiteDurationMedian)}
 		for _, suite := range findings.SlowSuites {
 			if row, ok := byKey[suite.Module+"\x00"+suite.Suite]; ok {
 				card.Suites = append(card.Suites, row)
@@ -280,20 +308,13 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	}
 	if len(findings.BroadCoverage) > 0 {
 		model.Cards = append(model.Cards, reportCard{
-			Kind: "coverage", Title: "Broad coverage", Count: len(findings.BroadCoverage),
+			Kind: "coverage", Scope: coverageFindingScope, Severity: "warning", Title: "Broad coverage", Count: len(findings.BroadCoverage),
 			Context:   fmt.Sprintf("Median covered files · %d", findings.CoveredFilesMedian),
 			Coverages: builder.reportCoverages(findings.BroadCoverage),
 		})
 	}
 	count := len(findings.ConfigurationErrors)
-	for i := range model.Cards {
-		card := &model.Cards[i]
-		if card.Severity == "" {
-			card.Severity = "warning"
-			if card.Kind == "error" || card.Kind == "failed" || card.Kind == "command-failed" || card.Kind == "no-test-events" {
-				card.Severity = "error"
-			}
-		}
+	for _, card := range model.Cards {
 		count += card.Count
 	}
 	if count > 0 {
