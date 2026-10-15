@@ -1351,7 +1351,8 @@ runtime ends the process with a fatal error when an exit hook panics. The test
 that was running is not reported, as after a signal. Mini closes a test when
 its body returns, before testing runs the test's cleanups, so a test whose
 cleanup exits reports the result of its body. `os.Exit(0)` during a test
-already panics in testing, and signals and crashes run no exit hooks.
+already panics in testing, and signals and crashes run no exit hooks: see
+[Crashes](#crashes) for the latter.
 `prepareExitHook` adds the file only when the toolchain's exithook and the
 selected runtime declare what it uses.
 
@@ -1366,7 +1367,9 @@ log has to say how it ended. Mini logs:
 - the signals it registers and those it leaves alone;
 - each signal that reaches it, and each one that arrives while a channel of the test is registered for it;
 - the stack that called `os.Exit`;
-- the HTTP transport of its event delivery.
+- the HTTP transport of its event delivery;
+- a crash that it closes CI Visibility for, the running tests it fails and the close's duration;
+- whether it reports in ddto's test session.
 
 The os/signal hook reports a signal that arrived while other channels were
 registered for it on a channel that `signalNotify` receives, without blocking,
@@ -1389,6 +1392,165 @@ own tests run without the overlays and use `signal.Notify` and `signal.Stop`
 in place of the hook's functions. Their shared cleanup waits for the
 bootstrap's tracked background work first, which a shutdown that ends early,
 as on a panic, can leave running.
+
+## Crashes
+
+A crash ends a test process without running deferred calls or exit hooks:
+testing's `-timeout` alarm, an unrecovered panic in a goroutine other than the
+test's own, a fatal error such as `concurrent map writes`, the race detector
+with `GORACE=halt_on_error=1`, or a kill. Mini sends its events in batches,
+so upstream and Mini without these hooks lose every event that the process
+buffered, including the tests that passed. A panic in a test's own goroutine
+already closes CI Visibility before it re-panics, as upstream. Mini keeps its
+send cadence and closes CI Visibility where Go code still runs before two of
+these crashes; ddto's test session reports the others (see below).
+
+`CloseForCrash` in
+[`civisibility_crash.go`](civisibility/integrations/civisibility_crash.go)
+fails, with the crash, every test whose event is still open, then closes CI
+Visibility as `forcedExit` does, at most a minute, and returns, and the crash
+continues as without Mini. `createTest` records open tests, and `Close`
+removes them, so Examples, benchmarks and manual tests count too; so does
+`MarkTestFinished`, for a fuzz seed or root that completed and whose event the
+fuzz queue closes later with its outcome. Quarantined and disabled tests keep
+the final status skip. A test can end on its own while the crash fails it:
+`failForCrash` runs under the test's lock, as `Close` does, and the span sets
+the crash's status, error and final status as it finishes
+(`Span.FinishWithTags`), so a tag that the test's own code sets meanwhile lands
+before and is replaced, or after and is ignored; the event has one outcome. Other goroutines keep running
+meanwhile: tests can finish, and their output can appear before the crash's.
+
+### testing's -timeout
+
+testing's alarm panics on a timer goroutine, which no test recovers. The
+testing overlay wraps the argument of the alarm's single `panic`, on its line,
+in `instrumentTestTimeout`, declared by `TimeoutHook` in
+`internal/instrument/timeout.go`: it calls `CloseForCrash` with the panic's
+message, error type `timeout`, and returns the message. Go's output and
+stacks, which show `testing.go`'s line, do not change. ddto edits the alarm
+only for a Mini runtime that declares the function, and leaves an alarm of
+another shape unchanged.
+
+### Unrecovered panics (--panic-hook)
+
+Upstream has no hook before the runtime prints an unrecovered panic and exits.
+With ddto's `--panic-hook`, `TransformPanic` in `internal/instrument/panic.go`
+edits the runtime's `gopanic`: right after `preprintpanics`, on its line, it
+calls the variable that `PanicHook` declares in the runtime, linknamed to
+`unhandledPanic` here, with the panic's value as `preprintpanics` left it. The
+runtime calls the value's `Error` or `String` method there for the last time
+before it stops the other goroutines; `panicValueText` renders the result
+without calling any method again. That also covers testing's timeout and a
+`nil` dereference in a background goroutine. The runtime still runs no Go code
+for fatal errors, the race detector's halt or a kill. The runtime prints a
+fatal error's message before it starts copying its output to the crash output
+(`runtime/debug.SetCrashOutput`), so that output starts with the goroutine;
+with the hook, `fatal` and `throw` pass the message to `fatalthrow`, which takes
+it as a new last parameter and writes it there right after `startpanic_m`:
+after the secure-mode exit, and once the runtime keeps the crash output's
+descriptor from being replaced or closed. Each crashing thread copies its own
+message. Like `print`, the copy only writes. The hook is opt-in: every
+package depends on the runtime, so the first build with it, per Go version and
+build variant, compiles every package again, and a CI cache that is not saved
+after the run pays that each time. ddto warns and builds without it when the
+toolchain's `gopanic` has another shape or the runtime lacks the variable.
+
+### The exit status during a crash
+
+While `CloseForCrash` sends, M.Run can finish and call `os.Exit(0)`, so a
+crashed test binary would exit 0 and go test would report `ok`.
+`holdForCrash` makes `forcedExit` wait for the crash's close and then block,
+so the crash ends the process with its own status, as without Mini. A second
+crash meanwhile waits for the first one's close before it continues. ddto
+installs the timeout and panic hooks only together with the exit hook, which
+keeps that status.
+
+## ddto's test session
+
+Upstream reports one test session per test binary, which closes with the
+binary's exit code. With ddto, the session belongs to the command:
+`startTestSession` in `internal/runner/session.go` creates it, with a new ID,
+ddto's command (`utils.TestCommand` of ddto's arguments) and its working
+directory, writes them as `session.json` in a new directory and hands the
+directory to go test's test processes as `DDTO_TEST_SESSION`, which
+`goenv.Receive` removes while a test process initializes. A test process of a
+runtime that supports it reports in that session:
+- `HandedCLISession` in
+  [`cli_session.go`](civisibility/utils/cli_session.go) joins it once it can
+  create the process's record in the directory; otherwise the process reports
+  its own session, as without ddto;
+- the CI tags take ddto's command, so test events and the session name, and the
+  module tags from which the backend computes the session fingerprint, match
+  ddto's session;
+- `CreateTestSession` uses the session's ID and working directory, sends no
+  session event, and records the tags that it sets; each process keeps its
+  session telemetry, as without ddto;
+  `Close` closes the modules and appends those tags, with the capability and
+  ITR correlation tags that the CI tags carry, and the exit code, to the
+  record.
+
+Modules and suites also append their start and end to the record, with their
+IDs, names and services. The record holds no test event: each process sends
+its own events. `internal/goenv/crashout`, which only the test runtime imports,
+passes the crash output (`runtime/debug.SetCrashOutput`) to a file next to the
+record while the process initializes, before any package that imports
+testing. The record and every other session file are opened without Go's test
+log, so they do not affect go test's cache.
+
+Once go test exits, `FinishCLISession` in
+[`cli_session_owner.go`](civisibility/integrations/cli_session_owner.go) sends
+the session from ddto's process. It initializes only the CI tags, in go test's
+directory, which `-C` can move from ddto's, from the Git worker's record of the
+checkout when there is one, and otherwise with git commands that have ten
+seconds in all, so a fetch that hangs does not keep ddto from exiting, with the
+test processes' runtime version, and the tracer, with the bootstrap's service rules
+(`ciVisibilityService`): no settings, Git upload, signal handler, logs or
+telemetry. The
+session starts with ddto, ends when go test exits, and has go test's exit code
+and status. Its tags merge the processes' records: counts add up, `true` and
+EFD's `faulty` win, and other values come from the first process. A process's
+coverage covers only its own run, so the session takes it only when that
+process is the only one that joined, and otherwise the statement total of the
+command's `-coverprofile`, which counts a block once and reads file names
+with spaces as Go does (`profileCoverage`). For a
+process that ended without closing CI Visibility, it recreates, failed, the
+modules and suites that the record shows open, with their IDs and services,
+so the events that the process sent earlier keep their containers, and the
+test that the crash output's crashed goroutine names: the
+first frame of a top-level test function or a function literal in one, or else
+the test function that created the goroutine, in a suite left open
+(`crashedTest`). Methods of testify suites, `TestMain`, helpers and dynamic
+subtest names name no test. The session's error names the crash: a panic's
+first line, or, for a fatal error, whose message the runtime prints before it
+copies its output to the crash output, its first frame outside the runtime,
+unless `--panic-hook` copied the message too. A
+process without crash output was killed or stopped by a sanitizer. ddto sends
+no session when no test process joined and go test succeeded, as when every
+result came from Go's cache.
+
+ddto does not own the session with the SDK runtime, `--session-per-binary`,
+`-c` or `-n`, a launcher, which could run the test binaries where ddto's
+directory is not, CODEOWNERS services, which give each package its own
+service, a disabled CI Visibility, Bazel's offline modes, or a runtime whose
+`civisibility/utils` lacks `HandedCLISession`, as the released ones. A test
+binary run without ddto reports its own session. Tests that finished before a
+fatal error, the race detector's halt or a kill are lost, since only that
+process held them.
+
+Checks: `TestMiniCrashKeepsEvents`, `TestMiniPanicHookKeepsExitStatus`,
+`TestMiniTestSessionSpansTheCommand`, `TestCloseForCrashFailsOpenTestsAndCloses`,
+`TestCloseForCrashOnce`, `TestCloseForCrashKeepsFinishedEvents`,
+`TestFailForCrashIsAtomicWithClose`, `TestFinishCLISessionBoundsGit`,
+`TestHoldForCrashReturnsWithoutACrash`,
+`TestCrashedTestNamesOnlyUnambiguousTests`, `TestCrashMessage`,
+`TestPanicValueTextCallsNoMethod`, `TestMergeCLISessionTags`,
+`TestFinishCLISessionRecreatesOnlyOpenContainers`,
+`TestFinishCLISessionSkipsAnEmptySuccess`, `TestToolchainTimeoutAlarmTakesTheHook`,
+`TestTimeoutHookIsOptional`, `TestTimeoutHookMatchesMiniRegistration`,
+`TestToolchainGopanicTakesTheHook`, `TestPanicHookMatchesMiniRegistration`,
+`TestPanicHookRejectsOtherRuntimesAndToolchains`,
+`TestSessionRuntimeErrorMatchesMini`, `TestCrashHooksNeedTheExitHook`,
+`TestStartTestSessionRefusals` and `TestProfileCoverage`.
 
 ## Per-test allocations
 

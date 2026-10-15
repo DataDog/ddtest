@@ -12,7 +12,7 @@ import (
 
 func TestFuzzHookTargetsSelectedRuntime(t *testing.T) {
 	for _, runtime := range []Runtime{Mini, SDK} {
-		hooks := hooksForRuntime(runtime, false)
+		hooks := hooksForRuntime(runtime, false, false)
 		prefix := "github.com/DataDog/dd-trace-go/v2/internal/civisibility/"
 		other := "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/"
 		if runtime == Mini {
@@ -28,13 +28,13 @@ func TestFuzzHookTargetsSelectedRuntime(t *testing.T) {
 // Only Mini links the parallel-stop hook, and only when testing declares the
 // counter it increments; the SDK runtime has no registration target.
 func TestParallelStopHookOnlyForMini(t *testing.T) {
-	if !strings.HasSuffix(hooksForRuntime(Mini, true), instrument.ParallelStopHook) {
+	if !strings.HasSuffix(hooksForRuntime(Mini, true, false), instrument.ParallelStopHook) {
 		t.Fatal("Mini hooks lack the parallel-stop hook")
 	}
-	if strings.Contains(hooksForRuntime(Mini, false), "testingParallelStop") {
+	if strings.Contains(hooksForRuntime(Mini, false, false), "testingParallelStop") {
 		t.Fatal("hook added although testing lacks the counter")
 	}
-	if strings.Contains(hooksForRuntime(SDK, true), "testingParallelStop") {
+	if strings.Contains(hooksForRuntime(SDK, true, false), "testingParallelStop") {
 		t.Fatal("SDK hooks link a Mini-only target")
 	}
 }
@@ -43,7 +43,7 @@ func TestParallelStopHookOnlyForMini(t *testing.T) {
 // initializes before Mini, and a call into Mini would record its coverage
 // counters without a package under -coverpkg. The SDK keeps its own call.
 func TestMiniHooksCallNoMiniFunctionAtInit(t *testing.T) {
-	mini := hooksForRuntime(Mini, true)
+	mini := hooksForRuntime(Mini, true, false)
 	if strings.Contains(mini, instrument.OrchestrionMarkCall) || !strings.Contains(mini, instrument.MiniOrchestrionMark) || !strings.Contains(mini, "\"sync/atomic\"") {
 		t.Fatalf("Mini hooks keep the init call:\n%s", mini)
 	}
@@ -52,7 +52,7 @@ func TestMiniHooksCallNoMiniFunctionAtInit(t *testing.T) {
 			t.Errorf("Mini hooks call into Mini at init: %s", line)
 		}
 	}
-	if !strings.Contains(hooksForRuntime(SDK, false), instrument.OrchestrionMarkCall) {
+	if !strings.Contains(hooksForRuntime(SDK, false, false), instrument.OrchestrionMarkCall) {
 		t.Fatal("SDK hooks lost the SDK's init call")
 	}
 }

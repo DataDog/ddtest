@@ -23,6 +23,12 @@ after a failed delivery, events beyond the queue bound are dropped instead.
 counting deliveries still in flight, within its deadline. As with the
 background senders, payloads sent together can arrive in any order.
 
+Either way, a test process keeps its events until a batch fills or CI
+Visibility closes. A crash ends the process without closing it: testing's
+`-timeout` alarm, and an unrecovered panic with `ddto --panic-hook`, close it
+first, and `ddto` reports the other crashes in its test session. See
+[Crashes](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md#crashes).
+
 With the variable enabled, delivery runs between completed test groups, and
 remaining data is sent at session close. Sequential tests can have a delivery
 checkpoint after each test. Parallel tests continue together until the whole

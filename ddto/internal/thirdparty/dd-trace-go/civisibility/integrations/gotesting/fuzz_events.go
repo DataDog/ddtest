@@ -56,6 +56,10 @@ func (q *fuzzEventQueue) add(event fuzzTestEvent) *fuzzTestEvent {
 		}
 		return &event
 	}
+	if !event.finishTime.IsZero() {
+		// A seed is added once it completed; a root, before it runs.
+		integrations.MarkTestFinished(event.test)
+	}
 	q.events = append(q.events, &event)
 	return &event
 }
@@ -71,6 +75,7 @@ func (q *fuzzEventQueue) complete(event *fuzzTestEvent, failed, skipped bool, fi
 	event.failed = failed
 	event.skipped = skipped
 	event.finishTime = finishTime
+	integrations.MarkTestFinished(event.test)
 }
 
 func (q *fuzzEventQueue) finish() {

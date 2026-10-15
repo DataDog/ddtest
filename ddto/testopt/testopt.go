@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/citransport"
+	// Sends the crash output to ddto's test session, if it hands one.
+	_ "github.com/tonyredondo/dd-ci-testing-poc/internal/goenv/crashout"
 	// Restores the caller's Go settings before any package that imports os.
 	_ "github.com/tonyredondo/dd-ci-testing-poc/internal/goenv/restore"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"

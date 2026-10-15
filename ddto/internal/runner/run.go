@@ -86,6 +86,9 @@ type Plan struct {
 	// testLauncher reports that a -exec program or Go's cross-compilation
 	// helper starts the test binaries, and so sees their environment first.
 	testLauncher bool
+	// sessionRefusal is why the selected runtime's test processes cannot
+	// report in ddto's test session, or "".
+	sessionRefusal string
 	// tests describes the test binaries and the packages that have tests,
 	// with their modules, for the Git worker and the test processes.
 	tests utils.CLITests
@@ -433,10 +436,18 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	if e := checkTestingGOROOT(native.Dir, opts.environment, plan.gorootMirror); e != nil {
 		return plan, e
 	}
-	rewritten, e := transformTesting(native, replacements, debug)
+	timeoutRefusal := "the SDK runtime"
+	if plan.mini {
+		timeoutRefusal = timeoutHookRefusal(listed, replacements)
+	}
+	rewritten, e := transformTesting(native, replacements, timeoutRefusal == "", debug)
 	if e != nil {
 		return plan, e
 	}
+	if timeoutRefusal == "" && !rewritten.Timeout {
+		timeoutRefusal = "testing's -timeout alarm does not panic exactly once"
+	}
+	debug.printf("timeout hook installed=%t reason=%q", rewritten.Timeout, timeoutRefusal)
 	// Backing files are shared only within this plan and finalized before Go starts.
 	backingByContent := map[string]string{}
 	add := func(logical, content string) error {
@@ -473,7 +484,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	// Orchestrion may introduce SDK imports during compilation. Other builds
 	// need the gate only when the already resolved client graph contains it.
 	plan.sdkCI = plan.mini && (plan.orchestrion || sdkCI)
-	hooks := hooksForRuntime(runtime, rewritten.ParallelStop)
+	hooks := hooksForRuntime(runtime, rewritten.ParallelStop, rewritten.Timeout)
 	if plan.sdkCI {
 		if warning := preflightSDKMirror(libraries[sdkTracerPackage], replacements); warning != "" {
 			plan.sdkMirrorDisabled = true
@@ -626,6 +637,20 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			return plan, e
 		}
 		debug.printf("exit hook installed=%t reason=%q", refusal == "", refusal)
+		refusal = "--panic-hook not set"
+		if opts.panicHook {
+			if refusal, e = preparePanicHook(listed, replacements, temp, add); e != nil {
+				return plan, e
+			}
+		}
+		debug.printf("panic hook installed=%t reason=%q", refusal == "", refusal)
+		plan.sessionRefusal = "the runtime's civisibility/utils package not listed"
+		if utils := findPackage(listed, miniUtilsPackage); utils != nil {
+			plan.sessionRefusal = checkSources(utils, replacements, instrument.SessionRuntimeError)
+		}
+		if opts.panicHook && refusal != "" {
+			plan.Warnings = append(plan.Warnings, "--panic-hook: "+refusal+"; an unrecovered panic still loses the test process's events")
+		}
 	}
 	plan.coverOverlay = needsCoverOverlay(dir, opts, packages, rewrittenPackages)
 	plan.File = filepath.Join(temp, "overlay.json")
@@ -648,7 +673,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	return plan, nil
 }
 
-func transformTesting(native *goPackage, replacements map[string]string, debug *cliDebug) (result instrument.TestingSources, err error) {
+func transformTesting(native *goPackage, replacements map[string]string, timeout bool, debug *cliDebug) (result instrument.TestingSources, err error) {
 	phase := debug.start("instrument testing")
 	defer func() { phase.finish(err) }()
 	files := map[string][]byte{}
@@ -665,7 +690,11 @@ func transformTesting(native *goPackage, replacements map[string]string, debug *
 		files[path] = src
 	}
 	// Both Mini and the pinned SDK support fuzz seeds through this hook.
-	result, err = instrument.TransformWithFuzz(files)
+	if timeout {
+		result, err = instrument.TransformWithTimeout(files)
+	} else {
+		result, err = instrument.TransformWithFuzz(files)
+	}
 	if err != nil {
 		return result, err
 	}
@@ -686,6 +715,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 // ddto first: the plan is removed only after Go exits, and the result keeps
 // go test's exit status. A signal during preparation stops it and cleans up.
 func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Reader, stdout, stderr io.Writer) (exitCode int) {
+	begin := time.Now()
 	runtime := cli.Runtime
 	ctx = withCLIDebug(ctx, stderr)
 	debug := debugFromContext(ctx)
@@ -716,6 +746,7 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 		return 2
 	}
 	applyGoLauncher(ctx, &opts)
+	opts.panicHook = cli.PanicHook
 	dir := workingDirectory(cwd, opts)
 	debug.printf("working_directory=%q package_patterns=%d build_flags=%d", dir, len(opts.packages), len(opts.buildFlags))
 	if opts.help || explicitFiles(dir, opts.packages) {
@@ -841,7 +872,32 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	if plan.launcher != nil {
 		ctx = context.WithValue(ctx, goLauncherKey{}, *plan.launcher)
 	}
-	return runGo(ctx, dir, forwarded, env, gitWorker.relaySignals(signals), stdin, stdout, stderr)
+	session, refusal := startTestSession(cli, opts, plan, dir, begin, stderr)
+	debug.printf("test session owned=%t reason=%q", session != nil, refusal)
+	if session != nil {
+		debug.printf("test session id=%d dir=%s", session.session.ID, session.dir)
+		env = append(env, session.handoff())
+		if gitWorker == nil {
+			// The session reports the test processes' runtime version.
+			plan.goVersion = testRuntimeVersion(ctx, dir, plan.goVersion, plan.goExperiment)
+		}
+	}
+	exitCode = runGo(ctx, dir, forwarded, env, gitWorker.relaySignals(signals), stdin, stdout, stderr)
+	var coverage *float64
+	if session != nil {
+		if path := coverProfilePath(opts, dir); path != "" {
+			if total, ok := profileCoverage(path); ok {
+				coverage = &total
+			}
+			debug.printf("test session coverage profile=%q found=%t", path, coverage != nil)
+		}
+	}
+	gitState := ""
+	if gitWorker != nil {
+		gitState = gitWorker.state
+	}
+	session.finish(ctx, exitCode, plan.goVersion, coverage, gitState)
+	return exitCode
 }
 
 // nativeGoError is a preparation failure after which ddto runs go test

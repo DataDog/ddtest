@@ -308,11 +308,19 @@ func TestMiniTestingCompatibility(t *testing.T) {
 				want := execute(t, dir, bins[0], args, enabled, false)
 				got := execute(t, dir, bins[1], args, enabled, false)
 				marker := map[string]string{"panic": "fixture panic", "goexit": "runtime.Goexit", "timeout": "test timed out"}[mode]
+				if got.code == 0 || got.code != want.code || !strings.Contains(got.stderr, marker) {
+					t.Fatalf("abnormal exit missing: %d/%d %s", got.code, want.code, got.stderr)
+				}
+				if mode == "timeout" && enabled {
+					// The SDK loses the events of a process that testing's
+					// -timeout ends; Mini sends them before testing panics.
+					if len(want.events) != 0 || !reportsTimedOutTest(got.wireEvents, "TestTimeout") {
+						t.Fatalf("timeout events: SDK %v, Mini %v", want.events, got.events)
+					}
+					continue
+				}
 				assertMiniEquivalent(t, want, got)
 				assertMiniCIAttributes(t, want.wireEvents, got.wireEvents)
-				if got.code == 0 || !strings.Contains(got.stderr, marker) {
-					t.Fatalf("abnormal exit missing: %s", got.stderr)
-				}
 			}
 		}
 	})
@@ -463,4 +471,21 @@ func TestTestifyMovedCallSitesInFormattedDiagnostics(t *testing.T) {
 	if !strings.Contains(canonicalTestifyDiagnostic(text), file+"433") {
 		t.Error("rewrote arbitrary message text")
 	}
+}
+
+// reportsTimedOutTest reports whether events contain a session and name's
+// test failed by testing's -timeout.
+func reportsTimedOutTest(events []map[string]any, name string) bool {
+	session, test := false, false
+	for _, event := range events {
+		content, _ := event["content"].(map[string]any)
+		meta, _ := content["meta"].(map[string]any)
+		switch event["type"] {
+		case "test_session_end":
+			session = meta["test.status"] == "fail"
+		case "test":
+			test = test || meta["test.name"] == name && meta["test.status"] == "fail" && meta["error.type"] == "timeout"
+		}
+	}
+	return session && test
 }

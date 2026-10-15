@@ -62,8 +62,12 @@ const GitHubJobIDHandoff = "DDTO_GITHUB_JOB_ID"
 // test process of the same checkout.
 const GitStateHandoff = "DDTO_GIT_STATE"
 
+// TestSessionHandoff carries the directory of the test session that ddto
+// owns for its go test command, in which its test processes report.
+const TestSessionHandoff = "DDTO_TEST_SESSION"
+
 // handoffs are the values that ddto hands to test processes.
-var handoffs = [...]string{GitHubJobIDHandoff, GitStateHandoff}
+var handoffs = [...]string{GitHubJobIDHandoff, GitStateHandoff, TestSessionHandoff}
 
 var handed [len(handoffs)]struct {
 	value  string
@@ -90,3 +94,7 @@ func GitHubJobID() (string, bool) { return handed[0].value, handed[0].handed }
 // GitState returns the Git state directory that ddto handed to this process,
 // and whether it handed one.
 func GitState() (string, bool) { return handed[1].value, handed[1].handed }
+
+// TestSession returns the test session directory that ddto handed to this
+// process, and whether it handed one.
+func TestSession() (string, bool) { return handed[2].value, handed[2].handed }

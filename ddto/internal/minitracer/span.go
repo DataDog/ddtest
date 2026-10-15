@@ -42,7 +42,17 @@ func ResourceName(v string) StartSpanOption { return func(s *Span) { s.content.R
 func SpanType(v string) StartSpanOption     { return func(s *Span) { s.content.Type = v } }
 func StartTime(v time.Time) StartSpanOption { return func(s *Span) { s.content.Start = v.UnixNano() } }
 func Tag(k string, v any) StartSpanOption   { return func(s *Span) { s.SetTag(k, v) } }
-func FinishTime(v time.Time) FinishOption   { return func(c *finishConfig) { c.time = v } }
+
+// Service sets the span's service instead of the client's.
+func Service(v string) StartSpanOption { return func(s *Span) { s.content.Service = v } }
+
+// Service returns the span's service.
+func (s *Span) Service() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.content.Service
+}
+func FinishTime(v time.Time) FinishOption { return func(c *finishConfig) { c.time = v } }
 
 // SetTag follows dd-trace-go's Span.SetTag for the values CI events carry:
 // pointers to basic values are dereferenced, numbers that fit a float64
@@ -367,7 +377,16 @@ func (s *Span) Metric(key string) (float64, bool) {
 
 // Finish seals the event and enqueues it exactly once. Hierarchy IDs are native
 // CI fields, separate from distributed trace parentage.
-func (s *Span) Finish(options ...FinishOption) {
+func (s *Span) Finish(options ...FinishOption) { s.finish(nil, options...) }
+
+// FinishWithTags sets tags, whose values must be strings or booleans, and
+// finishes the span in one step: a SetTag from another goroutine lands before
+// them, and they replace it, or after the span finished, and is ignored.
+func (s *Span) FinishWithTags(tags map[string]any, options ...FinishOption) {
+	s.finish(tags, options...)
+}
+
+func (s *Span) finish(tags map[string]any, options ...FinishOption) {
 	cfg := finishConfig{time: time.Now()}
 	for _, option := range options {
 		option(&cfg)
@@ -376,6 +395,9 @@ func (s *Span) Finish(options ...FinishOption) {
 	if s.finished {
 		s.mu.Unlock()
 		return
+	}
+	for key, value := range tags {
+		s.setScalarTag(key, value)
 	}
 	s.finished = true
 	content := s.content

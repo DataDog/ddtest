@@ -92,7 +92,8 @@ and the mini backend contains adapted CI source; see
 | Fuzz and executable Examples | Exact SDK PR #5442 workloads/assertions, 64 event comparisons plus 14 atomic coverage combinations; normal/deferred and goleak |
 | Process retries | First attempt fails, second passes; reference events and process exit |
 | EFD, ITR, disabled, quarantine, attempt-to-fix | Real SDK requests against loopback policy responses and reference event equivalence |
-| Panic, Goexit and timeout | Abnormal exit and diagnostic marker; enabled/disabled reference event equivalence |
+| Panic, Goexit and timeout | Abnormal exit and diagnostic marker; enabled/disabled reference event equivalence, except that Mini reports a timed-out test that the SDK loses |
+| Crashes and ddto's session | `TestMiniCrashKeepsEvents`, `TestMiniPanicHookKeepsExitStatus` and `TestMiniTestSessionSpansTheCommand`: timeout, panic with and without `--panic-hook`, fatal error and kill; the crashed binary's exit status; one session per command, `--session-per-binary` and cached runs |
 | Unsupported input | Missing/ambiguous hooks, malformed source and double instrumentation rejected |
 | Mini + Orchestrion | Explicit wrappers, GOFLAGS and toolexec; injected APM span and HTTP delivery; one CI hierarchy, Testify, goleak, retries, coverage and race |
 | SDK span copies under Mini tests | Independent APM/CI HTTP captures; original propagation and parentage, final fields, pooling, parallel/retry isolation, Testify, seeds, benchmarks, goleak, coverage and Orchestrion |

@@ -11,6 +11,11 @@ manual hierarchy calls, CI child spans, multiple package binaries, Unix
 sockets, a bounded fuzz campaign and CI telemetry. None of this establishes
 complete product parity.
 
+The SDK reports one session per test binary. `ddto` reports one session for
+the command, so comparisons that run `ddto test` over several packages pass it
+`--session-per-binary`, and `TestMiniTestSessionSpansTheCommand` checks the
+command's session. Comparisons of compiled test binaries are unaffected.
+
 The automatic goleak fixture checks both delivery modes, external helpers,
 race, covered library inputs and deliberate test/HTTP leaks. See
 [delivery and goleak](delivery.md) for its contract.
@@ -61,7 +66,7 @@ policy combinations and counts are exported by every workflow run.
 | Empty selection and list | Session-only events | Verified |
 | Fuzz roots, seeds and executable Examples | SDK PR #5442: 16 scenarios, manual/automatic, normal/deferred, atomic coverage and goleak | See the [78-comparison feature matrix](fuzz-examples.md); active mutations and workers emit no events |
 | Benchmarks | Same benchmark events, metric keys/types and run counts; values must be finite/nonnegative | Verified semantics; measured timings/allocations differ |
-| Panic, Goexit and timeout | Existing reference fixtures compare diagnostics, exit status and abnormal finalization | Verified for those fixtures |
+| Panic, Goexit and timeout | Existing reference fixtures compare diagnostics, exit status and abnormal finalization. On testing's `-timeout`, the SDK sends nothing and Mini sends the tests and the session first, a declared difference | Verified for those fixtures |
 | CLI activation and Go flags | Parent default, explicit values and child inheritance; overlays, GOFLAGS, tags, JSON, selection and native result-cache semantics | Verified |
 | Agent and Agentless | HTTP EVP v2, gzip Agentless test-cycle payloads, per-test coverage and ATR/ITR combinations; settings/test-cycle over Unix sockets on Unix CI | Verified loopback protocol; real Agent/intake unverified |
 | Payload size, retries and failures | Native byte/count bounds, oversized rejection, failed-batch retention, gzip reuse, 403/429/5xx and cancellation tests | Verified Mini contracts; not an exhaustive SDK/Mini delivery stress comparison |

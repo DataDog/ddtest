@@ -102,6 +102,10 @@ type options struct {
 	coverage             bool
 	coverPatterns        []string
 	race                 bool
+	// panicHook is ddto's --panic-hook, which go test does not see.
+	panicHook bool
+	// coverProfile and outputDir are go test's -coverprofile and -outputdir.
+	coverProfile, outputDir string
 	// execSet records -exec, even empty: then go test uses no
 	// cross-compilation helper.
 	execSet bool
@@ -357,6 +361,11 @@ func (o *options) apply(name, value string) error {
 		}
 	case "covermode", "coverprofile":
 		o.coverage = true
+		if name == "coverprofile" {
+			o.coverProfile = value
+		}
+	case "outputdir":
+		o.outputDir = value
 	case "coverpkg":
 		o.coverage = true
 		o.coverPatterns = nil

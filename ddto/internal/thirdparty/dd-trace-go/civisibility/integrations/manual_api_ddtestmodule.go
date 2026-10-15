@@ -15,6 +15,7 @@ import (
 
 	tracer "github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
 )
 
@@ -37,7 +38,8 @@ type tslvTestModule struct {
 }
 
 // createTestModule initializes a new test module within a given session.
-func createTestModule(session *tslvTestSession, name string, framework string, frameworkVersion string, startTime time.Time) TestModule {
+func createTestModule(session *tslvTestSession, name string, defaults *tslvTestModuleStartOptions) TestModule {
+	framework, frameworkVersion, startTime := defaults.framework, defaults.frameworkVersion, defaults.startTime
 	// Ensure CI visibility is properly configured.
 	EnsureCiVisibilityInitialization()
 
@@ -66,9 +68,15 @@ func createTestModule(session *tslvTestSession, name string, framework string, f
 		tracer.SpanType(constants.SpanTypeTestModule),
 		tracer.StartTime(startTime),
 	}), moduleTags...)
+	if defaults.service != "" {
+		testOpts = append(testOpts, tracer.Service(defaults.service))
+	}
 
 	span, ctx := tracer.StartSpanFromContext(context.Background(), operationName, testOpts...)
 	moduleID := span.Context().SpanID()
+	if defaults.id != 0 {
+		moduleID = defaults.id
+	}
 	if session != nil {
 		setCIVisibilitySpanTag(span, constants.TestSessionIDTag, strconv.FormatUint(session.sessionID, 10))
 	}
@@ -92,6 +100,9 @@ func createTestModule(session *tslvTestSession, name string, framework string, f
 
 	// Ensure to close everything before CI visibility exits. In CI visibility mode, we try to never lose data.
 	PushCiVisibilityCloseAction(func() { module.Close() })
+	if session != nil {
+		session.cliRecord.Append(utils.CLISessionRecordLine{Kind: "module", ID: moduleID, Name: name, Service: span.Service(), Start: startTime})
+	}
 
 	// Creating telemetry event created
 	telemetry.EventCreated(module.framework, telemetry.ModuleEventType)
@@ -136,6 +147,9 @@ func (t *tslvTestModule) Close(options ...TestModuleCloseOption) {
 
 	t.span.Finish(tracer.FinishTime(defaults.finishTime))
 	t.closed = true
+	if t.session != nil {
+		t.session.cliRecord.Append(utils.CLISessionRecordLine{Kind: "module_end", ID: t.moduleID})
+	}
 
 	// Creating telemetry event finished
 	telemetry.EventFinished(t.framework, telemetry.ModuleEventType)
@@ -159,7 +173,7 @@ func (t *tslvTestModule) GetOrCreateSuite(name string, options ...TestSuiteStart
 	if v, ok := t.suites[name]; ok {
 		suite = v
 	} else {
-		suite = createTestSuite(t, name, defaults.startTime)
+		suite = createTestSuite(t, name, defaults)
 		t.suites[name] = suite
 	}
 

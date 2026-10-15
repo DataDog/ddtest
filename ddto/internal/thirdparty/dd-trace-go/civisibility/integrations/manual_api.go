@@ -78,6 +78,14 @@ type tslvTestSessionStartOptions struct {
 	framework        string
 	frameworkVersion string
 	startTime        time.Time
+	// id is the session's ID, which ddto chose for its test processes;
+	// otherwise the session's span ID.
+	id uint64
+}
+
+// withTestSessionID sets the ID of the session that ddto owns.
+func withTestSessionID(id uint64) TestSessionStartOption {
+	return func(o *tslvTestSessionStartOptions) { o.id = id }
 }
 
 // WithTestSessionCommand sets the command used to run the test session.
@@ -109,6 +117,16 @@ type TestSessionCloseOption func(*tslvTestSessionCloseOptions)
 // tslvTestSessionCloseOptions contains the options for closing a test session.
 type tslvTestSessionCloseOptions struct {
 	finishTime time.Time
+	// crash replaces the exit-code error of a session that ends with a crash.
+	crash []ErrorOption
+}
+
+// withTestSessionCrash sets the error of a session whose test process
+// crashed, instead of the exit-code error.
+func withTestSessionCrash(errType, message, stack string) TestSessionCloseOption {
+	return func(o *tslvTestSessionCloseOptions) {
+		o.crash = []ErrorOption{WithErrorInfo(errType, message, stack)}
+	}
 }
 
 // WithTestSessionFinishTime sets the finish time of the test session.
@@ -124,6 +142,9 @@ type tslvTestModuleStartOptions struct {
 	framework        string
 	frameworkVersion string
 	startTime        time.Time
+	// id and service recreate a module that a crashed test process started.
+	id      uint64
+	service string
 }
 
 // WithTestModuleFramework sets the testing framework used by the test module.
@@ -181,6 +202,9 @@ type TestSuiteStartOption func(*tslvTestSuiteStartOptions)
 // tslvTestSuiteStartOptions represents the options for starting a test suite.
 type tslvTestSuiteStartOptions struct {
 	startTime time.Time
+	// id and service recreate a suite that a crashed test process started.
+	id      uint64
+	service string
 }
 
 // WithTestSuiteStartTime sets the start time for starting a test suite.
@@ -264,6 +288,8 @@ type TestCloseOption func(*tslvTestCloseOptions)
 type tslvTestCloseOptions struct {
 	finishTime time.Time
 	skipReason string
+	// finishTags are set as the test's span finishes: see failForCrash.
+	finishTags map[string]any
 }
 
 // WithTestFinishTime sets the finish time of the test.

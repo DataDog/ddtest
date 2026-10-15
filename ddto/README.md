@@ -146,7 +146,7 @@ Mini is selected when `--runtime` is omitted. Both `--runtime=mini` and
 `--runtime mini` work among Go flags and package names. Put the option before
 custom test flags, `-args` or `--`, which begin the test binary's arguments.
 
-Two more options follow the same rule:
+More options follow the same rule:
 
 - `--git-upload-timeout=2m` (default one minute) bounds every wait for the
   repository upload of `ddto`'s Git worker. Test processes wait at most that
@@ -154,7 +154,24 @@ Two more options follow the same rule:
   exits, then stops the upload cleanly.
 - `--keep-ci-state` keeps the invocation's CI state and prints where;
   `--keep-ci-state=state.zip` archives it. See
-  [Keeping the CI state](docs/cli-debug.md#keeping-the-ci-state).
+  [Keeping the CI state](docs/cli-debug.md#keeping-the-ci-state). It also
+  keeps the test session's directory.
+- `--panic-hook` edits Go's runtime so that Mini sends its events before an
+  unrecovered panic in any goroutine ends a test process, and so that a fatal
+  error's message, such as `concurrent map writes`, reaches the session. The
+  first build with it, per Go version and build variant, compiles every
+  package again; other projects then reuse the standard library that it
+  compiled. See [Crashes](internal/thirdparty/dd-trace-go/ADAPTATIONS.md#crashes).
+- `--session-per-binary` keeps one test session per test binary instead of
+  one for the command.
+
+`ddto` reports one test session per command: every package's tests report in
+it, and it lasts the command and has `go test`'s exit status. A test binary run
+without `ddto` reports its own session. When a test process crashes, the
+session says how; testing's `-timeout` sends the tests' events first, and so
+does an unrecovered panic with `--panic-hook`. For other crashes, `ddto`
+reports, failed, the module and suites that the process left open and the test
+that the crash names. [Details](internal/thirdparty/dd-trace-go/ADAPTATIONS.md#ddtos-test-session)
 
 `--runtime=sdk` requires the exact SDK version pinned in
 [`internal/version`](internal/version/version.go).

@@ -23,6 +23,15 @@ type CLIOptions struct {
 	// (--keep-ci-state); KeepCIStateZip, if set, archives it there instead.
 	KeepCIState    bool
 	KeepCIStateZip string
+	// PanicHook edits the runtime so that Mini sends its events before an
+	// unrecovered panic ends a test process (--panic-hook). Every package of
+	// the build depends on the runtime, so the first build with it, per Go
+	// version and build variant, compiles them all again.
+	PanicHook bool
+	// SessionPerBinary keeps one test session per test binary, which each
+	// test process reports, instead of the command's, which ddto reports
+	// (--session-per-binary).
+	SessionPerBinary bool
 }
 
 // DefaultCLIOptions are the options without any ddto flag.
@@ -51,6 +60,12 @@ func ParseCLIArgs(args []string) (CLIOptions, []string, error) {
 				return CLIOptions{}, nil, err
 			}
 			args = args[width:]
+			continue
+		}
+		if arg == "--panic-hook" || arg == "--session-per-binary" {
+			options.PanicHook = options.PanicHook || arg == "--panic-hook"
+			options.SessionPerBinary = options.SessionPerBinary || arg == "--session-per-binary"
+			args = args[1:]
 			continue
 		}
 		if strings.HasPrefix(arg, "--") && name == "keep-ci-state" {

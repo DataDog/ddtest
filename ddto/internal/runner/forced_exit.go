@@ -7,13 +7,18 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
 )
 
-const miniIntegrationsPackage = miniModule + "/internal/thirdparty/dd-trace-go/civisibility/integrations"
+const (
+	miniIntegrationsPackage = miniModule + "/internal/thirdparty/dd-trace-go/civisibility/integrations"
+	miniGotestingPackage    = miniIntegrationsPackage + "/gotesting"
+	miniUtilsPackage        = miniModule + "/internal/thirdparty/dd-trace-go/civisibility/utils"
+)
 
 // Overlay files that ddto adds to os/signal and testing for Mini's forced
 // exits.
 const (
 	signalHookFile = "zz_dd_ci_visibility_signal.go"
 	exitHookFile   = "zz_dd_ci_visibility_exit.go"
+	panicHookFile  = "zz_dd_ci_visibility_panic.go"
 )
 
 // prepareSignalHook edits os/signal so that Mini receives SIGINT and SIGTERM
@@ -54,17 +59,80 @@ func prepareSignalHook(listed []goPackage, replacements map[string]string, temp 
 // os.Exit closes Mini's CI Visibility before the process ends. It returns why
 // the build goes without it, or "".
 func prepareExitHook(listed []goPackage, replacements map[string]string, testingDir string, add func(logical, content string) error) (string, error) {
-	exithook, integrations := findPackage(listed, "internal/runtime/exithook"), findPackage(listed, miniIntegrationsPackage)
-	if exithook == nil || integrations == nil {
-		return "internal/runtime/exithook or the runtime's integrations package not listed", nil
-	}
-	if refusal := checkSources(exithook, replacements, instrument.ExitHookToolchainError); refusal != "" {
-		return refusal, nil
-	}
-	if refusal := checkSources(integrations, replacements, instrument.ExitHookRuntimeError); refusal != "" {
+	if refusal := exitHookRefusal(listed, replacements); refusal != "" {
 		return refusal, nil
 	}
 	return "", add(filepath.Join(testingDir, exitHookFile), instrument.ExitHook)
+}
+
+// exitHookRefusal returns why the build goes without instrument.ExitHook, or
+// "".
+func exitHookRefusal(listed []goPackage, replacements map[string]string) string {
+	exithook, integrations := findPackage(listed, "internal/runtime/exithook"), findPackage(listed, miniIntegrationsPackage)
+	if exithook == nil || integrations == nil {
+		return "internal/runtime/exithook or the runtime's integrations package not listed"
+	}
+	if refusal := checkSources(exithook, replacements, instrument.ExitHookToolchainError); refusal != "" {
+		return refusal
+	}
+	return checkSources(integrations, replacements, instrument.ExitHookRuntimeError)
+}
+
+// crashHookRefusal returns why a hook that closes CI Visibility before a
+// crash cannot be installed, given why the exit hook cannot, or "". While
+// such a hook sends, the tests can finish and call os.Exit(0); only the exit
+// hook then keeps the crash's status.
+func crashHookRefusal(exitRefusal string) string {
+	if exitRefusal != "" {
+		return "the exit hook, which keeps the crash's exit status, is not installed: " + exitRefusal
+	}
+	return ""
+}
+
+// preparePanicHook edits the runtime's gopanic to call Mini before an
+// unrecovered panic ends the process, and adds instrument.PanicHook. It
+// returns why the build keeps the runtime unchanged, or "".
+func preparePanicHook(listed []goPackage, replacements map[string]string, temp string, add func(logical, content string) error) (string, error) {
+	if refusal := crashHookRefusal(exitHookRefusal(listed, replacements)); refusal != "" {
+		return refusal, nil
+	}
+	runtime, integrations := findPackage(listed, "runtime"), findPackage(listed, miniIntegrationsPackage)
+	if runtime == nil || integrations == nil {
+		return "the runtime or the runtime's integrations package not listed", nil
+	}
+	if refusal := checkSources(integrations, replacements, instrument.PanicHookRuntimeError); refusal != "" {
+		return refusal, nil
+	}
+	sources, err := packageSources(runtime, replacements)
+	if err != nil {
+		return err.Error(), nil
+	}
+	edited, err := instrument.TransformPanic(sources)
+	if err != nil {
+		return err.Error(), nil
+	}
+	for logical, src := range edited {
+		backing := filepath.Join(temp, "runtime-"+filepath.Base(logical))
+		if err := os.WriteFile(backing, src, 0600); err != nil {
+			return "", err
+		}
+		replacements[logical] = backing
+	}
+	return "", add(filepath.Join(runtime.Dir, panicHookFile), instrument.PanicHook)
+}
+
+// timeoutHookRefusal returns why testing's -timeout alarm cannot call the
+// selected Mini runtime before it panics, or "": a client can require a
+// released runtime without that function.
+func timeoutHookRefusal(listed []goPackage, replacements map[string]string) string {
+	if refusal := crashHookRefusal(exitHookRefusal(listed, replacements)); refusal != "" {
+		return refusal
+	}
+	gotesting := findPackage(listed, miniGotestingPackage)
+	if gotesting == nil {
+		return "the runtime's gotesting package not listed"
+	}
+	return checkSources(gotesting, replacements, instrument.TimeoutHookRuntimeError)
 }
 
 // findPackage returns the listed package path that go list resolved without

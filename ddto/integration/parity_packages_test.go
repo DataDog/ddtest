@@ -19,7 +19,14 @@ func TestCIVisibilityMultiplePackages(t *testing.T) {
 		server := newServer(http.HandlerFunc(receiver.handler))
 		scratch := t.TempDir()
 		env := testEnv("DD_CIVISIBILITY_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL, "DD_TRACE_AGENT_URL="+server.URL, "DD_API_KEY=fixture", "TMPDIR="+scratch, "TMP="+scratch, "TEMP="+scratch, "XDG_CACHE_HOME="+scratch)
-		out, stderr, code, wall := commandWithTiming(t, dir, env, driver, "test", "--runtime="+backend, "-count=1", "-run=^Test(Pass|Other)$", "./...")
+		args := []string{"test", "--runtime=" + backend, "-count=1", "-run=^Test(Pass|Other)$", "./..."}
+		if backend == "mini" {
+			// The SDK reports one session per test binary; ddto reports one for
+			// the command unless asked, which TestMiniTestSessionSpansTheCommand
+			// checks.
+			args = append(args[:2], append([]string{"--session-per-binary"}, args[2:]...)...)
+		}
+		out, stderr, code, wall := commandWithTiming(t, dir, env, driver, args...)
 		server.Close()
 		if code != 0 {
 			t.Fatalf("multiple packages %s: %d %s %s", backend, code, out, stderr)

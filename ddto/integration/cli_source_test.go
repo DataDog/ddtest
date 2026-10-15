@@ -47,7 +47,9 @@ func TestMiniCLIRuntimeSelectionAndSourceRange(t *testing.T) {
 			defer server.Close()
 			env := testEnv("DD_CIVISIBILITY_AGENTLESS_ENABLED=true", "DD_CIVISIBILITY_AGENTLESS_URL="+server.URL,
 				"DD_TRACE_AGENT_URL="+server.URL, "DD_API_KEY=fixture", "DD_TRACE_DEBUG=true")
-			out, stderr, code := command(t, dir, env, driver, append(append([]string(nil), tc.args...), "-v")...)
+			// Each test binary reports its own command only in its own session.
+			args := append([]string{"test", "--session-per-binary"}, tc.args[1:]...)
+			out, stderr, code := command(t, dir, env, driver, append(args, "-v")...)
 			if code != 0 {
 				t.Fatalf("exit=%d\n%s\n%s", code, out, stderr)
 			}
@@ -78,8 +80,8 @@ func TestMiniCLIRuntimeSelectionAndSourceRange(t *testing.T) {
 				if filepath.Base(meta["test.source.file"].(string)) != "sample_test.go" || metrics["test.source.start"] != float64(5) || metrics["test.source.end"] != float64(10) {
 					t.Errorf("source=%v:%v-%v, want sample_test.go:5-10", meta["test.source.file"], metrics["test.source.start"], metrics["test.source.end"])
 				}
-				if strings.Contains(meta["test.command"].(string), "--runtime") {
-					t.Error("runtime flag reached test binary")
+				if command := meta["test.command"].(string); strings.Contains(command, "--runtime") || strings.Contains(command, "--session-per-binary") {
+					t.Errorf("ddto's flags reached the test binary: %s", command)
 				}
 			}
 			if count != 1 {

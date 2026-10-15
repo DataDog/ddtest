@@ -22,20 +22,29 @@ type edit struct {
 type TestingSources struct {
 	Files        map[string][]byte
 	ParallelStop bool
+	// Timeout reports that testing's -timeout alarm calls TimeoutHook's
+	// function before it panics.
+	Timeout bool
 }
 
 // Transform validates every required hook before returning rewritten sources.
 // Logical filenames are retained in line directives for diagnostics and stacks.
 func Transform(files map[string][]byte) (TestingSources, error) {
-	return transform(files, false)
+	return transform(files, false, false)
 }
 
 // TransformWithFuzz adds the F.Fuzz hook supported by both selected runtimes.
 func TransformWithFuzz(files map[string][]byte) (TestingSources, error) {
-	return transform(files, true)
+	return transform(files, true, false)
 }
 
-func transform(files map[string][]byte, fuzz bool) (TestingSources, error) {
+// TransformWithTimeout also edits testing's -timeout alarm for TimeoutHook,
+// when the alarm has the expected shape: see TestingSources.Timeout.
+func TransformWithTimeout(files map[string][]byte) (TestingSources, error) {
+	return transform(files, true, true)
+}
+
+func transform(files map[string][]byte, fuzz, timeout bool) (TestingSources, error) {
 	names := make([]string, 0, len(files))
 	for name := range files {
 		names = append(names, name)
@@ -43,7 +52,7 @@ func transform(files map[string][]byte, fuzz bool) (TestingSources, error) {
 	sort.Strings(names)
 	counts := map[string]int{}
 	output := map[string][]byte{}
-	parallelStop := false
+	parallelStop, alarmEdited := false, false
 	for _, name := range names {
 		src := files[name]
 		if bytes.Contains(src, []byte("__dd_civisibility_")) {
@@ -173,6 +182,29 @@ defer func() {
 					return false
 				})
 				continue
+			case "M.startAlarm":
+				// The alarm panics once; wrapping that panic's argument keeps
+				// the line, which the timeout's stack shows.
+				if !timeout {
+					continue
+				}
+				var alarm []edit
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					call, ok := n.(*ast.CallExpr)
+					if !ok {
+						return true
+					}
+					if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "panic" && len(call.Args) == 1 {
+						start, end := fs.Position(call.Args[0].Pos()).Offset, fs.Position(call.Args[0].End()).Offset
+						alarm = append(alarm, edit{start, end, "__dd_civisibility_instrumentTestTimeout(" + string(src[start:end]) + ")"})
+					}
+					return true
+				})
+				if len(alarm) == 1 && !alarmEdited {
+					edits = append(edits, alarm[0])
+					alarmEdited = true
+				}
+				continue
 			default:
 				continue
 			}
@@ -220,5 +252,5 @@ defer func() {
 			return TestingSources{}, fmt.Errorf("ambiguous testing hook %s: %d matches", key, counts[key])
 		}
 	}
-	return TestingSources{Files: output, ParallelStop: parallelStop}, nil
+	return TestingSources{Files: output, ParallelStop: parallelStop, Timeout: alarmEdited}, nil
 }

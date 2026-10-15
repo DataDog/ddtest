@@ -207,7 +207,11 @@ that is not an unsigned decimal number stays in meta, as the SDK leaves it. End
 events identify their session, module or suite; test events retain their own
 trace identity.
 Retries and parallel-test ownership are managed by the extracted testing hooks,
-which also control when a session closes and flushes.
+which also control when a session closes and flushes. Under `ddto`, the
+session belongs to the command: each test binary's modules report in it, and
+`ddto` sends it once `go test` exits, with `go test`'s status. A test binary
+run on its own reports its own session. See
+[ddto's test session](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md#ddtos-test-session).
 
 For a span with a client, the lifetime is:
 

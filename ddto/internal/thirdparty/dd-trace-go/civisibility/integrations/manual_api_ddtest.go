@@ -36,6 +36,9 @@ type (
 		testID uint64
 		suite  *tslvTestSuite
 		name   string
+		// ended is set by the first Close, which a delayed close finishes
+		// later: another Close does nothing.
+		ended bool
 	}
 
 	// tslvTestDelayed is a struct that represents a delayed test close operation.
@@ -48,6 +51,10 @@ type (
 var (
 	finishedTests      []*tslvTestDelayed
 	finishedTestsMutex sync.Mutex
+
+	// openTests holds the tests that are not closed yet, which a crash fails:
+	// see CloseForCrash.
+	openTests sync.Map // *tslvTest -> struct{}
 
 	globalTestEventStartHook func(any)
 	globalEventFinishHook    func([]any)
@@ -74,6 +81,9 @@ func createTest(suite *tslvTestSuite, name string, startTime time.Time) Test {
 		tracer.SpanType(constants.SpanTypeTest),
 		tracer.StartTime(startTime),
 	}), testTags...)
+	if suite.service != "" {
+		testOpts = append(testOpts, tracer.Service(suite.service))
+	}
 
 	span, ctx := tracer.StartSpanFromContext(context.Background(), operationName, testOpts...)
 	if suite.module.session != nil {
@@ -102,10 +112,23 @@ func createTest(suite *tslvTestSuite, name string, startTime time.Time) Test {
 
 	// Note: if the process is killed some tests will not be closed and will be lost. This is a known limitation.
 	// We will not close it because there's no a good test status to report in this case, and we don't want to report a false positive (pass, fail, or skip).
+	// A crash that Go code still sees fails them: see CloseForCrash.
+	openTests.Store(t, struct{}{})
 
 	// Creating telemetry event created
 	telemetry.EventCreated(t.suite.module.framework, telemetry.TestEventType)
 	return t
+}
+
+// MarkTestFinished records that test has finished although its event
+// closes later, as a fuzz seed's in the queue that holds it: a crash then
+// keeps the outcome that the later close reports, instead of failing it.
+func MarkTestFinished(test Test) {
+	if t, ok := test.(*tslvTest); ok {
+		t.mutex.Lock()
+		openTests.Delete(t)
+		t.mutex.Unlock()
+	}
 }
 
 // TestID returns the ID of the test.
@@ -123,9 +146,49 @@ func (t *tslvTest) Suite() TestSuite { return t.suite }
 func (t *tslvTest) Close(status TestResultStatus, options ...TestCloseOption) {
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
-	if t.closed {
+	t.closeLocked(status, options...)
+}
+
+// failForCrash fails the test with a crash and closes it, unless it finished
+// first, in one critical section with Close: the test then has either its
+// own outcome or the crash's, never a mix. It reports whether it failed it.
+func (t *tslvTest) failForCrash(errType, message, stack string) bool {
+	failed, final := func() (bool, string) {
+		t.mutex.Lock()
+		defer t.mutex.Unlock()
+		if _, open := openTests.Load(t); !open || t.ended || t.closed {
+			return false, ""
+		}
+		final := constants.TestStatusFail
+		if t.getContextValue(constants.TestIsQuarantined) == "true" || t.getContextValue(constants.TestIsDisabled) == "true" {
+			final = constants.TestStatusSkip
+		}
+		// The test's own SetTag and SetError do not take t.mutex: the span sets
+		// these tags as it finishes, so theirs land before and are replaced, or
+		// after and are ignored.
+		tags := map[string]any{ext.Error: true, ext.ErrorType: errType, ext.ErrorMsg: truncateCIVisibilityTagValue(message), constants.TestFinalStatus: final}
+		if stack != "" {
+			tags[ext.ErrorStack] = truncateCIVisibilityTagValue(stack)
+		}
+		t.Suite().SetTag(ext.Error, true)
+		t.Suite().Module().SetTag(ext.Error, true)
+		t.closeLocked(ResultStatusFail, func(o *tslvTestCloseOptions) { o.finishTags = tags })
+		return true, final
+	}()
+	if failed {
+		// The logger, which a client can replace, runs after the lock.
+		log.Debug("civisibility: failed the test name=%s suite=%s for the crash (%s) final_status=%s", t.name, t.suite.name, errType, final)
+	}
+	return failed
+}
+
+// closeLocked is Close, with t.mutex held.
+func (t *tslvTest) closeLocked(status TestResultStatus, options ...TestCloseOption) {
+	if t.ended || t.closed {
 		return
 	}
+	t.ended = true
+	openTests.Delete(t)
 
 	defaults := &tslvTestCloseOptions{}
 	for _, opt := range options {
@@ -144,6 +207,9 @@ func (t *tslvTest) Close(status TestResultStatus, options ...TestCloseOption) {
 	case ResultStatusSkip:
 		setCIVisibilitySpanTag(t.span, constants.TestStatus, constants.TestStatusSkip)
 	}
+	if defaults.finishTags != nil {
+		defaults.finishTags[constants.TestStatus] = constants.TestStatusFail
+	}
 
 	if defaults.skipReason != "" {
 		setCIVisibilitySpanTag(t.span, constants.TestSkipReason, defaults.skipReason)
@@ -151,6 +217,9 @@ func (t *tslvTest) Close(status TestResultStatus, options ...TestCloseOption) {
 
 	if globalEventFinishHook != nil {
 		// delayed close
+		for key, value := range defaults.finishTags {
+			setCIVisibilitySpanTag(t.span, key, value)
+		}
 		finishedTestsMutex.Lock()
 		defer finishedTestsMutex.Unlock()
 		finishedTests = append(finishedTests, &tslvTestDelayed{
@@ -159,12 +228,12 @@ func (t *tslvTest) Close(status TestResultStatus, options ...TestCloseOption) {
 		})
 		return
 	}
-	t.internalClose(tracer.FinishTime(defaults.finishTime))
+	t.internalClose(defaults.finishTags, tracer.FinishTime(defaults.finishTime))
 }
 
 // internalClose is a helper function to close the test and report the telemetry event.
-func (t *tslvTest) internalClose(options ...tracer.FinishOption) {
-	t.span.Finish(options...)
+func (t *tslvTest) internalClose(tags map[string]any, options ...tracer.FinishOption) {
+	t.span.FinishWithTags(tags, options...)
 	t.closed = true
 
 	// Creating telemetry event finished
@@ -360,7 +429,7 @@ func (d *tslvTestDelayed) close() {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 	if !d.closed {
-		d.internalClose(tracer.FinishTime(d.finishTime))
+		d.internalClose(nil, tracer.FinishTime(d.finishTime))
 	}
 }
 

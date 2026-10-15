@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tracer "github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"
@@ -39,6 +40,13 @@ type tslvTestSession struct {
 	efdAbortReason   string
 
 	modules map[string]TestModule
+
+	// cliRecord is set when this process reports in the session that ddto
+	// owns: the process then sends no session event, and records the tags it
+	// sets, in cliTags, for ddto's.
+	cliRecord *utils.CLISessionRecord
+	cliTagsMu sync.Mutex
+	cliTags   map[string]any
 }
 
 // CreateTestSession initializes a new test session with the given command and working directory.
@@ -50,6 +58,12 @@ func CreateTestSession(options ...TestSessionStartOption) TestSession {
 	defaults := &tslvTestSessionStartOptions{}
 	for _, f := range options {
 		f(defaults)
+	}
+	handed, record := utils.HandedCLISession()
+	if handed != nil {
+		// The command is already ddto's, in the CI tags.
+		defaults.id = handed.ID
+		defaults.workingDirectory = utils.GetRelativePathFromCITagsSourceRoot(handed.WorkingDirectory)
 	}
 
 	if defaults.command == "" {
@@ -93,6 +107,9 @@ func CreateTestSession(options ...TestSessionStartOption) TestSession {
 
 	span, ctx := tracer.StartSpanFromContext(context.Background(), operationName, testOpts...)
 	sessionID := span.Context().SpanID()
+	if defaults.id != 0 {
+		sessionID = defaults.id
+	}
 	setCIVisibilitySpanTag(span, constants.TestSessionIDTag, strconv.FormatUint(sessionID, 10))
 
 	s := &tslvTestSession{
@@ -113,6 +130,12 @@ func CreateTestSession(options ...TestSessionStartOption) TestSession {
 
 	// Ensure to close everything before CI visibility exits. In CI visibility mode, we try to never lose data.
 	PushCiVisibilityCloseAction(func() { s.Close(1) })
+	if record != nil {
+		// Each test process keeps reporting its session's telemetry, as
+		// without ddto.
+		s.cliRecord, s.cliTags = record, map[string]any{}
+		log.Debug("civisibility: reporting in ddto's test session id=%d", sessionID)
+	}
 
 	// Creating telemetry event created
 	testingEventType := telemetry.SessionEventType
@@ -140,6 +163,11 @@ func (t *tslvTestSession) SessionID() uint64 {
 // producing the session-finished telemetry event.
 func (t *tslvTestSession) SetTag(key string, value any) {
 	t.ciVisibilityCommon.SetTag(key, value)
+	if t.cliRecord != nil {
+		t.cliTagsMu.Lock()
+		t.cliTags[key] = value
+		t.cliTagsMu.Unlock()
+	}
 	if key == constants.TestEarlyFlakeDetectionRetryAborted {
 		t.efdAbortReasonMu.Lock()
 		t.efdAbortReason = fmt.Sprint(value)
@@ -159,6 +187,13 @@ func (t *tslvTestSession) WorkingDirectory() string { return t.workingDirectory 
 // Close closes the test session with the given exit code.
 func (t *tslvTestSession) Close(exitCode int, options ...TestSessionCloseOption) {
 	alreadyClosed := false
+	recordedTags := -1
+	// After unlocking: a client can replace the logger.
+	defer func() {
+		if recordedTags >= 0 {
+			log.Debug("civisibility: recorded the close of this process in ddto's test session exit_code=%d tags=%d", exitCode, recordedTags)
+		}
+	}()
 	if log.DebugEnabled() {
 		started := time.Now()
 		log.Debug("civisibility: session close started exit_code=%d", exitCode)
@@ -189,17 +224,23 @@ func (t *tslvTestSession) Close(exitCode int, options ...TestSessionCloseOption)
 	}
 	t.modules = map[string]TestModule{}
 
+	if t.cliRecord != nil {
+		recordedTags = t.closeInCLISession(exitCode)
+		t.reportFinished()
+		tracer.Flush()
+		return
+	}
+
 	setCIVisibilitySpanTag(t.span, constants.TestCommandExitCode, exitCode)
 	if exitCode == 0 {
 		setCIVisibilitySpanTag(t.span, constants.TestStatus, constants.TestStatusPass)
+	} else if defaults.crash != nil {
+		t.SetError(defaults.crash...)
+		setCIVisibilitySpanTag(t.span, constants.TestStatus, constants.TestStatusFail)
 	} else {
 		t.SetError(WithErrorInfo("ExitCode", "exit code is not zero.", ""))
 		setCIVisibilitySpanTag(t.span, constants.TestStatus, constants.TestStatusFail)
 	}
-	t.efdAbortReasonMu.Lock()
-	faultyEFDSession := t.efdAbortReason == "faulty"
-	t.efdAbortReasonMu.Unlock()
-
 	// Native startup can finish before asynchronous CI feature discovery.
 	// Publish newly discovered capabilities and ITR correlation before sealing
 	// the session event, preserving explicit session attributes.
@@ -212,8 +253,15 @@ func (t *tslvTestSession) Close(exitCode int, options ...TestSessionCloseOption)
 	}
 	t.span.Finish(tracer.FinishTime(defaults.finishTime))
 	t.closed = true
+	t.reportFinished()
+	tracer.Flush()
+}
 
-	// Creating telemetry event finished
+// reportFinished reports the session's finished-event telemetry.
+func (t *tslvTestSession) reportFinished() {
+	t.efdAbortReasonMu.Lock()
+	faultyEFDSession := t.efdAbortReason == "faulty"
+	t.efdAbortReasonMu.Unlock()
 	testingEventType := telemetry.SessionEventType
 	if utils.GetCodeOwners() != nil {
 		testingEventType = append(testingEventType, telemetry.HasCodeOwnerEventType...)
@@ -225,7 +273,6 @@ func (t *tslvTestSession) Close(exitCode int, options ...TestSessionCloseOption)
 		testingEventType = append(testingEventType, telemetry.EfdAbortFaultyEventType...)
 	}
 	telemetry.EventFinished(t.framework, testingEventType)
-	tracer.Flush()
 }
 
 // GetOrCreateModule returns an existing module or creates a new one with the given name, framework, framework version, and start time.
@@ -250,9 +297,32 @@ func (t *tslvTestSession) GetOrCreateModule(name string, options ...TestModuleSt
 	if v, ok := t.modules[name]; ok {
 		mod = v
 	} else {
-		mod = createTestModule(t, name, defaults.framework, defaults.frameworkVersion, defaults.startTime)
+		mod = createTestModule(t, name, defaults)
 		t.modules[name] = mod
 	}
 
 	return mod
+}
+
+// closeInCLISession closes a session that ddto owns: it records, for ddto's
+// session event, the exit code and the session tags that this process set,
+// including those that the CI tags carry, as Close does, and returns how many
+// tags it recorded. The session event itself is ddto's.
+func (t *tslvTestSession) closeInCLISession(exitCode int) int {
+	t.cliTagsMu.Lock()
+	tags := make(map[string]any, len(t.cliTags))
+	for key, value := range t.cliTags {
+		tags[key] = value
+	}
+	t.cliTagsMu.Unlock()
+	for key, value := range utils.GetCITagsReadOnly() {
+		if strings.HasPrefix(key, "_dd.library_capabilities.") || key == constants.ItrCorrelationIDTag {
+			if _, set := tags[key]; !set {
+				tags[key] = value
+			}
+		}
+	}
+	t.cliRecord.Append(utils.CLISessionRecordLine{Kind: "closed", ExitCode: exitCode, Tags: tags})
+	t.closed = true
+	return len(tags)
 }

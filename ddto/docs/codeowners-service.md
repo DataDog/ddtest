@@ -42,7 +42,9 @@ metadata. A service derived automatically retains
 
 ## Package identity and delivery
 
-Each test binary has one service. Session, module, suite and test events use
+Each test binary has one service, and its own test session: `ddto` does not
+report one session for the command, whose packages would have several
+services. Session, module, suite and test events use
 that identity, as do settings requests, CI logs and telemetry. The result is
 cached for that process; editing CODEOWNERS during a running test does not
 rename its service.

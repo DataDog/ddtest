@@ -148,27 +148,7 @@ func internalCiVisibilityInitialization(tracerInitializer func([]tracer.StartOpt
 		ciTags := utils.GetCITagsReadOnly()
 		_ = utils.GetCIMetrics()
 
-		// Check if DD_SERVICE has been set; otherwise default to the repo name (from the spec).
-		var opts []tracer.StartOption
-		serviceName := env.Get("DD_SERVICE")
-		if serviceName == "" {
-			serviceName = utils.ServiceFromCodeOwners()
-			if serviceName != "" {
-				opts = append(opts, tracer.WithService(serviceName))
-			}
-		}
-		if serviceName == "" {
-			if repoURL, ok := ciTags[constants.GitRepositoryURL]; ok {
-				// regex to sanitize the repository url to be used as a service name
-				repoRegex := regexp.MustCompile(`(?m)/([a-zA-Z0-9\-_.]*)$`)
-				matches := repoRegex.FindStringSubmatch(repoURL)
-				if len(matches) > 1 {
-					repoURL = strings.TrimSuffix(matches[1], ".git")
-				}
-				serviceName = repoURL
-				opts = append(opts, tracer.WithService(serviceName))
-			}
-		}
+		serviceName, opts := ciVisibilityService(ciTags)
 
 		// Initializing additional features asynchronously
 		if cidelivery.Enabled() {
@@ -193,6 +173,35 @@ func internalCiVisibilityInitialization(tracerInitializer func([]tracer.StartOpt
 
 		startCIVisibilitySignalHandler()
 	})
+}
+
+// ciVisibilityService returns the service that CI Visibility reports, and
+// the tracer options that set it: DD_SERVICE, else, if enabled, the service
+// of the test package's CODEOWNERS owner, else the repository's name, else
+// none, for the tracer's default.
+func ciVisibilityService(ciTags map[string]string) (string, []tracer.StartOption) {
+	// Check if DD_SERVICE has been set; otherwise default to the repo name (from the spec).
+	var opts []tracer.StartOption
+	serviceName := env.Get("DD_SERVICE")
+	if serviceName == "" {
+		serviceName = utils.ServiceFromCodeOwners()
+		if serviceName != "" {
+			opts = append(opts, tracer.WithService(serviceName))
+		}
+	}
+	if serviceName == "" {
+		if repoURL, ok := ciTags[constants.GitRepositoryURL]; ok {
+			// regex to sanitize the repository url to be used as a service name
+			repoRegex := regexp.MustCompile(`(?m)/([a-zA-Z0-9\-_.]*)$`)
+			matches := repoRegex.FindStringSubmatch(repoURL)
+			if len(matches) > 1 {
+				repoURL = strings.TrimSuffix(matches[1], ".git")
+			}
+			serviceName = repoURL
+			opts = append(opts, tracer.WithService(serviceName))
+		}
+	}
+	return serviceName, opts
 }
 
 // run waits for either a process signal or a normal shutdown request. It
@@ -380,6 +389,7 @@ var forcedExitTimeout = time.Minute
 //
 //go:linkname forcedExit
 func forcedExit() {
+	holdForCrash("os.Exit")
 	// The hook is registered with testing, so another package's init can call
 	// os.Exit before this package initializes; CI Visibility has not started
 	// then, and process retry children never start it.
@@ -396,26 +406,41 @@ func forcedExit() {
 		return
 	}
 	started := time.Now()
+	if closeWithinTimeout("in os.Exit", nil) {
+		log.Debug("civisibility: closed CI Visibility for os.Exit duration=%s", time.Since(started))
+	} else {
+		log.Error("civisibility: closing CI Visibility in os.Exit did not finish within %s; exiting without it", forcedExitTimeout)
+	}
+	// Errors are otherwise printed once a minute; the process ends now.
+	log.Flush()
+	// A crash that started meanwhile ends the process.
+	holdForCrash("os.Exit")
+}
+
+// closeWithinTimeout closes CI Visibility, or waits for the goroutine that
+// closes it, on a goroutine of its own after running before, if not nil; it
+// waits for that goroutine at most forcedExitTimeout and reports whether it
+// finished. what names the caller in the error that a panic logs.
+func closeWithinTimeout(what string, before func()) bool {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		defer func() {
 			if r := recover(); r != nil {
-				log.Error("civisibility: closing CI Visibility in os.Exit panicked: %v", r)
+				log.Error("civisibility: closing CI Visibility %s panicked: %v", what, r)
 			}
 		}()
+		if before != nil {
+			before()
+		}
 		markCIVisibilitySignalHandlerStopping()
 		exitCiVisibility(false)
 	}()
 	select {
 	case <-done:
-		log.Debug("civisibility: closed CI Visibility for os.Exit duration=%s", time.Since(started))
-		// Errors are otherwise printed once a minute; the process ends now.
-		log.Flush()
+		return true
 	case <-time.After(forcedExitTimeout):
-		log.Error("civisibility: closing CI Visibility in os.Exit did not finish within %s; exiting without it", forcedExitTimeout)
-		// Errors are otherwise printed once a minute; the process ends now.
-		log.Flush()
+		return false
 	}
 }
 
@@ -532,6 +557,10 @@ func exitCiVisibility(stopSignalHandler bool) {
 	}
 	if debug {
 		log.Debug("civisibility: close actions finished duration=%s actions=%d", time.Since(stageStarted), len(actions))
+		if _, record := utils.HandedCLISession(); record != nil {
+			lines, failures, first := record.Stats()
+			log.Debug("civisibility: test session record lines=%d failed=%d first_error=%v", lines, failures, first)
+		}
 	}
 }
 

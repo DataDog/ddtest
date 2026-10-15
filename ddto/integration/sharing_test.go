@@ -122,7 +122,8 @@ func TestSharedBackingCompatibility(t *testing.T) {
 		t.Run(variant.name, func(t *testing.T) {
 			args := append([]string{"test", "-count=1", "-run=^TestShared$"}, variant.flags...)
 			args = append(args, "./alpha", "./beta")
-			got := execute(t, dir, driver, args, true, false)
+			// The SDK reports one session per test binary, as ddto does when asked.
+			got := execute(t, dir, driver, append([]string{"test", "--session-per-binary"}, args[1:]...), true, false)
 			if got.code != 0 || len(got.events) == 0 {
 				t.Fatalf("shared backing: %d %s\n%s", got.code, got.out, got.stderr)
 			}

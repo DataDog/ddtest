@@ -265,8 +265,12 @@ func createCITagsMap() map[string]string {
 	log.Debug("civisibility: os architecture: %s", runtime.GOARCH)
 	log.Debug("civisibility: runtime version: %s", runtime.Version())
 
-	// Get command line test command
+	// Get command line test command. A process in ddto's test session
+	// reports ddto's: the session's events and fingerprints match its own.
 	cmd := testCommand(os.Args)
+	if session, _ := HandedCLISession(); session != nil {
+		cmd = session.Command
+	}
 	localTags[constants.TestCommand] = cmd
 	log.Debug("civisibility: test command: %s", cmd)
 
@@ -393,6 +397,10 @@ var volatileTestFlags = []string{"test.gocoverdir=", "test.v=", "test.testlogfil
 // and removes `(?si)-test.v=(.*)\s`-style matches; their greedy `.*` also
 // removed every later argument, and go test passes -test.testlogfile first
 // for a cacheable run, so the command was often only the binary name.
+// TestCommand returns the test.command of a process started with args: the
+// program's base name and the arguments that do not change from run to run.
+func TestCommand(args []string) string { return testCommand(args) }
+
 func testCommand(args []string) string {
 	if len(args) == 0 {
 		return ""

@@ -102,6 +102,18 @@ func TestReceiveRemovesGitState(t *testing.T) {
 	}
 }
 
+func TestReceiveRemovesTestSession(t *testing.T) {
+	t.Setenv(TestSessionHandoff, "/tmp/ddto-session")
+	Receive()
+	t.Cleanup(Receive)
+	if value, ok := os.LookupEnv(TestSessionHandoff); ok {
+		t.Fatalf("handed test session remains visible: %q", value)
+	}
+	if dir, ok := TestSession(); !ok || dir != "/tmp/ddto-session" {
+		t.Fatalf("test session %q, %t", dir, ok)
+	}
+}
+
 // Initialization order is the contract: anything that imports os, directly or
 // through os/exec, initializes after the restore package.
 func TestRestoreImportsNoPackageThatCanStartCommands(t *testing.T) {

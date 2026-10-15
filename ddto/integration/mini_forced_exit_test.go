@@ -111,10 +111,9 @@ func TestExit(t *testing.T) {
 					sessions = append(sessions, fmt.Sprint(meta["test.status"]))
 				}
 			}
+			// ddto's session fails with go test, also when the process exits
+			// before it reports anything.
 			wantSessions := []string{"fail"}
-			if !ran {
-				wantSessions = nil
-			}
 			if len(receiver.failures) != 0 || !reflect.DeepEqual(tests, tc.tests) || !reflect.DeepEqual(sessions, wantSessions) {
 				t.Fatalf("tests %v, sessions %v, failures %v\n%s\n%s", tests, sessions, receiver.failures, out, stderr)
 			}

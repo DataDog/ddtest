@@ -15,6 +15,7 @@ import (
 
 	tracer "github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils/telemetry"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/ddtrace/ext"
 )
@@ -31,13 +32,17 @@ type tslvTestSuite struct {
 	suiteID     uint64
 	suiteIDText string // suiteID formatted once for test events
 	name        string
+	// service is the service of a suite that ddto recreates for a crashed
+	// test process, which its tests take too; otherwise the tracer's.
+	service string
 }
 
 // createTestSuite initializes a new test suite within a given module.
-func createTestSuite(module *tslvTestModule, name string, startTime time.Time) TestSuite {
+func createTestSuite(module *tslvTestModule, name string, defaults *tslvTestSuiteStartOptions) TestSuite {
 	if module == nil {
 		return nil
 	}
+	startTime := defaults.startTime
 
 	operationName := "test_suite"
 	if module.framework != "" {
@@ -53,9 +58,15 @@ func createTestSuite(module *tslvTestModule, name string, startTime time.Time) T
 		tracer.SpanType(constants.SpanTypeTestSuite),
 		tracer.StartTime(startTime),
 	}), suiteTags...)
+	if defaults.service != "" {
+		testOpts = append(testOpts, tracer.Service(defaults.service))
+	}
 
 	span, ctx := tracer.StartSpanFromContext(context.Background(), operationName, testOpts...)
 	suiteID := span.Context().SpanID()
+	if defaults.id != 0 {
+		suiteID = defaults.id
+	}
 	if module.session != nil {
 		setCIVisibilitySpanTag(span, constants.TestSessionIDTag, strconv.FormatUint(module.session.sessionID, 10))
 	}
@@ -67,6 +78,7 @@ func createTestSuite(module *tslvTestModule, name string, startTime time.Time) T
 		suiteID:     suiteID,
 		suiteIDText: strconv.FormatUint(suiteID, 10),
 		name:        name,
+		service:     defaults.service,
 		ciVisibilityCommon: ciVisibilityCommon{
 			startTime: startTime,
 			tags:      suiteTags,
@@ -77,6 +89,9 @@ func createTestSuite(module *tslvTestModule, name string, startTime time.Time) T
 
 	// Ensure to close everything before CI visibility exits. In CI visibility mode, we try to never lose data.
 	PushCiVisibilityCloseAction(func() { suite.Close() })
+	if module.session != nil {
+		module.session.cliRecord.Append(utils.CLISessionRecordLine{Kind: "suite", ID: suiteID, Module: module.moduleID, Name: name, Service: span.Service(), Start: startTime})
+	}
 
 	// Creating telemetry event created
 	telemetry.EventCreated(module.framework, telemetry.SuiteEventType)
@@ -113,6 +128,9 @@ func (t *tslvTestSuite) Close(options ...TestSuiteCloseOption) {
 
 	t.span.Finish(tracer.FinishTime(defaults.finishTime))
 	t.closed = true
+	if t.module.session != nil {
+		t.module.session.cliRecord.Append(utils.CLISessionRecordLine{Kind: "suite_end", ID: t.suiteID})
+	}
 
 	// Creating telemetry event finished
 	telemetry.EventFinished(t.module.framework, telemetry.SuiteEventType)
