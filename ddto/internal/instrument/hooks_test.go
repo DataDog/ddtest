@@ -70,3 +70,34 @@ func TestToolchainProvidesCoverageHook(t *testing.T) {
 		t.Fatalf("%v; review CoverageHook", err)
 	}
 }
+
+// The testing overlay of released CLIs links these Mini functions while testing
+// initializes. A client can select this runtime with such a CLI, so they stay
+// even though the current overlay sets Mini's variables instead.
+func TestRuntimeKeepsFunctionsThatReleasedOverlaysLink(t *testing.T) {
+	dir := filepath.Join("..", "thirdparty", "dd-trace-go", "civisibility", "integrations", "gotesting")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources := map[string][]byte{}
+	for _, entry := range entries {
+		if name := entry.Name(); strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go") {
+			if sources[name], err = os.ReadFile(filepath.Join(dir, name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	have, err := sourceDeclarations(sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, decl := range []string{
+		"func registerTestingParallelStop(func())", "linkname registerTestingParallelStop",
+		"func instrumentTestingBuiltWithOrchestrion()", "linkname instrumentTestingBuiltWithOrchestrion",
+	} {
+		if !have[decl] {
+			t.Errorf("gotesting lacks %s, which released testing overlays link", decl)
+		}
+	}
+}

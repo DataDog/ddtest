@@ -162,9 +162,9 @@ package, so it can import `internal/coverage`. The hook copies the counters in
 memory before and after each attempt, and decodes the metadata once per
 process to map counters to files and lines. Mini then builds the same per-test
 coverage payload from the difference, with no counter files, textual profile
-or parsing. The hook is registered through a pushed linkname, as
-`ParallelStopHook` is, only when the toolchain's `internal/coverage` provides
-what it needs; otherwise the text-profile path runs.
+or parsing. The hook is registered through a pushed linkname, only when the
+toolchain's `internal/coverage` provides what it needs; otherwise the
+text-profile path runs.
 
 The change had to preserve everything item 8 lists: cleanup-only code and
 parallel attribution, the initial-attempt retry policy, impacted-test inputs

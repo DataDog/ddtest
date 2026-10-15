@@ -306,8 +306,9 @@ microsecond and several allocations less per test, less contention in large
 parallel suites, and less offset and reflection code.
 
 The standard library cannot import Mini. Added fields must use standard types,
-such as an `any` slot, and Mini must reach the accessors through registration
-hooks, as `ParallelStopHook` does, or interface assertions. Mini still builds
+such as an `any` slot, and Mini must reach the accessors through hooks that set
+Mini's variables while testing initializes, as `ParallelStopHook` does, or
+through interface assertions. Mini still builds
 and runs without the overlay, through `testopt.RunM`, so the map path stays as
 the fallback. Preserve cleanup lifetime, native cancellation, Testify scopes,
 retry ownership, fuzz seeds and SDK-free tests, and validate every supported

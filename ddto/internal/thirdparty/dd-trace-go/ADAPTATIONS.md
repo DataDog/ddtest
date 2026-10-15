@@ -1217,8 +1217,24 @@ test of the binary.
 Mini records those ends. ddto's testing overlay adds `ParallelStopHook` from
 `internal/instrument/hooks.go`, only for Mini and only when testing declares
 `parallelStop atomic.Int64`; the linker allows no other access to the counter.
-The hook registers a function in
-[`retry_attempt_parallel_stop.go`](civisibility/integrations/gotesting/retry_attempt_parallel_stop.go).
+While testing initializes, the hook sets `testingParallelStop` in
+[`retry_attempt_parallel_stop.go`](civisibility/integrations/gotesting/retry_attempt_parallel_stop.go)
+through a linknamed variable. It does not call Mini: testing initializes
+before Mini, and a Mini function that `-coverpkg` instruments and that runs
+first records its coverage counters without a package, so Go prints
+`internal error in coverage meta-data tracking` when it writes the profile.
+For the same reason, Mini's copy of the SDK's `Hooks` sets
+`testingBuiltWithOrchestrion` instead of calling
+`instrumentTestingBuiltWithOrchestrion`; the SDK runtime keeps the call.
+Released versions of this module declare both variables with the same types,
+so a client that requires one of them still links. In the other direction,
+the testing overlays of ddto v0.1.0 and v0.1.1 call `registerTestingParallelStop`
+and `instrumentTestingBuiltWithOrchestrion`, so Mini keeps both functions:
+a client can select this runtime while running an older ddto. The in-memory coverage
+hook keeps its call, because ddto installs it only when `-coverpkg` leaves
+Mini's coverage package alone. The SDK mirror's hook also keeps its call:
+Mini's tracer initializes before the SDK's in the tested graphs, so that call
+never ran first.
 `beginRootParallelSchedulerTransfer` marks attempts that go parallel after the
 lease moved, and `finalizeFreshRetryAttempt` records their end before it
 publishes the result, as `tRunner` does before it releases its caller. Both
@@ -1227,7 +1243,9 @@ runtime keeps upstream behavior.
 
 Checks: `TestSharedParallelLeaseAttemptsRecordTheirEnd`,
 `TestSequentialAttemptsRecordNoParallelEnd`, `TestParallelStopHookOnlyForMini`,
-`TestToolchainTestingDeclaresParallelStop` and
+`TestMiniHooksCallNoMiniFunctionAtInit`, `TestRuntimeKeepsFunctionsThatReleasedOverlaysLink`,
+`TestToolchainTestingDeclaresParallelStop`,
+`TestMiniCoverageOfMiniItselfHasNoCounterErrors` and
 `TestMiniInProcessRetryKeepsAllocsPerRun`. This package's own tests run without
 the overlay, so `TestSharedParallelLeaseAttemptsRecordTheirEnd` and
 `TestProcessRetryParityFreshRunnerSharesRootParallelLeaseAcrossSequentialAttempts`

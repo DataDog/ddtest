@@ -6,12 +6,15 @@ import (
 )
 
 // testingParallelStop records the end of a parallel test in testing's own
-// accounting, as testing's tRunner does. ddto's testing overlay registers it
-// while testing initializes, when the toolchain keeps that accounting; without
-// the overlay it stays nil.
+// accounting, as testing's tRunner does. ddto's testing overlay sets it through
+// a linknamed variable while testing initializes, before this package's
+// variables, so it has no initializer. Without the overlay, or when the
+// toolchain does not keep that accounting, it stays nil.
 var testingParallelStop func()
 
-// registerTestingParallelStop is called by ddto's testing overlay.
+// registerTestingParallelStop is what the testing overlay of ddto v0.1.0 and
+// v0.1.1 calls instead; it stays so that their test binaries still link when a
+// client selects this runtime.
 //
 //go:linkname registerTestingParallelStop
 func registerTestingParallelStop(stop func()) { testingParallelStop = stop }

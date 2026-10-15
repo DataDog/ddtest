@@ -31,11 +31,29 @@ func TestParallelStopHookOnlyForMini(t *testing.T) {
 	if !strings.HasSuffix(hooksForRuntime(Mini, true), instrument.ParallelStopHook) {
 		t.Fatal("Mini hooks lack the parallel-stop hook")
 	}
-	if strings.Contains(hooksForRuntime(Mini, false), "registerTestingParallelStop") {
+	if strings.Contains(hooksForRuntime(Mini, false), "testingParallelStop") {
 		t.Fatal("hook added although testing lacks the counter")
 	}
-	if strings.Contains(hooksForRuntime(SDK, true), "registerTestingParallelStop") {
+	if strings.Contains(hooksForRuntime(SDK, true), "testingParallelStop") {
 		t.Fatal("SDK hooks link a Mini-only target")
+	}
+}
+
+// While testing initializes, Mini's hooks only set Mini's variables: testing
+// initializes before Mini, and a call into Mini would record its coverage
+// counters without a package under -coverpkg. The SDK keeps its own call.
+func TestMiniHooksCallNoMiniFunctionAtInit(t *testing.T) {
+	mini := hooksForRuntime(Mini, true)
+	if strings.Contains(mini, instrument.OrchestrionMarkCall) || !strings.Contains(mini, instrument.MiniOrchestrionMark) || !strings.Contains(mini, "\"sync/atomic\"") {
+		t.Fatalf("Mini hooks keep the init call:\n%s", mini)
+	}
+	for _, line := range strings.Split(mini, "\n") {
+		if strings.HasPrefix(line, "func init()") && strings.Contains(line, "__dd_civisibility_") && !strings.Contains(line, " = ") && !strings.Contains(line, ".Store(true)") {
+			t.Errorf("Mini hooks call into Mini at init: %s", line)
+		}
+	}
+	if !strings.Contains(hooksForRuntime(SDK, false), instrument.OrchestrionMarkCall) {
+		t.Fatal("SDK hooks lost the SDK's init call")
 	}
 }
 

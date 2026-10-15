@@ -34,14 +34,30 @@ func __dd_civisibility_instrumentTestingBFunc(*B, string, func(*B)) (string, fun
 func init() { __dd_civisibility_instrumentTestingBuiltWithOrchestrion() }
 `
 
+// OrchestrionMarkCall is the line of Hooks that tells the SDK, while testing
+// initializes, that testing carries the hooks. MiniOrchestrionMark replaces it
+// for Mini: it sets gotesting's flag through a linknamed variable instead of
+// calling Mini. testing initializes before Mini, and a Mini function that
+// -coverpkg instruments and that runs first records its coverage counters
+// without a package: Go then prints "internal error in coverage meta-data
+// tracking". Mini declares the same variable in every released version.
+const (
+	OrchestrionMarkCall = "func init() { __dd_civisibility_instrumentTestingBuiltWithOrchestrion() }\n"
+	MiniOrchestrionMark = `//go:linkname __dd_civisibility_testingBuiltWithOrchestrion github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.testingBuiltWithOrchestrion
+var __dd_civisibility_testingBuiltWithOrchestrion atomic.Bool
+func init() { __dd_civisibility_testingBuiltWithOrchestrion.Store(true) }
+`
+)
+
 // ParallelStopHook lets Mini's in-process retries record the end of a parallel
 // test in testing's own accounting, which only testing's tRunner updates. A
 // retry attempt that calls Parallel ends outside tRunner; without the record,
 // testing.AllocsPerRun panics in every later test of the binary. The linker
-// rejects any other access to the counter.
-const ParallelStopHook = `//go:linkname __dd_civisibility_registerTestingParallelStop github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.registerTestingParallelStop
-func __dd_civisibility_registerTestingParallelStop(func())
-func init() { __dd_civisibility_registerTestingParallelStop(func() { parallelStop.Add(1) }) }
+// rejects any other access to the counter. Like MiniOrchestrionMark, it sets
+// Mini's variable instead of calling Mini while testing initializes.
+const ParallelStopHook = `//go:linkname __dd_civisibility_testingParallelStop github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting.testingParallelStop
+var __dd_civisibility_testingParallelStop func()
+func init() { __dd_civisibility_testingParallelStop = func() { parallelStop.Add(1) } }
 `
 
 // declaresParallelStop reports whether this AST declares the counter with the
