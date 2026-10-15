@@ -476,5 +476,5 @@ Gin's `-coverpkg=./... -covermode=atomic` runtime went from 6.53 to 0.56 s at
 +2.4% to +0.4% over Native, and with `-race` and coverage from +5.5% to +0.6%.
 Other Mini cells moved by about ±5% from the 2026-10-13 data. Collection days
 differ, so the phases' interleaved A/Bs remain the evidence for each change.
-The backlog records phase 3's wrapper, phases 4–6's findings and item 56, which
-stays parked.
+Phases 4–6 keep their findings above; the [backlog](optimization-backlog.md)
+keeps item 56 parked and the costs that remain to improve.

@@ -363,6 +363,21 @@ turn it into a parallel producer benchmark: concurrent finish behavior needs a
 workload that starts concurrent producers. The race and concurrency tests
 establish correctness only.
 
+For an optimization experiment, keep the baseline and candidate SHAs, inputs,
+commands, raw repetitions and limits in a task-scoped artifact directory.
+Alternate execution order and retain slow or failed samples. Record CPU,
+allocations, complete wall time, wire bytes and peak memory when they apply. A
+hot function's profile share does not predict the percentage that a change will
+save. Two benchmarks need care:
+
+- `BenchmarkEventLifecycle` at the default `GOMAXPROCS` shows gzip enabled and
+  disabled at nearly the same speed, 1.5 and 1.6 µs, because delivery runs on
+  other cores. At `GOMAXPROCS=1`, the gzip case takes 4.3 µs. Report CPU time,
+  or run it with `GOMAXPROCS=1`.
+- `BenchmarkCommonMetadataLifecycle` calls `utils.GetCITags()`, which opts into
+  the mutable tag path. `maps.Equal` then takes 13.6% of its CPU, although the
+  runtime never calls it.
+
 A CPU profiler inside the test binary does not profile Go's compiler and linker.
 For build diagnosis, capture the Go subprocesses and their process tree, or use
 `-x` and a Go build trace where available. `go test -cpuprofile` profiles test
