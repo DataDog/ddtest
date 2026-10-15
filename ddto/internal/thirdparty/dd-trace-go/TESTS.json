@@ -49,9 +49,9 @@
       "source": "internal/civisibility/integrations/civisibility_signal_handler_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_signal_handler_test.go",
       "source_sha256": "02c7164b23ce0e0941f53170dd07b651eebedcbc1e751a11f62cabc97dc04d48",
-      "adapted_sha256": "d2d02c9b7ddbcc9b09950676a53ae24084042fef9dab7f3af1ca2ed87027b5b8",
+      "adapted_sha256": "b1bb2f5e186a60dac0dca26e7edc8d81f1012bd0267ae850ed63197203e96c92",
       "kind": "full",
-      "adaptation": "Native writer-free CI bootstrap replaces APM mock initialization; signal/shutdown assertions preserved; standard-library assertion helpers"
+      "adaptation": "Native writer-free CI bootstrap replaces APM mock initialization; signal/shutdown assertions preserved; the exit seam receives the signal; signal.Notify and signal.Stop stand in for the functions that the os/signal overlay sets, and Mini-only cases cover a build without the overlay and ignored signals; standard-library assertion helpers"
     },
     {
       "source": "internal/civisibility/integrations/testing_helpers_test.go",
@@ -529,9 +529,9 @@
       "source": "internal/civisibility/integrations/civisibility_parent_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_parent_test.go",
       "source_sha256": "87c77b91fe4ff0304f4089f0f4815d9935418b6b5537bdfca300d8736956a508",
-      "adapted_sha256": "7041d5e39b88dc282d8f578184d97334e7fef4909429eaf0d19185c930fbeb29",
+      "adapted_sha256": "fd1922a59387d7fe0747cf83c04d80f35c5cdab0bd5b9680ce1b958fb3f6bb1d",
       "kind": "full",
-      "adaptation": "APM mock startup is replaced by a writer-free native CI bootstrap callback; assertions preserved; standard-library assertion helpers"
+      "adaptation": "APM mock startup is replaced by a writer-free native CI bootstrap callback; assertions preserved; standard-library assertion helpers; the shared restore waits for the bootstrap's tracked background work"
     },
     {
       "source": "internal/civisibility/integrations/manual_api_test.go",

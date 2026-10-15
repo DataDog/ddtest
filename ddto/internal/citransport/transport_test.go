@@ -35,6 +35,41 @@ func TestDeferredTransportOwnsItsConnections(t *testing.T) {
 	}
 }
 
+// A test can replace http.DefaultTransport before Mini starts, with a mock
+// that fails on unexpected requests or with settings of its own. Mini's
+// delivery never goes through it, also with a client that has no transport.
+func TestDeliveryNeverUsesTheDefaultTransport(t *testing.T) {
+	original := http.DefaultTransport
+	var replaced atomic.Int32
+	http.DefaultTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		replaced.Add(1)
+		return nil, errors.New("the replaced default transport")
+	})
+	t.Cleanup(func() { http.DefaultTransport = original })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(202)
+	}))
+	defer server.Close()
+	for _, client := range []*http.Client{nil, {Timeout: 5 * time.Second}} {
+		transport, err := New(Config{Endpoint: server.URL, HTTPClient: client})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := transport.Send(context.Background(), []byte("payload")); err != nil {
+			t.Fatal(err)
+		}
+		transport.CloseIdleConnections()
+	}
+	if replaced.Load() != 0 {
+		t.Fatal("delivery went through the replaced http.DefaultTransport")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 func TestLeakCheckpointLeavesCustomTransportOwnershipAlone(t *testing.T) {
 	custom := &customConnectionTransport{}
 	transport, err := New(Config{Endpoint: "http://fixture.invalid", HTTPClient: &http.Client{Transport: custom}})

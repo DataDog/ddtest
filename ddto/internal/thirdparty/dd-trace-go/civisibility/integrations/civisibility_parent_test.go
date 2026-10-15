@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/cidelivery"
 	tracer "github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"
 	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/testassert/require"
@@ -68,6 +69,9 @@ func resetCIVisibilityBootstrapStateForTesting() {
 
 // restoreCIVisibilityBootstrapForTesting clears the native bootstrap and client state.
 func restoreCIVisibilityBootstrapForTesting() {
+	// The bootstrap's tracked background work reads the state reset below; a
+	// shutdown that ends early, as on a panic, can leave it still running.
+	cidelivery.PrepareLeakCheck()()
 	resetCIVisibilityBootstrapStateForTesting()
 	disableAdditionalFeaturesForBootstrapTest()
 	// No network writer is installed by the lifecycle-only test callback.

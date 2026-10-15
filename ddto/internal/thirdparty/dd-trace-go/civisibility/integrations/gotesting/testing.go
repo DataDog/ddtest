@@ -418,7 +418,7 @@ func instrumentTestingMWithOptions(m *testing.M, wrapperOpts additionalFeatureWr
 	log.Debug("civisibility: start-up connections closed before the first test")
 
 	return true, func(exitCode int) int {
-		abnormalExit := exitCode == testingMAbnormalExitCode
+		abnormalExit := isAbnormalTestingMExit(exitCode)
 		if abnormalExit {
 			exitCode = processRetryFailureExitCode
 		}

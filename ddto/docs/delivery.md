@@ -178,9 +178,12 @@ subprocesses, which would otherwise look like leaks.
 
 The shim does not use `IgnoreCurrent`, ignore `net/http` functions, or suppress
 arbitrary goroutine snapshots. Mini clones standard HTTP transports for its own
-use, so closing them leaves the caller's default transport open. Leak
-checkpoints never close custom RoundTrippers; those keep their own lifecycle
-and may need cleanup by the caller.
+use, and without a configured one builds its own with Go's default settings,
+so closing them leaves the caller's transports open. It never uses
+`http.DefaultTransport`, which a test can replace, for example with a mock that
+fails on requests it did not expect. Leak checkpoints never close custom
+RoundTrippers; those keep their own lifecycle and may need cleanup by the
+caller.
 
 `VerifyNone` itself cannot assign other parallel tests' goroutines to their owners.
 Use `VerifyTestMain` for a parallel suite, following goleak's normal contract.

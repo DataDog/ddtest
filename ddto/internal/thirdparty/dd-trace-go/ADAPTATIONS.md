@@ -69,11 +69,19 @@ action per test, so prepending a copied slice would allocate quadratically.
 
 Keep LIFO ordering within each list, and run every pre-close barrier before the
 ordinary actions. A barrier can register an ordinary action; shutdown must
-include it. The existing locks, single shutdown owner and wait for that owner
-also apply to signal-triggered shutdown.
+include it. The single shutdown owner and the wait for that owner also apply
+to signal-triggered shutdown and to `os.Exit` (see [forced exits](#forced-exits)).
+
+Shutdown takes the ordinary actions under the lock and runs them after
+releasing it; upstream ran them holding it. A module registers a new suite's
+close action while holding its own lock, and its own close action takes that
+lock, so a suite created during shutdown deadlocked the two goroutines.
+Actions registered after shutdown took the list do not run, as upstream,
+where they waited for the lock and were then cleared.
 
 Checks: `TestCloseActionsKeepLIFOAndRunBarriersFirst`,
-`TestConcurrentCloseActionsRunOnce` and the signal-handler tests. Use
+`TestConcurrentCloseActionsRunOnce`, `TestCloseActionsRunWithoutTheRegistrationLock`
+and the signal-handler tests. Use
 `BenchmarkCloseActionRegistration` to compare allocation growth at 1,000,
 4,000 and 16,000 registrations.
 
@@ -1227,6 +1235,143 @@ leave the accounting unbalanced for the rest of the binary. The package's
 allocation checks therefore use its `allocsPerRun` helper instead of
 `testing.AllocsPerRun`, which would panic with `-count` above one or with
 `-shuffle`. `TestPackageTestsMeasureAllocationsWithHelper` keeps it that way.
+
+## Forced exits
+
+A test process can end before its tests finish: a signal, or a call to
+`os.Exit` or `log.Fatal` from a test, a cleanup or another goroutine. Mini
+sends the events of the tests that ran and closes the session as failed in
+both cases, and the process ends as under go test.
+
+### Signals that would end the process
+
+Upstream registers SIGINT and SIGTERM with `signal.Notify` when CI Visibility
+starts and, on either signal, closes CI Visibility and calls `os.Exit(1)`. Go
+delivers a signal to every channel that wants it, so that handler also ends a
+process whose test handles the signal itself: a server test that sends itself
+SIGTERM to check its graceful shutdown, or fuzzing's coordinator, which stops
+on SIGINT. The process exits with status 1 between two tests, and go test
+prints no reason. A signal that nothing handles also ends it with status 1
+instead of the signal, so go test does not print `signal: terminated`.
+
+Go has no API that tells whether another channel wants a signal, and its
+runtime ends a process for an unwanted signal from its signal handler, without
+running Go code. Mini therefore relies on an os/signal overlay that ddto adds
+for Mini only. `TransformSignal` in `internal/instrument/signal.go` edits
+`process`, the function that delivers signals to channels, so that Mini's
+channel receives a signal only when no other channel wants it. Channels that
+`Stop` is removing count too, as `process` still delivers to them, and so does
+a channel that the test stops right after its delivery: the check runs under
+the lock that `process` holds. It also edits `Reset` and `Ignore`, which
+remove a signal from every channel, Mini's included, through `cancel`. `Reset`
+passes `cancel` the hook's `__dd_civisibility_resetSignal` instead of
+`disableSignal`: under the same lock, that action registers Mini's channel
+again for a signal that Mini holds and keeps the signal enabled, so it never
+ends the process without reaching Mini first; other signals are disabled as
+before. `Ignore` passes `__dd_civisibility_ignoreSignal` instead of
+`ignoreSignal`, which also makes Mini stop holding the signal for good: Go
+keeps an ignored signal ignored after `Reset`, and for SIGINT and SIGHUP even
+after `Notify` and `Stop`, where only the operating system remembers it. Mini
+also leaves out, when it registers, the signals that the test ignored before
+Mini started, and SIGINT when the process started with it ignored, as a
+background job of a non-interactive shell does: the hook records that while
+os/signal initializes, before any `Notify` can hide it from `Ignored`. The
+hook keeps these sets in arrays indexed by signal number.
+The edits stay on their lines, so os/signal keeps its positions.
+
+`SignalHook` sets `signalNotify` and `signalStop` in
+[`civisibility.go`](civisibility/integrations/civisibility.go) through
+linknamed variables while os/signal initializes. It does not call Mini, because
+os/signal initializes before Mini: a Mini function that runs first and that
+`-coverpkg` instruments records its coverage counters without a package, and
+Go reports `internal error in coverage meta-data tracking` when it writes the
+profile. Mini's channel and its signals change under handlers' lock, after
+`Notify` has created the channel map and started the signal loop. Under that
+lock Mini holds its signals again, in case a `Reset` ran since `Notify`. Mini
+stops its channel through `signalStop`, so that `Reset` does not register it
+again afterwards.
+
+On such a signal Mini closes CI Visibility as before, stops its channel, and
+sends the signal to its own process again. With no channel left, the runtime
+ends the process as under go test
+([`civisibility_signal_exit_unix.go`](civisibility/integrations/civisibility_signal_exit_unix.go)).
+Windows cannot send a console event to one process, so it keeps exit status 1.
+Mini registers no signal that the process ignores, such as SIGINT in a
+background job, because registering it would install a handler. A test that
+ignores a signal removes Mini's channel for it, as for any channel. When the
+toolchain's os/signal lacks what the hook uses, `prepareSignalHook` leaves
+os/signal unchanged, and Mini handles no signal: a signal ends the process
+without CI events, as it ends go test. A client that requires an older version
+of this module runs that version's runtime, signal handling included.
+
+### os.Exit and log.Fatal
+
+Upstream loses every event of a process that a test ends with `os.Exit` or
+`log.Fatal`, because the process ends without running deferred functions or
+CI Visibility's shutdown. `ExitHook` in `internal/instrument/exit.go` is a
+testing overlay file that registers `forcedExit` in
+[`civisibility.go`](civisibility/integrations/civisibility.go) as a runtime
+exit hook (`internal/runtime/exithook`, which coverage uses to write its
+counters). `os.Exit` runs it before the process ends, with any status.
+`forcedExit` runs CI Visibility's shutdown; after a normal end CI Visibility
+is already closed, and it returns at once, and while another goroutine shuts
+it down it waits for that shutdown. The shutdown runs on its own goroutine,
+and `forcedExit` waits for it at most a minute (`forcedExitTimeout`): the
+goroutine that called `os.Exit` can hold a lock that the shutdown needs, as
+when user code that Mini calls during its own shutdown, such as a replaced
+`http.DefaultTransport`, exits; Mini's own delivery no longer uses that one.
+The bound also ends a delivery that still progresses after a minute, such as a
+large deferred queue to a slow intake: an exit is never delayed longer. An
+error says so, printed at once rather than with the errors that Mini prints
+every minute. testing's `-timeout` alarm keeps running while the hook waits;
+in the rare case that it expires then, testing's timeout panic ends the
+process instead of `os.Exit`'s status. It does not join the signal handler's
+goroutine: on Windows that goroutine calls `os.Exit` after a signal, and would
+wait for itself. Another package's init can call `os.Exit` after testing
+registered the hook and before Mini initializes; CI Visibility has not started
+then, and the hook only reads its state. It recovers a panic, because the
+runtime ends the process with a fatal error when an exit hook panics. The test
+that was running is not reported, as after a signal. Mini closes a test when
+its body returns, before testing runs the test's cleanups, so a test whose
+cleanup exits reports the result of its body. `os.Exit(0)` during a test
+already panics in testing, and signals and crashes run no exit hooks.
+`prepareExitHook` adds the file only when the toolchain's exithook and the
+selected runtime declare what it uses.
+
+The SDK runtime keeps upstream behavior for signals and exits.
+
+### Debug lines for process endings
+
+We never see a project's code, so with `DD_TRACE_DEBUG=true` a test process's
+log has to say how it ended. Mini logs:
+- each test's start (`createTest`) and finish (`finalizeInstrumentedTestExecution`, with a panic's value);
+- a panic that leaves `testing.M.Run` (`isAbnormalTestingMExit`);
+- the signals it registers and those it leaves alone;
+- each signal that reaches it, and each one that arrives while a channel of the test is registered for it;
+- the stack that called `os.Exit`;
+- the HTTP transport of its event delivery.
+
+The os/signal hook reports a signal that arrived while other channels were
+registered for it on a channel that `signalNotify` receives, without blocking,
+and `signalNotify` returns the signals it registered. `testing.go` changes
+on its line only, so its lines stay where the stack comparison expects them.
+[CLI build diagnostics](../../../docs/cli-debug.md#why-a-test-process-ended)
+explains each line.
+
+Checks: `TestMiniSignalsKeepGoTestBehavior`, `TestMiniForcedExitKeepsEvents`,
+`TestToolchainProvidesSignalHook`, `TestSignalHookTypeChecks`,
+`TestSignalHookMatchesMiniRegistration`, `TestTransformSignalRejectsOtherShapes`,
+`TestToolchainProvidesExitHook`, `TestExitHookTypeChecks`,
+`TestExitHookMatchesMiniRegistration`, `TestPrepareSignalHook`,
+`TestPrepareExitHook`, `TestForcedExitClosesCIVisibility`,
+`TestForcedExitRecoversPanics`, `TestForcedExitFromTheSignalHandlerReturns`,
+`TestForcedExitBeforeTheRuntimeInitializes`, `TestForcedExitBoundsItsWait`,
+`TestCIVisibilitySignalHandlerNeedsTheOverlay`
+and `TestCIVisibilitySignalHandlerKeepsIgnoredSignalsIgnored`. This package's
+own tests run without the overlays and use `signal.Notify` and `signal.Stop`
+in place of the hook's functions. Their shared cleanup waits for the
+bootstrap's tracked background work first, which a shutdown that ends early,
+as on a panic, can leave running.
 
 ## Per-test allocations
 

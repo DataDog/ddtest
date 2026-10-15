@@ -13,6 +13,7 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/ddtrace/ext"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
 )
 
 func finalizeInstrumentedTestExecution(
@@ -30,6 +31,7 @@ func finalizeInstrumentedTestExecution(
 	if isAnEfdExecution(execMeta) && duration >= 5*time.Minute {
 		test.SetTag(constants.TestEarlyFlakeDetectionRetryAborted, "slow")
 	}
+	logTestFinished(t, duration, terminal)
 
 	collectAndWriteLogs(t, test, attemptOutput)
 	if terminal != nil {
@@ -109,5 +111,24 @@ func finalizeInstrumentedTestExecution(
 			}
 		}
 		deferOrCloseInstrumentedTestEvent(execMeta, test, integrations.ResultStatusPass, "")
+	}
+}
+
+// logTestFinished records, in the debug log, how each test ended. With the
+// line that each test's start writes, it shows which test ran when a process
+// ended, and why a test failed.
+func logTestFinished(t *testing.T, duration time.Duration, terminal any) {
+	if !log.DebugEnabled() {
+		return
+	}
+	switch {
+	case terminal != nil:
+		log.Debug("gotesting: test finished name=%s status=fail duration=%s panic=%q", t.Name(), duration, fmt.Sprint(terminal))
+	case t.Failed():
+		log.Debug("gotesting: test finished name=%s status=fail duration=%s", t.Name(), duration)
+	case t.Skipped():
+		log.Debug("gotesting: test finished name=%s status=skip duration=%s", t.Name(), duration)
+	default:
+		log.Debug("gotesting: test finished name=%s status=pass duration=%s", t.Name(), duration)
 	}
 }

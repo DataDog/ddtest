@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -82,8 +83,19 @@ func New(c Config) (*Transport, error) {
 	// This client owns standard transports even in ordinary delivery mode.
 	// A goleak checkpoint must not close a caller's unrelated HTTP connections.
 	transport := copyClient.Transport
+	origin := "the client's custom RoundTripper"
 	if transport == nil {
-		transport = http.DefaultTransport
+		transport, origin = defaultTransport(), "Mini's own default transport"
+	} else if _, ok := transport.(*http.Transport); ok {
+		origin = "a clone of the client's transport"
+	}
+	if log.DebugEnabled() {
+		// The query can carry credentials; the scheme, host and path cannot.
+		endpoint := ""
+		if u != nil {
+			endpoint = u.Scheme + "://" + u.Host + u.Path
+		}
+		log.Debug("test-cycle: delivery uses %s endpoint=%s agentless=%t", origin, endpoint, c.Agentless)
 	}
 	if standard, ok := transport.(*http.Transport); ok {
 		clone := standard.Clone()
@@ -119,6 +131,25 @@ func New(c Config) (*Transport, error) {
 		}
 	}
 	return t, nil
+}
+
+// defaultTransport returns a transport configured as Go's
+// http.DefaultTransport, which Mini never uses: a test can replace it before
+// Mini starts, with a mock that fails on unexpected requests or with settings
+// of its own, and Mini's events would then go through it.
+func defaultTransport() *http.Transport {
+	return &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
 }
 
 // Send retries transient failures using the same immutable payload. Context

@@ -58,6 +58,10 @@ func createTest(suite *tslvTestSuite, name string, startTime time.Time) Test {
 	if suite == nil {
 		return nil
 	}
+	if log.DebugEnabled() {
+		// With each test's finish line, shows which test ran when a process ended.
+		log.Debug("civisibility: test started name=%s suite=%s", name, suite.name)
+	}
 
 	operationName := suite.module.testOperation
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/log"
 )
@@ -69,6 +70,34 @@ func TestConcurrentCloseActionsRunOnce(t *testing.T) {
 		if count != 1 {
 			t.Fatalf("action %d executed %d times", i, count)
 		}
+	}
+}
+
+// Close actions run without the registration lock: a module that registers
+// a suite's action while holding its own lock, as GetOrCreateSuite does,
+// cannot deadlock with the module's close action. A late registration does
+// not run.
+func TestCloseActionsRunWithoutTheRegistrationLock(t *testing.T) {
+	resetCIVisibilityBootstrapStateForTesting()
+	disableAdditionalFeaturesForBootstrapTest()
+	t.Cleanup(restoreCIVisibilityBootstrapForTesting)
+	initializeCIVisibilityLifecycleForTesting()
+	late := false
+	PushCiVisibilityCloseAction(func() {
+		registered := make(chan struct{})
+		go func() {
+			PushCiVisibilityCloseAction(func() { late = true })
+			close(registered)
+		}()
+		select {
+		case <-registered:
+		case <-time.After(5 * time.Second):
+			t.Error("a registration during the close actions waited for them")
+		}
+	})
+	ExitCiVisibility()
+	if late {
+		t.Fatal("an action registered during shutdown ran")
 	}
 }
 

@@ -106,8 +106,10 @@ func NeedsPlan(mode string, args []string, importPath string) bool {
 		if len(args) == 2 && args[1] == "-V=full" {
 			return true
 		}
+		// Cover opens logical paths; ddto translates the standard-library
+		// packages whose overlay it rewrites.
 		pkg, _, _ := strings.Cut(importPath, " [")
-		return pkg == "testing"
+		return pkg == "testing" || pkg == "os/signal"
 	}
 	if tool == "compile" && (mode == "mini-sdk" || strings.HasPrefix(mode, "mini-sdk-")) && !(len(args) == 2 && args[1] == "-V=full") {
 		if pkg, _ := SDKCompilePackage(importPath); pkg != "" && (pkg != SDKTracerPackage || !strings.Contains(mode, "nomirror")) {

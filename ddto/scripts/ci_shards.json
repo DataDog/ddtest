@@ -34,6 +34,8 @@
       "TestMiniConsumerAddsOnlyOwnModule",
       "TestMiniContinuesAfterPackageSetupFailures",
       "TestMiniDeliveryFailurePreservesGoExit",
+      "TestMiniForcedExitKeepsEvents",
+      "TestMiniIgnoresAReplacedDefaultTransport",
       "TestMiniExecWrapperSeesCallerEnvironment",
       "TestMiniFixtureRuntimeImportLineEndings",
       "TestMiniGOROOTMirrorDirectToolchain",
@@ -171,6 +173,7 @@
       "TestMiniContinuesAfterPackageSetupFailures",
       "TestMiniCoverageIncludesCleanup",
       "TestMiniExecWrapperSeesCallerEnvironment",
+      "TestMiniForcedExitKeepsEvents",
       "TestMiniGoleakAbsoluteTargetRetainsCompilerFlags",
       "TestMiniGoleakIntegration",
       "TestMiniLocalProvisionAvoidsProxy",
@@ -215,6 +218,7 @@
         "TestMiniCLIStateGivesModuleToCoverage",
         "TestMiniGOROOTMirrorToolchainSwitch",
         "TestMiniGitWorkerStopsOnInterrupt",
+        "TestMiniSignalsKeepGoTestBehavior",
         "TestToolWrapperWaitStopsOnSignal"
       ],
       "parity": [
@@ -225,6 +229,7 @@
       "cli": [
         "TestMiniCLIStateGivesModuleToCoverage",
         "TestMiniGitWorkerStopsOnInterrupt",
+        "TestMiniSignalsKeepGoTestBehavior",
         "TestToolWrapperWaitStopsOnSignal"
       ],
       "parity": [

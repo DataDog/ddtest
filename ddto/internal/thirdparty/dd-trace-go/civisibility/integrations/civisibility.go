@@ -9,11 +9,14 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
+	_ "unsafe" // go:linkname
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/cidelivery"
 	tracer "github.com/tonyredondo/dd-ci-testing-poc/internal/minitracer"
@@ -42,7 +45,8 @@ type ciVisibilityIdleConnectionCloser interface {
 // ciVisibilitySignalHandler owns the SIGINT/SIGTERM goroutine registered by CI
 // Visibility and lets normal test shutdown stop it before goleak runs.
 type ciVisibilitySignalHandler struct {
-	signals  chan os.Signal // receives process interrupt and termination signals
+	signals  chan os.Signal // receives the interrupt and termination signals that would end the process
+	observed chan int       // learns of the signals that the test's own channels received
 	stop     chan struct{}  // asks the handler goroutine to exit during normal shutdown
 	done     chan struct{}  // closes when the handler goroutine exits
 	stopOnce sync.Once      // guarantees stop is signaled at most once
@@ -59,8 +63,21 @@ var (
 	// activeCIVisibilitySignalHandler contains the active process signal handler, if CI Visibility started one.
 	activeCIVisibilitySignalHandler *ciVisibilitySignalHandler
 
-	// ciVisibilitySignalExitFunc terminates the process after signal-triggered shutdown; tests replace it.
-	ciVisibilitySignalExitFunc = os.Exit
+	// ciVisibilitySignalExitFunc ends the process with the signal after
+	// signal-triggered shutdown; tests replace it.
+	ciVisibilitySignalExitFunc = exitBySignal
+
+	// signalNotify registers a channel that receives a signal only when no
+	// other channel wants it, that is, when the signal would otherwise end the
+	// process; signal.Reset registers it again. The second channel learns,
+	// without blocking os/signal, of the signals that arrived while another
+	// channel was registered for them. It returns the signals it registered,
+	// leaving out those that the process ignores for good. signalStop stops it. ddto's os/signal overlay sets both while os/signal
+	// initializes, before this package's variables, which therefore have no
+	// initializer. Without the overlay they stay nil and CI Visibility handles
+	// no signal.
+	signalNotify func(chan<- os.Signal, chan<- int, ...os.Signal) []os.Signal
+	signalStop   func(chan<- os.Signal)
 
 	// closeActions holds CI visibility close actions.
 	closeActions []ciVisibilityCloseAction
@@ -178,27 +195,46 @@ func internalCiVisibilityInitialization(tracerInitializer func([]tracer.StartOpt
 	})
 }
 
-// run waits for either a process signal or a normal shutdown request.
+// run waits for either a process signal or a normal shutdown request. It
+// logs the signals that the test handles itself, which leave CI Visibility
+// running.
 func (handler *ciVisibilitySignalHandler) run() {
 	defer close(handler.done)
 
-	select {
-	case <-handler.signals:
-		if handler.stopping.Load() {
+	for {
+		select {
+		case n := <-handler.observed:
+			if log.DebugEnabled() {
+				log.Debug("civisibility: signal %q arrived while a channel of the test is registered for it; the signal does not end the process, and CI Visibility keeps running", syscall.Signal(n).String())
+			}
+		case sig := <-handler.signals:
+			if handler.stopping.Load() {
+				log.Debug("civisibility: signal %q arrived while CI Visibility was closing; the shutdown continues", sig)
+				return
+			}
+			log.Debug("civisibility: received signal %q, which no channel of the test handles and which ends the process: closing CI Visibility", sig)
+			exitCiVisibility(false)
+			if handler.stopping.Load() {
+				log.Debug("civisibility: a normal shutdown started during the shutdown for signal %q; leaving the process to it", sig)
+				return
+			}
+			// Without CI Visibility's channel, a signal that no other channel
+			// wants takes its default action again.
+			signalStop(handler.signals)
+			ciVisibilitySignalExitFunc(sig)
+			return
+		case <-handler.stop:
 			return
 		}
-		exitCiVisibility(false)
-		if handler.stopping.Load() {
-			return
-		}
-		ciVisibilitySignalExitFunc(1)
-	case <-handler.stop:
-		return
 	}
 }
 
 // startCIVisibilitySignalHandler registers the process signal handler once for
-// the current CI Visibility initialization.
+// the current CI Visibility initialization. It receives SIGINT and SIGTERM
+// only when they would end the process: a signal that the test handles
+// itself, as the fuzzing coordinator does with SIGINT, leaves CI Visibility
+// running. A signal that the process ignores, such as SIGINT in a background
+// job, stays ignored.
 func startCIVisibilitySignalHandler() {
 	ciVisibilitySignalHandlerMu.Lock()
 	defer ciVisibilitySignalHandlerMu.Unlock()
@@ -206,15 +242,40 @@ func startCIVisibilitySignalHandler() {
 	if activeCIVisibilitySignalHandler != nil {
 		return
 	}
+	if signalNotify == nil || signalStop == nil {
+		log.Debug("civisibility: no signal handler: os/signal was built without ddto's overlay")
+		return
+	}
+	var signals, ignored []os.Signal
+	for _, sig := range []os.Signal{syscall.SIGINT, syscall.SIGTERM} {
+		if signal.Ignored(sig) {
+			ignored = append(ignored, sig)
+		} else {
+			signals = append(signals, sig)
+		}
+	}
+	if len(signals) == 0 {
+		log.Debug("civisibility: no signal handler: the process ignores %v", ignored)
+		return
+	}
 
 	handler := &ciVisibilitySignalHandler{
-		signals: make(chan os.Signal, 1),
-		stop:    make(chan struct{}),
-		done:    make(chan struct{}),
+		signals:  make(chan os.Signal, 1),
+		observed: make(chan int, 8),
+		stop:     make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 
 	activeCIVisibilitySignalHandler = handler
-	signal.Notify(handler.signals, syscall.SIGINT, syscall.SIGTERM)
+	registered := signalNotify(handler.signals, handler.observed, signals...)
+	if log.DebugEnabled() {
+		for _, sig := range signals {
+			if !slices.Contains(registered, sig) {
+				ignored = append(ignored, sig) // ignored before CI Visibility started
+			}
+		}
+		log.Debug("civisibility: signal handler registered for %v, which reach CI Visibility only when no channel of the test is registered for them; ignored by the process: %v", registered, ignored)
+	}
 	go handler.run()
 }
 
@@ -243,7 +304,7 @@ func stopCIVisibilitySignalHandler() {
 
 	handler.stopOnce.Do(func() {
 		handler.stopping.Store(true)
-		signal.Stop(handler.signals)
+		signalStop(handler.signals)
 		close(handler.stop)
 	})
 
@@ -298,6 +359,64 @@ func TryPushCiVisibilityPreCloseAction(action ciVisibilityCloseAction) bool {
 	}
 	preCloseActions = append(preCloseActions, action)
 	return true
+}
+
+// forcedExitTimeout bounds forcedExit's wait for CI Visibility's shutdown;
+// tests shorten it.
+var forcedExitTimeout = time.Minute
+
+// forcedExit closes CI Visibility when the process ends through os.Exit, as
+// when a test calls os.Exit or log.Fatal before the tests finish, so that the
+// events of the tests that ran and the session are sent. ddto's testing
+// overlay registers it as a runtime exit hook, which runs inside os.Exit with
+// any status. After the tests, CI Visibility is already closed and it returns
+// at once; while another goroutine closes it, it waits for that shutdown.
+//
+// The shutdown runs on its own goroutine, and forcedExit waits for it at most
+// forcedExitTimeout: the goroutine that called os.Exit can hold a lock that
+// the shutdown needs, as when user code that Mini calls during its own
+// shutdown exits. It does not join the signal handler's goroutine, which can
+// be the one calling os.Exit after a signal.
+//
+//go:linkname forcedExit
+func forcedExit() {
+	// The hook is registered with testing, so another package's init can call
+	// os.Exit before this package initializes; CI Visibility has not started
+	// then, and process retry children never start it.
+	switch civisibility.GetState() {
+	case civisibility.StateInitialized:
+		if log.DebugEnabled() {
+			// The goroutine that called os.Exit runs the hook: its stack names
+			// the call, such as a test's log.Fatal, that ended the process.
+			log.Debug("civisibility: os.Exit before CI Visibility closed; closing it. os.Exit was called from:\n%s", debug.Stack())
+		}
+	case civisibility.StateExiting:
+		log.Debug("civisibility: os.Exit while CI Visibility closes; waiting for that shutdown")
+	default:
+		return
+	}
+	started := time.Now()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error("civisibility: closing CI Visibility in os.Exit panicked: %v", r)
+			}
+		}()
+		markCIVisibilitySignalHandlerStopping()
+		exitCiVisibility(false)
+	}()
+	select {
+	case <-done:
+		log.Debug("civisibility: closed CI Visibility for os.Exit duration=%s", time.Since(started))
+		// Errors are otherwise printed once a minute; the process ends now.
+		log.Flush()
+	case <-time.After(forcedExitTimeout):
+		log.Error("civisibility: closing CI Visibility in os.Exit did not finish within %s; exiting without it", forcedExitTimeout)
+		// Errors are otherwise printed once a minute; the process ends now.
+		log.Flush()
+	}
 }
 
 // ExitCiVisibility executes all registered close actions and stops the tracer.
@@ -370,11 +489,19 @@ func exitCiVisibility(stopSignalHandler bool) {
 		log.Debug("civisibility: shutdown barriers finished duration=%s actions=%d", time.Since(stageStarted), len(barriers))
 	}
 
+	// Run the actions without the lock: an object that registers its action
+	// while holding its own lock, as a module creating a suite does, would
+	// otherwise deadlock with its close action. Actions registered from now on
+	// do not run.
 	closeActionsMutex.Lock()
-	defer closeActionsMutex.Unlock()
+	actions := closeActions
+	closeActions = nil
+	closeActionsMutex.Unlock()
 	defer func() {
+		closeActionsMutex.Lock()
 		closeActions = []ciVisibilityCloseAction{}
 		preCloseActions = []ciVisibilityCloseAction{}
+		closeActionsMutex.Unlock()
 		log.Debug("civisibility: flushing and stopping the logger")
 		if debug {
 			stageStarted = time.Now()
@@ -400,11 +527,11 @@ func exitCiVisibility(stopSignalHandler bool) {
 	if debug {
 		stageStarted = time.Now()
 	}
-	for i := len(closeActions) - 1; i >= 0; i-- {
-		closeActions[i]()
+	for i := len(actions) - 1; i >= 0; i-- {
+		actions[i]()
 	}
 	if debug {
-		log.Debug("civisibility: close actions finished duration=%s actions=%d", time.Since(stageStarted), len(closeActions))
+		log.Debug("civisibility: close actions finished duration=%s actions=%d", time.Since(stageStarted), len(actions))
 	}
 }
 

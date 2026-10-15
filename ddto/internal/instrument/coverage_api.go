@@ -132,8 +132,9 @@ func goDeclarations(dir string, files []string) (map[string]bool, error) {
 
 // sourceDeclarations renders the declarations of a package's sources:
 // functions and methods with their parameter and result types, struct fields
-// of named types and of package variables, named types, constants and
-// linkname directives.
+// of named types and of package variables, embedded fields, other package
+// variables with their declared type, named types, constants and linkname
+// directives.
 func sourceDeclarations(sources map[string][]byte) (map[string]bool, error) {
 	decls := map[string]bool{}
 	fset := token.NewFileSet()
@@ -172,6 +173,8 @@ func sourceDeclarations(sources map[string][]byte) (map[string]bool, error) {
 								decls["const "+ident.Name] = true
 							} else if structType, ok := spec.Type.(*ast.StructType); ok {
 								addFields(decls, ident.Name, structType)
+							} else if spec.Type != nil {
+								decls["var "+ident.Name+" "+render(spec.Type)] = true
 							}
 						}
 					}
@@ -184,6 +187,9 @@ func sourceDeclarations(sources map[string][]byte) (map[string]bool, error) {
 
 func addFields(decls map[string]bool, owner string, structType *ast.StructType) {
 	for _, field := range structType.Fields.List {
+		if len(field.Names) == 0 {
+			decls["embed "+owner+" "+render(field.Type)] = true
+		}
 		for _, name := range field.Names {
 			decls["field "+owner+"."+name.Name+" "+render(field.Type)] = true
 		}
