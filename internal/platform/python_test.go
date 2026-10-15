@@ -154,8 +154,7 @@ func TestPython_baseEnv_SetsWhenNotSet(t *testing.T) {
 
 func TestPython_baseEnv_AppendsWhenAlreadySet(t *testing.T) {
 	original, existed := os.LookupEnv(pytestAddOptsEnvVar)
-	existingValue := "-v --tb=short --disable-plugin-autoload"
-	t.Setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+	existingValue := "-v --tb=short"
 	_ = os.Setenv(pytestAddOptsEnvVar, existingValue)
 	defer func() {
 		if existed {
@@ -172,7 +171,6 @@ func TestPython_baseEnv_AppendsWhenAlreadySet(t *testing.T) {
 	if envMap[pytestAddOptsEnvVar] != expected {
 		t.Errorf("expected %s=%q, got %q", pytestAddOptsEnvVar, expected, envMap[pytestAddOptsEnvVar])
 	}
-	require.NotContains(t, envMap, "PYTEST_DISABLE_PLUGIN_AUTOLOAD")
 }
 
 func TestPython_CreateTagsMap_Success(t *testing.T) {

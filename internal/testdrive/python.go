@@ -13,7 +13,7 @@ func pythonEnvironment(path string) map[string]string {
 			env["PYTHONPATH"] += string(os.PathListSeparator) + existing
 		}
 	}
-	env["PYTEST_ADDOPTS"] = strings.TrimSpace(os.Getenv("PYTEST_ADDOPTS") + " -p ddtrace --ddtrace")
+	env["PYTEST_ADDOPTS"] = strings.TrimSpace(os.Getenv("PYTEST_ADDOPTS") + " --ddtrace")
 
 	return env
 }

@@ -336,7 +336,7 @@ func writeFindings(output io.Writer, findings intake.Facts, cards ...reportCard)
 	}
 	count := len(findings.ConfigurationErrors)
 	for _, finding := range cards {
-		if finding.Kind != "command-failed" && finding.Kind != "no-test-events" {
+		if finding.Kind != "command-failed" && finding.Kind != "no-test-events" && finding.Kind != "pytest-plugin-not-loaded" {
 			continue
 		}
 		count += finding.Count
