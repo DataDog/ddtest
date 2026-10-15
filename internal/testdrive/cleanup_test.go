@@ -17,7 +17,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
 )
@@ -68,7 +67,7 @@ func TestRunCleansScratchOnSetupFailureAndCancellation(t *testing.T) {
 
 func TestUnvalidatedFrameworkCleansScratchAndKeepsBothReports(t *testing.T) {
 	run := preparedTestdrive(t)
-	run.framework = &framework.Cucumber{}
+	run.framework = &telemetryOnlyFramework{}
 	installer := &fakeTracer{preloadPath: "/trace/ci/init.js"}
 	run.platform = installer
 	run.executor = &fakeTestdriveExecutor{output: []byte("useful diagnostics")}
@@ -109,7 +108,7 @@ func TestCommandFailureOutputSurvivesCleanup(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			run := preparedTestdrive(t)
-			run.framework = &framework.Cucumber{}
+			run.framework = &telemetryOnlyFramework{}
 			installer := &fakeTracer{preloadPath: "/trace/ci/init.js"}
 			run.platform = installer
 			run.executor = &fakeTestdriveExecutor{output: []byte(tc.output), err: errors.New("exit status 1")}
@@ -117,8 +116,8 @@ func TestCommandFailureOutputSurvivesCleanup(t *testing.T) {
 				return &fakeIntake{findings: intake.Facts{TestEventCount: tc.events}}, nil
 			}
 			var output bytes.Buffer
-			require.Error(t, run.Run(t.Context(), &output), "Cucumber remains unvalidated")
-			require.Contains(t, output.String(), "Cucumber command output:")
+			require.Error(t, run.Run(t.Context(), &output), "Generic reporting framework remains unvalidated")
+			require.Contains(t, output.String(), "unvalidated command output:")
 			require.Contains(t, output.String(), tc.want)
 			require.Contains(t, output.String(), "Bounded diagnostic: "+validationPath(""))
 			require.NotContains(t, output.String(), "Full test output:")

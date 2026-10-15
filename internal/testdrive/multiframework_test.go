@@ -102,7 +102,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			require.Contains(t, preview.String(), displayName(name))
 			_, err = os.Stat(filepath.Join(root, ".testoptimization"))
 			require.True(t, os.IsNotExist(err), "preview must be read-only")
-			if name == "mocha" || name == "jest" || name == "vitest" || name == "playwright" || name == "cypress" {
+			if name == "mocha" || name == "jest" || name == "vitest" || name == "playwright" || name == "cypress" || name == "cucumber" {
 				return
 			} // Paired validation has separate real-run tests.
 			run.environmentFailure = nil

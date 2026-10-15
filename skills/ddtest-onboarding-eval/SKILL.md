@@ -1,11 +1,11 @@
 ---
 name: ddtest-onboarding-eval
-description: Evaluate ddtest onboarding on fresh open-source Jest, Vitest, Playwright, Mocha or Cypress repositories using Codex or Claude CLI and a minimal customer prompt. Use for developer experiments and comparisons, not for onboarding a customer repository directly.
+description: Evaluate ddtest onboarding on fresh open-source Jest, Vitest, Playwright, Mocha, Cypress or Cucumber.js repositories using Codex or Claude CLI and a minimal customer prompt. Use for developer experiments and comparisons, not for onboarding a customer repository directly.
 ---
 
 # ddtest onboarding evaluation
 
-Measure what an uncoached coding agent accomplishes with a ddtest binary. Cover Jest, Vitest, Playwright, Mocha and Cypress; grade unsupported versions or configurations as unvalidated. This skill belongs to the
+Measure what an uncoached coding agent accomplishes with a ddtest binary. Cover Jest, Vitest, Playwright, Mocha, Cypress and Cucumber.js; grade unsupported versions or configurations as unvalidated. This skill belongs to the
 **evaluator**, not the agent being tested. It is developer tooling in this repo;
 it is not embedded in the ddtest binary or installed in the target repository.
 
@@ -19,7 +19,7 @@ tested agent's global skill directories or target checkout.
 
 ## Prepare and run
 
-1. Select a public repository that actually runs Jest, Vitest, Playwright, Mocha or Cypress. Read its CI, package
+1. Select a public repository that actually runs Jest, Vitest, Playwright, Mocha, Cypress or Cucumber.js. Read its CI, package
    scripts, lockfile, runtime requirements, and ordinary repository instructions.
    Choose a commit and dependency installation command. Record the intended test
    command and relevant Node, package-manager, and framework versions outside the
@@ -54,7 +54,7 @@ tested agent's global skill directories or target checkout.
    > Use ddtest in /temporary/trial/bin and onboard this repository to test-optimization.
 
    For a requested framework-only trial in a mixed repository, pass
-   `--framework playwright` (or `jest`/`vitest`/`mocha`/`cypress`). This adds only
+   `--framework playwright` (or `jest`/`vitest`/`mocha`/`cypress`/`cucumber`). This adds only
    “for playwright only” to the prompt and records the scope in `run.json`.
 
    No skill, grading rubric, feature list, runbook, previous results, extra system
@@ -142,6 +142,15 @@ commands; testdrive may execute both. Retain unavailable browser/OS configuratio
 as untested. Keep
 Cloud recording disabled locally, use a private CYPRESS_CACHE_FOLDER, and inspect
 ignored generated fixtures/screenshots as part of cleanup.
+
+For Cucumber, preserve profiles, tags, support imports and build prerequisites.
+Check scenario results against telemetry, and reconcile probe-body counters for
+all six feature controls. A mixed npm test command must initialize only its
+Cucumber leaf when that is the requested scope. Istanbul suite coverage must name
+real application files; config, support and feature files alone are insufficient.
+Suite coverage is not independent per-scenario coverage. Check that CI enables
+the same NYC/ESM instrumentation and that its tracer supports every selected
+Node runtime. New ignored build outputs still require cleanup.
 
 If the tested ddtest version lacks paired runs or controlled feature scenarios,
 mark the missing checks **not exercised** and identify the product gap. Do not

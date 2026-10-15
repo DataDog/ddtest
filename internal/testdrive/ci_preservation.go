@@ -16,14 +16,14 @@ import (
 // The first local check is the baseline, including any pre-existing user edits.
 // Keep it inside the report rather than adding another customer-repo artifact.
 func checkCIPreservation(root string, result *validationResult) error {
-	if result.Framework != "mocha" {
+	if result.Framework != "mocha" && result.Framework != "cucumber" {
 		return nil
 	}
 	previous, err := readPreviousValidation(root)
 	if err != nil {
 		return err
 	}
-	current, err := onboard.CIMatrixRows(root)
+	current, err := onboard.CIMatrixRows(root, result.Framework)
 	if err != nil {
 		result.CIPreservation = &verdict{Status: "inconclusive", Reason: reportText(err.Error())}
 	} else {

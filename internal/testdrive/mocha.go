@@ -17,13 +17,17 @@ import (
 // Preserve an existing NYC invocation or an inherited NYC wrapper.
 func (t *Testdrive) executionCommand() (string, []string) {
 	command, args := t.command, t.args
-	if t.framework.Name() != "mocha" || os.Getenv("NYC_CONFIG") != "" {
+	if (t.framework.Name() != "mocha" && t.framework.Name() != "cucumber") || os.Getenv("NYC_CONFIG") != "" {
 		return command, args
 	}
 	if base := filepath.Base(command); base == "nyc" || base == "nyc.js" {
 		return command, args
 	}
-	if onboard.MochaUsesNYC(t.repositoryRoot, shellquote.Join(append([]string{command}, args...)...)) {
+	covered := onboard.MochaUsesNYC(t.repositoryRoot, shellquote.Join(append([]string{command}, args...)...))
+	if t.framework.Name() == "cucumber" {
+		covered = onboard.CucumberUsesNYC(t.repositoryRoot, shellquote.Join(append([]string{command}, args...)...))
+	}
+	if covered {
 		return command, args
 	}
 	nyc := filepath.Join("node_modules", ".bin", "nyc")

@@ -218,7 +218,7 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 }
 
 func validProbeControl(run validationRun, status string) bool {
-	if run.framework == "cypress" && (run.ProbeExecutions == nil || *run.ProbeExecutions != 1) {
+	if (run.framework == "cypress" || run.framework == "cucumber") && (run.ProbeExecutions == nil || *run.ProbeExecutions != 1) {
 		return false
 	}
 	expectedExit := (status == "passed" && run.ExitCode == 0) || (status == "failed" && run.ExitCode > 0)
@@ -316,7 +316,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	// Vitest reports one final native result for retries; attempt telemetry must
 	// still prove that the probe ran multiple times for the expected reason.
 	nativeRepeated := nativePass >= 2 || ((run.framework == "vitest" || run.framework == "playwright") && nativePass == 1) ||
-		(run.framework == "cypress" && nativePass == 1 && run.ProbeExecutions != nil && *run.ProbeExecutions >= 2)
+		((run.framework == "cypress" || run.framework == "cucumber") && nativePass == 1 && run.ProbeExecutions != nil && *run.ProbeExecutions >= 2)
 	success := false
 	switch feature {
 	case "auto-retries":
@@ -337,7 +337,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	case "attempt-to-fix":
 		success = attemptToFix && passed >= 2 && failed == 0 && retries > 0 && nativeRepeated && nativeFail == 0
 	}
-	if run.framework == "cypress" {
+	if run.framework == "cypress" || run.framework == "cucumber" {
 		success = success && run.ProbeExecutions != nil && *run.ProbeExecutions == passed+failed
 	}
 	if !success {

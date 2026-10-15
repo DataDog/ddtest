@@ -86,6 +86,7 @@ type coverageSummary struct {
 }
 
 type runSummary struct {
+	NativeResults                   string              `json:"native_results,omitempty"`
 	NativeCommand                   string              `json:"native_command,omitempty"`
 	ProbeExecutions                 *int                `json:"probe_executions,omitempty"`
 	FrameworkNode                   string              `json:"framework_node,omitempty"`
@@ -116,6 +117,12 @@ func (r validationRun) summary() runSummary {
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError),
 		ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic),
 		SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
+	if r.framework == "cucumber" {
+		summary.NativeResults = "observed"
+		if r.ResultError != "" {
+			summary.NativeResults = "unavailable"
+		}
+	}
 	summary.Coverage = r.Coverage
 	if summary.Coverage == nil && (r.framework == "mocha" || r.framework == "cypress") && r.Instrumented && r.ProbeMode == "" && strings.HasPrefix(r.Name, "reporting-only") && r.Facts.TestCount > 0 {
 		status := "observed"
