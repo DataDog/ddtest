@@ -60,7 +60,7 @@ type Testdrive struct {
 	preflight       *reportCard
 }
 
-// Prepare detects the repository and probes the project tracer without writing files.
+// Prepare detects the repository and probes the selected test environment and tracer.
 func Prepare(version string) (*Testdrive, error) {
 	if version == "" {
 		version = "latest"
@@ -103,7 +103,7 @@ func Prepare(version string) (*Testdrive, error) {
 	switch language {
 	case "python":
 		var source string
-		command, args, source = pythonTestdriveCommand(ctx, repositoryRoot, command, args, strings.TrimSpace(settings.GetCommand()) != "")
+		command, args, source = pythonTestdriveCommand(repositoryRoot, command, args, strings.TrimSpace(settings.GetCommand()) != "")
 		environment, preflight = pythonEnvironmentInfo(ctx, command, args, source)
 	case "javascript":
 		environment = nodeEnvironmentInfo(ctx, command)

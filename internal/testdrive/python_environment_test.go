@@ -24,8 +24,11 @@ func TestPythonEnvironmentSelection(t *testing.T) {
 		{name: "PATH", want: "python"},
 		{name: "uv lock", lock: true, want: "uv"},
 		{name: "explicit overrides uv", lock: true, explicit: true, want: "custom-python"},
-		{name: "activated venv overrides uv", lock: true, active: "VIRTUAL_ENV"},
-		{name: "activated conda overrides uv", lock: true, active: "CONDA_PREFIX"},
+		{name: "activated venv", active: "VIRTUAL_ENV"},
+		{name: "uv overrides activated venv", lock: true, active: "VIRTUAL_ENV", want: "uv"},
+		{name: "activated conda", active: "CONDA_PREFIX"},
+		{name: "uv overrides activated conda", lock: true, active: "CONDA_PREFIX", want: "uv"},
+		{name: "explicit overrides uv and activated venv", lock: true, active: "VIRTUAL_ENV", explicit: true, want: "custom-python"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -37,13 +40,15 @@ func TestPythonEnvironmentSelection(t *testing.T) {
 			want := tc.want
 			if tc.active != "" {
 				t.Setenv(tc.active, root)
-				want = environmentPython(root)
+				if want == "" {
+					want = environmentPython(root)
+				}
 			}
 			command := "python"
 			if tc.explicit {
 				command = "custom-python"
 			}
-			got, args, _ := pythonTestdriveCommand(t.Context(), root, command, []string{"-m", "pytest"}, tc.explicit)
+			got, args, _ := pythonTestdriveCommand(root, command, []string{"-m", "pytest"}, tc.explicit)
 			require.Equal(t, want, got)
 			if got == "uv" {
 				require.Equal(t, []string{"run", "--no-sync", "python", "-m", "pytest"}, args)
@@ -86,7 +91,7 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX executable fixture")
 	}
-	for _, outcome := range []string{"uv missing", "venv missing", "pytest missing", "ready"} {
+	for _, outcome := range []string{"uv missing", "runner error", "pytest missing", "ready"} {
 		t.Run(outcome, func(t *testing.T) {
 			root := t.TempDir()
 			t.Chdir(root)
@@ -100,14 +105,13 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 			requireWriteFile(t, "pyproject.toml", "[tool.pytest.ini_options]\n")
 			requireWriteFile(t, "uv.lock", "")
 			python := environmentPython(filepath.Join(root, ".venv"))
-			if outcome == "pytest missing" || outcome == "ready" {
-				require.NoError(t, os.MkdirAll(filepath.Dir(python), 0755))
-				require.NoError(t, os.WriteFile(python, []byte("#!/bin/sh\nexit 1\n"), 0755))
-			}
 			if outcome != "uv missing" {
 				result, err := json.Marshal(map[string]any{"executable": python, "version": "3.13.15", "pytest": outcome == "ready", "error": "No module named pytest"})
 				require.NoError(t, err)
-				script := "#!/bin/sh\nif [ \"$1\" = workspace ]; then pwd; exit; fi\nfor last; do :; done\nprintf '%s' '" + string(result) + "' > \"$last\"\n"
+				script := "#!/bin/sh\n[ \"$1\" = run ] || exit 2\nfor last; do :; done\nprintf '%s' '" + string(result) + "' > \"$last\"\n"
+				if outcome == "runner error" {
+					script = "#!/bin/sh\nprintf '%s' 'error: selected Python is unavailable' >&2\nexit 2\n"
+				}
 				require.NoError(t, os.WriteFile("uv", []byte(script), 0755))
 			}
 			drive, err := Prepare("latest")
@@ -135,6 +139,9 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 				require.Empty(t, executor.command)
 				require.NotContains(t, output.String(), "Installing ddtrace")
 				require.Contains(t, output.String(), "Not run (environment check failed)")
+				if outcome == "runner error" {
+					require.Contains(t, output.String(), "error: selected Python is unavailable")
+				}
 			}
 			var diagnostics runDiagnostics
 			data, err := os.ReadFile(filepath.Join(drive.session.Directory(), diagnosticsFilename))
@@ -177,19 +184,16 @@ func TestPythonFrameworkCommandUnaffectedByUV(t *testing.T) {
 	require.Equal(t, []string{"-m", "pytest"}, args)
 }
 
-func TestUnrelatedParentLockDoesNotSelectUV(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("uses a POSIX executable fixture")
-	}
+func TestParentLockSelectsUVWithoutProbing(t *testing.T) {
 	root := t.TempDir()
 	requireWriteFile(t, filepath.Join(root, "uv.lock"), "")
-	child := filepath.Join(root, "independent")
-	require.NoError(t, os.Mkdir(child, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "uv"), []byte("#!/bin/sh\npwd\n"), 0755))
-	t.Setenv("PATH", root)
+	child := filepath.Join(root, "packages", "member")
+	require.NoError(t, os.MkdirAll(child, 0755))
+	t.Setenv("PATH", "")
 	t.Setenv("VIRTUAL_ENV", "")
 	t.Setenv("CONDA_PREFIX", "")
-	command, _, source := pythonTestdriveCommand(t.Context(), child, "python", []string{"-m", "pytest"}, false)
-	require.Equal(t, "python", command)
-	require.Equal(t, "Python from PATH", source)
+	command, args, source := pythonTestdriveCommand(child, "python", []string{"-m", "pytest"}, false)
+	require.Equal(t, "uv", command)
+	require.Equal(t, []string{"run", "--no-sync", "python", "-m", "pytest"}, args)
+	require.Equal(t, "uv project (uv.lock)", source)
 }

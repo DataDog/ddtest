@@ -13,30 +13,17 @@ import (
 
 // Selection only affects testdrive. Production pytest discovery and RunTests
 // continue to use the command chosen by the framework.
-func pythonTestdriveCommand(ctx context.Context, root, command string, args []string, explicit bool) (string, []string, string) {
+func pythonTestdriveCommand(root, command string, args []string, explicit bool) (string, []string, string) {
 	if explicit {
 		return command, args, "Explicit test command"
+	}
+	if uvLockRoot(root) != "" {
+		return "uv", []string{"run", "--no-sync", "python", "-m", "pytest"}, "uv project (uv.lock)"
 	}
 	for _, variable := range []string{"VIRTUAL_ENV", "CONDA_PREFIX"} {
 		if directory := os.Getenv(variable); directory != "" {
 			return environmentPython(directory), args, "Activated environment (" + variable + ")"
 		}
-	}
-	if lockRoot := uvLockRoot(root); lockRoot != "" {
-		if lockRoot != root {
-			// uv decides workspace membership, including exclusions and globs.
-			// A lockfile in an unrelated parent must not select this environment.
-			probe := exec.CommandContext(ctx, "uv", "workspace", "dir")
-			probe.Dir = root
-			if output, err := probe.Output(); err == nil {
-				workspace, workspaceErr := os.Stat(strings.TrimSpace(string(output)))
-				locked, lockErr := os.Stat(lockRoot)
-				if workspaceErr == nil && lockErr == nil && !os.SameFile(workspace, locked) {
-					return command, args, "Python from PATH"
-				}
-			}
-		}
-		return "uv", []string{"run", "--no-sync", "python", "-m", "pytest"}, "uv project (uv.lock)"
 	}
 	return command, args, "Python from PATH"
 }
@@ -74,31 +61,7 @@ func pythonEnvironmentInfo(ctx context.Context, command string, args []string, s
 	if strings.TrimSuffix(filepath.Base(command), ".exe") == "uv" {
 		advice = "Prepare the project's uv environment with its test dependencies, including pytest, then rerun testdrive. Select the same dependency groups or extras as CI when preparing it. Testdrive uses --no-sync for environment checks and does not install project dependencies."
 		if _, err := exec.LookPath(command); err != nil {
-			return info, environmentFinding("uv-not-found", "uv is not available", err.Error(), "Install uv and prepare the project's test environment, or activate an existing test environment and rerun testdrive.")
-		}
-		// --no-sync can still create a missing venv. Resolve the workspace with
-		// uv itself and require a prepared environment before probing it.
-		workspaceArgs := append([]string{"workspace", "dir"}, uvProjectArgs(prefix)...)
-		output, err := exec.CommandContext(ctx, command, workspaceArgs...).Output()
-		if err != nil {
-			detail := err.Error()
-			if exit, ok := err.(*exec.ExitError); ok {
-				detail += "\n" + strings.TrimSpace(string(exit.Stderr))
-			}
-			return info, environmentFinding("python-environment-unresolved", "Cannot locate the uv project environment", detail, advice)
-		}
-		directory := os.Getenv("UV_PROJECT_ENVIRONMENT")
-		if directory == "" {
-			directory = ".venv"
-		}
-		if !filepath.IsAbs(directory) {
-			directory = filepath.Join(strings.TrimSpace(string(output)), directory)
-		}
-		if slices.Contains(prefix, "--active") && os.Getenv("VIRTUAL_ENV") != "" {
-			directory = os.Getenv("VIRTUAL_ENV")
-		}
-		if _, err := os.Stat(environmentPython(directory)); err != nil {
-			return info, environmentFinding("python-environment-missing", "The uv test environment is not prepared", "No Python interpreter found in "+directory+". Tests were not run.", advice)
+			return info, environmentFinding("uv-not-found", "uv is not available", err.Error(), "Install uv and prepare the project's test environment, or pass --command with an existing test environment's Python interpreter and pytest arguments.")
 		}
 	}
 	var result struct {
@@ -181,22 +144,6 @@ func pythonProbeCommand(command string, args []string) (string, []string, error)
 		}
 	}
 	return "", nil, fmt.Errorf("cannot identify a Python interpreter in %q", command)
-}
-
-func uvProjectArgs(prefix []string) []string {
-	var args []string
-	for i := 1; i < len(prefix); i++ {
-		option, _, hasValue := strings.Cut(prefix[i], "=")
-		if option != "--project" && option != "--directory" {
-			continue
-		}
-		args = append(args, prefix[i])
-		if !hasValue && i+1 < len(prefix) {
-			i++
-			args = append(args, prefix[i])
-		}
-	}
-	return args
 }
 
 func pythonEnvironment(path string) map[string]string {
