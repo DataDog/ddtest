@@ -21,7 +21,7 @@ func runFindingCards(facts intake.Facts, commandFailed bool, runtime reportRunti
 	if !noEvents && (!commandFailed || len(facts.FailedTests) > 0) {
 		return nil
 	}
-	card := reportCard{Kind: "no-test-events", Title: "No test results received", Count: 1}
+	card := reportCard{Kind: "no-test-events", Scope: runFindingScope, Severity: "error", Title: "No test results received", Count: 1}
 	advice := intake.Advice{
 		Finding: card.Kind, Title: "Verify test execution and instrumentation",
 		Text: "Check the command log (test-output.txt). Confirm the command runs tests, then check that the Datadog library is loaded and supports the selected framework.",
@@ -56,7 +56,6 @@ func runFindingCards(facts intake.Facts, commandFailed bool, runtime reportRunti
 				continue
 			}
 			card.Kind, card.Title = "pytest-plugin-not-loaded", "pytest did not load the ddtrace plugin"
-			card.Severity = "error"
 			card.Context = "pytest rejected --ddtrace because the ddtrace plugin was not loaded. Automatic instrumentation could not start with this project's pytest configuration."
 			advice = intake.Advice{
 				Finding: card.Kind, Title: "Load the ddtrace pytest plugin in CI",

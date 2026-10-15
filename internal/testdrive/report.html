@@ -553,16 +553,10 @@ THE SOFTWARE.
         background: var(--surface);
         border-radius: 8px;
       }
-      .problem-card[data-kind="failed"],
-      .problem-card[data-kind="error"],
-      .problem-card[data-kind="command-failed"],
-      .problem-card[data-kind="pytest-plugin-not-loaded"],
-      .problem-card[data-kind="no-test-events"] {
+      .problem-card[data-severity="error"] {
         --card-accent: var(--red);
       }
-      .problem-card[data-kind="flaky"],
-      .problem-card[data-kind="slow"],
-      .problem-card[data-kind="missing-coverage"] {
+      .problem-card[data-severity="warning"] {
         --card-accent: var(--amber);
       }
       .problem-card[data-severity="info"] {
@@ -1269,7 +1263,7 @@ THE SOFTWARE.
                     {{ template "icon-stopwatch" }}
                   {{ else if eq .Kind "missing-coverage" }}
                     {{ template "icon-exclamation-circle" }}
-                  {{ else if or (eq .Kind "error") (eq .Kind "command-failed") (eq .Kind "no-test-events") (eq .Kind "pytest-plugin-not-loaded") }}
+                  {{ else if eq .Severity "error" }}
                     {{ template "icon-exclamation-circle" }}
                   {{ else }}
                     {{ template "icon-file-earmark-text" }}

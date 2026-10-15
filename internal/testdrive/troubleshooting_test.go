@@ -78,6 +78,7 @@ func TestRunFailureFindingsAcrossReportConsoleAndJSON(t *testing.T) {
 			}
 			require.Len(t, diagnostics.Findings, 1)
 			require.Equal(t, tc.kind, diagnostics.Findings[0].Kind)
+			require.Equal(t, "error", diagnostics.Findings[0].Severity)
 			require.Equal(t, "1 finding.", diagnostics.Summary)
 			require.NotContains(t, console.String(), "1 finding.")
 			page, err := os.ReadFile(filepath.Join(installer.sessionDirectory, reportFilename))
@@ -96,10 +97,49 @@ func TestRunFailureFindingsAcrossReportConsoleAndJSON(t *testing.T) {
 				}
 			} else {
 				require.Empty(t, diagnostics.Troubleshooting)
+				require.Equal(t, 1, strings.Count(console.String(), "Failed tests"))
 			}
 			if strings.Contains(tc.log, "<config.ts>") {
 				require.Contains(t, report, "&lt;config.ts&gt;")
 			}
 		})
 	}
+}
+
+func TestRunFindingPresentationDoesNotDependOnKind(t *testing.T) {
+	root := t.TempDir()
+	facts := intake.Facts{}
+	model := buildReport(root, facts, true, reportRuntime{Framework: "pytest", Command: "pytest", Error: "exit status 4"})
+	require.Len(t, model.Cards, 1)
+	card := &model.Cards[0]
+	card.Kind = "new-run-diagnostic"
+	card.Advices[0].Finding = card.Kind
+
+	var console bytes.Buffer
+	writeFindings(&console, facts, model.Cards...)
+	require.Contains(t, console.String(), card.Title+": "+card.Context)
+	require.Contains(t, console.String(), card.Advices[0].Title)
+
+	path, err := writeReportModel(root, model)
+	require.NoError(t, err)
+	page, err := os.ReadFile(path)
+	require.NoError(t, err)
+	_, article, found := strings.Cut(string(page), `<article class="problem-card"`)
+	require.True(t, found)
+	article, _, _ = strings.Cut(article, "</article>")
+	require.Contains(t, article, `data-kind="new-run-diagnostic" data-severity="error"`)
+	require.Contains(t, article, "bi-exclamation-circle")
+	require.Contains(t, article, card.Title)
+	require.Contains(t, article, card.Advices[0].Title)
+
+	path, err = writeDiagnostics(root, root, facts, model, true)
+	require.NoError(t, err)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var diagnostics runDiagnostics
+	require.NoError(t, json.Unmarshal(data, &diagnostics))
+	require.Len(t, diagnostics.Findings, 1)
+	require.Equal(t, card.Kind, diagnostics.Findings[0].Kind)
+	require.Equal(t, card.Severity, diagnostics.Findings[0].Severity)
+	require.Equal(t, card.Advices, diagnostics.Troubleshooting)
 }
