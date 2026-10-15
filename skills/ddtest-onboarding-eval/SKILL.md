@@ -1,11 +1,11 @@
 ---
 name: ddtest-onboarding-eval
-description: Evaluate ddtest onboarding on fresh open-source Jest, Vitest, Playwright, Mocha, Cypress or Cucumber.js repositories using Codex or Claude CLI and a minimal customer prompt. Use for developer experiments and comparisons, not for onboarding a customer repository directly.
+description: Evaluate ddtest onboarding on fresh open-source Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js or WebdriverIO repositories using Codex or Claude CLI and a minimal customer prompt. Use for developer experiments and comparisons, not for onboarding a customer repository directly.
 ---
 
 # ddtest onboarding evaluation
 
-Measure what an uncoached coding agent accomplishes with a ddtest binary. Cover Jest, Vitest, Playwright, Mocha, Cypress and Cucumber.js; grade unsupported versions or configurations as unvalidated. This skill belongs to the
+Measure what an uncoached coding agent accomplishes with a ddtest binary. Cover Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js and WebdriverIO; grade unsupported versions or configurations as unvalidated. This skill belongs to the
 **evaluator**, not the agent being tested. It is developer tooling in this repo;
 it is not embedded in the ddtest binary or installed in the target repository.
 
@@ -19,7 +19,7 @@ tested agent's global skill directories or target checkout.
 
 ## Prepare and run
 
-1. Select a public repository that actually runs Jest, Vitest, Playwright, Mocha, Cypress or Cucumber.js. Read its CI, package
+1. Select a public repository that actually runs Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js or WebdriverIO. Read its CI, package
    scripts, lockfile, runtime requirements, and ordinary repository instructions.
    Choose a commit and dependency installation command. Record the intended test
    command and relevant Node, package-manager, and framework versions outside the
@@ -54,7 +54,7 @@ tested agent's global skill directories or target checkout.
    > Use ddtest in /temporary/trial/bin and onboard this repository to test-optimization.
 
    For a requested framework-only trial in a mixed repository, pass
-   `--framework playwright` (or `jest`/`vitest`/`mocha`/`cypress`/`cucumber`). This adds only
+   `--framework playwright` (or `jest`/`vitest`/`mocha`/`cypress`/`cucumber`/`webdriverio`). This adds only
    “for playwright only” to the prompt and records the scope in `run.json`.
 
    No skill, grading rubric, feature list, runbook, previous results, extra system
@@ -142,6 +142,24 @@ commands; testdrive may execute both. Retain unavailable browser/OS configuratio
 as untested. Keep
 Cloud recording disabled locally, use a private CYPRESS_CACHE_FOLDER, and inspect
 ignored generated fixtures/screenshots as part of cleanup.
+
+For WebdriverIO, require the actual WDIO command, native worker results and the
+five supported feature controls. TIA skipping and code coverage are not supported;
+record them as such, not passed. Preserve services, capabilities, reporters, loaders
+and worker initialization. Inspect every selected spec/capability for a completed
+native report and reconcile controlled attempts with independent body counters.
+Keep browser-runner, standalone automation and unavailable browser/remote variants
+explicitly unvalidated. Preserve unrelated services occupying local ports; record
+any consistent local port override. Collect generated logs, owned servers and browser
+caches during cleanup. CI edits or an empty Node preload check are not completed
+onboarding. Start with a focused configuration before the full matrix.
+For an explicitly focused WDIO evaluation, grade the current
+`summary.selected_validation` separately from whole-repository onboarding.
+Its `PASSED` requires the selected command's paired execution, five supported
+features, current static CI checks and cleanup; a focused command can exit zero
+while the repository verdict remains INCOMPLETE. Retain all other configurations
+as unvalidated. Check that workflow/package/config edits preceded the full run;
+real CI execution does not clear a stale local static check.
 
 For Cucumber, preserve profiles, tags, support imports and build prerequisites.
 Check scenario results against telemetry, and reconcile probe-body counters for

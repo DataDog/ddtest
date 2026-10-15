@@ -138,13 +138,16 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			child.tracerVersion = result.Selection.Version
 		}
 		child.command = filepath.Join(t.repositoryRoot, "node_modules", ".bin", words[0])
-		if onboard.IsDDTestCommand(words[0]) || ((t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber") && slices.Contains([]string{"npm", "pnpm", "yarn", "node", "npx"}, words[0])) {
+		if onboard.IsDDTestCommand(words[0]) || ((t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") && slices.Contains([]string{"npm", "pnpm", "yarn", "node", "npx"}, words[0])) {
 			child.command = words[0]
 		}
 		child.args = words[1:]
 		child.reportModels = &models
 		// Rebind method values to this command, rather than the original drive.
 		child.preflight = child.checkJestPreflight
+		if t.framework.Name() == "webdriverio" {
+			child.preflight = child.checkWebdriverIOPreflight
+		}
 		if t.framework.Name() == "cucumber" {
 			child.preflight = child.checkCucumberPreflight
 		}

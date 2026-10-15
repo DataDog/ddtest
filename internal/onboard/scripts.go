@@ -57,7 +57,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if strings.TrimSpace(step.Run) == "" {
 		return commandResolution{}
 	}
-	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "playwright" && framework != "mocha" && framework != "cypress" && framework != "cucumber") {
+	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "playwright" && framework != "mocha" && framework != "cypress" && framework != "cucumber" && framework != "webdriverio") {
 		return commandResolution{Matched: looksLikeTestJob(root, step.Run, language, framework, 0)}
 	}
 	directory := stepDirectory(workflow, job, step)
@@ -268,7 +268,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	if len(frameworks) > 0 {
 		framework = frameworks[0]
 	}
-	if framework == "cucumber" && len(words) > 1 && words[0] == "cross-env" {
+	if (framework == "cucumber" || framework == "webdriverio") && len(words) > 1 && words[0] == "cross-env" {
 		return resolveJestWords(root, directory, words[1:], stack, remaining, framework)
 	}
 	if len(words) == 0 {
@@ -334,12 +334,18 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	if framework == "cucumber" {
 		runner = "cucumber-js"
 	}
+	if framework == "webdriverio" {
+		runner = "wdio"
+	}
 	if words[0] == runner || words[0] == "./node_modules/.bin/"+runner || words[0] == "node_modules/.bin/"+runner || words[0] == filepath.Join(directory, "node_modules", ".bin", runner) {
 		if framework == "vitest" && len(words) > 1 && words[1] == "bench" {
 			return commandResolution{Benchmark: true, ReviewReason: "Vitest benchmark mode is not validated by the test adapter; do not add instrumentation based on ordinary test validation: " + command}
 		}
 		if framework == "cypress" && (len(words) < 2 || words[1] != "run") {
 			return commandResolution{ReviewReason: "Cypress setup/interactive command is outside headless validation: " + command}
+		}
+		if framework == "webdriverio" && (len(words) < 2 || words[1] != "run") {
+			return commandResolution{ReviewReason: "WebdriverIO setup command is outside test execution: " + command}
 		}
 		if framework == "playwright" && (len(words) < 2 || words[1] != "test") {
 			return commandResolution{ReviewReason: "Playwright setup/tool command is outside test execution: " + command}
@@ -365,6 +371,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	}
 	if framework == "cypress" && words[0] == "node" {
 		return resolveCypressNode(root, directory, words, assignments)
+	}
+	if framework == "webdriverio" && words[0] == "node" {
+		return resolveWebdriverIONode(root, directory, words)
 	}
 	if (framework == "mocha" || framework == "cucumber") && (filepath.Base(words[0]) == "c8" || filepath.Base(words[0]) == "nyc") {
 		return resolveMochaCoverage(root, directory, words, assignments, stack, remaining, framework)
@@ -431,8 +440,8 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		}
 		return unresolvedCommand("Unsupported script orchestration: " + command)
 	case "npm-run-all", "npm-run-all2", "run-s":
-		if framework == "cucumber" {
-			return resolveCucumberScripts(root, directory, words, stack, remaining)
+		if framework == "cucumber" || framework == "webdriverio" {
+			return resolveNpmRunAll(root, directory, words, stack, remaining, framework)
 		}
 		if framework != "mocha" || len(words) < 2 {
 			return unresolvedCommand("Unsupported script orchestration: " + command)
@@ -517,6 +526,19 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 }
 
 func resolvePackageScript(root, directory, name string, args, stack []string, command string, remaining *int, frameworks ...string) commandResolution {
+	if len(frameworks) > 0 && frameworks[0] == "webdriverio" && strings.HasPrefix(command, "npm ") {
+		for {
+			if _, err := os.Stat(filepath.Join(directory, "package.json")); err == nil {
+				break
+			}
+			relative, err := filepath.Rel(root, directory)
+			if err != nil || !filepath.IsLocal(relative) || relative == "." {
+				break
+			}
+			directory = filepath.Dir(directory)
+		}
+	}
+
 	key := filepath.Join(directory, "package.json") + ":" + name
 	if slices.Contains(stack, key) {
 		return unresolvedCommand("Package script cycle: " + strings.Join(append(slices.Clone(stack), key), " -> "))
@@ -534,6 +556,9 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	script, ok := manifest.Scripts[name]
 	if len(frameworks) > 0 && frameworks[0] == "cucumber" {
 		script = cucumberDiscoveryScript(script)
+	}
+	if len(frameworks) > 0 && frameworks[0] == "webdriverio" {
+		script = webdriverIODiscoveryScript(script)
 	}
 	if !ok {
 		if name == "flow" && (strings.HasPrefix(command, "yarn flow") || strings.HasPrefix(command, "pnpm flow")) {
@@ -594,7 +619,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		relative, _ := filepath.Rel(root, directory)
 		return commandResolution{Builds: []BuildCommand{{Directory: filepath.ToSlash(relative), Command: command, Kind: "package-build"}}}
 	}
-	if cucumber && result.SingleJest && result.Reason == "" && len(result.Tests) == 1 && len(result.Builds) == 0 {
+	if (cucumber || len(frameworks) > 0 && frameworks[0] == "webdriverio") && result.SingleJest && result.Reason == "" && len(result.Tests) == 1 && len(result.Builds) == 0 {
 		// This one leaf alias forwards formatter/probe options safely and retains
 		// its original debug/preload environment. Do not retain mixed npm test.
 		result.Tests[0].Resolution = command + " -> " + result.Evidence

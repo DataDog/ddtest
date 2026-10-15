@@ -224,8 +224,8 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	} else if strings.EqualFold(info.Framework, "cypress") && covered < total {
 		coverageTooltip = "Cypress collects Test Impact Analysis coverage from instrumented code in the browser. API-only tests that do not load that code may have no coverage."
 	}
-	if strings.EqualFold(info.Framework, "playwright") && covered == 0 {
-		coverageValue, coverageTone = "Not supported (Playwright)", "info"
+	if (strings.EqualFold(info.Framework, "playwright") || strings.EqualFold(info.Framework, "webdriverio")) && covered == 0 {
+		coverageValue, coverageTone = "Not supported ("+info.Framework+")", "info"
 	}
 	model := reportModel{
 		Summary:       "No findings.",
@@ -265,10 +265,10 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 			Context:  fmt.Sprintf("%d coverage entries had an empty files list. Affected payloads were excluded from coverage counts. Inspect the captured traffic.", findings.EmptyCoverageEntryCount),
 		})
 	}
-	if strings.EqualFold(info.Framework, "playwright") && findings.TestEventCount > 0 {
-		model.Cards = append(model.Cards, reportCard{Kind: "playwright-coverage-unavailable", Severity: "info", Title: "Playwright coverage and skipping are not supported", Count: 1, Context: playwrightSkippingReason})
+	if (strings.EqualFold(info.Framework, "playwright") || strings.EqualFold(info.Framework, "webdriverio")) && findings.TestEventCount > 0 {
+		model.Cards = append(model.Cards, reportCard{Kind: strings.ToLower(info.Framework) + "-coverage-unavailable", Severity: "info", Title: info.Framework + " coverage and skipping are not supported", Count: 1, Context: browserSkippingReason(strings.ToLower(info.Framework))})
 	}
-	if findings.MissingCoverage && !strings.EqualFold(info.Framework, "playwright") {
+	if findings.MissingCoverage && !strings.EqualFold(info.Framework, "playwright") && !strings.EqualFold(info.Framework, "webdriverio") {
 		model.Cards = append(model.Cards, reportCard{
 			Kind: intake.MissingCoverageFinding, Scope: coverageFindingScope, Severity: "warning", Title: "Coverage not reported", Count: 1,
 			Context: intake.MissingCoverageContext,

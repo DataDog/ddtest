@@ -29,7 +29,7 @@ func cucumberDiscoveryScript(script string) string {
 	return strings.NewReplacer(`DEBUG="any,$DEBUG"`, "", cucumberScopedOptions, "").Replace(script)
 }
 
-func resolveCucumberScripts(root, directory string, words, stack []string, remaining *int) commandResolution {
+func resolveNpmRunAll(root, directory string, words, stack []string, remaining *int, framework string) commandResolution {
 	data, err := os.ReadFile(filepath.Join(directory, "package.json"))
 	var pkg struct{ Scripts map[string]string }
 	if err != nil || json.Unmarshal(data, &pkg) != nil {
@@ -59,7 +59,7 @@ func resolveCucumberScripts(root, directory string, words, stack []string, remai
 			return unresolvedCommand("No package script matches " + value)
 		}
 	}
-	return resolveJestSequence(root, directory, strings.Join(commands, " && "), stack, remaining, "cucumber")
+	return resolveJestSequence(root, directory, strings.Join(commands, " && "), stack, remaining, framework)
 }
 
 func CucumberValidationCommand(root, command string) (string, error) {

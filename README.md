@@ -13,7 +13,7 @@ Currently supported:
 
 - Ruby with RSpec or Minitest.
 - Python with pytest.
-- JavaScript with Cucumber, Cypress, Jest, Mocha, Playwright, or Vitest.
+- JavaScript with Cucumber, Cypress, Jest, Mocha, Playwright, Vitest, or WebdriverIO.
 
 ## Try Test Optimization locally
 
@@ -29,9 +29,10 @@ No Datadog account or Agent is needed. Testdrive links to an HTML report at
 non-interactive sessions, `--framework` to select a runner, and `--command` for
 package scripts or custom setup.
 
-All nine frameworks listed above can collect local telemetry. Compatibility and
-feature validation currently support Jest; other frameworks explicitly remain
-unvalidated. If a repository contains several
+The frameworks listed above can collect local telemetry. JavaScript compatibility
+and feature validation covers Jest, Vitest, Playwright, Mocha, Cypress, Cucumber
+and WebdriverIO. Other frameworks and unsupported configurations remain
+explicitly unvalidated. If a repository contains several
 runners, select one with `--framework`. Use `--command` to select a custom entry
 point or a small representative part of a large suite:
 
@@ -39,6 +40,32 @@ point or a small representative part of a large suite:
 ddtest onboard --framework playwright
 ddtest testdrive --framework playwright --command 'npm run test:e2e -- --project=chromium' --yes
 ```
+
+For WebdriverIO, use `--framework webdriverio` or `--framework wdio`:
+
+```sh
+ddtest onboard --framework wdio
+ddtest testdrive --framework wdio --command 'npm run test:e2e' --tracer-version <resolved-release> --yes
+```
+
+WebdriverIO validation preserves the actual WDIO command, services, capabilities
+and reporters. It compares native worker results with and without tracing, then
+checks retries, early flake detection, quarantine, disabled tests and attempt-to-fix
+per capability. TIA skipping and code coverage are **not supported** by the tracer
+for WebdriverIO. The local runner with Mocha or Jasmine requires WebdriverIO >=9
+and dd-trace >=5.121.0 on v5 or >=6.10.0 on v6. These are capability minimums;
+select a current compatible release rather than using them as installation pins.
+Browser runner, standalone automation, custom adapters and unavailable browser
+variants remain unvalidated. A focused command does not validate the whole CI
+matrix; review `--all --check-only` before executing additional configurations.
+The focused result appears in `summary.selected_validation`; a `PASSED` selected
+command exits zero after its comparison, five feature controls, static CI checks
+and cleanup pass. Whole-repository onboarding remains separate and can still be
+`INCOMPLETE` while other configurations are untested. Rerun the full focused
+testdrive after any workflow/package/config edit; CI execution does not update
+a local report. Mixed commands can scope the preload through
+`DD_WDIO_NODE_OPTIONS` on the CI step and the WDIO leaves described by `onboard`.
+
 
 Testdrive prints a terminal summary and retains two reports:
 `.testoptimization/report.html` uses the upstream HTML renderer to show the latest

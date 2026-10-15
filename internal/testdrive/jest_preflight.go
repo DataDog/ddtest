@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/kballard/go-shellquote"
@@ -31,16 +32,17 @@ type jestProject struct {
 }
 
 type jestPreflight struct {
-	ExecutionPath       string                `json:"execution_path,omitempty"`
-	Verdict             verdict               `json:"verdict"`
-	Command             string                `json:"command"`
-	Node                string                `json:"node"`
-	Version             string                `json:"version"`
-	PlaywrightProjects  []playwrightProject   `json:"playwright_projects,omitempty"`
-	VitestProjects      []vitestProject       `json:"vitest_projects,omitempty"`
-	Projects            []jestProject         `json:"projects"`
-	Recommendation      *tracerRecommendation `json:"recommendation,omitempty"`
-	RecommendationNotes []string              `json:"recommendation_notes,omitempty"`
+	WebdriverIO         *framework.WebdriverIOConfig `json:"webdriverio,omitempty"`
+	ExecutionPath       string                       `json:"execution_path,omitempty"`
+	Verdict             verdict                      `json:"verdict"`
+	Command             string                       `json:"command"`
+	Node                string                       `json:"node"`
+	Version             string                       `json:"version"`
+	PlaywrightProjects  []playwrightProject          `json:"playwright_projects,omitempty"`
+	VitestProjects      []vitestProject              `json:"vitest_projects,omitempty"`
+	Projects            []jestProject                `json:"projects"`
+	Recommendation      *tracerRecommendation        `json:"recommendation,omitempty"`
+	RecommendationNotes []string                     `json:"recommendation_notes,omitempty"`
 }
 
 func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, result *validationResult) error {

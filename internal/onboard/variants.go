@@ -21,6 +21,12 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	if err != nil {
 		return step, nil, err
 	}
+	if len(frameworks) > 0 && frameworks[0] == "webdriverio" {
+		step.WorkingDirectory, err = runtimeValue(stepDirectory(workflow, job, step), row)
+		if err != nil {
+			return step, nil, err
+		}
+	}
 	if len(frameworks) > 0 && frameworks[0] == "cypress" && strings.HasPrefix(strings.ToLower(step.Uses), "cypress-io/github-action@") {
 		step.With = maps.Clone(step.With)
 		for key, value := range step.With {

@@ -121,6 +121,9 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 		path := workflow.Path
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
+			if framework == "webdriverio" && !webdriverIOJobCandidate(root, workflow, job) {
+				continue
+			}
 			resolutions := make([]commandResolution, len(job.Steps))
 			candidate := false
 			for i, step := range job.Steps {

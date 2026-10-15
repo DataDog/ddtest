@@ -15,6 +15,7 @@ import (
 )
 
 type validationSummary struct {
+	SelectedValidation      *verdict        `json:"selected_validation,omitempty"`
 	LocalNode               string          `json:"local_node,omitempty"`
 	CIScope                 *ciRuntimeScope `json:"ci_runtime_scope,omitempty"`
 	Status                  string          `json:"status"`
@@ -33,9 +34,15 @@ type validationSummary struct {
 func validationHandoff(result validationResult) string {
 	var block strings.Builder
 	summary := result.Summary
+	if summary.SelectedValidation != nil {
+		fmt.Fprintf(&block, "Selected WebdriverIO testdrive: %s. %s\n", summary.SelectedValidation.Status, summary.SelectedValidation.Reason)
+	}
 	fmt.Fprintf(&block, "Onboarding validation: %s. Local validation: %s. CI configuration: %s (static analysis). CI execution and Datadog backend processing: not exercised.\n", summary.Status, summary.LocalValidation, summary.CIConfiguration)
 	if summary.LocalNode != "" {
 		fmt.Fprintf(&block, "Local runtime: Node %s.\n", summary.LocalNode)
+	}
+	if result.Framework == "webdriverio" && summary.CIConfiguration != "compatible" && summary.CIConfiguration != "not applicable" {
+		block.WriteString("CI configuration is checked from local files. After workflow/package/config edits, rerun the full testdrive before answering; an actual CI run does not update this local report.\n")
 	}
 	if len(result.Configurations) > 0 {
 		compared, passed := 0, 0
@@ -134,6 +141,10 @@ func briefValidationText(value string) string {
 
 func summarizeValidation(result validationResult) validationSummary {
 	summary := validationSummary{Status: "INCOMPLETE", LocalValidation: "INCOMPLETE", CIConfiguration: "not checked", CIExecution: "not exercised"}
+	if result.Framework == "webdriverio" && result.FocusedCommand {
+		selected := selectedWebdriverIOValidation(result)
+		summary.SelectedValidation = &selected
+	}
 	if result.Success {
 		summary.Status = "COMPLETE LOCALLY"
 	}

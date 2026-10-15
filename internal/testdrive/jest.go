@@ -23,10 +23,11 @@ import (
 )
 
 type jestTest struct {
-	File    string `json:"file"`
-	Name    string `json:"name"`
-	Status  string `json:"status"`
-	Failure string `json:"failure,omitempty"`
+	WebdriverIOBrowser string `json:"webdriverio_browser,omitempty"`
+	File               string `json:"file"`
+	Name               string `json:"name"`
+	Status             string `json:"status"`
+	Failure            string `json:"failure,omitempty"`
 
 	Playwright    *playwrightIdentity `json:"playwright,omitempty"`
 	telemetryName *string
@@ -270,7 +271,7 @@ func outcomeKeys(run validationRun) []string {
 	keys := []string{fmt.Sprintf("exit=%d", run.ExitCode), "result=" + run.ResultError}
 	keys = append(keys, run.SuiteErrors...)
 	for _, test := range run.Tests {
-		keys = append(keys, test.File+" › "+test.Name+playwrightLabel(test)+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test))
+		keys = append(keys, test.File+" › "+test.Name+playwrightLabel(test)+test.WebdriverIOBrowser+": "+test.Status+"\n"+test.Failure+playwrightOutcome(test))
 	}
 	for i := range keys {
 		keys[i] = normalizeOwnedTemporaryPath(run, keys[i])
@@ -377,6 +378,9 @@ func verifyJestTelemetry(run validationRun) verdict {
 
 func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) error {
 	run := t.runJest
+	if t.framework.Name() == "webdriverio" {
+		run = t.runWebdriverIO
+	}
 	if t.framework.Name() == "cucumber" {
 		run = t.runCucumber
 	}
@@ -421,6 +425,9 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 			return err
 		}
 		result.Compatibility = compareRepeatedJavaScript(baseline, instrumented, baselineAgain, instrumentedAgain)
+	}
+	if t.framework.Name() == "webdriverio" {
+		return t.runWebdriverIOFeatures(ctx, output, session, preload, baseline, result)
 	}
 	if t.framework.Name() == "cucumber" {
 		return t.runCucumberFeatures(ctx, output, session, preload, baseline, result)

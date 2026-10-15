@@ -66,6 +66,9 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
+			if framework == "webdriverio" && !webdriverIOJobCandidate(root, workflow, job) {
+				continue
+			}
 			if framework == "cypress" || framework == "cucumber" {
 				candidate := false
 				for _, step := range job.Steps {
@@ -101,8 +104,11 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 						review = append(review, fmt.Sprintf("%s / %s / step %d: Datadog CI installation and its condition are checked separately by CI runtime analysis; local validation installs and initializes its own tracer.", workflow.Path, name, stepNumber(step, i)))
 						continue
 					}
-					if ((framework == "playwright" || framework == "cypress") && uses == "actions/upload-artifact" || framework == "mocha" && slices.Contains([]string{"actions/upload-artifact", "coverallsapp/github-action"}, uses)) && step.Run == "" && step.ResolutionError == "" {
+					if ((framework == "playwright" || framework == "cypress" || framework == "webdriverio") && (uses == "actions/upload-artifact" || framework == "webdriverio" && uses == "stateful/vscode-server-action") || framework == "mocha" && slices.Contains([]string{"actions/upload-artifact", "coverallsapp/github-action"}, uses)) && step.Run == "" && step.ResolutionError == "" {
 						reason := "artifact upload is outside local Playwright execution"
+						if framework == "webdriverio" {
+							reason = "CI artifact upload or interactive debugging is outside local WebdriverIO execution"
+						}
 						if framework == "mocha" {
 							reason = "artifact/coverage upload is outside local Mocha execution"
 						}

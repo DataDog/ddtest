@@ -117,7 +117,7 @@ func (r validationRun) summary() runSummary {
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError),
 		ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic),
 		SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
-	if r.framework == "cucumber" {
+	if r.framework == "cucumber" || r.framework == "webdriverio" {
 		summary.NativeResults = "observed"
 		if r.ResultError != "" {
 			summary.NativeResults = "unavailable"
@@ -152,6 +152,7 @@ func (r validationRun) summary() runSummary {
 }
 
 type validationResult struct {
+	FocusedCommand     bool                     `json:"focused_command,omitempty"`
 	CIBaseline         []string                 `json:"ci_matrix_baseline"`
 	CIPreservation     *verdict                 `json:"ci_preservation,omitempty"`
 	Scope              *onboard.ValidationScope `json:"scope,omitempty"`
@@ -292,6 +293,9 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	_, _ = fmt.Fprintf(output, "\nFINAL ONBOARDING RESPONSE — copy summary.final_response verbatim as the opening of your reply. Do not prepend a completion claim or reinterpret failed telemetry checks. Workflow edits can be finished while onboarding remains INCOMPLETE. Add only workflow edits and cleanup afterward.\n\n%s\n", result.Summary.FinalResponse)
 	if result.CheckOnly && result.ChecksPassed {
 		return nil
+	}
+	if result.Summary.SelectedValidation != nil && result.Summary.SelectedValidation.Status == "PASSED" {
+		return nil // --command certifies this command; repository scope remains explicit.
 	}
 	if !result.Success {
 		return fmt.Errorf("validation is incomplete or found an unexpected difference; see %s", path)
