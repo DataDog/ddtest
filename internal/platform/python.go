@@ -266,8 +266,7 @@ func (p *Python) TracerInstallCommand(options TracerOptions) (string, []string, 
 	} else if options.Version != "" && options.Version != "latest" {
 		packageName += "==" + options.Version
 	}
-	// Keep coverage aligned with install_test_visibility_v15.sh used by the CI action.
-	args := []string{"-m", "pip", "install", "--disable-pip-version-check", packageName, "coverage==7.13.5"}
+	args := []string{"-m", "pip", "install", "--disable-pip-version-check", packageName}
 	return command, args, nil
 }
 

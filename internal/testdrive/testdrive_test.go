@@ -584,7 +584,7 @@ func TestPythonPreviewDescribesTemporaryInstallation(t *testing.T) {
 	drive := &Testdrive{repositoryRoot: root, language: "python", framework: framework.NewPytest(platform.NewPython()), session: planSession(root), tracerLabel: "ddtrace@latest"}
 	var output bytes.Buffer
 	drive.Preview(&output)
-	if !strings.Contains(output.String(), "install ddtrace@latest and coverage in a temporary Python environment; remove it after the run") {
+	if !strings.Contains(output.String(), "install ddtrace@latest in a temporary Python environment; remove it after the run") {
 		t.Fatal(output.String())
 	}
 	if _, err := os.Stat(drive.session.Directory()); !os.IsNotExist(err) {

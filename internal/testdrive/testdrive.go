@@ -133,7 +133,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	if t.projectTracer != "" {
 		_, _ = fmt.Fprintf(output, "  - reuse installed %s; no installation is needed\n", t.installedTracerLabel(t.projectTracer))
 	} else if t.language == "python" {
-		_, _ = fmt.Fprintf(output, "  - install %s and coverage in a temporary Python environment; remove it after the run\n", t.tracerLabel)
+		_, _ = fmt.Fprintf(output, "  - install %s in a temporary Python environment; remove it after the run\n", t.tracerLabel)
 	} else {
 		install := append([]string{t.installCommand}, t.installArgs...)
 		for i, arg := range install {

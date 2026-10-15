@@ -512,7 +512,7 @@ func TestPythonInstallUsesSelectedInterpreterAndSeparateVenv(t *testing.T) {
 		venvPython = filepath.Join(directory, "python", "Scripts", "python.exe")
 	}
 	require.Equal(t, venvPython, executor.commands[2].name)
-	require.Equal(t, []string{"-m", "pip", "install", "--disable-pip-version-check", "ddtrace", "coverage==7.13.5"}, executor.commands[2].args)
+	require.Equal(t, []string{"-m", "pip", "install", "--disable-pip-version-check", "ddtrace"}, executor.commands[2].args)
 	require.Equal(t, venvPython, executor.commands[3].name)
 	require.Equal(t, []string{"-I", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"}, executor.commands[3].args)
 	// The installer generates no startup hook or other Python source files.
@@ -573,7 +573,7 @@ func TestPythonTracerVersions(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, "uv", executor.commands[1].name)
 			require.Equal(t, []string{"run", "python", "-m", "venv"}, executor.commands[1].args[:4])
-			require.Equal(t, tt.spec, executor.commands[2].args[4])
+			require.Equal(t, []string{"-m", "pip", "install", "--disable-pip-version-check", tt.spec}, executor.commands[2].args)
 		})
 	}
 	_, err := NewPython().InstallTestdriveTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Command: "python", Version: "git:"})
