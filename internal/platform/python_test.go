@@ -7,7 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -497,55 +497,50 @@ func TestPythonTracerDetectionUsesSelectedEnvironment(t *testing.T) {
 	require.Equal(t, "3.0.0", version) // Presence is independent of minimum supported version.
 }
 
-func TestPythonInstallUsesSelectedInterpreterAndIsolatedTarget(t *testing.T) {
+func TestPythonInstallUsesSelectedInterpreterAndSeparateVenv(t *testing.T) {
 	directory := t.TempDir()
-	executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {}}}
+	packages := filepath.Join(directory, "python", "lib", "python3.13", "site-packages")
+	executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {}, {}, {output: []byte(packages + "\n")}}}
 	installer := &Python{executor: executor}
-	path, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: directory, Command: "/customer/venv/bin/python"})
+	installation, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: directory, Command: "/customer/venv/bin/python"})
 	require.NoError(t, err)
-	require.Equal(t, filepath.Join(directory, "python"), path.Path)
+	require.Equal(t, packages, installation.Path)
 	require.Equal(t, "/customer/venv/bin/python", executor.commands[1].name)
-	require.Equal(t, []string{"-m", "pip", "install", "--disable-pip-version-check", "--target", filepath.Join(directory, "python-packages"), "ddtrace"}, executor.commands[1].args)
-	contents, err := os.ReadFile(filepath.Join(path.Path, "sitecustomize.py"))
-	require.NoError(t, err)
-	require.Contains(t, string(contents), filepath.Join(directory, "python-packages"))
-	require.Contains(t, string(contents), "sys.path.append(")
-	// Exercise the generated bootstrap without installing external packages.
-	python, err := exec.LookPath("python3")
-	if err == nil {
-		packages := filepath.Join(directory, "python-packages")
-		require.NoError(t, os.MkdirAll(packages, 0755))
-		require.NoError(t, os.WriteFile(filepath.Join(packages, "fallback_only.py"), []byte("value = 'fallback'\n"), 0600))
-		require.NoError(t, os.WriteFile(filepath.Join(packages, "project_dependency.py"), []byte("value = 'fallback'\n"), 0600))
-		for name, hook := range map[string]bool{"without startup hook": false, "with startup hook": true} {
-			t.Run(name, func(t *testing.T) {
-				project := t.TempDir()
-				require.NoError(t, os.WriteFile(filepath.Join(project, "project_dependency.py"), []byte("value = 'project'\n"), 0600))
-				if hook {
-					encodedProject, _ := json.Marshal(project)
-					script := "import os, sys\nassert 'DDTEST_STARTUP_HOOK' not in os.environ\nos.environ['DDTEST_STARTUP_HOOK'] = 'loaded'\nsys.path.insert(0, " + string(encodedProject) + ")\n"
-					require.NoError(t, os.WriteFile(filepath.Join(project, "sitecustomize.py"), []byte(script), 0600))
-				}
-				cmd := exec.CommandContext(t.Context(), python, "-c", "import fallback_only, project_dependency, os; print(fallback_only.value, project_dependency.value, os.getenv('DDTEST_STARTUP_HOOK', 'absent'))")
-				cmd.Env = slices.DeleteFunc(os.Environ(), func(value string) bool {
-					return strings.HasPrefix(value, "DDTEST_STARTUP_HOOK=") || strings.HasPrefix(value, "PYTHONPATH=")
-				})
-				cmd.Env = append(cmd.Env, "PYTHONPATH="+path.Path+string(os.PathListSeparator)+project)
-				output, err := cmd.CombinedOutput()
-				require.NoError(t, err, string(output))
-				want := "fallback project absent"
-				if hook {
-					want = "fallback project loaded"
-				}
-				require.Equal(t, want, strings.TrimSpace(string(output)))
-			})
-		}
+	require.Equal(t, []string{"-m", "venv", filepath.Join(directory, "python")}, executor.commands[1].args)
+	venvPython := filepath.Join(directory, "python", "bin", "python")
+	if runtime.GOOS == "windows" {
+		venvPython = filepath.Join(directory, "python", "Scripts", "python.exe")
 	}
-	executor = &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {output: []byte("pip unavailable"), err: errors.New("exit 1")}}}
-	installer.executor = executor
-	_, err = installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: directory, Command: "/customer/venv/bin/python"})
-	require.ErrorContains(t, err, "pip unavailable")
+	require.Equal(t, venvPython, executor.commands[2].name)
+	require.Equal(t, []string{"-m", "pip", "install", "--disable-pip-version-check", "ddtrace", "coverage==7.13.5"}, executor.commands[2].args)
+	require.Equal(t, venvPython, executor.commands[3].name)
+	require.Equal(t, []string{"-I", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"}, executor.commands[3].args)
+	// The installer generates no startup hook or other Python source files.
+	entries, err := os.ReadDir(directory)
+	require.NoError(t, err)
+	require.Empty(t, entries)
 }
+
+func TestPythonInstallReportsSetupFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		responses []commandResponse
+		want      string
+	}{
+		{"venv", []commandResponse{{output: []byte("ensurepip unavailable"), err: errors.New("exit 1")}}, "create Python tracer environment: ensurepip unavailable"},
+		{"pip", []commandResponse{{}, {output: []byte("package download failed"), err: errors.New("exit 1")}}, "install ddtrace: package download failed"},
+		{"location", []commandResponse{{}, {}, {stderr: []byte("probe failed"), err: errors.New("exit 1")}}, "locate Python tracer packages: probe failed"},
+		{"empty location", []commandResponse{{}, {}, {}}, "Python tracer package location is empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			executor := &fakeCommandExecutor{responses: append([]commandResponse{{err: errors.New("project tracer unavailable")}}, tc.responses...)}
+			_, err := (&Python{executor: executor}).InstallTestdriveTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Command: "python"})
+			require.ErrorContains(t, err, tc.want)
+			require.Len(t, executor.commands, len(executor.responses))
+		})
+	}
+}
+
 func TestPythonInterpreterUsesRunnerCommand(t *testing.T) {
 	for _, test := range []struct {
 		command     string
@@ -571,14 +566,14 @@ func TestPythonTracerVersions(t *testing.T) {
 		{"git:abc1234", "ddtrace @ git+https://github.com/DataDog/dd-trace-py.git@abc1234"},
 	} {
 		t.Run(tt.version, func(t *testing.T) {
-			executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {}}}
+			executor := &fakeCommandExecutor{responses: []commandResponse{{err: errors.New("project tracer unavailable")}, {}, {}, {output: []byte("/venv/site-packages\n")}}}
 			installer := NewPython()
 			installer.executor = executor
 			_, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Command: "uv", Args: []string{"run", "pytest"}, Version: tt.version})
 			require.NoError(t, err)
 			require.Equal(t, "uv", executor.commands[1].name)
-			require.Equal(t, []string{"run", "--with", "pip", "python", "-m", "pip"}, executor.commands[1].args[:6])
-			require.Equal(t, tt.spec, executor.commands[1].args[len(executor.commands[1].args)-1])
+			require.Equal(t, []string{"run", "python", "-m", "venv"}, executor.commands[1].args[:4])
+			require.Equal(t, tt.spec, executor.commands[2].args[4])
 		})
 	}
 	_, err := NewPython().InstallTestdriveTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Command: "python", Version: "git:"})
@@ -612,5 +607,5 @@ func TestPythonProbeFailureAttemptsInstall(t *testing.T) {
 	_, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Command: "python"})
 	require.ErrorContains(t, err, "pip unavailable")
 	require.Len(t, executor.commands, 2)
-	require.Equal(t, []string{"-m", "pip", "install"}, executor.commands[1].args[:3])
+	require.Equal(t, []string{"-m", "venv"}, executor.commands[1].args[:2])
 }

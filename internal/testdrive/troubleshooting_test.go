@@ -64,7 +64,7 @@ func TestRunFailureFindingsAcrossReportConsoleAndJSON(t *testing.T) {
 			} else {
 				require.Error(t, runErr)
 			}
-			data, err := os.ReadFile(filepath.Join(installer.sessionDirectory, diagnosticsFilename))
+			data, err := os.ReadFile(filepath.Join(drive.session.Directory(), diagnosticsFilename))
 			require.NoError(t, err)
 			var diagnostics runDiagnostics
 			require.NoError(t, json.Unmarshal(data, &diagnostics))
@@ -81,7 +81,7 @@ func TestRunFailureFindingsAcrossReportConsoleAndJSON(t *testing.T) {
 			require.Equal(t, "error", diagnostics.Findings[0].Severity)
 			require.Equal(t, "1 finding.", diagnostics.Summary)
 			require.NotContains(t, console.String(), "1 finding.")
-			page, err := os.ReadFile(filepath.Join(installer.sessionDirectory, reportFilename))
+			page, err := os.ReadFile(filepath.Join(drive.session.Directory(), reportFilename))
 			require.NoError(t, err)
 			report := string(page)
 			require.Contains(t, report, `<article class="problem-card" data-kind="`+tc.kind+`" data-severity="error">`)

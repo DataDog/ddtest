@@ -132,6 +132,8 @@ func (t *Testdrive) Preview(output io.Writer) {
 	_, _ = fmt.Fprintf(output, "  - create an output folder: %s\n", directory)
 	if t.projectTracer != "" {
 		_, _ = fmt.Fprintf(output, "  - reuse installed %s; no installation is needed\n", t.installedTracerLabel(t.projectTracer))
+	} else if t.language == "python" {
+		_, _ = fmt.Fprintf(output, "  - install %s and coverage in a temporary Python environment; remove it after the run\n", t.tracerLabel)
 	} else {
 		install := append([]string{t.installCommand}, t.installArgs...)
 		for i, arg := range install {
@@ -184,8 +186,20 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	}
 	if t.projectTracer == "" {
 		_, _ = fmt.Fprintf(output, "\nInstalling %s...\n", t.tracerLabel)
+		directory := session.Directory()
 		var err error
-		installation, err = t.platform.InstallTestdriveTracer(ctx, platform.TracerOptions{Directory: session.Directory(), Version: t.tracerVersion, Command: t.command, Args: t.args})
+		if t.language == "python" {
+			directory, err = os.MkdirTemp("", "ddtest-python-*")
+			if err != nil {
+				return fmt.Errorf("create temporary Python environment: %w", err)
+			}
+			defer func() {
+				if err := os.RemoveAll(directory); err != nil {
+					runErr = errors.Join(runErr, fmt.Errorf("remove temporary Python environment: %w", err))
+				}
+			}()
+		}
+		installation, err = t.platform.InstallTestdriveTracer(ctx, platform.TracerOptions{Directory: directory, Version: t.tracerVersion, Command: t.command, Args: t.args})
 		if err != nil {
 			return err
 		}
