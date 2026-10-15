@@ -14,7 +14,7 @@ import (
 
 // CIMatrixRows records active job/OS/runtime combinations independently of step
 // numbering and instrumentation edits. Unknown conditions remain unvalidated.
-func CIMatrixRows(root string) ([]string, error) {
+func CIMatrixRows(root string, frameworks ...string) ([]string, error) {
 	workflows, err := readWorkflows(root)
 	if err != nil {
 		return nil, err
@@ -23,6 +23,16 @@ func CIMatrixRows(root string) ([]string, error) {
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
+			if len(frameworks) > 0 && frameworks[0] == "cucumber" {
+				candidate := false
+				for _, step := range job.Steps {
+					r := resolveTestStep(root, workflow, job, step, "javascript", "cucumber")
+					candidate = candidate || !r.Review && (r.Matched || r.Reason != "")
+				}
+				if !candidate {
+					continue
+				}
+			}
 			matrix, err := runtimeMatrix(job.Strategy.Matrix)
 			if err != nil {
 				return nil, err

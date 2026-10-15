@@ -27,6 +27,9 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			if name == "playwright" {
 				entry += " test"
 			}
+			if name == "cucumber" {
+				entry = "cucumber-js"
+			}
 			switch name {
 			case "pytest":
 				files = map[string]string{"pyproject.toml": "[tool.pytest.ini_options]\n"}

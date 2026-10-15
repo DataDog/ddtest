@@ -19,6 +19,7 @@ import (
 // A resolution can be unrelated, matched, or unresolved. A matched command with
 // an unresolved component is still inconclusive; it must not hide custom wrappers.
 type commandResolution struct {
+	OtherFramework    bool
 	MochaAuxiliary    bool
 	Tests             []TestCommand
 	Builds            []BuildCommand
@@ -37,6 +38,9 @@ func unresolvedCommand(reason string) commandResolution {
 }
 
 func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, language, framework string) commandResolution {
+	if language == "javascript" && framework == "cucumber" && (strings.TrimSpace(step.Run) == "exit 0" || strings.TrimSpace(step.Run) == "exit 1") {
+		return commandResolution{Review: true, Reason: "CI status gate is outside Cucumber execution"}
+	}
 	if language == "javascript" && framework == "cypress" && strings.TrimSpace(step.Run) == "exit 1" {
 		return commandResolution{Review: true, Reason: "CI status gate is outside Cypress test execution"}
 	}
@@ -53,7 +57,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if strings.TrimSpace(step.Run) == "" {
 		return commandResolution{}
 	}
-	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "playwright" && framework != "mocha" && framework != "cypress") {
+	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "playwright" && framework != "mocha" && framework != "cypress" && framework != "cucumber") {
 		return commandResolution{Matched: looksLikeTestJob(root, step.Run, language, framework, 0)}
 	}
 	directory := stepDirectory(workflow, job, step)
@@ -243,6 +247,7 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 				result.UnknownExecutable = result.UnknownExecutable && part.UnknownExecutable
 			}
 		}
+		result.OtherFramework = result.OtherFramework || part.OtherFramework
 		result.Matched = result.Matched || part.Matched
 		result.Benchmark = result.Benchmark || part.Benchmark
 		if part.Evidence != "" {
@@ -262,6 +267,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	framework := "jest"
 	if len(frameworks) > 0 {
 		framework = frameworks[0]
+	}
+	if framework == "cucumber" && len(words) > 1 && words[0] == "cross-env" {
+		return resolveJestWords(root, directory, words[1:], stack, remaining, framework)
 	}
 	if len(words) == 0 {
 		return commandResolution{}
@@ -312,7 +320,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		} else {
 			words = words[2:]
 		}
-		if (framework == "mocha" || framework == "cypress") && len(words) > 0 && words[0] == "--no-install" {
+		if (framework == "mocha" || framework == "cypress" || framework == "cucumber") && len(words) > 0 && words[0] == "--no-install" {
 			words = words[1:]
 		}
 		if len(words) > 0 && words[0] == "--" {
@@ -322,7 +330,11 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			return unresolvedCommand("Missing executable: " + command)
 		}
 	}
-	if words[0] == framework || words[0] == "./node_modules/.bin/"+framework || words[0] == "node_modules/.bin/"+framework || words[0] == filepath.Join(directory, "node_modules", ".bin", framework) {
+	runner := framework
+	if framework == "cucumber" {
+		runner = "cucumber-js"
+	}
+	if words[0] == runner || words[0] == "./node_modules/.bin/"+runner || words[0] == "node_modules/.bin/"+runner || words[0] == filepath.Join(directory, "node_modules", ".bin", runner) {
 		if framework == "vitest" && len(words) > 1 && words[1] == "bench" {
 			return commandResolution{Benchmark: true, ReviewReason: "Vitest benchmark mode is not validated by the test adapter; do not add instrumentation based on ordinary test validation: " + command}
 		}
@@ -332,11 +344,15 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		if framework == "playwright" && (len(words) < 2 || words[1] != "test") {
 			return commandResolution{ReviewReason: "Playwright setup/tool command is outside test execution: " + command}
 		}
+		probeCommand := ""
+		if framework == "cucumber" {
+			probeCommand = shellquote.Join(append([]string{runner}, words[1:]...)...)
+		}
 		canonicalRoot, _ := filepath.EvalSymlinks(root)
 		canonicalDirectory, _ := filepath.EvalSymlinks(directory)
 		relative, _ := filepath.Rel(canonicalRoot, canonicalDirectory)
 		return commandResolution{Matched: true, SingleJest: true, Evidence: command,
-			Tests: []TestCommand{{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append(assignments, append([]string{framework}, words[1:]...)...)...)}}}
+			Tests: []TestCommand{{cucumberProbeCommand: probeCommand, Directory: filepath.ToSlash(relative), Command: shellquote.Join(append(assignments, append([]string{runner}, words[1:]...)...)...)}}}
 	}
 	if framework == "mocha" && mochaBrowserShell(root, directory, words[0]) {
 		return commandResolution{ReviewReason: "Mochify browser tests are outside Node Mocha validation: " + command}
@@ -350,8 +366,8 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	if framework == "cypress" && words[0] == "node" {
 		return resolveCypressNode(root, directory, words, assignments)
 	}
-	if framework == "mocha" && (filepath.Base(words[0]) == "c8" || filepath.Base(words[0]) == "nyc") {
-		return resolveMochaCoverage(root, directory, words, assignments, stack, remaining)
+	if (framework == "mocha" || framework == "cucumber") && (filepath.Base(words[0]) == "c8" || filepath.Base(words[0]) == "nyc") {
+		return resolveMochaCoverage(root, directory, words, assignments, stack, remaining, framework)
 	}
 	if framework == "vitest" && IsDDTestCommand(words[0]) {
 		if _, err := ParseVitestRunnerCommand(words[1:]); err != nil {
@@ -385,9 +401,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			result.ReviewReason = "Build/tool command is outside " + framework + " validation; review its configuration separately if it also runs tests: " + command
 		}
 		return result
-	case "jest", "playwright", "vitest", "mocha", "cypress", "tap", "mochify":
-		return commandResolution{ReviewReason: "Other test framework is outside " + framework + " validation: " + command}
-	case "flow", "bundlewatch", "api-extractor", "docusaurus", "documentation", "automd", "codecov", "vitepress":
+	case "jest", "playwright", "vitest", "mocha", "cypress", "cucumber-js", "tap", "mochify":
+		return commandResolution{OtherFramework: true, ReviewReason: "Other test framework is outside " + framework + " validation: " + command}
+	case "flow", "bundlewatch", "api-extractor", "docusaurus", "documentation", "automd", "codecov", "vitepress", "ls-engines", "lockfile-lint", "remark", "ban", "publint", "gherkin-lint":
 		return commandResolution{ReviewReason: "Build/tool command is outside " + framework + " validation; review its configuration separately if it also runs tests: " + command}
 	case "clean-publish":
 		return reviewReleaseLifecycle(directory, command, framework, []string{"prepublishOnly", "prepack", "prepare", "postpack", "publish", "postpublish"})
@@ -414,7 +430,10 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			return resolveCypressOrchestration(root, directory, words, stack, remaining)
 		}
 		return unresolvedCommand("Unsupported script orchestration: " + command)
-	case "run-s":
+	case "npm-run-all", "npm-run-all2", "run-s":
+		if framework == "cucumber" {
+			return resolveCucumberScripts(root, directory, words, stack, remaining)
+		}
 		if framework != "mocha" || len(words) < 2 {
 			return unresolvedCommand("Unsupported script orchestration: " + command)
 		}
@@ -448,7 +467,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			return commandResolution{}
 		}
 		// These are setup/metadata commands, not explicit test entry points.
-		if slices.Contains([]string{"ci", "install", "i", "--version", "--help"}, words[1]) {
+		if slices.Contains([]string{"ci", "clean-install", "install", "i", "--version", "--help"}, words[1]) {
 			return commandResolution{}
 		}
 		if words[0] == "pnpm" && words[1] == "add" {
@@ -513,6 +532,9 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		return unresolvedCommand("Cannot parse package.json: " + err.Error())
 	}
 	script, ok := manifest.Scripts[name]
+	if len(frameworks) > 0 && frameworks[0] == "cucumber" {
+		script = cucumberDiscoveryScript(script)
+	}
 	if !ok {
 		if name == "flow" && (strings.HasPrefix(command, "yarn flow") || strings.HasPrefix(command, "pnpm flow")) {
 			return resolveJestWords(root, directory, append([]string{"flow"}, args...), stack, remaining, frameworks...)
@@ -536,9 +558,10 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	}
 	mocha := len(frameworks) > 0 && frameworks[0] == "mocha"
 	cypress := len(frameworks) > 0 && frameworks[0] == "cypress"
+	cucumber := len(frameworks) > 0 && frameworks[0] == "cucumber"
 	// npm executes hooks without forwarding the main script's arguments. Keep
 	// their order, discover hidden test consumers, and retain the original alias.
-	if (mocha || cypress) && strings.HasPrefix(command, "npm ") {
+	if (mocha || cypress || cucumber) && strings.HasPrefix(command, "npm ") {
 		parts := []string{}
 		if pre := manifest.Scripts["pre"+name]; pre != "" {
 			parts = append(parts, pre)
@@ -555,6 +578,10 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		relative, _ := filepath.Rel(root, directory)
 		return commandResolution{Builds: []BuildCommand{{Directory: filepath.ToSlash(relative), Command: command, Kind: "package-build"}}}
 	}
+	if cucumber && name == "build" && !result.Matched && !result.OtherFramework && result.Reason == "" && len(result.Builds) > 0 {
+		relative, _ := filepath.Rel(root, directory)
+		return commandResolution{Builds: []BuildCommand{{Directory: filepath.ToSlash(relative), Command: command, Kind: "package-build"}}}
+	}
 	// Browser apps also need assets copied by their build script. Keep the
 	// validated package entry point instead of replaying only its bundler.
 	if len(frameworks) > 0 && frameworks[0] == "playwright" && name == "build" && lifecycle == "" && result.Reason == "" && !result.Matched && len(result.Builds) > 0 {
@@ -566,6 +593,12 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	if name == "build" && !result.Matched && orchestratedBuild(root, directory, script, manifest.Scripts, stack, remaining, frameworks...) {
 		relative, _ := filepath.Rel(root, directory)
 		return commandResolution{Builds: []BuildCommand{{Directory: filepath.ToSlash(relative), Command: command, Kind: "package-build"}}}
+	}
+	if cucumber && result.SingleJest && result.Reason == "" && len(result.Tests) == 1 && len(result.Builds) == 0 {
+		// This one leaf alias forwards formatter/probe options safely and retains
+		// its original debug/preload environment. Do not retain mixed npm test.
+		result.Tests[0].Resolution = command + " -> " + result.Evidence
+		result.Tests[0].Command = command
 	}
 	if (mocha || cypress) && lifecycle == "" && result.Reason == "" && len(result.Tests) == 1 {
 		// Keep surrounding lint/Node checks and their original ordering/exit behavior.

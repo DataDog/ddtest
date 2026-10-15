@@ -41,6 +41,9 @@ var cypressInstructions string
 //go:embed instructions/mocha.md
 var mochaInstructions string
 
+//go:embed instructions/cucumber.md
+var cucumberInstructions string
+
 // Run detects the first supported onboarding path and prints its instructions.
 func Run(output io.Writer) error {
 	repositoryRoot, err := os.Getwd()
@@ -76,7 +79,7 @@ func Run(output io.Writer) error {
 	for _, workflow := range workflows {
 		_, _ = fmt.Fprintf(output, "  - %s\n", workflow)
 	}
-	if name == "jest" || name == "vitest" || name == "playwright" || name == "mocha" {
+	if name == "jest" || name == "vitest" || name == "playwright" || name == "mocha" || name == "cucumber" {
 		scope, err := DiscoverValidationScope(repositoryRoot, name)
 		if err != nil {
 			return err
@@ -110,10 +113,10 @@ func Run(output io.Writer) error {
 	if len(discovery.Unresolved) == 0 && len(configured) == len(workflows) {
 		_, _ = fmt.Fprintln(output)
 		_, _ = fmt.Fprintln(output, "Datadog Test Optimization already appears in every detected test workflow.")
-		_, _ = fmt.Fprintf(output, "This is configuration detection, not completed onboarding. Run `ddtest testdrive --framework %s` to validate locally. Jest, Vitest, Playwright, Mocha and Cypress projects also check CI runtime compatibility; configurations without a validation adapter remain unvalidated.\n", name)
+		_, _ = fmt.Fprintf(output, "This is configuration detection, not completed onboarding. Run `ddtest testdrive --framework %s` to validate locally. Jest, Vitest, Playwright, Mocha, Cypress and Cucumber projects also check CI runtime compatibility; configurations without a validation adapter remain unvalidated.\n", name)
 		_, _ = fmt.Fprintln(output, "After it finishes, share the validation verdict, CI runtime compatibility and feature results using the final response block printed by testdrive. Copy its absolute Markdown report links verbatim, each on its own line; do not shorten them to relative paths or replace them with file:// URLs.")
 		_, _ = fmt.Fprintln(output, "Keep .testoptimization/report.html and .testoptimization/testdrive.json after cleanup, even on failure. Do not declare validation complete while any required check is failed or inconclusive.")
-		if name != "vitest" && name != "playwright" && name != "mocha" {
+		if name != "vitest" && name != "playwright" && name != "mocha" && name != "cucumber" {
 			return nil
 		}
 	}
@@ -426,6 +429,9 @@ func toxRunsTests(root string, args []string, name string) bool {
 }
 
 func instructions(language, name string) string {
+	if language == "javascript" && name == "cucumber" {
+		return strings.ReplaceAll(cucumberInstructions, "ddtest testdrive", "ddtest testdrive --framework cucumber")
+	}
 	if language == "javascript" && name == "cypress" {
 		text := strings.NewReplacer("For Jest and supported Vitest projects", "For Cypress projects", "Jest configuration", "Cypress configuration", "Jest CI discovery", "Cypress CI discovery", "Identified Jest steps", "Identified Cypress steps", "__FRAMEWORK__", "cypress", "__LANGUAGE__", "js", "__BOOTSTRAP__", javascriptBootstrap).Replace(gitHubInstructions)
 		return strings.ReplaceAll(text+"\n\n"+cypressInstructions, "ddtest testdrive", "ddtest testdrive --framework cypress")

@@ -163,7 +163,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 					continue
 				}
 				jobs := []runtimeJob{rowJob}
-				if framework == "cypress" {
+				if framework == "cypress" || framework == "cucumber" {
 					for i, step := range rowJob.Steps {
 						uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 						if uses == "actions/setup-node" {
@@ -174,7 +174,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 								rowJob.Steps[i].ResolutionError = e.Error()
 							}
 						}
-						if uses == "cypress-io/github-action" && step.With["command"] == "" && step.With["runTests"] != "false" {
+						if framework == "cypress" && uses == "cypress-io/github-action" && step.With["command"] == "" && step.With["runTests"] != "false" {
 							node := actionNodes[step.Uses]
 							if node == "" {
 								node, err = CypressActionNode(ctx, step.Uses)
@@ -189,14 +189,16 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 						}
 					}
 					var contextErr error
-					jobs, contextErr = cypressContextJobs(root, workflow, rowJob)
+					if framework == "cypress" {
+						jobs, contextErr = cypressContextJobs(root, workflow, rowJob)
+					}
 					if contextErr != nil {
 						result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "inconclusive", Reason: contextErr.Error()})
 						continue
 					}
 				}
 				for _, contextJob := range jobs {
-					result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, workflow, name, contextJob, rowResolutions, row, resolveNode, cachedResolve, framework)...)
+					result.Jobs = append(result.Jobs, checkRuntimeJob(ctx, root, workflow, name, contextJob, rowResolutions, row, resolveNode, cachedResolve, framework)...)
 				}
 			}
 		}
@@ -226,7 +228,7 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 	return result
 }
 
-func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) []RuntimeFinding {
+func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name string, job runtimeJob, resolutions []commandResolution, row map[string]any, resolveNode nodeResolver, resolve requirementResolver, frameworks ...string) []RuntimeFinding {
 	finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Scenario: job.Context["scenario"], Status: "inconclusive"}
 	var findings []RuntimeFinding
 	fail := func(reason string) []RuntimeFinding {
@@ -385,7 +387,7 @@ func checkRuntimeJob(ctx context.Context, workflow ciWorkflow, name string, job 
 			}
 			finding.Status, finding.Reason = CompareNodeRequirement(resolvedNode, requirement.Node)
 			if finding.Status == "compatible" {
-				if reason := checkTestBootstrap(workflow, job, step, row, resolution.Tests, frameworks...); reason != "" {
+				if reason := checkTestBootstrap(root, workflow, job, step, row, resolution.Tests, frameworks...); reason != "" {
 					finding.Status, finding.Reason = "inconclusive", reason
 					finding.Code = "unverified_initialization"
 				}

@@ -231,7 +231,11 @@ func validationFacts(result validationResult) []string {
 			if run.ExitCode != nil {
 				exit = fmt.Sprint(*run.ExitCode)
 			}
-			facts = append(facts, fmt.Sprintf("%s%s: %d passed, %d failed, %d skipped; %d suite errors; exit %s.", label+configurationLabel(run.Configuration), run.Name, run.TestCounts.Passed, run.TestCounts.Failed, run.TestCounts.Skipped, run.SuiteErrorCount, exit))
+			if run.NativeResults == "unavailable" {
+				facts = append(facts, fmt.Sprintf("%s%s: native outcome counts unavailable; exit %s. %s", label+configurationLabel(run.Configuration), run.Name, exit, run.ResultError))
+			} else {
+				facts = append(facts, fmt.Sprintf("%s%s: %d passed, %d failed, %d skipped; %d suite errors; exit %s.", label+configurationLabel(run.Configuration), run.Name, run.TestCounts.Passed, run.TestCounts.Failed, run.TestCounts.Skipped, run.SuiteErrorCount, exit))
+			}
 			if run.Coverage != nil {
 				facts = append(facts, fmt.Sprintf("Real-suite coverage: %s%s — %s; %d/%d reported tests linked to covered source. Synthetic feature probes are separate evidence.", label+configurationLabel(run.Configuration), run.Name, run.Coverage.Status, run.Coverage.CoveredTests, run.Coverage.TotalTests))
 				if run.Coverage.Reason != "" {

@@ -18,7 +18,11 @@ import (
 
 // Keep coverage wrappers intact. Unknown options are unresolved rather than
 // guessing which following word is the executable or discarding coverage flags.
-func resolveMochaCoverage(root, directory string, words, assignments, stack []string, remaining *int) commandResolution {
+func resolveMochaCoverage(root, directory string, words, assignments, stack []string, remaining *int, frameworks ...string) commandResolution {
+	framework := "mocha"
+	if len(frameworks) > 0 {
+		framework = frameworks[0]
+	}
 	i := 1
 	for i < len(words) {
 		word := words[i]
@@ -47,7 +51,7 @@ func resolveMochaCoverage(root, directory string, words, assignments, stack []st
 	if i >= len(words) {
 		return unresolvedCommand("Coverage wrapper has no test command")
 	}
-	result := resolveJestWords(root, directory, words[i:], stack, remaining, "mocha")
+	result := resolveJestWords(root, directory, words[i:], stack, remaining, framework)
 	if result.Reason == "" && !result.Matched && result.ReviewReason != "" {
 		return result
 	}

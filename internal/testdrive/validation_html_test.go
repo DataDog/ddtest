@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
 )
@@ -63,7 +62,7 @@ func TestCheckOnlyPreservesPreviousHTML(t *testing.T) {
 
 func TestHTMLWriteFailureStillKeepsJSONAndCleansSession(t *testing.T) {
 	run := preparedTestdrive(t)
-	run.framework = &framework.Cucumber{}
+	run.framework = &telemetryOnlyFramework{}
 	installer := &fakeTracer{preloadPath: "/trace/ci/init.js"}
 	run.platform = installer
 	run.executor = &fakeTestdriveExecutor{}

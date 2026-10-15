@@ -13,18 +13,19 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
-	Cypress           *CypressCommand `json:"cypress,omitempty"`
-	Resolution        string          `json:"resolution,omitempty"`
-	CICoverageCommand string          `json:"ci_coverage_command,omitempty"`
-	mochaProbeCommand string
-	usesNYC           bool
-	Directory         string            `json:"directory"`
-	Command           string            `json:"command"`
-	ExitOnFailure     bool              `json:"exit_on_failure,omitempty"`
-	Environment       map[string]string `json:"environment,omitempty"`
-	Locations         []string          `json:"locations,omitempty"`
-	Prerequisites     []BuildCommand    `json:"prerequisites,omitempty"`
-	UnvalidatedSetup  []string          `json:"unvalidated_setup,omitempty"`
+	cucumberProbeCommand string
+	Cypress              *CypressCommand `json:"cypress,omitempty"`
+	Resolution           string          `json:"resolution,omitempty"`
+	CICoverageCommand    string          `json:"ci_coverage_command,omitempty"`
+	mochaProbeCommand    string
+	usesNYC              bool
+	Directory            string            `json:"directory"`
+	Command              string            `json:"command"`
+	ExitOnFailure        bool              `json:"exit_on_failure,omitempty"`
+	Environment          map[string]string `json:"environment,omitempty"`
+	Locations            []string          `json:"locations,omitempty"`
+	Prerequisites        []BuildCommand    `json:"prerequisites,omitempty"`
+	UnvalidatedSetup     []string          `json:"unvalidated_setup,omitempty"`
 }
 
 // BuildCommand is a statically resolved build preceding a test in the same
@@ -65,14 +66,14 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
-			if framework == "cypress" {
+			if framework == "cypress" || framework == "cucumber" {
 				candidate := false
 				for _, step := range job.Steps {
 					resolution := resolveTestStep(root, workflow, job, step, "javascript", framework)
 					candidate = candidate || !resolution.Review && (resolution.Matched || resolution.Reason != "")
 				}
 				if !candidate {
-					scope.Review = append(scope.Review, workflow.Path+" / "+name+": no headless Cypress invocation identified; action implementations and job conditions are outside this local validation scope.")
+					scope.Review = append(scope.Review, workflow.Path+" / "+name+": no "+framework+" invocation identified; action implementations and job conditions are outside this local validation scope.")
 					continue
 				}
 			}

@@ -378,7 +378,7 @@ def main():
     parser.add_argument("--ref", required=True, help="Commit SHA or ref; resolved SHA is recorded")
     parser.add_argument("--ddtest", type=Path, required=True, help="Already-built executable")
     parser.add_argument("--agent", choices=("codex", "claude"), required=True)
-    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress"),
+    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber"),
                         help="Optional scope for mixed-framework repositories; adds only the framework to the minimal prompt")
     parser.add_argument("--setup-command", action="append", default=[], help="Repeatable, no implicit shell")
     parser.add_argument("--output", type=Path, required=True, help="New directory for evaluator evidence")

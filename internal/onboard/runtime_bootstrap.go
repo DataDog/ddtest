@@ -24,7 +24,10 @@ func symbolicConditionValue(value any) bool {
 
 // Called only after an active JavaScript action. Resolve its known references,
 // never arbitrary environment values or commands. Scope overrides need review.
-func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, commands []TestCommand, frameworks ...string) string {
+func checkTestBootstrap(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, commands []TestCommand, frameworks ...string) string {
+	if len(frameworks) > 0 && frameworks[0] == "cucumber" {
+		return checkCucumberBootstrap(root, workflow, job, step, row, commands)
+	}
 	runnerOnly := len(commands) > 0 && len(frameworks) > 0 && frameworks[0] == "vitest"
 	for _, command := range commands {
 		words, err := shellquote.Split(command.Command)

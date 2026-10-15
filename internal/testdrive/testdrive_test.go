@@ -249,6 +249,11 @@ func TestTestEnvironmentPreservesExistingNodeOptions(t *testing.T) {
 	}
 }
 
+// Keep generic reporting tests independent of frameworks with paired adapters.
+type telemetryOnlyFramework struct{ framework.Cucumber }
+
+func (*telemetryOnlyFramework) Name() string { return "unvalidated" }
+
 func preparedTestdrive(t *testing.T) *Testdrive {
 	t.Helper()
 	repositoryRoot := t.TempDir()
@@ -312,7 +317,7 @@ func TestRunReportsProjectTracer(t *testing.T) {
 	}
 	installer := &fakeTracer{preloadPath: "/project/node_modules/dd-trace/ci/init.js", project: true}
 	drive.platform = installer
-	drive.framework = &framework.Cucumber{}
+	drive.framework = &telemetryOnlyFramework{}
 	executor := &fakeTestdriveExecutor{}
 	drive.executor = executor
 	drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
@@ -320,7 +325,7 @@ func TestRunReportsProjectTracer(t *testing.T) {
 	}
 	var output bytes.Buffer
 	if err := drive.Run(t.Context(), &output); err == nil {
-		t.Fatal("Cucumber remains unvalidated")
+		t.Fatal("Generic reporting framework remains unvalidated")
 	}
 	if installer.options.Version != "git:ignored-for-existing-tracer" || installer.options.Command != drive.command {
 		t.Fatal(installer.options)
@@ -423,7 +428,7 @@ func TestPreviewChoosesTracerBeforeConfirmation(t *testing.T) {
 				if !strings.Contains(preview, "reuse installed dd-trace") || strings.Contains(preview, "npm install") {
 					t.Fatal(preview)
 				}
-				drive.framework = &framework.Cucumber{}
+				drive.framework = &telemetryOnlyFramework{}
 				drive.platform = &fakeTracer{err: errors.New("must not install")}
 				drive.executor = &fakeTestdriveExecutor{}
 				drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
