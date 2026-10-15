@@ -227,3 +227,10 @@ func TestHandoffIncludesActionableCIFindingAlongsideRealCoverage(t *testing.T) {
 	require.Contains(t, handoff, "CI .github/workflows/ci.yml / build / step 5: "+finding.Reason)
 	require.Equal(t, 1, strings.Count(handoff, finding.Reason), "matrix duplicates must not expand the handoff")
 }
+
+func TestHandoffNamesUnexecutedCypressConsumer(t *testing.T) {
+	result := validationResult{Framework: "cypress", Configurations: []configurationResult{{TestCommand: onboard.TestCommand{Command: "npm run e2e", Resolution: "npm run e2e -> cypress run"}, Compatibility: verdict{Status: "not exercised"}}}}
+	result.Summary = summarizeValidation(result)
+	require.Contains(t, validationHandoff(result), "Cypress consumer NOT EXECUTED: npm run e2e -> cypress run")
+	require.NotContains(t, validationHandoff(result), "Mocha")
+}

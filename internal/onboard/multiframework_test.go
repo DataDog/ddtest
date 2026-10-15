@@ -21,6 +21,9 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			language := "js"
 			entry := name
 			files := map[string]string{"package.json": `{"scripts":{"test":"` + name + `"}}`}
+			if name == "cypress" {
+				entry += " run"
+			}
 			if name == "playwright" {
 				entry += " test"
 			}

@@ -5,6 +5,7 @@ import (
 	"io"
 	"maps"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 )
@@ -12,8 +13,9 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
-	Resolution        string `json:"resolution,omitempty"`
-	CICoverageCommand string `json:"ci_coverage_command,omitempty"`
+	Cypress           *CypressCommand `json:"cypress,omitempty"`
+	Resolution        string          `json:"resolution,omitempty"`
+	CICoverageCommand string          `json:"ci_coverage_command,omitempty"`
 	mochaProbeCommand string
 	usesNYC           bool
 	Directory         string            `json:"directory"`
@@ -63,6 +65,17 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
+			if framework == "cypress" {
+				candidate := false
+				for _, step := range job.Steps {
+					resolution := resolveTestStep(root, workflow, job, step, "javascript", framework)
+					candidate = candidate || !resolution.Review && (resolution.Matched || resolution.Reason != "")
+				}
+				if !candidate {
+					scope.Review = append(scope.Review, workflow.Path+" / "+name+": no headless Cypress invocation identified; action implementations and job conditions are outside this local validation scope.")
+					continue
+				}
+			}
 			rows, err := runtimeMatrix(job.Strategy.Matrix)
 			if err != nil {
 				scope.Unresolved = append(scope.Unresolved, workflow.Path+" / "+name+": "+err.Error())
@@ -83,10 +96,17 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				var commands []TestCommand
 				for i, step := range job.Steps {
 					uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
-					if (framework == "playwright" && uses == "actions/upload-artifact" || framework == "mocha" && slices.Contains([]string{"actions/upload-artifact", "coverallsapp/github-action"}, uses)) && step.Run == "" && step.ResolutionError == "" {
+					if framework == "cypress" && uses == githubAction && step.Run == "" && step.ResolutionError == "" {
+						review = append(review, fmt.Sprintf("%s / %s / step %d: Datadog CI installation and its condition are checked separately by CI runtime analysis; local validation installs and initializes its own tracer.", workflow.Path, name, stepNumber(step, i)))
+						continue
+					}
+					if ((framework == "playwright" || framework == "cypress") && uses == "actions/upload-artifact" || framework == "mocha" && slices.Contains([]string{"actions/upload-artifact", "coverallsapp/github-action"}, uses)) && step.Run == "" && step.ResolutionError == "" {
 						reason := "artifact upload is outside local Playwright execution"
 						if framework == "mocha" {
 							reason = "artifact/coverage upload is outside local Mocha execution"
+						}
+						if framework == "cypress" {
+							reason = "artifact upload is outside local Cypress execution"
 						}
 						review = append(review, fmt.Sprintf("%s / %s / step %d: %s; its CI condition is not evaluated", workflow.Path, name, stepNumber(step, i), reason))
 						continue
@@ -100,7 +120,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 						jobLabel += fmt.Sprint(" ", row)
 					}
 					location := fmt.Sprintf("%s / %s / step %d (%s)", workflow.Path, jobLabel, stepNumber(step, i), step.Run)
-					resolved, env, envErr := resolveVariantStep(workflow, job, step, row)
+					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
 					resolution := resolveTestStep(root, workflow, job, resolved, "javascript", framework)
 					if conditionErr != nil && resolved.Run != "" && resolution.Reason == "" && !resolution.Matched && len(resolution.Builds) == 0 {
 						resolution.Review, resolution.Reason = true, "Condition affects only a recognized non-test command; review separately: "+conditionErr.Error()
@@ -158,7 +178,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 				scope.Review = append(scope.Review, review...)
 				for _, entry := range commands {
 					index := slices.IndexFunc(scope.Commands, func(previous TestCommand) bool {
-						return previous.Directory == entry.Directory && previous.Command == entry.Command && previous.ExitOnFailure == entry.ExitOnFailure && slices.EqualFunc(previous.Prerequisites, entry.Prerequisites, EqualPreparation) && slices.Equal(previous.UnvalidatedSetup, entry.UnvalidatedSetup) && maps.Equal(previous.Environment, entry.Environment)
+						return reflect.DeepEqual(previous.Cypress, entry.Cypress) && previous.Directory == entry.Directory && previous.Command == entry.Command && previous.ExitOnFailure == entry.ExitOnFailure && slices.EqualFunc(previous.Prerequisites, entry.Prerequisites, EqualPreparation) && slices.Equal(previous.UnvalidatedSetup, entry.UnvalidatedSetup) && maps.Equal(previous.Environment, entry.Environment)
 					})
 					if index < 0 {
 						scope.Commands = append(scope.Commands, entry)
@@ -185,7 +205,7 @@ func WriteValidationScope(output io.Writer, scope ValidationScope) {
 	for _, entry := range scope.Commands {
 		_, _ = fmt.Fprintf(output, "  - [%s] %s\n", entry.Directory, entry.Command)
 		if entry.Resolution != "" {
-			_, _ = fmt.Fprintf(output, "      Mocha consumer: %s\n", entry.Resolution)
+			_, _ = fmt.Fprintf(output, "      Resolved test command: %s\n", entry.Resolution)
 		}
 		if entry.CICoverageCommand != "" {
 			_, _ = fmt.Fprintf(output, "      CI coverage command: %s\n      Apply this wrapper in CI; testdrive adds NYC locally only. Real source coverage is a separate check.\n", entry.CICoverageCommand)

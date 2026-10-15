@@ -56,7 +56,11 @@ func validationHandoff(result validationResult) string {
 		}
 		unexecuted++
 		if unexecuted <= 3 {
-			fmt.Fprintf(&block, "\n- Mocha consumer NOT EXECUTED: %s. %s\n", briefValidationText(configuration.Resolution), briefValidationText(configuration.Error))
+			reason := configuration.Error
+			if reason == "" {
+				reason = configuration.Compatibility.Reason
+			}
+			fmt.Fprintf(&block, "\n- %s consumer NOT EXECUTED: %s. %s\n", displayName(result.Framework), briefValidationText(configuration.Resolution), briefValidationText(reason))
 		}
 	}
 	if len(result.Configurations) > 3 {
@@ -154,7 +158,10 @@ func summarizeValidation(result validationResult) validationSummary {
 		summary.BlockingChecks = append(summary.BlockingChecks, "preflight "+result.Preflight.Verdict.Status)
 	}
 	if !result.CheckOnly {
-		if missingMochaCoverage(result) {
+		if missingRealCoverage(result) && result.Framework == "cypress" {
+			summary.BlockingChecks = append(summary.BlockingChecks, "Cypress real-application coverage is missing or invalid. Instrument application source with Istanbul, preserving repository source filenames, and enable that startup/build path in local validation and CI. API-only tests may have no browser coverage. Synthetic probes and test-file coverage do not prove application coverage.")
+		}
+		if missingRealCoverage(result) && result.Framework != "cypress" {
 			summary.BlockingChecks = append(summary.BlockingChecks, "Mocha real-suite coverage was not observed. Synthetic skipping probes do not validate coverage of the customer's source. Check NYC instrument/include settings and ESM instrumentation; preserve existing coverage thresholds.")
 		}
 		if result.Compatibility.Status != "compatible" {
@@ -227,6 +234,9 @@ func validationFacts(result validationResult) []string {
 			facts = append(facts, fmt.Sprintf("%s%s: %d passed, %d failed, %d skipped; %d suite errors; exit %s.", label+configurationLabel(run.Configuration), run.Name, run.TestCounts.Passed, run.TestCounts.Failed, run.TestCounts.Skipped, run.SuiteErrorCount, exit))
 			if run.Coverage != nil {
 				facts = append(facts, fmt.Sprintf("Real-suite coverage: %s%s — %s; %d/%d reported tests linked to covered source. Synthetic feature probes are separate evidence.", label+configurationLabel(run.Configuration), run.Name, run.Coverage.Status, run.Coverage.CoveredTests, run.Coverage.TotalTests))
+				if run.Coverage.Reason != "" {
+					facts = append(facts, "Real-suite coverage: "+briefValidationText(run.Coverage.Reason))
+				}
 			}
 			if run.ExecutionPath != "" {
 				facts = append(facts, "Validated execution path: "+run.ExecutionPath+".")

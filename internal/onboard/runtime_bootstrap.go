@@ -75,6 +75,11 @@ func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			}
 		}
 	}
+	for key, value := range conditionEnvironment(workflow, job, step, row) {
+		if key != "NODE_OPTIONS" && key != "DD_TRACE_PACKAGE" && key != "DD_TRACE_ESM_IMPORT" {
+			known[key] = value
+		}
+	}
 	options, err := bootstrapOptions(options, row, known)
 	if err == nil && !strings.ContainsAny(options, "$`") {
 		words, err := shellquote.Split(options)

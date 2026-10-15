@@ -92,7 +92,7 @@ func TestPairedEvidenceSurvivesOtherFrameworkAndFailedPreflight(t *testing.T) {
 	// reporting-only Cucumber -> final Jest check sequence.
 	run.framework = &framework.Cucumber{}
 	run.checkOnly = true
-	require.ErrorContains(t, run.Run(t.Context(), &bytes.Buffer{}), "preflight currently supports Jest, Vitest, Playwright and Mocha only")
+	require.ErrorContains(t, run.Run(t.Context(), &bytes.Buffer{}), "preflight currently supports Jest, Vitest, Playwright, Mocha and Cypress only")
 	require.Error(t, finishValidation(&bytes.Buffer{}, root, validationResult{Framework: "cucumber",
 		Compatibility: verdict{Status: "unvalidated"}, Runs: []runSummary{
 			(validationRun{Name: "reporting-only", Command: "pnpm e2e", Instrumented: true}).summary(),
@@ -162,4 +162,26 @@ func TestConfigurationChangeCannotReuseEarlierLocalPass(t *testing.T) {
 	require.Equal(t, "after-ci-edit", report.LastExecution.Session)
 	require.Equal(t, "passed", report.ConfigurationCheck.Status)
 	require.Equal(t, "COMPLETE LOCALLY", report.Summary.Status)
+}
+
+func TestCypressExecutionSurvivesChecksAndUnexecutedAllPlan(t *testing.T) {
+	root := t.TempDir()
+	original := pairedReport("cypress-pair", "passed")
+	original.Framework = "cypress"
+	_ = finishValidation(&bytes.Buffer{}, root, original)
+	before := readValidationReport(t, root)
+	for _, next := range []validationResult{
+		{Framework: "cypress", CheckOnly: true},
+		{Framework: "cypress", Error: "CI setup requires review", Configurations: []configurationResult{{Status: "not exercised"}}},
+	} {
+		_ = finishValidation(&bytes.Buffer{}, root, next)
+		after := readValidationReport(t, root)
+		require.NotNil(t, after.Retained)
+		require.Equal(t, before.Session, after.Retained.Result.Session)
+		require.Equal(t, before.Runs, after.Retained.Result.Runs)
+		require.False(t, after.LastExecution.Current)
+		require.False(t, after.LocalSuccess)
+		require.Equal(t, "INCOMPLETE", after.Summary.Status)
+		require.Nil(t, after.Retained.Result.Retained, "history must stay bounded")
+	}
 }

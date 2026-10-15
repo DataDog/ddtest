@@ -35,6 +35,9 @@ var vitestInstructions string
 //go:embed instructions/playwright.md
 var playwrightInstructions string
 
+//go:embed instructions/cypress.md
+var cypressInstructions string
+
 //go:embed instructions/mocha.md
 var mochaInstructions string
 
@@ -107,7 +110,7 @@ func Run(output io.Writer) error {
 	if len(discovery.Unresolved) == 0 && len(configured) == len(workflows) {
 		_, _ = fmt.Fprintln(output)
 		_, _ = fmt.Fprintln(output, "Datadog Test Optimization already appears in every detected test workflow.")
-		_, _ = fmt.Fprintf(output, "This is configuration detection, not completed onboarding. Run `ddtest testdrive --framework %s` to validate locally. Jest, Vitest, Playwright and Mocha projects also check CI runtime compatibility; configurations without a validation adapter remain unvalidated.\n", name)
+		_, _ = fmt.Fprintf(output, "This is configuration detection, not completed onboarding. Run `ddtest testdrive --framework %s` to validate locally. Jest, Vitest, Playwright, Mocha and Cypress projects also check CI runtime compatibility; configurations without a validation adapter remain unvalidated.\n", name)
 		_, _ = fmt.Fprintln(output, "After it finishes, share the validation verdict, CI runtime compatibility and feature results using the final response block printed by testdrive. Copy its absolute Markdown report links verbatim, each on its own line; do not shorten them to relative paths or replace them with file:// URLs.")
 		_, _ = fmt.Fprintln(output, "Keep .testoptimization/report.html and .testoptimization/testdrive.json after cleanup, even on failure. Do not declare validation complete while any required check is failed or inconclusive.")
 		if name != "vitest" && name != "playwright" && name != "mocha" {
@@ -134,6 +137,7 @@ type ciDefaults struct {
 }
 
 type ciWorkflow struct {
+	On       any `yaml:"on"`
 	Path     string
 	Defaults ciDefaults            `yaml:"defaults"`
 	Env      map[string]string     `yaml:"env"`
@@ -422,6 +426,10 @@ func toxRunsTests(root string, args []string, name string) bool {
 }
 
 func instructions(language, name string) string {
+	if language == "javascript" && name == "cypress" {
+		text := strings.NewReplacer("For Jest and supported Vitest projects", "For Cypress projects", "Jest configuration", "Cypress configuration", "Jest CI discovery", "Cypress CI discovery", "Identified Jest steps", "Identified Cypress steps", "__FRAMEWORK__", "cypress", "__LANGUAGE__", "js", "__BOOTSTRAP__", javascriptBootstrap).Replace(gitHubInstructions)
+		return strings.ReplaceAll(text+"\n\n"+cypressInstructions, "ddtest testdrive", "ddtest testdrive --framework cypress")
+	}
 	if language == "javascript" && name == "mocha" {
 		return strings.ReplaceAll(mochaInstructions, "ddtest testdrive", "ddtest testdrive --framework mocha")
 	}
@@ -437,9 +445,6 @@ func instructions(language, name string) string {
 	case "javascript":
 		actionLanguage = "js"
 		bootstrap = javascriptBootstrap
-		if name == "cypress" {
-			bootstrap += "\n\n" + cypressBootstrap
-		}
 		if name == "cucumber" {
 			bootstrap += "\n\nFor Cucumber, also set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false on the test step. This avoids a tracer crash on Cucumber Background/Rule nodes; basic reporting is unaffected."
 		}
@@ -457,12 +462,3 @@ const javascriptBootstrap = "For every instrumented CI matrix entry, use a Node.
 const pythonBootstrap = "The action exports PYTHONPATH and PYTEST_ADDOPTS=--ddtrace for pytest. Preserve these variables on the existing test step; do not replace its current arguments. Activate the same Python environment used for the tests before the action. If CI uses tox or nox, pass DD_*, PYTHONPATH, and PYTEST_ADDOPTS into the test environment."
 
 const rubyBootstrap = "The action installs datadog-ci into the CI bundle and exports RUBYOPT=-rbundler/setup -rdatadog/ci/auto_instrument. Preserve RUBYOPT on the RSpec or Minitest step and merge any existing Ruby options. Keep the existing bundle exec or binstub entry point."
-
-const cypressBootstrap = `Cypress also needs browser-side instrumentation; NODE_OPTIONS alone is insufficient:
-
-1. In the existing Cypress config, resolve the tracer root from the action's DD_TRACE_PACKAGE value: path.dirname(path.dirname(process.env.DD_TRACE_PACKAGE)). Only enable this configuration when that variable is present. Use import syntax in an ESM config and require in a CommonJS config.
-2. Compose the existing setupNodeEvents callback with the module at path.join(tracerRoot, 'ci/cypress/plugin'), loaded with import in ESM or require in CommonJS. Preserve existing event handlers, including after:run and after:spec; do not replace them.
-3. In setupNodeEvents, generate a support wrapper under RUNNER_TEMP. Write a literal require of path.join(tracerRoot, 'ci/cypress/support'), followed by a literal require of the existing resolved supportFile (unless it is false). Set the returned config.supportFile to that wrapper. Generating literal absolute imports lets Cypress's browser bundler resolve the isolated tracer without adding it to package.json.
-4. Keep the project's existing application startup, browser installation, and cypress run command. Do not use cypress open.
-
-Use the same pattern for e2e or component configuration, whichever the selected job runs. The local testdrive creates equivalent wrappers inside its session automatically. See https://docs.datadoghq.com/tests/setup/javascript/ for the Cypress plugin contract.`

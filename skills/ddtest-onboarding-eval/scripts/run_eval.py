@@ -110,12 +110,13 @@ class BackgroundCommands:
         return sorted(self.bash | self.pending)
 
 
-def agent_environment(agent, timeout):
+def agent_environment(agent, timeout, framework=None):
     if agent != "claude":
         return {}
     # Print mode cannot resume a conversation after its final result. Keep Bash
     # synchronous and allow long paired runs without the default 120s handoff.
-    bash_timeout = str(min(600000, int(timeout * 1000)))
+    maximum = 3600000 if framework == "cypress" else 600000
+    bash_timeout = str(min(maximum, int(timeout * 1000)))
     return {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
             "BASH_DEFAULT_TIMEOUT_MS": bash_timeout,
             "BASH_MAX_TIMEOUT_MS": bash_timeout}
@@ -229,7 +230,7 @@ def run(args):
            if not key.startswith(("DD_", "DATADOG_")) and key not in ("NODE_OPTIONS", "NODE_PATH")}
     for key, name in (("npm_config_cache", "npm"), ("YARN_CACHE_FOLDER", "yarn"),
                       ("npm_config_store_dir", "pnpm-store"), ("npm_config_cache_dir", "pnpm"),
-                      ("TMPDIR", "tmp")):
+                      ("TMPDIR", "tmp"), ("CYPRESS_CACHE_FOLDER", "cypress")):
         directory = trial / "caches" / name
         directory.mkdir(parents=True, exist_ok=True)
         env[key] = str(directory)
@@ -251,7 +252,7 @@ def run(args):
     agent_timed_out = False
     final_response = ""
     background = BackgroundCommands()
-    overrides = agent_environment(args.agent, args.timeout)
+    overrides = agent_environment(args.agent, args.timeout, framework)
     manifest["agent_environment"] = overrides
 
     def emit(event):
@@ -377,7 +378,7 @@ def main():
     parser.add_argument("--ref", required=True, help="Commit SHA or ref; resolved SHA is recorded")
     parser.add_argument("--ddtest", type=Path, required=True, help="Already-built executable")
     parser.add_argument("--agent", choices=("codex", "claude"), required=True)
-    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha"),
+    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress"),
                         help="Optional scope for mixed-framework repositories; adds only the framework to the minimal prompt")
     parser.add_argument("--setup-command", action="append", default=[], help="Repeatable, no implicit shell")
     parser.add_argument("--output", type=Path, required=True, help="New directory for evaluator evidence")

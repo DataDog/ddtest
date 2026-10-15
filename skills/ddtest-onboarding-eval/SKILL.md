@@ -1,11 +1,11 @@
 ---
 name: ddtest-onboarding-eval
-description: Evaluate ddtest onboarding on fresh open-source Jest, Vitest, Playwright or Mocha repositories using Codex or Claude CLI and a minimal customer prompt. Use for developer experiments and comparisons, not for onboarding a customer repository directly.
+description: Evaluate ddtest onboarding on fresh open-source Jest, Vitest, Playwright, Mocha or Cypress repositories using Codex or Claude CLI and a minimal customer prompt. Use for developer experiments and comparisons, not for onboarding a customer repository directly.
 ---
 
 # ddtest onboarding evaluation
 
-Measure what an uncoached coding agent accomplishes with a ddtest binary. Cover Jest, Vitest, Playwright and Mocha; grade unsupported versions or configurations as unvalidated. This skill belongs to the
+Measure what an uncoached coding agent accomplishes with a ddtest binary. Cover Jest, Vitest, Playwright, Mocha and Cypress; grade unsupported versions or configurations as unvalidated. This skill belongs to the
 **evaluator**, not the agent being tested. It is developer tooling in this repo;
 it is not embedded in the ddtest binary or installed in the target repository.
 
@@ -19,7 +19,7 @@ tested agent's global skill directories or target checkout.
 
 ## Prepare and run
 
-1. Select a public repository that actually runs Jest, Vitest, Playwright or Mocha. Read its CI, package
+1. Select a public repository that actually runs Jest, Vitest, Playwright, Mocha or Cypress. Read its CI, package
    scripts, lockfile, runtime requirements, and ordinary repository instructions.
    Choose a commit and dependency installation command. Record the intended test
    command and relevant Node, package-manager, and framework versions outside the
@@ -54,7 +54,7 @@ tested agent's global skill directories or target checkout.
    > Use ddtest in /temporary/trial/bin and onboard this repository to test-optimization.
 
    For a requested framework-only trial in a mixed repository, pass
-   `--framework playwright` (or `jest`/`vitest`/`mocha`). This adds only
+   `--framework playwright` (or `jest`/`vitest`/`mocha`/`cypress`). This adds only
    “for playwright only” to the prompt and records the scope in `run.json`.
 
    No skill, grading rubric, feature list, runbook, previous results, extra system
@@ -65,7 +65,8 @@ tested agent's global skill directories or target checkout.
 The runner uses Codex's `--approve-for-me` or Claude's `--permission-mode auto`;
 normal CLI configuration and repository instructions still apply. For Claude print
 mode, it sets process-local `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` and Bash
-timeouts up to 600 seconds (bounded by the trial timeout), recorded in
+timeouts up to 600 seconds, or 3600 seconds for Cypress multi-configuration runs
+(bounded by the trial timeout), recorded in
 `run.json.agent_environment`. These settings keep long validation commands
 synchronous; they do not change repository test timeouts or the simple prompt.
 Unfinished Bash/background tasks at CLI exit make the trial an infrastructure
@@ -124,6 +125,23 @@ For Playwright, Test Impact Analysis skipping and per-test coverage are not
 supported by dd-trace-js. Record them as **not supported**, never passed; require
 the other five feature checks. Preserve the original Playwright projects, browser
 settings and web-server setup, and check that validation-owned servers stop.
+
+For Cypress, require a native baseline and instrumented comparison plus all six
+feature controls. Test Impact Analysis skips individual tests: match the reported
+suite and test name and require skipped telemetry with no probe-body executions.
+Retry/EFD/attempt-to-fix checks must reconcile the independent probe-body counter
+with retry telemetry; Cypress's native report can show one final result. Check
+real application Istanbul coverage separately; API-only tests may lack browser
+coverage. Verify that coverage names actual repository application files and
+that CI enables the same application coverage setup. Temporary filenames or
+coverage of spec files alone are insufficient. Preserve reporters,
+setupNodeEvents/support hooks and startup commands.
+Verify that Cypress GitHub Action consumers execute through the Node API with
+preserved inputs and the action's Node major. Review this path separately from CLI
+commands; testdrive may execute both. Retain unavailable browser/OS configurations
+as untested. Keep
+Cloud recording disabled locally, use a private CYPRESS_CACHE_FOLDER, and inspect
+ignored generated fixtures/screenshots as part of cleanup.
 
 If the tested ddtest version lacks paired runs or controlled feature scenarios,
 mark the missing checks **not exercised** and identify the product gap. Do not

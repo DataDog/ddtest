@@ -40,6 +40,10 @@ type featureResult struct {
 
 // Detailed results feed validation and the HTML findings report, not compact JSON.
 type validationRun struct {
+	Coverage                        *coverageSummary
+	NativeCommand                   string
+	ProbeExecutions                 *int
+	FrameworkNode                   string
 	temporaryRoot                   string
 	commandOutput                   string
 	commandError                    error
@@ -72,13 +76,19 @@ type testCounts struct {
 }
 
 type coverageSummary struct {
-	Status       string `json:"status"`
-	CoveredTests int    `json:"covered_tests"`
-	TotalTests   int    `json:"total_tests"`
-	Level        string `json:"level,omitempty"`
+	Reason       string   `json:"reason,omitempty"`
+	InvalidFiles []string `json:"invalid_files,omitempty"`
+	InvalidCount int      `json:"invalid_file_count,omitempty"`
+	Status       string   `json:"status"`
+	CoveredTests int      `json:"covered_tests"`
+	TotalTests   int      `json:"total_tests"`
+	Level        string   `json:"level,omitempty"`
 }
 
 type runSummary struct {
+	NativeCommand                   string              `json:"native_command,omitempty"`
+	ProbeExecutions                 *int                `json:"probe_executions,omitempty"`
+	FrameworkNode                   string              `json:"framework_node,omitempty"`
 	Coverage                        *coverageSummary    `json:"coverage,omitempty"`
 	PlannerSkipped                  bool                `json:"probe_skipped_by_planner,omitempty"`
 	ExecutionPath                   string              `json:"execution_path,omitempty"`
@@ -101,12 +111,13 @@ type runSummary struct {
 }
 
 func (r validationRun) summary() runSummary {
-	summary := runSummary{Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
+	summary := runSummary{NativeCommand: r.NativeCommand, ProbeExecutions: r.ProbeExecutions, FrameworkNode: r.FrameworkNode, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
 		ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped,
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError),
 		ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic),
 		SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
-	if r.framework == "mocha" && r.Instrumented && r.ProbeMode == "" && strings.HasPrefix(r.Name, "reporting-only") && r.Facts.TestCount > 0 {
+	summary.Coverage = r.Coverage
+	if summary.Coverage == nil && (r.framework == "mocha" || r.framework == "cypress") && r.Instrumented && r.ProbeMode == "" && strings.HasPrefix(r.Name, "reporting-only") && r.Facts.TestCount > 0 {
 		status := "observed"
 		if r.Facts.CoveredTestCount == 0 {
 			status = "not observed"
@@ -357,7 +368,7 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	for _, feature := range result.Features {
 		result.LocalSuccess = result.LocalSuccess && featureSatisfied(result.Framework, feature)
 	}
-	result.LocalSuccess = result.LocalSuccess && !missingMochaCoverage(*result)
+	result.LocalSuccess = result.LocalSuccess && !missingRealCoverage(*result)
 	result.Success = result.LocalSuccess
 	result.ChecksPassed = result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
 	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
@@ -405,9 +416,9 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	applyScopeVerdict(result)
 }
 
-func missingMochaCoverage(result validationResult) bool {
+func missingRealCoverage(result validationResult) bool {
 	for _, run := range result.Runs {
-		if run.Coverage != nil && run.Coverage.Status == "not observed" {
+		if run.Coverage != nil && run.Coverage.Status != "observed" {
 			return true
 		}
 	}

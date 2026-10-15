@@ -231,6 +231,14 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue(result["output"].startswith("[truncated]"))
 
 
+class CypressEnvironmentTests(unittest.TestCase):
+    def test_long_matrix_timeout_is_scoped_and_bounded(self):
+        self.assertEqual(run_eval.agent_environment("claude", 7200, "cypress")["BASH_MAX_TIMEOUT_MS"], "3600000")
+        self.assertEqual(run_eval.agent_environment("claude", 30, "cypress")["BASH_MAX_TIMEOUT_MS"], "30000")
+        self.assertEqual(run_eval.agent_environment("claude", 7200, "jest")["BASH_MAX_TIMEOUT_MS"], "600000")
+        self.assertEqual(run_eval.agent_environment("codex", 7200, "cypress"), {})
+
+
 class FailureClassificationTests(unittest.TestCase):
     def test_transport_failure_is_retryable_but_generic_failure_is_not(self):
         self.assertEqual(run_eval.failure_kind(['API Error: Response stalled mid-stream']), 'infrastructure')

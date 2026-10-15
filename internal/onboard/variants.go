@@ -5,6 +5,7 @@ import (
 	"maps"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/kballard/go-shellquote"
@@ -14,25 +15,58 @@ import (
 
 // Resolve only declared scalar environment values and simple parameter reads.
 // Never evaluate a command substitution or inherit the evaluator's environment.
-func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) (runtimeStep, map[string]string, error) {
+func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) (runtimeStep, map[string]string, error) {
 	var err error
 	step.Run, err = interpolateMatrix(step.Run, row)
 	if err != nil {
 		return step, nil, err
+	}
+	if len(frameworks) > 0 && frameworks[0] == "cypress" && strings.HasPrefix(strings.ToLower(step.Uses), "cypress-io/github-action@") {
+		step.With = maps.Clone(step.With)
+		for key, value := range step.With {
+			if !slices.Contains([]string{"browser", "config", "env", "expose", "project", "config-file", "spec", "headed", "quiet", "component", "working-directory", "command-prefix", "command", "build", "start", "start-windows", "wait-on", "wait-on-timeout", "runTests"}, key) {
+				continue
+			}
+			resolved, e := runtimeValue(value, row)
+			if e != nil {
+				return step, nil, e
+			}
+			step.With[key] = resolved
+		}
 	}
 	env := map[string]string{}
 	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		maps.Copy(env, layer)
 	}
 	for key, value := range env {
+		// Local Cypress validation disables Cloud recording and uses the
+		// evaluator's private binary cache. Never resolve or forward CI keys
+		// and runner-specific cache paths for these managed settings.
+		if len(frameworks) > 0 && frameworks[0] == "cypress" &&
+			slices.Contains([]string{"CYPRESS_RECORD_KEY", "CYPRESS_CLOUD_TOKEN", "CYPRESS_RECORD", "CYPRESS_PARALLEL", "CYPRESS_CACHE_FOLDER"}, key) {
+			delete(env, key)
+			continue
+		}
 		if key == "PATH" || key == "NODE_PATH" {
 			return step, nil, fmt.Errorf("CI environment overrides executable/module selection: %s", key)
 		}
-		if key == "NODE_OPTIONS" || strings.HasPrefix(key, "DD_") {
+		applicationCoverage := len(frameworks) > 0 && frameworks[0] == "cypress" && key == "DD_TEST_COVERAGE"
+		if key == "NODE_OPTIONS" || strings.HasPrefix(key, "DD_") && !applicationCoverage {
 			delete(env, key)
 			continue
 		}
 		resolved, err := runtimeValue(value, row)
+		if err != nil && len(frameworks) > 0 && frameworks[0] == "cypress" {
+			// Local comparison installs its own tracer and uses the same app
+			// coverage flag in both modes. CI installation/preload conditions
+			// are checked separately; action paths must never become local env.
+			known := conditionEnvironment(workflow, job, step, row)
+			known["DD_TRACE_PACKAGE"], known["DD_TRACE_ESM_IMPORT"] = actionPreload, "\x00DD_ACTION_IMPORT\x00"
+			resolved, err = bootstrapOptions(value, row, known)
+			if err == nil && strings.ContainsRune(resolved, 0) {
+				err = fmt.Errorf("cypress application environment %s forwards a CI-only action path", key)
+			}
+		}
 		if err != nil {
 			return step, nil, err
 		}
