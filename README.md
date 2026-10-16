@@ -77,6 +77,24 @@ directory. Each validation run records its exact shell-quoted command,
 instrumentation/probe mode, exit code and aggregate counts. Mismatch examples are
 limited to ten and diagnostic text is capped at 1,024 characters in the JSON.
 
+For each validated JavaScript framework, an explicit `--command` has its own
+`summary.selected_validation`. It passes and exits zero only after the selected
+command's current comparison, all supported features, static CI checks and
+cleanup pass. Other configurations can keep overall onboarding `INCOMPLETE`.
+`summary.executed_validation` describes the comparisons and features actually
+executed, while `summary.configuration_coverage` counts validated, blocked and
+unexecuted configurations. These do not override the overall verdict: a partial
+`--all` run still fails when any required configuration remains unvalidated.
+
+Aggregate HTML and JSON `reporting_counts` distinguish reported test executions
+from source-test identities. For example, the same 32 native file/name identities
+reported by three configurations produce 96 executions. Different commands and
+environments remain separately validated. Project/browser/repeat identity is
+preserved when reported; missing or ambiguous native identities leave the source
+identity count unavailable. JSON retains aggregate counts, not every identity.
+The compact `summary.final_response` carries these counts alongside the executed
+and repository verdicts, configuration coverage, feature results and report links.
+
 The HTML describes the instrumented suite, not the overall validation verdict;
 synthetic feature probes never replace its findings. It links to the compact
 JSON rather than discarded traffic or output files. Each executed suite replaces
@@ -90,6 +108,11 @@ and retains its dependency changes. Testdrive removes that directory on success,
 handled cancellation. Temporary probe files inside the project are also removed.
 Bounded setup errors and summaries of attempted runs are preserved when the report
 can be written. Other `.testoptimization` data is preserved.
+Each JavaScript baseline, reporting-only and probe execution receives a temporary
+directory inside its owned session through `TMPDIR`, `TMP` and `TEMP`, so child
+application scratch shares the same cleanup. Existing or supplied package/browser
+caches remain reusable; agents only need to remove dedicated extra scratch and
+processes they create, preserving artifacts whose ownership cannot be established.
 
 Jest validation has two stages:
 

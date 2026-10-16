@@ -24,6 +24,9 @@ CI changes, then validate them locally. `onboard` itself only prints guidance.
    each affected test step with `NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }}`.
    Preserve existing Node options. ESM also needs `--import ${{ env.DD_TRACE_ESM_IMPORT }}`
    on a Node runtime supporting --import. Do not add secrets or contact a real backend locally.
+   Prefer a step-local environment edit on the existing command. Keep the workflow
+   layout and package aliases; do not introduce shell loops or split steps merely
+   to add tracing. Split a mixed consumer only when its instrumentation scope requires it.
 4. Mocha per-test coverage uses Istanbul/NYC; c8 alone does not provide that
    instrumentation. If NYC is absent, add it as a project dev dependency using
    the existing package manager and lockfile convention. First follow package aliases: if the test command already uses NYC, keep that wrapper and do not add another. Only wrap commands lacking NYC; wrap the original CI

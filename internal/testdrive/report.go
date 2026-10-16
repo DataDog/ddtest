@@ -123,15 +123,17 @@ type reportArtifact struct {
 }
 
 type reportModel struct {
-	NoTestEvents  bool
-	CoverageLevel string
-	Runtime       reportRuntime
-	Summary       string
-	Cards         []reportCard
-	Facts         []reportFact
-	Artifacts     []reportArtifact
-	Suites        []reportSuite
-	Tests         []reportTest
+	ExecutionCounts *executionCounts
+	Aggregated      bool
+	NoTestEvents    bool
+	CoverageLevel   string
+	Runtime         reportRuntime
+	Summary         string
+	Cards           []reportCard
+	Facts           []reportFact
+	Artifacts       []reportArtifact
+	Suites          []reportSuite
+	Tests           []reportTest
 }
 
 type reportRuntime struct {

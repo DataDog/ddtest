@@ -8,6 +8,7 @@ package testdrive
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,20 +27,22 @@ func TestHandoffUsesCurrentFactsAndExistingClickableReports(t *testing.T) {
 	result := validationResult{Framework: "vitest", HTMLReportCurrent: true,
 		Compatibility: verdict{Status: "compatible"},
 		Features:      []featureResult{{Name: "skipping", Status: "failed", Reason: "no skip evidence"}},
-		Runs:          []runSummary{{Name: "baseline", ExitCode: &exit, TestCounts: testCounts{Passed: 23}}},
+		Runs:          []runSummary{{Name: "baseline", Command: "npm test", ExitCode: &exit, TestCounts: testCounts{Passed: 23}}},
 		Cleanup:       &verdict{Status: "passed", Reason: "ddtest temporary session storage removed."}}
 	var output bytes.Buffer
 	require.Error(t, finishValidation(&output, root, result))
 	report := readValidationReport(t, root)
 	block := validationHandoff(report)
-	require.True(t, strings.HasPrefix(block, "Onboarding validation: "+report.Summary.Status+"."))
+	require.True(t, strings.HasPrefix(block, "Executed Vitest validations: INCOMPLETE (0/1)."))
+	require.Contains(t, block, "Onboarding validation: "+report.Summary.Status+".")
 	require.Contains(t, block, "INCOMPLETE")
 	require.Contains(t, block, "skipping failed")
-	require.Contains(t, block, "23 passed")
+	require.Contains(t, strings.Join(report.Summary.Facts, "\n"), "23 passed")
+	require.Contains(t, block, "source-test identities unavailable")
 	require.Contains(t, block, "Features: 0/1")
 	require.Contains(t, block, "[Open report](<"+htmlReportPath(root)+">)")
 	require.Contains(t, block, "[Results JSON](<"+validationPath(root)+">)")
-	require.Contains(t, block, "Verify agent-created outputs")
+	require.Contains(t, block, "Verify your own scratch")
 	require.Contains(t, output.String(), block)
 }
 
@@ -198,20 +201,26 @@ func TestVerdictStatesLocalRuntimeAndDeduplicatedCIScope(t *testing.T) {
 	require.Contains(t, summary.OnboardingResponse, "Local execution runtime: Node 24.14.1")
 	require.Contains(t, summary.OnboardingResponse, "excluded from instrumentation: 14.x, 16.x")
 	require.Contains(t, summary.OnboardingResponse, "CI execution and Datadog backend processing: not exercised")
+	result.Summary = summary
+	require.Contains(t, validationHandoff(result), "CI runtime scope (static): 2 instrumented, 2 excluded, 0 unverified")
 	result.CIRuntime.Jobs = append(result.CIRuntime.Jobs, onboard.RuntimeFinding{Node: "lts/*", Status: "inconclusive"})
 	scope := summarizeCIScope(result.CIRuntime)
 	require.Equal(t, []string{"lts/*"}, scope.Unverified)
 	require.NotContains(t, scope.Excluded, "lts/*")
 }
 
-func TestHandoffNamesUnexecutedMochaLifecycleConsumer(t *testing.T) {
-	result := validationResult{Framework: "mocha", Configurations: []configurationResult{{TestCommand: onboard.TestCommand{Command: "npm run build", Resolution: "npm run build -> npm run test-esm -> mocha test.mjs"}, Compatibility: verdict{Status: "not exercised"}, Error: "unresolved cloud credentials"}}, Features: []featureResult{{Name: "skipping", Status: "passed"}}}
+func TestHandoffSummarizesUnexecutedMochaConsumerWithoutRepeatingCommands(t *testing.T) {
+	result := validationResult{Framework: "mocha", Scope: &onboard.ValidationScope{}, Compatibility: verdict{Status: "not exercised"}, Configurations: []configurationResult{{TestCommand: onboard.TestCommand{Command: "npm run build", Resolution: "npm run build -> npm run test-esm -> mocha test.mjs"}, Status: "not exercised", Compatibility: verdict{Status: "not exercised"}, Error: "unresolved cloud credentials"}}, Features: []featureResult{{Name: "skipping", Status: "passed"}}}
 	result.Summary = summarizeValidation(result)
 	result.Summary.Facts = validationFacts(result)
 	response := validationHandoff(result)
-	require.Contains(t, response, "Mocha consumer NOT EXECUTED: npm run build -> npm run test-esm -> mocha test.mjs")
-	require.Contains(t, response, "unresolved cloud credentials")
-	require.Contains(t, response, "these passes do not cover them")
+	require.Contains(t, response, "0/1 validated; 0 executed, 0 paired; 0 blocked, 1 not exercised")
+	require.Contains(t, response, "Blockers: 2")
+	require.NotContains(t, response, "npm run build -> npm run test-esm")
+	data, err := json.Marshal(result)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "unresolved cloud credentials")
+	require.Contains(t, string(data), "npm run build -\\u003e npm run test-esm")
 }
 
 func TestHandoffIncludesActionableCIFindingAlongsideRealCoverage(t *testing.T) {
@@ -219,18 +228,105 @@ func TestHandoffIncludesActionableCIFindingAlongsideRealCoverage(t *testing.T) {
 		Status: "inconclusive", Reason: "Mocha CI command npm run build has no NYC wrapper. Testdrive adds NYC locally only; wrap the original CI command with npx --no-install nyc --."}
 	result := validationResult{Framework: "mocha", Compatibility: verdict{Status: "compatible"},
 		CIRuntime: &onboard.RuntimeCheck{Status: "inconclusive", Jobs: []onboard.RuntimeFinding{finding, finding}},
-		Runs:      []runSummary{{Name: "reporting-only", Coverage: &coverageSummary{Status: "not observed", TotalTests: 10}}}}
+		Runs:      []runSummary{{Name: "reporting-only", Instrumented: true, Coverage: &coverageSummary{Status: "not observed", TotalTests: 10}}}}
 	result.Summary = summarizeValidation(result)
 	result.Summary.Facts = validationFacts(result)
 	handoff := validationHandoff(result)
 	require.Contains(t, handoff, "Mocha real-suite coverage was not observed")
-	require.Contains(t, handoff, "CI .github/workflows/ci.yml / build / step 5: "+finding.Reason)
-	require.Equal(t, 1, strings.Count(handoff, finding.Reason), "matrix duplicates must not expand the handoff")
+	require.Contains(t, handoff, "Real-suite coverage: observed in 0/1 reporting runs; 0/10 results linked")
+	require.Contains(t, handoff, "CI configuration: inconclusive")
+	require.Equal(t, 1, strings.Count(strings.Join(result.Summary.Facts, "\n"), finding.Reason), "the full actionable finding stays in JSON without matrix duplication")
 }
 
-func TestHandoffNamesUnexecutedCypressConsumer(t *testing.T) {
-	result := validationResult{Framework: "cypress", Configurations: []configurationResult{{TestCommand: onboard.TestCommand{Command: "npm run e2e", Resolution: "npm run e2e -> cypress run"}, Compatibility: verdict{Status: "not exercised"}}}}
+func TestHandoffSummarizesUnexecutedCypressConsumer(t *testing.T) {
+	result := validationResult{Framework: "cypress", Configurations: []configurationResult{{TestCommand: onboard.TestCommand{Command: "npm run e2e", Resolution: "npm run e2e -> cypress run"}, Status: "not exercised", Compatibility: verdict{Status: "not exercised"}}}}
 	result.Summary = summarizeValidation(result)
-	require.Contains(t, validationHandoff(result), "Cypress consumer NOT EXECUTED: npm run e2e -> cypress run")
+	require.Contains(t, validationHandoff(result), "0/1 validated; 0 executed, 0 paired; 0 blocked, 1 not exercised")
 	require.NotContains(t, validationHandoff(result), "Mocha")
+}
+
+func TestCompactHandoffKeepsExecutedScopeCountsAndRepositoryBlockersSeparate(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "customer project")
+	require.NoError(t, os.MkdirAll(filepath.Dir(htmlReportPath(root)), 0755))
+	require.NoError(t, os.WriteFile(htmlReportPath(root), []byte("real suite"), 0600))
+	identities, exit := 122, 0
+	result := validationResult{Framework: "cypress", WorkingDirectory: root, HTMLReportCurrent: true,
+		Scope: &onboard.ValidationScope{}, CIRuntime: &onboard.RuntimeCheck{Status: "compatible"},
+		Compatibility: verdict{Status: "compatible"}, Cleanup: &verdict{Status: "passed"},
+		ReportingCounts: &executionCounts{TestExecutions: 610, SourceTestIdentities: &identities}}
+	for i := range 5 {
+		command := fmt.Sprintf("npm run browser-%d", i)
+		result.Configurations = append(result.Configurations, configurationResult{TestCommand: onboard.TestCommand{Command: command}, Status: "passed", PairedExecution: true, ExecutionAttempted: true})
+		result.Runs = append(result.Runs,
+			runSummary{Name: "baseline", Command: command, ExitCode: &exit},
+			runSummary{Name: "reporting-only", Command: command, Instrumented: true, ExitCode: &exit, Coverage: &coverageSummary{Status: "observed", CoveredTests: 122, TotalTests: 122, Level: "test"}})
+		for _, feature := range jestFeatures {
+			result.Features = append(result.Features, featureResult{Project: command, Name: feature, Status: "passed"})
+		}
+	}
+	for _, status := range []string{"blocked", "blocked", "not exercised"} {
+		result.Configurations = append(result.Configurations, configurationResult{TestCommand: onboard.TestCommand{Command: strings.Repeat("long browser command ", 100)}, Status: status, Error: "unavailable browser or OS"})
+	}
+	result.Summary = summarizeValidation(result)
+	response := validationHandoff(result)
+	require.Contains(t, response, "Executed Cypress validations: PASSED (5/5).")
+	require.Contains(t, response, "Onboarding validation: INCOMPLETE.")
+	require.Contains(t, response, "Configurations: 5/8 validated; 5 executed, 5 paired; 2 blocked, 1 not exercised, 0 incomplete.")
+	require.Contains(t, response, "Reporting: 610 test executions; 122 source-test identities.")
+	require.Contains(t, response, "Features: 30/30 supported checks passed.")
+	require.Contains(t, response, "Real-suite coverage: observed in 5/5 reporting runs; 610/610 results linked to source.")
+	require.Contains(t, response, "Blockers: 3. Full blockers and commands are in Results JSON.")
+	require.Contains(t, response, "CI execution and Datadog backend processing: not exercised.")
+	require.Contains(t, response, "[Open report](<"+htmlReportPath(root)+">)")
+	require.Contains(t, response, "[Results JSON](<"+validationPath(root)+">)")
+	require.Less(t, len(response), 1800, "handoff must not expand with long unvalidated commands")
+	require.Len(t, result.Summary.BlockingChecks, 3, "full configuration blockers remain in JSON")
+}
+
+func TestCompactHandoffDoesNotInventIdentitiesOrCurrentEvidence(t *testing.T) {
+	result := focusedValidationFixture("mocha")
+	result.ReportingCounts = &executionCounts{TestExecutions: 96}
+	result.CheckOnly = true
+	result.LastExecution = &validationEvidence{Status: "passed", Current: false}
+	result.Runs[1].Coverage = &coverageSummary{Status: "observed", CoveredTests: 32, TotalTests: 32, Level: "suite"}
+	result.Summary = summarizeValidation(result)
+	response := validationHandoff(result)
+	require.Contains(t, response, "Selected Mocha testdrive: NOT EXERCISED.")
+	require.Contains(t, response, "Executed Mocha validations: NOT EXERCISED (0/0).")
+	require.Contains(t, response, "Onboarding validation: INCOMPLETE.")
+	require.Contains(t, response, "Historical reporting (not revalidated): 96 test executions; source-test identities unavailable.")
+	require.NotContains(t, response, "0 source-test identities")
+	require.Contains(t, response, "Historical features (not revalidated): 6/6 supported checks passed.")
+	require.Contains(t, response, "suite-level, not independent per-test coverage")
+	require.Contains(t, response, "Evidence: check-only")
+	require.Contains(t, response, "Evidence: earlier execution is stale")
+	require.NotContains(t, response, "Open report")
+	require.Contains(t, response, "HTML report unavailable")
+}
+
+func TestFeatureCountsDoNotHideUnexpectedUnsupportedChecks(t *testing.T) {
+	for _, tc := range []struct {
+		framework, feature string
+		legitimate         bool
+	}{
+		{"playwright", "skipping", true},
+		{"webdriverio", "skipping", true},
+		{"jest", "skipping", false},
+		{"vitest", "auto-retries", false},
+		{"playwright", "quarantine", false},
+	} {
+		t.Run(tc.framework+"/"+tc.feature, func(t *testing.T) {
+			result := validationResult{Framework: tc.framework, Features: []featureResult{{Name: tc.feature, Status: "not supported"}}}
+			passed, total, unsupported := validationFeatureCounts(result.Framework, result.Features)
+			require.Zero(t, passed)
+			if tc.legitimate {
+				require.Zero(t, total)
+				require.Equal(t, []string{tc.feature}, unsupported)
+			} else {
+				require.Equal(t, 1, total, "unsupported status does not waive a required feature")
+				require.Empty(t, unsupported)
+				require.Contains(t, validationFacts(result), "Features: 0/1 project-feature checks passed.")
+			}
+		})
+	}
 }

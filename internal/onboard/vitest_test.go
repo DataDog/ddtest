@@ -30,7 +30,7 @@ func TestVitestInstructionsRemainSpecificWhenAlreadyConfigured(t *testing.T) {
 		require.NotContains(t, text, "jest-circus")
 		require.NotContains(t, text, "--showConfig")
 		require.NotContains(t, text, "For Jest")
-		require.Less(t, len(text), 8000)
+		require.Less(t, len(text)-len(scratchCleanupInstructions), 8000)
 	}
 }
 

@@ -86,6 +86,7 @@ type coverageSummary struct {
 }
 
 type runSummary struct {
+	NativeCounts                    *executionCounts    `json:"native_counts,omitempty"`
 	NativeResults                   string              `json:"native_results,omitempty"`
 	NativeCommand                   string              `json:"native_command,omitempty"`
 	ProbeExecutions                 *int                `json:"probe_executions,omitempty"`
@@ -117,6 +118,9 @@ func (r validationRun) summary() runSummary {
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError),
 		ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic),
 		SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
+	if r.Instrumented && r.ProbeMode == "" && strings.HasPrefix(r.Name, "reporting-only") {
+		summary.NativeCounts = nativeExecutionCounts(r)
+	}
 	if r.framework == "cucumber" || r.framework == "webdriverio" {
 		summary.NativeResults = "observed"
 		if r.ResultError != "" {
@@ -152,6 +156,7 @@ func (r validationRun) summary() runSummary {
 }
 
 type validationResult struct {
+	ReportingCounts    *executionCounts         `json:"reporting_counts,omitempty"`
 	FocusedCommand     bool                     `json:"focused_command,omitempty"`
 	CIBaseline         []string                 `json:"ci_matrix_baseline"`
 	CIPreservation     *verdict                 `json:"ci_preservation,omitempty"`
@@ -204,6 +209,9 @@ func validationPath(repositoryRoot string) string {
 }
 
 func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {
+	if !result.CheckOnly {
+		result.ReportingCounts = reportingExecutionCounts(result.Runs)
+	}
 	if err := checkCIPreservation(repositoryRoot, &result); err != nil {
 		return err
 	}

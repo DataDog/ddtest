@@ -79,9 +79,7 @@ func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Ses
 	run.framework, run.root = "mocha", t.repositoryRoot
 	run.Name, run.Instrumented, run.ProbeMode = name, instrumented, probeMode
 	directory := filepath.Join(session.Directory(), name)
-	temporary := filepath.Join(directory, "tmp")
-	run.temporaryRoot = temporary
-	if err := os.MkdirAll(temporary, 0700); err != nil {
+	if err := os.MkdirAll(directory, 0700); err != nil {
 		return run, err
 	}
 	results := filepath.Join(directory, "native-results")
@@ -103,14 +101,13 @@ func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *Ses
 		}
 	}()
 	env := t.environment(preload, server.URL(), session.ID()+" "+name)
-	configureScenarioEnvironment(env, scenario.Feature)
-	// Tracer settings caches and child-process scratch must share session cleanup.
-	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
-		env[key] = temporary
+	if err := run.ownTemporaryDirectory(directory, env); err != nil {
+		return run, err
 	}
+	configureScenarioEnvironment(env, scenario.Feature)
 	// Companion tools such as Standard use XDG caches outside the checkout.
 	// Keep their scratch inside the same disposable run as Mocha.
-	env["XDG_CACHE_HOME"] = filepath.Join(temporary, "cache")
+	env["XDG_CACHE_HOME"] = filepath.Join(run.temporaryRoot, "cache")
 	if !instrumented {
 		env["NODE_OPTIONS"] = stripDatadogNodeOptions(os.Getenv("NODE_OPTIONS"))
 		env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"

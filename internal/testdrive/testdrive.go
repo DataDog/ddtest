@@ -414,7 +414,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 	} else {
 		result, runErr = t.run(ctx, output)
 	}
-	result.FocusedCommand = t.framework.Name() == "webdriverio" && strings.TrimSpace(settings.GetCommand()) != ""
+	result.FocusedCommand = supportsValidationFramework(t.framework.Name()) && strings.TrimSpace(settings.GetCommand()) != ""
 	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio" {
 		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
 		if err != nil {

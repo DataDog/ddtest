@@ -176,6 +176,9 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 		}
 	}()
 	env := t.environment(preload, server.URL(), session.ID()+" "+name)
+	if err := run.ownTemporaryDirectory(directory, env); err != nil {
+		return run, err
+	}
 	configureScenarioEnvironment(env, scenario.Feature)
 	if !instrumented {
 		env["NODE_OPTIONS"] = stripDatadogNodeOptions(os.Getenv("NODE_OPTIONS"))

@@ -49,6 +49,20 @@ tested agent's global skill directories or target checkout.
    reset or clean an existing checkout. Repeat `--setup-command` when necessary;
    each value is split into arguments, without implicit shell evaluation.
 
+   When a Codex trial needs a particular installed Node runtime, pass
+   `--node /absolute/path/to/node` (currently Codex only). The runner verifies that
+   executable and records its actual path/version in `run.json.node_runtime`,
+   uses it for setup, and keeps the same PATH in Codex
+   tools with process-local `allow_login_shell=false`, disabled shell snapshots,
+   `shell_environment_policy.set.PATH` and an empty private `ZDOTDIR`. These avoid
+   inherited shell snapshots or user profiles silently selecting a different
+   Node version. `run.json.shell_isolation` records the effective settings. No
+   global shell/profile/CLI files are edited; without `--node`, normal runtime
+   and shell selection apply. Compare `run.json.ddtest_runtime` with the chosen
+   runtime: a mismatch in ddtest's actual local command runtime is an evaluator
+   environment failure, not evidence of a tracer regression. Framework-owned
+   Node executables are recorded separately and do not silently replace this check.
+
    The tested agent receives exactly:
 
    > Use ddtest in /temporary/trial/bin and onboard this repository to test-optimization.
@@ -61,6 +75,8 @@ tested agent's global skill directories or target checkout.
    prompt, or follow-up coaching is supplied. Let ddtest's own output guide it.
    Observe the live public messages and commands. If it asks for missing input or
    is blocked, record that outcome; a coached retry is a separate experiment.
+   Respect requested one-shot or no-retry limits. When follow-ups are forbidden,
+   record the outcome without answering or nudging the tested agent.
 
 The runner uses Codex's `--approve-for-me` or Claude's `--permission-mode auto`;
 normal CLI configuration and repository instructions still apply. For Claude print
@@ -81,15 +97,28 @@ does not guarantee isolation from credentials stored elsewhere.
 
 ## Interrupted trials and diagnostic follow-ups
 
-The runner creates private package caches and TMPDIR for each trial and records
+The runner creates a short owned trial root (`/private/tmp/dde-*` on macOS), with
+state outside the customer checkout to leave room for Unix socket paths. Each trial
+has private npm, Yarn and browser caches and TMPDIR; pnpm uses a private
+`XDG_CONFIG_HOME/pnpm/rc`, avoiding pnpm-only npm environment variables.
+`run.json.private_caches` records the paths; reuse them for setup and diagnostics.
+Supplied cache contents are reusable environment-owned data. Do not ask the tested
+agent to scan, hash, prune individual cache entries or delete entries by timestamps.
+The evaluator later removes the whole verified owned trial root, not shared caches.
+The runner records
 `failure_kind`/`retry_recommended` for recognized CLI service or transport failures.
 The CLI version probe is capped at 15 seconds, before cloning or installing dependencies.
 A startup timeout is recorded as `failure_stage: cli_startup` and an infrastructure
-interruption. The runner flags explicit completion claims against INCOMPLETE
-reports in `agent_reporting`; independent factual review is still required.
+interruption. The runner records `agent_reporting` by comparing factual verdicts,
+executed/selected scope, configuration counts, execution/source-identity counts and
+absolute report links with the latest JSON. Contradictions fail; omitted or
+ambiguous facts remain `review`, not an automatic pass. Natural wording equivalent
+to `summary.final_response` is acceptable; byte-for-byte copying is not a grading
+requirement. Independent CI, test evidence and artifact review are still required.
 
 For an infrastructure interruption, retain and grade the original attempt, collect
-its evidence and clean its clone, then allow **one** retry from a fresh clone with
+its evidence and clean its clone. Unless the user requested a single attempt or no
+retry, allow **one** retry from a fresh clone with
 the same commit, binary, setup and simple prompt. Do not retry authentication or
 permission denials automatically, coach the retry, or keep rerunning product
 failures until they pass. Report both attempts separately.
@@ -120,6 +149,21 @@ claim of success, or one instrumented test run is insufficient.
 | Baseline versus instrumented execution | Both commands ran against the same suite and environment, with only instrumentation differing. Behavior-changing features must be disabled for this comparison. Compare discovered tests, results, failures, exit codes, and hangs/crashes. Matching pre-existing test failures can pass compatibility; unexplained differences fail. If missing setup prevents a meaningful comparison, mark blocked. |
 | Advanced features | Assess each separately: automatic test retries, early flake detection, test skipping, quarantine, disabled tests, and attempt-to-fix. Require an appropriate control and an observed change for a known test (attempt counts, execution/skip decisions, and expected failure/exit behavior). Enabling flags or receiving telemetry is insufficient. |
 | Agent verdict reporting | Compare the factual conclusion and overall claims with the latest report's `summary.status`, blockers, and `summary.final_response` (or `summary.onboarding_response` on older versions). Check whether counts and explanations match the latest report and whether any later claims contradict its verdict. Grade an upgraded verdict as a failure even if caveats appear later. Use `last_execution.current` and `configuration_check` when present to distinguish the last full execution from the latest configuration check. Historical passes do not certify changed inputs; a check-only final invocation still requires a full rerun before completion. |
+
+For every framework, assess `summary.executed_validation` and
+`summary.configuration_coverage` separately from repository-wide `summary.status`.
+Passing executed configurations do not validate unavailable browsers, operating
+systems or other untested configurations. For an explicit `--command`, grade the
+current `summary.selected_validation`: a selected pass requires that command's
+paired execution, supported feature controls, current static CI checks, HTML and
+cleanup. Its zero exit code does not upgrade an INCOMPLETE repository verdict.
+Check-only, stale execution or a failed required control cannot establish either
+selected or executed success. Report test executions across configurations as
+such; do not present repeated runs of the same tests as distinct test identities.
+When present, use `reporting_counts.test_executions` and
+`reporting_counts.source_test_identities`; a null identity count means native
+identities are missing or ambiguous. A shared source identity does not establish
+equivalent configuration or environment, so keep every configuration's validation.
 
 For Playwright, Test Impact Analysis skipping and per-test coverage are not
 supported by dd-trace-js. Record them as **not supported**, never passed; require
@@ -153,12 +197,9 @@ explicitly unvalidated. Preserve unrelated services occupying local ports; recor
 any consistent local port override. Collect generated logs, owned servers and browser
 caches during cleanup. CI edits or an empty Node preload check are not completed
 onboarding. Start with a focused configuration before the full matrix.
-For an explicitly focused WDIO evaluation, grade the current
-`summary.selected_validation` separately from whole-repository onboarding.
-Its `PASSED` requires the selected command's paired execution, five supported
-features, current static CI checks and cleanup; a focused command can exit zero
-while the repository verdict remains INCOMPLETE. Retain all other configurations
-as unvalidated. Check that workflow/package/config edits preceded the full run;
+For an explicitly focused WDIO evaluation, apply the common selected-validation
+contract above and retain all other configurations as unvalidated. Check that
+workflow/package/config edits preceded the full run;
 real CI execution does not clear a stale local static check.
 
 For Cucumber, preserve profiles, tags, support imports and build prerequisites.
@@ -176,8 +217,22 @@ silently add those capabilities to the agent's prompt, target repository, or
 ddtest build to turn the trial into a pass. Evaluator follow-up diagnostics may
 explain a result, but must be labeled separately from the unassisted trial.
 
-Inspect temporary fixtures, tracer installations, lockfiles, workflow edits, and
-leftover artifacts, including agent-created inventories or caches outside the clone. Establish their provenance before scoped removal; never delete arbitrary shared temporary files. Report cleanup separately from technical validation. Report unsupported runtime combinations, removed matrix
+Inspect temporary fixtures, tracer installations, lockfiles, workflow edits and
+dedicated scratch directories the agent created. Preserve supplied/pre-existing
+package and browser caches; do not enumerate, hash or prune their contents to grade
+agent cleanup. ddtest owns its nested session/run TMPDIR. Agents own additional
+unique scratch directories and processes they create, and should keep exact paths
+and process handles in their notes.
+
+A clean Git diff or ddtest's session-cleanup result does not prove those additional
+artifacts are gone. Record ddtest cleanup, agent cleanup at CLI exit and later
+evaluator teardown separately. Native applications such as Cypress can write profile
+logs outside supplied cache variables; record exact before/after paths or an ownership
+manifest when evaluating those escapes. Timestamps, glob matches and filenames alone
+do not establish ownership. Do not delete shared profile logs by creation time;
+preserve uncertain files and report the uncertainty. An owned escaped artifact left
+by the agent remains a cleanup omission even if the evaluator later removes it.
+Report cleanup separately from technical validation. Report unsupported runtime combinations, removed matrix
 coverage, cleanup failures, or a need for human intervention even if tests pass.
 
 ## Report and clean up
@@ -199,7 +254,9 @@ Prompt and command evidence: run.json, activity.jsonl
 | Baseline versus instrumented execution | | |
 | Advanced features (one row per feature) | | |
 | Factual agent reporting | | |
-| Artifact cleanup | | |
+| ddtest session cleanup | | |
+| Agent artifact cleanup at CLI exit | | Include ignored files and scratch paths outside the clone |
+| Evaluator teardown | | Retain evidence, then remove only owned trial artifacts |
 | Presentation | pass / warning | Verdict placement and report-path omissions |
 
 Overall: complete locally / incomplete / blocked
@@ -208,7 +265,10 @@ Cleanup and experiment limitations:
 ```
 
 Declare the experiment complete locally only when CI configuration review, the compatibility
-comparison, all scoped feature checks, accurate factual reporting, and artifact cleanup pass. A preamble before a correct verdict or a missing report path is a presentation warning, not a technical failure. Stale counts, dismissed blockers and upgraded verdicts remain factual reporting failures. Always retain the CI execution
+comparison, all scoped feature checks, accurate factual reporting, and agent artifact
+cleanup pass. Distinguish a technical validation pass with an agent cleanup omission
+from a fully successful experiment; evaluator teardown does not erase that omission.
+A preamble before a correct verdict or a missing report path is a presentation warning, not a technical failure. Stale counts, dismissed blockers and upgraded verdicts remain factual reporting failures. Always retain the CI execution
 limitation. Distinguish product defects, agent omissions, and environment blocks.
 State whether another person could repeat the run using the recorded commands.
 

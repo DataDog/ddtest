@@ -15,18 +15,20 @@ import (
 )
 
 type validationSummary struct {
-	SelectedValidation      *verdict        `json:"selected_validation,omitempty"`
-	LocalNode               string          `json:"local_node,omitempty"`
-	CIScope                 *ciRuntimeScope `json:"ci_runtime_scope,omitempty"`
-	Status                  string          `json:"status"`
-	LocalValidation         string          `json:"local_validation"`
-	CIConfiguration         string          `json:"ci_configuration"`
-	CIExecution             string          `json:"ci_execution"`
-	RealCredentialsRequired bool            `json:"real_credentials_required"`
-	BlockingChecks          []string        `json:"blocking_checks,omitempty"`
-	FinalResponse           string          `json:"final_response,omitempty"`
-	OnboardingResponse      string          `json:"onboarding_response"`
-	Facts                   []string        `json:"facts,omitempty"`
+	ExecutedValidation      *executedValidation    `json:"executed_validation,omitempty"`
+	ConfigurationCoverage   *configurationCoverage `json:"configuration_coverage,omitempty"`
+	SelectedValidation      *verdict               `json:"selected_validation,omitempty"`
+	LocalNode               string                 `json:"local_node,omitempty"`
+	CIScope                 *ciRuntimeScope        `json:"ci_runtime_scope,omitempty"`
+	Status                  string                 `json:"status"`
+	LocalValidation         string                 `json:"local_validation"`
+	CIConfiguration         string                 `json:"ci_configuration"`
+	CIExecution             string                 `json:"ci_execution"`
+	RealCredentialsRequired bool                   `json:"real_credentials_required"`
+	BlockingChecks          []string               `json:"blocking_checks,omitempty"`
+	FinalResponse           string                 `json:"final_response,omitempty"`
+	OnboardingResponse      string                 `json:"onboarding_response"`
+	Facts                   []string               `json:"facts,omitempty"`
 }
 
 // One copyable response, built from the same facts as the compact report. Only
@@ -35,81 +37,107 @@ func validationHandoff(result validationResult) string {
 	var block strings.Builder
 	summary := result.Summary
 	if summary.SelectedValidation != nil {
-		fmt.Fprintf(&block, "Selected WebdriverIO testdrive: %s. %s\n", summary.SelectedValidation.Status, summary.SelectedValidation.Reason)
+		fmt.Fprintf(&block, "Selected %s testdrive: %s.\n", displayName(result.Framework), summary.SelectedValidation.Status)
 	}
-	fmt.Fprintf(&block, "Onboarding validation: %s. Local validation: %s. CI configuration: %s (static analysis). CI execution and Datadog backend processing: not exercised.\n", summary.Status, summary.LocalValidation, summary.CIConfiguration)
+	if executed := summary.ExecutedValidation; executed != nil {
+		fmt.Fprintf(&block, "Executed %s validations: %s (%d/%d).\n", displayName(result.Framework), executed.Status, executed.Passed, executed.Configurations)
+	}
+	fmt.Fprintf(&block, "Onboarding validation: %s. Local validation: %s.\n", summary.Status, summary.LocalValidation)
+	if coverage := summary.ConfigurationCoverage; coverage != nil {
+		fmt.Fprintf(&block, "Configurations: %d/%d validated; %d executed, %d paired; %d blocked, %d not exercised, %d incomplete.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised, coverage.Incomplete)
+	}
+	current := !result.CheckOnly && (result.LastExecution == nil || result.LastExecution.Current)
+	if counts := result.ReportingCounts; counts != nil {
+		label := "Reporting"
+		if !current {
+			label = "Historical reporting (not revalidated)"
+		}
+		fmt.Fprintf(&block, "%s: %d test executions; ", label, counts.TestExecutions)
+		if counts.SourceTestIdentities == nil {
+			block.WriteString("source-test identities unavailable.\n")
+		} else {
+			fmt.Fprintf(&block, "%d source-test identities.\n", *counts.SourceTestIdentities)
+		}
+	} else {
+		block.WriteString("Reporting: test executions and source-test identities unavailable.\n")
+	}
+	compatibility := result.Compatibility.Status
+	if compatibility == "" {
+		compatibility = "not checked"
+	}
+	fmt.Fprintf(&block, "Compatibility: %s. ", compatibility)
+	passed, total, unsupported := validationFeatureCounts(result.Framework, result.Features)
+	if total == 0 {
+		block.WriteString("Features: not exercised.")
+	} else if !current {
+		fmt.Fprintf(&block, "Historical features (not revalidated): %d/%d supported checks passed.", passed, total)
+	} else {
+		fmt.Fprintf(&block, "Features: %d/%d supported checks passed.", passed, total)
+	}
+	if len(unsupported) > 0 {
+		fmt.Fprintf(&block, " %s not supported.", strings.Join(unsupported, ", "))
+	}
+	block.WriteByte('\n')
+	coverageRuns, coveredRuns, coveredTests, totalTests := 0, 0, 0, 0
+	var levels []string
+	for _, run := range result.Runs {
+		if run.Coverage == nil || !run.Instrumented || run.ProbeMode != "" || !strings.HasPrefix(run.Name, "reporting-only") {
+			continue
+		}
+		coverageRuns++
+		if run.Coverage.Status == "observed" {
+			coveredRuns++
+		}
+		coveredTests += run.Coverage.CoveredTests
+		totalTests += run.Coverage.TotalTests
+		if run.Coverage.Level != "" {
+			levels = appendUnique(levels, run.Coverage.Level)
+		}
+	}
+	if coverageRuns > 0 {
+		label := "Real-suite coverage"
+		if !current {
+			label = "Historical real-suite coverage (not revalidated)"
+		}
+		fmt.Fprintf(&block, "%s: observed in %d/%d reporting runs; %d/%d results linked to source", label, coveredRuns, coverageRuns, coveredTests, totalTests)
+		if len(levels) == 1 && levels[0] == "suite" {
+			block.WriteString(" (suite-level, not independent per-test coverage)")
+		}
+		block.WriteString(".\n")
+	}
+	fmt.Fprintf(&block, "CI configuration: %s (static analysis). CI execution and Datadog backend processing: not exercised.\n", summary.CIConfiguration)
+	if scope := summary.CIScope; scope != nil {
+		fmt.Fprintf(&block, "CI runtime scope (static): %d instrumented, %d excluded, %d unverified; versions in Results JSON.\n", len(scope.Instrumented), len(scope.Excluded), len(scope.Unverified))
+	}
+	if supportsValidationFramework(result.Framework) && summary.CIConfiguration != "compatible" && summary.CIConfiguration != "not applicable" {
+		block.WriteString("CI edits require a full local rerun; an actual CI run does not update this local report.\n")
+	}
 	if summary.LocalNode != "" {
 		fmt.Fprintf(&block, "Local runtime: Node %s.\n", summary.LocalNode)
 	}
-	if result.Framework == "webdriverio" && summary.CIConfiguration != "compatible" && summary.CIConfiguration != "not applicable" {
-		block.WriteString("CI configuration is checked from local files. After workflow/package/config edits, rerun the full testdrive before answering; an actual CI run does not update this local report.\n")
+	if result.CheckOnly {
+		block.WriteString("Evidence: check-only; paired execution and feature controls were not rerun.\n")
 	}
-	if len(result.Configurations) > 0 {
-		compared, passed := 0, 0
-		for _, configuration := range result.Configurations {
-			if configuration.Compatibility.Status == "compatible" {
-				compared++
-			}
-			if configuration.Status == "passed" {
-				passed++
-			}
-		}
-		fmt.Fprintf(&block, "\nConfigurations: %d/%d paired comparisons compatible; %d/%d fully validated.\n", compared, len(result.Configurations), passed, len(result.Configurations))
+	if result.LastExecution != nil && !result.LastExecution.Current {
+		block.WriteString("Evidence: earlier execution is stale; rerun full validation after configuration checks or edits.\n")
 	}
-	unexecuted := 0
-	for _, configuration := range result.Configurations {
-		if configuration.Compatibility.Status != "not exercised" || configuration.Resolution == "" {
-			continue
-		}
-		unexecuted++
-		if unexecuted <= 3 {
-			reason := configuration.Error
-			if reason == "" {
-				reason = configuration.Compatibility.Reason
-			}
-			fmt.Fprintf(&block, "\n- %s consumer NOT EXECUTED: %s. %s\n", displayName(result.Framework), briefValidationText(configuration.Resolution), briefValidationText(reason))
-		}
-	}
-	if len(result.Configurations) > 3 {
-		for _, name := range []string{"baseline", "reporting-only"} {
-			var passed, failed, skipped, count int
-			for _, run := range result.Runs {
-				if strings.HasPrefix(run.Name, name) {
-					count++
-					passed += run.TestCounts.Passed
-					failed += run.TestCounts.Failed
-					skipped += run.TestCounts.Skipped
-				}
-			}
-			if count > 0 {
-				fmt.Fprintf(&block, "\n- %s: %d passed, %d failed, %d skipped across %d runs.", name, passed, failed, skipped, count)
+	if len(summary.BlockingChecks) > 0 {
+		var headlines []string
+		for _, reason := range summary.BlockingChecks {
+			if !strings.HasPrefix(reason, "configuration ") && len(headlines) < 2 {
+				headlines = append(headlines, briefValidationText(reason))
 			}
 		}
-	}
-	for _, fact := range summary.Facts {
-		if strings.HasPrefix(fact, "Features:") || strings.HasPrefix(fact, "Real-suite coverage:") || strings.HasPrefix(fact, "CI ") || len(result.Configurations) <= 3 && (strings.HasPrefix(fact, "baseline") || strings.HasPrefix(fact, "reporting-only")) {
-			block.WriteString("\n- " + fact)
+		fmt.Fprintf(&block, "Blockers: %d", len(summary.BlockingChecks))
+		if len(headlines) > 0 {
+			block.WriteString(" — " + strings.Join(headlines, "; "))
 		}
-	}
-	fmt.Fprintf(&block, "\n- Compatibility: %s.", result.Compatibility.Status)
-	seenReasons := map[string]bool{}
-	for _, feature := range result.Features {
-		if feature.Status == "passed" || seenReasons[feature.Reason] {
-			continue
-		}
-		seenReasons[feature.Reason] = true
-		if len(seenReasons) > 2 {
-			break
-		}
-		fmt.Fprintf(&block, "\n- %s %s: %s", feature.Name, feature.Status, briefValidationText(feature.Reason))
-	}
-	for _, reason := range summary.BlockingChecks[:min(2, len(summary.BlockingChecks))] {
-		block.WriteString("\n- Blocker: " + briefValidationText(reason))
-	}
-	if len(summary.BlockingChecks) > 2 {
-		block.WriteString("\n- Additional blockers and per-configuration results are in Results JSON.")
+		block.WriteString(". Full blockers and commands are in Results JSON.\n")
 	}
 	link := func(label, path string) string {
+		if absolute, err := filepath.Abs(path); err == nil {
+			path = absolute
+		}
 		// Angle brackets preserve spaces; escape characters that can end a link.
 		path = strings.NewReplacer("%", "%25", "<", "%3C", ">", "%3E", "\n", "%0A", "\r", "%0D").Replace(filepath.ToSlash(path))
 		return fmt.Sprintf("[%s](<%s>)", label, path)
@@ -119,16 +147,39 @@ func validationHandoff(result validationResult) string {
 		if !result.HTMLReportCurrent {
 			label = "Previous HTML report (not regenerated)"
 		}
-		block.WriteString("\n\n" + link(label, htmlReportPath(result.WorkingDirectory)))
-	}
-	block.WriteString("\n\n" + link("Results JSON", validationPath(result.WorkingDirectory)))
-	if result.Cleanup != nil {
-		fmt.Fprintf(&block, "\n\nCleanup: %s — %s", result.Cleanup.Status, result.Cleanup.Reason)
+		block.WriteString("\n" + link(label, htmlReportPath(result.WorkingDirectory)) + "\n")
 	} else {
-		block.WriteString("\n\nCleanup: not recorded.")
+		block.WriteString("\nHTML report unavailable.\n")
 	}
-	block.WriteString(" Verify agent-created outputs and Git/package report exclusions separately; preserve customer files and both reports.")
+	block.WriteString(link("Results JSON", validationPath(result.WorkingDirectory)))
+	if result.Cleanup != nil {
+		fmt.Fprintf(&block, "\nCleanup: %s (ddtest sessions only)", result.Cleanup.Status)
+		if result.Cleanup.Status != "passed" {
+			block.WriteString(" — " + briefValidationText(result.Cleanup.Reason))
+		}
+		block.WriteString(".")
+	} else {
+		block.WriteString("\nCleanup: not recorded.")
+	}
+	block.WriteString(" Verify your own scratch and Git/package report exclusions; preserve customer files and both reports.")
 	return block.String()
+}
+
+func validationFeatureCounts(framework string, features []featureResult) (passed, total int, unsupported []string) {
+	for _, feature := range features {
+		if feature.Name == "all" {
+			continue
+		}
+		if feature.Status == "not supported" && featureSatisfied(framework, feature) {
+			unsupported = appendUnique(unsupported, feature.Name)
+			continue
+		}
+		total++
+		if feature.Status == "passed" {
+			passed++
+		}
+	}
+	return
 }
 
 func briefValidationText(value string) string {
@@ -141,8 +192,9 @@ func briefValidationText(value string) string {
 
 func summarizeValidation(result validationResult) validationSummary {
 	summary := validationSummary{Status: "INCOMPLETE", LocalValidation: "INCOMPLETE", CIConfiguration: "not checked", CIExecution: "not exercised"}
-	if result.Framework == "webdriverio" && result.FocusedCommand {
-		selected := selectedWebdriverIOValidation(result)
+	summary.ConfigurationCoverage, summary.ExecutedValidation = summarizeConfigurationCoverage(result)
+	if supportsValidationFramework(result.Framework) && result.FocusedCommand {
+		selected := selectedValidation(result)
 		summary.SelectedValidation = &selected
 	}
 	if result.Success {
@@ -224,7 +276,10 @@ func summarizeValidation(result validationResult) validationSummary {
 		summary.OnboardingResponse += fmt.Sprintf(" CI Node scope (static): configured for instrumentation: %s; excluded from instrumentation: %s; unresolved or blocked: %s.", scopeList(summary.CIScope.Instrumented), scopeList(summary.CIScope.Excluded), scopeList(summary.CIScope.Unverified))
 	}
 	if len(summary.BlockingChecks) > 0 {
-		summary.OnboardingResponse += " Blocking checks: " + strings.Join(summary.BlockingChecks, "; ") + "."
+		summary.OnboardingResponse += " Blocking checks: " + strings.Join(summary.BlockingChecks[:min(3, len(summary.BlockingChecks))], "; ") + "."
+		if len(summary.BlockingChecks) > 3 {
+			summary.OnboardingResponse += fmt.Sprintf(" %d additional blockers are in blocking_checks in Results JSON.", len(summary.BlockingChecks)-3)
+		}
 	}
 	return summary
 }
@@ -268,16 +323,7 @@ func validationFacts(result validationResult) []string {
 		}
 		facts = append(facts, string(text))
 	}
-	passed, total := 0, 0
-	for _, feature := range result.Features {
-		if feature.Name == "all" || feature.Status == "not supported" {
-			continue
-		}
-		total++
-		if feature.Status == "passed" {
-			passed++
-		}
-	}
+	passed, total, _ := validationFeatureCounts(result.Framework, result.Features)
 	if total == 0 {
 		facts = append(facts, "Features: not exercised.")
 	} else {

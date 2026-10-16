@@ -56,18 +56,7 @@ func executionStatus(result *validationResult) string {
 }
 
 func hasPairedExecution(result validationResult) bool {
-	if result.CheckOnly || (result.Framework != "jest" && result.Framework != "vitest" && result.Framework != "mocha" && result.Framework != "cypress" && result.Framework != "cucumber" && result.Framework != "webdriverio") {
-		return false
-	}
-	baseline, instrumented := false, false
-	for _, run := range result.Runs {
-		if run.Command == "" || run.ExitCode == nil {
-			continue
-		}
-		baseline = baseline || (run.Name == "baseline" && !run.Instrumented)
-		instrumented = instrumented || (run.Name == "reporting-only" && run.Instrumented)
-	}
-	return baseline && instrumented
+	return supportsValidationFramework(result.Framework) && hasValidationPair(result)
 }
 
 // Keep one historical paired run, never a growing chain of reports. Its verdict
