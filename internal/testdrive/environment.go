@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 )
 
@@ -40,7 +40,7 @@ func environmentFinding(kind, title, detail, advice string) *reportCard {
 }
 
 // Use a private result file so startup hooks writing to stdout cannot corrupt it.
-func probeEnvironment(ctx context.Context, command string, args []string, result any) error {
+func probeEnvironment(ctx context.Context, command string, args []string, env map[string]string, result any) error {
 	file, err := os.CreateTemp("", "ddtest-environment-*")
 	if err != nil {
 		return err
@@ -49,7 +49,8 @@ func probeEnvironment(ctx context.Context, command string, args []string, result
 	if err := file.Close(); err != nil {
 		return err
 	}
-	output, err := exec.CommandContext(ctx, command, append(args, file.Name())...).CombinedOutput()
+	executor := &ext.DefaultCommandExecutor{}
+	output, err := executor.CombinedOutput(ctx, command, append(args, file.Name()), env)
 	if err != nil {
 		return fmt.Errorf("%s: %w\n%s", command, err, strings.TrimSpace(string(output)))
 	}
@@ -67,6 +68,6 @@ func nodeEnvironmentInfo(ctx context.Context, command string) environmentInfo {
 	} else {
 		info.Source = "Selected Node.js command"
 	}
-	_ = probeEnvironment(ctx, command, []string{"-e", `require('fs').writeFileSync(process.argv[1], JSON.stringify({executable: process.execPath, version: process.version}))`}, &info)
+	_ = probeEnvironment(ctx, command, []string{"-e", `require('fs').writeFileSync(process.argv[1], JSON.stringify({executable: process.execPath, version: process.version}))`}, nil, &info)
 	return info
 }

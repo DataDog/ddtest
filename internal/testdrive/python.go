@@ -70,7 +70,7 @@ func pythonEnvironmentInfo(ctx context.Context, command string, args []string, s
 		Pytest     bool
 		Error      string
 	}
-	err = probeEnvironment(ctx, probeCommand, append(prefix, "-c", pythonEnvironmentProbe), &result)
+	err = probeEnvironment(ctx, probeCommand, append(prefix, "-c", pythonEnvironmentProbe), nil, &result)
 	if err != nil {
 		return info, environmentFinding("python-environment-unresolved", "Cannot inspect the selected Python environment", err.Error(), advice)
 	}

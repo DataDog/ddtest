@@ -29,13 +29,14 @@ func TestPrepareRubyEnvironment(t *testing.T) {
 				root := t.TempDir()
 				t.Chdir(root)
 				t.Setenv("PATH", root)
-				t.Setenv("RUBYOPT", "-rproject_hook")
-				t.Setenv("BUNDLE_GEMFILE", "Gemfile")
+				preloads := "-rbundler/setup -rdatadog/ci/auto_instrument"
+				t.Setenv("RUBYOPT", preloads)
+				t.Setenv("BUNDLE_GEMFILE", "config/Gemfile.test")
 				requireWriteFile(t, "Gemfile", "gem '"+name+"'\n")
 				if available {
 					script := `#!/bin/sh
-[ "$RUBYOPT" = '-rproject_hook' ] || exit 2
-[ "$BUNDLE_GEMFILE" = 'Gemfile' ] || exit 2
+[ "$RUBYOPT" = '' ] || exit 2
+[ "$BUNDLE_GEMFILE" = 'config/Gemfile.test' ] || exit 2
 printf '%s\n' 'customer startup output'
 for last; do :; done
 printf '%s' '{"executable":"/selected ruby/bin/ruby","version":"3.4.7"}' > "$last"
@@ -52,10 +53,30 @@ printf '%s' '{"executable":"/selected ruby/bin/ruby","version":"3.4.7"}' > "$las
 				require.Contains(t, output.String(), "Environment: Ruby from PATH")
 				if available {
 					require.Contains(t, output.String(), "Ruby 3.4.7: /selected ruby/bin/ruby")
+					drive.platform = &fakeTracer{}
+					executor := &fakeTestdriveExecutor{}
+					drive.executor = executor
+					drive.startIntake = func(string) (localIntake, error) {
+						return &fakeIntake{findings: intake.Facts{TestEventCount: 1}}, nil
+					}
+					require.NoError(t, drive.Run(t.Context(), &output))
+					require.True(t, strings.HasPrefix(executor.env["RUBYOPT"], preloads+" "))
+					require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
+					var diagnostics runDiagnostics
+					data, err := os.ReadFile(filepath.Join(drive.session.Directory(), diagnosticsFilename))
+					require.NoError(t, err)
+					require.NoError(t, json.Unmarshal(data, &diagnostics))
+					require.Equal(t, drive.environmentInfo, diagnostics.Environment)
+					report, err := os.ReadFile(filepath.Join(drive.session.Directory(), reportFilename))
+					require.NoError(t, err)
+					require.Contains(t, string(report), "Ruby 3.4.7")
+					require.Contains(t, string(report), "/selected ruby/bin/ruby")
 				} else {
 					require.Empty(t, drive.environmentInfo.Executable)
 					require.Empty(t, drive.environmentInfo.Version)
 				}
+				require.Equal(t, preloads, os.Getenv("RUBYOPT"))
+				require.Equal(t, "config/Gemfile.test", os.Getenv("BUNDLE_GEMFILE"))
 			})
 		}
 	}
