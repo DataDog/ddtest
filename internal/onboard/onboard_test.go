@@ -215,6 +215,10 @@ func TestRunIdentifiesJavaScriptInvocations(t *testing.T) {
 			if tc.matched {
 				require.NoError(t, err)
 				require.Contains(t, output.String(), "languages: js")
+			} else if tc.command == "npm run cycle" {
+				require.NoError(t, err)
+				require.Contains(t, output.String(), "CI command discovery is inconclusive")
+				require.NotContains(t, output.String(), "already appears in every detected test workflow")
 			} else {
 				require.ErrorContains(t, err, "could not find a GitHub Actions workflow that runs jest")
 			}

@@ -476,7 +476,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			return commandResolution{}
 		}
 		// These are setup/metadata commands, not explicit test entry points.
-		if slices.Contains([]string{"ci", "clean-install", "install", "i", "--version", "--help"}, words[1]) {
+		if (words[0] == "npm" && slices.Contains([]string{"ci", "clean-install"}, words[1])) || slices.Contains([]string{"install", "i", "--version", "--help"}, words[1]) {
 			return commandResolution{}
 		}
 		if words[0] == "pnpm" && words[1] == "add" {
