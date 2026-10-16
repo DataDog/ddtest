@@ -312,11 +312,27 @@ func TestFileCoverageRuntimeError(t *testing.T) {
 	if err := FileCoverageRuntimeError(older); err == nil || !strings.Contains(err.Error(), "fileCoverageEpoch") {
 		t.Fatalf("older runtime: %v", err)
 	}
-	if err := FileCoverageParallelRuntimeError(current); err == nil {
-		t.Fatal("a runtime without FileCoverageParallel keeps t.Parallel")
+	if err := FileCoverageContextRuntimeError(current); err == nil {
+		t.Fatal("a runtime without context banks reads them")
 	}
-	parallel := map[string][]byte{"c.go": []byte("package coverage\n\nfunc FileCoverageParallel() bool { return false }\n")}
-	if err := FileCoverageParallelRuntimeError(parallel); err != nil {
+	// The declarations that ddto checks are Mini's own, with their types.
+	dir := filepath.Join("..", "thirdparty", "dd-trace-go", "civisibility", "integrations", "gotesting", "coverage")
+	names, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mini := map[string][]byte{}
+	for _, name := range names {
+		if !strings.HasSuffix(name, "_test.go") {
+			if mini[name], err = os.ReadFile(name); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := FileCoverageRuntimeError(mini); err != nil {
+		t.Fatal(err)
+	}
+	if err := FileCoverageContextRuntimeError(mini); err != nil {
 		t.Fatal(err)
 	}
 }

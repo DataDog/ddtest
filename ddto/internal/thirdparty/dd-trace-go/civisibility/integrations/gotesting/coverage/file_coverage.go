@@ -1,9 +1,7 @@
 package coverage
 
 import (
-	"os"
 	"slices"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -52,9 +50,14 @@ var fileCoverageState struct {
 	available bool
 }
 
-// fileCoverageAvailable reports registered banks of the known layout. A bank
-// of another layout turns file coverage off: its files would be missing.
+// fileCoverageAvailable reports registered banks of the known layout, of
+// marks or of contexts. A bank of another layout turns file coverage off: its
+// files would be missing.
 func fileCoverageAvailable() bool {
+	return markCoverageAvailable() || contextCoverageAvailable()
+}
+
+func markCoverageAvailable() bool {
 	fileCoverageState.once.Do(func() {
 		banks, files := 0, 0
 		for p := atomic.LoadPointer(&fileCoverageBanksV1); p != nil; p = (*fileCoverageBank)(p).next {
@@ -80,23 +83,18 @@ func FileCoverageActive() bool {
 	return coverageUploadEnabled && mode == "" && fileCoverageAvailable()
 }
 
-// fileCoverageParallelEnv is set by ddto's --experimental-file-coverage=parallel.
-const fileCoverageParallelEnv = "DD_CIVISIBILITY_INTERNAL_FILE_COVERAGE_PARALLEL"
-
-var fileCoverageParallel = sync.OnceValue(func() bool {
-	parallel, _ := strconv.ParseBool(os.Getenv(fileCoverageParallelEnv))
-	return parallel
-})
-
 // FileCoverageParallel reports whether tests keep t.Parallel while file
-// coverage is collected. Windows of parallel tests then overlap, and each
-// test reports every file that ran during its window, its neighbors' too.
+// coverage is collected: context file coverage tells their files apart. The
+// banks of the test binary decide, so a binary built with -c keeps it too.
 func FileCoverageParallel() bool {
-	return FileCoverageActive() && fileCoverageParallel()
+	return FileCoverageActive() && contextCoverageAvailable()
 }
 
 // beginFileCoverage starts a test's window and returns its epoch.
 func beginFileCoverage() uint64 {
+	if contextCoverageAvailable() {
+		return beginContextCoverage()
+	}
 	return atomic.AddUint64(&fileCoverageEpoch, 1)
 }
 
@@ -104,6 +102,9 @@ func beginFileCoverage() uint64 {
 // that every test reports. It runs when the test's coverage is captured: a
 // later scan would also see the marks of tests that start afterwards.
 func scanFileCoverage(epoch uint64) []string {
+	if contextCoverageAvailable() {
+		return scanContextCoverage(epoch)
+	}
 	var names []string
 	for p := atomic.LoadPointer(&fileCoverageBanksV1); p != nil; p = (*fileCoverageBank)(p).next {
 		bank := (*fileCoverageBank)(p)

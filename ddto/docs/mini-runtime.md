@@ -462,9 +462,9 @@ read [source maintenance](maintenance.md) and the
 
 `ddto test --experimental-file-coverage` takes per-test coverage from file
 marks instead of Go's coverage counters. `DD_CIVISIBILITY_EXPERIMENTAL_FILE_COVERAGE`
-enables it without the flag: `true` for the default, `parallel` for
-`=parallel`. When the flag is given it decides, and a value that is neither a
-boolean nor `parallel` gets a warning and is ignored. Test Impact Analysis skips by file,
+enables it without the flag: `true` for the default, `context` for
+`=context`. When the flag is given it decides, and a value that is neither a
+boolean nor `context` gets a warning and is ignored. Test Impact Analysis skips by file,
 so a mark per source file is enough. Per-test coverage then works without
 `-cover`, and it reaches every package of the repository that a test runs,
 not only the packages that `-coverpkg` names.
@@ -537,23 +537,54 @@ and builds as without the flag. It also refuses in these cases:
 while coverage is collected, as with Go's counters, so that each test's window
 holds only its own code.
 
-`--experimental-file-coverage=parallel` keeps `t.Parallel()`. The epochs let
-any number of windows overlap: each test reports every file that ran during
-its window, its own and its parallel neighbors'. That is a superset, so it is
-safe, but it holds more files, and changes select more tests. A parallel
-test's window also covers the time it waits for the serial tests.
+`--experimental-file-coverage=context` keeps `t.Parallel()`, and each test
+still reports only the files that ran for it. Each goroutine carries a
+context: the tests, and the singleflight calls, that it works for. ddto's
+overlay edits the toolchain so that contexts flow where work does:
+- a goroutine starts with its creator's context;
+- a channel keeps the union of its senders' contexts. A receive of a value
+  adds that union to the receiver's context; a receive from a closed channel
+  adds nothing;
+- a timer delivers, or runs its function, with its creator's context.
+  `context.AfterFunc` and `http.Server.RegisterOnShutdown` run their
+  functions with their registrant's;
+- `testing`'s semaphore of parallel tests carries no context;
+- a goroutine that reads a socket, pipe or terminal may work for anyone from
+  then on, so it loses its context. Its files go to every running test, as do
+  those of goroutines that never had one, such as TestMain's;
+- a caller that joins a singleflight call in flight
+  (`golang.org/x/sync/singleflight`, or the standard library's own) gets the
+  files that the call's function runs, and so does the test that led the
+  call. A goroutine without a context keeps the calls that it works for, and
+  passes them on with what it sends.
 
-On fiber's root package (1236 tests, GOMAXPROCS=4):
+A site sets its file's bit in the current goroutine's context. When a receive
+adds tests to a context, the files of the receiver's stack go to them as well:
+the rest of each frame's statement runs for them before the next site. ddto
+edits x/sync's singleflight through its compiler wrapper, as it does goleak,
+because Go does not overlay the module cache.
 
-| Mode | Wall time | Production files per test | Tests selected per changed production file |
-| --- | --- | --- | --- |
-| Serial marks | 42.52 s | 27.2 | 287 |
-| `=parallel` | 34.80 s | 87.9 | 928 |
-| No per-test coverage | 34.30 s | — | — |
+The mode needs one build of the edited standard library per toolchain, which
+Go's build cache keeps. When an edit does not match the toolchain or a
+library, or the repository has more than about four million files, ddto
+prints `--experimental-file-coverage=context: <reason>; tests run one at a
+time while coverage is collected` and builds serial marks. A test binary keeps
+`t.Parallel()` when it has context banks, so one built with `-c` keeps it
+when it runs without ddto.
 
-On samber/lo, whose parallel tests are short, both modes take 8.4 s.
-
-When the build has file marks, ddto hands the mode to the test processes, which do not inherit it from a parent run. A selected Mini that predates the mode gets a warning, and its tests run one at a time.
+Context mode has the gaps that .NET's `ExecutionContext` also has:
+- work handed on through a mutex, `sync.Cond` or shared memory without a
+  channel;
+- a receive that releases a sender, which then works for the receiver;
+- joins other than singleflight's, and caches such as `sync.Once` that a
+  concurrent test fills first;
+- work that a goroutine without a context hands, through a channel, to a
+  goroutine that has one;
+- goroutines that outlive their test, such as tickers, whose later work
+  reaches no test;
+- cgo callbacks on threads that Go did not start, `iter.Pull`'s coroutines,
+  reads through raw descriptors, and, on Windows, pipes that are not
+  overlapped.
 
 **Limits.**
 - Tests retried in a child process report no per-test coverage.
@@ -564,36 +595,89 @@ When the build has file marks, ddto hands the mode to the test processes, which 
   suspension that spans a test's start can leave out the rest of that code.
 - The backend has to accept rows without bitmaps.
 
-**Measured** at GOMAXPROCS=4. On fiber's router benchmarks, in ns/op:
+**Measured** at GOMAXPROCS=4, three runs per mode after a warm-up run. The
+data is in
+[`docs/results/file-coverage-20261016-linux-go1.27`](results/file-coverage-20261016-linux-go1.27/README.md),
+produced by `scripts/file_coverage_benchmark.py`. Go's counters
+(`-cover -covermode=atomic -coverpkg=./...`) are what Test Impact Analysis uses
+today. Each run compares with the same run's Go's counters.
 
-| Benchmark | Native | Go's counters | File marks |
-| --- | --- | --- | --- |
-| `Router_Chain` | 126 | 532 | 185 |
-| `Router_Handler` | 58 | 311 | 76 |
-| `Router_Next` | 22 | 168 | 34 |
-| `Router_NotFound` | 153 | 733 | 237 |
+| Project, tests | Mode | Wall time | Production files per test | Tests per changed file | Tests missing a file of Go's counters, per run |
+| --- | --- | --- | --- | --- | --- |
+| fiber root package, 1236 | Go's counters | 42.42 s | 13.88 | 146.6 | — |
+| | Serial marks | 42.50 s | 27.17 | 287.1 | 1, 2, 2 |
+| | `=context` | 34.98 s | 35.17 | 371.5 | 6, 7, 7 |
+| | No per-test coverage | 34.33 s | — | — | — |
+| lo, 333 | Go's counters | 8.37 s | 1.21 | 17.5 | — |
+| | Serial marks | 8.45 s | 4.21 | 60.9 | 0, 0, 0 |
+| | `=context` | 8.54 s | 4.20 | 60.9 | 1, 1, 1 |
+| Gin root package, 403 | Go's counters | 0.96 s | 6.09 | 51.1 | — |
+| | Serial marks | 0.96 s | 9.09 | 76.3 | 0, 1, 0 |
+| | `=context` | 1.07 s | 8.90 | 74.8 | 76, 77, 76 |
 
-- **Router benchmarks:** file marks are 3 to 5 times cheaper than Go's
-  counters, at 1.3 to 1.6 times native.
-- **The CPU-bound `Test_Route_Match_SlashBoundsDifferential`:** 0.21 s with
-  marks, against 0.29 s with Go's counters and 0.20 s native.
-- **Whole suites** (lo: 8.45 s against 8.37 s; fiber: 42.44 s against
-  42.57 s) take the same time with both. Running top-level tests one at a
-  time costs fiber 8 seconds either way, and lo waits on its own timers.
+**Dropped `=parallel` mode.** An earlier run at the same revisions, in
+[`file-coverage-20261016-linux-go1.27-parallel`](results/file-coverage-20261016-linux-go1.27-parallel/README.md),
+also measured `=parallel`, a mode with overlapping windows:
+- fiber: 34.69 s, 88.17 files per test, 931.4 tests per changed file;
+- lo: 8.42 s, 18.64 files per test, 269.9 tests per changed file.
 
-Production files per test, against Go's counters
-(`-cover -covermode=atomic -coverpkg=./...`):
-- **samber/lo, 333 tests:** 4.21 against 1.21, and no test misses a file that
-  Go's counters report.
-- **gofiber/fiber, root package, 1236 tests:** 27.17 against 13.88.
-  - The 30 tests that use fiber's in-memory storage get its file either
-    way. A 10-second garbage collection tick of a storage that an earlier
-    test started lands in the window of a neighboring test, and which
-    neighbor depends on how fast the suite runs.
-  - `Test_GracefulShutdown_PostShutdownFiresOnce` reports three files in
-    some runs and not in others, with both mechanisms: 1 of 3 runs with Go's
-    counters.
-- **The extra files** are those that go to every test:
-  - lo's type-only constraint files;
-  - in fiber, files with only declarations, such as each middleware's
-    `config.go`.
+It was as fast as `=context`, but each test reported its neighbors' files
+too, so it was dropped.
+
+**Differences from Go's counters.** The files that every `=context` run
+misses against Go's counters come from work that another test started. A run
+one at a time gives that work to whichever test is running; context mode
+gives it to the test that started it:
+- **fiber:**
+  - five tests get the garbage collection ticks of in-memory storages that
+    earlier tests created;
+  - in `Test_Integration_RequestID_ContextPropagationFlag`, a concurrent test
+    was the first to register the logger tags that `requestid` registers in
+    a `sync.Once`;
+  - in some runs, `Test_GracefulShutdown_PostShutdownFiresOnce` gets files
+    from other tests' requests. Run alone, it reports none of them in either
+    mode.
+- **lo, 1 test:** `TestDuration` gets the timer of a `debounce` that an
+  earlier test armed.
+- **Gin, 76 tests:** `TestRaceContextCopy` starts two goroutines that call
+  `Context.Set` in an endless loop. In a run one at a time, `context.go` then
+  goes to 361 of the 403 tests, and these 76 never call it themselves.
+
+The remaining differences between runs come from Go's counters, which
+report these files in some runs only, while no marks run reports them:
+- fiber's `Test_Listen_Graceful_Shutdown` with
+  `internal/fieldname/fieldname.go`, in 2 of 3 runs;
+- Gin's `TestBasicAuthFails` with `internal/bytesconv/bytesconv.go`, in 1 of 3
+  runs. The test ranges over a map: whether it converts an account with
+  `bytesconv` before its expected panic depends on the iteration order.
+
+**The extra files.** Serial marks add the files that go to every test: lo's
+type-only constraint files, and, in fiber and Gin, files with only
+declarations, such as each fiber middleware's `config.go`.
+
+`=context` also adds the files of goroutines that may work for anyone, which
+go to every running test. In a fiber run, Mini's debug log counts 48
+goroutines that read a socket or pipe, against 3 receives that added tests to
+a context and no incomplete stack walk. On lo it matches serial marks. On fiber it reports 29% more files per test than serial marks
+(35.17 against 27.17), and selects 29% more tests per changed file (371.5
+against 287.1); Go's counters, with fewer packages, select 146.6.
+
+On fiber's router benchmarks, in ns/op:
+
+| Benchmark | go test | Go's counters | Serial marks | `=context` |
+| --- | --- | --- | --- | --- |
+| `Router_Chain` | 129.4 | 530.3 | 185.2 | 213.4 |
+| `Router_Handler` | 59.8 | 311.3 | 76.5 | 121.6 |
+| `Router_Next` | 21.6 | 165.4 | 33.9 | 43.6 |
+| `Router_NotFound` | 154.4 | 730.1 | 236.2 | 339.5 |
+
+- **Router benchmarks:**
+  - Serial marks are 3 to 5 times cheaper than Go's counters.
+  - Context sites cost 1.2 to 1.6 times as much as serial marks, for two
+    reasons: a site also reads the goroutine's context, and 120 fewer of
+    fiber's functions inline (2982 against 3101). They are still 2 to 4 times
+    cheaper than Go's counters.
+- **Whole suites:** serial marks take the time of Go's counters, since
+  running top-level tests one at a time dominates. `=context` keeps
+  `t.Parallel()`, which takes fiber from 42.4 s to 35.0 s, close to the
+  34.3 s of a run without per-test coverage.

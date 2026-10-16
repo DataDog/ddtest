@@ -135,3 +135,28 @@ The scripts check file hashes, complete rounds and validation outcomes. The
 merger also verifies that every Native and Orchestrion build observation is
 unchanged. Regeneration changes only the presentation and refreshes no
 measurement.
+
+## Per-test coverage modes
+
+`scripts/file_coverage_benchmark.py` compares Go's counters, which Test Impact
+Analysis uses today, with ddto's experimental file coverage. It runs `go test`
+with each mode on cloned projects, with a loopback receiver that enables code
+coverage. It reports, for each mode:
+- the wall time;
+- the production files per test;
+- the tests that a change to one production file selects;
+- the tests that miss a file of Go's counters;
+- with `--bench`, the project's benchmarks.
+
+```sh
+python3 scripts/file_coverage_benchmark.py --ddto "$PWD/ddto" --output /var/tmp/file-coverage-run \
+  --bench 'fiber=Benchmark_Router_(Chain|Handler|Next|NotFound)$' \
+  --report docs/results/file-coverage-<date>-<platform> \
+  lo=/path/to/lo fiber=/path/to/fiber gin=/path/to/gin
+```
+
+Build `ddto` from the revision to measure, and measure from a separate worktree:
+`ddto` compiles Mini from its own checkout. Each test's files stay in the
+output's `files.json`. The report records each project's commit and local
+changes. See [Experimental file coverage](mini-runtime.md#experimental-file-coverage)
+for the latest numbers.

@@ -75,3 +75,32 @@ func TestSources(t *testing.T) {
 		t.Errorf("key %q does not depend on the prefix", key)
 	}
 }
+
+// Modes name the library transforms and cover at most once each, in
+// Plan.toolMode's order.
+func TestValidMode(t *testing.T) {
+	for mode, want := range map[string]bool{
+		"testify": true, "cover": true, "goleak-cover": true, "testify-goleak-cover": true,
+		"singleflight": true, "goleak-singleflight": true, "testify-goleak-singleflight-cover": true,
+		"singleflight-cover-link": true, "mini-sdk-singleflight": true, "orchestrion-singleflight": true,
+		"": false, "cover-testify": false, "singleflight-goleak": false, "goleak-goleak": false, "race": false,
+	} {
+		if got := toolwrap.ValidMode(mode); got != want {
+			t.Errorf("ValidMode(%q) = %t, want %t", mode, got, want)
+		}
+	}
+}
+
+// The singleflight mode needs the plan for x/sync's compilation and its test
+// variants, which only drop the cache marker.
+func TestNeedsPlanForSingleflight(t *testing.T) {
+	compile := []string{"/go/pkg/tool/compile", "-p", "x"}
+	for _, pkg := range []string{toolwrap.SingleflightImport, toolwrap.SingleflightImport + "_test", toolwrap.SingleflightImport + ".test"} {
+		if !toolwrap.NeedsPlan("singleflight", compile, pkg+" [x.test]") {
+			t.Errorf("%s does not need the plan", pkg)
+		}
+	}
+	if toolwrap.NeedsPlan("singleflight", compile, "example.com/other") || toolwrap.NeedsPlan("goleak", compile, toolwrap.SingleflightImport) {
+		t.Error("another package, or another mode, needs the singleflight plan")
+	}
+}

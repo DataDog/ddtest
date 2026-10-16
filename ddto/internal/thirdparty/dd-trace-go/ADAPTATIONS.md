@@ -296,10 +296,10 @@ It extends three places that upstream gates on Go's counters:
   Its rows are the test file first, then the other files once each, in name
   order, without bitmaps.
 
-`FileCoverageParallel` also reads `DD_CIVISIBILITY_INTERNAL_FILE_COVERAGE_PARALLEL`,
-which ddto hands for `--experimental-file-coverage=parallel`. With it, the test
-wrapper leaves the parent's barrier alone, so `t.Parallel()` keeps working and
-the windows of parallel tests overlap. `registerTestCoverageCleanup` then puts
+`FileCoverageParallel` reports context banks, which
+`--experimental-file-coverage=context` builds: a binary built with `-c` has
+them too. With them, the test wrapper leaves the parent's barrier alone, so
+`t.Parallel()` keeps working. `registerTestCoverageCleanup` then puts
 back only a barrier that the test replaced; restoring the nil one it never
 took would have turned `t.Parallel()` off for the tests after it.
 
@@ -314,6 +314,76 @@ Checks: the unit tests `TestFileCoverageWindows`, `TestFileCoverageRows`,
 several packages, `TestMiniFileCoverageParallel` runs two parallel tests that pass only together,
 `TestMiniFileCoverageRefusals` checks the fallbacks, and
 `TestMiniFileCoverageTestCache` checks Go's test cache and `-json`.
+
+`--experimental-file-coverage=context` uses context banks instead, together
+with ddto's edits of the runtime. See
+[Experimental file coverage](../../../docs/mini-runtime.md#experimental-file-coverage).
+[`civisibility/integrations/gotesting/coverage/file_coverage_context.go`](civisibility/integrations/gotesting/coverage/file_coverage_context.go)
+is local.
+
+**Variables without initializers,** for the same reason as above:
+- `fileCoverageWords` and `fileCoverageBanksV2` are reserved and written by
+  the banks;
+- `fileCoverageUnknown` and the two state functions are initialized by the
+  runtime's edit;
+- the three hooks are set by this package once it reads the banks.
+
+ddto checks every declaration, with its type, before it emits context banks:
+a linknamed variable of another type would corrupt memory.
+
+**`beginFileCoverage` and `scanFileCoverage`** dispatch to
+`beginContextCoverage` and `scanContextCoverage` when context banks are
+registered, so `test_coverage.go` and the adapted wrapper do not change:
+- the begin gives the test's goroutine a context of its own, and makes a new
+  window current;
+- the capture takes the bits of:
+  - every context that held the test, or held a singleflight call that it
+    joined;
+  - the windows since the test began, or since such a call leaked to them.
+
+  A saturated call gives every file.
+
+**The hooks** intern contexts, call sets and channel unions under one mutex.
+They return what the runtime caches: always a context that this package
+still holds, so that a cached address cannot come back as another context's.
+- **A goroutine without a context** keeps its calls in a call set, and its
+  sends carry them. Its calls leak: their joiners read the windows since
+  then.
+- **A context or union with more than 32 sinks** keeps only its calls, or
+  saturates them.
+- **A receive that adds sinks** walks the receiver's stack and sets its
+  files' bits. If the walk does not reach `runtime.goexit`, or meets a frame
+  of an instrumented package whose file maps to no bank, it sets every bit
+  instead.
+- **Retention:** a context or call set is dropped once all its sinks are
+  dead. A retired call dies once no live test and no call in flight reaches
+  it. Windows go once no live test or leaky call needs them.
+
+**`fileCoverageEnter`, `fileCoverageLeave`, `fileCoverageJoin` and
+`fileCoverageComplete`** are called through linkname by ddto's edits of
+singleflight:
+- before the banks are read, while packages initialize, they do nothing;
+- the leader's sinks join the call, so its function's work counts for them;
+- a call that a goroutine without a context joined publishes its files to
+  the window before its waiters return.
+
+Checks:
+- **Unit tests:**
+  - `TestContextCoverageAttributesToEachTest`,
+    `TestContextCoverageMergesChannelUnions`,
+    `TestContextCoverageKeepsCallsAcrossUnknownWorkers`,
+    `TestContextCoverageIOKeepsCalls`;
+  - `TestContextCoverageOverflow`, `TestContextCoverageOverflowSaturates`,
+    `TestContextCoverageRetention`, `TestContextCoverageReclaimsCallCycles`;
+  - `TestContextCoverageUnknownJoiner`,
+    `TestContextCoverageUnknownJoinerGetsLeakyWindows`,
+    `TestContextCoverageSingleflightBeforeReady`,
+    `TestContextCoverageNestedCalls`, `TestContextCoveragePanickingLeader`,
+    `TestContextCoverageRepairsTheStack`, `TestSymbolPrefix`.
+- **Integration tests:** `TestMiniFileCoverageContext`,
+  `TestMiniFileCoverageContextSingleflight` and
+  `TestMiniFileCoverageContextFlows` run parallel tests that must not see each
+  other's files, and must get the files that ran for them.
 
 ## Coverage module identity
 

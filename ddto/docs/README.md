@@ -32,6 +32,7 @@ Measurement reports describe the exact revisions in their manifests.
 | See what the October 2026 optimization phases measured and changed | [Optimization plan](optimization-plan.md) |
 | Read the retained measurements | [Build, runtime and memory comparison](benchmarks.md) |
 | Collect builds or regenerate tables | [Benchmark runner](build-benchmarks.md) |
+| Compare Go's counters with experimental file coverage | [Per-test coverage modes](results/file-coverage-20261016-linux-go1.27/README.md) |
 
 [`internal/thirdparty`](../internal/thirdparty/README.md) records upstream
 repositories, commits, licenses and source hashes. SDK adaptations have a

@@ -1,0 +1,332 @@
+{
+ "ddto": {
+  "commit": "6c00fcce318a87717e964374ca7118c4456da587",
+  "version": "ddto v0.1.1-dev"
+ },
+ "go": "go version go1.27.0-X:nodwarf5 linux/amd64",
+ "gomaxprocs": 4,
+ "projects": {
+  "fiber": {
+   "benchmarks": {
+    "context": {
+     "Benchmark_Router_Chain": 213.4,
+     "Benchmark_Router_Handler": 121.6,
+     "Benchmark_Router_Next": 43.6,
+     "Benchmark_Router_NotFound": 339.5
+    },
+    "counters": {
+     "Benchmark_Router_Chain": 530.3,
+     "Benchmark_Router_Handler": 311.3,
+     "Benchmark_Router_Next": 165.4,
+     "Benchmark_Router_NotFound": 730.1
+    },
+    "marks": {
+     "Benchmark_Router_Chain": 185.2,
+     "Benchmark_Router_Handler": 76.5,
+     "Benchmark_Router_Next": 33.9,
+     "Benchmark_Router_NotFound": 236.2
+    },
+    "native": {
+     "Benchmark_Router_Chain": 129.4,
+     "Benchmark_Router_Handler": 59.8,
+     "Benchmark_Router_Next": 21.6,
+     "Benchmark_Router_NotFound": 154.4
+    }
+   },
+   "commit": "a1ac5133c60c6d3ed7256392c43462e34efd1c01",
+   "comparison": {
+    "context": {
+     "files_per_test": 35.17,
+     "missing": {
+      "app_integration_test.go/Test_Integration_App_ServerErrorHandler_WithCustomCtx": [
+       "internal/memory/memory.go"
+      ],
+      "app_integration_test.go/Test_Integration_Domain_CaseInsensitiveMatching": [
+       "internal/memory/memory.go",
+       "internal/storage/memory/memory.go"
+      ],
+      "app_integration_test.go/Test_Integration_RequestID_ContextPropagationFlag": [
+       "log/context.go",
+       "middleware/logger/context_tag.go",
+       "middleware/logger/tags.go"
+      ],
+      "listen_test.go/Test_Listen_Graceful_Shutdown": [
+       "internal/storage/memory/memory.go"
+      ],
+      "listen_test.go/Test_Listen_TLSConfig": [
+       "internal/storage/memory/memory.go"
+      ],
+      "path_test.go/Test_Route_Match_SlashBoundsDifferential": [
+       "internal/storage/memory/memory.go"
+      ]
+     },
+     "missing_tests": 6,
+     "tests": 1236,
+     "tests_per_changed_file": 371.5,
+     "tests_without_rows": 0
+    },
+    "counters": {
+     "files_per_test": 13.88,
+     "missing": {},
+     "missing_tests": 0,
+     "tests": 1236,
+     "tests_per_changed_file": 146.6,
+     "tests_without_rows": 0
+    },
+    "marks": {
+     "files_per_test": 27.17,
+     "missing": {
+      "path_test.go/Test_Route_Match_SlashBoundsDifferential": [
+       "internal/storage/memory/memory.go"
+      ]
+     },
+     "missing_tests": 1,
+     "tests": 1236,
+     "tests_per_changed_file": 287.1,
+     "tests_without_rows": 0
+    }
+   },
+   "local_diff_files": [],
+   "local_diff_sha256": "",
+   "missing_tests_per_run": {
+    "context": [
+     6,
+     7,
+     7
+    ],
+    "counters": [
+     0,
+     0,
+     0
+    ],
+    "marks": [
+     1,
+     2,
+     2
+    ]
+   },
+   "origin": "https://github.com/gofiber/fiber",
+   "pattern": ".",
+   "walls": {
+    "context": [
+     34.984,
+     34.975,
+     34.983
+    ],
+    "counters": [
+     42.408,
+     42.416,
+     42.525
+    ],
+    "marks": [
+     42.494,
+     42.497,
+     42.498
+    ],
+    "native": [
+     33.988,
+     34.042,
+     33.998
+    ],
+    "none": [
+     34.338,
+     34.33,
+     34.318
+    ]
+   }
+  },
+  "gin": {
+   "commit": "73726dc606796a025971fe451f0aa6f1b9b847f6",
+   "comparison": {
+    "context": {
+     "files_per_test": 8.9,
+     "missing": {
+      "logger_test.go/TestColorForLatency": [
+       "context.go"
+      ],
+      "logger_test.go/TestColorForMethod": [
+       "context.go"
+      ],
+      "logger_test.go/TestColorForStatus": [
+       "context.go"
+      ],
+      "logger_test.go/TestDefaultLogFormatter": [
+       "context.go"
+      ],
+      "logger_test.go/TestDisableConsoleColor": [
+       "context.go"
+      ],
+      "logger_test.go/TestForceConsoleColor": [
+       "context.go"
+      ],
+      "logger_test.go/TestIsOutputColor": [
+       "context.go"
+      ],
+      "logger_test.go/TestResetColor": [
+       "context.go"
+      ],
+      "mode_test.go/TestDisableBindValidation": [
+       "context.go"
+      ],
+      "mode_test.go/TestEnableJsonDecoderDisallowUnknownFields": [
+       "context.go"
+      ]
+     },
+     "missing_tests": 76,
+     "tests": 403,
+     "tests_per_changed_file": 74.8,
+     "tests_without_rows": 0
+    },
+    "counters": {
+     "files_per_test": 6.09,
+     "missing": {},
+     "missing_tests": 0,
+     "tests": 403,
+     "tests_per_changed_file": 51.1,
+     "tests_without_rows": 0
+    },
+    "marks": {
+     "files_per_test": 9.09,
+     "missing": {},
+     "missing_tests": 0,
+     "tests": 403,
+     "tests_per_changed_file": 76.3,
+     "tests_without_rows": 0
+    }
+   },
+   "local_diff_files": [],
+   "local_diff_sha256": "",
+   "missing_tests_per_run": {
+    "context": [
+     76,
+     77,
+     76
+    ],
+    "counters": [
+     0,
+     0,
+     0
+    ],
+    "marks": [
+     0,
+     1,
+     0
+    ]
+   },
+   "origin": "https://github.com/gin-gonic/gin.git",
+   "pattern": ".",
+   "walls": {
+    "context": [
+     1.068,
+     1.086,
+     1.07
+    ],
+    "counters": [
+     0.971,
+     0.958,
+     0.943
+    ],
+    "marks": [
+     0.962,
+     0.958,
+     0.951
+    ],
+    "native": [
+     0.651,
+     0.648,
+     0.648
+    ],
+    "none": [
+     0.845,
+     0.834,
+     0.863
+    ]
+   }
+  },
+  "lo": {
+   "commit": "5c6ddcb7063c9908031340db03f27ba7483d1ece",
+   "comparison": {
+    "context": {
+     "files_per_test": 4.2,
+     "missing": {
+      "time_test.go/TestDuration": [
+       "retry.go"
+      ]
+     },
+     "missing_tests": 1,
+     "tests": 333,
+     "tests_per_changed_file": 60.9,
+     "tests_without_rows": 0
+    },
+    "counters": {
+     "files_per_test": 1.21,
+     "missing": {},
+     "missing_tests": 0,
+     "tests": 333,
+     "tests_per_changed_file": 17.5,
+     "tests_without_rows": 0
+    },
+    "marks": {
+     "files_per_test": 4.21,
+     "missing": {},
+     "missing_tests": 0,
+     "tests": 333,
+     "tests_per_changed_file": 60.9,
+     "tests_without_rows": 0
+    }
+   },
+   "local_diff_files": [
+    "go.mod",
+    "go.sum"
+   ],
+   "local_diff_sha256": "b54038f480aa3c8517e5316a2b064cf58a662b64e7216b8accea88ded244007c",
+   "missing_tests_per_run": {
+    "context": [
+     1,
+     1,
+     1
+    ],
+    "counters": [
+     0,
+     0,
+     0
+    ],
+    "marks": [
+     0,
+     0,
+     0
+    ]
+   },
+   "origin": "https://github.com/samber/lo.git",
+   "pattern": ".",
+   "walls": {
+    "context": [
+     8.545,
+     8.563,
+     8.52
+    ],
+    "counters": [
+     8.373,
+     8.372,
+     8.377
+    ],
+    "marks": [
+     8.449,
+     8.443,
+     8.445
+    ],
+    "native": [
+     8.06,
+     8.053,
+     8.057
+    ],
+    "none": [
+     8.423,
+     8.298,
+     8.288
+    ]
+   }
+  }
+ },
+ "reps": 3
+}

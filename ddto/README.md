@@ -169,10 +169,12 @@ More options follow the same rule:
   needs no `-cover`, and it reports every package of the repository that a
   test runs. Rows name files without line bitmaps. Without Mini, with Go's
   coverage flags or with `-race`, ddto warns and keeps Go's counters.
-  `--experimental-file-coverage=parallel` also keeps `t.Parallel()`: each test
-  then reports what ran during its window, its parallel neighbors' code too.
-  Without the flag, `DD_CIVISIBILITY_EXPERIMENTAL_FILE_COVERAGE=true` or
-  `=parallel` does the same; the flag decides when both are set.
+  Top-level tests then run one at a time while coverage is collected.
+  `--experimental-file-coverage=context` keeps `t.Parallel()`: goroutines,
+  channels and timers carry the tests that they work for, so each test still
+  reports the files that ran for it. Without the flag,
+  `DD_CIVISIBILITY_EXPERIMENTAL_FILE_COVERAGE=true` or `=context` does the
+  same; the flag decides when both are set.
   See [Experimental file coverage](docs/mini-runtime.md#experimental-file-coverage).
 
 `ddto` reports one test session per command: every package's tests report in

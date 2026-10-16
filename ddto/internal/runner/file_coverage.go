@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
 )
 
 // --experimental-file-coverage: the packages of the repository compile with
@@ -28,9 +29,16 @@ const (
 	fileCoverageListFields = "Dir,Name,ImportPath,ForTest,Standard,Module,Error,GoFiles,CgoFiles,TestGoFiles,XTestGoFiles,EmbedPatterns,TestEmbedPatterns,XTestEmbedPatterns,EmbedFiles,TestEmbedFiles,XTestEmbedFiles,SFiles,CFiles,CXXFiles,MFiles,HFiles,FFiles,SwigFiles,SwigCXXFiles,SysoFiles"
 )
 
+// contextWords bounds the words of a build's context banks
+// (instrument.FileCoverageContextWords).
+var contextWords = instrument.FileCoverageContextWords
+
 // fileCoverageSummary is what a build with file coverage instrumented.
+// contextRefusal says why context file coverage cannot cover the build, in
+// which case nothing changed and serial marks can.
 type fileCoverageSummary struct {
 	packages, marked, always int
+	contextRefusal           string
 }
 
 // fileCoverageRefusal returns why the build keeps Go's coverage counters for
@@ -102,8 +110,9 @@ func matchingEmbedPattern(dir string, patterns []string, generated string) strin
 // packages are the repository's; excluded are directories that never are,
 // such as GOROOT and the module cache. userOverlay holds the paths that the
 // caller's -overlay replaces: a file that ddto replaced itself is reported
-// for every test instead of marked.
-func prepareFileCoverage(tested []goPackage, roots, excluded []string, replacements map[string]string, userOverlay map[string]bool, temp string, add func(logical, content string) error) (fileCoverageSummary, string, error) {
+// for every test instead of marked. With context, the files get the sites of
+// context file coverage instead (instrument.MarkContextFileCoverage).
+func prepareFileCoverage(tested []goPackage, roots, excluded []string, replacements map[string]string, userOverlay map[string]bool, temp string, context bool, add func(logical, content string) error) (fileCoverageSummary, string, error) {
 	var summary fileCoverageSummary
 	inside := func(dir string, roots []string) bool {
 		for _, root := range roots {
@@ -174,7 +183,7 @@ func prepareFileCoverage(tested []goPackage, roots, excluded []string, replaceme
 		if regular {
 			plans = append(plans, fileCoverageBankPlan{
 				logical:  filepath.Join(p.Dir, fileCoverageBankFile),
-				bank:     instrument.FileCoverageBank{Package: p.Name, Marks: "__ddto_m", Always: always, Shared: true},
+				bank:     instrument.FileCoverageBank{Package: p.Name, Marks: "__ddto_m", Always: always, Shared: true, Context: context, Prefix: instrument.SymbolPrefix(p.ImportPath), Path: p.ImportPath},
 				files:    join(p.GoFiles),
 				compiled: join(p.CgoFiles),
 			})
@@ -189,14 +198,14 @@ func prepareFileCoverage(tested []goPackage, roots, excluded []string, replaceme
 			}
 			plans = append(plans, fileCoverageBankPlan{
 				logical: filepath.Join(p.Dir, fileCoverageTestBankFile),
-				bank:    instrument.FileCoverageBank{Package: p.Name, Marks: "__ddto_t", Always: testAlways, Shared: !regular},
+				bank:    instrument.FileCoverageBank{Package: p.Name, Marks: "__ddto_t", Always: testAlways, Shared: !regular, Context: context, Prefix: instrument.SymbolPrefix(p.ImportPath), Path: p.ImportPath},
 				files:   join(p.TestGoFiles),
 			})
 		}
 		if len(p.XTestGoFiles) > 0 {
 			plans = append(plans, fileCoverageBankPlan{
 				logical: filepath.Join(p.Dir, fileCoverageXTestBankFile),
-				bank:    instrument.FileCoverageBank{Package: p.Name + "_test", Marks: "__ddto_x", Always: join(p.XTestEmbedFiles), Shared: true},
+				bank:    instrument.FileCoverageBank{Package: p.Name + "_test", Marks: "__ddto_x", Always: join(p.XTestEmbedFiles), Shared: true, Context: context, Prefix: instrument.SymbolPrefix(p.ImportPath + "_test"), Path: p.ImportPath},
 				files:   join(p.XTestGoFiles),
 			})
 		}
@@ -236,6 +245,10 @@ func prepareFileCoverage(tested []goPackage, roots, excluded []string, replaceme
 			}
 			if !replaced {
 				actual = path
+			} else if context && !userOverlay[path] {
+				// ddto's own edits, such as a vendored singleflight's,
+				// use the prefix without clashing with the bank.
+				continue
 			}
 			src, err := os.ReadFile(actual)
 			if err != nil {
@@ -261,7 +274,8 @@ func prepareFileCoverage(tested []goPackage, roots, excluded []string, replaceme
 			if replaced && actual == "" {
 				continue // The overlay removes the file from the build.
 			}
-			if replaced && !userOverlay[path] || embedded[path] {
+			// ddto's compiler wrapper edits a vendored singleflight.
+			if replaced && !userOverlay[path] || embedded[path] || context && plan.bank.Path == toolwrap.SingleflightImport {
 				plan.bank.Always = append(plan.bank.Always, path)
 				continue
 			}
@@ -272,13 +286,30 @@ func prepareFileCoverage(tested []goPackage, roots, excluded []string, replaceme
 			if err != nil {
 				return summary, "", err
 			}
-			source, refusal := instrument.MarkFileCoverage(path, src, plan.bank.Marks, len(plan.bank.Names))
+			mark := instrument.MarkFileCoverage
+			if context {
+				mark = instrument.MarkContextFileCoverage
+			}
+			source, refusal := mark(path, src, plan.bank.Marks, len(plan.bank.Names))
 			if refusal != "" {
 				plan.bank.Always = append(plan.bank.Always, path)
 				continue
 			}
 			marked[i] = append(marked[i], markedFile{path, source})
 			plan.bank.Names = append(plan.bank.Names, path)
+		}
+	}
+	if context {
+		// The runtime's scratch words take the bits of goroutines without a
+		// context until the first test starts.
+		files, words := 0, 0
+		for _, plan := range plans {
+			files += len(plan.bank.Names)
+			words += (len(plan.bank.Names) + 63) / 64
+		}
+		if words > contextWords {
+			summary.contextRefusal = fmt.Sprintf("%d files need %d words, more than the %d of context file coverage", files, words, contextWords)
+			return summary, "", nil
 		}
 	}
 	for i := range plans {

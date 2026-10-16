@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/goenv"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/utils"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/version"
 )
 
@@ -47,9 +47,10 @@ type goPackage struct {
 	Error *struct{ Err string }
 }
 type Overlay struct {
-	Replace map[string]string
-	Testify *LibraryEntry `json:",omitempty"`
-	Goleak  *LibraryEntry `json:",omitempty"`
+	Replace      map[string]string
+	Testify      *LibraryEntry `json:",omitempty"`
+	Goleak       *LibraryEntry `json:",omitempty"`
+	Singleflight *LibraryEntry `json:",omitempty"`
 }
 
 type Plan struct {
@@ -65,19 +66,19 @@ type Plan struct {
 	// Warnings name optional integrations skipped for unsupported libraries.
 	Warnings     []string
 	coverOverlay bool
-	// fileCoverage reports that the build has file marks; the test
-	// processes then get fileCoverageParallel, for
-	// --experimental-file-coverage=parallel, whatever they would inherit.
-	fileCoverage, fileCoverageParallel bool
-	orchestrionChain                   string
-	launcher                           *goLauncher
-	orchestrion                        bool
-	mini                               bool
-	sdkCI                              bool
-	sdkMirrorDisabled                  bool
-	testify                            bool
-	goleak                             bool
-	compilerCache                      []string
+	// fileCoverage reports that the build has file marks, and
+	// fileCoverageContext that they are context file coverage's.
+	fileCoverage, fileCoverageContext bool
+	singleflight                      bool
+	orchestrionChain                  string
+	launcher                          *goLauncher
+	orchestrion                       bool
+	mini                              bool
+	sdkCI                             bool
+	sdkMirrorDisabled                 bool
+	testify                           bool
+	goleak                            bool
+	compilerCache                     []string
 	// workspaceLock keeps a cached vendor workspace from being pruned.
 	workspaceLock *os.File
 	// gorootMirror runs go from a mirror of a toolchain in GOMODCACHE.
@@ -615,7 +616,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			return plan, e
 		}
 	}
-	var goleak *LibraryEntry
+	var goleak, singleflight *LibraryEntry
 	if runtime == Mini {
 		goleakPhase := debug.start("instrument goleak")
 		goleak, warning, e = prepareGoleak(libraries[instrument.GoleakImport], replacements, temp)
@@ -676,6 +677,8 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	if opts.fileCoverage {
 		phase := debug.start("file coverage")
 		refusal := fileCoverageRefusal(&plan, opts, vendorProvided, listed, replacements)
+		contextRefusal := ""
+		var singleflightPackage *goPackage
 		var summary fileCoverageSummary
 		if refusal == "" {
 			// The build with tests also links what only tests import.
@@ -691,25 +694,89 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 				if plan.gorootMirror != nil {
 					excluded = append(excluded, plan.gorootMirror.root)
 				}
-				summary, refusal, e = prepareFileCoverage(tested, repositoryRoots(dir, listed), excluded, replacements, userOverlay, temp, add)
+				// Context file coverage edits the toolchain first: marks
+				// leave the files that ddto edits unmarked. A refusal of
+				// file coverage takes the edits back.
+				var changes contextChanges
+				if opts.fileCoverageContext {
+					changes, contextRefusal, e = prepareContextCoverage(tested, listed, replacements, temp)
+					if e == nil && contextRefusal == "" {
+						if singleflightPackage = findPackage(tested, toolwrap.SingleflightImport); singleflightPackage != nil {
+							singleflight, contextRefusal, e = prepareSingleflight(singleflightPackage, replacements, temp)
+						}
+					}
+					if e != nil {
+						phase.finish(e)
+						return plan, e
+					}
+				}
+				context := opts.fileCoverageContext && contextRefusal == ""
+				previous := map[string]*string{}
+				restore := func() {
+					for logical, old := range previous {
+						if old == nil {
+							delete(replacements, logical)
+						} else {
+							replacements[logical] = *old
+						}
+					}
+				}
+				if context {
+					for logical, backing := range changes.replace {
+						if old, ok := replacements[logical]; ok {
+							previous[logical] = &old
+						} else {
+							previous[logical] = nil
+						}
+						replacements[logical] = backing
+					}
+				}
+				summary, refusal, e = prepareFileCoverage(tested, repositoryRoots(dir, listed), excluded, replacements, userOverlay, temp, context, add)
+				if e == nil && summary.contextRefusal != "" {
+					// Too many files for contexts: serial marks instead.
+					contextRefusal = summary.contextRefusal
+					restore()
+					context, singleflight = false, nil
+					summary, refusal, e = prepareFileCoverage(tested, repositoryRoots(dir, listed), excluded, replacements, userOverlay, temp, false, add)
+				}
 				if e != nil {
 					phase.finish(e)
 					return plan, e
+				}
+				if context && refusal != "" {
+					restore()
+				}
+				if context && refusal == "" {
+					for logical, content := range changes.add {
+						if e = add(logical, content); e != nil {
+							phase.finish(e)
+							return plan, e
+						}
+					}
+					plan.fileCoverageContext = true
+					if singleflight != nil {
+						var flag string
+						if flag, e = packageCompilerCacheFlag(dir, opts, singleflightPackage, singleflightCacheMarker(singleflight.Fingerprint)); e != nil {
+							phase.finish(e)
+							return plan, e
+						}
+						plan.singleflight = true
+						plan.compilerCache = append(plan.compilerCache, flag)
+					}
+				}
+				if !plan.fileCoverageContext {
+					singleflight = nil
 				}
 			}
 		}
 		phase.finish(nil)
 		plan.fileCoverage = refusal == ""
-		plan.fileCoverageParallel = plan.fileCoverage && opts.fileCoverageParallel
-		if plan.fileCoverageParallel {
-			// A selected runtime from before =parallel runs the tests one
-			// at a time; say so instead of leaving it unnoticed.
-			if parallelRefusal := checkSources(findPackage(listed, miniCoveragePackage), replacements, instrument.FileCoverageParallelRuntimeError); parallelRefusal != "" {
-				plan.fileCoverageParallel = false
-				plan.Warnings = append(plan.Warnings, "--experimental-file-coverage=parallel: "+parallelRefusal+"; tests run one at a time while coverage is collected")
-			}
+		// Only context file coverage keeps t.Parallel; a refused =context
+		// runs the tests one at a time, as the reference that it would match.
+		debug.printf("file coverage installed=%t reason=%q packages=%d marked_files=%d always_files=%d context=%t context_reason=%q", refusal == "", refusal, summary.packages, summary.marked, summary.always, plan.fileCoverageContext, contextRefusal)
+		if refusal == "" && contextRefusal != "" {
+			plan.Warnings = append(plan.Warnings, "--experimental-file-coverage=context: "+contextRefusal+"; tests run one at a time while coverage is collected")
 		}
-		debug.printf("file coverage installed=%t reason=%q packages=%d marked_files=%d always_files=%d parallel=%t", refusal == "", refusal, summary.packages, summary.marked, summary.always, plan.fileCoverageParallel)
 		if refusal != "" {
 			plan.Warnings = append(plan.Warnings, "--experimental-file-coverage: "+refusal+"; per-test coverage keeps Go's coverage counters")
 		}
@@ -718,7 +785,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	plan.File = filepath.Join(temp, "overlay.json")
 	plan.InstrumentedFiles = len(rewritten.Files)
 	writePhase := debug.start("write overlay")
-	encoded, e := json.Marshal(Overlay{Replace: replacements, Testify: testify, Goleak: goleak})
+	encoded, e := json.Marshal(Overlay{Replace: replacements, Testify: testify, Goleak: goleak, Singleflight: singleflight})
 	if e != nil {
 		writePhase.finish(e)
 		return plan, e
@@ -813,7 +880,7 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	if warning != "" {
 		fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN: "+warning)
 	}
-	opts.fileCoverage, opts.fileCoverageParallel = cli.FileCoverage, cli.FileCoverageParallel
+	opts.fileCoverage, opts.fileCoverageContext = cli.FileCoverage, cli.FileCoverageContext
 	dir := workingDirectory(cwd, opts)
 	debug.printf("working_directory=%q package_patterns=%d build_flags=%d", dir, len(opts.packages), len(opts.buildFlags))
 	if opts.help || explicitFiles(dir, opts.packages) {
@@ -879,7 +946,7 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	}
 	var tool string
 	var env []string
-	if plan.coverOverlay || plan.testify || plan.goleak || plan.orchestrion || plan.sdkCI || plan.linkSignal {
+	if plan.coverOverlay || plan.testify || plan.goleak || plan.singleflight || plan.orchestrion || plan.sdkCI || plan.linkSignal {
 		executable, e := os.Executable()
 		if e != nil {
 			fmt.Fprintln(stderr, e)
@@ -936,9 +1003,6 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 		debug.printf("github job id handed found=%t", !strings.HasSuffix(handoff[0], "="))
 	}
 	env = append(env, handoff...)
-	if plan.fileCoverage {
-		env = append(env, "DD_CIVISIBILITY_INTERNAL_FILE_COVERAGE_PARALLEL="+strconv.FormatBool(plan.fileCoverageParallel))
-	}
 	if plan.launcher != nil {
 		ctx = context.WithValue(ctx, goLauncherKey{}, *plan.launcher)
 	}

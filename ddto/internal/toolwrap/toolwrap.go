@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -28,6 +29,10 @@ const (
 	// TestifySuiteImport and GoleakImport are the packages that ddto rewrites.
 	TestifySuiteImport = "github.com/stretchr/testify/suite"
 	GoleakImport       = "go.uber.org/goleak"
+	// SingleflightImport is the singleflight package that context file
+	// coverage edits; the build compiles it from the module cache, where the
+	// overlay cannot reach.
+	SingleflightImport = "golang.org/x/sync/singleflight"
 	// The SDK packages whose compiles carry ddto's guards.
 	SDKCIConfigPackage      = "github.com/DataDog/dd-trace-go/v2/internal/config"
 	SDKCIEnvironmentPackage = "github.com/DataDog/dd-trace-go/v2/internal/civisibility/envconfig"
@@ -83,11 +88,17 @@ func ValidMode(mode string) bool {
 		return true
 	}
 	mode = strings.TrimPrefix(mode, "orchestrion-")
-	switch mode {
-	case "testify", "cover", "testify-cover", "goleak", "goleak-cover", "testify-goleak", "testify-goleak-cover":
-		return true
+	// The library transforms and cover, each at most once, in Plan.toolMode's
+	// order.
+	order := []string{"testify", "goleak", "singleflight", "cover"}
+	for _, part := range strings.Split(mode, "-") {
+		i := slices.Index(order, part)
+		if i < 0 {
+			return false
+		}
+		order = order[i+1:]
 	}
-	return false
+	return true
 }
 
 // NeedsPlan is the allocation-free dispatch before any plan I/O. Go probes
@@ -116,14 +127,15 @@ func NeedsPlan(mode string, args []string, importPath string) bool {
 			return true
 		}
 	}
-	if tool != "compile" || !strings.Contains(mode, "testify") && !strings.Contains(mode, "goleak") {
+	if tool != "compile" || !strings.Contains(mode, "testify") && !strings.Contains(mode, "goleak") && !strings.Contains(mode, "singleflight") {
 		return false
 	}
 	if len(args) == 2 && args[1] == "-V=full" {
 		return false
 	}
 	pkg, _, _ := strings.Cut(importPath, " [")
-	return pkg == TestifySuiteImport && strings.Contains(mode, "testify") || (pkg == GoleakImport || pkg == GoleakImport+"_test" || pkg == GoleakImport+".test") && strings.Contains(mode, "goleak")
+	return pkg == TestifySuiteImport && strings.Contains(mode, "testify") || (pkg == GoleakImport || pkg == GoleakImport+"_test" || pkg == GoleakImport+".test") && strings.Contains(mode, "goleak") ||
+		(pkg == SingleflightImport || pkg == SingleflightImport+"_test" || pkg == SingleflightImport+".test") && strings.Contains(mode, "singleflight")
 }
 
 // IsSDKCIPackage reports whether pkg is an SDK package that ddto guards.

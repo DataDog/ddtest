@@ -41,6 +41,9 @@ func (p Plan) toolMode() string {
 	if p.goleak {
 		modes = append(modes, "goleak")
 	}
+	if p.singleflight {
+		modes = append(modes, "singleflight")
+	}
 	if p.coverOverlay {
 		modes = append(modes, "cover")
 	}
@@ -120,6 +123,17 @@ func RunTool(ctx context.Context, overlay string, args []string, stdin io.Reader
 	}
 	if pkg == instrument.GoleakImport {
 		entry = plan.Goleak
+	}
+	if pkg == toolwrap.SingleflightImport+"_test" || pkg == toolwrap.SingleflightImport+".test" {
+		if plan.Singleflight == nil {
+			fmt.Fprintln(stderr, "missing optional library tool plan")
+			return 2
+		}
+		forwarded := removeCompilerCacheMarker(append([]string(nil), args...), singleflightCacheMarker(plan.Singleflight.Fingerprint))
+		return runChainedTool(ctx, forwarded, stdin, stdout, stderr)
+	}
+	if pkg == toolwrap.SingleflightImport {
+		entry = plan.Singleflight
 	}
 	forwarded, cleanup, err := prepareLibraryCompile(entry, args)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/instrument"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/toolwrap"
 )
 
 const minimumTestifyVersion = "v1.4.0"
@@ -228,6 +229,10 @@ func prepareLibraryCompile(plan *LibraryEntry, args []string) ([]string, func(),
 		if plan.Package == instrument.GoleakImport {
 			rewrite = instrument.TransformGoleakEntry
 		}
+		if plan.Package == toolwrap.SingleflightImport {
+			// Its other files compile as they are.
+			continue
+		}
 		transformed, found, err := rewrite(args[i], src)
 		if err != nil {
 			cleanup()
@@ -262,6 +267,9 @@ func prepareLibraryCompile(plan *LibraryEntry, args []string) ([]string, func(),
 		// Go has already hashed this package's gcflags. The cache marker is
 		// not a real include path; newer compilers reject -I with -importcfg.
 		result = removeGoleakCacheMarker(result, plan.Fingerprint)
+	}
+	if plan.Package == toolwrap.SingleflightImport {
+		result = removeCompilerCacheMarker(result, singleflightCacheMarker(plan.Fingerprint))
 	}
 	return append(result, plan.HookFile), cleanup, nil
 }

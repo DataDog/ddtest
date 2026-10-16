@@ -52,6 +52,30 @@ var directivesWithoutMarks = []string{"//go:nosplit", "//go:norace", "//go:syste
 // array marks, an import of sync/atomic for them and the logical name kept
 // in a line directive, or why the file stays unmarked.
 func MarkFileCoverage(logical string, src []byte, marks string, index int) ([]byte, FileCoverageRefusal) {
+	p, m := fileCoveragePrefix, fmt.Sprintf("&%s[%d]", marks, index)
+	site := fmt.Sprintf("if %se := %satomic.LoadUint64(&%sepoch); %satomic.LoadUint64(%s) < %se { for { %so := %satomic.LoadUint64(%s); if %so >= %se || %satomic.CompareAndSwapUint64(%s, %so, %se) { break } } };",
+		p, p, p, p, m, p, p, p, m, p, p, p, m, p, p)
+	return markFileCoverage(logical, src, site, "; import "+p+"atomic \"sync/atomic\"", false)
+}
+
+// MarkContextFileCoverage returns src with context sites, which set file
+// index's bit in the current goroutine's file set: bit index%64 of word
+// base+index/64, base being the bank's first word. Imports of sync/atomic
+// and runtime come with them, and the logical name stays in a line
+// directive. A file with line directives of its own stays unmarked: Mini
+// maps the frames of a goroutine's stack to files by the name that the
+// header gives.
+func MarkContextFileCoverage(logical string, src []byte, base string, index int) ([]byte, FileCoverageRefusal) {
+	p, w, bit := fileCoveragePrefix, fmt.Sprintf("%srt.DdtoWord(%s + %d)", fileCoveragePrefix, base, index/64), fmt.Sprintf("%#x", uint64(1)<<(index%64))
+	site := fmt.Sprintf("if %sw := %s; %satomic.LoadUint64(%sw)&%s == 0 { for { %so := %satomic.LoadUint64(%sw); if %so&%s != 0 || %satomic.CompareAndSwapUint64(%sw, %so, %so|%s) { break } } };",
+		p, w, p, p, bit, p, p, p, p, bit, p, p, p, p, bit)
+	return markFileCoverage(logical, src, site, "; import "+p+"atomic \"sync/atomic\"; import "+p+"rt \"runtime\"", true)
+}
+
+// markFileCoverage inserts site where code can start running, and imports
+// after the package clause. With noLineDirectives, a file with line
+// directives of its own stays unmarked.
+func markFileCoverage(logical string, src []byte, site, imports string, noLineDirectives bool) ([]byte, FileCoverageRefusal) {
 	// A byte order mark is valid only at the start of the file, before the
 	// line directive goes: the rewritten file leaves it out.
 	src = bytes.TrimPrefix(src, []byte("\uFEFF"))
@@ -70,6 +94,9 @@ func MarkFileCoverage(logical string, src []byte, marks string, index int) ([]by
 	}
 	for _, group := range file.Comments {
 		for _, comment := range group.List {
+			if noLineDirectives && (strings.HasPrefix(comment.Text, "//line ") || strings.HasPrefix(comment.Text, "/*line ")) {
+				return nil, "line directive"
+			}
 			for _, directive := range directivesWithoutMarks {
 				if comment.Text == directive || strings.HasPrefix(comment.Text, directive+" ") {
 					return nil, FileCoverageRefusal("directive " + directive)
@@ -77,12 +104,9 @@ func MarkFileCoverage(logical string, src []byte, marks string, index int) ([]by
 			}
 		}
 	}
-	p, m := fileCoveragePrefix, fmt.Sprintf("&%s[%d]", marks, index)
-	site := fmt.Sprintf("if %se := %satomic.LoadUint64(&%sepoch); %satomic.LoadUint64(%s) < %se { for { %so := %satomic.LoadUint64(%s); if %so >= %se || %satomic.CompareAndSwapUint64(%s, %so, %se) { break } } };",
-		p, p, p, p, m, p, p, p, m, p, p, p, m, p, p)
 	offset := func(p token.Pos) int { return fs.Position(p).Offset }
-	// The import goes on the package clause's line, so no line moves.
-	edits := []edit{{offset(file.Name.End()), offset(file.Name.End()), "; import " + p + "atomic \"sync/atomic\""}}
+	// The imports go on the package clause's line, so no line moves.
+	edits := []edit{{offset(file.Name.End()), offset(file.Name.End()), imports}}
 	insert := func(p token.Pos) { edits = append(edits, edit{offset(p), offset(p), site}) }
 	// list marks a statement list that starts at start.
 	var list func(start token.Pos, stmts []ast.Stmt)
@@ -246,13 +270,27 @@ type FileCoverageBank struct {
 	// Shared declares the epoch and the bank list, which a package variant
 	// declares once.
 	Shared bool
+	// Context renders the bank of context file coverage
+	// (MarkContextFileCoverage): Marks names the bank's first word, which
+	// the bank reserves while its package initializes.
+	Context bool
+	// Prefix is the package's symbol prefix, which Mini compares with its
+	// stack frames' function names, and Path the import path that -trimpath
+	// gives the package's directory (context banks only).
+	Prefix, Path string
 }
+
+// FileCoverageContextBankVersion is the layout of context banks.
+const FileCoverageContextBankVersion = 2
 
 // Source renders the bank file. Instrumented packages only read and write
 // Mini's variables: none of their code calls Mini or testing, which may not
 // have initialized yet. The code compiles with any Go version that a module
 // can declare.
 func (b FileCoverageBank) Source() string {
+	if b.Context {
+		return b.contextSource()
+	}
 	var s strings.Builder
 	fmt.Fprintf(&s, "package %s\n\nimport (\n\t%satomic \"sync/atomic\"\n\t%sunsafe \"unsafe\"\n)\n\n", b.Package, fileCoveragePrefix, fileCoveragePrefix)
 	p := fileCoveragePrefix
@@ -283,6 +321,42 @@ func (b FileCoverageBank) Source() string {
 	return s.String()
 }
 
+// contextSource renders a context bank. The bank reserves its words with a
+// variable's initializer, which runs before any of its package's code can
+// reach a site, and registers itself in init, as the banks of marks do.
+func (b FileCoverageBank) contextSource() string {
+	var s strings.Builder
+	p := fileCoveragePrefix
+	fmt.Fprintf(&s, "package %s\n\nimport (\n\t%satomic \"sync/atomic\"\n\t%sunsafe \"unsafe\"\n)\n\n", b.Package, p, p)
+	if b.Shared {
+		fmt.Fprintf(&s, "//go:linkname %swords %s.fileCoverageWords\nvar %swords uint64\n\n", p, FileCoveragePackage, p)
+		fmt.Fprintf(&s, "//go:linkname %sbanks %s.fileCoverageBanksV2\nvar %sbanks %sunsafe.Pointer\n\n", p, FileCoveragePackage, p, p)
+		fmt.Fprintf(&s, "func %sreserve(files uintptr) uintptr {\n\twords := uint64(files+63) / 64\n\treturn uintptr(%satomic.AddUint64(&%swords, words) - words)\n}\n\n", p, p, p)
+	}
+	n, always := len(b.Names), len(b.Always)
+	fmt.Fprintf(&s, "var %s = %sreserve(%d)\n\n", b.Marks, p, n)
+	namesRef, alwaysRef := "nil", "nil"
+	if n > 0 {
+		fmt.Fprintf(&s, "var %snames = [%d]string{", b.Marks, n)
+		for _, name := range b.Names {
+			fmt.Fprintf(&s, "%q, ", name)
+		}
+		s.WriteString("}\n\n")
+		namesRef = "&" + b.Marks + "names[0]"
+	}
+	if always > 0 {
+		fmt.Fprintf(&s, "var %salways = [%d]string{", b.Marks, always)
+		for _, name := range b.Always {
+			fmt.Fprintf(&s, "%q, ", name)
+		}
+		s.WriteString("}\n\n")
+		alwaysRef = "&" + b.Marks + "always[0]"
+	}
+	fmt.Fprintf(&s, "var %sbank = struct {\n\tnext    %sunsafe.Pointer\n\tversion uintptr\n\tbase    *uintptr\n\tnames   *string\n\tn       uintptr\n\talways  *string\n\tnAlways uintptr\n\tprefix  string\n\tpath    string\n}{nil, %d, &%s, %s, %d, %s, %d, %q, %q}\n\n", b.Marks, p, FileCoverageContextBankVersion, b.Marks, namesRef, n, alwaysRef, always, b.Prefix, b.Path)
+	fmt.Fprintf(&s, "func init() {\n\tbank := %sunsafe.Pointer(&%sbank)\n\tfor {\n\t\thead := %satomic.LoadPointer(&%sbanks)\n\t\t%sbank.next = head\n\t\tif %satomic.CompareAndSwapPointer(&%sbanks, head, bank) {\n\t\t\treturn\n\t\t}\n\t}\n}\n", p, b.Marks, p, p, b.Marks, p, p)
+	return s.String()
+}
+
 // fileCoverageRuntimeAPI is what the selected runtime's coverage package
 // declares when it reads banks of FileCoverageBankVersion's layout.
 var fileCoverageRuntimeAPI = []string{"var fileCoverageEpoch uint64", "var fileCoverageBanksV1 unsafe.Pointer"}
@@ -294,13 +368,47 @@ func FileCoverageRuntimeError(sources map[string][]byte) error {
 	return declarationsError(sources, fileCoverageRuntimeAPI, "the runtime's coverage package lacks %s")
 }
 
-// FileCoverageParallelRuntimeError reports why the selected runtime, whose
+// fileCoverageContextRuntimeAPI is what the selected runtime's coverage
+// package declares when it reads context banks: the variables that the banks
+// and the runtime's edits link to, with the types that they give them, and
+// the functions that the singleflight edits call.
+var fileCoverageContextRuntimeAPI = []string{
+	"var fileCoverageWords uint64",
+	"var fileCoverageBanksV2 unsafe.Pointer",
+	"var fileCoverageUnknown unsafe.Pointer",
+	"var fileCoverageGetState func() (unsafe.Pointer, unsafe.Pointer)",
+	"var fileCoverageSetState func(unsafe.Pointer, unsafe.Pointer)",
+	"var fileCoverageSendHook func(*uintptr, unsafe.Pointer) (unsafe.Pointer)",
+	"var fileCoverageReceiveHook func(uintptr, unsafe.Pointer, unsafe.Pointer) (unsafe.Pointer, unsafe.Pointer, unsafe.Pointer)",
+	"var fileCoverageIOHook func(unsafe.Pointer) (unsafe.Pointer)",
+	"func fileCoverageEnter(*unsafe.Pointer)",
+	"func fileCoverageLeave(*unsafe.Pointer)",
+	"func fileCoverageJoin(*unsafe.Pointer)",
+	"func fileCoverageComplete(*unsafe.Pointer)",
+}
+
+// FileCoverageContextRuntimeError reports why the selected runtime, whose
 // coverage package is given as the sources that the build compiles, does not
-// keep t.Parallel with file coverage, or nil.
-func FileCoverageParallelRuntimeError(sources map[string][]byte) error {
-	return declarationsError(sources, []string{"func FileCoverageParallel() bool"}, "the runtime's coverage package lacks %s")
+// read context banks, or nil.
+func FileCoverageContextRuntimeError(sources map[string][]byte) error {
+	return declarationsError(sources, fileCoverageContextRuntimeAPI, "the runtime's coverage package lacks %s")
 }
 
 // FileCoveragePackage is the Mini package that declares the epoch and the
 // bank list that instrumented packages link to.
 const FileCoveragePackage = "github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage"
+
+// SymbolPrefix returns the prefix of the symbol names of the package with
+// import path, as the linker escapes it (cmd/internal/objabi.PathToPrefix).
+func SymbolPrefix(path string) string {
+	slash := strings.LastIndex(path, "/")
+	var out strings.Builder
+	for i := 0; i < len(path); i++ {
+		if c := path[i]; c <= ' ' || c == '.' && i > slash || c == '%' || c == '"' || c >= 0x7F {
+			fmt.Fprintf(&out, "%%%02x", c)
+		} else {
+			out.WriteByte(c)
+		}
+	}
+	return out.String()
+}

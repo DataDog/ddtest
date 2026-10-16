@@ -104,9 +104,9 @@ type options struct {
 	race                 bool
 	// panicHook is ddto's --panic-hook, which go test does not see.
 	panicHook bool
-	// fileCoverage and fileCoverageParallel are ddto's
-	// --experimental-file-coverage and its =parallel.
-	fileCoverage, fileCoverageParallel bool
+	// fileCoverage and fileCoverageContext are ddto's
+	// --experimental-file-coverage and its =context.
+	fileCoverage, fileCoverageContext bool
 	// coverProfile and outputDir are go test's -coverprofile and -outputdir.
 	coverProfile, outputDir string
 	// execSet records -exec, even empty: then go test uses no

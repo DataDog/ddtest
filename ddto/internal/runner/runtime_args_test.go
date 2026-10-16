@@ -76,7 +76,7 @@ func TestParseCLIArgsUploadTimeoutAndCIState(t *testing.T) {
 		{"session per binary", []string{"-count=1", "--session-per-binary", "--panic-hook"}, []string{"-count=1"}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute, PanicHook: true, SessionPerBinary: true}},
 		{"test flag named like an option", []string{"-run", "--panic-hook", "."}, []string{"-run", "--panic-hook", "."}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute}},
 		{"file coverage", []string{"--experimental-file-coverage", "-count=1", "./..."}, []string{"-count=1", "./..."}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute, FileCoverage: true}},
-		{"parallel file coverage", []string{"-count=1", "--experimental-file-coverage=parallel", "./..."}, []string{"-count=1", "./..."}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute, FileCoverage: true, FileCoverageParallel: true}},
+		{"context file coverage", []string{"-count=1", "--experimental-file-coverage=context", "./..."}, []string{"-count=1", "./..."}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute, FileCoverage: true, FileCoverageContext: true}},
 		{"test flag named like file coverage", []string{"-run", "--experimental-file-coverage", "."}, []string{"-run", "--experimental-file-coverage", "."}, CLIOptions{Runtime: Mini, GitUploadTimeout: time.Minute}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,7 +89,7 @@ func TestParseCLIArgsUploadTimeoutAndCIState(t *testing.T) {
 	for _, args := range [][]string{
 		{"--git-upload-timeout"}, {"--git-upload-timeout=soon"}, {"--git-upload-timeout=-1s"},
 		{"--keep-ci-state=state.tar"}, {"--keep-ci-state="},
-		{"--experimental-file-coverage=serial"}, {"--experimental-file-coverage="},
+		{"--experimental-file-coverage=serial"}, {"--experimental-file-coverage="}, {"--experimental-file-coverage=parallel"},
 	} {
 		if _, _, err := ParseCLIArgs(args); err == nil {
 			t.Errorf("accepted %q", args)
@@ -141,24 +141,25 @@ func TestFileCoverageEnvironment(t *testing.T) {
 		return options
 	}
 	for _, tc := range []struct {
-		name                   string
-		options                CLIOptions
-		value                  string
-		fileCoverage, parallel bool
-		warns                  bool
+		name                  string
+		options               CLIOptions
+		value                 string
+		fileCoverage, context bool
+		warns                 bool
 	}{
 		{"unset", flag(), "", false, false, false},
 		{"true", flag(), "true", true, false, false},
 		{"1", flag(), "1", true, false, false},
-		{"parallel", flag(), "parallel", true, true, false},
+		{"context", flag(), "context", true, true, false},
 		{"false", flag(), "false", false, false, false},
 		{"invalid", flag(), "sometimes", false, false, true},
-		{"flag over parallel", flag("--experimental-file-coverage"), "parallel", true, false, false},
-		{"parallel flag over false", flag("--experimental-file-coverage=parallel"), "false", true, true, false},
+		{"parallel", flag(), "parallel", false, false, true},
+		{"flag over context", flag("--experimental-file-coverage"), "context", true, false, false},
+		{"context flag over false", flag("--experimental-file-coverage=context"), "false", true, true, false},
 	} {
 		got, warning := tc.options.WithFileCoverageEnvironment(tc.value)
-		if got.FileCoverage != tc.fileCoverage || got.FileCoverageParallel != tc.parallel || (warning != "") != tc.warns {
-			t.Errorf("%s: file coverage %t, parallel %t, warning %q", tc.name, got.FileCoverage, got.FileCoverageParallel, warning)
+		if got.FileCoverage != tc.fileCoverage || got.FileCoverageContext != tc.context || (warning != "") != tc.warns {
+			t.Errorf("%s: file coverage %t, context %t, warning %q", tc.name, got.FileCoverage, got.FileCoverageContext, warning)
 		}
 	}
 }
