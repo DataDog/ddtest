@@ -25,6 +25,7 @@ python_files = check_*.py
 def test_preserves_worker_environment():
     assert os.environ["DDTEST_PYTEST_WORKER"] == "selected"
     assert os.environ["_DD_CIVISIBILITY_ITR_SUITE_MODE"] == os.environ["DDTEST_EXPECTED_SUITE_MODE"]
+    assert os.environ["_DD_CIVISIBILITY_ITR_PREVENT_TEST_SKIPPING"] == os.environ["DDTEST_EXPECTED_SUITE_MODE"]
 `)
 	writeFixture(t, root, "checks/check_unselected.py", `def test_must_not_run():
     raise AssertionError("unselected file ran")
@@ -53,6 +54,7 @@ def test_preserves_worker_environment():
 
 	if err := pytest.RunTests(ctx, []string{"checks/check_selected.py"}, map[string]string{
 		"DDTEST_PYTEST_WORKER": "selected", "DDTEST_EXPECTED_SUITE_MODE": "false",
+		"_DD_CIVISIBILITY_ITR_PREVENT_TEST_SKIPPING": "false",
 	}); err != nil {
 		t.Fatalf("selected-file run failed: %v", err)
 	}
@@ -73,6 +75,7 @@ def test_preserves_worker_environment():
 		requireTestSources(t, tests, wantFiles)
 		if err := suitePytest.RunTests(ctx, []string{"checks/check_selected.py"}, map[string]string{
 			"DDTEST_PYTEST_WORKER": "selected", "DDTEST_EXPECTED_SUITE_MODE": "true",
+			"_DD_CIVISIBILITY_ITR_PREVENT_TEST_SKIPPING": "false",
 		}); err != nil {
 			t.Fatalf("suite-mode selected-file run failed: %v", err)
 		}

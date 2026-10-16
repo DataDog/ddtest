@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
@@ -98,10 +99,19 @@ func (p *PyTest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 	if testFiles.Empty() {
 		return []string{}, nil
 	}
-	if testFiles.UseExplicitFiles() {
-		return testFiles.ExplicitFiles, nil
+	files := testFiles.ExplicitFiles
+	if !testFiles.UseExplicitFiles() {
+		var err error
+		files, err = discovery.DiscoverTestFiles(testFiles.Pattern, settings.GetTestsExcludePattern())
+		if err != nil {
+			return nil, err
+		}
 	}
-	return discovery.DiscoverTestFiles(testFiles.Pattern, settings.GetTestsExcludePattern())
+	// Broad patterns can match bytecode and other artifacts. Clone before
+	// filtering explicit selections, which belong to the caller.
+	return slices.DeleteFunc(slices.Clone(files), func(file string) bool {
+		return filepath.Ext(file) != ".py"
+	}), nil
 }
 
 func (p *PyTest) SupportsFullTestDiscovery() bool {

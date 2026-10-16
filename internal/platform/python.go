@@ -285,6 +285,12 @@ func (p *Python) RunEnv(options framework.RuntimeOptions) (map[string]string, er
 	// Keep tracer coverage/skipping granularity aligned with the backend
 	// requests and plan, even when the process or worker env sets another mode.
 	env["_DD_CIVISIBILITY_ITR_SUITE_MODE"] = strconv.FormatBool(p.TestSkippingLevel() == settings.TestSkippingLevelSuite)
+	if p.TestSkippingLevel() == settings.TestSkippingLevelSuite {
+		// The plan owns suite skipping. The tracer must execute files retained
+		// for missing source mappings or conservative unskippable checks,
+		// while continuing to collect coverage and report test results.
+		env["_DD_CIVISIBILITY_ITR_PREVENT_TEST_SKIPPING"] = "true"
+	}
 	return env, nil
 }
 

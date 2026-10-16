@@ -235,6 +235,35 @@ func TestPyTest_UnskippableMarkers(t *testing.T) {
 	}
 }
 
+func TestPyTest_FileDiscoveryFiltersNonPythonFiles(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, file := range []string{"tests/test_case.py", "tests/__pycache__/test_case.pyc", "tests/test_case.txt"} {
+		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pytest := NewPytest(&testPlatform{})
+	for _, selection := range []discovery.TestFileSet{
+		{Pattern: "tests/**/test_*"},
+		{ExplicitFiles: []string{"tests/test_case.py", "tests/__pycache__/test_case.pyc", "tests/test_case.txt"}},
+	} {
+		original := slices.Clone(selection.ExplicitFiles)
+		files, err := pytest.DiscoverTestFiles(t.Context(), selection)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(files, []string{"tests/test_case.py"}) {
+			t.Fatalf("DiscoverTestFiles(%+v) = %v", selection, files)
+		}
+		if !slices.Equal(original, selection.ExplicitFiles) {
+			t.Fatal("file discovery mutated the caller's selection")
+		}
+	}
+}
+
 func TestPyTest_RunTests_WithCommandOverride(t *testing.T) {
 	testFiles := []string{"tests/test_user.py"}
 

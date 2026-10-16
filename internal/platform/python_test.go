@@ -39,8 +39,9 @@ func TestPython_TestSkippingLevel(t *testing.T) {
 			// Worker overrides must not put the tracer in a different mode
 			// from the backend request and the plan.
 			env, err := fw.Platform().RunEnv(framework.RuntimeOptions{Env: map[string]string{
-				"_DD_CIVISIBILITY_ITR_SUITE_MODE": "conflicting-worker-value",
-				"WORKER":                          "1",
+				"_DD_CIVISIBILITY_ITR_SUITE_MODE":            "conflicting-worker-value",
+				"_DD_CIVISIBILITY_ITR_PREVENT_TEST_SKIPPING": "false",
+				"WORKER": "1",
 			}})
 			require.NoError(t, err)
 			want := "false"
@@ -48,6 +49,11 @@ func TestPython_TestSkippingLevel(t *testing.T) {
 				want = "true"
 			}
 			require.Equal(t, want, env["_DD_CIVISIBILITY_ITR_SUITE_MODE"])
+			if level == settings.TestSkippingLevelSuite {
+				require.Equal(t, "true", env["_DD_CIVISIBILITY_ITR_PREVENT_TEST_SKIPPING"])
+			} else {
+				require.Equal(t, "false", env["_DD_CIVISIBILITY_ITR_PREVENT_TEST_SKIPPING"])
+			}
 			require.Equal(t, "1", env["WORKER"])
 			require.Contains(t, env[pytestAddOptsEnvVar], "--ddtrace")
 		})

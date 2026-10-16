@@ -41,11 +41,17 @@ ddtest run --platform python --framework pytest
 
 Alternatively, pass `--test-skipping-mode suite` to both commands. The default
 remains `test`. DDTest configures ddtrace's suite mode for test execution as well
-as requesting suite-level skippables from the backend.
+as requesting suite-level skippables from the backend. In suite mode, DDTest
+owns TIA skipping: it disables ddtrace's additional runtime TIA skipping with
+`_DD_CIVISIBILITY_ITR_PREVENT_TEST_SKIPPING=true`. Files retained in the plan
+therefore execute even if the tracer's backend response lists them as skippable.
+Tracing and coverage collection remain enabled; normal pytest skip marks and
+other execution-time selection still apply. Test mode retains tracer skipping.
 
 File discovery uses the existing pytest configuration/default file patterns,
-or `--tests-location`, and respects exclusions and positional selection. It does
-not enumerate test functions, classes, fixtures, or parametrized cases. A file
+or `--tests-location`, filters to `.py` source files, and respects exclusions and
+positional selection. It does not enumerate test functions, classes, fixtures,
+or parametrized cases. A file
 is omitted only when its backend suite is skippable and the backend suite
 metadata maps it to a selected source file. New files and suites without source
 metadata remain runnable; a dotted module name or matching filename alone is
@@ -57,7 +63,10 @@ containing it, remain runnable. This is a conservative text check: comments also
 keep files runnable, and read errors prevent skipping. Markers constructed
 dynamically or imported from other helpers cannot be detected by this check;
 add a literal marker comment to the affected test file or ancestor conftest to
-keep it runnable. Use accurate `--tests-location`
+keep it runnable under DDTest suite mode. These comments are DDTest planning
+guards, not pytest markers: when running pytest directly with tracer TIA
+skipping, use a real `@pytest.mark.skipif(False, reason="datadog_itr_unskippable")`
+marker. Use accurate `--tests-location`
 patterns for custom configuration locations or collectors that the existing
 file discovery does not understand. Custom collectors that group multiple
 suites into one file should use test mode.
