@@ -4,7 +4,7 @@ the minitracer microbenchmarks, and a test binary of many empty tests.
 usage: minitracer_benchmark.py --base DIR --candidate DIR --output DIR
            [--reps N] [--tests N] [--count N] [--alloc-count N]
            [--gomaxprocs N] [--benchtime D] [--own-benchmarks]
-           [--report DIR]
+           [--same-wire] [--report DIR]
 
 --base and --candidate are worktrees of this repository, such as one detached
 at main and one at the change: ddto compiles Mini from the tree it was built
@@ -22,13 +22,19 @@ ddto test -c. Each binary runs -test.count=--count against the loopback
 receiver with --gomaxprocs. The report gives the test process's wall time, CPU
 time (user and system) and peak RSS, and what ddto adds per test over plain go
 test. The first run of each tree decodes every payload and checks that each
-test event arrived. A last run of each binary, -test.count=--alloc-count with
+test event arrived. It also compares the trees' payloads, decoded with their
+MessagePack types (integers, floats, strings and binary data stay apart): every event, with
+its envelope's version and the metadata that it inherits. IDs, timestamps,
+_dd.p.tid and the runtime ID, which differ between runs, count by presence and
+type, hierarchy IDs by what they reference, and the binary's path is masked.
+--same-wire stops the benchmark when the payloads differ. A last run of each binary, -test.count=--alloc-count with
 every allocation profiled from the process's start (GODEBUG=memprofilerate=1),
 counts the objects and bytes that it allocates per test until testing writes
 the profile, before Mini's final delivery. --report copies results.json and README.md into DIR, such
 as a directory of docs/results; never edit those by hand.
 """
 import argparse
+from collections import Counter
 import hashlib
 import json
 import os
@@ -38,11 +44,12 @@ import re
 import shutil
 import signal
 import statistics
+import struct
 import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from benchmark_receiver import Receiver, decode  # noqa: E402
+from benchmark_receiver import Receiver  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 BENCHMARKS = '^(BenchmarkTestEventLifecycle|BenchmarkEventLifecycle|BenchmarkSpanMetadata)$'
@@ -178,6 +185,204 @@ def binary_env(args, variant, url):
     return env
 
 
+# Values that differ between two runs of one binary. A valid one becomes a
+# Marker of its kind; any other stays as it is. Hierarchy IDs become a Marker
+# that names the session, module or suite that they reference, with its
+# ancestors. canonical tags every value with its type, so no wire value can
+# stand for a marker or for a value of another type.
+HIERARCHY = {'test_session_end': 'test_session_id', 'test_module_end': 'test_module_id', 'test_suite_end': 'test_suite_id'}
+TID = re.compile(r'[0-9a-f]{16}')
+UUID = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+
+
+def normalize(value, binary_dir):
+    """Replaces the binary's directory, which differs between trees."""
+    if isinstance(value, str):
+        return value.replace(binary_dir, '<binary>')
+    if isinstance(value, dict):
+        return {k: normalize(v, binary_dir) for k, v in value.items()}
+    if isinstance(value, list):
+        return [normalize(v, binary_dir) for v in value]
+    return value
+
+
+class Float32(float):
+    """A 32-bit MessagePack float."""
+
+
+class Marker(tuple):
+    """What replaces a value that differs between runs."""
+
+
+def integer(value, minimum):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= minimum
+
+
+def mark(value, kind, valid):
+    return Marker((kind,)) if valid else value
+
+
+def canonical(value):
+    """Returns value with each of its parts tagged by its type."""
+    if isinstance(value, Marker):
+        return ['marker', [canonical(v) for v in value]]
+    if isinstance(value, tuple):
+        return ['tuple', [canonical(v) for v in value]]
+    if isinstance(value, dict):
+        return ['map', sorted([k, canonical(v)] for k, v in value.items())]
+    if isinstance(value, list):
+        return ['array', [canonical(v) for v in value]]
+    if isinstance(value, bool):
+        return ['bool', value]
+    if isinstance(value, int):
+        return ['int', value]
+    if isinstance(value, Float32):
+        return ['float32', value]
+    if isinstance(value, float):
+        return ['float64', value]
+    if isinstance(value, bytes):
+        return ['bin', value.hex()]
+    if isinstance(value, str):
+        return ['str', value]
+    if value is None:
+        return ['nil']
+    raise TypeError(f'unexpected decoded value {value!r}')
+
+
+# MessagePack types whose size follows them: (length bytes, kind).
+SIZED = {0xc4: (1, 'bin'), 0xc5: (2, 'bin'), 0xc6: (4, 'bin'), 0xd9: (1, 'str'), 0xda: (2, 'str'), 0xdb: (4, 'str'),
+         0xdc: (2, 'array'), 0xdd: (4, 'array'), 0xde: (2, 'map'), 0xdf: (4, 'map')}
+NUMBERS = {0xca: '>f', 0xcb: '>d', 0xcc: '>B', 0xcd: '>H', 0xce: '>I', 0xcf: '>Q', 0xd0: '>b', 0xd1: '>h', 0xd2: '>i', 0xd3: '>q'}
+
+
+def unpack(data):
+    """Decodes one MessagePack value and keeps the types that JSON merges:
+    integers are int, 64-bit floats float, 32-bit floats Float32 and binary
+    data bytes. Map keys must be strings."""
+    def take(i, n):
+        if i + n > len(data):
+            raise ValueError('truncated MessagePack value')
+        return data[i:i + n]
+
+    def value(i):
+        b = take(i, 1)[0]
+        i += 1
+        if b <= 0x7f:
+            return b, i
+        if b >= 0xe0:
+            return b - 0x100, i
+        if b <= 0x8f:
+            return mapping(i, b & 0x0f)
+        if b <= 0x9f:
+            return array(i, b & 0x0f)
+        if b <= 0xbf:
+            return take(i, b & 0x1f).decode(), i + (b & 0x1f)
+        if b in (0xc0, 0xc2, 0xc3):
+            return {0xc0: None, 0xc2: False, 0xc3: True}[b], i
+        if b in SIZED:
+            width, kind = SIZED[b]
+            n = int.from_bytes(take(i, width), 'big')
+            i += width
+            if kind == 'bin':
+                return bytes(take(i, n)), i + n
+            if kind == 'str':
+                return take(i, n).decode(), i + n
+            return (array if kind == 'array' else mapping)(i, n)
+        if b in NUMBERS:
+            width = struct.calcsize(NUMBERS[b])
+            number = struct.unpack(NUMBERS[b], take(i, width))[0]
+            return (Float32(number) if b == 0xca else number), i + width
+        raise ValueError(f'unsupported MessagePack type 0x{b:02x}')
+
+    def array(i, n):
+        items = []
+        for _ in range(n):
+            item, i = value(i)
+            items.append(item)
+        return items, i
+
+    def mapping(i, n):
+        out = {}
+        for _ in range(n):
+            key, i = value(i)
+            if not isinstance(key, str):
+                raise ValueError(f'map key {key!r} is not a string')
+            out[key], i = value(i)
+        return out, i
+
+    decoded, end = value(0)
+    if end != len(data):
+        raise ValueError(f'{len(data) - end} bytes after the MessagePack value')
+    return decoded
+
+
+def hierarchy_labels(payloads, binary_dir):
+    """Returns, for each hierarchy ID field, the label of each ID: the kind and
+    resource of the end event that has it, and its parent's label."""
+    ends = {kind: {} for kind in HIERARCHY}
+    for payload in payloads:
+        for event in payload.get('events', []):
+            field = HIERARCHY.get(event.get('type'))
+            content = event.get('content', {})
+            if field and field in content:
+                ends[event['type']][content[field]] = content
+    def resource(content):
+        return normalize(content.get('resource'), binary_dir)
+    sessions = {i: ('session', resource(c)) for i, c in ends['test_session_end'].items()}
+    modules = {i: ('module', resource(c), sessions.get(c.get('test_session_id'), ('unresolved',)))
+               for i, c in ends['test_module_end'].items()}
+    suites = {i: ('suite', resource(c), modules.get(c.get('test_module_id'), ('unresolved',)))
+              for i, c in ends['test_suite_end'].items()}
+    return {'test_session_id': sessions, 'test_module_id': modules, 'test_suite_id': suites}
+
+
+def wire_content(payloads, binary_dir):
+    """Returns a count of the payloads' normalized events. Each carries its
+    envelope's version and the event-kind metadata that it inherits."""
+    labels = hierarchy_labels(payloads, binary_dir)
+    events = Counter()
+    for payload in payloads:
+        metadata = {}
+        for kind, values in payload.get('metadata', {}).items():
+            values = dict(values)
+            if 'runtime-id' in values:
+                runtime = values['runtime-id']
+                values['runtime-id'] = mark(runtime, 'runtime-id', isinstance(runtime, str) and UUID.fullmatch(runtime))
+            metadata[kind] = values
+        for event in payload.get('events', []):
+            content = dict(event.get('content', {}))
+            for field, known in labels.items():
+                if field in content:
+                    value = content[field]
+                    if integer(value, 1) and value in known:
+                        content[field] = Marker(('reference', known[value]))
+            span = content.get('span_id')
+            for field in ('span_id', 'parent_id'):
+                if field in content:
+                    content[field] = mark(content[field], 'id', integer(content[field], 1))
+            if 'trace_id' in content:
+                trace = content['trace_id']
+                content['trace_id'] = mark(trace, 'span_id' if trace == span else 'id', integer(trace, 1))
+            for field, minimum in (('start', 1), ('duration', 0)):
+                if field in content:
+                    content[field] = mark(content[field], field, integer(content[field], minimum))
+            if isinstance(content.get('meta'), dict) and '_dd.p.tid' in content['meta']:
+                tid = content['meta']['_dd.p.tid']
+                content['meta'] = dict(content['meta'], **{'_dd.p.tid': mark(tid, 'tid', isinstance(tid, str) and TID.fullmatch(tid))})
+            inherited = {kind: values for kind, values in metadata.items() if kind in ('*', event.get('type'))}
+            key = {'payload_version': payload.get('version'), 'metadata': inherited,
+                   'type': event.get('type'), 'version': event.get('version'), 'content': content}
+            events[json.dumps(canonical(normalize(key, binary_dir)))] += 1
+    return events
+
+
+def compare_wire(base, candidate):
+    """Returns whether two wire_content counts are equal, with examples of
+    events that only one of them holds."""
+    return {'identical': base == candidate, 'distinct_events': len(candidate),
+            'only_base': list((base - candidate).elements())[:3], 'only_candidate': list((candidate - base).elements())[:3]}
+
+
 def run_binary(args, out, fixture, variant, directory, verify):
     """Runs one test binary and returns its wall time, CPU seconds, peak RSS
     and the receiver's test-cycle traffic. verify decodes every payload."""
@@ -191,11 +396,13 @@ def run_binary(args, out, fixture, variant, directory, verify):
     events = None
     if verify:
         events = {}
-        for request in cycle:
-            for event in decode(args.decoder, receiver.bodies[request['file']]).get('events', []):
+        payloads = [unpack(receiver.bodies[request['file']]) for request in cycle]
+        for payload in payloads:
+            for event in payload.get('events', []):
                 events[event['type']] = events.get(event['type'], 0) + 1
         if events.get('test') != args.tests * args.count:
             raise SystemExit(f'{variant}: {events.get("test")} test events arrived, want {args.tests * args.count}')
+        args.wire[variant] = wire_content(payloads, str(out / variant))
     receiver.bodies.clear()  # Only requests.json is kept.
     receiver.close()
     return {'wall': round(usage['wall'], 4), 'cpu': round(usage['cpu'], 4), 'maxrss_kb': usage['maxrss_kb'],
@@ -317,6 +524,16 @@ def report(results):
               '| Binary | Objects per test | Bytes per test |', '| --- | --- | --- |']
     for variant in VARIANTS:
         lines.append(f"| {labels[variant]} | {allocs[variant]['objects_per_test']} | {allocs[variant]['bytes_per_test']} |")
+    wire = results['wire']
+    lines += ['', '## Payload content', '',
+              "Each event is compared with its envelope's version and the metadata that it inherits. IDs, "
+              "timestamps, `_dd.p.tid` and the runtime ID count by presence and type, hierarchy IDs by the "
+              "session, module or suite that they reference, and the binary's path is masked.", '',
+              f"Both trees' test-cycle payloads hold the same events: {wire['distinct_events']} distinct ones."
+              if wire['identical'] else "The trees' test-cycle payloads differ. Only the base has, for example:", '']
+    if not wire['identical']:
+        lines += [f'- `{item}`' for item in wire['only_base']] + ['', 'Only the candidate has:', '']
+        lines += [f'- `{item}`' for item in wire['only_candidate']] + ['']
     lines.append('')
     return '\n'.join(lines)
 
@@ -343,20 +560,23 @@ def main():
     parser.add_argument('--alloc-count', type=int, default=3)
     parser.add_argument('--benchtime', default='1s')
     parser.add_argument('--own-benchmarks', action='store_true')
+    parser.add_argument('--same-wire', action='store_true')
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
     args.base, args.candidate = args.base.resolve(), args.candidate.resolve()
     out = args.output.resolve()
     out.mkdir(parents=True)
-    args.decoder = out / 'decode'
-    run(['go', 'build', '-o', str(args.decoder), './scripts/testdata/runtime-benchmark/decode.go'], ROOT)
     fixture = build(args, out)
     results = {'base': describe(args.base), 'candidate': describe(args.candidate),
                'go': run(['go', 'version'], ROOT).strip(), 'cpu': cpu_model(), 'os': f'{platform.system()} {platform.release()}',
                'reps': args.reps, 'tests': args.tests, 'count': args.count, 'gomaxprocs': args.gomaxprocs,
                'benchtime': args.benchtime, 'own_benchmarks': args.own_benchmarks, 'alloc_count': args.alloc_count}
     results['microbenchmarks'] = microbenchmarks(args, out)
+    args.wire = {}
     results['test_binaries'] = test_binaries(args, out, fixture)
+    results['wire'] = compare_wire(args.wire['base'], args.wire['candidate'])
+    if args.same_wire and not results['wire']['identical']:
+        raise SystemExit('the payloads differ:\n' + json.dumps(results['wire'], indent=1))
     results['allocations'] = allocations(args, out, fixture)
     (out / 'results.json').write_text(json.dumps(results, indent=1, sort_keys=True) + '\n')
     (out / 'README.md').write_text(report(results))

@@ -503,15 +503,16 @@ func (s *Span) finish(tags map[string]any, options ...FinishOption) {
 	}
 }
 
-// metadataCapacity bounds the entries that newSpan adds: _dd.origin and
-// _dd.p.tid, the client's tags, env and version, and one per Tag option. A
-// test event's 27 options, 22 of them tags, then reserve a 32-slot map for its
-// 22 entries, instead of 64 slots when every option counted.
-func metadataCapacity(client *Client, options []StartSpanOption) int {
-	capacity := 2
-	for _, option := range options {
-		if option.tag {
-			capacity++
+// metadataCapacity bounds the entries that a span starts with: _dd.origin and
+// _dd.p.tid, the client's tags, env and version, one per Tag option in lists,
+// and tags more. A test event's 22 tags then reserve 25 entries for its 22.
+func metadataCapacity(client *Client, tags int, lists ...[]StartSpanOption) int {
+	capacity := 2 + tags
+	for _, options := range lists {
+		for _, option := range options {
+			if option.tag {
+				capacity++
+			}
 		}
 	}
 	if client != nil {
@@ -527,6 +528,16 @@ func metadataCapacity(client *Client, options []StartSpanOption) int {
 }
 
 func newSpan(client *Client, ctx context.Context, name string, options ...StartSpanOption) (*Span, context.Context) {
+	s, spanCtx := startSpan(client, ctx, name, metadataCapacity(client, 0, options))
+	for _, option := range options {
+		option.apply(s)
+	}
+	return s, spanCtx
+}
+
+// startSpan creates a span with the entries that every span starts with,
+// before its options.
+func startSpan(client *Client, ctx context.Context, name string, capacity int) (*Span, context.Context) {
 	identity, ok := propagation.FromContext(ctx)
 	parent := uint64(0)
 	var err error
@@ -542,7 +553,7 @@ func newSpan(client *Client, ctx context.Context, name string, options ...StartS
 	if ctx == nil {
 		panic("cannot create context from nil parent") // As context.WithValue.
 	}
-	s := &Span{client: client, identity: identity, event: ciEvent{Content: eventContent{Name: name, Resource: name, Start: time.Now().UnixNano(), SpanID: identity.SpanID, TraceID: binary.BigEndian.Uint64(identity.TraceID[8:]), ParentID: parent, Meta: metaSet{newEntrySet[string](metadataCapacity(client, options))}}}}
+	s := &Span{client: client, identity: identity, event: ciEvent{Content: eventContent{Name: name, Resource: name, Start: time.Now().UnixNano(), SpanID: identity.SpanID, TraceID: binary.BigEndian.Uint64(identity.TraceID[8:]), ParentID: parent, Meta: metaSet{newEntrySet[string](capacity)}}}}
 	if client != nil {
 		s.event.Content.Service = client.service
 		for k, v := range client.tags {
@@ -557,9 +568,6 @@ func newSpan(client *Client, ctx context.Context, name string, options ...StartS
 	}
 	s.event.Content.Meta.set("_dd.origin", "ciapp-test")
 	s.event.Content.Meta.set("_dd.p.tid", hex.EncodeToString(identity.TraceID[:8]))
-	for _, option := range options {
-		option.apply(s)
-	}
 	// A carrier boxes nothing, unlike context.WithValue. It is not part of the
 	// span, so a context kept after the span finishes does not retain its tags.
 	return s, &propctx.Carrier[propagation.Context]{Context: ctx, Carried: identity}

@@ -1,5 +1,6 @@
 import os
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,160 @@ PASS
         self.assertIn("func TestEmpty00000(t *testing.T) {}\n", source)
         self.assertIn("func TestEmpty00001(t *testing.T) {}\n", source)
         self.assertEqual(2, source.count("func Test"))
+
+
+class WireTests(unittest.TestCase):
+    def payload(self, binary, ids, meta=None, metadata=None, version=1, test=None):
+        """A payload with a suite and a test of that suite; ids offsets the IDs."""
+        test_content = {"span_id": 10 + ids, "trace_id": 10 + ids, "start": 5 + ids, "duration": ids, "test_suite_id": 20 + ids,
+                        "name": "test", "resource": "suite.T", "meta": dict(meta or {"k": "v"}, **{"_dd.p.tid": "%016x" % ids}),
+                        "metrics": {"m": 1}}
+        test_content.update(test or {})
+        return {"version": version,
+                "metadata": metadata or {"*": {"runtime-id": "%08x-0000-4000-8000-%012x" % (ids, ids), "language": "go"},
+                                         "test": {"git.branch": "main", "cmd": binary + "/fixture.test"}},
+                "events": [{"type": "test_suite_end", "version": 1, "content": {"test_suite_id": 20 + ids, "resource": "suite", "start": 3 + ids, "duration": 1}},
+                           {"type": "test", "version": 2, "content": test_content}]}
+
+    def compare(self, base, candidate):
+        return benchmark.compare_wire(benchmark.wire_content(base, "/out/base"), benchmark.wire_content(candidate, "/out/candidate"))
+
+    def test_runs_differ_only_in_what_varies(self):
+        self.assertTrue(self.compare([self.payload("/out/base", 1)], [self.payload("/out/candidate", 2)])["identical"])
+
+    def test_a_changed_tag_differs(self):
+        result = self.compare([self.payload("/out/base", 1)], [self.payload("/out/candidate", 1, meta={"k": "other"})])
+        self.assertFalse(result["identical"])
+        self.assertIn('["k", ["str", "v"]]', result["only_base"][0])
+        self.assertIn('["k", ["str", "other"]]', result["only_candidate"][0])
+
+    def test_a_missing_event_differs(self):
+        one = self.payload("/out/base", 1)
+        two = dict(one, events=one["events"] + one["events"][1:])
+        self.assertFalse(self.compare([one], [two])["identical"])
+
+    def test_metadata_counts_for_each_payload(self):
+        # The second payload's events lose an inherited tag, while the first
+        # payload still holds it.
+        base = [self.payload("/out/base", 1), self.payload("/out/base", 2)]
+        bare = {"*": {"runtime-id": "x", "language": "go"}, "test": {"cmd": "/out/candidate/fixture.test"}}
+        candidate = [self.payload("/out/candidate", 1), self.payload("/out/candidate", 2, metadata=bare)]
+        self.assertFalse(self.compare(base, candidate)["identical"])
+
+    def test_structure_counts(self):
+        for name, candidate in {
+            "missing identity": self.payload("/out/candidate", 1, test={"span_id": None}),
+            "trace other than the span": self.payload("/out/candidate", 1, test={"trace_id": 99}),
+            "broken suite reference": self.payload("/out/candidate", 1, test={"test_suite_id": 999}),
+            "duration of another type": self.payload("/out/candidate", 1, test={"duration": "1"}),
+            "envelope version": self.payload("/out/candidate", 1, version=2),
+            "integer _dd.p.tid": self.payload("/out/candidate", 1, test={"meta": {"k": "v", "_dd.p.tid": 1234567890123456}}),
+            "string that reads like a marker": self.payload("/out/candidate", 1, test={"duration": {"marker": "duration"}}),
+        }.items():
+            with self.subTest(name):
+                self.assertFalse(self.compare([self.payload("/out/base", 1)], [candidate])["identical"])
+        missing = self.payload("/out/candidate", 1)
+        del missing["events"][1]["content"]["start"]
+        self.assertFalse(self.compare([self.payload("/out/base", 1)], [missing])["identical"])
+
+
+class HierarchyTests(unittest.TestCase):
+    def payload(self, moved):
+        """Two modules, each with a suite named shared_test.go; moved points a
+        test of module A at module B's suite."""
+        def end(kind, fields, resource):
+            return {"type": kind, "version": 1, "content": dict(fields, resource=resource, start=1, duration=1)}
+        events = [end("test_session_end", {"test_session_id": 1}, "session"),
+                  end("test_module_end", {"test_module_id": 10, "test_session_id": 1}, "a"),
+                  end("test_module_end", {"test_module_id": 20, "test_session_id": 1}, "b"),
+                  end("test_suite_end", {"test_suite_id": 100, "test_module_id": 10, "test_session_id": 1}, "shared_test.go"),
+                  end("test_suite_end", {"test_suite_id": 200, "test_module_id": 20, "test_session_id": 1}, "shared_test.go"),
+                  {"type": "test", "version": 2, "content": {"span_id": 5, "trace_id": 5, "start": 1, "duration": 1, "resource": "T",
+                                                             "test_suite_id": 200 if moved else 100, "test_module_id": 10, "test_session_id": 1}}]
+        return [{"version": 1, "metadata": {}, "events": events}]
+
+    def test_resources_cannot_forge_ancestry(self):
+        # A suite "x@module:b" of module "a" and a suite "x" of module "b@module:a".
+        def payload(suite):
+            events = [{"type": "test_session_end", "version": 1, "content": {"test_session_id": 1, "resource": "s", "start": 1, "duration": 1}},
+                      {"type": "test_module_end", "version": 1, "content": {"test_module_id": 10, "test_session_id": 1, "resource": "a", "start": 1, "duration": 1}},
+                      {"type": "test_module_end", "version": 1, "content": {"test_module_id": 20, "test_session_id": 1, "resource": "b@module:a", "start": 1, "duration": 1}},
+                      {"type": "test_suite_end", "version": 1, "content": {"test_suite_id": 100, "test_module_id": 10, "resource": "x@module:b", "start": 1, "duration": 1}},
+                      {"type": "test_suite_end", "version": 1, "content": {"test_suite_id": 200, "test_module_id": 20, "resource": "x", "start": 1, "duration": 1}},
+                      {"type": "test", "version": 2, "content": {"span_id": 5, "trace_id": 5, "start": 1, "duration": 1, "test_suite_id": suite}}]
+            return [{"version": 1, "metadata": {}, "events": events}]
+        result = benchmark.compare_wire(benchmark.wire_content(payload(100), "/b"), benchmark.wire_content(payload(200), "/c"))
+        self.assertFalse(result["identical"])
+
+    def test_suites_of_the_same_name_in_other_modules_differ(self):
+        result = benchmark.compare_wire(benchmark.wire_content(self.payload(False), "/b"), benchmark.wire_content(self.payload(True), "/c"))
+        self.assertFalse(result["identical"])
+        self.assertTrue(benchmark.compare_wire(benchmark.wire_content(self.payload(False), "/b"), benchmark.wire_content(self.payload(False), "/c"))["identical"])
+
+
+def pack(value):
+    """Encodes value as MessagePack: ints, floats (64-bit), str, bytes, bool,
+    None, lists and dicts with string keys."""
+    if value is None or isinstance(value, bool):
+        return bytes([{None: 0xc0, False: 0xc2, True: 0xc3}[value]])
+    if isinstance(value, int):
+        return bytes([value]) if 0 <= value <= 0x7f else b"\xd3" + struct.pack(">q", value)
+    if isinstance(value, float):
+        return b"\xcb" + struct.pack(">d", value)
+    if isinstance(value, str):
+        data = value.encode()
+        return b"\xda" + struct.pack(">H", len(data)) + data
+    if isinstance(value, bytes):
+        return b"\xc5" + struct.pack(">H", len(value)) + value
+    if isinstance(value, list):
+        return b"\xdc" + struct.pack(">H", len(value)) + b"".join(pack(v) for v in value)
+    return b"\xde" + struct.pack(">H", len(value)) + b"".join(pack(k) + pack(v) for k, v in value.items())
+
+
+class UnpackTests(unittest.TestCase):
+    def test_round_trip(self):
+        value = {"version": 1, "metadata": {"*": {"language": "go"}}, "events": [{"type": "test", "content": {
+            "span_id": 1 << 62, "start": -5, "error": 0, "ok": True, "none": None, "f": 0.5, "meta": {"k": "v"}}}]}
+        self.assertEqual(value, benchmark.unpack(pack(value)))
+
+    def test_types_that_json_merges_stay_apart(self):
+        self.assertEqual(1, benchmark.unpack(pack(1)))
+        self.assertIsInstance(benchmark.unpack(pack(1.0)), float)
+        self.assertEqual(b"ab", benchmark.unpack(pack(b"ab")))
+        self.assertIsInstance(benchmark.unpack(b"\xca" + struct.pack(">f", 1.5)), benchmark.Float32)
+        self.assertEqual(200, benchmark.unpack(b"\xcc\xc8"))
+        self.assertEqual(-1, benchmark.unpack(b"\xff"))
+
+    def test_malformed_input_fails(self):
+        for data in (b"\xda\x00\x05ab", pack(1) + b"\x00", b"\x81\x01\x02", b"\xc1"):
+            with self.subTest(data=data), self.assertRaises(ValueError):
+                benchmark.unpack(data)
+
+    def test_maps_cannot_stand_for_scalars_or_markers(self):
+        def payload(metric, meta_value, span):
+            return {"version": 1, "metadata": {}, "events": [{"type": "test", "version": 2, "content": {
+                "span_id": span, "metrics": {"m": metric}, "meta": {"k": meta_value}}}]}
+        def content(data):
+            return benchmark.wire_content([benchmark.unpack(data)], "/b")
+        float32 = b"\xca" + struct.pack(">f", 1.5)
+        base = pack(payload(0, "v", 7)).replace(pack({"m": 0}), b"\xde\x00\x01" + pack("m") + float32)
+        for name, candidate in {
+            "a map for a 32-bit float": pack(payload({"float32": 1.5}, "v", 7)),
+            "a map for binary data": pack(payload(0, {"bin": "6162"}, 7)),
+            "a map for a marker": pack(payload(0, "v", {"marker": "id"})),
+        }.items():
+            with self.subTest(name):
+                reference = base if name == "a map for a 32-bit float" else pack(payload(0, b"ab" if "binary" in name else "v", 7))
+                self.assertFalse(benchmark.compare_wire(content(reference), content(candidate))["identical"])
+
+    def test_wire_types_count(self):
+        def payload(duration, tid):
+            return pack({"version": 1, "metadata": {}, "events": [{"type": "test", "version": 2, "content": {
+                "span_id": 7, "trace_id": 7, "start": 1, "duration": duration, "meta": {"_dd.p.tid": tid}}}]})
+        base = benchmark.wire_content([benchmark.unpack(payload(1, "0123456789abcdef"))], "/b")
+        for name, candidate in {"float duration": payload(1.0, "0123456789abcdef"), "binary tid": payload(1, b"0123456789abcdef")}.items():
+            with self.subTest(name):
+                self.assertFalse(benchmark.compare_wire(base, benchmark.wire_content([benchmark.unpack(candidate)], "/c"))["identical"])
 
 
 class MeasureTests(unittest.TestCase):
@@ -103,6 +258,7 @@ class ReportTests(unittest.TestCase):
                             "candidate": {"objects_per_test": 48.8, "bytes_per_test": 5870}},
             "microbenchmarks": {"base": {"BenchmarkTestEventLifecycle": [(200, 30, 3), (200, 30, 3)]},
                                 "candidate": {"BenchmarkTestEventLifecycle": [(150, 20, 2), (150, 20, 2)]}},
+            "wire": {"identical": True, "distinct_events": 7, "only_base": [], "only_candidate": []},
             "test_binaries": {"native": [run(1.0, 1.0)], "base": [run(1.000004, 1.000008)], "candidate": [run(1.000002, 1.000004)]},
         }
         text = benchmark.report(results)
@@ -113,6 +269,11 @@ class ReportTests(unittest.TestCase):
         self.assertIn("The first base run delivered 4 `test`, 1 `test_suite_end` events.", text)
         self.assertIn("Each tree runs its own `performance_test.go`.", text)
         self.assertIn("| ddto, candidate | 48.8 | 5870 |", text)
+        self.assertIn("payloads hold the same events: 7 distinct ones.", text)
+        results["wire"] = {"identical": False, "distinct_events": 7, "only_base": ["a"], "only_candidate": ["b"]}
+        text = benchmark.report(results)
+        self.assertIn("Only the base has, for example:\n\n- `a`", text)
+        self.assertIn("Only the candidate has:\n\n- `b`", text)
 
     def test_pprof_total(self):
         self.assertEqual("123", benchmark.PPROF_TOTAL.search("Showing nodes accounting for 5, 4% of 123 total").group(1))

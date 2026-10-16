@@ -75,17 +75,17 @@ func createTest(suite *tslvTestSuite, name string, startTime time.Time) Test {
 	resourceName := suite.name + "." + name
 
 	// Test tags should include suite, module, and session tags so the backend can calculate the suite, module, and session fingerprint from the test.
-	testTags := append(slices.Clone(suite.tags), ciVisibilityTag(constants.TestName, name))
-	testOpts := append(fillCommonTags([]tracer.StartSpanOption{
-		tracer.ResourceName(resourceName),
-		tracer.SpanType(constants.SpanTypeTest),
-		tracer.StartTime(startTime),
-	}), testTags...)
-	if suite.service != "" {
-		testOpts = append(testOpts, tracer.Service(suite.service))
+	// StartTestSpan applies, in this order, what the test's option list held: ResourceName, SpanType and StartTime,
+	// fillCommonTags' constant and common options and CI metrics, the suite's tags, the test name and the service.
+	// It builds no list and no closure for each test, and its event encodes as the list's did. Tests share the clipped suite options.
+	testSpan := tracer.TestSpan{
+		Operation: operationName, Resource: resourceName, Type: constants.SpanTypeTest, Start: startTime,
+		Constant: constantOptions, Common: commonTagOptions(), Metrics: utils.GetCIMetrics(),
+		Suite: slices.Clip(suite.tags), NameKey: constants.TestName, Name: truncateCIVisibilityMetaValue(name),
+		Service: suite.service,
 	}
 
-	span, ctx := tracer.StartSpanFromContext(context.Background(), operationName, testOpts...)
+	span, ctx := tracer.StartTestSpan(context.Background(), &testSpan)
 	if suite.module.session != nil {
 		setCIVisibilitySpanStringTag(span, constants.TestSessionIDTag, suite.module.session.sessionIDText)
 	}
@@ -99,7 +99,7 @@ func createTest(suite *tslvTestSuite, name string, startTime time.Time) Test {
 		name:   name,
 		ciVisibilityCommon: ciVisibilityCommon{
 			startTime: startTime,
-			tags:      testTags,
+			tags:      nil, // No event inherits a test's tags; its span reads the suite's.
 			span:      span,
 			ctx:       ctx,
 		},

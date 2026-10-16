@@ -178,3 +178,7 @@ var (
 	originOption     = ciVisibilityTag(constants.Origin, constants.CIAppTestOrigin)
 	manualKeepOption = ciVisibilityTag(ext.ManualKeep, true)
 )
+
+// constantOptions are the options that fillCommonTags puts before the common
+// ones; tests share them through tracer.TestSpan.
+var constantOptions = []tracer.StartSpanOption{originOption, manualKeepOption}

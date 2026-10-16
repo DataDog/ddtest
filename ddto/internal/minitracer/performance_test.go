@@ -108,10 +108,10 @@ var testEventCommonTags = map[string]string{
 }
 
 // BenchmarkTestEventLifecycle starts, tags, finishes and delivers events shaped
-// like an instrumented binary's test events: the integrations' 27 start options
-// in their order, the tags set while the test runs, then 22 metadata entries and
-// 3 metrics, with the CI tags in a shared snapshot. Run it with GOMAXPROCS=1 to
-// include delivery in ns/op.
+// like an instrumented binary's test events: started as createTest does, with
+// StartTestSpan and the options that the integrations share, then the tags set
+// while the test runs, 22 metadata entries and 3 metrics, with the CI tags in a
+// shared snapshot. Run it with GOMAXPROCS=1 to include delivery in ns/op.
 func BenchmarkTestEventLifecycle(b *testing.B) {
 	benchmarkTelemetry(b)
 	c, err := New(Config{Service: "project", Env: "ci", Metadata: map[string]map[string]string{"test": {"test_session.name": "go test ./..."}},
@@ -121,14 +121,18 @@ func BenchmarkTestEventLifecycle(b *testing.B) {
 	}
 	common := NewCommonTags(testEventCommonTags)
 	// The options that the integrations build once per process, session,
-	// module or suite. Module tags repeat three of the session's.
-	shared := []StartSpanOption{
-		Tag("_dd.origin", "ciapp-test"), Tag("manual.keep", true),
+	// module or suite, which StartTestSpan applies with each test's values, as
+	// createTest does. Module tags repeat three of the session's.
+	constant := []StartSpanOption{Tag("_dd.origin", "ciapp-test"), Tag("manual.keep", true)}
+	commonOptions := []StartSpanOption{
 		Tag("_dd.library_capabilities.auto_test_retries", "1"), Tag("_dd.library_capabilities.coverage_report_upload", "1"),
 		Tag("_dd.library_capabilities.early_flake_detection", "1"), Tag("_dd.library_capabilities.test_impact_analysis", "1"),
 		Tag("_dd.library_capabilities.test_management.attempt_to_fix", "5"), Tag("_dd.library_capabilities.test_management.disable", "1"),
 		Tag("_dd.library_capabilities.test_management.quarantine", "1"), Tag("_dd.test.is_user_provided_service", "true"),
-		common.Option(), Tag("_dd.host.vcpu_count", float64(32)),
+		common.Option(),
+	}
+	metrics := map[string]float64{"_dd.host.vcpu_count": 32}
+	suite := []StartSpanOption{
 		Tag("test.type", "test"), Tag("test.command", "go test ./..."), Tag("test.working_directory", "."),
 		Tag("test.framework", "golang.org/pkg/testing"), Tag("test.framework_version", "go1.27.0"),
 		Tag("test.type", "test"), Tag("test.module", "example.com/project"),
@@ -136,14 +140,11 @@ func BenchmarkTestEventLifecycle(b *testing.B) {
 		Tag("test.suite", "project_test.go"),
 	}
 	finishTags := map[string]any{"test.final_status": "pass"}
-	var options []StartSpanOption
 	test := func() *Span {
 		start := time.Now()
-		// The integrations build each test's option slice.
-		options = append(make([]StartSpanOption, 0, 27), ResourceName("project_test.go.TestProject"), SpanType("test"), StartTime(start))
-		options = append(options, shared...)
-		options = append(options, Tag("test.name", "TestProject"), Service("project"))
-		s, _ := c.StartSpan(context.Background(), "golang.org/pkg/testing.test", options...)
+		s, _ := newTestSpan(c, context.Background(), &TestSpan{Operation: "golang.org/pkg/testing.test", Resource: "project_test.go.TestProject",
+			Type: "test", Start: start, Constant: constant, Common: commonOptions, Metrics: metrics, Suite: suite,
+			NameKey: "test.name", Name: "TestProject", Service: "project"})
 		s.SetTag("test_session_id", "8160361045226661673")
 		s.SetTag("test_module_id", "9051586845277556044")
 		s.SetTag("test_suite_id", "7700980063684605712")
@@ -154,8 +155,8 @@ func BenchmarkTestEventLifecycle(b *testing.B) {
 		s.FinishWithTags(finishTags, FinishTime(start))
 		return s
 	}
-	if s := test(); len(options) != 27 || s.event.Content.Meta.len() != 22 || s.event.Content.Metrics.len() != 3 {
-		b.Fatalf("event shape: %d options, %d metadata entries, %d metrics", len(options), s.event.Content.Meta.len(), s.event.Content.Metrics.len())
+	if s := test(); s.event.Content.Meta.len() != 22 || s.event.Content.Metrics.len() != 3 {
+		b.Fatalf("event shape: %d metadata entries, %d metrics", s.event.Content.Meta.len(), s.event.Content.Metrics.len())
 	}
 	b.ReportAllocs()
 	b.ResetTimer()

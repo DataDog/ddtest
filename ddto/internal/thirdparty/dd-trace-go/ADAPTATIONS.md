@@ -1704,10 +1704,20 @@ of them without changing any event:
   above 255, to `any` allocates; these setters take typed values, with
   `SetTag`'s semantics. Each call replaces the line of the original call, so no
   line moves.
+- `createTest` starts its span with `tracer.StartTestSpan` instead of building
+  an option list for each test. `StartTestSpan` takes the per-test values
+  (resource, type, start, test name and service) and the shared lists:
+  `constantOptions` (origin and manual keep, at the end of
+  `manual_api_common.go`), `commonTagOptions()`, the CI metrics and the suite's
+  tags, which `slices.Clip` marks as shared. It applies them in the order of the
+  former list, so the event is the same. A test's `tags` field stays nil: no
+  event inherits it. The new lines replace the list's lines one for one, so no
+  line moves, and the `context` and `slices` imports keep their uses.
 
 CI string snapshots use the revision/escaped-map contract below; numeric CI
 metrics remain fresh per call. Checks: `TestTestifyLookupMatchesReflection`,
-`TestFindTestifyTestMatchesFinalElement`, `TestTypedSettersMatchSetTag` in Mini,
+`TestFindTestifyTestMatchesFinalElement`, `TestTypedSettersMatchSetTag` and
+`TestStartTestSpanEncodesAsOptions` in Mini,
 Testify and native parity. When
 syncing, keep new per-test debug logs guarded without moving any line that can
 appear in an error stack, and re-measure allocations per test with a

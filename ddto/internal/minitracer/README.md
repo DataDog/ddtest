@@ -11,6 +11,7 @@ Its original Apache-2.0 license and notices are retained there.
 | `batch.go` | Event queue, bounded payloads, byte accounting, serialization, flush/close and error state |
 | `runtime.go` | Environment configuration and the process-wide client used by testing hooks |
 | `span.go` | The span's event, mutable until Finish seals it in place, its CI identity and its context |
+| `test_span.go` | Test events started from shared option lists and per-test values, without an option list for each test |
 | `entries.go` | Metadata and metric sets: slices up to 32 entries, maps beyond, encoded as msgpack maps |
 | `common_tags.go` | Immutable CI strings, effective byte accounting and event-kind metadata projection |
 | `events.go` | CI-only wire schema; generated serialization lives in `events_msgp.go` |

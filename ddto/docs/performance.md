@@ -189,6 +189,7 @@ invocation.
 | Events sealed in their span | Metadata and metric snapshots, and a copy of the event, on `Finish` | Setters must never change a finished span's event; getters read only fields that sealing leaves unchanged |
 | Small metadata and metric sets | Four allocations for the map of a test event's 22 entries | Up to 32 entries in a slice, searched linearly; a larger set switches to a map, so many tags cost no quadratic time; `omitzero` keeps an absent set off the wire |
 | One allocation for the span's context | A context and a boxed identity for each span | propagation's key lives in `internal/propctx`; the carrier answers it with a pointer, and `FromContext` reads both forms; other keys and cancellation go to its parent; it is not part of the span, so a kept context retains no tags |
+| Test events without option lists | About ten allocations for each test: a new option list, a closure for each of its values and a boxed test name | `StartTestSpan` applies the shared option lists in place and sets each test's values directly, in the order that the option list had: `TestStartTestSpanEncodesAsOptions` checks that the events encode to the same bytes |
 | Typed tag setters | An interface conversion for each tag value that is not a constant | `SetStringTag` and `SetMetric` keep `SetTag`'s semantics; the SDK port's call sites keep their lines |
 | Shared CI tag snapshots and cached options | Per-span closures, common map entries and repeated wire strings | Preserve late updates, getters, option precedence, numeric overrides, child spans and Bazel filtering |
 | Metadata capacity from `Tag` options | Repeated growth while applying common tags, and room for options that add no entry | Count every `Tag` option and the entries that `newSpan` adds itself; options that set fields or shared defaults reserve nothing |
@@ -254,8 +255,8 @@ boundaries.
 `newSpan` reserves a metadata entry for each `Tag` option, and for the entries
 it adds itself: `_dd.origin`, `_dd.p.tid` and the client's tags, `env` and
 `version`. Options that set fields, timestamps or the shared CI snapshot reserve
-nothing. A test event of an instrumented binary has 27 start options, 22 of them
-tags, and ends with 22 entries. With `DD_ENV` set, its estimate of 25 reserves
+nothing. A test event of an instrumented binary starts with the equivalent of 27
+options, 22 of them tags, and ends with 22 entries. With `DD_ENV` set, its estimate of 25 reserves
 a slice of 25 entries, 800 bytes. Sets of up to 32 entries are slices, so an
 estimate above 32 starts a map instead, and a slice that grows beyond 32
 entries switches to one. When the metadata was a map, the earlier estimate of
@@ -351,9 +352,9 @@ raw samples with a specific optimization experiment; the repository's retained
 ## Profiling the native event path
 
 `BenchmarkTestEventLifecycle` reproduces a test event of an instrumented
-binary: the integrations' 27 start options in their order, the tags set while
-the test runs, then 22 metadata entries and 3 metrics, with the CI tags in a
-shared snapshot. `BenchmarkEventLifecycle` creates simpler events with twelve
+binary: started as `createTest` does, with `StartTestSpan` and the options that
+the integrations share, then the tags set while the test runs, 22 metadata
+entries and 3 metrics, with the CI tags in a shared snapshot. `BenchmarkEventLifecycle` creates simpler events with twelve
 client tags and no snapshot, so it does not exercise the snapshot code. Both
 start a telemetry client, as a test binary does: before startup, every counter
 submission allocates an entry to replay. Their HTTP transport consumes
@@ -399,6 +400,13 @@ one allocation and the typed tag setters. They also count the objects and bytes 
 process allocates per test, from its start until testing writes the memory
 profile, before Mini's final delivery. With `--own-benchmarks`, each tree runs its own
 benchmarks, for a candidate whose benchmarks use internals that the base lacks.
+The [third results](results/minitracer-test-span-20261016-linux-go1.27/README.md)
+measure test events started without option lists. Every run also compares the
+two trees' payloads: each event with its envelope's version and the metadata
+that it inherits, counting IDs, timestamps and other values that differ between
+runs by presence and type, and hierarchy IDs by what they reference.
+`--same-wire` stops it when they differ: a change that must keep the wire
+contract runs with it.
 Alternate execution order and retain slow or failed samples. Record CPU,
 allocations, complete wall time, wire bytes and peak memory when they apply. A
 hot function's profile share does not predict the percentage that a change will

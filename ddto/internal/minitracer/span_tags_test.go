@@ -35,16 +35,16 @@ func TestMetadataCapacityCountsTagOptions(t *testing.T) {
 	common := NewCommonTags(map[string]string{"git.branch": "main"})
 	options := []StartSpanOption{ResourceName("resource"), SpanType("test"), StartTime(time.Now()), Service("service"), common.Option(),
 		Tag("_dd.host.vcpu_count", 32.0), Tag("test.name", "name"), Tag(ext.ManualKeep, true)}
-	if got := metadataCapacity(nil, options); got != 2+3 {
+	if got := metadataCapacity(nil, 0, options); got != 2+3 {
 		t.Fatalf("capacity %d, want _dd.origin, _dd.p.tid and 3 tags", got)
 	}
 	client := &Client{tags: map[string]string{"team": "a", "tier": "b"}, env: "ci", serviceVersion: "1.0"}
-	if got := metadataCapacity(client, options); got != 2+3+4 {
+	if got := metadataCapacity(client, 0, options); got != 2+3+4 {
 		t.Fatalf("capacity %d, want the client's 2 tags, env and version too", got)
 	}
 	text := []StartSpanOption{Tag("one", "1"), Tag("two", "2"), Tag("three", "3")}
 	span, _ := newSpan(nil, context.Background(), "test", text...)
-	if got, want := span.event.Content.Meta.len(), metadataCapacity(nil, text); got != want {
+	if got, want := span.event.Content.Meta.len(), metadataCapacity(nil, 0, text); got != want {
 		t.Fatalf("text-only span has %d entries, reserved %d", got, want)
 	}
 }
