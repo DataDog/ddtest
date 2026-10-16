@@ -46,6 +46,9 @@ def ids_conf(request): return request.param
 
 @pytest.fixture(name="conf_renamed")
 def _conf_renamed(): return 1
+
+@pytest.fixture(params=["u1", "u2"])
+def use_fixture(request): return request.param
 `)
 	writeFixture(t, root, "tests/test_cases.py", `import pytest
 import side_effect
@@ -97,6 +100,7 @@ def test_param_over_fixture(marked_local): pass
 
 CONST = [1, 2]
 ANN: list[int] = [3, 4]
+DICT_BASE = {"a": 1}
 
 @pytest.mark.parametrize("x", CONST)
 def test_constant(x): pass
@@ -201,10 +205,6 @@ class TestInit:
     def __init__(self): pass
     def test_not_collected(self): pass
 
-class TestOff:
-    __test__ = False
-    def test_disabled(self): pass
-
 class TestClassFixture:
     @pytest.fixture
     def cls_fixture(self): return 1
@@ -215,6 +215,41 @@ class TestClassFixture:
 
 @pytest.mark.parametrize("x", [])
 def test_empty(x): pass
+
+class TestOff:
+    __test__ = False
+    def test_base_off(self): pass
+
+class TestOn(TestOff):
+    __test__ = True
+    def test_on(self): pass
+
+class TestBaseNest:
+    class TestNested:
+        def test_nested(self): pass
+
+class TestDerivedNest(TestBaseNest):
+    def test_own_nest(self): pass
+
+@pytest.mark.usefixtures("use_fixture")
+def test_usefixtures(): pass
+
+@pytest.mark.parametrize("u", [1, 2])
+@pytest.mark.usefixtures("use_fixture")
+def test_usefixtures_and_param(u): pass
+
+class MarkedBase:
+    pytestmark = pytest.mark.skip
+    def test_hidden(self): pass
+
+class TestDerivedSkip(MarkedBase):
+    def test_derived_own(self): pass
+
+@pytest.mark.parametrize("d", [{**DICT_BASE, "b": 2}])
+def test_dict_unpack(d): pass
+
+@pytest.mark.parametrize("l", [[*[3, 4], 5]])
+def test_list_unpack(l): pass
 `)
 	t.Chdir(root)
 	t.Setenv("PYTEST_ADDOPTS", "--ddtrace -vv --tb=short -p no:cacheprovider")

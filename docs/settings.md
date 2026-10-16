@@ -53,12 +53,16 @@ The supported subset:
 
 - `test*` functions and `Test*` classes (or custom `python_functions`/
   `python_classes` patterns), including nested classes, `staticmethod` and
-  `classmethod` tests, varargs signatures, local (same-module) inheritance, and
+  `classmethod` tests, varargs signatures, local (same-module) inheritance of
+  methods, nested classes, and class-level `pytestmark` (resolved with MRO
+  semantics — a subclass `__test__ = True` overrides a disabled base), and
   pytest's own collection rules for classes with `__init__` or `__test__ = False`.
 - `@pytest.mark.parametrize` with literal lists/tuples of values or same-file
   module constants, multiple arguments, stacked decorators, literal `ids`, and
   `pytest.param` entries with literal IDs. Values can be strings, numbers,
-  booleans, `None`, lists, tuples, and dictionaries. Test names, duplicate IDs,
+  booleans, `None`, lists, tuples, and dictionaries — including literal
+  unpacking of same-file constants (`{**BASE, "k": 1}`, `[*BASE, 2]`). Test
+  names, duplicate IDs,
   and parameter serialization follow the tracer's identities, and skip-marked
   cases are omitted exactly like the discovery report.
 - Fixtures: built-in, plugin-provided (unknown names are trusted through the
@@ -66,8 +70,10 @@ The supported subset:
   Parametrized fixtures with literal values and `ids` expand with the tracer's
   identities, including `name=` renames, fixture shadowing (same-file over
   conftest, deeper conftest over shallower), and one module-level `autouse`
-  parametrized fixture. `conftest.py` files are parsed (never imported):
-  fixtures, constants, and imports are fine.
+  parametrized fixture. `usefixtures` marks at the function, class, and
+  `pytestmark` levels pull fixtures — including parametrized ones — into the
+  inventory with pytest's id ordering. `conftest.py` files are parsed (never
+  imported): fixtures, constants, and imports are fine.
 - Skip semantics: `@pytest.mark.skip` on functions, classes, and parametrize
   cases, and `@pytest.mark.skipif` with literal bool conditions, omit tests
   from the inventory exactly like the discovery report; `xfail` and other
@@ -96,7 +102,8 @@ is used; a warning explains the fallback, and successful static discovery logs
   parametrized fixtures in classes or conftest, multiple module-level autouse
   parametrized fixtures, and `pytest.param` chains that static discovery does
   not emulate.
-- Non-literal `skipif` conditions, `parametrize` inside `pytestmark`, custom
+- Non-literal `skipif` conditions, non-literal or keyword `usefixtures` names,
+  `parametrize` inside `pytestmark`, custom
   (non-`pytest.mark.*`) decorators, `property` test functions, metaclass
   keywords, cross-module inheritance, imported tests, wildcard imports,
   duplicate definitions, and executable module-level statements.

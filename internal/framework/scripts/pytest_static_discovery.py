@@ -260,11 +260,26 @@ def literal(node, constants):
     if isinstance(node, ast.Constant):
         value = node.value
     elif isinstance(node, (ast.List, ast.Tuple)):
-        elements = [literal(element, constants) for element in node.elts]
+        elements = []
+        for element in node.elts:
+            if isinstance(element, ast.Starred):
+                unpacked = literal(element.value, constants)
+                if not isinstance(unpacked, (list, tuple)):
+                    raise Unsupported("iterable unpacking requires a literal list or tuple")
+                elements.extend(unpacked)
+            else:
+                elements.append(literal(element, constants))
         value = tuple(elements) if isinstance(node, ast.Tuple) else elements
     elif isinstance(node, ast.Dict):
-        value = {literal(key, constants): literal(item, constants)
-                 for key, item in zip(node.keys, node.values) if key is not None}
+        value = {}
+        for key, item in zip(node.keys, node.values):
+            if key is None:
+                unpacked = literal(item, constants)
+                if not isinstance(unpacked, dict):
+                    raise Unsupported("dict unpacking requires a literal dict")
+                value.update(unpacked)
+            else:
+                value[literal(key, constants)] = literal(item, constants)
     elif isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
         try:
             operand = literal(node.operand, constants)
@@ -354,19 +369,46 @@ def mark_skips_tests(name, call, constants):
     return False  # xfail and every other mark keeps tests in the inventory.
 
 
-def pytestmark_skips(value, constants):
+def usefixtures_names(call, constants):
+    """Fixture names requested through a pytest.mark.usefixtures call."""
+    if call is None:
+        raise Unsupported("bare usefixtures mark is not supported")
+    if call.keywords:
+        raise Unsupported("usefixtures keyword arguments are not supported")
+    names = []
+    for argument in call.args:
+        name = literal(argument, constants)
+        if not isinstance(name, str):
+            raise Unsupported("usefixtures requires literal fixture names")
+        names.append(name)
+    return names
+
+
+def pytestmark_decision(value, constants):
+    """Returns (skips_tests, usefixtures_names) for a pytestmark value."""
+    skips = False
+    usefixtures = []
+
     def single(node):
+        nonlocal skips
         mark = mark_decorator(node)
         if mark is None:
             raise Unsupported("unsupported pytestmark value")
         name, call = mark
         if name == "parametrize":
             raise Unsupported("parametrize in pytestmark is not supported")
-        return bool(mark_skips_tests(name, call, constants))
+        if name == "usefixtures":
+            usefixtures.extend(usefixtures_names(call, constants))
+            return
+        if mark_skips_tests(name, call, constants):
+            skips = True
 
     if isinstance(value, (ast.List, ast.Tuple)):
-        return any([single(item) for item in value.elts])
-    return single(value)
+        for item in value.elts:
+            single(item)
+    else:
+        single(value)
+    return skips, usefixtures
 
 
 def validate_helper_decorator(decorator):
@@ -587,6 +629,7 @@ class ModuleScan:
         self.functions = []
         self.classes = {}
         self.pytestmark_skip = False
+        self.pytestmark_fixtures = []
 
 
 def scan_module(tree, is_conftest):
@@ -600,7 +643,9 @@ def scan_module(tree, is_conftest):
             if "pytestmark" in seen:
                 raise Unsupported("duplicate pytestmark assignment")
             seen.add("pytestmark")
-            scan.pytestmark_skip = pytestmark_skips(value, scan.constants) or scan.pytestmark_skip
+            skips, usefixtures = pytestmark_decision(value, scan.constants)
+            scan.pytestmark_skip = skips or scan.pytestmark_skip
+            scan.pytestmark_fixtures.extend(usefixtures)
             return
         if target.id == "pytest_plugins" or target.id.startswith(("test", "Test", "__")) or target.id in seen:
             raise Unsupported("assignment may customize collection")
@@ -655,16 +700,18 @@ def scan_module(tree, is_conftest):
 
 
 class ClassContext:
-    def __init__(self, node, prefix, collected):
+    def __init__(self, node):
         self.node = node
-        self.prefix = prefix
-        self.collected = collected
+        self.collectable = False
         self.skip = False
+        self.usefixtures = []
         self.fixtures = {}
         self.constants = {}
+        self.has_pytestmark = False
         self.pytestmark_skip = False
+        self.pytestmark_fixtures = []
         self.methods = []
-        self.nested = []
+        self.nested = {}
 
 
 def local_bases(node, module_classes):
@@ -676,34 +723,38 @@ def local_bases(node, module_classes):
     return node.bases
 
 
-def has_local_init(node, module_classes, seen=None):
+def class_mro(node, module_classes, seen=None):
+    """Approximate C3 linearization: self, then bases left-to-right. Diamond
+    orders can deviate from C3, which only affects exotic layouts."""
     seen = seen or set()
     if node.name in seen:
-        raise Unsupported("inheritance cycles are not supported")
+        return []
     seen = seen | {node.name}
-    if any(isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and stmt.name == "__init__"
-           for stmt in node.body):
-        return True
-    return any(has_local_init(module_classes[base.id], module_classes, seen)
-               for base in local_bases(node, module_classes))
+    result = [node]
+    for base in local_bases(node, module_classes):
+        for ancestor in class_mro(module_classes[base.id], module_classes, seen):
+            if not any(ancestor.name == existing.name for existing in result):
+                result.append(ancestor)
+    return result
+
+
+def has_local_init(node, module_classes):
+    # pytest skips collection of classes that define or inherit __init__.
+    return any(isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and stmt.name == "__init__"
+               for cls in class_mro(node, module_classes)
+               for stmt in cls.body)
 
 
 def test_disabled(node, module_classes):
-    stack, seen = [node], set()
-    while stack:
-        current = stack.pop()
-        if current.name in seen:
-            continue
-        seen.add(current.name)
-        for stmt in current.body:
+    # getattr semantics: the nearest __test__ assignment in MRO order wins.
+    for cls in class_mro(node, module_classes):
+        for stmt in cls.body:
             if isinstance(stmt, ast.Assign):
                 for target in stmt.targets:
                     if isinstance(target, ast.Name) and target.id == "__test__":
                         if not isinstance(stmt.value, ast.Constant) or not isinstance(stmt.value.value, bool):
                             raise Unsupported("__test__ must be a literal bool")
-                        if stmt.value.value is False:
-                            return True
-        stack.extend(module_classes[base.id] for base in local_bases(current, module_classes))
+                        return stmt.value.value is False
     return False
 
 
@@ -734,6 +785,22 @@ def inherited_class_values(node, module_classes, contexts, attribute, seen=None)
     return result
 
 
+def inherited_nested(node, module_classes, seen=None):
+    """Nested class definitions visible to a class: leftmost bases win and own
+    definitions override. pytest collects nested classes through inheritance."""
+    seen = seen or set()
+    if node.name in seen:
+        return {}
+    seen = seen | {node.name}
+    result = {}
+    for base in reversed(local_bases(node, module_classes)):
+        result.update(inherited_nested(module_classes[base.id], module_classes, seen))
+    for stmt in node.body:
+        if isinstance(stmt, ast.ClassDef):
+            result[stmt.name] = stmt
+    return result
+
+
 def method_kind(function):
     for decorator in function.decorator_list:
         if isinstance(decorator, ast.Name) and decorator.id == "property":
@@ -743,11 +810,12 @@ def method_kind(function):
     return "method"
 
 
-def build_class(node, prefix, collected, collector, scan, contexts):
+def build_class(node, collector, scan, contexts):
     """Recursively validate a class and record its collection context."""
     module_classes = scan.classes
-    collected = collected and name_matches(node.name, collector.class_patterns)
+    collectable = name_matches(node.name, collector.class_patterns)
     skip = False
+    usefixtures = []
     for decorator in node.decorator_list:
         mark = mark_decorator(decorator)
         if mark is None:
@@ -755,16 +823,22 @@ def build_class(node, prefix, collected, collector, scan, contexts):
         name, call = mark
         if name == "parametrize":
             raise Unsupported("parametrize marks on classes are not supported")
-        if collected and mark_skips_tests(name, call, scan.constants):
+        if not collectable:
+            continue  # marks on never-collected classes are inert
+        if name == "usefixtures":
+            usefixtures.extend(usefixtures_names(call, scan.constants))
+        elif mark_skips_tests(name, call, scan.constants):
             skip = True
-    if collected:
+    if collectable:
         local_bases(node, module_classes)
         # pytest skips collection of classes with __init__ or __test__ = False.
         if has_local_init(node, module_classes) or test_disabled(node, module_classes):
-            collected = False
+            collectable = False
 
-    context = ClassContext(node, prefix, collected)
+    context = ClassContext(node)
+    context.collectable = collectable
     context.skip = skip
+    context.usefixtures = usefixtures
     contexts[id(node)] = context
 
     seen = set()
@@ -774,7 +848,7 @@ def build_class(node, prefix, collected, collector, scan, contexts):
             if name in seen:
                 raise Unsupported("duplicate definitions in class")
             seen.add(name)
-            if collected and name.startswith(("pytest_", "__")):
+            if collectable and name.startswith(("pytest_", "__")):
                 raise Unsupported("unsupported method name in test class: " + name)
             fixture_decorators = [d for d in stmt.decorator_list if is_fixture_decorator(d)]
             if fixture_decorators:
@@ -795,9 +869,8 @@ def build_class(node, prefix, collected, collector, scan, contexts):
             if stmt.name in seen:
                 raise Unsupported("duplicate definitions in class")
             seen.add(stmt.name)
-            # pytest never descends into classes that are not collected.
-            context.nested.append(build_class(stmt, prefix + node.name + "::", context.collected,
-                                              collector, scan, contexts))
+            context.nested[stmt.name] = stmt
+            build_class(stmt, collector, scan, contexts)
         elif isinstance(stmt, ast.Assign):
             for target in stmt.targets:
                 if not isinstance(target, ast.Name):
@@ -806,8 +879,10 @@ def build_class(node, prefix, collected, collector, scan, contexts):
                     if "pytestmark" in seen:
                         raise Unsupported("duplicate pytestmark assignment")
                     seen.add("pytestmark")
-                    context.pytestmark_skip = pytestmark_skips(
-                        stmt.value, {**scan.constants, **context.constants}) or context.pytestmark_skip
+                    context.has_pytestmark = True
+                    skips, usef = pytestmark_decision(stmt.value, {**scan.constants, **context.constants})
+                    context.pytestmark_skip = context.pytestmark_skip or skips
+                    context.pytestmark_fixtures.extend(usef)
                     continue
                 if target.id == "pytest_plugins" or target.id.startswith(("test", "Test", "__")) or target.id in seen:
                     if target.id == "__test__":
@@ -841,10 +916,11 @@ def build_class(node, prefix, collected, collector, scan, contexts):
 
 # --- test generation ---------------------------------------------------------
 
-def function_tests(node, prefix, kind, fixtures, constants, autouse, collector):
+def function_tests(node, prefix, kind, fixtures, constants, autouse, collector, extra_names=None):
     parametrize_groups = []
     parametrized_names = set()
     skipped = False
+    function_usefixtures = []
     for decorator in reversed(node.decorator_list):
         mark = mark_decorator(decorator)
         if mark is None:
@@ -861,6 +937,8 @@ def function_tests(node, prefix, kind, fixtures, constants, autouse, collector):
             parametrized_names.update(argnames)
             # Fixture params come before parametrize parts in test ids.
             parametrize_groups.append([(case_id, case) for case_id, case, omitted in entries if not omitted])
+        elif name == "usefixtures":
+            function_usefixtures.extend(usefixtures_names(call, constants))
         elif mark_skips_tests(name, call, constants):
             skipped = True
     if skipped:
@@ -885,6 +963,19 @@ def function_tests(node, prefix, kind, fixtures, constants, autouse, collector):
     if autouse is not None and autouse[0] not in arg_names:
         covered.add(autouse[0])
         fixture_groups.append(autouse[1])
+    for name in function_usefixtures + list(extra_names or []):
+        # Fixtures requested through usefixtures marks expand like arguments;
+        # pytest orders their id parts closest-first, before argument parts.
+        if name in parametrized_names or name in covered or name in arg_names:
+            continue
+        spec = resolve(name)
+        if spec is None:
+            continue
+        if spec["poison"]:
+            raise Unsupported("test depends on a parametrized fixture chain")
+        if spec["expansion"] is not None:
+            covered.add(name)
+            fixture_groups.append([(case_id, {spec["name"]: value}) for case_id, value in spec["expansion"]])
     for name in arg_names:
         if name in parametrized_names:
             continue  # direct parametrization wins over same-named fixtures
@@ -929,8 +1020,8 @@ class StaticCollector:
 def module_tests(tree, collector):
     scan = scan_module(tree, is_conftest=False)
     contexts = {}
-    top_level = [build_class(node, "", True, collector, scan, contexts)
-                  for node in scan.classes.values()]
+    top_level = [build_class(node, collector, scan, contexts)
+                 for node in scan.classes.values()]
 
     # Class fixtures join module fixtures for poison analysis.
     all_specs = dict(scan.fixtures)
@@ -953,9 +1044,23 @@ def module_tests(tree, collector):
     if scan.pytestmark_skip:
         return
 
-    def emit_class(context):
-        if not context.collected or context.skip or context.pytestmark_skip:
+    def emit_class(context, prefix, inherited_usefixtures):
+        # Class pytestmark follows getattr/MRO semantics: the nearest class
+        # in the linearization that assigns pytestmark wins, and it applies to
+        # the whole collection subtree.
+        mark_fixtures = []
+        for cls in class_mro(context.node, scan.classes):
+            candidate = contexts[id(cls)]
+            if candidate.has_pytestmark:
+                if candidate.pytestmark_skip:
+                    return
+                mark_fixtures = candidate.pytestmark_fixtures
+                break
+        if not context.collectable or context.skip:
             return
+        # Fixture id parts are ordered closest-first: this class's pytestmark,
+        # then its decorators, then enclosing scopes.
+        extras = mark_fixtures + context.usefixtures + inherited_usefixtures
         fixtures = {**scan.fixtures,
                     **inherited_class_values(context.node, scan.classes, contexts, "fixtures")}
         constants = {**scan.constants,
@@ -964,23 +1069,27 @@ def module_tests(tree, collector):
         for name in sorted(methods):
             method = methods[name]
             if name_matches(name, collector.function_patterns):
-                yield from function_tests(method, context.prefix + context.node.name + "::",
-                                          method_kind(method), fixtures, constants, autouse, collector)
+                yield from function_tests(method, prefix + context.node.name + "::",
+                                          method_kind(method), fixtures, constants, autouse, collector, extras)
             else:
                 for decorator in method.decorator_list:
                     validate_helper_decorator(decorator)
-        for nested in context.nested:
-            yield from emit_class(nested)
+        # pytest collects nested classes through inheritance as well.
+        nested_definitions = inherited_nested(context.node, scan.classes)
+        for nested_name in sorted(nested_definitions):
+            nested_context = contexts[id(nested_definitions[nested_name])]
+            yield from emit_class(nested_context, prefix + context.node.name + "::", extras)
 
     for function in scan.functions:
         if name_matches(function.name, collector.function_patterns):
             kind = "static" if is_staticmethod(function) else "plain"
-            yield from function_tests(function, "", kind, scan.fixtures, scan.constants, autouse, collector)
+            yield from function_tests(function, "", kind, scan.fixtures, scan.constants, autouse, collector,
+                                      scan.pytestmark_fixtures)
         else:
             for decorator in function.decorator_list:
                 validate_helper_decorator(decorator)
     for context in top_level:
-        yield from emit_class(context)
+        yield from emit_class(context, "", scan.pytestmark_fixtures)
 
 
 def analyze_conftest(path, chain):
@@ -990,7 +1099,7 @@ def analyze_conftest(path, chain):
     contexts = {}
     collector = StaticCollector(chain, [], [])
     for node in scan.classes.values():
-        build_class(node, "", False, collector, scan, contexts)
+        build_class(node, collector, scan, contexts)
     for context in contexts.values():
         if context.fixtures:
             raise Unsupported("fixtures in conftest classes are not supported")

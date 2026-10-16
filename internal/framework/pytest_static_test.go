@@ -346,6 +346,113 @@ def test_thing(): pass
 `,
 			want: []testoptimization.Test{{Name: "check_thing"}},
 		},
+		{
+			name: "__test__ override",
+			source: `class TestOff:
+    __test__ = False
+    def test_base(self): pass
+
+class TestOn(TestOff):
+    __test__ = True
+    def test_on(self): pass
+`,
+			want: []testoptimization.Test{{Name: "TestOn::test_base"}, {Name: "TestOn::test_on"}},
+		},
+		{
+			name: "inherited nested classes",
+			source: `class TestBaseNest:
+    class TestNested:
+        def test_nested(self): pass
+
+class TestDerivedNest(TestBaseNest):
+    def test_own_nest(self): pass
+`,
+			want: []testoptimization.Test{
+				{Name: "TestBaseNest::TestNested::test_nested"},
+				{Name: "TestDerivedNest::test_own_nest"},
+				{Name: "TestDerivedNest::TestNested::test_nested"},
+			},
+		},
+		{
+			name: "usefixtures marks",
+			source: `import pytest
+@pytest.fixture(params=[1, 2])
+def backend(request): return request.param
+@pytest.fixture(params=["x", "y"])
+def arg_f(request): return request.param
+
+@pytest.mark.usefixtures("backend")
+def test_marked(): pass
+
+@pytest.mark.usefixtures("backend")
+def test_mark_and_arg(arg_f): pass
+`,
+			want: []testoptimization.Test{
+				{Name: "test_marked[1]", Parameters: `{"arguments": {"backend": "1"}, "metadata": {}}`},
+				{Name: "test_marked[2]", Parameters: `{"arguments": {"backend": "2"}, "metadata": {}}`},
+				{Name: "test_mark_and_arg[1-x]", Parameters: `{"arguments": {"arg_f": "'x'", "backend": "1"}, "metadata": {}}`},
+				{Name: "test_mark_and_arg[1-y]", Parameters: `{"arguments": {"arg_f": "'y'", "backend": "1"}, "metadata": {}}`},
+				{Name: "test_mark_and_arg[2-x]", Parameters: `{"arguments": {"arg_f": "'x'", "backend": "2"}, "metadata": {}}`},
+				{Name: "test_mark_and_arg[2-y]", Parameters: `{"arguments": {"arg_f": "'y'", "backend": "2"}, "metadata": {}}`},
+			},
+		},
+		{
+			name: "class pytestmark before decorators",
+			source: `import pytest
+@pytest.fixture(params=["d1", "d2"])
+def dec_f(request): return request.param
+@pytest.fixture(params=["p1", "p2"])
+def pm_f(request): return request.param
+
+@pytest.mark.usefixtures("dec_f")
+class TestBothMarks:
+    pytestmark = pytest.mark.usefixtures("pm_f")
+    def test_both(self): pass
+`,
+			want: []testoptimization.Test{
+				{Name: "TestBothMarks::test_both[p1-d1]", Parameters: `{"arguments": {"dec_f": "'d1'", "pm_f": "'p1'"}, "metadata": {}}`},
+				{Name: "TestBothMarks::test_both[p1-d2]", Parameters: `{"arguments": {"dec_f": "'d2'", "pm_f": "'p1'"}, "metadata": {}}`},
+				{Name: "TestBothMarks::test_both[p2-d1]", Parameters: `{"arguments": {"dec_f": "'d1'", "pm_f": "'p2'"}, "metadata": {}}`},
+				{Name: "TestBothMarks::test_both[p2-d2]", Parameters: `{"arguments": {"dec_f": "'d2'", "pm_f": "'p2'"}, "metadata": {}}`},
+			},
+		},
+		{
+			name:   "module pytestmark usefixtures",
+			source: "import pytest\npytestmark = pytest.mark.usefixtures(\"mark_f\")\n@pytest.fixture(params=[\"m1\", \"m2\"])\ndef mark_f(request): return request.param\n\ndef test_module_mark(): pass\n",
+			want: []testoptimization.Test{
+				{Name: "test_module_mark[m1]", Parameters: `{"arguments": {"mark_f": "'m1'"}, "metadata": {}}`},
+				{Name: "test_module_mark[m2]", Parameters: `{"arguments": {"mark_f": "'m2'"}, "metadata": {}}`},
+			},
+		},
+		{
+			name: "literal unpacking",
+			source: `import pytest
+BASE = {"a": 1}
+LIST_BASE = [1, 2]
+
+@pytest.mark.parametrize("x", [{**BASE, "b": 2}])
+def test_dict(x): pass
+
+@pytest.mark.parametrize("y", [[*LIST_BASE, 3]])
+def test_list(y): pass
+`,
+			want: []testoptimization.Test{
+				{Name: "test_dict[x0]", Parameters: `{"arguments": {"x": "{'a': 1, 'b': 2}"}, "metadata": {}}`},
+				{Name: "test_list[y0]", Parameters: `{"arguments": {"y": "[1, 2, 3]"}, "metadata": {}}`},
+			},
+		},
+		{
+			name: "inherited class pytestmark",
+			source: `import pytest
+class MarkedBase:
+    pytestmark = pytest.mark.skip
+    def test_hidden(self): pass
+
+class TestDerivedSkip(MarkedBase):
+    def test_own(self): pass
+`,
+			want: []testoptimization.Test{},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			pytest := staticPytestFixture(t, tt.source)
@@ -396,6 +503,9 @@ func TestPytestStaticFallback(t *testing.T) {
 		{"conftest hook", "", "def pytest_collection_modifyitems(items): pass\n", ""},
 		{"conftest autouse parametrized", "", "import pytest\n@pytest.fixture(params=[1], autouse=True)\ndef a(request): pass\n", ""},
 		{"python_modules config", "", "", "[pytest]\npython_modules = mymodule\n"},
+		{"usefixtures non-literal name", "import pytest\n@pytest.mark.usefixtures(backend)\ndef test_case(): pass\n", "", ""},
+		{"usefixtures kwargs", "import pytest\n@pytest.mark.usefixtures(fixture='backend')\ndef test_case(): pass\n", "", ""},
+		{"bare usefixtures", "import pytest\n@pytest.mark.usefixtures\ndef test_case(): pass\n", "", ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			pytest := staticPytestFixture(t, "def test_before_uncertainty(): pass\n"+tt.source)
