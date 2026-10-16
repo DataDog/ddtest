@@ -18,11 +18,13 @@ import (
 
 type configurationResult struct {
 	onboard.TestCommand
-	Status        string         `json:"status"`
-	Compatibility verdict        `json:"compatibility"`
-	Preflight     *jestPreflight `json:"preflight,omitempty"`
-	Error         string         `json:"error,omitempty"`
-	Preparation   []buildResult  `json:"preparation,omitempty"`
+	PairedExecution    bool           `json:"paired_execution"`
+	ExecutionAttempted bool           `json:"execution_attempted"`
+	Status             string         `json:"status"`
+	Compatibility      verdict        `json:"compatibility"`
+	Preflight          *jestPreflight `json:"preflight,omitempty"`
+	Error              string         `json:"error,omitempty"`
+	Preparation        []buildResult  `json:"preparation,omitempty"`
 }
 
 func setSingleConfigurationScope(root string, result *validationResult, scope onboard.ValidationScope) {
@@ -39,6 +41,8 @@ func setSingleConfigurationScope(root string, result *validationResult, scope on
 				item.Preflight = result.Preflight
 				item.Error = result.Error
 				item.Status = configurationStatus(*result)
+				item.PairedExecution = hasValidationPair(*result)
+				item.ExecutionAttempted = hasValidationExecution(*result)
 			}
 		}
 		result.Configurations = append(result.Configurations, item)
@@ -167,6 +171,8 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		execution, childErr := child.runPreparedConfiguration(ctx, output, &item)
 		prepareValidationResult(t.repositoryRoot, &execution)
 		item.Status = configurationStatus(execution)
+		item.PairedExecution = hasValidationPair(execution)
+		item.ExecutionAttempted = hasValidationExecution(execution)
 		if childErr != nil && (execution.Preflight == nil || t.framework.Name() == "cypress" && len(execution.Runs) == 0) {
 			item.Status = "blocked"
 		}
@@ -247,9 +253,11 @@ func labelConfigurationModel(model *reportModel, command string) {
 }
 
 func writeConfigurationHTML(root string, models []reportModel) error {
-	model := reportModel{NoTestEvents: true, Summary: fmt.Sprintf("%d configurations reported. See validation JSON for completeness, compatibility and feature verdicts.", len(models)), Artifacts: []reportArtifact{{Title: "Validation JSON", Href: validationFilename}}}
+	model := reportModel{Aggregated: true, NoTestEvents: true, Summary: fmt.Sprintf("%d configurations reported. See validation JSON for completeness, compatibility and feature verdicts.", len(models)), Artifacts: []reportArtifact{{Title: "Validation JSON", Href: validationFilename}}}
+	var counts []*executionCounts
 	var commands, outputs, failures []string
 	for index, part := range models {
+		counts = append(counts, part.ExecutionCounts)
 		if index == 0 {
 			model.Runtime = reportRuntime{Framework: part.Runtime.Framework, Tracer: part.Runtime.Tracer}
 			model.CoverageLevel = part.CoverageLevel
@@ -278,7 +286,16 @@ func writeConfigurationHTML(root string, models []reportModel) error {
 	model.Runtime.Command = strings.Join(commands, "\n")
 	model.Runtime.Output = strings.Join(outputs, "\n\n")
 	model.Runtime.Error = strings.Join(failures, "\n")
-	model.Facts = []reportFact{{Label: "Configurations reported", Value: fmt.Sprint(len(models))}, {Label: "Tests", Value: fmt.Sprint(len(model.Tests))}}
+	model.ExecutionCounts = combineExecutionCounts(counts)
+	model.Facts = []reportFact{{Label: "Configurations reported", Value: fmt.Sprint(len(models))}, {Label: "Reported test executions", Value: fmt.Sprint(len(model.Tests)), Tooltip: sourceIdentityScope}}
+	if model.ExecutionCounts != nil {
+		model.Facts[1].Value = fmt.Sprint(model.ExecutionCounts.TestExecutions)
+		identityFact := reportFact{Label: "Source-test identities", Value: "Unavailable", Tooltip: model.ExecutionCounts.Reason}
+		if model.ExecutionCounts.SourceTestIdentities != nil {
+			identityFact.Value, identityFact.Tooltip = fmt.Sprint(*model.ExecutionCounts.SourceTestIdentities), sourceIdentityScope
+		}
+		model.Facts = append(model.Facts, identityFact)
+	}
 	var content bytes.Buffer
 	if err := testdriveReport.Execute(&content, model); err != nil {
 		return err

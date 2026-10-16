@@ -175,9 +175,7 @@ func readCucumberResults(filename string, run *validationRun) {
 func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *Session, preload, name string, instrumented bool, scenario intake.Scenario, probePath, probeMode string) (run validationRun, runErr error) {
 	run.framework, run.root, run.Name, run.Instrumented, run.ProbeMode = "cucumber", t.repositoryRoot, name, instrumented, probeMode
 	directory := filepath.Join(session.Directory(), name)
-	temporary := filepath.Join(directory, "tmp")
-	run.temporaryRoot = temporary
-	if err := os.MkdirAll(temporary, 0700); err != nil {
+	if err := os.MkdirAll(directory, 0700); err != nil {
 		return run, err
 	}
 	server, err := t.startIntake(directory, scenario)
@@ -191,10 +189,10 @@ func (t *Testdrive) runCucumber(ctx context.Context, output io.Writer, session *
 		}
 	}()
 	env := t.environment(preload, server.URL(), session.ID()+" "+name)
-	configureScenarioEnvironment(env, scenario.Feature)
-	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
-		env[key] = temporary
+	if err := run.ownTemporaryDirectory(directory, env); err != nil {
+		return run, err
 	}
+	configureScenarioEnvironment(env, scenario.Feature)
 	env["CUCUMBER_PUBLISH_ENABLED"] = "false"
 	if !instrumented {
 		env["NODE_OPTIONS"] = stripDatadogNodeOptions(os.Getenv("NODE_OPTIONS"))

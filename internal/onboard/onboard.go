@@ -29,6 +29,9 @@ const githubAction = "datadog/test-visibility-github-action"
 //go:embed instructions/github.md
 var gitHubInstructions string
 
+//go:embed instructions/scratch-cleanup.md
+var scratchCleanupInstructions string
+
 //go:embed instructions/vitest.md
 var vitestInstructions string
 
@@ -82,6 +85,7 @@ func Run(output io.Writer) error {
 	for _, workflow := range workflows {
 		_, _ = fmt.Fprintf(output, "  - %s\n", workflow)
 	}
+	_, _ = fmt.Fprintln(output, "\n"+strings.TrimSpace(scratchCleanupInstructions))
 	if name == "jest" || name == "vitest" || name == "playwright" || name == "mocha" || name == "cucumber" || name == "webdriverio" {
 		scope, err := DiscoverValidationScope(repositoryRoot, name)
 		if err != nil {

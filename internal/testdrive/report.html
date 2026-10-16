@@ -1336,7 +1336,7 @@ THE SOFTWARE.
         aria-label="Run details"
       >
         <h2>Run details</h2>
-        <p class="run-totals">{{ len .Tests }} {{ plural (len .Tests) "test" "tests" }} · {{ len .Suites }} {{ plural (len .Suites) "suite" "suites" }}</p>
+        <p class="run-totals">{{ if .ExecutionCounts }}{{ .ExecutionCounts.TestExecutions }} reported test executions{{ if .ExecutionCounts.SourceTestIdentities }} · {{ .ExecutionCounts.SourceTestIdentities }} source-test identities{{ end }}{{ else }}{{ len .Tests }} {{ if .Aggregated }}reported test executions{{ else }}{{ plural (len .Tests) "test" "tests" }}{{ end }}{{ end }} · {{ len .Suites }} {{ plural (len .Suites) "suite" "suites" }}</p>
         {{ if .NoTestEvents }}<p class="no-test-events">No test events received.</p>{{ end }}
         <dl class="facts">
           {{ range $index, $fact := .Facts }}
@@ -1370,7 +1370,7 @@ THE SOFTWARE.
           aria-controls="tests"
           data-tab="tests"
         >
-          Tests <span class="tab-count">{{ len .Tests }}</span></button
+          {{ if .Aggregated }}Test executions{{ else }}Tests{{ end }} <span class="tab-count">{{ len .Tests }}</span></button
         ><button
           id="tab-suites"
           class="tab"

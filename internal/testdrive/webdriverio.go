@@ -28,31 +28,6 @@ func browserSkippingReason(name string) string {
 	return playwrightSkippingReason
 }
 
-// A focused command has its own verdict; it must never upgrade the repository
-// onboarding verdict or hide other untested consumers.
-func selectedWebdriverIOValidation(result validationResult) verdict {
-	check := verdict{Status: "INCOMPLETE", Reason: "The selected command still needs a current paired run, all five supported features, CI configuration checks and cleanup. Other configurations remain outside this command's validation."}
-	if result.CheckOnly {
-		check.Status = "NOT EXERCISED"
-		return check
-	}
-	if !hasPairedExecution(result) || configurationStatus(result) != "passed" || !result.ChecksPassed || result.Cleanup == nil || result.Cleanup.Status != "passed" || !result.HTMLReportCurrent {
-		return check
-	}
-	for _, name := range jestFeatures {
-		found := false
-		for _, feature := range result.Features {
-			found = found || feature.Name == name && featureSatisfied("webdriverio", feature)
-		}
-		if !found {
-			return check
-		}
-	}
-	check.Status = "PASSED"
-	check.Reason = "The selected command's paired comparison, five supported features, static CI checks and cleanup passed. This does not validate the other repository configurations or execute CI."
-	return check
-}
-
 func (t *Testdrive) inspectWebdriverIO(ctx context.Context, directory string) (framework.WebdriverIOConfig, error) {
 	var config framework.WebdriverIOConfig
 	observer, err := framework.PrepareWebdriverIOObserver(directory)
@@ -225,9 +200,7 @@ func readWebdriverIOResults(directory string, run *validationRun) {
 func (t *Testdrive) runWebdriverIO(ctx context.Context, output io.Writer, session *Session, preload, name string, instrumented bool, scenario intake.Scenario, probePath, probeMode string) (run validationRun, runErr error) {
 	run.Name, run.Instrumented, run.ProbeMode, run.root, run.framework = name, instrumented, probeMode, t.repositoryRoot, "webdriverio"
 	directory := filepath.Join(session.Directory(), name)
-	temporary := filepath.Join(directory, "tmp")
-	run.temporaryRoot = temporary
-	if err := os.MkdirAll(temporary, 0700); err != nil {
+	if err := os.MkdirAll(directory, 0700); err != nil {
 		return run, err
 	}
 	observer, err := framework.PrepareWebdriverIOObserver(directory)
@@ -249,6 +222,9 @@ func (t *Testdrive) runWebdriverIO(ctx context.Context, output io.Writer, sessio
 		}
 	}()
 	env := t.environment(preload, server.URL(), session.ID()+" "+name)
+	if err := run.ownTemporaryDirectory(directory, env); err != nil {
+		return run, err
+	}
 	configureScenarioEnvironment(env, scenario.Feature)
 	if !instrumented {
 		env["NODE_OPTIONS"] = stripDatadogNodeOptions(os.Getenv("NODE_OPTIONS"))
@@ -267,9 +243,7 @@ func (t *Testdrive) runWebdriverIO(ctx context.Context, output io.Writer, sessio
 	}
 	env["DDTEST_WDIO_RESULTS"] = filepath.Join(directory, "native")
 	env["DDTEST_WDIO_METADATA"] = filepath.Join(directory, "metadata.json")
-	for _, key := range []string{"TMPDIR", "TMP", "TEMP", "PUPPETEER_CACHE_DIR"} {
-		env[key] = temporary
-	}
+	env["PUPPETEER_CACHE_DIR"] = run.temporaryRoot
 	if probePath != "" {
 		env["DDTEST_WDIO_PROBE"], env["DDTEST_PROBE_MODE"], env["DDTEST_PROBE_COUNTER"] = probePath, probeMode, filepath.Join(directory, "body.txt")
 	}

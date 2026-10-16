@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import time
+from urllib.parse import unquote
 
 
 EXCERPT_LIMIT = 4000
@@ -136,15 +137,119 @@ CLI_STARTUP_TIMEOUT = 15
 
 
 def reporting_verdict(text, report):
-    """Flag explicit upgrades; retain the original response for human review."""
-    status = report.get("summary", {}).get("status")
+    """Compare labeled facts, not prose quality or byte-identical handoff text."""
+    report = report if isinstance(report, dict) else {}
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
     plain = re.sub(r"[*_`#]", "", text).lower()
-    claims_complete = re.search(r"\bonboarding\s+(?:(?:is|was|has been)\s+)?(?:done|complete|completed|successful)\b", plain)
-    if status == "INCOMPLETE" and claims_complete:
-        return {"status": "fail", "reason": "Agent claimed completed onboarding despite INCOMPLETE validation."}
-    if status and status.lower() not in plain:
-        return {"status": "review", "reason": "Final response does not state the report verdict."}
-    return {"status": "review", "reason": "No explicit verdict upgrade detected; independently review counts, causes, and caveats."}
+    checks, differences, missing = [], [], []
+
+    def check(label, expected, found):
+        if found is None:
+            missing.append(label)
+        elif found != expected:
+            differences.append(f"{label}: stated {found}, report says {expected}.")
+        else:
+            checks.append(label)
+
+    def groups(pattern, value=plain):
+        match = re.search(pattern, value)
+        return match.groups() if match else None
+
+    def numbers(pattern, value=plain):
+        found = groups(pattern, value)
+        return tuple(int(item.replace(",", "")) for item in found) if found else None
+
+    status = summary.get("status")
+    if status == "INCOMPLETE" and re.search(r"\bonboarding(?:\s+validation)?\s*(?::|is|was|has been)?\s*(?:complete locally|complete|completed|done|successful)\b", plain):
+        differences.append("Agent claimed completed onboarding despite INCOMPLETE validation.")
+    stated = groups(r"\bonboarding(?:\s+validation)?\s*(?::|is|was|has been)?\s*(incomplete|complete locally|complete|completed|done|successful)\b")
+    if status:
+        value = stated[0].upper() if stated else None
+        if value in ("COMPLETE", "COMPLETED", "DONE", "SUCCESSFUL"):
+            value = "COMPLETE LOCALLY"
+        check("onboarding verdict", status, value)
+    else:
+        missing.append("JSON onboarding verdict")
+    for key, label in (("selected_validation", "selected"), ("executed_validation", "executed")):
+        expected = summary.get(key)
+        if not isinstance(expected, dict) or "status" not in expected:
+            continue
+        found = groups(r"\b" + label + r"[^:\n]*\b(?:testdrive|validations?):\s*(passed|incomplete|not exercised|failed)\b")
+        check(label + " verdict", expected["status"], found[0].upper() if found else None)
+        if key == "executed_validation" and "passed" in expected and "configurations" in expected:
+            found = numbers(r"\bexecuted[^:\n]*validations?:\s*[\w ]+\s*\((\d+)\s*/\s*(\d+)\)")
+            check("executed configuration ratio", (expected["passed"], expected["configurations"]), found)
+    coverage = summary.get("configuration_coverage")
+    coverage_line = groups(r"(?m)^configurations:\s*(.*)$")
+    if isinstance(coverage, dict) and all(key in coverage for key in ("validated", "discovered", "executed", "paired", "blocked", "not_exercised", "incomplete")):
+        line = coverage_line[0] if coverage_line else ""
+        check("validated/discovered configurations", (coverage["validated"], coverage["discovered"]),
+              numbers(r"(\d+)\s*/\s*(\d+)\s+(?:fully\s+)?validated", line))
+        for key, label in (("executed", "executed"), ("paired", "paired"), ("blocked", "blocked"),
+                           ("not_exercised", "not exercised"), ("incomplete", "incomplete")):
+            found = numbers(r"(?:^|[;,])\s*(\d+)\s+" + label + r"\b", line)
+            check(label + " configurations", (coverage[key],), found)
+    else:
+        missing.append("JSON configuration coverage")
+    counts = report.get("reporting_counts")
+    reporting_line = groups(r"(?m)^reporting:\s*(.*)$")
+    if isinstance(counts, dict) and "test_executions" in counts and not report.get("check_only"):
+        line = reporting_line[0] if reporting_line else ""
+        check("reported test executions", (counts["test_executions"],), numbers(r"(\d[\d,]*)\s+(?:reported\s+)?test executions?\b", line))
+        expected = counts.get("source_test_identities")
+        found = numbers(r"(\d[\d,]*)\s+source[- ]test identities\b", line)
+        if found is None:
+            found = numbers(r"(\d[\d,]*)\s+(?:unique|distinct) tests\b")
+        check("source-test identities", (expected,) if expected is not None else "unavailable",
+              found if found is not None else "unavailable" if "source-test identities unavailable" in line else None)
+    else:
+        missing.append("current JSON reporting counts")
+    links = [unquote(a or b) for a, b in re.findall(r"\[[^\]]+\]\((?:<([^>]+)>|([^\s)]+))\)", text)]
+    working_directory = report.get("working_directory")
+    if working_directory and Path(working_directory).is_absolute():
+        expected = ["testdrive.json"]
+        if report.get("html_report_current") or "report.html" in summary.get("final_response", ""):
+            expected.append("report.html")
+        for name in expected:
+            path = str(Path(working_directory) / ".testoptimization" / name)
+            actual = [link for link in links if Path(link).name == name]
+            if any(Path(link).is_absolute() and link != path for link in actual):
+                differences.append(f"{name} link does not reference the current report path.")
+            elif path not in actual:
+                missing.append(name + " absolute Markdown link")
+            else:
+                checks.append(name + " link")
+    else:
+        missing.append("JSON report directory and evidence links")
+    outcome = "fail" if differences else "review" if missing else "pass"
+    reason = "Labeled facts contradict JSON." if differences else "Missing or ambiguous facts need independent review." if missing else "Labeled verdicts, scope, counts and report links match JSON; independent technical evaluation is still required."
+    return {"status": outcome, "reason": reason, "checks": checks,
+            "differences": differences[:10], "missing": missing[:10]}
+
+
+def report_runtime(report, requested=None):
+    """Audit the final command runtime; bundled framework runtimes are separate."""
+    report = report if isinstance(report, dict) else {}
+    observed = {}
+
+    def record(source, value):
+        if isinstance(value, str) and value:
+            observed.setdefault(value.removeprefix("v"), []).append(source)
+
+    record("summary.local_node", report.get("summary", {}).get("local_node"))
+    record("preflight.node", (report.get("preflight") or {}).get("node"))
+    for index, configuration in enumerate(report.get("configurations") or []):
+        record(f"configurations[{index}].preflight.node", (configuration.get("preflight") or {}).get("node"))
+    framework_nodes = sorted({run["framework_node"] for run in report.get("runs") or [] if run.get("framework_node")})
+    expected = requested.removeprefix("v") if requested else None
+    status = "not observed"
+    if observed:
+        status = "observed" if expected is None else "matched" if set(observed) == {expected} else "mismatch"
+    return {"status": status, "requested_version": requested,
+            "observed": [{"version": version, "sources": sources[:20], "source_count": len(sources)}
+                         for version, sources in sorted(observed.items())],
+            "framework_owned_nodes": framework_nodes,
+            "scope": "Final ddtest report only; framework-owned Node runtimes and historical execution have separate scopes."}
 
 
 def agent_command(agent, model):
@@ -216,25 +321,62 @@ def run(args):
     binary = args.ddtest.resolve(strict=True)
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise ValueError("--ddtest must be an executable file")
+    node = getattr(args, "node", None)
+    if node is not None:
+        if args.agent != "codex":
+            raise ValueError("--node currently requires --agent codex")
+        if not node.is_absolute():
+            raise ValueError("--node must be an absolute executable path")
+        node = node.resolve(strict=True)
+        if not node.is_file() or not os.access(node, os.X_OK):
+            raise ValueError("--node must be an executable file")
     setup_commands = [shlex.split(command) for command in args.setup_command]
     if any(not command for command in setup_commands):
         raise ValueError("--setup-command must not be empty")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    trial = Path(tempfile.mkdtemp(prefix="ddtest-onboarding-eval-")).resolve()
+    # macOS's per-user TMPDIR is too deep for Watchman's Unix socket name.
+    # A unique short root still owns every cache/configuration and its cleanup.
+    trial = Path(tempfile.mkdtemp(prefix="dde-", dir="/tmp" if sys.platform == "darwin" else None)).resolve()
     checkout = trial / "repo"
     bin_dir = trial / "bin"
     bin_dir.mkdir()
     shutil.copy2(binary, bin_dir / "ddtest")
     env = {key: value for key, value in os.environ.items()
-           if not key.startswith(("DD_", "DATADOG_")) and key not in ("NODE_OPTIONS", "NODE_PATH")}
+           if not key.startswith(("DD_", "DATADOG_")) and key not in ("NODE_OPTIONS", "NODE_PATH")
+           and key.lower() not in ("npm_config_store_dir", "npm_config_cache_dir")}
     for key, name in (("npm_config_cache", "npm"), ("YARN_CACHE_FOLDER", "yarn"),
-                      ("npm_config_store_dir", "pnpm-store"), ("npm_config_cache_dir", "pnpm"),
-                      ("TMPDIR", "tmp"), ("CYPRESS_CACHE_FOLDER", "cypress")):
-        directory = trial / "caches" / name
+                      ("XDG_CACHE_HOME", "xdg-cache"), ("XDG_DATA_HOME", "xdg-data"),
+                      ("XDG_STATE_HOME", "state"), ("XDG_CONFIG_HOME", "xdg-config"),
+                      ("PNPM_HOME", "pnpm-home"), ("TMPDIR", "tmp"),
+                      ("CYPRESS_CACHE_FOLDER", "cypress"),
+                      ("PLAYWRIGHT_BROWSERS_PATH", "playwright"),
+                      ("PUPPETEER_CACHE_DIR", "puppeteer")):
+        directory = trial / name if key == "XDG_STATE_HOME" else trial / "caches" / name
         directory.mkdir(parents=True, exist_ok=True)
         env[key] = str(directory)
+    # pnpm's own configuration is not inherited by npm commands in test scripts.
+    pnpm_config = Path(env["XDG_CONFIG_HOME"]) / "pnpm" / "rc"
+    pnpm_config.parent.mkdir()
+    pnpm_store, pnpm_cache = trial / "caches" / "pnpm-store", trial / "caches" / "pnpm"
+    pnpm_store.mkdir()
+    pnpm_cache.mkdir()
+    pnpm_config.write_text(f"store-dir={pnpm_store}\ncache-dir={pnpm_cache}\n")
+    if node is not None:
+        (bin_dir / "node").symlink_to(node)
+        zdotdir = trial / "zsh"
+        zdotdir.mkdir()
+        env["ZDOTDIR"] = str(zdotdir)
+        env["PATH"] = str(node.parent) + os.pathsep + env.get("PATH", "")
     env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+    agent_argv = agent_command(args.agent, args.model)
+    if node is not None:
+        # .zshenv also runs in non-login shells. Isolate it and disable shell
+        # snapshots so neither host startup files nor an old snapshot reset PATH.
+        agent_argv[2:2] = ["-c", "allow_login_shell=false", "-c",
+                           "features.shell_snapshot=false", "-c",
+                           "shell_environment_policy.set.PATH=" + json.dumps(env["PATH"]), "-c",
+                           "shell_environment_policy.set.ZDOTDIR=" + json.dumps(env["ZDOTDIR"])]
     framework = getattr(args, "framework", None)
     scope = f" for {framework} only" if framework else ""
     prompt = f"Use ddtest in {bin_dir} and onboard this repository to test-optimization{scope}."
@@ -245,6 +387,14 @@ def run(args):
                 "framework_scope": framework,
                 "started_at": time.time(), "commands": [], "status": "preparing",
                 "evaluation": "pending", "ci_execution": "not exercised"}
+    manifest["private_caches"] = {key: env[key] for key in (
+        "npm_config_cache", "YARN_CACHE_FOLDER", "XDG_CACHE_HOME", "XDG_DATA_HOME",
+        "XDG_STATE_HOME", "XDG_CONFIG_HOME", "PNPM_HOME", "TMPDIR",
+        "CYPRESS_CACHE_FOLDER", "PLAYWRIGHT_BROWSERS_PATH", "PUPPETEER_CACHE_DIR")}
+    manifest["private_caches"]["pnpm_store"] = str(pnpm_store)
+    manifest["private_caches"]["pnpm_cache"] = str(pnpm_cache)
+    if node is not None:
+        manifest["shell_isolation"] = {"zdotdir": env["ZDOTDIR"], "login_shell": False, "shell_snapshot": False}
     activity = (output / "activity.jsonl").open("w")
     agent_failed = False
     agent_completed = False
@@ -262,6 +412,11 @@ def run(args):
             agent_errors.append(str(event.get("error", event.get("text", ""))))
         if event["type"] == "result":
             agent_completed = True
+        if event["type"] == "item.completed" and "ddtest" in event.get("command", ""):
+            for version in re.findall(r"Local runtime: Node (v?\d+\.\d+\.\d+(?:[-+][\w.-]+)?)", event.get("output", "")):
+                observations = manifest.setdefault("runtime_observations", [])
+                if len(observations) < 20:
+                    observations.append({"source": "public ddtest command output", "version": version})
         activity.write(json.dumps(event) + "\n")
         activity.flush()
         print(json.dumps(event), flush=True)
@@ -309,6 +464,14 @@ def run(args):
 
     code = 1
     try:
+        if node is not None:
+            runtime = json.loads(command(["node", "-p",
+                "JSON.stringify({executable: process.execPath, version: process.version})"],
+                timeout=CLI_STARTUP_TIMEOUT))
+            manifest["node_runtime"] = {"requested": str(node), **runtime,
+                                        "codex_login_shell": False}
+            if not os.path.samefile(runtime["executable"], node):
+                raise RuntimeError("Selected Node executable did not run; inspect node_runtime")
         manifest["cli_version"] = command([args.agent, "--version"], timeout=CLI_STARTUP_TIMEOUT)
         command(["git", "clone", "--", args.repo, str(checkout)])
         command(["git", "checkout", "--detach", args.ref], cwd=checkout)
@@ -319,7 +482,7 @@ def run(args):
         if status:
             raise RuntimeError("Dependency setup changed the checkout; choose setup that leaves it clean")
         manifest["status"] = "agent_running"
-        command(agent_command(args.agent, args.model), cwd=checkout, agent=True, stdin=prompt)
+        command(agent_argv, cwd=checkout, agent=True, stdin=prompt)
         if background.unfinished():
             manifest["unfinished_background_commands"] = background.unfinished()
             manifest["failure_kind"] = "infrastructure"
@@ -329,9 +492,9 @@ def run(args):
             raise RuntimeError("CLI exited without a recognized completion event; inspect the activity")
         manifest["status"] = "agent_failed" if agent_failed else "completed"
         code = 1 if agent_failed else 0
-    except (OSError, RuntimeError, TimeoutError, KeyboardInterrupt) as error:
+    except (OSError, RuntimeError, TimeoutError, ValueError, KeyboardInterrupt) as error:
         manifest["status"] = "interrupted" if isinstance(error, KeyboardInterrupt) else "failed"
-        agent_timed_out = isinstance(error, TimeoutError) and bool(manifest["commands"]) and manifest["commands"][-1]["argv"] == agent_command(args.agent, args.model)
+        agent_timed_out = isinstance(error, TimeoutError) and bool(manifest["commands"]) and manifest["commands"][-1]["argv"] == agent_argv
         if isinstance(error, TimeoutError) and manifest["commands"][-1]["argv"] == [args.agent, "--version"]:
             manifest["failure_kind"] = "infrastructure"
             manifest["failure_stage"] = "cli_startup"
@@ -355,17 +518,29 @@ def run(args):
             manifest["failure_kind"] = failure_kind(agent_errors, agent_timed_out)
             manifest["retry_recommended"] = manifest["failure_kind"] == "infrastructure"
         report_path = checkout / ".testoptimization" / "testdrive.json"
-        if final_response and report_path.is_file():
-            try:
-                manifest["agent_reporting"] = reporting_verdict(final_response, json.loads(report_path.read_text()))
-                if manifest["agent_reporting"]["status"] == "fail":
-                    manifest["status"] = "agent_failed"
-                    manifest["failure_kind"] = "agent_reporting"
-                    manifest["retry_recommended"] = False
-                    code = 1
-            except (OSError, ValueError) as error:
-                manifest.setdefault("collection_errors", []).append(str(error))
+        report = {}
+        try:
+            if report_path.is_file():
+                report = json.loads(report_path.read_text())
+        except (OSError, ValueError) as error:
+            manifest.setdefault("collection_errors", []).append(str(error))
+        manifest["agent_reporting"] = reporting_verdict(final_response, report)
+        if manifest["agent_reporting"]["status"] == "fail":
+            manifest["status"] = "agent_failed"
+            manifest["failure_kind"] = "agent_reporting"
+            manifest["retry_recommended"] = False
+            code = 1
+        manifest["ddtest_runtime"] = report_runtime(report, manifest.get("node_runtime", {}).get("version"))
+        if manifest["ddtest_runtime"]["status"] == "mismatch":
+            manifest["status"] = "failed"
+            manifest["failure_kind"] = "evaluator_environment"
+            manifest["failure_stage"] = "ddtest_runtime"
+            manifest["error"] = "Final ddtest runtime differs from --node; the setup probe does not validate the agent's command environment."
+            manifest["retry_recommended"] = False
+            code = 1
         activity.close()
+        if final_response:
+            (output / "final-response.md").write_text(final_response + "\n")
         manifest["finished_at"] = time.time()
         (output / "run.json").write_text(json.dumps(manifest, indent=2) + "\n")
         print(f"Evidence: {output}\nDisposable checkout retained for evaluation: {trial}")
@@ -378,6 +553,8 @@ def main():
     parser.add_argument("--ref", required=True, help="Commit SHA or ref; resolved SHA is recorded")
     parser.add_argument("--ddtest", type=Path, required=True, help="Already-built executable")
     parser.add_argument("--agent", choices=("codex", "claude"), required=True)
+    parser.add_argument("--node", type=Path,
+                        help="Absolute Node executable for setup and Codex non-login shells; Codex only")
     parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio"),
                         help="Optional scope for mixed-framework repositories; adds only the framework to the minimal prompt")
     parser.add_argument("--setup-command", action="append", default=[], help="Repeatable, no implicit shell")
