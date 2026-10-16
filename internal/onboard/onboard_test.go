@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestRunPrintsJestGitHubInstructions(t *testing.T) {
@@ -153,6 +155,93 @@ func TestRunRequiresGitHubJestWorkflow(t *testing.T) {
 			err := Run(&bytes.Buffer{})
 			if err == nil || !strings.Contains(err.Error(), "could not find a GitHub Actions workflow that runs jest") {
 				t.Fatalf("Run() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestRunChecksActionOrderAndCondition(t *testing.T) {
+	for _, tc := range []struct {
+		name, steps string
+		configured  bool
+	}{
+		{"before tests", "- uses: datadog/test-visibility-github-action@v3\n  with: {languages: js}\n- run: npm test", true},
+		{"after tests", "- run: npm test\n- uses: datadog/test-visibility-github-action@v3\n  with: {languages: js}", false},
+		{"between test steps", "- run: npm test\n- uses: datadog/test-visibility-github-action@v3\n  with: {languages: js}\n- run: npm test", false},
+		{"disabled", "- uses: datadog/test-visibility-github-action@v3\n  if: false\n  with: {languages: js}\n- run: npm test", false},
+		{"disabled expression", "- uses: datadog/test-visibility-github-action@v3\n  if: ${{ false }}\n  with: {languages: js}\n- run: npm test", false},
+		{"enabled", "- uses: datadog/test-visibility-github-action@v3\n  if: true\n  with: {languages: js}\n- run: npm test", true},
+		{"unknown condition", "- uses: datadog/test-visibility-github-action@v3\n  if: ${{ matrix.instrument }}\n  with: {languages: js}\n- run: npm test", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := newJestRepository(t, "jobs:\n  tests:\n    steps:\n      "+strings.ReplaceAll(tc.steps, "\n", "\n      ")+"\n")
+			t.Chdir(root)
+			var output bytes.Buffer
+			require.NoError(t, Run(&output))
+			require.Equal(t, tc.configured, strings.Contains(output.String(), "already appears in every detected test workflow"), output.String())
+		})
+	}
+}
+
+func TestRunIdentifiesJavaScriptInvocations(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		matched bool
+	}{
+		{"npm run ci", true}, {"yarn ci", true}, {"pnpm run ci", true}, {"bun run ci", true},
+		{"npm run nested", true}, {"npm run cycle", false},
+		{"npx jest --ci", true}, {"npm exec -- jest --ci", true},
+		{"npm install --no-save jest\nnpm run lint", false},
+		{"echo jest\nnpm run lint", false}, {"# npx jest\nnpm run lint", false},
+		{"npm run lint", false}, {"npm ci && npm run ci", true},
+		{"npm ci", false}, {"npm install", false},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			root := newJestRepository(t, "jobs:\n  tests:\n    steps:\n      - run: |\n          "+strings.ReplaceAll(tc.command, "\n", "\n          ")+"\n")
+			require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"ci":"jest --ci","nested":"npm run ci","cycle":"npm run cycle","lint":"eslint ."},"devDependencies":{"jest":"30.0.0"}}`), 0644))
+			t.Chdir(root)
+			var output bytes.Buffer
+			err := Run(&output)
+			if tc.matched {
+				require.NoError(t, err)
+				require.Contains(t, output.String(), "languages: js")
+			} else {
+				require.ErrorContains(t, err, "could not find a GitHub Actions workflow that runs jest")
+			}
+		})
+	}
+}
+
+func TestRunDistinguishesToxTestEnvironments(t *testing.T) {
+	for _, tc := range []struct {
+		name, command string
+		matched       bool
+	}{
+		{"inherited pytest", "uv run --locked tox run -e py3.13", true},
+		{"typing", "uv run --locked tox run -e typing", false},
+		{"typing long flag", "tox run --environment=typing", false},
+		{"typing short flag", "tox -etyping", false},
+		{"mixed environments", "tox -e typing,py3.13", true},
+		{"default environments", "tox", true},
+		{"direct pytest", "python -m pytest", true},
+		{"dependency installation", "python -m pip install pytest", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			contents, err := os.ReadFile("../platform/testdata/detection/itsdangerous/pyproject.toml")
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(root, "pyproject.toml"), contents, 0644))
+			require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))
+			workflow := "jobs:\n  tests:\n    steps:\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: python}\n      - run: " + tc.command + "\n  typing:\n    steps:\n      - run: uv run --locked tox run -e typing\n"
+			require.NoError(t, os.WriteFile(filepath.Join(root, ".github/workflows/test.yml"), []byte(workflow), 0644))
+			t.Chdir(root)
+			var output bytes.Buffer
+			err = Run(&output)
+			if tc.matched {
+				require.NoError(t, err)
+				require.Contains(t, output.String(), "already appears in every detected test workflow")
+			} else {
+				require.ErrorContains(t, err, "could not find a GitHub Actions workflow that runs pytest")
 			}
 		})
 	}

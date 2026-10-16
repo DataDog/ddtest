@@ -8,6 +8,7 @@ package onboard
 
 import (
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,8 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/kballard/go-shellquote"
+	"github.com/pelletier/go-toml/v2"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -90,7 +93,7 @@ func findWorkflows(repositoryRoot, language, name string) ([]string, []string, e
 		if err != nil {
 			return nil, nil, fmt.Errorf("read %s: %w", path, err)
 		}
-		foundTests, isConfigured, err := inspectTestJobs(contents, language, name)
+		foundTests, isConfigured, err := inspectTestJobs(repositoryRoot, contents, language, name)
 		if err != nil {
 			return nil, nil, fmt.Errorf("parse %s: %w", path, err)
 		}
@@ -114,12 +117,13 @@ func findWorkflows(repositoryRoot, language, name string) ([]string, []string, e
 	return workflows, configured, nil
 }
 
-func inspectTestJobs(contents []byte, language, name string) (foundTests, configured bool, err error) {
+func inspectTestJobs(root string, contents []byte, language, name string) (foundTests, configured bool, err error) {
 	var workflow struct {
 		Jobs map[string]struct {
 			Steps []struct {
 				Run  string `yaml:"run"`
 				Uses string `yaml:"uses"`
+				If   string `yaml:"if"`
 				With struct {
 					Languages string `yaml:"languages"`
 				} `yaml:"with"`
@@ -134,40 +138,190 @@ func inspectTestJobs(contents []byte, language, name string) (foundTests, config
 		actionLanguage = "js"
 	}
 	for _, job := range workflow.Jobs {
-		var commands []string
 		jobConfigured := false
 		for _, step := range job.Steps {
-			commands = append(commands, strings.ToLower(step.Run))
+			condition := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(step.If), "${{"), "}}"))
+			if condition == "false" {
+				continue
+			}
+			if looksLikeTestJob(root, step.Run, language, name, 0) {
+				foundTests = true
+				if !jobConfigured {
+					return true, false, nil
+				}
+			}
 			action, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
-			if action == githubAction && hasVersion && !strings.Contains(step.With.Languages, "${{") {
+			if action == githubAction && hasVersion && (condition == "" || condition == "true" || condition == "success()") && !strings.Contains(step.With.Languages, "${{") {
 				languages := strings.Fields(step.With.Languages)
 				jobConfigured = jobConfigured || step.With.Languages == "all" || slices.Contains(languages, actionLanguage)
 			}
-		}
-		if !looksLikeTestJob(strings.Join(commands, "\n"), language, name) {
-			continue
-		}
-		foundTests = true
-		if !jobConfigured {
-			return true, false, nil
 		}
 	}
 	return foundTests, foundTests, nil
 }
 
-func looksLikeTestJob(commands, language, name string) bool {
-	markers := []string{name}
-	switch language {
-	case "javascript":
-		markers = append(markers, "npm test", "npm run test", "yarn test", "yarn run test", "pnpm test", "pnpm run test", "bun test", "bun run test")
-	case "ruby":
-		markers = append(markers, "bundle exec rake", "rake test", "rails test")
-	case "python":
-		markers = append(markers, "tox", "nox")
+// Resolve literal invocations without running project code. Limit script recursion
+// so cycles in package.json cannot hang onboarding.
+func looksLikeTestJob(root, commands, language, name string, depth int) bool {
+	if depth > 10 {
+		return false
 	}
-	for _, marker := range markers {
-		if strings.Contains(commands, marker) {
+	for _, command := range strings.Split(commands, "\n") {
+		command = strings.TrimSpace(command)
+		if command == "" || strings.HasPrefix(command, "#") {
+			continue
+		}
+		// Handle simple shell command lists. Leave quoted shell expressions opaque.
+		if !strings.ContainsAny(command, "\"'`") && strings.ContainsAny(command, ";&|") {
+			for _, part := range strings.FieldsFunc(command, func(r rune) bool { return r == ';' || r == '&' || r == '|' }) {
+				if looksLikeTestJob(root, part, language, name, depth+1) {
+					return true
+				}
+			}
+			continue
+		}
+		args, err := shellquote.Split(command)
+		if err != nil {
+			continue
+		}
+		for len(args) > 0 && strings.Contains(args[0], "=") {
+			args = args[1:]
+		}
+	unwrap:
+		for len(args) > 1 {
+			switch args[0] + " " + args[1] {
+			case "bundle exec", "python -m", "python3 -m", "{envpython} -m", "poetry run":
+				args = args[2:]
+			case "uv run":
+				args = args[2:]
+				for len(args) > 0 && slices.Contains([]string{"--locked", "--frozen", "--no-sync"}, args[0]) {
+					args = args[1:]
+				}
+			default:
+				break unwrap
+			}
+		}
+		if len(args) == 0 {
+			continue
+		}
+		executable := filepath.Base(args[0])
+		if language == "javascript" && slices.Contains([]string{"npm", "pnpm", "yarn", "bun", "npx", "bunx"}, executable) && len(args) > 1 {
+			args = args[1:]
+			direct := executable == "npx" || executable == "bunx" || args[0] == "exec" || args[0] == "dlx"
+			explicitScript := args[0] == "run" || args[0] == "run-script"
+			if !direct && !explicitScript && (slices.Contains([]string{"install", "add", "remove", "update"}, args[0]) || (executable == "npm" && args[0] != "test")) {
+				continue
+			}
+			if args[0] == "run" || args[0] == "run-script" || args[0] == "exec" || args[0] == "dlx" {
+				args = args[1:]
+			}
+			for len(args) > 0 && slices.Contains([]string{"--", "--silent", "--yes", "-y", "--no-install"}, args[0]) {
+				args = args[1:]
+			}
+			if len(args) == 0 {
+				continue
+			}
+			if direct {
+				executable = filepath.Base(args[0])
+			} else {
+				var manifest struct {
+					Scripts map[string]string `json:"scripts"`
+				}
+				contents, err := os.ReadFile(filepath.Join(root, "package.json"))
+				if err != nil || json.Unmarshal(contents, &manifest) != nil {
+					continue
+				}
+				if script, ok := manifest.Scripts[args[0]]; ok {
+					if looksLikeTestJob(root, script, language, name, depth+1) {
+						return true
+					}
+					continue
+				}
+				// Preserve conventional test entry points when the project has no script.
+				if args[0] == "test" {
+					return true
+				}
+				if executable == "npm" {
+					continue
+				}
+				executable = filepath.Base(args[0])
+			}
+		}
+		if executable == name || (name == "cucumber" && executable == "cucumber-js") {
+			if len(args) > 1 && slices.Contains([]string{"install", "install-deps"}, args[1]) {
+				continue
+			}
 			return true
+		}
+		if language == "ruby" && (executable == "rake" || (executable == "rails" && len(args) > 1 && args[1] == "test")) {
+			return true
+		}
+		if language == "python" {
+			if executable == "tox" && toxRunsTests(root, args[1:], name) {
+				return true
+			}
+			if executable == "nox" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Native tox configuration can distinguish test environments from typing and
+// lint environments even when both install pytest. Unknown tox configurations
+// remain candidates, as before; only explicit command overrides exclude a job.
+func toxRunsTests(root string, args []string, name string) bool {
+	type environment struct {
+		Commands [][]any `toml:"commands"`
+	}
+	var project struct {
+		Tool struct {
+			Tox struct {
+				Environments map[string]environment `toml:"env"`
+				Base         environment            `toml:"env_run_base"`
+				Default      []string               `toml:"env_list"`
+			} `toml:"tox"`
+		} `toml:"tool"`
+	}
+	contents, err := os.ReadFile(filepath.Join(root, "pyproject.toml"))
+	if err != nil || toml.Unmarshal(contents, &project) != nil {
+		return true
+	}
+	selected := project.Tool.Tox.Default
+	for i, arg := range args {
+		switch {
+		case (arg == "-e" || arg == "--environment") && i+1 < len(args):
+			selected = strings.Split(args[i+1], ",")
+		case strings.HasPrefix(arg, "--environment="):
+			selected = strings.Split(strings.TrimPrefix(arg, "--environment="), ",")
+		case strings.HasPrefix(arg, "-e") && len(arg) > 2:
+			selected = strings.Split(strings.TrimPrefix(arg, "-e"), ",")
+		}
+	}
+	if len(selected) == 0 {
+		selected = []string{""}
+	}
+	for _, env := range selected {
+		commands := project.Tool.Tox.Environments[env].Commands
+		if commands == nil {
+			commands = project.Tool.Tox.Base.Commands
+		}
+		if commands == nil {
+			return true
+		}
+		for _, command := range commands {
+			var literal []string
+			for _, value := range command {
+				text, ok := value.(string)
+				if !ok {
+					break
+				}
+				literal = append(literal, text)
+			}
+			if len(literal) > 0 && (filepath.Base(literal[0]) == name || (len(literal) > 2 && slices.Contains([]string{"python", "python3", "{envpython}"}, literal[0]) && literal[1] == "-m" && literal[2] == name)) {
+				return true
+			}
 		}
 	}
 	return false
