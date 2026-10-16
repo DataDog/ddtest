@@ -93,7 +93,9 @@ The supported subset:
 
 The following trigger normal pytest collection instead. No partial inventory
 is used; the fallback warning names the exact file, line, and construct that
-blocked static analysis, so customers and support can pinpoint the cause
+blocked static analysis — and, for rejected options, which source carried
+them (`the ddtest --command`, `PYTEST_ADDOPTS`, or `config addopts`) — so
+customers and support can pinpoint the cause
 (for example `pytest hooks are not supported: pytest_generate_tests (at
 tests/test_billing.py:42)`), and successful static discovery logs
 `Pytest static discovery succeeded`:

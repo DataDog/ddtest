@@ -469,6 +469,16 @@ def test_case(): pass
 `,
 			want: []testoptimization.Test{{Name: "test_case"}},
 		},
+		{
+			name: "function-local private imports are runtime concerns",
+			source: `def test_case():
+    from _pytest import monkeypatch
+
+
+def test_case_end(): pass
+`,
+			want: []testoptimization.Test{{Name: "test_case"}, {Name: "test_case_end"}},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			pytest := staticPytestFixture(t, tt.source)
@@ -613,6 +623,7 @@ func TestPytestStaticFallbackReasonDetails(t *testing.T) {
 		source   string
 		conftest string
 		config   string
+		addopts  string
 		contains []string
 	}{
 		{
@@ -655,10 +666,18 @@ func TestPytestStaticFallbackReasonDetails(t *testing.T) {
 			config:   "[pytest]\nxfail_strict = true\n",
 			contains: []string{"xfail_strict", "pytest.ini"},
 		},
+		{
+			name:     "selector source",
+			addopts:  "-k safe",
+			contains: []string{"-k", "PYTEST_ADDOPTS"},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			pytest := staticPytestFixture(t, "def test_before(): pass\n"+tt.source)
 			writeStaticExtras(t, tt.conftest, tt.config)
+			if tt.addopts != "" {
+				t.Setenv("PYTEST_ADDOPTS", tt.addopts)
+			}
 			_, err := pytest.discoverTestsStatically(context.Background(), discovery.TestFileSet{ExplicitFiles: []string{"tests/test_sample.py"}}, nil)
 			if err == nil {
 				t.Fatal("expected fallback")

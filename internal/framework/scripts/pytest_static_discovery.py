@@ -116,7 +116,10 @@ def normalize_plugin_name(name):
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def check_options(options, allow_paths=False):
+def check_options(options, allow_paths=False, source=None):
+    def unsupported(detail):
+        raise Unsupported(detail + (" (from " + source + ")" if source else ""))
+
     positional = False
     index = 0
     while index < len(options):
@@ -142,7 +145,7 @@ def check_options(options, allow_paths=False):
             # -p may only disable plugins here; loading one hides collection code.
             if option == "-p":
                 if index >= len(options) or not re.fullmatch(r"no:[A-Za-z0-9_.\-]+", options[index]):
-                    raise Unsupported("-p may only disable plugins in static discovery")
+                    unsupported("-p may only disable plugins in static discovery")
                 index += 1
                 continue
             if re.fullmatch(r"-p(=)?no:[A-Za-z0-9_.\-]+", option):
@@ -159,22 +162,22 @@ def check_options(options, allow_paths=False):
             if key in VALUE_OPTIONS:
                 if not separator:
                     if index >= len(options):
-                        raise Unsupported("missing pytest presentation option value")
+                        unsupported("missing pytest presentation option value")
                     value = options[index]
                     index += 1
                 if value in VALUE_OPTIONS[key]:
                     continue
-                raise Unsupported("unsupported pytest presentation option value")
+                unsupported("unsupported pytest presentation option value")
             if option == "--" and allow_paths:
                 positional = True
                 continue
         if allow_paths and not option.startswith("-") and "::" not in option and Path(option).exists():
             continue
-        raise Unsupported("unsafe or unsupported pytest argument: " + option)
+        unsupported("unsafe or unsupported pytest argument: " + option)
 
 
 def check_environment():
-    check_options(shlex.split(os.environ.get("PYTEST_ADDOPTS", "")))
+    check_options(shlex.split(os.environ.get("PYTEST_ADDOPTS", "")), source="PYTEST_ADDOPTS")
     if os.environ.get("PYTEST_PLUGINS"):
         raise Unsupported("PYTEST_PLUGINS may customize collection: " + os.environ["PYTEST_PLUGINS"])
     if not os.environ.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD"):
@@ -249,7 +252,7 @@ def check_config_values(values, directory, root):
         if key in {"testpaths", "python_files", "markers", "filterwarnings", "minversion"}:
             continue
         if key == "addopts":
-            check_options(shlex.split(value) if isinstance(value, str) else value)
+            check_options(shlex.split(value) if isinstance(value, str) else value, source="config addopts")
             continue
         if key in {"python_classes", "python_functions"}:
             entries = shlex.split(value) if isinstance(value, str) else (value or [])
@@ -619,6 +622,7 @@ def parse_fixture(decorator, function, constants, method):
         "autouse": autouse,
         "poison": False,
         "args": args,
+        "lineno": function.lineno,
     }
 
 
@@ -1074,12 +1078,14 @@ def module_tests(tree, collector):
     resolve_poison(all_specs, collector.chain)
     for name, spec in all_specs.items():
         if spec["autouse"] and spec["poison"]:
+            LOCATION["line"] = spec["lineno"]
             raise Unsupported("autouse fixture depends on a parametrized fixture chain: " + name)
 
     # A module-level autouse parametrized fixture applies to every test.
     autouse_specs = [(name, spec) for name, spec in scan.fixtures.items()
                      if spec["autouse"] and spec["expansion"] is not None]
     if len(autouse_specs) > 1:
+        LOCATION["line"] = autouse_specs[0][1]["lineno"]
         raise Unsupported("multiple autouse parametrized fixtures are not supported: " +
                           ", ".join(name for name, _ in autouse_specs))
     autouse = None
@@ -1163,13 +1169,14 @@ def analyze_conftest(path, chain, display):
     resolve_poison(scan.fixtures, chain)
     for name, spec in scan.fixtures.items():
         if spec["autouse"] and (spec["expansion"] is not None or spec["poison"]):
+            LOCATION["line"] = spec["lineno"]
             raise Unsupported("autouse parametrized conftest fixtures are not supported: " + name)
     return scan.fixtures
 
 
 def discover(manifest):
     LOCATION.update(file=None, line=None)
-    check_options(manifest.get("options") or [], allow_paths=True)
+    check_options(manifest.get("options") or [], allow_paths=True, source="the ddtest --command")
     check_environment()
     root = Path.cwd().resolve()
     files = []
