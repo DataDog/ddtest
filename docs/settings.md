@@ -1,6 +1,7 @@
 # Settings
 
-Every DDTest setting can be passed as a CLI flag or as an environment variable.
+Supported DDTest settings can be passed as a CLI flag or as an environment variable
+(except environment-only settings noted below).
 CLI flags take precedence over environment variables.
 When neither supplies a platform or framework, DDTest detects it from the current
 directory. An explicit framework also selects its platform. Multiple matching
@@ -26,3 +27,138 @@ platforms or frameworks require explicit selection.
 | `--strict-discovery` | `DD_TEST_OPTIMIZATION_RUNNER_STRICT_DISCOVERY` | | `false` | Fail planning when full test discovery fails. Cancelled full discovery still uses fast test file discovery fallback. |
 | `--runtime-tags` | `DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS` | `DD_TEST_OPTIMIZATION_RUNTIME_TAGS` | `""` | JSON string to override runtime tags used to fetch skippable tests. Useful for local development on a different OS than CI, such as `--runtime-tags '{"os.platform":"linux","runtime.version":"3.2.0"}'`. |
 | | `DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED` | | `true` | Print human-readable plan and run reports. Set to `false` to disable them. |
+
+## Pytest static discovery
+
+Set `DD_TEST_OPTIMIZATION_RUNNER_PYTEST_STATIC_DISCOVERY=true` to
+try discovering individual pytest tests without starting pytest or importing test
+modules. This is opt-in, disabled by default, with no CLI flag.
+It still starts a lightweight Python standard-library helper; it does not remove
+normal platform/prerequisite checks or change how tests execute.
+
+```bash
+DD_TEST_OPTIMIZATION_RUNNER_PYTEST_STATIC_DISCOVERY=true \
+  ddtest plan --platform python --framework pytest \
+  --tests-location 'tests/**/test_*.py' \
+  --tests-exclude-pattern 'tests/integration/**' \
+  --command 'pytest -q --ddtrace'
+```
+
+Supply accurate file include/exclude patterns. Supported commands are `pytest`
+(console scripts with a Python shebang) and `python -m pytest`, including
+versioned Python executables. Existing positional arguments must be selected
+Python files, not directories or node IDs. Wrapper commands fall back to pytest.
+
+The supported subset:
+
+- `test*` functions and `Test*` classes (or custom `python_functions`/
+  `python_classes` patterns), including nested classes, `staticmethod` and
+  `classmethod` tests, varargs signatures, local (same-module) inheritance of
+  methods, nested classes, and class-level `pytestmark` (resolved with MRO
+  semantics — a subclass `__test__ = True` overrides a disabled base), and
+  pytest's own collection rules for classes with `__init__` or `__test__ = False`.
+- `@pytest.mark.parametrize` with literal lists/tuples of values or same-file
+  module constants, multiple arguments, stacked decorators, literal `ids`, and
+  `pytest.param` entries with literal IDs. Values can be strings, numbers,
+  booleans, `None`, lists, tuples, and dictionaries — including literal
+  unpacking of same-file constants (`{**BASE, "k": 1}`, `[*BASE, 2]`). Test
+  names, duplicate IDs,
+  and parameter serialization follow the tracer's identities, and skip-marked
+  cases are omitted exactly like the discovery report.
+- Fixtures: built-in, plugin-provided (unknown names are trusted through the
+  plugin allowlist), same-file, class-level, and conftest fixtures.
+  Parametrized fixtures with literal values and `ids` expand with the tracer's
+  identities, including `name=` renames, fixture shadowing (same-file over
+  conftest, deeper conftest over shallower), and one module-level `autouse`
+  parametrized fixture. `usefixtures` marks at the function, class, and
+  `pytestmark` levels pull fixtures — including parametrized ones — into the
+  inventory with pytest's id ordering. `conftest.py` files are parsed (never
+  imported): fixtures, constants, and imports are fine.
+- Skip semantics: `@pytest.mark.skip` on functions, classes, and parametrize
+  cases, and `@pytest.mark.skipif` with literal bool conditions, omit tests
+  from the inventory exactly like the discovery report; `xfail` and other
+  `pytest.mark.*` marks are inert. Module and class `pytestmark` with skip or
+  literal `skipif` marks is supported.
+- Presentation and instrumentation options in the command, `PYTEST_ADDOPTS`, and
+  config `addopts`: `-q`/`-v` (including repeats), `-s`, `-r` summary flags,
+  `--ddtrace`, common color, capture, traceback, and warning-display options,
+  pytest-cov coverage options, execution/report options such as `-x`,
+  `--maxfail`, `--durations`, `--junitxml`, xdist's `-n`/`--dist`, and
+  `-p no:<name>` (plugin disabling only). Unknown options, selectors such as
+  `-k`/`-m`/`--lf`, plugin loads via `-p <name>`, and malformed quoting
+  trigger fallback.
+- A small allowlist of configuration in the working directory, including
+  `testpaths`, `python_files`, `python_functions`, `python_classes`, and safe
+  `addopts`. Static discovery with a `pyproject.toml` requires Python 3.11+.
+
+The following trigger normal pytest collection instead. No partial inventory
+is used; the fallback warning names the exact file, line, and construct that
+blocked static analysis — and, for rejected options, which source carried
+them (`the ddtest --command`, `PYTEST_ADDOPTS`, or `config addopts`) — so
+customers and support can pinpoint the cause
+(for example `pytest hooks are not supported: pytest_generate_tests (at
+tests/test_billing.py:42)`), and successful static discovery logs
+`Pytest static discovery succeeded`:
+
+- `conftest.py` defining collection hooks (`pytest_*` functions), a
+  `pytest_plugins` variable, decorated helpers, non-literal fixture params, or
+  autouse parametrized fixtures.
+- Fixture chains: fixtures that depend on parametrized fixtures, autouse
+  parametrized fixtures in classes or conftest, multiple module-level autouse
+  parametrized fixtures, and `pytest.param` chains that static discovery does
+  not emulate.
+- Non-literal `skipif` conditions, non-literal or keyword `usefixtures` names,
+  module-level `_pytest.*` imports that do not resolve in the installed
+  pytest (verified from the same interpreter pytest uses, so suites pinned to
+  an older pytest stay eligible), `parametrize` inside `pytestmark`, custom
+  (non-`pytest.mark.*`) decorators, `property` test functions, metaclass
+  keywords, cross-module inheritance anywhere in the ancestry of a collected
+  class (imported bases on never-collected helper classes are inert and fine),
+  imported tests, wildcard imports,
+  duplicate definitions, and executable module-level statements.
+- Auto-loaded plugins outside a curated inventory-neutral list (pytest-cov,
+  pytest-xdist, pytest-mock, pytest-sugar, and other execution, reporting,
+  ordering, and fixture plugins; the full list lives in
+  `internal/framework/scripts/pytest_static_discovery.py`), `PYTEST_PLUGINS`,
+  dynamic parameter values or IDs, indirect parametrization, ambiguous roots,
+  and wrapper commands (`uv run`, `poetry run`, `tox`).
+
+The plugin list is name-based and assumes those plugins keep to their
+documented non-collection behavior; when an installed plugin falls back, its
+name appears in the warning.
+
+This is not a general Python/pytest evaluator: use it only when imported
+application/helper modules do not mutate pytest collection. Discovery caches
+are not read while static discovery is enabled, so eligibility is rechecked
+on every invocation; runs that fall back to real pytest collection still
+refresh the discovery cache for later runs without the flag, and static
+inventories themselves are never cached.
+
+**Known limitation — collection-time import failures.** Static discovery never
+imports test modules, so it cannot detect modules that fail to import during
+collection (for example, test code importing a module or optional dependency
+that is not installed on the collector; module-level `_pytest` imports are
+verified against the installed pytest and fall back precisely). Real pytest
+collection drops such modules from the inventory while static discovery still
+includes their tests, so static over-counts rather than under-counts. The
+mismatch is loud: the broken file always stays runnable (its tests were never
+reported to the backend, so they never appear in skippable sets) and pytest
+surfaces the import error at run time. If plan counts look inflated or a run
+fails on an import error, compare against one run without the flag.
+
+**Migrating off `_pytest` private imports.** When a module-level `_pytest`
+import does not resolve in the installed pytest, the fallback reason names
+the exact symbol. The public replacements (validated on pytest 8 and 9):
+
+- `from _pytest import monkeypatch` with `monkeypatch.MonkeyPatch()` becomes
+  `from pytest import MonkeyPatch` (public since pytest 8.1).
+- Deferred restore-to-absence via `notset` and the private `_setitem` journal
+  becomes deletion at fixture setup through the public `monkeypatch` fixture:
+  `monkeypatch.delenv(key, raising=False)` and
+  `monkeypatch.delitem(mapping, key, raising=False)`. The fixture's own
+  teardown then restores whatever each test sets afterwards. Do not
+  substitute a custom sentinel into the private journal — pytest's teardown
+  compares against its own singleton, so the sentinel leaks in as a value
+  instead of deleting the key.
+- Keep private imports out with a CI guard, for example
+  `! grep -rnE "^\s*(from _pytest|import _pytest)" tests/`.

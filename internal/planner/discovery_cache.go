@@ -219,6 +219,14 @@ func (c discoveryCache) restore() ([]testoptimization.Test, discoveryCacheResult
 		Configured: settings.GetTestDiscoveryCache() != "",
 	}
 
+	// Keep static inventories out of the normal discovery cache. They must be
+	// rechecked against command options, environment, and config on every
+	// invocation, and must never survive disabling static discovery.
+	if c.testFramework.Name() == "pytest" && settings.GetPytestStaticDiscovery() {
+		result.NotUsedReason = "pytest static discovery requires fresh collection"
+		return nil, result
+	}
+
 	c.importExternal()
 
 	if err := c.validate(); err != nil {
@@ -257,6 +265,18 @@ func ensureDiscoveredTests(tests []testoptimization.Test) error {
 }
 
 func (c discoveryCache) store() {
+	// Pytest static discovery deletes any stale discovery file up front and,
+	// when the static path succeeds, returns without writing one — there is no
+	// collected inventory to cache, and static results are re-derived on every
+	// invocation. When static discovery is enabled but ineligible, real pytest
+	// collection runs instead and rewrites the discovery file: those results are
+	// identical to a run without the flag and must still be cached, so later
+	// runs without the flag can reuse them.
+	if c.testFramework.Name() == "pytest" && settings.GetPytestStaticDiscovery() {
+		if _, err := os.Stat(c.filePath); os.IsNotExist(err) {
+			return
+		}
+	}
 	output, err := discoveryCacheGitOutputDebug("rev-parse", "HEAD")
 	if err != nil {
 		slog.Warn("Failed to append test discovery cache metadata", "error", err)

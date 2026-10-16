@@ -190,7 +190,7 @@ jobs:
         run: |
           python -m pip install "ddtrace==${{ matrix.ddtrace }}" "pytest==${{ matrix.pytest }}"
           DDTEST_PYTHON_BINARY="$(command -v python)" \
-            go test -v ./internal/compatibility -run '^TestPyTestAdapterIntegration$'
+            go test -v ./internal/compatibility -run '^TestPyTest(AdapterIntegration|StaticDiscoveryParity)$'
           DDTEST_PYTHON_PLATFORM_INTEGRATION=1 \
             go test -v ./internal/compatibility -run '^TestPythonPlatformIntegration$'
 

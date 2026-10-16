@@ -42,6 +42,13 @@ const (
 	knapsackTestFileExcludeEnv    = "KNAPSACK_PRO_TEST_FILE_EXCLUDE_PATTERN"
 )
 
+// GetPytestStaticDiscovery reports whether the environment-only static discovery
+// option is enabled. It has no CLI flag or config-file setting.
+func GetPytestStaticDiscovery() bool {
+	enabled, _ := strconv.ParseBool(os.Getenv("DD_TEST_OPTIMIZATION_RUNNER_PYTEST_STATIC_DISCOVERY"))
+	return enabled
+}
+
 type TestSkippingLevel string
 
 const (

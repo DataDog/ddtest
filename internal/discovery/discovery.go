@@ -249,6 +249,7 @@ func DiscoverTests(
 	maps.Copy(discoveryEnv, BaseEnv())
 
 	slog.Info("Discovering tests with command", "command", discoveryCommandLogValue(executable, args))
+	startTime := time.Now()
 	if err := executeCommand(ctx, executor, executable, args, discoveryEnv); err != nil {
 		return nil, err
 	}
@@ -259,7 +260,7 @@ func DiscoverTests(
 		return nil, err
 	}
 
-	slog.Debug("Parsed test discovery report", "tests", len(tests))
+	slog.Info("Finished test discovery", "duration", time.Since(startTime), "tests", len(tests))
 	return tests, nil
 }
 
@@ -278,7 +279,6 @@ func discoveryCommandLogValue(executable string, args []string) string {
 
 func executeCommand(ctx context.Context, executor ext.CommandExecutor, executable string, args []string, envMap map[string]string) error {
 	slog.Debug("Starting test discovery...")
-	startTime := time.Now()
 
 	output, err := executor.CombinedOutput(ctx, executable, args, envMap)
 	if err != nil {
@@ -289,9 +289,6 @@ func executeCommand(ctx context.Context, executor ext.CommandExecutor, executabl
 		}
 		return err
 	}
-
-	duration := time.Since(startTime)
-	slog.Debug("Finished test discovery", "duration", duration)
 
 	return nil
 }
