@@ -17,11 +17,10 @@ import (
 	ciUtils "github.com/DataDog/ddtest/internal/utils"
 )
 
-func TestStaticPytestDiscoveryDoesNotUseCache(t *testing.T) {
+func TestStaticPytestDiscoveryDoesNotReadCache(t *testing.T) {
 	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PYTEST_STATIC_DISCOVERY", "true")
 	filePath := filepath.Join(t.TempDir(), "tests.json")
-	original := []byte(`{"name":"test_cached"}`)
-	if err := os.WriteFile(filePath, original, 0644); err != nil {
+	if err := os.WriteFile(filePath, []byte(`{"name":"test_cached"}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 	cache := discoveryCache{testFramework: &MockFramework{FrameworkName: "pytest"}, filePath: filePath}
@@ -29,10 +28,64 @@ func TestStaticPytestDiscoveryDoesNotUseCache(t *testing.T) {
 	if tests != nil || result.Used || !strings.Contains(result.NotUsedReason, "pytest static discovery") {
 		t.Fatalf("static discovery must recheck eligibility: tests=%v, result=%+v", tests, result)
 	}
+}
+
+func TestStaticPytestDiscoveryStaticRunDoesNotStoreCache(t *testing.T) {
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PYTEST_STATIC_DISCOVERY", "true")
+	mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{head: "head-sha"})
+	logs := captureLogs(t)
+	filePath := filepath.Join(t.TempDir(), "tests.json")
+	cache := discoveryCache{platformName: "python", testFramework: &MockFramework{FrameworkName: "pytest"}, filePath: filePath}
+
+	// A successful static run leaves no discovery file behind: DiscoverTests
+	// deletes any stale file before the static attempt and the static path
+	// returns without running collection.
 	cache.store()
-	data, err := os.ReadFile(filePath)
-	if err != nil || string(data) != string(original) {
-		t.Fatalf("static inventory must not become a reusable discovery cache: %s, %v", data, err)
+
+	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+		t.Fatalf("static discovery run must not create a discovery cache, stat err: %v", err)
+	}
+	if strings.Contains(logs.String(), "Failed to append test discovery cache metadata") {
+		t.Fatalf("static discovery run must not attempt to store a cache, logs: %s", logs.String())
+	}
+}
+
+func TestStaticPytestDiscoveryFallbackRunStillStoresCache(t *testing.T) {
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PYTEST_STATIC_DISCOVERY", "true")
+	mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{head: "head-sha"})
+	filePath := filepath.Join(t.TempDir(), "tests.json")
+	// Static eligibility failed and real pytest collection ran, rewriting the
+	// discovery file this invocation.
+	if err := os.WriteFile(filePath, []byte("{\"name\":\"test_fallback\"}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cache := discoveryCache{platformName: "python", testFramework: &MockFramework{FrameworkName: "pytest"}, filePath: filePath}
+
+	cache.store()
+
+	metadata, err := readDiscoveryCacheMetadata(filePath)
+	if err != nil {
+		t.Fatalf("fallback collection must populate the discovery cache: %v", err)
+	}
+	if metadata.SourceCommit != "head-sha" {
+		t.Fatalf("unexpected cache metadata: %+v", metadata)
+	}
+
+	// While static discovery is enabled the cache is still never read.
+	tests, result := cache.restore()
+	if tests != nil || result.Used || !strings.Contains(result.NotUsedReason, "pytest static discovery") {
+		t.Fatalf("cache must not be read while static discovery is enabled: tests=%v, result=%+v", tests, result)
+	}
+
+	// Once static discovery is disabled, the fallback-written cache is reusable
+	// without paying full collection again.
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PYTEST_STATIC_DISCOVERY", "false")
+	tests, result = cache.restore()
+	if !result.Used {
+		t.Fatalf("fallback-written cache must be reusable after disabling static discovery: %+v", result)
+	}
+	if len(tests) != 1 {
+		t.Fatalf("expected one cached test, got %+v", tests)
 	}
 }
 

@@ -74,7 +74,8 @@ partial inventory is used. A warning explains the fallback; successful static
 discovery logs `Pytest static discovery succeeded`.
 
 This is not a general Python/pytest evaluator: use it only when imported
-application/helper modules do not mutate pytest collection. Normal discovery
-caches are neither read nor refreshed while static discovery is enabled, so
-eligibility is rechecked on every invocation and static inventories cannot
-be reused after disabling it.
+application/helper modules do not mutate pytest collection. Discovery caches
+are not read while static discovery is enabled, so eligibility is rechecked
+on every invocation; runs that fall back to real pytest collection still
+refresh the discovery cache for later runs without the flag, and static
+inventories themselves are never cached.

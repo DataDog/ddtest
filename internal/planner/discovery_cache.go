@@ -265,8 +265,17 @@ func ensureDiscoveredTests(tests []testoptimization.Test) error {
 }
 
 func (c discoveryCache) store() {
+	// Pytest static discovery deletes any stale discovery file up front and,
+	// when the static path succeeds, returns without writing one — there is no
+	// collected inventory to cache, and static results are re-derived on every
+	// invocation. When static discovery is enabled but ineligible, real pytest
+	// collection runs instead and rewrites the discovery file: those results are
+	// identical to a run without the flag and must still be cached, so later
+	// runs without the flag can reuse them.
 	if c.testFramework.Name() == "pytest" && settings.GetPytestStaticDiscovery() {
-		return
+		if _, err := os.Stat(c.filePath); os.IsNotExist(err) {
+			return
+		}
 	}
 	output, err := discoveryCacheGitOutputDebug("rev-parse", "HEAD")
 	if err != nil {
