@@ -219,11 +219,11 @@ func (c discoveryCache) restore() ([]testoptimization.Test, discoveryCacheResult
 		Configured: settings.GetTestDiscoveryCache() != "",
 	}
 
-	// Keep experimental inventories out of the normal discovery cache. They
-	// must be rechecked against command options, environment, and config on
-	// every invocation, and must never survive disabling the experiment.
-	if c.testFramework.Name() == "pytest" && settings.GetExperimentalPytestStaticDiscovery() {
-		result.NotUsedReason = "experimental pytest static discovery requires fresh collection"
+	// Keep static inventories out of the normal discovery cache. They must be
+	// rechecked against command options, environment, and config on every
+	// invocation, and must never survive disabling static discovery.
+	if c.testFramework.Name() == "pytest" && settings.GetPytestStaticDiscovery() {
+		result.NotUsedReason = "pytest static discovery requires fresh collection"
 		return nil, result
 	}
 
@@ -265,7 +265,7 @@ func ensureDiscoveredTests(tests []testoptimization.Test) error {
 }
 
 func (c discoveryCache) store() {
-	if c.testFramework.Name() == "pytest" && settings.GetExperimentalPytestStaticDiscovery() {
+	if c.testFramework.Name() == "pytest" && settings.GetPytestStaticDiscovery() {
 		return
 	}
 	output, err := discoveryCacheGitOutputDebug("rev-parse", "HEAD")

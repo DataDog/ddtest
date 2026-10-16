@@ -22,16 +22,16 @@ var pytestStaticDiscoveryScript string
 
 // tryStaticDiscovery never returns a partial inventory. Any uncertainty falls back
 // to the tracer-backed collector, so an incomplete inventory cannot skip a file.
-// Experimental results deliberately do not populate the discovery cache.
+// Static discovery results deliberately do not populate the discovery cache.
 func (p *PyTest) tryStaticDiscovery(ctx context.Context, testFiles discovery.TestFileSet, env map[string]string) ([]testoptimization.Test, bool) {
 	tests, err := p.discoverTestsStatically(ctx, testFiles, env)
 	if err != nil {
 		if ctx.Err() == nil {
-			slog.Warn("Experimental pytest static discovery unavailable; falling back to pytest collection", "reason", err)
+			slog.Warn("Pytest static discovery unavailable; falling back to pytest collection", "reason", err)
 		}
 		return nil, false
 	}
-	slog.Info("Experimental pytest static discovery succeeded", "count", len(tests))
+	slog.Info("Pytest static discovery succeeded", "count", len(tests))
 	return tests, true
 }
 

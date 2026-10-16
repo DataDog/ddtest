@@ -16,7 +16,7 @@ import (
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
-// Compare the experimental inventory with the actual tracer, including both
+// Compare the static inventory with the actual tracer, including both
 // pytest's node IDs and ddtrace's parameter serialization. Runs in the existing
 // pytest/ddtrace compatibility matrix rather than copying their implementation
 // into the expected results.
@@ -75,8 +75,8 @@ def test_repr(x): pass
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	const experiment = "DD_TEST_OPTIMIZATION_RUNNER_EXPERIMENTAL_PYTEST_STATIC_DISCOVERY"
-	t.Setenv(experiment, "false")
+	const staticDiscoveryEnv = "DD_TEST_OPTIMIZATION_RUNNER_PYTEST_STATIC_DISCOVERY"
+	t.Setenv(staticDiscoveryEnv, "false")
 	collected, err := pytest.DiscoverTests(ctx, files)
 	if err != nil || len(collected) == 0 {
 		t.Fatalf("tracer discovery: %v (%d tests)", err, len(collected))
@@ -84,7 +84,7 @@ def test_repr(x): pass
 	if err := os.Remove("imported-test-module"); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(experiment, "true")
+	t.Setenv(staticDiscoveryEnv, "true")
 	static, err := pytest.DiscoverTests(ctx, files)
 	if err != nil {
 		t.Fatal(err)

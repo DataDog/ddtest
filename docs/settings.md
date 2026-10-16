@@ -28,16 +28,16 @@ platforms or frameworks require explicit selection.
 | `--runtime-tags` | `DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS` | `DD_TEST_OPTIMIZATION_RUNTIME_TAGS` | `""` | JSON string to override runtime tags used to fetch skippable tests. Useful for local development on a different OS than CI, such as `--runtime-tags '{"os.platform":"linux","runtime.version":"3.2.0"}'`. |
 | | `DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED` | | `true` | Print human-readable plan and run reports. Set to `false` to disable them. |
 
-## Experimental pytest static discovery
+## Pytest static discovery
 
-Set `DD_TEST_OPTIMIZATION_RUNNER_EXPERIMENTAL_PYTEST_STATIC_DISCOVERY=true` to
+Set `DD_TEST_OPTIMIZATION_RUNNER_PYTEST_STATIC_DISCOVERY=true` to
 try discovering individual pytest tests without starting pytest or importing test
-modules. This is an opt-in experiment, disabled by default, with no CLI flag.
+modules. This is opt-in, disabled by default, with no CLI flag.
 It still starts a lightweight Python standard-library helper; it does not remove
 normal platform/prerequisite checks or change how tests execute.
 
 ```bash
-DD_TEST_OPTIMIZATION_RUNNER_EXPERIMENTAL_PYTEST_STATIC_DISCOVERY=true \
+DD_TEST_OPTIMIZATION_RUNNER_PYTEST_STATIC_DISCOVERY=true \
   ddtest plan --platform python --framework pytest \
   --tests-location 'tests/**/test_*.py' \
   --tests-exclude-pattern 'tests/integration/**' \
@@ -71,10 +71,10 @@ collection hooks, imported tests, other decorators/marks (including skip marks),
 dynamic parameter values or IDs, indirect parametrization, ambiguous roots, and
 unsupported module-level code trigger normal pytest collection instead. No
 partial inventory is used. A warning explains the fallback; successful static
-discovery logs `Experimental pytest static discovery succeeded`.
+discovery logs `Pytest static discovery succeeded`.
 
 This is not a general Python/pytest evaluator: use it only when imported
 application/helper modules do not mutate pytest collection. Normal discovery
-caches are neither read nor refreshed while this experiment is enabled, so
-eligibility is rechecked on every invocation and experimental inventories cannot
+caches are neither read nor refreshed while static discovery is enabled, so
+eligibility is rechecked on every invocation and static inventories cannot
 be reused after disabling it.

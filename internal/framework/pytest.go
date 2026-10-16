@@ -72,7 +72,7 @@ func (p *PyTest) DiscoverTests(ctx context.Context, testFiles discovery.TestFile
 		return nil, err
 	}
 
-	if settings.GetExperimentalPytestStaticDiscovery() {
+	if settings.GetPytestStaticDiscovery() {
 		if tests, ok := p.tryStaticDiscovery(ctx, testFiles, envMap); ok {
 			return tests, nil
 		}

@@ -1,4 +1,4 @@
-"""Experimental, conservative pytest inventory without importing pytest or tests.
+"""Static pytest inventory without importing pytest or tests.
 
 This is not a Python evaluator. Unsupported syntax/configuration invalidates the
 entire inventory and asks Go to use normal collection. Keep identity behavior

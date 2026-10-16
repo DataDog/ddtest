@@ -18,7 +18,7 @@ import (
 	"github.com/DataDog/ddtest/internal/testoptimization"
 )
 
-const pytestStaticEnv = "DD_TEST_OPTIMIZATION_RUNNER_EXPERIMENTAL_PYTEST_STATIC_DISCOVERY"
+const pytestStaticEnv = "DD_TEST_OPTIMIZATION_RUNNER_PYTEST_STATIC_DISCOVERY"
 
 func staticPython(t *testing.T) string {
 	t.Helper()
@@ -317,7 +317,7 @@ func TestPytestStaticDiscoveryGateAndFallback(t *testing.T) {
 			}
 			if mode == "success" {
 				if _, err := os.Stat(discovery.TestsFilePath); !os.IsNotExist(err) {
-					t.Fatalf("experimental inventory must not be cached: %v", err)
+					t.Fatalf("static inventory must not be cached: %v", err)
 				}
 			}
 		})
