@@ -188,7 +188,10 @@ invocation.
 | CI-only runtime graph | Compilation/linking of excluded APM components | Retain CI policies, coverage, metadata and telemetry |
 | Sealed span maps | Metadata and metric snapshots on `Finish` | Setters must never mutate a finished span's maps |
 | Shared CI tag snapshots and cached options | Per-span closures, common map entries and repeated wire strings | Preserve late updates, getters, option precedence, numeric overrides, child spans and Bazel filtering |
-| Metadata capacity estimate | Repeated map growth while applying common tags | Include per-event and client tags in the estimate |
+| Metadata capacity from `Tag` options | Repeated map growth while applying common tags, and a 64-slot map (2.25 kB) for a test event's 22 entries | Count every `Tag` option and the entries that `newSpan` adds itself; options that set fields or shared defaults reserve nothing |
+| Overrides recorded at enqueue | Searching every event's keys when lifting shared defaults into payload metadata | `Client.add` stores `eventSize`'s result on the event; only those events can remove a default |
+| Shared-tag key filter | Snapshot lookups for keys that cannot be shared | A snapshot holds only keys that `IsSharedCITag` selects |
+| Finish configuration in the event | One allocation per finished event | Options apply, outside the span's lock, to the event that `Finish` allocates anyway |
 | Appended close-action lists | Copying all prior actions on every registration | Execute in LIFO order, with pre-close barriers before ordinary actions |
 | Lazy metric maps | A map allocation for events without numeric metrics | Tag type transitions must retain their existing semantics |
 | Direct event encoding | An intermediate encoded event array and its payload copy | Preserve field names, event versions and byte limits |
@@ -245,23 +248,31 @@ boundaries.
 
 ### Checking metadata capacity
 
-`newSpan` estimates metadata capacity from the option count and client tags.
-Some options set timestamps, hierarchy fields or shared metadata without adding
-a local map entry. A smaller reservation saves space for those spans, but can
-force extra map growth for custom spans containing mostly text tags.
+`newSpan` reserves a metadata entry for each `Tag` option, and for the entries
+it adds itself: `_dd.origin`, `_dd.p.tid` and the client's tags, `env` and
+`version`. Options that set fields, timestamps or the shared CI snapshot reserve
+nothing. A test event of an instrumented binary has 27 start options, 22 of them
+tags, and ends with 22 entries. With `DD_ENV` set, its estimate of 25 gives it a
+32-slot map, 1.12 kB. Counting every option, the earlier estimate of 30 gave it
+64 slots, 2.25 kB. Go's maps hold 28 entries in 32 slots, so that shape needs an
+estimate of 28 or less; a few client tags from `DD_TAGS` take it back to 64
+slots. An option is now twice the size of a function value, which adds 216
+bytes to the slice of a test's 27 options. `testopt`'s public options remain
+functions; its client turns each into an option that reserves one entry.
 
-Keep the current estimate until an alternative handles both shapes. A fixed
+Text-only spans reserve exactly the entries that their tags add. A fixed
 capacity of eight, including a version limited to small option lists, regresses
 the text-heavy cases. `BenchmarkSpanMetadata` covers CI-shaped and text-only
-options with 0, 4, 12, 32 and 128 additional tags:
+options with 0, 4, 12, 32 and 128 additional tags, and
+`BenchmarkTestEventLifecycle` a test event's options:
 
 ```sh
-go test ./internal/minitracer -run '^$' -bench '^BenchmarkSpanMetadata$' -benchmem -count=5
+go test ./internal/minitracer -run '^$' -bench '^(BenchmarkSpanMetadata|BenchmarkTestEventLifecycle)$' -benchmem -count=5
 ```
 
-Compare allocation counts as well as time, and include the complete CI lifecycle
-benchmark before changing production. Options are functions; their count alone
-does not reveal how many map entries they will add.
+Compare allocation counts as well as time before changing the estimate. Keep
+the option constructors inlinable: a `Tag` that classified its value was not,
+and the closures that callers had kept on the stack moved to the heap.
 
 ## The ownership rules behind reuse
 
@@ -335,10 +346,15 @@ raw samples with a specific optimization experiment; the repository's retained
 
 ## Profiling the native event path
 
-The existing `BenchmarkEventLifecycle` creates and finishes events with common
-CI tags. Its HTTP transport consumes requests in memory. The agentless variant
-still performs gzip, but neither variant measures real network latency, CI
-policy startup or full test execution.
+`BenchmarkTestEventLifecycle` reproduces a test event of an instrumented
+binary: the integrations' 27 start options in their order, the tags set while
+the test runs, then 22 metadata entries and 3 metrics, with the CI tags in a
+shared snapshot. `BenchmarkEventLifecycle` creates simpler events with twelve
+client tags and no snapshot, so it does not exercise the snapshot code. Both
+start a telemetry client, as a test binary does: before startup, every counter
+submission allocates an entry to replay. Their HTTP transport consumes
+requests in memory. The agentless variant still performs gzip, but no variant
+measures real network latency, CI policy startup or full test execution.
 
 From the repository root, choose a new directory for the artifacts:
 
@@ -365,6 +381,14 @@ establish correctness only.
 
 For an optimization experiment, keep the baseline and candidate SHAs, inputs,
 commands, raw repetitions and limits in a task-scoped artifact directory.
+`scripts/minitracer_benchmark.py` does this for a base and a candidate worktree.
+It runs these microbenchmarks in both trees, with the candidate's benchmarks,
+then a test binary of many empty tests, built with `go test` and with each
+tree's ddto, and checks that every test event arrives. Its
+[first results](results/minitracer-20261016-linux-go1.27/README.md) measure four
+rows of the optimization table above: metadata capacity from `Tag` options,
+overrides recorded at enqueue, the shared-tag key filter and the finish
+configuration in the event.
 Alternate execution order and retain slow or failed samples. Record CPU,
 allocations, complete wall time, wire bytes and peak memory when they apply. A
 hot function's profile share does not predict the percentage that a change will

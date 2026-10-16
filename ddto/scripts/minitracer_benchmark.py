@@ -1,0 +1,311 @@
+"""Compare Mini's event recording between two source trees of this repository:
+the minitracer microbenchmarks, and a test binary of many empty tests.
+
+usage: minitracer_benchmark.py --base DIR --candidate DIR --output DIR
+           [--reps N] [--tests N] [--count N] [--gomaxprocs N]
+           [--benchtime D] [--report DIR]
+
+--base and --candidate are worktrees of this repository, such as one detached
+at main and one at the change: ddto compiles Mini from the tree it was built
+from, so each needs its own. Their runs alternate, and every figure is the
+median of --reps runs.
+
+Microbenchmarks: the candidate's internal/minitracer/performance_test.go runs
+in both trees, through go test -overlay in the base, with GOMAXPROCS=1 so that
+ns/op includes delivery.
+
+Test binary: a generated module with --tests empty tests, in a Git checkout so
+that the CI tags are shared, is built with go test -c, and with each tree's
+ddto test -c. Each binary runs -test.count=--count against the loopback
+receiver with --gomaxprocs. The report gives the test process's wall time, CPU
+time (user and system) and peak RSS, and what ddto adds per test over plain go
+test. The first run of each tree decodes every payload and checks that each
+test event arrived. --report copies results.json and README.md into DIR, such
+as a directory of docs/results; never edit those by hand.
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import platform
+import re
+import shutil
+import signal
+import statistics
+import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from benchmark_receiver import Receiver, decode  # noqa: E402
+
+ROOT = Path(__file__).resolve().parent.parent
+BENCHMARKS = '^(BenchmarkTestEventLifecycle|BenchmarkEventLifecycle|BenchmarkSpanMetadata)$'
+PERFORMANCE_TEST = Path('internal/minitracer/performance_test.go')
+TREES = ('base', 'candidate')
+VARIANTS = ('native',) + TREES
+# Runs a test binary from a fresh interpreter and prints its wall time and
+# rusage as JSON on stderr; the binary's stderr goes to stdout. A child's peak
+# RSS includes its parent's memory until exec, and the benchmark's own process
+# holds the receiver's payloads.
+MEASURE = """
+import json, os, sys, time
+start = time.perf_counter()
+pid = os.posix_spawn(sys.argv[1], sys.argv[1:], os.environ, file_actions=[(os.POSIX_SPAWN_DUP2, 1, 2)])
+_, status, usage = os.wait4(pid, 0)
+print(json.dumps({'wall': time.perf_counter() - start, 'cpu': usage.ru_utime + usage.ru_stime,
+                  'maxrss_kb': usage.ru_maxrss, 'exit': os.waitstatus_to_exitcode(status)}), file=sys.stderr)
+"""
+BENCH_LINE = re.compile(r'^(Benchmark\S+?)(?:-\d+)?\s+\d+\s+([\d.]+) ns/op\s+([\d.]+) B/op\s+([\d.]+) allocs/op')
+
+
+def go_env(**values):
+    """Returns the environment without the caller's Datadog settings."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith('DD_')}
+    env.update(GOWORK='off', GOFLAGS='', **values)
+    return env
+
+
+def run(command, cwd, env=None):
+    result = subprocess.run(command, cwd=cwd, env=env or go_env(), capture_output=True, text=True, timeout=3600)
+    if result.returncode:
+        raise SystemExit(f'{" ".join(map(str, command))} in {cwd}: exit {result.returncode}\n{result.stdout[-4000:]}\n{result.stderr[-4000:]}')
+    return result.stdout
+
+
+def parse_benchmarks(output):
+    """Returns {name: (ns/op, B/op, allocs/op)} from go test -bench output."""
+    out = {}
+    for line in output.splitlines():
+        match = BENCH_LINE.match(line)
+        if match:
+            out[match.group(1)] = tuple(float(match.group(i)) for i in (2, 3, 4))
+    return out
+
+
+def fixture_source(tests):
+    return 'package fixture\n\nimport "testing"\n\n' + ''.join(
+        f'func TestEmpty{i:05d}(t *testing.T) {{}}\n' for i in range(tests))
+
+
+def make_fixture(directory, tests):
+    """Writes a module of empty tests into a new Git checkout with an origin,
+    as CI has, so that Mini shares its Git tags."""
+    directory.mkdir()
+    (directory / 'go.mod').write_text('module example.com/fixture\n\ngo 1.25\n')
+    (directory / 'many_test.go').write_text(fixture_source(tests))
+    git = ['git', '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.com']
+    for command in (['init', '-q'], ['remote', 'add', 'origin', 'https://github.com/example/fixture.git'],
+                    ['add', '-A'], ['commit', '-qm', 'Add the fixture']):
+        run(git + command, directory)
+
+
+def describe(tree):
+    head = run(['git', 'rev-parse', 'HEAD'], tree).strip()
+    diff = subprocess.run(['git', 'diff', 'HEAD'], cwd=tree, capture_output=True).stdout
+    return {'commit': head, 'local_diff_sha256': hashlib.sha256(diff).hexdigest() if diff else ''}
+
+
+def build(args, out):
+    """Builds each tree's ddto and minitracer test binary, and the fixture's
+    test binaries, into out/<variant>."""
+    overlay = out / 'overlay.json'
+    overlay.write_text(json.dumps({'Replace': {str(args.base / PERFORMANCE_TEST): str(args.candidate / PERFORMANCE_TEST)}}))
+    for tree in TREES:
+        (out / tree).mkdir()
+        source = getattr(args, tree)
+        run(['go', 'build', '-o', str(out / tree / 'ddto'), './cmd/ddto'], source)
+        run(['go', 'test', '-c', '-o', str(out / tree / 'minitracer.test'),
+             *(['-overlay', str(overlay)] if tree == 'base' else []), './internal/minitracer'], source)
+    (out / 'native').mkdir()
+    fixture = out / 'fixture'
+    make_fixture(fixture, args.tests)
+    env = go_env(DD_CIVISIBILITY_GIT_UPLOAD_ENABLED='false')
+    run(['go', 'test', '-c', '-o', str(out / 'native' / 'fixture.test'), '.'], fixture, env)
+    for tree in TREES:
+        run([str(out / tree / 'ddto'), 'test', '-c', '-o', str(out / tree / 'fixture.test'), '.'], fixture, env)
+    return fixture
+
+
+def microbenchmarks(args, out):
+    """Runs the microbenchmarks once per repetition and tree, alternating
+    which tree goes first, and returns {tree: {name: [(ns, B, allocs)]}}."""
+    samples = {tree: {} for tree in TREES}
+    env = go_env(GOMAXPROCS='1')
+    for rep in range(args.reps):
+        for tree in TREES if rep % 2 == 0 else TREES[::-1]:
+            output = run([str(out / tree / 'minitracer.test'), '-test.run=^$', '-test.bench=' + BENCHMARKS,
+                          '-test.benchmem', '-test.count=1', '-test.benchtime=' + args.benchtime],
+                         getattr(args, tree) / 'internal/minitracer', env)
+            for name, values in parse_benchmarks(output).items():
+                samples[tree].setdefault(name, []).append(values)
+            print(f'microbenchmarks {tree} run {rep + 1}', flush=True)
+    return samples
+
+
+def measure(command, cwd, env, timeout=3600):
+    """Returns the output of command and its wall time, CPU seconds, peak RSS
+    and exit code, measured by MEASURE. The command runs in MEASURE's process
+    group, which is killed after timeout seconds or when waiting fails, such as
+    on Ctrl+C."""
+    process = subprocess.Popen([sys.executable, '-I', '-c', MEASURE, *command], cwd=cwd, env=env,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except BaseException as error:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate()
+        if isinstance(error, subprocess.TimeoutExpired):
+            raise SystemExit(f'{" ".join(command)}: still running after {timeout} s') from None
+        raise
+    if process.returncode:
+        raise SystemExit(f'measuring {" ".join(command)}: exit {process.returncode}\n{stderr[-4000:].decode(errors="replace")}')
+    return stdout, json.loads(stderr.decode().splitlines()[-1])
+
+
+def run_binary(args, out, fixture, variant, directory, verify):
+    """Runs one test binary and returns its wall time, CPU seconds, peak RSS
+    and the receiver's test-cycle traffic. verify decodes every payload."""
+    receiver = Receiver(directory, False)
+    env = go_env(GOMAXPROCS=str(args.gomaxprocs))
+    if variant != 'native':
+        env.update(DD_CIVISIBILITY_ENABLED='parent', DD_TRACE_AGENT_URL=receiver.url, DD_SERVICE='fixture',
+                   DD_ENV='benchmark', DD_CIVISIBILITY_AGENTLESS_ENABLED='false',
+                   DD_CIVISIBILITY_GIT_UPLOAD_ENABLED='false', DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED='false')
+    command = [str(out / variant / 'fixture.test'), f'-test.count={args.count}']
+    output, usage = measure(command, fixture, env)
+    if usage['exit'] or not output.rstrip().endswith(b'PASS'):
+        receiver.close()
+        raise SystemExit(f'{" ".join(command)}: exit {usage["exit"]}\n{output[-4000:].decode(errors="replace")}')
+    cycle = [r for r in receiver.requests if r['path'].endswith('/citestcycle')]
+    events = None
+    if verify:
+        events = {}
+        for request in cycle:
+            for event in decode(args.decoder, receiver.bodies[request['file']]).get('events', []):
+                events[event['type']] = events.get(event['type'], 0) + 1
+        if events.get('test') != args.tests * args.count:
+            raise SystemExit(f'{variant}: {events.get("test")} test events arrived, want {args.tests * args.count}')
+    receiver.bodies.clear()  # Only requests.json is kept.
+    receiver.close()
+    return {'wall': round(usage['wall'], 4), 'cpu': round(usage['cpu'], 4), 'maxrss_kb': usage['maxrss_kb'],
+            'cycle_requests': len(cycle), 'cycle_bytes': sum(r['wire_bytes'] for r in cycle), 'events': events}
+
+
+def test_binaries(args, out, fixture):
+    """Runs each test binary once to warm up, then --reps times in rotating
+    order, and returns {variant: [run]}."""
+    runs = {variant: [] for variant in VARIANTS}
+    for rep in range(args.reps + 1):
+        order = VARIANTS[rep % len(VARIANTS):] + VARIANTS[:rep % len(VARIANTS)]
+        for variant in order:
+            verify = rep == 1 and variant != 'native'
+            result = run_binary(args, out, fixture, variant, out / 'runs' / f'{variant}-{rep}', verify)
+            print(f'test binary {variant} run {rep}: {result["wall"]:.2f} s wall, {result["cpu"]:.2f} s CPU', flush=True)
+            if rep:
+                runs[variant].append(result)
+    return runs
+
+
+def order(name):
+    """Sorts the realistic benchmark first, then numbers in names by value."""
+    return (not name.startswith('BenchmarkTestEvent'), [int(p) if p.isdigit() else p for p in re.split(r'(\d+)', name)])
+
+
+def change(base, candidate):
+    return f'{(candidate - base) / base * 100:+.1f}%' if base else '—'
+
+
+def report(results):
+    tests = results['tests'] * results['count']
+    lines = ['# Mini event recording: base against candidate', '',
+             'Generated by `scripts/minitracer_benchmark.py`; do not edit by hand.', '',
+             f"Base `{results['base']['commit']}`, candidate `{results['candidate']['commit']}`"
+             + ''.join(f", {tree} with local changes (sha256 {results[tree]['local_diff_sha256'][:12]})"
+                       for tree in TREES if results[tree]['local_diff_sha256']) + '.', '',
+             f"{results['go']}, {results['cpu']}, {results['os']}. Medians of {results['reps']} runs per tree; "
+             'the trees alternate.', '',
+             '## Microbenchmarks', '',
+             "`go test ./internal/minitracer -bench` with GOMAXPROCS=1 and `-benchtime="
+             f"{results['benchtime']}`. Both trees run the candidate's `performance_test.go`.", '',
+             '| Benchmark | ns/op base | ns/op candidate | Change | B/op base | B/op candidate | allocs/op base | allocs/op candidate |',
+             '| --- | --- | --- | --- | --- | --- | --- | --- |']
+    bench = results['microbenchmarks']
+    for name in sorted(bench['candidate'], key=order):
+        base = [statistics.median(v[i] for v in bench['base'].get(name, [(0, 0, 0)])) for i in range(3)]
+        cand = [statistics.median(v[i] for v in bench['candidate'][name]) for i in range(3)]
+        lines.append(f'| `{name}` | {base[0]:.0f} | {cand[0]:.0f} | {change(base[0], cand[0])} | {base[1]:.0f} | '
+                     f'{cand[1]:.0f} | {base[2]:.0f} | {cand[2]:.0f} |')
+    lines += ['', '## Test binary', '',
+              f"{results['tests']} empty tests run `-test.count={results['count']}`, {tests} test events, "
+              f"with GOMAXPROCS={results['gomaxprocs']} against the loopback receiver. CPU is the test process's "
+              'user and system time. Added per test is the difference with go test, divided by the test events.', '',
+              '| Binary | Wall time | CPU time | Peak RSS | Wall added per test | CPU added per test | Test-cycle payloads |',
+              '| --- | --- | --- | --- | --- | --- | --- |']
+    binaries = results['test_binaries']
+    native = {key: statistics.median(r[key] for r in binaries['native']) for key in ('wall', 'cpu')}
+    labels = {'native': 'go test', 'base': 'ddto, base', 'candidate': 'ddto, candidate'}
+    for variant in VARIANTS:
+        runs = binaries[variant]
+        wall, cpu = (statistics.median(r[key] for r in runs) for key in ('wall', 'cpu'))
+        rss = statistics.median(r['maxrss_kb'] for r in runs) / 1024
+        if variant == 'native':
+            lines.append(f'| {labels[variant]} | {wall:.3f} s | {cpu:.3f} s | {rss:.0f} MiB | — | — | — |')
+            continue
+        payloads = statistics.median(r['cycle_bytes'] for r in runs) / (1 << 20)
+        requests = statistics.median(r['cycle_requests'] for r in runs)
+        lines.append(f"| {labels[variant]} | {wall:.3f} s | {cpu:.3f} s | {rss:.0f} MiB | "
+                     f"{(wall - native['wall']) / tests * 1e6:.2f} µs | {(cpu - native['cpu']) / tests * 1e6:.2f} µs | "
+                     f'{requests:.0f}, {payloads:.1f} MiB |')
+    for tree in TREES:
+        events = binaries[tree][0]['events']
+        lines += ['', f"The first {tree} run delivered " + ', '.join(f'{n} `{kind}`' for kind, n in sorted(events.items())) + ' events.']
+    lines.append('')
+    return '\n'.join(lines)
+
+
+def cpu_model():
+    try:
+        for line in Path('/proc/cpuinfo').read_text().splitlines():
+            if line.startswith('model name'):
+                return line.split(':', 1)[1].strip()
+    except OSError:
+        pass
+    return platform.processor()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--base', type=Path, required=True)
+    parser.add_argument('--candidate', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--reps', type=int, default=10)
+    parser.add_argument('--tests', type=int, default=10000)
+    parser.add_argument('--count', type=int, default=30)
+    parser.add_argument('--gomaxprocs', type=int, default=4)
+    parser.add_argument('--benchtime', default='1s')
+    parser.add_argument('--report', type=Path)
+    args = parser.parse_args()
+    args.base, args.candidate = args.base.resolve(), args.candidate.resolve()
+    out = args.output.resolve()
+    out.mkdir(parents=True)
+    args.decoder = out / 'decode'
+    run(['go', 'build', '-o', str(args.decoder), './scripts/testdata/runtime-benchmark/decode.go'], ROOT)
+    fixture = build(args, out)
+    results = {'base': describe(args.base), 'candidate': describe(args.candidate),
+               'go': run(['go', 'version'], ROOT).strip(), 'cpu': cpu_model(), 'os': f'{platform.system()} {platform.release()}',
+               'reps': args.reps, 'tests': args.tests, 'count': args.count, 'gomaxprocs': args.gomaxprocs,
+               'benchtime': args.benchtime}
+    results['microbenchmarks'] = microbenchmarks(args, out)
+    results['test_binaries'] = test_binaries(args, out, fixture)
+    (out / 'results.json').write_text(json.dumps(results, indent=1, sort_keys=True) + '\n')
+    (out / 'README.md').write_text(report(results))
+    if args.report:
+        args.report.mkdir(parents=True, exist_ok=True)
+        for name in ('results.json', 'README.md'):
+            shutil.copy(out / name, args.report / name)
+    print(report(results))
+
+
+if __name__ == '__main__':
+    main()

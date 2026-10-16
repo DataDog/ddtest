@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -21,6 +22,8 @@ import (
 // payload that projection and encoding produce, and the shared total applies
 // only while the batch keeps one snapshot per test-event kind. A sealed batch
 // leaves nothing behind: the next one accounts as if it were the first.
+// Projection searches only the events that eventSize found overriding, and
+// produces what searching every event produces.
 func TestBatchBytesBoundProjectedPayload(t *testing.T) {
 	base := map[string]map[string]string{"*": {"language": "go"}, "test": {"test_session.name": "session", "ci.job.name": "older"}}
 	envelope := (&testCyclePayload{Version: 1, Metadata: base}).Msgsize() + msgp.ArrayHeaderSize
@@ -48,6 +51,7 @@ func TestBatchBytesBoundProjectedPayload(t *testing.T) {
 				event.Content.Metrics = map[string]float64{"git.commit.message": 1}
 			}
 			size, overrides := eventSize(event)
+			event.overrides = overrides // As Client.add records it.
 			want := accounted.with(event, size, overrides)
 			accounted.add(event, size, overrides)
 			if accounted.total() != want {
@@ -63,6 +67,21 @@ func TestBatchBytesBoundProjectedPayload(t *testing.T) {
 				t.Fatalf("run %d: after a reset, %+v differs from %+v", run, accounted, fresh)
 			}
 			metadata, wire := prepareCommonMetadata(base, events)
+			searched := make(ciEvents, len(events))
+			for i, event := range events {
+				every := *event
+				every.overrides = true
+				searched[i] = &every
+			}
+			everyMetadata, everyWire := prepareCommonMetadata(base, searched)
+			if !reflect.DeepEqual(metadata, everyMetadata) {
+				t.Fatalf("run %d: metadata %v, searching every event %v", run, metadata, everyMetadata)
+			}
+			for i := range wire {
+				if wire[i].Type != everyWire[i].Type || !reflect.DeepEqual(wire[i].Content, everyWire[i].Content) {
+					t.Fatalf("run %d: event %d is %+v, searching every event %+v", run, i, wire[i].Content, everyWire[i].Content)
+				}
+			}
 			var raw bytes.Buffer
 			if err := msgp.Encode(&raw, &testCycleBatch{Version: 1, Metadata: metadata, Events: wire}); err != nil {
 				t.Fatal(err)

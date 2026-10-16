@@ -34,17 +34,46 @@ func (c *SpanContext) TraceID() uint64               { return binary.BigEndian.U
 func (c *SpanContext) Portable() propagation.Context { return c.identity }
 func (s *Span) Context() *SpanContext                { return &SpanContext{identity: s.identity} }
 
-type StartSpanOption func(*Span)
-type FinishOption func(*finishConfig)
-type finishConfig struct{ time time.Time }
+// StartSpanOption sets a property of a new span. newSpan reserves a metadata
+// entry for each Tag option; options that set fields or shared defaults
+// reserve none.
+type StartSpanOption struct {
+	apply func(*Span)
+	tag   bool
+}
 
-func ResourceName(v string) StartSpanOption { return func(s *Span) { s.content.Resource = v } }
-func SpanType(v string) StartSpanOption     { return func(s *Span) { s.content.Type = v } }
-func StartTime(v time.Time) StartSpanOption { return func(s *Span) { s.content.Start = v.UnixNano() } }
-func Tag(k string, v any) StartSpanOption   { return func(s *Span) { s.SetTag(k, v) } }
+// FinishOption sets the configuration that the finished event holds, so
+// finishing allocates nothing else.
+type FinishOption func(*finishConfig)
+type finishConfig struct{ end int64 } // Unix nanoseconds.
+
+func ResourceName(v string) StartSpanOption {
+	return StartSpanOption{apply: func(s *Span) { s.content.Resource = v }}
+}
+func SpanType(v string) StartSpanOption {
+	return StartSpanOption{apply: func(s *Span) { s.content.Type = v }}
+}
+func StartTime(v time.Time) StartSpanOption {
+	return StartSpanOption{apply: func(s *Span) { s.content.Start = v.UnixNano() }}
+}
+
+func Tag(k string, v any) StartSpanOption {
+	return StartSpanOption{apply: func(s *Span) { s.SetTag(k, v) }, tag: true}
+}
 
 // Service sets the span's service instead of the client's.
-func Service(v string) StartSpanOption { return func(s *Span) { s.content.Service = v } }
+func Service(v string) StartSpanOption {
+	return StartSpanOption{apply: func(s *Span) { s.content.Service = v }}
+}
+
+// FuncOption makes an option of a function, such as testopt's options. It
+// reserves a metadata entry, as Tag does.
+func FuncOption(apply func(*Span)) StartSpanOption {
+	return StartSpanOption{apply: apply, tag: true}
+}
+
+// Func returns the function that applies the option.
+func (o StartSpanOption) Func() func(*Span) { return o.apply }
 
 // Service returns the span's service.
 func (s *Span) Service() string {
@@ -52,7 +81,7 @@ func (s *Span) Service() string {
 	defer s.mu.Unlock()
 	return s.content.Service
 }
-func FinishTime(v time.Time) FinishOption { return func(c *finishConfig) { c.time = v } }
+func FinishTime(v time.Time) FinishOption { return func(c *finishConfig) { c.end = v.UnixNano() } }
 
 // SetTag follows dd-trace-go's Span.SetTag for the values CI events carry:
 // pointers to basic values are dereferenced, numbers that fit a float64
@@ -387,9 +416,11 @@ func (s *Span) FinishWithTags(tags map[string]any, options ...FinishOption) {
 }
 
 func (s *Span) finish(tags map[string]any, options ...FinishOption) {
-	cfg := finishConfig{time: time.Now()}
+	// Options take the configuration's address. A local configuration would
+	// therefore move to the heap; the event is allocated anyway.
+	event := &ciEvent{Version: 1, finish: finishConfig{end: time.Now().UnixNano()}}
 	for _, option := range options {
-		option(&cfg)
+		option(&event.finish)
 	}
 	s.mu.Lock()
 	if s.finished {
@@ -401,11 +432,11 @@ func (s *Span) finish(tags map[string]any, options ...FinishOption) {
 	}
 	s.finished = true
 	content := s.content
-	content.Duration = cfg.time.UnixNano() - content.Start
+	content.Duration = event.finish.end - content.Start
 	if content.Duration < 0 {
 		content.Duration = 0
 	}
-	event := &ciEvent{Type: content.Type, Version: 1, Content: content, common: s.common}
+	event.Type, event.Content, event.common = content.Type, content, s.common
 	s.sealHierarchy(&event.Content)
 	switch content.Type {
 	case "test":
@@ -426,6 +457,30 @@ func (s *Span) finish(tags map[string]any, options ...FinishOption) {
 		s.client.add(event)
 	}
 }
+
+// metadataCapacity bounds the entries that newSpan adds: _dd.origin and
+// _dd.p.tid, the client's tags, env and version, and one per Tag option. A
+// test event's 27 options, 22 of them tags, then reserve a 32-slot map for its
+// 22 entries, instead of 64 slots when every option counted.
+func metadataCapacity(client *Client, options []StartSpanOption) int {
+	capacity := 2
+	for _, option := range options {
+		if option.tag {
+			capacity++
+		}
+	}
+	if client != nil {
+		capacity += len(client.tags)
+		if client.env != "" {
+			capacity++
+		}
+		if client.serviceVersion != "" {
+			capacity++
+		}
+	}
+	return capacity
+}
+
 func newSpan(client *Client, ctx context.Context, name string, options ...StartSpanOption) (*Span, context.Context) {
 	identity, ok := propagation.FromContext(ctx)
 	parent := uint64(0)
@@ -439,11 +494,7 @@ func newSpan(client *Client, ctx context.Context, name string, options ...StartS
 	if err != nil {
 		panic("cannot generate CI trace identifiers")
 	}
-	capacity := len(options) + 3
-	if client != nil {
-		capacity += len(client.tags)
-	}
-	s := &Span{client: client, identity: identity, content: eventContent{Name: name, Resource: name, Start: time.Now().UnixNano(), SpanID: identity.SpanID, TraceID: binary.BigEndian.Uint64(identity.TraceID[8:]), ParentID: parent, Meta: make(map[string]string, capacity)}}
+	s := &Span{client: client, identity: identity, content: eventContent{Name: name, Resource: name, Start: time.Now().UnixNano(), SpanID: identity.SpanID, TraceID: binary.BigEndian.Uint64(identity.TraceID[8:]), ParentID: parent, Meta: make(map[string]string, metadataCapacity(client, options))}}
 	if client != nil {
 		s.content.Service = client.service
 		for k, v := range client.tags {
@@ -459,7 +510,7 @@ func newSpan(client *Client, ctx context.Context, name string, options ...StartS
 	s.content.Meta["_dd.origin"] = "ciapp-test"
 	s.content.Meta["_dd.p.tid"] = hex.EncodeToString(identity.TraceID[:8])
 	for _, option := range options {
-		option(s)
+		option.apply(s)
 	}
 	return s, propagation.WithContext(ctx, identity)
 }

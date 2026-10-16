@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/citransport"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/ddtrace/ext"
@@ -26,6 +27,27 @@ func (formattedError) Format(s fmt.State, verb rune) {
 type nilStringer struct{ value string }
 
 func (n *nilStringer) String() string { return n.value }
+
+// Only Tag options reserve a metadata entry; options that set fields or shared
+// defaults do not. The client adds its tags, env and version, and text tags
+// fill the map exactly.
+func TestMetadataCapacityCountsTagOptions(t *testing.T) {
+	common := NewCommonTags(map[string]string{"git.branch": "main"})
+	options := []StartSpanOption{ResourceName("resource"), SpanType("test"), StartTime(time.Now()), Service("service"), common.Option(),
+		Tag("_dd.host.vcpu_count", 32.0), Tag("test.name", "name"), Tag(ext.ManualKeep, true)}
+	if got := metadataCapacity(nil, options); got != 2+3 {
+		t.Fatalf("capacity %d, want _dd.origin, _dd.p.tid and 3 tags", got)
+	}
+	client := &Client{tags: map[string]string{"team": "a", "tier": "b"}, env: "ci", serviceVersion: "1.0"}
+	if got := metadataCapacity(client, options); got != 2+3+4 {
+		t.Fatalf("capacity %d, want the client's 2 tags, env and version too", got)
+	}
+	text := []StartSpanOption{Tag("one", "1"), Tag("two", "2"), Tag("three", "3")}
+	span, _ := newSpan(nil, context.Background(), "test", text...)
+	if got, want := len(span.content.Meta), metadataCapacity(nil, text); got != want {
+		t.Fatalf("text-only span has %d entries, reserved %d", got, want)
+	}
+}
 
 func TestSetTagFollowsSDKValueRules(t *testing.T) {
 	span, _ := newSpan(nil, context.Background(), "test")

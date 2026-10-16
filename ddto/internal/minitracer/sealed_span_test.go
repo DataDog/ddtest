@@ -7,10 +7,29 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/citransport"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
 )
+
+// Finishing allocates only the event: the finish options' configuration stays
+// on the stack.
+func TestFinishAllocatesOnlyTheEvent(t *testing.T) {
+	spans := make([]*Span, 101) // AllocsPerRun calls once more to warm up.
+	for i := range spans {
+		spans[i], _ = newSpan(nil, context.Background(), "test", SpanType("test"))
+	}
+	end := time.Now()
+	next := 0
+	allocs := testing.AllocsPerRun(100, func() {
+		spans[next].Finish(FinishTime(end))
+		next++
+	})
+	if allocs != 1 {
+		t.Fatalf("Finish allocated %v objects, want only the event", allocs)
+	}
+}
 
 func TestFinishedSpanSharesSealedMaps(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(202) }))

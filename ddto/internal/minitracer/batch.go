@@ -122,6 +122,7 @@ func (b *batchBytes) reset() {
 // until an idle checkpoint.
 func (c *Client) add(event *ciEvent) {
 	size, overrides := eventSize(event)
+	event.overrides = overrides
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.closed && size+c.envelopeBytes > citransport.TestCycleMaxPayloadBytes {

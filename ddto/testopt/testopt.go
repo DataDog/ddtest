@@ -26,19 +26,52 @@ type Config = minitracer.Config
 type TransportConfig = citransport.Config
 
 // Client owns a bounded batch of native CI events.
-type Client = minitracer.Client
+type Client struct{ client *minitracer.Client }
 
 // Span represents one CI event; Finish seals it exactly once.
 type Span = minitracer.Span
 
 // StartSpanOption specifies an event property.
-type StartSpanOption = minitracer.StartSpanOption
+type StartSpanOption func(*Span)
 
 // FinishOption specifies how an event ends.
 type FinishOption = minitracer.FinishOption
 
 // New creates an explicit client without reading credentials from the environment.
-func New(c Config) (*Client, error) { return minitracer.New(c) }
+func New(c Config) (*Client, error) {
+	client, err := minitracer.New(c)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{client: client}, nil
+}
+
+// StartSpan starts an event, as a child of ctx's event if it has one. Each
+// option reserves an entry in the event's metadata map. A nil client starts an
+// event that is never sent.
+func (c *Client) StartSpan(ctx context.Context, name string, options ...StartSpanOption) (*Span, context.Context) {
+	converted := make([]minitracer.StartSpanOption, len(options))
+	for i, option := range options {
+		converted[i] = minitracer.FuncOption(option)
+	}
+	var client *minitracer.Client
+	if c != nil {
+		client = c.client
+	}
+	return client.StartSpan(ctx, name, converted...)
+}
+
+// Flush delivers every buffered event and waits for the result.
+func (c *Client) Flush(ctx context.Context) error { return c.client.Flush(ctx) }
+
+// Close delivers the remaining events and releases the client's connections.
+func (c *Client) Close(ctx context.Context) error { return c.client.Close(ctx) }
+
+// LastError returns the most recent delivery or rejection error.
+func (c *Client) LastError() error { return c.client.LastError() }
+
+// DroppedEvents reports rejected events and events abandoned at final closure.
+func (c *Client) DroppedEvents() uint64 { return c.client.DroppedEvents() }
 
 // Context returns the active test context installed by the testing hooks.
 // Cancellation follows the native testing lifetime. Uninstrumented tests and
@@ -46,16 +79,16 @@ func New(c Config) (*Client, error) { return minitracer.New(c) }
 func Context(tb testing.TB) context.Context { return gotesting.Context(tb) }
 
 // ResourceName sets the event's resource.
-func ResourceName(v string) StartSpanOption { return minitracer.ResourceName(v) }
+func ResourceName(v string) StartSpanOption { return minitracer.ResourceName(v).Func() }
 
 // SpanType sets the native CI event type.
-func SpanType(v string) StartSpanOption { return minitracer.SpanType(v) }
+func SpanType(v string) StartSpanOption { return minitracer.SpanType(v).Func() }
 
 // Tag sets metadata or a numeric metric.
-func Tag(k string, v any) StartSpanOption { return minitracer.Tag(k, v) }
+func Tag(k string, v any) StartSpanOption { return minitracer.Tag(k, v).Func() }
 
 // StartTime sets the event's start timestamp.
-func StartTime(v time.Time) StartSpanOption { return minitracer.StartTime(v) }
+func StartTime(v time.Time) StartSpanOption { return minitracer.StartTime(v).Func() }
 
 // FinishTime sets the event's end timestamp.
 func FinishTime(v time.Time) FinishOption { return minitracer.FinishTime(v) }

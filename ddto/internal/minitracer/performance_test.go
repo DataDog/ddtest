@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/citransport"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry"
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/telemetry/telemetrytest"
 )
 
 type benchmarkTransport struct{}
@@ -49,7 +51,14 @@ func BenchmarkSpanMetadata(b *testing.B) {
 	}
 }
 
+// benchmarkTelemetry starts a telemetry client, as a test binary does. Before
+// startup, every counter submission allocates an entry to replay later.
+func benchmarkTelemetry(b *testing.B) {
+	b.Cleanup(telemetry.MockClient(&telemetrytest.RecordClient{}))
+}
+
 func BenchmarkEventLifecycle(b *testing.B) {
+	benchmarkTelemetry(b)
 	for _, gzip := range []bool{false, true} {
 		b.Run(fmt.Sprintf("gzip=%t", gzip), func(b *testing.B) {
 			tags := make(map[string]string, 12)
@@ -74,5 +83,90 @@ func BenchmarkEventLifecycle(b *testing.B) {
 				b.Fatal("events dropped")
 			}
 		})
+	}
+}
+
+// testEventCommonTags are the CI, Git, OS and runtime tags of a Git checkout,
+// which test events share through payload metadata.
+var testEventCommonTags = map[string]string{
+	"ci.workspace_path":          "/home/runner/work/project/project",
+	"git.branch":                 "main",
+	"git.commit.author.date":     "2026-10-16T10:00:00+02:00",
+	"git.commit.author.email":    "author@example.com",
+	"git.commit.author.name":     "Author",
+	"git.commit.committer.date":  "2026-10-16T10:00:00+02:00",
+	"git.commit.committer.email": "author@example.com",
+	"git.commit.committer.name":  "Author",
+	"git.commit.message":         "Change the project",
+	"git.commit.sha":             "4880210c4b0d5b5e8c0f0f6c8e7a4f3f2b1a0c9d",
+	"git.repository_url":         "https://github.com/example/project.git",
+	"os.architecture":            "amd64",
+	"os.platform":                "linux",
+	"os.version":                 "6.8.0",
+	"runtime.name":               "go",
+	"runtime.version":            "go1.27.0",
+}
+
+// BenchmarkTestEventLifecycle starts, tags, finishes and delivers events shaped
+// like an instrumented binary's test events: the integrations' 27 start options
+// in their order, the tags set while the test runs, then 22 metadata entries and
+// 3 metrics, with the CI tags in a shared snapshot. Run it with GOMAXPROCS=1 to
+// include delivery in ns/op.
+func BenchmarkTestEventLifecycle(b *testing.B) {
+	benchmarkTelemetry(b)
+	c, err := New(Config{Service: "project", Env: "ci", Metadata: map[string]map[string]string{"test": {"test_session.name": "go test ./..."}},
+		Transport: citransport.Config{Endpoint: "http://diagnostic.invalid", HTTPClient: &http.Client{Transport: benchmarkTransport{}}}})
+	if err != nil {
+		b.Fatal(err)
+	}
+	common := NewCommonTags(testEventCommonTags)
+	// The options that the integrations build once per process, session,
+	// module or suite. Module tags repeat three of the session's.
+	shared := []StartSpanOption{
+		Tag("_dd.origin", "ciapp-test"), Tag("manual.keep", true),
+		Tag("_dd.library_capabilities.auto_test_retries", "1"), Tag("_dd.library_capabilities.coverage_report_upload", "1"),
+		Tag("_dd.library_capabilities.early_flake_detection", "1"), Tag("_dd.library_capabilities.test_impact_analysis", "1"),
+		Tag("_dd.library_capabilities.test_management.attempt_to_fix", "5"), Tag("_dd.library_capabilities.test_management.disable", "1"),
+		Tag("_dd.library_capabilities.test_management.quarantine", "1"), Tag("_dd.test.is_user_provided_service", "true"),
+		common.Option(), Tag("_dd.host.vcpu_count", float64(32)),
+		Tag("test.type", "test"), Tag("test.command", "go test ./..."), Tag("test.working_directory", "."),
+		Tag("test.framework", "golang.org/pkg/testing"), Tag("test.framework_version", "go1.27.0"),
+		Tag("test.type", "test"), Tag("test.module", "example.com/project"),
+		Tag("test.framework", "golang.org/pkg/testing"), Tag("test.framework_version", "go1.27.0"),
+		Tag("test.suite", "project_test.go"),
+	}
+	finishTags := map[string]any{"test.final_status": "pass"}
+	var options []StartSpanOption
+	test := func() *Span {
+		start := time.Now()
+		// The integrations build each test's option slice.
+		options = append(make([]StartSpanOption, 0, 27), ResourceName("project_test.go.TestProject"), SpanType("test"), StartTime(start))
+		options = append(options, shared...)
+		options = append(options, Tag("test.name", "TestProject"), Service("project"))
+		s, _ := c.StartSpan(context.Background(), "golang.org/pkg/testing.test", options...)
+		s.SetTag("test_session_id", "8160361045226661673")
+		s.SetTag("test_module_id", "9051586845277556044")
+		s.SetTag("test_suite_id", "7700980063684605712")
+		s.SetTag("test.source.file", "project_test.go")
+		s.SetTag("test.source.start", 5)
+		s.SetTag("test.source.end", 9)
+		s.SetTag("test.status", "pass")
+		s.FinishWithTags(finishTags, FinishTime(start))
+		return s
+	}
+	if s := test(); len(options) != 27 || len(s.content.Meta) != 22 || len(s.content.Metrics) != 3 {
+		b.Fatalf("event shape: %d options, %d metadata entries, %d metrics", len(options), len(s.content.Meta), len(s.content.Metrics))
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		test()
+	}
+	if err := c.Close(context.Background()); err != nil {
+		b.Fatal(err)
+	}
+	b.StopTimer()
+	if c.DroppedEvents() != 0 {
+		b.Fatal("events dropped")
 	}
 }

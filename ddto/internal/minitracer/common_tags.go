@@ -9,6 +9,8 @@ import (
 
 // CommonTags owns an immutable CI tag snapshot. Spans keep their own overrides;
 // getters and wire projection resolve those overrides before these defaults.
+// values holds only keys that IsSharedCITag selects, so other keys never need
+// a lookup.
 type CommonTags struct {
 	values map[string]string
 	bytes  int
@@ -40,7 +42,7 @@ func NewCommonTags(values map[string]string) *CommonTags {
 // Option applies defaults at this point in option order. Later string/numeric
 // tags win; an earlier tag of the same name is replaced, as with ordinary Tag.
 func (c *CommonTags) Option() StartSpanOption {
-	return func(s *Span) {
+	return StartSpanOption{apply: func(s *Span) {
 		if s.common != nil {
 			// Multiple common options are uncommon, but retain earlier keys that
 			// the new option does not replace, just as individual Tag options do.
@@ -53,17 +55,23 @@ func (c *CommonTags) Option() StartSpanOption {
 			}
 		}
 		for key := range s.content.Meta {
+			if !IsSharedCITag(key) {
+				continue
+			}
 			if _, replace := c.values[key]; replace {
 				delete(s.content.Meta, key)
 			}
 		}
 		for key := range s.content.Metrics {
+			if !IsSharedCITag(key) {
+				continue
+			}
 			if _, replace := c.values[key]; replace {
 				delete(s.content.Metrics, key)
 			}
 		}
 		s.common = c
-	}
+	}}
 }
 
 // Account for effective event strings and the potential envelope overhead.
@@ -76,12 +84,18 @@ func eventSize(event *ciEvent) (size int, overrides bool) {
 	if event.common != nil {
 		size += event.common.entrySize(event.Type)
 		for key := range event.Content.Meta {
+			if !IsSharedCITag(key) {
+				continue
+			}
 			if value, replaced := event.common.values[key]; replaced {
 				size -= 2*msgp.StringPrefixSize + len(key) + len(value)
 				overrides = true
 			}
 		}
 		for key := range event.Content.Metrics {
+			if !IsSharedCITag(key) {
+				continue
+			}
 			if _, text := event.Content.Meta[key]; text {
 				continue
 			}
@@ -107,6 +121,8 @@ func (c *CommonTags) entrySize(kind string) int {
 // An override removes only that new default from the envelope; peers get the
 // string on their event. This prevents numeric inheritance and unused strings
 // escaping the effective-event byte budget when every event overrides a key.
+// Only events whose overrides flag Client.add set, from eventSize, can remove
+// a default; the others are not searched.
 func prepareCommonMetadata(base map[string]map[string]string, events ciEvents) (map[string]map[string]string, ciEvents) {
 	groups := make(map[string]*CommonTags)
 	for _, event := range events {
@@ -125,6 +141,9 @@ func prepareCommonMetadata(base map[string]map[string]string, events ciEvents) (
 		}
 	}
 	for _, event := range events {
+		if !event.overrides {
+			continue
+		}
 		for key := range event.Content.Meta {
 			delete(defaults[event.Type], key)
 		}
