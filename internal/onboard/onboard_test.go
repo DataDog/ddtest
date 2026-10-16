@@ -7,6 +7,7 @@ package onboard
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,29 +50,50 @@ jobs:
 }
 
 func TestRunRecognizesExistingGitHubAction(t *testing.T) {
-	repositoryRoot := newJestRepository(t, `
+	for _, tc := range []struct {
+		name       string
+		languages  string
+		configured bool
+	}{
+		{name: "JavaScript", languages: "js", configured: true},
+		{name: "multiple languages", languages: "python js", configured: true},
+		{name: "all languages", languages: "all", configured: true},
+		{name: "only Python", languages: "python"},
+		{name: "missing languages"},
+		{name: "dynamic languages", languages: "${{ matrix.languages }}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repositoryRoot := newJestRepository(t, fmt.Sprintf(`
 name: tests
 jobs:
   test:
     steps:
       - uses: datadog/test-visibility-github-action@v3
+        with:
+          languages: %q
+      - run: pytest
       - run: npm test
-`)
+`, tc.languages))
 
-	var output bytes.Buffer
-	t.Chdir(repositoryRoot)
-	if err := Run(&output); err != nil {
-		t.Fatalf("Run() unexpected error: %v", err)
-	}
+			var output bytes.Buffer
+			t.Chdir(repositoryRoot)
+			if err := Run(&output); err != nil {
+				t.Fatalf("Run() unexpected error: %v", err)
+			}
 
-	if !strings.Contains(output.String(), "already appears in every detected test workflow") {
-		t.Fatalf("Run() did not recognize the existing setup:\n%s", output.String())
-	}
-	if !strings.Contains(output.String(), "ddtest testdrive") {
-		t.Fatalf("Run() did not print the next step:\n%s", output.String())
-	}
-	if !strings.Contains(output.String(), "post every `Open report:` link") {
-		t.Fatalf("Run() did not tell the agent to share the report:\n%s", output.String())
+			if strings.Contains(output.String(), "already appears in every detected test workflow") != tc.configured {
+				t.Fatalf("Run() recognized setup incorrectly:\n%s", output.String())
+			}
+			if !tc.configured && !strings.Contains(output.String(), "languages: js") {
+				t.Fatalf("Run() did not print JavaScript setup instructions:\n%s", output.String())
+			}
+			if !strings.Contains(output.String(), "ddtest testdrive") {
+				t.Fatalf("Run() did not print the next step:\n%s", output.String())
+			}
+			if !strings.Contains(output.String(), "post every `Open report:` link") {
+				t.Fatalf("Run() did not tell the agent to share the report:\n%s", output.String())
+			}
+		})
 	}
 }
 
@@ -82,6 +104,8 @@ jobs:
   unit:
     steps:
       - uses: datadog/test-visibility-github-action@v3
+        with:
+          languages: js
       - run: npm test
   integration:
     steps:
@@ -117,12 +141,20 @@ func TestRunTreatsRepositoryRootAsLiteralPath(t *testing.T) {
 }
 
 func TestRunRequiresGitHubJestWorkflow(t *testing.T) {
-	repositoryRoot := newJestRepository(t, "name: lint\njobs:\n  lint:\n    steps:\n      - run: npm run lint\n")
+	for _, workflow := range []string{
+		"name: lint\njobs:\n  lint:\n    steps:\n      - run: npm run lint\n",
+		"name: Jest lint\njobs:\n  lint:\n    steps:\n      - name: Jest lint\n        run: npm run lint\n",
+		"jobs:\n  lint:\n    steps:\n      - uses: datadog/test-visibility-github-action@v3\n        with:\n          languages: js\n      - run: npm run lint\n",
+	} {
+		t.Run(workflow, func(t *testing.T) {
+			repositoryRoot := newJestRepository(t, workflow)
 
-	t.Chdir(repositoryRoot)
-	err := Run(&bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "could not find a GitHub Actions workflow that runs jest") {
-		t.Fatalf("Run() error = %v", err)
+			t.Chdir(repositoryRoot)
+			err := Run(&bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), "could not find a GitHub Actions workflow that runs jest") {
+				t.Fatalf("Run() error = %v", err)
+			}
+		})
 	}
 }
 

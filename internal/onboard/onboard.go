@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -89,8 +90,11 @@ func findWorkflows(repositoryRoot, language, name string) ([]string, []string, e
 		if err != nil {
 			return nil, nil, fmt.Errorf("read %s: %w", path, err)
 		}
-		text := strings.ToLower(string(contents))
-		if !looksLikeTestWorkflow(text, language, name) {
+		foundTests, isConfigured, err := inspectTestJobs(contents, language, name)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parse %s: %w", path, err)
+		}
+		if !foundTests {
 			continue
 		}
 
@@ -100,10 +104,6 @@ func findWorkflows(repositoryRoot, language, name string) ([]string, []string, e
 		}
 		relativePath = filepath.ToSlash(relativePath)
 		workflows = append(workflows, relativePath)
-		isConfigured, err := allTestJobsConfigured(contents, language, name)
-		if err != nil {
-			return nil, nil, fmt.Errorf("parse %s: %w", path, err)
-		}
 		if isConfigured {
 			configured = append(configured, relativePath)
 		}
@@ -114,35 +114,45 @@ func findWorkflows(repositoryRoot, language, name string) ([]string, []string, e
 	return workflows, configured, nil
 }
 
-func allTestJobsConfigured(contents []byte, language, name string) (bool, error) {
+func inspectTestJobs(contents []byte, language, name string) (foundTests, configured bool, err error) {
 	var workflow struct {
 		Jobs map[string]struct {
 			Steps []struct {
 				Run  string `yaml:"run"`
 				Uses string `yaml:"uses"`
+				With struct {
+					Languages string `yaml:"languages"`
+				} `yaml:"with"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(contents, &workflow); err != nil {
-		return false, err
+		return false, false, err
 	}
-	foundTestJob := false
+	actionLanguage := language
+	if language == "javascript" {
+		actionLanguage = "js"
+	}
 	for _, job := range workflow.Jobs {
 		var commands []string
-		configured := false
+		jobConfigured := false
 		for _, step := range job.Steps {
 			commands = append(commands, strings.ToLower(step.Run))
-			configured = configured || strings.Contains(strings.ToLower(step.Uses), githubAction)
+			action, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
+			if action == githubAction && hasVersion && !strings.Contains(step.With.Languages, "${{") {
+				languages := strings.Fields(step.With.Languages)
+				jobConfigured = jobConfigured || step.With.Languages == "all" || slices.Contains(languages, actionLanguage)
+			}
 		}
 		if !looksLikeTestJob(strings.Join(commands, "\n"), language, name) {
 			continue
 		}
-		foundTestJob = true
-		if !configured {
-			return false, nil
+		foundTests = true
+		if !jobConfigured {
+			return true, false, nil
 		}
 	}
-	return foundTestJob, nil
+	return foundTests, foundTests, nil
 }
 
 func looksLikeTestJob(commands, language, name string) bool {
@@ -157,24 +167,6 @@ func looksLikeTestJob(commands, language, name string) bool {
 	}
 	for _, marker := range markers {
 		if strings.Contains(commands, marker) {
-			return true
-		}
-	}
-	return false
-}
-
-func looksLikeTestWorkflow(workflow, language, name string) bool {
-	markers := []string{name, githubAction}
-	switch language {
-	case "javascript":
-		markers = append(markers, "npm test", "npm run test", "yarn test", "yarn run test", "pnpm test", "pnpm run test", "bun test", "bun run test")
-	case "ruby":
-		markers = append(markers, "bundle exec rake", "rake test", "rails test")
-	case "python":
-		markers = append(markers, "tox", "nox")
-	}
-	for _, marker := range markers {
-		if strings.Contains(workflow, marker) {
 			return true
 		}
 	}

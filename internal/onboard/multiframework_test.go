@@ -52,6 +52,10 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			if name == "cypress" {
 				require.Contains(t, output.String(), "setupNodeEvents")
 			}
+			require.NoError(t, os.WriteFile(filepath.Join(root, ".github", "workflows", "ci.yml"), []byte("jobs:\n  tests:\n    steps:\n      - uses: datadog/test-visibility-github-action@v3\n        with:\n          languages: "+language+"\n      - run: "+entry+"\n"), 0644))
+			output.Reset()
+			require.NoError(t, Run(&output))
+			require.Contains(t, output.String(), "already appears in every detected test workflow")
 		})
 	}
 }
