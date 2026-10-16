@@ -7,8 +7,10 @@ package testdrive
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -16,6 +18,48 @@ import (
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPrepareRubyEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX executable fixture")
+	}
+	for _, name := range []string{"rspec", "minitest"} {
+		for _, available := range []bool{true, false} {
+			t.Run(name+"/"+map[bool]string{true: "available", false: "unavailable"}[available], func(t *testing.T) {
+				root := t.TempDir()
+				t.Chdir(root)
+				t.Setenv("PATH", root)
+				t.Setenv("RUBYOPT", "-rproject_hook")
+				t.Setenv("BUNDLE_GEMFILE", "Gemfile")
+				requireWriteFile(t, "Gemfile", "gem '"+name+"'\n")
+				if available {
+					script := `#!/bin/sh
+[ "$RUBYOPT" = '-rproject_hook' ] || exit 2
+[ "$BUNDLE_GEMFILE" = 'Gemfile' ] || exit 2
+printf '%s\n' 'customer startup output'
+for last; do :; done
+printf '%s' '{"executable":"/selected ruby/bin/ruby","version":"3.4.7"}' > "$last"
+`
+					require.NoError(t, os.WriteFile("ruby", []byte(script), 0755))
+				}
+				drive, err := Prepare("latest")
+				require.NoError(t, err)
+				require.Equal(t, "Ruby from PATH", drive.environmentInfo.Source)
+				require.Equal(t, "Ruby", drive.environmentInfo.Runtime)
+				require.NoDirExists(t, drive.session.Directory())
+				var output bytes.Buffer
+				drive.Preview(&output)
+				require.Contains(t, output.String(), "Environment: Ruby from PATH")
+				if available {
+					require.Contains(t, output.String(), "Ruby 3.4.7: /selected ruby/bin/ruby")
+				} else {
+					require.Empty(t, drive.environmentInfo.Executable)
+					require.Empty(t, drive.environmentInfo.Version)
+				}
+			})
+		}
+	}
+}
 
 func TestPrepareAllSupportedFrameworks(t *testing.T) {
 	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest", "rspec", "minitest"} {
@@ -65,6 +109,12 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 				require.Contains(t, executor.env["PYTEST_ADDOPTS"], "--ddtrace")
 				require.NotContains(t, executor.env, "NODE_OPTIONS")
 			case "ruby":
+				var diagnostics runDiagnostics
+				data, err := os.ReadFile(filepath.Join(run.session.Directory(), diagnosticsFilename))
+				require.NoError(t, err)
+				require.NoError(t, json.Unmarshal(data, &diagnostics))
+				require.Equal(t, run.environmentInfo, diagnostics.Environment)
+				require.Equal(t, "Ruby from PATH", diagnostics.Environment.Source)
 				require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
 				require.Contains(t, preview.String(), "Bundler updates Gemfile and Gemfile.lock.")
 				require.NotContains(t, preview.String(), "It will not change")
