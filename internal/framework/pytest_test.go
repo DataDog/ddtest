@@ -199,6 +199,71 @@ func TestPyTest_SupportsFullTestDiscovery(t *testing.T) {
 	}
 }
 
+func TestPyTest_UnskippableMarkers(t *testing.T) {
+	for _, location := range []string{"file", "conftest", "ancestor conftest", "missing file", "unreadable conftest", "plain"} {
+		t.Run(location, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			if err := os.MkdirAll("tests/unit", 0755); err != nil {
+				t.Fatal(err)
+			}
+			file := "tests/unit/test_case.py"
+			if location != "missing file" {
+				if err := os.WriteFile(file, []byte("def test_case(): pass\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			markerFile := map[string]string{
+				"file": file, "conftest": "tests/conftest.py", "ancestor conftest": "conftest.py",
+			}[location]
+			if markerFile != "" {
+				if err := os.WriteFile(markerFile, []byte("# datadog_itr_unskippable\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if location == "unreadable conftest" {
+				// A directory gives a deterministic read error, including when
+				// tests run as root and filesystem permissions cannot deny reads.
+				if err := os.Mkdir("tests/conftest.py", 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := NewPytest(&testPlatform{}).HasUnskippableMarker(file); got != (location != "plain") {
+				t.Fatalf("HasUnskippableMarker = %v for %s", got, location)
+			}
+		})
+	}
+}
+
+func TestPyTest_FileDiscoveryFiltersNonPythonFiles(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, file := range []string{"tests/test_case.py", "tests/__pycache__/test_case.pyc", "tests/test_case.txt"} {
+		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pytest := NewPytest(&testPlatform{})
+	for _, selection := range []discovery.TestFileSet{
+		{Pattern: "tests/**/test_*"},
+		{ExplicitFiles: []string{"tests/test_case.py", "tests/__pycache__/test_case.pyc", "tests/test_case.txt"}},
+	} {
+		original := slices.Clone(selection.ExplicitFiles)
+		files, err := pytest.DiscoverTestFiles(t.Context(), selection)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(files, []string{"tests/test_case.py"}) {
+			t.Fatalf("DiscoverTestFiles(%+v) = %v", selection, files)
+		}
+		if !slices.Equal(original, selection.ExplicitFiles) {
+			t.Fatal("file discovery mutated the caller's selection")
+		}
+	}
+}
+
 func TestPyTest_RunTests_WithCommandOverride(t *testing.T) {
 	testFiles := []string{"tests/test_user.py"}
 
