@@ -117,3 +117,14 @@ are not read while static discovery is enabled, so eligibility is rechecked
 on every invocation; runs that fall back to real pytest collection still
 refresh the discovery cache for later runs without the flag, and static
 inventories themselves are never cached.
+
+**Known limitation — collection-time import failures.** Static discovery never
+imports test modules, so it cannot detect modules that fail to import during
+collection (for example, test code using private `_pytest` APIs removed by a
+newer pytest, or a missing optional dependency). Real pytest collection drops
+such modules from the inventory while static discovery still includes their
+tests, so static over-counts rather than under-counts. The mismatch is loud:
+the broken file always stays runnable (its tests were never reported to the
+backend, so they never appear in skippable sets) and pytest surfaces the
+import error at run time. If plan counts look inflated or a run fails on an
+import error, compare against one run without the flag.
