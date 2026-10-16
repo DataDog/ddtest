@@ -27,24 +27,23 @@ type ciEvent struct {
 	common  *CommonTags  `msg:"-"` // Immutable defaults, projected onto the event at delivery.
 	// overrides is eventSize's result, set by Client.add: a local tag or metric
 	// replaces one of common's values.
-	overrides bool         `msg:"-"`
-	finish    finishConfig `msg:"-"` // Set by FinishOptions before the span is sealed.
+	overrides bool `msg:"-"`
 }
 type eventContent struct {
-	SessionID     uint64             `msg:"test_session_id,omitempty"`    // identifier of this session
-	ModuleID      uint64             `msg:"test_module_id,omitempty"`     // identifier of this module
-	SuiteID       uint64             `msg:"test_suite_id,omitempty"`      // identifier of this suite
-	CorrelationID string             `msg:"itr_correlation_id,omitempty"` // Correlation Id for Intelligent Test Runner transactions
-	Name          string             `msg:"name"`                         // operation name
-	Service       string             `msg:"service"`                      // configured test service
-	Resource      string             `msg:"resource"`                     // test or CI hierarchy resource name
-	Type          string             `msg:"type"`                         // test or CI hierarchy event type
-	Start         int64              `msg:"start"`                        // span start time expressed in nanoseconds since epoch
-	Duration      int64              `msg:"duration"`                     // duration of the span expressed in nanoseconds
-	SpanID        uint64             `msg:"span_id,omitempty"`            // identifier of this span
-	TraceID       uint64             `msg:"trace_id,omitempty"`           // lower 64-bits of the root span identifier
-	ParentID      uint64             `msg:"parent_id,omitempty"`          // identifier of the span's direct parent
-	Error         int32              `msg:"error"`                        // error status of the span; 0 means no errors
-	Meta          map[string]string  `msg:"meta,omitempty"`               // arbitrary map of metadata
-	Metrics       map[string]float64 `msg:"metrics,omitempty"`            // arbitrary map of numeric metrics
+	SessionID     uint64    `msg:"test_session_id,omitempty"`    // identifier of this session
+	ModuleID      uint64    `msg:"test_module_id,omitempty"`     // identifier of this module
+	SuiteID       uint64    `msg:"test_suite_id,omitempty"`      // identifier of this suite
+	CorrelationID string    `msg:"itr_correlation_id,omitempty"` // Correlation Id for Intelligent Test Runner transactions
+	Name          string    `msg:"name"`                         // operation name
+	Service       string    `msg:"service"`                      // configured test service
+	Resource      string    `msg:"resource"`                     // test or CI hierarchy resource name
+	Type          string    `msg:"type"`                         // test or CI hierarchy event type
+	Start         int64     `msg:"start"`                        // span start time expressed in nanoseconds since epoch
+	Duration      int64     `msg:"duration"`                     // duration of the span expressed in nanoseconds
+	SpanID        uint64    `msg:"span_id,omitempty"`            // identifier of this span
+	TraceID       uint64    `msg:"trace_id,omitempty"`           // lower 64-bits of the root span identifier
+	ParentID      uint64    `msg:"parent_id,omitempty"`          // identifier of the span's direct parent
+	Error         int32     `msg:"error"`                        // error status of the span; 0 means no errors
+	Meta          metaSet   `msg:"meta,omitzero"`                // arbitrary map of metadata
+	Metrics       metricSet `msg:"metrics,omitzero"`             // arbitrary map of numeric metrics
 }

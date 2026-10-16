@@ -58,7 +58,7 @@ func TestCIByteBatchingAndCompression(t *testing.T) {
 				}
 				count.Add(int32(len(events)))
 				for _, e := range events {
-					if e.Content.Meta["version"] != "service-v3" || len(e.Content.Meta["large"]) != 1<<20 {
+					if e.Content.Meta.asMap()["version"] != "service-v3" || len(e.Content.Meta.asMap()["large"]) != 1<<20 {
 						t.Error("lost event attributes")
 					}
 				}

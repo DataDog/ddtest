@@ -11,21 +11,22 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/propctx"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/ddtrace/ext"
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/dd-trace-go/stacktrace"
 	"github.com/tonyredondo/dd-ci-testing-poc/propagation"
 )
 
-// Span is mutable until Finish seals its maps for shared, read-only delivery.
+// Span is mutable until Finish seals its event in place for read-only
+// delivery: the client queues the span's own event.
 type Span struct {
 	mu           sync.Mutex
 	client       *Client
 	identity     propagation.Context
-	content      eventContent
+	event        ciEvent
 	finished     bool
 	hierarchy    [3]string
 	hierarchySet uint8
-	common       *CommonTags
 }
 type SpanContext struct{ identity propagation.Context }
 
@@ -42,19 +43,19 @@ type StartSpanOption struct {
 	tag   bool
 }
 
-// FinishOption sets the configuration that the finished event holds, so
-// finishing allocates nothing else.
+// FinishOption sets the finish configuration. Options take its address, so
+// it moves to the heap; Finish creates it only when options are given.
 type FinishOption func(*finishConfig)
 type finishConfig struct{ end int64 } // Unix nanoseconds.
 
 func ResourceName(v string) StartSpanOption {
-	return StartSpanOption{apply: func(s *Span) { s.content.Resource = v }}
+	return StartSpanOption{apply: func(s *Span) { s.event.Content.Resource = v }}
 }
 func SpanType(v string) StartSpanOption {
-	return StartSpanOption{apply: func(s *Span) { s.content.Type = v }}
+	return StartSpanOption{apply: func(s *Span) { s.event.Content.Type = v }}
 }
 func StartTime(v time.Time) StartSpanOption {
-	return StartSpanOption{apply: func(s *Span) { s.content.Start = v.UnixNano() }}
+	return StartSpanOption{apply: func(s *Span) { s.event.Content.Start = v.UnixNano() }}
 }
 
 func Tag(k string, v any) StartSpanOption {
@@ -63,7 +64,7 @@ func Tag(k string, v any) StartSpanOption {
 
 // Service sets the span's service instead of the client's.
 func Service(v string) StartSpanOption {
-	return StartSpanOption{apply: func(s *Span) { s.content.Service = v }}
+	return StartSpanOption{apply: func(s *Span) { s.event.Content.Service = v }}
 }
 
 // FuncOption makes an option of a function, such as testopt's options. It
@@ -72,14 +73,28 @@ func FuncOption(apply func(*Span)) StartSpanOption {
 	return StartSpanOption{apply: apply, tag: true}
 }
 
-// Func returns the function that applies the option.
-func (o StartSpanOption) Func() func(*Span) { return o.apply }
+// Func returns the function that applies the option, for testopt, whose callers
+// can apply it to a span at any time. Options that set fields then take the
+// span's lock and leave a finished span, whose event the client may be
+// sending, unchanged; Tag options do so through SetTag.
+func (o StartSpanOption) Func() func(*Span) {
+	if o.tag {
+		return o.apply
+	}
+	return func(s *Span) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if !s.finished {
+			o.apply(s)
+		}
+	}
+}
 
 // Service returns the span's service.
 func (s *Span) Service() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.content.Service
+	return s.event.Content.Service
 }
 func FinishTime(v time.Time) FinishOption { return func(c *finishConfig) { c.end = v.UnixNano() } }
 
@@ -120,6 +135,40 @@ func (s *Span) SetTag(key string, value any) {
 	}
 }
 
+// SetStringTag sets a text tag as SetTag does, without converting the value
+// to an interface, which allocates.
+func (s *Span) SetStringTag(key, value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.finished {
+		return
+	}
+	switch key {
+	case ext.ManualKeep:
+	case ext.Error, ext.ErrorNoStackTrace:
+		s.event.Content.Error = 1
+	default:
+		s.setTextTag(key, value)
+	}
+}
+
+// SetMetric sets a numeric tag as SetTag does, without converting the value
+// to an interface.
+func (s *Span) SetMetric(key string, value float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.finished {
+		return
+	}
+	switch key {
+	case ext.ManualKeep:
+	case ext.Error, ext.ErrorNoStackTrace:
+		s.event.Content.Error = 1
+	default:
+		s.setMetric(key, value)
+	}
+}
+
 // setScalarTag runs under mu and never invokes methods supplied by the caller.
 func (s *Span) setScalarTag(key string, value any) bool {
 	switch key {
@@ -129,9 +178,9 @@ func (s *Span) setScalarTag(key string, value any) bool {
 		if _, ok := value.(error); ok {
 			return false
 		}
-		s.content.Error = 1
+		s.event.Content.Error = 1
 		if value == nil || value == false {
-			s.content.Error = 0
+			s.event.Content.Error = 0
 		}
 		return true
 	}
@@ -200,7 +249,7 @@ func (s *Span) setError(value error, stack bool) {
 	if s.finished {
 		return
 	}
-	s.content.Error = 1
+	s.event.Content.Error = 1
 	s.setTextTag(ext.ErrorMsg, message)
 	s.setTextTag(ext.ErrorType, kind)
 	if stack {
@@ -313,7 +362,7 @@ func safeString(v fmt.Stringer, original any) (result string) {
 // outside the metadata map so serialization never mutates finished spans.
 func (s *Span) setTextTag(key, value string) {
 	s.setMeta(key, value)
-	delete(s.content.Metrics, key)
+	s.event.Content.Metrics.delete(key)
 }
 
 var hierarchyKeys = [3]string{"test_session_id", "test_module_id", "test_suite_id"}
@@ -344,25 +393,24 @@ func (s *Span) sealHierarchy(content *eventContent) {
 			*id = value
 			continue
 		}
-		if content.Meta == nil {
-			content.Meta = make(map[string]string, 1)
-		}
-		content.Meta[hierarchyKeys[i]] = s.hierarchy[i]
+		// setMeta keeps hierarchy keys out of Meta, and getters read them from
+		// the hierarchy fields first, so adding one here changes no getter.
+		content.Meta.set(hierarchyKeys[i], s.hierarchy[i])
 	}
 }
 func (s *Span) setMeta(key, value string) {
 	switch key {
 	case ext.SpanName:
-		s.content.Name = value
+		s.event.Content.Name = value
 		return
 	case ext.ServiceName:
-		s.content.Service = value
+		s.event.Content.Service = value
 		return
 	case ext.ResourceName:
-		s.content.Resource = value
+		s.event.Content.Resource = value
 		return
 	case ext.SpanType:
-		s.content.Type = value
+		s.event.Content.Type = value
 		return
 	}
 	if i := hierarchyIndex(key); i >= 0 {
@@ -370,14 +418,12 @@ func (s *Span) setMeta(key, value string) {
 		s.hierarchySet |= 1 << i
 		return
 	}
-	s.content.Meta[key] = value
+	s.event.Content.Meta.set(key, value)
 }
+
 func (s *Span) setMetric(key string, value float64) {
-	if s.content.Metrics == nil {
-		s.content.Metrics = make(map[string]float64)
-	}
-	s.content.Metrics[key] = value
-	delete(s.content.Meta, key)
+	s.event.Content.Metrics.set(key, value)
+	s.event.Content.Meta.delete(key)
 	if i := hierarchyIndex(key); i >= 0 {
 		s.hierarchySet &^= 1 << i
 		s.hierarchy[i] = ""
@@ -389,10 +435,10 @@ func (s *Span) Meta(key string) (string, bool) {
 	if i := hierarchyIndex(key); i >= 0 {
 		return s.hierarchy[i], s.hierarchySet&(1<<i) != 0
 	}
-	v, ok := s.content.Meta[key]
-	if !ok && s.common != nil {
-		if _, numeric := s.content.Metrics[key]; !numeric {
-			v, ok = s.common.values[key]
+	v, ok := s.event.Content.Meta.get(key)
+	if !ok && s.event.common != nil {
+		if _, numeric := s.event.Content.Metrics.get(key); !numeric {
+			v, ok = s.event.common.values[key]
 		}
 	}
 	return v, ok
@@ -400,8 +446,7 @@ func (s *Span) Meta(key string) (string, bool) {
 func (s *Span) Metric(key string) (float64, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	v, ok := s.content.Metrics[key]
-	return v, ok
+	return s.event.Content.Metrics.get(key)
 }
 
 // Finish seals the event and enqueues it exactly once. Hierarchy IDs are native
@@ -416,11 +461,13 @@ func (s *Span) FinishWithTags(tags map[string]any, options ...FinishOption) {
 }
 
 func (s *Span) finish(tags map[string]any, options ...FinishOption) {
-	// Options take the configuration's address. A local configuration would
-	// therefore move to the heap; the event is allocated anyway.
-	event := &ciEvent{Version: 1, finish: finishConfig{end: time.Now().UnixNano()}}
-	for _, option := range options {
-		option(&event.finish)
+	end := time.Now().UnixNano()
+	if len(options) != 0 {
+		cfg := &finishConfig{end: end}
+		for _, option := range options {
+			option(cfg)
+		}
+		end = cfg.end
 	}
 	s.mu.Lock()
 	if s.finished {
@@ -431,18 +478,16 @@ func (s *Span) finish(tags map[string]any, options ...FinishOption) {
 		s.setScalarTag(key, value)
 	}
 	s.finished = true
-	content := s.content
-	content.Duration = event.finish.end - content.Start
-	if content.Duration < 0 {
-		content.Duration = 0
-	}
-	event.Type, event.Content, event.common = content.Type, content, s.common
+	// Getters read only the service, metadata and metrics of a finished span.
+	event := &s.event
+	event.Content.Duration = max(end-event.Content.Start, 0)
+	event.Type, event.Version = event.Content.Type, 1
 	s.sealHierarchy(&event.Content)
-	switch content.Type {
+	switch event.Type {
 	case "test":
 		// dd-trace-go copies meta before it moves the correlation to this
 		// field, so test events carry it in both places.
-		event.Content.CorrelationID = content.Meta["itr_correlation_id"]
+		event.Content.CorrelationID, _ = event.Content.Meta.get("itr_correlation_id")
 		event.Version = 2
 		event.Content.ParentID = 0
 	case "test_session_end", "test_module_end", "test_suite_end":
@@ -494,23 +539,28 @@ func newSpan(client *Client, ctx context.Context, name string, options ...StartS
 	if err != nil {
 		panic("cannot generate CI trace identifiers")
 	}
-	s := &Span{client: client, identity: identity, content: eventContent{Name: name, Resource: name, Start: time.Now().UnixNano(), SpanID: identity.SpanID, TraceID: binary.BigEndian.Uint64(identity.TraceID[8:]), ParentID: parent, Meta: make(map[string]string, metadataCapacity(client, options))}}
+	if ctx == nil {
+		panic("cannot create context from nil parent") // As context.WithValue.
+	}
+	s := &Span{client: client, identity: identity, event: ciEvent{Content: eventContent{Name: name, Resource: name, Start: time.Now().UnixNano(), SpanID: identity.SpanID, TraceID: binary.BigEndian.Uint64(identity.TraceID[8:]), ParentID: parent, Meta: metaSet{newEntrySet[string](metadataCapacity(client, options))}}}}
 	if client != nil {
-		s.content.Service = client.service
+		s.event.Content.Service = client.service
 		for k, v := range client.tags {
 			s.setMeta(k, v)
 		}
 		if client.env != "" {
-			s.content.Meta["env"] = client.env
+			s.event.Content.Meta.set("env", client.env)
 		}
 		if client.serviceVersion != "" {
-			s.content.Meta["version"] = client.serviceVersion
+			s.event.Content.Meta.set("version", client.serviceVersion)
 		}
 	}
-	s.content.Meta["_dd.origin"] = "ciapp-test"
-	s.content.Meta["_dd.p.tid"] = hex.EncodeToString(identity.TraceID[:8])
+	s.event.Content.Meta.set("_dd.origin", "ciapp-test")
+	s.event.Content.Meta.set("_dd.p.tid", hex.EncodeToString(identity.TraceID[:8]))
 	for _, option := range options {
 		option.apply(s)
 	}
-	return s, propagation.WithContext(ctx, identity)
+	// A carrier boxes nothing, unlike context.WithValue. It is not part of the
+	// span, so a context kept after the span finishes does not retain its tags.
+	return s, &propctx.Carrier[propagation.Context]{Context: ctx, Carried: identity}
 }

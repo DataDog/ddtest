@@ -43,34 +43,27 @@ func NewCommonTags(values map[string]string) *CommonTags {
 // tags win; an earlier tag of the same name is replaced, as with ordinary Tag.
 func (c *CommonTags) Option() StartSpanOption {
 	return StartSpanOption{apply: func(s *Span) {
-		if s.common != nil {
+		if s.event.common != nil {
 			// Multiple common options are uncommon, but retain earlier keys that
 			// the new option does not replace, just as individual Tag options do.
-			for key, value := range s.common.values {
-				if _, text := s.content.Meta[key]; !text {
-					if _, numeric := s.content.Metrics[key]; !numeric {
-						s.content.Meta[key] = value
+			for key, value := range s.event.common.values {
+				if _, text := s.event.Content.Meta.get(key); !text {
+					if _, numeric := s.event.Content.Metrics.get(key); !numeric {
+						s.event.Content.Meta.set(key, value)
 					}
 				}
 			}
 		}
-		for key := range s.content.Meta {
+		replaced := func(key string) bool {
 			if !IsSharedCITag(key) {
-				continue
+				return false
 			}
-			if _, replace := c.values[key]; replace {
-				delete(s.content.Meta, key)
-			}
+			_, replace := c.values[key]
+			return replace
 		}
-		for key := range s.content.Metrics {
-			if !IsSharedCITag(key) {
-				continue
-			}
-			if _, replace := c.values[key]; replace {
-				delete(s.content.Metrics, key)
-			}
-		}
-		s.common = c
+		s.event.Content.Meta.deleteIf(replaced)
+		s.event.Content.Metrics.deleteIf(replaced)
+		s.event.common = c
 	}}
 }
 
@@ -83,7 +76,7 @@ func eventSize(event *ciEvent) (size int, overrides bool) {
 	size = event.Msgsize()
 	if event.common != nil {
 		size += event.common.entrySize(event.Type)
-		for key := range event.Content.Meta {
+		for key := range event.Content.Meta.all {
 			if !IsSharedCITag(key) {
 				continue
 			}
@@ -92,11 +85,11 @@ func eventSize(event *ciEvent) (size int, overrides bool) {
 				overrides = true
 			}
 		}
-		for key := range event.Content.Metrics {
+		for key := range event.Content.Metrics.all {
 			if !IsSharedCITag(key) {
 				continue
 			}
-			if _, text := event.Content.Meta[key]; text {
+			if _, text := event.Content.Meta.get(key); text {
 				continue
 			}
 			if value, replaced := event.common.values[key]; replaced {
@@ -144,10 +137,10 @@ func prepareCommonMetadata(base map[string]map[string]string, events ciEvents) (
 		if !event.overrides {
 			continue
 		}
-		for key := range event.Content.Meta {
+		for key := range event.Content.Meta.all {
 			delete(defaults[event.Type], key)
 		}
-		for key := range event.Content.Metrics {
+		for key := range event.Content.Metrics.all {
 			delete(defaults[event.Type], key)
 		}
 	}
@@ -173,31 +166,28 @@ func prepareCommonMetadata(base map[string]map[string]string, events ciEvents) (
 		if groups[event.Type] == event.common && len(defaults[event.Type]) == len(event.common.values) {
 			continue // Ordinary batch: the whole base is already in the envelope.
 		}
-		var meta map[string]string
+		var meta *metaSet
 		for key, value := range event.common.values {
-			if _, local := event.Content.Meta[key]; local {
+			if _, local := event.Content.Meta.get(key); local {
 				continue
 			}
-			if _, numeric := event.Content.Metrics[key]; numeric {
+			if _, numeric := event.Content.Metrics.get(key); numeric {
 				continue
 			}
 			if shared, present := defaults[event.Type][key]; present && shared == value {
 				continue
 			}
 			if meta == nil {
-				meta = maps.Clone(event.Content.Meta)
-				if meta == nil {
-					meta = make(map[string]string, len(event.common.values))
-				}
+				meta = &metaSet{event.Content.Meta.clone(len(event.common.values))}
 			}
-			meta[key] = value
+			meta.set(key, value)
 		}
 		if meta != nil {
 			if projected == nil {
 				projected = append(ciEvents(nil), events...)
 			}
 			copy := *event
-			copy.Content.Meta = meta
+			copy.Content.Meta = *meta
 			projected[i] = &copy
 		}
 	}

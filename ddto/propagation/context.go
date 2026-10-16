@@ -11,6 +11,8 @@ import (
 	"math/rand/v2"
 	"strconv"
 	"strings"
+
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/propctx"
 )
 
 // Context is an immutable value identifying the active span. TraceID contains
@@ -72,7 +74,9 @@ func randomSpanID() uint64 {
 	}
 }
 
-type contextKey struct{}
+// The key lives in an internal package, so that Mini's spans can carry the
+// identity themselves: see propctx.Carrier.
+type contextKey = propctx.Key
 
 // WithContext stores a value, preserving the caller's cancellation and values.
 func WithContext(ctx context.Context, c Context) context.Context {
@@ -84,8 +88,13 @@ func FromContext(ctx context.Context) (Context, bool) {
 	if ctx == nil {
 		return Context{}, false
 	}
-	c, ok := ctx.Value(contextKey{}).(Context)
-	return c, ok && c.Valid()
+	switch c := ctx.Value(contextKey{}).(type) {
+	case Context:
+		return c, c.Valid()
+	case *Context:
+		return *c, c.Valid()
+	}
+	return Context{}, false
 }
 
 // Reader and Writer accept http.Header and other user-owned carriers.

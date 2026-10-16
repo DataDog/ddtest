@@ -20,7 +20,7 @@ func effectiveCommonMeta(payload *testCycleBatch, event *ciEvent) map[string]str
 	values := make(map[string]string)
 	maps.Copy(values, payload.Metadata["*"])
 	maps.Copy(values, payload.Metadata[event.Type])
-	maps.Copy(values, event.Content.Meta)
+	maps.Copy(values, event.Content.Meta.asMap())
 	return values
 }
 
@@ -64,7 +64,7 @@ func TestCommonTagsWireOverridesAndGetters(t *testing.T) {
 			if _, exists := payload.Metadata["test"]["os.platform"]; exists {
 				t.Fatal("numeric event inherited a string default")
 			}
-			if payload.Events[0].Content.Meta["ci.job.name"] != "job" {
+			if payload.Events[0].Content.Meta.asMap()["ci.job.name"] != "job" {
 				t.Fatal("text fallback lost a peer's default")
 			}
 			for i, want := range []string{"job", "override", "job", "job"} {
@@ -74,11 +74,11 @@ func TestCommonTagsWireOverridesAndGetters(t *testing.T) {
 				if !exists || got != want || effectiveCommonMeta(&payload, payload.Events[i])["ci.job.name"] != want {
 					t.Fatalf("getter/wire override %d: %q %t", i, got, exists)
 				}
-				if _, repeated := payload.Events[i].Content.Meta["git.commit.sha"]; repeated {
+				if _, repeated := payload.Events[i].Content.Meta.asMap()["git.commit.sha"]; repeated {
 					t.Fatal("common Git value repeated on event")
 				}
 			}
-			if _, text := spans[2].Meta("os.platform"); text || spans[2].content.Metrics["os.platform"] != 42 {
+			if _, text := spans[2].Meta("os.platform"); text || spans[2].event.Content.Metrics.asMap()["os.platform"] != 42 {
 				t.Fatal("numeric getter changed")
 			}
 			if _, text := effectiveCommonMeta(&payload, payload.Events[2])["os.platform"]; text {
@@ -118,7 +118,7 @@ func TestCommonTagsKeepOnlySharedKeys(t *testing.T) {
 		}
 	}
 	span.Finish()
-	metadata, _ := prepareCommonMetadata(nil, ciEvents{{Type: "test", Content: span.content, common: common}})
+	metadata, _ := prepareCommonMetadata(nil, ciEvents{{Type: "test", Content: span.event.Content, common: common}})
 	if !maps.Equal(metadata["test"], want) {
 		t.Fatalf("lifted metadata: %v", metadata["test"])
 	}
@@ -128,10 +128,10 @@ func TestCommonMetadataMixedSnapshotsAndSealedMaps(t *testing.T) {
 	one := NewCommonTags(map[string]string{"git.commit.sha": "one", "ci.job.name": "job"})
 	two := NewCommonTags(map[string]string{"git.commit.sha": "two"})
 	events := ciEvents{
-		{Type: "test", Content: eventContent{Meta: map[string]string{"test.name": "a"}}, common: one},
+		{Type: "test", Content: eventContent{Meta: metaOf(map[string]string{"test.name": "a"})}, common: one},
 		{Type: "test", common: two}, // The wire schema permits omitted local metadata.
-		{Type: "test", Content: eventContent{Meta: map[string]string{"test.name": "c"}}},
-		{Type: "test_module_end", Content: eventContent{Meta: map[string]string{"test.module": "module"}}, common: two},
+		{Type: "test", Content: eventContent{Meta: metaOf(map[string]string{"test.name": "c"})}},
+		{Type: "test_module_end", Content: eventContent{Meta: metaOf(map[string]string{"test.module": "module"})}, common: two},
 	}
 	base := map[string]map[string]string{"*": {"language": "go"}}
 	metadata, wire := prepareCommonMetadata(base, events)
@@ -142,7 +142,7 @@ func TestCommonMetadataMixedSnapshotsAndSealedMaps(t *testing.T) {
 		if got := effectiveCommonMeta(&testCycleBatch{Metadata: metadata}, wire[i])["git.commit.sha"]; got != want {
 			t.Fatalf("snapshot %d: %q", i, got)
 		}
-		if _, changed := events[i].Content.Meta["git.commit.sha"]; changed {
+		if _, changed := events[i].Content.Meta.asMap()["git.commit.sha"]; changed {
 			t.Fatal("projection changed a sealed map")
 		}
 	}
@@ -155,7 +155,7 @@ func TestCommonMetadataConcurrentProjectionAndBounds(t *testing.T) {
 	common := NewCommonTags(map[string]string{"git.commit.sha": "commit", "ci.large": strings.Repeat("a", 32<<10)})
 	span, _ := newSpan(nil, context.Background(), "test", common.Option(), Tag("test.name", "name"))
 	span.Finish()
-	event := &ciEvent{Type: "test", Content: span.content, common: common}
+	event := &ciEvent{Type: "test", Content: span.event.Content, common: common}
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Go(func() {

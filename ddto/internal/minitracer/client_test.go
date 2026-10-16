@@ -73,14 +73,14 @@ func TestNativeEventsConcurrentFinishAndHierarchy(t *testing.T) {
 	}
 	ids := map[uint64]bool{}
 	for _, e := range received {
-		if e.Type != "test" || e.Version != 2 || e.Content.SessionID != 10 || e.Content.ModuleID != 20 || e.Content.SuiteID != 30 || e.Content.ParentID != 0 || e.Content.Meta["test.status"] != "pass" {
+		if e.Type != "test" || e.Version != 2 || e.Content.SessionID != 10 || e.Content.ModuleID != 20 || e.Content.SuiteID != 30 || e.Content.ParentID != 0 || e.Content.Meta.asMap()["test.status"] != "pass" {
 			t.Fatalf("invalid native event: %+v", e)
 		}
 		if ids[e.Content.SpanID] {
 			t.Fatal("duplicate span ID")
 		}
 		ids[e.Content.SpanID] = true
-		if _, exists := e.Content.Meta["test_session_id"]; exists {
+		if _, exists := e.Content.Meta.asMap()["test_session_id"]; exists {
 			t.Fatal("duplicated hierarchy field")
 		}
 	}

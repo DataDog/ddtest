@@ -2,8 +2,9 @@
 the minitracer microbenchmarks, and a test binary of many empty tests.
 
 usage: minitracer_benchmark.py --base DIR --candidate DIR --output DIR
-           [--reps N] [--tests N] [--count N] [--gomaxprocs N]
-           [--benchtime D] [--report DIR]
+           [--reps N] [--tests N] [--count N] [--alloc-count N]
+           [--gomaxprocs N] [--benchtime D] [--own-benchmarks]
+           [--report DIR]
 
 --base and --candidate are worktrees of this repository, such as one detached
 at main and one at the change: ddto compiles Mini from the tree it was built
@@ -12,7 +13,8 @@ median of --reps runs.
 
 Microbenchmarks: the candidate's internal/minitracer/performance_test.go runs
 in both trees, through go test -overlay in the base, with GOMAXPROCS=1 so that
-ns/op includes delivery.
+ns/op includes delivery. With --own-benchmarks, each tree runs its own file,
+for a candidate whose benchmarks use internals that the base lacks.
 
 Test binary: a generated module with --tests empty tests, in a Git checkout so
 that the CI tags are shared, is built with go test -c, and with each tree's
@@ -20,7 +22,10 @@ ddto test -c. Each binary runs -test.count=--count against the loopback
 receiver with --gomaxprocs. The report gives the test process's wall time, CPU
 time (user and system) and peak RSS, and what ddto adds per test over plain go
 test. The first run of each tree decodes every payload and checks that each
-test event arrived. --report copies results.json and README.md into DIR, such
+test event arrived. A last run of each binary, -test.count=--alloc-count with
+every allocation profiled from the process's start (GODEBUG=memprofilerate=1),
+counts the objects and bytes that it allocates per test until testing writes
+the profile, before Mini's final delivery. --report copies results.json and README.md into DIR, such
 as a directory of docs/results; never edit those by hand.
 """
 import argparse
@@ -115,8 +120,9 @@ def build(args, out):
         (out / tree).mkdir()
         source = getattr(args, tree)
         run(['go', 'build', '-o', str(out / tree / 'ddto'), './cmd/ddto'], source)
+        shared = tree == 'base' and not args.own_benchmarks
         run(['go', 'test', '-c', '-o', str(out / tree / 'minitracer.test'),
-             *(['-overlay', str(overlay)] if tree == 'base' else []), './internal/minitracer'], source)
+             *(['-overlay', str(overlay)] if shared else []), './internal/minitracer'], source)
     (out / 'native').mkdir()
     fixture = out / 'fixture'
     make_fixture(fixture, args.tests)
@@ -163,17 +169,21 @@ def measure(command, cwd, env, timeout=3600):
     return stdout, json.loads(stderr.decode().splitlines()[-1])
 
 
+def binary_env(args, variant, url):
+    env = go_env(GOMAXPROCS=str(args.gomaxprocs))
+    if variant != 'native':
+        env.update(DD_CIVISIBILITY_ENABLED='parent', DD_TRACE_AGENT_URL=url, DD_SERVICE='fixture',
+                   DD_ENV='benchmark', DD_CIVISIBILITY_AGENTLESS_ENABLED='false',
+                   DD_CIVISIBILITY_GIT_UPLOAD_ENABLED='false', DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED='false')
+    return env
+
+
 def run_binary(args, out, fixture, variant, directory, verify):
     """Runs one test binary and returns its wall time, CPU seconds, peak RSS
     and the receiver's test-cycle traffic. verify decodes every payload."""
     receiver = Receiver(directory, False)
-    env = go_env(GOMAXPROCS=str(args.gomaxprocs))
-    if variant != 'native':
-        env.update(DD_CIVISIBILITY_ENABLED='parent', DD_TRACE_AGENT_URL=receiver.url, DD_SERVICE='fixture',
-                   DD_ENV='benchmark', DD_CIVISIBILITY_AGENTLESS_ENABLED='false',
-                   DD_CIVISIBILITY_GIT_UPLOAD_ENABLED='false', DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED='false')
     command = [str(out / variant / 'fixture.test'), f'-test.count={args.count}']
-    output, usage = measure(command, fixture, env)
+    output, usage = measure(command, fixture, binary_env(args, variant, receiver.url))
     if usage['exit'] or not output.rstrip().endswith(b'PASS'):
         receiver.close()
         raise SystemExit(f'{" ".join(command)}: exit {usage["exit"]}\n{output[-4000:].decode(errors="replace")}')
@@ -190,6 +200,43 @@ def run_binary(args, out, fixture, variant, directory, verify):
     receiver.close()
     return {'wall': round(usage['wall'], 4), 'cpu': round(usage['cpu'], 4), 'maxrss_kb': usage['maxrss_kb'],
             'cycle_requests': len(cycle), 'cycle_bytes': sum(r['wire_bytes'] for r in cycle), 'events': events}
+
+
+PPROF_TOTAL = re.compile(r'of (\d+)B? total')
+
+
+def pprof_total(binary, profile, index):
+    """Returns a heap profile's total for the sample index, in objects or bytes."""
+    output = run(['go', 'tool', 'pprof', '-sample_index=' + index, '-unit=B', '-top', '-nodecount=1', str(binary), str(profile)], ROOT)
+    match = PPROF_TOTAL.search(output)
+    if not match:
+        raise SystemExit(f'no {index} total in pprof output:\n{output[-2000:]}')
+    return int(match.group(1))
+
+
+def allocations(args, out, fixture):
+    """Runs each test binary -test.count=--alloc-count with every allocation
+    profiled from its start, and returns the objects and bytes allocated per
+    test. testing would otherwise set the rate after Mini's setup."""
+    result = {}
+    for variant in VARIANTS:
+        receiver = Receiver(out / 'allocations' / variant, False)
+        profile = out / variant / 'allocations.pprof'
+        command = [str(out / variant / 'fixture.test'), f'-test.count={args.alloc_count}',
+                   f'-test.memprofile={profile}', '-test.memprofilerate=1']
+        env = binary_env(args, variant, receiver.url)
+        env['GODEBUG'] = ','.join(filter(None, (env.get('GODEBUG'), 'memprofilerate=1')))
+        output, usage = measure(command, fixture, env)
+        receiver.bodies.clear()
+        receiver.close()
+        if usage['exit'] or not output.rstrip().endswith(b'PASS'):
+            raise SystemExit(f'{" ".join(command)}: exit {usage["exit"]}\n{output[-4000:].decode(errors="replace")}')
+        tests = args.tests * args.alloc_count
+        binary = out / variant / 'fixture.test'
+        result[variant] = {'objects_per_test': round(pprof_total(binary, profile, 'alloc_objects') / tests, 1),
+                           'bytes_per_test': round(pprof_total(binary, profile, 'alloc_space') / tests)}
+        print(f'allocations {variant}: {result[variant]}', flush=True)
+    return result
 
 
 def test_binaries(args, out, fixture):
@@ -227,7 +274,9 @@ def report(results):
              'the trees alternate.', '',
              '## Microbenchmarks', '',
              "`go test ./internal/minitracer -bench` with GOMAXPROCS=1 and `-benchtime="
-             f"{results['benchtime']}`. Both trees run the candidate's `performance_test.go`.", '',
+             f"{results['benchtime']}`. "
+             + ("Each tree runs its own `performance_test.go`." if results['own_benchmarks']
+                else "Both trees run the candidate's `performance_test.go`."), '',
              '| Benchmark | ns/op base | ns/op candidate | Change | B/op base | B/op candidate | allocs/op base | allocs/op candidate |',
              '| --- | --- | --- | --- | --- | --- | --- | --- |']
     bench = results['microbenchmarks']
@@ -260,6 +309,14 @@ def report(results):
     for tree in TREES:
         events = binaries[tree][0]['events']
         lines += ['', f"The first {tree} run delivered " + ', '.join(f'{n} `{kind}`' for kind, n in sorted(events.items())) + ' events.']
+    allocs = results['allocations']
+    lines += ['', '## Allocations per test', '',
+              f"Each binary runs `-test.count={results['alloc_count']}` once more, with every allocation profiled from "
+              "its start (`GODEBUG=memprofilerate=1`). The objects and bytes are those that the test process "
+              "allocates until testing writes the profile, before Mini's final delivery, divided by the test events.", '',
+              '| Binary | Objects per test | Bytes per test |', '| --- | --- | --- |']
+    for variant in VARIANTS:
+        lines.append(f"| {labels[variant]} | {allocs[variant]['objects_per_test']} | {allocs[variant]['bytes_per_test']} |")
     lines.append('')
     return '\n'.join(lines)
 
@@ -283,7 +340,9 @@ def main():
     parser.add_argument('--tests', type=int, default=10000)
     parser.add_argument('--count', type=int, default=30)
     parser.add_argument('--gomaxprocs', type=int, default=4)
+    parser.add_argument('--alloc-count', type=int, default=3)
     parser.add_argument('--benchtime', default='1s')
+    parser.add_argument('--own-benchmarks', action='store_true')
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
     args.base, args.candidate = args.base.resolve(), args.candidate.resolve()
@@ -295,9 +354,10 @@ def main():
     results = {'base': describe(args.base), 'candidate': describe(args.candidate),
                'go': run(['go', 'version'], ROOT).strip(), 'cpu': cpu_model(), 'os': f'{platform.system()} {platform.release()}',
                'reps': args.reps, 'tests': args.tests, 'count': args.count, 'gomaxprocs': args.gomaxprocs,
-               'benchtime': args.benchtime}
+               'benchtime': args.benchtime, 'own_benchmarks': args.own_benchmarks, 'alloc_count': args.alloc_count}
     results['microbenchmarks'] = microbenchmarks(args, out)
     results['test_binaries'] = test_binaries(args, out, fixture)
+    results['allocations'] = allocations(args, out, fixture)
     (out / 'results.json').write_text(json.dumps(results, indent=1, sort_keys=True) + '\n')
     (out / 'README.md').write_text(report(results))
     if args.report:

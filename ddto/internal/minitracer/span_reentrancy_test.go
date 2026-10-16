@@ -15,10 +15,10 @@ func TestReservedTagsUpdateEventFields(t *testing.T) {
 		key   string
 		field func(*Span) string
 	}{
-		{"span.name", func(s *Span) string { return s.content.Name }},
-		{"service.name", func(s *Span) string { return s.content.Service }},
-		{"resource.name", func(s *Span) string { return s.content.Resource }},
-		{"span.type", func(s *Span) string { return s.content.Type }},
+		{"span.name", func(s *Span) string { return s.event.Content.Name }},
+		{"service.name", func(s *Span) string { return s.event.Content.Service }},
+		{"resource.name", func(s *Span) string { return s.event.Content.Resource }},
+		{"span.type", func(s *Span) string { return s.event.Content.Type }},
 	} {
 		t.Run(tc.key, func(t *testing.T) {
 			span, _ := newSpan(nil, context.Background(), "original", SpanType("test"))

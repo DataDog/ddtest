@@ -47,3 +47,9 @@ func truncateCIVisibilityMetaValue(v string) string {
 	}
 	return v
 }
+
+// setCIVisibilitySpanStringTag is setCIVisibilitySpanTag for a string, which
+// it passes without the allocation of an interface conversion.
+func setCIVisibilitySpanStringTag(span *tracer.Span, key, value string) {
+	span.SetStringTag(key, truncateCIVisibilityMetaValue(value))
+}

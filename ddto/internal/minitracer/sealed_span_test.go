@@ -13,21 +13,26 @@ import (
 	"github.com/tonyredondo/dd-ci-testing-poc/internal/thirdparty/msgp/msgp"
 )
 
-// Finishing allocates only the event: the finish options' configuration stays
-// on the stack.
-func TestFinishAllocatesOnlyTheEvent(t *testing.T) {
-	spans := make([]*Span, 101) // AllocsPerRun calls once more to warm up.
-	for i := range spans {
-		spans[i], _ = newSpan(nil, context.Background(), "test", SpanType("test"))
-	}
+// Finishing seals the span's own event: it allocates nothing, or only the
+// configuration that finish options take.
+func TestFinishAllocations(t *testing.T) {
 	end := time.Now()
-	next := 0
-	allocs := testing.AllocsPerRun(100, func() {
-		spans[next].Finish(FinishTime(end))
-		next++
-	})
-	if allocs != 1 {
-		t.Fatalf("Finish allocated %v objects, want only the event", allocs)
+	for _, tc := range []struct {
+		options []FinishOption
+		want    float64
+	}{{nil, 0}, {[]FinishOption{FinishTime(end)}, 1}} {
+		spans := make([]*Span, 101) // AllocsPerRun calls once more to warm up.
+		for i := range spans {
+			spans[i], _ = newSpan(nil, context.Background(), "test", SpanType("test"))
+		}
+		next := 0
+		allocs := testing.AllocsPerRun(100, func() {
+			spans[next].Finish(tc.options...)
+			next++
+		})
+		if allocs != tc.want {
+			t.Fatalf("Finish with %d options allocated %v objects, want %v", len(tc.options), allocs, tc.want)
+		}
 	}
 }
 
@@ -47,11 +52,11 @@ func TestFinishedSpanSharesSealedMaps(t *testing.T) {
 		t.Fatal("lost hierarchy")
 	}
 	for _, key := range []string{"test_session_id", "test_module_id", "test_suite_id"} {
-		if _, ok := event.Content.Meta[key]; ok {
+		if _, ok := event.Content.Meta.asMap()[key]; ok {
 			t.Fatal("hierarchy duplicated in metadata")
 		}
 	}
-	if fmt.Sprintf("%p", event.Content.Meta) != fmt.Sprintf("%p", span.content.Meta) || fmt.Sprintf("%p", event.Content.Metrics) != fmt.Sprintf("%p", span.content.Metrics) {
+	if fmt.Sprintf("%p", event.Content.Meta) != fmt.Sprintf("%p", span.event.Content.Meta) || fmt.Sprintf("%p", event.Content.Metrics) != fmt.Sprintf("%p", span.event.Content.Metrics) {
 		t.Fatal("Finish copied sealed maps")
 	}
 	var wg sync.WaitGroup
@@ -84,7 +89,7 @@ func TestFinishedSpanSharesSealedMaps(t *testing.T) {
 		}
 	}()
 	wg.Wait()
-	if event.Content.Meta["test.name"] != "original" || event.Content.Metrics["coverage"] != 0.5 {
+	if event.Content.Meta.asMap()["test.name"] != "original" || event.Content.Metrics.asMap()["coverage"] != 0.5 {
 		t.Fatal("event changed after Finish")
 	}
 	client.mu.Lock()
@@ -141,13 +146,13 @@ func TestNonNumericHierarchyTagsStayInMeta(t *testing.T) {
 	}
 	for i, event := range payload.Events {
 		content := event.Content
-		if session, ok := content.Meta["test_session_id"]; !ok || session != "session-a" || content.SessionID != 0 {
+		if session, ok := content.Meta.asMap()["test_session_id"]; !ok || session != "session-a" || content.SessionID != 0 {
 			t.Fatalf("%s: session meta=%q native=%d", event.Type, session, content.SessionID)
 		}
-		if suite, ok := content.Meta["test_suite_id"]; !ok || suite != "" || content.SuiteID != 0 {
+		if suite, ok := content.Meta.asMap()["test_suite_id"]; !ok || suite != "" || content.SuiteID != 0 {
 			t.Fatalf("%s: empty suite meta=%q/%t native=%d", event.Type, suite, ok, content.SuiteID)
 		}
-		if _, alias := content.Meta["test_module_id"]; alias || content.ModuleID != 42 {
+		if _, alias := content.Meta.asMap()["test_module_id"]; alias || content.ModuleID != 42 {
 			t.Fatalf("%s: numeric module ID meta=%v native=%d", event.Type, content.Meta, content.ModuleID)
 		}
 		for key, want := range values {

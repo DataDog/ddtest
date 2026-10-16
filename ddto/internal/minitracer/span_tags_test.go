@@ -44,7 +44,7 @@ func TestMetadataCapacityCountsTagOptions(t *testing.T) {
 	}
 	text := []StartSpanOption{Tag("one", "1"), Tag("two", "2"), Tag("three", "3")}
 	span, _ := newSpan(nil, context.Background(), "test", text...)
-	if got, want := len(span.content.Meta), metadataCapacity(nil, text); got != want {
+	if got, want := span.event.Content.Meta.len(), metadataCapacity(nil, text); got != want {
 		t.Fatalf("text-only span has %d entries, reserved %d", got, want)
 	}
 }
@@ -94,10 +94,10 @@ func TestErrorTagsFollowSDK(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			span, _ := newSpan(nil, context.Background(), "test")
-			span.content.Error = 1 - tc.flag // Every case must set the flag explicitly.
+			span.event.Content.Error = 1 - tc.flag // Every case must set the flag explicitly.
 			span.SetTag(tc.key, tc.value)
-			if span.content.Error != tc.flag {
-				t.Fatalf("error flag=%d, want %d", span.content.Error, tc.flag)
+			if span.event.Content.Error != tc.flag {
+				t.Fatalf("error flag=%d, want %d", span.event.Content.Error, tc.flag)
 			}
 			if got, _ := span.Meta(ext.ErrorMsg); got != tc.message {
 				t.Fatalf("message=%q", got)
@@ -133,10 +133,45 @@ func TestTestEventKeepsITRCorrelationInMeta(t *testing.T) {
 	client.mu.Lock()
 	test, session := client.events[0], client.events[1]
 	client.mu.Unlock()
-	if test.Content.CorrelationID != "correlation" || test.Content.Meta[key] != "correlation" {
+	if test.Content.CorrelationID != "correlation" || test.Content.Meta.asMap()[key] != "correlation" {
 		t.Fatalf("test event: field=%q meta=%v", test.Content.CorrelationID, test.Content.Meta)
 	}
-	if session.Content.CorrelationID != "" || session.Content.Meta[key] != "correlation" {
+	if session.Content.CorrelationID != "" || session.Content.Meta.asMap()[key] != "correlation" {
 		t.Fatalf("session event: field=%q meta=%v", session.Content.CorrelationID, session.Content.Meta)
+	}
+}
+
+// The typed setters leave a span as SetTag does with the same values.
+func TestTypedSettersMatchSetTag(t *testing.T) {
+	steps := []struct {
+		key   string
+		text  string
+		num   float64
+		isNum bool
+	}{
+		{key: "custom", text: "value"}, {key: "custom", num: 3, isNum: true}, {key: "custom", text: "again"},
+		{key: ext.ManualKeep, text: "true"}, {key: ext.Error, text: "failed"}, {key: ext.ResourceName, text: "resource"},
+		{key: "test_session_id", text: "12"}, {key: "test_module_id", num: 7, isNum: true}, {key: "test_suite_id", text: "suite"},
+		{key: ext.ErrorNoStackTrace, num: 0, isNum: true}, {key: "metric", num: 2.5, isNum: true},
+	}
+	viaSetTag, _ := newSpan(nil, context.Background(), "test")
+	typed, _ := newSpan(nil, context.Background(), "test")
+	for _, step := range steps {
+		if step.isNum {
+			viaSetTag.SetTag(step.key, step.num)
+			typed.SetMetric(step.key, step.num)
+		} else {
+			viaSetTag.SetTag(step.key, step.text)
+			typed.SetStringTag(step.key, step.text)
+		}
+	}
+	viaSetTag.Finish()
+	typed.Finish()
+	a, b := viaSetTag.event.Content, typed.event.Content
+	a.Start, a.Duration, a.SpanID, a.TraceID, b.Start, b.Duration, b.SpanID, b.TraceID = 0, 0, 0, 0, 0, 0, 0, 0
+	a.Meta.delete("_dd.p.tid")
+	b.Meta.delete("_dd.p.tid")
+	if !sameContent(a, b) || viaSetTag.hierarchy != typed.hierarchy || viaSetTag.hierarchySet != typed.hierarchySet {
+		t.Fatalf("SetTag %+v %v\ntyped  %+v %v", a, viaSetTag.hierarchy, b, typed.hierarchy)
 	}
 }

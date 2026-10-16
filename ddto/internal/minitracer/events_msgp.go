@@ -333,60 +333,16 @@ func (z *eventContent) DecodeMsg(dc *msgp.Reader) (err error) {
 				return
 			}
 		case "meta":
-			var zb0002 uint32
-			zb0002, err = dc.ReadMapHeader()
+			err = z.Meta.DecodeMsg(dc)
 			if err != nil {
 				err = msgp.WrapError(err, "Meta")
 				return
 			}
-			if z.Meta == nil {
-				z.Meta = make(map[string]string, zb0002)
-			} else if len(z.Meta) > 0 {
-				clear(z.Meta)
-			}
-			for zb0002 > 0 {
-				zb0002--
-				var za0001 string
-				za0001, err = dc.ReadString()
-				if err != nil {
-					err = msgp.WrapError(err, "Meta")
-					return
-				}
-				var za0002 string
-				za0002, err = dc.ReadString()
-				if err != nil {
-					err = msgp.WrapError(err, "Meta", za0001)
-					return
-				}
-				z.Meta[za0001] = za0002
-			}
 		case "metrics":
-			var zb0003 uint32
-			zb0003, err = dc.ReadMapHeader()
+			err = z.Metrics.DecodeMsg(dc)
 			if err != nil {
 				err = msgp.WrapError(err, "Metrics")
 				return
-			}
-			if z.Metrics == nil {
-				z.Metrics = make(map[string]float64, zb0003)
-			} else if len(z.Metrics) > 0 {
-				clear(z.Metrics)
-			}
-			for zb0003 > 0 {
-				zb0003--
-				var za0003 string
-				za0003, err = dc.ReadString()
-				if err != nil {
-					err = msgp.WrapError(err, "Metrics")
-					return
-				}
-				var za0004 float64
-				za0004, err = dc.ReadFloat64()
-				if err != nil {
-					err = msgp.WrapError(err, "Metrics", za0003)
-					return
-				}
-				z.Metrics[za0003] = za0004
 			}
 		default:
 			err = dc.Skip()
@@ -433,11 +389,11 @@ func (z *eventContent) EncodeMsg(en *msgp.Writer) (err error) {
 		zb0001Len--
 		zb0001Mask |= 0x1000
 	}
-	if z.Meta == nil {
+	if z.Meta.IsZero() {
 		zb0001Len--
 		zb0001Mask |= 0x4000
 	}
-	if z.Metrics == nil {
+	if z.Metrics.IsZero() {
 		zb0001Len--
 		zb0001Mask |= 0x8000
 	}
@@ -609,22 +565,10 @@ func (z *eventContent) EncodeMsg(en *msgp.Writer) (err error) {
 			if err != nil {
 				return
 			}
-			err = en.WriteMapHeader(uint32(len(z.Meta)))
+			err = z.Meta.EncodeMsg(en)
 			if err != nil {
 				err = msgp.WrapError(err, "Meta")
 				return
-			}
-			for za0001, za0002 := range z.Meta {
-				err = en.WriteString(za0001)
-				if err != nil {
-					err = msgp.WrapError(err, "Meta")
-					return
-				}
-				err = en.WriteString(za0002)
-				if err != nil {
-					err = msgp.WrapError(err, "Meta", za0001)
-					return
-				}
 			}
 		}
 		if (zb0001Mask & 0x8000) == 0 { // if not omitted
@@ -633,22 +577,10 @@ func (z *eventContent) EncodeMsg(en *msgp.Writer) (err error) {
 			if err != nil {
 				return
 			}
-			err = en.WriteMapHeader(uint32(len(z.Metrics)))
+			err = z.Metrics.EncodeMsg(en)
 			if err != nil {
 				err = msgp.WrapError(err, "Metrics")
 				return
-			}
-			for za0003, za0004 := range z.Metrics {
-				err = en.WriteString(za0003)
-				if err != nil {
-					err = msgp.WrapError(err, "Metrics")
-					return
-				}
-				err = en.WriteFloat64(za0004)
-				if err != nil {
-					err = msgp.WrapError(err, "Metrics", za0003)
-					return
-				}
 			}
 		}
 	}
@@ -657,20 +589,7 @@ func (z *eventContent) EncodeMsg(en *msgp.Writer) (err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *eventContent) Msgsize() (s int) {
-	s = 3 + 16 + msgp.Uint64Size + 15 + msgp.Uint64Size + 14 + msgp.Uint64Size + 19 + msgp.StringPrefixSize + len(z.CorrelationID) + 5 + msgp.StringPrefixSize + len(z.Name) + 8 + msgp.StringPrefixSize + len(z.Service) + 9 + msgp.StringPrefixSize + len(z.Resource) + 5 + msgp.StringPrefixSize + len(z.Type) + 6 + msgp.Int64Size + 9 + msgp.Int64Size + 8 + msgp.Uint64Size + 9 + msgp.Uint64Size + 10 + msgp.Uint64Size + 6 + msgp.Int32Size + 5 + msgp.MapHeaderSize
-	if z.Meta != nil {
-		for za0001, za0002 := range z.Meta {
-			_ = za0002
-			s += msgp.StringPrefixSize + len(za0001) + msgp.StringPrefixSize + len(za0002)
-		}
-	}
-	s += 8 + msgp.MapHeaderSize
-	if z.Metrics != nil {
-		for za0003, za0004 := range z.Metrics {
-			_ = za0004
-			s += msgp.StringPrefixSize + len(za0003) + msgp.Float64Size
-		}
-	}
+	s = 3 + 16 + msgp.Uint64Size + 15 + msgp.Uint64Size + 14 + msgp.Uint64Size + 19 + msgp.StringPrefixSize + len(z.CorrelationID) + 5 + msgp.StringPrefixSize + len(z.Name) + 8 + msgp.StringPrefixSize + len(z.Service) + 9 + msgp.StringPrefixSize + len(z.Resource) + 5 + msgp.StringPrefixSize + len(z.Type) + 6 + msgp.Int64Size + 9 + msgp.Int64Size + 8 + msgp.Uint64Size + 9 + msgp.Uint64Size + 10 + msgp.Uint64Size + 6 + msgp.Int32Size + 5 + z.Meta.Msgsize() + 8 + z.Metrics.Msgsize()
 	return
 }
 

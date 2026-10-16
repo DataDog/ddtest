@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+
+	"github.com/tonyredondo/dd-ci-testing-poc/internal/propctx"
 )
 
 func TestW3CAndDatadogExchange(t *testing.T) {
@@ -239,4 +241,19 @@ func BenchmarkChild(b *testing.B) {
 			_ = c
 		})
 	})
+}
+
+// FromContext also reads an identity that a context carries by pointer, as
+// Mini's spans do, and still rejects an invalid one.
+func TestFromCarrier(t *testing.T) {
+	c, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := FromContext(&propctx.Carrier[Context]{Context: context.Background(), Carried: c}); !ok || got != c {
+		t.Fatalf("carried %v, %t", got, ok)
+	}
+	if _, ok := FromContext(&propctx.Carrier[Context]{Context: context.Background()}); ok {
+		t.Fatal("an invalid carried identity was accepted")
+	}
 }

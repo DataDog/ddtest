@@ -186,14 +186,17 @@ invocation.
 | Change | Cost removed or reduced | Constraint to retain |
 | --- | --- | --- |
 | CI-only runtime graph | Compilation/linking of excluded APM components | Retain CI policies, coverage, metadata and telemetry |
-| Sealed span maps | Metadata and metric snapshots on `Finish` | Setters must never mutate a finished span's maps |
+| Events sealed in their span | Metadata and metric snapshots, and a copy of the event, on `Finish` | Setters must never change a finished span's event; getters read only fields that sealing leaves unchanged |
+| Small metadata and metric sets | Four allocations for the map of a test event's 22 entries | Up to 32 entries in a slice, searched linearly; a larger set switches to a map, so many tags cost no quadratic time; `omitzero` keeps an absent set off the wire |
+| One allocation for the span's context | A context and a boxed identity for each span | propagation's key lives in `internal/propctx`; the carrier answers it with a pointer, and `FromContext` reads both forms; other keys and cancellation go to its parent; it is not part of the span, so a kept context retains no tags |
+| Typed tag setters | An interface conversion for each tag value that is not a constant | `SetStringTag` and `SetMetric` keep `SetTag`'s semantics; the SDK port's call sites keep their lines |
 | Shared CI tag snapshots and cached options | Per-span closures, common map entries and repeated wire strings | Preserve late updates, getters, option precedence, numeric overrides, child spans and Bazel filtering |
-| Metadata capacity from `Tag` options | Repeated map growth while applying common tags, and a 64-slot map (2.25 kB) for a test event's 22 entries | Count every `Tag` option and the entries that `newSpan` adds itself; options that set fields or shared defaults reserve nothing |
+| Metadata capacity from `Tag` options | Repeated growth while applying common tags, and room for options that add no entry | Count every `Tag` option and the entries that `newSpan` adds itself; options that set fields or shared defaults reserve nothing |
 | Overrides recorded at enqueue | Searching every event's keys when lifting shared defaults into payload metadata | `Client.add` stores `eventSize`'s result on the event; only those events can remove a default |
 | Shared-tag key filter | Snapshot lookups for keys that cannot be shared | A snapshot holds only keys that `IsSharedCITag` selects |
-| Finish configuration in the event | One allocation per finished event | Options apply, outside the span's lock, to the event that `Finish` allocates anyway |
+| Finish configuration only with options | One allocation for every `Finish` | Options take the configuration's address, which moves it to the heap; `Finish` creates it only when options are given, and applies them outside the span's lock |
 | Appended close-action lists | Copying all prior actions on every registration | Execute in LIFO order, with pre-close barriers before ordinary actions |
-| Lazy metric maps | A map allocation for events without numeric metrics | Tag type transitions must retain their existing semantics |
+| Lazy metric sets | An allocation for events without numeric metrics | Tag type transitions must retain their existing semantics |
 | Direct event encoding | An intermediate encoded event array and its payload copy | Preserve field names, event versions and byte limits |
 | Queue and payload reuse | Fresh backing storage after every successful batch | Retryable flush failures retain events; final closure discards a failed batch once |
 | Gzip writer and buffer pooling | New compression state for each agentless batch | Seal all request readers before returning storage to a pool |
@@ -252,12 +255,12 @@ boundaries.
 it adds itself: `_dd.origin`, `_dd.p.tid` and the client's tags, `env` and
 `version`. Options that set fields, timestamps or the shared CI snapshot reserve
 nothing. A test event of an instrumented binary has 27 start options, 22 of them
-tags, and ends with 22 entries. With `DD_ENV` set, its estimate of 25 gives it a
-32-slot map, 1.12 kB. Counting every option, the earlier estimate of 30 gave it
-64 slots, 2.25 kB. Go's maps hold 28 entries in 32 slots, so that shape needs an
-estimate of 28 or less; a few client tags from `DD_TAGS` take it back to 64
-slots. An option is now twice the size of a function value, which adds 216
-bytes to the slice of a test's 27 options. `testopt`'s public options remain
+tags, and ends with 22 entries. With `DD_ENV` set, its estimate of 25 reserves
+a slice of 25 entries, 800 bytes. Sets of up to 32 entries are slices, so an
+estimate above 32 starts a map instead, and a slice that grows beyond 32
+entries switches to one. When the metadata was a map, the earlier estimate of
+30 gave a test event 64 slots, 2.25 kB. An option is now twice the size of a
+function value, which adds 216 bytes to the slice of a test's 27 options. `testopt`'s public options remain
 functions; its client turns each into an option that reserves one entry.
 
 Text-only spans reserve exactly the entries that their tags add. A fixed
@@ -278,9 +281,10 @@ and the closures that callers had kept on the stack moved to the heap.
 
 Read [the event lifetime](architecture.md#native-event-ownership) before changing
 `Finish`. The client copies caller-owned configuration at construction. A span
-then owns private maps until it seals them; getters continue to work after
-finalization. Hierarchy IDs are stored outside those maps so serialization can
-write the CI fields without deleting tags.
+then owns its event and its private metadata and metric sets until it seals
+them; getters continue to work after finalization. Hierarchy IDs are stored
+outside those sets so serialization can write the CI fields without deleting
+tags.
 
 Delivery owns one reusable payload buffer under `sendMu`. The transport borrows
 its bytes only for the duration of `Send`. In agentless mode it borrows a gzip
@@ -388,7 +392,13 @@ tree's ddto, and checks that every test event arrives. Its
 [first results](results/minitracer-20261016-linux-go1.27/README.md) measure four
 rows of the optimization table above: metadata capacity from `Tag` options,
 overrides recorded at enqueue, the shared-tag key filter and the finish
-configuration in the event.
+configuration, which then lived in the event. The
+[second results](results/minitracer-allocs-20261016-linux-go1.27/README.md)
+measure the events sealed in their span, the small sets, the span's context in
+one allocation and the typed tag setters. They also count the objects and bytes that the test
+process allocates per test, from its start until testing writes the memory
+profile, before Mini's final delivery. With `--own-benchmarks`, each tree runs its own
+benchmarks, for a candidate whose benchmarks use internals that the base lacks.
 Alternate execution order and retain slow or failed samples. Record CPU,
 allocations, complete wall time, wire bytes and peak memory when they apply. A
 hot function's profile share does not predict the percentage that a change will

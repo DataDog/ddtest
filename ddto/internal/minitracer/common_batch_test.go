@@ -43,12 +43,12 @@ func TestBatchBytesBoundProjectedPayload(t *testing.T) {
 				events = nil
 			}
 			event := &ciEvent{Type: kinds[random.IntN(len(kinds))], Version: 1, common: snapshots[random.IntN(len(snapshots))],
-				Content: eventContent{Name: "test", Meta: map[string]string{"test.name": fmt.Sprint(i)}}}
+				Content: eventContent{Name: "test", Meta: metaOf(map[string]string{"test.name": fmt.Sprint(i)})}}
 			switch random.IntN(25) {
 			case 0:
-				event.Content.Meta["git.commit.message"] = "override"
+				event.Content.Meta.set("git.commit.message", "override")
 			case 1:
-				event.Content.Metrics = map[string]float64{"git.commit.message": 1}
+				event.Content.Metrics = metricsOf(map[string]float64{"git.commit.message": 1})
 			}
 			size, overrides := eventSize(event)
 			event.overrides = overrides // As Client.add records it.
@@ -78,7 +78,7 @@ func TestBatchBytesBoundProjectedPayload(t *testing.T) {
 				t.Fatalf("run %d: metadata %v, searching every event %v", run, metadata, everyMetadata)
 			}
 			for i := range wire {
-				if wire[i].Type != everyWire[i].Type || !reflect.DeepEqual(wire[i].Content, everyWire[i].Content) {
+				if wire[i].Type != everyWire[i].Type || !sameContent(wire[i].Content, everyWire[i].Content) {
 					t.Fatalf("run %d: event %d is %+v, searching every event %+v", run, i, wire[i].Content, everyWire[i].Content)
 				}
 			}
@@ -111,7 +111,7 @@ func TestBatchBytesWorstCaseSaturates(t *testing.T) {
 	common := NewCommonTags(map[string]string{"ci.large": strings.Repeat("c", (2<<20)+(128<<10))})
 	var accounted batchBytes
 	for i := range 1000 {
-		event := &ciEvent{Type: "test", Version: 1, common: common, Content: eventContent{Name: "test", Meta: map[string]string{"test.name": fmt.Sprint(i)}}}
+		event := &ciEvent{Type: "test", Version: 1, common: common, Content: eventContent{Name: "test", Meta: metaOf(map[string]string{"test.name": fmt.Sprint(i)})}}
 		size, overrides := eventSize(event)
 		accounted.add(event, size, overrides)
 	}
@@ -133,10 +133,10 @@ func TestSharedSnapshotBatches(t *testing.T) {
 	large := map[string]string{"ci.large": strings.Repeat("c", 32<<10), "git.commit.sha": "commit"}
 	common := NewCommonTags(large)
 	test := func(i int, common *CommonTags) *ciEvent {
-		return &ciEvent{Type: "test", Version: 1, common: common, Content: eventContent{Name: "test", Meta: map[string]string{"test.name": fmt.Sprint(i)}}}
+		return &ciEvent{Type: "test", Version: 1, common: common, Content: eventContent{Name: "test", Meta: metaOf(map[string]string{"test.name": fmt.Sprint(i)})}}
 	}
 	override := func(event *ciEvent) *ciEvent {
-		event.Content.Meta["ci.large"] = "override"
+		event.Content.Meta.set("ci.large", "override")
 		return event
 	}
 	// requests is the number of payloads; one of them holds contains events.
@@ -156,7 +156,7 @@ func TestSharedSnapshotBatches(t *testing.T) {
 		{"metric override", func(i int) *ciEvent {
 			event := test(i, common)
 			if i == 200 {
-				event.Content.Metrics = map[string]float64{"ci.large": 1}
+				event.Content.Metrics = metricsOf(map[string]float64{"ci.large": 1})
 			}
 			return event
 		}, 300, 3, 200},

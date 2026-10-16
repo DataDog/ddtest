@@ -10,12 +10,13 @@ Its original Apache-2.0 license and notices are retained there.
 | `client.go` | Explicit configuration, immutable common metadata, client construction |
 | `batch.go` | Event queue, bounded payloads, byte accounting, serialization, flush/close and error state |
 | `runtime.go` | Environment configuration and the process-wide client used by testing hooks |
-| `span.go` | Mutable event fields until Finish, CI identity and read-only final maps |
+| `span.go` | The span's event, mutable until Finish seals it in place, its CI identity and its context |
+| `entries.go` | Metadata and metric sets: slices up to 32 entries, maps beyond, encoded as msgpack maps |
 | `common_tags.go` | Immutable CI strings, effective byte accounting and event-kind metadata projection |
 | `events.go` | CI-only wire schema; generated serialization lives in `events_msgp.go` |
 
-`Finish` transfers ownership of the private metadata/metric maps once; setters
-cannot change them afterward. `sendMu` serializes delivery and owns the reusable
+`Finish` seals the span's own event once, and the client queues it; setters
+cannot change it afterward. `sendMu` serializes delivery and owns the reusable
 payload buffer. `mu` protects queue/error state. In ordinary delivery, a
 finisher at the queue bound waits for a sender while deliveries succeed; after a
 failed delivery, which keeps its batch, work beyond the bound is rejected.

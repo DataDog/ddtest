@@ -87,10 +87,10 @@ func createTest(suite *tslvTestSuite, name string, startTime time.Time) Test {
 
 	span, ctx := tracer.StartSpanFromContext(context.Background(), operationName, testOpts...)
 	if suite.module.session != nil {
-		setCIVisibilitySpanTag(span, constants.TestSessionIDTag, suite.module.session.sessionIDText)
+		setCIVisibilitySpanStringTag(span, constants.TestSessionIDTag, suite.module.session.sessionIDText)
 	}
-	setCIVisibilitySpanTag(span, constants.TestModuleIDTag, suite.module.moduleIDText)
-	setCIVisibilitySpanTag(span, constants.TestSuiteIDTag, suite.suiteIDText)
+	setCIVisibilitySpanStringTag(span, constants.TestModuleIDTag, suite.module.moduleIDText)
+	setCIVisibilitySpanStringTag(span, constants.TestSuiteIDTag, suite.suiteIDText)
 	testID := span.Context().SpanID()
 
 	t := &tslvTest{
@@ -310,9 +310,9 @@ func (t *tslvTest) SetTestFunc(fn *runtime.Func) {
 		log.Debug("civisibility: resolving test source location [function:%s file:%s start_line:%d relative_file:%s runtime_file:%s filesystem_file:%s filesystem_known:%t entry:%#x]",
 			fn.Name(), runtimePath, runtimeStartLine, file, sourcePath.RuntimePath, sourcePath.FilesystemPath, sourcePath.FilesystemKnown, fn.Entry())
 	}
-	t.SetTag(constants.TestSourceFile, file)
-	t.SetTag(constants.TestSourceStartLine, runtimeStartLine)
-	t.suite.SetTag(constants.TestSourceFile, file)
+	setCIVisibilitySpanStringTag(t.span, constants.TestSourceFile, file)
+	t.span.SetMetric(constants.TestSourceStartLine, float64(runtimeStartLine))
+	setCIVisibilitySpanStringTag(t.suite.span, constants.TestSourceFile, file)
 
 	// Source inspection is cached per file so repeated retries/subtests do not reparse the same file.
 	metadata := functionMetadata.fileMetadata
@@ -368,8 +368,8 @@ func (t *tslvTest) SetTestFunc(fn *runtime.Func) {
 		// line that was already tagged above; this does not clear any previous end-line tag if the
 		// same test object is reused.
 		if endLine >= startLine {
-			t.SetTag(constants.TestSourceStartLine, startLine)
-			t.SetTag(constants.TestSourceEndLine, endLine)
+			t.span.SetMetric(constants.TestSourceStartLine, float64(startLine))
+			t.span.SetMetric(constants.TestSourceEndLine, float64(endLine))
 			if log.DebugEnabled() {
 				log.Debug("civisibility: resolved test source range [function:%s file:%s start_line:%d end_line:%d]",
 					fullName, file, startLine, endLine)

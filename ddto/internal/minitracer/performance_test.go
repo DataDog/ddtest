@@ -154,8 +154,8 @@ func BenchmarkTestEventLifecycle(b *testing.B) {
 		s.FinishWithTags(finishTags, FinishTime(start))
 		return s
 	}
-	if s := test(); len(options) != 27 || len(s.content.Meta) != 22 || len(s.content.Metrics) != 3 {
-		b.Fatalf("event shape: %d options, %d metadata entries, %d metrics", len(options), len(s.content.Meta), len(s.content.Metrics))
+	if s := test(); len(options) != 27 || s.event.Content.Meta.len() != 22 || s.event.Content.Metrics.len() != 3 {
+		b.Fatalf("event shape: %d options, %d metadata entries, %d metrics", len(options), s.event.Content.Meta.len(), s.event.Content.Metrics.len())
 	}
 	b.ReportAllocs()
 	b.ResetTimer()

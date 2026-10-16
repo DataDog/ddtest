@@ -97,7 +97,10 @@ class ReportTests(unittest.TestCase):
             "base": {"commit": "b" * 40, "local_diff_sha256": ""},
             "candidate": {"commit": "c" * 40, "local_diff_sha256": "d" * 64},
             "go": "go version go1.27.0 linux/amd64", "cpu": "CPU", "os": "Linux 7", "reps": 2,
-            "tests": 2, "count": 2, "gomaxprocs": 4, "benchtime": "1s",
+            "tests": 2, "count": 2, "gomaxprocs": 4, "benchtime": "1s", "own_benchmarks": True, "alloc_count": 3,
+            "allocations": {"native": {"objects_per_test": 10.0, "bytes_per_test": 1000},
+                            "base": {"objects_per_test": 60.5, "bytes_per_test": 7000},
+                            "candidate": {"objects_per_test": 48.8, "bytes_per_test": 5870}},
             "microbenchmarks": {"base": {"BenchmarkTestEventLifecycle": [(200, 30, 3), (200, 30, 3)]},
                                 "candidate": {"BenchmarkTestEventLifecycle": [(150, 20, 2), (150, 20, 2)]}},
             "test_binaries": {"native": [run(1.0, 1.0)], "base": [run(1.000004, 1.000008)], "candidate": [run(1.000002, 1.000004)]},
@@ -108,6 +111,12 @@ class ReportTests(unittest.TestCase):
         self.assertIn("| ddto, candidate | 1.000 s | 1.000 s | 2 MiB | 0.50 µs | 1.00 µs | 3, 1.0 MiB |", text)
         self.assertIn("candidate with local changes (sha256 dddddddddddd)", text)
         self.assertIn("The first base run delivered 4 `test`, 1 `test_suite_end` events.", text)
+        self.assertIn("Each tree runs its own `performance_test.go`.", text)
+        self.assertIn("| ddto, candidate | 48.8 | 5870 |", text)
+
+    def test_pprof_total(self):
+        self.assertEqual("123", benchmark.PPROF_TOTAL.search("Showing nodes accounting for 5, 4% of 123 total").group(1))
+        self.assertEqual("184505376", benchmark.PPROF_TOTAL.search("accounting for 38881568B, 21.07% of 184505376B total").group(1))
 
 
 if __name__ == "__main__":

@@ -235,14 +235,15 @@ stateDiagram-v2
     Abandoned --> [*]
 ```
 
-`Finish` seals the span under its mutex. It copies the event's scalar fields and
-shares the private metadata and metric maps with the event. Setters then become
-no-ops; getters remain usable. Repeated `Finish` calls do not enqueue again.
+`Finish` seals the span under its mutex. The span holds its own event, which
+`Finish` completes in place and the client queues, so nothing is copied.
+Setters then become no-ops; getters remain usable, since sealing changes only
+fields that they do not read. Repeated `Finish` calls do not enqueue again.
 A span without a client can still carry context, but it is not queued.
 
 CI/Git/system strings have a separate immutable snapshot. Spans store local
 overrides and read the snapshot through their getters. Delivery projects shared
-values into event-kind metadata without changing either map. Mixed snapshots
+values into event-kind metadata without changing either. Mixed snapshots
 or numeric overrides use local strings for the affected kind/key. The
 [metadata diagram and rules](delivery.md#payload-level-common-metadata) explain
 that boundary; ordinary child spans receive no CI defaults.

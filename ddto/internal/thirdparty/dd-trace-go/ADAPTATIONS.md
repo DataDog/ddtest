@@ -1698,10 +1698,17 @@ of them without changing any event:
   closure with `TestifyTest.moduleAndSuite` instead of reassigning the captured
   names, so closures capture them by value instead of moving them to the heap.
 - `utils.GetModuleAndSuiteName` caches its result by program counter.
+- `createTest` sets the hierarchy IDs, and `SetTestFunc` the source file and
+  lines, through `setCIVisibilitySpanStringTag` (at the end of `meta.go`) and
+  `Span.SetMetric`. Converting a string that is not a constant, or a number
+  above 255, to `any` allocates; these setters take typed values, with
+  `SetTag`'s semantics. Each call replaces the line of the original call, so no
+  line moves.
 
 CI string snapshots use the revision/escaped-map contract below; numeric CI
 metrics remain fresh per call. Checks: `TestTestifyLookupMatchesReflection`,
-`TestFindTestifyTestMatchesFinalElement`, Testify and native parity. When
+`TestFindTestifyTestMatchesFinalElement`, `TestTypedSettersMatchSetTag` in Mini,
+Testify and native parity. When
 syncing, keep new per-test debug logs guarded without moving any line that can
 appear in an error stack, and re-measure allocations per test with a
 many-subtest fixture.

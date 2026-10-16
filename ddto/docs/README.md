@@ -33,7 +33,7 @@ Measurement reports describe the exact revisions in their manifests.
 | Read the retained measurements | [Build, runtime and memory comparison](benchmarks.md) |
 | Collect builds or regenerate tables | [Benchmark runner](build-benchmarks.md) |
 | Compare Go's counters with experimental file coverage | [Per-test coverage modes](results/file-coverage-20261016-linux-go1.27/README.md) |
-| Compare Mini's event recording before and after a change | [Mini event recording](results/minitracer-20261016-linux-go1.27/README.md) |
+| Compare Mini's event recording before and after a change | [Mini event recording](results/minitracer-20261016-linux-go1.27/README.md), [allocations](results/minitracer-allocs-20261016-linux-go1.27/README.md) |
 
 [`internal/thirdparty`](../internal/thirdparty/README.md) records upstream
 repositories, commits, licenses and source hashes. SDK adaptations have a
