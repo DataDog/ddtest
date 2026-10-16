@@ -84,6 +84,13 @@ The log records:
   `--panic-hook` edits the runtime to do so before an unrecovered panic;
   `false` comes with the reason, such as `--panic-hook not set`. Both need the
   exit hook.
+- `file coverage installed=true packages=<n> marked_files=<n> always_files=<n> parallel=<bool>`
+  when `--experimental-file-coverage` marks the repository's packages:
+  `always_files` counts the entries that every test reports, and `parallel`
+  whether `=parallel` keeps `t.Parallel()`. `false` comes
+  with the reason, such as `-race`, and a warning. Test processes then log
+  `civisibility.cov: per-test file coverage: true [banks:<n> files:<n>]`. See
+  [Experimental file coverage](mini-runtime.md#experimental-file-coverage).
 - `test session owned=true` when ddto owns the command's
   [test session](../internal/thirdparty/dd-trace-go/ADAPTATIONS.md#ddtos-test-session),
   followed by `test session id=<id> dir=<dir>`; `false`

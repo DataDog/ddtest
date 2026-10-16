@@ -457,3 +457,140 @@ and long-running fuzz campaigns need separate validation. The
 For source revisions, licenses, codecs, platform subsets and update commands,
 read [source maintenance](maintenance.md) and the
 [incorporated-source records](../internal/thirdparty/README.md).
+
+### Experimental file coverage
+
+`ddto test --experimental-file-coverage` takes per-test coverage from file
+marks instead of Go's coverage counters. Test Impact Analysis skips by file,
+so a mark per source file is enough. Per-test coverage then works without
+`-cover`, and it reaches every package of the repository that a test runs,
+not only the packages that `-coverpkg` names.
+
+**What changes in the build.** ddto lists the build with its tests
+(`go list -deps -test`) and rewrites, through its overlay, every Go file of
+the repository's packages:
+- **The repository's packages:** those inside the Git working tree that holds
+  the working directory, or, outside Git, inside the main modules. That
+  includes `vendor/`, local `replace` targets and packages that only tests
+  import.
+- **The mark:** a site raises the file's mark to Mini's current epoch. Sites
+  go where code can start running during a test:
+  - at the start of every statement list;
+  - after every statement that ends a basic block, as cover counts;
+  - after every statement with a call or a channel operation, where a
+    goroutine that blocked before the test can resume.
+
+  Between two sites, code waits for no other goroutine, though the runtime
+  can still suspend it briefly (see Limits). A site uses only
+  `sync/atomic`'s intrinsics, which cost the compiler's inliner little, and
+  raises the mark with a compare-and-swap loop, so a mark never goes down.
+  Sites and the import that they need stay on their lines, and a `//line`
+  directive keeps the file's name, so stack traces and test output keep their
+  positions.
+- **The bank:** a generated file per package (`zz_ddto_file_coverage.go`), per
+  internal test package (`zz_ddto_file_coverage_test.go`) and per external
+  test package (`zz_ddto_file_coverage_x_test.go`) holds the marks and the
+  file names. It registers the bank while the package initializes. The
+  packages only read and write Mini's variables through linkname; they never
+  call Mini, which initializes after them.
+- **The test result cache:** the rewritten packages compile into their own
+  build cache entries. Runs with the flag share them, and Go's test result
+  cache works as without it.
+
+**What a test reports.** Each test advances the epoch when it starts. After
+its cleanups, it reports the files whose mark reached its epoch. Some files go
+to every test instead, because a test can depend on them without running a
+statement of theirs:
+- non-Go files of the linked packages: embedded files, assembly, C and the
+  rest;
+- Go files that a package embeds, which keep their content because embedding
+  reads the overlay;
+- files whose only code runs while packages initialize: declarations,
+  `init` functions and function literals outside functions;
+- cgo files;
+- files with a function directive under which the call could change behavior,
+  such as `//go:nosplit` or `//go:norace`;
+- files that ddto's own overlay replaces.
+
+Rows name files without line bitmaps.
+
+**When it applies.** The flag applies only with Mini and without Go's coverage
+flags, which would make cover count the marks, and without `-race`, where the
+marks' atomics would order goroutines for the race detector. It also needs a
+selected Mini that reads banks. Otherwise ddto prints
+`--experimental-file-coverage: <reason>; per-test coverage keeps Go's coverage counters`
+and builds as without the flag. It also refuses in these cases:
+- Orchestrion's `-toolexec`;
+- a test binary that can load plugins: a plugin built without the marks
+  would not load next to the packages it shares with the binary;
+- vendored dependencies that ddto provides from its cache, outside the
+  repository;
+- an embed pattern that would match a generated file, since patterns resolve
+  through the overlay, and, on Windows, an embed pattern with a backslash;
+- a compiled Go file that uses an identifier with the generated code's prefix
+  `__ddto_`.
+
+**Keeping `t.Parallel()`.** By default, top-level tests run one at a time
+while coverage is collected, as with Go's counters, so that each test's window
+holds only its own code.
+
+`--experimental-file-coverage=parallel` keeps `t.Parallel()`. The epochs let
+any number of windows overlap: each test reports every file that ran during
+its window, its own and its parallel neighbors'. That is a superset, so it is
+safe, but it holds more files, and changes select more tests. A parallel
+test's window also covers the time it waits for the serial tests.
+
+On fiber's root package (1236 tests, GOMAXPROCS=4):
+
+| Mode | Wall time | Production files per test | Tests selected per changed production file |
+| --- | --- | --- | --- |
+| Serial marks | 42.52 s | 27.2 | 287 |
+| `=parallel` | 34.80 s | 87.9 | 928 |
+| No per-test coverage | 34.30 s | — | — |
+
+On samber/lo, whose parallel tests are short, both modes take 8.4 s.
+
+When the build has file marks, ddto hands the mode to the test processes, which do not inherit it from a parent run. A selected Mini that predates the mode gets a warning, and its tests run one at a time.
+
+**Limits.**
+- Tests retried in a child process report no per-test coverage.
+- Code that blocks before the test and resumes during it marks its file
+  again at its next site, which follows every call and channel operation.
+  The runtime can still suspend code briefly between two sites, to preempt
+  it or to assist the garbage collector, as it can inside any statement: a
+  suspension that spans a test's start can leave out the rest of that code.
+- The backend has to accept rows without bitmaps.
+
+**Measured** at GOMAXPROCS=4. On fiber's router benchmarks, in ns/op:
+
+| Benchmark | Native | Go's counters | File marks |
+| --- | --- | --- | --- |
+| `Router_Chain` | 126 | 532 | 185 |
+| `Router_Handler` | 58 | 311 | 76 |
+| `Router_Next` | 22 | 168 | 34 |
+| `Router_NotFound` | 153 | 733 | 237 |
+
+- **Router benchmarks:** file marks are 3 to 5 times cheaper than Go's
+  counters, at 1.3 to 1.6 times native.
+- **The CPU-bound `Test_Route_Match_SlashBoundsDifferential`:** 0.21 s with
+  marks, against 0.29 s with Go's counters and 0.20 s native.
+- **Whole suites** (lo: 8.45 s against 8.37 s; fiber: 42.44 s against
+  42.57 s) take the same time with both. Running top-level tests one at a
+  time costs fiber 8 seconds either way, and lo waits on its own timers.
+
+Production files per test, against Go's counters
+(`-cover -covermode=atomic -coverpkg=./...`):
+- **samber/lo, 333 tests:** 4.21 against 1.21, and no test misses a file that
+  Go's counters report.
+- **gofiber/fiber, root package, 1236 tests:** 27.17 against 13.88.
+  - The 30 tests that use fiber's in-memory storage get its file either
+    way. A 10-second garbage collection tick of a storage that an earlier
+    test started lands in the window of a neighboring test, and which
+    neighbor depends on how fast the suite runs.
+  - `Test_GracefulShutdown_PostShutdownFiresOnce` reports three files in
+    some runs and not in others, with both mechanisms: 1 of 3 runs with Go's
+    counters.
+- **The extra files** are those that go to every test:
+  - lo's type-only constraint files;
+  - in fiber, files with only declarations, such as each middleware's
+    `config.go`.

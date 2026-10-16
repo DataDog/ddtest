@@ -62,6 +62,10 @@ type (
 		filesCovered         []coveredFile
 		// memory is the in-memory collector, or nil with text profiles.
 		memory *memoryCollector
+		// fileEpoch is the test's file coverage epoch, or 0 without file
+		// coverage; fileNames are the files captured after the test.
+		fileEpoch uint64
+		fileNames []string
 	}
 
 	// coverageData holds information about coverage data with their block
@@ -212,7 +216,7 @@ func InitializeCoverage(m *testing.M, uploadEnabled bool) {
 	deferModuleInfo()
 
 	// if we cannot collect we bailout early
-	if !CanCollectPerTestCoverage() {
+	if !CanCollectPerTestCoverage() && !FileCoverageActive() {
 		return
 	}
 	// Per-test coverage reads the module from a worker while tests run, and
@@ -566,7 +570,7 @@ func NewTestCoverage(sessionID, moduleID, suiteID, testID uint64, testFile strin
 
 // CollectCoverageBeforeTestExecution collects coverage before test execution.
 func (t *testCoverage) CollectCoverageBeforeTestExecution() {
-	if !CanCollectPerTestCoverage() {
+	if !CanCollectPerTestCoverage() && !FileCoverageActive() {
 		return
 	}
 
@@ -579,6 +583,10 @@ func (t *testCoverage) CollectCoverageBeforeTestExecution() {
 }
 
 func (t *testCoverage) collectCoverageBeforeTestExecution() error {
+	if FileCoverageActive() {
+		t.fileEpoch = beginFileCoverage()
+		return nil
+	}
 	memory, err := beginMemoryCoverage()
 	if memory != nil {
 		t.memory = memory
@@ -593,7 +601,7 @@ func (t *testCoverage) collectCoverageBeforeTestExecution() error {
 
 // CollectCoverageAfterTestExecution collects coverage after test execution.
 func (t *testCoverage) CollectCoverageAfterTestExecution() {
-	if !CanCollectPerTestCoverage() {
+	if !CanCollectPerTestCoverage() && !FileCoverageActive() {
 		return
 	}
 
@@ -631,7 +639,7 @@ func (t *testCoverage) scheduleProcessing() <-chan struct{} {
 
 // getCoverageData gets the coverage data.
 func (t *testCoverage) getCoverageData() error {
-	if !CanCollectPerTestCoverage() {
+	if !CanCollectPerTestCoverage() && !FileCoverageActive() {
 		return nil
 	}
 
@@ -639,6 +647,10 @@ func (t *testCoverage) getCoverageData() error {
 }
 
 func (t *testCoverage) collectCoverageAfterTestExecution() error {
+	if t.fileEpoch != 0 {
+		t.fileNames = scanFileCoverage(t.fileEpoch)
+		return nil
+	}
 	if t.memory != nil {
 		err := t.memory.finish()
 		if err != nil {
@@ -669,6 +681,10 @@ func (t *testCoverage) processCoverageData() {
 }
 
 func (t *testCoverage) loadCoverageData() bool {
+	if t.fileEpoch != 0 {
+		t.filesCovered = fileCoverageFiles(t.testFile, t.fileNames)
+		return true
+	}
 	if t.memory != nil {
 		t.filesCovered = t.memory.files(t.testFile)
 		t.memory.checkOracle(t.testFile, t.filesCovered)
@@ -708,7 +724,7 @@ func (t *testCoverage) submitCoverageData() {
 }
 
 func (t *testCoverage) removeCoverageFiles() {
-	if t.memory != nil {
+	if t.memory != nil || t.fileEpoch != 0 {
 		return
 	}
 	err := os.Remove(t.preCoverageFilename)

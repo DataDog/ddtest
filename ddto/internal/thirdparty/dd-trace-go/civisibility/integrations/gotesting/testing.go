@@ -671,7 +671,7 @@ func (ddm *M) instrumentInternalTests(internalTests *[]testing.InternalTest, wra
 
 	// Check if the test is going to be skipped by ITR
 	if settings != nil && settings.ItrEnabled {
-		coverageEnabled := coverage.CanCollectPerTestCoverage()
+		coverageEnabled := coverage.CanCollectPerTestCoverage() || coverage.FileCoverageActive()
 		session.SetTag(constants.CodeCoverageEnabled, strconv.FormatBool(coverageEnabled))
 		testsSkippingEnabled := strconv.FormatBool(itrState.testsSkippingEnabled())
 		session.SetTag(constants.ITRTestsSkippingEnabled, testsSkippingEnabled)
@@ -712,7 +712,7 @@ func (ddm *M) executeInternalTest(testInfo *testingTInfo, wrapperOpts additional
 
 	// Get the settings response for this session
 	settings := integrations.GetSettings()
-	coverageEnabled := coverage.CanCollectPerTestCoverage()
+	coverageEnabled := coverage.CanCollectPerTestCoverage() || coverage.FileCoverageActive()
 	testIsNew := true
 
 	// Check if the test is known
@@ -790,7 +790,7 @@ func (ddm *M) executeInternalTest(testInfo *testingTInfo, wrapperOpts additional
 		// Check if the coverage is enabled
 		var tCoverage coverage.TestCoverage
 		var tParentOldBarrier chan bool
-		if shouldCollectExecutionCoverage(coverageEnabled, execMeta) && coverage.CanCollect() {
+		if shouldCollectExecutionCoverage(coverageEnabled, execMeta) && (coverage.CanCollect() || coverage.FileCoverageActive()) {
 			// set the test coverage collector
 			testFile, _ := originalFunc.FileLine(originalFunc.Entry())
 			tCoverage = coverage.NewTestCoverage(
@@ -800,9 +800,9 @@ func (ddm *M) executeInternalTest(testInfo *testingTInfo, wrapperOpts additional
 				test.TestID(),
 				testFile)
 
-			// now we need to disable parallelism for the test in order to collect the test coverage
+			// now we need to disable parallelism for the test in order to collect the test coverage, unless file coverage keeps it
 			tParent := getTestParentPrivateFields(t)
-			if tParent != nil && tParent.barrier != nil {
+			if tParent != nil && tParent.barrier != nil && !coverage.FileCoverageParallel() {
 				tParentOldBarrier = *tParent.barrier
 				*tParent.barrier = nil
 			}

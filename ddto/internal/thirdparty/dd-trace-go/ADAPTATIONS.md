@@ -267,6 +267,54 @@ keeps them when a test imports `plugin`; and the coverage parity cases compare
 it with the SDK reference. During prototyping, the oracle agreed on all 731
 collectors of Gin, Chi and both Testify subjects.
 
+## Per-test file coverage (experimental)
+
+Upstream takes per-test coverage only from Go's coverage counters, so a test
+binary built without `-cover` reports none. With ddto's
+`--experimental-file-coverage`, the packages of the repository compile with
+one mark per source file (see `instrument.MarkFileCoverage` and
+[Experimental file coverage](../../../docs/mini-runtime.md#experimental-file-coverage)).
+
+[`civisibility/integrations/gotesting/coverage/file_coverage.go`](civisibility/integrations/gotesting/coverage/file_coverage.go)
+is local. It declares:
+- `fileCoverageEpoch`, which marks are raised to;
+- `fileCoverageBanksV1`, the list of the banks that the instrumented packages
+  register while they initialize.
+
+Both have no initializer, because the packages write them through linkname
+before this package initializes. The layout version is in the list's name
+and in each bank record. ddto checks the declaration before it emits banks,
+and a bank of another layout turns file coverage off.
+
+`FileCoverageActive` reports banks, Go's coverage off and coverage upload on.
+It extends three places that upstream gates on Go's counters:
+- the session's `test.code_coverage.enabled` tag;
+- the test wrapper's choice to collect;
+- `testCoverage`. The collector takes the test's epoch before the test and
+  scans the banks when the coverage is captured, after the test's cleanups:
+  a later scan would also see the marks of the tests that start afterwards.
+  Its rows are the test file first, then the other files once each, in name
+  order, without bitmaps.
+
+`FileCoverageParallel` also reads `DD_CIVISIBILITY_INTERNAL_FILE_COVERAGE_PARALLEL`,
+which ddto hands for `--experimental-file-coverage=parallel`. With it, the test
+wrapper leaves the parent's barrier alone, so `t.Parallel()` keeps working and
+the windows of parallel tests overlap. `registerTestCoverageCleanup` then puts
+back only a barrier that the test replaced; restoring the nil one it never
+took would have turned `t.Parallel()` off for the tests after it.
+
+`CanCollect`, `CanCollectPerTestCoverage`, process retries and quarantined
+race processes keep Go's counters. Tests retried in a child process report no
+per-test coverage in this mode. Session coverage, LCOV reports and backfill
+stay native-only, so file marks never produce a coverage percentage.
+
+Checks: the unit tests `TestFileCoverageWindows`, `TestFileCoverageRows`,
+`TestFileCoverageRefusals` and `TestFileCoverageCollector`. In integration,
+`TestMiniFileCoverage` compares the rows with Go's counters on a fixture with
+several packages, `TestMiniFileCoverageParallel` runs two parallel tests that pass only together,
+`TestMiniFileCoverageRefusals` checks the fallbacks, and
+`TestMiniFileCoverageTestCache` checks Go's test cache and `-json`.
+
 ## Coverage module identity
 
 Upstream `InitializeCoverage` in

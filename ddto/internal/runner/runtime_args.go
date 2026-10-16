@@ -32,6 +32,13 @@ type CLIOptions struct {
 	// test process reports, instead of the command's, which ddto reports
 	// (--session-per-binary).
 	SessionPerBinary bool
+	// FileCoverage takes per-test coverage from ddto's file marks instead
+	// of Go's coverage counters (--experimental-file-coverage). The
+	// repository's packages compile with the marks, in their own build cache
+	// entries. FileCoverageParallel also keeps t.Parallel
+	// (--experimental-file-coverage=parallel): each test then reports the
+	// files that ran during its window, its parallel neighbors' too.
+	FileCoverage, FileCoverageParallel bool
 }
 
 // DefaultCLIOptions are the options without any ddto flag.
@@ -65,6 +72,16 @@ func ParseCLIArgs(args []string) (CLIOptions, []string, error) {
 		if arg == "--panic-hook" || arg == "--session-per-binary" {
 			options.PanicHook = options.PanicHook || arg == "--panic-hook"
 			options.SessionPerBinary = options.SessionPerBinary || arg == "--session-per-binary"
+			args = args[1:]
+			continue
+		}
+		if strings.HasPrefix(arg, "--") && name == "experimental-file-coverage" {
+			// No separate value: it would be taken for a package.
+			if hasValue && value != "parallel" {
+				return CLIOptions{}, nil, fmt.Errorf("--experimental-file-coverage takes no value or =parallel, not %q", value)
+			}
+			options.FileCoverage = true
+			options.FileCoverageParallel = options.FileCoverageParallel || hasValue
 			args = args[1:]
 			continue
 		}
