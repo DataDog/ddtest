@@ -365,7 +365,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 				tiaSkippingEnabled = false
 			}
 
-			if !tiaSkippingEnabled {
+			if !tiaSkippingEnabled && !forceFullTestDiscovery {
 				slog.Info("TIA or test skipping disabled, cancelling full test discovery")
 				cancelDiscovery()
 			}
