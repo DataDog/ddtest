@@ -7,8 +7,10 @@ package testdrive
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -17,8 +19,71 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPrepareRubyEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX executable fixture")
+	}
+	for _, name := range []string{"rspec", "minitest"} {
+		for _, available := range []bool{true, false} {
+			t.Run(name+"/"+map[bool]string{true: "available", false: "unavailable"}[available], func(t *testing.T) {
+				root := t.TempDir()
+				t.Chdir(root)
+				t.Setenv("PATH", root)
+				preloads := "-rbundler/setup -rdatadog/ci/auto_instrument"
+				t.Setenv("RUBYOPT", preloads)
+				t.Setenv("BUNDLE_GEMFILE", "config/Gemfile.test")
+				requireWriteFile(t, "Gemfile", "gem '"+name+"'\n")
+				if available {
+					script := `#!/bin/sh
+[ "$RUBYOPT" = '' ] || exit 2
+[ "$BUNDLE_GEMFILE" = 'config/Gemfile.test' ] || exit 2
+printf '%s\n' 'customer startup output'
+for last; do :; done
+printf '%s' '{"executable":"/selected ruby/bin/ruby","version":"3.4.7"}' > "$last"
+`
+					require.NoError(t, os.WriteFile("ruby", []byte(script), 0755))
+				}
+				drive, err := Prepare("latest")
+				require.NoError(t, err)
+				require.Equal(t, "Ruby from PATH", drive.environmentInfo.Source)
+				require.Equal(t, "Ruby", drive.environmentInfo.Runtime)
+				require.NoDirExists(t, drive.session.Directory())
+				var output bytes.Buffer
+				drive.Preview(&output)
+				require.Contains(t, output.String(), "Environment: Ruby from PATH")
+				if available {
+					require.Contains(t, output.String(), "Ruby 3.4.7: /selected ruby/bin/ruby")
+					drive.platform = &fakeTracer{}
+					executor := &fakeTestdriveExecutor{}
+					drive.executor = executor
+					drive.startIntake = func(string) (localIntake, error) {
+						return &fakeIntake{findings: intake.Facts{TestEventCount: 1}}, nil
+					}
+					require.NoError(t, drive.Run(t.Context(), &output))
+					require.True(t, strings.HasPrefix(executor.env["RUBYOPT"], preloads+" "))
+					require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
+					var diagnostics runDiagnostics
+					data, err := os.ReadFile(filepath.Join(drive.session.Directory(), diagnosticsFilename))
+					require.NoError(t, err)
+					require.NoError(t, json.Unmarshal(data, &diagnostics))
+					require.Equal(t, drive.environmentInfo, diagnostics.Environment)
+					report, err := os.ReadFile(filepath.Join(drive.session.Directory(), reportFilename))
+					require.NoError(t, err)
+					require.Contains(t, string(report), "Ruby 3.4.7")
+					require.Contains(t, string(report), "/selected ruby/bin/ruby")
+				} else {
+					require.Empty(t, drive.environmentInfo.Executable)
+					require.Empty(t, drive.environmentInfo.Version)
+				}
+				require.Equal(t, preloads, os.Getenv("RUBYOPT"))
+				require.Equal(t, "config/Gemfile.test", os.Getenv("BUNDLE_GEMFILE"))
+			})
+		}
+	}
+}
+
 func TestPrepareAllSupportedFrameworks(t *testing.T) {
-	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest"} {
+	for _, name := range []string{"jest", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest", "rspec", "minitest"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			switch name {
@@ -43,6 +108,7 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			installer := &fakeTracer{preloadPath: filepath.Join(root, "isolated")}
 			run.platform = installer
 			run.projectTracer = ""
+			run.projectTracer = ""
 			executor := &fakeTestdriveExecutor{}
 			run.executor = executor
 			run.startIntake = func(string) (localIntake, error) {
@@ -64,8 +130,15 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 				require.Contains(t, executor.env["PYTEST_ADDOPTS"], "--ddtrace")
 				require.NotContains(t, executor.env, "NODE_OPTIONS")
 			case "ruby":
+				var diagnostics runDiagnostics
+				data, err := os.ReadFile(filepath.Join(run.session.Directory(), diagnosticsFilename))
+				require.NoError(t, err)
+				require.NoError(t, json.Unmarshal(data, &diagnostics))
+				require.Equal(t, run.environmentInfo, diagnostics.Environment)
+				require.Equal(t, "Ruby from PATH", diagnostics.Environment.Source)
 				require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
-				require.Contains(t, preview.String(), "Bundler updates the project Gemfile and lockfile")
+				require.Contains(t, preview.String(), "Bundler updates Gemfile and Gemfile.lock.")
+				require.NotContains(t, preview.String(), "It will not change")
 				require.Contains(t, output.String(), "datadog-ci · installed in project")
 				require.Contains(t, executor.env["RUBYOPT"], "datadog/ci/auto_instrument")
 				require.NotContains(t, executor.env, "NODE_OPTIONS")
@@ -139,6 +212,9 @@ func TestLanguageEnvironmentsPreserveCustomerOptions(t *testing.T) {
 	require.Equal(t, "/session/python"+string(os.PathListSeparator)+"/customer/modules", python["PYTHONPATH"])
 	require.Equal(t, "--ddtrace -q --disable-plugin-autoload", python["PYTEST_ADDOPTS"])
 	require.NotContains(t, python, "PYTEST_DISABLE_PLUGIN_AUTOLOAD")
+	ruby := (&Testdrive{language: "ruby"}).environment("/session/Gemfile", "http://127.0.0.1:1234", "session")
+	require.True(t, strings.HasPrefix(ruby["RUBYOPT"], "-W0 "))
+	require.NotContains(t, ruby, "BUNDLE_PATH") // Inherit project Bundler configuration.
 }
 
 func TestCypressTestdrivePreservesCommand(t *testing.T) {
@@ -184,6 +260,19 @@ func TestPythonProjectTracerPreservesImportEnvironment(t *testing.T) {
 		t.Fatal("project PYTHONPATH overridden", env)
 	}
 	if env["PYTEST_ADDOPTS"] != "--ddtrace -v -p ddtrace.testing.internal.pytest.entry_point" {
+		t.Fatal(env)
+	}
+}
+
+func TestRubyProjectTracerPreservesBundleEnvironment(t *testing.T) {
+	drive := &Testdrive{language: "ruby"}
+	env := drive.environment("", "http://127.0.0.1:1234", "session")
+	for _, key := range []string{"BUNDLE_GEMFILE", "BUNDLE_PATH", "BUNDLE_APP_CONFIG", "BUNDLE_FROZEN", "BUNDLE_WITHOUT"} {
+		if _, changed := env[key]; changed {
+			t.Fatal("project Bundler setting overridden", key)
+		}
+	}
+	if !strings.Contains(env["RUBYOPT"], "-rdatadog/ci/auto_instrument") {
 		t.Fatal(env)
 	}
 }
