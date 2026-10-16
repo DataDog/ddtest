@@ -17,6 +17,25 @@ import (
 	ciUtils "github.com/DataDog/ddtest/internal/utils"
 )
 
+func TestExperimentalPytestDiscoveryDoesNotUseCache(t *testing.T) {
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_EXPERIMENTAL_PYTEST_STATIC_DISCOVERY", "true")
+	filePath := filepath.Join(t.TempDir(), "tests.json")
+	original := []byte(`{"name":"test_cached"}`)
+	if err := os.WriteFile(filePath, original, 0644); err != nil {
+		t.Fatal(err)
+	}
+	cache := discoveryCache{testFramework: &MockFramework{FrameworkName: "pytest"}, filePath: filePath}
+	tests, result := cache.restore()
+	if tests != nil || result.Used || !strings.Contains(result.NotUsedReason, "experimental") {
+		t.Fatalf("experimental discovery must recheck eligibility: tests=%v, result=%+v", tests, result)
+	}
+	cache.store()
+	data, err := os.ReadFile(filePath)
+	if err != nil || string(data) != string(original) {
+		t.Fatalf("experimental inventory must not become a reusable discovery cache: %s, %v", data, err)
+	}
+}
+
 func TestDiscoveryCacheMetadata_AppendedAndParsed(t *testing.T) {
 	filePath := filepath.Join(t.TempDir(), "tests.json")
 	initial := strings.Join([]string{

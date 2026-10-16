@@ -603,6 +603,18 @@ func TestGetForceFullTestDiscovery(t *testing.T) {
 	}
 }
 
+func TestGetExperimentalPytestStaticDiscovery(t *testing.T) {
+	for _, value := range []string{"", "false", "0", "invalid", "true", "1"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_EXPERIMENTAL_PYTEST_STATIC_DISCOVERY", value)
+			want := value == "true" || value == "1"
+			if got := GetExperimentalPytestStaticDiscovery(); got != want {
+				t.Fatalf("value %q: got %v, want %v", value, got, want)
+			}
+		})
+	}
+}
+
 func TestGetStrictDiscovery(t *testing.T) {
 	config = nil
 	viper.Reset()

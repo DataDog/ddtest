@@ -72,6 +72,15 @@ func (p *PyTest) DiscoverTests(ctx context.Context, testFiles discovery.TestFile
 		return nil, err
 	}
 
+	if settings.GetExperimentalPytestStaticDiscovery() {
+		if tests, ok := p.tryStaticDiscovery(ctx, testFiles, envMap); ok {
+			return tests, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+
 	command, args := p.Command()
 
 	if testFiles.UseExplicitFiles() {

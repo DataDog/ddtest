@@ -1,6 +1,7 @@
 # Settings
 
-Every DDTest setting can be passed as a CLI flag or as an environment variable.
+Supported DDTest settings can be passed as a CLI flag or as an environment variable
+(except environment-only settings noted below).
 CLI flags take precedence over environment variables.
 When neither supplies a platform or framework, DDTest detects it from the current
 directory. An explicit framework also selects its platform. Multiple matching
@@ -26,3 +27,54 @@ platforms or frameworks require explicit selection.
 | `--strict-discovery` | `DD_TEST_OPTIMIZATION_RUNNER_STRICT_DISCOVERY` | | `false` | Fail planning when full test discovery fails. Cancelled full discovery still uses fast test file discovery fallback. |
 | `--runtime-tags` | `DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS` | `DD_TEST_OPTIMIZATION_RUNTIME_TAGS` | `""` | JSON string to override runtime tags used to fetch skippable tests. Useful for local development on a different OS than CI, such as `--runtime-tags '{"os.platform":"linux","runtime.version":"3.2.0"}'`. |
 | | `DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED` | | `true` | Print human-readable plan and run reports. Set to `false` to disable them. |
+
+## Experimental pytest static discovery
+
+Set `DD_TEST_OPTIMIZATION_RUNNER_EXPERIMENTAL_PYTEST_STATIC_DISCOVERY=true` to
+try discovering individual pytest tests without starting pytest or importing test
+modules. This is an opt-in experiment, disabled by default, with no CLI flag.
+It still starts a lightweight Python standard-library helper; it does not remove
+normal platform/prerequisite checks or change how tests execute.
+
+```bash
+DD_TEST_OPTIMIZATION_RUNNER_EXPERIMENTAL_PYTEST_STATIC_DISCOVERY=true \
+  ddtest plan --platform python --framework pytest \
+  --tests-location 'tests/**/test_*.py' \
+  --tests-exclude-pattern 'tests/integration/**' \
+  --command 'pytest -q --ddtrace'
+```
+
+Supply accurate file include/exclude patterns. Supported commands are `pytest`
+(console scripts with a Python shebang) and `python -m pytest`, including
+versioned Python executables. Existing positional arguments must be selected
+Python files, not directories or node IDs. Wrapper commands fall back to pytest.
+
+The initial subset supports:
+
+- Plain `test*` functions and methods in `Test*` classes without inheritance or
+  custom constructors, including nested classes.
+- `@pytest.mark.parametrize` with literal lists/tuples of values, multiple
+  arguments, stacked decorators, literal `ids`, and unmarked `pytest.param`
+  entries with literal IDs. Values can be strings, numbers, booleans, `None`,
+  lists, tuples, and dictionaries. Test names, duplicate IDs, and parameter
+  serialization follow the tracer's identities.
+- Presentation options in the command, `PYTEST_ADDOPTS`, and config `addopts`:
+  `-q`/`-v` (including repeats), `-s`, `-r` summary flags, `--ddtrace`, and common
+  color, capture, traceback, and warning-display options. Unknown options,
+  selectors such as `-k`/`-m`/`--lf`, and malformed quoting trigger fallback.
+- A small allowlist of configuration in the working directory, including
+  `testpaths`, `python_files`, and safe `addopts`. Static discovery with a
+  `pyproject.toml` requires Python 3.11+.
+
+`conftest.py`, non-ddtrace auto-loaded plugins, `PYTEST_PLUGINS`, fixtures,
+collection hooks, imported tests, other decorators/marks (including skip marks),
+dynamic parameter values or IDs, indirect parametrization, ambiguous roots, and
+unsupported module-level code trigger normal pytest collection instead. No
+partial inventory is used. A warning explains the fallback; successful static
+discovery logs `Experimental pytest static discovery succeeded`.
+
+This is not a general Python/pytest evaluator: use it only when imported
+application/helper modules do not mutate pytest collection. Normal discovery
+caches are neither read nor refreshed while this experiment is enabled, so
+eligibility is rechecked on every invocation and experimental inventories cannot
+be reused after disabling it.

@@ -42,6 +42,13 @@ const (
 	knapsackTestFileExcludeEnv    = "KNAPSACK_PRO_TEST_FILE_EXCLUDE_PATTERN"
 )
 
+// GetExperimentalPytestStaticDiscovery is intentionally environment-only: this
+// incomplete pytest collector is not a supported CLI/config-file option.
+func GetExperimentalPytestStaticDiscovery() bool {
+	enabled, _ := strconv.ParseBool(os.Getenv("DD_TEST_OPTIMIZATION_RUNNER_EXPERIMENTAL_PYTEST_STATIC_DISCOVERY"))
+	return enabled
+}
+
 type TestSkippingLevel string
 
 const (

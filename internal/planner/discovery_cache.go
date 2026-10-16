@@ -219,6 +219,14 @@ func (c discoveryCache) restore() ([]testoptimization.Test, discoveryCacheResult
 		Configured: settings.GetTestDiscoveryCache() != "",
 	}
 
+	// Keep experimental inventories out of the normal discovery cache. They
+	// must be rechecked against command options, environment, and config on
+	// every invocation, and must never survive disabling the experiment.
+	if c.testFramework.Name() == "pytest" && settings.GetExperimentalPytestStaticDiscovery() {
+		result.NotUsedReason = "experimental pytest static discovery requires fresh collection"
+		return nil, result
+	}
+
 	c.importExternal()
 
 	if err := c.validate(); err != nil {
@@ -257,6 +265,9 @@ func ensureDiscoveredTests(tests []testoptimization.Test) error {
 }
 
 func (c discoveryCache) store() {
+	if c.testFramework.Name() == "pytest" && settings.GetExperimentalPytestStaticDiscovery() {
+		return
+	}
 	output, err := discoveryCacheGitOutputDebug("rev-parse", "HEAD")
 	if err != nil {
 		slog.Warn("Failed to append test discovery cache metadata", "error", err)
