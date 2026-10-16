@@ -34,22 +34,70 @@ VALUE_OPTIONS = {
     "--capture": {"fd", "sys", "no", "tee-sys"},
     "--tb": {"auto", "long", "short", "line", "native", "no"},
 }
+
+# pytest-cov instrumentation options. They never select, add, or deselect tests;
+# a missing newer option only loses the fast path (fallback is the safe direction).
+COVERAGE_FLAG_OPTIONS = {"--no-cov", "--cov-append", "--cov-branch", "--cov-reset"}
+COVERAGE_VALUE_OPTIONS = {"--cov", "--cov-config", "--cov-context", "--cov-fail-under", "--cov-report", "--cov-source"}
+
+# Plugins verified to affect only execution, reporting, ordering, or fixtures —
+# never the collected inventory. Collection-affecting plugins (hypothesis,
+# pytest-bdd, pytest-describe, pytest-mypy, pytest-repeat, pytest-split,
+# pytest-testmon, ...) must never be added. Names are PEP 503-normalized.
+INVENTORY_NEUTRAL_PLUGINS = {
+    "ddtrace",  # identity source for this feature; parity-tested
+    # instrumentation and execution
+    "pytest-cov", "pytest-xdist", "pytest-forked", "pytest-parallel",
+    "pytest-timeout", "pytest-rerunfailures", "pytest-flaky", "pytest-retry",
+    # output and reporting
+    "pytest-sugar", "pytest-instafail", "pytest-pretty", "pytest-clarity",
+    "pytest-icdiff", "pytest-emoji", "pytest-tldr", "pytest-html",
+    "pytest-json-report", "pytest-metadata", "pytest-tap", "pytest-nunit",
+    "pytest-github-actions-annotate-failures",
+    # ordering only (reorder hooks, identical inventory)
+    "pytest-randomly", "pytest-order", "pytest-ordering",
+    # fixture, assertion, and service helpers
+    "pytest-mock", "pytest-subtests", "pytest-benchmark", "pytest-env",
+    "pytest-lazy-fixture", "pytest-freezegun", "pytest-freezer",
+    "pytest-datadir", "pytest-regressions", "pytest-vcr", "pytest-recording",
+    "pytest-docker", "pytest-postgresql", "pytest-redis", "pytest-mysql",
+    "pytest-mongo", "pytest-httpserver", "pytest-responses", "pytest-qt",
+    "pytest-selenium", "pytest-localserver", "pytest-console-scripts",
+    "pytest-check", "pytest-assume",
+}
 MAX_CASES = 100_000
+
+
+def normalize_plugin_name(name):
+    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def check_options(options, allow_paths=False):
     positional = False
-    iterator = iter(options)
-    for option in iterator:
+    index = 0
+    while index < len(options):
+        option = options[index]
+        index += 1
         if not positional:
             if option in SAFE_OPTIONS or re.fullmatch(r"-[qv]+", option):
                 continue
             if re.fullmatch(r"-r[aAfEsxXpP]+", option):
                 continue
             key, separator, value = option.partition("=")
+            if key in COVERAGE_FLAG_OPTIONS and not separator:
+                continue
+            if key in COVERAGE_VALUE_OPTIONS:
+                # Coverage instrumentation never selects tests. The value is a
+                # path or report spec; never consume a following option as one.
+                if not separator and index < len(options) and not options[index].startswith("-"):
+                    index += 1
+                continue
             if key in VALUE_OPTIONS:
                 if not separator:
-                    value = next(iterator, "")
+                    if index >= len(options):
+                        raise Unsupported("missing pytest presentation option value")
+                    value = options[index]
+                    index += 1
                 if value in VALUE_OPTIONS[key]:
                     continue
                 raise Unsupported("unsupported pytest presentation option value")
@@ -66,13 +114,17 @@ def check_environment():
     if os.environ.get("PYTEST_PLUGINS"):
         raise Unsupported("PYTEST_PLUGINS may customize collection")
     if not os.environ.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD"):
-        # Inspect entry point metadata without importing any plugin. Include
-        # PYTHONPATH distributions even though the helper runs in isolated mode.
+        # Inspect entry point metadata without importing any plugin; include the
+        # working directory and PYTHONPATH even though the helper runs in
+        # isolated mode. Inventory-neutral plugins are allowed by curated name.
+        # Anything else falls back because we cannot see which hooks it
+        # registers without importing it.
         paths = [str(Path.cwd())] + os.environ.get("PYTHONPATH", "").split(os.pathsep) + sys.path
         for distribution in importlib.metadata.distributions(path=[p for p in paths if p]):
             if any(ep.group == "pytest11" for ep in distribution.entry_points):
-                if distribution.metadata["Name"].lower() != "ddtrace":
-                    raise Unsupported("installed pytest plugin may customize collection: " + distribution.metadata["Name"])
+                name = distribution.metadata["Name"] or "<unnamed>"
+                if normalize_plugin_name(name) not in INVENTORY_NEUTRAL_PLUGINS:
+                    raise Unsupported("installed pytest plugin may customize collection: " + name)
 
 
 def check_config(directory, root):

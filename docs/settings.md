@@ -58,20 +58,28 @@ The initial subset supports:
   entries with literal IDs. Values can be strings, numbers, booleans, `None`,
   lists, tuples, and dictionaries. Test names, duplicate IDs, and parameter
   serialization follow the tracer's identities.
-- Presentation options in the command, `PYTEST_ADDOPTS`, and config `addopts`:
-  `-q`/`-v` (including repeats), `-s`, `-r` summary flags, `--ddtrace`, and common
-  color, capture, traceback, and warning-display options. Unknown options,
-  selectors such as `-k`/`-m`/`--lf`, and malformed quoting trigger fallback.
+- Presentation and instrumentation options in the command, `PYTEST_ADDOPTS`, and
+  config `addopts`: `-q`/`-v` (including repeats), `-s`, `-r` summary flags,
+  `--ddtrace`, common color, capture, traceback, and warning-display options,
+  and pytest-cov coverage options (`--cov`, `--cov-report`, and friends).
+  Unknown options, selectors such as `-k`/`-m`/`--lf`, and malformed quoting
+  trigger fallback.
 - A small allowlist of configuration in the working directory, including
   `testpaths`, `python_files`, and safe `addopts`. Static discovery with a
   `pyproject.toml` requires Python 3.11+.
 
-`conftest.py`, non-ddtrace auto-loaded plugins, `PYTEST_PLUGINS`, fixtures,
-collection hooks, imported tests, other decorators/marks (including skip marks),
-dynamic parameter values or IDs, indirect parametrization, ambiguous roots, and
-unsupported module-level code trigger normal pytest collection instead. No
-partial inventory is used. A warning explains the fallback; successful static
-discovery logs `Pytest static discovery succeeded`.
+`conftest.py`, auto-loaded plugins outside a curated inventory-neutral list
+(pytest-cov, pytest-xdist, pytest-mock, pytest-sugar, and other execution,
+reporting, ordering, and fixture plugins; the full list lives in
+`internal/framework/scripts/pytest_static_discovery.py`), `PYTEST_PLUGINS`,
+fixtures, collection hooks, imported tests, other decorators/marks (including
+skip marks), dynamic parameter values or IDs, indirect parametrization, ambiguous
+roots, and unsupported module-level code trigger normal pytest collection
+instead. No partial inventory is used. A warning explains the fallback;
+successful static discovery logs `Pytest static discovery succeeded`. The
+plugin list is name-based and assumes those plugins keep to their documented
+non-collection behavior; when an installed plugin falls back, its name appears
+in the warning.
 
 This is not a general Python/pytest evaluator: use it only when imported
 application/helper modules do not mutate pytest collection. Discovery caches

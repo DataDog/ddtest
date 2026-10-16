@@ -183,6 +183,8 @@ func TestPytestStaticOptionsAndConfig(t *testing.T) {
 		{name: "replaced positional scope", args: []string{"-q", "--", "discarded.py"}, wantOK: true},
 		{name: "safe config", config: "pytest.ini", content: "[pytest]\naddopts = -q --ddtrace\npython_functions = test\npython_files = *.py\n", wantOK: true},
 		{name: "safe TOML", config: "pyproject.toml", content: "[tool.pytest.ini_options]\naddopts = ['-v', '--ddtrace']\n", wantOK: true},
+		{name: "coverage options", options: "--cov=myapp --cov-report term-missing:skip-covered --cov-fail-under=90 --cov-branch --no-cov", wantOK: true},
+		{name: "coverage option cannot hide a selector", options: "--cov -k safe", wantOK: false},
 		{name: "selection env", options: "-k safe"},
 		{name: "marker env", options: "-m slow"},
 		{name: "unknown env", options: "--unknown"},
@@ -215,26 +217,52 @@ func TestPytestStaticOptionsAndConfig(t *testing.T) {
 	}
 }
 
-func TestPytestStaticPluginDetection(t *testing.T) {
-	pytest := staticPytestFixture(t, "def test_plain(): pass\n")
-	metadata := filepath.Join(t.TempDir(), "custom_plugin-1.0.dist-info")
+func staticPluginDir(t *testing.T, name string) string {
+	t.Helper()
+	metadata := filepath.Join(t.TempDir(), "plugin-1.0.dist-info")
 	if err := os.MkdirAll(metadata, 0755); err != nil {
 		t.Fatal(err)
 	}
-	for name, content := range map[string]string{
-		"METADATA":         "Metadata-Version: 2.1\nName: custom-plugin\nVersion: 1.0\n",
+	for filename, content := range map[string]string{
+		"METADATA":         "Metadata-Version: 2.1\nName: " + name + "\nVersion: 1.0\n",
 		"entry_points.txt": "[pytest11]\ncustom = must_not_import:plugin\n",
 	} {
-		if err := os.WriteFile(filepath.Join(metadata, name), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(metadata, filename), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	t.Setenv("PYTHONPATH", filepath.Dir(metadata))
-	t.Setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "")
-	_, err := pytest.discoverTestsStatically(context.Background(), discovery.TestFileSet{Pattern: "tests/**/*.py"}, nil)
-	if err == nil || !strings.Contains(err.Error(), "custom-plugin") {
-		t.Fatalf("plugin metadata must trigger fallback without importing the plugin: %v", err)
-	}
+	return filepath.Dir(metadata)
+}
+
+func TestPytestStaticPluginDetection(t *testing.T) {
+	// Fake dist-info metadata in PYTHONPATH is scanned before the host
+	// interpreter's site-packages, so the fallback case stays hermetic.
+	t.Run("unknown plugin triggers fallback", func(t *testing.T) {
+		pytest := staticPytestFixture(t, "def test_plain(): pass\n")
+		t.Setenv("PYTHONPATH", staticPluginDir(t, "custom-plugin"))
+		t.Setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "")
+		_, err := pytest.discoverTestsStatically(context.Background(), discovery.TestFileSet{Pattern: "tests/**/*.py"}, nil)
+		if err == nil || !strings.Contains(err.Error(), "custom-plugin") {
+			t.Fatalf("unknown plugin must trigger fallback without being imported: %v", err)
+		}
+	})
+
+	t.Run("inventory-neutral plugins are allowed", func(t *testing.T) {
+		// "PyTest_Randomly" also covers PEP 503 name normalization.
+		for _, name := range []string{"pytest-cov", "PyTest_Randomly"} {
+			t.Run(name, func(t *testing.T) {
+				pytest := staticPytestFixture(t, "def test_plain(): pass\n")
+				t.Setenv("PYTHONPATH", staticPluginDir(t, name))
+				t.Setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "")
+				_, err := pytest.discoverTestsStatically(context.Background(), discovery.TestFileSet{Pattern: "tests/**/*.py"}, nil)
+				// A host interpreter may carry extra plugins outside the
+				// allowlist; our allowlisted names may never be the reason.
+				if err != nil && strings.Contains(err.Error(), name) {
+					t.Fatalf("inventory-neutral plugin %q must not trigger fallback: %v", name, err)
+				}
+			})
+		}
+	})
 }
 
 func TestPytestStaticEnvironmentOverrides(t *testing.T) {
