@@ -78,6 +78,48 @@ func TestDetectCIProvider_NoProvider(t *testing.T) {
 	}
 }
 
+func TestDetectRepositoryCIProvider(t *testing.T) {
+	for _, tc := range []struct {
+		name, path string
+		github     bool
+	}{
+		{"no CI", "", false},
+		{"another provider", ".gitlab-ci.yml", false},
+		{"GitHub metadata only", ".github/CODEOWNERS", false},
+		{"workflow documentation", ".github/workflows/README.md", false},
+		{"yml workflow", ".github/workflows/test.yml", true},
+		{"yaml workflow", ".github/workflows/test.yaml", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			// Runtime CI tags must not determine the provider used by local onboarding.
+			setDetectedProvider(t, "gitlab")
+			if tc.path != "" {
+				path := filepath.Join(root, tc.path)
+				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+					t.Fatal(err)
+				}
+				// Detection identifies configuration; parsing belongs to inspection.
+				if err := os.WriteFile(path, []byte("invalid: ["), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			provider, err := DetectRepositoryCIProvider(root)
+			if tc.github {
+				github, ok := provider.(*GitHub)
+				if err != nil || !ok {
+					t.Fatalf("provider = %T, error = %v", provider, err)
+				}
+				if _, _, err := github.FindTestWorkflows(root, "javascript", "jest"); err == nil || !strings.Contains(err.Error(), "parse ") {
+					t.Fatalf("expected malformed workflow error, got %v", err)
+				}
+			} else if provider != nil || err == nil || !strings.Contains(err.Error(), "no supported CI provider") {
+				t.Fatalf("provider = %T, error = %v", provider, err)
+			}
+		})
+	}
+}
+
 func TestDatadogCIProviderDetector_DetectCIProvider(t *testing.T) {
 	setDetectedProvider(t, "github")
 
