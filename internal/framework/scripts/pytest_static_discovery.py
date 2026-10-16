@@ -30,6 +30,29 @@ class Unsupported(Exception):
     pass
 
 
+# Location of the construct currently being analyzed, so fallback reasons
+# are actionable for customers and support (file, line).
+LOCATION = {"file": None, "line": None}
+
+
+def located(message):
+    """Attach the current file/line to a fallback reason."""
+    file, line = LOCATION["file"], LOCATION["line"]
+    if not file or str(file) in message:
+        return message
+    location = str(file) + (":" + str(line) if line else "")
+    if location in message:
+        return message
+    return message + " (at " + location + ")"
+
+
+def display_path(path, root):
+    try:
+        return path.relative_to(root).as_posix() or str(path)
+    except ValueError:
+        return str(path)
+
+
 # --- CLI options -------------------------------------------------------------
 
 SAFE_OPTIONS = {
@@ -153,7 +176,7 @@ def check_options(options, allow_paths=False):
 def check_environment():
     check_options(shlex.split(os.environ.get("PYTEST_ADDOPTS", "")))
     if os.environ.get("PYTEST_PLUGINS"):
-        raise Unsupported("PYTEST_PLUGINS may customize collection")
+        raise Unsupported("PYTEST_PLUGINS may customize collection: " + os.environ["PYTEST_PLUGINS"])
     if not os.environ.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD"):
         # Inspect entry point metadata without importing any plugin; include the
         # working directory and PYTHONPATH even though the helper runs in
@@ -180,12 +203,14 @@ def check_config(directory, root):
     patterns = None
     for name in ("pytest.toml", ".pytest.toml"):
         if (directory / name).exists():
+            LOCATION.update(file=display_path(directory / name, root), line=None)
             raise Unsupported("native pytest TOML configuration is not supported")
     for name, section in (("pytest.ini", "pytest"), (".pytest.ini", "pytest"),
                           ("tox.ini", "pytest"), ("setup.cfg", "tool:pytest")):
         path = directory / name
         if not path.exists():
             continue
+        LOCATION.update(file=display_path(path, root), line=None)
         parser = configparser.RawConfigParser()
         parser.read(path, encoding="utf-8")
         found = None
@@ -197,6 +222,7 @@ def check_config(directory, root):
             patterns = found
     path = directory / "pyproject.toml"
     if path.exists():
+        LOCATION.update(file=display_path(path, root), line=None)
         if directory != root:
             raise Unsupported("pyproject.toml may change pytest's root directory")
         text = path.read_text(encoding="utf-8")
@@ -417,7 +443,8 @@ def validate_helper_decorator(decorator):
         return
     if isinstance(decorator, ast.Name) and decorator.id in {"staticmethod", "classmethod", "property"}:
         return
-    raise Unsupported("decorators other than pytest.mark.* are not supported")
+    raise Unsupported("decorators other than pytest.mark.* are not supported: " +
+                      (dotted_name(decorator) or type(decorator).__name__))
 
 
 # --- parametrize -------------------------------------------------------------
@@ -648,14 +675,15 @@ def scan_module(tree, is_conftest):
             scan.pytestmark_fixtures.extend(usefixtures)
             return
         if target.id == "pytest_plugins" or target.id.startswith(("test", "Test", "__")) or target.id in seen:
-            raise Unsupported("assignment may customize collection")
+            raise Unsupported("assignment may customize collection: " + target.id)
         seen.add(target.id)
         scan.constants[target.id] = literal(value, scan.constants)
 
     for node in tree.body:
+        LOCATION["line"] = getattr(node, "lineno", None)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if node.name in seen:
-                raise Unsupported("duplicate definitions in module")
+                raise Unsupported("duplicate definition of '" + node.name + "' in module")
             seen.add(node.name)
             if node.name.startswith("pytest_"):
                 raise Unsupported("pytest hooks are not supported: " + node.name)
@@ -670,13 +698,13 @@ def scan_module(tree, is_conftest):
                         validate_helper_decorator(other)
                 spec = parse_fixture(fixture_decorators[0], node, scan.constants, method=False)
                 if spec["name"] in scan.fixtures:
-                    raise Unsupported("duplicate fixture names")
+                    raise Unsupported("duplicate fixture name: " + spec["name"])
                 scan.fixtures[spec["name"]] = spec
             else:
                 scan.functions.append(node)
         elif isinstance(node, ast.ClassDef):
             if node.name in seen:
-                raise Unsupported("duplicate definitions in module")
+                raise Unsupported("duplicate definition of '" + node.name + "' in module")
             seen.add(node.name)
             if node.name.startswith("pytest_"):
                 raise Unsupported("pytest hooks are not supported: " + node.name)
@@ -688,10 +716,15 @@ def scan_module(tree, is_conftest):
             if node.value is not None:
                 assign(node.target, node.value)
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            module = getattr(node, "module", "") or ""
             for alias in node.names:
                 bound = alias.asname or alias.name.split(".")[0]
-                if isinstance(node, ast.ImportFrom) and (alias.name == "*" or bound.startswith(("test", "Test", "pytest_"))):
-                    raise Unsupported("imported tests are not supported")
+                if alias.name.split(".")[0] == "_pytest" or module.split(".")[0] == "_pytest":
+                    raise Unsupported("imports pytest private API (_pytest), which can break collection on the installed pytest version")
+                if alias.name == "*":
+                    raise Unsupported("wildcard import is not supported: from " + module + " import *")
+                if isinstance(node, ast.ImportFrom) and bound.startswith(("test", "Test", "pytest_")):
+                    raise Unsupported("imported test or hook names are not supported: " + bound)
         elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
             pass  # docstring
         elif not isinstance(node, ast.Pass):
@@ -716,10 +749,12 @@ class ClassContext:
 
 def local_bases(node, module_classes):
     if node.keywords:
-        raise Unsupported("class keywords such as metaclass are not supported")
+        raise Unsupported("class keywords such as metaclass are not supported: " + node.name)
     for base in node.bases:
         if not isinstance(base, ast.Name) or base.id not in module_classes:
-            raise Unsupported("test class inheritance outside the module is not supported")
+            described = base.id if isinstance(base, ast.Name) else (dotted_name(base) or "<expression>")
+            raise Unsupported("class '" + node.name + "' inherits from '" + described +
+                              "', which is not defined in the same module")
     return node.bases
 
 
@@ -819,7 +854,8 @@ def build_class(node, collector, scan, contexts):
     for decorator in node.decorator_list:
         mark = mark_decorator(decorator)
         if mark is None:
-            raise Unsupported("class decorators other than pytest.mark.* are not supported")
+            raise Unsupported("class decorators other than pytest.mark.* are not supported: " +
+                              (dotted_name(decorator) or type(decorator).__name__))
         name, call = mark
         if name == "parametrize":
             raise Unsupported("parametrize marks on classes are not supported")
@@ -843,10 +879,11 @@ def build_class(node, collector, scan, contexts):
 
     seen = set()
     for stmt in node.body:
+        LOCATION["line"] = stmt.lineno
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
             name = stmt.name
             if name in seen:
-                raise Unsupported("duplicate definitions in class")
+                raise Unsupported("duplicate definition of '" + name + "' in class")
             seen.add(name)
             if collectable and name.startswith(("pytest_", "__")):
                 raise Unsupported("unsupported method name in test class: " + name)
@@ -859,15 +896,15 @@ def build_class(node, collector, scan, contexts):
                         validate_helper_decorator(other)
                 spec = parse_fixture(fixture_decorators[0], stmt, {**scan.constants, **context.constants}, method=True)
                 if spec["name"] in context.fixtures:
-                    raise Unsupported("duplicate fixture names")
+                    raise Unsupported("duplicate fixture name: " + spec["name"])
                 if spec["autouse"] and spec["expansion"] is not None:
-                    raise Unsupported("autouse parametrized class fixtures are not supported")
+                    raise Unsupported("autouse parametrized class fixtures are not supported: " + spec["name"])
                 context.fixtures[spec["name"]] = spec
                 continue
             context.methods.append(stmt)
         elif isinstance(stmt, ast.ClassDef):
             if stmt.name in seen:
-                raise Unsupported("duplicate definitions in class")
+                raise Unsupported("duplicate definition of '" + stmt.name + "' in class")
             seen.add(stmt.name)
             context.nested[stmt.name] = stmt
             build_class(stmt, collector, scan, contexts)
@@ -889,7 +926,7 @@ def build_class(node, collector, scan, contexts):
                         if not isinstance(stmt.value, ast.Constant) or not isinstance(stmt.value.value, bool):
                             raise Unsupported("__test__ must be a literal bool")
                         continue
-                    raise Unsupported("assignment may customize collection")
+                    raise Unsupported("assignment may customize collection: " + target.id)
                 seen.add(target.id)
                 context.constants[target.id] = literal(stmt.value, {**scan.constants, **context.constants})
         elif isinstance(stmt, ast.AnnAssign):
@@ -901,10 +938,15 @@ def build_class(node, collector, scan, contexts):
                 seen.add(stmt.target.id)
                 context.constants[stmt.target.id] = literal(stmt.value, {**scan.constants, **context.constants})
         elif isinstance(stmt, (ast.Import, ast.ImportFrom)):
+            module = getattr(stmt, "module", "") or ""
             for alias in stmt.names:
                 bound = alias.asname or alias.name.split(".")[0]
-                if isinstance(stmt, ast.ImportFrom) and (alias.name == "*" or bound.startswith(("test", "Test", "pytest_"))):
-                    raise Unsupported("imported tests are not supported")
+                if alias.name.split(".")[0] == "_pytest" or module.split(".")[0] == "_pytest":
+                    raise Unsupported("imports pytest private API (_pytest), which can break collection on the installed pytest version")
+                if alias.name == "*":
+                    raise Unsupported("wildcard import is not supported: from " + module + " import *")
+                if isinstance(stmt, ast.ImportFrom) and bound.startswith(("test", "Test", "pytest_")):
+                    raise Unsupported("imported test or hook names are not supported: " + bound)
         elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
             pass
         elif not isinstance(stmt, ast.Pass):
@@ -926,14 +968,15 @@ def function_tests(node, prefix, kind, fixtures, constants, autouse, collector, 
         if mark is None:
             if isinstance(decorator, ast.Name) and decorator.id in {"staticmethod", "classmethod"}:
                 continue
-            raise Unsupported("decorators other than pytest.mark.* are not supported")
+            raise Unsupported("decorators other than pytest.mark.* are not supported: " +
+                              (dotted_name(decorator) or type(decorator).__name__))
         name, call = mark
         if name == "parametrize":
             if call is None:
                 raise Unsupported("bare parametrize mark is not supported")
             argnames, entries = parametrization(call, constants)
             if parametrized_names & set(argnames):
-                raise Unsupported("duplicate parametrization argument")
+                raise Unsupported("duplicate parametrization argument: " + ", ".join(argnames))
             parametrized_names.update(argnames)
             # Fixture params come before parametrize parts in test ids.
             parametrize_groups.append([(case_id, case) for case_id, case, omitted in entries if not omitted])
@@ -945,7 +988,7 @@ def function_tests(node, prefix, kind, fixtures, constants, autouse, collector, 
         return
 
     if autouse is not None and autouse[0] in parametrized_names:
-        raise Unsupported("autouse fixture name is also parametrized")
+        raise Unsupported("autouse fixture name is also parametrized: " + autouse[0])
     arg_names = [argument.arg for argument in node.args.posonlyargs + node.args.args + node.args.kwonlyargs]
     if kind == "method" and arg_names:
         arg_names = arg_names[1:]
@@ -972,7 +1015,7 @@ def function_tests(node, prefix, kind, fixtures, constants, autouse, collector, 
         if spec is None:
             continue
         if spec["poison"]:
-            raise Unsupported("test depends on a parametrized fixture chain")
+            raise Unsupported("test depends on a parametrized fixture chain: " + name)
         if spec["expansion"] is not None:
             covered.add(name)
             fixture_groups.append([(case_id, {spec["name"]: value}) for case_id, value in spec["expansion"]])
@@ -986,7 +1029,7 @@ def function_tests(node, prefix, kind, fixtures, constants, autouse, collector, 
             # prevent collection.
             continue
         if spec["poison"]:
-            raise Unsupported("test depends on a parametrized fixture chain")
+            raise Unsupported("test depends on a parametrized fixture chain: " + name)
         if spec["expansion"] is not None and name not in covered:
             covered.add(name)
             fixture_groups.append([(case_id, {spec["name"]: value}) for case_id, value in spec["expansion"]])
@@ -1029,17 +1072,20 @@ def module_tests(tree, collector):
         for name, spec in context.fixtures.items():
             all_specs.setdefault(name, spec)
     resolve_poison(all_specs, collector.chain)
-    for spec in all_specs.values():
+    for name, spec in all_specs.items():
         if spec["autouse"] and spec["poison"]:
-            raise Unsupported("autouse fixtures depending on parametrized fixtures are not supported")
+            raise Unsupported("autouse fixture depends on a parametrized fixture chain: " + name)
 
     # A module-level autouse parametrized fixture applies to every test.
+    autouse_specs = [(name, spec) for name, spec in scan.fixtures.items()
+                     if spec["autouse"] and spec["expansion"] is not None]
+    if len(autouse_specs) > 1:
+        raise Unsupported("multiple autouse parametrized fixtures are not supported: " +
+                          ", ".join(name for name, _ in autouse_specs))
     autouse = None
-    for name, spec in scan.fixtures.items():
-        if spec["autouse"] and spec["expansion"] is not None:
-            if autouse is not None:
-                raise Unsupported("multiple autouse parametrized fixtures are not supported")
-            autouse = (name, [(case_id, {name: value}) for case_id, value in spec["expansion"]])
+    if autouse_specs:
+        name, spec = autouse_specs[0]
+        autouse = (name, [(case_id, {name: value}) for case_id, value in spec["expansion"]])
 
     if scan.pytestmark_skip:
         return
@@ -1068,6 +1114,7 @@ def module_tests(tree, collector):
         methods = inherited_methods(context.node, scan.classes)
         for name in sorted(methods):
             method = methods[name]
+            LOCATION["line"] = method.lineno
             if name_matches(name, collector.function_patterns):
                 yield from function_tests(method, prefix + context.node.name + "::",
                                           method_kind(method), fixtures, constants, autouse, collector, extras)
@@ -1081,6 +1128,7 @@ def module_tests(tree, collector):
             yield from emit_class(nested_context, prefix + context.node.name + "::", extras)
 
     for function in scan.functions:
+        LOCATION["line"] = function.lineno
         if name_matches(function.name, collector.function_patterns):
             kind = "static" if is_staticmethod(function) else "plain"
             yield from function_tests(function, "", kind, scan.fixtures, scan.constants, autouse, collector,
@@ -1092,9 +1140,10 @@ def module_tests(tree, collector):
         yield from emit_class(context, "", scan.pytestmark_fixtures)
 
 
-def analyze_conftest(path, chain):
+def analyze_conftest(path, chain, display):
+    LOCATION.update(file=display, line=None)
     with tokenize.open(path) as source:
-        tree = ast.parse(source.read(), filename=str(path))
+        tree = ast.parse(source.read(), filename=display)
     scan = scan_module(tree, is_conftest=True)
     contexts = {}
     collector = StaticCollector(chain, [], [])
@@ -1108,13 +1157,14 @@ def analyze_conftest(path, chain):
             if mark_decorator(decorator) is None:
                 raise Unsupported("decorated helpers are not supported in conftest")
     resolve_poison(scan.fixtures, chain)
-    for spec in scan.fixtures.values():
+    for name, spec in scan.fixtures.items():
         if spec["autouse"] and (spec["expansion"] is not None or spec["poison"]):
-            raise Unsupported("autouse parametrized conftest fixtures are not supported")
+            raise Unsupported("autouse parametrized conftest fixtures are not supported: " + name)
     return scan.fixtures
 
 
 def discover(manifest):
+    LOCATION.update(file=None, line=None)
     check_options(manifest.get("options") or [], allow_paths=True)
     check_environment()
     root = Path.cwd().resolve()
@@ -1139,6 +1189,7 @@ def discover(manifest):
     patterns = None
     conftest_by_dir = {}
     for directory in sorted(directories, key=lambda d: len(d.parts)):
+        LOCATION.update(file=None, line=None)
         found = check_config(directory, root)
         if directory == root and patterns is None:
             patterns = found
@@ -1150,20 +1201,22 @@ def discover(manifest):
         visible = [conftest_by_dir[ancestor]
                    for ancestor in [directory] + list(directory.parents)
                    if ancestor != directory and ancestor in conftest_by_dir]
-        conftest_by_dir[directory] = analyze_conftest(conftest, visible)
+        conftest_by_dir[directory] = analyze_conftest(conftest, visible, display_path(conftest, root))
 
     function_patterns = (patterns or {}).get("python_functions") or DEFAULT_FUNCTION_PATTERNS
     class_patterns = (patterns or {}).get("python_classes") or DEFAULT_CLASS_PATTERNS
 
     tests = []
     for path in files:
+        display = display_path(path, root)
+        LOCATION.update(file=display, line=None)
         # Nearest conftests shadow shallower ones, matching pytest.
         chain = [conftest_by_dir[directory]
                  for directory in [path.parent] + list(path.parent.parents)
                  if directory in conftest_by_dir]
         collector = StaticCollector(chain, function_patterns, class_patterns)
         with tokenize.open(path) as source:
-            tree = ast.parse(source.read(), filename=str(path))
+            tree = ast.parse(source.read(), filename=display)
         relative = path.relative_to(root)
         module = ".".join(relative.parts[:-1])
         for test in module_tests(tree, collector):
@@ -1178,6 +1231,8 @@ try:
     with open(sys.argv[1], encoding="utf-8") as source:
         inventory = discover(json.load(source))
     print(json.dumps({"tests": inventory}))
+except Unsupported as error:
+    print(json.dumps({"reason": located(str(error) or type(error).__name__)}))
 except Exception as error:
-    # Never expose an inventory from the files processed before an uncertainty.
-    print(json.dumps({"reason": str(error) or type(error).__name__}))
+    # Crash details help diagnose helper bugs; never expose an inventory.
+    print(json.dumps({"reason": located(type(error).__name__ + ": " + str(error))}))

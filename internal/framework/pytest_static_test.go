@@ -506,6 +506,7 @@ func TestPytestStaticFallback(t *testing.T) {
 		{"usefixtures non-literal name", "import pytest\n@pytest.mark.usefixtures(backend)\ndef test_case(): pass\n", "", ""},
 		{"usefixtures kwargs", "import pytest\n@pytest.mark.usefixtures(fixture='backend')\ndef test_case(): pass\n", "", ""},
 		{"bare usefixtures", "import pytest\n@pytest.mark.usefixtures\ndef test_case(): pass\n", "", ""},
+		{"pytest private api import", "from _pytest.monkeypatch import notset\ndef test_case(): pass\n", "", ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			pytest := staticPytestFixture(t, "def test_before_uncertainty(): pass\n"+tt.source)
@@ -587,6 +588,71 @@ func staticPluginDir(t *testing.T, name string) string {
 		}
 	}
 	return filepath.Dir(metadata)
+}
+
+func TestPytestStaticFallbackReasonDetails(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		source   string
+		conftest string
+		config   string
+		contains []string
+	}{
+		{
+			name:     "module hook",
+			source:   "def pytest_generate_tests(metafunc): pass\n",
+			contains: []string{"pytest_generate_tests", "tests/test_sample.py:2"},
+		},
+		{
+			name:     "inheritance outside module",
+			source:   "class TestCase(Base):\n def test_case(self): pass\n",
+			contains: []string{"TestCase", "Base"},
+		},
+		{
+			name:     "custom decorator",
+			source:   "import functools\n@functools.cache\ndef test_case(): pass\n",
+			contains: []string{"functools.cache"},
+		},
+		{
+			name:     "duplicate definition",
+			source:   "def test_case(): pass\ndef test_case(): pass\n",
+			contains: []string{"duplicate definition", "test_case"},
+		},
+		{
+			name:     "assignment",
+			source:   "pytest_plugins = ['plug']\n",
+			contains: []string{"pytest_plugins"},
+		},
+		{
+			name:     "pytest private api",
+			source:   "from _pytest.monkeypatch import notset\n",
+			contains: []string{"_pytest", "tests/test_sample.py"},
+		},
+		{
+			name:     "conftest hook",
+			conftest: "def pytest_collection_modifyitems(items): pass\n",
+			contains: []string{"pytest_collection_modifyitems", "tests/conftest.py:1"},
+		},
+		{
+			name:     "config key",
+			config:   "[pytest]\nxfail_strict = true\n",
+			contains: []string{"xfail_strict", "pytest.ini"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			pytest := staticPytestFixture(t, "def test_before(): pass\n"+tt.source)
+			writeStaticExtras(t, tt.conftest, tt.config)
+			_, err := pytest.discoverTestsStatically(context.Background(), discovery.TestFileSet{ExplicitFiles: []string{"tests/test_sample.py"}}, nil)
+			if err == nil {
+				t.Fatal("expected fallback")
+			}
+			for _, want := range tt.contains {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("reason %q does not mention %q", err.Error(), want)
+				}
+			}
+		})
+	}
 }
 
 func TestPytestStaticPluginDetection(t *testing.T) {

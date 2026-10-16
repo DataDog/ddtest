@@ -92,7 +92,10 @@ The supported subset:
   `addopts`. Static discovery with a `pyproject.toml` requires Python 3.11+.
 
 The following trigger normal pytest collection instead. No partial inventory
-is used; a warning explains the fallback, and successful static discovery logs
+is used; the fallback warning names the exact file, line, and construct that
+blocked static analysis, so customers and support can pinpoint the cause
+(for example `pytest hooks are not supported: pytest_generate_tests (at
+tests/test_billing.py:42)`), and successful static discovery logs
 `Pytest static discovery succeeded`:
 
 - `conftest.py` defining collection hooks (`pytest_*` functions), a
@@ -103,7 +106,8 @@ is used; a warning explains the fallback, and successful static discovery logs
   parametrized fixtures, and `pytest.param` chains that static discovery does
   not emulate.
 - Non-literal `skipif` conditions, non-literal or keyword `usefixtures` names,
-  `parametrize` inside `pytestmark`, custom
+  imports of pytest private API (`_pytest.*`, which can break collection on
+  the installed pytest version), `parametrize` inside `pytestmark`, custom
   (non-`pytest.mark.*`) decorators, `property` test functions, metaclass
   keywords, cross-module inheritance, imported tests, wildcard imports,
   duplicate definitions, and executable module-level statements.
