@@ -188,6 +188,7 @@ The transparency and safety regressions cover these contracts:
 | Vendor tree | `TestMiniVendorTreeMatchesGo`: `go test . example.com/patternhelper/...` selects the same vendored packages and failures as native Go, and vendored `//go:embed` of a file and a directory embeds the same contents; real vendored directories stay traversable |
 | Vendor selection | `TestMiniVendorSelectionMatchesGo`: a `go mod vendor` tree beside a Go 1.21 or 1.25 `go.work`, and a `go work vendor` tree under `GOWORK=off`, are ignored as with `go test`; module or workspace manifests with relative local replacements, including a `go.work` replacement of one version, a project directory containing spaces with another version replaced elsewhere, and a linked vendor directory, keep working; runner tests mirror cmd/go's selection and replacement canonicalization |
 | Vendored build cache | `TestMiniVendorWorkspaceLinksAndReusesBuildCache`: the vendor workspace hard-links sources, an unchanged vendored package is not recompiled, and later vendor edits are used. Runner tests check that a workspace whose files or links no longer match the client's is not reused, that pruning skips a workspace in use, that a run waiting during a prune rebuilds it, and that waiting for the lock honors cancellation |
+| 32-bit targets | `TestMini32BitTarget`: on Linux, `ddto test` for `386` builds Mini's runtime and ddto's overlays, and the tests report as on a 64-bit target. The source audit job runs the runtime's unit tests for `386`, including msgp's `TestLengthsBeyondInt`: lengths that an `int` cannot hold read as short bytes instead of panicking |
 | Enforced dependency boundary | `scripts/test_dependency_boundary.py`: reject unused external requirements and nonstandard packages outside this module |
 
 ## Compatibility workflow
@@ -210,7 +211,9 @@ its runner images, some carry an older patch release, and `setup-go` would use
 it.
 
 One job audits incorporated sources and licenses, checks the dependency boundary
-and runs the script tests. The unit group of each configuration runs `go vet` and
+and runs the script tests. Because the other jobs build only for 64-bit targets,
+it also vets every package for `386` and runs the tests of the runtime's
+packages there; ddto is released only for 64-bit platforms. The unit group of each configuration runs `go vet` and
 the local packages. Go 1.25 and tip execute all local runtime packages, plus
 native Mini fixtures for compiler/coverage hooks, Testify, goleak,
 fuzz/examples, delivery and consumer transparency. Tip also checks the manual

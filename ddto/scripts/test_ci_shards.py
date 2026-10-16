@@ -36,7 +36,7 @@ class ShardTests(unittest.TestCase):
             owners = [item["owner"] for item in differential
                       if (item["suite"], item["os"], item["go"], item["mode"]) == config]
             self.assertEqual([True] + [False] * (len(owners) - 1), owners)
-        for platform, count in (("ubuntu-latest", 163), ("macos-latest", 162), ("windows-latest", 161)):
+        for platform, count in (("ubuntu-latest", 164), ("macos-latest", 162), ("windows-latest", 161)):
             tests = [name for shard in ci_shards.SHARDS["differential"][1:]
                      for name in ci_shards.selected_tests(self.groups, "differential", "1.27.x", shard, platform)]
             self.assertEqual(count, len(tests))

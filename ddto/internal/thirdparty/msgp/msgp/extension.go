@@ -560,7 +560,8 @@ func readExt(b []byte) (typ int8, remain []byte, data []byte, err error) {
 	// the data of the extension starts
 	// at 'off' and is 'sz' bytes long
 	tot := off + sz
-	if len(b[off:]) < sz {
+	// sz < 0: a 32-bit length that int cannot hold on 32-bit platforms.
+	if sz < 0 || len(b[off:]) < sz {
 		return 0, b, nil, ErrShortBytes
 	}
 	return typ, b[tot:], b[off:tot:tot], nil

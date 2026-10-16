@@ -8,6 +8,7 @@ package coverage
 import (
 	"cmp"
 	"errors"
+	"math"
 	"os"
 	"reflect"
 	"slices"
@@ -302,7 +303,7 @@ func (l *coverageLayout) matchesTextProfile(text []byte) bool {
 		if block.fileName != l.files[entry[0]] ||
 			block.startLine != int(entry[1]) || block.startCol != int(entry[2]) ||
 			block.endLine != int(entry[3]) || block.endCol != int(entry[4]) ||
-			block.numStmt != int(entry[5]) || block.count != int(^uint32(0)) {
+			block.numStmt != int(entry[5]) || int64(block.count) != math.MaxUint32 {
 			return false
 		}
 	}

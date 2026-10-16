@@ -346,6 +346,7 @@ change, the relevant full validation is:
 python3 scripts/upstream.py verify
 python3 -B -m unittest discover -s scripts -p 'test_upstream.py'
 go vet ./...
+GOARCH=386 go vet ./...
 go mod verify
 (cd testdata/fixture && go mod verify)
 go list -deps -f '{{if and (not .Standard) .Module}}{{.Module.Path}}{{end}}' ./testopt ./cmd/ddto | sort -u

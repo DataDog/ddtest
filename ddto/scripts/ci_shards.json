@@ -233,6 +233,7 @@
   "platform_tests": {
     "linux": {
       "cli": [
+        "TestMini32BitTarget",
         "TestMiniCLIStateGivesModuleToCoverage",
         "TestMiniGOROOTMirrorToolchainSwitch",
         "TestMiniGitWorkerStopsOnInterrupt",

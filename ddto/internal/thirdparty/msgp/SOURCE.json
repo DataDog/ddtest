@@ -23,7 +23,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "a531c56f87e8113d187197c0b5de9fd44925b862a69bb76b98f0719b511d71a1",
+      "sha256": "501687458fd2fa0caecb789e1499018c9ed69bd634e45b02021311ab033434f4",
       "role": "local"
     },
     {
@@ -145,7 +145,7 @@
     },
     {
       "path": "msgp/extension.go",
-      "sha256": "e49c051dab89e9c879a20eea578003fc6a1cc17fb46ab10a91886126c8155983",
+      "sha256": "60bc6fa6b91bbbc60afbe383709068e3157e541a0a207564e80b431694582ff2",
       "role": "adapted",
       "source_path": "msgp/extension.go",
       "source_sha256": "e49c051dab89e9c879a20eea578003fc6a1cc17fb46ab10a91886126c8155983"
@@ -249,6 +249,11 @@
       "source_sha256": "8f19901f1fb683761bafffb024331b02d56af0ad7efb266717dd06e17ff1c1ba"
     },
     {
+      "path": "msgp/length32_test.go",
+      "sha256": "32f1e18d6bbb10b438b9314ef31f7aeab03860736b518fe17d017b1afaf2d081",
+      "role": "local"
+    },
+    {
       "path": "msgp/number.go",
       "sha256": "fe2fc8ab7ef192359917c42a5620f31a6873565bde78979b285579e03ff537f9",
       "role": "adapted",
@@ -278,14 +283,14 @@
     },
     {
       "path": "msgp/read.go",
-      "sha256": "2755150da1204f391b4476e886a1229113b881142ac2f10fadddb507089226a2",
+      "sha256": "1e355cd430725d55276dd12b1d924b5333927293e11df541de1e17f5dcb8c5de",
       "role": "adapted",
       "source_path": "msgp/read.go",
       "source_sha256": "be521d500f880823efd13fc1caffc2b9e477619c4baa4a36d5005a1afa05bda0"
     },
     {
       "path": "msgp/read_bytes.go",
-      "sha256": "8a865ab944433074e47163acce511beb46a8709d08df0154ddbdd29167616ba9",
+      "sha256": "a0a3c0eada05154c791098ff2806ade42629bdec5685f7cccfff45f594cb835a",
       "role": "adapted",
       "source_path": "msgp/read_bytes.go",
       "source_sha256": "8a865ab944433074e47163acce511beb46a8709d08df0154ddbdd29167616ba9"

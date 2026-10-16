@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -143,6 +144,15 @@ func (f *fakeTestingCoverage) renameFile(from, to string) {
 
 func setUpMemoryCoverage(t *testing.T) *fakeTestingCoverage {
 	t.Helper()
+	if strconv.IntSize < 64 {
+		t.Skip("32-bit platforms keep text profiles: TestMemoryCoverageNeeds64BitCounts")
+	}
+	return fakeMemoryCoverage(t)
+}
+
+// fakeMemoryCoverage is setUpMemoryCoverage on any platform.
+func fakeMemoryCoverage(t *testing.T) *fakeTestingCoverage {
+	t.Helper()
 	ResetForTesting()
 	t.Cleanup(ResetForTesting)
 	mode = "atomic"
@@ -159,7 +169,7 @@ func setUpMemoryCoverage(t *testing.T) *fakeTestingCoverage {
 // The layout holds the text profile's blocks in its order, and maps each
 // unit to its block.
 func TestBuildCoverageLayout(t *testing.T) {
-	setUpMemoryCoverage(t)
+	fakeMemoryCoverage(t)
 	strs, records := fakeMeta(memoryPackages)
 	layout, refusal := buildCoverageLayout(strs, records, "atomic")
 	require.Empty(t, refusal)
@@ -170,7 +180,8 @@ func TestBuildCoverageLayout(t *testing.T) {
 	// b.B; a.Second's units, the second with a parent; a.First twice.
 	require.Equal(t, []int32{2, 1, -1, 0, 0}, layout.units)
 	require.Equal(t, [][]layoutFunc{{{0, 1}}, {{1, 2}, {3, 1}}, {}, {{4, 1}}}, layout.funcs)
-	require.True(t, layout.matchesTextProfile([]byte(memoryText)))
+	// On 32-bit platforms, text profiles cannot read the maximum count.
+	require.Equal(t, strconv.IntSize == 64, layout.matchesTextProfile([]byte(memoryText)))
 
 	// Units of other functions or literals at the same position are distinct
 	// blocks, which share a position.
@@ -387,6 +398,13 @@ func TestMemoryCoverageRefusals(t *testing.T) {
 	f := setUpMemoryCoverage(t)
 	f.renameFile("example.com/b/b.go", "example.com/b/"+strings.Repeat("b", 1000)+".go")
 	require.True(t, memoryCoverageReady(), "a renamed file")
+}
+
+// On 32-bit platforms, where text profiles cannot read counts beyond int,
+// the process keeps text profiles.
+func TestMemoryCoverageNeeds64BitCounts(t *testing.T) {
+	fakeMemoryCoverage(t)
+	require.Equal(t, strconv.IntSize == 64, memoryCoverageReady())
 }
 
 // Over the budget for baselines, a collector uses text profiles, and its

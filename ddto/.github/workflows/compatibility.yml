@@ -74,7 +74,7 @@ jobs:
           fi
 
   lint:
-    name: Sources, dependency boundary and scripts
+    name: Sources, dependency boundary, scripts and 386 runtime
     needs: plan
     if: needs.plan.outputs.skip != 'true'
     runs-on: ubuntu-latest
@@ -93,6 +93,19 @@ jobs:
           python scripts/upstream.py verify
           python -m unittest discover -s scripts -p "test_*.py"
           python scripts/dependency_boundary.py
+      # The other jobs build for 64-bit targets. Mini's runtime compiles into
+      # the test binaries of any target, so every package must vet for 386 and
+      # the runtime's tests must pass there. ddto is released for 64-bit
+      # platforms only, and its own tests build for the host.
+      - name: Vet for 386 and test the runtime there
+        shell: bash
+        env:
+          GOARCH: '386'
+          GOTOOLCHAIN: local
+        run: |
+          go vet ./...
+          runtime=$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./testopt ./propagation)
+          go test -count=1 $runtime
 
   differential:
     name: differential (${{ matrix.os }}, ${{ matrix.go }}, ${{ matrix.mode }}, ${{ matrix.job }})

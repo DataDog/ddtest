@@ -2332,12 +2332,12 @@
     },
     {
       "path": "civisibility/integrations/gotesting/coverage/memory_coverage.go",
-      "sha256": "e1b03de57b54e546034c249211047dd2160e07cf46837732ce0e678706695a93",
+      "sha256": "61f3ac08b442205549cdff93b4c2a007d58aa58bc89ec5de31947f1e47231d2a",
       "role": "local"
     },
     {
       "path": "civisibility/integrations/gotesting/coverage/memory_coverage_test.go",
-      "sha256": "600ed9932e8b4956a1c6569a11780fb56c17c74e76a51990fbfef966bfbf4bb4",
+      "sha256": "a008155124057467dea488ff3b50948a2edc6b94196e9b4f4a7b9d0df8066b72",
       "role": "local"
     },
     {
