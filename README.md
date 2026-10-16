@@ -15,9 +15,28 @@ Currently supported:
 - Python with pytest.
 - JavaScript with Cucumber, Cypress, Jest, Mocha, Playwright, or Vitest.
 
+## Try Test Optimization locally
+
+With your project's test dependencies and any required browsers/services ready:
+
+```sh
+ddtest onboard    # GitHub Actions setup instructions
+ddtest testdrive  # Preview, confirm, and run tests locally
+```
+
+No Datadog account or Agent is needed. Testdrive links to an HTML report under
+`.testoptimization/testdrive/`. Use `--yes` after reviewing the preview in
+non-interactive sessions, `--framework` to select a runner, and `--command` for
+package scripts or custom setup.
+
+Testdrive reuses a detected project tracer; otherwise it installs the latest
+release (`--tracer-version` selects a fallback release or `git:<ref>`).
+JavaScript/Python installs are isolated. Ruby runs `bundle add datadog-ci`,
+updating the project's Gemfile and lockfile.
+
 ## Prerequisites
 
-Before using DDTest, you must have **Datadog Test Optimization** already set up and enabled with a Datadog Test Optimization library for your language and framework. DDTest relies on this integration to discover your tests and plan test execution accordingly.
+Before using `ddtest plan` or `ddtest run`, you must have **Datadog Test Optimization** already set up and enabled with a Datadog Test Optimization library for your language and framework. DDTest relies on this integration to discover your tests and plan test execution accordingly.
 
 Minimum supported library and runtime requirements:
 
@@ -231,6 +250,13 @@ For all flags, environment variables, and defaults, see
 [Settings](docs/settings.md).
 
 ## Installation
+
+To install from a checkout:
+
+```sh
+make install                          # GOBIN, or the first GOPATH entry's bin
+make install GOBIN="$HOME/.local/bin"  # Custom destination; add it to PATH
+```
 
 This project uses GitHub Releases for distribution.
 
