@@ -198,6 +198,8 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 		environment, environmentFailure = pythonEnvironmentInfo(ctx, command, args, source)
 	case "javascript":
 		environment = nodeEnvironmentInfo(ctx, command)
+	case "ruby":
+		environment = rubyEnvironmentInfo(ctx)
 	}
 	options := platform.TracerOptions{Directory: session.Directory(), Version: version, Command: command, Args: args}
 	if language == "python" && environment.Executable != "" {

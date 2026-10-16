@@ -7,7 +7,6 @@ package testdrive
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -56,18 +55,13 @@ printf '%s' '{"executable":"/selected ruby/bin/ruby","version":"3.4.7"}' > "$las
 					drive.platform = &fakeTracer{}
 					executor := &fakeTestdriveExecutor{}
 					drive.executor = executor
-					drive.startIntake = func(string) (localIntake, error) {
+					drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 						return &fakeIntake{findings: intake.Facts{TestEventCount: 1}}, nil
 					}
-					require.NoError(t, drive.Run(t.Context(), &output))
+					require.ErrorContains(t, drive.Run(t.Context(), &output), "validation is incomplete")
 					require.True(t, strings.HasPrefix(executor.env["RUBYOPT"], preloads+" "))
 					require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
-					var diagnostics runDiagnostics
-					data, err := os.ReadFile(filepath.Join(drive.session.Directory(), diagnosticsFilename))
-					require.NoError(t, err)
-					require.NoError(t, json.Unmarshal(data, &diagnostics))
-					require.Equal(t, drive.environmentInfo, diagnostics.Environment)
-					report, err := os.ReadFile(filepath.Join(drive.session.Directory(), reportFilename))
+					report, err := os.ReadFile(htmlReportPath(root))
 					require.NoError(t, err)
 					require.Contains(t, string(report), "Ruby 3.4.7")
 					require.Contains(t, string(report), "/selected ruby/bin/ruby")
@@ -133,12 +127,9 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 				require.Contains(t, executor.env["PYTEST_ADDOPTS"], "--ddtrace")
 				require.NotContains(t, executor.env, "NODE_OPTIONS")
 			case "ruby":
-				var diagnostics runDiagnostics
-				data, err := os.ReadFile(filepath.Join(run.session.Directory(), diagnosticsFilename))
+				report, err := os.ReadFile(htmlReportPath(root))
 				require.NoError(t, err)
-				require.NoError(t, json.Unmarshal(data, &diagnostics))
-				require.Equal(t, run.environmentInfo, diagnostics.Environment)
-				require.Equal(t, "Ruby from PATH", diagnostics.Environment.Source)
+				require.Contains(t, string(report), "Ruby from PATH")
 				require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
 				require.Contains(t, preview.String(), "Bundler updates Gemfile and Gemfile.lock.")
 				require.NotContains(t, preview.String(), "It will not change")
