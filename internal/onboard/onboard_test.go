@@ -73,7 +73,6 @@ jobs:
       - uses: datadog/test-visibility-github-action@v3
         with:
           languages: %q
-      - run: pytest
       - run: npm test
 `, tc.languages))
 
