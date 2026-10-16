@@ -22,7 +22,54 @@ platforms or frameworks require explicit selection.
 | `--tests-location` | `DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION` | `KNAPSACK_PRO_TEST_FILE_PATTERN` | `""` | Custom glob pattern to filter discovered test files, such as `--tests-location "custom/spec/**/*_spec.rb"`, `--tests-location "tests/**/*_test.py"`, or `--tests-location "packages/**/__tests__/**/*.test.ts"`. Defaults to `spec/**/*_spec.rb` for RSpec, `test/**/*_test.rb` for Minitest, pytest config or `**/{test_*,*_test}.py` for pytest, and each JavaScript framework's configured/default test matching for Cucumber, Cypress, Jest, Mocha, Playwright, and Vitest. |
 | `--tests-exclude-pattern` | `DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN` | `KNAPSACK_PRO_TEST_FILE_EXCLUDE_PATTERN` | `""` | Glob pattern to exclude test files from discovery, such as `--tests-exclude-pattern "spec/system/**/*_spec.rb"`. |
 | `--test-discovery-cache` | `DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE` | | `""` | Path to a restored test discovery cache file. DDTest imports it before planning and refreshes the internal discovery cache after successful full discovery. |
+| `--test-skipping-mode` | `DD_TESTOPTIMIZATION_TIA_TEST_SKIPPING_MODE` | | `test` | TIA skipping granularity for Ruby and Python: `test` or `suite`. Python suite mode discovers test files without running pytest collection. Invalid values fall back to `test`. JavaScript uses suite mode. |
 | `--force-full-test-discovery` | `DD_TEST_OPTIMIZATION_RUNNER_FORCE_FULL_TEST_DISCOVERY` | | `false` | Force full test discovery when the framework supports it, including in suite-level skipping mode and when TIA or test skipping is disabled, so the discovery cache is still written for later runs. |
 | `--strict-discovery` | `DD_TEST_OPTIMIZATION_RUNNER_STRICT_DISCOVERY` | | `false` | Fail planning when full test discovery fails. Cancelled full discovery still uses fast test file discovery fallback. |
 | `--runtime-tags` | `DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS` | `DD_TEST_OPTIMIZATION_RUNTIME_TAGS` | `""` | JSON string to override runtime tags used to fetch skippable tests. Useful for local development on a different OS than CI, such as `--runtime-tags '{"os.platform":"linux","runtime.version":"3.2.0"}'`. |
 | | `DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED` | | `true` | Print human-readable plan and run reports. Set to `false` to disable them. |
+
+## Pytest suite-level discovery
+
+Use suite mode to plan from test files without starting pytest collection or
+importing test modules or conftest files:
+
+```bash
+export DD_TESTOPTIMIZATION_TIA_TEST_SKIPPING_MODE=suite
+ddtest plan --platform python --framework pytest
+ddtest run --platform python --framework pytest
+```
+
+Alternatively, pass `--test-skipping-mode suite` to both commands. The default
+remains `test`. DDTest configures ddtrace's suite mode for test execution as well
+as requesting suite-level skippables from the backend.
+
+File discovery uses the existing pytest configuration/default file patterns,
+or `--tests-location`, and respects exclusions and positional selection. It does
+not enumerate test functions, classes, fixtures, or parametrized cases. A file
+is omitted only when its backend suite is skippable and the backend suite
+metadata maps it to a selected source file. New files and suites without source
+metadata remain runnable; a dotted module name or matching filename alone is
+not enough to skip a file. Source metadata is obtained with suite durations,
+but a valid duration value is not required to apply the skip.
+
+Files containing `datadog_itr_unskippable`, or having an ancestor `conftest.py`
+containing it, remain runnable. This is a conservative text check: comments also
+keep files runnable, and read errors prevent skipping. Markers constructed
+dynamically or imported from other helpers cannot be detected by this check;
+add a literal marker comment to the affected test file or ancestor conftest to
+keep it runnable. Use accurate `--tests-location`
+patterns for custom configuration locations or collectors that the existing
+file discovery does not understand. Custom collectors that group multiple
+suites into one file should use test mode.
+
+Suite mode trades test-level skipping precision for cheaper planning: if a
+suite is not skippable, its file remains in the execution plan. Individual test
+counts are unavailable during file discovery. Planning still performs normal
+platform checks, runtime-tag detection, and backend requests.
+
+Suite mode does not read or refresh the full-discovery cache because collection
+is unnecessary. `--force-full-test-discovery` explicitly restores normal pytest
+collection and cache behavior, including in suite mode; it is useful for
+diagnostics or refreshing a discovery cache. `--strict-discovery` alone does not
+force collection. To opt out, unset the environment variable or select
+`--test-skipping-mode test` and regenerate the plan.

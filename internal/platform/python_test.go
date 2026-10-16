@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
@@ -25,8 +26,31 @@ func TestPython_Name(t *testing.T) {
 }
 
 func TestPython_TestSkippingLevel(t *testing.T) {
-	if got := NewPython().TestSkippingLevel(); got != settings.TestSkippingLevelTest {
-		t.Fatalf("TestSkippingLevel() = %q, want %q", got, settings.TestSkippingLevelTest)
+	resetDetectionSettings(t)
+	for _, level := range []settings.TestSkippingLevel{settings.TestSkippingLevelTest, settings.TestSkippingLevelSuite} {
+		t.Run(level.String(), func(t *testing.T) {
+			settings.Get().TestSkippingLevel = level
+			settings.Get().Platform = "python"
+			python, err := DetectPlatform()
+			require.NoError(t, err)
+			require.Equal(t, level, python.TestSkippingLevel())
+			fw, err := python.DetectFramework()
+			require.NoError(t, err)
+			// Worker overrides must not put the tracer in a different mode
+			// from the backend request and the plan.
+			env, err := fw.Platform().RunEnv(framework.RuntimeOptions{Env: map[string]string{
+				"_DD_CIVISIBILITY_ITR_SUITE_MODE": "conflicting-worker-value",
+				"WORKER":                          "1",
+			}})
+			require.NoError(t, err)
+			want := "false"
+			if level == settings.TestSkippingLevelSuite {
+				want = "true"
+			}
+			require.Equal(t, want, env["_DD_CIVISIBILITY_ITR_SUITE_MODE"])
+			require.Equal(t, "1", env["WORKER"])
+			require.Contains(t, env[pytestAddOptsEnvVar], "--ddtrace")
+		})
 	}
 }
 
