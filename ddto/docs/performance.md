@@ -191,6 +191,7 @@ invocation.
 | One allocation for the span's context | A context and a boxed identity for each span | propagation's key lives in `internal/propctx`; the carrier answers it with a pointer, and `FromContext` reads both forms; other keys and cancellation go to its parent; it is not part of the span, so a kept context retains no tags |
 | Test events without option lists | About ten allocations for each test: a new option list, a closure for each of its values and a boxed test name | `StartTestSpan` applies the shared option lists in place and sets each test's values directly, in the order that the option list had: `TestStartTestSpanEncodesAsOptions` checks that the events encode to the same bytes |
 | Per-test lookups and options without allocations | An allocation each to find the test's module and suite, to start it, to close it and to set its final status | Without options, an existing module or suite returns at once; configurations are allocated only for options; known statuses are constants |
+| `t.Helper()` only for wrapped tests | Two allocations for each test's helper map | A top-level test that testing runs directly reports the same locations without the mark, except at one stack depth that the SDK port's `ADAPTATIONS.md` describes; `TestMiniHelperMarksKeepLocations` pins them, with and without a retry wrapper |
 | Typed tag setters | An interface conversion for each tag value that is not a constant | `SetStringTag` and `SetMetric` keep `SetTag`'s semantics; the SDK port's call sites keep their lines |
 | Shared CI tag snapshots and cached options | Per-span closures, common map entries and repeated wire strings | Preserve late updates, getters, option precedence, numeric overrides, child spans and Bazel filtering |
 | Metadata capacity from `Tag` options | Repeated growth while applying common tags, and room for options that add no entry | Count every `Tag` option and the entries that `newSpan` adds itself; options that set fields or shared defaults reserve nothing |
@@ -404,7 +405,9 @@ benchmarks, for a candidate whose benchmarks use internals that the base lacks.
 The [third results](results/minitracer-test-span-20261016-linux-go1.27/README.md)
 measure test events started without option lists, and the
 [fourth](results/minitracer-test-path-20261016-linux-go1.27/README.md) the
-per-test lookups and options without allocations. Every run also compares the
+per-test lookups and options without allocations, and the
+[fifth](results/minitracer-test-helper-20261017-linux-go1.27/README.md)
+`t.Helper()` only for wrapped tests. Every run also compares the
 two trees' payloads: each event with its envelope's version and the metadata
 that it inherits, counting IDs, timestamps and other values that differ between
 runs by presence and type, and hierarchy IDs by what they reference.

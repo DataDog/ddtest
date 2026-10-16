@@ -1728,6 +1728,32 @@ of them without changing any event:
   instead of converting a string variable to `any`; its four calls replace the
   original lines. Checks: `TestExistingModulesAndSuitesAllocateNothing`,
   `TestTestOptionsWithoutOptionsAllocateNothing` and `TestFinalStatusValue`.
+- `executeInternalTest`'s function calls `t.Helper()` only when an additional
+  feature wrapper calls it: `directTestFunc` (at the end of
+  `gotesting/testing.go`) records, at setup, whether testing runs it directly.
+  The call allocates the test's helper map, and testing reads helper marks only
+  to choose the frame that a log, failure or skip reports. When that search
+  reaches the function that tRunner calls in a top-level test, it reports that
+  function's frame, marked or not, so a direct function's mark changes no
+  location, except in the case below; a wrapper's frames lie between it and
+  tRunner, so a wrapped one keeps the call. The condition replaces the comment,
+  the call and the blank line after it, the flag shares the known-test line of
+  `commonInfo`, and the return line calls `directTestFunc` in place, so no line
+  moves. Flaky test retries wrap every test while the retry count and the
+  session's retry budget are positive, and a test that calls a helper allocates
+  the map itself.
+
+  One case changes, which we accepted for the cost. testing looks at no more
+  than 50 frames (`maxStackLen`) when it chooses the frame. A test function that
+  calls `t.Helper()` itself, with helpers nested exactly deep enough below it,
+  makes Mini's function the last frame that testing looks at: in Go 1.27, 48
+  nested helper calls. All the frames before it are helpers, so testing used to
+  go past the marked function and report the line that logged; now it reports
+  `testing.go:882`, as Mini already did for any shallower stack. `go test`
+  reports the test function's line there, so neither matched it.
+  Checks: `TestDirectTestFunc`, and `TestMiniHelperMarksKeepLocations`, which
+  pins the locations of a test that calls `t.Helper()` itself, directly and
+  with a retry wrapper.
 
 CI string snapshots use the revision/escaped-map contract below; numeric CI
 metrics remain fresh per call. Checks: `TestTestifyLookupMatchesReflection`,
