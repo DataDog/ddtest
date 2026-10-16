@@ -24,12 +24,85 @@ func TestPyTestStaticDiscoveryParity(t *testing.T) {
 	python := requireEnv(t, "DDTEST_PYTHON_BINARY")
 	resetSettingsAfterTest(t)
 	root := t.TempDir()
-	writeFixture(t, root, "pytest.ini", "[pytest]\naddopts = -q\n")
+	writeFixture(t, root, "pytest.ini", "[pytest]\naddopts = -q\npython_functions = test_* check_*\n")
 	writeFixture(t, root, "side_effect.py", "from pathlib import Path\nPath('imported-test-module').touch()\n")
 	writeFixture(t, root, "test_root.py", "def test_root(): pass\n")
 	writeFixture(t, root, "tests/test_excluded.py", "raise AssertionError('excluded file imported')\n")
+	writeFixture(t, root, "tests/conftest.py", `import pytest
+
+CONF_CONST = ["c1", "c2"]
+
+@pytest.fixture
+def plain_conf(): return 1
+
+@pytest.fixture(params=["p1", "p2"])
+def param_conf(request): return request.param
+
+@pytest.fixture(params=CONF_CONST)
+def const_conf(request): return request.param
+
+@pytest.fixture(params=[1, 2], ids=["uno", "dos"])
+def ids_conf(request): return request.param
+
+@pytest.fixture(name="conf_renamed")
+def _conf_renamed(): return 1
+`)
 	writeFixture(t, root, "tests/test_cases.py", `import pytest
 import side_effect
+
+def check_collected(): pass
+
+def test_builtin_fixtures(tmp_path, monkeypatch, capsys): pass
+
+def test_unknown_fixture(nonexistent): pass
+
+@pytest.fixture
+def plain_local(): return 2
+
+def test_local_fixture(plain_local): pass
+
+@pytest.fixture(params=["s1", "s2"])
+def local_param(request): return request.param
+
+def test_local_param(local_param): pass
+
+@pytest.fixture(params=["au1", "au2"], autouse=True)
+def auto_f(request): return request.param
+
+def test_autouse_only(): pass
+
+@pytest.mark.parametrize("z", [1, 2])
+def test_autouse_param(z): pass
+
+def test_conftest_plain(plain_conf): pass
+
+def test_conftest_param(param_conf): pass
+
+def test_conftest_const(const_conf): pass
+
+def test_conftest_ids(ids_conf): pass
+
+def test_renamed(conf_renamed): pass
+
+@pytest.mark.parametrize("p", [10, 20])
+def test_combo(p, param_conf): pass
+
+@pytest.fixture(params=[9])
+def param_conf(request): return request.param
+
+def test_local_shadow(param_conf): pass
+
+@pytest.mark.parametrize("marked_local", [9])
+def test_param_over_fixture(marked_local): pass
+
+CONST = [1, 2]
+ANN: list[int] = [3, 4]
+
+@pytest.mark.parametrize("x", CONST)
+def test_constant(x): pass
+
+@pytest.mark.parametrize("y", ANN)
+def test_annotated(y): pass
 
 def test_plain(): pass
 
@@ -62,9 +135,89 @@ def test_stacked(x, y): pass
 
 @pytest.mark.parametrize("x", ["object at 0x123ABC", (1, "a")])
 def test_repr(x): pass
+
+@pytest.mark.skip
+def test_skip(): pass
+
+@pytest.mark.skipif(False, reason="never")
+def test_skipif_false(): pass
+
+@pytest.mark.skipif(True, reason="always")
+def test_skipif_true(): pass
+
+@pytest.mark.xfail
+def test_xfail(): pass
+
+@pytest.mark.slow
+def test_inert_mark(): pass
+
+@pytest.mark.skip
+@pytest.mark.parametrize("x", [1, 2])
+def test_param_skip(x): pass
+
+@pytest.mark.parametrize("x", [pytest.param(1, marks=pytest.mark.skip), 2])
+def test_param_mark_skip(x): pass
+
+@pytest.mark.parametrize("x", [pytest.param(1, id="dup", marks=pytest.mark.skip), pytest.param(2, id="dup")])
+def test_dup_skip(x): pass
+
+@pytest.mark.skip
+class TestSkipClass:
+    def test_a(self): pass
+    def test_b(self): pass
+
+class TestHalfSkip:
+    @pytest.mark.skip
+    def test_skipped_method(self): pass
+    def test_ok_method(self): pass
+
+class TestClsMark:
+    pytestmark = pytest.mark.skip
+    def test_c(self): pass
+
+class Base:
+    def test_inherited(self): pass
+
+class TestDerived(Base):
+    def test_own(self): pass
+
+class MixinBase:
+    @pytest.mark.parametrize("x", [1, 2])
+    def test_inherited_param(self, x): pass
+
+class TestWithParam(MixinBase):
+    def test_own2(self): pass
+
+class TestStatic:
+    @staticmethod
+    def test_staticmethod(): pass
+    @classmethod
+    def test_classmethod(cls): pass
+
+class TestVarargs:
+    def test_varargs(self, *args): pass
+
+class TestInit:
+    def __init__(self): pass
+    def test_not_collected(self): pass
+
+class TestOff:
+    __test__ = False
+    def test_disabled(self): pass
+
+class TestClassFixture:
+    @pytest.fixture
+    def cls_fixture(self): return 1
+    def test_cls_fixture(self, cls_fixture): pass
+    @pytest.fixture(params=["m1", "m2"])
+    def cls_param(self, request): return request.param
+    def test_cls_param(self, cls_param): pass
+
+@pytest.mark.parametrize("x", [])
+def test_empty(x): pass
 `)
 	t.Chdir(root)
-	t.Setenv("PYTEST_ADDOPTS", "--ddtrace -vv --tb=short")
+	t.Setenv("PYTEST_ADDOPTS", "--ddtrace -vv --tb=short -p no:cacheprovider")
 	t.Setenv("PYTEST_PLUGINS", "")
 	t.Setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "")
 	configureFramework(shellCommand(python, "-m", "pytest", "-q"), "")

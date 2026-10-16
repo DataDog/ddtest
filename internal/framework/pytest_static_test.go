@@ -134,33 +134,272 @@ def test_case(x): pass
 	}
 }
 
+func writeStaticExtras(t *testing.T, conftest, config string) {
+	t.Helper()
+	if conftest != "" {
+		if err := os.WriteFile(filepath.Join("tests", "conftest.py"), []byte(conftest), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if config != "" {
+		if err := os.WriteFile("pytest.ini", []byte(config), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestPytestStaticCollectionInventory(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		source   string
+		conftest string
+		config   string
+		want     []testoptimization.Test
+	}{
+		{
+			name: "plain and unknown fixtures",
+			source: `import pytest
+@pytest.fixture
+def plain(): pass
+
+def test_builtin(tmp_path, monkeypatch, capsys): pass
+
+def test_unknown(nonexistent): pass
+
+def test_plain(plain): pass
+`,
+			want: []testoptimization.Test{{Name: "test_builtin"}, {Name: "test_unknown"}, {Name: "test_plain"}},
+		},
+		{
+			name: "parametrized fixtures",
+			source: `import pytest
+@pytest.fixture(params=["a", "b"])
+def thing(request): return request.param
+
+def test_thing(thing): pass
+
+@pytest.fixture(params=[1, 2], ids=["uno", "dos"])
+def named(request): return request.param
+
+def test_named(named): pass
+
+@pytest.fixture(name="renamed")
+def _underlying(): pass
+
+def test_renamed(renamed): pass
+
+@pytest.mark.parametrize("p", [10, 20])
+def test_combo(p, thing): pass
+`,
+			want: []testoptimization.Test{
+				{Name: "test_thing[a]", Parameters: `{"arguments": {"thing": "'a'"}, "metadata": {}}`},
+				{Name: "test_thing[b]", Parameters: `{"arguments": {"thing": "'b'"}, "metadata": {}}`},
+				{Name: "test_named[uno]", Parameters: `{"arguments": {"named": "1"}, "metadata": {}}`},
+				{Name: "test_named[dos]", Parameters: `{"arguments": {"named": "2"}, "metadata": {}}`},
+				{Name: "test_renamed"},
+				{Name: "test_combo[a-10]", Parameters: `{"arguments": {"p": "10", "thing": "'a'"}, "metadata": {}}`},
+				{Name: "test_combo[a-20]", Parameters: `{"arguments": {"p": "20", "thing": "'a'"}, "metadata": {}}`},
+				{Name: "test_combo[b-10]", Parameters: `{"arguments": {"p": "10", "thing": "'b'"}, "metadata": {}}`},
+				{Name: "test_combo[b-20]", Parameters: `{"arguments": {"p": "20", "thing": "'b'"}, "metadata": {}}`},
+			},
+		},
+		{
+			name: "module autouse parametrized fixture",
+			source: `import pytest
+@pytest.fixture(params=["u1", "u2"], autouse=True)
+def auto_f(request): return request.param
+
+def test_alone(): pass
+
+@pytest.mark.parametrize("x", [1])
+def test_with(x): pass
+`,
+			want: []testoptimization.Test{
+				{Name: "test_alone[u1]", Parameters: `{"arguments": {"auto_f": "'u1'"}, "metadata": {}}`},
+				{Name: "test_alone[u2]", Parameters: `{"arguments": {"auto_f": "'u2'"}, "metadata": {}}`},
+				{Name: "test_with[u1-1]", Parameters: `{"arguments": {"auto_f": "'u1'", "x": "1"}, "metadata": {}}`},
+				{Name: "test_with[u2-1]", Parameters: `{"arguments": {"auto_f": "'u2'", "x": "1"}, "metadata": {}}`},
+			},
+		},
+		{
+			name:     "conftest fixtures",
+			conftest: "import pytest\n\n@pytest.fixture\ndef plain_conf(): pass\n\n@pytest.fixture(params=[\"p1\", \"p2\"])\ndef param_conf(request): return request.param\n",
+			source: `def test_conf_param(param_conf): pass
+
+def test_conf_plain(plain_conf): pass
+`,
+			want: []testoptimization.Test{
+				{Name: "test_conf_param[p1]", Parameters: `{"arguments": {"param_conf": "'p1'"}, "metadata": {}}`},
+				{Name: "test_conf_param[p2]", Parameters: `{"arguments": {"param_conf": "'p2'"}, "metadata": {}}`},
+				{Name: "test_conf_plain"},
+			},
+		},
+		{
+			name:     "local fixture shadows conftest",
+			conftest: "import pytest\n\n@pytest.fixture(params=[\"p1\", \"p2\"])\ndef param_conf(request): return request.param\n",
+			source: `import pytest
+@pytest.fixture
+def param_conf(): pass
+
+def test_shadow(param_conf): pass
+`,
+			want: []testoptimization.Test{{Name: "test_shadow"}},
+		},
+		{
+			name: "skip marks",
+			source: `import pytest
+@pytest.mark.skip
+def test_skip(): pass
+
+@pytest.mark.skipif(False, reason="never")
+def test_skipif_false(): pass
+
+@pytest.mark.skipif(True, reason="always")
+def test_skipif_true(): pass
+
+@pytest.mark.xfail
+def test_xfail(): pass
+
+@pytest.mark.slow
+def test_inert(): pass
+
+@pytest.mark.parametrize("x", [pytest.param(1, marks=pytest.mark.skip), 2])
+def test_one_skipped(x): pass
+`,
+			want: []testoptimization.Test{
+				{Name: "test_skipif_false"},
+				{Name: "test_xfail"},
+				{Name: "test_inert"},
+				{Name: "test_one_skipped[2]", Parameters: `{"arguments": {"x": "2"}, "metadata": {}}`},
+			},
+		},
+		{
+			name: "local inheritance",
+			source: `class Base:
+    def test_inherited(self): pass
+
+class TestDerived(Base):
+    def test_own(self): pass
+`,
+			want: []testoptimization.Test{{Name: "TestDerived::test_inherited"}, {Name: "TestDerived::test_own"}},
+		},
+		{
+			name: "collection details",
+			source: `import pytest
+CONST = [1, 2]
+ANN: list = [3]
+
+@pytest.mark.parametrize("x", CONST)
+def test_const(x): pass
+
+@pytest.mark.parametrize("y", ANN)
+def test_ann(y): pass
+
+class TestStatic:
+    @staticmethod
+    def test_static(): pass
+
+    @classmethod
+    def test_cls(cls): pass
+
+class TestVarargs:
+    def test_var(self, *args): pass
+
+class TestInit:
+    def __init__(self): pass
+    def test_not_collected(self): pass
+
+class TestOff:
+    __test__ = False
+    def test_off(self): pass
+
+class TestClsFixture:
+    @pytest.fixture(params=["m1", "m2"])
+    def cls_param(self, request): return request.param
+    def test_m(self, cls_param): pass
+
+@pytest.mark.parametrize("x", [])
+def test_empty(x): pass
+`,
+			want: []testoptimization.Test{
+				{Name: "test_const[1]", Parameters: `{"arguments": {"x": "1"}, "metadata": {}}`},
+				{Name: "test_const[2]", Parameters: `{"arguments": {"x": "2"}, "metadata": {}}`},
+				{Name: "test_ann[3]", Parameters: `{"arguments": {"y": "3"}, "metadata": {}}`},
+				{Name: "TestStatic::test_cls"},
+				{Name: "TestStatic::test_static"},
+				{Name: "TestVarargs::test_var"},
+				{Name: "TestClsFixture::test_m[m1]", Parameters: `{"arguments": {"cls_param": "'m1'"}, "metadata": {}}`},
+				{Name: "TestClsFixture::test_m[m2]", Parameters: `{"arguments": {"cls_param": "'m2'"}, "metadata": {}}`},
+			},
+		},
+		{
+			name:   "module pytestmark skip",
+			source: "import pytest\npytestmark = pytest.mark.skip\n\ndef test_case(): pass\n",
+			want:   []testoptimization.Test{},
+		},
+		{
+			name:   "custom function patterns",
+			config: "[pytest]\npython_functions = check_*\n",
+			source: `def check_thing(): pass
+
+def test_thing(): pass
+`,
+			want: []testoptimization.Test{{Name: "check_thing"}},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			pytest := staticPytestFixture(t, tt.source)
+			writeStaticExtras(t, tt.conftest, tt.config)
+			tests, err := pytest.discoverTestsStatically(context.Background(), discovery.TestFileSet{Pattern: "tests/**/*.py"}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := range tt.want {
+				tt.want[i].Module = "tests"
+				tt.want[i].Suite = "test_sample.py"
+				tt.want[i].SuiteSourceFile = "tests/test_sample.py"
+			}
+			if !reflect.DeepEqual(tests, tt.want) {
+				t.Fatalf("inventory = %#v; want %#v", tests, tt.want)
+			}
+		})
+	}
+}
+
 func TestPytestStaticFallback(t *testing.T) {
 	for _, tt := range []struct {
-		name   string
-		source string
+		name     string
+		source   string
+		conftest string
+		config   string
 	}{
-		{"dynamic values", "import pytest\n@pytest.mark.parametrize('x', range(3))\ndef test_case(x): pass\n"},
-		{"callable ids", "import pytest\n@pytest.mark.parametrize('x', [1], ids=str)\ndef test_case(x): pass\n"},
-		{"parameter marks", "import pytest\n@pytest.mark.parametrize('x', [pytest.param(1, marks=pytest.mark.skip)])\ndef test_case(x): pass\n"},
-		{"skip marker", "import pytest\n@pytest.mark.skip\ndef test_case(): pass\n"},
-		{"indirect", "import pytest\n@pytest.mark.parametrize('x', [1], indirect=True)\ndef test_case(x): pass\n"},
-		{"empty values", "import pytest\n@pytest.mark.parametrize('x', [])\ndef test_case(x): pass\n"},
-		{"version-dependent trailing comma", "import pytest\n@pytest.mark.parametrize('x,', [1, 2])\ndef test_case(x): pass\n"},
-		{"fixture", "def test_case(tmp_path): pass\n"},
-		{"fixture decorator", "import pytest\n@pytest.fixture(params=[1, 2], autouse=True)\ndef fixture(request): pass\ndef test_case(): pass\n"},
-		{"hook", "def pytest_generate_tests(metafunc): pass\ndef test_case(): pass\n"},
-		{"inheritance", "class TestCase(Base):\n def test_case(self): pass\n"},
-		{"test disabled", "__test__ = False\ndef test_case(): pass\n"},
-		{"class constructor", "class TestCase:\n def __init__(self): pass\n def test_case(self): pass\n"},
-		{"imported tests", "from somewhere import test_imported\n"},
-		{"dynamic annotations", "def test_case() -> configure_collection(): pass\n"},
-		{"wildcard imports", "from somewhere import *\n"},
-		{"duplicate definitions", "def test_case(): pass\ndef test_case(): pass\n"},
-		{"executable module", "raise RuntimeError('must not import tests')\ndef test_case(): pass\n"},
-		{"malformed source", "def test_case(\n"},
+		{"dynamic values", "import pytest\n@pytest.mark.parametrize('x', range(3))\ndef test_case(x): pass\n", "", ""},
+		{"callable ids", "import pytest\n@pytest.mark.parametrize('x', [1], ids=str)\ndef test_case(x): pass\n", "", ""},
+		{"indirect", "import pytest\n@pytest.mark.parametrize('x', [1], indirect=True)\ndef test_case(x): pass\n", "", ""},
+		{"version-dependent trailing comma", "import pytest\n@pytest.mark.parametrize('x,', [1, 2])\ndef test_case(x): pass\n", "", ""},
+		{"custom decorator", "import functools\n@functools.cache\ndef test_case(): pass\n", "", ""},
+		{"poison fixture chain", "import pytest\n@pytest.fixture(params=[1])\ndef p(request): return request.param\n@pytest.fixture\ndef mid(p): return 1\ndef test_case(mid): pass\n", "", ""},
+		{"multiple module autouse", "import pytest\n@pytest.fixture(params=[1], autouse=True)\ndef a(request): pass\n@pytest.fixture(params=[2], autouse=True)\ndef b(request): pass\n\ndef test_case(): pass\n", "", ""},
+		{"class autouse parametrized", "import pytest\nclass TestC:\n    @pytest.fixture(params=[1], autouse=True)\n    def a(self, request): pass\n    def test_case(self): pass\n", "", ""},
+		{"non-literal skipif", "import sys\n@pytest.mark.skipif(sys.platform == 'darwin', reason='local')\ndef test_case(): pass\n", "", ""},
+		{"parametrize in pytestmark", "import pytest\npytestmark = pytest.mark.parametrize('x', [1])\ndef test_case(): pass\n", "", ""},
+		{"property test", "class TestP:\n    @property\n    def test_case(self): pass\n", "", ""},
+		{"metaclass keyword", "class TestM(metaclass=type):\n    def test_case(self): pass\n", "", ""},
+		{"hook", "def pytest_generate_tests(metafunc): pass\ndef test_case(): pass\n", "", ""},
+		{"inheritance outside module", "class TestCase(Base):\n def test_case(self): pass\n", "", ""},
+		{"module level test flag", "__test__ = False\ndef test_case(): pass\n", "", ""},
+		{"imported tests", "from somewhere import test_imported\n", "", ""},
+		{"wildcard imports", "from somewhere import *\n", "", ""},
+		{"duplicate definitions", "def test_case(): pass\ndef test_case(): pass\n", "", ""},
+		{"executable module", "raise RuntimeError('must not import tests')\ndef test_case(): pass\n", "", ""},
+		{"malformed source", "def test_case(\n", "", ""},
+		{"conftest hook", "", "def pytest_collection_modifyitems(items): pass\n", ""},
+		{"conftest autouse parametrized", "", "import pytest\n@pytest.fixture(params=[1], autouse=True)\ndef a(request): pass\n", ""},
+		{"python_modules config", "", "", "[pytest]\npython_modules = mymodule\n"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			pytest := staticPytestFixture(t, "def test_before_uncertainty(): pass\n"+tt.source)
+			writeStaticExtras(t, tt.conftest, tt.config)
 			tests, err := pytest.discoverTestsStatically(context.Background(), discovery.TestFileSet{ExplicitFiles: []string{"tests/test_sample.py"}}, nil)
 			if err == nil || tests != nil {
 				t.Fatalf("got %#v, %v; expected no partial inventory and a fallback reason", tests, err)
@@ -183,8 +422,15 @@ func TestPytestStaticOptionsAndConfig(t *testing.T) {
 		{name: "replaced positional scope", args: []string{"-q", "--", "discarded.py"}, wantOK: true},
 		{name: "safe config", config: "pytest.ini", content: "[pytest]\naddopts = -q --ddtrace\npython_functions = test\npython_files = *.py\n", wantOK: true},
 		{name: "safe TOML", config: "pyproject.toml", content: "[tool.pytest.ini_options]\naddopts = ['-v', '--ddtrace']\n", wantOK: true},
+		{name: "safe conftest", config: "tests/conftest.py", content: "import pytest\n\n@pytest.fixture\ndef helper():\n    return 1\n", wantOK: true},
+		{name: "pattern globs", config: "pytest.ini", content: "[pytest]\npython_functions = it_*\npython_classes = *Suite\n", wantOK: true},
+		{name: "python_modules", config: "pytest.ini", content: "[pytest]\npython_modules = mymodule\n", wantOK: false},
 		{name: "coverage options", options: "--cov=myapp --cov-report term-missing:skip-covered --cov-fail-under=90 --cov-branch --no-cov", wantOK: true},
 		{name: "coverage option cannot hide a selector", options: "--cov -k safe", wantOK: false},
+		{name: "xdist and execution options", options: "-n auto --dist loadscope -p no:cacheprovider -x --maxfail=2 --durations 5 --junitxml=r.xml -W ignore --strict-markers", wantOK: true},
+		{name: "attached short options", options: "-n4 -pno:cacheprovider -Werror", wantOK: true},
+		{name: "invalid worker count", options: "-nfoo", wantOK: false},
+		{name: "plugin load via -p", options: "-p cacheprovider", wantOK: false},
 		{name: "selection env", options: "-k safe"},
 		{name: "marker env", options: "-m slow"},
 		{name: "unknown env", options: "--unknown"},
@@ -193,8 +439,7 @@ func TestPytestStaticOptionsAndConfig(t *testing.T) {
 		{name: "node id", args: []string{"tests/test_sample.py::test_plain"}},
 		{name: "selection command", args: []string{"--lf"}},
 		{name: "selection config", config: "pytest.ini", content: "[pytest]\naddopts = -k selected\n"},
-		{name: "custom function names", config: "pytest.ini", content: "[pytest]\npython_functions = check_*\n"},
-		{name: "conftest", config: "tests/conftest.py", content: "# Local collection may depend on this plugin\n"},
+		{name: "custom function names", config: "pytest.ini", content: "[pytest]\npython_functions = check_*\n", wantOK: true},
 		{name: "nested config", config: "tests/pytest.ini", content: "[pytest]\n"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

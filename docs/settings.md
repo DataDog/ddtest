@@ -49,37 +49,67 @@ Supply accurate file include/exclude patterns. Supported commands are `pytest`
 versioned Python executables. Existing positional arguments must be selected
 Python files, not directories or node IDs. Wrapper commands fall back to pytest.
 
-The initial subset supports:
+The supported subset:
 
-- Plain `test*` functions and methods in `Test*` classes without inheritance or
-  custom constructors, including nested classes.
-- `@pytest.mark.parametrize` with literal lists/tuples of values, multiple
-  arguments, stacked decorators, literal `ids`, and unmarked `pytest.param`
-  entries with literal IDs. Values can be strings, numbers, booleans, `None`,
-  lists, tuples, and dictionaries. Test names, duplicate IDs, and parameter
-  serialization follow the tracer's identities.
+- `test*` functions and `Test*` classes (or custom `python_functions`/
+  `python_classes` patterns), including nested classes, `staticmethod` and
+  `classmethod` tests, varargs signatures, local (same-module) inheritance, and
+  pytest's own collection rules for classes with `__init__` or `__test__ = False`.
+- `@pytest.mark.parametrize` with literal lists/tuples of values or same-file
+  module constants, multiple arguments, stacked decorators, literal `ids`, and
+  `pytest.param` entries with literal IDs. Values can be strings, numbers,
+  booleans, `None`, lists, tuples, and dictionaries. Test names, duplicate IDs,
+  and parameter serialization follow the tracer's identities, and skip-marked
+  cases are omitted exactly like the discovery report.
+- Fixtures: built-in, plugin-provided (unknown names are trusted through the
+  plugin allowlist), same-file, class-level, and conftest fixtures.
+  Parametrized fixtures with literal values and `ids` expand with the tracer's
+  identities, including `name=` renames, fixture shadowing (same-file over
+  conftest, deeper conftest over shallower), and one module-level `autouse`
+  parametrized fixture. `conftest.py` files are parsed (never imported):
+  fixtures, constants, and imports are fine.
+- Skip semantics: `@pytest.mark.skip` on functions, classes, and parametrize
+  cases, and `@pytest.mark.skipif` with literal bool conditions, omit tests
+  from the inventory exactly like the discovery report; `xfail` and other
+  `pytest.mark.*` marks are inert. Module and class `pytestmark` with skip or
+  literal `skipif` marks is supported.
 - Presentation and instrumentation options in the command, `PYTEST_ADDOPTS`, and
   config `addopts`: `-q`/`-v` (including repeats), `-s`, `-r` summary flags,
   `--ddtrace`, common color, capture, traceback, and warning-display options,
-  and pytest-cov coverage options (`--cov`, `--cov-report`, and friends).
-  Unknown options, selectors such as `-k`/`-m`/`--lf`, and malformed quoting
+  pytest-cov coverage options, execution/report options such as `-x`,
+  `--maxfail`, `--durations`, `--junitxml`, xdist's `-n`/`--dist`, and
+  `-p no:<name>` (plugin disabling only). Unknown options, selectors such as
+  `-k`/`-m`/`--lf`, plugin loads via `-p <name>`, and malformed quoting
   trigger fallback.
 - A small allowlist of configuration in the working directory, including
-  `testpaths`, `python_files`, and safe `addopts`. Static discovery with a
-  `pyproject.toml` requires Python 3.11+.
+  `testpaths`, `python_files`, `python_functions`, `python_classes`, and safe
+  `addopts`. Static discovery with a `pyproject.toml` requires Python 3.11+.
 
-`conftest.py`, auto-loaded plugins outside a curated inventory-neutral list
-(pytest-cov, pytest-xdist, pytest-mock, pytest-sugar, and other execution,
-reporting, ordering, and fixture plugins; the full list lives in
-`internal/framework/scripts/pytest_static_discovery.py`), `PYTEST_PLUGINS`,
-fixtures, collection hooks, imported tests, other decorators/marks (including
-skip marks), dynamic parameter values or IDs, indirect parametrization, ambiguous
-roots, and unsupported module-level code trigger normal pytest collection
-instead. No partial inventory is used. A warning explains the fallback;
-successful static discovery logs `Pytest static discovery succeeded`. The
-plugin list is name-based and assumes those plugins keep to their documented
-non-collection behavior; when an installed plugin falls back, its name appears
-in the warning.
+The following trigger normal pytest collection instead. No partial inventory
+is used; a warning explains the fallback, and successful static discovery logs
+`Pytest static discovery succeeded`:
+
+- `conftest.py` defining collection hooks (`pytest_*` functions), a
+  `pytest_plugins` variable, decorated helpers, non-literal fixture params, or
+  autouse parametrized fixtures.
+- Fixture chains: fixtures that depend on parametrized fixtures, autouse
+  parametrized fixtures in classes or conftest, multiple module-level autouse
+  parametrized fixtures, and `pytest.param` chains that static discovery does
+  not emulate.
+- Non-literal `skipif` conditions, `parametrize` inside `pytestmark`, custom
+  (non-`pytest.mark.*`) decorators, `property` test functions, metaclass
+  keywords, cross-module inheritance, imported tests, wildcard imports,
+  duplicate definitions, and executable module-level statements.
+- Auto-loaded plugins outside a curated inventory-neutral list (pytest-cov,
+  pytest-xdist, pytest-mock, pytest-sugar, and other execution, reporting,
+  ordering, and fixture plugins; the full list lives in
+  `internal/framework/scripts/pytest_static_discovery.py`), `PYTEST_PLUGINS`,
+  dynamic parameter values or IDs, indirect parametrization, ambiguous roots,
+  and wrapper commands (`uv run`, `poetry run`, `tox`).
+
+The plugin list is name-based and assumes those plugins keep to their
+documented non-collection behavior; when an installed plugin falls back, its
+name appears in the warning.
 
 This is not a general Python/pytest evaluator: use it only when imported
 application/helper modules do not mutate pytest collection. Discovery caches
