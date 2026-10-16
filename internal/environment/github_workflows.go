@@ -78,13 +78,21 @@ func (g *GitHub) FindTestWorkflows(repositoryRoot, language, name string) ([]str
 }
 
 func inspectTestJobs(root string, contents []byte, language, name string) (foundTests, configured bool, err error) {
+	type defaults struct {
+		Run struct {
+			WorkingDirectory string `yaml:"working-directory"`
+		} `yaml:"run"`
+	}
 	var workflow struct {
-		Jobs map[string]struct {
-			Steps []struct {
-				Run  string `yaml:"run"`
-				Uses string `yaml:"uses"`
-				If   string `yaml:"if"`
-				With struct {
+		Defaults defaults `yaml:"defaults"`
+		Jobs     map[string]struct {
+			Defaults defaults `yaml:"defaults"`
+			Steps    []struct {
+				Run              string `yaml:"run"`
+				Uses             string `yaml:"uses"`
+				If               string `yaml:"if"`
+				WorkingDirectory string `yaml:"working-directory"`
+				With             struct {
 					Languages string `yaml:"languages"`
 				} `yaml:"with"`
 			} `yaml:"steps"`
@@ -104,7 +112,17 @@ func inspectTestJobs(root string, contents []byte, language, name string) (found
 			if condition == "false" {
 				continue
 			}
-			if looksLikeTestJob(root, step.Run, language, name, 0) {
+			directory := step.WorkingDirectory
+			if directory == "" {
+				directory = job.Defaults.Run.WorkingDirectory
+			}
+			if directory == "" {
+				directory = workflow.Defaults.Run.WorkingDirectory
+			}
+			if !filepath.IsAbs(directory) {
+				directory = filepath.Join(root, directory)
+			}
+			if looksLikeTestJob(directory, step.Run, language, name, 0) {
 				foundTests = true
 				if !jobConfigured {
 					return true, false, nil
@@ -208,12 +226,44 @@ func looksLikeTestJob(root, commands, language, name string, depth int) bool {
 			}
 		}
 		if executable == name || (name == "cucumber" && executable == "cucumber-js") {
-			if len(args) > 1 && slices.Contains([]string{"install", "install-deps"}, args[1]) {
+			if len(args) > 1 && (slices.Contains([]string{"install", "install-deps"}, args[1]) || (name == "cypress" && slices.Contains([]string{"verify", "cache", "info", "version", "help"}, args[1]))) {
 				continue
 			}
 			return true
 		}
-		if language == "ruby" && (executable == "rake" || (executable == "rails" && len(args) > 1 && args[1] == "test")) {
+		if language == "ruby" && executable == "rake" {
+			var tasks []string
+			listing := false
+			for i := 1; i < len(args); i++ {
+				arg := args[i]
+				if slices.Contains([]string{"-T", "--tasks", "-D", "--describe", "-P", "--prereqs", "-W", "--where", "-V", "--version", "-h", "--help"}, arg) {
+					listing = true
+				}
+				if slices.Contains([]string{"-f", "--rakefile", "-I", "--libdir", "-r", "--require"}, arg) {
+					i++
+					continue
+				}
+				if !strings.HasPrefix(arg, "-") && !strings.Contains(arg, "=") {
+					tasks = append(tasks, arg)
+				}
+			}
+			if listing {
+				continue
+			}
+			// Keep default and custom tasks as candidates, but exclude known
+			// maintenance tasks that do not execute tests.
+			if len(tasks) == 0 {
+				return true
+			}
+			for _, task := range tasks {
+				task, _, _ = strings.Cut(task, ":")
+				task, _, _ = strings.Cut(task, "[")
+				if !slices.Contains([]string{"rubocop", "standard", "standardrb", "lint", "format", "style", "build", "install", "release", "assets", "clobber", "clean"}, task) {
+					return true
+				}
+			}
+		}
+		if language == "ruby" && executable == "rails" && len(args) > 1 && args[1] == "test" {
 			return true
 		}
 		if language == "python" {

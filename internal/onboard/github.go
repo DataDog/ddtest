@@ -79,7 +79,7 @@ const rubyBootstrap = "The action installs datadog-ci into the CI bundle and exp
 const cypressBootstrap = `Cypress also needs browser-side instrumentation; NODE_OPTIONS alone is insufficient:
 
 1. In the existing Cypress config, resolve the tracer root from the action's DD_TRACE_PACKAGE value: path.dirname(path.dirname(process.env.DD_TRACE_PACKAGE)). Only enable this configuration when that variable is present. Use import syntax in an ESM config and require in a CommonJS config.
-2. Compose the existing setupNodeEvents callback with the module at path.join(tracerRoot, 'ci/cypress/plugin'), loaded with import in ESM or require in CommonJS. Preserve existing event handlers, including after:run and after:spec; do not replace them.
+2. Set pluginPath to path.join(tracerRoot, 'ci/cypress/plugin.js'). In ESM, import { pathToFileURL } from 'node:url' and load the plugin with (await import(pathToFileURL(pluginPath).href)).default; in CommonJS, use require(pluginPath). Compose it with the existing setupNodeEvents callback. Preserve existing event handlers, including after:run and after:spec; do not replace them.
 3. In setupNodeEvents, generate a support wrapper under RUNNER_TEMP. Write a literal require of path.join(tracerRoot, 'ci/cypress/support'), followed by a literal require of the existing resolved supportFile (unless it is false). Set the returned config.supportFile to that wrapper. Generating literal absolute imports lets Cypress's browser bundler resolve the isolated tracer without adding it to package.json.
 4. Keep the project's existing application startup, browser installation, and cypress run command. Do not use cypress open.
 
