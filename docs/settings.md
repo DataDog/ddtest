@@ -108,8 +108,9 @@ tests/test_billing.py:42)`), and successful static discovery logs
   parametrized fixtures, and `pytest.param` chains that static discovery does
   not emulate.
 - Non-literal `skipif` conditions, non-literal or keyword `usefixtures` names,
-  imports of pytest private API (`_pytest.*`, which can break collection on
-  the installed pytest version), `parametrize` inside `pytestmark`, custom
+  module-level `_pytest.*` imports that do not resolve in the installed
+  pytest (verified from the same interpreter pytest uses, so suites pinned to
+  an older pytest stay eligible), `parametrize` inside `pytestmark`, custom
   (non-`pytest.mark.*`) decorators, `property` test functions, metaclass
   keywords, cross-module inheritance anywhere in the ancestry of a collected
   class (imported bases on never-collected helper classes are inert and fine),
@@ -135,11 +136,29 @@ inventories themselves are never cached.
 
 **Known limitation — collection-time import failures.** Static discovery never
 imports test modules, so it cannot detect modules that fail to import during
-collection (for example, test code using private `_pytest` APIs removed by a
-newer pytest, or a missing optional dependency). Real pytest collection drops
-such modules from the inventory while static discovery still includes their
-tests, so static over-counts rather than under-counts. The mismatch is loud:
-the broken file always stays runnable (its tests were never reported to the
-backend, so they never appear in skippable sets) and pytest surfaces the
-import error at run time. If plan counts look inflated or a run fails on an
-import error, compare against one run without the flag.
+collection (for example, test code importing a module or optional dependency
+that is not installed on the collector; module-level `_pytest` imports are
+verified against the installed pytest and fall back precisely). Real pytest
+collection drops such modules from the inventory while static discovery still
+includes their tests, so static over-counts rather than under-counts. The
+mismatch is loud: the broken file always stays runnable (its tests were never
+reported to the backend, so they never appear in skippable sets) and pytest
+surfaces the import error at run time. If plan counts look inflated or a run
+fails on an import error, compare against one run without the flag.
+
+**Migrating off `_pytest` private imports.** When a module-level `_pytest`
+import does not resolve in the installed pytest, the fallback reason names
+the exact symbol. The public replacements (validated on pytest 8 and 9):
+
+- `from _pytest import monkeypatch` with `monkeypatch.MonkeyPatch()` becomes
+  `from pytest import MonkeyPatch` (public since pytest 8.1).
+- Deferred restore-to-absence via `notset` and the private `_setitem` journal
+  becomes deletion at fixture setup through the public `monkeypatch` fixture:
+  `monkeypatch.delenv(key, raising=False)` and
+  `monkeypatch.delitem(mapping, key, raising=False)`. The fixture's own
+  teardown then restores whatever each test sets afterwards. Do not
+  substitute a custom sentinel into the private journal — pytest's teardown
+  compares against its own singleton, so the sentinel leaks in as a value
+  instead of deleting the key.
+- Keep private imports out with a CI guard, for example
+  `! grep -rnE "^\s*(from _pytest|import _pytest)" tests/`.

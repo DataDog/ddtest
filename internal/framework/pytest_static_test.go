@@ -479,6 +479,14 @@ def test_case_end(): pass
 `,
 			want: []testoptimization.Test{{Name: "test_case"}, {Name: "test_case_end"}},
 		},
+		{
+			name: "resolvable private imports stay eligible",
+			source: `from _pytest import monkeypatch
+
+def test_case(): pass
+`,
+			want: []testoptimization.Test{{Name: "test_case"}},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			pytest := staticPytestFixture(t, tt.source)
@@ -532,7 +540,7 @@ func TestPytestStaticFallback(t *testing.T) {
 		{"usefixtures non-literal name", "import pytest\n@pytest.mark.usefixtures(backend)\ndef test_case(): pass\n", "", ""},
 		{"usefixtures kwargs", "import pytest\n@pytest.mark.usefixtures(fixture='backend')\ndef test_case(): pass\n", "", ""},
 		{"bare usefixtures", "import pytest\n@pytest.mark.usefixtures\ndef test_case(): pass\n", "", ""},
-		{"pytest private api import", "from _pytest.monkeypatch import notset\ndef test_case(): pass\n", "", ""},
+		{"unresolvable pytest private api import", "from _pytest.monkeypatch import notset_v2_removed_symbol\ndef test_case(): pass\n", "", ""},
 		{"collected class through foreign ancestry", "import datetime\nclass Base(datetime.tzinfo):\n    def helper(self): pass\nclass TestD(Base):\n    def test_case(self): pass\n", "", ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -652,9 +660,9 @@ func TestPytestStaticFallbackReasonDetails(t *testing.T) {
 			contains: []string{"pytest_plugins"},
 		},
 		{
-			name:     "pytest private api",
-			source:   "from _pytest.monkeypatch import notset\n",
-			contains: []string{"_pytest", "tests/test_sample.py"},
+			name:     "unresolvable pytest private api",
+			source:   "from _pytest.monkeypatch import notset_v2_removed_symbol\n",
+			contains: []string{"_pytest.monkeypatch.notset_v2_removed_symbol", "does not provide", "tests/test_sample.py"},
 		},
 		{
 			name:     "conftest hook",

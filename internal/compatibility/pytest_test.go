@@ -52,6 +52,7 @@ def use_fixture(request): return request.param
 `)
 	writeFixture(t, root, "tests/test_cases.py", `import pytest
 import side_effect
+from _pytest import monkeypatch
 
 def check_collected(): pass
 

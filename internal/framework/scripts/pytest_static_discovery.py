@@ -111,6 +111,50 @@ DEFAULT_FUNCTION_PATTERNS = ["test"]
 DEFAULT_CLASS_PATTERNS = ["Test"]
 MAX_CASES = 100_000
 
+_PRIVATE_IMPORT_RESOLVED = {}
+
+
+def private_import_resolves(module_name, symbol=None):
+    """Whether a module-level _pytest import resolves in the installed pytest.
+
+    Verified from the same interpreter that runs real pytest collection, so
+    the answer matches exactly what collection would do: a resolvable private
+    import executes fine at collection (inventory-neutral), while a missing
+    symbol drops the whole module from real discovery.
+    """
+    key = (module_name, symbol)
+    if key in _PRIVATE_IMPORT_RESOLVED:
+        return _PRIVATE_IMPORT_RESOLVED[key]
+    resolved = False
+    try:
+        # The helper runs isolated, which ignores PYTHONPATH; restore it so
+        # resolution matches a real pytest run.
+        entries = [entry for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep) if entry]
+        for entry in reversed(entries):
+            if entry not in sys.path:
+                sys.path.insert(0, entry)
+        import importlib
+        import importlib.util
+        try:
+            spec = importlib.util.find_spec(module_name)
+        except (ImportError, AttributeError, ValueError):
+            spec = None
+        resolved = spec is not None
+        if resolved and symbol is not None:
+            try:
+                resolved = importlib.util.find_spec(module_name + "." + symbol) is not None
+            except (ImportError, AttributeError, ValueError):
+                resolved = False
+            if not resolved:
+                try:
+                    resolved = hasattr(importlib.import_module(module_name), symbol)
+                except Exception:
+                    resolved = False
+    except Exception:
+        resolved = False
+    _PRIVATE_IMPORT_RESOLVED[key] = resolved
+    return resolved
+
 
 def normalize_plugin_name(name):
     return re.sub(r"[-_.]+", "-", name).lower()
@@ -724,7 +768,17 @@ def scan_module(tree, is_conftest):
             for alias in node.names:
                 bound = alias.asname or alias.name.split(".")[0]
                 if alias.name.split(".")[0] == "_pytest" or module.split(".")[0] == "_pytest":
-                    raise Unsupported("imports pytest private API (_pytest), which can break collection on the installed pytest version")
+                    if isinstance(node, ast.Import):
+                        target, symbol = alias.name, None
+                    else:
+                        target, symbol = module, alias.name
+                    if not private_import_resolves(target, symbol):
+                        raise Unsupported("imports pytest private API (" + target +
+                                          (("." + symbol) if symbol else "") +
+                                          "), which the installed pytest does not provide; "
+                                          "pytest collection would drop this module "
+                                          "(migrate to the public pytest API)")
+                    continue
                 if alias.name == "*":
                     raise Unsupported("wildcard import is not supported: from " + module + " import *")
                 if isinstance(node, ast.ImportFrom) and bound.startswith(("test", "Test", "pytest_")):
@@ -946,7 +1000,17 @@ def build_class(node, collector, scan, contexts):
             for alias in stmt.names:
                 bound = alias.asname or alias.name.split(".")[0]
                 if alias.name.split(".")[0] == "_pytest" or module.split(".")[0] == "_pytest":
-                    raise Unsupported("imports pytest private API (_pytest), which can break collection on the installed pytest version")
+                    if isinstance(stmt, ast.Import):
+                        target, symbol = alias.name, None
+                    else:
+                        target, symbol = module, alias.name
+                    if not private_import_resolves(target, symbol):
+                        raise Unsupported("imports pytest private API (" + target +
+                                          (("." + symbol) if symbol else "") +
+                                          "), which the installed pytest does not provide; "
+                                          "pytest collection would drop this module "
+                                          "(migrate to the public pytest API)")
+                    continue
                 if alias.name == "*":
                     raise Unsupported("wildcard import is not supported: from " + module + " import *")
                 if isinstance(stmt, ast.ImportFrom) and bound.startswith(("test", "Test", "pytest_")):
