@@ -531,6 +531,39 @@ func (m *waitForDiscoveryOptimizationClient) TimedOut() bool {
 	return m.timedOut
 }
 
+// settingsCheckedDiscoveryFramework blocks full discovery until the backend
+// settings goroutine has made its cancellation decision, so tests can
+// deterministically observe whether discovery was cancelled or kept running.
+type settingsCheckedDiscoveryFramework struct {
+	MockFramework
+	settingsChecked <-chan struct{}
+}
+
+func (m *settingsCheckedDiscoveryFramework) DiscoverTests(ctx context.Context, testFiles discovery.TestFileSet) ([]testoptimization.Test, error) {
+	select {
+	case <-m.settingsChecked:
+	case <-ctx.Done():
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return m.MockFramework.DiscoverTests(ctx, testFiles)
+}
+
+// settingsCheckingOptimizationClient signals settingsChecked from the backend
+// settings goroutine after its full discovery cancellation decision has been
+// made, coordinating with settingsCheckedDiscoveryFramework.
+type settingsCheckingOptimizationClient struct {
+	MockTestOptimizationClient
+	settingsChecked chan struct{}
+	once            sync.Once
+}
+
+func (m *settingsCheckingOptimizationClient) GetDisabledTests() map[string]bool {
+	m.once.Do(func() { close(m.settingsChecked) })
+	return m.MockTestOptimizationClient.GetDisabledTests()
+}
+
 // MockCIProvider mocks a CI provider
 type MockCIProvider struct {
 	ProviderName    string
@@ -1332,6 +1365,253 @@ func TestTestPlanner_PreparePlanningData_ForceFullDiscoveryKeepsRunningWithNoTIA
 	}
 	if _, ok := runner.testFileWeights["spec/discovered_spec.rb"]; !ok {
 		t.Fatalf("expected forced full discovery result to be runnable, got weights: %+v", runner.testFileWeights)
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_ForceFullDiscoveryRunsWhenTIASkippingDisabled(t *testing.T) {
+	tests := []struct {
+		name          string
+		tiaEnabled    bool
+		testsSkipping bool
+	}{
+		{name: "itr disabled", tiaEnabled: false, testsSkipping: true},
+		{name: "test skipping disabled", tiaEnabled: true, testsSkipping: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			setPlannerForceFullTestDiscovery(t, true)
+			logs := captureLogs(t)
+
+			tiaSkippableTest := testoptimization.Test{
+				Module: "rspec", Suite: "Suite1", Name: "tia_skipped", SuiteSourceFile: "spec/file1_spec.rb",
+			}
+			disabledTest := testoptimization.Test{
+				Module: "rspec", Suite: "Suite2", Name: "disabled", SuiteSourceFile: "spec/file2_spec.rb",
+			}
+			runnableTest := testoptimization.Test{
+				Module: "rspec", Suite: "Suite2", Name: "runnable", SuiteSourceFile: "spec/file2_spec.rb",
+			}
+
+			settingsChecked := make(chan struct{})
+			mockFramework := &settingsCheckedDiscoveryFramework{
+				MockFramework: MockFramework{
+					FrameworkName: "rspec",
+					TestFiles:     []string{"spec/file1_spec.rb", "spec/file2_spec.rb"},
+					Tests: []testoptimization.Test{
+						tiaSkippableTest,
+						disabledTest,
+						runnableTest,
+					},
+				},
+				settingsChecked: settingsChecked,
+			}
+			mockPlatform := &MockPlatform{
+				PlatformName: "ruby",
+				Tags:         map[string]string{"platform": "ruby"},
+				Framework:    mockFramework,
+			}
+			mockOptimizationClient := &settingsCheckingOptimizationClient{
+				MockTestOptimizationClient: MockTestOptimizationClient{
+					Settings: testOptimizationSettings(tt.tiaEnabled, tt.testsSkipping, true),
+					Skippables: testSkippables(map[string]bool{
+						tiaSkippableTest.DatadogTestId(): true,
+					}),
+					TestManagementTests: &api.TestManagementTestsResponseDataModules{
+						Modules: map[string]api.TestManagementTestsResponseDataSuites{
+							"rspec": {
+								Suites: map[string]api.TestManagementTestsResponseDataTests{
+									"Suite2": {
+										Tests: map[string]api.TestManagementTestsResponseDataTestProperties{
+											"disabled": {Properties: api.TestManagementTestsResponseDataTestPropertiesAttributes{Disabled: true}},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				settingsChecked: settingsChecked,
+			}
+
+			runner := NewWithDependencies(
+				mockPlatform, mockPlatform.Framework,
+				mockOptimizationClient,
+				newDefaultMockCIProviderDetector(),
+			)
+
+			if err := runner.PreparePlanningData(context.Background()); err != nil {
+				t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
+			}
+
+			if len(mockFramework.DiscoverTestsFiles) != 1 {
+				t.Fatalf("expected forced full discovery to run once, got %d calls", len(mockFramework.DiscoverTestsFiles))
+			}
+			if runner.tiaSkippingEnabled {
+				t.Fatal("expected TIA skipping to remain disabled")
+			}
+			// TIA skippables must not be applied while test skipping is disabled.
+			if _, ok := runner.testFileWeights["spec/file1_spec.rb"]; !ok {
+				t.Fatalf("expected TIA-skippable file to remain runnable, got weights: %+v", runner.testFileWeights)
+			}
+			if aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite1"}]; aggregate.NumTestsSkipped != 0 {
+				t.Fatalf("expected no TIA skips to be applied, got %+v", aggregate)
+			}
+			// Test management disabled tests keep their usual behavior.
+			if aggregate := runner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Suite2"}]; aggregate.NumTests != 2 || aggregate.NumTestsSkipped != 1 {
+				t.Fatalf("expected disabled test to be skipped within an otherwise runnable suite, got %+v", aggregate)
+			}
+			if _, ok := runner.testFileWeights["spec/file2_spec.rb"]; !ok {
+				t.Fatalf("expected mixed file to remain runnable, got weights: %+v", runner.testFileWeights)
+			}
+			report := runner.newPlanReportData(splitScore{})
+			if report.Planning.Skipping.DisabledTests != 1 {
+				t.Fatalf("expected one disabled test in report, got %+v", report.Planning.Skipping)
+			}
+			if !strings.Contains(logs.String(), "TIA or test skipping disabled; keeping forced full test discovery running") {
+				t.Fatalf("expected log about keeping forced discovery running, got: %s", logs.String())
+			}
+		})
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_CancelsFullDiscoveryWhenTIASkippingDisabled(t *testing.T) {
+	t.Chdir(t.TempDir())
+	logs := captureLogs(t)
+
+	settingsChecked := make(chan struct{})
+	mockFramework := &settingsCheckedDiscoveryFramework{
+		MockFramework: MockFramework{
+			FrameworkName: "rspec",
+			TestFiles:     []string{"spec/file1_spec.rb", "spec/file2_spec.rb"},
+		},
+		settingsChecked: settingsChecked,
+	}
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mockFramework,
+	}
+	mockOptimizationClient := &settingsCheckingOptimizationClient{
+		MockTestOptimizationClient: MockTestOptimizationClient{
+			Settings: testOptimizationSettings(false, true, true),
+		},
+		settingsChecked: settingsChecked,
+	}
+
+	runner := NewWithDependencies(
+		mockPlatform, mockPlatform.Framework,
+		mockOptimizationClient,
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := runner.PreparePlanningData(context.Background()); err != nil {
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
+	}
+
+	if len(runner.suiteAggregates) != 0 {
+		t.Fatalf("expected cancelled full discovery to leave no suite aggregates, got %+v", runner.suiteAggregates)
+	}
+	for _, file := range []string{"spec/file1_spec.rb", "spec/file2_spec.rb"} {
+		if _, ok := runner.testFileWeights[file]; !ok {
+			t.Fatalf("expected fast discovery fallback to keep %s runnable, got %+v", file, runner.testFileWeights)
+		}
+	}
+	if !strings.Contains(logs.String(), "TIA or test skipping disabled, cancelling full test discovery") {
+		t.Fatalf("expected cancellation log when full discovery is not forced, got: %s", logs.String())
+	}
+}
+
+func TestTestPlanner_PreparePlanningData_ForceFullDiscoveryWithSkippingDisabledWritesReusableCache(t *testing.T) {
+	t.Chdir(t.TempDir())
+	mockDiscoveryCacheGit(t, mockDiscoveryCacheGitRunner{head: "head-sha"})
+	setPlannerForceFullTestDiscovery(t, true)
+
+	pattern := "spec/**/*_spec.rb"
+	cachedTest := testoptimization.Test{
+		Module: "rspec", Suite: "Cart", Name: "adds item", SuiteSourceFile: "spec/cart_spec.rb",
+	}
+
+	// Main branch run: test skipping is disabled, but full discovery is forced so
+	// the discovery cache is written for PRs.
+	settingsChecked := make(chan struct{})
+	mainFramework := &settingsCheckedDiscoveryFramework{
+		MockFramework: MockFramework{
+			FrameworkName:    "rspec",
+			TestPatternValue: pattern,
+			Tests:            []testoptimization.Test{cachedTest},
+		},
+		settingsChecked: settingsChecked,
+	}
+	mainPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    mainFramework,
+	}
+	mainRunner := NewWithDependencies(
+		mainPlatform, mainPlatform.Framework,
+		&settingsCheckingOptimizationClient{
+			MockTestOptimizationClient: MockTestOptimizationClient{
+				Settings:   testOptimizationSettings(false, true, false),
+				Skippables: testSkippables(map[string]bool{cachedTest.DatadogTestId(): true}),
+			},
+			settingsChecked: settingsChecked,
+		},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := mainRunner.PreparePlanningData(context.Background()); err != nil {
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
+	}
+	if len(mainFramework.DiscoverTestsFiles) != 1 {
+		t.Fatalf("expected forced full discovery to run once, got %d calls", len(mainFramework.DiscoverTestsFiles))
+	}
+	metadata, err := readDiscoveryCacheMetadata(discovery.TestsFilePath)
+	if err != nil {
+		t.Fatalf("expected forced full discovery to write reusable cache metadata, got: %v", err)
+	}
+	if metadata.SourceCommit != "head-sha" || metadata.TestsLocation != pattern {
+		t.Fatalf("unexpected cache metadata: %+v", metadata)
+	}
+
+	// PR run: test skipping is enabled and full discovery is not forced; the
+	// cache written on main must be reused instead of collecting tests again.
+	setPlannerForceFullTestDiscovery(t, false)
+	prFramework := &MockFramework{
+		FrameworkName:    "rspec",
+		TestPatternValue: pattern,
+		Tests:            []testoptimization.Test{{Module: "rspec", Suite: "Live", Name: "test", SuiteSourceFile: "spec/live_spec.rb"}},
+		OnDiscoverTests: func() {
+			t.Fatal("PR run should reuse the discovery cache instead of running full discovery")
+		},
+	}
+	prPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    prFramework,
+	}
+	prRunner := NewWithDependencies(
+		prPlatform, prPlatform.Framework,
+		&MockTestOptimizationClient{
+			Settings:   testOptimizationSettings(true, true, false),
+			Skippables: testSkippables(map[string]bool{cachedTest.DatadogTestId(): true}),
+		},
+		newDefaultMockCIProviderDetector(),
+	)
+
+	if err := prRunner.PreparePlanningData(context.Background()); err != nil {
+		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
+	}
+	if len(prFramework.DiscoverTestsFiles) != 0 {
+		t.Fatalf("expected PR run to reuse cached discovery, got calls: %+v", prFramework.DiscoverTestsFiles)
+	}
+	report := prRunner.newPlanReportData(splitScore{})
+	if !report.Planning.Discovery.Cache.Used {
+		t.Fatalf("expected PR run to report cache usage, got %+v", report.Planning.Discovery.Cache)
+	}
+	aggregate := prRunner.suiteAggregates[testSuiteKey{Module: "rspec", Suite: "Cart"}]
+	if aggregate.NumTests != 1 || aggregate.NumTestsSkipped != 1 {
+		t.Fatalf("cached aggregate = %+v, want one skipped test", aggregate)
 	}
 }
 
