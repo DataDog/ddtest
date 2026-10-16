@@ -1091,6 +1091,12 @@ def module_tests(tree, collector):
         return
 
     def emit_class(context, prefix, inherited_usefixtures):
+        # Never-collected classes are inert, including imported bases such as
+        # datetime.tzinfo or framework views: pytest only merges the class
+        # hierarchy of classes it actually collects, so no ancestor analysis
+        # may reject them.
+        if not context.collectable or context.skip:
+            return
         # Class pytestmark follows getattr/MRO semantics: the nearest class
         # in the linearization that assigns pytestmark wins, and it applies to
         # the whole collection subtree.
@@ -1102,8 +1108,6 @@ def module_tests(tree, collector):
                     return
                 mark_fixtures = candidate.pytestmark_fixtures
                 break
-        if not context.collectable or context.skip:
-            return
         # Fixture id parts are ordered closest-first: this class's pytestmark,
         # then its decorators, then enclosing scopes.
         extras = mark_fixtures + context.usefixtures + inherited_usefixtures

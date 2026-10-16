@@ -453,6 +453,22 @@ class TestDerivedSkip(MarkedBase):
 `,
 			want: []testoptimization.Test{},
 		},
+		{
+			name: "foreign-based helper classes are inert",
+			source: `import datetime
+
+class FixedOffset(datetime.tzinfo):
+    def utcoffset(self, dt): pass
+
+class MyError(Exception): pass
+
+class Base:
+    def helper(self): pass
+
+def test_case(): pass
+`,
+			want: []testoptimization.Test{{Name: "test_case"}},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			pytest := staticPytestFixture(t, tt.source)
@@ -507,6 +523,7 @@ func TestPytestStaticFallback(t *testing.T) {
 		{"usefixtures kwargs", "import pytest\n@pytest.mark.usefixtures(fixture='backend')\ndef test_case(): pass\n", "", ""},
 		{"bare usefixtures", "import pytest\n@pytest.mark.usefixtures\ndef test_case(): pass\n", "", ""},
 		{"pytest private api import", "from _pytest.monkeypatch import notset\ndef test_case(): pass\n", "", ""},
+		{"collected class through foreign ancestry", "import datetime\nclass Base(datetime.tzinfo):\n    def helper(self): pass\nclass TestD(Base):\n    def test_case(self): pass\n", "", ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			pytest := staticPytestFixture(t, "def test_before_uncertainty(): pass\n"+tt.source)

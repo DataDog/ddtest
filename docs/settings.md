@@ -109,7 +109,9 @@ tests/test_billing.py:42)`), and successful static discovery logs
   imports of pytest private API (`_pytest.*`, which can break collection on
   the installed pytest version), `parametrize` inside `pytestmark`, custom
   (non-`pytest.mark.*`) decorators, `property` test functions, metaclass
-  keywords, cross-module inheritance, imported tests, wildcard imports,
+  keywords, cross-module inheritance anywhere in the ancestry of a collected
+  class (imported bases on never-collected helper classes are inert and fine),
+  imported tests, wildcard imports,
   duplicate definitions, and executable module-level statements.
 - Auto-loaded plugins outside a curated inventory-neutral list (pytest-cov,
   pytest-xdist, pytest-mock, pytest-sugar, and other execution, reporting,
