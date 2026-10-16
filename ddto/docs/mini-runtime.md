@@ -461,7 +461,10 @@ read [source maintenance](maintenance.md) and the
 ### Experimental file coverage
 
 `ddto test --experimental-file-coverage` takes per-test coverage from file
-marks instead of Go's coverage counters. Test Impact Analysis skips by file,
+marks instead of Go's coverage counters. `DD_CIVISIBILITY_EXPERIMENTAL_FILE_COVERAGE`
+enables it without the flag: `true` for the default, `parallel` for
+`=parallel`. When the flag is given it decides, and a value that is neither a
+boolean nor `parallel` gets a warning and is ignored. Test Impact Analysis skips by file,
 so a mark per source file is enough. Per-test coverage then works without
 `-cover`, and it reaches every package of the repository that a test runs,
 not only the packages that `-coverpkg` names.

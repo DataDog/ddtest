@@ -331,6 +331,33 @@ func TestFileParallelB(t *testing.T) {
 	}
 }
 
+// DD_CIVISIBILITY_EXPERIMENTAL_FILE_COVERAGE enables file coverage without
+// the flag, with parallel for =parallel; the flag decides when it is given,
+// and a value that is neither a boolean nor parallel only warns.
+func TestMiniFileCoverageEnvironment(t *testing.T) {
+	dir, driver := prepareMiniFixture(t)
+	writeFileCoverageFixture(t, dir)
+	for _, tc := range []struct {
+		name, value, want string
+		flags             []string
+	}{
+		{"true", "true", "file coverage installed=true", nil},
+		{"parallel", "parallel", "parallel=true", nil},
+		{"flag decides", "parallel", "parallel=false", []string{"--experimental-file-coverage"}},
+		{"invalid", "sometimes", `DD_CIVISIBILITY_EXPERIMENTAL_FILE_COVERAGE="sometimes" is neither a boolean nor parallel; ignoring it`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := filepath.Join(t.TempDir(), executableName("env.test"))
+			args := append(append([]string{"test", "--runtime=mini"}, tc.flags...), "-c", "-o", bin, ".")
+			env := testEnv("DD_CIVISIBILITY_ENABLED=false", "DD_TRACE_DEBUG=true", "DD_CIVISIBILITY_EXPERIMENTAL_FILE_COVERAGE="+tc.value)
+			out, stderr, code := command(t, dir, env, driver, args...)
+			if code != 0 || !strings.Contains(stderr, tc.want) {
+				t.Fatalf("exit %d, stderr lacks %q:\n%s\n%s", code, tc.want, out, stderr)
+			}
+		})
+	}
+}
+
 // File marks keep go test's output and its test cache: a second run is
 // cached, and a run with marks does not reuse the result of a run without.
 func TestMiniFileCoverageTestCache(t *testing.T) {

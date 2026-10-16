@@ -1821,6 +1821,15 @@ log worker functions, and Mini's background and checkpoint test-cycle senders, p
 filters without ignoring `net/http` or a user goroutine snapshot. Preserve worker names together with
 `internal/instrument/goleak.go` when moving these functions.
 
+That asynchronous feature initialization can still be running when the next
+ported test starts. It runs `additionalFeaturesInitializationOnce` while it
+holds `additionalFeaturesInitializationMu`. A test helper that replaces the
+Once (`resetCIVisibilityStateForTesting`,
+`disableAdditionalFeaturesForBootstrapTest`) takes that mutex first: replacing
+the Once while the initialization runs zeroes the mutex that the
+initialization then unlocks, and Go stops with "sync: unlock of unlocked
+mutex".
+
 Checks: `TestDeferredDeliveryParityMatrix` (16 policy combinations),
 `TestDeferredDeliveryTestifyParity` (seven suite combinations),
 `TestMiniGoleakIntegration` (normal/deferred, covered library, race, external

@@ -17,7 +17,7 @@
       "source": "internal/civisibility/integrations/civisibility_features_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_features_test.go",
       "source_sha256": "b305b518346a7916864815adf9b5dd0ab257ccc861bc8f4cff21d67a36e9d32e",
-      "adapted_sha256": "9c5bf66af78f1bbf5e86816c7ad03f7f578a49a085ef573a59beb2c062b36459",
+      "adapted_sha256": "c449fa51f49634f0905e1882f54811c0b212eaf472e07d011fe577233d4fec62",
       "kind": "full",
       "adaptation": "Internal import relocation only; standard-library assertion helpers"
     },
@@ -529,7 +529,7 @@
       "source": "internal/civisibility/integrations/civisibility_parent_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/civisibility_parent_test.go",
       "source_sha256": "87c77b91fe4ff0304f4089f0f4815d9935418b6b5537bdfca300d8736956a508",
-      "adapted_sha256": "fd1922a59387d7fe0747cf83c04d80f35c5cdab0bd5b9680ce1b958fb3f6bb1d",
+      "adapted_sha256": "1e5f5b64feb130959852cc98afb82bdc940a7dcf3d4d528bf2e24f25c2cced1f",
       "kind": "full",
       "adaptation": "APM mock startup is replaced by a writer-free native CI bootstrap callback; assertions preserved; standard-library assertion helpers; the shared restore waits for the bootstrap's tracked background work"
     },

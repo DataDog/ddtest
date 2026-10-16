@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -39,6 +40,30 @@ type CLIOptions struct {
 	// (--experimental-file-coverage=parallel): each test then reports the
 	// files that ran during its window, its parallel neighbors' too.
 	FileCoverage, FileCoverageParallel bool
+}
+
+// FileCoverageEnv enables --experimental-file-coverage without the flag:
+// true for one test at a time, parallel for =parallel. The flag, when given,
+// decides instead.
+const FileCoverageEnv = "DD_CIVISIBILITY_EXPERIMENTAL_FILE_COVERAGE"
+
+// WithFileCoverageEnvironment applies FileCoverageEnv's value to options that
+// do not set --experimental-file-coverage. It returns why it ignores a value
+// that is not a boolean or parallel, or "".
+func (o CLIOptions) WithFileCoverageEnvironment(value string) (CLIOptions, string) {
+	if o.FileCoverage || value == "" {
+		return o, ""
+	}
+	if value == "parallel" {
+		o.FileCoverage, o.FileCoverageParallel = true, true
+		return o, ""
+	}
+	enabled, err := strconv.ParseBool(value)
+	if err != nil {
+		return o, fmt.Sprintf("%s=%q is neither a boolean nor parallel; ignoring it", FileCoverageEnv, value)
+	}
+	o.FileCoverage = enabled
+	return o, ""
 }
 
 // DefaultCLIOptions are the options without any ddto flag.

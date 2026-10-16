@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "ec58cee9bd9238bfe8ac44d313e51a660be7088356bb4b0067c90c7334200383",
+      "sha256": "892712146509275aa583668fca1582eca68ca2b0c5aedce78ff15465618c5772",
       "role": "local"
     },
     {
@@ -35,7 +35,7 @@
     },
     {
       "path": "TESTS.json",
-      "sha256": "375c5d93dee38ef7371b41dbcc25bde282f4b564a672ada577876325f0d2ad7f",
+      "sha256": "acf95d9507e16c032d33375f70eecaddb6e9bdb1be01ec25710b601e89b3779a",
       "role": "local"
     },
     {
@@ -252,7 +252,7 @@
     },
     {
       "path": "civisibility/integrations/civisibility_features_test.go",
-      "sha256": "9c5bf66af78f1bbf5e86816c7ad03f7f578a49a085ef573a59beb2c062b36459",
+      "sha256": "c449fa51f49634f0905e1882f54811c0b212eaf472e07d011fe577233d4fec62",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/civisibility_features_test.go",
       "source_sha256": "b305b518346a7916864815adf9b5dd0ab257ccc861bc8f4cff21d67a36e9d32e"
@@ -278,7 +278,7 @@
     },
     {
       "path": "civisibility/integrations/civisibility_parent_test.go",
-      "sha256": "fd1922a59387d7fe0747cf83c04d80f35c5cdab0bd5b9680ce1b958fb3f6bb1d",
+      "sha256": "1e5f5b64feb130959852cc98afb82bdc940a7dcf3d4d528bf2e24f25c2cced1f",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/civisibility_parent_test.go",
       "source_sha256": "87c77b91fe4ff0304f4089f0f4815d9935418b6b5537bdfca300d8736956a508"

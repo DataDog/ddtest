@@ -128,3 +128,37 @@ func TestTestCommand(t *testing.T) {
 		}
 	}
 }
+
+// DD_CIVISIBILITY_EXPERIMENTAL_FILE_COVERAGE enables file coverage when the
+// flag is not given; the flag decides when it is.
+func TestFileCoverageEnvironment(t *testing.T) {
+	flag := func(args ...string) CLIOptions {
+		t.Helper()
+		options, _, err := ParseCLIArgs(append(args, "."))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return options
+	}
+	for _, tc := range []struct {
+		name                   string
+		options                CLIOptions
+		value                  string
+		fileCoverage, parallel bool
+		warns                  bool
+	}{
+		{"unset", flag(), "", false, false, false},
+		{"true", flag(), "true", true, false, false},
+		{"1", flag(), "1", true, false, false},
+		{"parallel", flag(), "parallel", true, true, false},
+		{"false", flag(), "false", false, false, false},
+		{"invalid", flag(), "sometimes", false, false, true},
+		{"flag over parallel", flag("--experimental-file-coverage"), "parallel", true, false, false},
+		{"parallel flag over false", flag("--experimental-file-coverage=parallel"), "false", true, true, false},
+	} {
+		got, warning := tc.options.WithFileCoverageEnvironment(tc.value)
+		if got.FileCoverage != tc.fileCoverage || got.FileCoverageParallel != tc.parallel || (warning != "") != tc.warns {
+			t.Errorf("%s: file coverage %t, parallel %t, warning %q", tc.name, got.FileCoverage, got.FileCoverageParallel, warning)
+		}
+	}
+}

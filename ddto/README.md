@@ -171,6 +171,8 @@ More options follow the same rule:
   coverage flags or with `-race`, ddto warns and keeps Go's counters.
   `--experimental-file-coverage=parallel` also keeps `t.Parallel()`: each test
   then reports what ran during its window, its parallel neighbors' code too.
+  Without the flag, `DD_CIVISIBILITY_EXPERIMENTAL_FILE_COVERAGE=true` or
+  `=parallel` does the same; the flag decides when both are set.
   See [Experimental file coverage](docs/mini-runtime.md#experimental-file-coverage).
 
 `ddto` reports one test session per command: every package's tests report in

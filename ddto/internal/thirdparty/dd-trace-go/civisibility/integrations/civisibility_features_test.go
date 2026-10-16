@@ -7,7 +7,6 @@ package integrations
 
 import (
 	"io"
-	"sync"
 	"testing"
 
 	assert "github.com/tonyredondo/dd-ci-testing-poc/internal/testassert"
@@ -20,8 +19,7 @@ func TestAdditionalFeaturesInitializationPublishesLockFreeFastPath(t *testing.T)
 	resetCIVisibilityStateForTesting()
 	t.Cleanup(resetCIVisibilityStateForTesting)
 
-	additionalFeaturesInitializationOnce = sync.Once{}
-	additionalFeaturesInitializationOnce.Do(func() {})
+	disableAdditionalFeaturesForBootstrapTest()
 	require.False(t, additionalFeaturesInitialized.Load())
 
 	ensureAdditionalFeaturesInitialization("")

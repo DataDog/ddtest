@@ -809,6 +809,10 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	}
 	applyGoLauncher(ctx, &opts)
 	opts.panicHook = cli.PanicHook
+	cli, warning := cli.WithFileCoverageEnvironment(os.Getenv(FileCoverageEnv))
+	if warning != "" {
+		fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN: "+warning)
+	}
 	opts.fileCoverage, opts.fileCoverageParallel = cli.FileCoverage, cli.FileCoverageParallel
 	dir := workingDirectory(cwd, opts)
 	debug.printf("working_directory=%q package_patterns=%d build_flags=%d", dir, len(opts.packages), len(opts.buildFlags))

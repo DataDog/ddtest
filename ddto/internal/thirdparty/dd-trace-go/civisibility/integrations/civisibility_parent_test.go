@@ -79,7 +79,12 @@ func restoreCIVisibilityBootstrapForTesting() {
 }
 
 // disableAdditionalFeaturesForBootstrapTest prevents bootstrap tests from starting asynchronous backend setup.
+// An earlier bootstrap's background initialization can still be inside the
+// Once; it holds the mutex there, and replacing the Once under it would
+// unlock an unlocked mutex when it returns.
 func disableAdditionalFeaturesForBootstrapTest() {
+	additionalFeaturesInitializationMu.Lock()
+	defer additionalFeaturesInitializationMu.Unlock()
 	additionalFeaturesInitializationOnce = sync.Once{}
 	additionalFeaturesInitializationOnce.Do(func() {})
 }
