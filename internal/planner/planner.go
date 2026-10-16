@@ -366,8 +366,15 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 			}
 
 			if !tiaSkippingEnabled {
-				slog.Info("TIA or test skipping disabled, cancelling full test discovery")
-				cancelDiscovery()
+				// Forced full discovery keeps running even when backend settings
+				// disable TIA or test skipping, so the discovery cache can still
+				// be written for later runs (e.g. on a default branch).
+				if forceFullTestDiscovery {
+					slog.Info("TIA or test skipping disabled; keeping forced full test discovery running")
+				} else {
+					slog.Info("TIA or test skipping disabled, cancelling full test discovery")
+					cancelDiscovery()
+				}
 			}
 		}
 
