@@ -144,14 +144,27 @@ func (t *tslvTestSuite) SetError(options ...ErrorOption) {
 
 // CreateTest creates a new test within the suite.
 func (t *tslvTestSuite) CreateTest(name string, options ...TestStartOption) Test {
-	defaults := &tslvTestStartOptions{}
-	for _, opt := range options {
-		opt(defaults)
-	}
+	// Options take the address of their configuration, which moves it to the
+	// heap: testStartOptions allocates it only when options are given, and
+	// tests start without any.
+	defaults := testStartOptions(options)
 
 	if defaults.startTime.IsZero() {
 		defaults.startTime = time.Now()
 	}
 
 	return createTest(t, name, defaults.startTime)
+}
+
+// testStartOptions applies options to a configuration that it allocates only
+// when there are options.
+func testStartOptions(options []TestStartOption) tslvTestStartOptions {
+	if len(options) == 0 {
+		return tslvTestStartOptions{}
+	}
+	defaults := &tslvTestStartOptions{}
+	for _, opt := range options {
+		opt(defaults)
+	}
+	return *defaults
 }

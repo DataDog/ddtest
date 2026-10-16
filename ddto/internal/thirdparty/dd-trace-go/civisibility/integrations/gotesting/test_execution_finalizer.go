@@ -41,7 +41,7 @@ func finalizeInstrumentedTestExecution(
 		finalExec := isFinalExecution(true, false, execMeta, duration)
 		if finalExec {
 			finalStatus := calculateFinalStatus(execMeta.anyExecutionPassed, true, false, execMeta.isQuarantined, execMeta.isDisabled, execMeta.isAttemptToFix)
-			test.SetTag(constants.TestFinalStatus, finalStatus)
+			test.SetTag(constants.TestFinalStatus, finalStatusValue(finalStatus))
 		}
 		if execMeta.isARetry && finalExec {
 			if execMeta.allRetriesFailed {
@@ -67,7 +67,7 @@ func finalizeInstrumentedTestExecution(
 	case failed:
 		if finalExec {
 			finalStatus := calculateFinalStatus(execMeta.anyExecutionPassed, true, false, execMeta.isQuarantined, execMeta.isDisabled, execMeta.isAttemptToFix)
-			test.SetTag(constants.TestFinalStatus, finalStatus)
+			test.SetTag(constants.TestFinalStatus, finalStatusValue(finalStatus))
 		}
 		if execMeta.isARetry && finalExec {
 			if execMeta.allRetriesFailed {
@@ -88,7 +88,7 @@ func finalizeInstrumentedTestExecution(
 	case skipped:
 		if finalExec {
 			finalStatus := calculateFinalStatus(execMeta.anyExecutionPassed, execMeta.anyExecutionFailed, true, execMeta.isQuarantined, execMeta.isDisabled, execMeta.isAttemptToFix)
-			test.SetTag(constants.TestFinalStatus, finalStatus)
+			test.SetTag(constants.TestFinalStatus, finalStatusValue(finalStatus))
 		}
 		if execMeta.isAttemptToFix && execMeta.isARetry && finalExec {
 			test.SetTag(constants.TestAttemptToFixPassed, "false")
@@ -101,7 +101,7 @@ func finalizeInstrumentedTestExecution(
 	default:
 		if finalExec {
 			finalStatus := calculateFinalStatus(true, execMeta.anyExecutionFailed, false, execMeta.isQuarantined, execMeta.isDisabled, execMeta.isAttemptToFix)
-			test.SetTag(constants.TestFinalStatus, finalStatus)
+			test.SetTag(constants.TestFinalStatus, finalStatusValue(finalStatus))
 		}
 		if execMeta.isAttemptToFix && execMeta.isARetry && finalExec {
 			if execMeta.allAttemptsPassed {
@@ -131,4 +131,19 @@ func logTestFinished(t *testing.T, duration time.Duration, terminal any) {
 	default:
 		log.Debug("gotesting: test finished name=%s status=pass duration=%s", t.Name(), duration)
 	}
+}
+
+// finalStatusValue returns a final status as an interface. Converting a
+// string variable to one allocates; the known statuses are constants, which
+// do not.
+func finalStatusValue(status string) any {
+	switch status {
+	case constants.TestStatusPass:
+		return constants.TestStatusPass
+	case constants.TestStatusFail:
+		return constants.TestStatusFail
+	case constants.TestStatusSkip:
+		return constants.TestStatusSkip
+	}
+	return status
 }

@@ -190,10 +190,10 @@ func (t *tslvTest) closeLocked(status TestResultStatus, options ...TestCloseOpti
 	t.ended = true
 	openTests.Delete(t)
 
-	defaults := &tslvTestCloseOptions{}
-	for _, opt := range options {
-		opt(defaults)
-	}
+	// Options take the address of their configuration, which moves it to the
+	// heap: testCloseOptions allocates it only when options are given, and a
+	// passing test closes without any.
+	defaults := testCloseOptions(options)
 
 	if defaults.finishTime.IsZero() {
 		defaults.finishTime = time.Now()
@@ -492,4 +492,17 @@ func testOperationName(framework string) string {
 		return "test"
 	}
 	return strings.ToLower(framework) + ".test"
+}
+
+// testCloseOptions applies options to a configuration that it allocates only
+// when there are options.
+func testCloseOptions(options []TestCloseOption) tslvTestCloseOptions {
+	if len(options) == 0 {
+		return tslvTestCloseOptions{}
+	}
+	defaults := &tslvTestCloseOptions{}
+	for _, opt := range options {
+		opt(defaults)
+	}
+	return *defaults
 }

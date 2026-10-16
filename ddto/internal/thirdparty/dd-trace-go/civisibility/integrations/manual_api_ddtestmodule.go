@@ -160,6 +160,12 @@ func (t *tslvTestModule) GetOrCreateSuite(name string, options ...TestSuiteStart
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
 
+	// An existing suite ignores the options' values and the start time.
+	// Without options, as for every test after the first, it returns at once
+	// instead of allocating them and reading the clock.
+	if suite, ok := t.suites[name]; ok && len(options) == 0 {
+		return suite
+	}
 	defaults := &tslvTestSuiteStartOptions{}
 	for _, o := range options {
 		o(defaults)

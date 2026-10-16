@@ -1713,6 +1713,21 @@ of them without changing any event:
   former list, so the event is the same. A test's `tags` field stays nil: no
   event inherits it. The new lines replace the list's lines one for one, so no
   line moves, and the `context` and `slices` imports keep their uses.
+- Called without options, `GetOrCreateModule` and `GetOrCreateSuite` return an
+  existing module or suite before they allocate options or read the clock,
+  which only a new one uses; given options still run. `CreateTest` and
+  `closeLocked` allocate their configuration only when options are given
+  (`testStartOptions` and `testCloseOptions`, at the end of their files):
+  options take its address, which moves it to the heap. An ordinary test
+  starts without any, and closes without any when it passes and its close is
+  not deferred for process retries. Examples, fuzz roots, benchmarks and
+  deferred closes pass times, so they keep these allocations. These functions return before a test's body
+  runs or start after it, so their frames are not in the error stacks that
+  parity compares. `finalizeInstrumentedTestExecution` sets the final status
+  through `finalStatusValue`, which returns the known statuses as constants
+  instead of converting a string variable to `any`; its four calls replace the
+  original lines. Checks: `TestExistingModulesAndSuitesAllocateNothing`,
+  `TestTestOptionsWithoutOptionsAllocateNothing` and `TestFinalStatusValue`.
 
 CI string snapshots use the revision/escaped-map contract below; numeric CI
 metrics remain fresh per call. Checks: `TestTestifyLookupMatchesReflection`,

@@ -280,6 +280,12 @@ func (t *tslvTestSession) GetOrCreateModule(name string, options ...TestModuleSt
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
 
+	// An existing module ignores the options' values, the framework and the
+	// start time. Without options, as for every test after the first, it
+	// returns at once instead of allocating them and reading the clock.
+	if mod, ok := t.modules[name]; ok && len(options) == 0 {
+		return mod
+	}
 	defaults := &tslvTestModuleStartOptions{}
 	for _, f := range options {
 		f(defaults)
