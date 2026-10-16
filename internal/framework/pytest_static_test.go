@@ -812,6 +812,9 @@ func TestPytestStaticDiscoveryGateAndFallback(t *testing.T) {
 				if _, err := os.Stat(discovery.TestsFilePath); !os.IsNotExist(err) {
 					t.Fatalf("static inventory must not be cached: %v", err)
 				}
+				if !strings.Contains(logs.String(), "Pytest static discovery succeeded") || !strings.Contains(logs.String(), "duration=") {
+					t.Fatalf("expected success log with duration, got: %s", logs.String())
+				}
 			}
 		})
 	}

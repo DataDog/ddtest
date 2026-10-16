@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -25,14 +26,16 @@ var pytestStaticDiscoveryScript string
 // Static discovery results deliberately do not populate the discovery cache;
 // results produced by the fallback collector still use the normal cache.
 func (p *PyTest) tryStaticDiscovery(ctx context.Context, testFiles discovery.TestFileSet, env map[string]string) ([]testoptimization.Test, bool) {
+	startTime := time.Now()
 	tests, err := p.discoverTestsStatically(ctx, testFiles, env)
 	if err != nil {
 		if ctx.Err() == nil {
-			slog.Warn("Pytest static discovery unavailable; falling back to pytest collection", "reason", err)
+			slog.Warn("Pytest static discovery unavailable; falling back to pytest collection",
+				"reason", err, "duration", time.Since(startTime))
 		}
 		return nil, false
 	}
-	slog.Info("Pytest static discovery succeeded", "count", len(tests))
+	slog.Info("Pytest static discovery succeeded", "count", len(tests), "duration", time.Since(startTime))
 	return tests, true
 }
 

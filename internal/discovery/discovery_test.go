@@ -393,6 +393,32 @@ func TestDiscoverTestsReturnsParseError(t *testing.T) {
 	}
 }
 
+func TestDiscoverTestsLogsDuration(t *testing.T) {
+	logs := captureDiscoveryLogs(t)
+	root := t.TempDir()
+	t.Chdir(root)
+
+	if err := os.MkdirAll(filepath.Dir(TestsFilePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(TestsFilePath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests, err := DiscoverTests(context.Background(), successfulDiscoveryExecutor{}, "bundle", []string{"exec", "rspec"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 0 {
+		t.Fatalf("expected no tests, got %d", len(tests))
+	}
+
+	output := logs.String()
+	if !strings.Contains(output, "Finished test discovery") || !strings.Contains(output, "duration=") {
+		t.Fatalf("expected finished discovery log with duration, got: %s", output)
+	}
+}
+
 func TestDiscoveryCommandLogValueShortCommand(t *testing.T) {
 	got := discoveryCommandLogValue("bundle", []string{"exec", "rspec"})
 	if got != "bundle exec rspec" {
