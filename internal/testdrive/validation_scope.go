@@ -32,6 +32,35 @@ func supportsValidationFramework(name string) bool {
 	return false
 }
 
+// Every selected project needs every feature, including explicit unsupported
+// results. A partial list cannot certify a complete validation.
+func featureChecksPassed(framework string, features []featureResult) bool {
+	projects := map[string]map[string]bool{}
+	for _, feature := range features {
+		if !featureSatisfied(framework, feature) {
+			return false
+		}
+		if projects[feature.Project] == nil {
+			projects[feature.Project] = map[string]bool{}
+		}
+		projects[feature.Project][feature.Name] = true
+	}
+	if !supportsValidationFramework(framework) {
+		return true
+	}
+	if len(projects) == 0 {
+		return false
+	}
+	for _, features := range projects {
+		for _, name := range jestFeatures {
+			if !features[name] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func hasValidationPair(result validationResult) bool {
 	if result.CheckOnly {
 		return false
@@ -72,23 +101,6 @@ func selectedValidation(result validationResult) verdict {
 	}
 	if result.LastExecution != nil && !result.LastExecution.Current {
 		return check
-	}
-	projects := map[string]map[string]bool{}
-	for _, feature := range result.Features {
-		if projects[feature.Project] == nil {
-			projects[feature.Project] = map[string]bool{}
-		}
-		projects[feature.Project][feature.Name] = featureSatisfied(result.Framework, feature)
-	}
-	if len(projects) == 0 {
-		return check
-	}
-	for _, features := range projects {
-		for _, name := range jestFeatures {
-			if !features[name] {
-				return check
-			}
-		}
 	}
 	check.Status = "PASSED"
 	check.Reason = "The selected command's paired comparison, all supported features, static CI checks and cleanup passed. Other configurations and actual CI execution remain unvalidated."

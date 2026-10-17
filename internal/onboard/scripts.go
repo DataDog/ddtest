@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -58,7 +59,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return commandResolution{}
 	}
 	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "playwright" && framework != "mocha" && framework != "cypress" && framework != "cucumber" && framework != "webdriverio") {
-		return commandResolution{Matched: looksLikeTestJob(root, step.Run, language, framework, 0)}
+		return commandResolution{Matched: environment.LooksLikeTestCommand(root, step.Run, language, framework)}
 	}
 	directory := stepDirectory(workflow, job, step)
 	shell := workflow.Defaults.Run.Shell

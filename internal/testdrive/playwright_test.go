@@ -49,11 +49,12 @@ func TestPlaywrightComparisonPreservesProjectAndExpectedStatus(t *testing.T) {
 func TestPlaywrightUnsupportedSkippingIsNotAPassOrABlocker(t *testing.T) {
 	result := pairedReport("playwright", "passed")
 	result.Framework = "playwright"
-	result.Features = append(result.Features, featureResult{Name: "skipping", Status: "not supported", Reason: playwrightSkippingReason})
+	unsupported := featureResult{Project: "Web", Name: "skipping", Status: "not supported", Reason: playwrightSkippingReason}
+	result.Features[0] = unsupported
 	prepareValidationResult(t.TempDir(), &result)
 	require.True(t, result.LocalSuccess)
-	require.True(t, featureSatisfied("playwright", result.Features[len(result.Features)-1]))
-	require.False(t, featureSatisfied("jest", result.Features[len(result.Features)-1]))
+	require.True(t, featureSatisfied("playwright", unsupported))
+	require.False(t, featureSatisfied("jest", unsupported))
 	require.False(t, featureSatisfied("playwright", featureResult{Name: "auto-retries", Status: "not supported"}))
 	model := buildReport("/repo", intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true}, false, reportRuntime{Framework: "Playwright"})
 	data, err := json.Marshal(model)

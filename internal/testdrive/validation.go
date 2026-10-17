@@ -383,12 +383,14 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	result.CompletedAt = time.Now().UTC()
 	result.WorkingDirectory = repositoryRoot
 	result.CIExecution = verdict{Status: "not exercised", Reason: "Local-only validation; CI execution and Datadog backend processing were not exercised."}
-	result.LocalSuccess = result.Compatibility.Status == "compatible" && result.Error == ""
-	for _, feature := range result.Features {
-		result.LocalSuccess = result.LocalSuccess && featureSatisfied(result.Framework, feature)
+	result.LocalSuccess = result.Compatibility.Status == "compatible" && result.Error == "" && featureChecksPassed(result.Framework, result.Features) && !missingRealCoverage(*result)
+	if supportsValidationFramework(result.Framework) {
+		result.LocalSuccess = result.LocalSuccess && hasValidationPair(*result)
 	}
-	result.LocalSuccess = result.LocalSuccess && !missingRealCoverage(*result)
 	result.Success = result.LocalSuccess
+	if supportsValidationFramework(result.Framework) {
+		result.Success = result.Success && result.HTMLReportCurrent && result.Cleanup != nil && result.Cleanup.Status == "passed"
+	}
 	result.ChecksPassed = result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
 	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
 		result.Success, result.ChecksPassed = false, false
@@ -424,7 +426,6 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	}
 	result.Features = slices.Clone(result.Features)
 	for i, feature := range result.Features {
-		result.Success = result.Success && featureSatisfied(result.Framework, feature)
 		result.Features[i].Reason = reportText(feature.Reason)
 	}
 	if result.CheckOnly {
