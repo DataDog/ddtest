@@ -1,0 +1,100 @@
+package testdrive_test
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestPublicVitestRunnerTestdrive(t *testing.T) {
+	if os.Getenv("DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST") == "" {
+		t.Skip("set DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST=1")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
+	defer cancel()
+	binary := filepath.Join(t.TempDir(), "ddtest-under-test")
+	integrationCommand(t, ctx, "../..", nil, "go", "build", "-o", binary, ".")
+	root := t.TempDir()
+	integrationCommand(t, ctx, root, nil, "git", "init", "-q")
+	integrationFile(t, root, "package.json", `{"type":"module","devDependencies":{"vitest":"4.1.6","dd-trace":"6.20.1"}}`)
+	integrationFile(t, root, "vitest.config.js", `export default { test: { dir: 'src', pool: 'forks', maxWorkers: 1 } }`)
+	// CLI substring matching historically selected both of these for one
+	// assignment. The Node API must run each file on exactly one worker.
+	for _, file := range []string{"src/endOfYear/example.test.ts", "src/eachWeekendOfYear/example.test.ts"} {
+		integrationFile(t, root, file, `import { test, expect } from 'vitest'; test('adds', () => expect(1 + 1).toBe(2))`)
+	}
+	integrationFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    steps:\n      - run: ddtest run --framework vitest --vitest-config vitest.config.js --min-parallelism 2 --max-parallelism 2\n      - run: vitest run --config vitest.config.js\n")
+	integrationFile(t, root, ".testoptimization/runner/parallel-runners.txt", "customer's existing plan")
+	integrationCommand(t, ctx, root, nil, "npm", "install", "--no-audit", "--no-fund")
+	for _, mode := range []struct {
+		name            string
+		args            []string
+		features, paths int
+	}{
+		{"mixed CI paths", []string{"--all"}, 12, 2},
+		{"explicit runner", []string{"--command", "ddtest run --framework vitest --vitest-config vitest.config.js --min-parallelism 2 --max-parallelism 2"}, 6, 1},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			command := exec.CommandContext(ctx, binary, append([]string{"testdrive", "--framework", "vitest", "--yes"}, mode.args...)...)
+			command.Dir = root
+			output, err := command.CombinedOutput()
+			// This fixture intentionally has no Datadog action. Static CI validation
+			// must remain incomplete despite successful local validation.
+			require.Error(t, err, string(output))
+			t.Log(string(output))
+			data, err := os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
+			require.NoError(t, err)
+			var report struct {
+				Compatibility struct{ Status string }
+				Runs          []struct {
+					Name          string
+					ExecutionPath string `json:"execution_path"`
+					Workers       int
+					TestCounts    struct{ Passed int } `json:"test_counts"`
+				}
+				Features []struct{ Name, Status, Reason string }
+			}
+			require.NoError(t, json.Unmarshal(data, &report))
+			if report.Compatibility.Status != "compatible" {
+				t.Log(string(data))
+			}
+			require.Equal(t, "compatible", report.Compatibility.Status, string(output))
+			require.GreaterOrEqual(t, len(report.Runs), 2)
+			paths := map[string]bool{}
+			for _, run := range report.Runs {
+				paths[run.ExecutionPath] = true
+			}
+			require.Equal(t, mode.paths, len(paths))
+			for _, run := range report.Runs[:2] {
+				require.Equal(t, "ddtest-run-node-api", run.ExecutionPath)
+				require.Equal(t, 2, run.Workers)
+				require.Equal(t, 2, run.TestCounts.Passed)
+			}
+			require.Len(t, report.Features, mode.features)
+			for _, feature := range report.Features {
+				if feature.Status != "passed" {
+					t.Log(string(data))
+				}
+				require.Equal(t, "passed", feature.Status, "%s: %s", feature.Name, feature.Reason)
+			}
+		})
+	}
+	plan, err := os.ReadFile(filepath.Join(root, ".testoptimization/runner/parallel-runners.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "customer's existing plan", string(plan))
+	require.NoError(t, filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		require.NoError(t, err)
+		if entry.IsDir() && entry.Name() == "node_modules" {
+			return filepath.SkipDir
+		}
+		require.False(t, strings.Contains(entry.Name(), "ddtest-validation"), path)
+		return nil
+	}))
+}
