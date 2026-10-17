@@ -146,8 +146,12 @@ func findPackage(listed []goPackage, path string) *goPackage {
 	return nil
 }
 
-// checkSources returns why check rejects p's sources, or "".
+// checkSources returns why check rejects p's sources, or "". The CLI's own
+// runtime sources pass every runtime check: see ownSources.
 func checkSources(p *goPackage, replacements map[string]string, check func(map[string][]byte) error) string {
+	if ownSources(p, replacements) {
+		return ""
+	}
 	sources, err := packageSources(p, replacements)
 	if err == nil {
 		err = check(sources)

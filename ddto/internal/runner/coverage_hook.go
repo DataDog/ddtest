@@ -64,7 +64,11 @@ func coverageHookRefusal(dir string, opts options, runtimePackage string, goroot
 	if err := instrument.CoverageHookToolchainError(goroots[0]); err != nil {
 		return err.Error()
 	}
-	// The registration must be in the files that the build compiles.
+	// The registration must be in the files that the build compiles, which
+	// the CLI's own runtime sources have: see ownSources.
+	if ownSources(coverage, replacements) {
+		return ""
+	}
 	sources := map[string][]byte{}
 	for _, name := range coverage.GoFiles {
 		path := filepath.Join(coverage.Dir, name)

@@ -218,12 +218,17 @@ func cliMiniRoot(ctx context.Context, sourceFile, moduleCache, version string) s
 	if root := miniSourceRoot(sourceFile, "", ""); root != "" {
 		return root
 	}
+	// Only sources that cannot change are the CLI's own for its runtime
+	// checks: see ownSources.
 	if bundled := bundledMiniFrom(ctx); bundled != nil {
 		if root := bundled.sources(ctx); root != "" {
+			noteOwnRuntimeRoot(ctx, root)
 			return root
 		}
 	}
-	return miniSourceRoot("", moduleCache, version)
+	root := miniSourceRoot("", moduleCache, version)
+	noteOwnRuntimeRoot(ctx, root)
+	return root
 }
 
 // publishedVersion excludes development builds, whose version cannot be fetched.

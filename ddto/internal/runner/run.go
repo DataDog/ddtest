@@ -45,6 +45,9 @@ type goPackage struct {
 		Replace            *struct{ Path, Dir, Version string }
 	}
 	Error *struct{ Err string }
+	// ownRuntime marks a package of the CLI's own runtime sources: see
+	// ownSources.
+	ownRuntime bool
 }
 type Overlay struct {
 	Replace      map[string]string
@@ -204,6 +207,7 @@ func explicitFiles(dir string, packages []string) bool {
 }
 
 func prepare(ctx context.Context, dir string, opts options, runtime Runtime, progress io.Writer) (plan Plan, err error) {
+	ctx = withOwnRuntimeRoots(ctx)
 	debug := debugFromContext(ctx)
 	phase := debug.start("prepare")
 	defer func() { phase.finish(err) }()
@@ -455,6 +459,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	if selectedRuntime == nil || native == nil {
 		return plan, fmt.Errorf("missing testing or selected CI runtime package")
 	}
+	debug.printf("runtime own_source_packages=%d", markOwnRuntime(ctx, listed, opts.environment.GOMODCACHE, cliModuleVersion()))
 	if e := checkTestingGOROOT(native.Dir, opts.environment, plan.gorootMirror); e != nil {
 		return plan, e
 	}
