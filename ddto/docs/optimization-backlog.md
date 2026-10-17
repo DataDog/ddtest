@@ -64,7 +64,6 @@ Ordered by the expected effect on a run's wall time, then by cost.
 | 10 | Send each test process's exit telemetry through the worker | About one request latency per run: 0.1 s of the 0.3 s that 100 ms of latency adds | Medium | Parked (2026-10-12) |
 | 57 | Deliver events through the CLI | In a project without HTTP, up to about 10 of the 16 CPU-s that Mini adds to a cold build, and about 0.1 s and 5.6 MB per test binary link, by a probe; little in projects that use HTTP, such as Gin. Unmeasured for the change itself | High | Parked (2026-10-11) |
 | 56 | Reuse the preparation plan between unchanged invocations | 60–80 ms of the 0.11 s in repeated local runs; nothing in a fresh CI job | Medium to high | Parked (2026-10-14) |
-| 60 | Check the runtime's hook sources once | Up to the checks' 23 ms per invocation, of 0.211 s for a cached Gin build. Unmeasured for the change itself | Low to medium | Open |
 | 39 | Parse the sources of selected tests concurrently at startup | 1–4.5 ms per test file with Early Flake Detection and impacted tests | Medium | Open |
 | 51 | Store known tests per module in the read cache | 10–25 ms of CPU and several MB of heap per binary with 100,000 known tests | Medium to high | Open |
 | 32 | Scope retry subtest-name cleanup to the attempt | Up to 9 ms per retry group with 100,000 subtests, during which `T.Run` blocks | Medium to high | Open |
@@ -201,33 +200,6 @@ missing from the key would reuse a wrong plan, so validate the key with a debug
 mode that also runs the queries and compares their results. The cache saves
 60–80 ms only in repeated local runs, because CI jobs start without it. It
 stays parked by the user's decision of 2026-10-14.
-
-## 60. Hook checks on every invocation
-
-On 2026-10-17, the benchmark refresh measured Mini's cached builds 19% slower
-than on 2026-10-14 (median of 48 cells). Timing a cached `ddto test -c` of Gin
-at 4 CPUs with the `ddto` of each merge since then, 15 runs each, gives
-0.181 s at `97ec6e3` and 0.211 s at `bfcf898`:
-- #60 (forced exits) added 8 ms;
-- #64 (crash data loss) 16 ms;
-- #66 (file coverage) 5 ms.
-
-`ddto`'s debug timings at `bfcf898` show where most of it goes. Before it
-rewrites `testing`, `timeoutHookRefusal` (`internal/runner/forced_exit.go`)
-reads and checks the sources of three packages: `internal/runtime/exithook`,
-Mini's `integrations` package and Mini's `gotesting` package. That takes
-17 ms. `exitHookRefusal`, which checks the first two, runs again for the exit
-hook, and the signal hook checks its own package: together about 6.5 ms more.
-
-The checks cost about 23 ms of every invocation, including a fresh CI job.
-How much of it a change saves is unmeasured:
-- checking each package once per invocation removes only the repeated checks,
-  part of the 6.5 ms;
-- caching the results across invocations, keyed on the contents of the files
-  that a check reads, also saves the first check in repeated local runs, but
-  not in a fresh CI job, which starts without the cache;
-- checking only the declarations that each hook needs could save most of it
-  on every run, if it keeps the same refusals.
 
 ## 39. Source parsing at startup
 

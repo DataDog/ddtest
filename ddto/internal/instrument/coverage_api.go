@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 // coverageHookAPI is every declaration of the toolchain that CoverageHook
@@ -94,7 +95,7 @@ func CoverageHookRuntimeError(sources map[string][]byte) error {
 	if want == "" {
 		return errors.New("the coverage hook declares no registration")
 	}
-	have, err := sourceDeclarations(sources)
+	have, err := sourceDeclarations(declaringSources(sources, []string{want}))
 	if err != nil {
 		return err
 	}
@@ -128,6 +129,60 @@ func goDeclarations(dir string, files []string) (map[string]bool, error) {
 		sources[path] = src
 	}
 	return sourceDeclarations(sources)
+}
+
+// declaringSources returns the sources that can declare one of want, as
+// sourceDeclarations renders them: a file declares a name, a method of a
+// type or a field of a type or variable only if it contains that name, so
+// the others need no parsing. A check then parses a few files of a package,
+// instead of all of Mini's gotesting or integrations package on every
+// invocation. A file left out is not parsed, so its syntax errors go
+// unreported here; the build reports them.
+func declaringSources(sources map[string][]byte, want []string) map[string][]byte {
+	names := make([][]byte, 0, len(want))
+	for _, decl := range want {
+		name := declaredName(decl)
+		if name == "" {
+			return sources
+		}
+		names = append(names, []byte(name))
+	}
+	selected := map[string][]byte{}
+	for path, src := range sources {
+		text := src
+		if bytes.IndexByte(text, '\r') >= 0 {
+			// go/parser drops carriage returns from comments, so a
+			// linkname directive can name a declaration only without them.
+			text = bytes.ReplaceAll(text, []byte("\r"), nil)
+		}
+		for _, name := range names {
+			if bytes.Contains(text, name) {
+				selected[path] = src
+				break
+			}
+		}
+	}
+	return selected
+}
+
+// declaredName returns the first identifier after decl's kind, such as
+// "forcedExit" in "func forcedExit()" or "linkname forcedExit", "FD" in
+// "func (*FD) readLock() error" and "Hook" in "field Hook.F func()": the file
+// that declares decl contains it. It returns "" for any other form.
+func declaredName(decl string) string {
+	_, rest, ok := strings.Cut(decl, " ")
+	if !ok {
+		return ""
+	}
+	start := strings.IndexFunc(rest, func(r rune) bool { return r == '_' || unicode.IsLetter(r) })
+	if start < 0 {
+		return ""
+	}
+	rest = rest[start:]
+	if end := strings.IndexFunc(rest, func(r rune) bool { return r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r) }); end >= 0 {
+		rest = rest[:end]
+	}
+	return rest
 }
 
 // sourceDeclarations renders the declarations of a package's sources:

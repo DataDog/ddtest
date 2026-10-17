@@ -49,6 +49,23 @@ deterministic transformation, and unchanged files do not become overlay outputs.
 The same AST identifies `testing.parallelStop` for the optional shutdown hook;
 hook selection does not parse the sources again.
 
+Before it installs a hook, ddto checks that the selected runtime and the
+toolchain declare what the hook uses (`declarationsError` in
+`internal/instrument`): the runtime can be another version of Mini that a
+client requires. A file declares a name only if it contains it, so each check
+parses only the files that contain a name it wants, such as 1 of the 34 files
+of Mini's `gotesting` package and 1 or 2 of the 15 of `integrations`, instead
+of all of them. Parsing them all took about 23 ms of every invocation. On
+2026-10-17, a cached Gin build at 4 CPUs took 0.197 s against 0.219 s, in two
+alternating rounds of the build benchmark
+([before](results/hook-checks-20261017-linux-go1.27.1/base-1/README.md),
+[after](results/hook-checks-20261017-linux-go1.27.1/candidate-1/README.md)).
+`TestDeclaringSourcesKeepsEveryDeclaration` checks that every declaration of
+the checked packages has a name that its own file contains, and
+`TestDeclarationChecksMatchFullParse` that each check decides as a full parse
+does. A file that is left out is not parsed, so a syntax error there is
+reported by the build instead.
+
 [`PrepareRuntime`](../internal/runner/run.go) requests only the package fields
 it needs from a targeted `go list -deps`, which lists the named packages and
 each of their dependencies once. Reachability follows `Imports` through that

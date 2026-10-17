@@ -54,7 +54,7 @@ func ExitHookRuntimeError(sources map[string][]byte) error {
 
 // declarationsError reports the first of want that sources do not declare.
 func declarationsError(sources map[string][]byte, want []string, format string) error {
-	have, err := sourceDeclarations(sources)
+	have, err := sourceDeclarations(declaringSources(sources, want))
 	if err != nil {
 		return err
 	}
