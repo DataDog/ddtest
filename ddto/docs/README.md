@@ -32,8 +32,8 @@ Measurement reports describe the exact revisions in their manifests.
 | See what the October 2026 optimization phases measured and changed | [Optimization plan](optimization-plan.md) |
 | Read the retained measurements | [Build, runtime and memory comparison](benchmarks.md) |
 | Collect builds or regenerate tables | [Benchmark runner](build-benchmarks.md) |
-| Compare Go's counters with experimental file coverage | [Per-test coverage modes](results/file-coverage-20261016-linux-go1.27/README.md) |
-| Compare Mini's event recording before and after a change | [Mini event recording](results/minitracer-20261016-linux-go1.27/README.md), [allocations](results/minitracer-allocs-20261016-linux-go1.27/README.md), [test events without option lists](results/minitracer-test-span-20261016-linux-go1.27/README.md), [per-test lookups and options](results/minitracer-test-path-20261016-linux-go1.27/README.md), [`t.Helper()` only for wrapped tests](results/minitracer-test-helper-20261017-linux-go1.27/README.md) |
+| Compare Go's counters with experimental file coverage | [Per-test coverage modes](results/file-coverage-20261017-linux-go1.27/README.md) |
+| Compare Mini's event recording before and after a change | [Mini event recording](results/minitracer-20261016-linux-go1.27/README.md), [allocations](results/minitracer-allocs-20261016-linux-go1.27/README.md), [test events without option lists](results/minitracer-test-span-20261016-linux-go1.27/README.md), [per-test lookups and options](results/minitracer-test-path-20261016-linux-go1.27/README.md), [`t.Helper()` only for wrapped tests](results/minitracer-test-helper-20261017-linux-go1.27/README.md), [all of them together](results/minitracer-cumulative-20261017-linux-go1.27/README.md) |
 
 [`internal/thirdparty`](../internal/thirdparty/README.md) records upstream
 repositories, commits, licenses and source hashes. SDK adaptations have a

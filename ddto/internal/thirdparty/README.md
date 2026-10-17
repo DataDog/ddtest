@@ -58,5 +58,5 @@ checks, full SDK differential suite, coverage/race tests, and platform checks.
 Update performance claims only after measuring the changed implementation.
 
 The manifests identify the source base used by this implementation. The
-[benchmark inputs](../../docs/results/20261014-linux-go1.27.1/build/manifest.json)
+[benchmark inputs](../../docs/results/20261016-linux-go1.27.1/build/manifest.json)
 identify the exact code and tool versions used for the latest measurements.

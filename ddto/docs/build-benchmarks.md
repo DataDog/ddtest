@@ -18,7 +18,7 @@ Use a new artifact directory on disk, outside the repository and `/tmp`.
 
 ```sh
 BENCH_RUN=/var/tmp/dd-ci-mini-benchmark-new
-BASELINE=docs/results/20261014-linux-go1.27.1
+BASELINE=docs/results/20261016-linux-go1.27.1
 GO_BENCH=/path/to/go1.27.1/bin/go
 ORCHESTRION_BENCH=/path/to/orchestrion
 
@@ -47,7 +47,7 @@ python3 scripts/benchmark_report.py --input docs/results/new-run
 ```
 
 Name the new dataset after its collection date, platform and Go version, as in
-`20261014-linux-go1.27.1`, instead of `new-run`. It replaces the previous
+`20261016-linux-go1.27.1`, instead of `new-run`. It replaces the previous
 dataset: remove the old directory and update the links that point to it.
 
 Orchestrion is checked as a reference tool during setup, although the

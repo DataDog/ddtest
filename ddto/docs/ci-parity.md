@@ -287,7 +287,7 @@ Builds that deliberately alter flags, sources, overlays, workspaces or library
 versions keep their independent fixtures. Do not add those variants to the
 shared sets without checking their inputs and cleanup ownership.
 
-The [recorded repeated comparison](results/20261014-linux-go1.27.1/parity/README.md)
+The [recorded repeated comparison](results/20261016-linux-go1.27.1/parity/README.md)
 ran 115 scenarios at its frozen source revision. The current schema-4 gate
 requires the 113 ordinary/deferred/Testify cases plus Fuzz/Examples and
 supplemental evidence. The per-round `harness.json` records total harness
@@ -296,7 +296,7 @@ backend's runtime nor GitHub CI duration.
 
 ### Per-case duration records
 
-The [recorded Linux Go 1.27.1 run](results/20261014-linux-go1.27.1/parity/README.md)
+The [recorded Linux Go 1.27.1 run](results/20261016-linux-go1.27.1/parity/README.md)
 includes six rounds at each of 4/32 CPUs. Its per-round JSON files retain
 scenario durations, event counts and supplemental fixtures; `manifest.json`
 records the execution order, reference versions and harness input hashes.
@@ -329,7 +329,7 @@ enough context to separate host load, compilation and SDK work. The
 
 ### Repeated whole-matrix timing
 
-The [recorded Linux comparison](results/20261014-linux-go1.27.1/parity/README.md)
+The [recorded Linux comparison](results/20261016-linux-go1.27.1/parity/README.md)
 keeps every input report, the run manifest and separate continuous clocks for
 the 65-case testing and 17-case deferred SDK/Mini blocks. It has six measured
 rounds at each CPU count, three in each execution order. The 26 Testify and seven

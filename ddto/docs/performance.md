@@ -407,7 +407,12 @@ measure test events started without option lists, and the
 [fourth](results/minitracer-test-path-20261016-linux-go1.27/README.md) the
 per-test lookups and options without allocations, and the
 [fifth](results/minitracer-test-helper-20261017-linux-go1.27/README.md)
-`t.Helper()` only for wrapped tests. Every run also compares the
+`t.Helper()` only for wrapped tests. The
+[cumulative results](results/minitracer-cumulative-20261017-linux-go1.27/README.md)
+compare `d6fd1c3`, before the first of these changes, with `bfcf898`, after
+the last: Mini's CPU added per test went from 14.05 to 7.24 µs, its wall time
+added per test from 7.71 to 3.96 µs, and the objects that it
+adds over `go test` from 51.2 to 20.7 per test, with identical payloads. Every run also compares the
 two trees' payloads: each event with its envelope's version and the metadata
 that it inherits, counting IDs, timestamps and other values that differ between
 runs by presence and type, and hierarchy IDs by what they reference.
@@ -498,7 +503,7 @@ The [build benchmark guide](build-benchmarks.md) documents
 [`scripts/build_benchmark.py`](../scripts/build_benchmark.py), which runs
 Native, Orchestrion and Mini across the five scenarios, assigns affinity,
 measures exclusive cgroups and qualifies the outputs. Its `report` command regenerates the
-[recorded build tables](results/20261014-linux-go1.27.1/build/README.md)
+[recorded build tables](results/20261016-linux-go1.27.1/build/README.md)
 from every retained CSV observation, without Go or network access.
 
 ## Evidence and remaining work

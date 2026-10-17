@@ -595,27 +595,27 @@ Context mode has the gaps that .NET's `ExecutionContext` also has:
   suspension that spans a test's start can leave out the rest of that code.
 - The backend has to accept rows without bitmaps.
 
-**Measured** at GOMAXPROCS=4, three runs per mode after a warm-up run. The
-data is in
-[`docs/results/file-coverage-20261016-linux-go1.27`](results/file-coverage-20261016-linux-go1.27/README.md),
+**Measured** on 2026-10-17 at `bfcf898`, at GOMAXPROCS=4, three runs per mode
+after a warm-up run. The data is in
+[`docs/results/file-coverage-20261017-linux-go1.27`](results/file-coverage-20261017-linux-go1.27/README.md),
 produced by `scripts/file_coverage_benchmark.py`. Go's counters
 (`-cover -covermode=atomic -coverpkg=./...`) are what Test Impact Analysis uses
 today. Each run compares with the same run's Go's counters.
 
 | Project, tests | Mode | Wall time | Production files per test | Tests per changed file | Tests missing a file of Go's counters, per run |
 | --- | --- | --- | --- | --- | --- |
-| fiber root package, 1236 | Go's counters | 42.42 s | 13.88 | 146.6 | — |
-| | Serial marks | 42.50 s | 27.17 | 287.1 | 1, 2, 2 |
-| | `=context` | 34.98 s | 35.17 | 371.5 | 6, 7, 7 |
-| | No per-test coverage | 34.33 s | — | — | — |
+| fiber root package, 1236 | Go's counters | 42.49 s | 13.88 | 146.6 | — |
+| | Serial marks | 42.46 s | 27.17 | 287.1 | 1, 1, 2 |
+| | `=context` | 34.98 s | 35.17 | 371.5 | 6, 6, 6 |
+| | No per-test coverage | 34.30 s | — | — | — |
 | lo, 333 | Go's counters | 8.37 s | 1.21 | 17.5 | — |
-| | Serial marks | 8.45 s | 4.21 | 60.9 | 0, 0, 0 |
+| | Serial marks | 8.44 s | 4.21 | 60.9 | 0, 0, 0 |
 | | `=context` | 8.54 s | 4.20 | 60.9 | 1, 1, 1 |
 | Gin root package, 403 | Go's counters | 0.96 s | 6.09 | 51.1 | — |
-| | Serial marks | 0.96 s | 9.09 | 76.3 | 0, 1, 0 |
-| | `=context` | 1.07 s | 8.90 | 74.8 | 76, 77, 76 |
+| | Serial marks | 0.96 s | 9.09 | 76.3 | 0, 0, 0 |
+| | `=context` | 1.11 s | 8.90 | 74.8 | 76, 76, 76 |
 
-**Dropped `=parallel` mode.** An earlier run at the same revisions, in
+**Dropped `=parallel` mode.** A run on 2026-10-16, with the same projects, in
 [`file-coverage-20261016-linux-go1.27-parallel`](results/file-coverage-20261016-linux-go1.27-parallel/README.md),
 also measured `=parallel`, a mode with overlapping windows:
 - fiber: 34.69 s, 88.17 files per test, 931.4 tests per changed file;
@@ -633,23 +633,22 @@ gives it to the test that started it:
     earlier tests created;
   - in `Test_Integration_RequestID_ContextPropagationFlag`, a concurrent test
     was the first to register the logger tags that `requestid` registers in
-    a `sync.Once`;
-  - in some runs, `Test_GracefulShutdown_PostShutdownFiresOnce` gets files
-    from other tests' requests. Run alone, it reports none of them in either
-    mode.
+    a `sync.Once`.
 - **lo, 1 test:** `TestDuration` gets the timer of a `debounce` that an
   earlier test armed.
 - **Gin, 76 tests:** `TestRaceContextCopy` starts two goroutines that call
   `Context.Set` in an endless loop. In a run one at a time, `context.go` then
   goes to 361 of the 403 tests, and these 76 never call it themselves.
 
-The remaining differences between runs come from Go's counters, which
-report these files in some runs only, while no marks run reports them:
-- fiber's `Test_Listen_Graceful_Shutdown` with
-  `internal/fieldname/fieldname.go`, in 2 of 3 runs;
-- Gin's `TestBasicAuthFails` with `internal/bytesconv/bytesconv.go`, in 1 of 3
-  runs. The test ranges over a map: whether it converts an account with
-  `bytesconv` before its expected panic depends on the iteration order.
+The remaining difference between runs comes from Go's counters, which
+report a file in some runs only, while no serial marks run reports it: fiber's
+`TestDefaultCtx_ScheduleReclaim_ReleaseBeforeHandlerDone` with `res.go`, in 1
+of 3 runs. `=context`, which follows the goroutine that the test starts to
+reclaim its context, reports `res.go` in every run. In the 2026-10-16 runs,
+the varying files were fiber's `Test_Listen_Graceful_Shutdown` with
+`internal/fieldname/fieldname.go` and Gin's `TestBasicAuthFails` with
+`internal/bytesconv/bytesconv.go`, whose map iteration order decides whether
+it reaches `bytesconv` before its expected panic.
 
 **The extra files.** Serial marks add the files that go to every test: lo's
 type-only constraint files, and, in fiber and Gin, files with only
@@ -666,18 +665,18 @@ On fiber's router benchmarks, in ns/op:
 
 | Benchmark | go test | Go's counters | Serial marks | `=context` |
 | --- | --- | --- | --- | --- |
-| `Router_Chain` | 129.4 | 530.3 | 185.2 | 213.4 |
-| `Router_Handler` | 59.8 | 311.3 | 76.5 | 121.6 |
-| `Router_Next` | 21.6 | 165.4 | 33.9 | 43.6 |
-| `Router_NotFound` | 154.4 | 730.1 | 236.2 | 339.5 |
+| `Router_Chain` | 127.2 | 530.1 | 183.8 | 213.0 |
+| `Router_Handler` | 57.4 | 309.1 | 77.7 | 117.4 |
+| `Router_Next` | 21.9 | 169.7 | 33.6 | 44.1 |
+| `Router_NotFound` | 152.3 | 730.1 | 234.8 | 338.4 |
 
 - **Router benchmarks:**
   - Serial marks are 3 to 5 times cheaper than Go's counters.
-  - Context sites cost 1.2 to 1.6 times as much as serial marks, for two
+  - Context sites cost 1.2 to 1.5 times as much as serial marks, for two
     reasons: a site also reads the goroutine's context, and 120 fewer of
     fiber's functions inline (2982 against 3101). They are still 2 to 4 times
     cheaper than Go's counters.
 - **Whole suites:** serial marks take the time of Go's counters, since
   running top-level tests one at a time dominates. `=context` keeps
-  `t.Parallel()`, which takes fiber from 42.4 s to 35.0 s, close to the
+  `t.Parallel()`, which takes fiber from 42.5 s to 35.0 s, close to the
   34.3 s of a run without per-test coverage.

@@ -467,9 +467,11 @@ each phase measured and dropped.
 ### Outcome
 
 Mini was refreshed on 2026-10-14 at `97ec6e3`, in
-[docs/results/20261014-linux-go1.27.1](results/20261014-linux-go1.27.1/README.md).
-By the user's decision, Native and Orchestrion keep their 2026-10-04
-observations.
+`docs/results/20261014-linux-go1.27.1`, which the 2026-10-16 refresh at
+`bfcf898`, in
+[docs/results/20261016-linux-go1.27.1](results/20261016-linux-go1.27.1/README.md),
+later replaced. By the user's decision, Native and Orchestrion keep their
+2026-10-04 observations.
 
 Gin's `-coverpkg=./... -covermode=atomic` runtime went from 6.53 to 0.56 s at
 4 CPUs, against 0.25 s natively, thanks to phase 2. Chi with coverage went from

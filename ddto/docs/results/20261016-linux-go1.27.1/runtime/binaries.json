@@ -1,0 +1,866 @@
+[
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin-cpu4/bytesconv.test",
+    "sha256": "dae5d357a0039aae4df775d14b5da9cb2309736b93fa4b641870c53807b4b5be",
+    "bytes": 12534098
+  },
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin-cpu4/fs.test",
+    "sha256": "ec72b3d113f30ee716e32658e92e53ad223d833763252ae1ff4d1f0222645977",
+    "bytes": 12665511
+  },
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin-cpu4/render.test",
+    "sha256": "4e7ba3b62ea36f70cb3a30cd4ce78805f822ff292bf93f37006178c1a0492924",
+    "bytes": 27041351
+  },
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin-cpu4/binding.test",
+    "sha256": "6cb280e0c6fb7bfe82aa1263eef134e00a1ec5aee296f739f53e90b85c1059d9",
+    "bytes": 28087739
+  },
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin-cpu4/ginS.test",
+    "sha256": "cf2bd4ffb09e34b27cfd3f0ba6f8244b635678041388e6ab0e55b3aa86ccdeb8",
+    "bytes": 21055128
+  },
+  {
+    "case": "gin",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin-cpu4/gin.test",
+    "sha256": "68a048e0bc52a6e274957c5107ff12acf549cd549ae87d155446ff47581a4664",
+    "bytes": 32028952
+  },
+  {
+    "case": "gin",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin-cpu32/bytesconv.test",
+    "sha256": "dae5d357a0039aae4df775d14b5da9cb2309736b93fa4b641870c53807b4b5be",
+    "bytes": 12534098
+  },
+  {
+    "case": "gin",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin-cpu32/fs.test",
+    "sha256": "ec72b3d113f30ee716e32658e92e53ad223d833763252ae1ff4d1f0222645977",
+    "bytes": 12665511
+  },
+  {
+    "case": "gin",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin-cpu32/ginS.test",
+    "sha256": "cf2bd4ffb09e34b27cfd3f0ba6f8244b635678041388e6ab0e55b3aa86ccdeb8",
+    "bytes": 21055128
+  },
+  {
+    "case": "gin",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin-cpu32/render.test",
+    "sha256": "4e7ba3b62ea36f70cb3a30cd4ce78805f822ff292bf93f37006178c1a0492924",
+    "bytes": 27041351
+  },
+  {
+    "case": "gin",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin-cpu32/binding.test",
+    "sha256": "6cb280e0c6fb7bfe82aa1263eef134e00a1ec5aee296f739f53e90b85c1059d9",
+    "bytes": 28087739
+  },
+  {
+    "case": "gin",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin-cpu32/gin.test",
+    "sha256": "68a048e0bc52a6e274957c5107ff12acf549cd549ae87d155446ff47581a4664",
+    "bytes": 32028952
+  },
+  {
+    "case": "chi",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi-cpu4/chi.test",
+    "sha256": "74170edeacec84a17a50d1bdf0af57762cafd1d32bd4ed97ee27faea93d0f98e",
+    "bytes": 13438716
+  },
+  {
+    "case": "chi",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi-cpu4/middleware.test",
+    "sha256": "456f642dd269b1d2f93d3f441ac240216487000b42bb19447e9180e1f057e75e",
+    "bytes": 14379545
+  },
+  {
+    "case": "chi",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi-cpu32/chi.test",
+    "sha256": "74170edeacec84a17a50d1bdf0af57762cafd1d32bd4ed97ee27faea93d0f98e",
+    "bytes": 13438716
+  },
+  {
+    "case": "chi",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi-cpu32/middleware.test",
+    "sha256": "456f642dd269b1d2f93d3f441ac240216487000b42bb19447e9180e1f057e75e",
+    "bytes": 14379545
+  },
+  {
+    "case": "gin--race",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cpu4/bytesconv.test",
+    "sha256": "938423846a8fbe549a802cb384bf34fec4d2bd93adc8ad3de2dd0f0c6220a83f",
+    "bytes": 16562438
+  },
+  {
+    "case": "gin--race",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cpu4/fs.test",
+    "sha256": "8742070b57d38ad4f37291ca4ca4d42abffefdac04a3dc5bd7b90bde78526604",
+    "bytes": 16747101
+  },
+  {
+    "case": "gin--race",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cpu4/render.test",
+    "sha256": "db1c01d4c64d2695c9862e9b87975f484a12b53977172eb2845097c851dbb61f",
+    "bytes": 37887687
+  },
+  {
+    "case": "gin--race",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cpu4/binding.test",
+    "sha256": "75190d1dc1450734999b25f4235d488f4670d677de09ed337618ee892b6aa9a3",
+    "bytes": 39476569
+  },
+  {
+    "case": "gin--race",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cpu4/ginS.test",
+    "sha256": "8474e24b7f004fbd311f83007a0ee4c64e5e960d55ee8041a123838e22c96a79",
+    "bytes": 29724869
+  },
+  {
+    "case": "gin--race",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cpu4/gin.test",
+    "sha256": "f51da1b38f03e1052b88ffc6e4d38b8bede75cce79ee53d7518fcbaa6d9c8cf0",
+    "bytes": 44824591
+  },
+  {
+    "case": "gin--race",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cpu32/bytesconv.test",
+    "sha256": "938423846a8fbe549a802cb384bf34fec4d2bd93adc8ad3de2dd0f0c6220a83f",
+    "bytes": 16562438
+  },
+  {
+    "case": "gin--race",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cpu32/fs.test",
+    "sha256": "8742070b57d38ad4f37291ca4ca4d42abffefdac04a3dc5bd7b90bde78526604",
+    "bytes": 16747101
+  },
+  {
+    "case": "gin--race",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cpu32/ginS.test",
+    "sha256": "8474e24b7f004fbd311f83007a0ee4c64e5e960d55ee8041a123838e22c96a79",
+    "bytes": 29724869
+  },
+  {
+    "case": "gin--race",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cpu32/render.test",
+    "sha256": "db1c01d4c64d2695c9862e9b87975f484a12b53977172eb2845097c851dbb61f",
+    "bytes": 37887687
+  },
+  {
+    "case": "gin--race",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cpu32/binding.test",
+    "sha256": "75190d1dc1450734999b25f4235d488f4670d677de09ed337618ee892b6aa9a3",
+    "bytes": 39476569
+  },
+  {
+    "case": "gin--race",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cpu32/gin.test",
+    "sha256": "f51da1b38f03e1052b88ffc6e4d38b8bede75cce79ee53d7518fcbaa6d9c8cf0",
+    "bytes": 44824591
+  },
+  {
+    "case": "gin--cover",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-cpu4/bytesconv.test",
+    "sha256": "6db125874f26e922e97ad2a6471fedd3704e1b8e35f7f2a544e882b982e005fd",
+    "bytes": 12780885
+  },
+  {
+    "case": "gin--cover",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-cpu4/fs.test",
+    "sha256": "507247744a76b0f874089fc2b92010fc7bf66e5cc5844627e4a3a8208f433cc1",
+    "bytes": 12916398
+  },
+  {
+    "case": "gin--cover",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-cpu4/ginS.test",
+    "sha256": "e576c97230be2972773e4844dbf92f88810d52bb37a94e608ed8587040c93314",
+    "bytes": 21302021
+  },
+  {
+    "case": "gin--cover",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-cpu4/binding.test",
+    "sha256": "ff66c142e6087b5b31bd62f1da33b86f8eb501f86d92357ea750c6a909e44b43",
+    "bytes": 28351649
+  },
+  {
+    "case": "gin--cover",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-cpu4/gin.test",
+    "sha256": "ee4113e756b8fe97ad16105b43518e3ea3f75456ec62679cc331f9e5e967cb77",
+    "bytes": 32382971
+  },
+  {
+    "case": "gin--cover",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-cpu4/render.test",
+    "sha256": "675983e1f37fd027a93dfc774a9e1409e83c956ef9437bc3bddfe5728ff9691f",
+    "bytes": 27297141
+  },
+  {
+    "case": "gin--cover",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-cpu32/bytesconv.test",
+    "sha256": "6db125874f26e922e97ad2a6471fedd3704e1b8e35f7f2a544e882b982e005fd",
+    "bytes": 12780885
+  },
+  {
+    "case": "gin--cover",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-cpu32/fs.test",
+    "sha256": "507247744a76b0f874089fc2b92010fc7bf66e5cc5844627e4a3a8208f433cc1",
+    "bytes": 12916398
+  },
+  {
+    "case": "gin--cover",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-cpu32/ginS.test",
+    "sha256": "e576c97230be2972773e4844dbf92f88810d52bb37a94e608ed8587040c93314",
+    "bytes": 21302021
+  },
+  {
+    "case": "gin--cover",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-cpu32/render.test",
+    "sha256": "675983e1f37fd027a93dfc774a9e1409e83c956ef9437bc3bddfe5728ff9691f",
+    "bytes": 27297141
+  },
+  {
+    "case": "gin--cover",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-cpu32/binding.test",
+    "sha256": "ff66c142e6087b5b31bd62f1da33b86f8eb501f86d92357ea750c6a909e44b43",
+    "bytes": 28351649
+  },
+  {
+    "case": "gin--cover",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-cpu32/gin.test",
+    "sha256": "ee4113e756b8fe97ad16105b43518e3ea3f75456ec62679cc331f9e5e967cb77",
+    "bytes": 32382971
+  },
+  {
+    "case": "gin--cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-client-cpu4/bytesconv.test",
+    "sha256": "d64486efc2ada0ebd766caee6646b9cd70ecec189296a9e825d8255b2d9ac5a5",
+    "bytes": 12780924
+  },
+  {
+    "case": "gin--cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-client-cpu4/fs.test",
+    "sha256": "3f5f0e3b95d5704b679e59c461a1e9e6bc1ce0868e03e51f4632e6493c3d2767",
+    "bytes": 12916437
+  },
+  {
+    "case": "gin--cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-client-cpu4/binding.test",
+    "sha256": "c0572eff119c70ee4ed602cc407fa2fe1fc42e49b26f509b9815075a7c1e1837",
+    "bytes": 28369144
+  },
+  {
+    "case": "gin--cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-client-cpu4/ginS.test",
+    "sha256": "3e20ca226ebd4b6671104b0cb781861797e6167006917e8886e1bc84c4bc85f8",
+    "bytes": 21364817
+  },
+  {
+    "case": "gin--cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-client-cpu4/render.test",
+    "sha256": "a40b3ece5d37c84a06475b0af2101fd1191d2d84ddfea36a461f92e5b18d36ad",
+    "bytes": 27306198
+  },
+  {
+    "case": "gin--cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-client-cpu4/gin.test",
+    "sha256": "8ed5af7a8d768ee46be15dc17fa1ae0a0c0cc00b9718636846cfb74705c6bb15",
+    "bytes": 32470387
+  },
+  {
+    "case": "gin--cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-client-cpu32/fs.test",
+    "sha256": "3f5f0e3b95d5704b679e59c461a1e9e6bc1ce0868e03e51f4632e6493c3d2767",
+    "bytes": 12916437
+  },
+  {
+    "case": "gin--cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-client-cpu32/bytesconv.test",
+    "sha256": "d64486efc2ada0ebd766caee6646b9cd70ecec189296a9e825d8255b2d9ac5a5",
+    "bytes": 12780924
+  },
+  {
+    "case": "gin--cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-client-cpu32/ginS.test",
+    "sha256": "3e20ca226ebd4b6671104b0cb781861797e6167006917e8886e1bc84c4bc85f8",
+    "bytes": 21364817
+  },
+  {
+    "case": "gin--cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-client-cpu32/render.test",
+    "sha256": "a40b3ece5d37c84a06475b0af2101fd1191d2d84ddfea36a461f92e5b18d36ad",
+    "bytes": 27306198
+  },
+  {
+    "case": "gin--cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-client-cpu32/binding.test",
+    "sha256": "c0572eff119c70ee4ed602cc407fa2fe1fc42e49b26f509b9815075a7c1e1837",
+    "bytes": 28369144
+  },
+  {
+    "case": "gin--cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--cover-client-cpu32/gin.test",
+    "sha256": "8ed5af7a8d768ee46be15dc17fa1ae0a0c0cc00b9718636846cfb74705c6bb15",
+    "bytes": 32470387
+  },
+  {
+    "case": "gin--race-cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cover-client-cpu4/bytesconv.test",
+    "sha256": "d7eed8c458fd1d5c6521bdcca16ccc057cf08480991362be75c00eaf79fb8040",
+    "bytes": 16920315
+  },
+  {
+    "case": "gin--race-cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cover-client-cpu4/ginS.test",
+    "sha256": "f45aa8512288f2962dd9c6d89125f1a0a93d7235eec8f0964cf58d2d756aebf0",
+    "bytes": 30153801
+  },
+  {
+    "case": "gin--race-cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cover-client-cpu4/fs.test",
+    "sha256": "df7aea5e4d54375b9650a132aa67ed0823f2d7b9876cd4f775f0aa6278fbaf46",
+    "bytes": 17096790
+  },
+  {
+    "case": "gin--race-cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cover-client-cpu4/binding.test",
+    "sha256": "ae5558e1df4af4e75c38694f552571b2ce176505af78a09a4e6ca5c4f80c4786",
+    "bytes": 39873058
+  },
+  {
+    "case": "gin--race-cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cover-client-cpu4/render.test",
+    "sha256": "ab47b35e383607c4f5a7dae06aadc1c98f04ceadeaedbfe67e5347d7766488b2",
+    "bytes": 38263522
+  },
+  {
+    "case": "gin--race-cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cover-client-cpu4/gin.test",
+    "sha256": "bae969d41857dda5a2c065a0697274f12067e6a8374815022574a94e2d4404ae",
+    "bytes": 45430262
+  },
+  {
+    "case": "gin--race-cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cover-client-cpu32/bytesconv.test",
+    "sha256": "d7eed8c458fd1d5c6521bdcca16ccc057cf08480991362be75c00eaf79fb8040",
+    "bytes": 16920315
+  },
+  {
+    "case": "gin--race-cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cover-client-cpu32/fs.test",
+    "sha256": "df7aea5e4d54375b9650a132aa67ed0823f2d7b9876cd4f775f0aa6278fbaf46",
+    "bytes": 17096790
+  },
+  {
+    "case": "gin--race-cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cover-client-cpu32/ginS.test",
+    "sha256": "f45aa8512288f2962dd9c6d89125f1a0a93d7235eec8f0964cf58d2d756aebf0",
+    "bytes": 30153801
+  },
+  {
+    "case": "gin--race-cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cover-client-cpu32/render.test",
+    "sha256": "ab47b35e383607c4f5a7dae06aadc1c98f04ceadeaedbfe67e5347d7766488b2",
+    "bytes": 38263522
+  },
+  {
+    "case": "gin--race-cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cover-client-cpu32/binding.test",
+    "sha256": "ae5558e1df4af4e75c38694f552571b2ce176505af78a09a4e6ca5c4f80c4786",
+    "bytes": 39873058
+  },
+  {
+    "case": "gin--race-cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/gin--race-cover-client-cpu32/gin.test",
+    "sha256": "bae969d41857dda5a2c065a0697274f12067e6a8374815022574a94e2d4404ae",
+    "bytes": 45430262
+  },
+  {
+    "case": "chi--race",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi--race-cpu4/chi.test",
+    "sha256": "cf798eba0d312c09479a6ea87235b66c8a6e02e94d3f121b1bba49e07f30c5d0",
+    "bytes": 17805017
+  },
+  {
+    "case": "chi--race",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi--race-cpu4/middleware.test",
+    "sha256": "b07e4df1748a04b627843be5f4bbbdab893677b75f01b2427832029ae1c214e2",
+    "bytes": 19053496
+  },
+  {
+    "case": "chi--race",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi--race-cpu32/chi.test",
+    "sha256": "cf798eba0d312c09479a6ea87235b66c8a6e02e94d3f121b1bba49e07f30c5d0",
+    "bytes": 17805017
+  },
+  {
+    "case": "chi--race",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi--race-cpu32/middleware.test",
+    "sha256": "b07e4df1748a04b627843be5f4bbbdab893677b75f01b2427832029ae1c214e2",
+    "bytes": 19053496
+  },
+  {
+    "case": "chi--cover",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi--cover-cpu4/chi.test",
+    "sha256": "7198edc151dccf03545fd6e195c3749696a8d8fef0bbac65c6cad3bf2deef190",
+    "bytes": 13710041
+  },
+  {
+    "case": "chi--cover",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi--cover-cpu4/middleware.test",
+    "sha256": "967d72c70019c6a1ec7aed2fc12c968446352b12f04e5af20edcd67f4f5d45a7",
+    "bytes": 14651016
+  },
+  {
+    "case": "chi--cover",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi--cover-cpu32/chi.test",
+    "sha256": "7198edc151dccf03545fd6e195c3749696a8d8fef0bbac65c6cad3bf2deef190",
+    "bytes": 13710041
+  },
+  {
+    "case": "chi--cover",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi--cover-cpu32/middleware.test",
+    "sha256": "967d72c70019c6a1ec7aed2fc12c968446352b12f04e5af20edcd67f4f5d45a7",
+    "bytes": 14651016
+  },
+  {
+    "case": "chi--cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi--cover-client-cpu4/chi.test",
+    "sha256": "8b5c9a74f9c814da6c6488452235f67be2a052f1913d96c2c90f8d9903476442",
+    "bytes": 13722329
+  },
+  {
+    "case": "chi--cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi--cover-client-cpu4/middleware.test",
+    "sha256": "cdd78a261d62466e4cb7a6e6ca3ecb79a946eed1a6b8e72e614fb731f296086e",
+    "bytes": 14683928
+  },
+  {
+    "case": "chi--cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi--cover-client-cpu32/chi.test",
+    "sha256": "8b5c9a74f9c814da6c6488452235f67be2a052f1913d96c2c90f8d9903476442",
+    "bytes": 13722329
+  },
+  {
+    "case": "chi--cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi--cover-client-cpu32/middleware.test",
+    "sha256": "cdd78a261d62466e4cb7a6e6ca3ecb79a946eed1a6b8e72e614fb731f296086e",
+    "bytes": 14683928
+  },
+  {
+    "case": "chi--race-cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi--race-cover-client-cpu4/chi.test",
+    "sha256": "30ca9127bdea98ccddd0a32c5bca8c9c0ff0d16e4ea1817dcdb9770a4c9460e8",
+    "bytes": 18203777
+  },
+  {
+    "case": "chi--race-cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi--race-cover-client-cpu4/middleware.test",
+    "sha256": "62764cbbe6314245d46895a4e05a9e86f9111be25fdfe4ee61766d19968f216b",
+    "bytes": 19477122
+  },
+  {
+    "case": "chi--race-cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi--race-cover-client-cpu32/middleware.test",
+    "sha256": "62764cbbe6314245d46895a4e05a9e86f9111be25fdfe4ee61766d19968f216b",
+    "bytes": 19477122
+  },
+  {
+    "case": "chi--race-cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/chi--race-cover-client-cpu32/chi.test",
+    "sha256": "30ca9127bdea98ccddd0a32c5bca8c9c0ff0d16e4ea1817dcdb9770a4c9460e8",
+    "bytes": 18203777
+  },
+  {
+    "case": "testify-direct--normal",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-direct--normal-cpu4/testify-direct.test",
+    "sha256": "655aac6b3d2af5e9ff5567d5ef9a3bace5cb85ccd1d2798758ef82b88396ca75",
+    "bytes": 15777438
+  },
+  {
+    "case": "testify-direct--normal",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-direct--normal-cpu32/testify-direct.test",
+    "sha256": "655aac6b3d2af5e9ff5567d5ef9a3bace5cb85ccd1d2798758ef82b88396ca75",
+    "bytes": 15777438
+  },
+  {
+    "case": "testify-direct--race",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-direct--race-cpu4/testify-direct.test",
+    "sha256": "d179d4f18c72fa3e33ee06d52826005ee0b0b569092ede8dce39b0570e7efe0a",
+    "bytes": 20683832
+  },
+  {
+    "case": "testify-direct--race",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-direct--race-cpu32/testify-direct.test",
+    "sha256": "d179d4f18c72fa3e33ee06d52826005ee0b0b569092ede8dce39b0570e7efe0a",
+    "bytes": 20683832
+  },
+  {
+    "case": "testify-direct--cover",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-direct--cover-cpu4/testify-direct.test",
+    "sha256": "9dfdcd62c87e293f2b8bab1aad7194d72550f9d1e0518a7c3a8997749cca95e0",
+    "bytes": 16024790
+  },
+  {
+    "case": "testify-direct--cover",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-direct--cover-cpu32/testify-direct.test",
+    "sha256": "9dfdcd62c87e293f2b8bab1aad7194d72550f9d1e0518a7c3a8997749cca95e0",
+    "bytes": 16024790
+  },
+  {
+    "case": "testify-direct--cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-direct--cover-client-cpu4/testify-direct.test",
+    "sha256": "c39f083c7a625c8b29169715b85a0ac33c84279293944b1ed7c2dbfb51470606",
+    "bytes": 16024790
+  },
+  {
+    "case": "testify-direct--cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-direct--cover-client-cpu32/testify-direct.test",
+    "sha256": "c39f083c7a625c8b29169715b85a0ac33c84279293944b1ed7c2dbfb51470606",
+    "bytes": 16024790
+  },
+  {
+    "case": "testify-direct--race-cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-direct--race-cover-client-cpu4/testify-direct.test",
+    "sha256": "d90cb89e6a8c87ae6c7654056dd3d645ca531b77a3a8c569111a7ff09a5b757b",
+    "bytes": 21042172
+  },
+  {
+    "case": "testify-direct--race-cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-direct--race-cover-client-cpu32/testify-direct.test",
+    "sha256": "d90cb89e6a8c87ae6c7654056dd3d645ca531b77a3a8c569111a7ff09a5b757b",
+    "bytes": 21042172
+  },
+  {
+    "case": "testify-direct--cover-testing",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-direct--cover-testing-cpu4/testify-direct.test",
+    "sha256": "ad2d95243810549897db02b59af8c9d1a5c36d035a3513e948364408d209e0e7",
+    "bytes": 16076129
+  },
+  {
+    "case": "testify-direct--cover-testing",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-direct--cover-testing-cpu32/testify-direct.test",
+    "sha256": "ad2d95243810549897db02b59af8c9d1a5c36d035a3513e948364408d209e0e7",
+    "bytes": 16076129
+  },
+  {
+    "case": "testify-direct--race-cover-testing",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-direct--race-cover-testing-cpu4/testify-direct.test",
+    "sha256": "011046c1b7a3edfa0f316c2bda4217ac4a51c22c8f5c871c8c828706ef401a74",
+    "bytes": 21095932
+  },
+  {
+    "case": "testify-direct--race-cover-testing",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-direct--race-cover-testing-cpu32/testify-direct.test",
+    "sha256": "011046c1b7a3edfa0f316c2bda4217ac4a51c22c8f5c871c8c828706ef401a74",
+    "bytes": 21095932
+  },
+  {
+    "case": "testify-external--normal",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-external--normal-cpu4/testify-external.test",
+    "sha256": "dff5bd275084eeef697c2d720827837a82a8ce72212f1aefdaa28de71362cbb3",
+    "bytes": 15771171
+  },
+  {
+    "case": "testify-external--normal",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-external--normal-cpu32/testify-external.test",
+    "sha256": "dff5bd275084eeef697c2d720827837a82a8ce72212f1aefdaa28de71362cbb3",
+    "bytes": 15771171
+  },
+  {
+    "case": "testify-external--race",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-external--race-cpu4/testify-external.test",
+    "sha256": "2fc9025a06287776840eb0a9ef6f56afb15262f1c6808e5d9c56e5b6fd13f1ba",
+    "bytes": 20681661
+  },
+  {
+    "case": "testify-external--race",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-external--race-cpu32/testify-external.test",
+    "sha256": "2fc9025a06287776840eb0a9ef6f56afb15262f1c6808e5d9c56e5b6fd13f1ba",
+    "bytes": 20681661
+  },
+  {
+    "case": "testify-external--cover",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-external--cover-cpu4/testify-external.test",
+    "sha256": "f953a809f24554f67cd499f6b247330e3e1cd2edbdf7f4976fb055c92729c469",
+    "bytes": 16022625
+  },
+  {
+    "case": "testify-external--cover",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-external--cover-cpu32/testify-external.test",
+    "sha256": "f953a809f24554f67cd499f6b247330e3e1cd2edbdf7f4976fb055c92729c469",
+    "bytes": 16022625
+  },
+  {
+    "case": "testify-external--cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-external--cover-client-cpu4/testify-external.test",
+    "sha256": "3fdf2a24fa37b1d6804f31073a9f408cde18de1879f53a89287d9921a27a04da",
+    "bytes": 16022862
+  },
+  {
+    "case": "testify-external--cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-external--cover-client-cpu32/testify-external.test",
+    "sha256": "3fdf2a24fa37b1d6804f31073a9f408cde18de1879f53a89287d9921a27a04da",
+    "bytes": 16022862
+  },
+  {
+    "case": "testify-external--race-cover-client",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-external--race-cover-client-cpu4/testify-external.test",
+    "sha256": "058286c0c024283460a6c7683b6e1726b3007ab68040db1c210ff962ceb55c9c",
+    "bytes": 21036148
+  },
+  {
+    "case": "testify-external--race-cover-client",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-external--race-cover-client-cpu32/testify-external.test",
+    "sha256": "058286c0c024283460a6c7683b6e1726b3007ab68040db1c210ff962ceb55c9c",
+    "bytes": 21036148
+  },
+  {
+    "case": "testify-external--cover-testing",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-external--cover-testing-cpu4/testify-external.test",
+    "sha256": "5b214747889478a0b54c93fed1043aef1185ee009f835a815c4cdf233ca933af",
+    "bytes": 16073958
+  },
+  {
+    "case": "testify-external--cover-testing",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-external--cover-testing-cpu32/testify-external.test",
+    "sha256": "5b214747889478a0b54c93fed1043aef1185ee009f835a815c4cdf233ca933af",
+    "bytes": 16073958
+  },
+  {
+    "case": "testify-external--race-cover-testing",
+    "cpus": 4,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-external--race-cover-testing-cpu4/testify-external.test",
+    "sha256": "a57e232db7e8479e2313006e18c7f02dabe1ffa349ccbf45693887812f66652b",
+    "bytes": 21093761
+  },
+  {
+    "case": "testify-external--race-cover-testing",
+    "cpus": 32,
+    "variant": "mini",
+    "path": "/var/tmp/dd-ci-bench-20261017.6WzocI/run/runtime/binaries/testify-external--race-cover-testing-cpu32/testify-external.test",
+    "sha256": "a57e232db7e8479e2313006e18c7f02dabe1ffa349ccbf45693887812f66652b",
+    "bytes": 21093761
+  }
+]
