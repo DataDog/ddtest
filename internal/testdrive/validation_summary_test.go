@@ -215,7 +215,7 @@ func TestHandoffSummarizesUnexecutedMochaConsumerWithoutRepeatingCommands(t *tes
 	result.Summary.Facts = validationFacts(result)
 	response := validationHandoff(result)
 	require.Contains(t, response, "0/1 validated; 0 executed, 0 paired; 0 blocked, 1 not exercised")
-	require.Contains(t, response, "Blockers: 2")
+	require.Contains(t, response, "Full blockers and commands are in Results JSON.")
 	require.NotContains(t, response, "npm run build -> npm run test-esm")
 	data, err := json.Marshal(result)
 	require.NoError(t, err)

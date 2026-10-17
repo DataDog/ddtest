@@ -17,9 +17,24 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPreparationFailurePreservesFrameworkAndDiagnostic(t *testing.T) {
+	drive := preparedTestdrive(t)
+	drive.framework = framework.NewMocha(platform.NewJavaScript())
+	require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(drive.repositoryRoot, "outside")))
+	require.ErrorContains(t, drive.Run(t.Context(), &bytes.Buffer{}), "escapes repository")
+	report := readValidationReport(t, drive.repositoryRoot)
+	require.Equal(t, "mocha", report.Framework)
+	require.Contains(t, report.Error, "escapes repository")
+	require.Equal(t, "not exercised", report.Compatibility.Status)
+	require.Empty(t, report.Runs)
+	require.False(t, report.Success)
+}
 
 func TestRunCleansScratchOnSetupFailureAndCancellation(t *testing.T) {
 	for _, stage := range []string{"installation", "intake", "cancellation", "report write"} {

@@ -53,13 +53,8 @@ func configurationStatus(result validationResult) string {
 	if result.CheckOnly {
 		return "not exercised"
 	}
-	if result.Error != "" || result.Compatibility.Status != "compatible" || len(result.Features) == 0 || missingRealCoverage(result) {
+	if result.Error != "" || result.Compatibility.Status != "compatible" || !hasValidationPair(result) || !featureChecksPassed(result.Framework, result.Features) || missingRealCoverage(result) {
 		return "incomplete"
-	}
-	for _, feature := range result.Features {
-		if !featureSatisfied(result.Framework, feature) {
-			return "incomplete"
-		}
 	}
 	return "passed"
 }
@@ -148,25 +143,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		child.args = words[1:]
 		child.reportModels = &models
 		// Rebind method values to this command, rather than the original drive.
-		child.preflight = child.checkJestPreflight
-		if t.framework.Name() == "webdriverio" {
-			child.preflight = child.checkWebdriverIOPreflight
-		}
-		if t.framework.Name() == "cucumber" {
-			child.preflight = child.checkCucumberPreflight
-		}
-		if t.framework.Name() == "cypress" {
-			child.preflight = child.checkCypressPreflight
-		}
-		if t.framework.Name() == "mocha" {
-			child.preflight = child.checkMochaPreflight
-		}
-		if t.framework.Name() == "vitest" {
-			child.preflight = child.checkVitestPreflight
-		}
-		if t.framework.Name() == "playwright" {
-			child.preflight = child.checkPlaywrightPreflight
-		}
+		child.bindPreflight()
 		before := len(models)
 		execution, childErr := child.runPreparedConfiguration(ctx, output, &item)
 		prepareValidationResult(t.repositoryRoot, &execution)

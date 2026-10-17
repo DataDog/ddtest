@@ -178,11 +178,12 @@ func TestSeparateCIReviewDoesNotChangeJestTracerAgreement(t *testing.T) {
 func TestMochaSyntheticSkippingDoesNotCertifyRealCoverage(t *testing.T) {
 	for _, covered := range []int{0, 2} {
 		run := validationRun{framework: "mocha", Name: "reporting-only", Command: "npm test", Instrumented: true, Facts: intake.Facts{TestCount: 10, CoveredTestCount: covered, CoverageLevel: "suite"}}
-		result := validationResult{Framework: "mocha", Compatibility: verdict{Status: "compatible"}, Features: []featureResult{{Name: "skipping", Status: "passed"}}, Runs: []runSummary{run.summary()}}
+		result := completeValidationFixture("mocha")
+		result.Runs[1] = run.summary()
 		prepareValidationResult(t.TempDir(), &result)
 		require.Equal(t, covered > 0, result.LocalSuccess)
-		require.Equal(t, covered, result.Runs[0].Coverage.CoveredTests)
-		require.Equal(t, 10, result.Runs[0].Coverage.TotalTests)
+		require.Equal(t, covered, result.Runs[1].Coverage.CoveredTests)
+		require.Equal(t, 10, result.Runs[1].Coverage.TotalTests)
 		result.Summary = summarizeValidation(result)
 		result.Summary.Facts = validationFacts(result)
 		response := validationHandoff(result)

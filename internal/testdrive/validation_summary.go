@@ -264,6 +264,20 @@ func summarizeValidation(result validationResult) validationSummary {
 			}
 		}
 	}
+	if !result.CheckOnly && supportsValidationFramework(result.Framework) {
+		if !hasValidationPair(result) {
+			summary.BlockingChecks = append(summary.BlockingChecks, "current baseline/reporting pair is incomplete")
+		}
+		if !featureChecksPassed(result.Framework, result.Features) {
+			summary.BlockingChecks = append(summary.BlockingChecks, "required feature checks are incomplete for at least one project")
+		}
+		if hasValidationPair(result) && !result.HTMLReportCurrent {
+			summary.BlockingChecks = append(summary.BlockingChecks, "current HTML report was not written")
+		}
+		if result.Cleanup == nil || result.Cleanup.Status != "passed" {
+			summary.BlockingChecks = append(summary.BlockingChecks, "temporary-session cleanup did not pass")
+		}
+	}
 	if result.Preflight != nil {
 		summary.LocalNode = result.Preflight.Node
 	}

@@ -99,7 +99,7 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	if all && strings.TrimSpace(settings.GetCommand()) != "" {
 		return nil, fmt.Errorf("--all and --command are mutually exclusive")
 	}
-	if all && runner.Name() != "jest" && runner.Name() != "vitest" && runner.Name() != "playwright" && runner.Name() != "mocha" && runner.Name() != "cypress" && runner.Name() != "cucumber" && runner.Name() != "webdriverio" {
+	if all && !supportsValidationFramework(runner.Name()) {
 		return nil, fmt.Errorf("--all currently validates Jest, Vitest, Playwright, Mocha, Cypress, Cucumber and WebdriverIO only")
 	}
 	if runner.Name() == "vitest" {
@@ -233,29 +233,31 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 		}
 	}
 	drive.checkOnly = len(checkOnly) > 0 && checkOnly[0]
-	drive.preflight = drive.checkJestPreflight
-	if runner.Name() == "webdriverio" {
-		drive.preflight = drive.checkWebdriverIOPreflight
-	}
-	if runner.Name() == "cucumber" {
-		drive.preflight = drive.checkCucumberPreflight
-	}
-	if runner.Name() == "cypress" {
-		drive.preflight = drive.checkCypressPreflight
-	}
-	if runner.Name() == "mocha" {
-		drive.preflight = drive.checkMochaPreflight
-	}
-	if runner.Name() == "vitest" {
-		drive.preflight = drive.checkVitestPreflight
-	}
-	if runner.Name() == "playwright" {
-		drive.preflight = drive.checkPlaywrightPreflight
-	}
+	drive.bindPreflight()
 	if js, ok := detectedPlatform.(*platform.JavaScript); ok {
 		drive.resolveJSTracer = js.ResolveRegistryTracer
 	}
 	return drive, nil
+}
+
+// Bind method values after copying a drive so preflight uses its command and workspace.
+func (t *Testdrive) bindPreflight() {
+	switch t.framework.Name() {
+	case "vitest":
+		t.preflight = t.checkVitestPreflight
+	case "playwright":
+		t.preflight = t.checkPlaywrightPreflight
+	case "mocha":
+		t.preflight = t.checkMochaPreflight
+	case "cypress":
+		t.preflight = t.checkCypressPreflight
+	case "cucumber":
+		t.preflight = t.checkCucumberPreflight
+	case "webdriverio":
+		t.preflight = t.checkWebdriverIOPreflight
+	default:
+		t.preflight = t.checkJestPreflight
+	}
 }
 
 func displayName(name string) string {
@@ -310,7 +312,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 		}
 		_, _ = fmt.Fprintf(output, "  - install %s: %s\n", t.tracerLabel, shellquote.Join(install...))
 	}
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio" {
+	if supportsValidationFramework(t.framework.Name()) {
 		_, _ = fmt.Fprintln(output, "  - inspect the selected framework configuration and tracer compatibility before running tests")
 	}
 
@@ -319,7 +321,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	} else {
 		_, _ = fmt.Fprintf(output, "  - command: %s\n", shellquote.Join(append([]string{command}, args...)...))
 	}
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio" {
+	if supportsValidationFramework(t.framework.Name()) {
 		_, _ = fmt.Fprintln(output, "  - check GitHub Actions Node runtimes against the workflow-selected tracer using public action and npm metadata")
 		_, _ = fmt.Fprintln(output, "  - compare native JSON results without instrumentation and with reporting-only instrumentation")
 		_, _ = fmt.Fprintln(output, "  - repeat the pair if outcomes differ; timing and console order are ignored")
@@ -388,22 +390,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 		child := *t
 		var models []reportModel
 		child.reportModels = &models
-		child.preflight = child.checkVitestPreflight
-		if t.framework.Name() == "webdriverio" {
-			child.preflight = child.checkWebdriverIOPreflight
-		}
-		if t.framework.Name() == "cucumber" {
-			child.preflight = child.checkCucumberPreflight
-		}
-		if t.framework.Name() == "cypress" {
-			child.preflight = child.checkCypressPreflight
-		}
-		if t.framework.Name() == "mocha" {
-			child.preflight = child.checkMochaPreflight
-		}
-		if t.framework.Name() == "playwright" {
-			child.preflight = child.checkPlaywrightPreflight
-		}
+		child.bindPreflight()
 		result, runErr = child.runPreparedConfiguration(ctx, output, &configurationResult{})
 		if result.Preflight != nil {
 			result.Preflight.Command = shellquote.Join(append([]string{t.command}, t.args...)...)
@@ -416,14 +403,20 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 	} else {
 		result, runErr = t.run(ctx, output)
 	}
+	result.Framework = t.framework.Name()
 	result.FocusedCommand = supportsValidationFramework(t.framework.Name()) && strings.TrimSpace(settings.GetCommand()) != ""
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio" {
+	if supportsValidationFramework(t.framework.Name()) {
 		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
 		if err != nil {
 			runErr = errors.Join(runErr, err)
-			result.Error = runErr.Error()
 		} else {
 			setSingleConfigurationScope(t.repositoryRoot, &result, scope)
+		}
+	}
+	if runErr != nil {
+		result.Error = runErr.Error()
+		if result.Compatibility.Status == "" {
+			result.Compatibility = verdict{Status: "not exercised", Reason: "Validation preparation failed; tests were not started."}
 		}
 	}
 	return errors.Join(runErr, finishValidation(output, t.repositoryRoot, result))
@@ -466,7 +459,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		return result, errors.New(t.environmentFailure.Title)
 	}
 
-	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio" {
+	if supportsValidationFramework(t.framework.Name()) {
 		check := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
 		result.CIRuntime = &check
 		if t.preflight != nil {

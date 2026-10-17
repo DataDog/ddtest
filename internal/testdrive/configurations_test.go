@@ -19,7 +19,8 @@ func TestSelectedCommandDoesNotCertifyOtherConfigurations(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"test":"vitest run"}}`), 0644))
 	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: "vitest run"}, {Directory: ".", Command: "vitest run --config production.ts"}}}
-	result := validationResult{Framework: "vitest", Preflight: &jestPreflight{Command: "npx vitest run", Verdict: verdict{Status: "compatible"}}, Compatibility: verdict{Status: "compatible"}, Features: []featureResult{{Name: "auto-retries", Status: "passed"}}}
+	result := completeValidationFixture("vitest")
+	result.Preflight.Command = "npx vitest run"
 	setSingleConfigurationScope(root, &result, scope)
 	require.Equal(t, "passed", result.Configurations[0].Status)
 	require.Equal(t, "not exercised", result.Configurations[1].Status)
@@ -54,7 +55,8 @@ func TestConfigurationReportsRemainOnePairAndKeepCommandLabels(t *testing.T) {
 	labelConfigurationModel(&models[1], "vitest run --config production.ts")
 	require.NoError(t, writeConfigurationHTML(root, models))
 	code := 0
-	result := validationResult{Framework: "vitest", Compatibility: verdict{Status: "compatible"}, Features: []featureResult{{Name: "early-flake-detection", Status: "passed"}}, Runs: []runSummary{{Name: "baseline", Configuration: "vitest run", Command: "vitest run", ExitCode: &code}, {Name: "reporting-only", Configuration: "vitest run", Command: "vitest run", Instrumented: true, ExitCode: &code}}}
+	result := completeValidationFixture("vitest")
+	result.Runs = []runSummary{{Name: "baseline", Configuration: "vitest run", Command: "vitest run", ExitCode: &code}, {Name: "reporting-only", Configuration: "vitest run", Command: "vitest run", Instrumented: true, ExitCode: &code}}
 	require.NoError(t, finishValidation(&bytes.Buffer{}, root, result))
 	html, err := os.ReadFile(htmlReportPath(root))
 	require.NoError(t, err)
@@ -105,7 +107,8 @@ func TestCombinedHTMLPreservesCoverageLinksAndFullCommandOutput(t *testing.T) {
 
 func TestSourceRunDoesNotValidateCIPreparedConfiguration(t *testing.T) {
 	root := t.TempDir()
-	result := validationResult{Framework: "vitest", Preflight: &jestPreflight{Command: "vitest run"}, Compatibility: verdict{Status: "compatible"}, Features: []featureResult{{Name: "auto-retries", Status: "passed"}}}
+	result := completeValidationFixture("vitest")
+	result.Preflight.Command = "vitest run"
 	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{
 		{Directory: ".", Command: "vitest run"},
 		{Directory: ".", Command: "vitest run", UnvalidatedSetup: []string{"React dependency replacement"}},

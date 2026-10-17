@@ -35,6 +35,12 @@ func focusedValidationFixture(name string) validationResult {
 	return result
 }
 
+func completeValidationFixture(name string) validationResult {
+	result := focusedValidationFixture(name)
+	result.FocusedCommand, result.Scope, result.Configurations = false, nil, nil
+	return result
+}
+
 func TestFocusedValidationAcrossFrameworksKeepsUnvalidatedRepositoryScope(t *testing.T) {
 	for _, name := range []string{"jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio"} {
 		t.Run(name, func(t *testing.T) {
@@ -81,6 +87,43 @@ func TestSelectedValidationDoesNotCertifyMissingOrStaleEvidence(t *testing.T) {
 			tc.edit(&result)
 			require.Equal(t, tc.want, selectedValidation(result).Status)
 		})
+	}
+}
+
+func TestValidationRequiresCompleteEvidence(t *testing.T) {
+	cases := []struct {
+		name    string
+		edit    func(*validationResult)
+		local   bool
+		success bool
+	}{
+		{"complete", func(*validationResult) {}, true, true},
+		{"missing feature", func(r *validationResult) { r.Features = r.Features[:len(r.Features)-1] }, false, false},
+		{"partial project", func(r *validationResult) {
+			r.Features = append(r.Features, featureResult{Project: "other", Name: "auto-retries", Status: "passed"})
+		}, false, false},
+		{"unrecorded cleanup", func(r *validationResult) { r.Cleanup = nil }, true, false},
+		{"failed cleanup", func(r *validationResult) { r.Cleanup.Status = "failed" }, true, false},
+		{"missing HTML", func(r *validationResult) { r.HTMLReportCurrent = false }, true, false},
+		{"missing baseline", func(r *validationResult) { r.Runs = r.Runs[1:] }, false, false},
+	}
+	for _, framework := range []string{"jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio"} {
+		for _, tc := range cases {
+			t.Run(framework+"/"+tc.name, func(t *testing.T) {
+				result := completeValidationFixture(framework)
+				tc.edit(&result)
+				root := t.TempDir()
+				err := finishValidation(&bytes.Buffer{}, root, result)
+				require.Equal(t, tc.success, err == nil)
+				report := readValidationReport(t, root)
+				require.Equal(t, tc.success, report.Success)
+				require.Equal(t, tc.local, report.LocalSuccess)
+				if !tc.success {
+					require.Equal(t, "INCOMPLETE", report.Summary.Status)
+					require.NotEmpty(t, report.Summary.BlockingChecks)
+				}
+			})
+		}
 	}
 }
 

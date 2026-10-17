@@ -19,7 +19,7 @@ import (
 )
 
 func pairedReport(session, featureStatus string) validationResult {
-	return validationResult{Session: session, Framework: "jest", Tracer: "dd-trace@6.17.0",
+	result := validationResult{HTMLReportCurrent: true, Cleanup: &verdict{Status: "passed"}, Session: session, Framework: "jest", Tracer: "dd-trace@6.17.0",
 		Compatibility: verdict{Status: "compatible"},
 		ProjectChecks: []projectProbeCheck{{Project: "Web", Discovered: true, Probe: "src/probe.test.js"}},
 		Features:      []featureResult{{Project: "Web", Name: "skipping", Status: featureStatus}},
@@ -28,6 +28,12 @@ func pairedReport(session, featureStatus string) validationResult {
 			(validationRun{Name: "reporting-only", Command: "pnpm exec jest --config original.js", Instrumented: true, ExitCode: 0, Tests: []jestTest{{Status: "passed"}}}).summary(),
 			(validationRun{Project: "Web", Name: "skipping", Command: "pnpm exec jest --config original.js --selectProjects Web --runTestsByPath src/probe.test.js", Instrumented: true, ExitCode: 1}).summary(),
 		}}
+	for _, name := range jestFeatures {
+		if name != "skipping" {
+			result.Features = append(result.Features, featureResult{Project: "Web", Name: name, Status: "passed"})
+		}
+	}
+	return result
 }
 
 func readValidationReport(t *testing.T, root string) validationResult {
