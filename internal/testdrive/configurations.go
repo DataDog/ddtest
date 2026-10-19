@@ -148,9 +148,13 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		if t.framework.Name() == "pytest" {
 			child.pytestEnvironment = maps.Clone(entry.Environment)
 			child.command = words[0]
-			if filepath.Base(words[0]) == words[0] && strings.HasPrefix(words[0], "python") && t.environmentInfo.Executable != "" {
+			if (words[0] == "python" || words[0] == "python.exe") && t.environmentInfo.Executable != "" {
 				child.command = t.environmentInfo.Executable
 			}
+			// Preflight selects this command's runtime and tracer afresh; the
+			// default interpreter's diagnostics do not describe this environment.
+			child.environmentInfo = environmentInfo{Runtime: "Python", Source: "Discovered CI command"}
+			child.environmentFailure = nil
 		}
 		child.args = words[1:]
 		child.reportModels = &models

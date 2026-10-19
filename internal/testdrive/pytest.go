@@ -102,7 +102,14 @@ func (t *Testdrive) verifyPytestTracer(ctx context.Context, path, expected strin
 	}
 	var result struct{ Version string }
 	script := `import importlib.metadata, json, pathlib, sys; pathlib.Path(sys.argv[1]).write_text(json.dumps({"version": importlib.metadata.version("ddtrace")}))`
-	env := t.environment(path, "http://127.0.0.1:1", "pytest-tracer-check")
+	env := maps.Clone(t.pytestEnvironment)
+	if env == nil {
+		env = map[string]string{}
+	}
+	maps.Copy(env, t.environment(path, "http://127.0.0.1:1", "pytest-tracer-check"))
+	if configured, ok := t.pytestEnvironment["PYTHONPATH"]; ok && path != "" && configured != "" {
+		env["PYTHONPATH"] = path + string(os.PathListSeparator) + configured
+	}
 	if err := probeEnvironment(ctx, command, append(prefix, "-c", script), env, &result); err != nil {
 		return err
 	}

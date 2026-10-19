@@ -2,10 +2,14 @@ package testdrive
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/ext"
@@ -58,6 +62,78 @@ func TestPytestBaselinePreservesCustomerOptions(t *testing.T) {
 	require.Equal(t, `-v -k 'some test' --cov=app`, options)
 	_, err = stripPytestInstrumentation(`-k 'unfinished`)
 	require.Error(t, err)
+}
+
+func TestPythonReviewAllSelectsEachCommandEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX executable fixtures")
+	}
+	for _, tc := range []struct {
+		name     string
+		commands []string
+		failure  bool
+	}{
+		{"versioned interpreters", []string{"python3.10 -m pytest", "python3.12 -m pytest"}, false},
+		{"default unavailable", []string{".venv/bin/python -m pytest", "poetry run pytest"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+			for _, command := range []string{"python3.10", "python3.12", ".venv/bin/python", "poetry"} {
+				version := "3.12.8"
+				if command == "python3.10" {
+					version = "3.10.16"
+				}
+				metadata, err := json.Marshal(map[string]string{"Pytest": "8.4.2", "Python": version, "Tracer": "4.16.0", "RequiresPython": ">=3.9", "Executable": filepath.Join(root, command)})
+				require.NoError(t, err)
+				file := filepath.Join(root, command)
+				require.NoError(t, os.MkdirAll(filepath.Dir(file), 0755))
+				requireWriteFile(t, file, "#!/bin/sh\nfor last; do :; done\nprintf '%s' '"+string(metadata)+"' > \"$last\"\n")
+				require.NoError(t, os.Chmod(file, 0755))
+			}
+			var steps strings.Builder
+			for _, command := range tc.commands {
+				fmt.Fprintf(&steps, "      - run: %s\n", command)
+			}
+			require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))
+			requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  tests:\n    steps:\n"+steps.String())
+			drive := &Testdrive{repositoryRoot: root, language: "python", framework: framework.NewPytest(platform.NewPython()), command: "python", tracerVersion: "4.16.0", checkOnly: true,
+				environmentInfo: environmentInfo{Executable: filepath.Join(root, "python3.12"), Version: "3.12.8"}}
+			if tc.failure {
+				drive.environmentFailure = environmentFinding("pytest-unavailable", "default pytest missing", "default environment is unavailable", "select a CI environment")
+			}
+			_ = drive.runAllConfigurations(t.Context(), io.Discard)
+			data, err := os.ReadFile(validationPath(root))
+			require.NoError(t, err)
+			var result validationResult
+			require.NoError(t, json.Unmarshal(data, &result))
+			require.Len(t, result.Configurations, len(tc.commands))
+			for index, configuration := range result.Configurations {
+				require.NotNil(t, configuration.Preflight, "%s: %s", configuration.Command, configuration.Error)
+				require.Equal(t, tc.commands[index], configuration.Preflight.Command)
+				require.Equal(t, "compatible", configuration.Preflight.Verdict.Status)
+				if !tc.failure && index == 0 {
+					require.Equal(t, "3.10.16", configuration.Preflight.Python)
+				} else {
+					require.Equal(t, "3.12.8", configuration.Preflight.Python)
+				}
+			}
+		})
+	}
+}
+
+func TestPythonReviewTracerVerificationKeepsSelectedEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX executable fixture")
+	}
+	root := t.TempDir()
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	command := filepath.Join(root, "uv")
+	requireWriteFile(t, command, "#!/bin/sh\n[ \"$UV_PROJECT_ENVIRONMENT\" = .venv-ci ] || exit 3\n[ \"$DD_ENV\" = application-ci ] || exit 4\n[ \"$PYTHONPATH\" = tracer-path:application-path ] || exit 5\nfor last; do :; done\nprintf '%s' '{\"Version\":\"4.16.0\"}' > \"$last\"\n")
+	require.NoError(t, os.Chmod(command, 0755))
+	drive := &Testdrive{language: "python", command: "uv", args: []string{"run", "pytest"}, pytestEnvironment: map[string]string{"UV_PROJECT_ENVIRONMENT": ".venv-ci", "DD_ENV": "application-ci", "PYTHONPATH": "application-path"}}
+	require.NoError(t, drive.verifyPytestTracer(t.Context(), "tracer-path", "4.16.0"))
 }
 
 // Uses an explicitly supplied existing environment; never installs dependencies.

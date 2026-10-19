@@ -72,7 +72,10 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			return step, nil, fmt.Errorf("CI environment overrides executable/module selection: %s", key)
 		}
 		applicationCoverage := len(frameworks) > 0 && frameworks[0] == "cypress" && key == "DD_TEST_COVERAGE"
-		if key == "NODE_OPTIONS" || strings.HasPrefix(key, "DD_") && !applicationCoverage {
+		// Preserve pytest's application DD_* settings. The local mock owns
+		// credentials/endpoints; feature switches are overridden at execution.
+		pythonEnvironment := len(frameworks) > 0 && frameworks[0] == "pytest" && !slices.Contains([]string{"DD_API_KEY", "DD_TRACE_AGENT_URL", "DD_CIVISIBILITY_AGENTLESS_URL"}, key)
+		if key == "NODE_OPTIONS" || strings.HasPrefix(key, "DD_") && !applicationCoverage && !pythonEnvironment {
 			delete(env, key)
 			continue
 		}

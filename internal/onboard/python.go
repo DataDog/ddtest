@@ -79,9 +79,16 @@ func readPythonRelease(reader io.Reader) (PythonRelease, error) {
 }
 
 func pythonJobCandidate(root string, workflow ciWorkflow, job runtimeJob) bool {
-	for _, step := range job.Steps {
-		if resolvePythonStep(root, workflow, job, step).Matched || environment.LooksLikeTestCommand(root, step.Run, "python", "pytest") {
-			return true
+	rows, err := runtimeMatrix(job.Strategy.Matrix)
+	if err != nil {
+		rows = []map[string]any{nil}
+	}
+	for _, row := range rows {
+		for _, step := range job.Steps {
+			resolved, _, _ := resolveVariantStep(workflow, job, step, row, "pytest")
+			if resolvePythonStep(root, workflow, job, resolved).Matched || environment.LooksLikeTestCommand(root, resolved.Run, "python", "pytest") {
+				return true
+			}
 		}
 	}
 	return false
@@ -318,16 +325,11 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 							if selection.Version != localVersion {
 								finding.Status, finding.Reason = "incompatible", fmt.Sprintf("CI selects ddtrace@%s; local validation selected ddtrace@%s. Align selections or validate the CI release separately.", selection.Version, localVersion)
 							}
-							for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
-								if value, ok := env["PYTEST_ADDOPTS"]; ok && !strings.Contains(value, "--ddtrace") && !strings.Contains(value, "${{ env.PYTEST_ADDOPTS }}") {
-									finding.Status, finding.Reason = "incompatible", "The test step replaces the action's PYTEST_ADDOPTS; preserve --ddtrace and existing options."
-								}
-							}
 							if value, ok := step.Env["PYTHONPATH"]; ok && !strings.Contains(value, "${{ env.PYTHONPATH }}") {
 								finding.Status, finding.Reason = "incompatible", "The test step replaces the action's PYTHONPATH; preserve the injected tracer package path."
 							}
-							if strings.Contains(resolved.Run, "--no-ddtrace") {
-								finding.Status, finding.Reason = "incompatible", "The pytest command explicitly disables Datadog instrumentation."
+							if status, reason := pythonInstrumentationOptions(workflow, job, resolved, row); status != "" {
+								finding.Status, finding.Reason = status, reason
 							}
 						}
 					}
@@ -350,4 +352,60 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion string, resol
 		}
 	}
 	return result
+}
+
+func pythonInstrumentationOptions(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) (string, string) {
+	env := map[string]string{}
+	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		maps.Copy(env, layer)
+	}
+	// The action supplies --ddtrace unless declared options replace its value.
+	value, declared := env["PYTEST_ADDOPTS"]
+	if !declared {
+		value = "--ddtrace"
+	}
+	value = strings.ReplaceAll(value, "${{ env.PYTEST_ADDOPTS }}", "--ddtrace")
+	value, err := runtimeValue(value, row)
+	if err != nil {
+		return "inconclusive", err.Error()
+	}
+	options, err := shellquote.Split(value)
+	if err != nil {
+		return "inconclusive", "Cannot parse CI PYTEST_ADDOPTS: " + err.Error()
+	}
+	commands, _ := staticCommands(step.Run)
+	for _, words := range commands {
+		if pythonInvocation(words) {
+			options = append(options, words...)
+		}
+	}
+	if slices.Contains(options, "--no-ddtrace") {
+		return "incompatible", "The pytest command or effective PYTEST_ADDOPTS explicitly disables Datadog instrumentation."
+	}
+	if !slices.Contains(options, "--ddtrace") {
+		return "incompatible", "The test step replaces the action's PYTEST_ADDOPTS; preserve --ddtrace and existing options."
+	}
+	loaded := false
+	for index, option := range options {
+		plugin := strings.TrimPrefix(option, "-p")
+		if option == "-p" && index+1 < len(options) {
+			plugin = options[index+1]
+		} else if !strings.HasPrefix(option, "-p") {
+			continue
+		}
+		if slices.Contains([]string{"ddtrace", "ddtrace.contrib.pytest.plugin", "ddtrace.contrib.internal.pytest.plugin"}, strings.TrimPrefix(plugin, "no:")) {
+			if strings.HasPrefix(plugin, "no:") {
+				return "incompatible", "The pytest options explicitly block the Datadog plugin."
+			}
+			loaded = true
+		}
+	}
+	autoload, err := runtimeValue(env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"], row)
+	if err != nil {
+		return "inconclusive", err.Error()
+	}
+	if (autoload != "" || slices.Contains(options, "--disable-plugin-autoload")) && !loaded {
+		return "incompatible", "pytest plugin autoload is disabled; explicitly load the Datadog plugin with -p ddtrace in CI. Local plugin loading does not validate CI setup."
+	}
+	return "", ""
 }

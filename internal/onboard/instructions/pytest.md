@@ -18,6 +18,10 @@ PYTHONPATH and PYTEST_ADDOPTS=--ddtrace. Merge existing options with these value
 do not overwrite them on the test step. Guard credential-dependent setup for
 fork pull requests while preserving their uninstrumented tests.
 
+If CI disables pytest plugin autoload, explicitly load the tracer with
+`-p ddtrace` in its existing pytest command or PYTEST_ADDOPTS. Local testdrive
+plugin loading does not establish that the CI process loads the plugin.
+
 If CI uses tox, the action's environment must reach the pytest environment.
 Extend its existing `pass_env` (`passenv` in INI) with `DD_*`, `PYTHONPATH`, and
 `PYTEST_ADDOPTS`; preserve existing entries and apply this to every targeted
