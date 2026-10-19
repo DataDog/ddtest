@@ -39,6 +39,7 @@ type jestProject struct {
 }
 
 type jestPreflight struct {
+	Python              string                       `json:"python,omitempty"`
 	WebdriverIO         *framework.WebdriverIOConfig `json:"webdriverio,omitempty"`
 	RunnerBinary        *runnerBinary                `json:"runner_binary,omitempty"`
 	PlaywrightProjects  []playwrightProject          `json:"playwright_projects,omitempty"`
@@ -260,6 +261,8 @@ func releaseParts(version string) (int, int, bool) {
 // bound to t. A framework without them gets nil, never another framework's.
 func (t *Testdrive) frameworkPreflight() func(context.Context, io.Writer, *validationResult) error {
 	switch t.framework.Name() {
+	case "pytest":
+		return t.checkPytestPreflight
 	case "jest":
 		return t.checkJestPreflight
 	case "vitest":

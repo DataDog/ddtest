@@ -25,10 +25,11 @@ const (
 
 // Scenario configures exactly one local feature experiment. The zero value preserves ordinary testdrive settings.
 type Scenario struct {
-	Feature string
-	Module  string
-	Suite   string
-	Test    string
+	Framework string
+	Feature   string
+	Module    string
+	Suite     string
+	Test      string
 	// SourceFile is the repository-relative path used by Jest suite skipping.
 	// Suite remains the reported identity used by test management.
 	SourceFile string
@@ -172,7 +173,11 @@ func handleSkippableTests(w http.ResponseWriter, r *http.Request, scenario Scena
 	}
 	if scenario.Feature == "skipping" && scenario.SourceFile != "" {
 		if level == "test" && scenario.Suite != "" && scenario.Test != "" {
-			data = append(data, map[string]any{"type": "test", "attributes": map[string]any{"suite": scenario.Suite, "name": scenario.Test}})
+			attributes := map[string]any{"suite": scenario.Suite, "name": scenario.Test}
+			if scenario.Framework == "pytest" {
+				attributes["configurations"] = map[string]any{"test.bundle": scenario.Module}
+			}
+			data = append(data, map[string]any{"type": "test", "attributes": attributes})
 		} else if level != "test" {
 			data = append(data, map[string]any{"type": "suite", "attributes": map[string]any{"suite": suite}})
 		}

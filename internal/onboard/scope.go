@@ -142,7 +142,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 func discoverValidationScope(root, framework string, allowSetupFacts bool) (ValidationScope, error) {
 	var scope ValidationScope
 	var allUnresolved, allReview []scopeDiagnostic
-	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" && framework != "cucumber" && framework != "webdriverio" {
+	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" && framework != "cucumber" && framework != "webdriverio" && framework != "pytest" {
 		return scope, fmt.Errorf("CI command discovery is not available for %s", framework)
 	}
 
@@ -157,6 +157,13 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 			lastTest := -1
 			{
 				consumer, hidden := false, false
+				if framework == "pytest" {
+					if !pythonJobCandidate(root, workflow, job) {
+						scope.Review = append(scope.Review, workflow.Path+" / "+name+": no pytest environment identified; review other entry points separately.")
+						continue
+					}
+					consumer = true
+				}
 				var outside []string
 				for i, step := range job.Steps {
 					resolution := resolveTestStep(root, workflow, job, step, "javascript", framework)
@@ -456,6 +463,9 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 
 // ValidationCommands also resolves a selected local alias, for scope accounting.
 func ValidationCommands(root, command, framework string) []TestCommand {
+	if framework == "pytest" {
+		return resolvePythonStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: command}).Tests
+	}
 	remaining := packageScriptExpansionLimit
 	return resolveJestSequence(root, root, command, nil, &remaining, framework).Tests
 }

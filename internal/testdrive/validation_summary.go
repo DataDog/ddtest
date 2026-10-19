@@ -11,6 +11,7 @@ import (
 )
 
 type validationSummary struct {
+	LocalPython           string                 `json:"local_python,omitempty"`
 	FinalResponse         string                 `json:"final_response,omitempty"`
 	Facts                 []string               `json:"facts,omitempty"`
 	ConfigurationCoverage *configurationCoverage `json:"configuration_coverage,omitempty"`
@@ -175,6 +176,7 @@ func summarizeValidation(result validationResult) validationSummary {
 	}
 	if result.Preflight != nil {
 		summary.LocalNode = result.Preflight.Node
+		summary.LocalPython = result.Preflight.Python
 	}
 	summary.CIScope = summarizeCIScope(result.CIRuntime)
 	if summary.CIScope != nil && len(summary.CIScope.Instrumented) > 0 {
@@ -352,6 +354,9 @@ func validationHandoff(result validationResult) string {
 			settings = append(settings, key+"="+result.AmbientDatadogEnvironment[key])
 		}
 		fmt.Fprintf(&block, "Ambient Datadog settings (not from CI) reached local runs: %s. CI runs without them unless the workflow sets them.\n", strings.Join(settings, ", "))
+	}
+	if summary.LocalPython != "" {
+		fmt.Fprintf(&block, "Local runtime: Python %s.\n", summary.LocalPython)
 	}
 	if result.CheckOnly {
 		block.WriteString("Evidence: check-only; paired execution and feature controls were not rerun.\n")
@@ -596,6 +601,9 @@ func summarizeCIScope(check *onboard.RuntimeCheck) *ciRuntimeScope {
 	}
 	for _, job := range check.Jobs {
 		label := nodeScopeLabel(job.Node)
+		if job.Python != "" {
+			label = "Python " + job.Python
+		}
 		switch job.Status {
 		case "compatible":
 			scope.Instrumented = appendUnique(scope.Instrumented, label)

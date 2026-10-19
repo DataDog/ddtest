@@ -119,6 +119,9 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 			require.NoDirExists(t, drive.session.Directory())
 			installer := &fakeTracer{}
 			drive.platform = installer
+			// This fixture tests environment selection and cleanup. Real pytest
+			// preflight and paired execution have separate integration coverage.
+			drive.preflight = nil
 			executor := &fakeTestdriveExecutor{}
 			drive.executor = executor
 			drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
@@ -133,7 +136,7 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 				require.NotContains(t, output.String(), "INCOMPLETE")
 				require.Equal(t, python, installer.options.Command)
 				require.Equal(t, "uv", executor.command)
-				require.Equal(t, []string{"run", "--no-sync", "python", "-m", "pytest"}, executor.args)
+				require.Equal(t, []string{"run", "--no-sync", "python", "-m", "pytest", "--ddtrace"}, executor.args)
 			} else {
 				require.Error(t, err)
 				require.Empty(t, installer.options.Directory)

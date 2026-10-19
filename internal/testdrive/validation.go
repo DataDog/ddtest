@@ -228,6 +228,7 @@ func (r validationRun) summary() runSummary {
 }
 
 type validationResult struct {
+	PythonSelection *onboard.PythonRelease `json:"python_tracer_selection,omitempty"`
 	// Set when a compatible local runtime stood in for the CI runtime.
 	RuntimeSubstitution *runtimeSubstitution `json:"runtime_substitution,omitempty"`
 	// RuntimeSubstitutions lists every distinct substitution when --all
@@ -390,6 +391,9 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 			}
 			if job.Node != "" {
 				label += " / Node " + job.Node
+			}
+			if job.Python != "" {
+				label += " / Python " + job.Python
 			}
 			if job.NodeResolution != nil {
 				label += " => " + job.NodeResolution.Version + " (" + job.NodeResolution.Source + ")"

@@ -274,6 +274,9 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			child.tracerVersion = result.Selection.Version
 		}
 		child.command = words[0]
+		if t.framework.Name() == "pytest" {
+			child.pytestEnvironment = maps.Clone(entry.Environment)
+		}
 		child.args = words[1:]
 		child.playwrightGuard = entry.ExitOnFailure
 		child.reportModels = &models
@@ -295,8 +298,9 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		if result.Preflight == nil {
 			result.Preflight = execution.Preflight
 		}
-		if result.Selection == nil && execution.Selection != nil {
+		if result.Selection == nil && result.PythonSelection == nil {
 			result.Selection = execution.Selection
+			result.PythonSelection = execution.PythonSelection
 			result.Tracer = execution.Tracer
 			result.TracerSource = execution.TracerSource
 			tracerConfiguration = displayed

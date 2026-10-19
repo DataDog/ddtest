@@ -46,6 +46,7 @@ const GuardedActionBranch = "The Datadog action's condition is false for this br
 const WindowsRunnerBranch = "Windows runner: the Datadog action is skipped here because ddtest doesn't set up or validate Windows runners locally. These tests run uninstrumented; add manual initialization to instrument them."
 
 type RuntimeFinding struct {
+	Python          string          `json:"python,omitempty"`
 	Workflow        string          `json:"workflow"`
 	Job             string          `json:"job"`
 	Step            int             `json:"step,omitempty"`

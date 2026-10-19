@@ -17,6 +17,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPythonFeatureFixturesKeepHistoricalAndModuleIdentity(t *testing.T) {
+	scenario := Scenario{Framework: "pytest", Feature: "skipping", Module: "tests.integration", Suite: "test_example.py", Test: "test_probe", SourceFile: "tests/integration/test_example.py"}
+	response := httptest.NewRecorder()
+	handleKnownTests(response, nil, scenario)
+	var known struct {
+		Data struct {
+			Attributes struct {
+				Tests map[string]map[string][]string
+			}
+		}
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &known))
+	require.Equal(t, []string{"ddtest_existing_test"}, known.Data.Attributes.Tests["pytest"]["ddtest_known_test.py"])
+	response = httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, constants.SkippableTestsURLPath, bytes.NewBufferString(`{"data":{"attributes":{"test_level":"test"}}}`))
+	handleSkippableTests(response, request, scenario)
+	var skipped struct {
+		Data []struct {
+			Attributes struct {
+				Suite, Name    string
+				Configurations map[string]string
+			}
+		}
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &skipped))
+	require.Len(t, skipped.Data, 1)
+	require.Equal(t, scenario.Module, skipped.Data[0].Attributes.Configurations["test.bundle"])
+	require.Equal(t, scenario.Suite, skipped.Data[0].Attributes.Suite)
+	require.Equal(t, scenario.Test, skipped.Data[0].Attributes.Name)
+}
+
 func TestSettingsEnablesTestOptimizationCoverage(t *testing.T) {
 	server, err := Start(t.TempDir())
 	require.NoError(t, err)

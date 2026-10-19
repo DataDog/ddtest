@@ -871,3 +871,34 @@ for a fresh final response. `--report --detail plan` inspects resolved commands
 without running them. `onboard --apply --yes` adds recognized setup first. See
 [agent coordination](onboarding.md#agent-coordination-and-fresh-results) for
 bounded resume, setup facts, services, exclusions and freshness guarantees.
+
+
+### Python with pytest testdrive
+
+For Python/pytest, activate the project's test environment, then run:
+
+```sh
+ddtest onboard --framework pytest
+ddtest testdrive --framework pytest --all --check-only --yes
+ddtest testdrive --framework pytest --all --tracer-version <resolved-release> --yes
+```
+
+Pytest validation compares native results with and without instrumentation,
+including parametrized tests, class methods, skipped tests, failure details, and
+exit codes. It then checks retries, early flake detection, test skipping,
+quarantine, disabled tests, and attempt-to-fix using temporary probes under the
+existing pytest configuration. Full-suite coverage thresholds remain enabled;
+isolated probes disable pytest-cov's threshold only. This workflow requires
+pytest >=7 and ddtrace >=4.11. An installed tracer takes precedence over the
+fallback version; CI must select the same release and a compatible Python.
+
+Discovered direct pytest, Python, uv, and poetry commands retain their options
+and CI environments. `uv run` uses `--no-sync`; install test dependencies first.
+Without `--command`, discovered CI configurations are validated together.
+Use `--command 'python -m pytest tests -c pytest.ini'` for a focused command.
+Tox/nox wrappers, dynamic setup, and commands in other working directories remain
+unvalidated; enter the selected test environment and validate its actual pytest
+command. Local execution does not certify other Python/OS environments or run CI.
+After edits, rerun full validation: `--check-only` preserves prior execution only
+as historical evidence. Keep both HTML and JSON reports after cleanup.
+

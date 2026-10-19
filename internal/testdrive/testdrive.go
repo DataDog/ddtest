@@ -43,6 +43,7 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
+	pytestEnvironment        map[string]string
 	selectedPlan             onboard.TestCommand
 	cypressPackage           string
 	cypressSelected          onboard.TestCommand
@@ -181,6 +182,13 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	}
 	if all && !frameworkFeaturePolicies[runner.Name()].Configurations {
 		return nil, fmt.Errorf("--all currently validates %s only", frameworkNamesWith(func(policy frameworkPolicy) bool { return policy.Configurations }))
+	}
+	if runner.Name() == "pytest" && strings.TrimSpace(settings.GetCommand()) == "" {
+		if scope, err := onboard.DiscoverValidationScope(repositoryRoot, "pytest"); err != nil {
+			return nil, err
+		} else if len(scope.Commands) > 0 {
+			all = true
+		}
 	}
 
 	var discoveryError error
@@ -798,16 +806,18 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	}
 
 	if supportsValidationFramework(t.framework.Name()) {
-		ciRoot := t.repositoryRoot
-		if t.workflowRoot != "" {
-			ciRoot = t.workflowRoot
+		if t.framework.Name() != "pytest" {
+			ciRoot := t.repositoryRoot
+			if t.workflowRoot != "" {
+				ciRoot = t.workflowRoot
+			}
+			check := checkConfigurationCIRuntimes(ctx, ciRoot, t.framework.Name())
+			if t.workflowRoot != "" {
+				check = onboard.CheckCIRuntimes(ctx, ciRoot, t.framework.Name())
+			}
+			result.CIRuntime = &check
+			t.defaultToCITracer(check)
 		}
-		check := checkConfigurationCIRuntimes(ctx, ciRoot, t.framework.Name())
-		if t.workflowRoot != "" {
-			check = onboard.CheckCIRuntimes(ctx, ciRoot, t.framework.Name())
-		}
-		result.CIRuntime = &check
-		t.defaultToCITracer(check)
 		if t.preflight != nil {
 			if err := t.preflight(ctx, output, &result); err != nil {
 				return result, err
@@ -874,6 +884,11 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		result.TracerSource = "project installation · reused"
 	}
 	if supportsValidationFramework(t.framework.Name()) {
+		if result.PythonSelection != nil {
+			if err := t.verifyPytestTracer(ctx, installation.Path, result.PythonSelection.Version); err != nil {
+				return result, err
+			}
+		}
 		if result.Selection != nil {
 			if err := t.verifyInstalledSelection(ctx, installation.Path, &result); err != nil {
 				return result, err
@@ -897,7 +912,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 				return result, fmt.Errorf("%s preflight: %s", t.framework.Name(), result.Preflight.Verdict.Reason)
 			}
 		}
-		runErr = t.runJavaScriptValidation(ctx, output, session, installation.Path, &result)
+		runErr = t.runFrameworkValidation(ctx, output, session, installation.Path, &result)
 		return
 	}
 	server, err := t.startIntake(session.Directory(), intake.Scenario{})

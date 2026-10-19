@@ -383,6 +383,9 @@ func verifyJestTelemetry(run validationRun) verdict {
 	expected := make(map[identity]int)
 	for _, test := range run.Tests {
 		status := map[string]string{"passed": "pass", "failed": "fail"}[test.Status]
+		if run.framework == "pytest" && test.Status == "skipped" {
+			status = "skip"
+		}
 		if status != "" {
 			name := test.Name
 			if test.telemetryName != nil {
@@ -408,7 +411,7 @@ func verifyJestTelemetry(run validationRun) verdict {
 		}
 		file = filepath.Clean(file)
 		observe := func(attempt intake.TestRun) {
-			if attempt.Status == "pass" || attempt.Status == "fail" {
+			if attempt.Status == "pass" || attempt.Status == "fail" || run.framework == "pytest" && attempt.Status == "skip" {
 				observed[identity{file, test.Name, attempt.Status}]++
 			}
 		}
@@ -461,8 +464,11 @@ func verifyJestTelemetry(run validationRun) verdict {
 	return verdict{}
 }
 
-func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) error {
+func (t *Testdrive) runFrameworkValidation(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) error {
 	run := t.runJest
+	if t.framework.Name() == "pytest" {
+		run = t.runPytest
+	}
 	if t.framework.Name() == "webdriverio" {
 		run = t.runWebdriverIO
 	}
@@ -528,6 +534,9 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 	}
 	if t.framework.Name() == "webdriverio" {
 		return t.runWebdriverIOFeatures(ctx, output, session, preload, baseline, result)
+	}
+	if t.framework.Name() == "pytest" {
+		return t.runPytestFeatures(ctx, output, session, preload, baseline, result)
 	}
 	if t.framework.Name() == "cucumber" {
 		return t.runCucumberFeatures(ctx, output, session, preload, baseline, result)

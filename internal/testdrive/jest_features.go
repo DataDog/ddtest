@@ -344,7 +344,7 @@ func validProbeControl(run validationRun, status string) bool {
 		return false
 	}
 	for _, test := range run.Tests {
-		if test.Name == probeName && test.Status == status {
+		if (test.Name == probeName || run.framework == "pytest" && test.Name == pytestProbeName) && test.Status == status {
 			return status != "failed" || strings.Contains(test.Failure, "ddtest intentional failure")
 		}
 	}
@@ -444,6 +444,9 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 		// Quarantine changes the command outcome, not necessarily the native
 		// assertion status. Some Jest versions retain the failing assertion.
 		success = quarantined && failed == 1 && passed == 0 && retries == 0 && len(run.Tests) == 1 && nativePass+nativeFail == 1
+		if run.framework == "pytest" {
+			success = success || quarantined && failed == 1 && passed == 0 && retries == 0 && len(run.Tests) == 1 && nativeSkip == 1
+		}
 	case "disabled":
 		success = disabled && executedTests(run) == 0 && nativeSkip == 1
 	case "attempt-to-fix":
