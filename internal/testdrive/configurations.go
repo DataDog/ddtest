@@ -145,6 +145,13 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			child.tracerVersion = result.Selection.Version
 		}
 		child.command = t.configurationExecutable(words[0])
+		if t.framework.Name() == "pytest" {
+			child.pytestEnvironment = maps.Clone(entry.Environment)
+			child.command = words[0]
+			if filepath.Base(words[0]) == words[0] && strings.HasPrefix(words[0], "python") && t.environmentInfo.Executable != "" {
+				child.command = t.environmentInfo.Executable
+			}
+		}
 		child.args = words[1:]
 		child.reportModels = &models
 		// Rebind method values to this command, rather than the original drive.
@@ -174,8 +181,9 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		if result.Preflight == nil {
 			result.Preflight = execution.Preflight
 		}
-		if result.Selection == nil {
+		if result.Selection == nil && result.PythonSelection == nil {
 			result.Selection = execution.Selection
+			result.PythonSelection = execution.PythonSelection
 			result.Tracer = execution.Tracer
 			result.TracerSource = execution.TracerSource
 		}

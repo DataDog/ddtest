@@ -74,6 +74,10 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 			if framework == "webdriverio" && !webdriverIOJobCandidate(root, workflow, job) {
 				continue
 			}
+			if framework == "pytest" && !pythonJobCandidate(root, workflow, job) {
+				scope.Review = append(scope.Review, workflow.Path+" / "+name+": no pytest environment identified; review other entry points separately.")
+				continue
+			}
 			if framework == "cypress" || framework == "cucumber" {
 				candidate := false
 				for _, step := range job.Steps {
@@ -208,6 +212,9 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 
 // ValidationCommands also resolves a selected local alias, for scope accounting.
 func ValidationCommands(root, command, framework string) []TestCommand {
+	if framework == "pytest" {
+		return resolvePythonStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: command}).Tests
+	}
 	remaining := 256
 	return resolveJestSequence(root, root, command, nil, &remaining, framework).Tests
 }

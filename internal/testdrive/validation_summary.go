@@ -15,6 +15,7 @@ import (
 )
 
 type validationSummary struct {
+	LocalPython             string                 `json:"local_python,omitempty"`
 	ExecutedValidation      *executedValidation    `json:"executed_validation,omitempty"`
 	ConfigurationCoverage   *configurationCoverage `json:"configuration_coverage,omitempty"`
 	SelectedValidation      *verdict               `json:"selected_validation,omitempty"`
@@ -117,6 +118,9 @@ func validationHandoff(result validationResult) string {
 	}
 	if summary.LocalNode != "" {
 		fmt.Fprintf(&block, "Local runtime: Node %s.\n", summary.LocalNode)
+	}
+	if summary.LocalPython != "" {
+		fmt.Fprintf(&block, "Local runtime: Python %s.\n", summary.LocalPython)
 	}
 	if result.CheckOnly {
 		block.WriteString("Evidence: check-only; paired execution and feature controls were not rerun.\n")
@@ -235,7 +239,10 @@ func summarizeValidation(result validationResult) validationSummary {
 		summary.BlockingChecks = append(summary.BlockingChecks, "preflight "+result.Preflight.Verdict.Status)
 	}
 	if !result.CheckOnly {
-		if missingRealCoverage(result) {
+		if missingRealCoverage(result) && result.Framework == "pytest" {
+			summary.BlockingChecks = append(summary.BlockingChecks, "pytest real-suite coverage was not observed. Check the selected tracer's coverage collection and preserve the project's coverage settings.")
+		}
+		if missingRealCoverage(result) && result.Framework != "pytest" {
 			summary.BlockingChecks = append(summary.BlockingChecks, displayName(result.Framework)+" real-suite coverage was not observed. Synthetic skipping probes do not validate coverage of the customer's source. Check NYC instrument/include settings and ESM instrumentation; preserve existing coverage thresholds.")
 		}
 		if result.Compatibility.Status != "compatible" {
@@ -291,6 +298,7 @@ func summarizeValidation(result validationResult) validationSummary {
 	}
 	if result.Preflight != nil {
 		summary.LocalNode = result.Preflight.Node
+		summary.LocalPython = result.Preflight.Python
 	}
 	summary.CIScope = summarizeCIScope(result.CIRuntime)
 	summary.OnboardingResponse = fmt.Sprintf("Onboarding validation: %s. Local validation: %s. CI configuration: %s (static analysis). CI execution and Datadog backend processing: not exercised.", summary.Status, summary.LocalValidation, summary.CIConfiguration)
@@ -298,7 +306,7 @@ func summarizeValidation(result validationResult) validationSummary {
 		summary.OnboardingResponse += " Local execution runtime: Node " + summary.LocalNode + "."
 	}
 	if summary.CIScope != nil {
-		summary.OnboardingResponse += fmt.Sprintf(" CI Node scope (static): configured for instrumentation: %s; excluded from instrumentation: %s; unresolved or blocked: %s.", scopeList(summary.CIScope.Instrumented), scopeList(summary.CIScope.Excluded), scopeList(summary.CIScope.Unverified))
+		summary.OnboardingResponse += fmt.Sprintf(" CI runtime scope (static): configured for instrumentation: %s; excluded from instrumentation: %s; unresolved or blocked: %s.", scopeList(summary.CIScope.Instrumented), scopeList(summary.CIScope.Excluded), scopeList(summary.CIScope.Unverified))
 	}
 	if len(summary.BlockingChecks) > 0 {
 		summary.OnboardingResponse += " Blocking checks: " + strings.Join(summary.BlockingChecks[:min(3, len(summary.BlockingChecks))], "; ") + "."
@@ -430,6 +438,9 @@ func summarizeCIScope(check *onboard.RuntimeCheck) *ciRuntimeScope {
 	scope := &ciRuntimeScope{}
 	for _, job := range check.Jobs {
 		label := nodeScopeLabel(job.Node)
+		if job.Python != "" {
+			label = "Python " + job.Python
+		}
 		switch job.Status {
 		case "compatible":
 			scope.Instrumented = appendUnique(scope.Instrumented, label)

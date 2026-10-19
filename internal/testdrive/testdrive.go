@@ -48,6 +48,7 @@ type Testdrive struct {
 	workflowScope  *onboard.ValidationScope
 	workflowRun    func(context.Context, io.Writer) error // test injection for coordinator failures
 
+	pytestEnvironment     map[string]string
 	webdriverIOCapability *int
 	environmentInfo       environmentInfo
 	environmentFailure    *reportCard
@@ -106,7 +107,14 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 		return nil, fmt.Errorf("--all and --command are mutually exclusive")
 	}
 	if all && !supportsValidationFramework(runner.Name()) {
-		return nil, fmt.Errorf("--all currently validates Jest, Vitest, Playwright, Mocha, Cypress, Cucumber and WebdriverIO only")
+		return nil, fmt.Errorf("--all currently validates Jest, Vitest, Playwright, Mocha, Cypress, Cucumber, WebdriverIO and pytest only")
+	}
+	if runner.Name() == "pytest" && strings.TrimSpace(settings.GetCommand()) == "" {
+		if scope, err := onboard.DiscoverValidationScope(repositoryRoot, "pytest"); err != nil {
+			return nil, err
+		} else if len(scope.Commands) > 0 {
+			all = true
+		}
 	}
 	if runner.Name() == "vitest" {
 		repositoryRoot, err = filepath.EvalSymlinks(repositoryRoot)
@@ -249,6 +257,8 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 // Bind method values after copying a drive so preflight uses its command and workspace.
 func (t *Testdrive) bindPreflight() {
 	switch t.framework.Name() {
+	case "pytest":
+		t.preflight = t.checkPytestPreflight
 	case "vitest":
 		t.preflight = t.checkVitestPreflight
 	case "playwright":
@@ -334,7 +344,11 @@ func (t *Testdrive) Preview(output io.Writer) {
 		_, _ = fmt.Fprintf(output, "  - command: %s\n", shellquote.Join(append([]string{command}, args...)...))
 	}
 	if supportsValidationFramework(t.framework.Name()) {
-		_, _ = fmt.Fprintln(output, "  - check GitHub Actions Node runtimes against the workflow-selected tracer using public action and npm metadata")
+		if t.framework.Name() == "pytest" {
+			_, _ = fmt.Fprintln(output, "  - check GitHub Actions Python runtimes and tracer release agreement using action and PyPI metadata")
+		} else {
+			_, _ = fmt.Fprintln(output, "  - check GitHub Actions Node runtimes against the workflow-selected tracer using public action and npm metadata")
+		}
 		_, _ = fmt.Fprintln(output, "  - compare native JSON results without instrumentation and with reporting-only instrumentation")
 		_, _ = fmt.Fprintln(output, "  - repeat the pair if outcomes differ; timing and console order are ignored")
 		if t.framework.Name() == "webdriverio" {
@@ -489,12 +503,14 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	}
 
 	if supportsValidationFramework(t.framework.Name()) {
-		ciRoot := t.repositoryRoot
-		if t.workflowRoot != "" {
-			ciRoot = t.workflowRoot
+		if t.framework.Name() != "pytest" {
+			ciRoot := t.repositoryRoot
+			if t.workflowRoot != "" {
+				ciRoot = t.workflowRoot
+			}
+			check := onboard.CheckCIRuntimes(ctx, ciRoot, t.framework.Name())
+			result.CIRuntime = &check
 		}
-		check := onboard.CheckCIRuntimes(ctx, ciRoot, t.framework.Name())
-		result.CIRuntime = &check
 		if t.preflight != nil {
 			if err := t.preflight(ctx, output, &result); err != nil {
 				return result, err
@@ -506,7 +522,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 			return result, nil
 		}
 	} else if t.checkOnly {
-		return result, fmt.Errorf("configuration preflight currently supports Jest, Vitest, Playwright, Mocha, Cypress, Cucumber and WebdriverIO only")
+		return result, fmt.Errorf("configuration preflight currently supports Jest, Vitest, Playwright, Mocha, Cypress, Cucumber, WebdriverIO and pytest only")
 	}
 
 	_, _ = fmt.Fprintf(output, "\nPreparing %s in %s...\n", t.tracerLabel, session.Directory())
@@ -550,11 +566,20 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		result.Tracer = t.installedTracerLabel(t.projectTracer)
 		result.TracerSource = "project installation (reused; fallback selector ignored)"
 	}
+	if t.framework.Name() == "pytest" {
+		if result.PythonSelection != nil {
+			if err := t.verifyPytestTracer(ctx, installation.Path, result.PythonSelection.Version); err != nil {
+				return result, err
+			}
+		}
+		runErr = t.runFrameworkValidation(ctx, output, session, installation.Path, &result)
+		return
+	}
 	if t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio" {
 		if err := verifyInstalledSelection(installation.Path, &result); err != nil {
 			return result, err
 		}
-		runErr = t.runJavaScriptValidation(ctx, output, session, installation.Path, &result)
+		runErr = t.runFrameworkValidation(ctx, output, session, installation.Path, &result)
 		return
 	}
 	if t.framework.Name() == "jest" {
@@ -567,7 +592,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 				return result, fmt.Errorf("jest preflight: %s", result.Preflight.Verdict.Reason)
 			}
 		}
-		runErr = t.runJavaScriptValidation(ctx, output, session, installation.Path, &result)
+		runErr = t.runFrameworkValidation(ctx, output, session, installation.Path, &result)
 		return
 	}
 	server, err := t.startIntake(session.Directory(), intake.Scenario{})

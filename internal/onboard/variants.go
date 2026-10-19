@@ -53,6 +53,13 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		maps.Copy(env, layer)
 	}
 	for key, value := range env {
+		if len(frameworks) > 0 && frameworks[0] == "pytest" && key == "PYTEST_ADDOPTS" {
+			value = strings.ReplaceAll(value, "${{ env.PYTEST_ADDOPTS }}", "")
+		}
+		if len(frameworks) > 0 && frameworks[0] == "pytest" && key == "PYTHONPATH" && strings.TrimSpace(value) == "${{ env.PYTHONPATH }}" {
+			delete(env, key)
+			continue
+		}
 		// Local Cypress validation disables Cloud recording and uses the
 		// evaluator's private binary cache. Never resolve or forward CI keys
 		// and runner-specific cache paths for these managed settings.

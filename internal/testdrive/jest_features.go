@@ -220,7 +220,7 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 }
 
 func validProbeControl(run validationRun, status string) bool {
-	if (run.framework == "cypress" || run.framework == "cucumber" || run.framework == "webdriverio") && (run.ProbeExecutions == nil || *run.ProbeExecutions != 1) {
+	if (run.framework == "cypress" || run.framework == "cucumber" || run.framework == "webdriverio" || run.framework == "pytest") && (run.ProbeExecutions == nil || *run.ProbeExecutions != 1) {
 		return false
 	}
 	expectedExit := (status == "passed" && run.ExitCode == 0) || (status == "failed" && run.ExitCode > 0)
@@ -228,7 +228,7 @@ func validProbeControl(run validationRun, status string) bool {
 		return false
 	}
 	for _, test := range run.Tests {
-		if test.Name == probeName && test.Status == status {
+		if (test.Name == probeName || run.framework == "pytest" && test.Name == pytestProbeName) && test.Status == status {
 			return status != "failed" || strings.Contains(test.Failure, "ddtest intentional failure")
 		}
 	}
@@ -266,7 +266,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	omittedPlaywrightIdentity := false
 	for _, event := range run.Facts.Events {
 		tags := event.Tags
-		if run.framework == "cypress" && isSkippedCypressProbe(event, identity) {
+		if (run.framework == "cypress" || run.framework == "pytest") && isSkippedCypressProbe(event, identity) {
 			skipped = true
 		}
 		if isSkippedJestProbe(event, identity.Module, identity.Suite, identity.SourceFile) {
@@ -318,7 +318,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	// Vitest reports one final native result for retries; attempt telemetry must
 	// still prove that the probe ran multiple times for the expected reason.
 	nativeRepeated := nativePass >= 2 || ((run.framework == "vitest" || run.framework == "playwright") && nativePass == 1) ||
-		((run.framework == "cypress" || run.framework == "cucumber" || run.framework == "webdriverio") && nativePass == 1 && run.ProbeExecutions != nil && *run.ProbeExecutions >= 2)
+		((run.framework == "cypress" || run.framework == "cucumber" || run.framework == "webdriverio" || run.framework == "pytest") && nativePass == 1 && run.ProbeExecutions != nil && *run.ProbeExecutions >= 2)
 	success := false
 	switch feature {
 	case "auto-retries":
@@ -327,19 +327,22 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 		success = passed >= 2 && failed == 0 && retries > 0 && nativeRepeated && nativeFail == 0
 	case "skipping":
 		success = skipped && executedTests(run) == 0 && run.Facts.TestEventCount == 0
-		if run.framework == "cypress" {
+		if run.framework == "cypress" || run.framework == "pytest" {
 			success = skipped && executedTests(run) == 0 && nativeSkip == 1 && run.Facts.TestEventCount == 1
 		}
 	case "quarantine":
 		// Quarantine changes the command outcome, not necessarily the native
 		// assertion status. Some Jest versions retain the failing assertion.
 		success = quarantined && failed == 1 && passed == 0 && retries == 0 && len(run.Tests) == 1 && nativePass+nativeFail == 1
+		if run.framework == "pytest" {
+			success = success || quarantined && failed == 1 && passed == 0 && retries == 0 && len(run.Tests) == 1 && nativeSkip == 1
+		}
 	case "disabled":
 		success = disabled && executedTests(run) == 0 && nativeSkip == 1
 	case "attempt-to-fix":
 		success = attemptToFix && passed >= 2 && failed == 0 && retries > 0 && nativeRepeated && nativeFail == 0
 	}
-	if run.framework == "cypress" || run.framework == "cucumber" || run.framework == "webdriverio" {
+	if run.framework == "cypress" || run.framework == "cucumber" || run.framework == "webdriverio" || run.framework == "pytest" {
 		success = success && run.ProbeExecutions != nil && *run.ProbeExecutions == passed+failed
 	}
 	if !success {
@@ -370,7 +373,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 			"disabled":              "The normally failing probe was reported disabled/skipped, with no executed test body and a successful command.",
 			"attempt-to-fix":        "The marked passing probe ran repeatedly with attempt_to_fix retry evidence and a successful command.",
 		}[feature]
-		if feature == "skipping" && run.framework == "cypress" {
+		if feature == "skipping" && (run.framework == "cypress" || run.framework == "pytest") {
 			result.Reason = "Test Impact Analysis skipped the normally failing probe test; matching skipped test telemetry, zero probe-body executions and a successful command were observed."
 		}
 		if omittedPlaywrightIdentity {
