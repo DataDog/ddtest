@@ -34,6 +34,9 @@ var playwrightInstructions string
 //go:embed instructions/vitest.md
 var vitestInstructions string
 
+//go:embed instructions/ruby.md
+var rubyInstructions string
+
 //go:embed instructions/github.md
 var gitHubInstructions string
 
@@ -43,7 +46,7 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		return err
 	}
 	var scope *ValidationScope
-	if language == "javascript" && (name == "mocha" || name == "playwright" || name == "cypress" || name == "cucumber" || name == "webdriverio") {
+	if language == "ruby" || language == "javascript" && (name == "mocha" || name == "playwright" || name == "cypress" || name == "cucumber" || name == "webdriverio") {
 		discovered, err := DiscoverValidationScope(repositoryRoot, name)
 		if err != nil {
 			return err
@@ -84,7 +87,7 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 		}
 		_, _ = fmt.Fprintf(output, "Run `%s` to check the setup locally.\n", command)
 		_, _ = fmt.Fprintln(output, "After it finishes, post every `Open report:` link to the user so they can open the local Test Optimization report.")
-		if name != "webdriverio" && name != "cypress" && name != "cucumber" {
+		if language != "ruby" && name != "webdriverio" && name != "cypress" && name != "cucumber" {
 			return nil
 		}
 	}
@@ -108,6 +111,9 @@ func instructions(language, name string) string {
 }
 
 func frameworkInstructions(language, name string) string {
+	if language == "ruby" {
+		return strings.ReplaceAll(rubyInstructions, "__FRAMEWORK__", name)
+	}
 	if language == "javascript" && name == "webdriverio" {
 		return strings.ReplaceAll(webdriverIOInstructions, "ddtest testdrive", "ddtest testdrive --framework webdriverio")
 	}

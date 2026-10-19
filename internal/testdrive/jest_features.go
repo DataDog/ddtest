@@ -313,7 +313,10 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 		case "skipping", "quarantine", "disabled":
 			mode = "fail"
 		}
-		scenario := intake.Scenario{Feature: feature, Module: identity.Module, Suite: identity.Suite, Test: identity.Name, SourceFile: identity.SourceFile}
+		scenario := intake.Scenario{Feature: feature, Module: identity.Module, Suite: identity.Suite, Test: identity.Name, SourceFile: identity.SourceFile, Parameters: identity.Parameters}
+		if passControl.framework == "rspec" || passControl.framework == "minitest" {
+			scenario.SuiteSelector = identity.Suite
+		}
 		value, err := run(feature, scenario, mode)
 		value = markTimeout(value)
 		result.Runs = append(result.Runs, value.summary())
@@ -344,7 +347,7 @@ func validProbeControl(run validationRun, status string) bool {
 		return false
 	}
 	for _, test := range run.Tests {
-		if test.Name == probeName && test.Status == status {
+		if (test.Name == probeName || run.framework == "minitest" && test.Name == "test_ddtest_validation_probe") && test.Status == status {
 			return status != "failed" || strings.Contains(test.Failure, "ddtest intentional failure")
 		}
 	}

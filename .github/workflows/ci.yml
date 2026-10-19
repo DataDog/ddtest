@@ -168,6 +168,24 @@ jobs:
             DDTEST_DATADOG_CI_VERSION="${{ matrix.datadog_ci }}" \
             go test -v ./internal/compatibility -run '^TestMinitestAdapterIntegration$'
 
+  ruby-onboarding-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1
+        with:
+          ruby-version: "3.4"
+      - name: Test Ruby onboarding and feature controls
+        run: |
+          gem install datadog-ci --version 1.40.0 --no-document
+          gem install rspec --version 3.13.2 --no-document
+          gem install minitest --version 6.0.6 --no-document
+          gem install rake --version 13.4.2 --no-document
+          DDTEST_RUN_RUBY_INTEGRATION_TEST=1 go test -v ./internal/testdrive -run '^TestRubyValidationIntegration$' -count=1
+
   pytest-compatibility:
     runs-on: ubuntu-latest
     strategy:

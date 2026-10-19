@@ -43,6 +43,7 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
+	rubyTracerEnv            map[string]string
 	selectedPlan             onboard.TestCommand
 	cypressPackage           string
 	cypressSelected          onboard.TestCommand
@@ -184,6 +185,17 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	}
 
 	var discoveryError error
+	if language == "ruby" && !all {
+		selected, selectErr := onboard.RubyValidationCommand(repositoryRoot, runner.Name(), settings.GetCommand())
+		discoveryError = selectErr
+		if selected != "" {
+			words, parseErr := shellquote.Split(selected)
+			if parseErr != nil || len(words) == 0 {
+				return nil, fmt.Errorf("invalid Ruby command: %s", selected)
+			}
+			command, args = words[0], words[1:]
+		}
+	}
 	var selectedPlan onboard.TestCommand
 	var preflightEnvironment map[string]string
 	if configurationOnly && !frameworkFeaturePolicies[runner.Name()].CheckOnly {
@@ -590,7 +602,7 @@ func (t *Testdrive) runLocked(ctx context.Context, output io.Writer) (runErr err
 	var prepared *configurationResult
 	if t.discoveryError != nil {
 		result, runErr = t.run(ctx, output)
-	} else if t.framework.Name() == "webdriverio" || t.framework.Name() == "cucumber" || t.framework.Name() == "cypress" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
+	} else if t.language == "ruby" || t.framework.Name() == "webdriverio" || t.framework.Name() == "cucumber" || t.framework.Name() == "cypress" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
 		child := *t
 		child.workflowRoot = t.repositoryRoot
 		child.preflight = child.frameworkPreflight()
@@ -803,7 +815,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 			ciRoot = t.workflowRoot
 		}
 		check := checkConfigurationCIRuntimes(ctx, ciRoot, t.framework.Name())
-		if t.workflowRoot != "" {
+		if t.workflowRoot != "" && t.language != "ruby" {
 			check = onboard.CheckCIRuntimes(ctx, ciRoot, t.framework.Name())
 		}
 		result.CIRuntime = &check
@@ -859,7 +871,11 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 			// The same --timeout bound as every other validation subprocess.
 			options.Timeout = t.commandTimeout
 		}
-		installation, err = t.platform.InstallTestdriveTracer(ctx, options)
+		if t.language == "ruby" {
+			installation, err = t.installRubyTracer(ctx, options)
+		} else {
+			installation, err = t.platform.InstallTestdriveTracer(ctx, options)
+		}
 		if err != nil {
 			return result, err
 		}
@@ -872,6 +888,12 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	if installation.Project {
 		result.Tracer = t.installedTracerLabel(t.projectTracer)
 		result.TracerSource = "project installation · reused"
+	}
+	if t.language == "ruby" {
+		if err := t.checkRubyPreflight(ctx, output, &result); err != nil {
+			return result, err
+		}
+		return result, t.runFrameworkValidation(ctx, output, session, "", &result)
 	}
 	if supportsValidationFramework(t.framework.Name()) {
 		if result.Selection != nil {
@@ -897,7 +919,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 				return result, fmt.Errorf("%s preflight: %s", t.framework.Name(), result.Preflight.Verdict.Reason)
 			}
 		}
-		runErr = t.runJavaScriptValidation(ctx, output, session, installation.Path, &result)
+		runErr = t.runFrameworkValidation(ctx, output, session, installation.Path, &result)
 		return
 	}
 	server, err := t.startIntake(session.Directory(), intake.Scenario{})

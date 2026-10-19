@@ -142,7 +142,11 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 func discoverValidationScope(root, framework string, allowSetupFacts bool) (ValidationScope, error) {
 	var scope ValidationScope
 	var allUnresolved, allReview []scopeDiagnostic
-	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" && framework != "cucumber" && framework != "webdriverio" {
+	language := "javascript"
+	if framework == "rspec" || framework == "minitest" {
+		language = "ruby"
+	}
+	if framework != "jest" && framework != "vitest" && framework != "mocha" && framework != "playwright" && framework != "cypress" && framework != "cucumber" && framework != "webdriverio" && language != "ruby" {
 		return scope, fmt.Errorf("CI command discovery is not available for %s", framework)
 	}
 
@@ -159,7 +163,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				consumer, hidden := false, false
 				var outside []string
 				for i, step := range job.Steps {
-					resolution := resolveTestStep(root, workflow, job, step, "javascript", framework)
+					resolution := resolveTestStep(root, workflow, job, step, language, framework)
 					switch {
 					case resolution.Review:
 					case resolution.Matched:
@@ -220,6 +224,9 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				// without asking. The Node is the one active at that step: a job
 				// may switch runtimes between test steps.
 				unsupportedAt := func(step int) bool {
+					if language != "javascript" {
+						return false
+					}
 					node, err := rowSetupNodeBefore(root, workflow, job, row, step)
 					if err != nil || !UnsupportedNode(node) {
 						return false
@@ -230,7 +237,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					return true
 				}
 				finalNode, finalErr := rowSetupNode(root, workflow, job, row)
-				unsupportedRow := finalErr == nil && UnsupportedNode(finalNode)
+				unsupportedRow := language == "javascript" && finalErr == nil && UnsupportedNode(finalNode)
 				installerActive, installerSkipped := false, false
 				var pendingSetup []string
 				var preparation []BuildCommand
@@ -259,7 +266,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						continue
 					}
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
-					resolution := resolveTestStep(root, workflow, job, resolved, "javascript", framework)
+					resolution := resolveTestStep(root, workflow, job, resolved, language, framework)
 					if readsComputedAxis(step.Run, computed, row) && !resolution.Matched && !stepMayStartTests(root, workflow, job, step, framework) {
 						// A dependency install of a computed variant is the axis
 						// itself; the tests run with the installed dependencies.
@@ -287,7 +294,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 							}
 							// Resolve like the main scan so matrix-selected tests are recognized.
 							resolvedLater, _, _ := resolveVariantStep(workflow, job, later, row, framework)
-							laterTest = laterTest || resolveTestStep(root, workflow, job, resolvedLater, "javascript", framework).Matched
+							laterTest = laterTest || resolveTestStep(root, workflow, job, resolvedLater, language, framework).Matched
 						}
 						if !laterTest {
 							for _, setup := range resolution.Setup {
@@ -456,6 +463,9 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 
 // ValidationCommands also resolves a selected local alias, for scope accounting.
 func ValidationCommands(root, command, framework string) []TestCommand {
+	if framework == "rspec" || framework == "minitest" {
+		return resolveRubyStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: command}, framework).Tests
+	}
 	remaining := packageScriptExpansionLimit
 	return resolveJestSequence(root, root, command, nil, &remaining, framework).Tests
 }

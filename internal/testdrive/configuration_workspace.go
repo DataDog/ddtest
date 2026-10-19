@@ -66,7 +66,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	}
 	original, workspace := t.repositoryRoot, t.repositoryRoot
 	checkout := t.checkoutRoot()
-	if !t.checkOnly && (len(item.Prerequisites) > 0 || len(item.Services) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha" || t.framework.Name() == "playwright" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") {
+	if t.language == "ruby" || !t.checkOnly && (len(item.Prerequisites) > 0 || len(item.Services) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha" || t.framework.Name() == "playwright" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") {
 		parent, err := os.MkdirTemp("", "ddtest-configuration-")
 		if err != nil {
 			return result, err
@@ -146,6 +146,23 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 		return result, err
 	}
 	t.configurationEnvironment = isolatedCIEnvironment(onboard.WithGitHubActionsDefaults(item.Environment), original, checkout)
+	if t.language == "ruby" {
+		gemfile := t.configurationEnvironment["BUNDLE_GEMFILE"]
+		if gemfile == "" {
+			gemfile = os.Getenv("BUNDLE_GEMFILE")
+		}
+		if filepath.IsAbs(gemfile) {
+			canonical, err := filepath.EvalSymlinks(gemfile)
+			if err != nil {
+				return result, err
+			}
+			relative, err := filepath.Rel(canonicalWorkflowRoot(original), canonical)
+			if err != nil || !filepath.IsLocal(relative) {
+				return result, fmt.Errorf("BUNDLE_GEMFILE is outside the repository; use a repository-local Gemfile for isolated Ruby validation")
+			}
+			t.configurationEnvironment["BUNDLE_GEMFILE"] = filepath.Join(workspace, relative)
+		}
+	}
 	t.executor = configurationExecutor{executor, t.configurationEnvironment}
 	directory, err := localSetupDirectory(workspace, item.Directory)
 	if err != nil {

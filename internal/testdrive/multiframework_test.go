@@ -58,14 +58,10 @@ printf '%s' '{"executable":"/selected ruby/bin/ruby","version":"3.4.7"}' > "$las
 					drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 						return &fakeIntake{findings: intake.Facts{TestEventCount: 1}}, nil
 					}
-					require.NoError(t, drive.Run(t.Context(), &output))
-					require.NotContains(t, output.String(), "INCOMPLETE")
-					require.True(t, strings.HasPrefix(executor.env["RUBYOPT"], preloads+" "))
+					require.ErrorContains(t, drive.Run(t.Context(), &output), "validation is incomplete")
+					require.NotContains(t, executor.env["RUBYOPT"], "datadog/ci/auto_instrument", "preflight disables tracing")
 					require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
-					report, err := os.ReadFile(htmlReportPath(root))
-					require.NoError(t, err)
-					require.Contains(t, string(report), "Ruby 3.4.7")
-					require.Contains(t, string(report), "/selected ruby/bin/ruby")
+					require.Contains(t, output.String(), "ruby bundle did not produce framework metadata")
 				} else {
 					require.Empty(t, drive.environmentInfo.Executable)
 					require.Empty(t, drive.environmentInfo.Version)
@@ -127,16 +123,6 @@ func TestPrepareAllSupportedFrameworks(t *testing.T) {
 			case "python":
 				require.NotEmpty(t, executor.env["PYTHONPATH"])
 				require.Contains(t, executor.env["PYTEST_ADDOPTS"], "--ddtrace")
-				require.NotContains(t, executor.env, "NODE_OPTIONS")
-			case "ruby":
-				report, err := os.ReadFile(htmlReportPath(root))
-				require.NoError(t, err)
-				require.Contains(t, string(report), "Ruby from PATH")
-				require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
-				require.Contains(t, preview.String(), "Bundler updates Gemfile and Gemfile.lock.")
-				require.NotContains(t, preview.String(), "It will not change")
-				require.Contains(t, output.String(), "datadog-ci@latest · project bundle installation")
-				require.Contains(t, executor.env["RUBYOPT"], "datadog/ci/auto_instrument")
 				require.NotContains(t, executor.env, "NODE_OPTIONS")
 			}
 		})

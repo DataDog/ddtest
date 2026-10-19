@@ -365,7 +365,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 // Preflight and execution must resolve the same installed framework binary,
 // without requiring the caller to add node_modules/.bin to PATH.
 func (t *Testdrive) configurationExecutable(command string) string {
-	if strings.ContainsAny(command, `/\`) ||
+	if t.language == "ruby" || strings.ContainsAny(command, `/\`) ||
 		slices.Contains([]string{"npm", "pnpm", "yarn", "node", "npx", "bun", "corepack", "ddtest"}, command) {
 		return command
 	}

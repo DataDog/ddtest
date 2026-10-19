@@ -461,8 +461,15 @@ func verifyJestTelemetry(run validationRun) verdict {
 	return verdict{}
 }
 
-func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) error {
+func (t *Testdrive) runFrameworkValidation(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) error {
 	run := t.runJest
+	if t.language == "ruby" {
+		run = func(ctx context.Context, output io.Writer, session *Session, preload string, spec runSpec) (validationRun, error) {
+			value, err := t.runRuby(ctx, output, session, preload, spec.Name, spec.Instrumented, spec.Scenario, spec.ProbePath, spec.ProbeMode)
+			value.Role = spec.Role
+			return value, err
+		}
+	}
 	if t.framework.Name() == "webdriverio" {
 		run = t.runWebdriverIO
 	}
@@ -525,6 +532,9 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 		result.Features = []featureResult{{Name: "all", Status: "not exercised", Reason: feature}}
 		result.Compatibility = compatibility
 		return nil
+	}
+	if t.language == "ruby" {
+		return t.runRubyFeatures(ctx, output, session, baseline, result)
 	}
 	if t.framework.Name() == "webdriverio" {
 		return t.runWebdriverIOFeatures(ctx, output, session, preload, baseline, result)

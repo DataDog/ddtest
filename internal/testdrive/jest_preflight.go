@@ -260,6 +260,8 @@ func releaseParts(version string) (int, int, bool) {
 // bound to t. A framework without them gets nil, never another framework's.
 func (t *Testdrive) frameworkPreflight() func(context.Context, io.Writer, *validationResult) error {
 	switch t.framework.Name() {
+	case "rspec", "minitest":
+		return t.checkRubyPreflight
 	case "jest":
 		return t.checkJestPreflight
 	case "vitest":
@@ -313,6 +315,9 @@ func (t *Testdrive) runConfigurationChecks(ctx context.Context, output io.Writer
 // Full package/checkout scope coordination belongs to the configuration PR.
 // Until then, nested invocation must not certify CI it did not inspect.
 func checkConfigurationCIRuntimes(ctx context.Context, packageRoot, frameworkName string) onboard.RuntimeCheck {
+	if frameworkName == "rspec" || frameworkName == "minitest" {
+		return onboard.RubyCIConfiguration(packageRoot, frameworkName)
+	}
 	check := onboard.CheckCIRuntimes(ctx, packageRoot, frameworkName)
 	checkout := git.GetSourceRoot()
 	if checkout == "" {
