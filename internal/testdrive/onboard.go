@@ -39,7 +39,8 @@ func (t *Testdrive) Onboard(ctx context.Context, output io.Writer, explicitVersi
 
 func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options WorkflowOptions) error {
 	name := t.framework.Name()
-	if !supportsValidationFramework(name) && options.Format == "verbose" && !options.Apply {
+	standalonePython := t.language == "python" && options.Resume == "" && options.FactsFile == ""
+	if (!supportsValidationFramework(name) || standalonePython) && options.Format == "verbose" && !options.Apply {
 		return t.Run(ctx, output)
 	}
 	result := onboard.AgentResult{Status: "running", Phase: "discovery", NextAction: "run_command", NextCommand: onboard.OnboardingCommand(name)}

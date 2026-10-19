@@ -136,6 +136,50 @@ func TestPythonReviewTracerVerificationKeepsSelectedEnvironment(t *testing.T) {
 	require.NoError(t, drive.verifyPytestTracer(t.Context(), "tracer-path", "4.16.0"))
 }
 
+func TestPytestWorkflowPreservesStandaloneValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		options    WorkflowOptions
+		standalone bool
+	}{
+		{"standalone", WorkflowOptions{Format: "verbose"}, true},
+		{"agent coordinator", WorkflowOptions{Format: "agent"}, false},
+		{"automatic CI edits", WorkflowOptions{Format: "json", Apply: true}, false},
+		{"resume coordinator", WorkflowOptions{Format: "verbose", Resume: "previous-run"}, false},
+		{"setup facts", WorkflowOptions{Format: "verbose", FactsFile: "facts.json"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			drive := &Testdrive{repositoryRoot: root, language: "python", framework: framework.NewPytest(platform.NewPython()), environmentFailure: environmentFinding("pytest-unavailable", "selected pytest environment is unavailable", "missing pytest", "prepare the environment")}
+			var output bytes.Buffer
+			err := drive.Workflow(t.Context(), &output, tc.options)
+			if tc.standalone {
+				require.ErrorContains(t, err, "selected pytest environment is unavailable")
+				require.FileExists(t, validationPath(root))
+			} else {
+				require.ErrorContains(t, err, "framework_unsupported")
+				require.NoFileExists(t, validationPath(root))
+			}
+		})
+	}
+}
+
+func TestPytestAllRetainsUnsupportedPackageDirectory(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "python-app"), 0755))
+	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  tests:\n    defaults:\n      run:\n        working-directory: python-app\n    steps:\n      - run: python -m pytest\n")
+	drive := &Testdrive{repositoryRoot: root, language: "python", framework: framework.NewPytest(platform.NewPython())}
+	require.ErrorContains(t, drive.runAllConfigurations(t.Context(), io.Discard), "root-package commands only")
+	data, err := os.ReadFile(validationPath(root))
+	require.NoError(t, err)
+	var result validationResult
+	require.NoError(t, json.Unmarshal(data, &result))
+	require.Len(t, result.Configurations, 1)
+	require.Equal(t, "not exercised", result.Configurations[0].Status)
+	require.Empty(t, result.Runs)
+}
+
 // Uses an explicitly supplied existing environment; never installs dependencies.
 // DDTEST_PYTEST_PYTHON=/path/to/venv/bin/python go test ./internal/testdrive -run TestPytestRealValidation -v
 func TestPytestRealValidation(t *testing.T) {
