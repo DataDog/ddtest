@@ -8,9 +8,49 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/maven"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMavenWorkflowPreservesConfigurationOnlyValidation(t *testing.T) {
+	previous := *settings.Get()
+	t.Cleanup(func() { *settings.Get() = previous })
+	settings.Get().Platform, settings.Get().Command = "java", ""
+	t.Setenv("DD_TRACER_FOLDER", "")
+	fixtures, err := filepath.Abs("testdata/maven")
+	require.NoError(t, err)
+	bin := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "java"), []byte("#!/bin/sh\nexit 0\n"), 0700))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, name := range maven.FrameworkNames {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			pom, err := os.ReadFile(filepath.Join(fixtures, name, "pom.xml"))
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile("pom.xml", pom, 0600))
+			settings.Get().Framework = name
+			drive, err := Prepare("1.67.1", true)
+			require.NoError(t, err)
+			var output bytes.Buffer
+			require.Error(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "verbose"}))
+			require.Contains(t, output.String(), "Maven module")
+			data, err := os.ReadFile(validationPath(root))
+			require.NoError(t, err)
+			var result validationResult
+			require.NoError(t, json.Unmarshal(data, &result))
+			require.Equal(t, name, result.Framework)
+			require.True(t, result.CheckOnly)
+			require.False(t, result.Success)
+			require.Empty(t, result.Runs)
+			require.NotNil(t, result.Cleanup)
+			require.Equal(t, "passed", result.Cleanup.Status)
+			require.NoDirExists(t, drive.session.Directory())
+			require.NoDirExists(t, filepath.Join(root, "target"))
+		})
+	}
+}
 
 func TestCompareMavenRequiresNativeAndTelemetryAgreement(t *testing.T) {
 	baseline := validationRun{ExitCode: 1, Tests: []jestTest{{File: ". / example.Test", Name: "fails()", Status: "failed", Failure: "AssertionError: expected"}}}
