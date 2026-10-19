@@ -350,7 +350,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	if supportsValidationFramework(t.framework.Name()) {
 		if t.language == "ruby" {
 			_, _ = fmt.Fprintln(output, "  - validate in a temporary repository copy; preserve the original Gemfile and lockfile")
-			_, _ = fmt.Fprintln(output, "  - check exact GitHub Actions Ruby/tracer selections against the installed bundle; floating or custom installations stay inconclusive")
+			_, _ = fmt.Fprintln(output, "  - check numeric CI Ruby selectors against the resolved tracer's RubyGems requirements; tracer releases must match exactly, and other engines/floating selectors need separate validation or explicit instrumentation exclusions")
 		} else {
 			_, _ = fmt.Fprintln(output, "  - check GitHub Actions Node runtimes against the workflow-selected tracer using public action and npm metadata")
 		}

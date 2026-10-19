@@ -23,22 +23,73 @@ var rubyObserver string
 
 // RubyGems is the authority for gem version requirements, including pessimistic
 // constraints. Do not approximate them using Node's semver rules.
-const rubyPreflightScript = `require "json"
+const rubyRequirementScript = `
+def ruby_requirement_status(selector, requirements)
+  return "inconclusive" unless selector.match?(/\A\d+(?:\.\d+){0,2}\z/)
+  parts = selector.split(".").map(&:to_i)
+  lower = Gem::Version.new((parts + [0] * (3 - parts.length)).join("."))
+  if parts.length == 3
+    return requirements.all? { |r| r.satisfied_by?(lower) } ? "compatible" : "incompatible"
+  end
+  upper_parts = parts.dup
+  upper_parts[-1] += 1
+  upper = Gem::Version.new((upper_parts + [0] * (3 - parts.length)).join("."))
+  # Requirement truth changes only at its version boundaries. Check the first
+  # stable patch and both sides of every boundary inside this selector's range.
+  points = [lower]
+  requirements.each do |requirement|
+    requirement.requirements.each do |operator, version|
+      boundaries = [version]
+      boundaries << version.bump if operator == "~>"
+      boundaries.each do |boundary|
+        segments = boundary.release.segments
+        return "inconclusive" unless segments.length <= 3 && segments.all? { |s| s.is_a?(Integer) }
+        patch = segments + [0] * (3 - segments.length)
+        after = patch.dup
+        after[2] += 1
+        points.concat([Gem::Version.new(patch.join(".")), Gem::Version.new(after.join("."))])
+      end
+    end
+  end
+  outcomes = points.uniq.select { |v| v >= lower && v < upper }.map { |v| requirements.all? { |r| r.satisfied_by?(v) } }.uniq
+  return "compatible" if outcomes == [true]
+  return "incompatible" if outcomes == [false]
+  "inconclusive"
+end
+`
+
+const rubyPreflightScript = rubyRequirementScript + `require "json"
 framework = Gem::Specification.find_by_name(ARGV.fetch(0) == "rspec" ? "rspec-core" : "minitest")
 tracer = Gem.loaded_specs["datadog-ci"]
-requirements = Gem.loaded_specs.values.map(&:required_ruby_version)
+# The CI action installs the tracer separately. Do not mistake a local Rails or
+# development-tool version for the bundle resolved by every CI matrix entry.
+specs = {}
+pending = tracer ? [tracer] : []
+until pending.empty?
+  spec = pending.pop
+  next if specs.key?(spec.name)
+  specs[spec.name] = spec
+  spec.runtime_dependencies.each { |d| pending << Gem.loaded_specs.fetch(d.name) }
+end
+requirements = specs.values.map(&:required_ruby_version)
 jobs = JSON.parse(ARGV.fetch(1))
 jobs.each do |job|
   next unless job["status"] == "not checked"
   ruby = job["ruby"].to_s
   job["tracer"] = tracer ? "datadog-ci@#{tracer.version}" : ""
   job["requirement"] = requirements.map(&:to_s).uniq.join("; ")
-  if !tracer || ruby !~ /\A\d+\.\d+\.\d+\z/ || job["tracer_requested"] != tracer.version.to_s
-    job["status"], job["reason"] = "inconclusive", "Pin exact Ruby and datadog-ci releases matching local validation; floating, different or missing releases require separate validation."
-  elsif requirements.all? { |r| r.satisfied_by?(Gem::Version.new(ruby)) }
-    job["status"], job["reason"] = "compatible", "Selected Ruby satisfies the bundled tracer and direct dependency requirements; tracer release matches local validation. Framework execution on that CI runtime remains untested."
+  if !tracer || job["tracer_requested"] != tracer.version.to_s
+    job["status"], job["reason"] = "inconclusive", "Pin an exact datadog-ci release matching local validation; floating, different or missing tracer releases require separate validation."
   else
-    job["status"], job["reason"] = "incompatible", "Selected CI Ruby does not satisfy the bundled tracer's RubyGems requirements. Preserve the matrix and select a compatible tracer."
+    job["status"] = ruby_requirement_status(ruby, requirements)
+    job["reason"] = case job["status"]
+    when "compatible"
+      "Every stable release selected by this Ruby version satisfies the locally resolved tracer and its runtime dependencies. The exact tracer release matches; CI bundle resolution, platform/engine support and framework execution remain untested."
+    when "incompatible"
+      "Selected CI Ruby does not satisfy the resolved tracer's RubyGems requirements. Preserve its tests; choose a compatible tracer or explicitly exclude only its instrumentation."
+    else
+      "Ruby selector is floating, selects another engine, or spans the tracer's requirement boundary. Pin a compatible numeric Ruby release, validate that runtime separately, or explicitly guard the Datadog action while preserving its tests."
+    end
   end
 end
 supported = framework.version >= Gem::Version.new(ARGV.fetch(0) == "rspec" ? "3.0.0" : "5.0.0")
@@ -93,10 +144,17 @@ func (t *Testdrive) checkRubyPreflight(ctx context.Context, output io.Writer, re
 	if len(ci.Jobs) > 0 {
 		ci.Status, ci.Reason = "compatible", "Static Ruby CI selections agree with the installed bundle. Actual CI execution remains untested."
 		for _, job := range ci.Jobs {
-			if job.Status != "compatible" {
+			if job.Status != "compatible" && job.Status != "excluded" {
 				ci.Status, ci.Reason = job.Status, job.Reason
 				break
 			}
+		}
+		instrumented := false
+		for _, job := range ci.Jobs {
+			instrumented = instrumented || job.Status == "compatible"
+		}
+		if ci.Status == "compatible" && !instrumented {
+			ci.Status, ci.Reason = "inconclusive", "Every CI entry excludes instrumentation; at least one compatible instrumented CI consumer is required."
 		}
 	}
 	result.CIRuntime = &ci
