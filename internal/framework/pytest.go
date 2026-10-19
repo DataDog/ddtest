@@ -2,8 +2,10 @@ package framework
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 
@@ -155,7 +157,19 @@ func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[st
 	if err != nil {
 		return err
 	}
-	return p.executor.Run(ctx, command, args, mergedEnv)
+	err = p.executor.Run(ctx, command, args, mergedEnv)
+	skippingPlatform, ok := p.platform.(interface {
+		TestSkippingLevel() settings.TestSkippingLevel
+	})
+	var exitErr *exec.ExitError
+	if ok && skippingPlatform.TestSkippingLevel() == settings.TestSkippingLevelSuite &&
+		ctx.Err() == nil && errors.As(err, &exitErr) && exitErr.ExitCode() == 5 {
+		// File-only planning cannot apply pytest's item selectors. A worker
+		// may legitimately receive only files whose tests are all deselected.
+		slog.Info("No tests collected in pytest suite-mode batch", "testFilesCount", len(testFiles))
+		return nil
+	}
+	return err
 }
 
 func (p *PyTest) Command() (string, []string) {

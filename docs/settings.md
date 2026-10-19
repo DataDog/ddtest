@@ -48,6 +48,14 @@ therefore execute even if the tracer's backend response lists them as skippable.
 Tracing and coverage collection remain enabled; normal pytest skip marks and
 other execution-time selection still apply. Test mode retains tracer skipping.
 
+Selectors such as `-k` and `-m` are applied by pytest during execution, so a
+suite-mode worker may receive files with no matching tests. DDTest treats pytest
+exit code 5 (no tests collected) as a successful empty batch in suite mode and
+logs it. This also means an entirely deselected suite-mode run succeeds; a CI
+node cannot determine whether matching tests execute on another node. Test mode
+retains pytest's exit-code-5 failure behavior. Test failures, collection errors,
+invalid arguments, and interruptions still fail the run in either mode.
+
 File discovery uses the existing pytest configuration/default file patterns,
 or `--tests-location`, filters to `.py` source files, and respects exclusions and
 positional selection. It does not enumerate test functions, classes, fixtures,

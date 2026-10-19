@@ -2,6 +2,8 @@ package compatibility
 
 import (
 	"context"
+	"errors"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -9,6 +11,7 @@ import (
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
+	"golang.org/x/sync/errgroup"
 )
 
 func TestPyTestAdapterIntegration(t *testing.T) {
@@ -80,4 +83,70 @@ def test_preserves_worker_environment():
 			t.Fatalf("suite-mode selected-file run failed: %v", err)
 		}
 	})
+}
+
+func TestPyTestSuiteModeSelectorBatches(t *testing.T) {
+	python := requireEnv(t, "DDTEST_PYTHON_BINARY")
+	resetSettingsAfterTest(t)
+	root := t.TempDir()
+	writeFixture(t, root, "pytest.ini", `[pytest]
+markers = keep: tests selected for this run
+`)
+	writeFixture(t, root, "test_keep.py", `import os
+import pytest
+
+@pytest.mark.keep
+def test_keep():
+    assert os.environ.get("DDTEST_FAIL_SELECTED") != "true"
+`)
+	writeFixture(t, root, "test_other.py", `def test_other():
+    raise AssertionError("deselected test ran")
+`)
+	t.Chdir(root)
+	configureFramework(shellCommand(python, "-m", "pytest"), "")
+	t.Setenv("PYTEST_ADDOPTS", "--ddtrace")
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+
+	for _, selector := range []string{"-k test_keep", "-m keep"} {
+		t.Run(selector, func(t *testing.T) {
+			settings.Get().TestSkippingLevel = settings.TestSkippingLevelSuite
+			pytest := framework.NewPytest(platform.NewPython())
+			for _, failSelected := range []string{"false", "true"} {
+				var workers errgroup.Group
+				for _, file := range []string{"test_keep.py", "test_other.py"} {
+					workers.Go(func() error {
+						return pytest.RunTests(ctx, []string{file}, map[string]string{
+							"PYTEST_ADDOPTS":       "--ddtrace " + selector,
+							"DDTEST_FAIL_SELECTED": failSelected,
+						})
+					})
+				}
+				err := workers.Wait()
+				if failSelected == "false" {
+					if err != nil {
+						t.Fatalf("empty batch failed successful selected tests: %v", err)
+					}
+				} else {
+					requirePytestExitCode(t, err, 1)
+				}
+			}
+			// An entirely deselected suite-mode run is also an empty batch.
+			if err := pytest.RunTests(ctx, []string{"test_other.py"}, map[string]string{"PYTEST_ADDOPTS": "--ddtrace " + selector}); err != nil {
+				t.Fatalf("entirely deselected suite-mode batch failed: %v", err)
+			}
+			settings.Get().TestSkippingLevel = settings.TestSkippingLevelTest
+			testPytest := framework.NewPytest(platform.NewPython())
+			err := testPytest.RunTests(ctx, []string{"test_other.py"}, map[string]string{"PYTEST_ADDOPTS": "--ddtrace " + selector})
+			requirePytestExitCode(t, err, 5)
+		})
+	}
+}
+
+func requirePytestExitCode(t *testing.T, err error, want int) {
+	t.Helper()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != want {
+		t.Fatalf("expected pytest exit code %d, got %v", want, err)
+	}
 }

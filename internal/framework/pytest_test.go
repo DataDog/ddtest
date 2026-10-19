@@ -3,14 +3,77 @@ package framework
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/discovery"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/stretchr/testify/require"
 )
+
+type pytestSkippingPlatform struct {
+	testPlatform
+	level settings.TestSkippingLevel
+}
+
+func (p *pytestSkippingPlatform) TestSkippingLevel() settings.TestSkippingLevel { return p.level }
+
+func TestPyTest_RunTests_EmptyCollection(t *testing.T) {
+	// Use real subprocess exit errors, including wrapping, rather than matching
+	// error messages that might also come from test failures.
+	for _, level := range []settings.TestSkippingLevel{settings.TestSkippingLevelTest, settings.TestSkippingLevelSuite} {
+		for _, code := range []int{0, 1, 2, 3, 4, 5} {
+			t.Run(fmt.Sprintf("%s/exit-%d", level, code), func(t *testing.T) {
+				cmd := exec.Command(os.Args[0], "-test.run=^TestPyTest_ExitHelper$")
+				cmd.Env = append(os.Environ(), fmt.Sprintf("DDTEST_PYTEST_EXIT_HELPER=%d", code))
+				processErr := cmd.Run()
+				if code != 0 {
+					var exitErr *exec.ExitError
+					require.ErrorAs(t, processErr, &exitErr)
+					require.Equal(t, code, exitErr.ExitCode())
+					processErr = fmt.Errorf("pytest execution: %w", processErr)
+				}
+				pytest := &PyTest{
+					executor: &mockCommandExecutor{err: processErr},
+					platform: &pytestSkippingPlatform{level: level},
+				}
+				err := pytest.RunTests(t.Context(), []string{"test_case.py"}, nil)
+				if code == 0 || (level == settings.TestSkippingLevelSuite && code == 5) {
+					require.NoError(t, err)
+				} else {
+					require.ErrorIs(t, err, processErr)
+				}
+				if code == 5 {
+					ctx, cancel := context.WithCancel(t.Context())
+					cancel()
+					require.Error(t, pytest.RunTests(ctx, []string{"test_case.py"}, nil))
+				}
+			})
+		}
+	}
+	for _, failure := range []error{context.Canceled, context.DeadlineExceeded, errors.New("failed to start pytest"), errors.New("exit status 5")} {
+		pytest := &PyTest{
+			executor: &mockCommandExecutor{err: failure},
+			platform: &pytestSkippingPlatform{level: settings.TestSkippingLevelSuite},
+		}
+		require.ErrorIs(t, pytest.RunTests(t.Context(), []string{"test_case.py"}, nil), failure)
+	}
+}
+
+func TestPyTest_ExitHelper(t *testing.T) {
+	if code := os.Getenv("DDTEST_PYTEST_EXIT_HELPER"); code != "" {
+		var status int
+		_, err := fmt.Sscanf(code, "%d", &status)
+		require.NoError(t, err)
+		os.Exit(status)
+	}
+}
 
 func TestPyTest_DiscoverTests_WithExplicitFiles(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(discovery.TestsFilePath), 0755); err != nil {
