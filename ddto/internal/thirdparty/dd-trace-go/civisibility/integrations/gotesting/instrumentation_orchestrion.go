@@ -209,12 +209,9 @@ func instrumentTestingTFuncWithSourceOptions(
 	instrumentedFn := func(t *testing.T) {
 		// Check if we have testify suite data related to this test
 		testifyData := getTestifyTest(t)
-		// If we have testify data, we need to extract the module and suite name
-		// from the testify suite. New variables that are never reassigned are
-		// captured by value, so the closures do not move them to the heap for
-		// every test.
+		// Testify's suite data gives the module and suite. Names declared once and never reassigned
+		// are captured by value, so the closures do not move them to the heap for every test.
 		moduleName, suiteName := testifyData.moduleAndSuite(moduleName, suiteName)
-
 		subtestIdentity := newTestIdentity(moduleName, suiteName, t.Name())
 		isSubtest := len(subtestIdentity.Segments) > 1
 
@@ -226,12 +223,15 @@ func instrumentTestingTFuncWithSourceOptions(
 			if testPrivateFields != nil && testPrivateFields.parent != nil {
 				parentExecMeta = getTestMetadataFromPointer(*testPrivateFields.parent)
 			}
+			if testifyData == nil { // a helper in another package can create the subtest: see subtestModuleName
+				subtestIdentity.ModuleName = subtestModuleName(subtestIdentity.ModuleName, parentExecMeta)
+			}
 
 			settings := integrations.GetSettings()
 			shouldInstrument := settings != nil && settings.SubtestFeaturesEnabled
 			hasDirective := false
 			if log.DebugEnabled() {
-				log.Debug("subtest gating module=%s suite=%s identity=%s", moduleName, suiteName, subtestIdentity.FullName)
+				log.Debug("subtest gating module=%s suite=%s identity=%s", subtestIdentity.ModuleName, suiteName, subtestIdentity.FullName)
 			}
 			if parentExecMeta != nil {
 				if parentExecMeta.isAttemptToFix || parentExecMeta.isDisabled || parentExecMeta.isQuarantined {
@@ -255,7 +255,7 @@ func instrumentTestingTFuncWithSourceOptions(
 		}
 
 		subtestInfo := &commonInfo{
-			moduleName: moduleName,
+			moduleName: subtestIdentity.ModuleName,
 			suiteName:  suiteName,
 			testName:   subtestIdentity.FullName,
 			identity:   subtestIdentity,
@@ -266,15 +266,15 @@ func instrumentTestingTFuncWithSourceOptions(
 			localIdentity := subtestIdentity
 			if currentT.Name() != subtestIdentity.FullName {
 				// Nested subtests have their own full identity path.
-				localIdentity = newTestIdentity(moduleName, suiteName, currentT.Name())
+				localIdentity = newTestIdentity(subtestIdentity.ModuleName, suiteName, currentT.Name())
 			}
 
-			addModulesCounters(moduleName, 1)
-			addSuitesCounters(moduleName, suiteName, 1)
+			addModulesCounters(subtestIdentity.ModuleName, 1)
+			addSuitesCounters(subtestIdentity.ModuleName, suiteName, 1)
 			if log.DebugEnabled() {
 				log.Debug("instrumentTestingTFunc: creating test span for %s", currentT.Name())
 			}
-			module := session.GetOrCreateModule(moduleName)
+			module := session.GetOrCreateModule(subtestIdentity.ModuleName)
 			suite := module.GetOrCreateSuite(suiteName)
 			test := suite.CreateTest(currentT.Name())
 			startTime := time.Now()
@@ -866,4 +866,16 @@ func testingParallelWillSuspend(t *testing.T) bool {
 	default:
 		return false
 	}
+}
+
+// subtestModuleName keeps subtests in the module of the test binary that owns
+// them. The callback can live in an imported production helper package, while
+// the suite continues to identify the callback's source file. Ported from
+// dd-trace-go #5401: a subtest outside a Testify suite takes its parent's
+// module when the parent has one, and keeps the callback's module otherwise.
+func subtestModuleName(callbackModuleName string, parentExecMeta *testExecutionMetadata) string {
+	if parentExecMeta == nil || parentExecMeta.identity == nil || parentExecMeta.identity.ModuleName == "" {
+		return callbackModuleName
+	}
+	return parentExecMeta.identity.ModuleName
 }

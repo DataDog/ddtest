@@ -2137,6 +2137,35 @@ value now warns at the first error, after `loggingRateOnce` returns:
 reports an error itself does not wait for the rate. `log/log_test.go` checks
 the rate, the warning and such a logger.
 
+## Subtests created by helper packages
+
+dd-trace-go PR #5401 (`91a3d7a9d`) is newer than the recorded base, and its
+subtest identity fix is ported; `feature_ports` records the PR's revision of
+both files. A test can call a helper in an imported package that creates
+subtests with `t.Run`. The callback's package then named the subtest's
+module, so its known-tests, Early Flake Detection and test management lookups
+used the helper's package. A subtest outside a Testify suite now takes its
+parent's module when the parent's execution metadata has one
+(`subtestModuleName`, at the end of `gotesting/instrumentation_orchestrion.go`);
+the callback still gives the suite and source. In a quarantined child process,
+`quarantinedSubtestIdentity` (at the end of `gotesting/quarantine_process.go`)
+keeps a Testify suite's module and suite, and its method as the source when
+known; another subtest takes its parent's module, or the selected root's from
+the retry config. The PR's other half routes the SDK tracer around
+`mocktracer` and `tracer.Start`/`Stop` in tests; Mini sends CI events through
+its own tracer, which those calls do not reach, so it is not ported.
+
+The port keeps line positions that error stacks show. In
+`instrumentTestingTFuncWithSourceOptions`, the correction sets
+`subtestIdentity.ModuleName` and later uses read it, instead of reassigning
+`moduleName`: a reassigned name would be captured by reference and move to the
+heap for every test. A shorter comment and one blank line make room for the
+added lines, and `quarantinedSubtestIdentity` replaces the Testify block in
+place. Checks: `TestSubtestModuleName`, `TestQuarantinedSubtestIdentity` and
+`TestMiniHelperSubtestKeepsTheTestModule`, which fails without the port. The
+pinned SDK that parity compares with predates the fix; no parity scenario
+creates subtests from another package.
+
 ## Fuzz and executable Examples
 
 SDK PR #5442 is integrated in the recorded `main` base. `feature_ports` keeps

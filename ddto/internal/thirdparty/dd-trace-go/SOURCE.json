@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "64c4cdc903e572b6abb91e17ea8fb403e14d39553b59d5a4052f8b5b44e0f256",
+      "sha256": "9739a0df9f24e5f47bc95b75db204da6e6d3a3d43e0dd695c0a5e873346a89d6",
       "role": "local"
     },
     {
@@ -507,7 +507,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/instrumentation_orchestrion.go",
-      "sha256": "26bce2e301d496e11ffc8ef05310eb4466e8e7bcd6dd6ce433bec3fb53072c54",
+      "sha256": "a66da253fc70f05369923325dbc102aaa22bdb244868f960f2121c1f7aeddb51",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/instrumentation_orchestrion.go",
       "source_sha256": "e07e0e5d272cdf6148fea865f53b1f1f40dfe29b60b4c461bfe29a5dd52784b3"
@@ -552,7 +552,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/quarantine_process.go",
-      "sha256": "7db78cfa93c5361d2f665ff90929cff368a6b8b6933cc743ee86aab6c8d608c5",
+      "sha256": "7a4924bad00ffb7af0bea7b2276227288f828655f456dd5701eb99ca42125358",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/quarantine_process.go",
       "source_sha256": "127b790b31e406e5b1d4702ef09e0a7b37cfff06488f0f97b20fa987d67cd8e5"
@@ -739,6 +739,11 @@
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/retry_test_helpers_test.go",
       "source_sha256": "b0e72ad0de4a5ae4f79883c5d70015e0004c04a418235ed324546f55e25a3c4c"
+    },
+    {
+      "path": "civisibility/integrations/gotesting/subtest_module_test.go",
+      "sha256": "a84414fd81025a3eef06a812b8e96b51c20d2de1df3dad3e295e7adbbd4a19d4",
+      "role": "local"
     },
     {
       "path": "civisibility/integrations/gotesting/suite_counters_test.go",
@@ -2436,6 +2441,25 @@
     }
   ],
   "feature_ports": [
+    {
+      "name": "subtest-module-identity",
+      "pr": "https://github.com/DataDog/dd-trace-go/pull/5401",
+      "commit": "91a3d7a9d74dd7bc58da58711bc271efb0ab6fc1",
+      "base_commit": "197dcfc4877241800b71ba664f561a127f7ebc0e",
+      "scope": "Subtest identity only; the CI tracer router does not apply to Mini's own tracer.",
+      "files": [
+        {
+          "path": "civisibility/integrations/gotesting/instrumentation_orchestrion.go",
+          "source_path": "internal/civisibility/integrations/gotesting/instrumentation_orchestrion.go",
+          "source_sha256": "88e71d11631e9fc57b026d076423ed28f12be116f35202c2a3760040f9d44faa"
+        },
+        {
+          "path": "civisibility/integrations/gotesting/quarantine_process.go",
+          "source_path": "internal/civisibility/integrations/gotesting/quarantine_process.go",
+          "source_sha256": "644a3fd35e2e83593a073f3db1ae19fe8358d6821b4db4e9c966f278c9a1ffb1"
+        }
+      ]
+    },
     {
       "name": "go-fuzz-examples",
       "pr": "https://github.com/DataDog/dd-trace-go/pull/5442",

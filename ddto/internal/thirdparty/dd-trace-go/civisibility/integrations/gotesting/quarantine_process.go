@@ -865,11 +865,11 @@ func runQuarantinedRaceChildSubtest(t *testing.T, original func(*testing.T), par
 	callbackPC := reflect.ValueOf(original).Pointer()
 	moduleName, suiteName := utils.GetModuleAndSuiteName(callbackPC)
 	sourceFunc := runtime.FuncForPC(callbackPC)
-	if testifyData := getTestifyTest(t); testifyData != nil && testifyData.methodFunc != nil {
-		moduleName = testifyData.moduleName
-		suiteName = testifyData.suiteName
-		sourceFunc = testifyData.methodFunc
-	}
+	// Testify's suite keeps its module, suite and method source; another
+	// subtest keeps its parent's module, as a helper package can create it
+	// (dd-trace-go #5401): see quarantinedSubtestIdentity.
+	moduleName, suiteName, sourceFunc = quarantinedSubtestIdentity(t, state, parent, moduleName, suiteName, sourceFunc)
+
 	execMeta := createTestMetadata(t, nil)
 	execMeta.test = parent.test
 	execMeta.processRetryOwner = parent
@@ -1993,4 +1993,24 @@ func processRetryResultFromSubtree(result processRetrySubtreeResult) processRetr
 		Source:          result.Source,
 		Coverage:        result.Coverage,
 	}
+}
+
+// quarantinedSubtestIdentity returns the module, suite and source of a
+// subtest in a quarantined child process. A Testify suite's own module and
+// suite take precedence, and its method, when known, is the source. Another
+// subtest takes its parent's module, or the selected root's from the retry
+// config, since an out-of-root discovery carrier has no identity; the
+// callback still gives the suite and source. Ported from dd-trace-go #5401.
+func quarantinedSubtestIdentity(t *testing.T, state *quarantinedRaceChildState, parent *testExecutionMetadata, moduleName, suiteName string, sourceFunc *runtime.Func) (string, string, *runtime.Func) {
+	if testifyData := getTestifyTest(t); testifyData != nil {
+		if testifyData.methodFunc != nil {
+			sourceFunc = testifyData.methodFunc
+		}
+		return testifyData.moduleName, testifyData.suiteName, sourceFunc
+	}
+	fallbackModule := state.cfg.Root.ModuleName
+	if fallbackModule == "" {
+		fallbackModule = moduleName
+	}
+	return subtestModuleName(fallbackModule, parent), suiteName, sourceFunc
 }
