@@ -236,7 +236,11 @@ func summarizeValidation(result validationResult) validationSummary {
 	}
 	if !result.CheckOnly {
 		if missingRealCoverage(result) {
-			summary.BlockingChecks = append(summary.BlockingChecks, displayName(result.Framework)+" real-suite coverage was not observed. Synthetic skipping probes do not validate coverage of the customer's source. Check NYC instrument/include settings and ESM instrumentation; preserve existing coverage thresholds.")
+			if result.Framework == "rspec" || result.Framework == "minitest" {
+				summary.BlockingChecks = append(summary.BlockingChecks, "Ruby application coverage was not observed. Inspect the selected Gemfile/runtime and native suite output; setup failures before tests start cannot validate compatibility or features. Check datadog-ci coverage settings after the native suite runs.")
+			} else {
+				summary.BlockingChecks = append(summary.BlockingChecks, displayName(result.Framework)+" real-suite coverage was not observed. Synthetic skipping probes do not validate coverage of the customer's source. Check NYC instrument/include settings and ESM instrumentation; preserve existing coverage thresholds.")
+			}
 		}
 		if result.Compatibility.Status != "compatible" {
 			summary.BlockingChecks = append(summary.BlockingChecks, "compatibility "+result.Compatibility.Status)

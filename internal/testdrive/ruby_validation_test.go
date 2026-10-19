@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/framework"
@@ -197,6 +198,18 @@ func TestRubyCIScopeKeepsInstrumentedAndExcludedVersions(t *testing.T) {
 	require.Equal(t, []string{"Ruby 3.4"}, scope.Instrumented)
 	require.Equal(t, []string{"Ruby head"}, scope.Excluded)
 	require.Equal(t, []string{"Ruby jruby-9.4"}, scope.Unverified)
+}
+
+func TestRubyMissingCoverageReportsRubySetupRemediation(t *testing.T) {
+	for _, name := range []string{"rspec", "minitest"} {
+		result := validationResult{Framework: name, Runs: []runSummary{{Name: "reporting-only", Coverage: &coverageSummary{Status: "not observed"}}}}
+		summary := summarizeValidation(result)
+		blockers := strings.Join(summary.BlockingChecks, "\n")
+		require.Contains(t, blockers, "Ruby application coverage was not observed")
+		require.Contains(t, blockers, "Gemfile/runtime")
+		require.NotContains(t, blockers, "Mocha")
+		require.NotContains(t, blockers, "NYC")
+	}
 }
 
 func TestRubyAnonymousRSpecTelemetryUsesIndependentScopedIdentity(t *testing.T) {
