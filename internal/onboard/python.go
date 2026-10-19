@@ -116,7 +116,7 @@ func pythonInvocation(words []string) bool {
 			}
 			option, _, assigned := strings.Cut(arg, "=")
 			switch option {
-			case "--no-sync", "--locked", "--frozen", "--offline", "--active", "--no-python-downloads", "--":
+			case "--no-sync", "--locked", "--frozen", "--offline", "--active", "--no-python-downloads", "--no-default-groups", "--":
 			case "--project", "--directory", "--package", "--python", "-p", "--group", "--extra":
 				if !assigned {
 					i++

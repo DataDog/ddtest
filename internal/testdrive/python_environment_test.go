@@ -73,6 +73,7 @@ func TestPythonProbePreservesEnvironmentSelectors(t *testing.T) {
 		args, prefix []string
 	}{
 		{"uv", []string{"run", "--no-sync", "python", "-m", "pytest"}, []string{"run", "--no-sync", "python"}},
+		{"uv", []string{"run", "--no-default-groups", "--group", "tests", "pytest"}, []string{"run", "--no-sync", "--no-default-groups", "--group", "tests", "python"}},
 		{"uv", []string{"run", "--project", "project space", "--python", "python3.13", "--package=member", "pytest", "-k", "example"}, []string{"run", "--no-sync", "--project", "project space", "--python", "python3.13", "--package=member", "python"}},
 		{"uv", []string{"run", "--locked", "--", "python", "-m", "pytest"}, []string{"run", "--no-sync", "--locked", "--", "python"}},
 		{"python3.13", []string{"-W", "error", "-m", "pytest"}, []string{"-W", "error"}},

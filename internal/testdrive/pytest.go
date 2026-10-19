@@ -315,7 +315,45 @@ func (t *Testdrive) runPytestFeatures(ctx context.Context, output io.Writer, ses
 	if err := os.WriteFile(probe, []byte(pytestProbeSource), 0600); err != nil {
 		return err
 	}
-	return runProbeFeatures(func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
-		return t.runPytest(ctx, output, session, preload, name, true, scenario, probe, mode)
-	}, result)
+	inventory, err := t.runPytest(ctx, output, session, preload, "probe-inventory", true, intake.Scenario{}, probe, "pass")
+	result.Runs = append(result.Runs, inventory.summary())
+	if err != nil {
+		return err
+	}
+	if inventory.ExitCode != 0 || inventory.ResultError != "" || len(inventory.SuiteErrors) != 0 || len(inventory.Tests) == 0 {
+		unavailableFeatures(result, "The temporary pytest probe could not enumerate its fixture variants under the project configuration.")
+		return nil
+	}
+	for _, test := range inventory.Tests {
+		if !isPytestProbe(test.Name) {
+			unavailableFeatures(result, "The pytest probe inventory included an unexpected test identity.")
+			return nil
+		}
+	}
+	// Autouse parametrized fixtures apply to the probe too. Exercise every
+	// collected variant independently without disabling the project's fixtures.
+	for index, test := range inventory.Tests {
+		featureStart, runStart := len(result.Features), len(result.Runs)
+		err := runProbeFeatures(func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
+			run, err := t.runPytest(ctx, output, session, preload, fmt.Sprintf("probe-%d/%s", index, name), true, scenario, probe+"::"+test.Name, mode)
+			run.Name = name
+			return run, err
+		}, result)
+		if len(inventory.Tests) > 1 {
+			for i := featureStart; i < len(result.Features); i++ {
+				result.Features[i].Project = test.Name
+			}
+			for i := runStart; i < len(result.Runs); i++ {
+				result.Runs[i].Project = test.Name
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isPytestProbe(name string) bool {
+	return name == pytestProbeName || strings.HasPrefix(name, pytestProbeName+"[")
 }

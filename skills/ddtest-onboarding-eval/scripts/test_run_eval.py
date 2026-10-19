@@ -32,6 +32,8 @@ pathlib.Path("observed.json").write_text(json.dumps({
     "cache_environment": {key: os.environ.get(key) for key in ("npm_config_cache", "YARN_CACHE_FOLDER", "XDG_CONFIG_HOME", "PLAYWRIGHT_BROWSERS_PATH", "PUPPETEER_CACHE_DIR")},
     "npm_unknown_config": [key for key in os.environ if key.lower() in ("npm_config_store_dir", "npm_config_cache_dir")],
     "zdotdir": os.environ.get("ZDOTDIR"),
+    "virtual_env": os.environ.get("VIRTUAL_ENV"),
+    "uv_project_environment": os.environ.get("UV_PROJECT_ENVIRONMENT"),
 }))
 if os.environ.get("FAKE_RUNTIME_SHELL"):
     settings = {}
@@ -127,6 +129,28 @@ class RunnerTests(unittest.TestCase):
                             f"print(json.dumps({{'executable':str(pathlib.Path(__file__).resolve()), 'version':'v{version}'}}) if '-p' in sys.argv else 'v{version}')\n")
         selected.chmod(0o755)
         return selected
+
+    def test_python_trial_activates_private_environment_without_changing_prompt(self):
+        self.args.python = Path(sys.executable).resolve()
+        self.args.framework = "pytest"
+        self.args.isolate_agent_config = True
+        code, manifest = self.trial()
+        self.assertEqual(code, 0)
+        observed = json.loads((Path(manifest["checkout"])/"observed.json").read_text())
+        expected = str(Path(manifest["trial_directory"])/"venv")
+        self.assertEqual(observed["virtual_env"], expected)
+        self.assertEqual(observed["uv_project_environment"], expected)
+        self.assertEqual(manifest["python_runtime"]["prefix"], expected)
+        self.assertIn("--ignore-user-config", observed["argv"])
+        self.assertTrue(manifest["isolated_agent_config"])
+        self.assertEqual(observed["prompt"], f"Use ddtest in {Path(expected).parent / 'bin'} and onboard this repository to test-optimization for pytest only.")
+
+    def test_python_runtime_audit_checks_every_final_configuration(self):
+        report = {"summary": {"local_python": "3.12.8"}, "preflight": {"python": "3.12.8"},
+                  "configurations": [{"preflight": {"python": "3.12.8"}}]}
+        self.assertEqual(run_eval.report_runtime(report, "3.12.8", "python")["status"], "matched")
+        report["configurations"][0]["preflight"]["python"] = "3.13.1"
+        self.assertEqual(run_eval.report_runtime(report, "3.12.8", "python")["status"], "mismatch")
 
     def test_fresh_trials_minimal_prompt_and_independent_evaluation(self):
         checkouts = []

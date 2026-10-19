@@ -45,7 +45,7 @@ func TestPythonScopeRetainsCommandsAndUnresolvedWrappers(t *testing.T) {
     steps:
       - run: python -m pip install -r requirements.txt
       - run: python -m pytest tests -q --cov=app
-      - run: uv run --no-sync --group test python -m pytest -c integration.ini
+      - run: uv run --no-sync --no-default-groups --group test python -m pytest -c integration.ini
       - run: make custom-tests
 `), 0644))
 	scope, err := DiscoverValidationScope(root, "pytest")
@@ -85,7 +85,7 @@ func TestPythonCIReleaseAndMatrixValidation(t *testing.T) {
 
 func TestPytestInstructionsPreserveEnvironmentAndEvidence(t *testing.T) {
 	text := instructions("python", "pytest")
-	for _, expected := range []string{"languages: python", "PYTHONPATH", "PYTEST_ADDOPTS", "tox/nox", "--check-only", "--all", "--command", "report.html", "testdrive.json", "historical evidence", "no Datadog credentials"} {
+	for _, expected := range []string{"languages: python", "PYTHONPATH", "PYTEST_ADDOPTS", "tox/nox", "pass_env", "DD_*", "--check-only", "--all", "--command", "report.html", "testdrive.json", "historical evidence", "no Datadog credentials"} {
 		require.Contains(t, text, expected)
 	}
 	require.NotContains(t, text, "NODE_OPTIONS")
