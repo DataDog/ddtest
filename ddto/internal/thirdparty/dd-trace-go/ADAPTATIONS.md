@@ -2173,7 +2173,13 @@ elsewhere. On Windows, the runtime's clock is coarser, so a wait measured on it
 could exceed the root's QPC-measured time and leave a zero or negative
 duration; the event then fell back to the wrapper's own clock, which includes
 the wait. `TestFuzzFinishTimeUsesKnownNativeDuration` and
-`TestNativeClockNestsInTestingDuration` check both.
+`TestNativeClockNestsInTestingDuration` check both. Go 1.28 replaces
+`testing.common.start`'s highPrecisionTime with a time.Time, on Windows too:
+`initializeRetryAttemptStart` and `addRetryAttemptElapsed` then set and read
+it directly, and `startNativeClock` uses the runtime's clock on Windows, as
+testing then does. Without that, a fresh retry attempt kept a zero duration on
+Go tip. `TestRetryAttemptTimeHandlesATimeStart` covers a time.Time start on
+every toolchain.
 This removes the per-event private-field reflection and common wrapper allocation.
 Six repeated result-collection benchmarks are recorded in `docs/results`.
 
