@@ -234,3 +234,20 @@ func TestStoppedWorkflowCannotLeaveEarlierSuccessAsCurrent(t *testing.T) {
 	require.False(t, current.LastExecution.Current)
 	require.Empty(t, current.Runs)
 }
+
+func TestRubyWorkflowPreservesNativeValidationPath(t *testing.T) {
+	for _, runner := range []framework.Framework{framework.NewRSpec(platform.NewRuby("")), framework.NewMinitest(platform.NewRuby(""))} {
+		t.Run(runner.Name(), func(t *testing.T) {
+			root := t.TempDir()
+			preparation := errors.New("Ruby command requires preparation")
+			drive := &Testdrive{repositoryRoot: root, framework: runner, language: "ruby", preparationError: preparation}
+			var output bytes.Buffer
+			require.ErrorIs(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "verbose"}), preparation)
+			require.NotContains(t, output.String(), "framework_unsupported")
+			report := readValidationReport(t, root)
+			require.Equal(t, runner.Name(), report.Framework)
+			require.Equal(t, preparation.Error(), report.Error)
+			require.Equal(t, "INCOMPLETE", report.Summary.Status)
+		})
+	}
+}
