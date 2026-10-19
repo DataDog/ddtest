@@ -86,8 +86,8 @@ tested agent's global skill directories or target checkout.
    the evaluator. A typical dependency setup is
    `--setup-command 'mvn -q -DskipTests test-compile'`. Record the real intended
    suite command independently; setup compilation is not execution evidence.
-   Java trials get a private Maven dependency cache and preserved JAVA_HOME,
-   MAVEN_OPTS and PATH. Codex ignores user CLI configuration and Claude loads
+   Java trials get private Maven dependency and wrapper caches and preserved JAVA_HOME,
+   MAVEN_OPTS, MAVEN_USER_HOME and PATH. Codex ignores user CLI configuration and Claude loads
    project settings with an empty strict MCP configuration for these trials;
    auth and ordinary repository instructions still apply. Record these
    process-local differences and the observed agent model in the assessment.

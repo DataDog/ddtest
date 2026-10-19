@@ -83,6 +83,9 @@ func TestTestNGInvalidNativeResultsCannotCertifyCompatibility(t *testing.T) {
 	tests, err := readTestNG([]byte(`<testng-results><suite><test><class name="Test"><test-method name="disabled" status="SKIP"/></class></test></suite></testng-results>`), ".")
 	require.NoError(t, err)
 	require.Equal(t, "skipped", tests[0].Status)
+	tests, err = readTestNG([]byte(`<testng-results><suite><test><class name="Test"><test-method name="quarantined" status="SUCCESS_PERCENTAGE_FAILURE"/></class></test></suite></testng-results>`), ".")
+	require.NoError(t, err)
+	require.Equal(t, "passed", tests[0].Status, "tolerated TestNG failures must match Surefire's successful result")
 }
 
 func TestKarateNativeScenariosAndErrors(t *testing.T) {

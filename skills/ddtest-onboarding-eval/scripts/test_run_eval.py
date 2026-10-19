@@ -363,6 +363,7 @@ class RunnerTests(unittest.TestCase):
                 self.assertIn("test-maven-3.9", manifest["maven_runtime"])
                 self.assertEqual(manifest["java_environment"]["JAVA_HOME"], str(jdk.resolve()))
                 self.assertEqual(manifest["java_environment"]["MAVEN_OPTS"], "-Dmaven.repo.local=" + manifest["private_caches"]["maven"])
+                self.assertEqual(manifest["java_environment"]["MAVEN_USER_HOME"], manifest["private_caches"]["maven_user_home"])
                 observed = json.loads((Path(manifest["checkout"]) / "observed.json").read_text())
                 self.assertEqual(observed["prompt"], f"Use ddtest in {Path(manifest['checkout']).parent / 'bin'} and onboard this repository to test-optimization for junit5 only.")
                 self.assertIn("--ignore-user-config" if agent == "codex" else "--strict-mcp-config", observed["argv"])

@@ -374,8 +374,11 @@ def run(args):
     if java_home is not None:
         maven_cache = trial / "caches" / "maven"
         maven_cache.mkdir()
+        maven_user_home = trial / "caches" / "maven-user"
+        maven_user_home.mkdir()
         env["JAVA_HOME"] = str(java_home)
         env["MAVEN_OPTS"] = "-Dmaven.repo.local=" + str(maven_cache)
+        env["MAVEN_USER_HOME"] = str(maven_user_home)
         env["PATH"] = str(java_home / "bin") + os.pathsep + env.get("PATH", "")
     if node is not None or java_home is not None:
         if node is not None:
@@ -395,7 +398,8 @@ def run(args):
                            "shell_environment_policy.set.ZDOTDIR=" + json.dumps(env["ZDOTDIR"])]
         if java_home is not None:
             agent_argv[2:2] = ["--ignore-user-config", "-c", "shell_environment_policy.set.JAVA_HOME=" + json.dumps(env["JAVA_HOME"]),
-                              "-c", "shell_environment_policy.set.MAVEN_OPTS=" + json.dumps(env["MAVEN_OPTS"])]
+                              "-c", "shell_environment_policy.set.MAVEN_OPTS=" + json.dumps(env["MAVEN_OPTS"]),
+                              "-c", "shell_environment_policy.set.MAVEN_USER_HOME=" + json.dumps(env["MAVEN_USER_HOME"])]
     if java_home is not None and args.agent == "claude":
         agent_argv[1:1] = ["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--setting-sources", "project", "--no-chrome"]
     framework = getattr(args, "framework", None)
@@ -418,7 +422,8 @@ def run(args):
         manifest["shell_isolation"] = {"zdotdir": env["ZDOTDIR"], "login_shell": False, "shell_snapshot": False}
     if java_home is not None:
         manifest["private_caches"]["maven"] = str(maven_cache)
-        manifest["java_environment"] = {key: env[key] for key in ("JAVA_HOME", "MAVEN_OPTS", "PATH")}
+        manifest["private_caches"]["maven_user_home"] = str(maven_user_home)
+        manifest["java_environment"] = {key: env[key] for key in ("JAVA_HOME", "MAVEN_OPTS", "MAVEN_USER_HOME", "PATH")}
         manifest["agent_configuration"] = "process-local CLI configuration: Codex ignores user config; Claude loads project settings only; no inherited MCP servers"
     activity = (output / "activity.jsonl").open("w")
     agent_failed = False
