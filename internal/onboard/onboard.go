@@ -50,6 +50,9 @@ var cucumberInstructions string
 //go:embed instructions/webdriverio.md
 var webdriverIOInstructions string
 
+//go:embed instructions/java.md
+var javaInstructions string
+
 // Run detects the first supported onboarding path and prints its instructions.
 func Run(output io.Writer) error {
 	repositoryRoot, err := os.Getwd()
@@ -271,6 +274,9 @@ func renderGitHubInstructions(language string) string {
 }
 
 func instructions(language, name string) string {
+	if language == "java" {
+		return strings.ReplaceAll(javaInstructions, "__FRAMEWORK__", name)
+	}
 	if language == "javascript" && name == "webdriverio" {
 		return strings.ReplaceAll(webdriverIOInstructions, "ddtest testdrive", "ddtest testdrive --framework webdriverio")
 	}

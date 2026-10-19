@@ -105,7 +105,7 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	if all && strings.TrimSpace(settings.GetCommand()) != "" {
 		return nil, fmt.Errorf("--all and --command are mutually exclusive")
 	}
-	if all && !supportsValidationFramework(runner.Name()) {
+	if all && !supportsValidationFramework(runner.Name()) && language != "java" {
 		return nil, fmt.Errorf("--all currently validates Jest, Vitest, Playwright, Mocha, Cypress, Cucumber and WebdriverIO only")
 	}
 	if runner.Name() == "vitest" {
@@ -191,7 +191,7 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 			command, args = words[0], words[1:]
 		}
 	}
-	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
+	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci", "java": "dd-java-agent"}[language] + "@" + version
 	session := planSession()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -276,6 +276,10 @@ func displayName(name string) string {
 
 // Preview describes the filesystem and process changes that Run will make.
 func (t *Testdrive) Preview(output io.Writer) {
+	if t.language == "java" {
+		t.previewMaven(output)
+		return
+	}
 	if t.preparationError != nil {
 		_, _ = fmt.Fprintf(output, "Discovery failed: %s\nWith --yes, save an INCOMPLETE JSON report; no tests will execute.\n", t.preparationError)
 		return
@@ -395,6 +399,9 @@ func (t *Testdrive) Preview(output io.Writer) {
 
 // Run prepares the tracer and executes the detected test suite.
 func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
+	if t.language == "java" {
+		return t.runMaven(ctx, output)
+	}
 	if t.preparationError != nil {
 		result := validationResult{Session: planSession().ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, Error: t.preparationError.Error(), Compatibility: verdict{Status: "not exercised", Reason: "Command resolution failed; no tests were executed."}}
 		return errors.Join(t.preparationError, finishValidation(output, t.repositoryRoot, result))

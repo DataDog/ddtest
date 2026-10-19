@@ -28,6 +28,8 @@ type Scenario struct {
 	Module  string
 	Suite   string
 	Test    string
+	// TestLevel supplies the protocol default for Java, which omits test_level.
+	TestLevel string
 	// SourceFile is the repository-relative path used by Jest suite skipping.
 	// Suite remains the reported identity used by test management.
 	SourceFile string
@@ -38,7 +40,15 @@ func newHandler() http.Handler { return scenarioHandler(Scenario{}) }
 func scenarioHandler(scenario Scenario) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+constants.SettingsURLPath, func(w http.ResponseWriter, r *http.Request) { handleScenarioSettings(w, r, scenario) })
-	mux.HandleFunc("POST "+constants.KnownTestsURLPath, handleKnownTests)
+	mux.HandleFunc("POST "+constants.KnownTestsURLPath, func(w http.ResponseWriter, r *http.Request) {
+		if scenario.TestLevel == "test" && scenario.Feature == "early-flake-detection" {
+			// Java disables EFD when the known-tests dataset is empty. A separate
+			// known test enables the experiment while keeping the probe new.
+			writeJSON(w, map[string]any{"data": map[string]any{"attributes": map[string]any{"tests": map[string]any{scenario.Module: map[string]any{"ddtest.known.Control": []string{"knownControl"}}}}}})
+			return
+		}
+		handleKnownTests(w, r)
+	})
 	mux.HandleFunc("POST "+constants.SkippableTestsURLPath, func(w http.ResponseWriter, r *http.Request) { handleSkippableTests(w, r, scenario) })
 	mux.HandleFunc("POST "+constants.TestManagementTestsURLPath, func(w http.ResponseWriter, r *http.Request) { handleTestManagement(w, r, scenario) })
 	mux.HandleFunc("POST "+constants.SearchCommitsURLPath, func(w http.ResponseWriter, _ *http.Request) {
@@ -130,14 +140,21 @@ func handleSkippableTests(w http.ResponseWriter, r *http.Request, scenario Scena
 		return
 	}
 	level := request.Data.Attributes.TestLevel
+	if level == "" {
+		level = scenario.TestLevel
+	}
 	if level != "" && level != "suite" && level != "test" {
 		http.Error(w, "unsupported skipping level", http.StatusBadRequest)
 		return
 	}
 	data := []any{}
-	if scenario.Feature == "skipping" && scenario.SourceFile != "" {
+	if scenario.Feature == "skipping" && (scenario.SourceFile != "" || scenario.TestLevel == "test") {
 		if level == "test" && scenario.Suite != "" && scenario.Test != "" {
-			data = append(data, map[string]any{"type": "test", "attributes": map[string]any{"suite": scenario.Suite, "name": scenario.Test}})
+			attributes := map[string]any{"suite": scenario.Suite, "name": scenario.Test}
+			if scenario.TestLevel == "test" {
+				attributes["configurations"] = map[string]any{"test.bundle": scenario.Module}
+			}
+			data = append(data, map[string]any{"type": "test", "attributes": attributes})
 		} else if level != "test" {
 			data = append(data, map[string]any{"type": "suite", "attributes": map[string]any{"suite": scenario.SourceFile}})
 		}

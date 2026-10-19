@@ -5,7 +5,12 @@
 
 package testdrive
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+
+	"github.com/DataDog/ddtest/internal/maven"
+)
 
 type configurationCoverage struct {
 	Discovered   int `json:"discovered"`
@@ -45,7 +50,7 @@ func featureChecksPassed(framework string, features []featureResult) bool {
 		}
 		projects[feature.Project][feature.Name] = true
 	}
-	if !supportsValidationFramework(framework) {
+	if !supportsValidationFramework(framework) && !slices.Contains(maven.FrameworkNames, framework) {
 		return true
 	}
 	if len(projects) == 0 {

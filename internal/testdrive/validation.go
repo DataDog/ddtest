@@ -41,6 +41,7 @@ type featureResult struct {
 // Detailed results feed validation and the HTML findings report, not compact JSON.
 type validationRun struct {
 	ExecutionContext                string
+	mavenModules                    map[string]string
 	Coverage                        *coverageSummary
 	NativeCommand                   string
 	ProbeExecutions                 *int
