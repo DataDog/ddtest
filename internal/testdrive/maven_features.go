@@ -206,7 +206,7 @@ func (t *Testdrive) mavenFeatures(ctx context.Context, output io.Writer, agent s
 		}
 	}
 	if !checked {
-		unavailableFeatures(result, "No executed module declares this framework directly; inherited/BOM/profile configuration needs a probe adapter before features can be certified.")
+		unavailableFeatures(result, "No executed module has statically resolved dependencies for this framework; remote parents/BOM/profile configuration needs a probe adapter before features can be certified.")
 	}
 	return nil
 }

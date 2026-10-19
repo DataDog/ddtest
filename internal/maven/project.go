@@ -25,9 +25,18 @@ type Dependency struct {
 }
 
 type Project struct {
-	XMLName      xml.Name `xml:"project"`
-	Directory    string
-	Artifact     string       `xml:"artifactId"`
+	XMLName   xml.Name `xml:"project"`
+	Directory string
+	Name      string `xml:"name"`
+	Group     string `xml:"groupId"`
+	Artifact  string `xml:"artifactId"`
+	Version   string `xml:"version"`
+	Parent    *struct {
+		Group        string  `xml:"groupId"`
+		Artifact     string  `xml:"artifactId"`
+		Version      string  `xml:"version"`
+		RelativePath *string `xml:"relativePath"`
+	} `xml:"parent"`
 	Packaging    string       `xml:"packaging"`
 	Dependencies []Dependency `xml:"dependencies>dependency"`
 	Modules      []string     `xml:"modules>module"`
@@ -87,8 +96,66 @@ func Projects(root string) ([]Project, error) {
 		}
 		return nil
 	}
-	err = visit(canonical)
-	return projects, err
+	if err := visit(canonical); err != nil {
+		return nil, err
+	}
+	return inheritDependencies(projects)
+}
+
+// Resolve only parents already inside the declared reactor, with matching Maven
+// coordinates. An aggregator alone does not establish dependency inheritance.
+// Remote parents, property interpolation and active profiles remain candidates
+// requiring a successful execution/control, not an inferred effective POM.
+func inheritDependencies(projects []Project) ([]Project, error) {
+	byPOM := map[string]int{}
+	for i, project := range projects {
+		byPOM[filepath.Clean(filepath.Join(project.Directory, "pom.xml"))] = i
+		if parent := project.Parent; parent != nil {
+			if project.Group == "" {
+				projects[i].Group = parent.Group
+			}
+			if project.Version == "" {
+				projects[i].Version = parent.Version
+			}
+		}
+	}
+	state := make([]uint8, len(projects))
+	var resolve func(int) error
+	resolve = func(i int) error {
+		if state[i] == 1 {
+			return fmt.Errorf("cyclic local Maven parents at %s", projects[i].Directory)
+		}
+		if state[i] == 2 {
+			return nil
+		}
+		state[i] = 1
+		project := &projects[i]
+		if parent := project.Parent; parent != nil {
+			relative := "../pom.xml"
+			if parent.RelativePath != nil {
+				relative = strings.TrimSpace(*parent.RelativePath)
+			}
+			if relative != "" {
+				if j, ok := byPOM[filepath.Clean(filepath.Join(project.Directory, relative))]; ok {
+					candidate := projects[j]
+					if parent.Group == candidate.Group && parent.Artifact == candidate.Artifact && parent.Version == candidate.Version {
+						if err := resolve(j); err != nil {
+							return err
+						}
+						project.Dependencies = append(slices.Clone(projects[j].Dependencies), project.Dependencies...)
+					}
+				}
+			}
+		}
+		state[i] = 2
+		return nil
+	}
+	for i := range projects {
+		if err := resolve(i); err != nil {
+			return nil, err
+		}
+	}
+	return projects, nil
 }
 
 func (p Project) Frameworks() []string {

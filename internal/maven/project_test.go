@@ -39,6 +39,42 @@ func TestProjectsRejectUnresolvedOrEscapingModule(t *testing.T) {
 	}
 }
 
+func TestProjectsInheritOnlyMatchingLocalParents(t *testing.T) {
+	for _, tc := range []struct {
+		name, parent string
+		inherits     bool
+	}{
+		{"default parent", `<parent><groupId>example</groupId><artifactId>parent</artifactId><version>1</version></parent>`, true},
+		{"explicit parent", `<parent><groupId>example</groupId><artifactId>parent</artifactId><version>1</version><relativePath>../pom.xml</relativePath></parent>`, true},
+		{"disabled local lookup", `<parent><groupId>example</groupId><artifactId>parent</artifactId><version>1</version><relativePath/></parent>`, false},
+		{"different coordinates", `<parent><groupId>other</groupId><artifactId>parent</artifactId><version>1</version></parent>`, false},
+		{"aggregator only", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			require.NoError(t, os.Mkdir(filepath.Join(root, "child"), 0700))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "pom.xml"), []byte(`<project><groupId>example</groupId><artifactId>parent</artifactId><version>1</version><modules><module>child</module></modules><dependencies><dependency><groupId>org.testng</groupId><artifactId>testng</artifactId></dependency></dependencies></project>`), 0600))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "child/pom.xml"), []byte(`<project>`+tc.parent+`<artifactId>child</artifactId></project>`), 0600))
+			projects, err := Projects(root)
+			require.NoError(t, err)
+			if tc.inherits {
+				require.Equal(t, []string{"testng"}, projects[1].Frameworks())
+			} else {
+				require.Empty(t, projects[1].Frameworks())
+			}
+		})
+	}
+}
+
+func TestProjectsRejectCyclicParents(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(root, "child"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "pom.xml"), []byte(`<project><groupId>example</groupId><artifactId>root</artifactId><version>1</version><parent><groupId>example</groupId><artifactId>child</artifactId><version>1</version><relativePath>child/pom.xml</relativePath></parent><modules><module>child</module></modules></project>`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "child/pom.xml"), []byte(`<project><artifactId>child</artifactId><parent><groupId>example</groupId><artifactId>root</artifactId><version>1</version></parent></project>`), 0600))
+	_, err := Projects(root)
+	require.ErrorContains(t, err, "cyclic")
+}
+
 func TestIsTestCommand(t *testing.T) {
 	for _, tc := range []struct {
 		command string

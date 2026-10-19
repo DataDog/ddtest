@@ -7,6 +7,7 @@ package testdrive
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -268,14 +270,7 @@ func (t *Testdrive) mavenRun(ctx context.Context, output io.Writer, name, agent 
 	if projectErr != nil {
 		return run, projectErr
 	}
-	run.mavenModules = map[string]string{}
-	for _, project := range projects {
-		if previous, ok := run.mavenModules[project.Artifact]; ok && previous != project.Directory {
-			run.mavenModules[project.Artifact] = "ambiguous"
-		} else {
-			run.mavenModules[project.Artifact] = project.Directory
-		}
-	}
+	run.mavenModules = mavenModuleDirectories(projects)
 	if len(projects) == 1 && t.framework.Name() == "scalatest" {
 		run.mavenModules["org.scalatest.tools.Runner"] = projects[0].Directory
 	}
@@ -321,9 +316,15 @@ func verifyMavenTelemetry(run validationRun) verdict {
 		expected[identity{module, suite, mavenTestName(test.Name), status}]++
 	}
 	for _, test := range run.Facts.Tests {
-		artifact, _, _ := strings.Cut(test.Module, " ")
-		module, ok := run.mavenModules[artifact]
-		if !ok {
+		name := test.Module
+		for _, plugin := range []string{"maven-surefire-plugin", "maven-failsafe-plugin", "tycho-surefire-plugin"} {
+			if prefix, _, found := strings.Cut(test.Module, " "+plugin+" "); found {
+				name = prefix
+				break
+			}
+		}
+		module, ok := run.mavenModules[name]
+		if !ok || module == "ambiguous" {
 			return verdict{Status: "inconclusive", Reason: "Java test.module cannot be reconciled with a unique Maven reactor module: " + test.Module}
 		}
 		suite := test.Suite
@@ -336,7 +337,7 @@ func verifyMavenTelemetry(run validationRun) verdict {
 			if attempt.Retry {
 				return verdict{Status: "inconclusive", Reason: "Unexpected Java retry in reporting-only mode."}
 			}
-			observed[identity{module, suite, mavenTestName(test.Name), attempt.Status}]++
+			observed[identity{module, suite, mavenEventTestName(test), attempt.Status}]++
 		}
 	}
 	if len(expected) == 0 || !maps.Equal(expected, observed) {
@@ -345,4 +346,49 @@ func verifyMavenTelemetry(run validationRun) verdict {
 	return verdict{Status: "compatible", Reason: "Maven native identities, outcomes, exception types/messages and exit code match; reporting-only test events reconcile with native results. Existing failures are acceptable."}
 }
 
-func mavenTestName(name string) string { return strings.TrimSuffix(name, "()") }
+// The Java tracer uses Maven's project display name, falling back to artifactId.
+// Names can contain spaces and need not be unique across the reactor.
+func mavenModuleDirectories(projects []maven.Project) map[string]string {
+	modules := map[string]string{}
+	for _, project := range projects {
+		for _, name := range []string{project.Name, project.Artifact} {
+			if name == "" || strings.Contains(name, "${") {
+				continue
+			}
+			if previous, ok := modules[name]; ok && previous != project.Directory {
+				modules[name] = "ambiguous"
+			} else {
+				modules[name] = project.Directory
+			}
+		}
+	}
+	return modules
+}
+
+var mavenParameterizedName = regexp.MustCompile(`^([\pL_$][\pL\pN_$]*)\([^)]*\)(\[[0-9]+\])$`)
+var mavenInvocationIndex = regexp.MustCompile(`^\[[0-9]+\]`)
+
+func mavenTestName(name string) string {
+	if parts := mavenParameterizedName.FindStringSubmatch(name); parts != nil {
+		return parts[1] + parts[2]
+	}
+	return strings.TrimSuffix(name, "()")
+}
+
+func mavenEventTestName(test intake.Test) string {
+	name := mavenTestName(test.Name)
+	var parameters struct {
+		Metadata struct {
+			Name string `json:"test_name"`
+		} `json:"metadata"`
+	}
+	if json.Unmarshal([]byte(test.Parameters), &parameters) == nil {
+		// JUnit 5 exposes the invocation index in its display name, while
+		// Surefire adds it after the Java method signature. Preserve that index
+		// so a duplicate event cannot substitute for a missing parameter case.
+		if index := mavenInvocationIndex.FindString(parameters.Metadata.Name); index != "" && !strings.HasSuffix(name, index) {
+			name += index
+		}
+	}
+	return name
+}
