@@ -276,6 +276,8 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		child.command = words[0]
 		if t.framework.Name() == "pytest" {
 			child.pytestEnvironment = maps.Clone(entry.Environment)
+			child.environmentInfo = environmentInfo{Runtime: "Python", Source: "Discovered CI command"}
+			child.environmentFailure = nil
 		}
 		child.args = words[1:]
 		child.playwrightGuard = entry.ExitOnFailure

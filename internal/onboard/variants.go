@@ -136,7 +136,8 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		applicationCoverage := len(frameworks) > 0 && frameworks[0] == "cypress" && key == "DD_TEST_COVERAGE"
 		// Other DD_* settings configure CI's agent, intake or session, which local
 		// validation replaces. Plugin settings change test behavior and are kept.
-		if strings.HasPrefix(key, "DD_") && !applicationCoverage && !TracerPluginSetting(key) {
+		pythonEnvironment := len(frameworks) > 0 && frameworks[0] == "pytest" && !slices.Contains([]string{"DD_API_KEY", "DD_TRACE_AGENT_URL", "DD_CIVISIBILITY_AGENTLESS_URL"}, key)
+		if strings.HasPrefix(key, "DD_") && !applicationCoverage && !pythonEnvironment && !TracerPluginSetting(key) {
 			delete(env, key)
 			continue
 		}

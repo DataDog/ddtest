@@ -23,6 +23,9 @@ func CIMatrixRows(root string, frameworks ...string) ([]string, error) {
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
+			if len(frameworks) > 0 && frameworks[0] == "pytest" && !pythonJobCandidate(root, workflow, job) {
+				continue
+			}
 			if len(frameworks) > 0 && (frameworks[0] == "cucumber" || frameworks[0] == "webdriverio") {
 				candidate := false
 				for _, step := range job.Steps {

@@ -2,6 +2,7 @@ package onboard
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,4 +90,114 @@ func TestPytestInstructionsPreserveEnvironmentAndEvidence(t *testing.T) {
 		require.Contains(t, text, expected)
 	}
 	require.NotContains(t, text, "NODE_OPTIONS")
+}
+
+func pythonReviewWorkflow(t *testing.T, contents string) string {
+	t.Helper()
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".github/workflows/test.yml"), []byte(contents), 0644))
+	return root
+}
+
+func pythonReviewRuntime(t *testing.T, root string) RuntimeCheck {
+	t.Helper()
+	return checkPythonCIRuntimes(t.Context(), root, "4.16.0", func(_ context.Context, version string) (PythonRelease, error) {
+		return PythonRelease{version, ">=3.9,<3.15"}, nil
+	}, func(context.Context, string) (string, error) {
+		t.Fatal("explicit version must not resolve action default")
+		return "", nil
+	})
+}
+
+func TestPythonReviewExpandsCommandMatrixBeforeFiltering(t *testing.T) {
+	root := pythonReviewWorkflow(t, `jobs:
+  tests:
+    strategy:
+      matrix:
+        command: ['python -m pytest tests', 'python3.12 -m pytest integration']
+    steps:
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - uses: datadog/test-visibility-github-action@v3
+        with: {languages: python, python-tracer-version: '4.16.0'}
+      - run: ${{ matrix.command }}
+`)
+	scope, err := DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 2)
+	check := pythonReviewRuntime(t, root)
+	require.Equal(t, "compatible", check.Status, "%+v", check)
+	require.Len(t, check.Jobs, 2)
+}
+
+func TestPythonReviewRetainsApplicationEnvironment(t *testing.T) {
+	root := pythonReviewWorkflow(t, `env:
+  DD_ENV: ci
+  DD_SERVICE: application
+  DD_APPLICATION_SETTING: '${{ matrix.mode }}'
+  DD_GIT_BRANCH: fixture
+  DD_API_KEY: '${{ secrets.DD_API_KEY }}'
+  DD_TRACE_AGENT_URL: '${{ env.ACTION_AGENT_URL }}'
+jobs:
+  tests:
+    strategy:
+      matrix: {mode: [one, two]}
+    steps:
+      - run: python -m pytest
+`)
+	scope, err := DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 2)
+	for index, command := range scope.Commands {
+		require.Equal(t, "ci", command.Environment["DD_ENV"])
+		require.Equal(t, "application", command.Environment["DD_SERVICE"])
+		require.Equal(t, []string{"one", "two"}[index], command.Environment["DD_APPLICATION_SETTING"])
+		require.Equal(t, "fixture", command.Environment["DD_GIT_BRANCH"])
+		require.NotContains(t, command.Environment, "DD_API_KEY")
+		require.NotContains(t, command.Environment, "DD_TRACE_AGENT_URL")
+	}
+}
+
+func TestPythonReviewEffectiveInstrumentationOptions(t *testing.T) {
+	for _, tc := range []struct{ name, parent, stepEnv, command, status string }{
+		{"step overrides parent", "  PYTEST_ADDOPTS: '-q'\n", "          PYTEST_ADDOPTS: '--ddtrace -q'\n", "python -m pytest", "compatible"},
+		{"action options extended", "", "          PYTEST_ADDOPTS: '${{ env.PYTEST_ADDOPTS }} -q'\n", "python -m pytest", "compatible"},
+		{"environment disables tracing", "", "          PYTEST_ADDOPTS: '--ddtrace --no-ddtrace'\n", "python -m pytest", "incompatible"},
+		{"autoload disabled without plugin", "  PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'\n", "          PYTEST_ADDOPTS: '--ddtrace'\n", "python -m pytest", "incompatible"},
+		{"autoload disabled explicit command plugin", "  PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'\n", "          PYTEST_ADDOPTS: '--ddtrace'\n", "python -m pytest -p ddtrace", "compatible"},
+		{"autoload disabled explicit environment plugin", "  PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'\n", "          PYTEST_ADDOPTS: '--ddtrace -p ddtrace'\n", "python -m pytest", "compatible"},
+		{"plugin explicitly blocked", "  PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'\n", "          PYTEST_ADDOPTS: '--ddtrace -p no:ddtrace'\n", "python -m pytest", "incompatible"},
+		{"autoload restored by step", "  PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'\n", "          PYTEST_DISABLE_PLUGIN_AUTOLOAD: ''\n          PYTEST_ADDOPTS: '--ddtrace'\n", "python -m pytest", "compatible"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := pythonReviewWorkflow(t, fmt.Sprintf("env:\n%sjobs:\n  tests:\n    steps:\n      - uses: actions/setup-python@v6\n        with: {python-version: '3.12'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: python, python-tracer-version: '4.16.0'}\n      - run: %s\n        env:\n%s", tc.parent, tc.command, tc.stepEnv))
+			check := pythonReviewRuntime(t, root)
+			require.Equal(t, tc.status, check.Status, "%+v", check)
+		})
+	}
+}
+
+func TestPythonReviewMatrixPreservationExcludesUnrelatedJobs(t *testing.T) {
+	root := pythonReviewWorkflow(t, `jobs:
+  docs:
+    if: github.event_name == 'release'
+    strategy:
+      matrix: {config: [{target: web}]}
+    steps:
+      - run: make docs
+  tests:
+    strategy:
+      matrix: {python: ['3.11', '3.12']}
+    steps:
+      - run: python -m pytest
+`)
+	rows, err := CIMatrixRows(root, "pytest")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	for _, row := range rows {
+		require.Contains(t, row, " / tests / ")
+	}
 }
