@@ -39,6 +39,7 @@ type jestProject struct {
 }
 
 type jestPreflight struct {
+	Ruby                string                       `json:"ruby,omitempty"`
 	WebdriverIO         *framework.WebdriverIOConfig `json:"webdriverio,omitempty"`
 	RunnerBinary        *runnerBinary                `json:"runner_binary,omitempty"`
 	PlaywrightProjects  []playwrightProject          `json:"playwright_projects,omitempty"`

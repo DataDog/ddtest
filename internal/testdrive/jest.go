@@ -31,6 +31,7 @@ type jestTest struct {
 	CucumberLine          int                 `json:"-"`
 	CypressAttempts       []string            `json:"-"`
 	Playwright            *playwrightIdentity `json:"playwright,omitempty"`
+	telemetryScopedID     string
 	telemetryName         *string
 	File                  string `json:"file"`
 	Name                  string `json:"name"`
@@ -381,12 +382,17 @@ func verifyJestTelemetry(run validationRun) verdict {
 	}
 	type identity struct{ file, name, status string }
 	expected := make(map[identity]int)
+	anonymous := make(map[string]bool)
 	for _, test := range run.Tests {
 		status := map[string]string{"passed": "pass", "failed": "fail"}[test.Status]
 		if status != "" {
 			name := test.Name
 			if test.telemetryName != nil {
 				name = *test.telemetryName
+			}
+			if run.framework == "rspec" && test.telemetryScopedID != "" {
+				name = "scoped_id:" + test.telemetryScopedID
+				anonymous[test.File+"\x00"+name] = true
 			}
 			expected[identity{test.File, name, status}]++
 		}
@@ -407,9 +413,23 @@ func verifyJestTelemetry(run validationRun) verdict {
 			file = filepath.Join(base, file)
 		}
 		file = filepath.Clean(file)
+		name := test.Name
+		if run.framework == "rspec" {
+			var parameters struct {
+				Metadata struct {
+					ScopedID string `json:"scoped_id"`
+				}
+			}
+			if json.Unmarshal([]byte(test.Parameters), &parameters) == nil {
+				id := "scoped_id:" + parameters.Metadata.ScopedID
+				if anonymous[file+"\x00"+id] {
+					name = id
+				}
+			}
+		}
 		observe := func(attempt intake.TestRun) {
 			if attempt.Status == "pass" || attempt.Status == "fail" {
-				observed[identity{file, test.Name, attempt.Status}]++
+				observed[identity{file, name, attempt.Status}]++
 			}
 		}
 		// A span sent twice is one execution; counting it again could hide a

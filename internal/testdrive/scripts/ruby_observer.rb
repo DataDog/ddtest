@@ -18,6 +18,13 @@ module DDTestObserver
   def self.failure(exception)
     exception ? "#{exception.class}: #{exception.message}" : ""
   end
+
+  def self.telemetry_name(name)
+    # Apply the installed release's pure wire-name formatting (for example,
+    # arrays become ARRAY). Outcomes and executions still come from the native
+    # reporter, independently of tracing or any received telemetry.
+    defined?(Datadog::CI::Utils::TestName) ? Datadog::CI::Utils::TestName.normalize(name) : name
+  end
 end
 
 if ENV.fetch("DDTEST_RUBY_FRAMEWORK") == "rspec"
@@ -48,10 +55,15 @@ if ENV.fetch("DDTEST_RUBY_FRAMEWORK") == "rspec"
       metadata = example.metadata
       group = metadata[:example_group]
       group = group[:parent_example_group] while group[:parent_example_group]
-      # Derive tracer names from native metadata, without calling tracer helpers.
+      # Derive the expected wire name from native metadata.
       name = example.full_description.strip.sub(group[:description].to_s, "").strip
       file = File.expand_path(metadata[:file_path])
-      DDTestObserver::TESTS << {file: file, name: example.full_description, telemetry_name: name,
+      # Anonymous examples get generated descriptions after execution. Tracer
+      # releases can render these differently; scoped_id identifies the same
+      # native example without trusting a tracer-generated name.
+      anonymous = Array(metadata[:description_args]).all? { |arg| arg.to_s.strip.empty? }
+      DDTestObserver::TESTS << {file: file, name: example.full_description, telemetry_name: DDTestObserver.telemetry_name(name),
+                               telemetry_scoped_id: anonymous ? metadata[:scoped_id] : nil,
                                status: status, failure: DDTestObserver.failure(example.exception)}
     end
 
@@ -66,6 +78,8 @@ if ENV.fetch("DDTEST_RUBY_FRAMEWORK") == "rspec"
       @configuration.add_formatter("progress") if @configuration.formatters.empty?
       @configuration.add_formatter(DDTestRSpecFormatter)
       if (probe = ENV["DDTEST_RUBY_PROBE"]) && !probe.empty?
+        # Rake's --pattern adds matching files even with an explicit file list.
+        @configuration.force(pattern: probe)
         @configuration.files_or_directories_to_run = [probe]
       end
     end
@@ -79,6 +93,7 @@ else
       klass = Minitest::Runnable.runnables.find { |candidate| candidate.name == result.class_name }
       location = klass&.instance_method(result.name)&.source_location
       DDTestObserver::TESTS << {file: location ? File.expand_path(location.first) : "", name: result.name,
+                               telemetry_name: DDTestObserver.telemetry_name(result.name),
                                status: result.skipped? ? "pending" : (result.passed? ? "passed" : "failed"),
                                failure: result.failures.map { |failure| DDTestObserver.failure(failure) }.join("\n")}
     end
@@ -100,8 +115,20 @@ else
   module DDTestMinitestRun
     def run(*args)
       if (probe = ENV["DDTEST_RUBY_PROBE"]) && !probe.empty?
-        require probe
-        Minitest::Runnable.runnables.select! { |klass| klass.name == "DDTestValidationProbe" }
+        # A Rake task can launch several Minitest processes. Elect one owner so
+        # the pass control and an aborting fail control exercise the same probe.
+        begin
+          File.open(ENV.fetch("DDTEST_PROBE_OWNER"), File::WRONLY | File::CREAT | File::EXCL) { |file| file.puts Process.pid }
+          @ddtest_probe_owner = true
+        rescue Errno::EEXIST
+          # Further runs in the owning process keep their normal retry lifecycle.
+        end
+        if @ddtest_probe_owner
+          require probe
+          Minitest::Runnable.runnables.select! { |klass| klass.name == "DDTestValidationProbe" }
+        else
+          Minitest::Runnable.runnables.clear
+        end
       end
       super
     end

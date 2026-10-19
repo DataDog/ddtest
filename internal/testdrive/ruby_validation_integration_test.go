@@ -32,7 +32,7 @@ func TestRubyValidationIntegration(t *testing.T) {
 			require.NoError(t, os.MkdirAll(root, 0755))
 			integrationCommand(t, ctx, root, nil, "git", "init", "-q")
 			integrationFile(t, root, ".ruby-version", gems.Ruby)
-			gem, version, command := "rspec-core", gems.Rspec, "bundle exec rspec"
+			gem, version, command := "rspec-core", gems.Rspec, "bundle exec rake spec"
 			if framework == "minitest" {
 				gem, version, command = "minitest", gems.Minitest, "bundle exec rake test"
 			}
@@ -40,10 +40,11 @@ func TestRubyValidationIntegration(t *testing.T) {
 			integrationFile(t, root, "lib/customer.rb", "module Customer; def self.add; 1+1; end; end\n")
 			if framework == "rspec" {
 				integrationFile(t, root, ".rspec", "--format documentation\n")
-				integrationFile(t, root, "spec/one_spec.rb", "require_relative '../lib/customer'\nRSpec.describe 'customer suite' do\n it('passes') { raise 'broken' unless Customer.add == 2 }\n it('existing failure') { Customer.add; raise 'customer expected failure' }\nend\n")
+				integrationFile(t, root, "Rakefile", "require 'rspec/core/rake_task'\nRSpec::Core::RakeTask.new(:spec)\n")
+				integrationFile(t, root, "spec/one_spec.rb", "require_relative '../lib/customer'\nRSpec.describe 'customer suite' do\n it('passes [1, 2]') { raise 'broken' unless Customer.add == 2 }\n specify { Customer.add }\n it('existing failure') { Customer.add; raise 'customer expected failure' }\nend\n")
 			} else {
-				integrationFile(t, root, "Rakefile", "require 'rake/testtask'\nRake::TestTask.new(:test) { |t| t.pattern = 'test/**/*_test.rb' }\n")
-				integrationFile(t, root, "test/one_test.rb", "require 'minitest/autorun'\nrequire_relative '../lib/customer'\nclass CustomerTest < Minitest::Test\n def test_passes; assert_equal 2, Customer.add; end\n def test_existing_failure; Customer.add; flunk 'customer expected failure'; end\nend\n")
+				integrationFile(t, root, "Rakefile", "require 'rake/testtask'\n3.times { |i| Rake::TestTask.new(\"test_#{i}\") { |t| t.pattern = 'test/**/*_test.rb' } }\ntask test: [:test_0, :test_1, :test_2]\n")
+				integrationFile(t, root, "test/one_test.rb", "require 'minitest/autorun'\nrequire_relative '../lib/customer'\nclass CustomerTest < Minitest::Test\n define_method('test_passes [1, 2]') { assert_equal 2, Customer.add }\n def test_existing_failure; Customer.add; flunk 'customer expected failure'; end\nend\n")
 			}
 			workflow := "jobs:\n  tests:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with: {ruby-version: '" + gems.Ruby + "'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby, ruby-tracer-version: '" + gems.Tracer + "'}\n      - run: " + command + "\n"
 			integrationFile(t, root, ".github/workflows/test.yml", workflow)
@@ -62,6 +63,7 @@ func TestRubyValidationIntegration(t *testing.T) {
 			require.Contains(t, output, "Local validation: PASSED")
 			var result struct {
 				Success       bool
+				Preflight     struct{ Ruby string }
 				Compatibility struct{ Status string }
 				Features      []struct{ Name, Status string }
 				Runs          []struct {
@@ -76,6 +78,7 @@ func TestRubyValidationIntegration(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, json.Unmarshal(data, &result))
 			require.True(t, result.Success, string(data))
+			require.Equal(t, gems.Ruby, result.Preflight.Ruby)
 			require.Equal(t, "compatible", result.Compatibility.Status)
 			require.Len(t, result.Features, 6)
 			for _, feature := range result.Features {

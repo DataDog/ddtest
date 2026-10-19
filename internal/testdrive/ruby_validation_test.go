@@ -122,6 +122,18 @@ func TestRubyIncompleteEvidenceCannotPass(t *testing.T) {
 	require.False(t, result.LocalSuccess)
 }
 
+func TestRubyAnonymousRSpecTelemetryUsesIndependentScopedIdentity(t *testing.T) {
+	id := "1:2"
+	run := validationRun{framework: "rspec", root: "/repo", Tests: []jestTest{{File: "/repo/spec/one_spec.rb", Name: "native generated description", Status: "passed", telemetryScopedID: id}},
+		Facts: intake.Facts{TestEventCount: 1, Tests: []intake.Test{{Name: "stable anonymous description", SourceFile: "spec/one_spec.rb", Parameters: `{"arguments":{},"metadata":{"scoped_id":"1:2"}}`, Attempts: []intake.TestRun{{Status: "pass"}}}}}}
+	require.Empty(t, verifyJestTelemetry(run).Status)
+	run.Facts.Tests[0].Parameters = `{"metadata":{"scoped_id":"1:3"}}`
+	require.Equal(t, "inconclusive", verifyJestTelemetry(run).Status)
+	run.Facts.Tests[0].Parameters = `{"metadata":{"scoped_id":"1:2"}}`
+	run.Facts.Tests[0].Attempts[0].Status = "fail"
+	require.Equal(t, "inconclusive", verifyJestTelemetry(run).Status)
+}
+
 func TestRubyCoverageRequiresExistingApplicationSource(t *testing.T) {
 	root := t.TempDir()
 	app := filepath.Join(root, "lib/customer.rb")
