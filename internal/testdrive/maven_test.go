@@ -43,6 +43,32 @@ func TestMavenTelemetryCannotSwapReactorModules(t *testing.T) {
 	require.Equal(t, "inconclusive", verifyMavenTelemetry(run).Status)
 }
 
+func TestMavenTelemetryUsesProjectDisplayNames(t *testing.T) {
+	for _, name := range []string{"JavaPoet", "jsoup Java HTML Parser"} {
+		run := validationRun{mavenModules: mavenModuleDirectories([]maven.Project{{Name: name, Artifact: "artifact", Directory: "."}}), Tests: []jestTest{{File: ". / ExampleTest", Name: "test", Status: "passed"}}, Facts: intake.Facts{Tests: []intake.Test{
+			{Module: name + " maven-surefire-plugin default-test", Suite: "ExampleTest", Name: "test", Attempts: []intake.TestRun{{Status: "pass"}}},
+		}}}
+		require.Equal(t, "compatible", verifyMavenTelemetry(run).Status, name)
+		run.mavenModules = mavenModuleDirectories([]maven.Project{{Name: name, Artifact: "artifact", Directory: "."}, {Name: name, Artifact: "other", Directory: "child"}})
+		require.Equal(t, "inconclusive", verifyMavenTelemetry(run).Status, "duplicate names must not conceal module ambiguity")
+	}
+}
+
+func TestMavenTelemetryReconcilesJUnit5ParameterizedInvocations(t *testing.T) {
+	run := validationRun{mavenModules: map[string]string{"module": "."}, Tests: []jestTest{
+		{File: ". / ExampleTest", Name: "parameters(String, String)[1]", Status: "passed"},
+		{File: ". / ExampleTest", Name: "parameters(String, String)[2]", Status: "passed"},
+	}, Facts: intake.Facts{Tests: []intake.Test{
+		{Module: "module", Suite: "ExampleTest", Name: "parameters", Parameters: `{"metadata":{"test_name":"[1] first"}}`, Attempts: []intake.TestRun{{Status: "pass"}}},
+		{Module: "module", Suite: "ExampleTest", Name: "parameters", Parameters: `{"metadata":{"test_name":"[2] second"}}`, Attempts: []intake.TestRun{{Status: "pass"}}},
+	}}}
+	require.Equal(t, "compatible", verifyMavenTelemetry(run).Status)
+	run.Facts.Tests[1].Parameters = run.Facts.Tests[0].Parameters
+	require.Equal(t, "inconclusive", verifyMavenTelemetry(run).Status, "equal total counts cannot hide a missing invocation")
+	run.Facts.Tests[1].Parameters = `{"metadata":{"test_name":"custom name without an index"}}`
+	require.Equal(t, "inconclusive", verifyMavenTelemetry(run).Status, "ambiguous display names require review")
+}
+
 func TestMavenProbePreservesCustomerFiles(t *testing.T) {
 	root := t.TempDir()
 	for _, name := range maven.FrameworkNames {
