@@ -57,52 +57,10 @@ selects a fallback release or `git:<ref>`).
 JavaScript/Python installs are isolated. Ruby runs `bundle add datadog-ci`,
 updating the project's Gemfile and lockfile.
 
-For Maven projects, select `junit4`, `junit5`, `testng`, `spock`, `cucumber-java`,
-`karate`, `scalatest` or `munit`, especially when dependencies include several
-frameworks. For example:
-
-```sh
-ddtest onboard --framework junit5
-ddtest testdrive --framework junit5 --check-only --yes
-ddtest testdrive --framework junit5 --command './mvnw verify' --tracer-version 1.67.1 --yes
-```
-
-Use the project's actual Maven command, profiles and modules. The default is
-`./mvnw test`, or `mvn test` without a wrapper. Framework selection labels the
-validation and chooses probes; it does not filter a mixed-framework Maven suite.
-The adapter compares fresh native `TEST-*.xml` results under `target` (TestNG
-uses its method-preserving XML when consistent with Surefire; Karate uses its
-native scenario JSON) against a
-reporting-only Java-agent run, including identities, outcomes, exception
-type/message and exit code, then reconciles test events. Full stack traces and
-command output remain in the HTML report. Existing failures are acceptable when
-both executions agree.
-
-Local feature probes exercise the project's existing Maven test provider in
-temporary repository copies. Framework dependencies inherited from matching local
-parents in the declared reactor are recognized. Custom source roots, XML output locations,
-unresolved remote parents/BOMs/profiles, unsupported provider configurations or
-excluded probes remain inconclusive. Maven may populate its normal dependency
-cache; prepare external services first. Native XML or Karate JSON output is required.
-
-Maven display names can differ from artifact IDs and contain spaces. Indexed
-JUnit 5 invocations retain their indexes during telemetry reconciliation. Custom
-parameter display names without an index, or tracer events missing test names,
-remain inconclusive; matching total counts alone do not establish identity agreement.
-
-Features are selected from the controlled test event's advertised capabilities.
-For example, Java tracer 1.67.1 does not advertise skipping or disable for MUnit;
-those checks are unsupported and are not counted as passed. ScalaTest's native
-Maven plugin forks need the agent in `JAVA_TOOL_OPTIONS`; testdrive supplies that
-for local validation. Preserve equivalent instrumentation in the CI command.
-
-The overall Java onboarding verdict remains **INCOMPLETE** pending separate CI
-Java/tracer compatibility review and validation of other profiles/commands.
-`--all` is not supported for Maven. `--check-only` runs no tests or downloads and
-marks retained execution as historical. A release selector downloads a temporary
-`dd-java-agent`; an existing agent can be reused from `DD_TRACER_FOLDER`.
-Java git tracer builds are not supported. See the runnable
-[Maven QA fixtures](internal/testdrive/testdata/maven/README.md).
+For Maven projects, `ddtest onboard --framework junit5` prints manual setup
+guidance. Run `ddtest testdrive --framework junit5 --yes` for local validation.
+See [Maven validation](docs/onboarding.md#maven-projects) for frameworks, commands
+and limits.
 
 See [onboarding and validation](docs/onboarding.md) for supported scope, agent
 results, custom commands, setup facts, recovery and framework limitations.

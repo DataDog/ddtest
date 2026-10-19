@@ -24,4 +24,8 @@ func TestMavenOnboardingUsesJavaActionAndNativeValidation(t *testing.T) {
 		require.Contains(t, output.String(), text)
 	}
 	require.NotContains(t, output.String(), "NODE_OPTIONS")
+	instructions := output.String()
+	output.Reset()
+	require.NoError(t, Start(&output))
+	require.Equal(t, instructions, output.String(), "the default onboarding entry point must preserve Maven guidance")
 }
