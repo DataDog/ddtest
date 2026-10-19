@@ -234,6 +234,9 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			words = []string{"node"}
 			parseErr = nil
 		}
+		if t.framework.Name() == "pytest" && filepath.Clean(entry.Directory) != "." {
+			parseErr = fmt.Errorf("configuration in %s needs validation from that package directory; --all currently executes root-package commands only for pytest", entry.Directory)
+		}
 		if _, err := localSetupDirectory(t.repositoryRoot, entry.Directory); err != nil {
 			parseErr = err
 		}
