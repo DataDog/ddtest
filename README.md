@@ -70,18 +70,25 @@ ddtest testdrive --framework junit5 --command './mvnw verify' --tracer-version 1
 Use the project's actual Maven command, profiles and modules. The default is
 `./mvnw test`, or `mvn test` without a wrapper. Framework selection labels the
 validation and chooses probes; it does not filter a mixed-framework Maven suite.
-The adapter compares fresh native `TEST-*.xml` results under `target` (Karate
-uses its native scenario JSON) against a
+The adapter compares fresh native `TEST-*.xml` results under `target` (TestNG
+uses its method-preserving XML when consistent with Surefire; Karate uses its
+native scenario JSON) against a
 reporting-only Java-agent run, including identities, outcomes, exception
 type/message and exit code, then reconciles test events. Full stack traces and
 command output remain in the HTML report. Existing failures are acceptable when
 both executions agree.
 
 Local feature probes exercise the project's existing Maven test provider in
-temporary repository copies. Custom source roots, XML output locations,
-inherited dependency declarations, unsupported provider configurations or
+temporary repository copies. Framework dependencies inherited from matching local
+parents in the declared reactor are recognized. Custom source roots, XML output locations,
+unresolved remote parents/BOMs/profiles, unsupported provider configurations or
 excluded probes remain inconclusive. Maven may populate its normal dependency
 cache; prepare external services first. Native XML or Karate JSON output is required.
+
+Maven display names can differ from artifact IDs and contain spaces. Indexed
+JUnit 5 invocations retain their indexes during telemetry reconciliation. Custom
+parameter display names without an index, or tracer events missing test names,
+remain inconclusive; matching total counts alone do not establish identity agreement.
 
 Features are selected from the controlled test event's advertised capabilities.
 For example, Java tracer 1.67.1 does not advertise skipping or disable for MUnit;

@@ -220,7 +220,9 @@ func readTestNG(data []byte, module string) ([]Test, error) {
 				}
 				continue
 			}
-			status := map[string]string{"PASS": "passed", "FAIL": "failed", "SKIP": "skipped"}[method.Status]
+			// TestNG's success-percentage failures are tolerated by the build
+			// (also used for quarantine); Surefire reports them as successful.
+			status := map[string]string{"PASS": "passed", "FAIL": "failed", "SKIP": "skipped", "SUCCESS_PERCENTAGE_FAILURE": "passed"}[method.Status]
 			if class.Name == "" || method.Name == "" || status == "" {
 				return nil, fmt.Errorf("missing TestNG test identity or unsupported status %q", method.Status)
 			}
