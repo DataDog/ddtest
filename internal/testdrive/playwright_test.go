@@ -73,14 +73,11 @@ func TestPlaywrightSupportUsesRuntimeAndKnownMinimum(t *testing.T) {
 	require.Equal(t, "compatible", checkPlaywrightSupport(check, platform.JSSelection{Node: ">=18"}).Status, "do not add a separate major allowlist")
 }
 
-func TestPlaywrightMissingResultsAndInvalidProcessRecords(t *testing.T) {
+func TestPlaywrightMissingResults(t *testing.T) {
 	var run validationRun
 	_, err := readPlaywrightResults(filepath.Join(t.TempDir(), "missing"), &run)
 	require.Error(t, err)
 	require.NotEmpty(t, run.ResultError)
-	path := filepath.Join(t.TempDir(), "children")
-	require.NoError(t, os.WriteFile(path, []byte("0\n"), 0600))
-	require.Error(t, cleanupPlaywrightChildren(path))
 }
 
 func TestPlaywrightDisabledProbeWithoutModule(t *testing.T) {

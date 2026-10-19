@@ -26,6 +26,12 @@ var playwrightReporter string
 //go:embed scripts/playwright_children.cjs
 var playwrightChildren string
 
+//go:embed scripts/playwright_owner.cjs
+var playwrightOwnerScript string
+
+//go:embed scripts/playwright_guard.cjs
+var playwrightGuardScript string
+
 const playwrightSkippingReason = "dd-trace-js does not support Test Impact Analysis skipping or per-test coverage for Playwright. This feature is not exercised and is not counted as a passed check."
 
 func featureSatisfied(framework string, feature featureResult) bool {
@@ -225,32 +231,6 @@ func checkPlaywrightSupport(check jestPreflight, selection platform.JSSelection)
 
 type playwrightCleanupError struct{ error }
 
-func cleanupPlaywrightChildren(path string) error {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	var errs []error
-	seen := map[int]bool{}
-	for _, line := range strings.Fields(string(data)) {
-		pid, err := strconv.Atoi(line)
-		if err != nil || pid >= -1 && pid <= 1 {
-			return fmt.Errorf("invalid owned Playwright process record")
-		}
-		if seen[pid] {
-			continue
-		}
-		seen[pid] = true
-		if err := stopPlaywrightProcess(pid); err != nil {
-			errs = append(errs, fmt.Errorf("cleanup owned Playwright process %d: %w", pid, err))
-		}
-	}
-	return errors.Join(errs...)
-}
-
 func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session *Session, preload, name string, instrumented bool, scenario intake.Scenario, probePath, probeMode string) (run validationRun, runErr error) {
 	run.Name, run.Instrumented, run.ProbeMode, run.root, run.framework = name, instrumented, probeMode, t.repositoryRoot, "playwright"
 	run.ExecutionPath = "playwright-cli"
@@ -260,9 +240,6 @@ func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session
 	}
 	reporter, children := filepath.Join(directory, "reporter.cjs"), filepath.Join(directory, "children.cjs")
 	if err := os.WriteFile(reporter, []byte(playwrightReporter), 0600); err != nil {
-		return run, err
-	}
-	if err := os.WriteFile(children, []byte(playwrightChildren), 0600); err != nil {
 		return run, err
 	}
 	server, err := t.startIntake(directory, scenario)
@@ -285,10 +262,13 @@ func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session
 		env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
 	}
 	env["NODE_OPTIONS"] += " --require " + strconv.Quote(children)
-	env["DDTEST_PLAYWRIGHT_CHILDREN"] = filepath.Join(directory, "children.txt")
+	owner, err := startPlaywrightOwner(directory, env)
+	if err != nil {
+		return run, err
+	}
 	env["DDTEST_PLAYWRIGHT_REPORT"] = filepath.Join(directory, "results.json")
 	defer func() {
-		if err := cleanupPlaywrightChildren(env["DDTEST_PLAYWRIGHT_CHILDREN"]); err != nil {
+		if err := owner.Close(); err != nil {
 			runErr = errors.Join(runErr, &playwrightCleanupError{err})
 		}
 	}()
@@ -483,7 +463,7 @@ func (t *Testdrive) runPlaywrightFeatures(ctx context.Context, output io.Writer,
 			continue
 		}
 		err = func() (probeErr error) {
-			defer func() { probeErr = errors.Join(probeErr, os.Remove(probe)) }()
+			defer func() { probeErr = errors.Join(probeErr, removeProbe(t.repositoryRoot, probe)) }()
 			discovered, err := t.inspectPlaywright(ctx, session.Directory(), probe, project)
 			if err != nil || len(discovered.Tests) != 1 || discovered.Tests[0].File != probe {
 				unavailableFeatures(result, fmt.Sprintf("Probe was not uniquely discovered under the original Playwright configuration: %v", err))

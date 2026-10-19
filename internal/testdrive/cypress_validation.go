@@ -174,12 +174,9 @@ func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *S
 	if err := os.WriteFile(observer, []byte(cypressObserver), 0600); err != nil {
 		return run, err
 	}
-	if err := os.WriteFile(children, []byte(playwrightChildren), 0600); err != nil {
-		return run, err
-	}
 	if probePath != "" {
 		source := "let attempts = 0;\ndescribe('ddtest', () => { it('validation probe', () => {\nattempts++;\nreturn cy.task('ddtest:validation:attempt').then(() => {\nif (" + strconv.Quote(probeMode) + " === 'fail' || (" + strconv.Quote(probeMode) + " === 'fail-once' && attempts === 1)) throw new Error('ddtest intentional failure');\n});\n}); });\n"
-		if err := os.WriteFile(probePath, []byte(source), 0600); err != nil {
+		if err := writeOwnedProbe(t.repositoryRoot, probePath, []byte(source)); err != nil {
 			return run, err
 		}
 	}
@@ -204,11 +201,14 @@ func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *S
 	}
 	env["NODE_OPTIONS"] += " --require " + strconv.Quote(observer) + " --require " + strconv.Quote(children)
 	env["DDTEST_CYPRESS_DIRECTORY"], env["DDTEST_CYPRESS_PROBE"] = directory, probePath
-	env["DDTEST_PLAYWRIGHT_CHILDREN"] = filepath.Join(directory, "children.txt")
+	owner, err := startPlaywrightOwner(directory, env)
+	if err != nil {
+		return run, err
+	}
 	env["CYPRESS_RECORD_KEY"], env["CYPRESS_CLOUD_TOKEN"], env["CYPRESS_RECORD"], env["CYPRESS_PARALLEL"] = "", "", "false", "false"
 	env["PATH"] = filepath.Join(t.repositoryRoot, "node_modules", ".bin") + string(os.PathListSeparator) + os.Getenv("PATH")
 	defer func() {
-		if err := cleanupPlaywrightChildren(env["DDTEST_PLAYWRIGHT_CHILDREN"]); err != nil {
+		if err := owner.Close(); err != nil {
 			runErr = errors.Join(runErr, &playwrightCleanupError{err})
 		}
 	}()
@@ -329,7 +329,7 @@ func (t *Testdrive) runCypressFeatures(ctx context.Context, output io.Writer, se
 		unavailableFeatures(result, err.Error())
 		return nil
 	}
-	defer func() { runErr = errors.Join(runErr, os.Remove(probe)) }()
+	defer func() { runErr = errors.Join(runErr, removeProbe(t.repositoryRoot, probe)) }()
 	return runProbeFeatures(func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
 		return t.runCypress(ctx, output, session, preload, name, true, scenario, probe, mode)
 	}, result)

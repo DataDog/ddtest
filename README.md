@@ -79,6 +79,13 @@ Cleanup stops that instance and verifies exit before removing its storage on
 success, failure or cancellation. Shared daemons and caches are preserved;
 unverified owned cleanup keeps the result incomplete.
 
+Browser descendants hold live ownership connections; cleanup does not kill PIDs
+read from old files. Detached groups retain a live owned member until cleanup.
+After a crash, the next workflow acquires the repository lock and removes only
+probes whose exact paths and unchanged contents match private ownership records.
+Edited probes are preserved and reported as a blocker. These records stay outside
+the checkout. Source fingerprints include submodule commits and local changes.
+
 When a missing local build prerequisite needs repository knowledge, the agent
 may supply `--facts /outside/checkout/setup.json` with `--all`. For example:
 

@@ -30,7 +30,7 @@ func TestProjectProbeKeepsLettersOnlyServerPattern(t *testing.T) {
 	requireWriteFile(t, source, "original")
 	path, err := createJestProbe(root, validationRun{Tests: []jestTest{{File: source, Status: "passed"}}})
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, os.Remove(path)) })
+	t.Cleanup(func() { require.NoError(t, removeProbe(root, path)) })
 	require.Regexp(t, regexp.MustCompile(`^[a-zA-Z]+\.server\.test\.tsx$`), filepath.Base(path))
 }
 

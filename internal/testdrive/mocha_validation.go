@@ -208,7 +208,7 @@ func (t *Testdrive) runMochaFeatures(ctx context.Context, output io.Writer, sess
 		unavailableFeatures(result, err.Error())
 		return nil
 	}
-	defer func() { runErr = errors.Join(runErr, os.Remove(probe)) }()
+	defer func() { runErr = errors.Join(runErr, removeProbe(t.repositoryRoot, probe)) }()
 	return runProbeFeatures(func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
 		return t.runMocha(ctx, output, session, preload, name, true, scenario, probe, mode)
 	}, result)

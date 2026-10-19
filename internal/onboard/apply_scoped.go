@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // SetupDependencyGap names a package-manager operation, not an invitation to
@@ -110,7 +112,7 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 			command = cucumberDiscoveryScript(command)
 		}
 		resolution := resolveJestSequence(root, root, command, nil, &remaining, framework)
-		if resolution.Reason != "" || len(resolution.Tests) != 1 || resolution.OtherFramework {
+		if resolution.Reason != "" || len(resolution.Tests) != 1 || resolution.OtherFramework || !resolution.SingleJest {
 			return nil, "", &SetupGap{"package.json / scripts / " + name, "Custom framework wrapper requires an explicit scoped initialization; preserve its command."}
 		}
 		if framework == "webdriverio" {
@@ -122,11 +124,11 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 				continue
 			} // Explicit browser runner remains outside instrumentation.
 		} else if !resolution.Tests[0].usesNYC {
-			index := strings.Index(script, "cucumber-js")
-			if index < 0 {
-				return nil, "", fmt.Errorf("cucumber leaf could not be located")
+			index, insertion, err := cucumberCommandOffset(script)
+			if err != nil {
+				return nil, "", &SetupGap{"package.json / scripts / " + name, err.Error()}
 			}
-			script = script[:index] + "npx --no-install nyc -- " + script[index:]
+			script = script[:index] + insertion + script[index:]
 		}
 		extra := ""
 		if framework == "cucumber" {
@@ -154,6 +156,54 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 	}
 	edit.before = original.before
 	return []setupEdit{edit}, options, nil
+}
+
+// Locate the executable word, not an occurrence in an assignment or argument.
+// Offsets refer to the original script, including its quoting and local path.
+func cucumberCommandOffset(script string) (int, string, error) {
+	file, err := syntax.NewParser().Parse(strings.NewReader(script), "")
+	if err != nil {
+		return 0, "", err
+	}
+	offset := -1
+	insertion := "npx --no-install nyc -- "
+	valid := true
+	syntax.Walk(file, func(node syntax.Node) bool {
+		call, ok := node.(*syntax.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return true
+		}
+		i := 0
+		if call.Args[i].Lit() == "cross-env" {
+			i++
+			for i < len(call.Args) && strings.Contains(call.Args[i].Lit(), "=") {
+				i++
+			}
+		}
+		launcher := i
+		if i < len(call.Args) && slices.Contains([]string{"npx", "pnpx"}, call.Args[i].Lit()) {
+			i++
+		} else if i+1 < len(call.Args) && slices.Contains([]string{"npm", "pnpm"}, call.Args[i].Lit()) && call.Args[i+1].Lit() == "exec" {
+			i += 2
+		}
+		for i < len(call.Args) && slices.Contains([]string{"--no-install", "--"}, call.Args[i].Lit()) {
+			i++
+		}
+		if i < len(call.Args) && filepath.Base(call.Args[i].Lit()) == "cucumber-js" {
+			if offset >= 0 {
+				valid = false
+			}
+			offset = int(call.Args[i].Pos().Offset())
+			if i > launcher {
+				insertion = "nyc -- "
+			}
+		}
+		return true
+	})
+	if !valid || offset < 0 {
+		return 0, "", fmt.Errorf("cannot locate one literal Cucumber executable; preserve this script and configure coverage explicitly")
+	}
+	return offset, insertion, nil
 }
 
 var localWDIORunner = regexp.MustCompile(`(?m)^\s*runner:\s*['"]local['"]\s*,`)

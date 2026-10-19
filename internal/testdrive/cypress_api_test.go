@@ -56,9 +56,11 @@ func TestCypressAPIPreservesOptionsHooksAndCleansStartup(t *testing.T) {
 			defer cancel()
 			command := exec.CommandContext(ctx, node, filepath.Join(root, "api.cjs"), filepath.Join(root, "plan.json"))
 			command.Dir = root
-			record := filepath.Join(root, "children.txt")
-			command.Env = append(os.Environ(), "DDTEST_API_LATE_START_FAILURE="+lateFailure, "DDTEST_CYPRESS_DIRECTORY="+root, "DDTEST_PLAYWRIGHT_CHILDREN="+record, "NODE_OPTIONS=--require "+filepath.Join(root, "children.cjs"))
-			t.Cleanup(func() { require.NoError(t, cleanupPlaywrightChildren(record)) })
+			env := map[string]string{}
+			owner, err := startPlaywrightOwner(root, env)
+			require.NoError(t, err)
+			command.Env = append(os.Environ(), "DDTEST_API_LATE_START_FAILURE="+lateFailure, "DDTEST_CYPRESS_DIRECTORY="+root, "DDTEST_PLAYWRIGHT_OWNER="+env["DDTEST_PLAYWRIGHT_OWNER"], "NODE_OPTIONS=--require "+filepath.Join(root, "children.cjs"))
+			t.Cleanup(func() { require.NoError(t, owner.Close()) })
 			output, err := command.CombinedOutput()
 			if lateFailure == "true" {
 				require.Error(t, err, string(output))

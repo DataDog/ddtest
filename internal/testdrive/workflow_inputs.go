@@ -30,10 +30,32 @@ type PrerequisiteFact = onboard.PrerequisiteFact
 // InputFingerprint binds facts and reports to source/configuration, runtime and
 // relevant non-secret environment. Git-ignored caches/outputs are not audited.
 func InputFingerprint(ctx context.Context, root string) (string, error) {
+	return inputFingerprint(ctx, root, 0)
+}
+
+func inputFingerprint(ctx context.Context, root string, depth int) (string, error) {
+	if depth > 16 {
+		return "", fmt.Errorf("submodule nesting exceeds 16 levels")
+	}
 	var files []string
+	gitlinks := map[string]string{}
 	data, err := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z").Output()
 	if err == nil {
 		files = strings.Split(strings.TrimSuffix(string(data), "\x00"), "\x00")
+		index, err := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "--stage", "-z").Output()
+		if err != nil {
+			return "", fmt.Errorf("read submodule index: %w", err)
+		}
+		for entry := range strings.SplitSeq(string(index), "\x00") {
+			header, name, _ := strings.Cut(entry, "\t")
+			fields := strings.Fields(header)
+			if len(fields) == 3 && fields[0] == "160000" {
+				if fields[2] != "0" {
+					return "", fmt.Errorf("resolve unmerged submodule %s before validation", name)
+				}
+				gitlinks[name] = fields[1]
+			}
+		}
 	} else {
 		err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
@@ -70,6 +92,14 @@ func InputFingerprint(ctx context.Context, root string) (string, error) {
 			return "", err
 		}
 		path := filepath.Join(root, name)
+		if commit, ok := gitlinks[name]; ok {
+			state, err := submoduleFingerprint(ctx, path, depth+1)
+			if err != nil {
+				return "", fmt.Errorf("submodule %s: %w", name, err)
+			}
+			_, _ = fmt.Fprintf(hash, "%s\x00gitlink\x00%s\x00%s\x00", name, commit, state)
+			continue
+		}
 		info, err := os.Lstat(path)
 		if os.IsNotExist(err) {
 			_, _ = fmt.Fprintf(hash, "%s\x00missing\x00", name)
@@ -108,6 +138,34 @@ func InputFingerprint(ctx context.Context, root string) (string, error) {
 		_, _ = fmt.Fprintf(hash, "%s=%s\x00", key, os.Getenv(key))
 	}
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
+}
+
+func submoduleFingerprint(ctx context.Context, path string, depth int) (string, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return "uninitialized", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("expected a real submodule directory")
+	}
+	if _, err := os.Lstat(filepath.Join(path, ".git")); os.IsNotExist(err) {
+		entries, err := os.ReadDir(path)
+		if err == nil && len(entries) != 0 {
+			err = fmt.Errorf("nonempty submodule is not initialized; initialize it before validation")
+		}
+		return "uninitialized", err
+	} else if err != nil {
+		return "", err
+	}
+	head, err := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", fmt.Errorf("read checked-out commit: %w", err)
+	}
+	contents, err := inputFingerprint(ctx, path, depth)
+	return strings.TrimSpace(string(head)) + ":" + contents, err
 }
 
 func applySetupFacts(root, path, fingerprint string, scope *onboard.ValidationScope) (string, error) {

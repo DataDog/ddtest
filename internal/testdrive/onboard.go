@@ -128,6 +128,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	}
 	ownedLock = true
 	defer func() { _ = lock.Close() }()
+	if err := recoverProbes(t.repositoryRoot); err != nil {
+		return fail("needs_input", "probe_recovery_failed", err.Error(), "Review only the named owned probe; modified files are preserved. Then retry the same command.")
+	}
 	checkpoint, err = openCheckpoint(options.Resume, t.repositoryRoot, name, settings.GetCommand(), options.Apply, t.allConfigurations)
 	if err != nil {
 		return fail("needs_input", "resume_invalid", err.Error(), "Use the supplied resume command with its original repository/framework/scope, or start a fresh workflow.")

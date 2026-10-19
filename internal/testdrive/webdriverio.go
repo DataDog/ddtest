@@ -208,9 +208,6 @@ func (t *Testdrive) runWebdriverIO(ctx context.Context, output io.Writer, sessio
 		return run, err
 	}
 	children := filepath.Join(directory, "children.cjs")
-	if err := os.WriteFile(children, []byte(playwrightChildren), 0600); err != nil {
-		return run, err
-	}
 	server, err := t.startIntake(directory, scenario)
 	if err != nil {
 		return run, err
@@ -231,9 +228,12 @@ func (t *Testdrive) runWebdriverIO(ctx context.Context, output io.Writer, sessio
 		env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
 	}
 	env["NODE_OPTIONS"] += " --require " + strconv.Quote(children) + " --import " + strconv.Quote(observer)
-	env["DDTEST_PLAYWRIGHT_CHILDREN"] = filepath.Join(directory, "children.txt")
+	owner, err := startPlaywrightOwner(directory, env)
+	if err != nil {
+		return run, err
+	}
 	defer func() {
-		if err := cleanupPlaywrightChildren(env["DDTEST_PLAYWRIGHT_CHILDREN"]); err != nil {
+		if err := owner.Close(); err != nil {
 			runErr = errors.Join(runErr, &playwrightCleanupError{err})
 		}
 	}()
@@ -302,7 +302,7 @@ func (t *Testdrive) runWebdriverIOFeatures(ctx context.Context, output io.Writer
 		unavailableFeatures(result, err.Error())
 		return nil
 	}
-	defer func() { runErr = errors.Join(runErr, os.Remove(probe)) }()
+	defer func() { runErr = errors.Join(runErr, removeProbe(t.repositoryRoot, probe)) }()
 	if result.Preflight == nil || result.Preflight.WebdriverIO == nil {
 		return fmt.Errorf("webdriverio capability selection is unavailable")
 	}

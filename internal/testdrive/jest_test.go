@@ -97,7 +97,7 @@ func TestProbeUsesProjectTestLocationAndDoesNotOverwrite(t *testing.T) {
 	run.Tests[0].File = original
 	path, err := createJestProbe(root, run)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, os.Remove(path)) }()
+	defer func() { require.NoError(t, removeProbe(root, path)) }()
 	require.NotEqual(t, original, path)
 	resolvedRoot, err := filepath.EvalSymlinks(root)
 	require.NoError(t, err)

@@ -290,7 +290,7 @@ func (t *Testdrive) runVitestFeatures(ctx context.Context, output io.Writer, ses
 		unavailableFeatures(result, err.Error())
 		return nil
 	}
-	defer func() { runErr = errors.Join(runErr, os.Remove(probePath)) }()
+	defer func() { runErr = errors.Join(runErr, removeProbe(t.repositoryRoot, probePath)) }()
 	runner := *t
 	if !t.usesVitestRunner() {
 		runner.args = append(slices.Clone(t.args), probePath)

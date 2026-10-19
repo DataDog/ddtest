@@ -89,7 +89,7 @@ func (w *ownedWatchman) close() error {
 		return fmt.Errorf("stop owned Watchman at %s: %w", w.directory, err)
 	}
 	// Verify exit through the existing bounded process lifecycle helper.
-	if err := stopPlaywrightProcess(response.PID); err != nil {
+	if err := waitOwnedProcessExit(response.PID); err != nil {
 		return fmt.Errorf("owned Watchman did not exit at %s: %w", w.directory, err)
 	}
 	return os.RemoveAll(w.directory)

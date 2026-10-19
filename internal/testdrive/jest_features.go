@@ -67,14 +67,20 @@ func createProbe(root string, baseline validationRun, sourceText string) (string
 		for i, value := range letters {
 			letters[i] = 'a' + value%26
 		}
-		probe, err := os.OpenFile(filepath.Join(filepath.Dir(source), "ddtest"+string(letters)+filepath.Base(source)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		name := filepath.Join(filepath.Dir(source), "ddtest"+string(letters)+filepath.Base(source))
+		if err := recordProbe(root, name, []byte(sourceText)); err != nil {
+			return "", err
+		}
+		probe, err := os.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err != nil {
+			record, _ := probeOwnershipPath(root, name)
+			_ = os.Remove(record) // O_EXCL failed: the existing source file is not ours.
 			return "", err
 		}
 		_, writeErr := probe.WriteString(sourceText)
 		closeErr := probe.Close()
 		if err := errors.Join(writeErr, closeErr); err != nil {
-			return "", errors.Join(err, os.Remove(probe.Name()))
+			return "", errors.Join(err, os.Remove(probe.Name()), removeProbe(root, probe.Name()))
 		}
 		return probe.Name(), nil
 	}
@@ -144,7 +150,7 @@ func (t *Testdrive) runJestProjectFeatures(ctx context.Context, output io.Writer
 		unavailableFeatures(result, err.Error())
 		return nil
 	}
-	defer func() { runErr = errors.Join(runErr, os.Remove(probePath)) }()
+	defer func() { runErr = errors.Join(runErr, removeProbe(t.repositoryRoot, probePath)) }()
 	check.Probe, _ = filepath.Rel(t.repositoryRoot, probePath)
 	files, check.ProbeDiscoveryCommand, err = t.discoverJestTests(ctx, probePath)
 	if err != nil || len(files) != 1 || filepath.Clean(files[0]) != filepath.Clean(probePath) {

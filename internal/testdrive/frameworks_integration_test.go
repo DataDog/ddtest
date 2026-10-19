@@ -36,7 +36,7 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 		{"jest", `{"scripts":{"test":"jest"},"devDependencies":{"jest":"30.5.1"}}`, "npm test -- --runInBand -- one.test.js", map[string]string{"one.test.js": `test('adds', () => expect(1+1).toBe(2));`}},
 		{"mocha", `{"scripts":{"test":"mocha"},"devDependencies":{"mocha":"11.7.5"}}`, "npm test", map[string]string{"test/one.js": `const assert = require('node:assert'); it('adds', () => assert.equal(1+1,2));`}},
 		{"vitest", `{"type":"module","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"4.1.6"}}`, "npm test", map[string]string{"one.test.js": `import {test,expect} from 'vitest'; test('adds', () => expect(1+1).toBe(2));`}},
-		{"playwright", `{"scripts":{"test":"playwright test"},"devDependencies":{"@playwright/test":"1.55.1"}}`, "npm test", map[string]string{"one.spec.js": `const {test,expect} = require('@playwright/test'); test('adds', () => expect(1+1).toBe(2));`}},
+		{"playwright", `{"name":"ddtest-playwright-fixture","version":"1.0.0","scripts":{"test":"playwright test"},"devDependencies":{"@playwright/test":"1.55.1"}}`, "npm test", map[string]string{"one.spec.js": `const {test,expect} = require('@playwright/test'); test('renders', async ({page}) => { await page.setContent('<h1>hello</h1>'); await expect(page.locator('h1')).toHaveText('hello'); });`}},
 		{"cucumber", `{"scripts":{"test":"cucumber-js"},"devDependencies":{"@cucumber/cucumber":"12.2.0"}}`, "npm test", map[string]string{"features/one.feature": "Feature: Arithmetic\n  Scenario: Add\n    Given addition works\n", "features/step_definitions/one.js": `const {Given} = require('@cucumber/cucumber'); Given('addition works', () => require('node:assert').equal(1+1,2));`}},
 		{"cypress", `{"scripts":{"test":"cypress run"},"devDependencies":{"cypress":"15.1.0"}}`, "npm test", map[string]string{"cypress.config.js": `module.exports={e2e:{supportFile:false,setupNodeEvents(on,config){on('task',{answer:()=>42});on('after:run',()=>{require('node:fs').writeFileSync('original-hook.txt','ran');});return config;}}};`, "cypress/e2e/one.cy.js": `it('preserves hooks', () => { cy.task('answer').should('equal',42); });`}},
 		{"pytest", "", "python -m pytest", map[string]string{"requirements.txt": "pytest==8.4.2\n", "pytest.ini": "[pytest]\n", "test_one.py": "def test_adds():\n    assert 1 + 1 == 2\n"}},
@@ -63,6 +63,11 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 			if fixture.manifest != "" {
 				integrationCommand(t, ctx, root, env, "npm", "install", "--no-audit", "--no-fund")
 			}
+			if fixture.name == "playwright" {
+				integrationFile(t, root, ".gitignore", "/.testoptimization/\n")
+				env = append(env, "PLAYWRIGHT_BROWSERS_PATH="+filepath.Join(t.TempDir(), "browsers"))
+				integrationCommand(t, ctx, root, env, "npx", "--no-install", "playwright", "install", "chromium")
+			}
 			if fixture.name == "pytest" {
 				venv := filepath.Join(t.TempDir(), "venv")
 				integrationCommand(t, ctx, root, nil, "python3", "-m", "venv", venv)
@@ -79,9 +84,12 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 					before[name] = string(contents)
 				}
 			}
-			onboard := integrationCommand(t, ctx, root, env, binary, "onboard")
+			onboard := integrationCommand(t, ctx, root, env, binary, "onboard", "--instructions")
 			require.Contains(t, onboard, "datadog/test-visibility-github-action@v3")
 			args := []string{"testdrive", "--yes"}
+			if fixture.name == "playwright" {
+				args = append(args, "--all")
+			}
 			if fixture.name == "jest" || fixture.name == "playwright" {
 				// The validation contract also requires instrumented CI configuration.
 				// Resolve once so local and CI metadata refer to the same release.
@@ -111,11 +119,6 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 				require.Empty(t, probes)
 			case "playwright":
 				require.NoError(t, runErr, output)
-				require.Contains(t, output, "No observed behavioral regression")
-				for _, feature := range []string{"auto-retries", "early-flake-detection", "quarantine", "disabled", "attempt-to-fix"} {
-					require.Contains(t, output, "Feature "+feature+": passed")
-				}
-				require.Contains(t, output, "Feature skipping: not supported")
 				probes, err := filepath.Glob(filepath.Join(root, "ddtest*"))
 				require.NoError(t, err)
 				require.Empty(t, probes)
@@ -128,19 +131,44 @@ func TestPublicFrameworkTestdrives(t *testing.T) {
 				require.Error(t, runErr, output)
 				require.Contains(t, output, "unvalidated")
 			}
-			require.Contains(t, output, "Results JSON:")
+			require.Contains(t, output, "testdrive.json")
 			reports, err := filepath.Glob(filepath.Join(root, ".testoptimization", "testdrive.json"))
 			require.NoError(t, err)
 			require.Len(t, reports, 1)
 			data, err := os.ReadFile(reports[0])
 			require.NoError(t, err)
 			var report struct {
-				Runs []struct {
-					Instrumented   bool `json:"instrumented"`
-					TestEventCount int  `json:"test_event_count"`
+				Summary       struct{ Status string }
+				Compatibility struct{ Status string }
+				Cleanup       struct{ Status string }
+				Features      []struct{ Name, Status string }
+				Runs          []struct {
+					Name           string                       `json:"name"`
+					TestCounts     struct{ Passed, Failed int } `json:"test_counts"`
+					Instrumented   bool                         `json:"instrumented"`
+					TestEventCount int                          `json:"test_event_count"`
 				} `json:"runs"`
 			}
 			require.NoError(t, json.Unmarshal(data, &report))
+			if fixture.name == "playwright" {
+				require.Equal(t, "COMPLETE LOCALLY", report.Summary.Status)
+				require.Equal(t, "compatible", report.Compatibility.Status)
+				require.Equal(t, "passed", report.Cleanup.Status)
+				features := map[string]string{}
+				for _, feature := range report.Features {
+					features[feature.Name] = feature.Status
+				}
+				require.Equal(t, map[string]string{"auto-retries": "passed", "early-flake-detection": "passed", "skipping": "not supported", "quarantine": "passed", "disabled": "passed", "attempt-to-fix": "passed"}, features)
+				pairs := 0
+				for _, run := range report.Runs {
+					if run.Name == "baseline" || run.Name == "reporting-only" {
+						pairs++
+						require.Equal(t, 1, run.TestCounts.Passed, "the real page test must execute")
+						require.Zero(t, run.TestCounts.Failed)
+					}
+				}
+				require.Equal(t, 2, pairs)
+			}
 			events := 0
 			for _, run := range report.Runs {
 				if run.Instrumented {

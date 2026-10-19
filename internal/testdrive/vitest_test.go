@@ -218,7 +218,7 @@ func TestVitestJSONAndProbeStayInOriginalSuite(t *testing.T) {
 	data, err := os.ReadFile(original)
 	require.NoError(t, err)
 	require.Equal(t, "original", string(data))
-	require.NoError(t, os.Remove(probe))
+	require.NoError(t, removeProbe(root, probe))
 }
 
 func TestVitestMissingSkippingNegotiationIsNotAPass(t *testing.T) {

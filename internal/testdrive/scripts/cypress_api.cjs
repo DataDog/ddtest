@@ -40,7 +40,7 @@ async function waitFor (address) {
 
 async function stop () {
   for (const child of children) {
-    if (!child.pid) continue
+    if (!child.pid || child.exitCode !== null || child.signalCode !== null) continue
     try {
       if (process.platform === 'win32') child.kill('SIGTERM')
       else process.kill(-child.pid, 'SIGTERM')
@@ -48,7 +48,7 @@ async function stop () {
       if (error.code !== 'ESRCH') throw error
     }
   }
-  // The Go process recorder also cleans descendants and checks for survivors.
+  // Live owner connections clean detached descendants after the API returns.
 }
 
 async function run () {

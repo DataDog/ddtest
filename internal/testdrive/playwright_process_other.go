@@ -4,6 +4,6 @@ package testdrive
 
 import "fmt"
 
-func stopPlaywrightProcess(pid int) error {
+func waitOwnedProcessExit(pid int) error {
 	return fmt.Errorf("automatic cleanup of detached Playwright server %d is not supported on this OS", pid)
 }

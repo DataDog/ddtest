@@ -58,7 +58,7 @@ func (t *Testdrive) runCucumberFeatures(ctx context.Context, output io.Writer, s
 		unavailableFeatures(result, err.Error())
 		return nil
 	}
-	defer func() { runErr = errors.Join(runErr, os.Remove(probe)) }()
+	defer func() { runErr = errors.Join(runErr, removeProbe(t.repositoryRoot, probe)) }()
 	steps := probe + ".steps.cjs"
 	file, err := os.OpenFile(steps, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {

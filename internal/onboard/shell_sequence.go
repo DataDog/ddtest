@@ -11,22 +11,13 @@ import (
 type commandFragment struct {
 	Words  []string
 	Reason string
+	Chain  int
 }
 
 // Discovery is not execution: retain literal tests after dynamic external
 // commands, but keep those preceding commands as unvalidated setup. Shell state
 // changes and control flow cannot be safely separated and remain unresolved.
 func discoverCommands(command string) ([]commandFragment, error) {
-	if words, err := staticCommands(command); err == nil {
-		fragments := make([]commandFragment, len(words))
-		for i, entry := range words {
-			if len(entry) > 0 && slices.Contains([]string{"if", "then", "fi", "for", "while", "until", "case", "do", "done", "else", "elif", "function", "source", ".", "eval", "exec", "export", "unset", "set"}, entry[0]) {
-				return nil, fmt.Errorf("shell control flow or state changes require review")
-			}
-			fragments[i].Words = entry
-		}
-		return fragments, nil
-	}
 	if len(command) > 16384 {
 		return nil, fmt.Errorf("shell sequence exceeds discovery limit")
 	}
@@ -35,6 +26,7 @@ func discoverCommands(command string) ([]commandFragment, error) {
 		return nil, fmt.Errorf("cannot parse shell sequence: %w", err)
 	}
 	var result []commandFragment
+	chain := 0
 	var visit func(*syntax.Stmt, int) error
 	visit = func(stmt *syntax.Stmt, depth int) error {
 		if depth > 16 || len(result) >= 64 || stmt.Background || stmt.Negated || stmt.Coprocess || stmt.Disown {
@@ -63,16 +55,17 @@ func discoverCommands(command string) ([]commandFragment, error) {
 		}
 		words, err := staticCommands(printed.String())
 		if err == nil && len(words) == 1 {
-			result = append(result, commandFragment{Words: words[0]})
+			result = append(result, commandFragment{Words: words[0], Chain: chain})
 		} else {
 			if name == "cd" {
 				return fmt.Errorf("dynamic directory change requires review")
 			}
-			result = append(result, commandFragment{Reason: "Unvalidated setup or command with dynamic shell syntax: " + printed.String()})
+			result = append(result, commandFragment{Reason: "Unvalidated setup or command with dynamic shell syntax: " + printed.String(), Chain: chain})
 		}
 		return nil
 	}
 	for _, stmt := range file.Stmts {
+		chain++
 		if err := visit(stmt, 0); err != nil {
 			return nil, err
 		}

@@ -197,7 +197,12 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 	}
 	var result commandResolution
 	var setup []string
+	previousChain := 0
 	for _, fragment := range commands {
+		if previousChain != 0 && previousChain != fragment.Chain && len(result.Builds) > 0 {
+			setup = append(setup, "Builds separated from tests by ; or a newline require shell exit-policy review; they are not conditional prerequisites.")
+		}
+		previousChain = fragment.Chain
 		words := fragment.Words
 		if fragment.Reason != "" {
 			result.Reason = fragment.Reason

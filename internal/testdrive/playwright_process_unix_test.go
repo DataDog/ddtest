@@ -16,75 +16,104 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPlaywrightCleanupDeniedSignalRequiresObservedExit(t *testing.T) {
-	for _, disappears := range []bool{false, true} {
-		t.Run(fmt.Sprintf("disappears=%t", disappears), func(t *testing.T) {
-			probes := 0
-			err := stopPlaywrightProcessWithSignal(-42, func(pid int, signal syscall.Signal) error {
-				require.Equal(t, -42, pid)
-				if signal == syscall.SIGTERM {
-					return syscall.EPERM
-				}
-				require.Zero(t, signal, "must not escalate a denied signal to SIGKILL")
-				probes++
-				if disappears && probes == 2 {
-					return syscall.ESRCH
-				}
-				return syscall.EPERM
-			})
-			if disappears {
-				require.NoError(t, err)
-			} else {
-				require.ErrorIs(t, err, syscall.EPERM)
-			}
-		})
-	}
+func TestOwnedExitCheckNeverSignalsARecordedPID(t *testing.T) {
+	err := waitOwnedProcessExitWithSignal(42, func(pid int, signal syscall.Signal) error {
+		require.Equal(t, 42, pid)
+		require.Zero(t, signal, "a reused PID must never receive a termination signal")
+		return nil
+	}, time.Millisecond)
+	require.ErrorContains(t, err, "cannot verify exit")
 }
 
-func TestOwnedCleanupRequiresExitAfterSuccessfulKill(t *testing.T) {
-	err := stopPlaywrightProcessWithSignal(-42, func(int, syscall.Signal) error {
-		return nil // Signal delivery succeeded, but the process never disappeared.
-	})
-	require.ErrorContains(t, err, "still alive")
+func TestOwnedExitCheckAllowsAsynchronousShutdown(t *testing.T) {
+	checks := 0
+	err := waitOwnedProcessExitWithSignal(42, func(_ int, signal syscall.Signal) error {
+		require.Zero(t, signal)
+		checks++
+		if checks == 4 {
+			return syscall.ESRCH
+		}
+		return nil
+	}, time.Second)
+	require.NoError(t, err)
+	require.Equal(t, 4, checks)
 }
 
-func TestPlaywrightCleanupStopsOnlyRecordedDescendants(t *testing.T) {
+func TestPlaywrightCleanupStopsOnlyLiveOwnedDescendants(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("Node is needed for the process lifecycle regression")
 	}
-	// An unrelated listener is deliberately not in the child record.
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	for _, mode := range []string{"node", "non-node", "owner-crash"} {
+		t.Run(mode, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			defer func() { _ = listener.Close() }()
+			dir := t.TempDir()
+			env := map[string]string{}
+			owner, err := startPlaywrightOwner(dir, env)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, owner.Close()) })
+			portFile := filepath.Join(dir, "port")
+			child := fmt.Sprintf(`const fs=require('node:fs');const s=require('node:net').createServer();s.listen(0,'127.0.0.1',()=>fs.writeFileSync(%q,String(s.address().port)));`, portFile)
+			parent := fmt.Sprintf(`const child=require('node:child_process').spawn(process.execPath,['-e',%q],{detached:true,stdio:'ignore'});child.unref();`, child)
+			if mode == "non-node" {
+				python, err := exec.LookPath("python3")
+				if err != nil {
+					t.Skip("Python is needed for the non-Node group regression")
+				}
+				script := fmt.Sprintf("import socket,pathlib; s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); pathlib.Path(%q).write_text(str(s.getsockname()[1])); __import__('time').sleep(60)", portFile)
+				parent = fmt.Sprintf(`const child=require('node:child_process').spawn(%q,['-c',%q],{detached:true,stdio:'ignore'});child.unref();`, python, script)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, node, "-e", parent)
+			cmd.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(dir, "children.cjs"), "DDTEST_PLAYWRIGHT_OWNER="+env["DDTEST_PLAYWRIGHT_OWNER"])
+			output, err := cmd.CombinedOutput()
+			require.NoError(t, err, string(output))
+			var port []byte
+			require.Eventually(t, func() bool { port, err = os.ReadFile(portFile); return err == nil }, 5*time.Second, 20*time.Millisecond)
+			conn, err := net.DialTimeout("tcp", "127.0.0.1:"+string(port), time.Second)
+			require.NoError(t, err)
+			_ = conn.Close()
+			if mode == "owner-crash" {
+				// Equivalent to the kernel closing ddtest's sockets after SIGKILL.
+				owner.clients.Range(func(key, _ any) bool { _ = key.(net.Conn).Close(); return true })
+			} else {
+				require.NoError(t, owner.Close())
+			}
+			require.Eventually(t, func() bool {
+				c, err := net.DialTimeout("tcp", "127.0.0.1:"+string(port), 50*time.Millisecond)
+				if err == nil {
+					_ = c.Close()
+				}
+				return err != nil
+			}, 3*time.Second, 20*time.Millisecond)
+			conn, err = net.DialTimeout("tcp", listener.Addr().String(), time.Second)
+			require.NoError(t, err)
+			_ = conn.Close()
+		})
+	}
+}
+
+func TestDetachedGuardPreservesExtraPipesAndExitStatus(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node is needed for the process lifecycle regression")
+	}
+	directory := t.TempDir()
+	env := map[string]string{}
+	owner, err := startPlaywrightOwner(directory, env)
 	require.NoError(t, err)
-	defer func() { _ = listener.Close() }()
-	dir := t.TempDir()
-	preload := filepath.Join(dir, "children.cjs")
-	record := filepath.Join(dir, "children.txt")
-	portFile := filepath.Join(dir, "port")
-	require.NoError(t, os.WriteFile(preload, []byte(playwrightChildren), 0600))
-	child := fmt.Sprintf(`const fs=require('node:fs');const s=require('node:net').createServer();s.listen(0,'127.0.0.1',()=>fs.writeFileSync(%q,String(s.address().port)));`, portFile)
-	// Simulate a descendant that starts its own group and outlives its wrapper.
-	parent := fmt.Sprintf(`const child=require('node:child_process').spawn(process.execPath,['-e',%q],{detached:true,stdio:'ignore'});child.unref();`, child)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	script := `const assert=require('node:assert');
+const child=require('node:child_process').spawn('/bin/sh',['-c','read -r value <&3; echo "fd:$value"; echo "$$:$PPID" >&4; exit 7'],{detached:true,stdio:['ignore','pipe','pipe','pipe','pipe']});
+let output='',identity='';child.stdout.on('data',data=>output+=data);child.stdio[4].on('data',data=>identity+=data);child.stderr.pipe(process.stderr);
+child.stdio[3].end('hello\n');child.on('close',code=>{assert.equal(code,7);assert.equal(output,'fd:hello\n');assert.equal(identity,child.pid+':'+process.pid+'\n')});`
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, node, "-e", parent)
-	cmd.Env = append(os.Environ(), "NODE_OPTIONS=--require "+preload, "DDTEST_PLAYWRIGHT_CHILDREN="+record)
-	require.NoError(t, cmd.Run())
-	t.Cleanup(func() { require.NoError(t, cleanupPlaywrightChildren(record)) })
-	var port []byte
-	require.Eventually(t, func() bool { port, err = os.ReadFile(portFile); return err == nil }, 5*time.Second, 20*time.Millisecond)
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+string(port), time.Second)
-	require.NoError(t, err)
-	_ = conn.Close()
-	require.NoError(t, cleanupPlaywrightChildren(record))
-	require.Eventually(t, func() bool {
-		c, err := net.DialTimeout("tcp", "127.0.0.1:"+string(port), 50*time.Millisecond)
-		if err == nil {
-			_ = c.Close()
-		}
-		return err != nil
-	}, time.Second, 20*time.Millisecond)
-	conn, err = net.DialTimeout("tcp", listener.Addr().String(), time.Second)
-	require.NoError(t, err)
-	_ = conn.Close()
+	command := exec.CommandContext(ctx, node, "-e", script)
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PLAYWRIGHT_OWNER="+env["DDTEST_PLAYWRIGHT_OWNER"])
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
 }
