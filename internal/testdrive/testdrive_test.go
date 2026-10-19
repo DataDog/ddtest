@@ -264,6 +264,13 @@ func preparedTestdrive(t *testing.T) *Testdrive {
 		t.Fatal(err)
 	}
 	testdrive.preflight = nil
+	t.Cleanup(func() {
+		if testdrive.session != nil {
+			if err := testdrive.session.Close(); err != nil {
+				t.Error(err)
+			}
+		}
+	})
 	return testdrive
 }
 

@@ -77,6 +77,18 @@ func (j *JavaScript) ResolveRegistryTracer(ctx context.Context, selector string)
 	return decodeJSSelection(selected, data)
 }
 
+// MetadataError lets callers distinguish environment failures from unsupported
+// configurations. Only transient transport failures may be retried automatically.
+type MetadataError struct {
+	Code       string
+	Capability string
+	Retryable  bool
+	Err        error
+}
+
+func (e *MetadataError) Error() string { return e.Err.Error() }
+func (e *MetadataError) Unwrap() error { return e.Err }
+
 func registryMetadataError(ctx context.Context, stderr []byte, err error) error {
 	if cause := ctx.Err(); cause != nil {
 		return fmt.Errorf("resolve dd-trace metadata interrupted; no version selected and compatibility remains unverified: %w", errors.Join(cause, err))
@@ -84,12 +96,12 @@ func registryMetadataError(ctx context.Context, stderr []byte, err error) error 
 	message := string(stderr)
 	for _, code := range []string{"ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "FETCH_ERROR"} {
 		if strings.Contains(message, code) {
-			return fmt.Errorf("resolve dd-trace metadata: registry network failure (%s); check network/sandbox access and configured registry/proxy, then rerun preflight; compatibility is unverified: %w", code, err)
+			return &MetadataError{Code: code, Capability: "registry network access", Retryable: code == "ECONNRESET" || code == "ETIMEDOUT", Err: fmt.Errorf("resolve dd-trace metadata: registry network failure (%s); check network/sandbox access and configured registry/proxy, then rerun preflight; compatibility is unverified: %w", code, err)}
 		}
 	}
 	for _, code := range []string{"EACCES", "EPERM", "EROFS", "ENOSPC"} {
 		if strings.Contains(message, code) {
-			return fmt.Errorf("resolve dd-trace metadata: filesystem failure (%s); check TMPDIR and npm configuration permissions/free space, then rerun preflight; compatibility is unverified: %w", code, err)
+			return &MetadataError{Code: code, Capability: "writable private temporary storage", Err: fmt.Errorf("resolve dd-trace metadata: filesystem failure (%s); check TMPDIR and npm configuration permissions/free space, then rerun preflight; compatibility is unverified: %w", code, err)}
 		}
 	}
 	return fmt.Errorf("resolve dd-trace metadata failed; verify the selector, registry and npm authentication, then rerun preflight; no fallback version was guessed: %w", err)

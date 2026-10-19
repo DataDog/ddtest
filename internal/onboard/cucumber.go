@@ -20,13 +20,15 @@ import (
 
 // These optional values affect debug logging and scoped preloading, not test
 // selection. Only normalize them for discovery; execute the original npm alias.
+const cucumberImpactedWorkaround = "DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false"
+
 const cucumberScopedOptions = `NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-}"`
 
 func cucumberDiscoveryScript(script string) string {
 	if strings.TrimSpace(script) == "npm ls >/dev/null" {
 		return "true"
 	}
-	return strings.NewReplacer(`DEBUG="any,$DEBUG"`, "", cucumberScopedOptions, "").Replace(script)
+	return strings.NewReplacer(`DEBUG="any,$DEBUG"`, "", cucumberScopedOptions, "", cucumberImpactedWorkaround, "").Replace(script)
 }
 
 func resolveNpmRunAll(root, directory string, words, stack []string, remaining *int, framework string) commandResolution {

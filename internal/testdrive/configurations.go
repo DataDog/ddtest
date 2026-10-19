@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -18,13 +19,14 @@ import (
 
 type configurationResult struct {
 	onboard.TestCommand
-	PairedExecution    bool           `json:"paired_execution"`
-	ExecutionAttempted bool           `json:"execution_attempted"`
-	Status             string         `json:"status"`
-	Compatibility      verdict        `json:"compatibility"`
-	Preflight          *jestPreflight `json:"preflight,omitempty"`
-	Error              string         `json:"error,omitempty"`
-	Preparation        []buildResult  `json:"preparation,omitempty"`
+	PairedExecution    bool               `json:"paired_execution"`
+	ExecutionAttempted bool               `json:"execution_attempted"`
+	Status             string             `json:"status"`
+	Compatibility      verdict            `json:"compatibility"`
+	Preflight          *jestPreflight     `json:"preflight,omitempty"`
+	Error              string             `json:"error,omitempty"`
+	Preparation        []buildResult      `json:"preparation,omitempty"`
+	ServiceExecutions  []serviceExecution `json:"service_executions,omitempty"`
 }
 
 func setSingleConfigurationScope(root string, result *validationResult, scope onboard.ValidationScope) {
@@ -79,7 +81,13 @@ func applyScopeVerdict(result *validationResult) {
 // source, configuration, runtime or tracer edits. Each configuration has its own
 // paired comparison and feature controls, and shares only the final report pair.
 func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) error {
-	scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
+	var scope onboard.ValidationScope
+	var err error
+	if t.workflowScope != nil {
+		scope = *t.workflowScope
+	} else {
+		scope, err = onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
+	}
 	if err == nil && len(scope.Commands) == 0 {
 		err = fmt.Errorf("no explicit %s CI invocations discovered; review discovery and use --command for local validation", t.framework.Name())
 	}
@@ -103,8 +111,8 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 			words = []string{"node"}
 			parseErr = nil
 		}
-		if filepath.Clean(entry.Directory) != "." {
-			parseErr = fmt.Errorf("configuration in %s needs validation from that package directory; --all currently executes root-package commands only", entry.Directory)
+		if _, err := localSetupDirectory(t.repositoryRoot, entry.Directory); err != nil {
+			parseErr = err
 		}
 		if len(words) == 0 || strings.Contains(words[0], "=") {
 			parseErr = fmt.Errorf("configuration command needs explicit environment/wrapper review: %s", entry.Command)
@@ -136,10 +144,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		if result.Selection != nil && result.Selection.Version != "" {
 			child.tracerVersion = result.Selection.Version
 		}
-		child.command = filepath.Join(t.repositoryRoot, "node_modules", ".bin", words[0])
-		if onboard.IsDDTestCommand(words[0]) || ((t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") && slices.Contains([]string{"npm", "pnpm", "yarn", "node", "npx"}, words[0])) {
-			child.command = words[0]
-		}
+		child.command = t.configurationExecutable(words[0])
 		child.args = words[1:]
 		child.reportModels = &models
 		// Rebind method values to this command, rather than the original drive.
@@ -215,6 +220,25 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		result.Error = runErr.Error()
 	}
 	return errors.Join(runErr, finishValidation(output, t.repositoryRoot, result))
+}
+
+// Preflight and execution must resolve the same installed framework binary,
+// without requiring the caller to add node_modules/.bin to PATH.
+func (t *Testdrive) configurationExecutable(command string) string {
+	if onboard.IsDDTestCommand(command) || strings.ContainsAny(command, `/\`) ||
+		slices.Contains([]string{"npm", "pnpm", "yarn", "node", "npx"}, command) {
+		return command
+	}
+	for directory := t.repositoryRoot; ; directory = filepath.Dir(directory) {
+		candidate := filepath.Join(directory, "node_modules", ".bin", command)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+		if t.workflowRoot == "" || directory == t.workflowRoot || directory == filepath.Dir(directory) {
+			break
+		}
+	}
+	return filepath.Join(t.repositoryRoot, "node_modules", ".bin", command)
 }
 
 func labelConfigurationModel(model *reportModel, command string) {

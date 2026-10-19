@@ -43,6 +43,18 @@ func TestCypressForkCannotInstallWithUnavailableCredentials(t *testing.T) {
 	require.Equal(t, "missing_fork_guard", findings[0].Code)
 }
 
+func TestCypressActionRuntimeIsKnownBeforeTracerInstallation(t *testing.T) {
+	job := runtimeJob{Steps: []runtimeStep{
+		{Uses: "actions/setup-node@v4", With: map[string]string{"node-version": "24"}},
+		{Uses: "cypress-io/github-action@v6", ActionNode: "20"},
+	}}
+	resolutions := []commandResolution{{}, {Matched: true, Tests: []TestCommand{{Cypress: &CypressCommand{Action: "cypress-io/github-action@v6"}}}}}
+	findings := checkRuntimeJob(t.Context(), "", ciWorkflow{}, "test", job, resolutions, nil, nil, nil, "cypress")
+	require.Len(t, findings, 1)
+	require.Equal(t, "missing_instrumentation", findings[0].Code)
+	require.Equal(t, "20", findings[0].Node, "use the action runtime when choosing a tracer before CI setup")
+}
+
 func TestCypressNodeVersionFileAndPrecedence(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".node-version"), []byte("24\n"), 0600))

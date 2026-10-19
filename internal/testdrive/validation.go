@@ -156,6 +156,7 @@ func (r validationRun) summary() runSummary {
 }
 
 type validationResult struct {
+	Workflow           *WorkflowEvidence        `json:"workflow,omitempty"`
 	ReportingCounts    *executionCounts         `json:"reporting_counts,omitempty"`
 	FocusedCommand     bool                     `json:"focused_command,omitempty"`
 	CIBaseline         []string                 `json:"ci_matrix_baseline"`
@@ -209,7 +210,7 @@ func validationPath(repositoryRoot string) string {
 }
 
 func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {
-	if !result.CheckOnly {
+	if !result.CheckOnly && result.ReportingCounts == nil {
 		result.ReportingCounts = reportingExecutionCounts(result.Runs)
 	}
 	if err := checkCIPreservation(repositoryRoot, &result); err != nil {
@@ -387,11 +388,11 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	if supportsValidationFramework(result.Framework) {
 		result.LocalSuccess = result.LocalSuccess && hasValidationPair(*result)
 	}
-	result.Success = result.LocalSuccess
+	result.Success = result.LocalSuccess && workflowChecksPassed(result.Workflow)
 	if supportsValidationFramework(result.Framework) {
 		result.Success = result.Success && result.HTMLReportCurrent && result.Cleanup != nil && result.Cleanup.Status == "passed"
 	}
-	result.ChecksPassed = result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
+	result.ChecksPassed = workflowChecksPassed(result.Workflow) && result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
 	if result.CIPreservation != nil && result.CIPreservation.Status != "passed" {
 		result.Success, result.ChecksPassed = false, false
 	}

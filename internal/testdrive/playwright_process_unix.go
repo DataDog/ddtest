@@ -4,6 +4,7 @@ package testdrive
 
 import (
 	"errors"
+	"fmt"
 	"syscall"
 	"time"
 )
@@ -37,5 +38,14 @@ func stopPlaywrightProcessWithSignal(pid int, signal func(int, syscall.Signal) e
 	if errors.Is(err, syscall.ESRCH) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	for range 20 {
+		if errors.Is(signal(pid, 0), syscall.ESRCH) {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return fmt.Errorf("owned process %d is still alive after termination", pid)
 }

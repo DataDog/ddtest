@@ -342,6 +342,11 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 			findings = append(findings, finding)
 			continue
 		}
+		// The Cypress action owns its Node process even before Datadog is
+		// installed. Selection needs this runtime to choose a compatible tracer.
+		if len(resolution.Tests) > 0 && resolution.Tests[0].Cypress != nil && resolution.Tests[0].Cypress.Action != "" {
+			finding.Node, finding.NodeSource = step.ActionNode, step.Uses+" / runs.using"
+		}
 		if action == "" {
 			finding.Status = "incompatible"
 			finding.Code = "missing_instrumentation"

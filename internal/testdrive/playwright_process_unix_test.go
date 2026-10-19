@@ -41,6 +41,13 @@ func TestPlaywrightCleanupDeniedSignalRequiresObservedExit(t *testing.T) {
 	}
 }
 
+func TestOwnedCleanupRequiresExitAfterSuccessfulKill(t *testing.T) {
+	err := stopPlaywrightProcessWithSignal(-42, func(int, syscall.Signal) error {
+		return nil // Signal delivery succeeded, but the process never disappeared.
+	})
+	require.ErrorContains(t, err, "still alive")
+}
+
 func TestPlaywrightCleanupStopsOnlyRecordedDescendants(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {

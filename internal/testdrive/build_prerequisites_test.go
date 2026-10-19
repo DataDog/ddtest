@@ -34,7 +34,9 @@ func TestBuildPrerequisiteExecutionAndCheckOnly(t *testing.T) {
 	for _, checkOnly := range []bool{false, true} {
 		t.Run(map[bool]string{false: "execution", true: "check-only"}[checkOnly], func(t *testing.T) {
 			executor := &buildExecutor{t: t}
-			drive := Testdrive{repositoryRoot: t.TempDir(), executor: executor, checkOnly: checkOnly}
+			root := t.TempDir()
+			t.Chdir(root)
+			drive := Testdrive{repositoryRoot: root, executor: executor, checkOnly: checkOnly}
 			item := configurationResult{TestCommand: onboard.TestCommand{Prerequisites: []onboard.BuildCommand{{Directory: ".", Command: "tsc"}, {Directory: ".", Command: "tsup"}}}}
 			require.NoError(t, drive.runBuildPrerequisites(t.Context(), &bytes.Buffer{}, &item))
 			if checkOnly {

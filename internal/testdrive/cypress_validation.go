@@ -88,6 +88,7 @@ func (t *Testdrive) checkCypressPreflight(ctx context.Context, output io.Writer,
 		result.CISelection = compareCISelection(*result.CIRuntime, selection.Version)
 	}
 	_, _ = fmt.Fprintf(output, "Cypress %s; Node %s; tracer %s (%s). Preflight: %s — %s\n", check.Version, check.Node, result.Tracer, selection.Source, check.Verdict.Status, check.Verdict.Reason)
+	t.recommendTracer(ctx, output, result)
 	if check.Verdict.Status != "compatible" {
 		return fmt.Errorf("cypress preflight: %s", check.Verdict.Reason)
 	}

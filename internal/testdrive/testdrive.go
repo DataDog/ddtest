@@ -42,6 +42,12 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
+	workflowSelect func(context.Context, onboard.ValidationScope, bool) (string, error) // deterministic preflight injection for coordinator tests
+	workflowRoot   string
+	workflowPlan   *onboard.ExecutionPlan
+	workflowScope  *onboard.ValidationScope
+	workflowRun    func(context.Context, io.Writer) error // test injection for coordinator failures
+
 	webdriverIOCapability *int
 	environmentInfo       environmentInfo
 	environmentFailure    *reportCard
@@ -275,7 +281,13 @@ func (t *Testdrive) Preview(output io.Writer) {
 		return
 	}
 	if t.allConfigurations {
-		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
+		var scope onboard.ValidationScope
+		var err error
+		if t.workflowScope != nil {
+			scope = *t.workflowScope
+		} else {
+			scope, err = onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
+		}
 		if err != nil {
 			_, _ = fmt.Fprintln(output, err)
 		} else {
@@ -406,7 +418,13 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 	result.Framework = t.framework.Name()
 	result.FocusedCommand = supportsValidationFramework(t.framework.Name()) && strings.TrimSpace(settings.GetCommand()) != ""
 	if supportsValidationFramework(t.framework.Name()) {
-		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
+		var scope onboard.ValidationScope
+		var err error
+		if t.workflowScope != nil {
+			scope = *t.workflowScope
+		} else {
+			scope, err = onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
+		}
 		if err != nil {
 			runErr = errors.Join(runErr, err)
 		} else {
@@ -431,6 +449,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		return result, err
 	}
 
+	t.session = session
 	result = validationResult{CheckOnly: t.checkOnly, Session: session.ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel,
 		Compatibility: verdict{Status: "inconclusive", Reason: "Validation did not complete."}}
 	defer func() {
@@ -439,7 +458,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		if errors.As(runErr, &processCleanup) {
 			cleanupErr = errors.Join(cleanupErr, processCleanup)
 		}
-		result.Cleanup = &verdict{Status: "passed", Reason: "ddtest temporary session storage removed."}
+		result.Cleanup = &verdict{Status: "passed", Reason: "Owned session storage and framework daemons removed."}
 		if cleanupErr != nil {
 			result.Cleanup = &verdict{Status: "failed", Reason: reportText(cleanupErr.Error())}
 		}
@@ -460,7 +479,11 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	}
 
 	if supportsValidationFramework(t.framework.Name()) {
-		check := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
+		ciRoot := t.repositoryRoot
+		if t.workflowRoot != "" {
+			ciRoot = t.workflowRoot
+		}
+		check := onboard.CheckCIRuntimes(ctx, ciRoot, t.framework.Name())
 		result.CIRuntime = &check
 		if t.preflight != nil {
 			if err := t.preflight(ctx, output, &result); err != nil {

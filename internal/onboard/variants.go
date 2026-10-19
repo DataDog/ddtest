@@ -16,6 +16,14 @@ import (
 // Resolve only declared scalar environment values and simple parameter reads.
 // Never evaluate a command substitution or inherit the evaluator's environment.
 func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) (runtimeStep, map[string]string, error) {
+	// An action's environment is not inherited by subsequent run steps. Keep
+	// opaque actions outside local validation; do not demand their CI secrets.
+	// Supported Cypress actions and failed composite expansion still need their
+	// original resolution path and may not bypass environment checks.
+	cypressAction := len(frameworks) > 0 && frameworks[0] == "cypress" && strings.HasPrefix(strings.ToLower(step.Uses), "cypress-io/github-action@")
+	if step.Run == "" && step.Uses != "" && step.ResolutionError == "" && !cypressAction {
+		return step, nil, nil
+	}
 	var err error
 	step.Run, err = interpolateMatrix(step.Run, row)
 	if err != nil {
@@ -222,5 +230,5 @@ func orchestratedBuild(root, directory, script string, scripts map[string]string
 
 // EqualPreparation compares executable preparation, including its step-local environment.
 func EqualPreparation(a, b BuildCommand) bool {
-	return a.Kind == b.Kind && a.Directory == b.Directory && a.Command == b.Command && maps.Equal(a.Environment, b.Environment)
+	return a.FactSource == b.FactSource && slices.Equal(a.ExpectedFiles, b.ExpectedFiles) && a.Kind == b.Kind && a.Directory == b.Directory && a.Command == b.Command && maps.Equal(a.Environment, b.Environment)
 }

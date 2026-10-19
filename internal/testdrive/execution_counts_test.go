@@ -60,6 +60,11 @@ func TestAggregateCountsDistinguishRepeatedExecutionsWithoutDroppingContexts(t *
 	require.NotContains(t, string(encoded), "native test")
 	require.NotContains(t, string(encoded), "test.js")
 	require.Less(t, len(encoded), 600, "JSON stores aggregate counts, never per-test identities")
+	// The coordinator reloads compact JSON to append workflow checks. Native
+	// identities are intentionally absent, so finalizing again must keep counts.
+	_ = finishValidation(&bytes.Buffer{}, root, result)
+	reloaded := readValidationReport(t, root)
+	require.Equal(t, result.ReportingCounts, reloaded.ReportingCounts)
 }
 
 func TestSourceIdentityCountsPreserveNativeProjectBrowserAndRepeat(t *testing.T) {

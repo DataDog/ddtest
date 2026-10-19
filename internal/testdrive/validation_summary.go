@@ -161,7 +161,11 @@ func validationHandoff(result validationResult) string {
 	} else {
 		block.WriteString("\nCleanup: not recorded.")
 	}
-	block.WriteString(" Verify your own scratch and Git/package report exclusions; preserve customer files and both reports.")
+	if result.Workflow != nil {
+		fmt.Fprintf(&block, "\nWorkflow checks: %d recorded; Git/package exclusions and owned cleanup: %s. Preserve both reports. No further cache or package audit is required for unchanged inputs.", len(result.Workflow.Checks), map[bool]string{true: "passed", false: "incomplete"}[workflowChecksPassed(result.Workflow)])
+	} else {
+		block.WriteString(" Verify your own scratch and Git/package report exclusions; preserve customer files and both reports.")
+	}
 	return block.String()
 }
 
@@ -213,6 +217,13 @@ func summarizeValidation(result validationResult) validationSummary {
 			summary.BlockingChecks = nil
 		}
 		summary.BlockingChecks = append(summary.BlockingChecks, "final full validation required after configuration checks or edits; earlier execution has not been revalidated")
+	}
+	if result.Workflow != nil {
+		for _, check := range result.Workflow.Checks {
+			if check.Status != "passed" && check.Status != "not applicable" {
+				summary.BlockingChecks = append(summary.BlockingChecks, "workflow "+check.Name+": "+check.Status+" — "+reportText(check.Reason))
+			}
+		}
 	}
 	if result.Error != "" {
 		summary.BlockingChecks = append(summary.BlockingChecks, "execution error: "+reportText(result.Error))

@@ -17,10 +17,161 @@ Currently supported:
 
 ## Try Test Optimization locally
 
+Coding agents can use the same short request for any selected framework:
+
+> Use ddtest to onboard this repository to test-optimization for vitest only.
+
+`onboard` returns a versioned result with the next command and required local
+capabilities. `onboard --apply --yes` selects an exact compatible tracer,
+applies recognized GitHub Actions initialization/report exclusions, and runs the
+shared testdrive coordinator. Ordinary Jest, Vitest, Mocha and Playwright Node
+CLI jobs share the editor, including ordinary inherited environments. Known
+Cucumber NYC/ESM and WDIO local-runner package leaves receive scoped initialization;
+other framework consumers keep their original commands. Missing Cucumber coverage
+packages return an exact npm install command followed by the automatic resume
+command. Unknown hooks or ambiguous CI return a named blocker. Static legacy Node
+matrices retain every row and original legacy command; only compatible rows receive
+installation/preload. Unsupported runtimes remain explicitly uninstrumented. `--instructions` retains manual guidance.
+For a new CI action, `--site` overrides `DD_SITE` and the default `datadoghq.com`;
+local validation requires no API key and does not verify the CI secret/site.
+
+For an already configured repository, run
+`ddtest testdrive --framework vitest --all --agent --yes`. Both entry points use
+one coordinator: source snapshot, execution, Git/npm package exclusion checks,
+owned cleanup and the final verdict. The package check is
+`npm pack --dry-run --ignore-scripts --json`: it creates no archive and does not
+publish or run lifecycle scripts. Checks/commands and edit receipts stay in the
+existing JSON; full test output stays in the HTML. A failed workflow check keeps
+onboarding incomplete even when the native comparison passes. An OS lock rejects
+concurrent coordinator runs; reusable lock metadata lives outside the checkout.
+
+Agent results distinguish `ready`, `running`, `blocked_environment`,
+`needs_input`, `unsupported`, `validation_failed`, `selected_passed`, and
+`complete_locally`. A blocker names its phase, code, location, required fact or
+capability, and next/resume command. Only a recognized transient registry
+transport failure may retry once before execution; permission/authentication
+failures and feature assertions are never automatically retried by the coordinator.
+Unchanged saved results can be rendered without running tests:
+
+```sh
+ddtest testdrive --report               # compact state and factual text
+ddtest testdrive --report --format json # direct host consumption; no LLM needed
+```
+
+The renderer refuses a passing handoff when source/configuration, the observed
+framework installation or Node runtime changed. `--format json` also makes
+onboarding/execution return structured results without the rendered text. Hosts
+can display `final_response` directly; agent wording is not the source of truth.
+Successful execution returns the exact `--report` command as the final action.
+Run it after all edits; an edit afterward invalidates completion, including a
+formatting-only edit. A standalone binary cannot prevent a later agent edit;
+hosts requiring that guarantee must render/check the result at final delivery.
+
+Routine responses contain `plan_summary`, the current blocker/input template and
+recovery argv rather than the complete CI matrix. Use the returned
+`details_command` to inspect the full plan without running tests. Replace its
+`--detail plan` with `--detail configuration-ID` for one configuration. Interrupted
+plans are read from the existing private checkpoint via `--resume`; completed
+plans live in the existing JSON report. No extra repository report is created.
+
+Jest validation uses a private Watchman socket/state when Watchman is installed.
+Cleanup stops that instance and verifies exit before removing its storage on
+success, failure or cancellation. Shared daemons and caches are preserved;
+unverified owned cleanup keeps the result incomplete.
+
+When a missing local build prerequisite needs repository knowledge, the agent
+may supply `--facts /outside/checkout/setup.json` with `--all`. For example:
+
+```json
+{
+  "schema_version": 1,
+  "input_fingerprint": "<fingerprint from the current result>",
+  "prerequisites": [{
+    "for_command": "vitest run",
+    "argv": ["npm", "run", "prepare:test"],
+    "expected_files": ["dist/index.js"]
+  }]
+}
+```
+
+Facts must match the current source snapshot and exactly one discovered root
+command. The prerequisite must reference an existing package script or a local
+Node script. It runs in the isolated configuration workspace, and its successful
+exit plus repository-local output files are checked before either comparison.
+Facts record an agent-supplied setup relationship; they cannot remove commands,
+erase unresolved CI, bypass coverage/feature assertions, or upgrade a failed
+verdict. Fresh facts are required after source/configuration changes. Preserve
+supplied files; ddtest removes only storage it creates. Framework-owned native
+application profiles remain subject to their adapter's cleanup support; the
+workflow receipt does not certify unrelated profiles or shared caches.
+
+
+Every coordinator result includes a resolved `plan`: configuration IDs, original
+CI locations and commands, working directories, environments, prerequisites,
+services, runtime/tracer selection and feature scenarios. An unresolved entry
+remains visible and keeps onboarding incomplete. Configuration IDs distinguish
+environment and package variants and remain stable when CI line numbers move.
+
+Schema version 1 facts above remain supported. Prefer schema version 2 when
+commands repeat or setup belongs to a subpackage:
+
+```json
+{
+  "schema_version": 2,
+  "input_fingerprint": "<current fingerprint>",
+  "configurations": [{
+    "configuration_id": "<ID from plan.scope.commands>",
+    "directory": ".",
+    "prerequisites": [{
+      "argv": ["npm", "run", "build"],
+      "expected_files": ["dist/index.js"]
+    }],
+    "services": [{
+      "argv": ["npm", "run", "start"],
+      "directory": ".",
+      "readiness_url": "http://127.0.0.1:8080/",
+      "timeout_seconds": 60,
+      "port_environment": "APP_PORT"
+    }]
+  }]
+}
+```
+
+Only supply setup that the configuration actually needs. Expected build output
+paths are relative to the repository root. Working directories must agree with
+the discovered CI directory and remain inside the checkout. Services run in the
+isolated configuration workspace; ddtest checks HTTP readiness, cancels validation
+if startup exits early, and stops owned processes before removing the workspace.
+`port_environment` is optional and must already be supported by both application
+and test configuration. It passes the selected port consistently to both; it does
+not rewrite config files. Without an override, an occupied port is a blocker and
+the existing listener is preserved. Existing framework-managed servers stay in
+their original command/adapter; do not duplicate them as service facts.
+
+For one action-owned Cypress application, use a configuration fact with
+`"port_override": {"environment": "PORT", "source_file": "serve.js"}` instead of
+adding another service. The source must already read that environment variable
+with its existing default. If a source edit is needed, obtain a fresh fingerprint
+afterward. ddtest preserves the action's startup command and API path, chooses a
+free local port, and applies it to startup, `baseUrl`, and readiness. The resolved
+plan records the local override; CI files and default ports are not rewritten.
+Custom config strings or complex readiness/startup arrangements require review.
+
+A blocked coordinator returns `run_id`, a typed `input_template` when applicable,
+and `resume_command`. After filling the template outside the checkout, append
+`--facts /absolute/path/setup.json` to that command. Both onboarding and agent
+validation accept `--resume <run-id>`. A private checkpoint retains only the
+bounded plan and successful preflight selection for up to 24 hours. Selection is
+recomputed if source, runtime, facts, requested tracer or ddtest binary changed;
+all baseline/instrumented pairs and feature controls always execute fresh.
+Completed checkpoints are removed. Expired checkpoints are rejected and removed
+when resumed. Three identical failures without changed inputs stop suggesting a
+retry. No checkpoint can supply a passing test verdict.
+
 With your project's test dependencies and any required browsers/services ready:
 
 ```sh
-ddtest onboard    # GitHub Actions setup instructions
+ddtest onboard    # Detect setup and return the next onboarding action
 ddtest testdrive  # Preview, confirm, and run tests locally
 ```
 

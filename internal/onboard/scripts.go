@@ -56,6 +56,9 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return unresolvedCommand(step.ResolutionError)
 	}
 	if strings.TrimSpace(step.Run) == "" {
+		if step.Uses != "" && len(step.Env) > 0 {
+			return commandResolution{Review: true, Reason: "Action implementation and its private environment are outside local " + framework + " execution; no CI secret is resolved or forwarded."}
+		}
 		return commandResolution{}
 	}
 	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "playwright" && framework != "mocha" && framework != "cypress" && framework != "cucumber" && framework != "webdriverio") {

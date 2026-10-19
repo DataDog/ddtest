@@ -30,7 +30,8 @@ func (t *Testdrive) runBuildPrerequisites(ctx context.Context, output io.Writer,
 	commands := make([][]string, len(item.Prerequisites))
 	for i, build := range item.Prerequisites {
 		words, err := shellquote.Split(build.Command)
-		if err != nil || len(words) == 0 || filepath.Clean(build.Directory) != "." {
+		_, directoryErr := localSetupDirectory(t.repositoryRoot, build.Directory)
+		if err != nil || len(words) == 0 || directoryErr != nil {
 			return fmt.Errorf("build prerequisite needs explicit command/directory review: [%s] %s", build.Directory, build.Command)
 		}
 		for _, word := range words {
@@ -77,7 +78,14 @@ func (t *Testdrive) runBuildPrerequisites(ctx context.Context, output io.Writer,
 			stepEnv = map[string]string{}
 		}
 		maps.Copy(stepEnv, env)
-		data, err := t.executor.CombinedOutput(ctx, executable, args, stepEnv)
+		// The configuration environment applies to its build too; instrumentation
+		// remains disabled above, independent of customer environment values.
+		merged := maps.Clone(item.Environment)
+		if merged == nil {
+			merged = map[string]string{}
+		}
+		maps.Copy(merged, stepEnv)
+		data, err := setupOutput(ctx, t.executor, t.repositoryRoot, build.Directory, executable, args, merged)
 		exitCode := commandExitCode(err)
 		build.ExitCode = &exitCode
 		build.Status = "passed"
@@ -85,6 +93,16 @@ func (t *Testdrive) runBuildPrerequisites(ctx context.Context, output io.Writer,
 			build.Status, build.Diagnostic = "failed", commandDiagnostic(data)
 			writeCommandFailure(output, "Build prerequisite", data)
 			return fmt.Errorf("build prerequisite %s: %w", build.Command, err)
+		}
+		for _, file := range build.ExpectedFiles {
+			path, err := filepath.EvalSymlinks(filepath.Join(t.repositoryRoot, file))
+			relative, relErr := filepath.Rel(canonicalWorkflowRoot(t.repositoryRoot), path)
+			info, statErr := os.Stat(path)
+			if err != nil || relErr != nil || !filepath.IsLocal(relative) || statErr != nil || !info.Mode().IsRegular() {
+				build.Status = "failed"
+				build.Diagnostic = "Declared build output was not produced as a repository-local regular file: " + file
+				return fmt.Errorf("%s", build.Diagnostic)
+			}
 		}
 	}
 	return nil

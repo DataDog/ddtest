@@ -19,6 +19,23 @@ type configurationExecutor struct {
 	environment map[string]string
 }
 
+type separateOutputExecutor interface {
+	Output(context.Context, string, []string, map[string]string) ([]byte, []byte, error)
+}
+
+func (e configurationExecutor) CombinedOutputInDirectory(ctx context.Context, directory, name string, args []string, env map[string]string) ([]byte, error) {
+	merged := maps.Clone(e.environment)
+	if merged == nil {
+		merged = map[string]string{}
+	}
+	maps.Copy(merged, env)
+	executor, ok := e.commandExecutor.(directoryExecutor)
+	if !ok {
+		return nil, fmt.Errorf("command executor cannot set setup working directory")
+	}
+	return executor.CombinedOutputInDirectory(ctx, directory, name, args, merged)
+}
+
 func (e configurationExecutor) CombinedOutput(ctx context.Context, name string, args []string, env map[string]string) ([]byte, error) {
 	merged := map[string]string{}
 	maps.Copy(merged, e.environment)
@@ -26,10 +43,29 @@ func (e configurationExecutor) CombinedOutput(ctx context.Context, name string, 
 	return e.commandExecutor.CombinedOutput(ctx, name, args, merged)
 }
 
+func (e configurationExecutor) Output(ctx context.Context, name string, args []string, env map[string]string) ([]byte, []byte, error) {
+	merged := map[string]string{}
+	maps.Copy(merged, e.environment)
+	maps.Copy(merged, env)
+	executor, ok := e.commandExecutor.(separateOutputExecutor)
+	if !ok {
+		return nil, nil, fmt.Errorf("command executor cannot capture stdout and stderr separately")
+	}
+	return executor.Output(ctx, name, args, merged)
+}
+
 // Commands still use the existing process executor. The temporary copy gives
 // every variant independent manifests, dependencies, test files and build output.
 func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writer, item *configurationResult) (result validationResult, runErr error) {
-	if len(item.Prerequisites) == 0 && !onboard.IsDDTestCommand(t.command) && t.framework.Name() != "playwright" && t.framework.Name() != "mocha" && t.framework.Name() != "cypress" && t.framework.Name() != "cucumber" && t.framework.Name() != "webdriverio" || t.checkOnly {
+	if item.Directory == "" {
+		item.Directory = "."
+	}
+	if !t.checkOnly {
+		if err := checkCypressStartupPorts(t.cypress); err != nil {
+			return result, err
+		}
+	}
+	if len(item.Prerequisites) == 0 && len(item.Services) == 0 && item.Directory == "." && !onboard.IsDDTestCommand(t.command) && t.framework.Name() != "playwright" && t.framework.Name() != "mocha" && t.framework.Name() != "cypress" && t.framework.Name() != "cucumber" && t.framework.Name() != "webdriverio" || t.checkOnly {
 		if err := t.runBuildPrerequisites(ctx, output, item); err != nil {
 			return result, err
 		}
@@ -92,6 +128,27 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	if err := t.runBuildPrerequisites(ctx, output, item); err != nil {
 		result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration preparation failed; tests were not started."}
 		return result, err
+	}
+	ctx, stop, err := t.startSetupServices(ctx, output, item)
+	defer func() {
+		if err := stop(); err != nil {
+			result.Cleanup = &verdict{Status: "failed", Reason: err.Error()}
+			runErr = errors.Join(runErr, err)
+		}
+	}()
+	if err != nil {
+		return result, err
+	}
+	if item.Directory != "." {
+		directory, err := localSetupDirectory(workspace, item.Directory)
+		if err != nil {
+			return result, err
+		}
+		if err := os.Chdir(directory); err != nil {
+			return result, err
+		}
+		t.repositoryRoot = directory
+		t.command = t.configurationExecutable(filepath.Base(t.command))
 	}
 	t.executor = configurationExecutor{t.executor, item.Environment}
 	return t.run(ctx, output)

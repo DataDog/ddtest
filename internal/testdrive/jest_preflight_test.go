@@ -103,6 +103,11 @@ func preflightFixture(t *testing.T, version, runner string) *Testdrive {
 		}
 		return platform.JSSelection{Version: "6.17.0", Node: ">=22"}, nil
 	}
+	t.Cleanup(func() {
+		if run.session != nil {
+			require.NoError(t, run.session.Close())
+		}
+	})
 	return run
 }
 

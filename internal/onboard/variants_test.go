@@ -8,6 +8,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestActionSecretsDoNotBecomeLocalTestPrerequisites(t *testing.T) {
+	root := newJestRepository(t, `jobs:
+  docs:
+    steps:
+      - uses: vendor/deploy-pages@v1
+        env: {GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'}
+  tests:
+    steps:
+      - run: npm test
+`)
+	writeScripts(t, root, map[string]string{"test": "vitest run"})
+	scope, err := DiscoverValidationScope(root, "vitest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Contains(t, strings.Join(scope.Review, " "), "private environment")
+	step := runtimeStep{Run: "npm test", Env: map[string]string{"TOKEN": "${{ secrets.GITHUB_TOKEN }}"}}
+	_, _, err = resolveVariantStep(ciWorkflow{}, runtimeJob{}, step, nil, "vitest")
+	require.Error(t, err, "test-step secrets remain unresolved")
+	step.Run = ""
+	step.Uses = "./composite"
+	step.ResolutionError = "composite could not be expanded"
+	resolution := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, step, "javascript", "vitest")
+	require.Equal(t, "composite could not be expanded", resolution.Reason)
+}
+
 func TestVariantRuntimeIgnoresResolvedTypecheckOnlyMatrix(t *testing.T) {
 	root := newJestRepository(t, `jobs:
   types:

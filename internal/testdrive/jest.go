@@ -176,6 +176,9 @@ func (t *Testdrive) runJest(ctx context.Context, output io.Writer, session *Sess
 		}
 	}()
 	env := t.environment(preload, server.URL(), session.ID()+" "+name)
+	if err := session.watchmanEnvironment(env); err != nil {
+		return run, err
+	}
 	if err := run.ownTemporaryDirectory(directory, env); err != nil {
 		return run, err
 	}

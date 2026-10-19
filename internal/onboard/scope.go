@@ -13,6 +13,9 @@ import (
 // TestCommand identifies an explicit framework invocation, not the surrounding
 // build, publication or shell script. Locations retain every CI consumer.
 type TestCommand struct {
+	ID                   string           `json:"id,omitempty"`
+	Services             []ServiceCommand `json:"services,omitempty"`
+	LocalOverrides       []string         `json:"local_overrides,omitempty"`
 	cucumberProbeCommand string
 	Cypress              *CypressCommand `json:"cypress,omitempty"`
 	Resolution           string          `json:"resolution,omitempty"`
@@ -31,10 +34,12 @@ type TestCommand struct {
 // BuildCommand is a statically resolved build preceding a test in the same
 // command chain. It is executed without test instrumentation.
 type BuildCommand struct {
-	Environment map[string]string `json:"environment,omitempty"`
-	Kind        string            `json:"kind,omitempty"`
-	Directory   string            `json:"directory"`
-	Command     string            `json:"command"`
+	ExpectedFiles []string          `json:"expected_files,omitempty"`
+	FactSource    string            `json:"fact_source,omitempty"`
+	Environment   map[string]string `json:"environment,omitempty"`
+	Kind          string            `json:"kind,omitempty"`
+	Directory     string            `json:"directory"`
+	Command       string            `json:"command"`
 }
 
 type ValidationScope struct {

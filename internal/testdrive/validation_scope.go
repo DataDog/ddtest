@@ -96,7 +96,7 @@ func selectedValidation(result validationResult) verdict {
 		check.Status = "NOT EXERCISED"
 		return check
 	}
-	if !hasValidationPair(result) || configurationStatus(result) != "passed" || !result.ChecksPassed || result.Cleanup == nil || result.Cleanup.Status != "passed" || !result.HTMLReportCurrent {
+	if !workflowChecksPassed(result.Workflow) || !hasValidationPair(result) || configurationStatus(result) != "passed" || !result.ChecksPassed || result.Cleanup == nil || result.Cleanup.Status != "passed" || !result.HTMLReportCurrent {
 		return check
 	}
 	if result.LastExecution != nil && !result.LastExecution.Current {
