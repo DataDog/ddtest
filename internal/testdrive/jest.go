@@ -29,8 +29,9 @@ type jestTest struct {
 	Status             string `json:"status"`
 	Failure            string `json:"failure,omitempty"`
 
-	Playwright    *playwrightIdentity `json:"playwright,omitempty"`
-	telemetryName *string
+	Playwright        *playwrightIdentity `json:"playwright,omitempty"`
+	telemetryName     *string
+	telemetryScopedID string
 }
 
 type jestResults struct {
@@ -335,12 +336,17 @@ func verifyJestTelemetry(run validationRun) verdict {
 	}
 	type identity struct{ file, name, status string }
 	expected := make(map[identity]int)
+	anonymous := make(map[string]bool)
 	for _, test := range run.Tests {
 		status := map[string]string{"passed": "pass", "failed": "fail"}[test.Status]
 		if status != "" {
 			name := test.Name
 			if test.telemetryName != nil {
 				name = *test.telemetryName
+			}
+			if run.framework == "rspec" && test.telemetryScopedID != "" {
+				name = "scoped_id:" + test.telemetryScopedID
+				anonymous[test.File+"\x00"+name] = true
 			}
 			expected[identity{test.File, name, status}]++
 		}
@@ -355,9 +361,23 @@ func verifyJestTelemetry(run validationRun) verdict {
 			file = filepath.Join(run.root, file)
 		}
 		file = filepath.Clean(file)
+		name := test.Name
+		if run.framework == "rspec" {
+			var parameters struct {
+				Metadata struct {
+					ScopedID string `json:"scoped_id"`
+				}
+			}
+			if json.Unmarshal([]byte(test.Parameters), &parameters) == nil {
+				id := "scoped_id:" + parameters.Metadata.ScopedID
+				if anonymous[file+"\x00"+id] {
+					name = id
+				}
+			}
+		}
 		for _, attempt := range test.Attempts {
 			if attempt.Status == "pass" || attempt.Status == "fail" {
-				observed[identity{file, test.Name, attempt.Status}]++
+				observed[identity{file, name, attempt.Status}]++
 			}
 			if attempt.Retry {
 				return verdict{Status: "inconclusive", Reason: "Unexpected retry telemetry in the reporting-only run."}

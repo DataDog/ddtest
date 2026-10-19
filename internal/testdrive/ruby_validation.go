@@ -88,6 +88,7 @@ func (t *Testdrive) checkRubyPreflight(ctx context.Context, output io.Writer, re
 		return fmt.Errorf("ruby bundle did not produce framework metadata: %s", commandDiagnostic(data))
 	}
 	check.Version = info.Version
+	check.Ruby = info.Ruby
 	ci.Jobs = info.Jobs
 	if len(ci.Jobs) > 0 {
 		ci.Status, ci.Reason = "compatible", "Static Ruby CI selections agree with the installed bundle. Actual CI execution remains untested."
@@ -206,6 +207,7 @@ func (t *Testdrive) runRuby(ctx context.Context, output io.Writer, session *Sess
 	env["DDTEST_RUBY_FRAMEWORK"], env["DDTEST_RUBY_RESULTS"] = run.framework, filepath.Join(directory, "native-results")
 	env["DDTEST_RUBY_PROBE"], env["DDTEST_PROBE_MODE"] = probe, mode
 	env["DDTEST_PROBE_STATE"] = filepath.Join(directory, "probe-count")
+	env["DDTEST_PROBE_OWNER"] = filepath.Join(directory, "probe-owner")
 	command, args := t.executionCommand()
 	run.Command = shellquote.Join(append([]string{command}, args...)...)
 	_, _ = fmt.Fprintf(output, "Running %s...\n", name)
@@ -270,6 +272,7 @@ func readRubyResults(directory string, run *validationRun) {
 			Tests    []struct {
 				File, Name, Status, Failure string
 				TelemetryName               *string `json:"telemetry_name"`
+				TelemetryScopedID           string  `json:"telemetry_scoped_id"`
 			}
 			Errors []string
 		}
@@ -279,7 +282,7 @@ func readRubyResults(directory string, run *validationRun) {
 			return
 		}
 		for _, test := range result.Tests {
-			run.Tests = append(run.Tests, jestTest{File: filepath.Clean(test.File), Name: test.Name, Status: test.Status, Failure: failureSignature(test.Failure), telemetryName: test.TelemetryName})
+			run.Tests = append(run.Tests, jestTest{File: filepath.Clean(test.File), Name: test.Name, Status: test.Status, Failure: failureSignature(test.Failure), telemetryName: test.TelemetryName, telemetryScopedID: test.TelemetryScopedID})
 		}
 		run.SuiteErrors = append(run.SuiteErrors, result.Errors...)
 	}

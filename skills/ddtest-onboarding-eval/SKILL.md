@@ -1,11 +1,11 @@
 ---
 name: ddtest-onboarding-eval
-description: Evaluate ddtest onboarding on fresh open-source Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js or WebdriverIO repositories using Codex or Claude CLI and a minimal customer prompt. Use for developer experiments and comparisons, not for onboarding a customer repository directly.
+description: Evaluate ddtest onboarding on fresh open-source JavaScript or Ruby repositories using Codex or Claude CLI and a minimal customer prompt. Use for developer experiments and comparisons, not for onboarding a customer repository directly.
 ---
 
 # ddtest onboarding evaluation
 
-Measure what an uncoached coding agent accomplishes with a ddtest binary. Cover Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js and WebdriverIO; grade unsupported versions or configurations as unvalidated. This skill belongs to the
+Measure what an uncoached coding agent accomplishes with a ddtest binary. Cover Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js, WebdriverIO, RSpec and Minitest; grade unsupported versions or configurations as unvalidated. This skill belongs to the
 **evaluator**, not the agent being tested. It is developer tooling in this repo;
 it is not embedded in the ddtest binary or installed in the target repository.
 
@@ -19,7 +19,7 @@ tested agent's global skill directories or target checkout.
 
 ## Prepare and run
 
-1. Select a public repository that actually runs Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js or WebdriverIO. Read its CI, package
+1. Select a public repository that actually runs a supported framework. Read its CI, package
    scripts, lockfile, runtime requirements, and ordinary repository instructions.
    Choose a commit and dependency installation command. Record the intended test
    command and relevant Node, package-manager, and framework versions outside the
@@ -63,12 +63,22 @@ tested agent's global skill directories or target checkout.
    environment failure, not evidence of a tracer regression. Framework-owned
    Node executables are recorded separately and do not silently replace this check.
 
+   For Ruby, pass `--ruby /absolute/path/to/ruby` with either agent. This pins the
+   setup PATH, gives Codex the same process-local shell settings, and uses private
+   Bundler configuration, gem installation and cache directories. Record the
+   resolved lockfile and framework/tracer releases. Compare `ruby_runtime` with
+   `ddtest_ruby_runtime`; missing runtime evidence remains unobserved. Claude keeps
+   its normal shell behavior, so inspect the actual ddtest runtime before grading.
+   Use `--disable-mcp-server <name>` for each configured Codex Datadog server or
+   `--strict-mcp` for an empty Claude MCP configuration. These flags affect only
+   this trial and preserve normal permission checks and security hooks.
+
    The tested agent receives exactly:
 
    > Use ddtest in /temporary/trial/bin and onboard this repository to test-optimization.
 
    For a requested framework-only trial in a mixed repository, pass
-   `--framework playwright` (or `jest`/`vitest`/`mocha`/`cypress`/`cucumber`/`webdriverio`). This adds only
+   `--framework playwright` (or `jest`/`vitest`/`mocha`/`cypress`/`cucumber`/`webdriverio`/`rspec`/`minitest`). This adds only
    “for playwright only” to the prompt and records the scope in `run.json`.
 
    No skill, grading rubric, feature list, runbook, previous results, extra system
@@ -90,7 +100,8 @@ interruption even when the CLI exits zero. Collect and grade it as incomplete
 before cleanup or a permitted fresh retry. Do not infer completion from a
 promise to wait for a later notification. Check these
 flags in the installed CLI's help. It does not bypass permissions or isolate the
-agent's account, filesystem, network, global skills, or MCP configuration. Record
+agent's account, filesystem, network or global skills. MCP isolation requires the
+explicit process-local flags above. Record
 relevant inherited settings and any exposure to evaluator instructions as a
 limitation. It removes `DD_*` and `DATADOG_*` environment variables, which alone
 does not guarantee isolation from credentials stored elsewhere.
@@ -208,6 +219,18 @@ real application files; config, support and feature files alone are insufficient
 Suite coverage is not independent per-scenario coverage. Check that CI enables
 the same NYC/ESM instrumentation and that its tracer supports every selected
 Node runtime. New ignored build outputs still require cleanup.
+
+For Ruby, preserve Gemfiles, lockfiles, Rake/Rails tasks, test arguments, reporters
+and existing Ruby options. Require native RSpec/Minitest results for the complete
+selected suite in both baseline and reporting-only runs, actual application-file
+coverage, and all six controlled features with independent probe-body counters.
+Do not replace a custom/default Rake task with a guessed command to manufacture a
+repository-wide pass. Review what it invokes; explicitly selected local commands
+leave unresolved CI configurations unvalidated. Preserve legacy Ruby/JRuby entries
+and grade incompatible or floating CI versions separately from the local runtime.
+Collect owned bundle installations, generated lockfiles and ignored coverage
+outputs. Tracer installation in ddtest's disposable copy must not change the
+customer bundle. Record ddtest cleanup separately from agent and evaluator cleanup.
 
 If the tested ddtest version lacks paired runs or controlled feature scenarios,
 mark the missing checks **not exercised** and identify the product gap. Do not
