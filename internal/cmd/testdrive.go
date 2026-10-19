@@ -26,7 +26,7 @@ func newTestdriveCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "testdrive",
 		Short: "Try Test Optimization on the local test suite",
-		Long:  fmt.Sprintf("For %[1]s, compares native test results without and with instrumentation, then checks advanced features using temporary probes under the original configuration. Matching existing test failures are acceptable. Other frameworks run reporting-only checks against a local intake. No Datadog API key is required. With --check-only, inspect %[1]s configuration and static CI/tracer compatibility without installing a tracer or running tests.", testdrive.ValidationFrameworkNames()),
+		Long:  fmt.Sprintf("For %[1]s and Maven JVM frameworks, compares native test results without and with instrumentation, then checks advanced features using temporary probes under the original configuration. Matching existing test failures are acceptable. Other frameworks run reporting-only checks against a local intake. No Datadog API key is required. With --check-only, inspect %[1]s or Maven configuration; Java CI/tracer compatibility requires separate review without installing a tracer or running tests.", testdrive.ValidationFrameworkNames()),
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.NoArgs(cmd, args); err != nil {
 				return err

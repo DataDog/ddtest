@@ -301,7 +301,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 			}
 		}
 	}
-	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
+	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci", "java": "dd-java-agent"}[language] + "@" + version
 
 	session := planSession()
 	if !supportsValidationFramework(runner.Name()) {
@@ -428,6 +428,10 @@ func displayName(name string) string {
 
 // Preview describes the filesystem and process changes that Run will make.
 func (t *Testdrive) Preview(output io.Writer) {
+	if t.language == "java" {
+		t.previewMaven(output)
+		return
+	}
 	if t.discoveryError != nil {
 		_, _ = fmt.Fprintf(output, "Command discovery failed: %s\nWith --yes, save a failed report without running tests.\n", t.discoveryError)
 		return
@@ -573,6 +577,9 @@ func (t *Testdrive) runLocked(ctx context.Context, output io.Writer) (runErr err
 	}
 	if err := t.recoverStartup(output); err != nil {
 		return t.finishStartupFailure(output, err)
+	}
+	if t.language == "java" {
+		return t.runMaven(ctx, output)
 	}
 	if t.allConfigurations {
 		return t.runAllConfigurations(ctx, output)

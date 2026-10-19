@@ -54,7 +54,7 @@ func DetectPlatform() (Platform, error) {
 	root := "."
 	frameworkHint := settings.GetFramework()
 	platformHint := settings.GetPlatform()
-	platforms := []Platform{NewJavaScript(), NewPython(), NewRuby(settings.GetTestSkippingLevel())}
+	platforms := []Platform{NewJavaScript(), NewPython(), NewRuby(settings.GetTestSkippingLevel()), NewJava()}
 	if platformHint != "" {
 		for _, p := range platforms {
 			if p.Name() == platformHint {
@@ -85,7 +85,7 @@ func DetectPlatform() (Platform, error) {
 		if frameworkHint != "" {
 			return nil, fmt.Errorf("unsupported framework: %s", frameworkHint)
 		}
-		return nil, fmt.Errorf("could not detect a supported platform; inspect package.json, Python project configuration, or Gemfile, or specify --platform")
+		return nil, fmt.Errorf("could not detect a supported platform; inspect package.json, Python project configuration, Gemfile, or pom.xml, or specify --platform")
 	}
 	if len(candidates) > 1 {
 		names := make([]string, len(candidates))

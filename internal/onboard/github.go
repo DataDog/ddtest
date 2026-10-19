@@ -34,6 +34,9 @@ var playwrightInstructions string
 //go:embed instructions/vitest.md
 var vitestInstructions string
 
+//go:embed instructions/java.md
+var javaInstructions string
+
 //go:embed instructions/github.md
 var gitHubInstructions string
 
@@ -108,6 +111,9 @@ func instructions(language, name string) string {
 }
 
 func frameworkInstructions(language, name string) string {
+	if language == "java" {
+		return strings.ReplaceAll(javaInstructions, "__FRAMEWORK__", name)
+	}
 	if language == "javascript" && name == "webdriverio" {
 		return strings.ReplaceAll(webdriverIOInstructions, "ddtest testdrive", "ddtest testdrive --framework webdriverio")
 	}

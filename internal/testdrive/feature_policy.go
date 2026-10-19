@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/maven"
 )
 
 // A policy describes what must be exercised, never an assumed passing result.
@@ -33,7 +34,24 @@ func (p frameworkPolicy) configurationOptions() []string {
 	return []string{"--config", "-c"}
 }
 
+var mavenFeaturePolicies = []featurePolicy{
+	{Name: "auto-retries", Status: "required"},
+	{Name: "early-flake-detection", Status: "required"},
+	{Name: "skipping", Status: "required"},
+	{Name: "quarantine", Status: "required"},
+	{Name: "disabled", Status: "required"},
+	{Name: "attempt-to-fix", Status: "required"},
+}
+
 var frameworkFeaturePolicies = map[string]frameworkPolicy{
+	"junit4": {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
+	"junit5": {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
+	"testng": {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
+	"spock": {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
+	"cucumber-java": {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
+	"karate": {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
+	"scalatest": {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
+	"munit": {Paired: true, CheckOnly: true, ProbeBodyCounts: true, Features: mavenFeaturePolicies},
 	"webdriverio": {ProbeBodyCounts: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, Features: []featurePolicy{
 		{Name: "auto-retries", Status: "required"}, {Name: "early-flake-detection", Status: "required"}, {Name: "skipping", Status: "not supported", Reason: webdriverIOSkippingReason}, {Name: "quarantine", Status: "required"}, {Name: "disabled", Status: "required"}, {Name: "attempt-to-fix", Status: "required"},
 	}},
@@ -83,6 +101,9 @@ func supportsValidationFramework(name string) bool {
 	return frameworkFeaturePolicies[name].Paired
 }
 func featureSatisfied(framework string, feature featureResult) bool {
+	if slices.Contains(maven.FrameworkNames, framework) && feature.Status == "not supported" {
+		return true
+	}
 	for _, policy := range featurePolicies(framework) {
 		if policy.Name == feature.Name {
 			if policy.Status == "required" {

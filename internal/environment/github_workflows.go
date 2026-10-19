@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/maven"
+
 	"github.com/kballard/go-shellquote"
 	"github.com/pelletier/go-toml/v2"
 	"go.yaml.in/yaml/v3"
@@ -188,6 +190,9 @@ func looksLikeTestJob(root, commands, language, name string, depth int) bool {
 			continue
 		}
 		executable := filepath.Base(args[0])
+		if language == "java" && maven.IsTestCommand(args[0], args[1:]) {
+			return true
+		}
 		if language == "javascript" && slices.Contains([]string{"npm", "pnpm", "yarn", "bun", "npx", "bunx"}, executable) && len(args) > 1 {
 			args = args[1:]
 			direct := executable == "npx" || executable == "bunx" || args[0] == "exec" || args[0] == "dlx"
