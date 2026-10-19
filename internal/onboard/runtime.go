@@ -31,6 +31,7 @@ type RuntimeCheck struct {
 
 // RuntimeFinding records the metadata used to check one CI runtime.
 type RuntimeFinding struct {
+	Ruby            string          `json:"ruby,omitempty"`
 	Scenario        string          `json:"scenario,omitempty"`
 	Workflow        string          `json:"workflow"`
 	Job             string          `json:"job"`

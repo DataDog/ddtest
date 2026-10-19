@@ -141,7 +141,9 @@ func (r *Ruby) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 
 // DetectTracer reads the project tracer's bundle information.
 func (r *Ruby) DetectTracer(ctx context.Context, _ TracerOptions) (string, error) {
-	gemVersion, err := r.detectTracerVersion(ctx)
+	// Detection is also used by testdrive's read-only preparation. Bundler must
+	// not resolve or write a customer lockfile before validation is approved.
+	gemVersion, err := r.detectTracerVersion(ctx, map[string]string{"BUNDLE_FROZEN": "true"})
 	if err != nil {
 		return "", err
 	}
@@ -203,7 +205,7 @@ func (r *Ruby) DiscoveryEnv(ctx context.Context, kind framework.DiscoveryKind, o
 
 // SanityCheck checks the prerequisite shared by Ruby execution and full discovery.
 func (r *Ruby) SanityCheck(ctx context.Context) error {
-	gemVersion, err := r.detectTracerVersion(ctx)
+	gemVersion, err := r.detectTracerVersion(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -218,9 +220,9 @@ func (r *Ruby) SanityCheck(ctx context.Context) error {
 }
 
 // detectTracerVersion reads the tracer version from the project's bundle.
-func (r *Ruby) detectTracerVersion(ctx context.Context) (version.Version, error) {
+func (r *Ruby) detectTracerVersion(ctx context.Context, env map[string]string) (version.Version, error) {
 	// Inherit project loaders without adding the instrumentation preload.
-	output, err := r.executor.CombinedOutput(ctx, "bundle", []string{"info", requiredGemName}, nil)
+	output, err := r.executor.CombinedOutput(ctx, "bundle", []string{"info", requiredGemName}, env)
 	if err != nil {
 		return version.Version{}, fmt.Errorf("detect project tracer: %s: %w", strings.TrimSpace(string(output)), err)
 	}

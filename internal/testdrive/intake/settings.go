@@ -24,10 +24,11 @@ const (
 
 // Scenario configures exactly one local feature experiment. The zero value is reporting-only.
 type Scenario struct {
-	Feature string
-	Module  string
-	Suite   string
-	Test    string
+	Feature    string
+	Module     string
+	Suite      string
+	Test       string
+	Parameters string
 	// SourceFile is the repository-relative path used by Jest suite skipping.
 	// Suite remains the reported identity used by test management.
 	SourceFile string
@@ -108,6 +109,11 @@ func handleKnownTests(w http.ResponseWriter, _ *http.Request) {
 	for _, name := range []string{"jest", "webdriverio", "mocha", "vitest", "playwright", "cucumber", "cypress", "pytest", "rspec", "minitest"} {
 		tests[name] = map[string]any{}
 	}
+	// Ruby disables new-test detection when its known-test dataset is empty.
+	// An unrelated known test keeps the controlled probe new.
+	for _, name := range []string{"rspec", "minitest"} {
+		tests[name] = map[string]any{"ddtest unrelated known suite": []string{"known test"}}
+	}
 	writeJSON(w, map[string]any{
 		"data": map[string]any{
 			"attributes": map[string]any{
@@ -137,9 +143,17 @@ func handleSkippableTests(w http.ResponseWriter, r *http.Request, scenario Scena
 	data := []any{}
 	if scenario.Feature == "skipping" && scenario.SourceFile != "" {
 		if level == "test" && scenario.Suite != "" && scenario.Test != "" {
-			data = append(data, map[string]any{"type": "test", "attributes": map[string]any{"suite": scenario.Suite, "name": scenario.Test}})
+			attributes := map[string]any{"suite": scenario.Suite, "name": scenario.Test}
+			if scenario.Parameters != "" {
+				attributes["parameters"] = scenario.Parameters
+			}
+			data = append(data, map[string]any{"type": "test", "attributes": attributes})
 		} else if level != "test" {
-			data = append(data, map[string]any{"type": "suite", "attributes": map[string]any{"suite": scenario.SourceFile}})
+			suite := scenario.SourceFile
+			if scenario.Module == "rspec" || scenario.Module == "minitest" {
+				suite = scenario.Suite
+			}
+			data = append(data, map[string]any{"type": "suite", "attributes": map[string]any{"suite": suite}})
 		}
 	}
 	writeJSON(w, map[string]any{

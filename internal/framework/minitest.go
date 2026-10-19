@@ -115,7 +115,9 @@ func (m *Minitest) RunTests(ctx context.Context, testFiles []string, envMap map[
 // isRailsApplication determines if the current project is a Rails application
 func (m *Minitest) isRailsApplication(ctx context.Context) bool {
 	// Check if rails gem is installed
-	output, err := m.executor.CombinedOutput(ctx, "bundle", []string{"show", "rails"}, nil)
+	// Command selection must not resolve or create a customer's lockfile.
+	probeEnv := map[string]string{"BUNDLE_FROZEN": "true"}
+	output, err := m.executor.CombinedOutput(ctx, "bundle", []string{"show", "rails"}, probeEnv)
 	if err != nil {
 		slog.Debug("Not a Rails application: bundle show rails failed", "output", string(output), "error", err)
 		return false
@@ -137,7 +139,7 @@ func (m *Minitest) isRailsApplication(ctx context.Context) bool {
 	}
 
 	// Check if rails command works
-	output, err = m.executor.CombinedOutput(ctx, "bundle", []string{"exec", "rails", "version"}, nil)
+	output, err = m.executor.CombinedOutput(ctx, "bundle", []string{"exec", "rails", "version"}, probeEnv)
 	if err != nil {
 		slog.Debug("Not a Rails application: bundle exec rails version failed", "output", string(output), "error", err)
 		return false

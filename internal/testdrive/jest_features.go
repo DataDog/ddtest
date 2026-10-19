@@ -208,7 +208,7 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 		case "skipping", "quarantine", "disabled":
 			mode = "fail"
 		}
-		scenario := intake.Scenario{Feature: feature, Module: identity.Module, Suite: identity.Suite, Test: identity.Name, SourceFile: identity.SourceFile}
+		scenario := intake.Scenario{Feature: feature, Module: identity.Module, Suite: identity.Suite, Test: identity.Name, SourceFile: identity.SourceFile, Parameters: identity.Parameters}
 		value, err := run(feature, scenario, mode)
 		result.Runs = append(result.Runs, value.summary())
 		if err != nil {
@@ -220,7 +220,7 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 }
 
 func validProbeControl(run validationRun, status string) bool {
-	if (run.framework == "cypress" || run.framework == "cucumber" || run.framework == "webdriverio") && (run.ProbeExecutions == nil || *run.ProbeExecutions != 1) {
+	if (run.framework == "cypress" || run.framework == "cucumber" || run.framework == "webdriverio" || run.framework == "rspec" || run.framework == "minitest") && (run.ProbeExecutions == nil || *run.ProbeExecutions != 1) {
 		return false
 	}
 	expectedExit := (status == "passed" && run.ExitCode == 0) || (status == "failed" && run.ExitCode > 0)
@@ -228,7 +228,7 @@ func validProbeControl(run validationRun, status string) bool {
 		return false
 	}
 	for _, test := range run.Tests {
-		if test.Name == probeName && test.Status == status {
+		if (test.Name == probeName || run.framework == "minitest" && test.Name == "test_ddtest_validation_probe") && test.Status == status {
 			return status != "failed" || strings.Contains(test.Failure, "ddtest intentional failure")
 		}
 	}
@@ -266,6 +266,9 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	omittedPlaywrightIdentity := false
 	for _, event := range run.Facts.Events {
 		tags := event.Tags
+		if (run.framework == "rspec" || run.framework == "minitest") && event.Type == "test" && tags["test.module"] == identity.Module && tags["test.suite"] == identity.Suite && tags["test.name"] == identity.Name && tags["test.status"] == "skip" && tags["test.skipped_by_itr"] == "true" {
+			skipped = true
+		}
 		if run.framework == "cypress" && isSkippedCypressProbe(event, identity) {
 			skipped = true
 		}
@@ -318,7 +321,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	// Vitest reports one final native result for retries; attempt telemetry must
 	// still prove that the probe ran multiple times for the expected reason.
 	nativeRepeated := nativePass >= 2 || ((run.framework == "vitest" || run.framework == "playwright") && nativePass == 1) ||
-		((run.framework == "cypress" || run.framework == "cucumber" || run.framework == "webdriverio") && nativePass == 1 && run.ProbeExecutions != nil && *run.ProbeExecutions >= 2)
+		((run.framework == "cypress" || run.framework == "cucumber" || run.framework == "webdriverio" || run.framework == "rspec" || run.framework == "minitest") && nativePass == 1 && run.ProbeExecutions != nil && *run.ProbeExecutions >= 2)
 	success := false
 	switch feature {
 	case "auto-retries":
@@ -330,6 +333,9 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 		if run.framework == "cypress" {
 			success = skipped && executedTests(run) == 0 && nativeSkip == 1 && run.Facts.TestEventCount == 1
 		}
+		if run.framework == "rspec" || run.framework == "minitest" {
+			success = skipped && executedTests(run) == 0 && nativeSkip <= 1 && run.Facts.TestEventCount <= 1 && run.ProbeExecutions != nil && *run.ProbeExecutions == 0
+		}
 	case "quarantine":
 		// Quarantine changes the command outcome, not necessarily the native
 		// assertion status. Some Jest versions retain the failing assertion.
@@ -339,7 +345,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 	case "attempt-to-fix":
 		success = attemptToFix && passed >= 2 && failed == 0 && retries > 0 && nativeRepeated && nativeFail == 0
 	}
-	if run.framework == "cypress" || run.framework == "cucumber" || run.framework == "webdriverio" {
+	if run.framework == "cypress" || run.framework == "cucumber" || run.framework == "webdriverio" || run.framework == "rspec" || run.framework == "minitest" {
 		success = success && run.ProbeExecutions != nil && *run.ProbeExecutions == passed+failed
 	}
 	if !success {
