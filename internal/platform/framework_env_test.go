@@ -2,6 +2,7 @@ package platform
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"testing"
 
@@ -79,7 +80,11 @@ func TestPlatformEnvironmentOverridesAndIsolation(t *testing.T) {
 				input := map[string]string{tc.key: value, "CUSTOM": "input"}
 				env, err := tc.p.RunEnv(framework.RuntimeOptions{ESM: tc.name == "vitest", Env: input})
 				require.NoError(t, err)
-				require.Equal(t, input, env, "explicit values, including empty ones, override defaults")
+				want := maps.Clone(input)
+				if tc.p.Name() == "python" {
+					want["_DD_CIVISIBILITY_ITR_SUITE_MODE"] = "false"
+				}
+				require.Equal(t, want, env, "explicit values, including empty ones, override defaults")
 				env["CUSTOM"] = "changed"
 				require.Equal(t, "input", input["CUSTOM"])
 				again, err := tc.p.RunEnv(framework.RuntimeOptions{ESM: tc.name == "vitest", Env: input})

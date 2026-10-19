@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -43,13 +44,15 @@ const (
 )
 
 type Python struct {
-	frameworkEnv map[string]string
-	executor     commandExecutor
+	frameworkEnv      map[string]string
+	executor          commandExecutor
+	testSkippingLevel settings.TestSkippingLevel
 }
 
 func NewPython() *Python {
 	return &Python{
-		executor: &ext.DefaultCommandExecutor{},
+		executor:          &ext.DefaultCommandExecutor{},
+		testSkippingLevel: settings.GetTestSkippingLevel(),
 	}
 }
 
@@ -93,7 +96,7 @@ func (p *Python) DetectFramework() (framework.Framework, error) {
 }
 
 func (p *Python) TestSkippingLevel() settings.TestSkippingLevel {
-	return settings.TestSkippingLevelTest
+	return settings.NormalizeTestSkippingLevel(p.testSkippingLevel)
 }
 
 // baseEnv returns environment variables required for Python commands.
@@ -279,6 +282,15 @@ func (p *Python) RunEnv(options framework.RuntimeOptions) (map[string]string, er
 		env = p.baseEnv()
 	}
 	maps.Copy(env, options.Env)
+	// Keep tracer coverage/skipping granularity aligned with the backend
+	// requests and plan, even when the process or worker env sets another mode.
+	env["_DD_CIVISIBILITY_ITR_SUITE_MODE"] = strconv.FormatBool(p.TestSkippingLevel() == settings.TestSkippingLevelSuite)
+	if p.TestSkippingLevel() == settings.TestSkippingLevelSuite {
+		// The plan owns suite skipping. The tracer must execute files retained
+		// for missing source mappings or conservative unskippable checks,
+		// while continuing to collect coverage and report test results.
+		env["_DD_CIVISIBILITY_ITR_PREVENT_TEST_SKIPPING"] = "true"
+	}
 	return env, nil
 }
 

@@ -2,7 +2,12 @@ package framework
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
@@ -96,10 +101,19 @@ func (p *PyTest) DiscoverTestFiles(ctx context.Context, testFiles discovery.Test
 	if testFiles.Empty() {
 		return []string{}, nil
 	}
-	if testFiles.UseExplicitFiles() {
-		return testFiles.ExplicitFiles, nil
+	files := testFiles.ExplicitFiles
+	if !testFiles.UseExplicitFiles() {
+		var err error
+		files, err = discovery.DiscoverTestFiles(testFiles.Pattern, settings.GetTestsExcludePattern())
+		if err != nil {
+			return nil, err
+		}
 	}
-	return discovery.DiscoverTestFiles(testFiles.Pattern, settings.GetTestsExcludePattern())
+	// Broad patterns can match bytecode and other artifacts. Clone before
+	// filtering explicit selections, which belong to the caller.
+	return slices.DeleteFunc(slices.Clone(files), func(file string) bool {
+		return filepath.Ext(file) != ".py"
+	}), nil
 }
 
 func (p *PyTest) SupportsFullTestDiscovery() bool {
@@ -111,7 +125,27 @@ func (p *PyTest) SourceFileForSuite(suite string) (string, bool) {
 }
 
 func (p *PyTest) HasUnskippableMarker(testFile string) bool {
-	return false
+	const marker = "datadog_itr_unskippable"
+	if utils.FileContainsAll(testFile, marker) {
+		return true
+	}
+	// Conftests can apply the marker to a whole subtree. Do not execute them
+	// or interpret Python; even a comment keeps the affected files runnable.
+	absolute, err := filepath.Abs(testFile)
+	if err != nil {
+		return true
+	}
+	for directory := filepath.Dir(absolute); ; directory = filepath.Dir(directory) {
+		conftest := filepath.Join(directory, "conftest.py")
+		if _, err := os.Lstat(conftest); !os.IsNotExist(err) {
+			if err != nil || utils.FileContainsAll(conftest, marker) {
+				return true
+			}
+		}
+		if filepath.Dir(directory) == directory {
+			return false
+		}
+	}
 }
 
 func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
@@ -123,7 +157,19 @@ func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[st
 	if err != nil {
 		return err
 	}
-	return p.executor.Run(ctx, command, args, mergedEnv)
+	err = p.executor.Run(ctx, command, args, mergedEnv)
+	skippingPlatform, ok := p.platform.(interface {
+		TestSkippingLevel() settings.TestSkippingLevel
+	})
+	var exitErr *exec.ExitError
+	if ok && skippingPlatform.TestSkippingLevel() == settings.TestSkippingLevelSuite &&
+		ctx.Err() == nil && errors.As(err, &exitErr) && exitErr.ExitCode() == 5 {
+		// File-only planning cannot apply pytest's item selectors. A worker
+		// may legitimately receive only files whose tests are all deselected.
+		slog.Info("No tests collected in pytest suite-mode batch", "testFilesCount", len(testFiles))
+		return nil
+	}
+	return err
 }
 
 func (p *PyTest) Command() (string, []string) {

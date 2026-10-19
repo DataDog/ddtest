@@ -3,14 +3,77 @@ package framework
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/discovery"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
+	"github.com/stretchr/testify/require"
 )
+
+type pytestSkippingPlatform struct {
+	testPlatform
+	level settings.TestSkippingLevel
+}
+
+func (p *pytestSkippingPlatform) TestSkippingLevel() settings.TestSkippingLevel { return p.level }
+
+func TestPyTest_RunTests_EmptyCollection(t *testing.T) {
+	// Use real subprocess exit errors, including wrapping, rather than matching
+	// error messages that might also come from test failures.
+	for _, level := range []settings.TestSkippingLevel{settings.TestSkippingLevelTest, settings.TestSkippingLevelSuite} {
+		for _, code := range []int{0, 1, 2, 3, 4, 5} {
+			t.Run(fmt.Sprintf("%s/exit-%d", level, code), func(t *testing.T) {
+				cmd := exec.Command(os.Args[0], "-test.run=^TestPyTest_ExitHelper$")
+				cmd.Env = append(os.Environ(), fmt.Sprintf("DDTEST_PYTEST_EXIT_HELPER=%d", code))
+				processErr := cmd.Run()
+				if code != 0 {
+					var exitErr *exec.ExitError
+					require.ErrorAs(t, processErr, &exitErr)
+					require.Equal(t, code, exitErr.ExitCode())
+					processErr = fmt.Errorf("pytest execution: %w", processErr)
+				}
+				pytest := &PyTest{
+					executor: &mockCommandExecutor{err: processErr},
+					platform: &pytestSkippingPlatform{level: level},
+				}
+				err := pytest.RunTests(t.Context(), []string{"test_case.py"}, nil)
+				if code == 0 || (level == settings.TestSkippingLevelSuite && code == 5) {
+					require.NoError(t, err)
+				} else {
+					require.ErrorIs(t, err, processErr)
+				}
+				if code == 5 {
+					ctx, cancel := context.WithCancel(t.Context())
+					cancel()
+					require.Error(t, pytest.RunTests(ctx, []string{"test_case.py"}, nil))
+				}
+			})
+		}
+	}
+	for _, failure := range []error{context.Canceled, context.DeadlineExceeded, errors.New("failed to start pytest"), errors.New("exit status 5")} {
+		pytest := &PyTest{
+			executor: &mockCommandExecutor{err: failure},
+			platform: &pytestSkippingPlatform{level: settings.TestSkippingLevelSuite},
+		}
+		require.ErrorIs(t, pytest.RunTests(t.Context(), []string{"test_case.py"}, nil), failure)
+	}
+}
+
+func TestPyTest_ExitHelper(t *testing.T) {
+	if code := os.Getenv("DDTEST_PYTEST_EXIT_HELPER"); code != "" {
+		var status int
+		_, err := fmt.Sscanf(code, "%d", &status)
+		require.NoError(t, err)
+		os.Exit(status)
+	}
+}
 
 func TestPyTest_DiscoverTests_WithExplicitFiles(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(discovery.TestsFilePath), 0755); err != nil {
@@ -196,6 +259,71 @@ func TestPyTest_SupportsFullTestDiscovery(t *testing.T) {
 	}
 	if sourceFile, ok := pytest.SourceFileForSuite("tests/test_user.py"); ok || sourceFile != "" {
 		t.Fatalf("SourceFileForSuite() = %q, %v; want unsupported", sourceFile, ok)
+	}
+}
+
+func TestPyTest_UnskippableMarkers(t *testing.T) {
+	for _, location := range []string{"file", "conftest", "ancestor conftest", "missing file", "unreadable conftest", "plain"} {
+		t.Run(location, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			if err := os.MkdirAll("tests/unit", 0755); err != nil {
+				t.Fatal(err)
+			}
+			file := "tests/unit/test_case.py"
+			if location != "missing file" {
+				if err := os.WriteFile(file, []byte("def test_case(): pass\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			markerFile := map[string]string{
+				"file": file, "conftest": "tests/conftest.py", "ancestor conftest": "conftest.py",
+			}[location]
+			if markerFile != "" {
+				if err := os.WriteFile(markerFile, []byte("# datadog_itr_unskippable\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if location == "unreadable conftest" {
+				// A directory gives a deterministic read error, including when
+				// tests run as root and filesystem permissions cannot deny reads.
+				if err := os.Mkdir("tests/conftest.py", 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := NewPytest(&testPlatform{}).HasUnskippableMarker(file); got != (location != "plain") {
+				t.Fatalf("HasUnskippableMarker = %v for %s", got, location)
+			}
+		})
+	}
+}
+
+func TestPyTest_FileDiscoveryFiltersNonPythonFiles(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, file := range []string{"tests/test_case.py", "tests/__pycache__/test_case.pyc", "tests/test_case.txt"} {
+		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pytest := NewPytest(&testPlatform{})
+	for _, selection := range []discovery.TestFileSet{
+		{Pattern: "tests/**/test_*"},
+		{ExplicitFiles: []string{"tests/test_case.py", "tests/__pycache__/test_case.pyc", "tests/test_case.txt"}},
+	} {
+		original := slices.Clone(selection.ExplicitFiles)
+		files, err := pytest.DiscoverTestFiles(t.Context(), selection)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(files, []string{"tests/test_case.py"}) {
+			t.Fatalf("DiscoverTestFiles(%+v) = %v", selection, files)
+		}
+		if !slices.Equal(original, selection.ExplicitFiles) {
+			t.Fatal("file discovery mutated the caller's selection")
+		}
 	}
 }
 
