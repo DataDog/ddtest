@@ -84,9 +84,49 @@ func TestRubyCIRequiresInstallationBeforeTestsAndUnconditionalConditions(t *test
 `)
 	check := RubyCIConfiguration(root, "rspec")
 	require.Len(t, check.Jobs, 2)
-	for _, job := range check.Jobs {
-		require.Equal(t, "inconclusive", job.Status)
-		require.Empty(t, job.Action)
+	require.Equal(t, "inconclusive", check.Jobs[0].Status, "a later install cannot instrument an earlier test")
+	require.Equal(t, "excluded", check.Jobs[1].Status, "explicitly skipped instrumentation leaves the test running")
+	require.Empty(t, check.Jobs[1].Action)
+}
+
+func TestRubyMatrixGemfilesResolveWithoutRunnerPathsOrShellEvaluation(t *testing.T) {
+	root := rubyWorkflowFixture(t, `env:
+  BUNDLE_GEMFILE: ${{ github.workspace }}/gemfiles/rails_${{ matrix.rails }}.gemfile
+jobs:
+  tests:
+    strategy:
+      matrix:
+        ruby: ['3.4', 'head']
+        rails: ['7.1', '8.0']
+    steps:
+      - uses: ruby/setup-ruby@v1
+        with: {ruby-version: '${{ matrix.ruby }}'}
+      - uses: datadog/test-visibility-github-action@v3
+        if: matrix.ruby != 'head'
+        with: {languages: ruby, ruby-tracer-version: '1.42.0'}
+      - run: bundle exec rake test
+`)
+	scope, err := DiscoverValidationScope(root, "minitest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 2)
+	for i, gemfile := range []string{"gemfiles/rails_7.1.gemfile", "gemfiles/rails_8.0.gemfile"} {
+		require.Equal(t, gemfile, scope.Commands[i].Environment["BUNDLE_GEMFILE"])
+		require.Empty(t, scope.Commands[i].UnvalidatedSetup)
+		require.Len(t, scope.Commands[i].Locations, 2, "both original runtime consumers remain in the inventory")
+	}
+	ci := RubyCIConfiguration(root, "minitest")
+	require.Len(t, ci.Jobs, 4)
+	for _, job := range ci.Jobs {
+		if job.Ruby == "head" {
+			require.Equal(t, "excluded", job.Status)
+		} else {
+			require.Equal(t, "not checked", job.Status)
+		}
+	}
+	for _, value := range []string{"${{ secrets.GEMFILE }}", "${{ github.workspace }}/../escape", "${{ github.workspace }}/gemfiles/$(touch bad)", "/runner/Gemfile", "${{ runner.temp }}/Gemfile"} {
+		_, _, err := resolveVariantStep(ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "bundle exec rake test", Env: map[string]string{"BUNDLE_GEMFILE": value}}, nil, "minitest")
+		require.Error(t, err, value)
 	}
 }
 

@@ -516,6 +516,10 @@ func (t *Testdrive) Preview(output io.Writer) {
 		_, _ = fmt.Fprintf(output, "  - install %s: %s\n", t.tracerLabel, shellquote.Join(install...))
 	}
 
+	if t.language == "ruby" {
+		_, _ = fmt.Fprintln(output, "  - compare native baseline/reporting-only results and feature controls in a disposable copy; preserve the original Gemfile and lockfile")
+		_, _ = fmt.Fprintln(output, "  - check numeric CI Ruby selectors against the resolved tracer; other engines/floating selectors require separate validation or explicit instrumentation exclusions")
+	}
 	preview := shellquote.Join(append([]string{command}, args...)...)
 	if onboard.RedactsCommandKeys(t.framework.Name()) {
 		preview = onboard.RedactCypressCommand(preview)

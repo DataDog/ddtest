@@ -79,6 +79,22 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	}
 	for _, key := range slices.Sorted(maps.Keys(env)) {
 		value := env[key]
+		if key == "BUNDLE_GEMFILE" && len(frameworks) > 0 && (frameworks[0] == "rspec" || frameworks[0] == "minitest") {
+			// github.workspace names this checkout, not the CI runner's absolute
+			// path. Keep matrix Gemfiles distinct and relocate them in the copy.
+			value = strings.NewReplacer("${{ github.workspace }}/", "", "${{github.workspace}}/", "").Replace(value)
+			value, err = interpolateMatrix(value, row)
+			if err != nil {
+				return step, nil, err
+			}
+			if !filepath.IsLocal(value) || strings.ContainsAny(value, "$`~\\\x00") {
+				return step, nil, fmt.Errorf("BUNDLE_GEMFILE must resolve to a repository-local path: %s", value)
+			}
+		}
+		if key == "RUBYOPT" && len(frameworks) > 0 && (frameworks[0] == "rspec" || frameworks[0] == "minitest") {
+			// Local validation owns the tracer preload; preserve companion Ruby options.
+			value = strings.NewReplacer("${{ env.RUBYOPT }}", "", "${{env.RUBYOPT}}", "").Replace(value)
+		}
 		// Local Cypress validation disables Cloud recording and uses the
 		// evaluator's private binary cache. Never resolve or forward CI keys
 		// and runner-specific cache paths for these managed settings.

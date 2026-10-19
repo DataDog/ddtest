@@ -2,16 +2,85 @@ package testdrive
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRubyRequirementSelectorsUseRubyGemsBoundaries(t *testing.T) {
+	ruby, err := exec.LookPath("ruby")
+	if err != nil {
+		t.Skip("Ruby is required to verify RubyGems requirement semantics")
+	}
+	// These cases exercise crossings and holes, not just a selector's minimum.
+	script := rubyRequirementScript + `
+cases = [
+  ["3.4", [">= 2.7", "< 4.1.dev"], "compatible"],
+  ["3.4.9", [">= 3.4.9", "<= 3.4.9"], "compatible"],
+  ["3.4", [">= 3.4.9"], "inconclusive"],
+  ["3.4", ["!= 3.4.9"], "inconclusive"],
+  ["3.4", ["> 3.4.0"], "inconclusive"],
+  ["3.4", ["<= 3.4.9"], "inconclusive"],
+  ["3.4", ["~> 3.4.1"], "inconclusive"],
+  ["3.4", ["~> 3.4.0"], "compatible"],
+  ["3", ["~> 3.4.0"], "inconclusive"],
+  ["3.4", ["< 3.4.0.pre"], "incompatible"],
+  ["3.4", [">= 3.4.0.pre"], "compatible"],
+  ["3.4", ["= 3.4.0.pre"], "incompatible"],
+  ["2.6", [">= 2.7"], "incompatible"],
+  ["4.1", ["< 4.1.dev"], "incompatible"],
+  ["head", [">= 2.7"], "inconclusive"],
+  ["jruby-9.4", [">= 2.7"], "inconclusive"]
+]
+cases.each do |selector, constraints, expected|
+  actual = ruby_requirement_status(selector, constraints.map { |c| Gem::Requirement.new(c) })
+  abort "#{selector} #{constraints}: #{actual} != #{expected}" unless actual == expected
+end
+`
+	data, err := exec.CommandContext(t.Context(), ruby, "-e", script).CombinedOutput()
+	require.NoError(t, err, string(data))
+}
+
+func TestRubyCIPreflightChecksTracerDependenciesWithoutLocalApplicationConstraints(t *testing.T) {
+	ruby, err := exec.LookPath("ruby")
+	if err != nil {
+		t.Skip("Ruby is required to inspect RubyGems specifications")
+	}
+	setup := `
+framework = Gem::Specification.new { |s| s.name = "minitest"; s.version = "5.27.0"; s.required_ruby_version = ">= 3.4" }
+Gem::Specification.define_singleton_method(:find_by_name) { |*| framework }
+Gem.loaded_specs["unrelated-app"] = Gem::Specification.new { |s| s.name = "unrelated-app"; s.version = "1"; s.required_ruby_version = ">= 99" }
+Gem.loaded_specs["datadog-ci"] = Gem::Specification.new do |s|
+  s.name = "datadog-ci"; s.version = "1.42.0"; s.required_ruby_version = ">= 2.7"
+  s.add_runtime_dependency "trace-dependency"
+end
+Gem.loaded_specs["trace-dependency"] = Gem::Specification.new { |s| s.name = "trace-dependency"; s.version = "1"; s.required_ruby_version = ">= 3.0", "< 4.1.dev" }
+`
+	jobs, err := json.Marshal([]onboard.RuntimeFinding{
+		{Ruby: "3.4", Status: "not checked", TracerRequested: "1.42.0"},
+		{Ruby: "2.7", Status: "not checked", TracerRequested: "1.42.0"},
+		{Ruby: "3.4", Status: "not checked", TracerRequested: "latest"},
+		{Ruby: "head", Status: "excluded"},
+	})
+	require.NoError(t, err)
+	data, err := exec.CommandContext(t.Context(), ruby, "-e", setup+rubyPreflightScript, "minitest", string(jobs)).CombinedOutput()
+	require.NoError(t, err, string(data))
+	var info struct{ Jobs []onboard.RuntimeFinding }
+	require.NoError(t, json.Unmarshal(data, &info))
+	for i, status := range []string{"compatible", "incompatible", "inconclusive", "excluded"} {
+		require.Equal(t, status, info.Jobs[i].Status)
+	}
+	require.NotContains(t, info.Jobs[0].Requirement, "99")
+}
 
 func TestRubyNativeResultsPreserveDuplicatesFailuresAndTelemetryNames(t *testing.T) {
 	directory := t.TempDir()
@@ -120,6 +189,14 @@ func TestRubyIncompleteEvidenceCannotPass(t *testing.T) {
 	prepareValidationResult(t.TempDir(), &result)
 	require.False(t, result.Success)
 	require.False(t, result.LocalSuccess)
+}
+
+func TestRubyCIScopeKeepsInstrumentedAndExcludedVersions(t *testing.T) {
+	check := &onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{{Ruby: "3.4", Status: "compatible"}, {Ruby: "head", Status: "excluded"}, {Ruby: "jruby-9.4", Status: "inconclusive"}}}
+	scope := summarizeCIScope(check)
+	require.Equal(t, []string{"Ruby 3.4"}, scope.Instrumented)
+	require.Equal(t, []string{"Ruby head"}, scope.Excluded)
+	require.Equal(t, []string{"Ruby jruby-9.4"}, scope.Unverified)
 }
 
 func TestRubyAnonymousRSpecTelemetryUsesIndependentScopedIdentity(t *testing.T) {

@@ -596,6 +596,9 @@ func summarizeCIScope(check *onboard.RuntimeCheck) *ciRuntimeScope {
 	}
 	for _, job := range check.Jobs {
 		label := nodeScopeLabel(job.Node)
+		if job.Ruby != "" {
+			label = "Ruby " + job.Ruby
+		}
 		switch job.Status {
 		case "compatible":
 			scope.Instrumented = appendUnique(scope.Instrumented, label)

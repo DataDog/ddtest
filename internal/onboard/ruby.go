@@ -128,14 +128,20 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 					continue
 				}
 				ruby, tracer, action := "", "", ""
+				skippedAction := false
 				for i, step := range job.Steps {
+					uses, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
 					active, stepErr := stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
 					if stepErr == nil && !active {
+						languages := strings.Fields(step.With["languages"])
+						if uses == githubAction && hasVersion && (slices.Contains(languages, "ruby") || slices.Contains(languages, "all")) {
+							skippedAction = true
+						}
 						continue
 					}
-					uses, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
 					if uses == "ruby/setup-ruby" {
 						ruby, tracer, action = "", "", ""
+						skippedAction = false
 					}
 					if uses == githubAction {
 						tracer, action = "", ""
@@ -163,11 +169,20 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 					if !resolution.Matched && resolution.Reason == "" {
 						continue
 					}
-					finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Ruby: ruby, Action: action, TracerRequested: tracer, Status: "inconclusive", Reason: "Pin an exact Ruby version and ruby-tracer-version in an unconditional Datadog action before this test step; validate other installs separately."}
+					finding := RuntimeFinding{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Ruby: ruby, Action: action, TracerRequested: tracer, Status: "inconclusive", Reason: "Select a static Ruby version and exact ruby-tracer-version in a Datadog action before this test step; validate other installs separately."}
 					if conditionErr != nil || stepErr != nil || resolveErr != nil || resolution.Reason != "" {
-						finding.Reason = fmt.Sprintf("Ruby CI scope needs review: %v %v %v %s", conditionErr, stepErr, resolveErr, resolution.Reason)
+						reasons := []string{resolution.Reason}
+						for _, err := range []error{conditionErr, stepErr, resolveErr} {
+							if err != nil {
+								reasons = append(reasons, err.Error())
+							}
+						}
+						finding.Reason = "Ruby CI scope needs review: " + strings.TrimSpace(strings.Join(reasons, "; "))
 					} else if ruby != "" && tracer != "" && action != "" {
 						finding.Status, finding.Reason = "not checked", "Check the selected Ruby with the bundled tracer's RubyGems requirements and compare tracer releases."
+					} else if action == "" && skippedAction {
+						finding.Status, finding.Code = "excluded", "excluded_runtime"
+						finding.Reason = "The Datadog action is explicitly skipped for this matrix entry. Its tests still run without instrumentation; this runtime is not validated with the tracer."
 					}
 					if reason := rubyBootstrapProblem(workflow, job, step, framework); reason != "" {
 						finding.Status, finding.Reason = "inconclusive", reason
