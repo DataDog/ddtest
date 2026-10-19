@@ -344,7 +344,7 @@ func validProbeControl(run validationRun, status string) bool {
 		return false
 	}
 	for _, test := range run.Tests {
-		if (test.Name == probeName || run.framework == "pytest" && test.Name == pytestProbeName) && test.Status == status {
+		if (test.Name == probeName || run.framework == "pytest" && isPytestProbe(test.Name)) && test.Status == status {
 			return status != "failed" || strings.Contains(test.Failure, "ddtest intentional failure")
 		}
 	}

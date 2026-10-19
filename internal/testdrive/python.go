@@ -130,7 +130,7 @@ func pythonProbeCommand(command string, args []string) (string, []string, error)
 			}
 			option, _, hasValue := strings.Cut(arg, "=")
 			switch option {
-			case "--no-sync", "--locked", "--frozen", "--offline", "--active", "--no-python-downloads":
+			case "--no-sync", "--locked", "--frozen", "--offline", "--active", "--no-python-downloads", "--no-default-groups":
 				prefix = append(prefix, arg)
 			case "--project", "--directory", "--package", "--python", "-p", "--group", "--extra":
 				prefix = append(prefix, arg)

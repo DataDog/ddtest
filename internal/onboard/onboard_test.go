@@ -230,6 +230,9 @@ func TestRunDistinguishesToxTestEnvironments(t *testing.T) {
 		matched       bool
 	}{
 		{"inherited pytest", "uv run --locked tox run -e py3.13", true},
+		{"uv dependency group", "uv run --locked --no-default-groups --group dev tox run", true},
+		{"uv inline dependency group", "uv run --group=dev --locked tox run", true},
+		{"uv typing dependency group", "uv run --no-default-groups --group dev tox run -e typing", false},
 		{"typing", "uv run --locked tox run -e typing", false},
 		{"typing long flag", "tox run --environment=typing", false},
 		{"typing short flag", "tox -etyping", false},

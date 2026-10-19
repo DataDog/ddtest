@@ -322,7 +322,7 @@ def negated(text, start):
     return re.search(r"\b(?:not|never|no longer|isn't|wasn't|hasn't|haven't|cannot|can't|without|yet to)\b|n't\b", sentence) is not None
 
 
-def report_runtime(report, requested=None):
+def report_runtime(report, requested=None, runtime="node"):
     """Audit the final command runtime; bundled framework runtimes are separate."""
     report = report if isinstance(report, dict) else {}
     observed = {}
@@ -331,10 +331,10 @@ def report_runtime(report, requested=None):
         if isinstance(value, str) and value:
             observed.setdefault(value.removeprefix("v"), []).append(source)
 
-    record("summary.local_node", report.get("summary", {}).get("local_node"))
-    record("preflight.node", (report.get("preflight") or {}).get("node"))
+    record(f"summary.local_{runtime}", report.get("summary", {}).get(f"local_{runtime}"))
+    record(f"preflight.{runtime}", (report.get("preflight") or {}).get(runtime))
     for index, configuration in enumerate(report.get("configurations") or []):
-        record(f"configurations[{index}].preflight.node", (configuration.get("preflight") or {}).get("node"))
+        record(f"configurations[{index}].preflight.{runtime}", (configuration.get("preflight") or {}).get(runtime))
     framework_nodes = sorted({run["framework_node"] for run in report.get("runs") or [] if run.get("framework_node")})
     expected = requested.removeprefix("v") if requested else None
     status = "not observed"
@@ -344,7 +344,7 @@ def report_runtime(report, requested=None):
             "observed": [{"version": version, "sources": sources[:20], "source_count": len(sources)}
                          for version, sources in sorted(observed.items())],
             "framework_owned_nodes": framework_nodes,
-            "scope": "Final ddtest report only; framework-owned Node runtimes and historical execution have separate scopes."}
+            "scope": f"Final ddtest {runtime} report only; framework-owned Node runtimes and historical execution have separate scopes."}
 
 
 def agent_command(agent, model):
@@ -428,6 +428,12 @@ def run(args):
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise ValueError("--ddtest must be an executable file")
     node = getattr(args, "node", None)
+    python = getattr(args, "python", None)
+    if python is not None:
+        if not python.is_absolute():
+            raise ValueError("--python must be an absolute executable path")
+        if ".." in python.parts:
+            raise ValueError("--python must be an absolute path inside the image")
     if node is not None:
         if args.agent != "codex":
             raise ValueError("--node currently requires --agent codex")
@@ -476,6 +482,10 @@ def run(args):
         directory = trial / name if key == "XDG_STATE_HOME" else trial / "caches" / name
         directory.mkdir(parents=True, exist_ok=True)
         env[key] = str(directory)
+    for key, name in (("PIP_CACHE_DIR", "pip"), ("UV_CACHE_DIR", "uv")):
+        directory = trial / "caches" / name
+        directory.mkdir()
+        env[key] = str(directory)
     # pnpm's own configuration is not inherited by npm commands in test scripts.
     pnpm_config = Path(env["XDG_CONFIG_HOME"]) / "pnpm" / "rc"
     pnpm_config.parent.mkdir()
@@ -486,12 +496,17 @@ def run(args):
     pnpm_config.write_text(f"store-dir={inside(pnpm_store)}\ncache-dir={inside(pnpm_cache)}\n")
     pnpm_config.with_name("config.yaml").write_text(
         f"storeDir: {json.dumps(inside(pnpm_store))}\ncacheDir: {json.dumps(inside(pnpm_cache))}\n")
+    if python is not None:
+        env["VIRTUAL_ENV"] = inside(trial / "venv")
+        env["UV_PROJECT_ENVIRONMENT"] = env["VIRTUAL_ENV"]
+        env["PATH"] = inside(trial / "venv" / "bin") + os.pathsep + env.get("PATH", "")
     if node is not None:
         (bin_dir / "node").symlink_to(node)
+        env["PATH"] = str(node.parent) + os.pathsep + env.get("PATH", "")
+    if node is not None or python is not None:
         zdotdir = trial / "zsh"
         zdotdir.mkdir(exist_ok=True)
         env["ZDOTDIR"] = str(zdotdir)
-        env["PATH"] = str(node.parent) + os.pathsep + env.get("PATH", "")
     pnpm = getattr(args, "pnpm", None)
     tools = trial / "tools"
     if pnpm is not None:
@@ -500,13 +515,20 @@ def run(args):
         env["PATH"] = str(tools / "node_modules" / ".bin") + os.pathsep + env.get("PATH", "")
     env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
     agent_argv = agent_command(args.agent, args.model)
-    if node is not None:
+    isolated = getattr(args, "isolate_agent_config", False)
+    if isolated:
+        agent_argv[2:2] = (["--ignore-user-config", "--disable", "apps", "--disable", "plugins"]
+                           if args.agent == "codex" else ["--safe-mode"])
+    if (node is not None or python is not None) and args.agent == "codex":
         # .zshenv also runs in non-login shells. Isolate it and disable shell
         # snapshots so neither host startup files nor an old snapshot reset PATH.
         agent_argv[2:2] = ["-c", "allow_login_shell=false", "-c",
                            "features.shell_snapshot=false", "-c",
                            "shell_environment_policy.set.PATH=" + json.dumps(env["PATH"]), "-c",
                            "shell_environment_policy.set.ZDOTDIR=" + json.dumps(env["ZDOTDIR"])]
+        if python is not None:
+            for key in ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT"):
+                agent_argv[2:2] = ["-c", "shell_environment_policy.set." + key + "=" + json.dumps(env[key])]
     framework = getattr(args, "framework", None)
     scope = f" for {framework} only" if framework else ""
     prompt = f"Use ddtest in {bin_dir} and onboard this repository to test-optimization{scope}."
@@ -517,14 +539,15 @@ def run(args):
                 "framework_scope": framework,
                 "started_at": time.time(), "commands": [], "status": "preparing",
                 "evaluation": "pending", "ci_execution": "not exercised"}
+    manifest["isolated_agent_config"] = isolated
     manifest["private_caches"] = {key: env[key] for key in (
         "npm_config_cache", "YARN_CACHE_FOLDER", "XDG_CACHE_HOME", "XDG_DATA_HOME",
         "XDG_STATE_HOME", "XDG_CONFIG_HOME", "PNPM_HOME", "TMPDIR",
-        "CYPRESS_CACHE_FOLDER", "PLAYWRIGHT_BROWSERS_PATH", "PUPPETEER_CACHE_DIR")}
+        "CYPRESS_CACHE_FOLDER", "PLAYWRIGHT_BROWSERS_PATH", "PUPPETEER_CACHE_DIR", "PIP_CACHE_DIR", "UV_CACHE_DIR")}
     manifest["private_caches"]["pnpm_store"] = str(pnpm_store)
     manifest["private_caches"]["pnpm_cache"] = str(pnpm_cache)
-    if node is not None:
-        manifest["shell_isolation"] = {"zdotdir": env["ZDOTDIR"], "login_shell": False, "shell_snapshot": False}
+    if node is not None or python is not None:
+        manifest["shell_isolation"] = {"zdotdir": env["ZDOTDIR"], "login_shell": False if args.agent == "codex" else "CLI default", "shell_snapshot": False if args.agent == "codex" else "not applicable"}
     activity = (output / "activity.jsonl").open("w")
     agent_failed = False
     agent_completed = False
@@ -672,8 +695,15 @@ def run(args):
                 raise RuntimeError(f"Requested pnpm {pnpm}; pnpm {selected} runs in the checkout")
             manifest["package_manager"] = {"pnpm": selected, "requested": pnpm}
             manifest.pop("failure_stage", None)
+        if python is not None:
+            command([str(python), "-m", "venv", env["VIRTUAL_ENV"]])
         for setup in setup_commands:
             command(setup, cwd=checkout)
+        if python is not None:
+            runtime = json.loads(command(["python", "-c", "import json, platform, sys; print(json.dumps({'executable': sys.executable, 'version': platform.python_version(), 'prefix': sys.prefix}))"]))
+            manifest["python_runtime"] = {"requested": str(python), **runtime}
+            if Path(runtime["prefix"]) != Path(env["VIRTUAL_ENV"]):
+                raise RuntimeError("Selected Python environment did not run; inspect python_runtime")
         status = command(["git", "status", "--porcelain"], cwd=checkout)
         if status:
             raise RuntimeError("Dependency setup changed the checkout; choose setup that leaves it clean")
@@ -785,7 +815,8 @@ def run(args):
             code = finalization_failed(str(error))
         try:
             manifest["agent_reporting"] = reporting_verdict(final_response, report)
-            manifest["ddtest_runtime"] = report_runtime(report, manifest.get("node_runtime", {}).get("version"))
+            runtime = "python" if python is not None else "node"
+            manifest["ddtest_runtime"] = report_runtime(report, manifest.get(runtime + "_runtime", {}).get("version"), runtime)
         except (AttributeError, TypeError, ValueError) as error:
             # Reports are untrusted trial output. A malformed nested field must
             # not prevent durable evidence after the container has been removed.
@@ -805,7 +836,7 @@ def run(args):
             manifest["status"] = "failed"
             manifest["failure_kind"] = "evaluator_environment"
             manifest["failure_stage"] = "ddtest_runtime"
-            manifest["error"] = "Final ddtest runtime differs from --node; the setup probe does not validate the agent's command environment."
+            manifest["error"] = "Final ddtest runtime differs from the selected runtime; the setup probe does not validate the agent's command environment."
             manifest["retry_recommended"] = False
             code = 1
         memory = agent_memory_files(home)
@@ -847,7 +878,9 @@ def main():
     parser.add_argument("--agent", choices=("codex", "claude"))
     parser.add_argument("--node", type=Path,
                         help="Absolute Node executable for setup and Codex non-login shells; Codex only")
-    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio"),
+    parser.add_argument("--python", type=Path, help="Absolute Python executable inside the image; create and activate a private trial venv before setup")
+    parser.add_argument("--isolate-agent-config", action="store_true", help="Disable inherited agent customizations and connectors while retaining CLI authentication")
+    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio", "pytest"),
                         help="Optional scope for mixed-framework repositories; adds only the framework to the minimal prompt")
     parser.add_argument("--readiness-command", action="append", default=[], help="Repeatable native runtime/browser readiness checks before the uncoached agent")
     parser.add_argument("--setup-command", action="append", default=[], help="Repeatable, no implicit shell")

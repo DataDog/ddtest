@@ -63,6 +63,11 @@ func TestPytestBaselinePreservesCustomerOptions(t *testing.T) {
 // Uses an explicitly supplied existing environment; never installs dependencies.
 // DDTEST_PYTEST_PYTHON=/path/to/venv/bin/python go test ./internal/testdrive -run TestPytestRealValidation -v
 func TestPytestRealValidation(t *testing.T) {
+	t.Run("ordinary", func(t *testing.T) { testPytestRealValidation(t, false) })
+	t.Run("autouse parameters", func(t *testing.T) { testPytestRealValidation(t, true) })
+}
+
+func testPytestRealValidation(t *testing.T, parameters bool) {
 	python := os.Getenv("DDTEST_PYTEST_PYTHON")
 	if python == "" {
 		python, _ = exec.LookPath("python3")
@@ -81,6 +86,9 @@ func TestPytestRealValidation(t *testing.T) {
 	t.Setenv("DD_GIT_COMMIT_MESSAGE", "pytest validation fixture")
 	requireWriteFile(t, filepath.Join(root, "pytest.ini"), "[pytest]\n")
 	requireWriteFile(t, filepath.Join(root, "app.py"), "def add(a, b):\n    return a + b\n")
+	if parameters {
+		requireWriteFile(t, filepath.Join(root, "conftest.py"), "import pytest\n@pytest.fixture(autouse=True, params=['native', 'extension'])\ndef implementation(request):\n    return request.param\n")
+	}
 	requireWriteFile(t, filepath.Join(root, "test_app.py"), "import pytest\nfrom app import add\n@pytest.mark.parametrize('value', [1, 2])\ndef test_add(value):\n    assert add(value, 0) == value\nclass TestMath:\n    def test_method(self):\n        assert add(1, 2) == 3\n@pytest.mark.skip(reason='fixture')\ndef test_skip():\n    pass\ndef test_existing_failure():\n    assert add(1, 1) == 3\n")
 	git := &ext.DefaultCommandExecutor{}
 	_, err := git.CombinedOutput(t.Context(), "git", []string{"init", "-q"}, nil)
@@ -96,9 +104,17 @@ func TestPytestRealValidation(t *testing.T) {
 	require.NoError(t, drive.runFrameworkValidation(t.Context(), &output, session, "", &result), output.String())
 	require.Equal(t, "compatible", result.Compatibility.Status, "%+v", result.Compatibility)
 	for _, feature := range result.Features {
+		if parameters && feature.Name == "early-flake-detection" {
+			require.Contains(t, []string{"passed", "failed"}, feature.Status, feature.Reason)
+			continue
+		}
 		require.Equal(t, "passed", feature.Status, "%s: %s", feature.Name, feature.Reason)
 	}
-	require.Len(t, result.Features, 6)
+	count := 6
+	if parameters {
+		count = 12
+	}
+	require.Len(t, result.Features, count)
 	require.True(t, result.HTMLReportCurrent)
 	probes, err := filepath.Glob(filepath.Join(root, "ddtest-pytest-*"))
 	require.NoError(t, err)

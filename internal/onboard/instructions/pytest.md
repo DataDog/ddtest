@@ -18,6 +18,20 @@ PYTHONPATH and PYTEST_ADDOPTS=--ddtrace. Merge existing options with these value
 do not overwrite them on the test step. Guard credential-dependent setup for
 fork pull requests while preserving their uninstrumented tests.
 
+If CI uses tox, the action's environment must reach the pytest environment.
+Extend its existing `pass_env` (`passenv` in INI) with `DD_*`, `PYTHONPATH`, and
+`PYTEST_ADDOPTS`; preserve existing entries and apply this to every targeted
+pytest environment. For native tox TOML, merge into the appropriate test base:
+
+```toml
+[tool.tox.env_run_base]
+pass_env = ["DD_*", "PYTHONPATH", "PYTEST_ADDOPTS"]
+```
+
+For nox or another isolated wrapper, verify the same variables reach its actual
+pytest process. Merely adding the action before a wrapper does not establish
+instrumentation. Keep wrapper commands and the test matrix intact.
+
 Prepare and activate the same environment used by CI. uv projects use
 `uv run --no-sync python -m pytest` by default; testdrive does not synchronize
 project dependencies. Explicit commands can select Python, pytest, uv, or poetry.
