@@ -236,10 +236,11 @@ def ended(pid):
 
 
 def running(pid):
-    """Reports whether pid exists and is not a zombie waiting for its reaper."""
+    """Reports whether pid exists and has not exited: a zombie (Z) waits for
+    its reaper, and a dead process (X) is being reaped."""
     try:
         with open(f"/proc/{pid}/stat") as f:
-            return f.read().rsplit(")", 1)[1].split()[0] != "Z"
+            return f.read().rsplit(")", 1)[1].split()[0] not in ("Z", "X")
     except (FileNotFoundError, ProcessLookupError):
         return False
 

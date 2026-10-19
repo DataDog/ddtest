@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -260,18 +261,20 @@ func (w *gitWorker) handOff(tests utils.CLITests, launcher bool, goVersion strin
 }
 
 // recordMissingResults writes the results that a worker told to proceed did
-// not write before it exited, so test processes waiting for them continue.
+// not write before it exited, so test processes waiting for them continue. A
+// result that exists is kept, even when it cannot be read at once, as when
+// another process holds it for a moment on Windows.
 func (w *gitWorker) recordMissingResults() {
 	if !w.proceeded.Load() {
 		return
 	}
 	var upload utils.CLIGitUpload
-	if utils.ReadCLIGitStateFile(w.state, utils.CLIGitUploadFile, &upload) != nil {
+	if errors.Is(utils.ReadCLIGitStateFile(w.state, utils.CLIGitUploadFile, &upload), os.ErrNotExist) {
 		w.debug.printf("git worker exited without an upload result")
 		_ = utils.WriteCLIGitStateFile(w.state, utils.CLIGitUploadFile, utils.CLIGitUpload{Error: "ddto git worker exited"})
 	}
 	var state impactedtests.CLIState
-	if utils.ReadCLIGitStateFile(w.state, utils.CLIGitImpactedFile, &state) != nil {
+	if errors.Is(utils.ReadCLIGitStateFile(w.state, utils.CLIGitImpactedFile, &state), os.ErrNotExist) {
 		_ = utils.WriteCLIGitStateFile(w.state, utils.CLIGitImpactedFile, impactedtests.CLIState{Reason: "ddto git worker exited"})
 	}
 }

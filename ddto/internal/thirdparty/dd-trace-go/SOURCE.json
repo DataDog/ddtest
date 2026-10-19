@@ -1051,7 +1051,7 @@
     },
     {
       "path": "civisibility/utils/cli_git_state.go",
-      "sha256": "0cee8f25ae9b095d8bac7c4f4cb382ba06ff4c22f00fc297d6db6bb208b1b425",
+      "sha256": "03a8847db55537dc58fd0443d085943313cda156b66da580a54cdad58e9813fb",
       "role": "local"
     },
     {
@@ -1067,6 +1067,21 @@
     {
       "path": "civisibility/utils/cli_state_files.go",
       "sha256": "339c0dfb19b31385820eb92445c3165a01741b14a72786386eb01cf879e2f606",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/utils/cli_state_wait_other.go",
+      "sha256": "84ad57e35b7463f1a0fc70b90c9ac649cf120ba95351a0a69ca0d475a2a56003",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/utils/cli_state_wait_windows.go",
+      "sha256": "4bf0f34c9b8cf81cdfaf23190895194a354d735ca764897b82fdbdfa320dd3ea",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/utils/cli_state_wait_windows_test.go",
+      "sha256": "5af4dac84ff25bf7d811ff5b29f6c9aea76c2a61d1b730db6e9a7b2adb52895f",
       "role": "local"
     },
     {

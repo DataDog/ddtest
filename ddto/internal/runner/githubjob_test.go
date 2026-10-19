@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -97,5 +98,21 @@ func TestGitWorkerRecordsMissingResults(t *testing.T) {
 	w.recordMissingResults()
 	if err := utils.ReadCLIGitStateFile(state, utils.CLIGitUploadFile, &upload); err != nil || upload.Bytes != 7 {
 		t.Fatalf("worker's result replaced: %+v, %v", upload, err)
+	}
+	// A result that exists but cannot be read at once, as when Windows lets
+	// another process hold it, is kept too.
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		return
+	}
+	path := filepath.Join(state, utils.CLIGitUploadFile)
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	w.recordMissingResults()
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := utils.ReadCLIGitStateFile(state, utils.CLIGitUploadFile, &upload); err != nil || upload.Bytes != 7 {
+		t.Fatalf("an unreadable result was replaced: %+v, %v", upload, err)
 	}
 }
