@@ -35,7 +35,7 @@ func InputFingerprint(ctx context.Context, root string) (string, error) {
 
 func inputFingerprint(ctx context.Context, root string, depth int) (string, error) {
 	if depth > 16 {
-		return "", fmt.Errorf("submodule nesting exceeds 16 levels")
+		return "", fmt.Errorf("repository nesting exceeds 16 levels")
 	}
 	var files []string
 	gitlinks := map[string]string{}
@@ -107,6 +107,23 @@ func inputFingerprint(ctx context.Context, root string, depth int) (string, erro
 		}
 		if err != nil {
 			return "", err
+		}
+		if info.IsDir() {
+			// Git represents an untracked nested checkout as one directory entry.
+			// Recurse into its own index/worktree rather than dropping its inputs.
+			state, err := inputFingerprint(ctx, path, depth+1)
+			if err != nil {
+				return "", fmt.Errorf("nested repository %s: %w", name, err)
+			}
+			head, err := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--verify", "HEAD").Output()
+			if err != nil {
+				if ctx.Err() != nil {
+					return "", ctx.Err()
+				}
+				head = nil // An unborn nested repository still has source inputs.
+			}
+			_, _ = fmt.Fprintf(hash, "%s\x00repository\x00%s\x00%s\x00", filepath.ToSlash(name), strings.TrimSpace(string(head)), state)
+			continue
 		}
 		_, _ = fmt.Fprintf(hash, "%s\x00%d\x00", filepath.ToSlash(name), info.Mode())
 		if info.Mode()&os.ModeSymlink != 0 {

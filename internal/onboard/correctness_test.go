@@ -15,6 +15,8 @@ func TestCucumberCoverageInsertionUsesExecutablePosition(t *testing.T) {
 		"./node_modules/.bin/cucumber-js features",
 		`DEBUG=cucumber-js:* cucumber-js features`,
 		"npx --no-install -- cucumber-js features",
+		"npx cucumber-js features",
+		"npx -- cucumber-js features",
 		"cross-env DEBUG=cucumber-js:* cucumber-js features",
 	} {
 		t.Run(command, func(t *testing.T) {
@@ -34,6 +36,9 @@ func TestCucumberCoverageInsertionUsesExecutablePosition(t *testing.T) {
 				require.Contains(t, script, "DEBUG=cucumber-js:*")
 			}
 			require.Contains(t, script, "nyc -- ")
+			if strings.Contains(command, "npx") {
+				require.Contains(t, script, "npx --no-install")
+			}
 			remaining := 256
 			resolution := resolveJestSequence(root, root, cucumberDiscoveryScript(script), nil, &remaining, "cucumber")
 			require.Empty(t, resolution.Reason)
@@ -55,7 +60,8 @@ func TestBuildSequencingPreservesConditionalExecution(t *testing.T) {
 				require.Empty(t, result.Tests[0].UnvalidatedSetup)
 				require.Len(t, result.Tests[0].Prerequisites, 1)
 			} else {
-				require.Contains(t, strings.Join(result.Tests[0].UnvalidatedSetup, " "), "exit-policy review")
+				require.NotEmpty(t, result.Tests[0].UnvalidatedSetup)
+				require.Empty(t, result.Tests[0].Prerequisites)
 			}
 		})
 	}
@@ -79,4 +85,14 @@ func TestCucumberSetupDoesNotScopeEnvironmentToAnEarlierCommand(t *testing.T) {
 	after, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, before, after)
+}
+
+func TestShellDiscoveryUsesLiteralASTValues(t *testing.T) {
+	commands, err := staticCommands(`DEBUG='cucumber-js:*' node "a path.js" 'x;y' a\ b && echo '$(literal)'`)
+	require.NoError(t, err)
+	require.Equal(t, [][]string{{"DEBUG=cucumber-js:*", "node", "a path.js", "x;y", "a b"}, {"echo", "$(literal)"}}, commands)
+	for _, command := range []string{`echo "$(node run.js)"`, `echo "$HOME"`, `node a.js > out`, `node a.js &`} {
+		_, err := staticCommands(command)
+		require.Error(t, err, command)
+	}
 }

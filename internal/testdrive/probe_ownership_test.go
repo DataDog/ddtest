@@ -3,6 +3,7 @@ package testdrive
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
@@ -87,17 +88,89 @@ func TestProbeRecoveryRequiresExactOwnershipAndUnchangedContents(t *testing.T) {
 	}
 }
 
-func TestOwnedProbeUpdatesRemainRecoverable(t *testing.T) {
+func TestProbeRecoverySurvivesTemporaryDirectoryChange(t *testing.T) {
 	root := t.TempDir()
-	source := filepath.Join(root, "real.cy.js")
+	source := filepath.Join(root, "real.test.js")
 	requireWriteFile(t, source, "customer test")
-	probe, err := createProbe(root, validationRun{Tests: []jestTest{{File: source, Status: "passed"}}}, "")
+	probe, err := createProbe(root, validationRun{Tests: []jestTest{{File: source, Status: "passed"}}}, "owned test")
 	require.NoError(t, err)
-	require.NoError(t, writeOwnedProbe(root, probe, []byte("updated Cypress scenario")))
-	require.NoError(t, removeProbe(root, probe))
+	t.Setenv("TMPDIR", t.TempDir())
+	require.NoError(t, recoverProbes(root))
+	require.NoFileExists(t, probe)
+	require.NoDirExists(t, filepath.Join(root, ".testoptimization", ".probes"))
+}
+
+func TestProbeCreationNeverReplacesCustomerFiles(t *testing.T) {
+	root := t.TempDir()
+	probe := filepath.Join(root, "customer.test.js")
+	requireWriteFile(t, probe, "customer contents")
+	require.Error(t, createOwnedProbe(root, probe, []byte("probe contents")))
+	require.NoError(t, recoverProbes(root))
+	data, err := os.ReadFile(probe)
+	require.NoError(t, err)
+	require.Equal(t, "customer contents", string(data))
+}
+
+func TestUnpublishedProbeContentsAreRecovered(t *testing.T) {
+	root := t.TempDir()
+	probe := filepath.Join(root, "probe.test.js")
+	require.NoError(t, recordProbe(root, probe, []byte("complete contents")))
 	directory, err := probeOwnershipDirectory(root)
 	require.NoError(t, err)
-	entries, err := os.ReadDir(directory)
+	requireWriteFile(t, filepath.Join(directory, "contents-interrupted"), "partial")
+	require.NoError(t, recoverProbes(root))
+	require.NoFileExists(t, probe)
+	require.NoDirExists(t, directory)
+}
+
+func TestProbeOwnershipRejectsCheckoutRecordsAndSymlinks(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, ".testoptimization", ".probes")
+	require.NoError(t, os.MkdirAll(directory, 0755))
+	_, err := probeOwnershipDirectory(root)
+	require.Error(t, err)
+	require.NoError(t, os.RemoveAll(filepath.Join(root, ".testoptimization")))
+	require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(root, ".testoptimization")))
+	_, err = probeOwnershipDirectory(root)
+	require.Error(t, err)
+}
+
+func TestRecoverProbeFromPreviousTemporaryStorage(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TMPDIR", t.TempDir())
+	probe := filepath.Join(root, "old-probe.test.js")
+	require.NoError(t, createOwnedProbe(root, probe, []byte("owned")))
+	current, err := probeOwnershipPath(root, probe)
 	require.NoError(t, err)
-	require.Empty(t, entries)
+	legacy := filepath.Join(os.TempDir(), fmt.Sprintf("ddtest-probes-%d", os.Getuid()), fmt.Sprintf("%x", sha256.Sum256([]byte(canonicalWorkflowRoot(root)))))
+	require.NoError(t, os.MkdirAll(legacy, 0700))
+	require.NoError(t, os.Rename(current, filepath.Join(legacy, filepath.Base(current))))
+	require.NoError(t, recoverProbes(root))
+	require.NoFileExists(t, probe)
+	require.NoDirExists(t, legacy)
+}
+
+func TestAbandonedCypressProbeIsSkipped(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node is required")
+	}
+	script := `let skipped=0;global.Cypress={env:()=>undefined};global.describe=(name,body)=>body();global.it=()=>{throw new Error('unexpected active probe')};global.it.skip=()=>skipped++;` + cypressProbeSource + `;require('node:assert').equal(skipped,1);`
+	output, err := exec.CommandContext(t.Context(), node, "-e", script).CombinedOutput()
+	require.NoError(t, err, string(output))
+}
+
+func TestUnpublishedProbeCannotClaimExistingSameContents(t *testing.T) {
+	root := t.TempDir()
+	probe := filepath.Join(root, "customer.test.js")
+	requireWriteFile(t, probe, "same contents")
+	peer, err := probeContentsFile(root, []byte("same contents"))
+	require.NoError(t, err)
+	record := probeOwnership{Root: canonicalWorkflowRoot(root), Path: probe, Hash: fmt.Sprintf("%x", sha256.Sum256([]byte("same contents"))), Peer: peer}
+	require.NoError(t, writeProbeRecord(record))
+	// Emulate death after recording ownership but before the exclusive link.
+	require.Error(t, recoverProbes(root))
+	data, err := os.ReadFile(probe)
+	require.NoError(t, err)
+	require.Equal(t, "same contents", string(data))
 }

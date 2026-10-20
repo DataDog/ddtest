@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -68,21 +67,10 @@ func createProbe(root string, baseline validationRun, sourceText string) (string
 			letters[i] = 'a' + value%26
 		}
 		name := filepath.Join(filepath.Dir(source), "ddtest"+string(letters)+filepath.Base(source))
-		if err := recordProbe(root, name, []byte(sourceText)); err != nil {
+		if err := createOwnedProbe(root, name, []byte(sourceText)); err != nil {
 			return "", err
 		}
-		probe, err := os.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if err != nil {
-			record, _ := probeOwnershipPath(root, name)
-			_ = os.Remove(record) // O_EXCL failed: the existing source file is not ours.
-			return "", err
-		}
-		_, writeErr := probe.WriteString(sourceText)
-		closeErr := probe.Close()
-		if err := errors.Join(writeErr, closeErr); err != nil {
-			return "", errors.Join(err, os.Remove(probe.Name()), removeProbe(root, probe.Name()))
-		}
-		return probe.Name(), nil
+		return name, nil
 	}
 	return "", errors.New("no writable test location inside this repository was found for the probe")
 }

@@ -333,6 +333,9 @@ func validationFacts(result validationResult) []string {
 					facts = append(facts, "Real-suite coverage: "+briefValidationText(run.Coverage.Reason))
 				}
 			}
+			if strings.HasPrefix(run.Name, "baseline") && run.ExecutionContext != "" {
+				facts = append(facts, run.ExecutionContext)
+			}
 			if run.ExecutionPath != "" {
 				facts = append(facts, "Validated execution path: "+run.ExecutionPath+".")
 			}

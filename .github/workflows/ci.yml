@@ -393,6 +393,30 @@ jobs:
             DDTEST_CUCUMBER_VERSION="${{ matrix.cucumber }}" \
             go test -v ./internal/compatibility -run '^TestCucumberAdapterIntegration$'
 
+  testdrive-workflow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [jest, vitest, mocha, playwright, cucumber, cypress, webdriverio]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Install Playwright browser system dependencies
+        if: matrix.framework == 'playwright'
+        run: npx --yes --package=@playwright/test@1.55.1 playwright install-deps chromium
+      - name: Run public onboarding and testdrive workflow
+        env:
+          DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST: '1'
+          DDTEST_CHROME_BINARY: /usr/bin/google-chrome
+        run: xvfb-run -a go test -v ./internal/testdrive -run '^TestPublicFrameworkTestdrives/${{ matrix.framework }}$' -count=1 -timeout=20m
+
   lint:
     runs-on: ubuntu-latest
     steps:

@@ -51,7 +51,7 @@ func TestPlaywrightCleanupStopsOnlyLiveOwnedDescendants(t *testing.T) {
 			defer func() { _ = listener.Close() }()
 			dir := t.TempDir()
 			env := map[string]string{}
-			owner, err := startPlaywrightOwner(dir, env)
+			owner, err := startProcessOwner(dir, env)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, owner.Close()) })
 			portFile := filepath.Join(dir, "port")
@@ -68,7 +68,7 @@ func TestPlaywrightCleanupStopsOnlyLiveOwnedDescendants(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, node, "-e", parent)
-			cmd.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(dir, "children.cjs"), "DDTEST_PLAYWRIGHT_OWNER="+env["DDTEST_PLAYWRIGHT_OWNER"])
+			cmd.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(dir, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"])
 			output, err := cmd.CombinedOutput()
 			require.NoError(t, err, string(output))
 			var port []byte
@@ -103,7 +103,7 @@ func TestDetachedGuardPreservesExtraPipesAndExitStatus(t *testing.T) {
 	}
 	directory := t.TempDir()
 	env := map[string]string{}
-	owner, err := startPlaywrightOwner(directory, env)
+	owner, err := startProcessOwner(directory, env)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, owner.Close()) })
 	script := `const assert=require('node:assert');
@@ -113,7 +113,48 @@ child.stdio[3].end('hello\n');child.on('close',code=>{assert.equal(code,7);asser
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, node, "-e", script)
-	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PLAYWRIGHT_OWNER="+env["DDTEST_PLAYWRIGHT_OWNER"])
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"])
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
+}
+
+func TestInitialOwnerConnectionFailureDoesNotKillCustomerProcess(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node is required")
+	}
+	directory := t.TempDir()
+	env := map[string]string{}
+	owner, err := startProcessOwner(directory, env)
+	require.NoError(t, err)
+	command := exec.CommandContext(t.Context(), node, "-e", `setTimeout(() => console.log('customer code survived'), 50)`)
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+filepath.Join(directory, "missing"), "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.Contains(t, string(output), "customer code survived")
+	var failure *processSupervisionError
+	require.ErrorAs(t, owner.Close(), &failure)
+	require.Equal(t, "ownership_connection_failed", failure.Code)
+}
+
+func TestUnsupportedDetachedSpawnInvalidatesValidation(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node is required")
+	}
+	directory := t.TempDir()
+	env := map[string]string{}
+	owner, err := startProcessOwner(directory, env)
+	require.NoError(t, err)
+	marker := filepath.Join(directory, "unowned-child")
+	script := fmt.Sprintf(`require('node:child_process').spawn('/bin/sh',['-c',%q],{detached:true,argv0:'custom',stdio:'ignore'})`, "touch "+marker)
+	command := exec.CommandContext(t.Context(), node, "-e", script)
+	command.Env = append(os.Environ(), "NODE_OPTIONS=--require "+filepath.Join(directory, "children.cjs"), "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "DDTEST_PROCESS_ERRORS="+env["DDTEST_PROCESS_ERRORS"])
+	output, err := command.CombinedOutput()
+	require.Error(t, err, string(output))
+	require.Equal(t, 86, command.ProcessState.ExitCode())
+	require.NoFileExists(t, marker, "an unowned detached child must not be launched")
+	var failure *processSupervisionError
+	require.ErrorAs(t, owner.Close(), &failure)
+	require.Equal(t, "unsupported_detached_spawn", failure.Code)
 }

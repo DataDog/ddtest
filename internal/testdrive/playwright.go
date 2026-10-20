@@ -23,15 +23,6 @@ import (
 //go:embed scripts/playwright_reporter.cjs
 var playwrightReporter string
 
-//go:embed scripts/playwright_children.cjs
-var playwrightChildren string
-
-//go:embed scripts/playwright_owner.cjs
-var playwrightOwnerScript string
-
-//go:embed scripts/playwright_guard.cjs
-var playwrightGuardScript string
-
 const playwrightSkippingReason = "dd-trace-js does not support Test Impact Analysis skipping or per-test coverage for Playwright. This feature is not exercised and is not counted as a passed check."
 
 func featureSatisfied(framework string, feature featureResult) bool {
@@ -229,10 +220,9 @@ func checkPlaywrightSupport(check jestPreflight, selection platform.JSSelection)
 	return verdict{Status: "compatible", Reason: "Runtime requirements match; paired execution and supported feature controls are still required."}
 }
 
-type playwrightCleanupError struct{ error }
-
 func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session *Session, preload, name string, instrumented bool, scenario intake.Scenario, probePath, probeMode string) (run validationRun, runErr error) {
 	run.Name, run.Instrumented, run.ProbeMode, run.root, run.framework = name, instrumented, probeMode, t.repositoryRoot, "playwright"
+	run.ExecutionContext = "Both comparison modes use ddtest native-result observers and process supervision. Baseline disables dd-trace; it is not an unmodified shell invocation."
 	run.ExecutionPath = "playwright-cli"
 	directory := filepath.Join(session.Directory(), name)
 	if err := os.MkdirAll(directory, 0700); err != nil {
@@ -262,15 +252,13 @@ func (t *Testdrive) runPlaywright(ctx context.Context, output io.Writer, session
 		env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
 	}
 	env["NODE_OPTIONS"] += " --require " + strconv.Quote(children)
-	owner, err := startPlaywrightOwner(directory, env)
+	owner, err := startProcessOwner(directory, env)
 	if err != nil {
 		return run, err
 	}
 	env["DDTEST_PLAYWRIGHT_REPORT"] = filepath.Join(directory, "results.json")
 	defer func() {
-		if err := owner.Close(); err != nil {
-			runErr = errors.Join(runErr, &playwrightCleanupError{err})
-		}
+		runErr = errors.Join(runErr, owner.Close())
 	}()
 	args := playwrightArgs(t.command, t.args, "--reporter=line,"+reporter, "--output="+filepath.Join(directory, "artifacts"))
 	if probePath != "" {

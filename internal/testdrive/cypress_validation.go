@@ -162,6 +162,7 @@ func checkCypressSupport(check jestPreflight, selection platform.JSSelection) ve
 
 func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *Session, preload, name string, instrumented bool, scenario intake.Scenario, probePath, probeMode string) (run validationRun, runErr error) {
 	run.Name, run.Instrumented, run.ProbeMode = name, instrumented, probeMode
+	run.ExecutionContext = "Both comparison modes use ddtest native-result observers and process supervision. Baseline disables dd-trace; it is not an unmodified shell invocation."
 	run.framework, run.root, run.ExecutionPath = "cypress", t.repositoryRoot, "cypress-cli"
 	if t.cypress != nil && t.cypress.Action != "" {
 		run.ExecutionPath = "cypress-api"
@@ -174,12 +175,7 @@ func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *S
 	if err := os.WriteFile(observer, []byte(cypressObserver), 0600); err != nil {
 		return run, err
 	}
-	if probePath != "" {
-		source := "let attempts = 0;\ndescribe('ddtest', () => { it('validation probe', () => {\nattempts++;\nreturn cy.task('ddtest:validation:attempt').then(() => {\nif (" + strconv.Quote(probeMode) + " === 'fail' || (" + strconv.Quote(probeMode) + " === 'fail-once' && attempts === 1)) throw new Error('ddtest intentional failure');\n});\n}); });\n"
-		if err := writeOwnedProbe(t.repositoryRoot, probePath, []byte(source)); err != nil {
-			return run, err
-		}
-	}
+
 	server, err := t.startIntake(directory, scenario)
 	if err != nil {
 		return run, err
@@ -200,17 +196,15 @@ func (t *Testdrive) runCypress(ctx context.Context, output io.Writer, session *S
 		env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
 	}
 	env["NODE_OPTIONS"] += " --require " + strconv.Quote(observer) + " --require " + strconv.Quote(children)
-	env["DDTEST_CYPRESS_DIRECTORY"], env["DDTEST_CYPRESS_PROBE"] = directory, probePath
-	owner, err := startPlaywrightOwner(directory, env)
+	env["DDTEST_CYPRESS_DIRECTORY"], env["DDTEST_CYPRESS_PROBE"], env["DDTEST_PROBE_MODE"] = directory, probePath, probeMode
+	owner, err := startProcessOwner(directory, env)
 	if err != nil {
 		return run, err
 	}
 	env["CYPRESS_RECORD_KEY"], env["CYPRESS_CLOUD_TOKEN"], env["CYPRESS_RECORD"], env["CYPRESS_PARALLEL"] = "", "", "false", "false"
 	env["PATH"] = filepath.Join(t.repositoryRoot, "node_modules", ".bin") + string(os.PathListSeparator) + os.Getenv("PATH")
 	defer func() {
-		if err := owner.Close(); err != nil {
-			runErr = errors.Join(runErr, &playwrightCleanupError{err})
-		}
+		runErr = errors.Join(runErr, owner.Close())
 	}()
 	run.Command = shellquote.Join(append([]string{t.command}, t.args...)...)
 	run.Diagnostic = "Original CLI command with an after:run observer. Cloud recording/parallel grouping are disabled locally; application startup, browser, reporter and user hooks are retained."
@@ -324,7 +318,7 @@ func readCypressResults(path string, run *validationRun) {
 }
 
 func (t *Testdrive) runCypressFeatures(ctx context.Context, output io.Writer, session *Session, preload string, baseline validationRun, result *validationResult) (runErr error) {
-	probe, err := createProbe(t.repositoryRoot, baseline, "")
+	probe, err := createProbe(t.repositoryRoot, baseline, cypressProbeSource)
 	if err != nil {
 		unavailableFeatures(result, err.Error())
 		return nil
@@ -342,3 +336,15 @@ func isSkippedCypressProbe(event intake.Event, identity intake.Test) bool {
 		tags["test.source.file"] == identity.SourceFile && tags["test.status"] == "skip" &&
 		tags["test.skipped_by_itr"] == "true"
 }
+
+// Mode comes from the observed config, so scenarios never rewrite test source.
+// An abandoned probe is skipped under the customer's ordinary Cypress config.
+const cypressProbeSource = `let attempts = 0;
+const mode = Cypress.env('__ddtest_probe_mode');
+describe('ddtest', () => { (mode ? it : it.skip)('validation probe', () => {
+ attempts++;
+ return cy.task('ddtest:validation:attempt').then(() => {
+  if (mode === 'fail' || (mode === 'fail-once' && attempts === 1)) throw new Error('ddtest intentional failure');
+ });
+}); });
+`

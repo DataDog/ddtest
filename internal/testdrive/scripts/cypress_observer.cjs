@@ -42,6 +42,7 @@ function createObservedConfig (project, requested, directory, probe, component) 
       const resolved = returned || effective
       let probeExecutions = 0
       if (options.probe) {
+        resolved.env = { ...resolved.env, __ddtest_probe_mode: options.probeMode }
         on('task', { 'ddtest:validation:attempt': () => { probeExecutions++; return null } })
       }
       on('after:run', async results => {
@@ -58,7 +59,7 @@ function createObservedConfig (project, requested, directory, probe, component) 
     }
     return config
   }
-  const options = JSON.stringify({ directory, probe: !!probe, component })
+  const options = JSON.stringify({ directory, probe: !!probe, component, probeMode: process.env.DDTEST_PROBE_MODE })
   const body = 'const config = (' + attachObserver.toString() + ')(original, ' + options + ');\n'
   fs.writeFileSync(wrapper, imported + body + (esm || extension === '.ts' ? '\nexport default config;\n' : '\nmodule.exports = config;\n'))
   return wrapper

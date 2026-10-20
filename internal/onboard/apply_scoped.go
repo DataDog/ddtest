@@ -124,11 +124,11 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 				continue
 			} // Explicit browser runner remains outside instrumentation.
 		} else if !resolution.Tests[0].usesNYC {
-			index, insertion, err := cucumberCommandOffset(script)
+			start, end, insertion, err := cucumberCoverageEdit(script)
 			if err != nil {
 				return nil, "", &SetupGap{"package.json / scripts / " + name, err.Error()}
 			}
-			script = script[:index] + insertion + script[index:]
+			script = script[:start] + insertion + script[end:]
 		}
 		extra := ""
 		if framework == "cucumber" {
@@ -160,12 +160,12 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 
 // Locate the executable word, not an occurrence in an assignment or argument.
 // Offsets refer to the original script, including its quoting and local path.
-func cucumberCommandOffset(script string) (int, string, error) {
+func cucumberCoverageEdit(script string) (int, int, string, error) {
 	file, err := syntax.NewParser().Parse(strings.NewReader(script), "")
 	if err != nil {
-		return 0, "", err
+		return 0, 0, "", err
 	}
-	offset := -1
+	offset, end := -1, -1
 	insertion := "npx --no-install nyc -- "
 	valid := true
 	syntax.Walk(file, func(node syntax.Node) bool {
@@ -194,16 +194,21 @@ func cucumberCommandOffset(script string) (int, string, error) {
 				valid = false
 			}
 			offset = int(call.Args[i].Pos().Offset())
+			end = offset
 			if i > launcher {
 				insertion = "nyc -- "
+				if call.Args[launcher].Lit() == "npx" {
+					offset = int(call.Args[launcher].Pos().Offset())
+					insertion = "npx --no-install nyc -- "
+				}
 			}
 		}
 		return true
 	})
 	if !valid || offset < 0 {
-		return 0, "", fmt.Errorf("cannot locate one literal Cucumber executable; preserve this script and configure coverage explicitly")
+		return 0, 0, "", fmt.Errorf("cannot locate one literal Cucumber executable; preserve this script and configure coverage explicitly")
 	}
-	return offset, insertion, nil
+	return offset, end, insertion, nil
 }
 
 var localWDIORunner = regexp.MustCompile(`(?m)^\s*runner:\s*['"]local['"]\s*,`)

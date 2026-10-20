@@ -390,6 +390,15 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		result.JSONReport = validationPath(t.repositoryRoot)
 		return fail("blocked_environment", runtimeMetadata.Code, runErr.Error(), "Resolve only the named registry/storage capability, then rerun next_command. The failed attempt remains incomplete in json_report.")
 	}
+	var supervision *processSupervisionError
+	if errors.As(runErr, &supervision) {
+		result.JSONReport = validationPath(t.repositoryRoot)
+		if supervision.Code == "unsupported_detached_spawn" {
+			return fail("unsupported", supervision.Code, supervision.Error(), "Preserve the original test command/configuration. This detached spawn cannot be supervised safely; it is not a pre-existing test failure or tracer comparison.")
+		}
+		result.Capabilities = []string{"local owned-process socket connections"}
+		return fail("blocked_environment", supervision.Code, supervision.Error(), "Restore the named local process capability, then rerun next_command. The test comparison is unverified.")
+	}
 	if runErr != nil && validation.Summary.Status == "COMPLETE LOCALLY" {
 		return fail("validation_failed", "execution_result_conflict", runErr.Error(), "Resolve the execution/report discrepancy before claiming completion.")
 	}

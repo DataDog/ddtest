@@ -18,216 +18,153 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPublicFrameworkTestdrives exercises the shipped CLI, real tracers, and
-// real test runners. Browser downloads are explicit test setup, never testdrive
-// side effects. Run with DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST=1.
+// These small real-runner tests exercise the public coordinator, not adapter
+// mocks. CI runs each JavaScript framework on one Node version with local intake.
 func TestPublicFrameworkTestdrives(t *testing.T) {
 	if os.Getenv("DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST") == "" {
 		t.Skip("set DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST=1")
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
 	binary := filepath.Join(t.TempDir(), "ddtest")
 	integrationCommand(t, ctx, "../..", nil, "go", "build", "-o", binary, ".")
 	fixtures := []struct {
-		name, manifest, command string
-		files                   map[string]string
+		name, manifest string
+		files          map[string]string
 	}{
-		{"jest", `{"scripts":{"test":"jest"},"devDependencies":{"jest":"30.5.1"}}`, "npm test -- --runInBand -- one.test.js", map[string]string{"one.test.js": `test('adds', () => expect(1+1).toBe(2));`}},
-		{"mocha", `{"scripts":{"test":"mocha"},"devDependencies":{"mocha":"11.7.5"}}`, "npm test", map[string]string{"test/one.js": `const assert = require('node:assert'); it('adds', () => assert.equal(1+1,2));`}},
-		{"vitest", `{"type":"module","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"4.1.6"}}`, "npm test", map[string]string{"one.test.js": `import {test,expect} from 'vitest'; test('adds', () => expect(1+1).toBe(2));`}},
-		{"playwright", `{"name":"ddtest-playwright-fixture","version":"1.0.0","scripts":{"test":"playwright test"},"devDependencies":{"@playwright/test":"1.55.1"}}`, "npm test", map[string]string{"one.spec.js": `const {test,expect} = require('@playwright/test'); test('renders', async ({page}) => { await page.setContent('<h1>hello</h1>'); await expect(page.locator('h1')).toHaveText('hello'); });`}},
-		{"cucumber", `{"scripts":{"test":"cucumber-js"},"devDependencies":{"@cucumber/cucumber":"12.2.0"}}`, "npm test", map[string]string{"features/one.feature": "Feature: Arithmetic\n  Scenario: Add\n    Given addition works\n", "features/step_definitions/one.js": `const {Given} = require('@cucumber/cucumber'); Given('addition works', () => require('node:assert').equal(1+1,2));`}},
-		{"cypress", `{"scripts":{"test":"cypress run"},"devDependencies":{"cypress":"15.1.0"}}`, "npm test", map[string]string{"cypress.config.js": `module.exports={e2e:{supportFile:false,setupNodeEvents(on,config){on('task',{answer:()=>42});on('after:run',()=>{require('node:fs').writeFileSync('original-hook.txt','ran');});return config;}}};`, "cypress/e2e/one.cy.js": `it('preserves hooks', () => { cy.task('answer').should('equal',42); });`}},
-		{"pytest", "", "python -m pytest", map[string]string{"requirements.txt": "pytest==8.4.2\n", "pytest.ini": "[pytest]\n", "test_one.py": "def test_adds():\n    assert 1 + 1 == 2\n"}},
-		{"rspec", "", "bundle exec rspec", map[string]string{"Gemfile": "source 'https://rubygems.org'\ngem 'rspec', '3.13.1'\n", "spec/one_spec.rb": "RSpec.describe 'addition' do\n  it('adds') { expect(1 + 1).to eq(2) }\nend\n"}},
-		{"minitest", "", "bundle exec rake test", map[string]string{"Gemfile": "source 'https://rubygems.org'\ngem 'rake', '13.3.0'\ngem 'minitest', '5.25.5'\n", "Rakefile": "require 'rake/testtask'\nRake::TestTask.new(:test) { |t| t.pattern = 'test/**/*_test.rb' }\n", "test/one_test.rb": "require 'minitest/autorun'\nclass AdditionTest < Minitest::Test\n  def test_adds\n    assert_equal 2, 1 + 1\n  end\nend\n"}},
+		{"jest", `{"scripts":{"test":"jest --runInBand"},"devDependencies":{"jest":"30.5.1"}}`, map[string]string{"one.test.js": `test('adds',()=>expect(require('./src/add.cjs')(1,1)).toBe(2));`}},
+		{"vitest", `{"type":"module","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"4.1.6","@vitest/coverage-v8":"4.1.6"}}`, map[string]string{"one.test.js": `import {test,expect} from 'vitest'; import add from './src/add.cjs'; test('adds',()=>expect(add(1,1)).toBe(2));`}},
+		{"mocha", `{"scripts":{"test":"nyc -- mocha"},"devDependencies":{"mocha":"11.7.5","nyc":"17.1.0"}}`, map[string]string{"test/one.js": `const assert=require('node:assert'); describe('addition',()=>{it('adds',()=>assert.equal(require('../src/add.cjs')(1,1),2));});`}},
+		{"playwright", `{"scripts":{"test":"playwright test"},"devDependencies":{"@playwright/test":"1.55.1"}}`, map[string]string{"one.spec.js": `const {test,expect}=require('@playwright/test'); test('renders',async({page})=>{await page.setContent('<h1>hello</h1>');await expect(page.locator('h1')).toHaveText('hello');});`}},
+		{"cucumber", `{"scripts":{"test":"cucumber-js"},"devDependencies":{"@cucumber/cucumber":"12.2.0","nyc":"17.1.0"}}`, map[string]string{"features/one.feature": "Feature: Arithmetic\n  Scenario: Add\n    Given addition works\n", "features/step_definitions/one.js": `const {Given}=require('@cucumber/cucumber'); Given('addition works',()=>require('node:assert').equal(require('../../src/add.cjs')(1,1),2));`}},
+		{"cypress", `{"scripts":{"test":"cypress run"},"devDependencies":{"cypress":"15.1.0","istanbul-lib-instrument":"6.0.3"}}`, map[string]string{
+			"src/browser.js":        `window.add=(a,b)=>a+b;`,
+			"cypress.config.js":     `const fs=require('node:fs'); const path=require('node:path'); module.exports=require('cypress').defineConfig({e2e:{supportFile:false,async setupNodeEvents(on,config){const source=path.resolve('src/browser.js');const code=require('istanbul-lib-instrument').createInstrumenter().instrumentSync(fs.readFileSync(source,'utf8'),source);const server=require('node:http').createServer((req,res)=>{res.setHeader('content-type','text/html');res.end('<script>'+code+'</script>');});on('after:run',()=>new Promise(resolve=>server.close(resolve)));await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));config.baseUrl='http://127.0.0.1:'+server.address().port;return config;}}});`,
+			"cypress/e2e/one.cy.js": `it('adds in the application',()=>{cy.visit('/');cy.window().then(win=>expect(win.add(1,1)).to.equal(2));});`,
+		}},
+		{"webdriverio", `{"scripts":{"test":"wdio run wdio.conf.cjs"},"devDependencies":{"@wdio/cli":"9.20.0","@wdio/local-runner":"9.20.0","@wdio/mocha-framework":"9.20.0","@wdio/spec-reporter":"9.20.0"}}`, map[string]string{
+			"wdio.conf.cjs": `exports.config={
+ runner:'local',
+ specs:['./test/*.js'],maxInstances:1,framework:'mocha',reporters:['spec'],capabilities:[{browserName:'chrome','goog:chromeOptions':{binary:process.env.DDTEST_CHROME_BINARY,args:['--headless=new','--no-sandbox','--disable-dev-shm-usage']}}]};`,
+			"test/one.js": `describe('browser',()=>{it('renders',async()=>{await browser.url('data:text/html,<h1>hello</h1>');if(await $('h1').getText()!=='hello')throw new Error('missing heading');});});`,
+		}},
 	}
 	for _, fixture := range fixtures {
 		t.Run(fixture.name, func(t *testing.T) {
-			name := "project space"
-			if fixture.name == "rspec" || fixture.name == "minitest" {
-				name = "project"
-			} // Keep the recorded Ruby fixture path; build failures retain Bundler diagnostics.
-			root := filepath.Join(t.TempDir(), name)
+			root := filepath.Join(t.TempDir(), "project space")
 			require.NoError(t, os.MkdirAll(root, 0755))
 			integrationCommand(t, ctx, root, nil, "git", "init", "-q")
+			integrationFile(t, root, ".gitignore", "node_modules/\n/.testoptimization/\n/coverage/\n/.nyc_output/\n")
+			integrationFile(t, root, "src/add.cjs", "module.exports=(a,b)=>a+b;\n")
 			for name, contents := range fixture.files {
 				integrationFile(t, root, name, contents)
 			}
-			if fixture.manifest != "" {
-				integrationFile(t, root, "package.json", fixture.manifest)
-			}
-			integrationFile(t, root, ".github/workflows/test.yml", "name: tests\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: "+fixture.command+"\n")
-			env := []string{}
-			if fixture.manifest != "" {
-				integrationCommand(t, ctx, root, env, "npm", "install", "--no-audit", "--no-fund")
-			}
+			var pkg map[string]any
+			require.NoError(t, json.Unmarshal([]byte(fixture.manifest), &pkg))
+			pkg["name"], pkg["version"], pkg["files"] = "ddtest-integration-fixture", "1.0.0", []string{"src"}
+			manifest, err := json.Marshal(pkg)
+			require.NoError(t, err)
+			integrationFile(t, root, "package.json", string(manifest))
+			env := []string{"CYPRESS_CACHE_FOLDER=" + filepath.Join(t.TempDir(), "cypress"), "PLAYWRIGHT_BROWSERS_PATH=" + filepath.Join(t.TempDir(), "playwright")}
+			integrationCommand(t, ctx, root, env, "npm", "install", "--no-audit", "--no-fund")
 			if fixture.name == "playwright" {
-				integrationFile(t, root, ".gitignore", "/.testoptimization/\n")
-				env = append(env, "PLAYWRIGHT_BROWSERS_PATH="+filepath.Join(t.TempDir(), "browsers"))
 				integrationCommand(t, ctx, root, env, "npx", "--no-install", "playwright", "install", "chromium")
 			}
-			if fixture.name == "pytest" {
-				venv := filepath.Join(t.TempDir(), "venv")
-				integrationCommand(t, ctx, root, nil, "python3", "-m", "venv", venv)
-				env = append(env, "PATH="+filepath.Join(venv, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
-				integrationCommand(t, ctx, root, env, filepath.Join(venv, "bin", "python"), "-m", "pip", "install", "pytest==8.4.2")
-			}
-			if fixture.name == "rspec" || fixture.name == "minitest" {
-				integrationCommand(t, ctx, root, env, "bundle", "lock")
-			}
-			before := map[string]string{}
-			for _, name := range []string{"package.json", "package-lock.json", "Gemfile", "Gemfile.lock", "requirements.txt", "cypress.config.js"} {
-				contents, err := os.ReadFile(filepath.Join(root, name))
-				if err == nil {
-					before[name] = string(contents)
-				}
-			}
-			onboard := integrationCommand(t, ctx, root, env, binary, "onboard", "--instructions")
-			require.Contains(t, onboard, "datadog/test-visibility-github-action@v3")
-			args := []string{"testdrive", "--yes"}
-			if fixture.name == "playwright" {
-				args = append(args, "--all")
-			}
-			if fixture.name == "jest" || fixture.name == "playwright" {
-				// The validation contract also requires instrumented CI configuration.
-				// Resolve once so local and CI metadata refer to the same release.
+			node := strings.TrimSpace(integrationCommand(t, ctx, root, env, "node", "--version"))
+			integrationFile(t, root, ".github/workflows/test.yml", "name: tests\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-node@v4\n        with:\n          node-version: '"+strings.TrimPrefix(node, "v")+"'\n      - run: npm ci\n      - run: npm test\n")
+			args := []string{"onboard", "--framework", fixture.name, "--apply", "--yes", "--format", "json"}
+			if fixture.name == "cypress" {
+				// Cypress needs application/config hooks; the automatic editor deliberately
+				// returns a source-integration gap. Exercise the public execution entry
+				// point with an explicitly configured CI fixture, not a guessed editor.
 				version := strings.TrimSpace(integrationCommand(t, ctx, root, env, "npm", "view", "dd-trace", "version"))
-				node := strings.TrimSpace(integrationCommand(t, ctx, root, env, "node", "--version"))
-				integrationFile(t, root, ".github/workflows/test.yml", "name: tests\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-node@v4\n        with:\n          node-version: '"+strings.TrimPrefix(node, "v")+"'\n      - uses: datadog/test-visibility-github-action@v3\n        with:\n          languages: js\n          js-tracer-version: '"+version+"'\n      - run: "+fixture.command+"\n        env:\n          NODE_OPTIONS: \"-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}\"\n")
-				args = append(args, "--tracer-version", version)
+				integrationFile(t, root, ".github/workflows/test.yml", "name: tests\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-node@v4\n        with:\n          node-version: '"+strings.TrimPrefix(node, "v")+"'\n      - uses: datadog/test-visibility-github-action@v3\n        with:\n          languages: js\n          js-tracer-version: '"+version+"'\n      - run: npm test\n        env:\n          NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }}\n")
+				args = []string{"testdrive", "--framework", "cypress", "--all", "--agent", "--yes", "--tracer-version", version, "--format", "json"}
 			}
-			command := exec.CommandContext(ctx, binary, args...)
-			command.Dir = root
-			command.Env = append(os.Environ(), env...)
-			rawOutput, runErr := command.CombinedOutput()
-			output := string(rawOutput)
-			switch fixture.name {
-			case "jest":
-				require.NoError(t, runErr, output)
-				t.Log(strings.TrimSpace(output))
-				// Reuse the exact release from the fallback run, and exercise an
-				// explicit wrapper separator with the installed-tracer preview.
-				integrationCommand(t, ctx, root, env, "npm", "install", "--no-save", "--package-lock=false", "--no-audit", "--no-fund", "dd-trace@"+args[len(args)-1])
-				output = integrationCommand(t, ctx, root, env, binary, "testdrive", "--yes", "--command", "npx -- jest --runInBand -- one.test.js")
-				require.Contains(t, output, "reuse installed dd-trace@")
-				require.Contains(t, output, "no installation is needed")
-				require.NotContains(t, output, "npm install")
-				probes, err := filepath.Glob(filepath.Join(root, "ddtest*"))
-				require.NoError(t, err)
-				require.Empty(t, probes)
-			case "playwright":
-				require.NoError(t, runErr, output)
-				probes, err := filepath.Glob(filepath.Join(root, "ddtest*"))
-				require.NoError(t, err)
-				require.Empty(t, probes)
-			case "vitest":
-				require.Error(t, runErr, output) // Fixture deliberately has no CI installation.
-				require.Contains(t, output, "No observed behavioral regression")
-				require.Contains(t, output, "Feature auto-retries: passed")
-				require.Contains(t, output, "CI runtime incompatible")
-			default:
-				require.Error(t, runErr, output)
-				require.Contains(t, output, "unvalidated")
+			output := integrationCommand(t, ctx, root, env, binary, args...)
+			var result struct {
+				Status string `json:"status"`
 			}
-			require.Contains(t, output, "testdrive.json")
-			reports, err := filepath.Glob(filepath.Join(root, ".testoptimization", "testdrive.json"))
-			require.NoError(t, err)
-			require.Len(t, reports, 1)
-			data, err := os.ReadFile(reports[0])
+			lines := strings.Split(strings.TrimSpace(output), "\n")
+			require.NoError(t, json.Unmarshal([]byte(lines[len(lines)-1]), &result), output)
+			require.Equal(t, "complete_locally", result.Status, output)
+			data, err := os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
 			require.NoError(t, err)
 			var report struct {
 				Summary       struct{ Status string }
 				Compatibility struct{ Status string }
 				Cleanup       struct{ Status string }
+				LastExecution struct{ Current bool } `json:"last_execution"`
 				Features      []struct{ Name, Status string }
 				Runs          []struct {
-					Name           string                       `json:"name"`
-					TestCounts     struct{ Passed, Failed int } `json:"test_counts"`
-					Instrumented   bool                         `json:"instrumented"`
-					TestEventCount int                          `json:"test_event_count"`
-				} `json:"runs"`
+					Name             string
+					Instrumented     bool
+					ExecutionContext string                       `json:"execution_context"`
+					TestCounts       struct{ Passed, Failed int } `json:"test_counts"`
+					TestEventCount   int                          `json:"test_event_count"`
+				}
 			}
 			require.NoError(t, json.Unmarshal(data, &report))
-			if fixture.name == "playwright" {
-				require.Equal(t, "COMPLETE LOCALLY", report.Summary.Status)
-				require.Equal(t, "compatible", report.Compatibility.Status)
-				require.Equal(t, "passed", report.Cleanup.Status)
-				features := map[string]string{}
-				for _, feature := range report.Features {
-					features[feature.Name] = feature.Status
-				}
-				require.Equal(t, map[string]string{"auto-retries": "passed", "early-flake-detection": "passed", "skipping": "not supported", "quarantine": "passed", "disabled": "passed", "attempt-to-fix": "passed"}, features)
-				pairs := 0
-				for _, run := range report.Runs {
-					if run.Name == "baseline" || run.Name == "reporting-only" {
-						pairs++
-						require.Equal(t, 1, run.TestCounts.Passed, "the real page test must execute")
-						require.Zero(t, run.TestCounts.Failed)
-					}
-				}
-				require.Equal(t, 2, pairs)
+			require.Equal(t, "COMPLETE LOCALLY", report.Summary.Status)
+			require.Equal(t, "compatible", report.Compatibility.Status)
+			require.Equal(t, "passed", report.Cleanup.Status)
+			require.True(t, report.LastExecution.Current)
+			expected := map[string]string{"auto-retries": "passed", "early-flake-detection": "passed", "skipping": "passed", "quarantine": "passed", "disabled": "passed", "attempt-to-fix": "passed"}
+			if fixture.name == "playwright" || fixture.name == "webdriverio" {
+				expected["skipping"] = "not supported"
 			}
-			events := 0
+			actual := map[string]string{}
+			for _, feature := range report.Features {
+				actual[feature.Name] = feature.Status
+			}
+			require.Equal(t, expected, actual)
+			paired := 0
 			for _, run := range report.Runs {
+				if run.Name != "baseline" && run.Name != "reporting-only" {
+					continue
+				}
+				paired++
+				require.Equal(t, 1, run.TestCounts.Passed)
+				require.Zero(t, run.TestCounts.Failed)
 				if run.Instrumented {
-					events += run.TestEventCount
+					require.Positive(t, run.TestEventCount)
+				}
+				if fixture.name == "playwright" || fixture.name == "cypress" || fixture.name == "webdriverio" {
+					require.NotEmpty(t, run.ExecutionContext)
 				}
 			}
-			require.Positive(t, events, "instrumented runs must retain evidence of test events")
-			artifacts, err := os.ReadDir(filepath.Join(root, ".testoptimization"))
+			require.Equal(t, 2, paired)
+			for _, name := range []string{"package-lock.json", "node_modules/dd-trace"} {
+				if name == "package-lock.json" {
+					require.FileExists(t, filepath.Join(root, name))
+				} else {
+					require.NoDirExists(t, filepath.Join(root, name))
+				}
+			}
+			entries, err := os.ReadDir(filepath.Join(root, ".testoptimization"))
 			require.NoError(t, err)
-			require.Len(t, artifacts, 2, "only HTML and compact JSON reports should remain")
-			html, err := filepath.Glob(filepath.Join(root, ".testoptimization", "*.html"))
-			require.NoError(t, err)
-			require.Equal(t, []string{filepath.Join(root, ".testoptimization", "report.html")}, html)
-			contents, err := os.ReadFile(html[0])
-			require.NoError(t, err)
-			require.Contains(t, string(contents), `id="run-details"`)
+			require.Len(t, entries, 2, "only HTML and JSON reports remain")
+			require.FileExists(t, filepath.Join(root, ".testoptimization/report.html"))
+			final := integrationCommand(t, ctx, root, env, binary, "testdrive", "--report", "--format", "json")
+			require.True(t, json.Valid([]byte(final)), final)
+
 			if fixture.name == "playwright" {
-				require.Contains(t, output, "[Open report](<")
-			} else {
-				require.Contains(t, output, "Open report:")
-			}
-			for name, contents := range before {
-				if (fixture.name == "rspec" || fixture.name == "minitest") && (name == "Gemfile" || name == "Gemfile.lock") {
-					continue // bundle add updates Ruby dependency files.
-				}
-				after, err := os.ReadFile(filepath.Join(root, name))
-				require.NoError(t, err)
-				require.Equal(t, contents, string(after), name)
-			}
-			if fixture.name == "rspec" || fixture.name == "minitest" {
-				gemfile, err := os.ReadFile(filepath.Join(root, "Gemfile"))
-				require.NoError(t, err)
-				require.Contains(t, string(gemfile), "datadog-ci")
-				require.FileExists(t, filepath.Join(root, "Gemfile.lock"))
-			} else if _, existed := before["Gemfile.lock"]; !existed {
-				_, err := os.Stat(filepath.Join(root, "Gemfile.lock"))
-				require.True(t, os.IsNotExist(err), "project lockfile must not be created")
-			}
-			if fixture.name == "cypress" {
-				// Cleanup removes the fallback install; use an independent external
-				// install to verify reuse without project dependencies or wrappers.
-				external := t.TempDir()
-				integrationCommand(t, ctx, external, env, "npm", "install", "--no-save", "--package-lock=false", "--no-audit", "--no-fund", "dd-trace")
-				preload := filepath.Join(external, "node_modules", "dd-trace", "ci", "init.js")
-				require.NoError(t, os.Remove(filepath.Join(root, "original-hook.txt")))
-				command := exec.CommandContext(ctx, binary, "testdrive", "--yes")
+				integrationFile(t, root, "one.spec.js", `const {test}=require('@playwright/test');test('unsupported child',()=>{require('node:child_process').spawn('/bin/sh',['-c','exit 0'],{detached:true,argv0:'custom',stdio:'ignore'});});`)
+				command := exec.CommandContext(ctx, binary, "testdrive", "--framework", "playwright", "--all", "--agent", "--yes", "--format", "json")
 				command.Dir = root
-				command.Env = append(append(os.Environ(), env...), "DD_TRACE_PACKAGE="+preload)
-				reused, err := command.CombinedOutput()
-				require.Error(t, err, string(reused)) // Cypress compatibility remains unvalidated.
-				require.Contains(t, string(reused), "reuse installed dd-trace")
-				require.Contains(t, string(reused), "Test events received.")
-				require.Contains(t, string(reused), "unvalidated")
-				require.NotContains(t, string(reused), "Installing dd-trace")
-				hook, err := os.ReadFile(filepath.Join(root, "original-hook.txt"))
+				command.Env = append(os.Environ(), env...)
+				blocked, err := command.CombinedOutput()
+				require.Error(t, err, string(blocked))
+				lines := strings.Split(strings.TrimSpace(string(blocked)), "\n")
+				var result struct{ Status, Code string }
+				require.NoError(t, json.Unmarshal([]byte(lines[len(lines)-1]), &result), string(blocked))
+				require.Equal(t, "unsupported", result.Status, string(blocked))
+				require.Equal(t, "unsupported_detached_spawn", result.Code)
+				data, err := os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
 				require.NoError(t, err)
-				require.Equal(t, "ran", string(hook))
+				require.NoError(t, json.Unmarshal(data, &report))
+				require.NotEqual(t, "compatible", report.Compatibility.Status)
 			}
-			t.Log(strings.TrimSpace(output))
 		})
 	}
 }
@@ -243,7 +180,12 @@ func integrationCommand(t *testing.T, ctx context.Context, directory string, env
 	t.Helper()
 	command := exec.CommandContext(ctx, name, args...)
 	command.Dir = directory
-	command.Env = append(os.Environ(), env...)
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "DD_") && !strings.HasPrefix(entry, "DATADOG_") {
+			command.Env = append(command.Env, entry)
+		}
+	}
+	command.Env = append(command.Env, env...)
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "%s %v:\n%s", name, args, output)
 	return string(output)

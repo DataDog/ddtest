@@ -1,5 +1,5 @@
 const fs = require('node:fs')
-const ownProcess = require('./playwright_owner.cjs')
+const ownProcess = require('./process_owner.cjs')
 
 // The launcher execs the original command, preserving its PID, parent, pipes
 // and exit behavior. This live member anchors that same detached group.

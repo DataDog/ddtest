@@ -201,6 +201,7 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 	for _, fragment := range commands {
 		if previousChain != 0 && previousChain != fragment.Chain && len(result.Builds) > 0 {
 			setup = append(setup, "Builds separated from tests by ; or a newline require shell exit-policy review; they are not conditional prerequisites.")
+			result.Builds = nil
 		}
 		previousChain = fragment.Chain
 		words := fragment.Words
@@ -660,73 +661,18 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	return result
 }
 
-// Split a deliberately small shell subset: literal words, quotes, comments,
-// newlines and &&/; sequences. Expansion, pipelines and control flow require
-// review. shellquote handles word quoting; this scanner only finds boundaries.
+// Reuse AST discovery for callers that require every command to be literal.
 func staticCommands(command string) ([][]string, error) {
+	fragments, err := discoverCommands(command)
+	if err != nil {
+		return nil, err
+	}
 	var commands [][]string
-	start := 0
-	var quote byte
-	add := func(end int) error {
-		words, err := shellquote.Split(command[start:end])
-		if err != nil {
-			return err
+	for _, fragment := range fragments {
+		if fragment.Reason != "" {
+			return nil, fmt.Errorf("%s", fragment.Reason)
 		}
-		if len(words) > 0 {
-			commands = append(commands, words)
-		}
-		if len(commands) > 64 {
-			return fmt.Errorf("command sequence exceeds 64 entries")
-		}
-		return nil
-	}
-	for i := 0; i < len(command); i++ {
-		c := command[i]
-		if c == '\\' && quote != '\'' {
-			i++
-			continue
-		}
-		if quote != 0 {
-			if c == quote {
-				quote = 0
-			} else if quote == '"' && (c == '$' || c == '`') {
-				return nil, fmt.Errorf("dynamic shell expansion requires review")
-			}
-			continue
-		}
-		switch c {
-		case '\'', '"':
-			quote = c
-		case '$', '`', '|', '<', '>', '(', ')', '{', '}':
-			return nil, fmt.Errorf("unsupported or dynamic shell syntax requires review")
-		case '#':
-			if i > start && !strings.ContainsRune(" \t\n", rune(command[i-1])) {
-				continue
-			}
-			if err := add(i); err != nil {
-				return nil, err
-			}
-			for i < len(command) && command[i] != '\n' {
-				i++
-			}
-			start = i + 1
-		case '&', ';', '\n':
-			if err := add(i); err != nil {
-				return nil, err
-			}
-			if c == '&' {
-				if i+1 >= len(command) || command[i+1] != '&' {
-					return nil, fmt.Errorf("background commands require review")
-				}
-				i++
-			}
-			start = i + 1
-		}
-	}
-	if start < len(command) {
-		if err := add(len(command)); err != nil {
-			return nil, err
-		}
+		commands = append(commands, fragment.Words)
 	}
 	return commands, nil
 }

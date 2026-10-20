@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -53,9 +54,9 @@ func discoverCommands(command string) ([]commandFragment, error) {
 		if err := syntax.NewPrinter().Print(&printed, stmt); err != nil {
 			return err
 		}
-		words, err := staticCommands(printed.String())
-		if err == nil && len(words) == 1 {
-			result = append(result, commandFragment{Words: words[0], Chain: chain})
+		words, err := literalCall(stmt)
+		if err == nil {
+			result = append(result, commandFragment{Words: words, Chain: chain})
 		} else {
 			if name == "cd" {
 				return fmt.Errorf("dynamic directory change requires review")
@@ -71,4 +72,60 @@ func discoverCommands(command string) ([]commandFragment, error) {
 		}
 	}
 	return result, nil
+}
+
+// Expand quoting/escapes from the parsed word, never variables or executable
+// substitutions. Discovery and scoped edits share this one shell grammar.
+func literalShellWord(word *syntax.Word) (string, error) {
+	valid := true
+	syntax.Walk(word, func(node syntax.Node) bool {
+		switch node.(type) {
+		case *syntax.Word, *syntax.Lit, *syntax.SglQuoted, *syntax.DblQuoted, nil:
+		default:
+			valid = false
+			return false
+		}
+		return true
+	})
+	if !valid {
+		return "", fmt.Errorf("dynamic shell expansion requires review")
+	}
+	fields, err := expand.Fields(nil, word)
+	if err != nil {
+		return "", err
+	}
+	if len(fields) != 1 {
+		return "", fmt.Errorf("shell word must resolve to one literal argument")
+	}
+	return fields[0], nil
+}
+
+func literalCall(stmt *syntax.Stmt) ([]string, error) {
+	call, ok := stmt.Cmd.(*syntax.CallExpr)
+	if !ok || len(stmt.Redirs) != 0 {
+		return nil, fmt.Errorf("shell control flow or redirection requires review")
+	}
+	var words []string
+	for _, assignment := range call.Assigns {
+		if assignment.Append || assignment.Array != nil || assignment.Index != nil || assignment.Name == nil {
+			return nil, fmt.Errorf("shell assignment requires review")
+		}
+		value := ""
+		if assignment.Value != nil {
+			var err error
+			value, err = literalShellWord(assignment.Value)
+			if err != nil {
+				return nil, err
+			}
+		}
+		words = append(words, assignment.Name.Value+"="+value)
+	}
+	for _, arg := range call.Args {
+		value, err := literalShellWord(arg)
+		if err != nil {
+			return nil, err
+		}
+		words = append(words, value)
+	}
+	return words, nil
 }

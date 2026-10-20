@@ -40,6 +40,7 @@ type featureResult struct {
 
 // Detailed results feed validation and the HTML findings report, not compact JSON.
 type validationRun struct {
+	ExecutionContext                string
 	Coverage                        *coverageSummary
 	NativeCommand                   string
 	ProbeExecutions                 *int
@@ -86,6 +87,7 @@ type coverageSummary struct {
 }
 
 type runSummary struct {
+	ExecutionContext                string              `json:"execution_context,omitempty"`
 	NativeCounts                    *executionCounts    `json:"native_counts,omitempty"`
 	NativeResults                   string              `json:"native_results,omitempty"`
 	NativeCommand                   string              `json:"native_command,omitempty"`
@@ -113,7 +115,7 @@ type runSummary struct {
 }
 
 func (r validationRun) summary() runSummary {
-	summary := runSummary{NativeCommand: r.NativeCommand, ProbeExecutions: r.ProbeExecutions, FrameworkNode: r.FrameworkNode, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
+	summary := runSummary{ExecutionContext: r.ExecutionContext, NativeCommand: r.NativeCommand, ProbeExecutions: r.ProbeExecutions, FrameworkNode: r.FrameworkNode, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
 		ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped,
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError),
 		ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic),

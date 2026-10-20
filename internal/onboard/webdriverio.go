@@ -67,10 +67,18 @@ func checkWebdriverIOBootstrap(root string, workflow ciWorkflow, job runtimeJob,
 	}
 	for _, command := range resolution.Tests {
 		parts, err := staticCommands(command.Command)
-		if err != nil || len(parts) != 1 || len(parts[0]) != 3 || parts[0][0] != "npm" || parts[0][1] != "run" {
+		if err != nil || len(parts) != 1 {
 			return "Scoped WDIO instrumentation requires an identified npm leaf consuming DD_WDIO_NODE_OPTIONS"
 		}
-		script := pkg.Scripts[parts[0][2]]
+		name := ""
+		if slices.Equal(parts[0], []string{"npm", "test"}) {
+			name = "test"
+		} else if len(parts[0]) == 3 && parts[0][0] == "npm" && parts[0][1] == "run" {
+			name = parts[0][2]
+		} else {
+			return "Scoped WDIO instrumentation requires an identified npm leaf consuming DD_WDIO_NODE_OPTIONS"
+		}
+		script := pkg.Scripts[name]
 		if !strings.HasPrefix(script, webdriverIOScopedOptions+" ") {
 			return "WDIO leaf " + command.Command + " must start with " + webdriverIOScopedOptions + " while preserving its existing command"
 		}

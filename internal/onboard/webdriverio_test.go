@@ -109,3 +109,10 @@ func TestWebdriverIOUnknownNodeWrapperStillBlocks(t *testing.T) {
 	result := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "node " + strings.Repeat("../", 2) + "outside.js"}, "javascript", "webdriverio")
 	require.False(t, result.Review)
 }
+
+func TestWebdriverIOBootstrapAcceptsNpmTestShorthand(t *testing.T) {
+	root := t.TempDir()
+	writeScripts(t, root, map[string]string{"test": webdriverIOScopedOptions + " wdio run wdio.conf.cjs"})
+	reason := checkWebdriverIOBootstrap(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "npm test", Env: map[string]string{"DD_WDIO_NODE_OPTIONS": "-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}"}}, nil)
+	require.Empty(t, reason)
+}

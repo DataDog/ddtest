@@ -199,6 +199,7 @@ func readWebdriverIOResults(directory string, run *validationRun) {
 }
 func (t *Testdrive) runWebdriverIO(ctx context.Context, output io.Writer, session *Session, preload, name string, instrumented bool, scenario intake.Scenario, probePath, probeMode string) (run validationRun, runErr error) {
 	run.Name, run.Instrumented, run.ProbeMode, run.root, run.framework = name, instrumented, probeMode, t.repositoryRoot, "webdriverio"
+	run.ExecutionContext = "Both comparison modes use ddtest native-result observers and process supervision. Baseline disables dd-trace; it is not an unmodified shell invocation."
 	directory := filepath.Join(session.Directory(), name)
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return run, err
@@ -228,14 +229,12 @@ func (t *Testdrive) runWebdriverIO(ctx context.Context, output io.Writer, sessio
 		env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
 	}
 	env["NODE_OPTIONS"] += " --require " + strconv.Quote(children) + " --import " + strconv.Quote(observer)
-	owner, err := startPlaywrightOwner(directory, env)
+	owner, err := startProcessOwner(directory, env)
 	if err != nil {
 		return run, err
 	}
 	defer func() {
-		if err := owner.Close(); err != nil {
-			runErr = errors.Join(runErr, &playwrightCleanupError{err})
-		}
+		runErr = errors.Join(runErr, owner.Close())
 	}()
 	env["DDTEST_WDIO_INSPECT"], env["DDTEST_WDIO_PROBE"], env["DDTEST_WDIO_FILES"], env["DDTEST_WDIO_CAPABILITY"] = "", "", "", ""
 	if t.webdriverIOCapability != nil {

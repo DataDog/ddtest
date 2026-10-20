@@ -454,7 +454,11 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		Compatibility: verdict{Status: "inconclusive", Reason: "Validation did not complete."}}
 	defer func() {
 		cleanupErr := session.Close()
-		var processCleanup *playwrightCleanupError
+		var supervision *processSupervisionError
+		if errors.As(runErr, &supervision) {
+			result.Compatibility = verdict{Status: "not exercised", Reason: supervision.Error()}
+		}
+		var processCleanup *processCleanupError
 		if errors.As(runErr, &processCleanup) {
 			cleanupErr = errors.Join(cleanupErr, processCleanup)
 		}

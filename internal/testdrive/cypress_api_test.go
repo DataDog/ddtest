@@ -27,7 +27,7 @@ func TestCypressAPIPreservesOptionsHooksAndCleansStartup(t *testing.T) {
 				"package.json":       `{}`,
 				"api.cjs":            cypressAPI,
 				"observer.cjs":       cypressObserver,
-				"children.cjs":       playwrightChildren,
+				"children.cjs":       processChildren,
 				"server.cjs":         `const fs=require('fs');fs.writeFileSync('started',String(process.pid));process.on('SIGTERM',()=>{fs.writeFileSync('stopped','yes');process.exit(0)});setInterval(()=>{if(process.env.DDTEST_API_LATE_START_FAILURE==='true'&&fs.existsSync('api-started'))process.exit(2)},10)`,
 				"cypress.config.cjs": `module.exports={e2e:{setupNodeEvents(on){on('after:run',()=>require('fs').writeFileSync('user-hook','called'))}}}`,
 				"node_modules/cypress/index.js": `exports.run=async options=>{
@@ -57,9 +57,9 @@ func TestCypressAPIPreservesOptionsHooksAndCleansStartup(t *testing.T) {
 			command := exec.CommandContext(ctx, node, filepath.Join(root, "api.cjs"), filepath.Join(root, "plan.json"))
 			command.Dir = root
 			env := map[string]string{}
-			owner, err := startPlaywrightOwner(root, env)
+			owner, err := startProcessOwner(root, env)
 			require.NoError(t, err)
-			command.Env = append(os.Environ(), "DDTEST_API_LATE_START_FAILURE="+lateFailure, "DDTEST_CYPRESS_DIRECTORY="+root, "DDTEST_PLAYWRIGHT_OWNER="+env["DDTEST_PLAYWRIGHT_OWNER"], "NODE_OPTIONS=--require "+filepath.Join(root, "children.cjs"))
+			command.Env = append(os.Environ(), "DDTEST_API_LATE_START_FAILURE="+lateFailure, "DDTEST_CYPRESS_DIRECTORY="+root, "DDTEST_PROCESS_OWNER="+env["DDTEST_PROCESS_OWNER"], "NODE_OPTIONS=--require "+filepath.Join(root, "children.cjs"))
 			t.Cleanup(func() { require.NoError(t, owner.Close()) })
 			output, err := command.CombinedOutput()
 			if lateFailure == "true" {
