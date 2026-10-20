@@ -174,3 +174,19 @@ func TestBuildEntryPointWithUnresolvedSetupStillBlocks(t *testing.T) {
 		require.False(t, result.Review, result)
 	}
 }
+
+const algorithmsWorkflow = `name: Node CI
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '22.x'}
+      - run: npm i
+      - run: npm run lint
+      - uses: datadog/test-visibility-github-action@v3
+        with: {languages: js, js-tracer-version: '6.17.0'}
+      - run: npm run coverage
+        env:
+          NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}
+`

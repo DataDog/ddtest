@@ -29,6 +29,12 @@ No Datadog account or Agent is needed. Testdrive links to an HTML report under
 non-interactive sessions, `--framework` to select a runner, and `--command` for
 package scripts or custom setup.
 
+For Jest, `ddtest testdrive --framework jest --check-only --yes` checks the
+configuration, tracer selection and static CI runtime compatibility first. It
+loads Jest configuration but does not install a tracer or run tests. See the
+[check-only guide](docs/onboarding.md#check-jest-configuration-before-test-execution)
+for the JSON result and limitations.
+
 Testdrive reuses a detected project tracer; otherwise it installs the latest
 release (`--tracer-version` selects a fallback release or `git:<ref>`).
 JavaScript/Python installs are isolated. Ruby runs `bundle add datadog-ci`,

@@ -133,3 +133,41 @@ func TestTestdriveCommandPreview(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckOnlyPreviewRequiresConfirmationAndExposesOnlyCurrentFlags(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	viper.Reset()
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	if err := os.WriteFile("package.json", []byte(`{"scripts":{"test":"jest"},"devDependencies":{"jest":"30.2.0"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("jest.config.js", []byte(`throw new Error('preview must not load configuration')`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := newTestdriveCommand()
+	var output bytes.Buffer
+	command.SetIn(strings.NewReader("yes\n"))
+	command.SetOut(&output)
+	command.SetErr(&output)
+	command.SetArgs([]string{"--check-only"})
+	err := command.ExecuteContext(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("expected confirmation error, got %v", err)
+	}
+	if !strings.Contains(output.String(), "--showConfig") {
+		t.Fatal(output.String())
+	}
+	if _, err := os.Stat(".testoptimization"); !os.IsNotExist(err) {
+		t.Fatalf("preview wrote artifacts: %v", err)
+	}
+	if command.Flags().Lookup("check-only") == nil {
+		t.Fatal("missing --check-only")
+	}
+	for _, name := range []string{"all", "agent", "format", "report", "detail", "resume", "facts"} {
+		if command.Flags().Lookup(name) != nil {
+			t.Fatalf("premature flag: --%s", name)
+		}
+	}
+}

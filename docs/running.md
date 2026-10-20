@@ -557,3 +557,15 @@ wall time is at or below that target. Use the same duration format, such as
 within `--min-parallelism` and `--max-parallelism` can meet the target, DDTest
 logs a warning and selects the split with the lowest expected wall time,
 ignoring CI job overhead, to get as close as possible to the target.
+
+
+## Testdrive configuration checks
+
+Before running a Jest suite, use `ddtest testdrive --framework jest --check-only
+--yes` to inspect its effective configuration and local/CI tracer prerequisites.
+This mode loads Jest configuration, reads public dependency/runtime metadata, and
+writes `.testoptimization/testdrive.json`; it does not install dd-trace, execute
+tests, edit workflows or exercise the Datadog backend. Exit 0 certifies only the
+configuration checks, not test compatibility or advanced features. See
+[the check-only guide](onboarding.md#check-jest-configuration-before-test-execution)
+for setup, failure cases and manual QA.

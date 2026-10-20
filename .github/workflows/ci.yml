@@ -247,6 +247,8 @@ jobs:
           npm install --prefix "${jest_dir}" "jest@${{ matrix.jest }}" dd-trace@5.86.0
           DDTEST_JEST_NODE_MODULES="${jest_dir}/node_modules" \
             go test -v ./internal/compatibility -run '^TestJest(Adapter|Testdrive)Integration$'
+          DDTEST_JEST_NODE_MODULES="${jest_dir}/node_modules" \
+            go test -v ./internal/testdrive -run '^TestJestCheckOnlyIntegration$'
 
   vitest-compatibility:
     runs-on: ubuntu-latest

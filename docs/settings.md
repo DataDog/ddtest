@@ -104,3 +104,13 @@ This also applies to a single runner. Splitting does not resolve collisions
 during full test collection, which runs before distribution. Add `__init__.py`
 packages, rename the files, or configure pytest's `--import-mode=importlib` to
 resolve collisions that runner distribution cannot avoid.
+
+## Testdrive-only configuration check
+
+`ddtest testdrive --check-only --framework jest --yes` loads Jest configuration
+and checks tracer/local Node/static CI prerequisites without tracer installation
+or test execution. `--tracer-version` remains a fallback selector: an installed
+project tracer takes precedence. These command flags have no environment-variable
+binding. See [onboarding configuration checks](onboarding.md#check-jest-configuration-before-test-execution)
+for result fields and limitations. Other test frameworks are not supported by
+`--check-only` in this step.

@@ -6,6 +6,8 @@
 package onboard
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -79,4 +81,58 @@ func TestStaticMatrixIncludesFollowOriginalCombinations(t *testing.T) {
 	rows, err = runtimeMatrix(map[string]any{"node": []any{18, 20, 22}, "os": []any{"linux", "windows"}, "exclude": []any{map[string]any{"node": 18}}, "include": []any{map[string]any{"node": 18, "os": "linux", "instrument": false}}})
 	require.NoError(t, err)
 	require.Len(t, rows, 5)
+}
+
+func TestTSyringeConditionsAndIncludePreserveCoverage(t *testing.T) {
+	for _, matrix := range []string{
+		"node-version: [8.x, 10.x, 12.x, 14.x, 16.x, 18.x, 20.x, 22.x]",
+		"include: [{node-version: 8.x}, {node-version: 10.x}, {node-version: 12.x}, {node-version: 14.x}, {node-version: 16.x}, {node-version: 18.x}, {node-version: 20.x}, {node-version: 22.x}]",
+	} {
+		workflow := fmt.Sprintf(`jobs:
+  test:
+    strategy:
+      matrix:
+        %s
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '${{ matrix.node-version }}'}
+      - uses: datadog/test-visibility-github-action@v3
+        if: contains(fromJSON('["18.x", "20.x", "22.x"]'), matrix.node-version)
+        with: {languages: js, js-tracer-version: '5.128.0'}
+      - run: yarn test
+        env:
+          NODE_OPTIONS: ${{ contains(fromJSON('["18.x", "20.x", "22.x"]'), matrix.node-version) && format('-r {0}', env.DD_TRACE_PACKAGE) || '' }}
+      - run: yarn build
+`, matrix)
+		root := newJestRepository(t, workflow)
+		writeScripts(t, root, map[string]string{"test": "jest", "build": "yarn clean && tsc", "clean": "rimraf ./dist"})
+		result := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+			return tracerRequirement{Version: "5.128.0", Node: ">=18"}, nil
+		})
+		require.Equal(t, "compatible", result.Status)
+		require.Len(t, result.Jobs, 8)
+		for i, job := range result.Jobs {
+			if i < 5 {
+				require.Equal(t, "excluded", job.Status)
+			} else {
+				require.Equal(t, "compatible", job.Status)
+			}
+		}
+	}
+}
+
+func TestEmptyMatrixDoesNotMasqueradeAsNoCI(t *testing.T) {
+	workflow := `jobs:
+  test:
+    strategy:
+      matrix:
+        node: [22]
+        exclude: [{node: 22}]
+    steps:
+      - run: yarn test
+        env: {NODE_OPTIONS: "-r ${{ env.DD_TRACE_PACKAGE }}"}
+`
+	result := checkCIRuntimes(t.Context(), newJestRepository(t, workflow), nil, nil)
+	require.Equal(t, "inconclusive", result.Status)
+	require.Contains(t, result.Jobs[0].Reason, "no entries")
 }
