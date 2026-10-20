@@ -24,6 +24,14 @@ func createWorkerEnv(workerEnvMap map[string]string, nodeIndex int, workerIndex 
 	return workerEnv
 }
 
+func addTestParallelizationEnv(workerEnv, planCITags map[string]string) {
+	workerEnv[constants.TestParallelizationEnabledEnvVar] = "true"
+	for tag, envVar := range constants.TestParallelizationPlanEnvVars {
+		// Empty values also clear inherited metadata from a different plan.
+		workerEnv[envVar] = planCITags[tag]
+	}
+}
+
 func workerEnvKeys(workerEnv map[string]string) []string {
 	keys := make([]string, 0, len(workerEnv))
 	for key := range workerEnv {

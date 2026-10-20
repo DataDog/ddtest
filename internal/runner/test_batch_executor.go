@@ -18,6 +18,7 @@ type testExecutor struct {
 	framework    framework.Framework
 	workerEnvMap map[string]string
 	planner      testFilePlanner
+	planCITags   map[string]string
 }
 
 func newTestExecutor(ctx context.Context, framework framework.Framework, workerEnvMap map[string]string, planner testFilePlanner) testExecutor {
@@ -45,6 +46,7 @@ func (r runExecutionReport) failure(err error) runExecutionResult {
 // runBatch executes an already selected batch of test files in one worker.
 func (e testExecutor) runBatch(testFiles []string, nodeIndex int, workerIndex int) error {
 	workerEnv := createWorkerEnv(e.workerEnvMap, nodeIndex, workerIndex)
+	addTestParallelizationEnv(workerEnv, e.planCITags)
 
 	slog.Info("Running tests in worker", "nodeIndex", nodeIndex, "workerIndex", workerIndex, "testFilesCount", len(testFiles), "workerEnvKeys", workerEnvKeys(workerEnv))
 	return e.framework.RunTests(e.ctx, testFiles, workerEnv)
