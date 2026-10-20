@@ -42,26 +42,27 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
-	discoveryError  error
-	repositoryRoot  string
-	framework       framework.Framework
-	language        string
-	command         string
-	args            []string
-	tracerLabel     string
-	platform        platform.Platform
-	tracerVersion   string
-	projectTracer   string
-	session         *Session
-	installCommand  string
-	installArgs     []string
-	executor        commandExecutor
-	startIntake     func(string) (localIntake, error)
-	nodeVersion     func() string
-	environmentInfo environmentInfo
-	preflight       *reportCard
-	checkOnly       bool
-	resolveJSTracer func(context.Context, string) (platform.JSSelection, error)
+	preflightEnvironment map[string]string
+	discoveryError       error
+	repositoryRoot       string
+	framework            framework.Framework
+	language             string
+	command              string
+	args                 []string
+	tracerLabel          string
+	platform             platform.Platform
+	tracerVersion        string
+	projectTracer        string
+	session              *Session
+	installCommand       string
+	installArgs          []string
+	executor             commandExecutor
+	startIntake          func(string) (localIntake, error)
+	nodeVersion          func() string
+	environmentInfo      environmentInfo
+	preflight            *reportCard
+	checkOnly            bool
+	resolveJSTracer      func(context.Context, string) (platform.JSSelection, error)
 }
 
 // Prepare detects the repository and probes the selected test environment and tracer.
@@ -88,16 +89,15 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	command, args := runner.Command()
 	configurationOnly := len(checkOnly) > 0 && checkOnly[0]
 	var discoveryError error
+	var preflightEnvironment map[string]string
 	if configurationOnly {
 		if runner.Name() != "jest" {
 			return nil, fmt.Errorf("configuration preflight currently supports Jest only")
 		}
-		var selected string
-		if override := strings.TrimSpace(settings.GetCommand()); override != "" {
-			selected, err = onboard.ForwardJestCommand(repositoryRoot, override)
-		} else {
-			selected, err = onboard.JestValidationCommand(repositoryRoot)
-		}
+		entry, selectionErr := onboard.JestConfigurationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
+		err = selectionErr
+		selected := entry.Command
+		preflightEnvironment = entry.Environment
 		if err != nil {
 			discoveryError = err
 		}
@@ -152,7 +152,7 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	}
 
 	drive := &Testdrive{projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
-		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) }, nodeVersion: currentNodeVersion, environmentInfo: environment, preflight: preflight, checkOnly: configurationOnly, discoveryError: discoveryError}
+		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) }, nodeVersion: currentNodeVersion, environmentInfo: environment, preflight: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
 	if installer, ok := detectedPlatform.(*platform.JavaScript); ok {
 		drive.resolveJSTracer = installer.ResolveRegistryTracer
 	}

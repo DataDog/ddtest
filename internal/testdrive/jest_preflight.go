@@ -35,21 +35,35 @@ type jestPreflight struct {
 	Verdict             verdict               `json:"verdict"`
 	Command             string                `json:"command"`
 	Node                string                `json:"node"`
+	Executable          string                `json:"executable,omitempty"`
+	Arguments           []string              `json:"arguments,omitempty"`
 	Version             string                `json:"version"`
 	Projects            []jestProject         `json:"projects"`
 	Recommendation      *tracerRecommendation `json:"recommendation,omitempty"`
 	RecommendationNotes []string              `json:"recommendation_notes,omitempty"`
 }
 
-func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, result *validationResult) error {
+func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, result *validationResult) (preflightErr error) {
 	args := appendJestArgs(t.command, t.args, "--showConfig")
-	check := &jestPreflight{Node: t.nodeVersion(), Command: shellquote.Join(append([]string{t.command}, args...)...), Verdict: verdict{Status: "inconclusive", Reason: "Effective Jest configuration was not resolved."}}
+	check := &jestPreflight{Command: shellquote.Join(append([]string{t.command}, args...)...), Verdict: verdict{Status: "inconclusive", Reason: "Effective Jest configuration was not resolved."}}
 	result.Preflight = check
 	_, _ = fmt.Fprintf(output, "Inspecting Jest configuration: %s\n", check.Command)
 	// Loading Jest configuration may execute project JavaScript. This belongs in
 	// the approved execution phase, never detection or preview. Disable uploads.
 	env := testEnvironment("http://127.0.0.1:1", "preflight")
-	env["NODE_OPTIONS"] = stripDatadogNodeOptions(os.Getenv("NODE_OPTIONS"))
+	for key, value := range t.preflightEnvironment {
+		env[key] = value
+	}
+	options := os.Getenv("NODE_OPTIONS")
+	if explicit, ok := t.preflightEnvironment["NODE_OPTIONS"]; ok {
+		options = explicit
+	}
+	env["NODE_OPTIONS"] = stripDatadogNodeOptions(options)
+	directory, capture, err := prepareJestRuntimeCapture(env)
+	if err != nil {
+		return err
+	}
+	defer func() { preflightErr = errors.Join(preflightErr, os.RemoveAll(directory)) }()
 	env["DD_CIVISIBILITY_ENABLED"] = "false"
 	env["DD_TRACE_ENABLED"] = "false"
 	data, err := t.executor.CombinedOutput(ctx, t.command, args, env)
@@ -71,6 +85,11 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 	if !decoded {
 		return fmt.Errorf("could not read Jest --showConfig; pass the actual Jest command including its config with --command")
 	}
+	runtime, err := readJestRuntimeCapture(capture)
+	if err != nil {
+		return err
+	}
+	check.Node, check.Executable, check.Arguments = runtime.Node, runtime.Executable, runtime.Arguments
 	check.Version = config.Version
 	check.Projects = config.Configs
 	installer, ok := t.platform.(*platform.JavaScript)

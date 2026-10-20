@@ -31,6 +31,10 @@ func stepDirectory(workflow ciWorkflow, job runtimeJob, step runtimeStep) string
 // code. Package scripts must forward added Jest flags to exactly one runner.
 // An empty result leaves repositories without a known script on the default.
 func JestValidationCommand(root string) (string, error) {
+	return jestValidationCommand(root, true)
+}
+
+func jestValidationCommand(root string, forward bool) (string, error) {
 	workflows, err := readWorkflows(root)
 	if err != nil {
 		return "", err
@@ -79,6 +83,10 @@ func JestValidationCommand(root string) (string, error) {
 					words, err := shellquote.Split(resolved.Run)
 					if err != nil || len(words) == 0 || filepath.Clean(stepDirectory(workflow, job, resolved)) != "." {
 						return "", fmt.Errorf("cannot automatically forward Jest options through CI command %q; use --command with its working directory and required setup", step.Run)
+					}
+					if !forward {
+						candidates[resolved.Run] = true
+						continue
 					}
 					selected, err := ForwardJestCommand(root, resolved.Run)
 					if err != nil {
@@ -139,6 +147,9 @@ func JestValidationCommand(root string) (string, error) {
 		command := manager + " run " + name
 		resolution := resolveJestCommand(root, command, nil)
 		if resolution.Matched && resolution.Reason == "" {
+			if !forward {
+				return command, nil
+			}
 			return ForwardJestCommand(root, command)
 		}
 		if resolution.Matched || resolution.Reason != "" {

@@ -140,6 +140,12 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	result.WorkingDirectory = repositoryRoot
 	result.CIExecution = verdict{Status: "not exercised", Reason: "Local-only validation; CI execution and Datadog backend processing were not exercised."}
 	result.ChecksPassed = result.Error == "" && result.Preflight != nil && result.Preflight.Verdict.Status == "compatible"
+	if result.Scope != nil {
+		result.ChecksPassed = result.ChecksPassed && len(result.Scope.Unresolved) == 0
+		for _, command := range result.Scope.Commands {
+			result.ChecksPassed = result.ChecksPassed && len(command.UnvalidatedSetup) == 0
+		}
+	}
 	if result.CISelection != nil {
 		result.ChecksPassed = result.ChecksPassed && result.CISelection.Status == "compatible"
 	}

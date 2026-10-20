@@ -8,7 +8,7 @@ With the project's test dependencies installed, run:
 ddtest testdrive --framework jest --check-only --yes
 ```
 
-This loads the effective Jest configuration with `--showConfig` (which can execute
+This isolates the statically resolved Jest invocation and loads its effective configuration with `--showConfig` (which can execute
 project configuration code), checks the Jest/Circus runner and local Node version
 against the selected tracer, and reads GitHub Actions setup, conditions and runtime
 matrices. It resolves the action's default tracer from that action's metadata,
@@ -28,6 +28,9 @@ The result is saved to `.testoptimization/testdrive.json`. Exit 0 and
 actual CI execution and Datadog backend processing remain untested. An incompatible
 or unresolved check returns non-zero and still writes its findings. Ordinary
 execution retains its existing HTML report; check-only does not generate one.
+
+Check-only does not execute package lifecycle hooks, other test frameworks or unresolved setup. Mixed runner scripts must be replaced with an explicit Jest command for this check. Known lint wrappers are omitted from configuration inspection and remain visible for separate review. On every platform, ordinary package scripts resolve to Node's Jest entry point without requiring a POSIX forwarding shell. The report records the Node executable/version observed in the actual Jest process. Missing runtime capture and unresolved CI preparation prevent a passing check.
+
 
 ### Manual CLI QA
 

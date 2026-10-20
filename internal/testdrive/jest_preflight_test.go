@@ -44,9 +44,20 @@ type preflightExecutor struct {
 	calls  int
 	args   []string
 	config string
+	node   string
 }
 
-func (e *preflightExecutor) CombinedOutput(_ context.Context, _ string, args []string, _ map[string]string) ([]byte, error) {
+func (e *preflightExecutor) CombinedOutput(_ context.Context, _ string, args []string, env map[string]string) ([]byte, error) {
+	if path := env["DDTEST_JEST_PREFLIGHT"]; path != "" {
+		node := e.node
+		if node == "" {
+			node = "v24.14.1"
+		}
+		data, _ := json.Marshal(jestRuntime{Node: node, Executable: "/test/node"})
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			return nil, err
+		}
+	}
 	e.calls++
 	e.args = args
 	return []byte("package script banner\n" + e.config), nil
