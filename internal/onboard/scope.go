@@ -1,0 +1,224 @@
+package onboard
+
+import (
+	"fmt"
+	"maps"
+	"path/filepath"
+	"slices"
+	"strings"
+)
+
+// TestCommand identifies an explicit framework invocation, not the surrounding
+// build, publication or shell script. Locations retain every CI consumer.
+type TestCommand struct {
+	Resolution       string            `json:"resolution,omitempty"`
+	Directory        string            `json:"directory"`
+	Command          string            `json:"command"`
+	Environment      map[string]string `json:"environment,omitempty"`
+	Locations        []string          `json:"locations,omitempty"`
+	Prerequisites    []BuildCommand    `json:"prerequisites,omitempty"`
+	UnvalidatedSetup []string          `json:"unvalidated_setup,omitempty"`
+}
+
+// BuildCommand is a statically resolved build preceding a test in the same
+// command chain. Discovery records preparation without executing it.
+type BuildCommand struct {
+	Environment map[string]string `json:"environment,omitempty"`
+	Kind        string            `json:"kind,omitempty"`
+	Directory   string            `json:"directory"`
+	Command     string            `json:"command"`
+}
+
+type ValidationScope struct {
+	Commands   []TestCommand `json:"commands"`
+	Unresolved []string      `json:"unresolved,omitempty"`
+	Review     []string      `json:"review,omitempty"`
+}
+
+func yarnImplicitInstall(words []string) bool {
+	if len(words) == 0 || words[0] != "yarn" {
+		return false
+	}
+	for _, word := range words[1:] {
+		if !slices.Contains([]string{"--frozen-lockfile", "--non-interactive", "--ignore-scripts", "--ignore-optional", "--offline", "--immutable"}, word) {
+			return false
+		}
+	}
+	return true
+}
+
+// DiscoverValidationScope reads CI and package aliases without running them.
+// Unknown fragments stay visible alongside known test invocations.
+func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
+	var scope ValidationScope
+	if framework != "jest" {
+		return scope, fmt.Errorf("CI command discovery is not available for %s", framework)
+	}
+
+	workflows, err := readWorkflows(root)
+	if err != nil {
+		return scope, err
+	}
+	for _, workflow := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[name]
+
+			rows, err := runtimeMatrix(job.Strategy.Matrix)
+			if err != nil {
+				scope.Unresolved = append(scope.Unresolved, workflow.Path+" / "+name+": "+err.Error())
+				continue
+			}
+			for _, row := range rows {
+				active, err := possibleJobCondition(job.If, row)
+				if err != nil {
+					scope.Unresolved = append(scope.Unresolved, workflow.Path+" / "+name+": "+err.Error())
+					continue
+				}
+				if !active {
+					continue
+				}
+				var pendingSetup []string
+				var preparation []BuildCommand
+				var unresolved, review []string
+				var commands []TestCommand
+				for i, step := range job.Steps {
+
+					active, conditionErr := stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
+					if conditionErr == nil && !active {
+						continue
+					}
+					jobLabel := name
+					if len(row) > 0 {
+						jobLabel += fmt.Sprint(" ", row)
+					}
+					location := fmt.Sprintf("%s / %s / step %d (%s)", workflow.Path, jobLabel, stepNumber(step, i), step.Run)
+					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
+					resolution := resolveTestStep(root, workflow, job, resolved, "javascript", framework)
+					if conditionErr != nil && resolved.Run != "" && resolution.Reason == "" && !resolution.Matched && len(resolution.Builds) == 0 {
+						resolution.Review, resolution.Reason = true, "Condition affects only a recognized non-test command; review separately: "+conditionErr.Error()
+					}
+					if conditionErr != nil && !resolution.Review {
+						pendingSetup = append(pendingSetup, conditionErr.Error())
+						resolution.Reason = conditionErr.Error()
+					}
+					if envErr != nil && !resolution.Review {
+						pendingSetup = append(pendingSetup, envErr.Error())
+						resolution.Reason = envErr.Error()
+					}
+					if resolution.Review {
+						for j := range resolution.Builds {
+							resolution.Builds[j].Environment = maps.Clone(env)
+						}
+						preparation = append(preparation, resolution.Builds...)
+						review = append(review, location+": "+resolution.Reason)
+						continue
+					}
+					if resolution.Reason != "" {
+						unresolved = append(unresolved, location+": "+resolution.Reason)
+					}
+					if resolution.ReviewReason != "" {
+						review = append(review, location+": "+resolution.ReviewReason)
+					}
+					for j := range resolution.Builds {
+						resolution.Builds[j].Environment = maps.Clone(env)
+					}
+					for _, entry := range resolution.Tests {
+
+						for j := range entry.Prerequisites {
+							entry.Prerequisites[j].Environment = maps.Clone(env)
+						}
+						entry.Prerequisites = append(slices.Clone(preparation), entry.Prerequisites...)
+						entry.UnvalidatedSetup = append(slices.Clone(pendingSetup), entry.UnvalidatedSetup...)
+						entry.Environment = env
+						entry.Directory = filepath.ToSlash(filepath.Clean(entry.Directory))
+						entry.Locations = []string{location}
+						commands = append(commands, entry)
+					}
+					if resolution.Reason != "" {
+						pendingSetup = append(pendingSetup, location+": "+resolution.Reason)
+					}
+					if !resolution.Matched {
+						preparation = append(preparation, resolution.Builds...)
+					}
+				}
+				scope.Unresolved = append(scope.Unresolved, unresolved...)
+				scope.Review = append(scope.Review, review...)
+				for _, entry := range commands {
+					index := slices.IndexFunc(scope.Commands, func(previous TestCommand) bool {
+						return previous.Directory == entry.Directory && previous.Command == entry.Command && slices.EqualFunc(previous.Prerequisites, entry.Prerequisites, EqualPreparation) && slices.Equal(previous.UnvalidatedSetup, entry.UnvalidatedSetup) && maps.Equal(previous.Environment, entry.Environment)
+					})
+					if index < 0 {
+						scope.Commands = append(scope.Commands, entry)
+					} else {
+						scope.Commands[index].Locations = append(scope.Commands[index].Locations, entry.Locations...)
+					}
+				}
+			}
+		}
+	}
+	scope.Unresolved = groupMatrixDiagnostics(scope.Unresolved)
+	scope.Review = groupMatrixDiagnostics(scope.Review)
+	return scope, nil
+}
+
+// ValidationCommands also resolves a selected local alias, for scope accounting.
+func ValidationCommands(root, command, framework string) []TestCommand {
+	remaining := 256
+	return resolveJestSequence(root, root, command, nil, &remaining, framework).Tests
+}
+
+// File rewrites in earlier CI steps change what the same test command executes.
+func mutatesCIFiles(command string) bool {
+	commands, err := staticCommands(command)
+	if err != nil {
+		return false
+	} // Already retained as unresolved setup.
+	for _, words := range commands {
+		if len(words) > 0 && slices.Contains([]string{"sed", "cp", "mv", "rm", "patch"}, words[0]) {
+			return true
+		}
+		if len(words) > 1 && slices.Contains([]string{"pnpm", "yarn", "bun"}, words[0]) && words[1] == "add" {
+			return true
+		}
+	}
+	return false
+}
+
+// Keep repeated setup/parse failures readable without hiding their affected
+// matrix scope. Per-test locations and runtime findings retain all consumers.
+func groupMatrixDiagnostics(messages []string) []string {
+	type group struct {
+		text string
+		rows []string
+	}
+	groups := []group{}
+	indexes := map[string]int{}
+	for _, message := range messages {
+		prefix, rest, matrix := strings.Cut(message, " map[")
+		row, suffix, end := strings.Cut(rest, "] / step ")
+		key := message
+		if matrix && end {
+			key = prefix + " / step " + suffix
+		} else {
+			row = ""
+		}
+		index, exists := indexes[key]
+		if !exists {
+			index = len(groups)
+			indexes[key] = index
+			groups = append(groups, group{text: key})
+		}
+		if row != "" && !slices.Contains(groups[index].rows, row) {
+			groups[index].rows = append(groups[index].rows, row)
+		}
+	}
+	result := make([]string, 0, len(groups))
+	for _, group := range groups {
+		text := group.text
+		if len(group.rows) > 0 {
+			text += fmt.Sprintf(" [affects %d matrix entries; e.g. %s]", len(group.rows), strings.Join(group.rows[:min(2, len(group.rows))], "; "))
+		}
+		result = append(result, text)
+	}
+	return result
+}
