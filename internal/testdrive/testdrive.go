@@ -48,6 +48,7 @@ type Testdrive struct {
 	workflowScope  *onboard.ValidationScope
 	workflowRun    func(context.Context, io.Writer) error // test injection for coordinator failures
 
+	rubyTracerEnv         map[string]string
 	webdriverIOCapability *int
 	environmentInfo       environmentInfo
 	environmentFailure    *reportCard
@@ -106,7 +107,7 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 		return nil, fmt.Errorf("--all and --command are mutually exclusive")
 	}
 	if all && !supportsValidationFramework(runner.Name()) {
-		return nil, fmt.Errorf("--all currently validates Jest, Vitest, Playwright, Mocha, Cypress, Cucumber and WebdriverIO only")
+		return nil, fmt.Errorf("--all currently validates Jest, Vitest, Playwright, Mocha, Cypress, Cucumber, WebdriverIO, RSpec and Minitest only")
 	}
 	if runner.Name() == "vitest" {
 		repositoryRoot, err = filepath.EvalSymlinks(repositoryRoot)
@@ -157,6 +158,17 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 		command, args = words[0], words[1:]
 	}
 	var preparationError error
+	if language == "ruby" && !all {
+		selected, selectErr := onboard.RubyValidationCommand(repositoryRoot, runner.Name(), settings.GetCommand())
+		preparationError = selectErr
+		if selected != "" {
+			words, parseErr := shellquote.Split(selected)
+			if parseErr != nil || len(words) == 0 {
+				return nil, fmt.Errorf("invalid Ruby command: %s", selected)
+			}
+			command, args = words[0], words[1:]
+		}
+	}
 	if (runner.Name() == "mocha" || runner.Name() == "cypress" || runner.Name() == "cucumber" || runner.Name() == "webdriverio") && !all {
 		var selected string
 		var err error
@@ -249,6 +261,8 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 // Bind method values after copying a drive so preflight uses its command and workspace.
 func (t *Testdrive) bindPreflight() {
 	switch t.framework.Name() {
+	case "rspec", "minitest":
+		t.preflight = t.checkRubyPreflight
 	case "vitest":
 		t.preflight = t.checkVitestPreflight
 	case "playwright":
@@ -334,7 +348,12 @@ func (t *Testdrive) Preview(output io.Writer) {
 		_, _ = fmt.Fprintf(output, "  - command: %s\n", shellquote.Join(append([]string{command}, args...)...))
 	}
 	if supportsValidationFramework(t.framework.Name()) {
-		_, _ = fmt.Fprintln(output, "  - check GitHub Actions Node runtimes against the workflow-selected tracer using public action and npm metadata")
+		if t.language == "ruby" {
+			_, _ = fmt.Fprintln(output, "  - validate in a temporary repository copy; preserve the original Gemfile and lockfile")
+			_, _ = fmt.Fprintln(output, "  - check numeric CI Ruby selectors against the resolved tracer's RubyGems requirements; tracer releases must match exactly, and other engines/floating selectors need separate validation or explicit instrumentation exclusions")
+		} else {
+			_, _ = fmt.Fprintln(output, "  - check GitHub Actions Node runtimes against the workflow-selected tracer using public action and npm metadata")
+		}
 		_, _ = fmt.Fprintln(output, "  - compare native JSON results without instrumentation and with reporting-only instrumentation")
 		_, _ = fmt.Fprintln(output, "  - repeat the pair if outcomes differ; timing and console order are ignored")
 		if t.framework.Name() == "webdriverio" {
@@ -363,7 +382,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	_, _ = fmt.Fprintln(output, "  - keep the upstream HTML findings report and compact JSON validation report; remove temporary probes, tracer, traffic, and run files")
 	_, _ = fmt.Fprintln(output)
 	if t.language == "ruby" && t.projectTracer == "" {
-		_, _ = fmt.Fprintln(output, "Bundler updates Gemfile and Gemfile.lock.")
+		_, _ = fmt.Fprintln(output, "Bundler updates only the temporary copy of Gemfile and Gemfile.lock; the original bundle is preserved.")
 		return
 	}
 	patterns := map[string][]string{
@@ -404,7 +423,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 	}
 	var result validationResult
 	var runErr error
-	if (t.framework.Name() == "vitest" && onboard.IsDDTestCommand(t.command) || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") && !t.checkOnly {
+	if (t.framework.Name() == "vitest" && onboard.IsDDTestCommand(t.command) || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") && !t.checkOnly || t.language == "ruby" {
 		child := *t
 		var models []reportModel
 		child.reportModels = &models
@@ -489,12 +508,14 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	}
 
 	if supportsValidationFramework(t.framework.Name()) {
-		ciRoot := t.repositoryRoot
-		if t.workflowRoot != "" {
-			ciRoot = t.workflowRoot
+		if t.language != "ruby" {
+			ciRoot := t.repositoryRoot
+			if t.workflowRoot != "" {
+				ciRoot = t.workflowRoot
+			}
+			check := onboard.CheckCIRuntimes(ctx, ciRoot, t.framework.Name())
+			result.CIRuntime = &check
 		}
-		check := onboard.CheckCIRuntimes(ctx, ciRoot, t.framework.Name())
-		result.CIRuntime = &check
 		if t.preflight != nil {
 			if err := t.preflight(ctx, output, &result); err != nil {
 				return result, err
@@ -506,7 +527,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 			return result, nil
 		}
 	} else if t.checkOnly {
-		return result, fmt.Errorf("configuration preflight currently supports Jest, Vitest, Playwright, Mocha, Cypress, Cucumber and WebdriverIO only")
+		return result, fmt.Errorf("configuration preflight currently supports Jest, Vitest, Playwright, Mocha, Cypress, Cucumber, WebdriverIO, RSpec and Minitest only")
 	}
 
 	_, _ = fmt.Fprintf(output, "\nPreparing %s in %s...\n", t.tracerLabel, session.Directory())
@@ -536,7 +557,11 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		if t.language == "python" && t.environmentInfo.Executable != "" {
 			options.Command, options.Args = t.environmentInfo.Executable, nil
 		}
-		installation, err = t.platform.InstallTestdriveTracer(ctx, options)
+		if t.language == "ruby" {
+			installation, err = t.installRubyTracer(ctx, options)
+		} else {
+			installation, err = t.platform.InstallTestdriveTracer(ctx, options)
+		}
 		if err != nil {
 			return result, err
 		}
@@ -544,17 +569,24 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 
 	result.TracerSource = "temporary installation"
 	if t.language == "ruby" {
-		result.TracerSource = "project bundle installation"
+		result.TracerSource = "temporary bundle installation"
 	}
 	if installation.Project {
 		result.Tracer = t.installedTracerLabel(t.projectTracer)
 		result.TracerSource = "project installation (reused; fallback selector ignored)"
 	}
+	if t.language == "ruby" {
+		if err := t.checkRubyPreflight(ctx, output, &result); err != nil {
+			return result, err
+		}
+		runErr = t.runFrameworkValidation(ctx, output, session, "", &result)
+		return
+	}
 	if t.framework.Name() == "vitest" || t.framework.Name() == "playwright" || t.framework.Name() == "mocha" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio" {
 		if err := verifyInstalledSelection(installation.Path, &result); err != nil {
 			return result, err
 		}
-		runErr = t.runJavaScriptValidation(ctx, output, session, installation.Path, &result)
+		runErr = t.runFrameworkValidation(ctx, output, session, installation.Path, &result)
 		return
 	}
 	if t.framework.Name() == "jest" {
@@ -567,7 +599,7 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 				return result, fmt.Errorf("jest preflight: %s", result.Preflight.Verdict.Reason)
 			}
 		}
-		runErr = t.runJavaScriptValidation(ctx, output, session, installation.Path, &result)
+		runErr = t.runFrameworkValidation(ctx, output, session, installation.Path, &result)
 		return
 	}
 	server, err := t.startIntake(session.Directory(), intake.Scenario{})
@@ -873,6 +905,7 @@ func (t *Testdrive) environment(path, intakeURL, sessionID string) map[string]st
 		maps.Copy(env, pythonEnvironment(path))
 	case "ruby":
 		maps.Copy(env, rubyEnvironment(path))
+		maps.Copy(env, t.rubyTracerEnv)
 	}
 	return env
 }

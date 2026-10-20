@@ -236,7 +236,11 @@ func summarizeValidation(result validationResult) validationSummary {
 	}
 	if !result.CheckOnly {
 		if missingRealCoverage(result) {
-			summary.BlockingChecks = append(summary.BlockingChecks, displayName(result.Framework)+" real-suite coverage was not observed. Synthetic skipping probes do not validate coverage of the customer's source. Check NYC instrument/include settings and ESM instrumentation; preserve existing coverage thresholds.")
+			if result.Framework == "rspec" || result.Framework == "minitest" {
+				summary.BlockingChecks = append(summary.BlockingChecks, "Ruby application coverage was not observed. Inspect the selected Gemfile/runtime and native suite output; setup failures before tests start cannot validate compatibility or features. Check datadog-ci coverage settings after the native suite runs.")
+			} else {
+				summary.BlockingChecks = append(summary.BlockingChecks, displayName(result.Framework)+" real-suite coverage was not observed. Synthetic skipping probes do not validate coverage of the customer's source. Check NYC instrument/include settings and ESM instrumentation; preserve existing coverage thresholds.")
+			}
 		}
 		if result.Compatibility.Status != "compatible" {
 			summary.BlockingChecks = append(summary.BlockingChecks, "compatibility "+result.Compatibility.Status)
@@ -298,7 +302,7 @@ func summarizeValidation(result validationResult) validationSummary {
 		summary.OnboardingResponse += " Local execution runtime: Node " + summary.LocalNode + "."
 	}
 	if summary.CIScope != nil {
-		summary.OnboardingResponse += fmt.Sprintf(" CI Node scope (static): configured for instrumentation: %s; excluded from instrumentation: %s; unresolved or blocked: %s.", scopeList(summary.CIScope.Instrumented), scopeList(summary.CIScope.Excluded), scopeList(summary.CIScope.Unverified))
+		summary.OnboardingResponse += fmt.Sprintf(" CI runtime scope (static): configured for instrumentation: %s; excluded from instrumentation: %s; unresolved or blocked: %s.", scopeList(summary.CIScope.Instrumented), scopeList(summary.CIScope.Excluded), scopeList(summary.CIScope.Unverified))
 	}
 	if len(summary.BlockingChecks) > 0 {
 		summary.OnboardingResponse += " Blocking checks: " + strings.Join(summary.BlockingChecks[:min(3, len(summary.BlockingChecks))], "; ") + "."
@@ -416,7 +420,7 @@ func validationFacts(result validationResult) []string {
 	return facts
 }
 
-// Scope describes configuration entries, not execution on these Node versions.
+// Scope describes static configuration entries, not execution on these runtimes.
 type ciRuntimeScope struct {
 	Instrumented []string `json:"instrumented,omitempty"`
 	Excluded     []string `json:"excluded,omitempty"`
@@ -430,6 +434,9 @@ func summarizeCIScope(check *onboard.RuntimeCheck) *ciRuntimeScope {
 	scope := &ciRuntimeScope{}
 	for _, job := range check.Jobs {
 		label := nodeScopeLabel(job.Node)
+		if job.Ruby != "" {
+			label = "Ruby " + job.Ruby
+		}
 		switch job.Status {
 		case "compatible":
 			scope.Instrumented = appendUnique(scope.Instrumented, label)

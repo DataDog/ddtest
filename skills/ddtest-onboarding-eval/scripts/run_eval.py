@@ -265,6 +265,14 @@ def agent_command(agent, model):
     return command
 
 
+def report_ruby_runtime(report, requested):
+    observed = sorted({preflight["ruby"] for preflight in [report.get("preflight") or {},
+        *[(configuration.get("preflight") or {}) for configuration in report.get("configurations") or []]]
+        if preflight.get("ruby")})
+    return {"requested_version": requested, "observed_versions": observed,
+            "status": "not observed" if not observed else "matched" if observed == [requested] else "mismatch"}
+
+
 def execute(command, cwd, env, timeout, on_line, prompt=None):
     """Stream a process and kill its process group on timeout or interruption."""
     process = subprocess.Popen(command, cwd=cwd, env=env, text=True,
@@ -322,6 +330,13 @@ def run(args):
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise ValueError("--ddtest must be an executable file")
     node = getattr(args, "node", None)
+    ruby = getattr(args, "ruby", None)
+    if ruby is not None:
+        if node is not None:
+            raise ValueError("Select either --node or --ruby")
+        if not ruby.is_absolute() or not ruby.is_file() or not os.access(ruby, os.X_OK):
+            raise ValueError("--ruby must be an absolute executable path")
+        ruby = ruby.resolve(strict=True)
     if node is not None:
         if args.agent != "codex":
             raise ValueError("--node currently requires --agent codex")
@@ -362,21 +377,45 @@ def run(args):
     pnpm_store.mkdir()
     pnpm_cache.mkdir()
     pnpm_config.write_text(f"store-dir={pnpm_store}\ncache-dir={pnpm_cache}\n")
-    if node is not None:
-        (bin_dir / "node").symlink_to(node)
+    if ruby is not None:
+        for key in ("RUBYOPT", "BUNDLE_GEMFILE", "BUNDLE_BIN_PATH", "BUNDLE_FROZEN", "BUNDLE_DEPLOYMENT"):
+            env.pop(key, None)
+        for key, name in (("BUNDLE_PATH", "bundle"), ("BUNDLE_APP_CONFIG", "bundle-config"),
+                          ("BUNDLE_USER_HOME", "bundler"), ("GEM_HOME", "ruby-gems")):
+            directory = trial / "caches" / name
+            directory.mkdir()
+            env[key] = str(directory)
+        env.pop("GEM_PATH", None)
+        env["PATH"] = str(ruby.parent) + os.pathsep + env.get("PATH", "")
+        (bin_dir / "ruby").symlink_to(ruby)
+    if node is not None or ruby is not None:
         zdotdir = trial / "zsh"
         zdotdir.mkdir()
         env["ZDOTDIR"] = str(zdotdir)
+    if node is not None:
+        (bin_dir / "node").symlink_to(node)
         env["PATH"] = str(node.parent) + os.pathsep + env.get("PATH", "")
     env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
     agent_argv = agent_command(args.agent, args.model)
-    if node is not None:
+    if args.agent == "codex" and (node is not None or ruby is not None):
         # .zshenv also runs in non-login shells. Isolate it and disable shell
         # snapshots so neither host startup files nor an old snapshot reset PATH.
         agent_argv[2:2] = ["-c", "allow_login_shell=false", "-c",
                            "features.shell_snapshot=false", "-c",
                            "shell_environment_policy.set.PATH=" + json.dumps(env["PATH"]), "-c",
                            "shell_environment_policy.set.ZDOTDIR=" + json.dumps(env["ZDOTDIR"])]
+    disabled_servers = getattr(args, "disable_mcp_server", [])
+    if args.agent == "codex":
+        for server in disabled_servers:
+            if not re.fullmatch(r"[\w-]+", server):
+                raise ValueError("Invalid MCP server name")
+            agent_argv[2:2] = ["-c", f"mcp_servers.{server}.enabled=false"]
+    elif disabled_servers:
+        raise ValueError("--disable-mcp-server requires Codex; Claude uses --strict-mcp-config")
+    if getattr(args, "strict_mcp", False):
+        if args.agent != "claude":
+            raise ValueError("--strict-mcp requires Claude")
+        agent_argv.extend(["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'])
     framework = getattr(args, "framework", None)
     scope = f" for {framework} only" if framework else ""
     prompt = f"Use ddtest in {bin_dir} and onboard this repository to test-optimization{scope}."
@@ -393,8 +432,11 @@ def run(args):
         "CYPRESS_CACHE_FOLDER", "PLAYWRIGHT_BROWSERS_PATH", "PUPPETEER_CACHE_DIR")}
     manifest["private_caches"]["pnpm_store"] = str(pnpm_store)
     manifest["private_caches"]["pnpm_cache"] = str(pnpm_cache)
-    if node is not None:
-        manifest["shell_isolation"] = {"zdotdir": env["ZDOTDIR"], "login_shell": False, "shell_snapshot": False}
+    if node is not None or ruby is not None:
+        manifest["shell_isolation"] = {"zdotdir": env["ZDOTDIR"], "login_shell": False if args.agent == "codex" else "CLI default", "shell_snapshot": False if args.agent == "codex" else "not applicable"}
+    manifest["mcp_isolation"] = {"disabled_servers": disabled_servers, "strict_empty_config": getattr(args, "strict_mcp", False)}
+    if ruby is not None:
+        manifest["private_caches"].update({key: env[key] for key in ("BUNDLE_PATH", "BUNDLE_APP_CONFIG", "BUNDLE_USER_HOME", "GEM_HOME")})
     activity = (output / "activity.jsonl").open("w")
     agent_failed = False
     agent_completed = False
@@ -464,6 +506,12 @@ def run(args):
 
     code = 1
     try:
+        if ruby is not None:
+            runtime = json.loads(command(["ruby", "-rjson", "-rrbconfig", "-e",
+                "puts JSON.generate(executable: RbConfig.ruby, version: RUBY_VERSION)"], timeout=CLI_STARTUP_TIMEOUT))
+            manifest["ruby_runtime"] = {"requested": str(ruby), **runtime}
+            if not os.path.samefile(runtime["executable"], ruby):
+                raise RuntimeError("Selected Ruby executable did not run; inspect ruby_runtime")
         if node is not None:
             runtime = json.loads(command(["node", "-p",
                 "JSON.stringify({executable: process.execPath, version: process.version})"],
@@ -531,6 +579,13 @@ def run(args):
             manifest["retry_recommended"] = False
             code = 1
         manifest["ddtest_runtime"] = report_runtime(report, manifest.get("node_runtime", {}).get("version"))
+        if ruby is not None:
+            manifest["ddtest_ruby_runtime"] = report_ruby_runtime(report, manifest.get("ruby_runtime", {}).get("version"))
+            if manifest["ddtest_ruby_runtime"]["status"] == "mismatch":
+                manifest["status"], manifest["failure_kind"] = "failed", "evaluator_environment"
+                manifest["error"] = "Final ddtest runtime differs from --ruby"
+                manifest["retry_recommended"] = False
+                code = 1
         if manifest["ddtest_runtime"]["status"] == "mismatch":
             manifest["status"] = "failed"
             manifest["failure_kind"] = "evaluator_environment"
@@ -555,7 +610,10 @@ def main():
     parser.add_argument("--agent", choices=("codex", "claude"), required=True)
     parser.add_argument("--node", type=Path,
                         help="Absolute Node executable for setup and Codex non-login shells; Codex only")
-    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio"),
+    parser.add_argument("--ruby", type=Path, help="Absolute Ruby executable; uses private Bundler and gem directories")
+    parser.add_argument("--disable-mcp-server", action="append", default=[], help="Disable a named Codex MCP server for this process only")
+    parser.add_argument("--strict-mcp", action="store_true", help="Use an empty strict Claude MCP configuration for this process only")
+    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio", "rspec", "minitest"),
                         help="Optional scope for mixed-framework repositories; adds only the framework to the minimal prompt")
     parser.add_argument("--setup-command", action="append", default=[], help="Repeatable, no implicit shell")
     parser.add_argument("--output", type=Path, required=True, help="New directory for evaluator evidence")

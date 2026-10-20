@@ -234,3 +234,44 @@ func TestStoppedWorkflowCannotLeaveEarlierSuccessAsCurrent(t *testing.T) {
 	require.False(t, current.LastExecution.Current)
 	require.Empty(t, current.Runs)
 }
+
+func TestRubyWorkflowPreservesNativeValidationPath(t *testing.T) {
+	for _, runner := range []framework.Framework{framework.NewRSpec(platform.NewRuby("")), framework.NewMinitest(platform.NewRuby(""))} {
+		t.Run(runner.Name(), func(t *testing.T) {
+			root := t.TempDir()
+			preparation := errors.New("Ruby command requires preparation")
+			drive := &Testdrive{repositoryRoot: root, framework: runner, language: "ruby", preparationError: preparation}
+			var output bytes.Buffer
+			require.ErrorIs(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "verbose"}), preparation)
+			require.NotContains(t, output.String(), "framework_unsupported")
+			report := readValidationReport(t, root)
+			require.Equal(t, runner.Name(), report.Framework)
+			require.Equal(t, preparation.Error(), report.Error)
+			require.Equal(t, "INCOMPLETE", report.Summary.Status)
+		})
+	}
+}
+
+func TestRubyWorkflowAgentModesPreserveEvidence(t *testing.T) {
+	for _, runner := range []framework.Framework{framework.NewRSpec(platform.NewRuby("")), framework.NewMinitest(platform.NewRuby(""))} {
+		for _, format := range []string{"agent", "json"} {
+			t.Run(runner.Name()+"/"+format, func(t *testing.T) {
+				root := t.TempDir()
+				previous := []byte(`{"success":false}`)
+				require.NoError(t, writeValidation(validationPath(root), previous))
+				executor := &fakeTestdriveExecutor{}
+				drive := &Testdrive{repositoryRoot: root, framework: runner, language: "ruby", executor: executor}
+				var output bytes.Buffer
+				require.ErrorContains(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: format}), "framework_unsupported")
+				var result onboard.AgentResult
+				require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+				require.Equal(t, "unsupported", result.Status)
+				require.Empty(t, result.NextCommand)
+				require.Empty(t, executor.command)
+				current, err := os.ReadFile(validationPath(root))
+				require.NoError(t, err)
+				require.Equal(t, previous, current)
+			})
+		}
+	}
+}

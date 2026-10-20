@@ -66,7 +66,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 			return result, err
 		}
 	}
-	if len(item.Prerequisites) == 0 && len(item.Services) == 0 && item.Directory == "." && !onboard.IsDDTestCommand(t.command) && t.framework.Name() != "playwright" && t.framework.Name() != "mocha" && t.framework.Name() != "cypress" && t.framework.Name() != "cucumber" && t.framework.Name() != "webdriverio" || t.checkOnly {
+	if t.language != "ruby" && (len(item.Prerequisites) == 0 && len(item.Services) == 0 && item.Directory == "." && !onboard.IsDDTestCommand(t.command) && t.framework.Name() != "playwright" && t.framework.Name() != "mocha" && t.framework.Name() != "cypress" && t.framework.Name() != "cucumber" && t.framework.Name() != "webdriverio" || t.checkOnly) {
 		if err := t.runBuildPrerequisites(ctx, output, item); err != nil {
 			return result, err
 		}
@@ -151,7 +151,29 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 		t.repositoryRoot = directory
 		t.command = t.configurationExecutable(filepath.Base(t.command))
 	}
-	t.executor = configurationExecutor{t.executor, isolatedCIEnvironment(item.Environment, workspace)}
+	environment := isolatedCIEnvironment(item.Environment, workspace)
+	if t.language == "ruby" {
+		gemfile := environment["BUNDLE_GEMFILE"]
+		if gemfile == "" {
+			gemfile = os.Getenv("BUNDLE_GEMFILE")
+		}
+		if filepath.IsAbs(gemfile) {
+			canonicalGemfile, err := filepath.EvalSymlinks(gemfile)
+			if err != nil {
+				return result, err
+			}
+			canonicalRoot, err := filepath.EvalSymlinks(original)
+			if err != nil {
+				return result, err
+			}
+			relative, err := filepath.Rel(canonicalRoot, canonicalGemfile)
+			if err != nil || !filepath.IsLocal(relative) {
+				return result, fmt.Errorf("BUNDLE_GEMFILE is outside the repository; use a repository-local Gemfile for isolated Ruby validation")
+			}
+			environment["BUNDLE_GEMFILE"] = filepath.Join(workspace, relative)
+		}
+	}
+	t.executor = configurationExecutor{t.executor, environment}
 	return t.run(ctx, output)
 }
 

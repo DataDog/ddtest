@@ -50,6 +50,9 @@ var cucumberInstructions string
 //go:embed instructions/webdriverio.md
 var webdriverIOInstructions string
 
+//go:embed instructions/ruby.md
+var rubyInstructions string
+
 // Run detects the first supported onboarding path and prints its instructions.
 func Run(output io.Writer) error {
 	repositoryRoot, err := os.Getwd()
@@ -70,7 +73,7 @@ func Run(output io.Writer) error {
 	}
 	language := detectedPlatform.Name()
 	name := runner.Name()
-	if language != "javascript" {
+	if language != "javascript" && language != "ruby" {
 		github, ok := provider.(*environment.GitHub)
 		if !ok {
 			return fmt.Errorf("onboard does not support CI provider %s", provider.Name())
@@ -94,7 +97,7 @@ func Run(output io.Writer) error {
 		_, _ = fmt.Fprintf(output, "  - %s\n", workflow)
 	}
 	_, _ = fmt.Fprintln(output, "\n"+strings.TrimSpace(scratchCleanupInstructions))
-	if name == "jest" || name == "vitest" || name == "playwright" || name == "mocha" || name == "cucumber" || name == "webdriverio" {
+	if name == "jest" || name == "vitest" || name == "playwright" || name == "mocha" || name == "cucumber" || name == "webdriverio" || language == "ruby" {
 		scope, err := DiscoverValidationScope(repositoryRoot, name)
 		if err != nil {
 			return err
@@ -141,7 +144,7 @@ func Run(output io.Writer) error {
 		_, _ = fmt.Fprintf(output, "This is configuration detection, not completed onboarding. Run `ddtest testdrive --framework %s` to validate locally. Jest, Vitest, Playwright, Mocha, Cypress and Cucumber projects also check CI runtime compatibility; configurations without a validation adapter remain unvalidated.\n", name)
 		_, _ = fmt.Fprintln(output, "After it finishes, share the validation verdict, CI runtime compatibility and feature results using the final response block printed by testdrive. Copy its absolute Markdown report links verbatim, each on its own line; do not shorten them to relative paths or replace them with file:// URLs.")
 		_, _ = fmt.Fprintln(output, "Keep .testoptimization/report.html and .testoptimization/testdrive.json after cleanup, even on failure. Do not declare validation complete while any required check is failed or inconclusive.")
-		if name != "vitest" && name != "playwright" && name != "mocha" && name != "cucumber" && name != "webdriverio" {
+		if name != "vitest" && name != "playwright" && name != "mocha" && name != "cucumber" && name != "webdriverio" && language != "ruby" {
 			return nil
 		}
 	}
@@ -271,6 +274,9 @@ func renderGitHubInstructions(language string) string {
 }
 
 func instructions(language, name string) string {
+	if language == "ruby" {
+		return strings.ReplaceAll(rubyInstructions, "__FRAMEWORK__", name)
+	}
 	if language == "javascript" && name == "webdriverio" {
 		return strings.ReplaceAll(webdriverIOInstructions, "ddtest testdrive", "ddtest testdrive --framework webdriverio")
 	}

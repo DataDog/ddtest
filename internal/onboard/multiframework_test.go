@@ -38,7 +38,10 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			case "rspec", "minitest":
 				files = map[string]string{"Gemfile": "gem '" + name + "'\n"}
 				language = "ruby"
-				entry = "bundle exec rake"
+				entry = "bundle exec rspec"
+				if name == "minitest" {
+					entry = "bundle exec rake test"
+				}
 			}
 			for file, contents := range files {
 				require.NoError(t, os.WriteFile(filepath.Join(root, file), []byte(contents), 0644))

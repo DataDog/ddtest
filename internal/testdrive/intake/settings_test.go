@@ -164,3 +164,29 @@ func TestSkippingUsesTheRequestedProtocolLevel(t *testing.T) {
 		require.JSONEq(t, tc.want, string(result.Data[0]))
 	}
 }
+
+func TestRubySkippingReturnsParameterizedIdentityAndKnownTestsSeed(t *testing.T) {
+	scenario := Scenario{Feature: "skipping", Module: "rspec", Suite: "customer at ./spec/probe_spec.rb", SourceFile: "spec/probe_spec.rb", Test: "probe", Parameters: `{"arguments":{},"metadata":{"scoped_id":"1:1"}}`}
+	handler := scenarioHandler(scenario)
+	for _, level := range []string{"test", "suite"} {
+		body := `{"data":{"attributes":{"test_level":"` + level + `"}}}`
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, constants.SkippableTestsURLPath, bytes.NewBufferString(body)))
+		var result struct {
+			Data []struct {
+				Type       string
+				Attributes struct{ Suite, Name, Parameters string }
+			}
+		}
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+		require.Len(t, result.Data, 1)
+		require.Equal(t, scenario.Suite, result.Data[0].Attributes.Suite)
+		if level == "test" {
+			require.Equal(t, scenario.Parameters, result.Data[0].Attributes.Parameters)
+		}
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, constants.KnownTestsURLPath, bytes.NewBufferString(`{}`)))
+	require.Contains(t, response.Body.String(), `"ddtest unrelated known suite":["known test"]`)
+	require.NotContains(t, response.Body.String(), scenario.Test)
+}

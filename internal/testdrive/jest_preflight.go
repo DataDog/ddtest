@@ -37,6 +37,7 @@ type jestPreflight struct {
 	Verdict             verdict                      `json:"verdict"`
 	Command             string                       `json:"command"`
 	Node                string                       `json:"node"`
+	Ruby                string                       `json:"ruby,omitempty"`
 	Version             string                       `json:"version"`
 	PlaywrightProjects  []playwrightProject          `json:"playwright_projects,omitempty"`
 	VitestProjects      []vitestProject              `json:"vitest_projects,omitempty"`

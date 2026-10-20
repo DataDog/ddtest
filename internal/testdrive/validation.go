@@ -212,7 +212,7 @@ func validationPath(repositoryRoot string) string {
 }
 
 func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {
-	if result.Framework == "pytest" || result.Framework == "rspec" || result.Framework == "minitest" {
+	if result.Framework == "pytest" {
 		result.CompletedAt = time.Now().UTC()
 		result.WorkingDirectory = repositoryRoot
 		result.Success = result.Error == ""
@@ -261,6 +261,9 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 			}
 			if job.Node != "" {
 				label += " / Node " + job.Node
+			}
+			if job.Ruby != "" {
+				label += " / Ruby " + job.Ruby
 			}
 			if job.NodeResolution != nil {
 				label += " => " + job.NodeResolution.Version + " (" + job.NodeResolution.Source + ")"
@@ -427,7 +430,7 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 		for _, findings := range [][]onboard.RuntimeFinding{check.Jobs, check.Review} {
 			for i := range findings {
 				job := &findings[i]
-				for _, field := range []*string{&job.Workflow, &job.Job, &job.Source, &job.Command, &job.Resolution, &job.Node, &job.NodeSource, &job.Action, &job.Tracer, &job.TracerRequested, &job.Requirement, &job.Reason} {
+				for _, field := range []*string{&job.Workflow, &job.Job, &job.Source, &job.Command, &job.Resolution, &job.Node, &job.Ruby, &job.NodeSource, &job.Action, &job.Tracer, &job.TracerRequested, &job.Requirement, &job.Reason} {
 					*field = reportText(*field)
 				}
 			}

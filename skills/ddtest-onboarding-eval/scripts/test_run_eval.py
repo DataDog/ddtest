@@ -194,6 +194,39 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(observed["prompt"], f"Use ddtest in {checkout.parent / 'bin'} and onboard this repository to test-optimization.")
         self.assertNotIn("--model", observed["argv"])
 
+    def test_ruby_trials_pin_runtime_and_keep_dependencies_private_for_both_agents(self):
+        selected = self.root / "selected" / "ruby"
+        selected.parent.mkdir()
+        selected.write_text(f"#!{sys.executable}\nimport json\nprint(json.dumps({{'executable':{str(selected)!r},'version':'3.4.9'}}))\n")
+        selected.chmod(0o755)
+        self.args.ruby = selected
+        for agent in ("codex", "claude"):
+            with self.subTest(agent=agent):
+                self.args.agent = agent
+                self.args.output = self.root / (agent + "-ruby")
+                self.args.disable_mcp_server = ["datadog-code-exec"] if agent == "codex" else []
+                self.args.strict_mcp = agent == "claude"
+                code, manifest = self.trial({"FAKE_REPORT_JSON": json.dumps({"preflight":{"ruby":"3.4.9"}})})
+                self.assertEqual(code, 0)
+                self.assertEqual(manifest["ruby_runtime"]["version"], "3.4.9")
+                self.assertEqual(manifest["ddtest_ruby_runtime"]["status"], "matched")
+                checkout = Path(manifest["checkout"])
+                for key in ("BUNDLE_PATH", "BUNDLE_APP_CONFIG", "BUNDLE_USER_HOME", "GEM_HOME"):
+                    self.assertTrue(Path(manifest["private_caches"][key]).is_relative_to(checkout.parent / "caches"))
+                observed = json.loads((checkout / "observed.json").read_text())
+                if agent == "codex":
+                    self.assertIn("mcp_servers.datadog-code-exec.enabled=false", observed["argv"])
+                    self.assertIn("allow_login_shell=false", observed["argv"])
+                else:
+                    self.assertIn("--strict-mcp-config", observed["argv"])
+                    self.assertIn('{"mcpServers":{}}', observed["argv"])
+                self.assertEqual(observed["prompt"], f"Use ddtest in {checkout.parent / 'bin'} and onboard this repository to test-optimization.")
+
+    def test_ruby_runtime_mismatch_and_missing_evidence_remain_distinct(self):
+        self.assertEqual(run_eval.report_ruby_runtime({}, "3.4.9")["status"], "not observed")
+        self.assertEqual(run_eval.report_ruby_runtime({"preflight":{"ruby":"3.2.2"}}, "3.4.9")["status"], "mismatch")
+        self.assertEqual(run_eval.report_ruby_runtime({"configurations":[{"preflight":{"ruby":"3.4.9"}}]}, "3.4.9")["status"], "matched")
+
     def test_short_owned_state_path_accepts_real_watchman_socket(self):
         code, manifest = self.trial()
         self.assertEqual(code, 0)

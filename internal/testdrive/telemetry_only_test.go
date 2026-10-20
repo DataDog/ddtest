@@ -11,19 +11,16 @@ import (
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
-	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
 )
 
-func TestPythonRubyExitCodeMatchesMain(t *testing.T) {
+func TestPythonExitCodeMatchesMain(t *testing.T) {
 	for _, fixture := range []struct {
 		language string
 		runner   framework.Framework
 	}{
 		{"python", framework.NewPytest(platform.NewPython())},
-		{"ruby", framework.NewRSpec(platform.NewRuby(settings.TestSkippingLevelTest))},
-		{"ruby", framework.NewMinitest(platform.NewRuby(settings.TestSkippingLevelTest))},
 	} {
 		t.Run(fixture.runner.Name(), func(t *testing.T) {
 			for _, tc := range []struct {
@@ -106,11 +103,16 @@ func TestPythonRubyAndCypressPreviewsDoNotPromiseUnsupportedChecks(t *testing.T)
 			var output bytes.Buffer
 			drive.Preview(&output)
 			require.NotContains(t, output.String(), "disable coverage thresholds")
-			if fixture.language != "javascript" {
+			switch fixture.language {
+			case "ruby":
+				require.Contains(t, output.String(), "native JSON results")
+				require.Contains(t, output.String(), "temporary probe test")
+				require.NotContains(t, output.String(), "reporting-only telemetry")
+			case "python":
 				require.Contains(t, output.String(), "reporting-only telemetry")
 				require.NotContains(t, output.String(), "temporary probe test")
 				require.NotContains(t, output.String(), "Node runtimes")
-			} else {
+			default:
 				require.Contains(t, output.String(), "application coverage validation are deferred")
 				require.NotContains(t, output.String(), "EFD, skipping")
 			}
@@ -118,8 +120,8 @@ func TestPythonRubyAndCypressPreviewsDoNotPromiseUnsupportedChecks(t *testing.T)
 	}
 }
 
-func TestPythonRubyReportsDoNotEnterAgentValidation(t *testing.T) {
-	for _, name := range []string{"pytest", "rspec", "minitest"} {
+func TestPythonReportsDoNotEnterAgentValidation(t *testing.T) {
+	for _, name := range []string{"pytest"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			t.Chdir(root)

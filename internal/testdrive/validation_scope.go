@@ -26,7 +26,7 @@ type executedValidation struct {
 
 func supportsValidationFramework(name string) bool {
 	switch name {
-	case "jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio":
+	case "jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio", "rspec", "minitest":
 		return true
 	}
 	return false

@@ -64,6 +64,10 @@ func yarnImplicitInstall(words []string) bool {
 // Unknown fragments stay visible alongside known test invocations.
 func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	var scope ValidationScope
+	language := "javascript"
+	if framework == "rspec" || framework == "minitest" {
+		language = "ruby"
+	}
 	workflows, err := readWorkflows(root)
 	if err != nil {
 		return scope, err
@@ -133,7 +137,7 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 					}
 					location := fmt.Sprintf("%s / %s / step %d (%s)", workflow.Path, jobLabel, stepNumber(step, i), step.Run)
 					resolved, env, envErr := resolveVariantStep(workflow, job, step, row, framework)
-					resolution := resolveTestStep(root, workflow, job, resolved, "javascript", framework)
+					resolution := resolveTestStep(root, workflow, job, resolved, language, framework)
 					if conditionErr != nil && resolved.Run != "" && resolution.Reason == "" && !resolution.Matched && len(resolution.Builds) == 0 {
 						resolution.Review, resolution.Reason = true, "Condition affects only a recognized non-test command; review separately: "+conditionErr.Error()
 					}
@@ -208,6 +212,9 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 
 // ValidationCommands also resolves a selected local alias, for scope accounting.
 func ValidationCommands(root, command, framework string) []TestCommand {
+	if framework == "rspec" || framework == "minitest" {
+		return resolveRubyStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: command}, framework).Tests
+	}
 	remaining := 256
 	return resolveJestSequence(root, root, command, nil, &remaining, framework).Tests
 }

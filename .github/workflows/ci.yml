@@ -459,6 +459,13 @@ jobs:
         if: matrix.framework != 'pytest'
         with:
           ruby-version: '3.4'
+      - name: Install Ruby validation dependencies
+        if: matrix.framework != 'pytest'
+        run: |
+          gem install datadog-ci --version 1.40.0 --no-document
+          gem install rspec --version 3.13.2 --no-document
+          gem install minitest --version 6.0.6 --no-document
+          gem install rake --version 13.4.2 --no-document
       - name: Run Python or Ruby testdrive
         env:
           DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST: '1'
