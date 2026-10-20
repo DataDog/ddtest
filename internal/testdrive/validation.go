@@ -92,6 +92,7 @@ type testCounts struct {
 
 type runSummary struct {
 	Role                            runRole             `json:"role"`
+	Configuration                   string              `json:"configuration,omitempty"`
 	NativeCounts                    *executionCounts    `json:"native_counts,omitempty"`
 	ProbeLintSkipped                bool                `json:"probe_lint_skipped,omitempty"`
 	Project                         string              `json:"project,omitempty"`
@@ -138,6 +139,8 @@ func (r validationRun) summary() runSummary {
 type validationResult struct {
 	TelemetryOnly      bool                     `json:"telemetry_only,omitempty"`
 	SchemaVersion      int                      `json:"schema_version"`
+	FocusedCommand     bool                     `json:"focused_command,omitempty"`
+	Configurations     []configurationResult    `json:"configurations,omitempty"`
 	ReportingCounts    *executionCounts         `json:"reporting_counts,omitempty"`
 	Scope              *onboard.ValidationScope `json:"scope,omitempty"`
 	Cleanup            *verdict                 `json:"cleanup,omitempty"`
@@ -296,6 +299,15 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		_, _ = fmt.Fprintf(output, "Feature %s: %s — %s\n", label, feature.Status, feature.Reason)
 	}
 	_, _ = fmt.Fprintf(output, "\nValidation verdict: %s\nLocal validation: %s\n", result.Summary.Status, result.Summary.LocalValidation)
+	if execution := result.Summary.ExecutedValidation; execution != nil {
+		_, _ = fmt.Fprintf(output, "Executed %s validations: %s — %s\n", displayName(result.Framework), execution.Status, execution.Reason)
+	}
+	if coverage := result.Summary.ConfigurationCoverage; coverage != nil {
+		_, _ = fmt.Fprintf(output, "Configuration coverage: %d/%d validated; %d executed, %d paired, %d blocked, %d not exercised.\n", coverage.Validated, coverage.Discovered, coverage.Executed, coverage.Paired, coverage.Blocked, coverage.NotExercised)
+	}
+	if selected := result.Summary.SelectedValidation; selected != nil {
+		_, _ = fmt.Fprintf(output, "Selected %s testdrive: %s — %s\n", displayName(result.Framework), selected.Status, selected.Reason)
+	}
 	if len(result.Summary.BlockingChecks) > 0 {
 		_, _ = fmt.Fprintf(output, "Blocking checks: %s\n", strings.Join(result.Summary.BlockingChecks, "; "))
 	}
@@ -313,6 +325,9 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	_, _ = fmt.Fprintf(output, "Datadog library: %s · %s\nResults JSON: %s\n", result.Tracer, result.TracerSource, validationPath(""))
 	_, _ = fmt.Fprintln(output, "Keep this JSON report and the HTML findings report after cleanup, including when validation fails.")
 	if result.CheckOnly && result.ChecksPassed {
+		return nil
+	}
+	if result.Summary.SelectedValidation != nil && result.Summary.SelectedValidation.Status == "PASSED" {
 		return nil
 	}
 	if !result.Success {
@@ -450,5 +465,7 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 		result.Success = false
 		result.LocalSuccess = false
 	}
+
+	applyScopeVerdict(result)
 
 }

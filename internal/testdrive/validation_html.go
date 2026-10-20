@@ -35,6 +35,10 @@ func (t *Testdrive) writeHTMLReport(output io.Writer, result *validationResult, 
 	if supportsValidationFramework(t.framework.Name()) {
 		writeRunFindings(output, run.Facts, false, model.Cards...)
 	}
+	if t.reportModels != nil {
+		*t.reportModels = append(*t.reportModels, model)
+		return nil
+	}
 	model.Artifacts = []reportArtifact{{Title: "Validation JSON", Href: validationFilename}}
 	var content bytes.Buffer
 	if err := testdriveReport.Execute(&content, model); err != nil {

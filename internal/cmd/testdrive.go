@@ -35,11 +35,13 @@ func newTestdriveCommand() *cobra.Command {
 	}
 	var version string
 	var checkOnly bool
+	var all bool
+	command.Flags().BoolVar(&all,"all",false,"Validate every discovered "+testdrive.ValidationFrameworkNames()+" CI configuration, preserving environment and known build prerequisites")
 	command.Flags().BoolVar(&checkOnly, "check-only", false, "Check "+testdrive.ValidationFrameworkNames()+" configuration, tracer selection and static CI runtimes without installing a tracer or running tests")
 	command.Flags().StringVar(&version, "tracer-version", "latest", "Fallback tracer release or git:<commit-or-ref>, used only when the project has no tracer")
 	command.Flags().Bool("yes", false, "Run after printing the changes and commands")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
-		execution, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: version, CheckOnly: checkOnly})
+		execution, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: version, CheckOnly: checkOnly, All: all})
 		if err != nil {
 			return err
 		}

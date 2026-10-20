@@ -589,3 +589,7 @@ For Jest, full testdrive compares native results without and with instrumentatio
 Jest compatibility uses two execution pairs when the first pair differs. A recurring difference remains a suspected regression even if another test varies. Two pairs cannot rule out coincidental or repeatable flakiness; investigate the recorded differences before attributing their cause. Reporting counts include the primary instrumented suite once; repeated comparisons and synthetic probes have separate roles. Probes isolate customer selection, coverage thresholds and native retry settings while retaining the original configuration.
 
 Frameworks without a controlled adapter retain their ordinary feature-enabled telemetry check and captured diagnostics under `.testoptimization/testdrive/`. Their stable HTML/JSON reports identify the result as telemetry-only; a passing exit does not certify behavioral compatibility or advanced features.
+
+## Validate all discovered Jest configurations
+
+Use `ddtest testdrive --framework jest --all --yes` to validate every discovered Jest CI configuration. Known build prerequisites run in disposable copies. Use `--all --check-only` to inspect configurations without builds or tests. `--command` selects one command, without validating unrelated CI configurations. Both modes retain one HTML/JSON report pair.

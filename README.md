@@ -33,6 +33,8 @@ package scripts or custom setup.
 
 For Jest, start with [testdrive configuration checks](docs/running.md#testdrive-configuration-checks).
 
+For repositories with several Jest configurations, use `ddtest testdrive --framework jest --all --yes` to validate discovered CI commands and their prerequisites. Unknown setup stays explicitly unvalidated; `--command` selects a focused command. See [configuration validation](docs/running.md#validate-all-discovered-jest-configurations).
+
 Testdrive reuses a detected project tracer; otherwise it installs the latest
 release (`--tracer-version` selects a fallback release or `git:<ref>`).
 JavaScript/Python installs are isolated. Ruby runs `bundle add datadog-ci`,

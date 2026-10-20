@@ -79,7 +79,7 @@ func (t *Testdrive) checkJestPreflight(ctx context.Context, output io.Writer, re
 	for key, value := range t.preflightEnvironment {
 		env[key] = value
 	}
-	options := os.Getenv("NODE_OPTIONS")
+	options := t.nodeOptions()
 	if explicit, ok := t.preflightEnvironment["NODE_OPTIONS"]; ok {
 		options = explicit
 	}

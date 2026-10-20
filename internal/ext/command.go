@@ -92,9 +92,16 @@ func prepareCommand(cmd *exec.Cmd) {
 	cmd.WaitDelay = commandWaitDelay
 }
 
-func (e *DefaultCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
+func (e *DefaultCommandExecutor) CombinedOutput(ctx context.Context, name string, args []string, env map[string]string) ([]byte, error) {
+	return e.CombinedOutputInDirectory(ctx, "", name, args, env)
+}
+
+// CombinedOutputInDirectory preserves process-group cancellation for setup
+// commands without changing the calling process's working directory.
+func (e *DefaultCommandExecutor) CombinedOutputInDirectory(ctx context.Context, directory, name string, args []string, envMap map[string]string) ([]byte, error) {
 	// no-dd-sa:go-security/command-injection
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = directory
 	applyEnvMap(cmd, envMap)
 	prepareCommand(cmd)
 

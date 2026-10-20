@@ -434,11 +434,11 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Install real Jest and tracer
-        run: npm install --prefix "${RUNNER_TEMP}/jest-testdrive" jest@${{ matrix.jest }} dd-trace@${{ matrix.tracer }} ${{ matrix.typescript }}
+        run: npm install --prefix "${RUNNER_TEMP}/jest-testdrive" jest@${{ matrix.jest }} dd-trace@${{ matrix.tracer }} ${{ matrix.typescript }} typescript@5
       - name: Validate paired outcomes, all feature probes and cleanup
         env:
           DDTEST_JEST_NODE_MODULES: ${{ runner.temp }}/jest-testdrive/node_modules
-        run: go test -v ./internal/testdrive -run '^TestPublicJestTestdrive$' -count=1 -timeout=16m
+        run: go test -v ./internal/testdrive -run '^TestPublicJest(Testdrive|Configurations)$' -count=1 -timeout=20m
 
   windows-probe-diagnostics:
     runs-on: windows-latest

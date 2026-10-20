@@ -44,40 +44,46 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
-	jestProject          jestProject
-	probeLintSkipped     bool
-	commandReviewReason  string
-	preflightEnvironment map[string]string
-	discoveryError       error
-	preflight            func(context.Context, io.Writer, *validationResult) error
-	repositoryRoot       string
+	configurationEnvironment map[string]string
+	allConfigurations        bool
+	reportModels             *[]reportModel
+	workflowRoot             string
+	configurationRoot        string
+	jestProject              jestProject
+	probeLintSkipped         bool
+	commandReviewReason      string
+	preflightEnvironment     map[string]string
+	discoveryError           error
+	preflight                func(context.Context, io.Writer, *validationResult) error
+	repositoryRoot           string
 	// Git checkout root; tracer source files are relative to it.
-	checkoutRoot       string
-	framework          framework.Framework
-	language           string
-	command            string
-	args               []string
-	tracerLabel        string
-	platform           platform.Platform
-	tracerVersion      string
-	projectTracer      string
-	session            *Session
-	installCommand     string
-	installArgs        []string
-	executor           commandExecutor
-	startIntake        func(string, intake.Scenario) (localIntake, error)
-	nodeVersion        func() string
-	environmentInfo    environmentInfo
-	environmentFailure *reportCard
-	checkOnly          bool
-	resolveJSTags      func(context.Context) (map[string]string, error)
-	resolveJSTracer    func(context.Context, string) (platform.JSSelection, error)
+	checkoutRoot             string
+	framework                framework.Framework
+	language                 string
+	command                  string
+	args                     []string
+	tracerLabel              string
+	platform                 platform.Platform
+	tracerVersion            string
+	projectTracer            string
+	session                  *Session
+	installCommand           string
+	installArgs              []string
+	executor                 commandExecutor
+	startIntake              func(string, intake.Scenario) (localIntake, error)
+	nodeVersion              func() string
+	environmentInfo          environmentInfo
+	environmentFailure       *reportCard
+	checkOnly                bool
+	resolveJSTags            func(context.Context) (map[string]string, error)
+	resolveJSTracer          func(context.Context, string) (platform.JSSelection, error)
 }
 
 // Prepare detects the repository and probes the selected test environment and tracer.
 type PrepareOptions struct {
 	TracerVersion string
 	CheckOnly     bool
+	All           bool
 }
 
 func checkTemporaryStorage() error {
@@ -118,6 +124,14 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	}
 	command, args := runner.Command()
 	configurationOnly := configuration.CheckOnly
+	all := configuration.All
+	if all && strings.TrimSpace(settings.GetCommand()) != "" {
+		return nil, fmt.Errorf("--all and --command are mutually exclusive")
+	}
+	if all && runner.Name() != "jest" {
+		return nil, fmt.Errorf("--all currently validates Jest only")
+	}
+
 	var discoveryError error
 	var selectedPlan onboard.TestCommand
 	var preflightEnvironment map[string]string
@@ -129,6 +143,8 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		if err != nil {
 			return nil, fmt.Errorf("resolve Jest repository root: %w", err)
 		}
+	}
+	if runner.Name() == "jest" && !all {
 		var selected string
 		if configurationOnly {
 			var entry onboard.TestCommand
@@ -215,6 +231,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string, scenario intake.Scenario) (localIntake, error) {
 			return intake.StartScenario(directory, scenario)
 		}, nodeVersion: currentNodeVersion, environmentInfo: environment, environmentFailure: preflight, checkOnly: configurationOnly, discoveryError: discoveryError, preflightEnvironment: preflightEnvironment}
+	drive.allConfigurations = all
 	if frameworkFeaturePolicies[runner.Name()].Preflight {
 		drive.preflight = drive.checkJestPreflight
 	}
@@ -239,6 +256,16 @@ func (t *Testdrive) Preview(output io.Writer) {
 		_, _ = fmt.Fprintf(output, "Command discovery failed: %s\nWith --yes, save a failed report without running tests.\n", t.discoveryError)
 		return
 	}
+	if t.allConfigurations {
+		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, "jest")
+		if err != nil {
+			_, _ = fmt.Fprintln(output, err)
+		} else {
+			onboard.WriteValidationScope(output, scope)
+		}
+		_, _ = fmt.Fprintln(output, "Every discovered configuration shares the final JSON/HTML reports. Known build prerequisites run in isolated copies; unresolved CI setup stays unvalidated.")
+	}
+
 	if t.checkOnly {
 		_, _ = fmt.Fprintln(output, "Check configuration only: load Jest configuration with --showConfig, resolve tracer metadata and review static CI runtimes. No tracer installation or tests; write .testoptimization/testdrive.json. Jest configuration may execute project JavaScript. CI execution and Datadog backend processing remain untested.")
 		return
@@ -319,6 +346,9 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 	if err := t.recoverStartup(output); err != nil {
 		return t.finishStartupFailure(output, err)
 	}
+	if t.allConfigurations {
+		return t.runAllConfigurations(ctx, output)
+	}
 	if t.checkOnly {
 		return t.runConfigurationChecks(ctx, output)
 	}
@@ -330,6 +360,15 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) error {
 
 	result, runErr := t.run(ctx, output)
 	result.Framework = t.framework.Name()
+	result.FocusedCommand = t.framework.Name() == "jest" && strings.TrimSpace(settings.GetCommand()) != ""
+	if t.framework.Name() == "jest" {
+		scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, "jest")
+		if err != nil {
+			runErr = errors.Join(runErr, err)
+		} else {
+			setSingleConfigurationScope(t.repositoryRoot, &result, scope)
+		}
+	}
 	if runErr != nil {
 		result.Error = runErr.Error()
 	}
@@ -402,7 +441,11 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 	}
 
 	if supportsValidationFramework(t.framework.Name()) {
-		check := checkConfigurationCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
+		ciRoot := t.repositoryRoot
+		if t.workflowRoot != "" {
+			ciRoot = t.workflowRoot
+		}
+		check := checkConfigurationCIRuntimes(ctx, ciRoot, t.framework.Name())
 		result.CIRuntime = &check
 		if t.preflight != nil {
 			if err := t.preflight(ctx, output, &result); err != nil {
@@ -855,4 +898,12 @@ func (t *Testdrive) finishStartupFailure(output io.Writer, err error) error {
 		result.Preflight = &jestPreflight{Verdict: verdict{Status: "inconclusive", Code: "recovery_failed", Reason: err.Error()}}
 	}
 	return errors.Join(err, finishValidation(output, t.repositoryRoot, result))
+}
+
+// An explicit CI value, including empty, overrides the caller's shell value.
+func (t *Testdrive) nodeOptions() string {
+	if value, exists := t.configurationEnvironment["NODE_OPTIONS"]; exists {
+		return value
+	}
+	return os.Getenv("NODE_OPTIONS")
 }

@@ -84,7 +84,7 @@ func (t *Testdrive) discoverJestTests(ctx context.Context, probe string) ([]stri
 	command := shellquote.Join(append([]string{t.command}, args...)...)
 	env := reportingEnvironment("http://127.0.0.1:1", "project-discovery")
 
-	env["NODE_OPTIONS"] = stripDatadogNodeOptions(os.Getenv("NODE_OPTIONS"))
+	env["NODE_OPTIONS"] = stripDatadogNodeOptions(t.nodeOptions())
 	env["DD_CIVISIBILITY_ENABLED"] = "false"
 	env["DD_TRACE_ENABLED"] = "false"
 	if probe != "" {
