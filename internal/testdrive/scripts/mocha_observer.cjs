@@ -13,11 +13,13 @@ function internal (file) {
 const Runner = internal('runner')
 let sequence = 0
 const observed = new WeakSet()
+const entry = process.argv[1] && path.resolve(process.argv[1])
+const mochaWorker = entry === path.join(root, 'lib/nodejs/worker.js') || entry === path.join(root, 'lib/nodejs/worker.cjs')
 function observeRunner (prototype) {
   const originalRun = prototype.run
   prototype.run = function (...args) {
     // Worker events are also forwarded to the parent Runner. Do not count twice.
-    if (process.env.MOCHA_WORKER_ID !== undefined || observed.has(this)) return originalRun.apply(this, args)
+    if (mochaWorker || process.env.MOCHA_WORKER_ID !== undefined || observed.has(this)) return originalRun.apply(this, args)
     observed.add(this)
     const file = path.join(process.env.DDTEST_MOCHA_RESULTS, `${process.pid}-${sequence++}.json`)
     const report = { complete: false, tests: [], errors: [] }

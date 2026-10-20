@@ -173,7 +173,7 @@ func TestMochaNativeObserverIntegration(t *testing.T) {
 			if mode == "missing source" {
 				name = "node"
 				args = []string{"runner.cjs"}
-				requireWriteFile(t, filepath.Join(root, "runner.cjs"), `const Mocha=require('mocha');const mocha=new Mocha();mocha.suite.addTest(new Mocha.Test('works',()=>{}));mocha.run(failures=>{process.exitCode=failures?1:0})`)
+				requireWriteFile(t, filepath.Join(root, "runner.cjs"), `const exported=require('mocha');const Mocha=exported.Mocha||exported.default||exported;const mocha=new Mocha();mocha.suite.addTest(new Mocha.Test('works',()=>{}));mocha.run(failures=>{process.exitCode=failures?1:0})`)
 			}
 			if mode == "alias cwd" {
 				require.NoError(t, os.MkdirAll(filepath.Join(root, "packages/unit"), 0700))
