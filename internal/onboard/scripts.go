@@ -218,17 +218,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 	}
 	for len(words) > 0 && shellAssignment(words[0]) {
 		key, _, _ := strings.Cut(words[0], "=")
-		if key == "NODE_OPTIONS" {
-			if strings.TrimPrefix(words[0], key+"=") == "" {
-				return unresolvedCommand("Command resets instrumentation environment: " + command)
-			}
-			value, err := ordinaryNodeOptions(strings.TrimPrefix(words[0], key+"="))
-			if err != nil {
-				return unresolvedCommand(repositoryError(root, err))
-			}
-			words[0] = key + "=" + value
-		}
-		if key == "PATH" || strings.HasPrefix(key, "DD_") {
+		if key == "NODE_OPTIONS" || key == "PATH" || strings.HasPrefix(key, "DD_") {
 			return unresolvedCommand("Command overrides instrumentation or executable selection: " + command)
 		}
 		key, value, _ := strings.Cut(words[0], "=")

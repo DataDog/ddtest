@@ -41,7 +41,7 @@ func TestCommonJestInvocations(t *testing.T) {
 			require.Equal(t, []TestCommand{{Directory: ".", Command: tc.command, Environment: tc.environment}}, result.Tests)
 		})
 	}
-	for _, input := range []string{"cross-env NODE_ENV=$MODE jest", "node --eval 'jest()' node_modules/jest/bin/jest.js", "node $FLAGS node_modules/jest/bin/jest.js"} {
+	for _, input := range []string{"cross-env NODE_ENV=$MODE jest", "NODE_OPTIONS=--experimental-vm-modules jest", "cross-env NODE_OPTIONS=--experimental-vm-modules jest", "node --eval 'jest()' node_modules/jest/bin/jest.js", "node $FLAGS node_modules/jest/bin/jest.js"} {
 		result := resolveJestCommand(root, input, nil)
 		require.NotEmpty(t, result.Reason, input)
 		require.Empty(t, result.Tests, input)
