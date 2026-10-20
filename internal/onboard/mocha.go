@@ -138,7 +138,7 @@ func resolveMochaNode(root, directory string, words []string) commandResolution 
 		return commandResolution{MochaAuxiliary: true}
 	}
 	directoryRelative, _ := filepath.Rel(root, directory)
-	return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{{Directory: filepath.ToSlash(directoryRelative), Command: command}}}
+	return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{{mochaESM: mochaESMInputs(directory, words[1:]), Directory: filepath.ToSlash(directoryRelative), Command: command}}}
 }
 
 // MochaProbeCommand omits companion lint/assertion checks only for synthetic

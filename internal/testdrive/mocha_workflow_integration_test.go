@@ -33,7 +33,7 @@ func TestPublicMochaTestdrive(t *testing.T) {
 	}
 	output, err := command("../..", "go", "build", "-o", binary, ".")
 	require.NoError(t, err, string(output))
-	for _, mode := range []string{"passing", "existing failure", "coverage disabled"} {
+	for _, mode := range []string{"passing", "existing failure", "coverage disabled", "scoped alias"} {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
@@ -53,6 +53,11 @@ func TestPublicMochaTestdrive(t *testing.T) {
 			write(".nycrc.json", `{"include":["lib/**/*.cjs"],"extension":[".cjs"],"reporter":"none"}`)
 			if mode == "coverage disabled" {
 				write(".nycrc.json", `{"instrument":false,"reporter":"none"}`)
+			}
+			if mode == "scoped alias" {
+				write("package.json", `{"scripts":{"pretest":"node hook.cjs","test":"MODE=unit nyc -- mocha --file setup.cjs 'test/*.test.cjs'","posttest":"node hook.cjs","programmatic":"nyc -- node runner.cjs"},"devDependencies":{"mocha":"11.7.6","nyc":"17.1.0","dd-trace":"6.20.1"}}`)
+				write("hook.cjs", `require('node:assert/strict').equal(process.env.MODE,undefined);require('node:fs').accessSync('runner.cjs')`)
+				write("setup.cjs", `beforeEach(()=>require('node:assert/strict').equal(process.env.MODE,'unit'))`)
 			}
 			write(".github/workflows/ci.yml", `jobs:
   test:

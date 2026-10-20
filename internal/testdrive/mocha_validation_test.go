@@ -16,8 +16,10 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/kballard/go-shellquote"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,7 +84,8 @@ assert.deepEqual(options._,[process.env.DDTEST_MOCHA_PROBE]); assert.equal(optio
 assert.deepEqual(options.require,['setup.js']); assert.equal(options.reporter,'custom');
 assert.equal(options.timeout,1234); assert.equal(options.parallel,true); assert.equal(options.invert,false);
 const test={type:'test',file:'test.js',fullTitle:()=> 'same'};
-new Runner().run(r=>{r.emit('pass',test);r.emit('pass',test);r.emit('pending',{...test,fullTitle:()=> 'pending'});r.emit('fail',{...test,type:'hook',fullTitle:()=> 'before hook'},new Error('setup'));r.emit('end')});
+const runner=new Runner();runner.run(r=>{r.emit('pass',test);r.emit('pass',test);r.emit('pending',{...test,fullTitle:()=> 'pending'});r.emit('fail',{...test,type:'hook',fullTitle:()=> 'before hook'},new Error('setup'));r.emit('end')});
+runner.run(r=>{r.emit('pass',{...test,fullTitle:()=> 'reused runner'});r.emit('end')});
 `)
 	command := exec.CommandContext(t.Context(), node, "--require", observer, "run.cjs")
 	command.Dir = root
@@ -92,8 +95,9 @@ new Runner().run(r=>{r.emit('pass',test);r.emit('pass',test);r.emit('pending',{.
 	var run validationRun
 	readMochaResults(root, &run)
 	require.Empty(t, run.ResultError)
-	require.Len(t, run.Tests, 3)
+	require.Len(t, run.Tests, 4)
 	require.Equal(t, "pending", run.Tests[2].Status)
+	require.Equal(t, "reused runner", run.Tests[3].Name)
 	require.Equal(t, []string{"before hook: setup"}, run.SuiteErrors)
 }
 
@@ -147,25 +151,72 @@ func TestMochaNativeObserverIntegration(t *testing.T) {
 	if modules == "" {
 		t.Skip("set DDTEST_MOCHA_NODE_MODULES")
 	}
-	root := t.TempDir()
-	t.Chdir(root)
-	require.NoError(t, os.Symlink(modules, filepath.Join(root, "node_modules")))
-	requireWriteFile(t, filepath.Join(root, "package.json"), `{}`)
-	requireWriteFile(t, filepath.Join(root, "one.cjs"), `const assert=require('node:assert/strict');describe('math',()=>it('adds',()=>assert.equal(1+1,2)))`)
-	directory := t.TempDir()
-	observer := filepath.Join(t.TempDir(), "observer.cjs")
-	requireWriteFile(t, observer, mochaObserver)
-	command := exec.CommandContext(t.Context(), filepath.Join(root, "node_modules/.bin/mocha"), "one.cjs")
-	command.Env = append(os.Environ(), "NODE_OPTIONS=--require="+strconv.Quote(observer), "DDTEST_MOCHA_RESULTS="+directory)
-	output, err := command.CombinedOutput()
-	require.NoError(t, err, string(output))
-	var run validationRun
-	readMochaResults(directory, &run)
-	require.Empty(t, run.ResultError)
-	require.Empty(t, run.SuiteErrors)
-	require.Len(t, run.Tests, 1)
-	require.Equal(t, "math adds", run.Tests[0].Name)
-	require.Equal(t, "passed", run.Tests[0].Status)
+	for _, mode := range []string{"serial", "parallel", "setup probe", "missing source", "alias cwd"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			require.NoError(t, os.Symlink(modules, filepath.Join(root, "node_modules")))
+			requireWriteFile(t, filepath.Join(root, "package.json"), `{}`)
+			requireWriteFile(t, filepath.Join(root, "one.cjs"), `const assert=require('node:assert/strict');describe('math',()=>it('adds',()=>assert.equal(1+1,2)))`)
+			directory := t.TempDir()
+			observer := filepath.Join(t.TempDir(), "observer.cjs")
+			requireWriteFile(t, observer, mochaObserver)
+			args := []string{"one.cjs"}
+			name := filepath.Join(root, "node_modules/.bin/mocha")
+			if mode == "parallel" {
+				args = append(args, "--parallel", "--jobs=2")
+			}
+			if mode == "setup probe" {
+				requireWriteFile(t, filepath.Join(root, "setup.cjs"), `beforeEach(()=>{globalThis.probeSetupLoaded=true})`)
+				requireWriteFile(t, filepath.Join(root, "probe.cjs"), `const assert=require('node:assert/strict');describe('ddtest',()=>it('validation probe',()=>assert.equal(globalThis.probeSetupLoaded,true)))`)
+				args = append(args, "--file", "setup.cjs")
+			}
+			if mode == "missing source" {
+				name = "node"
+				args = []string{"runner.cjs"}
+				requireWriteFile(t, filepath.Join(root, "runner.cjs"), `const Mocha=require('mocha');const mocha=new Mocha();mocha.suite.addTest(new Mocha.Test('works',()=>{}));mocha.run(failures=>{process.exitCode=failures?1:0})`)
+			}
+			if mode == "alias cwd" {
+				require.NoError(t, os.MkdirAll(filepath.Join(root, "packages/unit"), 0700))
+				data, err := os.ReadFile(filepath.Join(root, "one.cjs"))
+				require.NoError(t, err)
+				requireWriteFile(t, filepath.Join(root, "packages/unit/one.cjs"), string(data))
+				requireWriteFile(t, filepath.Join(root, "hook.cjs"), `require('node:fs').accessSync('hook.cjs')`)
+				requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"pretest":"node hook.cjs","test":"cd packages/unit && mocha one.cjs","posttest":"node hook.cjs"}}`)
+				entries := onboard.ValidationCommands(root, "npm test", "mocha")
+				require.Len(t, entries, 1)
+				require.Equal(t, ".", entries[0].Directory)
+				words, err := shellquote.Split(entries[0].Command)
+				require.NoError(t, err)
+				name, args = words[0], words[1:]
+			}
+			command := exec.CommandContext(t.Context(), name, args...)
+			command.Dir = root
+			command.Env = append(os.Environ(), "NODE_OPTIONS=--require="+strconv.Quote(observer), "DDTEST_MOCHA_RESULTS="+directory)
+			if mode == "setup probe" {
+				command.Env = append(command.Env, "DDTEST_MOCHA_PROBE="+filepath.Join(root, "probe.cjs"))
+			}
+			output, err := command.CombinedOutput()
+			require.NoError(t, err, string(output))
+			var run validationRun
+			readMochaResults(directory, &run)
+			if mode == "missing source" {
+				require.Contains(t, run.ResultError, "source file")
+			} else {
+				require.Empty(t, run.ResultError)
+			}
+			require.Empty(t, run.SuiteErrors)
+			require.Len(t, run.Tests, 1)
+			require.Equal(t, "passed", run.Tests[0].Status)
+			want := "math adds"
+			if mode == "setup probe" {
+				want = probeName
+			}
+			if mode == "missing source" {
+				want = "works"
+			}
+			require.Equal(t, want, run.Tests[0].Name)
+		})
+	}
 }
 
 func TestMochaCoverageGateRequiresRealSuiteEvidence(t *testing.T) {

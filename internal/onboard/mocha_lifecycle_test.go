@@ -148,7 +148,7 @@ func TestMochaCIRequiresCoverageForEveryConsumer(t *testing.T) {
       - uses: datadog/test-visibility-github-action@v3
         with: {languages: js, js-tracer-version: '6.21.0'}
       - run: `+tc.command+`
-        env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }}'}
+        env: {NODE_OPTIONS: '-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}'}
 `)
 			writeScripts(t, root, map[string]string{"test": "mocha", "build": "echo build", "postbuild": tc.postbuild})
 			result := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {

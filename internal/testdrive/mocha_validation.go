@@ -190,6 +190,10 @@ func readMochaResults(directory string, run *validationRun) {
 			return
 		}
 		for _, test := range result.Tests {
+			if test.File == "" {
+				run.ResultError = "Mocha did not report a source file for a native test; identity comparison is inconclusive"
+			}
+
 			test.Failure = failureSignature(test.Failure)
 			run.Tests = append(run.Tests, test)
 		}

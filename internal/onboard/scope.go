@@ -25,6 +25,7 @@ type TestCommand struct {
 	Prerequisites    []BuildCommand `json:"prerequisites,omitempty"`
 	UnvalidatedSetup []string       `json:"unvalidated_setup,omitempty"`
 	CICoverageCommand string `json:"ci_coverage_command,omitempty"`
+	mochaESM          bool
 	mochaProbeCommand string
 	usesNYC bool
 }

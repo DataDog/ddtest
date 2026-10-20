@@ -231,6 +231,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		return unresolvedCommand(err.Error())
 	}
 	defer func() { applyCommandEnvironment(&result, assignments) }()
+	command = shellCommand(words)
 	if literalFileOperation(words) {
 		return commandResolution{}
 	}
@@ -304,7 +305,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		canonicalDirectory, _ := filepath.EvalSymlinks(directory)
 		relative, _ := filepath.Rel(canonicalRoot, canonicalDirectory)
 		return commandResolution{Matched: true, SingleJest: true, Evidence: command,
-			Tests: []TestCommand{{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append([]string{runner}, words[1:]...)...)}}}
+			Tests: []TestCommand{{mochaESM: framework == "mocha" && mochaESMInputs(directory, words[1:]), Directory: filepath.ToSlash(relative), Command: shellquote.Join(append([]string{runner}, words[1:]...)...)}}}
 	}
 
 	if framework == "mocha" {
@@ -464,21 +465,40 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 	}
 
 	mocha := len(frameworks) > 0 && frameworks[0] == "mocha"
+	var result commandResolution
 	if mocha && strings.HasPrefix(command, "npm ") {
-		var parts []string
-		if pre := manifest.Scripts["pre"+name]; pre != "" {
-			parts = append(parts, pre)
+		// npm starts each lifecycle script in a fresh shell at the package root.
+		// Resolve them independently so an inner cd/export cannot affect the next hook.
+		singleInvocation := true
+		for _, part := range []string{manifest.Scripts["pre"+name], script, manifest.Scripts["post"+name]} {
+			if part == "" {
+				continue
+			}
+			resolved := resolveJestSequence(root, directory, part, append(slices.Clone(stack), key), remaining, frameworks...)
+			if resolved.Matched {
+				singleInvocation = singleInvocation && resolved.SingleJest
+			}
+			result.Tests = append(result.Tests, resolved.Tests...)
+			result.Builds = append(result.Builds, resolved.Builds...)
+			result.Setup = append(result.Setup, resolved.Setup...)
+			result.Matched = result.Matched || resolved.Matched
+			result.OtherFramework = result.OtherFramework || resolved.OtherFramework
+			result.MochaAuxiliary = result.MochaAuxiliary || resolved.MochaAuxiliary
+			result.Reason = joinDiagnostic(result.Reason, resolved.Reason)
+			result.ReviewReason = joinDiagnostic(result.ReviewReason, resolved.ReviewReason)
+			result.Evidence = joinDiagnostic(result.Evidence, resolved.Evidence)
 		}
-		parts = append(parts, script)
-		if post := manifest.Scripts["post"+name]; post != "" {
-			parts = append(parts, post)
-		}
-		script = strings.Join(parts, " && ")
 		lifecycle = ""
+		result.SingleJest = singleInvocation && len(result.Tests) == 1 && manifest.Scripts["pre"+name] == "" && manifest.Scripts["post"+name] == ""
+	} else {
+		result = resolveJestSequence(root, directory, script, append(slices.Clone(stack), key), remaining, frameworks...)
 	}
-	result := resolveJestSequence(root, directory, script, append(slices.Clone(stack), key), remaining, frameworks...)
+
 	if mocha && lifecycle == "" && result.Reason == "" && !result.Matched && result.MochaAuxiliary && name == "build" {
 		return commandResolution{Builds: []BuildCommand{{Directory: repositoryPath(root, directory), Command: command, Kind: "package-build"}}}
+	}
+	if mocha && len(result.Tests) > 1 {
+		return unresolvedCommand("Multiple Mocha invocations in one package alias require ordered execution review; preserve the original alias: " + command)
 	}
 	if mocha && lifecycle == "" && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
 		if !result.SingleJest && result.Tests[0].mochaProbeCommand == "" {
@@ -486,6 +506,13 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		}
 		result.SingleJest = true
 		result.MochaAuxiliary = false
+		// The retained alias must start in its caller directory/environment. Inner
+		// assignments and cd apply only inside the script, including for probes.
+		if result.Tests[0].Directory != repositoryPath(root, directory) || len(result.Tests[0].Environment) > 0 {
+			result.Tests[0].mochaProbeCommand = command
+		}
+		result.Tests[0].Directory = repositoryPath(root, directory)
+		result.Tests[0].Environment = nil
 		result.Tests[0].Resolution = command + " -> " + result.Evidence
 		result.Tests[0].Command = command
 		result.Tests[0].Prerequisites = nil
