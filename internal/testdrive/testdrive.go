@@ -42,6 +42,7 @@ type localIntake interface {
 
 // Testdrive is a detected local test run ready for preview and execution.
 type Testdrive struct {
+	discoveryError  error
 	repositoryRoot  string
 	framework       framework.Framework
 	language        string
@@ -86,6 +87,7 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	language := detectedPlatform.Name()
 	command, args := runner.Command()
 	configurationOnly := len(checkOnly) > 0 && checkOnly[0]
+	var discoveryError error
 	if configurationOnly {
 		if runner.Name() != "jest" {
 			return nil, fmt.Errorf("configuration preflight currently supports Jest only")
@@ -97,14 +99,16 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 			selected, err = onboard.JestValidationCommand(repositoryRoot)
 		}
 		if err != nil {
-			return nil, err
+			discoveryError = err
 		}
 		if selected != "" {
 			words, err := shellquote.Split(selected)
 			if err != nil || len(words) == 0 {
-				return nil, fmt.Errorf("invalid Jest command: %s", selected)
+				discoveryError = fmt.Errorf("invalid Jest command: %s", selected)
+			} else {
+				command, args = words[0], words[1:]
 			}
-			command, args = words[0], words[1:]
+
 		}
 	}
 	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
@@ -148,7 +152,7 @@ func Prepare(version string, checkOnly ...bool) (*Testdrive, error) {
 	}
 
 	drive := &Testdrive{projectTracer: projectTracer, session: session, installCommand: installCommand, installArgs: installArgs, repositoryRoot: repositoryRoot, framework: runner, language: language, command: command, args: args, platform: detectedPlatform, tracerVersion: version, tracerLabel: label,
-		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) }, nodeVersion: currentNodeVersion, environmentInfo: environment, preflight: preflight, checkOnly: configurationOnly}
+		executor: &ext.DefaultCommandExecutor{}, startIntake: func(directory string) (localIntake, error) { return intake.Start(directory) }, nodeVersion: currentNodeVersion, environmentInfo: environment, preflight: preflight, checkOnly: configurationOnly, discoveryError: discoveryError}
 	if installer, ok := detectedPlatform.(*platform.JavaScript); ok {
 		drive.resolveJSTracer = installer.ResolveRegistryTracer
 	}
@@ -163,6 +167,10 @@ func displayName(name string) string {
 // Preview describes the filesystem and process changes that Run will make.
 func (t *Testdrive) Preview(output io.Writer) {
 	if t.checkOnly {
+		if t.discoveryError != nil {
+			_, _ = fmt.Fprintf(output, "Command discovery failed: %s\nWith --yes, save failed configuration findings without running tests.\n", t.discoveryError)
+			return
+		}
 		_, _ = fmt.Fprintln(output, "Check configuration only: load Jest configuration with --showConfig, resolve tracer metadata and review static CI runtimes. No tracer installation or tests; write .testoptimization/testdrive.json. Jest configuration may execute project JavaScript. CI execution and Datadog backend processing remain untested.")
 		return
 	}

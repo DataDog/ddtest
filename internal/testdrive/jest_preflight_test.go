@@ -154,3 +154,47 @@ func TestJestCheckOnlyIntegration(t *testing.T) {
 	require.Equal(t, "project", report.Selection.Source)
 	require.Equal(t, "compatible", report.Preflight.Verdict.Status)
 }
+
+func TestCheckOnlyDiscoveryFailureReplacesEarlierPassingReport(t *testing.T) {
+	root := t.TempDir()
+	writeJestManifest(t, root)
+	t.Chdir(root)
+	viper.Reset()
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0755))
+	requireWriteFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"), `jobs:
+  first:
+    steps:
+      - run: npm test -- --config first.js
+  second:
+    steps:
+      - run: npm test -- --config second.js
+`)
+	require.NoError(t, os.MkdirAll(filepath.Dir(validationPath(root)), 0755))
+	previous := `{"checks_passed":true,"success":false}`
+	requireWriteFile(t, validationPath(root), previous)
+	run, err := Prepare("latest", true)
+	require.NoError(t, err)
+	require.Error(t, run.discoveryError)
+	executor := &preflightExecutor{}
+	run.executor = executor
+	run.startIntake = func(string) (localIntake, error) { t.Fatal("discovery failure started an intake"); return nil, nil }
+	var output bytes.Buffer
+	run.Preview(&output)
+	before, err := os.ReadFile(validationPath(root))
+	require.NoError(t, err)
+	require.Equal(t, previous, string(before), "preview must not replace reports")
+	require.Error(t, run.Run(t.Context(), &output))
+	require.Zero(t, executor.calls)
+	data, err := os.ReadFile(validationPath(root))
+	require.NoError(t, err)
+	var report validationResult
+	require.NoError(t, json.Unmarshal(data, &report))
+	require.False(t, report.ChecksPassed)
+	require.False(t, report.Success)
+	require.True(t, report.CheckOnly)
+	require.Equal(t, "jest", report.Framework)
+	require.NotEmpty(t, report.Error)
+	require.Empty(t, report.Runs)
+}

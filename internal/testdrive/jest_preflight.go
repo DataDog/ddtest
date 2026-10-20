@@ -154,6 +154,10 @@ func (t *Testdrive) runConfigurationChecks(ctx context.Context, output io.Writer
 		Compatibility: verdict{Status: "not exercised", Reason: "Configuration checks only; run testdrive without --check-only for paired execution."},
 		Features:      []featureResult{{Name: "all", Status: "not exercised", Reason: "Configuration checks only."}}}
 	defer func() { runErr = errors.Join(runErr, finishValidation(output, t.repositoryRoot, result)) }()
+	if t.discoveryError != nil {
+		result.Error = t.discoveryError.Error()
+		return t.discoveryError
+	}
 	scope, err := onboard.DiscoverValidationScope(t.repositoryRoot, t.framework.Name())
 	if err != nil {
 		result.Error = err.Error()

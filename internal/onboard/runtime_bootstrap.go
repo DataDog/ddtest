@@ -23,32 +23,8 @@ func symbolicConditionValue(value any) bool {
 }
 
 func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) string {
-	known := map[string]string{"NODE_OPTIONS": "", "DD_TRACE_PACKAGE": actionPreload, "DD_TRACE_ESM_IMPORT": "\x00DD_ACTION_IMPORT\x00"}
-	var options string
-	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
-		if value, ok := env["NODE_OPTIONS"]; ok {
-			options = value
-		}
-		for key, value := range env {
-			if key == "NODE_OPTIONS" {
-				if !strings.Contains(value, "${{") && !strings.ContainsRune(value, 0) {
-					known[key] = value
-				}
-				continue
-			}
-			delete(known, key)
-			if key != "DD_TRACE_PACKAGE" && key != "DD_TRACE_ESM_IMPORT" && !strings.Contains(value, "${{") && !strings.ContainsRune(value, 0) {
-				known[key] = value
-			}
-		}
-	}
-	for key, value := range conditionEnvironment(workflow, job, step, row) {
-		if key != "NODE_OPTIONS" && key != "DD_TRACE_PACKAGE" && key != "DD_TRACE_ESM_IMPORT" {
-			known[key] = value
-		}
-	}
-	options, err := bootstrapOptions(options, row, known)
-	if err == nil && !strings.ContainsAny(options, "$`") {
+	options, err := effectiveBootstrapOptions(workflow, job, step, row, true)
+	if err == nil && !strings.ContainsAny(options, "$`'") {
 		words, err := shellquote.Split(options)
 		if err == nil {
 			requireFound := false
@@ -150,4 +126,55 @@ func (p *conditionParser) format() (any, error) {
 		}
 	}
 	return result.String(), nil
+}
+
+// Resolve expressions with action outputs present only on instrumented entries.
+func effectiveBootstrapOptions(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, actionRan bool) (string, error) {
+	known := map[string]string{"NODE_OPTIONS": "", "DD_TRACE_PACKAGE": actionPreload, "DD_TRACE_ESM_IMPORT": "\x00DD_ACTION_IMPORT\x00"}
+	if !actionRan {
+		known["DD_TRACE_PACKAGE"], known["DD_TRACE_ESM_IMPORT"] = "", ""
+	}
+	var options string
+	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		if value, ok := env["NODE_OPTIONS"]; ok {
+			options = value
+		}
+		for key, value := range env {
+			if key == "NODE_OPTIONS" {
+				if !strings.Contains(value, "${{") && !strings.ContainsRune(value, 0) {
+					known[key] = value
+				}
+				continue
+			}
+			delete(known, key)
+			if key != "DD_TRACE_PACKAGE" && key != "DD_TRACE_ESM_IMPORT" && !strings.Contains(value, "${{") && !strings.ContainsRune(value, 0) {
+				known[key] = value
+			}
+		}
+	}
+	for key, value := range conditionEnvironment(workflow, job, step, row) {
+		if key != "NODE_OPTIONS" && key != "DD_TRACE_PACKAGE" && key != "DD_TRACE_ESM_IMPORT" {
+			known[key] = value
+		}
+	}
+	return bootstrapOptions(options, row, known)
+}
+
+func checkExcludedJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) string {
+	options, err := effectiveBootstrapOptions(workflow, job, step, row, false)
+	reason := "Cannot verify initialization is disabled when the Datadog action is skipped; guard installation and its NODE_OPTIONS preload together."
+	if err != nil || strings.ContainsAny(options, "$`'") {
+		return reason
+	}
+	words, err := shellquote.Split(options)
+	if err != nil {
+		return reason
+	}
+	for _, word := range words {
+		key, _, _ := strings.Cut(word, "=")
+		if key == "--require" || key == "--import" || key == "--loader" || key == "--experimental-loader" || strings.HasPrefix(word, "-r") {
+			return reason
+		}
+	}
+	return ""
 }

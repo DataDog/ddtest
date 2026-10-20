@@ -75,6 +75,7 @@ func TestBootstrapExpressionsAndScope(t *testing.T) {
 		{"${{format('-r {1}', env.DD_TRACE_PACKAGE)}}", false},
 		{"${{format('-r {0}', env.DD_TRACE_PACKAGE)}", false},
 		{"-r $DD_TRACE_PACKAGE", false},
+		{"-r '${{env.DD_TRACE_PACKAGE}}'", false},
 		{"-r ${{env.DD_TRACE_PACKAGE}} `custom`", false},
 		{strings.Repeat(" ", 4097) + "-r ${{env.DD_TRACE_PACKAGE}}", false},
 	} {

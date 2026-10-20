@@ -7,7 +7,6 @@ package onboard
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -17,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/platform"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -100,7 +100,7 @@ func CheckCIRuntimes(ctx context.Context, root string, frameworks ...string) Run
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	return checkCIRuntimes(ctx, root, setupNodeResolver(client), func(ctx context.Context, action, version string) (tracerRequirement, error) {
-		return resolveRequirement(ctx, client, action, version)
+		return resolveRequirement(ctx, client, action, version, platform.NewJavaScript().ResolveRegistryTracer)
 	}, frameworks...)
 }
 
@@ -313,6 +313,11 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 
 				finding.Status = "excluded"
 				finding.Code = "excluded_runtime"
+				if reason := checkExcludedJestBootstrap(workflow, job, step, row); reason != "" {
+					finding.Status, finding.Code, finding.Reason = "inconclusive", "unverified_exclusion", reason
+					findings = append(findings, finding)
+					continue
+				}
 			}
 			finding.Reason = "No Datadog JavaScript action runs before this test step for this matrix entry. It is not validated as instrumented."
 			if !skippedAction {
@@ -358,7 +363,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 	return findings
 }
 
-func resolveRequirement(ctx context.Context, client *http.Client, action, version string) (tracerRequirement, error) {
+func resolveRequirement(ctx context.Context, client *http.Client, action, version string, resolveRegistry func(context.Context, string) (platform.JSSelection, error)) (tracerRequirement, error) {
 	if version == "" {
 		_, ref, ok := strings.Cut(action, "@")
 		if !ok || ref == "" {
@@ -377,27 +382,18 @@ func resolveRequirement(ctx context.Context, client *http.Client, action, versio
 			return tracerRequirement{}, fmt.Errorf("decode action metadata: %w", err)
 		}
 		version = definition.Inputs["js-tracer-version"].Default
+		if version == "" {
+			version = "latest"
+		}
 	}
 	if version == "" || strings.Contains(version, "${{") {
 		return tracerRequirement{}, fmt.Errorf("could not resolve the action's JavaScript tracer version")
 	}
-	data, err := fetchRuntimeMetadata(ctx, client, "https://registry.npmjs.org/dd-trace/"+url.PathEscape(version))
+	selected, err := resolveRegistry(ctx, version)
 	if err != nil {
 		return tracerRequirement{}, err
 	}
-	var manifest struct {
-		Version string `json:"version"`
-		Engines struct {
-			Node string `json:"node"`
-		} `json:"engines"`
-	}
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return tracerRequirement{}, fmt.Errorf("decode dd-trace metadata: %w", err)
-	}
-	if manifest.Version == "" || manifest.Engines.Node == "" {
-		return tracerRequirement{}, fmt.Errorf("dd-trace metadata has no resolved version or Node requirement")
-	}
-	return tracerRequirement{Version: manifest.Version, Node: manifest.Engines.Node, Requested: version}, nil
+	return tracerRequirement{Version: selected.Version, Node: selected.Node, Requested: version}, nil
 }
 
 func fetchRuntimeMetadata(ctx context.Context, client *http.Client, address string) ([]byte, error) {

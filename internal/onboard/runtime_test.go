@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,10 +39,14 @@ const runtimeWorkflow = `jobs:
 func TestCIRuntimesCatchLuxonRegressionAndRespectExclusion(t *testing.T) {
 	for _, tc := range []struct{ name, guard, status string }{
 		{"unconditional instrumentation", "", "incompatible"},
+		{"installation guard alone", "if: ${{ !startsWith(matrix.node-version, '20.') }}", "inconclusive"},
 		{"preserve Node 20 tests", "if: ${{ !startsWith(matrix.node-version, '20.') }}", "compatible"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			workflow := fmt.Sprintf(runtimeWorkflow, tc.guard)
+			if tc.name == "preserve Node 20 tests" {
+				workflow = strings.Replace(workflow, `"-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}"`, `"${{ !startsWith(matrix.node-version, '20.') && format('-r {0} --import {1}', env.DD_TRACE_PACKAGE, env.DD_TRACE_ESM_IMPORT) || '' }}"`, 1)
+			}
 			root := newJestRepository(t, workflow)
 			calls := 0
 			result := checkCIRuntimes(t.Context(), root, nil, func(_ context.Context, action, version string) (tracerRequirement, error) {
@@ -50,16 +55,19 @@ func TestCIRuntimesCatchLuxonRegressionAndRespectExclusion(t *testing.T) {
 				require.Empty(t, version)
 				return tracerRequirement{Version: "6.16.0", Node: ">=22"}, nil
 			})
-			require.Equal(t, tc.status, result.Status)
+			require.Equal(t, tc.status, result.Status, result)
 			require.Len(t, result.Jobs, 4)
 			require.Equal(t, 1, calls)
 			require.Equal(t, "20.20.1", result.Jobs[0].Node)
-			if tc.status == "incompatible" {
+			switch tc.status {
+			case "incompatible":
 				require.Equal(t, "incompatible", result.Jobs[0].Status)
 				require.Equal(t, "dd-trace@6.16.0", result.Jobs[0].Tracer)
 				require.Equal(t, ">=22", result.Jobs[0].Requirement)
-			} else {
+			case "compatible":
 				require.Equal(t, "excluded", result.Jobs[0].Status)
+			case "inconclusive":
+				require.Equal(t, "unverified_exclusion", result.Jobs[0].Code)
 			}
 			data, err := os.ReadFile(filepath.Join(root, ".github/workflows/test.yml"))
 			require.NoError(t, err)
@@ -208,28 +216,34 @@ type runtimeTransport func(*http.Request) (*http.Response, error)
 func (f runtimeTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestRuntimeMetadataUsesActionRefDefaultAndExplicitOverride(t *testing.T) {
-	for _, explicit := range []string{"", "5.99.0"} {
-		t.Run(explicit, func(t *testing.T) {
+	for _, tc := range []struct{ input, actionDefault, selector, version, node string }{
+		{"", "6.16.0", "6.16.0", "6.16.0", ">=22"},
+		{"5.99.0", "6.16.0", "5.99.0", "5.99.0", ">=18"},
+		{"", "", "latest", "6.16.0", ">=22"},
+		{"5", "", "5", "5.100.0", ">=18"},
+		{"^5.0.0", "", "^5.0.0", "5.100.0", ">=18"},
+	} {
+		t.Run(tc.input+"/"+tc.actionDefault, func(t *testing.T) {
 			var addresses []string
 			client := &http.Client{Transport: runtimeTransport(func(r *http.Request) (*http.Response, error) {
 				addresses = append(addresses, r.URL.String())
-				body := `{"version":"6.16.0","engines":{"node":">=22"}}`
-				if r.URL.Host == "raw.githubusercontent.com" {
-					body = "inputs:\n  js-tracer-version:\n    default: '6.16.0'\n"
-				}
-				if strings.HasSuffix(r.URL.Path, "/5.99.0") {
-					body = `{"version":"5.99.0","engines":{"node":">=18"}}`
-				}
+				require.Equal(t, "raw.githubusercontent.com", r.URL.Host, "npm metadata must use the configured npm resolver")
+				body := "inputs:\n  js-tracer-version:\n    default: '" + tc.actionDefault + "'\n"
 				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 			})}
-			requirement, err := resolveRequirement(t.Context(), client, githubAction+"@abc123", explicit)
+			calls := 0
+			requirement, err := resolveRequirement(t.Context(), client, githubAction+"@abc123", tc.input, func(_ context.Context, selector string) (platform.JSSelection, error) {
+				calls++
+				require.Equal(t, tc.selector, selector)
+				return platform.JSSelection{Version: tc.version, Node: tc.node}, nil
+			})
 			require.NoError(t, err)
-			if explicit == "" {
-				require.Equal(t, []string{"https://raw.githubusercontent.com/DataDog/test-visibility-github-action/abc123/action.yml", "https://registry.npmjs.org/dd-trace/6.16.0"}, addresses)
-				require.Equal(t, ">=22", requirement.Node)
+			require.Equal(t, 1, calls)
+			require.Equal(t, tracerRequirement{Version: tc.version, Node: tc.node, Requested: tc.selector}, requirement)
+			if tc.input == "" {
+				require.Equal(t, []string{"https://raw.githubusercontent.com/DataDog/test-visibility-github-action/abc123/action.yml"}, addresses)
 			} else {
-				require.Equal(t, []string{"https://registry.npmjs.org/dd-trace/5.99.0"}, addresses)
-				require.Equal(t, ">=18", requirement.Node)
+				require.Empty(t, addresses)
 			}
 		})
 	}
@@ -240,16 +254,23 @@ func TestRuntimeMetadataErrorsAreNotCompatibility(t *testing.T) {
 		name, body string
 		status     int
 	}{
-		{"not found", "", 404}, {"malformed", "not json", 200}, {"missing engines", `{"version":"6.16.0"}`, 200}, {"oversized", strings.Repeat("x", (1<<20)+1), 200},
+		{"not found", "", 404}, {"malformed action", "[", 200}, {"oversized", strings.Repeat("x", (1<<20)+1), 200},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &http.Client{Transport: runtimeTransport(func(*http.Request) (*http.Response, error) {
 				return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(tc.body))}, nil
 			})}
-			_, err := resolveRequirement(t.Context(), client, githubAction+"@v3", "6.16.0")
+			_, err := resolveRequirement(t.Context(), client, githubAction+"@v3", "", func(context.Context, string) (platform.JSSelection, error) {
+				t.Fatal("invalid action metadata must not select a tracer")
+				return platform.JSSelection{}, nil
+			})
 			require.Error(t, err)
 		})
 	}
+	_, err := resolveRequirement(t.Context(), nil, githubAction+"@v3", "5", func(context.Context, string) (platform.JSSelection, error) {
+		return platform.JSSelection{}, fmt.Errorf("registry unavailable")
+	})
+	require.ErrorContains(t, err, "registry unavailable")
 }
 
 func TestExplicitEmptyTracerInputOverridesActionDefault(t *testing.T) {
