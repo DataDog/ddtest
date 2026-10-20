@@ -9,18 +9,19 @@ import (
 // ExecutionPlan is the input to preparation, execution and reporting. An
 // unresolved plan is useful evidence, never permission to omit a configuration.
 type ExecutionPlan struct {
-	SchemaVersion  int             `json:"schema_version"`
-	Fingerprint    string          `json:"input_fingerprint"`
-	Framework      string          `json:"framework"`
-	Runtime        string          `json:"local_runtime"`
-	PackageManager string          `json:"package_manager,omitempty"`
-	Tracer         string          `json:"tracer,omitempty"`
-	Site           string          `json:"site"`
-	TracerNode     string          `json:"tracer_node,omitempty"`
-	Initialization string          `json:"initialization"`
-	Features       []string        `json:"feature_scenarios"`
-	CIRuntime      *RuntimeCheck   `json:"ci_runtime,omitempty"`
-	Scope          ValidationScope `json:"scope"`
+	SchemaVersion    int               `json:"schema_version"`
+	Fingerprint      string            `json:"input_fingerprint"`
+	Framework        string            `json:"framework"`
+	Runtime          string            `json:"local_runtime"`
+	PackageManager   string            `json:"package_manager,omitempty"`
+	Tracer           string            `json:"tracer,omitempty"`
+	Site             string            `json:"site"`
+	TracerNode       string            `json:"tracer_node,omitempty"`
+	Initialization   string            `json:"initialization"`
+	Features         []string          `json:"feature_scenarios"`
+	DeferredFeatures map[string]string `json:"deferred_features,omitempty"`
+	CIRuntime        *RuntimeCheck     `json:"ci_runtime,omitempty"`
+	Scope            ValidationScope   `json:"scope"`
 }
 
 // AssignConfigurationIDs excludes line locations and agent-supplied setup:

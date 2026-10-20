@@ -30,6 +30,9 @@ func focusedValidationFixture(name string) validationResult {
 		if feature == "skipping" && (name == "playwright" || name == "webdriverio") {
 			status = "not supported"
 		}
+		if feature == "skipping" && name == "cypress" {
+			status = "deferred"
+		}
 		result.Features = append(result.Features, featureResult{Name: feature, Status: status})
 	}
 	return result

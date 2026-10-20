@@ -197,6 +197,15 @@ ddtest onboard --framework playwright
 ddtest testdrive --framework playwright --command 'npm run test:e2e -- --project=chromium' --yes
 ```
 
+For Cypress, testdrive compares native results and telemetry, then requires five
+controls: automatic retries, early flake detection, quarantine, disabled tests and
+attempt-to-fix. **TIA skipping and application coverage validation are deferred**,
+not passed or unsupported by the tracer. Missing application Istanbul coverage
+alone does not block a local pass. Do not change application builds or install
+coverage dependencies for testdrive; preserve any existing coverage setup. The
+plan, HTML and JSON disclose the deferral. A local pass does not validate Cypress
+TIA, actual CI execution or Datadog backend processing.
+
 For WebdriverIO, use `--framework webdriverio` or `--framework wdio`:
 
 ```sh
@@ -327,6 +336,10 @@ The JSON records `telemetry_only: true`, `success: false`, and an `INCOMPLETE`
 onboarding verdict with `UNVALIDATED (TELEMETRY ONLY)` local validation. Compatibility
 and advanced features remain unvalidated until controlled adapters exist; exit 0
 does not certify onboarding for these languages.
+The same telemetry check and exit-code rules apply to plain output, `--format json`
+and `--agent`. Structured output reports `status: telemetry_only` on a successful
+telemetry check and `next_action: report_result`, with no automatic retry command.
+These modes do not add controlled validation adapters.
 
 The local intake supports agentless traffic; Agent/EVP routing is not supported.
 No results are sent to Datadog. Temporary installations and run files are removed;

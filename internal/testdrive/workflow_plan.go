@@ -32,7 +32,7 @@ func workflowPackageManager(root string) string {
 func workflowInitialization(framework string) string {
 	switch framework {
 	case "cypress":
-		return "Preserve setupNodeEvents and support hooks; initialize dd-trace/ci/cypress in both."
+		return "For the Datadog CI action, set the Cypress step NODE_OPTIONS to -r ${{ env.DD_TRACE_PACKAGE }}, preserving existing options. Guard action installation and preload together when secrets are absent. Preserve defineConfig, setupNodeEvents and support hooks. Cypress TIA and application coverage validation are deferred."
 	case "webdriverio":
 		return "Initialize dd-trace/ci/init in the WDIO worker before framework imports; preserve loaders."
 	case "cucumber":

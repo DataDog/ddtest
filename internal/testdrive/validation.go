@@ -446,6 +446,9 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 }
 
 func missingRealCoverage(result validationResult) bool {
+	if result.Framework == "cypress" {
+		return false // Application coverage is part of the deferred Cypress TIA validation.
+	}
 	for _, run := range result.Runs {
 		if run.Coverage != nil && run.Coverage.Status != "observed" {
 			return true

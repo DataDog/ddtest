@@ -170,16 +170,14 @@ supported by dd-trace-js. Record them as **not supported**, never passed; requir
 the other five feature checks. Preserve the original Playwright projects, browser
 settings and web-server setup, and check that validation-owned servers stop.
 
-For Cypress, require a native baseline and instrumented comparison plus all six
-feature controls. Test Impact Analysis skips individual tests: match the reported
-suite and test name and require skipped telemetry with no probe-body executions.
-Retry/EFD/attempt-to-fix checks must reconcile the independent probe-body counter
-with retry telemetry; Cypress's native report can show one final result. Check
-real application Istanbul coverage separately; API-only tests may lack browser
-coverage. Verify that coverage names actual repository application files and
-that CI enables the same application coverage setup. Temporary filenames or
-coverage of spec files alone are insufficient. Preserve reporters,
-setupNodeEvents/support hooks and startup commands.
+For Cypress, require a native baseline and instrumented comparison plus five
+feature controls: retries, early flake detection, quarantine, disabled tests and
+attempt-to-fix. TIA skipping and application coverage validation are deferred;
+record them as deferred, never passed or unsupported by the tracer. Do not require
+agents to add Istanbul dependencies or change application builds for this trial.
+Preserve existing coverage setup. Retry/EFD/attempt-to-fix checks must reconcile
+independent probe-body counts with telemetry; the native report can show one final
+result. Preserve reporters, setupNodeEvents/support hooks and startup commands.
 Verify that Cypress GitHub Action consumers execute through the Node API with
 preserved inputs and the action's Node major. Review this path separately from CLI
 commands; testdrive may execute both. Retain unavailable browser/OS configurations

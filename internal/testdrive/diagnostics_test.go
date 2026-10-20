@@ -42,7 +42,7 @@ func TestFindingsShareConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T)
 	}{
 		{name: "missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true},
 		{name: "Mocha missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, mocha: true},
-		{name: "Cypress missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, cypress: true},
+		{name: "Cypress missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, cypress: true},
 		{name: "Cypress with coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, CoveredTestCount: 1, CoverageLevel: "test", Tests: []intake.Test{passed}}, cypress: true},
 		{name: "Mocha with installed nyc missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, mocha: true, nycInstalled: true},
 		{name: "Cucumber with declared nyc missing coverage", facts: intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true, Tests: []intake.Test{passed}}, wantAdvice: true, nycDeclared: true},
@@ -128,7 +128,7 @@ func TestFindingsShareConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T)
 			if strings.Contains(output.String(), "1 finding.") {
 				t.Fatal("console must print the finding instead of a standalone total")
 			}
-			if tc.facts.MissingCoverage && !strings.Contains(output.String(), intake.MissingCoverageContext+"\n  Fix:") {
+			if tc.facts.MissingCoverage && !tc.cypress && !strings.Contains(output.String(), intake.MissingCoverageContext+"\n  Fix:") {
 				t.Fatalf("coverage guidance must immediately follow the concise finding:\n%s", output.String())
 			}
 			report, err := os.ReadFile(filepath.Join(session, reportFilename))
@@ -154,21 +154,16 @@ func TestFindingsShareConsoleTroubleshootingAndCompleteDiagnostics(t *testing.T)
 					t.Fatal("console must identify the informational finding")
 				}
 			}
+			if tc.cypress {
+				if !strings.Contains(output.String(), cypressTIADeferredReason) || strings.Contains(output.String(), intake.MissingCoverageContext) {
+					t.Fatal("deferred Cypress TIA must not ask the agent to instrument the application")
+				}
+			}
 			if tc.wantAdvice {
 				if len(diagnostics.Troubleshooting) != 1 {
 					t.Fatalf("missing troubleshooting: %+v", diagnostics)
 				}
 				advice := diagnostics.Troubleshooting[0]
-				if tc.cypress {
-					for _, text := range []string{"Test Impact Analysis data", "babel-plugin-istanbul", "vite-plugin-istanbul", "window.__coverage__"} {
-						if !strings.Contains(advice.Text, text) {
-							t.Fatalf("Cypress advice lacks setup instruction %q: %+v", text, advice)
-						}
-					}
-					if advice.Finding != intake.MissingCoverageFinding || !strings.HasSuffix(advice.URL, "#cypress") || strings.Contains(advice.Text, "nyc ddtest") {
-						t.Fatalf("Cypress needs browser instrumentation guidance: %+v", advice)
-					}
-				}
 				if tc.nycInstalled && (advice.Title != "Check NYC coverage configuration" || !strings.Contains(advice.Text, "include/exclude") || strings.Contains(advice.Text, "./node_modules/.bin/nyc ddtest")) {
 					t.Fatalf("installed NYC still needs actionable coverage guidance: %+v", advice)
 				}

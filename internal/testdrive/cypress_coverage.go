@@ -64,7 +64,7 @@ func cypressSourceCoverage(root string, facts intake.Facts, native []jestTest) *
 	case result.CoveredTests > 0:
 		result.Status = "observed"
 	default:
-		result.Reason = "No repository application source was covered; spec-file coverage alone is insufficient. Enable application Istanbul instrumentation in the selected local command and CI startup/build."
+		result.Reason = "No repository application source coverage was observed; spec-file coverage alone does not prove application coverage. Cypress TIA validation is deferred; this observation does not block testdrive."
 	}
 	return result
 }

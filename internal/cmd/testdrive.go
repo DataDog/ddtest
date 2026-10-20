@@ -77,7 +77,7 @@ func newTestdriveCommand() *cobra.Command {
 		}
 
 		output := cmd.OutOrStdout()
-		if !agent {
+		if !agent && !cmd.Flags().Changed("format") {
 			execution.Preview(output)
 		}
 		yes, err := cmd.Flags().GetBool("yes")

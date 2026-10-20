@@ -27,37 +27,14 @@ the CI setup, then validate with the customer's actual headless command.
    instrumentation works. Keep an existing manual integration; if browser
    instrumentation is missing, report the concrete diagnostics and review the
    documented manual Cypress plugin/support setup.
-4. Test Impact Analysis also needs Istanbul coverage from the application loaded
-   in the browser. Inspect real-suite coverage counts. API-only tests may have no
-   browser source coverage. If the application is not instrumented, add or reuse
-   test-only instrumentation in its existing startup/build path, preserving
-   production behavior, source paths and coverage thresholds. Use the same app
-   coverage setup in the baseline and instrumented comparison. Synthetic probes
-   validate feature behavior; they do not prove coverage of the real application.
-   This coverage setup is part of onboarding: after a zero-coverage result,
-   inspect the application build/server and implement a suitable test-only path
-   before the final run. Use its existing Istanbul bundler integration, or for
-   a static JavaScript app, instrument application scripts with
-   istanbul-lib-instrument in a temporary served copy. Keep the ordinary server
-   behavior when coverage is off. Instrument with the original repository
-   source filename, not the temporary destination filename: coverage pointing
-   to a temporary directory cannot map back to changed repository files.
-   Enable this coverage path in CI's existing build/start step too; a local-only
-   coverage alias is insufficient. Prefer an opt-in environment flag that keeps
-   the existing CI commands and Cloud recording options. Pass that flag
-   identically to both local modes. Include those flags in final verification
-   of every discovered configuration. If setup is blocked, state the prerequisite you could not
-   satisfy instead of leaving coverage as an unexplored follow-up.
-   Set environment flags before ddtest, for example COVERAGE=true ddtest testdrive
-   --framework cypress --all --tracer-version <exact-release> --yes. An explicit
-   --command is for targeted diagnostics and takes an executable with arguments,
-   not shell variable assignments; it does not validate the other CI paths.
-   When adding a temporary coverage server, use asynchronous spawn and forward
-   termination signals to the child, cleaning the copy when it exits. Signal
-   callbacks cannot interrupt an execSync server; adding those callbacks can
-   hang shutdown checks. Prefer verification through testdrive's managed startup
-   and cleanup instead of a separate background preview server.
-5. Run ddtest testdrive --framework cypress --all --tracer-version <exact-release>
+4. Cypress Test Impact Analysis (TIA skipping and application coverage validation)
+   is deferred in testdrive. Do not add Istanbul instrumentation, coverage build
+   paths or coverage dependencies for this validation. Preserve any existing
+   coverage setup. A successful run does not validate Cypress TIA; report it as
+   deferred, not passed or unsupported by the tracer.
+5. Before final validation, run the repository checks appropriate to any config
+   or startup source files you edited, including their existing lint rules.
+   Run ddtest testdrive --framework cypress --all --tracer-version <exact-release>
    --yes after all edits. A final run overriding one alias is insufficient for
    onboarding when other CLI or API configurations were discovered.
    Record/parallel workflows do not require a Cloud key locally: testdrive disables
@@ -82,8 +59,9 @@ the CI setup, then validate with the customer's actual headless command.
    and parallel grouping, keeps the reporter and browser options, and records
    native after:run results. No real Datadog or Cypress Cloud key is needed.
    Unsupported commands/configurations remain incomplete; preserve their scope.
-6. Review both native runs, the telemetry comparison and all six controlled
-   feature results. Use the report's compatibility.status; matching counts alone
+6. Review both native runs, the telemetry comparison and the five required controlled
+   feature results (automatic retries, early flake detection, quarantine, disabled
+   tests and attempt-to-fix), with TIA explicitly deferred. Use the report's compatibility.status; matching counts alone
    cannot establish compatibility. Existing failures can pass when test identities,
    results, failure details and exit codes match. Preserve an inconclusive verdict.
    Fix configuration or instrumentation errors and rerun the complete command.
@@ -98,7 +76,7 @@ summary.final_response verbatim at the start of your response, including its
 absolute report links and any INCOMPLETE verdict.
 
 If validation is INCOMPLETE, do not say "onboarding is complete up to human
-action". Unknown CI guards, an unvalidated execution path or invalid coverage are
+action". Unknown CI guards, an unvalidated execution path or a failed required feature are
 validation gaps; adding a Datadog key does not resolve them. Name those gaps
 separately from the later human credential setup, and keep the generated verdict
 as the opening sentence.

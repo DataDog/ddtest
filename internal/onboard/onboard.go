@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"text/template"
 
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/platform"
@@ -25,6 +26,8 @@ const githubAction = "datadog/test-visibility-github-action"
 
 //go:embed instructions/github.md
 var gitHubInstructions string
+
+var gitHubInstructionsTemplate = template.Must(template.New("github").Delims("[[", "]]").Parse(gitHubInstructions))
 
 //go:embed instructions/scratch-cleanup.md
 var scratchCleanupInstructions string
@@ -251,6 +254,14 @@ func findWorkflows(root, language, name string) (workflowDiscovery, error) {
 	return result, nil
 }
 
+func renderGitHubInstructions(language string) string {
+	var output strings.Builder
+	if err := gitHubInstructionsTemplate.Execute(&output, language); err != nil {
+		panic(err) // The embedded template has only string comparisons and writes to a strings.Builder.
+	}
+	return output.String()
+}
+
 func instructions(language, name string) string {
 	if language == "javascript" && name == "webdriverio" {
 		return strings.ReplaceAll(webdriverIOInstructions, "ddtest testdrive", "ddtest testdrive --framework webdriverio")
@@ -259,7 +270,7 @@ func instructions(language, name string) string {
 		return strings.ReplaceAll(cucumberInstructions, "ddtest testdrive", "ddtest testdrive --framework cucumber")
 	}
 	if language == "javascript" && name == "cypress" {
-		text := strings.NewReplacer("For Jest and supported Vitest projects", "For Cypress projects", "Jest configuration", "Cypress configuration", "Jest CI discovery", "Cypress CI discovery", "Identified Jest steps", "Identified Cypress steps", "__FRAMEWORK__", "cypress", "__LANGUAGE__", "js", "__BOOTSTRAP__", javascriptBootstrap).Replace(gitHubInstructions)
+		text := strings.NewReplacer("For Jest and supported Vitest projects", "For Cypress projects", "Jest configuration", "Cypress configuration", "Jest CI discovery", "Cypress CI discovery", "Identified Jest steps", "Identified Cypress steps", "__FRAMEWORK__", "cypress", "__LANGUAGE__", "js", "__BOOTSTRAP__", javascriptBootstrap).Replace(renderGitHubInstructions(language))
 		return strings.ReplaceAll(text+"\n\n"+cypressInstructions, "ddtest testdrive", "ddtest testdrive --framework cypress")
 	}
 	if language == "javascript" && name == "mocha" {
@@ -285,7 +296,7 @@ func instructions(language, name string) string {
 	case "ruby":
 		bootstrap = rubyBootstrap
 	}
-	text := strings.NewReplacer("__FRAMEWORK__", name, "__LANGUAGE__", actionLanguage, "__BOOTSTRAP__", bootstrap).Replace(gitHubInstructions)
+	text := strings.NewReplacer("__FRAMEWORK__", name, "__LANGUAGE__", actionLanguage, "__BOOTSTRAP__", bootstrap).Replace(renderGitHubInstructions(language))
 	return strings.ReplaceAll(text, "ddtest testdrive", "ddtest testdrive --framework "+name)
 }
 

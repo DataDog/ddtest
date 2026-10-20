@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 )
 
 func TestRunPrintsJestGitHubInstructions(t *testing.T) {
@@ -283,7 +284,7 @@ func newJestRepository(t *testing.T, workflow string) string {
 func TestInstructionsUseV3WithoutTracerPinsAndKeepBothReports(t *testing.T) {
 	for language, framework := range map[string]string{"javascript": "jest", "python": "pytest", "ruby": "rspec"} {
 		output := instructions(language, framework)
-		for _, expected := range []string{"datadog/test-visibility-github-action@v3", "Results JSON", "report.html", "testdrive.json", "JavaScript and Python fallback installations are temporary", "Ruby fallback uses `bundle add datadog-ci`", "Fix known runtime incompatibilities", "preserve the workflow", "--check-only", "--tracer-version"} {
+		for _, expected := range []string{"datadog/test-visibility-github-action@v3", "Results JSON", "report.html", "testdrive.json", "--tracer-version", "summary.final_response"} {
 			if !strings.Contains(output, expected) {
 				t.Errorf("%s instructions missing %q", language, expected)
 			}
@@ -293,5 +294,33 @@ func TestInstructionsUseV3WithoutTracerPinsAndKeepBothReports(t *testing.T) {
 				t.Errorf("%s instructions still contain %q", language, absent)
 			}
 		}
+	}
+}
+
+func TestPythonRubyInstructionsKeepSelectedLanguageSetup(t *testing.T) {
+	for _, fixture := range []struct{ language, framework, initialization string }{
+		{"python", "pytest", "PYTEST_ADDOPTS=--ddtrace"},
+		{"ruby", "rspec", "RUBYOPT=-rbundler/setup -rdatadog/ci/auto_instrument"},
+		{"ruby", "minitest", "RUBYOPT=-rbundler/setup -rdatadog/ci/auto_instrument"},
+	} {
+		t.Run(fixture.framework, func(t *testing.T) {
+			output := instructions(fixture.language, fixture.framework)
+			for _, required := range []string{fixture.initialization, "ddtest testdrive --framework " + fixture.framework + " --yes", "telemetry_only: true", "UNVALIDATED (TELEMETRY ONLY)"} {
+				require.Contains(t, output, required)
+			}
+			for _, invalid := range []string{"NODE_OPTIONS", "js-tracer-version", "Jest", "Vitest", "package.json", "coverageThreshold", "__FRAMEWORK__", "[[if"} {
+				require.NotContains(t, output, invalid)
+			}
+			_, yamlText, found := strings.Cut(output, "```yaml\n")
+			require.True(t, found)
+			yamlText, _, _ = strings.Cut(yamlText, "```")
+			var steps []struct {
+				Uses string
+				With map[string]string
+			}
+			require.NoError(t, yaml.Unmarshal([]byte(yamlText), &steps))
+			require.Len(t, steps, 1)
+			require.Equal(t, fixture.language, steps[0].With["languages"])
+		})
 	}
 }

@@ -270,7 +270,10 @@ func buildReport(repositoryRoot string, findings intake.Facts, commandFailed boo
 	if (strings.EqualFold(info.Framework, "playwright") || strings.EqualFold(info.Framework, "webdriverio")) && findings.TestEventCount > 0 {
 		model.Cards = append(model.Cards, reportCard{Kind: strings.ToLower(info.Framework) + "-coverage-unavailable", Severity: "info", Title: info.Framework + " coverage and skipping are not supported", Count: 1, Context: browserSkippingReason(strings.ToLower(info.Framework))})
 	}
-	if findings.MissingCoverage && !strings.EqualFold(info.Framework, "playwright") && !strings.EqualFold(info.Framework, "webdriverio") {
+	if strings.EqualFold(info.Framework, "cypress") {
+		model.Cards = append(model.Cards, reportCard{Kind: "cypress-tia-deferred", Severity: "info", Title: "Cypress Test Impact Analysis validation is deferred", Count: 1, Context: cypressTIADeferredReason})
+	}
+	if findings.MissingCoverage && !strings.EqualFold(info.Framework, "cypress") && !strings.EqualFold(info.Framework, "playwright") && !strings.EqualFold(info.Framework, "webdriverio") {
 		model.Cards = append(model.Cards, reportCard{
 			Kind: intake.MissingCoverageFinding, Scope: coverageFindingScope, Severity: "warning", Title: "Coverage not reported", Count: 1,
 			Context: intake.MissingCoverageContext,

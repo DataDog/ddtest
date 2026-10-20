@@ -42,6 +42,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if !supportsValidationFramework(name) && options.Format == "verbose" && !options.Apply {
 		return t.Run(ctx, output)
 	}
+	if !supportsValidationFramework(name) && !options.Apply && (t.language == "python" || t.language == "ruby") && options.Resume == "" && options.FactsFile == "" {
+		return t.telemetryWorkflow(ctx, output, options.Format)
+	}
 	result := onboard.AgentResult{Status: "running", Phase: "discovery", NextAction: "run_command", NextCommand: onboard.OnboardingCommand(name)}
 	if !options.Apply {
 		result.NextCommand = []string{result.NextCommand[0], "testdrive", "--framework", name, "--agent", "--yes"}
@@ -115,6 +118,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		return errors.Join(fmt.Errorf("%s: %s", code, result.Reason), onboard.RenderAgentResult(output, result, options.Format))
 	}
 	if !supportsValidationFramework(name) || t.language != "javascript" {
+		result.NextCommand = nil
 		return fail("unsupported", "framework_unsupported", "Controlled validation is not available for this framework.", "Preserve its unsupported status; do not substitute a different framework.")
 	}
 	t.repositoryRoot = canonicalWorkflowRoot(t.repositoryRoot)
@@ -172,6 +176,15 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		runtimeVersion = t.nodeVersion()
 	}
 	plan := &onboard.ExecutionPlan{SchemaVersion: 1, Fingerprint: fingerprint, Framework: name, Site: options.Site, Runtime: runtimeVersion, Initialization: workflowInitialization(name), Features: append([]string{}, jestFeatures...), Scope: scope}
+	if name == "cypress" {
+		plan.Features = nil
+		for _, feature := range jestFeatures {
+			if feature != "skipping" {
+				plan.Features = append(plan.Features, feature)
+			}
+		}
+		plan.DeferredFeatures = map[string]string{"skipping": cypressTIADeferredReason}
+	}
 	if plan.Site == "" {
 		plan.Site = "datadoghq.com"
 	}

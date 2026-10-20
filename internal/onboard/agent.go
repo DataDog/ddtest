@@ -58,12 +58,14 @@ type AgentResult struct {
 
 // PlanSummary keeps routine handoffs independent of CI matrix size.
 type PlanSummary struct {
-	Framework      string `json:"framework"`
-	Tracer         string `json:"tracer,omitempty"`
-	Site           string `json:"site"`
-	Initialization string `json:"initialization"`
-	Configurations int    `json:"configurations"`
-	Unresolved     int    `json:"unresolved"`
+	Features         []string          `json:"feature_scenarios,omitempty"`
+	DeferredFeatures map[string]string `json:"deferred_features,omitempty"`
+	Framework        string            `json:"framework"`
+	Tracer           string            `json:"tracer,omitempty"`
+	Site             string            `json:"site"`
+	Initialization   string            `json:"initialization"`
+	Configurations   int               `json:"configurations"`
+	Unresolved       int               `json:"unresolved"`
 }
 
 // WorkflowCheck records an owned check and its command, without unbounded logs.
@@ -84,7 +86,7 @@ func WriteAgentResult(output io.Writer, result AgentResult) error {
 func RenderAgentResult(output io.Writer, result AgentResult, format string) error {
 	if result.Plan != nil {
 		plan := result.Plan
-		result.PlanSummary = &PlanSummary{Framework: plan.Framework, Tracer: plan.Tracer, Site: plan.Site, Initialization: plan.Initialization, Configurations: len(plan.Scope.Commands), Unresolved: len(plan.Scope.Unresolved)}
+		result.PlanSummary = &PlanSummary{Framework: plan.Framework, Tracer: plan.Tracer, Site: plan.Site, Initialization: plan.Initialization, Configurations: len(plan.Scope.Commands), Unresolved: len(plan.Scope.Unresolved), Features: plan.Features, DeferredFeatures: plan.DeferredFeatures}
 		executable, err := os.Executable()
 		if err != nil {
 			executable = "ddtest"

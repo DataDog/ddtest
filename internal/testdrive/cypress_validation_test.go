@@ -168,7 +168,9 @@ func TestCypressCoverageRequiresRepositoryApplicationFiles(t *testing.T) {
 	require.Equal(t, 6, coverage.InvalidCount)
 	require.Len(t, coverage.InvalidFiles, 5, "diagnostics must stay bounded")
 	result := validationResult{Framework: "cypress", Runs: []runSummary{{Coverage: coverage}}}
-	require.True(t, missingRealCoverage(result), "invalid source mappings cannot pass real-coverage validation")
+	require.False(t, missingRealCoverage(result), "Cypress TIA is deferred; coverage does not block the other controls")
+	result.Framework = "mocha"
+	require.True(t, missingRealCoverage(result), "other frameworks must retain coverage requirements")
 }
 
 func TestCypressReportsExecutableStartFailureWithoutOutput(t *testing.T) {
@@ -211,4 +213,42 @@ func TestCypressRejectsSetupFailureDespitePassingNativeResults(t *testing.T) {
 	require.ErrorContains(t, err, "Cypress execution setup failed")
 	require.Contains(t, run.ResultError, "Startup process exited")
 	require.Len(t, run.Tests, 1, "complete native results must not hide setup failure")
+}
+
+func TestCypressTIAExceptionKeepsOtherControlsMandatory(t *testing.T) {
+	result := completeValidationFixture("cypress")
+	result.Runs[1].Coverage = &coverageSummary{Status: "not observed"}
+	root := t.TempDir()
+	var output bytes.Buffer
+	require.NoError(t, finishValidation(&output, root, result))
+	report := readValidationReport(t, root)
+	require.True(t, report.LocalSuccess)
+	require.Equal(t, "COMPLETE LOCALLY", report.Summary.Status)
+	require.Contains(t, report.Summary.FinalResponse, "Features: 5/5 supported checks passed.")
+	require.Contains(t, report.Summary.FinalResponse, cypressTIADeferredReason)
+	for i, feature := range result.Features {
+		if feature.Name == "skipping" {
+			require.Equal(t, "deferred", feature.Status)
+			require.False(t, featureSatisfied("jest", feature))
+			require.False(t, featureSatisfied("vitest", feature))
+			require.False(t, featureSatisfied("mocha", feature))
+			continue
+		}
+		for _, status := range []string{"failed", "inconclusive", "deferred", "not supported"} {
+			result.Features[i].Status = status
+			require.False(t, featureChecksPassed("cypress", result.Features), "%s %s must block completion", feature.Name, status)
+		}
+		result.Features[i].Status = feature.Status
+	}
+	require.False(t, featureSatisfied("cypress", featureResult{Name: "skipping", Status: "not supported"}))
+}
+
+func TestCypressReportDisclosesDeferredTIAWithoutCoverageWarning(t *testing.T) {
+	model := buildReport(t.TempDir(), intake.Facts{TestEventCount: 1, TestCount: 1, MissingCoverage: true}, false, reportRuntime{Framework: "Cypress"})
+	var output bytes.Buffer
+	require.NoError(t, testdriveReport.Execute(&output, model))
+	require.Contains(t, output.String(), cypressTIADeferredReason)
+	for _, card := range model.Cards {
+		require.NotEqual(t, intake.MissingCoverageFinding, card.Kind)
+	}
 }

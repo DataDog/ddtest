@@ -340,6 +340,8 @@ func (t *Testdrive) Preview(output io.Writer) {
 		if t.framework.Name() == "webdriverio" {
 			_, _ = fmt.Fprintln(output, "  - preserve WDIO services, capabilities and reporters in a temporary copy; clean owned server/browser processes")
 			_, _ = fmt.Fprintln(output, "  - check five supported features per capability; TIA skipping and code coverage are not supported")
+		} else if t.framework.Name() == "cypress" {
+			_, _ = fmt.Fprintln(output, "  - check automatic retries, early flake detection, quarantine, disabled tests and attempt-to-fix; Cypress TIA skipping and application coverage validation are deferred")
 		} else if t.framework.Name() == "playwright" {
 			_, _ = fmt.Fprintln(output, "  - run in a temporary repository copy; capture native results and clean owned server processes after every run")
 			_, _ = fmt.Fprintln(output, "  - check retries, EFD, quarantine, disabled tests and attempt-to-fix per Playwright project; TIA skipping/coverage are not supported")
@@ -351,7 +353,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 	}
 	_, _ = fmt.Fprintf(output, "  - update the validation report at %s; retain the latest paired execution as historical evidence until another pair runs\n", reportPath)
 	_, _ = fmt.Fprintf(output, "  - save the instrumented suite findings in %s\n", htmlReportPath(""))
-	if t.framework.Name() != "playwright" && t.framework.Name() != "webdriverio" {
+	if t.framework.Name() == "jest" || t.framework.Name() == "vitest" || t.framework.Name() == "mocha" || t.framework.Name() == "cucumber" {
 		_, _ = fmt.Fprintln(output, "  - disable coverage thresholds only for isolated probes, preserving coverage collection and the original full-suite thresholds")
 	}
 	_, _ = fmt.Fprintln(output, "  - keep the upstream HTML findings report and compact JSON validation report; remove temporary probes, tracer, traffic, and run files")
@@ -691,7 +693,12 @@ func writeFindings(output io.Writer, findings intake.Facts, cards ...reportCard)
 		_, _ = fmt.Fprintf(output, "Tracer configuration errors: %s.\n", strings.Join(findings.ConfigurationErrors, ", "))
 	}
 	count := len(findings.ConfigurationErrors)
+	coverageDeferred := false
 	for _, finding := range cards {
+		if finding.Kind == "cypress-tia-deferred" {
+			coverageDeferred = true
+			_, _ = fmt.Fprintln(output, "Info: "+finding.Context)
+		}
 		if finding.Scope != runFindingScope {
 			continue
 		}
@@ -702,7 +709,7 @@ func writeFindings(output io.Writer, findings intake.Facts, cards ...reportCard)
 	if findings.TestEventCount == 0 {
 		_, _ = fmt.Fprintln(output, "Test findings unavailable: no test events were received.")
 	}
-	if findings.MissingCoverage {
+	if findings.MissingCoverage && !coverageDeferred {
 		count++
 		_, _ = fmt.Fprintln(output, intake.MissingCoverageContext)
 		writeTroubleshooting(output, cards, intake.MissingCoverageFinding)

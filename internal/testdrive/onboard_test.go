@@ -78,3 +78,29 @@ func TestOnboardMissingScopePreservesFramework(t *testing.T) {
 	require.NotContains(t, result.NextCommand, "vitest")
 	require.NotContains(t, result.NextCommand, "vitest")
 }
+
+func TestCypressPlanDisclosesDeferredTIA(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"cypress run"},"devDependencies":{"cypress":"15.1.0"}}`)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))
+	requireWriteFile(t, filepath.Join(root, ".github/workflows/test.yml"), "jobs:\n  test:\n    steps:\n      - run: custom-setup && npx cypress run\n")
+	drive := &Testdrive{repositoryRoot: root, framework: &framework.Cypress{}, language: "javascript", allConfigurations: true}
+	var output bytes.Buffer
+	require.ErrorContains(t, drive.Onboard(t.Context(), &output, false), "scope_unresolved")
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+	require.NotNil(t, result.PlanSummary)
+	require.Len(t, result.PlanSummary.Features, 5)
+	require.NotContains(t, result.PlanSummary.Features, "skipping")
+	require.Equal(t, cypressTIADeferredReason, result.PlanSummary.DeferredFeatures["skipping"])
+}
+
+func TestUnsupportedWorkflowDoesNotRecommendItself(t *testing.T) {
+	drive := &Testdrive{framework: framework.NewPytest(nil), language: "python"}
+	var output bytes.Buffer
+	require.ErrorContains(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Apply: true, Format: "json"}), "framework_unsupported")
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+	require.Equal(t, "report_result", result.NextAction)
+	require.Empty(t, result.NextCommand)
+}

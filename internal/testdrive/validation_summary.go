@@ -78,6 +78,9 @@ func validationHandoff(result validationResult) string {
 		fmt.Fprintf(&block, " %s not supported.", strings.Join(unsupported, ", "))
 	}
 	block.WriteByte('\n')
+	if result.Framework == "cypress" {
+		block.WriteString(cypressTIADeferredReason + "\n")
+	}
 	coverageRuns, coveredRuns, coveredTests, totalTests := 0, 0, 0, 0
 	var levels []string
 	for _, run := range result.Runs {
@@ -171,7 +174,7 @@ func validationHandoff(result validationResult) string {
 
 func validationFeatureCounts(framework string, features []featureResult) (passed, total int, unsupported []string) {
 	for _, feature := range features {
-		if feature.Name == "all" {
+		if feature.Name == "all" || deferredCypressFeature(framework, feature) {
 			continue
 		}
 		if feature.Status == "not supported" && featureSatisfied(framework, feature) {
@@ -235,10 +238,7 @@ func summarizeValidation(result validationResult) validationSummary {
 		summary.BlockingChecks = append(summary.BlockingChecks, "preflight "+result.Preflight.Verdict.Status)
 	}
 	if !result.CheckOnly {
-		if missingRealCoverage(result) && result.Framework == "cypress" {
-			summary.BlockingChecks = append(summary.BlockingChecks, "Cypress real-application coverage is missing or invalid. Instrument application source with Istanbul, preserving repository source filenames, and enable that startup/build path in local validation and CI. API-only tests may have no browser coverage. Synthetic probes and test-file coverage do not prove application coverage.")
-		}
-		if missingRealCoverage(result) && result.Framework != "cypress" {
+		if missingRealCoverage(result) {
 			summary.BlockingChecks = append(summary.BlockingChecks, "Mocha real-suite coverage was not observed. Synthetic skipping probes do not validate coverage of the customer's source. Check NYC instrument/include settings and ESM instrumentation; preserve existing coverage thresholds.")
 		}
 		if result.Compatibility.Status != "compatible" {
@@ -353,6 +353,9 @@ func validationFacts(result validationResult) []string {
 			text = append(text[:240], '…')
 		}
 		facts = append(facts, string(text))
+	}
+	if result.Framework == "cypress" {
+		facts = append(facts, cypressTIADeferredReason)
 	}
 	passed, total, _ := validationFeatureCounts(result.Framework, result.Features)
 	if total == 0 {

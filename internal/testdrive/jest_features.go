@@ -32,6 +32,10 @@ var jestFeatures = []string{"auto-retries", "early-flake-detection", "skipping",
 
 func unavailableFeatures(result *validationResult, reason string) {
 	for _, feature := range jestFeatures {
+		if result.Framework == "cypress" && feature == "skipping" {
+			result.Features = append(result.Features, featureResult{Name: feature, Status: "deferred", Reason: cypressTIADeferredReason})
+			continue
+		}
 		result.Features = append(result.Features, featureResult{Name: feature, Status: "inconclusive", Reason: reason})
 	}
 }
@@ -185,6 +189,10 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 	}
 	identity := passControl.Facts.Tests[0]
 	for _, feature := range jestFeatures {
+		if passControl.framework == "cypress" && feature == "skipping" {
+			result.Features = append(result.Features, featureResult{Name: feature, Status: "deferred", Reason: cypressTIADeferredReason})
+			continue
+		}
 		if (passControl.framework == "playwright" || passControl.framework == "webdriverio") && feature == "skipping" {
 			result.Features = append(result.Features, featureResult{Name: feature, Status: "not supported", Reason: browserSkippingReason(passControl.framework)})
 			continue

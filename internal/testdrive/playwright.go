@@ -26,7 +26,13 @@ var playwrightReporter string
 const playwrightSkippingReason = "dd-trace-js does not support Test Impact Analysis skipping or per-test coverage for Playwright. This feature is not exercised and is not counted as a passed check."
 
 func featureSatisfied(framework string, feature featureResult) bool {
-	return feature.Status == "passed" || (framework == "playwright" || framework == "webdriverio") && feature.Name == "skipping" && feature.Status == "not supported"
+	if feature.Status == "passed" {
+		return true
+	}
+	if feature.Name != "skipping" {
+		return false
+	}
+	return (framework == "playwright" || framework == "webdriverio") && feature.Status == "not supported" || deferredCypressFeature(framework, feature)
 }
 
 type playwrightProject struct {

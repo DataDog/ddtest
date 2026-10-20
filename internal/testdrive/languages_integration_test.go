@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,7 +39,6 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 		t.Run(fixture.name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "project")
 			require.NoError(t, os.MkdirAll(root, 0755))
-			retainIntegrationReports(t, root, fixture.name)
 			integrationCommand(t, ctx, root, nil, "git", "init", "-q")
 			integrationFile(t, root, ".gitignore", "/.testoptimization/\n__pycache__/\n.pytest_cache/\n")
 			for name, contents := range fixture.files {
@@ -54,58 +54,97 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 				env = append(env, "BUNDLE_PATH="+filepath.Join(t.TempDir(), "bundle"), "BUNDLE_USER_HOME="+t.TempDir())
 				integrationCommand(t, ctx, root, env, "bundle", "lock")
 			}
-			command := exec.CommandContext(ctx, binary, "testdrive", "--framework", fixture.name, "--command", fixture.command, "--yes")
-			command.Dir = root
-			command.Env = integrationEnvironment(env)
-			output, err := command.CombinedOutput()
-			require.NoError(t, err, "a successful telemetry-only check retains exit 0: %s", output)
-			require.Contains(t, string(output), "Test events received.")
-			data, err := os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
-			require.NoError(t, err, string(output))
-			var report struct {
-				Framework     string
-				Success       bool
-				TelemetryOnly bool `json:"telemetry_only"`
-				Summary       struct {
-					Status          string
-					LocalValidation string `json:"local_validation"`
+
+			integrationFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    steps:\n      - run: "+fixture.command+"\n")
+			for _, flags := range [][]string{nil, {"--instructions"}} {
+				args := append([]string{"onboard", "--framework", fixture.name}, flags...)
+				instructions := integrationCommand(t, ctx, root, env, binary, args...)
+				for _, invalid := range []string{"NODE_OPTIONS", "js-tracer-version", "Jest", "Vitest", "package.json"} {
+					require.NotContains(t, instructions, invalid)
 				}
-				Compatibility struct{ Status string }
-				Features      []struct{ Name, Status string }
-				Runs          []struct {
-					Name           string
-					ExitCode       int `json:"exit_code"`
-					Instrumented   bool
-					TestEventCount int `json:"test_event_count"`
-				}
+				require.Contains(t, instructions, "telemetry_only: true")
 			}
-			require.NoError(t, json.Unmarshal(data, &report))
-			require.Equal(t, fixture.name, report.Framework)
-			require.False(t, report.Success)
-			require.True(t, report.TelemetryOnly)
-			require.Equal(t, "INCOMPLETE", report.Summary.Status)
-			require.Equal(t, "UNVALIDATED (TELEMETRY ONLY)", report.Summary.LocalValidation)
-			require.Equal(t, "inconclusive", report.Compatibility.Status)
-			require.Len(t, report.Features, 1)
-			require.Equal(t, "unvalidated", report.Features[0].Status)
-			require.Len(t, report.Runs, 1)
-			require.Equal(t, "reporting-only", report.Runs[0].Name)
-			require.True(t, report.Runs[0].Instrumented)
-			require.Zero(t, report.Runs[0].ExitCode, string(output))
-			require.Equal(t, 1, report.Runs[0].TestEventCount)
-			for name, contents := range fixture.files {
-				after, err := os.ReadFile(filepath.Join(root, name))
-				require.NoError(t, err)
-				if name == "Gemfile" {
-					require.Contains(t, string(after), "datadog-ci", "Ruby installation updates its bundle")
-				} else {
-					require.Equal(t, contents, string(after), name)
-				}
+			for _, mode := range []struct {
+				name string
+				args []string
+			}{
+				{"plain", nil}, {"json", []string{"--format", "json"}}, {"agent", []string{"--agent"}},
+			} {
+				t.Run(mode.name, func(t *testing.T) {
+					retainIntegrationReports(t, root, fixture.name+"-"+mode.name)
+					args := []string{"testdrive", "--framework", fixture.name, "--command", fixture.command, "--yes"}
+					args = append(args, mode.args...)
+					command := exec.CommandContext(ctx, binary, args...)
+					command.Dir = root
+					command.Env = integrationEnvironment(env)
+					output, err := command.CombinedOutput()
+					require.NoError(t, err, "a successful telemetry-only check retains exit 0: %s", output)
+					if mode.name == "plain" {
+						require.Contains(t, string(output), "Test events received.")
+					} else {
+						var result struct {
+							Status      string
+							NextAction  string   `json:"next_action"`
+							NextCommand []string `json:"next_command"`
+							JSONReport  string   `json:"json_report"`
+						}
+						require.NoError(t, json.NewDecoder(strings.NewReader(string(output))).Decode(&result), string(output))
+						require.Equal(t, "telemetry_only", result.Status)
+						require.Equal(t, "report_result", result.NextAction)
+						require.Empty(t, result.NextCommand)
+						require.FileExists(t, result.JSONReport)
+						if mode.name == "json" {
+							require.True(t, json.Valid(output), string(output))
+						}
+					}
+					data, err := os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
+					require.NoError(t, err, string(output))
+					var report struct {
+						Framework     string
+						Success       bool
+						TelemetryOnly bool `json:"telemetry_only"`
+						Summary       struct {
+							Status          string
+							LocalValidation string `json:"local_validation"`
+						}
+						Compatibility struct{ Status string }
+						Features      []struct{ Name, Status string }
+						Runs          []struct {
+							Name           string
+							ExitCode       int `json:"exit_code"`
+							Instrumented   bool
+							TestEventCount int `json:"test_event_count"`
+						}
+					}
+					require.NoError(t, json.Unmarshal(data, &report))
+					require.Equal(t, fixture.name, report.Framework)
+					require.False(t, report.Success)
+					require.True(t, report.TelemetryOnly)
+					require.Equal(t, "INCOMPLETE", report.Summary.Status)
+					require.Equal(t, "UNVALIDATED (TELEMETRY ONLY)", report.Summary.LocalValidation)
+					require.Equal(t, "inconclusive", report.Compatibility.Status)
+					require.Len(t, report.Features, 1)
+					require.Equal(t, "unvalidated", report.Features[0].Status)
+					require.Len(t, report.Runs, 1)
+					require.Equal(t, "reporting-only", report.Runs[0].Name)
+					require.True(t, report.Runs[0].Instrumented)
+					require.Zero(t, report.Runs[0].ExitCode, string(output))
+					require.Equal(t, 1, report.Runs[0].TestEventCount)
+					for name, contents := range fixture.files {
+						after, err := os.ReadFile(filepath.Join(root, name))
+						require.NoError(t, err)
+						if name == "Gemfile" {
+							require.Contains(t, string(after), "datadog-ci", "Ruby installation updates its bundle")
+						} else {
+							require.Equal(t, contents, string(after), name)
+						}
+					}
+					entries, err := os.ReadDir(filepath.Join(root, ".testoptimization"))
+					require.NoError(t, err)
+					require.Len(t, entries, 2)
+					require.FileExists(t, filepath.Join(root, ".testoptimization/report.html"))
+				})
 			}
-			entries, err := os.ReadDir(filepath.Join(root, ".testoptimization"))
-			require.NoError(t, err)
-			require.Len(t, entries, 2)
-			require.FileExists(t, filepath.Join(root, ".testoptimization/report.html"))
 		})
 	}
 }

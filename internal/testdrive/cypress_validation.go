@@ -18,11 +18,17 @@ import (
 	"github.com/kballard/go-shellquote"
 )
 
+const cypressTIADeferredReason = "Cypress Test Impact Analysis (skipping and application coverage) is deferred and was not validated. Application Istanbul instrumentation is not required by this testdrive; preserve any existing coverage setup."
+
 //go:embed scripts/cypress_observer.cjs
 var cypressObserver string
 
 //go:embed scripts/cypress_api.cjs
 var cypressAPI string
+
+func deferredCypressFeature(framework string, feature featureResult) bool {
+	return framework == "cypress" && feature.Name == "skipping" && feature.Status == "deferred"
+}
 
 func (t *Testdrive) checkCypressPreflight(ctx context.Context, output io.Writer, result *validationResult) error {
 	check := &jestPreflight{Node: t.nodeVersion(), Command: shellquote.Join(append([]string{t.command}, t.args...)...), ExecutionPath: "cypress-cli", Verdict: verdict{Status: "inconclusive", Reason: "Cypress metadata was not resolved."}}

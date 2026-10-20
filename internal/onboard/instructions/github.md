@@ -2,6 +2,7 @@
 
 Apply this setup to every GitHub Actions job that runs __FRAMEWORK__.
 
+[[if eq . "javascript"]]
 For Jest and supported Vitest projects, do the work in this order:
 
 1. Inspect the actual test command and run `ddtest testdrive --check-only --yes` to resolve the framework, the local Node runtime and a tracer candidate. This does not install the tracer or run the suite. Use any generated recommendation instead of guessing older tracer majors.
@@ -9,6 +10,7 @@ For Jest and supported Vitest projects, do the work in this order:
 3. Complete workflow, dependency, Jest configuration and Git/package exclusion edits. Run `--check-only --yes` with the selected tracer and test command again. Fix concrete blockers before full validation; preserve and disclose unresolved tool limitations.
 4. Run one full `ddtest testdrive --yes` with that same selection. Wait for completion, then clean up and report its generated verdict. Do not finish with another configuration-only check or edit validated inputs afterward; either requires a new full run.
 
+[[end]]
 
 ## 1. Instrument the test job
 
@@ -27,12 +29,15 @@ If the organization uses a Datadog site other than US1, replace `datadoghq.com` 
 
 __BOOTSTRAP__
 
+[[if eq . "javascript"]]
 Jest CI discovery follows ordinary package.json script aliases, including nested scripts, using the workflow, job, or step working directory and literal npm `--prefix` package directories. It inspects supported cache-output commands and commands executed by substitutions in metadata steps; echoed text alone is not evidence that a command is harmless. Discovery only reads these files; it never executes scripts. Identified Jest steps are checked. Unresolved build, publishing, and documentation entry points are listed separately for review; inspect them if they also run tests. Unknown test wrappers, dynamic commands, unsupported shells, and unresolved working directories remain inconclusive. Identify their actual test steps without rewriting valid commands just to satisfy discovery.
+[[end]]
 
 Keep the existing test command and unrelated workflow content unchanged. Add the Datadog action once per test job, not once per test step.
 
 ## 2. Try it locally
 
+[[if eq . "javascript"]]
 Identify the actual test command from the package scripts and CI, including custom config paths and required setup. Preserve that command in CI. For local Jest validation, testdrive automatically selects a unique, statically resolved root-level CI command. Supported literal && package scripts are expanded with options forwarded only to their single Jest invocation, preserving setup order, environment and Jest options. The executed command is recorded in the report. Recognized ESLint/Prettier commands still run in the full-suite comparison, but are skipped while the synthetic probe exists so its formatting does not block feature checks; those runs record `probe_lint_skipped`. Other setup remains in place. Check workflow environment such as TZ, LANG and test selection variables against the local environment; carry over required literal values consistently to both modes. Do not copy CI secrets or silently reduce the test suite. Unresolved commands elsewhere do not prevent a known invocation from running locally; they remain independent CI findings. If no known or unresolved CI invocation is found, it tries the `test:ci` and `test` scripts before the runner default. Ambiguous commands, lifecycle hooks, and scripts that cannot forward Jest options safely require an explicit `--command` after reviewing setup. An explicit command overrides automatic selection. Do not silently drop a non-default config or necessary setup.
 
 For Jest, use `ddtest testdrive --check-only --yes` during the setup sequence above (and `--command` when needed). This executes Jest's `--showConfig`, but does not install a tracer or run tests. Review the detected Jest version, runner, Node version, and tracer selection. Fix known incompatibilities before the full run: older Jest may need a supported tracer major and a matching `jest-circus` runner. Avoid upgrading the framework or dropping CI coverage merely to use the newest tracer.
@@ -59,6 +64,50 @@ Use the latest report's `summary.facts` for counts, repeated runs, concrete CI b
 
 Also share local compatibility, each feature result, static CI runtime compatibility, local/CI tracer agreement, and the HTML (`Open report`) and `Results JSON` paths separately. Actual CI execution and backend processing remain not exercised by testdrive. Preserve inconclusive results; do not describe receiving telemetry as proof of compatibility. Do not declare validation complete while any required check is failed or inconclusive.
 
+[[else]]
+Identify the existing __FRAMEWORK__ command from CI, including its working
+directory, configuration and required setup. Preserve it rather than replacing
+it with a smaller suite. Complete the intended workflow edits, then run:
+
+```shell
+ddtest testdrive --yes
+```
+
+Use `--command '<existing test command>'` when automatic command selection does
+not match CI. `--tracer-version <release-or-tag>` selects a fallback; an existing
+project tracer takes precedence. No Datadog API key is needed locally.
+[[if eq . "python"]]
+The fallback ddtrace installation uses a temporary Python environment and is
+removed afterward. Do not add it to project dependencies just for local testing.
+[[else]]
+Ruby fallback installation uses `bundle add datadog-ci` and retains its Gemfile
+and lockfile changes. Preserve those intended dependency changes.
+[[end]]
+
+This is a **telemetry-only** check. Exit 0 means the test command succeeded and
+test events reached the local intake. Failed commands, missing events, or
+setup/reporting/cleanup errors return nonzero. `--format json` and `--agent`
+perform the same check; they change the output, not which tests execute.
+Compatibility and advanced features remain unvalidated. Do not use `--check-only`
+as a replacement: configuration preflight is not implemented for this framework.
+
+Keep `.testoptimization/report.html` and `.testoptimization/testdrive.json` as the
+only generated validation outputs. The HTML contains the captured command output
+and findings; JSON retains bounded diagnostics, the command, exit code and event
+counts. The JSON records `telemetry_only: true`, `success: false`, an `INCOMPLETE`
+onboarding verdict and `UNVALIDATED (TELEMETRY ONLY)` local validation on a
+successful telemetry check. Exit 0 does not certify onboarding. Actual CI
+execution and Datadog backend processing are not exercised locally.
+
+Copy `summary.final_response` from the latest JSON verbatim as the opening of the
+reply, including the absolute `Open report` and `Results JSON` links. Preserve the
+INCOMPLETE verdict and explain that telemetry succeeded while compatibility and
+features remain unvalidated. Report workflow edits and cleanup afterward. Keep
+both reports even if the command fails; receiving events does not turn a failing
+test command into a successful check. Exclude both reports from source control
+and published packages.
+[[end]]
+
 ## Cleanup after local validation
 
 Avoid building the project unless its test setup requires it. Before any build or
@@ -70,7 +119,7 @@ Keep your caches and manifests there; avoid shared /tmp filenames. After
 validation, remove only the outputs newly created by your commands (for
 example new dist/ or lib/ files), plus your temporary manifests and caches. Do
 not delete pre-existing customer outputs, restore over customer edits, or use a
-blanket git clean. ddtest already cleans its own probes, tracer and coverage.
+blanket git clean. ddtest already cleans its owned temporary validation files.
 Keep the intended onboarding edits, .testoptimization/report.html and
 .testoptimization/testdrive.json. Verify Git and package exclusions for both reports even when validation
 is incomplete. Confirm cleanup before the final response; disclose anything that
