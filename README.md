@@ -15,6 +15,11 @@ Currently supported:
 - Python with pytest.
 - JavaScript with Cucumber, Cypress, Jest, Mocha, Playwright, Vitest, or WebdriverIO.
 
+Java also supports `onboard` and `testdrive` with Maven: JUnit 4/5, TestNG,
+Spock, Cucumber JVM, Karate, ScalaTest and Scala MUnit. Java uses Maven's native
+test command for production optimization; `ddtest plan`/`run` are not available
+for Java. Gradle, Bazel and SBT are outside this Maven-first adapter.
+
 ## Try Test Optimization locally
 
 Ask your coding agent:
@@ -41,6 +46,11 @@ files and processes are cleaned up. To inspect the current result without rerunn
 ```sh
 ddtest testdrive --report
 ```
+
+For Maven projects, `ddtest onboard --framework junit5` prints manual setup
+guidance. Run `ddtest testdrive --framework junit5 --yes` for local validation.
+See [Maven validation](docs/onboarding.md#maven-projects) for frameworks, commands
+and limits.
 
 See [onboarding and validation](docs/onboarding.md) for supported scope, agent
 results, custom commands, setup facts, recovery and framework limitations.

@@ -76,6 +76,26 @@ func TestDefaultCommandExecutor_CombinedOutput_Success(t *testing.T) {
 	}
 }
 
+func TestCommandWorkingDirectoryDoesNotChangeCaller(t *testing.T) {
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	executor := &DefaultCommandExecutor{}
+	if err := os.WriteFile(directory+"/marker", []byte("isolated"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	output, err := executor.CombinedOutputInDirectory(context.Background(), directory, "cat", []string{"marker"}, nil)
+	if err != nil || string(output) != "isolated" {
+		t.Fatalf("working directory output %q, error %v", output, err)
+	}
+	current, err := os.Getwd()
+	if err != nil || current != original {
+		t.Fatalf("caller working directory changed: %s, %v", current, err)
+	}
+}
+
 func TestDefaultCommandExecutor_Output_SeparatesStdoutAndStderr(t *testing.T) {
 	executor := &DefaultCommandExecutor{}
 	stdout, stderr, err := executor.Output(

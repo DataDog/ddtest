@@ -19,6 +19,7 @@ from urllib.parse import unquote
 
 
 EXCERPT_LIMIT = 4000
+JAVA_FRAMEWORKS = ("junit4", "junit5", "testng", "spock", "cucumber-java", "karate", "scalatest", "munit")
 
 
 def excerpt(value):
@@ -322,6 +323,11 @@ def run(args):
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise ValueError("--ddtest must be an executable file")
     node = getattr(args, "node", None)
+    java_home = getattr(args, "java_home", None)
+    if java_home is not None:
+        if not java_home.is_absolute() or not (java_home / "bin" / "java").is_file():
+            raise ValueError("--java-home must identify an absolute JDK directory")
+        java_home = java_home.resolve(strict=True)
     if node is not None:
         if args.agent != "codex":
             raise ValueError("--node currently requires --agent codex")
@@ -345,6 +351,9 @@ def run(args):
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("DD_", "DATADOG_")) and key not in ("NODE_OPTIONS", "NODE_PATH")
            and key.lower() not in ("npm_config_store_dir", "npm_config_cache_dir")}
+    if java_home is not None:
+        for key in ("MAVEN_OPTS", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "BASH_ENV", "ENV"):
+            env.pop(key, None)
     for key, name in (("npm_config_cache", "npm"), ("YARN_CACHE_FOLDER", "yarn"),
                       ("XDG_CACHE_HOME", "xdg-cache"), ("XDG_DATA_HOME", "xdg-data"),
                       ("XDG_STATE_HOME", "state"), ("XDG_CONFIG_HOME", "xdg-config"),
@@ -362,21 +371,37 @@ def run(args):
     pnpm_store.mkdir()
     pnpm_cache.mkdir()
     pnpm_config.write_text(f"store-dir={pnpm_store}\ncache-dir={pnpm_cache}\n")
-    if node is not None:
-        (bin_dir / "node").symlink_to(node)
+    if java_home is not None:
+        maven_cache = trial / "caches" / "maven"
+        maven_cache.mkdir()
+        maven_user_home = trial / "caches" / "maven-user"
+        maven_user_home.mkdir()
+        env["JAVA_HOME"] = str(java_home)
+        env["MAVEN_OPTS"] = "-Dmaven.repo.local=" + str(maven_cache)
+        env["MAVEN_USER_HOME"] = str(maven_user_home)
+        env["PATH"] = str(java_home / "bin") + os.pathsep + env.get("PATH", "")
+    if node is not None or java_home is not None:
+        if node is not None:
+            (bin_dir / "node").symlink_to(node)
+            env["PATH"] = str(node.parent) + os.pathsep + env.get("PATH", "")
         zdotdir = trial / "zsh"
         zdotdir.mkdir()
         env["ZDOTDIR"] = str(zdotdir)
-        env["PATH"] = str(node.parent) + os.pathsep + env.get("PATH", "")
     env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
     agent_argv = agent_command(args.agent, args.model)
-    if node is not None:
+    if (node is not None or java_home is not None) and args.agent == "codex":
         # .zshenv also runs in non-login shells. Isolate it and disable shell
         # snapshots so neither host startup files nor an old snapshot reset PATH.
         agent_argv[2:2] = ["-c", "allow_login_shell=false", "-c",
                            "features.shell_snapshot=false", "-c",
                            "shell_environment_policy.set.PATH=" + json.dumps(env["PATH"]), "-c",
                            "shell_environment_policy.set.ZDOTDIR=" + json.dumps(env["ZDOTDIR"])]
+        if java_home is not None:
+            agent_argv[2:2] = ["--ignore-user-config", "-c", "shell_environment_policy.set.JAVA_HOME=" + json.dumps(env["JAVA_HOME"]),
+                              "-c", "shell_environment_policy.set.MAVEN_OPTS=" + json.dumps(env["MAVEN_OPTS"]),
+                              "-c", "shell_environment_policy.set.MAVEN_USER_HOME=" + json.dumps(env["MAVEN_USER_HOME"])]
+    if java_home is not None and args.agent == "claude":
+        agent_argv[1:1] = ["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--setting-sources", "project", "--no-chrome"]
     framework = getattr(args, "framework", None)
     scope = f" for {framework} only" if framework else ""
     prompt = f"Use ddtest in {bin_dir} and onboard this repository to test-optimization{scope}."
@@ -393,8 +418,13 @@ def run(args):
         "CYPRESS_CACHE_FOLDER", "PLAYWRIGHT_BROWSERS_PATH", "PUPPETEER_CACHE_DIR")}
     manifest["private_caches"]["pnpm_store"] = str(pnpm_store)
     manifest["private_caches"]["pnpm_cache"] = str(pnpm_cache)
-    if node is not None:
+    if node is not None or java_home is not None:
         manifest["shell_isolation"] = {"zdotdir": env["ZDOTDIR"], "login_shell": False, "shell_snapshot": False}
+    if java_home is not None:
+        manifest["private_caches"]["maven"] = str(maven_cache)
+        manifest["private_caches"]["maven_user_home"] = str(maven_user_home)
+        manifest["java_environment"] = {key: env[key] for key in ("JAVA_HOME", "MAVEN_OPTS", "MAVEN_USER_HOME", "PATH")}
+        manifest["agent_configuration"] = "process-local CLI configuration: Codex ignores user config; Claude loads project settings only; no inherited MCP servers"
     activity = (output / "activity.jsonl").open("w")
     agent_failed = False
     agent_completed = False
@@ -464,6 +494,9 @@ def run(args):
 
     code = 1
     try:
+        if java_home is not None:
+            manifest["java_runtime"] = command([str(java_home / "bin" / "java"), "-version"], timeout=CLI_STARTUP_TIMEOUT)
+            manifest["maven_runtime"] = command(["mvn", "--version"], timeout=CLI_STARTUP_TIMEOUT)
         if node is not None:
             runtime = json.loads(command(["node", "-p",
                 "JSON.stringify({executable: process.execPath, version: process.version})"],
@@ -555,7 +588,8 @@ def main():
     parser.add_argument("--agent", choices=("codex", "claude"), required=True)
     parser.add_argument("--node", type=Path,
                         help="Absolute Node executable for setup and Codex non-login shells; Codex only")
-    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio"),
+    parser.add_argument("--java-home", type=Path, help="Absolute JDK home for Maven trials with private dependency caches and process-local agent configuration")
+    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio") + JAVA_FRAMEWORKS,
                         help="Optional scope for mixed-framework repositories; adds only the framework to the minimal prompt")
     parser.add_argument("--setup-command", action="append", default=[], help="Repeatable, no implicit shell")
     parser.add_argument("--output", type=Path, required=True, help="New directory for evaluator evidence")

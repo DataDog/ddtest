@@ -1,0 +1,1062 @@
+{
+  "date": "2026-10-19",
+  "scope": "Local-only uncoached Claude/Codex onboarding evaluation; no remote CI/backend certification",
+  "trials": [
+    {
+      "trial": "failsafe-claude-v1",
+      "repository": "https://github.com/failsafe-lib/failsafe.git",
+      "commit": "ed3f92739669769274cf5c9567fd422929c20ad2",
+      "binary_sha256": "074756f35658bed7275b5e2dfcc89f4249d6cce36bd941acef5bfee2d92c0ccd",
+      "agent": "claude",
+      "cli_version": "2.1.220 (Claude Code)",
+      "model": "claude-opus-5",
+      "framework": "testng",
+      "harness_status": "completed",
+      "commands": [
+        "mvn -B test"
+      ],
+      "native_baseline": {
+        "passed": 324,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "native_instrumented": {
+        "passed": 324,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "baseline_exit": 0,
+      "instrumented_exit": 0,
+      "baseline_event_count": 0,
+      "instrumented_event_count": 324,
+      "native_counts_and_exit_match": true,
+      "compatibility": {
+        "status": "inconclusive",
+        "reason": "Java test.module cannot be reconciled with a unique Maven reactor module: Failsafe maven-surefire-plugin default-test"
+      },
+      "features": [
+        {
+          "name": "auto-retries",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "early-flake-detection",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "skipping",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "quarantine",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "disabled",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "attempt-to-fix",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        }
+      ],
+      "summary_status": "INCOMPLETE",
+      "local_validation": "INCOMPLETE",
+      "pom_changed": false
+    },
+    {
+      "trial": "failsafe-claude-v2",
+      "repository": "https://github.com/failsafe-lib/failsafe.git",
+      "commit": "ed3f92739669769274cf5c9567fd422929c20ad2",
+      "binary_sha256": "e8a441820c2fd75d29381b1a706dcadfbaf43881ce92a27b6e6643005ec8d765",
+      "agent": "claude",
+      "cli_version": "2.1.220 (Claude Code)",
+      "model": "claude-opus-5",
+      "framework": "testng",
+      "harness_status": "interrupted",
+      "commands": [
+        "mvn -B test",
+        "mvn -B test -Dtest=ddtest.DdtestValidationTest -Dit.test=ddtest.DdtestValidationTest -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false"
+      ],
+      "native_baseline": {
+        "passed": 324,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "native_instrumented": {
+        "passed": 324,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "baseline_exit": 0,
+      "instrumented_exit": 0,
+      "baseline_event_count": 0,
+      "instrumented_event_count": 324,
+      "native_counts_and_exit_match": true,
+      "compatibility": {
+        "status": "compatible",
+        "reason": "Maven native identities, outcomes, exception types/messages and exit code match; reporting-only test events reconcile with native results. Existing failures are acceptable."
+      },
+      "features": [
+        {
+          "project": "core",
+          "name": "auto-retries",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": "core",
+          "name": "early-flake-detection",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": "core",
+          "name": "skipping",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": "core",
+          "name": "quarantine",
+          "status": "inconclusive",
+          "reason": "Controlled Java execution counts, native results and feature telemetry did not demonstrate the expected behavior."
+        },
+        {
+          "project": "core",
+          "name": "disabled",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": "core",
+          "name": "attempt-to-fix",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": "modules/okhttp",
+          "name": "auto-retries",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": "modules/okhttp",
+          "name": "early-flake-detection",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": "modules/okhttp",
+          "name": "skipping",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": "modules/okhttp",
+          "name": "quarantine",
+          "status": "inconclusive",
+          "reason": "Controlled Java execution counts, native results and feature telemetry did not demonstrate the expected behavior."
+        },
+        {
+          "project": "modules/okhttp",
+          "name": "disabled",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": "modules/okhttp",
+          "name": "attempt-to-fix",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": "modules/retrofit",
+          "name": "auto-retries",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": "modules/retrofit",
+          "name": "early-flake-detection",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": "modules/retrofit",
+          "name": "skipping",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": "modules/retrofit",
+          "name": "quarantine",
+          "status": "inconclusive",
+          "reason": "Controlled Java execution counts, native results and feature telemetry did not demonstrate the expected behavior."
+        },
+        {
+          "project": "modules/retrofit",
+          "name": "disabled",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": "modules/retrofit",
+          "name": "attempt-to-fix",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        }
+      ],
+      "summary_status": "INCOMPLETE",
+      "local_validation": "INCOMPLETE",
+      "pom_changed": true
+    },
+    {
+      "trial": "failsafe-codex-v1",
+      "repository": "https://github.com/failsafe-lib/failsafe.git",
+      "commit": "ed3f92739669769274cf5c9567fd422929c20ad2",
+      "binary_sha256": "074756f35658bed7275b5e2dfcc89f4249d6cce36bd941acef5bfee2d92c0ccd",
+      "agent": "codex",
+      "cli_version": "codex-cli 0.163.0",
+      "model": null,
+      "framework": "testng",
+      "harness_status": "completed",
+      "commands": [
+        "mvn -B test"
+      ],
+      "native_baseline": {
+        "passed": 324,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "native_instrumented": {
+        "passed": 324,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "baseline_exit": 0,
+      "instrumented_exit": 0,
+      "baseline_event_count": 0,
+      "instrumented_event_count": 324,
+      "native_counts_and_exit_match": true,
+      "compatibility": {
+        "status": "inconclusive",
+        "reason": "Java test.module cannot be reconciled with a unique Maven reactor module: Failsafe maven-surefire-plugin default-test"
+      },
+      "features": [
+        {
+          "name": "auto-retries",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "early-flake-detection",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "skipping",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "quarantine",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "disabled",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "attempt-to-fix",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        }
+      ],
+      "summary_status": "INCOMPLETE",
+      "local_validation": "INCOMPLETE",
+      "pom_changed": false
+    },
+    {
+      "trial": "failsafe-codex-v2",
+      "repository": "https://github.com/failsafe-lib/failsafe.git",
+      "commit": "ed3f92739669769274cf5c9567fd422929c20ad2",
+      "binary_sha256": "e8a441820c2fd75d29381b1a706dcadfbaf43881ce92a27b6e6643005ec8d765",
+      "agent": "codex",
+      "cli_version": "codex-cli 0.163.0",
+      "model": null,
+      "framework": "testng",
+      "harness_status": "completed",
+      "commands": [
+        "mvn -B test"
+      ],
+      "native_baseline": {
+        "passed": 324,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "native_instrumented": {
+        "passed": 324,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "baseline_exit": 0,
+      "instrumented_exit": 0,
+      "baseline_event_count": 0,
+      "instrumented_event_count": 324,
+      "native_counts_and_exit_match": true,
+      "compatibility": {
+        "status": "inconclusive",
+        "reason": "Native Maven identities/statuses/counts do not match Java test events; inspect XML reporter naming, mixed frameworks and parameterized tests."
+      },
+      "features": [
+        {
+          "name": "auto-retries",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "early-flake-detection",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "skipping",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "quarantine",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "disabled",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "attempt-to-fix",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        }
+      ],
+      "summary_status": "INCOMPLETE",
+      "local_validation": "INCOMPLETE",
+      "pom_changed": false
+    },
+    {
+      "trial": "java-otp-claude-v2",
+      "repository": "https://github.com/jchambers/java-otp.git",
+      "commit": "479c9b47576788935b7a35b15f3a12edf7cd4897",
+      "binary_sha256": "e8a441820c2fd75d29381b1a706dcadfbaf43881ce92a27b6e6643005ec8d765",
+      "agent": "claude",
+      "cli_version": "2.1.220 (Claude Code)",
+      "model": "claude-opus-5",
+      "framework": "junit5",
+      "harness_status": "completed",
+      "commands": [
+        "./mvnw test -B --file pom.xml",
+        "./mvnw test -B --file pom.xml -Dtest=ddtest.DdtestValidationTest -Dit.test=ddtest.DdtestValidationTest -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false"
+      ],
+      "native_baseline": {
+        "passed": 100,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "native_instrumented": {
+        "passed": 100,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "baseline_exit": 0,
+      "instrumented_exit": 0,
+      "baseline_event_count": 0,
+      "instrumented_event_count": 100,
+      "native_counts_and_exit_match": true,
+      "compatibility": {
+        "status": "compatible",
+        "reason": "Maven native identities, outcomes, exception types/messages and exit code match; reporting-only test events reconcile with native results. Existing failures are acceptable."
+      },
+      "features": [
+        {
+          "project": ".",
+          "name": "auto-retries",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "early-flake-detection",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "skipping",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "quarantine",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "disabled",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "attempt-to-fix",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        }
+      ],
+      "summary_status": "INCOMPLETE",
+      "local_validation": "PASSED",
+      "pom_changed": false
+    },
+    {
+      "trial": "java-otp-codex-v2",
+      "repository": "https://github.com/jchambers/java-otp.git",
+      "commit": "479c9b47576788935b7a35b15f3a12edf7cd4897",
+      "binary_sha256": "e8a441820c2fd75d29381b1a706dcadfbaf43881ce92a27b6e6643005ec8d765",
+      "agent": "codex",
+      "cli_version": "codex-cli 0.163.0",
+      "model": null,
+      "framework": "junit5",
+      "harness_status": "completed",
+      "commands": [
+        "./mvnw test -B --file pom.xml",
+        "./mvnw test -B --file pom.xml -Dtest=ddtest.DdtestValidationTest -Dit.test=ddtest.DdtestValidationTest -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false"
+      ],
+      "native_baseline": {
+        "passed": 100,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "native_instrumented": {
+        "passed": 100,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "baseline_exit": 0,
+      "instrumented_exit": 0,
+      "baseline_event_count": 0,
+      "instrumented_event_count": 100,
+      "native_counts_and_exit_match": true,
+      "compatibility": {
+        "status": "compatible",
+        "reason": "Maven native identities, outcomes, exception types/messages and exit code match; reporting-only test events reconcile with native results. Existing failures are acceptable."
+      },
+      "features": [
+        {
+          "project": ".",
+          "name": "auto-retries",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "early-flake-detection",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "skipping",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "quarantine",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "disabled",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "attempt-to-fix",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        }
+      ],
+      "summary_status": "INCOMPLETE",
+      "local_validation": "PASSED",
+      "pom_changed": false
+    },
+    {
+      "trial": "javapoet-claude-v1",
+      "repository": "https://github.com/square/javapoet.git",
+      "commit": "b9017a9503b76e11b4ad4c1a9f050e2d29112cb0",
+      "binary_sha256": "074756f35658bed7275b5e2dfcc89f4249d6cce36bd941acef5bfee2d92c0ccd",
+      "agent": "claude",
+      "cli_version": "2.1.220 (Claude Code)",
+      "model": "claude-opus-5",
+      "framework": "junit4",
+      "harness_status": "completed",
+      "commands": [
+        "mvn --no-transfer-progress verify source:jar javadoc:jar",
+        "mvn --no-transfer-progress verify source:jar javadoc:jar -Dtest=ddtest.DdtestValidationTest -Dit.test=ddtest.DdtestValidationTest -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false"
+      ],
+      "native_baseline": {
+        "passed": 388,
+        "failed": 0,
+        "skipped": 1,
+        "other": 0
+      },
+      "native_instrumented": {
+        "passed": 388,
+        "failed": 0,
+        "skipped": 1,
+        "other": 0
+      },
+      "baseline_exit": 0,
+      "instrumented_exit": 0,
+      "baseline_event_count": 0,
+      "instrumented_event_count": 389,
+      "native_counts_and_exit_match": true,
+      "compatibility": {
+        "status": "compatible",
+        "reason": "Maven native identities, outcomes, exception types/messages and exit code match; reporting-only test events reconcile with native results. Existing failures are acceptable."
+      },
+      "features": [
+        {
+          "project": ".",
+          "name": "auto-retries",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "early-flake-detection",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "skipping",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "quarantine",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "disabled",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "attempt-to-fix",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        }
+      ],
+      "summary_status": "INCOMPLETE",
+      "local_validation": "PASSED",
+      "pom_changed": true
+    },
+    {
+      "trial": "javapoet-claude-v2",
+      "repository": "https://github.com/square/javapoet.git",
+      "commit": "b9017a9503b76e11b4ad4c1a9f050e2d29112cb0",
+      "binary_sha256": "e8a441820c2fd75d29381b1a706dcadfbaf43881ce92a27b6e6643005ec8d765",
+      "agent": "claude",
+      "cli_version": "2.1.220 (Claude Code)",
+      "model": "claude-opus-5",
+      "framework": "junit4",
+      "harness_status": "completed",
+      "commands": [
+        "mvn --no-transfer-progress verify source:jar javadoc:jar",
+        "mvn --no-transfer-progress verify source:jar javadoc:jar -Dtest=ddtest.DdtestValidationTest -Dit.test=ddtest.DdtestValidationTest -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false"
+      ],
+      "native_baseline": {
+        "passed": 388,
+        "failed": 0,
+        "skipped": 1,
+        "other": 0
+      },
+      "native_instrumented": {
+        "passed": 388,
+        "failed": 0,
+        "skipped": 1,
+        "other": 0
+      },
+      "baseline_exit": 0,
+      "instrumented_exit": 0,
+      "baseline_event_count": 0,
+      "instrumented_event_count": 389,
+      "native_counts_and_exit_match": true,
+      "compatibility": {
+        "status": "compatible",
+        "reason": "Maven native identities, outcomes, exception types/messages and exit code match; reporting-only test events reconcile with native results. Existing failures are acceptable."
+      },
+      "features": [
+        {
+          "project": ".",
+          "name": "auto-retries",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "early-flake-detection",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "skipping",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "quarantine",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "disabled",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "attempt-to-fix",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        }
+      ],
+      "summary_status": "INCOMPLETE",
+      "local_validation": "PASSED",
+      "pom_changed": false
+    },
+    {
+      "trial": "javapoet-codex-v1",
+      "repository": "https://github.com/square/javapoet.git",
+      "commit": "b9017a9503b76e11b4ad4c1a9f050e2d29112cb0",
+      "binary_sha256": "074756f35658bed7275b5e2dfcc89f4249d6cce36bd941acef5bfee2d92c0ccd",
+      "agent": "codex",
+      "cli_version": "codex-cli 0.163.0",
+      "model": null,
+      "framework": "junit4",
+      "harness_status": "completed",
+      "commands": [
+        "mvn --no-transfer-progress verify source:jar javadoc:jar"
+      ],
+      "native_baseline": {
+        "passed": 388,
+        "failed": 0,
+        "skipped": 1,
+        "other": 0
+      },
+      "native_instrumented": {
+        "passed": 388,
+        "failed": 0,
+        "skipped": 1,
+        "other": 0
+      },
+      "baseline_exit": 0,
+      "instrumented_exit": 0,
+      "baseline_event_count": 0,
+      "instrumented_event_count": 389,
+      "native_counts_and_exit_match": true,
+      "compatibility": {
+        "status": "inconclusive",
+        "reason": "Java test.module cannot be reconciled with a unique Maven reactor module: JavaPoet maven-surefire-plugin default-test"
+      },
+      "features": [
+        {
+          "name": "auto-retries",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "early-flake-detection",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "skipping",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "quarantine",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "disabled",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "attempt-to-fix",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        }
+      ],
+      "summary_status": "INCOMPLETE",
+      "local_validation": "INCOMPLETE",
+      "pom_changed": false
+    },
+    {
+      "trial": "javapoet-codex-v2",
+      "repository": "https://github.com/square/javapoet.git",
+      "commit": "b9017a9503b76e11b4ad4c1a9f050e2d29112cb0",
+      "binary_sha256": "e8a441820c2fd75d29381b1a706dcadfbaf43881ce92a27b6e6643005ec8d765",
+      "agent": "codex",
+      "cli_version": "codex-cli 0.163.0",
+      "model": null,
+      "framework": "junit4",
+      "harness_status": "completed",
+      "commands": [
+        "mvn --no-transfer-progress verify source:jar javadoc:jar",
+        "mvn --no-transfer-progress verify source:jar javadoc:jar -Dtest=ddtest.DdtestValidationTest -Dit.test=ddtest.DdtestValidationTest -Dsurefire.failIfNoSpecifiedTests=false -Dfailsafe.failIfNoSpecifiedTests=false"
+      ],
+      "native_baseline": {
+        "passed": 388,
+        "failed": 0,
+        "skipped": 1,
+        "other": 0
+      },
+      "native_instrumented": {
+        "passed": 388,
+        "failed": 0,
+        "skipped": 1,
+        "other": 0
+      },
+      "baseline_exit": 0,
+      "instrumented_exit": 0,
+      "baseline_event_count": 0,
+      "instrumented_event_count": 389,
+      "native_counts_and_exit_match": true,
+      "compatibility": {
+        "status": "compatible",
+        "reason": "Maven native identities, outcomes, exception types/messages and exit code match; reporting-only test events reconcile with native results. Existing failures are acceptable."
+      },
+      "features": [
+        {
+          "project": ".",
+          "name": "auto-retries",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "early-flake-detection",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "skipping",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "quarantine",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "disabled",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        },
+        {
+          "project": ".",
+          "name": "attempt-to-fix",
+          "status": "passed",
+          "reason": "Native Maven outcomes, probe body counter and Java feature events agree with the controlled scenario."
+        }
+      ],
+      "summary_status": "INCOMPLETE",
+      "local_validation": "PASSED",
+      "pom_changed": false
+    },
+    {
+      "trial": "jsoup-claude-v1",
+      "repository": "https://github.com/jhy/jsoup.git",
+      "commit": "4cf664cdb2e9d2cc2d40fdf3bb9c0be0be22f865",
+      "binary_sha256": "074756f35658bed7275b5e2dfcc89f4249d6cce36bd941acef5bfee2d92c0ccd",
+      "agent": "claude",
+      "cli_version": "2.1.220 (Claude Code)",
+      "model": "claude-opus-5",
+      "framework": "junit5",
+      "harness_status": "completed",
+      "commands": [
+        "mvn verify -B --file pom.xml"
+      ],
+      "native_baseline": {
+        "passed": 2447,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "native_instrumented": {
+        "passed": 2447,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "baseline_exit": 0,
+      "instrumented_exit": 0,
+      "baseline_event_count": 0,
+      "instrumented_event_count": 2447,
+      "native_counts_and_exit_match": true,
+      "compatibility": {
+        "status": "inconclusive",
+        "reason": "Native Maven identities/statuses/counts do not match Java test events; inspect XML reporter naming, mixed frameworks and parameterized tests."
+      },
+      "features": [
+        {
+          "name": "auto-retries",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "early-flake-detection",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "skipping",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "quarantine",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "disabled",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "attempt-to-fix",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        }
+      ],
+      "summary_status": "INCOMPLETE",
+      "local_validation": "INCOMPLETE",
+      "pom_changed": false
+    },
+    {
+      "trial": "jsoup-claude-v2",
+      "repository": "https://github.com/jhy/jsoup.git",
+      "commit": "4cf664cdb2e9d2cc2d40fdf3bb9c0be0be22f865",
+      "binary_sha256": "e8a441820c2fd75d29381b1a706dcadfbaf43881ce92a27b6e6643005ec8d765",
+      "agent": "claude",
+      "cli_version": "2.1.220 (Claude Code)",
+      "model": "claude-opus-5",
+      "framework": "junit5",
+      "harness_status": "interrupted",
+      "commands": [],
+      "native_baseline": null,
+      "native_instrumented": null,
+      "baseline_exit": null,
+      "instrumented_exit": null,
+      "baseline_event_count": null,
+      "instrumented_event_count": null,
+      "native_counts_and_exit_match": false,
+      "compatibility": {
+        "status": "not exercised",
+        "reason": "Maven validation has not executed."
+      },
+      "features": null,
+      "summary_status": "INCOMPLETE",
+      "local_validation": "INCOMPLETE",
+      "pom_changed": false
+    },
+    {
+      "trial": "jsoup-codex-v1",
+      "repository": "https://github.com/jhy/jsoup.git",
+      "commit": "4cf664cdb2e9d2cc2d40fdf3bb9c0be0be22f865",
+      "binary_sha256": "074756f35658bed7275b5e2dfcc89f4249d6cce36bd941acef5bfee2d92c0ccd",
+      "agent": "codex",
+      "cli_version": "codex-cli 0.163.0",
+      "model": null,
+      "framework": "junit5",
+      "harness_status": "completed",
+      "commands": [
+        "mvn -X verify -B --file pom.xml"
+      ],
+      "native_baseline": {
+        "passed": 2447,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "native_instrumented": {
+        "passed": 2447,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "baseline_exit": 0,
+      "instrumented_exit": 0,
+      "baseline_event_count": 0,
+      "instrumented_event_count": 2447,
+      "native_counts_and_exit_match": true,
+      "compatibility": {
+        "status": "inconclusive",
+        "reason": "Native Maven identities/statuses/counts do not match Java test events; inspect XML reporter naming, mixed frameworks and parameterized tests."
+      },
+      "features": [
+        {
+          "name": "auto-retries",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "early-flake-detection",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "skipping",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "quarantine",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "disabled",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "attempt-to-fix",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        }
+      ],
+      "summary_status": "INCOMPLETE",
+      "local_validation": "INCOMPLETE",
+      "pom_changed": false
+    },
+    {
+      "trial": "jsoup-codex-v2",
+      "repository": "https://github.com/jhy/jsoup.git",
+      "commit": "4cf664cdb2e9d2cc2d40fdf3bb9c0be0be22f865",
+      "binary_sha256": "e8a441820c2fd75d29381b1a706dcadfbaf43881ce92a27b6e6643005ec8d765",
+      "agent": "codex",
+      "cli_version": "codex-cli 0.163.0",
+      "model": null,
+      "framework": "junit5",
+      "harness_status": "completed",
+      "commands": [
+        "mvn -X verify -B --file pom.xml"
+      ],
+      "native_baseline": {
+        "passed": 2447,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "native_instrumented": {
+        "passed": 2447,
+        "failed": 0,
+        "skipped": 0,
+        "other": 0
+      },
+      "baseline_exit": 0,
+      "instrumented_exit": 0,
+      "baseline_event_count": 0,
+      "instrumented_event_count": 2447,
+      "native_counts_and_exit_match": true,
+      "compatibility": {
+        "status": "inconclusive",
+        "reason": "Native Maven identities/statuses/counts do not match Java test events; inspect XML reporter naming, mixed frameworks and parameterized tests."
+      },
+      "features": [
+        {
+          "name": "auto-retries",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "early-flake-detection",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "skipping",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "quarantine",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "disabled",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        },
+        {
+          "name": "attempt-to-fix",
+          "status": "inconclusive",
+          "reason": "Establish compatible baseline/reporting results before feature checks."
+        }
+      ],
+      "summary_status": "INCOMPLETE",
+      "local_validation": "INCOMPLETE",
+      "pom_changed": false
+    }
+  ],
+  "diagnostics": {
+    "TestNG_7_11_fixture": "Initial quarantine was inconclusive for SUCCESS_PERCENTAGE_FAILURE. Corrected parser: compatible and 6/6 feature checks passed.",
+    "Failsafe_TestNG_7_5": "Final parser diagnostic: compatible, 324 native results/events and 18/18 feature checks across core, okhttp and retrofit. Dependency upgrade is explicit, not unchanged 6.9.10 certification.",
+    "Java_parser_fix": "ac366de plus TestNG SUCCESS_PERCENTAGE_FAILURE mapping; independently validated after unassisted trials."
+  }
+}

@@ -342,6 +342,32 @@ class RunnerTests(unittest.TestCase):
                          f"Use ddtest in {checkout.parent / 'bin'} and onboard this repository to test-optimization for playwright only.")
         self.assertEqual(manifest["framework_scope"], "playwright")
 
+    def test_java_trials_isolate_runtime_cache_and_agent_configuration(self):
+        jdk = self.root / "jdk"
+        (jdk / "bin").mkdir(parents=True)
+        java = jdk / "bin" / "java"
+        java.write_text("#!/bin/sh\nprintf 'test-java-17\\n'\n")
+        java.chmod(0o755)
+        maven = self.root / "mvn"
+        maven.write_text("#!/bin/sh\nprintf 'test-maven-3.9\\n'\n")
+        maven.chmod(0o755)
+        for agent in ("codex", "claude"):
+            with self.subTest(agent=agent):
+                self.args.agent = agent
+                self.args.java_home = jdk
+                self.args.framework = "junit5"
+                self.args.output = self.root / (agent + "-java")
+                code, manifest = self.trial({"JAVA_TOOL_OPTIONS": "-javaagent:unwanted.jar", "MAVEN_OPTS": "-Dsecret=unwanted"})
+                self.assertEqual(code, 0)
+                self.assertIn("test-java-17", manifest["java_runtime"])
+                self.assertIn("test-maven-3.9", manifest["maven_runtime"])
+                self.assertEqual(manifest["java_environment"]["JAVA_HOME"], str(jdk.resolve()))
+                self.assertEqual(manifest["java_environment"]["MAVEN_OPTS"], "-Dmaven.repo.local=" + manifest["private_caches"]["maven"])
+                self.assertEqual(manifest["java_environment"]["MAVEN_USER_HOME"], manifest["private_caches"]["maven_user_home"])
+                observed = json.loads((Path(manifest["checkout"]) / "observed.json").read_text())
+                self.assertEqual(observed["prompt"], f"Use ddtest in {Path(manifest['checkout']).parent / 'bin'} and onboard this repository to test-optimization for junit5 only.")
+                self.assertIn("--ignore-user-config" if agent == "codex" else "--strict-mcp-config", observed["argv"])
+
     def test_cleanup_permission_error_requires_observed_process_group_exit(self):
         for disappears in (True, False):
             with self.subTest(disappears=disappears):

@@ -1,11 +1,11 @@
 ---
 name: ddtest-onboarding-eval
-description: Evaluate ddtest onboarding on fresh open-source Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js or WebdriverIO repositories using Codex or Claude CLI and a minimal customer prompt. Use for developer experiments and comparisons, not for onboarding a customer repository directly.
+description: Evaluate ddtest onboarding on fresh open-source JavaScript or Maven JVM repositories using Codex or Claude CLI and a minimal customer prompt. Use for developer experiments and comparisons, not for onboarding a customer repository directly.
 ---
 
 # ddtest onboarding evaluation
 
-Measure what an uncoached coding agent accomplishes with a ddtest binary. Cover Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js and WebdriverIO; grade unsupported versions or configurations as unvalidated. This skill belongs to the
+Measure what an uncoached coding agent accomplishes with a ddtest binary. Cover Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js, WebdriverIO and supported Maven JVM frameworks; grade unsupported versions or configurations as unvalidated. This skill belongs to the
 **evaluator**, not the agent being tested. It is developer tooling in this repo;
 it is not embedded in the ddtest binary or installed in the target repository.
 
@@ -19,7 +19,7 @@ tested agent's global skill directories or target checkout.
 
 ## Prepare and run
 
-1. Select a public repository that actually runs Jest, Vitest, Playwright, Mocha, Cypress, Cucumber.js or WebdriverIO. Read its CI, package
+1. Select a public repository that actually runs a supported JavaScript or Maven JVM framework. Read its CI, package
    scripts, lockfile, runtime requirements, and ordinary repository instructions.
    Choose a commit and dependency installation command. Record the intended test
    command and relevant Node, package-manager, and framework versions outside the
@@ -77,6 +77,20 @@ tested agent's global skill directories or target checkout.
    is blocked, record that outcome; a coached retry is a separate experiment.
    Respect requested one-shot or no-retry limits. When follow-ups are forbidden,
    record the outcome without answering or nudging the tested agent.
+
+   For Java, use `--framework junit4`, `junit5`, `testng`, `spock`,
+   `cucumber-java`, `karate`, `scalatest` or `munit`, and pass
+   `--java-home /absolute/path/to/jdk`. Put Maven on the evaluator's PATH.
+   Use the same JDK and Maven versions in each project's Claude/Codex pair;
+   match the project's CI requirements rather than changing its build to fit
+   the evaluator. A typical dependency setup is
+   `--setup-command 'mvn -q -DskipTests test-compile'`. Record the real intended
+   suite command independently; setup compilation is not execution evidence.
+   Java trials get private Maven dependency and wrapper caches and preserved JAVA_HOME,
+   MAVEN_OPTS, MAVEN_USER_HOME and PATH. Codex ignores user CLI configuration and Claude loads
+   project settings with an empty strict MCP configuration for these trials;
+   auth and ordinary repository instructions still apply. Record these
+   process-local differences and the observed agent model in the assessment.
 
 The runner uses Codex's `--approve-for-me` or Claude's `--permission-mode auto`;
 normal CLI configuration and repository instructions still apply. For Claude print
@@ -208,6 +222,19 @@ real application files; config, support and feature files alone are insufficient
 Suite coverage is not independent per-scenario coverage. Check that CI enables
 the same NYC/ESM instrumentation and that its tracer supports every selected
 Node runtime. New ignored build outputs still require cleanup.
+
+For Maven JVM frameworks, compare module/suite/test identities, native XML
+(Karate: scenario JSON), outcomes, exception details and exit codes against
+reporting-only telemetry. Preserve reactor modules, profiles, providers,
+compiler options and CI matrices. Assess feature capabilities advertised by
+the control event; unsupported features are never counted as passed. Java
+tracer 1.67.1 does not advertise MUnit skipping/disable. Inspect controlled body
+counters and native outcomes, including a deliberate failure control. The
+Maven-first adapter does not certify CI runtime/tracer compatibility or every
+profile, so a local technical pass still has INCOMPLETE onboarding scope.
+Review inherited dependencies, parameterized tests, multiple report writers,
+and custom source/output directories explicitly. Record blockers rather than
+rewriting an existing suite or deleting tests to make the tool pass.
 
 If the tested ddtest version lacks paired runs or controlled feature scenarios,
 mark the missing checks **not exercised** and identify the product gap. Do not
