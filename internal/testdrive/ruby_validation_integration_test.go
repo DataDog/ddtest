@@ -19,6 +19,11 @@ func TestRubyValidationIntegration(t *testing.T) {
 	if os.Getenv("DDTEST_RUN_RUBY_INTEGRATION_TEST") == "" {
 		t.Skip("set DDTEST_RUN_RUBY_INTEGRATION_TEST=1 with rspec, minitest, rake and datadog-ci installed")
 	}
+	runRubyValidationIntegration(t, "rspec", "minitest")
+}
+
+func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
 	metadata := integrationCommand(t, ctx, ".", nil, "ruby", "-rjson", "-e", `puts JSON.generate(ruby: RUBY_VERSION, rspec: Gem::Specification.find_by_name("rspec-core").version.to_s, minitest: Gem::Specification.find_by_name("minitest").version.to_s, tracer: Gem::Specification.find_by_name("datadog-ci").version.to_s, rake: Gem::Specification.find_by_name("rake").version.to_s)`)
@@ -26,10 +31,11 @@ func TestRubyValidationIntegration(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(metadata), &gems))
 	binary := filepath.Join(t.TempDir(), "ddtest")
 	integrationCommand(t, ctx, "../..", nil, "go", "build", "-o", binary, ".")
-	for _, framework := range []string{"rspec", "minitest"} {
+	for _, framework := range frameworks {
 		t.Run(framework, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "project space")
 			require.NoError(t, os.MkdirAll(root, 0755))
+			retainIntegrationReports(t, root, framework)
 			integrationCommand(t, ctx, root, nil, "git", "init", "-q")
 			integrationFile(t, root, ".ruby-version", gems.Ruby)
 			gem, version, command := "rspec-core", gems.Rspec, "bundle exec rake spec"

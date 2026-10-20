@@ -58,7 +58,7 @@ printf '%s' '{"executable":"/selected ruby/bin/ruby","version":"3.4.7"}' > "$las
 					drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 						return &fakeIntake{findings: intake.Facts{TestEventCount: 1}}, nil
 					}
-					require.ErrorContains(t, drive.Run(t.Context(), &output), "validation is incomplete")
+					require.ErrorContains(t, drive.Run(t.Context(), &output), "ruby bundle did not produce framework metadata")
 					require.NotContains(t, executor.env["RUBYOPT"], "datadog/ci/auto_instrument", "preflight disables tracing")
 					require.NotContains(t, executor.env, "BUNDLE_GEMFILE")
 					require.Contains(t, output.String(), "ruby bundle did not produce framework metadata")

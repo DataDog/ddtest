@@ -1,6 +1,7 @@
 package testdrive
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -190,6 +191,26 @@ func TestRubyIncompleteEvidenceCannotPass(t *testing.T) {
 	prepareValidationResult(t.TempDir(), &result)
 	require.False(t, result.Success)
 	require.False(t, result.LocalSuccess)
+}
+
+func TestRubyReportsRequirePairedExecutionAndFeatureValidation(t *testing.T) {
+	for _, name := range []string{"rspec", "minitest"} {
+		for _, complete := range []bool{false, true} {
+			t.Run(name+map[bool]string{false: "/reporting-only", true: "/complete"}[complete], func(t *testing.T) {
+				root := t.TempDir()
+				result := completeValidationFixture(name)
+				if !complete {
+					result.Runs = result.Runs[1:]
+				}
+				var output bytes.Buffer
+				err := finishValidation(&output, root, result)
+				require.Equal(t, complete, err == nil)
+				report := readValidationReport(t, root)
+				require.Equal(t, complete, report.Success)
+				require.Equal(t, map[bool]string{false: "INCOMPLETE", true: "COMPLETE LOCALLY"}[complete], report.Summary.Status)
+			})
+		}
+	}
 }
 
 func TestRubyCIScopeKeepsInstrumentedAndExcludedVersions(t *testing.T) {

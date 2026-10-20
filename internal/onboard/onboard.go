@@ -73,7 +73,7 @@ func Run(output io.Writer) error {
 	}
 	language := detectedPlatform.Name()
 	name := runner.Name()
-	if language != "javascript" {
+	if language != "javascript" && language != "ruby" {
 		github, ok := provider.(*environment.GitHub)
 		if !ok {
 			return fmt.Errorf("onboard does not support CI provider %s", provider.Name())

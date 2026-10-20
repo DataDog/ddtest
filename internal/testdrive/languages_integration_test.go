@@ -17,8 +17,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Python/Ruby currently collect real telemetry; they do not claim the paired
-// comparison or feature validation implemented for JavaScript frameworks.
+// Python preserves reporting-only checks; Ruby exercises native paired
+// validation, source coverage and all six feature controls.
 func TestPublicPythonRubyTestdrives(t *testing.T) {
 	if os.Getenv("DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST") == "" {
 		t.Skip("set DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST=1")
@@ -32,8 +32,6 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 		files         map[string]string
 	}{
 		{"pytest", "python -m pytest", map[string]string{"requirements.txt": "pytest==8.4.2\n", "pytest.ini": "[pytest]\n", "test_one.py": "def test_adds():\n    assert 1 + 1 == 2\n"}},
-		{"rspec", "bundle exec rspec", map[string]string{"Gemfile": "source 'https://rubygems.org'\ngem 'rspec', '3.13.1'\n", "spec/one_spec.rb": "RSpec.describe 'addition' do\n  it('adds') { expect(1 + 1).to eq(2) }\nend\n"}},
-		{"minitest", "bundle exec rake test", map[string]string{"Gemfile": "source 'https://rubygems.org'\ngem 'rake', '13.3.0'\ngem 'minitest', '5.25.5'\n", "Rakefile": "require 'rake/testtask'\nRake::TestTask.new(:test) { |t| t.pattern = 'test/**/*_test.rb' }\n", "test/one_test.rb": "require 'minitest/autorun'\nclass AdditionTest < Minitest::Test\n  def test_adds\n    assert_equal 2, 1 + 1\n  end\nend\n"}},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "project")
@@ -49,9 +47,6 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 				integrationCommand(t, ctx, root, nil, "python3", "-m", "venv", venv)
 				env = append(env, "PATH="+filepath.Join(venv, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"), "VIRTUAL_ENV="+venv)
 				integrationCommand(t, ctx, root, env, filepath.Join(venv, "bin", "python"), "-m", "pip", "install", "-r", "requirements.txt")
-			} else {
-				env = append(env, "BUNDLE_PATH="+filepath.Join(t.TempDir(), "bundle"), "BUNDLE_USER_HOME="+t.TempDir())
-				integrationCommand(t, ctx, root, env, "bundle", "lock")
 			}
 
 			integrationFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    steps:\n      - run: "+fixture.command+"\n")
@@ -131,11 +126,7 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 					for name, contents := range fixture.files {
 						after, err := os.ReadFile(filepath.Join(root, name))
 						require.NoError(t, err)
-						if name == "Gemfile" {
-							require.Contains(t, string(after), "datadog-ci", "Ruby installation updates its bundle")
-						} else {
-							require.Equal(t, contents, string(after), name)
-						}
+						require.Equal(t, contents, string(after), name)
 					}
 					entries, err := os.ReadDir(filepath.Join(root, ".testoptimization"))
 					require.NoError(t, err)
@@ -144,5 +135,8 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 				})
 			}
 		})
+	}
+	for _, name := range []string{"rspec", "minitest"} {
+		t.Run(name, func(t *testing.T) { runRubyValidationIntegration(t, name) })
 	}
 }

@@ -212,7 +212,7 @@ func validationPath(repositoryRoot string) string {
 }
 
 func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {
-	if result.Framework == "pytest" || result.Framework == "rspec" || result.Framework == "minitest" {
+	if result.Framework == "pytest" {
 		result.CompletedAt = time.Now().UTC()
 		result.WorkingDirectory = repositoryRoot
 		result.Success = result.Error == ""

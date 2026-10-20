@@ -267,9 +267,9 @@ the HTML at the same path. Configuration-only checks leave earlier HTML unchange
 and do not claim that tests were rerun. Raw output and telemetry payload files
 are discarded after validation; report directories do not accumulate.
 
-JavaScript/Python fallback tracers, captured requests, and runner files live in a
-private OS temporary directory. Ruby fallback installation uses the project bundle
-and retains its dependency changes. Testdrive removes that directory on success, failure, and
+Fallback tracers, captured requests, and runner files live in a private OS
+temporary directory. Ruby validation uses a disposable repository copy and preserves
+the original Gemfile and lockfile. Testdrive removes its temporary storage on success, failure, and
 handled cancellation. Temporary probe files inside the project are also removed.
 Bounded setup errors and summaries of attempted runs are preserved when the report
 can be written. Other `.testoptimization` data is preserved.
@@ -323,23 +323,33 @@ other ranges. This checks the declared setup-node runtime, not arbitrary shell
 commands that might later change Node. It does not execute CI or prove bootstrap
 correctness, remote instrumentation, or Datadog backend connectivity.
 
-For supported JavaScript frameworks, the command exits successfully only when local compatibility, all feature checks,
+For supported JavaScript frameworks, RSpec and Minitest, the command exits successfully only when local compatibility, all feature checks,
 and the applicable CI runtime check succeed. A runtime incompatibility or unknown
 configuration makes `success` false even if every local test matches. Repositories
 without detected GitHub Actions test jobs can still pass local validation; their
 CI runtime result is explicitly `not applicable`. The suite's own failures do not
 automatically fail validation.
-Python and Ruby retain their existing exit contract: exit 0 means the test
+Python retains its existing exit contract: exit 0 means the test
 command succeeded and test events reached the local intake. A failed command,
 missing events, or a setup/reporting/cleanup failure returns a nonzero exit code.
-Onboarding instructions remain identical to main for pytest, RSpec and Minitest.
-Their plain testdrive reports command execution and received events without adding
+Onboarding instructions remain identical to main for pytest.
+Its plain testdrive reports command execution and received events without adding
 a compatibility/feature onboarding verdict. `--format json` and `--agent` return
-`unsupported` with no `next_command`; full Python/Ruby validation belongs to the
-separate language changes. The one intentional user-visible change for these
-languages is the shared report location: `.testoptimization/report.html` and
+`unsupported` with no `next_command`; full Python validation belongs to a
+separate language change. Python also uses the shared report location: `.testoptimization/report.html` and
 `.testoptimization/testdrive.json` replace per-run `.testoptimization/testdrive/<id>/`
 report directories.
+
+RSpec and Minitest compare native results with and without instrumentation,
+verify application source coverage and exercise all six feature controls. Run
+`ddtest testdrive --framework rspec --all --check-only --yes` (or `minitest`)
+after preparing the existing bundle, then rerun without `--check-only` after
+setup edits. Each discovered command and Gemfile must pass independently.
+Numeric CI Ruby selections are checked against the resolved tracer's RubyGems
+requirements; other engines and floating selections require separate validation
+or explicit instrumentation exclusions that preserve their original test steps.
+Matching pre-existing failures are permitted. Ruby agent/JSON coordinator modes
+remain unsupported; use the plain CLI's final response and retained reports.
 
 The local intake supports agentless traffic; Agent/EVP routing is not supported.
 No results are sent to Datadog. Temporary installations and run files are removed;
@@ -348,8 +358,8 @@ only the HTML findings and compact JSON validation reports remain. Keep both out
 Testdrive reuses the project's tracer when the platform's tracer check succeeds.
 If the check fails, it attempts a fallback installation (latest by default).
 `--tracer-version` selects a release or Git revision for that fallback installation;
-JavaScript and Python installations leave project dependency files unchanged;
-Ruby uses `bundle add datadog-ci`, which updates the project Gemfile and lockfile:
+Fallback installations leave project dependency files unchanged. Ruby uses
+`bundle add datadog-ci` inside its disposable copy:
 
 ```sh
 ddtest testdrive --tracer-version <selected-release-or-tag> --yes
@@ -367,10 +377,11 @@ Local testdrive prerequisites:
 - Python: an activated project environment with pytest, and pip if `ddtrace` is
   absent. Fallback installation uses a session-owned directory; the active
   environment is unchanged.
-- Ruby: Ruby/Bundler. If `datadog-ci` is unavailable, testdrive runs
-  `bundle add datadog-ci` in the project, honoring `BUNDLE_GEMFILE` and the
-  existing bundle settings. Bundler updates the project Gemfile and lockfile;
-  tests use that same bundle. Native gem builds need build tools.
+- Ruby: Ruby/Bundler and the project's normal dependencies and lockfile. If
+  `datadog-ci` is unavailable, testdrive runs `bundle add datadog-ci` in a
+  disposable copy, honoring the selected repository-local `BUNDLE_GEMFILE`.
+  The original Gemfile and lockfile remain unchanged. Native gem builds need
+  build tools.
 - Browser suites: install the project's browsers and start any required services
   first, or use its existing test command that manages them. Testdrive does not
   install browsers or start applications on its own.
