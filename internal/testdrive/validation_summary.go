@@ -45,6 +45,9 @@ func summarizeValidation(result validationResult) validationSummary {
 		if supportsValidationFramework(result.Framework) && !hasValidationPair(result) {
 			summary.BlockingChecks = append(summary.BlockingChecks, "current baseline and reporting-only execution evidence is missing")
 		}
+		if missingRealCoverage(result) {
+			summary.BlockingChecks = append(summary.BlockingChecks, "Mocha real-suite coverage was not observed. Synthetic skipping probes do not validate coverage of customer source. Preserve coverage thresholds and review NYC/ESM instrumentation.")
+		}
 		if result.Compatibility.Status != "" && result.Compatibility.Status != "compatible" {
 			summary.BlockingChecks = append(summary.BlockingChecks, "compatibility: "+result.Compatibility.Status)
 		}

@@ -22,7 +22,8 @@ func TestFeaturePolicyRequiresObservedResultsForEveryProject(t *testing.T) {
 		require.False(t, featureChecksPassed("jest", incomplete), status)
 	}
 	require.True(t, supportsValidationFramework("vitest"))
-	require.False(t, supportsValidationFramework("mocha"), "adapters register only when their validation code lands")
+	require.True(t, supportsValidationFramework("mocha"))
+	require.False(t, supportsValidationFramework("playwright"), "adapters register only when their validation code lands")
 }
 
 func TestValidationFrameworkNamesFollowRegisteredPolicies(t *testing.T) {

@@ -148,14 +148,14 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		return nil, fmt.Errorf("--all and --command are mutually exclusive")
 	}
 	if all && !frameworkFeaturePolicies[runner.Name()].Configurations {
-		return nil, fmt.Errorf("--all currently validates Jest and Vitest only")
+		return nil, fmt.Errorf("--all currently validates Jest, Vitest and Mocha only")
 	}
 
 	var discoveryError error
 	var selectedPlan onboard.TestCommand
 	var preflightEnvironment map[string]string
 	if configurationOnly && !frameworkFeaturePolicies[runner.Name()].CheckOnly {
-		return nil, fmt.Errorf("configuration preflight currently supports Jest and Vitest only")
+		return nil, fmt.Errorf("configuration preflight currently supports Jest, Vitest and Mocha only")
 	}
 	if frameworkFeaturePolicies[runner.Name()].Preflight {
 		repositoryRoot, err = filepath.EvalSymlinks(repositoryRoot)
@@ -194,6 +194,19 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	}
 	// A failed discovery still runs startup recovery and replaces the earlier
 	// report after confirmation, so a stale PASSED result never stays current.
+	if runner.Name() == "mocha" && !all {
+		selected, resolveErr := onboard.MochaValidationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
+		if resolveErr != nil {
+			discoveryError = resolveErr
+		} else if selected != "" {
+			words, splitErr := shellquote.Split(selected)
+			if splitErr != nil || len(words) == 0 {
+				discoveryError = fmt.Errorf("invalid Mocha command: %s", selected)
+			} else {
+				command, args = words[0], words[1:]
+			}
+		}
+	}
 	label := map[string]string{"javascript": "dd-trace", "python": "ddtrace", "ruby": "datadog-ci"}[language] + "@" + version
 
 	session := planSession()
@@ -296,6 +309,9 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	}
 	if runner.Name() == "vitest" {
 		drive.preflight = drive.checkVitestPreflight
+	}
+	if runner.Name() == "mocha" {
+		drive.preflight = drive.checkMochaPreflight
 	}
 	if installer, ok := detectedPlatform.(*platform.JavaScript); ok {
 		drive.resolveJSTracer = installer.ResolveRegistryTracer
@@ -440,10 +456,13 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 	}
 
 	var result validationResult
-	if t.framework.Name() == "vitest" && t.usesVitestRunner() {
+	if t.framework.Name() == "mocha" || (t.framework.Name() == "vitest" && t.usesVitestRunner()) {
 		child := *t
 		child.workflowRoot = t.repositoryRoot
 		child.preflight = child.checkVitestPreflight
+		if child.framework.Name() == "mocha" {
+			child.preflight = child.checkMochaPreflight
+		}
 		// The run executes in a disposable copy; publish its report here instead.
 		var models []reportModel
 		child.reportModels = &models
@@ -529,6 +548,9 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 		}
 	}()
 
+	if t.discoveryError != nil {
+		return result, t.discoveryError
+	}
 	if t.environmentFailure != nil {
 		result.Compatibility = verdict{Status: "not exercised", Reason: t.environmentFailure.Title}
 		_, _ = fmt.Fprintf(output, "\nEnvironment check: %s\n%s\n", t.environmentFailure.Title, t.environmentFailure.Context)
@@ -633,6 +655,8 @@ func (t *Testdrive) run(ctx context.Context, output io.Writer) (result validatio
 			}
 			if t.framework.Name() == "vitest" {
 				result.Preflight.Verdict = checkVitestSupport(*result.Preflight, *result.Selection)
+			} else if t.framework.Name() == "mocha" {
+				result.Preflight.Verdict = checkMochaSupport(*result.Preflight, *result.Selection)
 			} else {
 				result.Preflight.Verdict = checkJestSupport(*result.Preflight, *result.Selection)
 			}

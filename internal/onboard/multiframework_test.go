@@ -40,9 +40,12 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			t.Chdir(root)
 			require.NoError(t, Run(&output))
 			require.Contains(t, output.String(), "languages: "+language)
-			if name == "vitest" {
+			switch name {
+			case "mocha":
+				require.Contains(t, output.String(), "`js-tracer-version`")
+			case "vitest":
 				require.Contains(t, output.String(), "js-tracer-version: <resolved-release>")
-			} else {
+			default:
 				require.Contains(t, output.String(), language+"-tracer-version: '' # Latest release")
 			}
 			require.Contains(t, output.String(), "ddtest testdrive --framework "+name)
@@ -50,7 +53,10 @@ func TestOnboardAllSupportedFrameworks(t *testing.T) {
 			if language != "js" {
 				require.NotContains(t, output.String(), "NODE_OPTIONS")
 			}
-			if name == "vitest" {
+			switch name {
+			case "mocha":
+				require.Contains(t, output.String(), "`js-tracer-version`")
+			case "vitest":
 				require.Contains(t, output.String(), "DD_TRACE_ESM_IMPORT")
 			}
 			if name == "cypress" {

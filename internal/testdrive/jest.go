@@ -408,6 +408,9 @@ func verifyJestTelemetry(run validationRun) verdict {
 
 func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Writer, session *Session, preload string, result *validationResult) error {
 	run := t.runJest
+	if t.framework.Name() == "mocha" {
+		run = t.runMocha
+	}
 	if t.framework.Name() == "vitest" {
 		run = t.runVitest
 	}
@@ -443,6 +446,9 @@ func (t *Testdrive) runJavaScriptValidation(ctx context.Context, output io.Write
 	}
 	if t.framework.Name() == "vitest" {
 		return t.runVitestFeatures(ctx, output, session, preload, baseline, result)
+	}
+	if t.framework.Name() == "mocha" {
+		return t.runMochaFeatures(ctx, output, session, preload, baseline, result)
 	}
 	if err := t.runJestFeatures(ctx, output, session, preload, result); err != nil {
 		return err

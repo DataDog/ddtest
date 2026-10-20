@@ -70,7 +70,7 @@ func setSingleConfigurationScope(root string, result *validationResult, scope on
 // The same current-evidence predicate is used by a child, a focused command,
 // and final publication. Scope completeness is applied separately.
 func validationPassed(result validationResult) bool {
-	return result.Error == "" && result.Compatibility.Status == "compatible" && hasValidationPair(result) && featureChecksPassed(result.Framework, result.Features) && result.ChecksPassed && result.Cleanup != nil && result.Cleanup.Status == "passed" && result.HTMLReportCurrent
+	return !missingRealCoverage(result) && result.Error == "" && result.Compatibility.Status == "compatible" && hasValidationPair(result) && featureChecksPassed(result.Framework, result.Features) && result.ChecksPassed && result.Cleanup != nil && result.Cleanup.Status == "passed" && result.HTMLReportCurrent
 }
 func configurationStatus(result validationResult) string {
 	if result.CheckOnly {
@@ -191,6 +191,9 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		child.preflight = child.checkJestPreflight
 		if child.framework.Name() == "vitest" {
 			child.preflight = child.checkVitestPreflight
+		}
+		if child.framework.Name() == "mocha" {
+			child.preflight = child.checkMochaPreflight
 		}
 		before := len(models)
 		execution, childErr := child.runPreparedConfiguration(ctx, output, &item)

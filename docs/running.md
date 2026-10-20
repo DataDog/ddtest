@@ -693,3 +693,28 @@ The runner report records the binary path/version used locally and warns about
 recognized different CI release pins. It does not certify execution of that
 remote binary. The controlled CI matrix exercises Vitest 3, 4 and 5; unknown
 future versions still require effective configuration and live feature evidence.
+
+### Mocha testdrive validation
+
+`ddtest testdrive --framework mocha --all --check-only --yes` resolves the local
+Mocha/tracer and reviews CI initialization and Istanbul/NYC wrappers without
+running tests. Follow it with `ddtest testdrive --framework mocha --all --yes`.
+The full run compares native results and telemetry for every discovered command,
+then checks six controlled features. CLI and statically identified programmatic
+Mocha runners retain their requires, hooks, reporters and options. Known npm
+lifecycle hooks and literal sequential scripts are preserved; ambiguous setup
+stays unvalidated. Focused diagnostics can use `--command 'npm test'` instead of
+`--all`.
+
+Use the project's installed NYC for per-test coverage; c8 alone is insufficient.
+Do not duplicate an existing NYC wrapper. Full-suite coverage thresholds stay
+intact; only synthetic probes relax thresholds and replace test selection.
+Missing coverage from real application source remains incomplete even when all
+feature probes pass. Native ESM requires actual Istanbul instrumentation; the
+tracer's ESM loader alone does not supply coverage.
+
+Mocha execution uses disposable copies so build, coverage and companion-tool
+outputs stay outside the original checkout. Keep the JSON/HTML report pair.
+Matching existing test failures are acceptable; missing results, changed
+outcomes and failed feature controls are not success. Real CI and Datadog backend
+processing are not exercised.

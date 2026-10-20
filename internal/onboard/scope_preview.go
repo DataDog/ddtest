@@ -9,6 +9,9 @@ func WriteValidationScope(output io.Writer, scope ValidationScope) {
 	_, _ = fmt.Fprintln(output, "\nRequired local validation configurations (every CI consumer must also be instrumented):")
 	for _, entry := range scope.Commands {
 		_, _ = fmt.Fprintf(output, "  - [%s] %s\n", entry.Directory, entry.Command)
+		if entry.CICoverageCommand != "" {
+			_, _ = fmt.Fprintf(output, "      CI coverage command: %s\n      Apply the CI wrapper. Real source coverage is a separate check.\n", entry.CICoverageCommand)
+		}
 		if entry.Resolution != "" {
 			_, _ = fmt.Fprintf(output, "      Resolved test command: %s\n", entry.Resolution)
 		}

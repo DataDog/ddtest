@@ -24,7 +24,7 @@ ddtest onboard    # GitHub Actions setup instructions
 ddtest testdrive  # Preview, confirm, and run tests locally
 ```
 
-For Jest and Vitest, testdrive compares the original test suite without and with instrumentation, then validates six advanced features using temporary probes. Matching existing failures are acceptable. Other frameworks keep their existing reporting checks.
+For Jest, Vitest and Mocha, testdrive compares the original test suite without and with instrumentation, then validates six advanced features using temporary probes. Matching existing failures are acceptable. Other frameworks keep their existing reporting checks.
 
 No Datadog account or Agent is needed. Testdrive links to an HTML report under
 `.testoptimization/report.html` with a compact `.testoptimization/testdrive.json`. Use `--yes` after reviewing the preview in
@@ -313,3 +313,11 @@ Use `ddtest testdrive --framework vitest --all --check-only --yes` before
 replace `--all` with `--command "npx vitest run --config ci.ts"` or a supported
 `ddtest run` invocation. `plan`/`run` retain their Node API behavior and reject
 their own `--command`. See [Vitest validation](docs/running.md#vitest-testdrive-validation).
+
+### Mocha testdrive validation
+
+Mocha supports paired outcome/telemetry comparison and six controlled feature
+checks. Use `ddtest testdrive --framework mocha --all --check-only --yes` before
+`ddtest testdrive --framework mocha --all --yes`. Preserve the original command
+and Istanbul/NYC coverage; missing real-source coverage stays incomplete even
+when probes pass. See [Mocha validation](docs/running.md#mocha-testdrive-validation).

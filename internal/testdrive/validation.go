@@ -94,9 +94,17 @@ type testCounts struct {
 	Other   int `json:"other"`
 }
 
+type coverageSummary struct {
+	Status       string `json:"status"`
+	CoveredTests int    `json:"covered_tests"`
+	TotalTests   int    `json:"total_tests"`
+	Level        string `json:"level,omitempty"`
+}
+
 type runSummary struct {
 	ReplacedReporters               []string            `json:"replaced_reporters,omitempty"`
 	Role                            runRole             `json:"role"`
+	Coverage                        *coverageSummary    `json:"coverage,omitempty"`
 	ExecutionPath                   string              `json:"execution_path,omitempty"`
 	Workers                         int                 `json:"workers,omitempty"`
 	PlannerSkipped                  bool                `json:"probe_skipped_by_planner,omitempty"`
@@ -123,6 +131,13 @@ func (r validationRun) summary() runSummary {
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount}
 	if r.Role == roleReporting {
 		summary.NativeCounts = nativeExecutionCounts(r)
+	}
+	if r.framework == "mocha" && r.Instrumented && r.ProbeMode == "" && strings.HasPrefix(r.Name, "reporting-only") && r.Facts.TestCount > 0 {
+		status := "observed"
+		if r.Facts.CoveredTestCount == 0 {
+			status = "not observed"
+		}
+		summary.Coverage = &coverageSummary{Status: status, CoveredTests: r.Facts.CoveredTestCount, TotalTests: r.Facts.TestCount, Level: r.Facts.CoverageLevel}
 	}
 	// A setup failure before execution must not look like a successful command.
 	if r.Command != "" {
@@ -422,7 +437,7 @@ func prepareValidationResult(repositoryRoot string, result *validationResult) {
 	result.CompletedAt = time.Now().UTC()
 	result.WorkingDirectory = repositoryRoot
 	result.CIExecution = verdict{Status: "not exercised", Reason: "Local-only validation; CI execution and Datadog backend processing were not exercised."}
-	result.LocalSuccess = result.Compatibility.Status == "compatible" && result.Error == "" && featureChecksPassed(result.Framework, result.Features)
+	result.LocalSuccess = result.Compatibility.Status == "compatible" && result.Error == "" && featureChecksPassed(result.Framework, result.Features) && !missingRealCoverage(*result)
 	if supportsValidationFramework(result.Framework) {
 		result.LocalSuccess = result.LocalSuccess && hasValidationPair(*result)
 	}
@@ -488,4 +503,13 @@ func tracerDescription(result validationResult) string {
 		return result.Tracer
 	}
 	return result.Tracer + " · " + result.TracerSource
+}
+
+func missingRealCoverage(result validationResult) bool {
+	for _, run := range result.Runs {
+		if run.Coverage != nil && run.Coverage.Status != "observed" {
+			return true
+		}
+	}
+	return false
 }

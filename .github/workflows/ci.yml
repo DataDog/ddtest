@@ -308,6 +308,8 @@ jobs:
           npm install --prefix "${mocha_dir}" "mocha@${{ matrix.mocha }}"
           DDTEST_MOCHA_NODE_MODULES="${mocha_dir}/node_modules" \
             go test -v ./internal/compatibility -run '^TestMocha.*Integration$'
+          DDTEST_MOCHA_NODE_MODULES="${mocha_dir}/node_modules" \
+            go test -v ./internal/testdrive -run '^TestMochaNativeObserverIntegration$'
 
   cypress-compatibility:
     runs-on: ubuntu-latest
@@ -514,3 +516,21 @@ jobs:
           DDTEST_VITEST_VERSION: ${{ matrix.vitest }}
           DDTEST_VITEST_TRACER_VERSION: ${{ matrix.tracer }}
         run: go test -v ./internal/testdrive -run '^TestPublicVitestRunnerTestdrive$' -count=1 -timeout=15m
+
+  testdrive-mocha-workflow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Install Mocha testdrive fixture dependencies
+        run: npm install --prefix "$RUNNER_TEMP/mocha-testdrive" mocha@11.7.6 nyc@17.1.0 dd-trace@6.20.1 --no-audit --no-fund
+      - name: Validate CLI, programmatic runner, existing failures and coverage gate
+        env:
+          DDTEST_MOCHA_NODE_MODULES: ${{ runner.temp }}/mocha-testdrive/node_modules
+        run: go test -v ./internal/testdrive -run '^TestPublicMochaTestdrive$' -count=1 -timeout=10m

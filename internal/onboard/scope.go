@@ -24,6 +24,9 @@ type TestCommand struct {
 	Locations        []string       `json:"locations,omitempty"`
 	Prerequisites    []BuildCommand `json:"prerequisites,omitempty"`
 	UnvalidatedSetup []string       `json:"unvalidated_setup,omitempty"`
+	CICoverageCommand string `json:"ci_coverage_command,omitempty"`
+	mochaProbeCommand string
+	usesNYC bool
 }
 
 // BuildCommand is a statically resolved build preceding a test in the same
@@ -66,7 +69,7 @@ func yarnImplicitInstall(words []string) bool {
 func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 	var scope ValidationScope
 	var allUnresolved, allReview []scopeDiagnostic
-	if framework != "jest" && framework != "vitest" {
+	if framework != "jest" && framework != "vitest" && framework != "mocha" {
 		return scope, fmt.Errorf("CI command discovery is not available for %s", framework)
 	}
 
@@ -145,6 +148,12 @@ func DiscoverValidationScope(root, framework string) (ValidationScope, error) {
 						resolution.Builds[j].Environment = mergeEnvironment(env, resolution.Builds[j].Environment)
 					}
 					for _, entry := range resolution.Tests {
+						if framework == "mocha" && !entry.usesNYC {
+							parts, err := staticCommands(entry.Command)
+							if err == nil && len(parts) == 1 && len(parts[0]) > 0 && !strings.Contains(parts[0][0], "=") {
+								entry.CICoverageCommand = "npx --no-install nyc -- " + entry.Command
+							}
+						}
 
 						for j := range entry.Prerequisites {
 							entry.Prerequisites[j].Environment = mergeEnvironment(env, entry.Prerequisites[j].Environment)

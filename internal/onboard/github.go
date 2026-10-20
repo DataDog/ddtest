@@ -9,10 +9,14 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/environment"
 )
+
+//go:embed instructions/mocha.md
+var mochaInstructions string
 
 //go:embed instructions/vitest.md
 var vitestInstructions string
@@ -24,6 +28,22 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 	workflows, configured, err := provider.FindTestWorkflows(repositoryRoot, language, name)
 	if err != nil {
 		return err
+	}
+	var scope *ValidationScope
+	if language == "javascript" && name == "mocha" {
+		discovered, err := DiscoverValidationScope(repositoryRoot, name)
+		if err != nil {
+			return err
+		}
+		scope = &discovered
+		for _, entry := range discovered.Commands {
+			for _, location := range entry.locations {
+				if !slices.Contains(workflows, location.Workflow) {
+					workflows = append(workflows, location.Workflow)
+				}
+			}
+		}
+		slices.Sort(workflows)
 	}
 	if len(workflows) == 0 {
 		return fmt.Errorf("onboard could not find a GitHub Actions workflow that runs %s", name)
@@ -50,11 +70,17 @@ func onboardGitHub(output io.Writer, provider *environment.GitHub, repositoryRoo
 	}
 
 	_, _ = fmt.Fprintln(output)
+	if scope != nil {
+		WriteValidationScope(output, *scope)
+	}
 	_, _ = fmt.Fprintln(output, strings.TrimSpace(instructions(language, name)))
 	return nil
 }
 
 func instructions(language, name string) string {
+	if language == "javascript" && name == "mocha" {
+		return strings.ReplaceAll(mochaInstructions, "ddtest testdrive", "ddtest testdrive --framework mocha")
+	}
 	if language == "javascript" && name == "vitest" {
 		return strings.ReplaceAll(vitestInstructions, "ddtest testdrive", "ddtest testdrive --framework vitest")
 	}

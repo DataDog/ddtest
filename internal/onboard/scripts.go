@@ -20,6 +20,7 @@ import (
 // A resolution can be unrelated, matched, or unresolved. A matched command with
 // an unresolved component is still inconclusive; it must not hide custom wrappers.
 type commandResolution struct {
+	MochaAuxiliary bool
 	OtherFramework bool
 	Setup          []string
 
@@ -55,7 +56,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		}
 		return commandResolution{}
 	}
-	if language != "javascript" || (framework != "jest" && framework != "vitest") {
+	if language != "javascript" || (framework != "jest" && framework != "vitest" && framework != "mocha") {
 		return commandResolution{Matched: environment.LooksLikeTestCommand(root, step.Run, language, framework)}
 	}
 	// GitHub expands these before the shell runs; they are not shell syntax.
@@ -93,12 +94,23 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return result
 	}
 
+	if framework == "mocha" {
+		if result, ok := reviewMochaBrowserStep(root, resolvedDirectory, step.Run); ok {
+			return result
+		}
+	}
 	remaining := 256
 	result := resolveJestSequence(root, resolvedDirectory, step.Run, nil, &remaining, framework)
 
 	if _, err := staticCommands(step.Run); err != nil {
 		if metadata, ok := resolveMetadataStep(root, workflow, job, step, framework); ok {
 			return metadata
+		}
+	}
+	if result.MochaAuxiliary && (result.ReviewReason == "" || result.Matched) {
+		result.Reason = joinDiagnostic(result.Reason, "Node script is not identified as Mocha outside a resolved Mocha package command; review its test scope.")
+		for i := range result.Tests {
+			result.Tests[i].UnvalidatedSetup = append(result.Tests[i].UnvalidatedSetup, result.Reason)
 		}
 	}
 	if !result.Matched && result.Reason == "" && result.ReviewReason != "" {
@@ -172,6 +184,7 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 			}
 		}
 		result.Tests = append(result.Tests, part.Tests...)
+		result.MochaAuxiliary = result.MochaAuxiliary || part.MochaAuxiliary
 		setup = append(setup, part.Setup...)
 
 		result.Builds = append(result.Builds, part.Builds...)
@@ -258,6 +271,9 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			words = words[2:]
 		}
 
+		if framework == "mocha" && len(words) > 0 && slices.Contains([]string{"--no-install", "--no"}, words[0]) {
+			words = words[1:]
+		}
 		if npmExec {
 			separator := slices.Index(words, "--")
 			for i, word := range words {
@@ -291,6 +307,17 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 			Tests: []TestCommand{{Directory: filepath.ToSlash(relative), Command: shellquote.Join(append([]string{runner}, words[1:]...)...)}}}
 	}
 
+	if framework == "mocha" {
+		if words[0] == "mochify" || mochaBrowserShell(root, directory, words[0]) {
+			return commandResolution{ReviewReason: "Mochify browser tests are outside Node Mocha validation: " + command}
+		}
+		if words[0] == "node" {
+			return resolveMochaNode(root, directory, words)
+		}
+		if filepath.Base(words[0]) == "c8" || filepath.Base(words[0]) == "nyc" {
+			return resolveMochaCoverage(root, directory, words, stack, remaining, framework)
+		}
+	}
 	if tool, ok := discoveryTools[words[0]]; ok {
 		return resolveDiscoveryTool(root, directory, words, framework, tool)
 	}
@@ -323,8 +350,17 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 
 		return unresolvedCommand("Unsupported script orchestration: " + command)
 	case "npm-run-all", "npm-run-all2", "run-s":
-
-		return unresolvedCommand("Unsupported script orchestration: " + command)
+		if framework != "mocha" || len(words) < 2 {
+			return unresolvedCommand("Unsupported script orchestration: " + command)
+		}
+		var scripts []string
+		for _, name := range words[1:] {
+			if strings.ContainsAny(name, "*?[]{} ") || strings.HasPrefix(name, "-") {
+				return unresolvedCommand("Script orchestration needs literal script names: " + command)
+			}
+			scripts = append(scripts, shellquote.Join("npm", "run", name))
+		}
+		return resolveJestSequence(root, directory, strings.Join(scripts, " && "), stack, remaining, framework)
 
 	case "npm", "yarn", "pnpm", "bun":
 		// Yarn without a subcommand installs dependencies. npm accepts global
@@ -427,7 +463,34 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		script += " " + shellquote.Join(args...)
 	}
 
+	mocha := len(frameworks) > 0 && frameworks[0] == "mocha"
+	if mocha && strings.HasPrefix(command, "npm ") {
+		var parts []string
+		if pre := manifest.Scripts["pre"+name]; pre != "" {
+			parts = append(parts, pre)
+		}
+		parts = append(parts, script)
+		if post := manifest.Scripts["post"+name]; post != "" {
+			parts = append(parts, post)
+		}
+		script = strings.Join(parts, " && ")
+		lifecycle = ""
+	}
 	result := resolveJestSequence(root, directory, script, append(slices.Clone(stack), key), remaining, frameworks...)
+	if mocha && lifecycle == "" && result.Reason == "" && !result.Matched && result.MochaAuxiliary && name == "build" {
+		return commandResolution{Builds: []BuildCommand{{Directory: repositoryPath(root, directory), Command: command, Kind: "package-build"}}}
+	}
+	if mocha && lifecycle == "" && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
+		if !result.SingleJest && result.Tests[0].mochaProbeCommand == "" {
+			result.Tests[0].mochaProbeCommand = result.Tests[0].Command
+		}
+		result.SingleJest = true
+		result.MochaAuxiliary = false
+		result.Tests[0].Resolution = command + " -> " + result.Evidence
+		result.Tests[0].Command = command
+		result.Tests[0].Prerequisites = nil
+		result.Builds = nil
+	}
 
 	// An npm alias without -- consumes newly appended runner flags. Expand
 	// this boundary when forwarding, while retaining already-safe aliases.
